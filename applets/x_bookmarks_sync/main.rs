@@ -75,13 +75,25 @@ async fn main() -> Result<()> {
     let storage = lake::storage_from_env()?;
     let client = virtues_applets::http_client();
 
+    // The feature block is the same for every page; build it once.
+    let features = features().to_string();
+
     let mut total_written = 0usize;
     let mut new_high: Option<String> = None;
     let mut cursor: Option<String> = None;
     let mut reached_last_seen = false;
     let mut hit_page_cap = true;
 
-    for _page in 0..MAX_PAGES {
+    for page in 0..MAX_PAGES {
+        // Pace multi-page runs. X flags rapid automated access aggressively, and
+        // a flagged session costs the whole credential — far more than the extra
+        // seconds. Only the first backfill (or a large new batch) pages at all;
+        // a steady-state run is one page and never sleeps. Kept well inside the
+        // 300s subprocess ceiling: at ~1s each, 60 pages is a minute of pause.
+        if page > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+
         let variables = match &cursor {
             Some(c) => json!({ "count": PAGE_SIZE, "cursor": c, "includePromotedContent": false }),
             None => json!({ "count": PAGE_SIZE, "includePromotedContent": false }),
@@ -91,7 +103,7 @@ async fn main() -> Result<()> {
             .get(format!("https://x.com/i/api/graphql/{QUERY_ID}/Bookmarks"))
             .query(&[
                 ("variables", variables.to_string()),
-                ("features", features().to_string()),
+                ("features", features.clone()),
             ])
             .header("authorization", WEB_BEARER)
             .header("content-type", "application/json")
