@@ -38,13 +38,31 @@ final class PushRegistrar {
   private let queue = DispatchQueue(label: "com.virtues.push", qos: .utility)
   private var hooksInstalled = false
 
-  /// What the box last ACCEPTED, and when. Outer nil = nothing accepted yet this
-  /// process; `.some(nil)` = the box accepted "unreachable".
-  private var accepted: String?? = nil
+  /// What the box last ACCEPTED. Outer nil = never; `.some(nil)` = the box
+  /// accepted "unreachable". **Persisted**, because the box keeps the address
+  /// across app restarts — and without it every cold open would ask for status
+  /// before this launch's report lands and wrongly tell the owner the server
+  /// does not have this phone's address.
+  private var accepted: String?? = PushRegistrar.loadAccepted()
   private var acceptedAt = Date.distantPast
-  /// Foreground flaps (Control Center, a call) fire didBecomeActive repeatedly.
-  /// The same value inside this window is already on the box.
-  private let coalesce: TimeInterval = 600
+  /// Whether the most recent report failed (not paired, box unreachable, box
+  /// refused). While true, the screen must not claim the server can reach this
+  /// phone, whatever was accepted before — an unpaired phone reports -1 here.
+  private var lastFailed = false
+  /// The first report of every launch always goes out, so the box's
+  /// `push_address_at` reflects this launch and a newly paired box learns the
+  /// address without waiting out the coalesce window.
+  private var reportedThisLaunch = false
+  /// Foreground flaps (Control Center, a call) fire didBecomeActive in bursts
+  /// seconds apart. The same value inside this window is already on the box.
+  private let coalesce: TimeInterval = 60
+
+  private static let acceptedKey = "virtues.push.accepted"
+  /// Stored as the token, or "" for an accepted "unreachable".
+  private static func loadAccepted() -> String?? {
+    guard let v = UserDefaults.standard.string(forKey: acceptedKey) else { return nil }
+    return .some(v.isEmpty ? nil : v)
+  }
 
   /// `request` callers waiting for the report that their grant set off.
   private var waiters: [() -> Void] = []
@@ -78,7 +96,11 @@ final class PushRegistrar {
         // package targets iOS 13, and this app is never an App Clip.
         switch settings.authorizationStatus {
         case .authorized, .provisional:
-          if case .some(.some(_)) = self.accepted { done("authorized") } else { done("unregistered") }
+          if !self.lastFailed, case .some(.some(_)) = self.accepted {
+            done("authorized")
+          } else {
+            done("unregistered")
+          }
         case .notDetermined:
           done("not_determined")
         default:
@@ -134,7 +156,8 @@ final class PushRegistrar {
 
   private func report(_ address: String?, force: Bool) {
     queue.async {
-      if !force, case .some(let last) = self.accepted, last == address,
+      if !force, self.reportedThisLaunch, !self.lastFailed,
+        case .some(let last) = self.accepted, last == address,
         Date().timeIntervalSince(self.acceptedAt) < self.coalesce
       {
         self.drainWaiters()
@@ -146,10 +169,14 @@ final class PushRegistrar {
       } else {
         rc = virtues_report_push_address(nil)
       }
+      self.reportedThisLaunch = true
       if rc == 0 {
         self.accepted = .some(address)
         self.acceptedAt = Date()
+        self.lastFailed = false
+        UserDefaults.standard.set(address ?? "", forKey: Self.acceptedKey)
       } else {
+        self.lastFailed = true
         // Not retried here: the next foreground reports again, and iOS re-issues
         // the token on every registerForRemoteNotifications.
         NSLog("[virtues push] box did not accept the report (rc=%d)", rc)

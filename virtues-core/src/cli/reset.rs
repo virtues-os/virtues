@@ -185,7 +185,7 @@ async fn run_keep_data(database_url: &str, yes: bool) -> Result<(), crate::Error
         .await
         .map_err(|e| crate::Error::Database(format!("begin: {e}")))?;
 
-    let devices = sqlx::query("UPDATE app_device SET revoked_at = now() WHERE revoked_at IS NULL")
+    let devices = sqlx::query("UPDATE app_device SET revoked_at = now(), push_address = NULL, push_address_at = NULL WHERE revoked_at IS NULL")
         .execute(&mut *tx)
         .await
         .map_err(|e| crate::Error::Database(format!("revoke devices: {e}")))?
