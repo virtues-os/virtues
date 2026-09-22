@@ -114,7 +114,7 @@
 {#if article}
 	<div class="article">
 		<div class="article-prose">
-			<Markdown content={article} refVariant="quiet" />
+			<Markdown content={article} refVariant="quiet" variant="article" />
 		</div>
 		<p class="colophon">
 			<!-- "Not kept" means the person switched maintenance off. It no
@@ -172,10 +172,9 @@
 {/if}
 
 <style>
+	/* Was serif/1.0313rem/1.65 here. The renderer carries it now - same
+	   register, one definition, and the day article is finally in it too. */
 	.article-prose {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 1.0313rem;
-		line-height: 1.65;
 		color: var(--color-foreground);
 	}
 

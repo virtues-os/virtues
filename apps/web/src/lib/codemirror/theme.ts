@@ -9,8 +9,13 @@ import { EditorView } from '@codemirror/view';
 
 export const virtuesTheme = EditorView.theme({
 	'&': {
-		fontFamily: 'var(--editor-font-family, var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif))',
-		fontSize: 'var(--editor-font-size, 1rem)',
+		// The editor stays in the UI register (a writing surface is not a
+		// printed article, and the decorations are measured against these
+		// metrics), but it reads the shared tokens rather than restating them —
+		// the hardcoded `1rem` here was one of the five body sizes the app had
+		// drifted into. `--editor-font-*` still wins where a caller sets it.
+		fontFamily: 'var(--editor-font-family, var(--md-body-family, ui-sans-serif, system-ui, -apple-system, sans-serif))',
+		fontSize: 'var(--editor-font-size, var(--md-body-size, 1rem))',
 		lineHeight: 'var(--editor-line-height, 1.7)',
 		color: 'var(--color-foreground)',
 	},
