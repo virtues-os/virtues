@@ -18,14 +18,28 @@
 //! article's own page, where the person's edits and the editor's share one
 //! document.
 //!
-//! **The gate is consent.** An entity has no article until someone asks for
-//! one, and none is maintained until they set `maintenance` on it. Writing
-//! once and maintaining forever are different decisions and get different
-//! switches. The thresholds that used to decide this for them
+//! **The gate is consent, and it is ONE gate.** An entity has no article until
+//! someone asks for one. The thresholds that used to decide this for them
 //! (`MIN_REFS_TO_WRITE`, `MIN_NEW_REFS`) are gone: on the real box they
 //! cleared 226 entities on five months of records — hundreds of unrequested
 //! model calls, recurring forever, with nothing in the UI to say the box was
 //! spending on them.
+//!
+//! Asking for the article DOES enroll it in maintenance: the column defaults
+//! to `auto` and nothing here overrides it. This paragraph used to claim the
+//! opposite — "none is maintained until they set `maintenance` on it …
+//! different decisions and get different switches" — which no schema, API or
+//! UI has ever supported. There is one switch, and an article worth writing is
+//! worth keeping true; a stale article about someone you now see weekly is a
+//! WRONG article, which is the failure this design fears most.
+//!
+//! What makes that safe is not a second consent but four small gates, all in
+//! `wiki_editor`: `maintenance <> 'never'`, no human edit inside six hours,
+//! rested past its interval (30 days for an entity, 7 for a year or story),
+//! and the evidence fingerprint actually moved — then one article per applet
+//! run, at most one run an hour. And it is disclosed where it is read rather
+//! than in a settings page: every article carries a colophon saying "The
+//! record wrote this and keeps it current", with the off switch in that line.
 
 use sqlx::PgPool;
 
