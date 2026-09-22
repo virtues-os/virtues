@@ -1148,8 +1148,18 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 // Tags are deliberately not part of this test: a bookmark whose
                 // only text is a folder name is a bare link, and the folder is
                 // already searchable as structure.
+                //
+                // A tombstone is out of scope too. `deleted_at_source` means the
+                // bookmark is gone from the browser or account it came from, and
+                // the room hides those — so a retriever that still returns them
+                // contradicts the shelf: chat cited four bookmarks the owner had
+                // deleted in Dia while the room showed none of them. The row and
+                // the note survive, the detail page still opens (a link should
+                // find something), and a re-add clears the tombstone and puts it
+                // back in the index on the next pass.
                 embed_where: Some(
-                    "AND btrim(COALESCE(t.title, '') || COALESCE(t.description, '') \
+                    "AND t.deleted_at_source IS NULL \
+                     AND btrim(COALESCE(t.title, '') || COALESCE(t.description, '') \
                      || COALESCE(t.note, '') || COALESCE(t.extraction_text, '')) <> ''",
                 ),
             }),
