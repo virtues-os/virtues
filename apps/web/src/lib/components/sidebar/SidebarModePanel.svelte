@@ -140,9 +140,11 @@
 	}
 
 	/* The panel body already insets from the top; the first group would
-	   otherwise sit lower than the panel title it follows. */
+	   otherwise sit lower than the panel title it follows. 4px, not the 2px
+	   this shipped with for an hour — padding and margin are on the 4px grid
+	   and `design-lint.sh` counts every exception. */
 	.mode-group.first {
-		margin-top: 2px;
+		margin-top: 4px;
 	}
 
 
