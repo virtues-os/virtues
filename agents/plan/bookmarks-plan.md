@@ -10,9 +10,15 @@ detail view whose first field is the user's own note. A save becomes findable
 by what it is about, by the user's words, and by the phrases they would
 plausibly type.
 
-**What v1 deliberately is not:** no Instagram (the iOS share extension is
-[deferred](#5-ios-share-sheet--deferred-2026-08-07-box-side-landed) — too much
-platform machinery for one door), no image understanding, no X, no Inbox.
+**What v1 deliberately is not:** no Inbox.
+
+**Since v1 (2026-09-22, on `wave`, unreleased):** X bookmarks and Instagram
+saves sync from the box (`applets/x_bookmarks_sync`, `applets/instagram_saves_sync`
+— §6, and each applet's module doc for the credential and its open questions);
+the image pass reads saved pictures with the Omni slot
+(`bookmark_enrichment::enrich_image`); and the iOS share sheet is built on
+both sides but not yet wired into the Xcode project
+([§5](#5-ios-share-sheet--built-2026-09-22-awaiting-apple-side-wiring)).
 
 ## Why this exists
 
@@ -394,7 +400,64 @@ Build real aspect rows only when per-aspect **attribution** is wanted ("matched
 on palette"), not merely per-aspect recall. That defers the invasive change
 until a surface actually needs it.
 
-### 5. iOS share sheet — DEFERRED 2026-08-07 (box side landed)
+### 5. iOS share sheet — BUILT 2026-09-22, awaiting Apple-side wiring
+
+**Where it stands.** Everything that does not need an Apple Developer account is
+built and committed; nothing is wired into the Xcode project yet, on purpose.
+
+| piece | where | state |
+|---|---|---|
+| Extension ("Save to Virtues", optional note) | `apps/web/src-tauri/gen/apple/ShareExtension/` | written, typechecks (Swift 5 + 6); **in no target** |
+| App-side drain, inbox → outbox as `bookmark` | `plugins/reach/ios/Sources/ShareInbox.swift` | in the app; a no-op until the App Group exists |
+| Drain on foreground + on the background wake | `ReachPlugin.swift` init, `BackgroundSync.swift` | in the app |
+| Box: `image_data` → Drive → `asset_id` | `applets/ios_ingest/bookmark.rs` `externalize_images` | built, tested |
+| Image pass reads it | `bookmark_enrichment::enrich_image` | built, tested |
+
+The flow: the extension copies a link and/or a picture (raw file bytes, never
+decoded there) plus the note into the App Group folder `ShareInbox/`, writing
+the JSON last and atomically. The app, on foreground or background wake,
+downscales the picture to 2048px JPEG, base64s it into a `bookmark` record, and
+enqueues it — then the existing reach drain carries it to `ios_ingest`, the
+audio road. The box keeps the picture in Drive and the image pass reads it.
+
+**Wiring, in order — each step depends on the one before:**
+
+1. **Register the App Group** `group.com.virtues.app` (Apple Developer portal,
+   team `4YV9K677RY`). Enable it on the app's App ID `com.virtues.app`, and
+   create an App ID `com.virtues.app.share` with it. Owner's account; cannot be
+   done from the repo.
+2. **Only then** add `com.apple.security.application-groups:
+   [group.com.virtues.app]` to the app's entitlements (`project.yml` AND the
+   committed `virtues_iOS.entitlements`). Before step 1 this breaks signing of
+   every build — the profile would not carry it, the same trap the FinanceKit
+   comment in `project.yml` describes.
+3. Add the `ShareExtension` target to `project.yml` (`type: app-extension`,
+   sources `ShareExtension`, its `Info.plist` and entitlements, bundle id
+   `com.virtues.app.share`, `DEVELOPMENT_TEAM`), and embed it from
+   `virtues_iOS` as a target dependency.
+4. Regenerate the project deliberately, then diff the `.pbxproj`: confirm
+   `DEVELOPMENT_TEAM` survived and decide about the pending `AppIcon.icon`
+   entry that regeneration will also pull in (see the notes in `project.yml`).
+5. **Versions must match or App Store upload fails.** An extension's
+   `CFBundleShortVersionString`/`CFBundleVersion` must equal its parent app's.
+   Tauri overwrites the APP's from `tauri.ios.conf.json` at build time and does
+   not touch the extension's (`$(MARKETING_VERSION)` /
+   `$(CURRENT_PROJECT_VERSION)`), so set those build settings from the same
+   version, or they drift on the first bump.
+6. On a real phone: share a Safari link and a screenshot, and measure the time
+   until each is on the box. That is the one number the design rests on (the
+   background wake, not an `openURL` hack).
+
+"Open in Virtues" is deliberately not part of this: a share extension cannot
+open its host app without fragile, review-risky workarounds. An "ask about
+this" action can ride the same inbox later as a flag on the saved item.
+
+Not covered in v1: a share that is only text (no link, no picture) — the
+activation rule offers the row for links and images only, because the box has
+nothing to point a text-only share at. Pulling a link out of shared text is the
+natural next step.
+
+#### Decision record (2026-08-07) — why it was deferred then
 
 **Decision: not in the first version.** The spike below found no blocker, but
 the shape it found is the reason to wait: a share extension is a separate
