@@ -49,6 +49,11 @@ async fn main() -> Result<()> {
     for page in 1..=MAX_PAGES {
         let resp = client
             .get(STARRED_URL)
+            // The incremental cursor below depends on newest-first order, so
+            // pin it rather than ride GitHub's default (which is `created`/`desc`
+            // today, but a default is not a contract — a silent flip to `asc`
+            // would make the cursor stop on page one and never backfill).
+            .query(&[("sort", "created"), ("direction", "desc")])
             .query(&[("per_page", PAGE_SIZE), ("page", page)])
             .bearer_auth(&token)
             // GitHub rejects requests without a User-Agent outright (403).
