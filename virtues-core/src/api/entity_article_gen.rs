@@ -119,7 +119,7 @@ pub async fn write_entity_article_now(
         refs,
     };
 
-    let prompt = build_dossier(pool, &entity).await?;
+    let (prompt, allowed) = build_dossier(pool, &entity).await?;
     tracing::info!(
         entity = %entity.id, kind = %entity.kind, refs,
         prompt_chars = prompt.len(),
@@ -128,6 +128,20 @@ pub async fn write_entity_article_now(
 
     let raw = call_virtues_api(pool, &prompt).await?;
     let article = parse_article(&raw);
+    // The allowlist is enforced here, not requested in the prompt. See
+    // `sanitize_links`: asked nicely, the model got 0 of 3 entity links right.
+    let self_href = format!(
+        "/{}/{}",
+        if subject_type == "organization" { "org" } else { subject_type },
+        subject_id
+    );
+    let (article, stripped) = sanitize_links(&article, &allowed, &self_href);
+    if stripped > 0 {
+        tracing::warn!(
+            entity = %entity.id, kind = %entity.kind, stripped,
+            "unwrapped links the article was not entitled to make"
+        );
+    }
     if article.is_empty() {
         return Err(Error::ExternalApi(
             "LLM returned an empty entity article".to_string(),
@@ -182,10 +196,11 @@ async fn entity_title(pool: &PgPool, entity_type: &str, entity_id: &str) -> Resu
 /// "Interactions on record: 0" was reaching the prompt for entities with
 /// thousands of refs. The honest count is `entity.refs`, straight from
 /// `wiki_refs`, and it is already in the header line.
-async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
+async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, LinkAllowlist)> {
     use sqlx::Row;
 
     let mut p = String::new();
+    let mut allowed = LinkAllowlist::default();
 
     // ── Header facts + previous edition, per kind ──
     let (name, facts): (String, String) = match entity.kind.as_str() {
@@ -326,6 +341,9 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             .fetch_optional(pool)
             .await
         {
+            // Offered to the model AND remembered, so the answer can be held
+            // to the same list rather than trusted to have read it.
+            allowed.push_entity(format!("/{route}/{eid}"), n.clone());
             links.push(format!("- [{}](/{}/{})", n, route, eid));
         }
     }
@@ -350,6 +368,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
     .unwrap_or_default();
     for (date, lede) in &days {
         let label = date.format("%B %-d, %Y");
+        allowed.push_day(format!("/day/day_{}", date.format("%Y-%m-%d")));
         match lede {
             Some(e) => links.push(format!(
                 "- [{}](/day/day_{}) — narrated day: \"{}\"",
@@ -372,7 +391,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
         p.push_str("\n\n(material truncated)");
     }
 
-    Ok(p)
+    Ok((p, allowed))
 }
 
 fn cap(s: &str, n: usize) -> String {
@@ -411,6 +430,85 @@ async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
     .await
 }
 
+/// The links an article is allowed to carry, collected while the dossier is
+/// built — the same list the prompt prints under "Entities you may link".
+///
+/// It exists because the prompt asking nicely does not work. Audited across 24
+/// generated articles on a real box, `[Name](/person/…)` links were **0
+/// correct and 3 mismatched**: one article labelled the SUBJECT'S OWN NAME
+/// with a different person's id, then invented a second name for that same
+/// wrong id. Day links were fine, because a date describes itself and the
+/// model copies it.
+///
+/// A ref that points at the wrong person is worse than no ref: the prose reads
+/// as sourced, the chip opens someone else's page, and nothing about it looks
+/// broken.
+#[derive(Debug, Default, Clone)]
+struct LinkAllowlist {
+    /// `/person/<id>` → the name that id actually has.
+    entities: std::collections::HashMap<String, String>,
+    /// `/day/day_YYYY-MM-DD` hrefs that were offered.
+    days: std::collections::HashSet<String>,
+}
+
+impl LinkAllowlist {
+    fn push_entity(&mut self, href: String, name: String) {
+        self.entities.insert(href, name);
+    }
+    fn push_day(&mut self, href: String) {
+        self.days.insert(href);
+    }
+}
+
+/// Unwrap every link the article was not entitled to make, keeping the words.
+///
+/// Three ways a link dies, and all of them leave the sentence intact — the
+/// prose is usually right about the person and wrong only about the pointer,
+/// so `[Maya](/person/wrong_id)` becomes `Maya` rather than disappearing.
+///
+///   1. The href was never offered.
+///   2. The href was offered, but under a different name. This is the observed
+///      failure: the right words over someone else's id.
+///   3. The href is the article's own subject. A page does not link itself.
+///
+/// A day link is checked for membership only. Its label is a rendering of the
+/// date in the href — "September 2, 2026", "September 2" — and requiring one
+/// spelling would strip correct links.
+///
+/// External links are left alone; the prompt does not ask for them and the
+/// renderer already treats them as citations rather than refs.
+fn sanitize_links(article: &str, allowed: &LinkAllowlist, self_href: &str) -> (String, usize) {
+    static LINK: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = LINK.get_or_init(|| {
+        regex::Regex::new(r"\[([^\]]*)\]\((/[^)\s]*)\)").expect("static link regex")
+    });
+
+    let mut stripped = 0usize;
+    let out = re
+        .replace_all(article, |c: &regex::Captures<'_>| {
+            let label = &c[1];
+            let href = &c[2];
+            let keep = if href == self_href {
+                false
+            } else if href.starts_with("/day/") {
+                allowed.days.contains(href)
+            } else {
+                allowed
+                    .entities
+                    .get(href)
+                    .is_some_and(|name| name.trim().eq_ignore_ascii_case(label.trim()))
+            };
+            if keep {
+                c[0].to_string()
+            } else {
+                stripped += 1;
+                label.to_string()
+            }
+        })
+        .into_owned();
+    (out, stripped)
+}
+
 /// Strip code fences and return the article prose.
 fn parse_article(raw: &str) -> String {
     raw.trim()
@@ -437,6 +535,97 @@ mod tests {
     }
 
     /// THE TEST THAT WOULD HAVE CAUGHT THIS. The header queries here are raw
+    fn allowlist() -> LinkAllowlist {
+        let mut a = LinkAllowlist::default();
+        a.push_entity("/person/person_real".into(), "Nick".into());
+        a.push_entity("/org/org_real".into(), "Example Ltd".into());
+        a.push_day("/day/day_2026-09-02".into());
+        a
+    }
+
+    /// The failure this function exists for, reproduced from a real box: the
+    /// article named one person and pointed the link at another. The words are
+    /// right and the pointer is wrong, so the words stay.
+    #[test]
+    fn a_right_name_over_the_wrong_id_loses_its_link() {
+        let (out, n) = sanitize_links(
+            "[Nick](/person/person_someone_else) writes to you most mornings.",
+            &allowlist(),
+            "/person/person_subject",
+        );
+        assert_eq!(n, 1);
+        assert_eq!(out, "Nick writes to you most mornings.");
+    }
+
+    /// The other half of the same failure: an invented name on an id that IS
+    /// on the list. Membership alone would have passed this.
+    #[test]
+    fn an_invented_name_on_a_listed_id_loses_its_link() {
+        let (out, n) = sanitize_links(
+            "You met [David Okafor](/person/person_real) for lunch.",
+            &allowlist(),
+            "/person/person_subject",
+        );
+        assert_eq!(n, 1);
+        assert_eq!(out, "You met David Okafor for lunch.");
+    }
+
+    #[test]
+    fn a_listed_entity_under_its_own_name_survives() {
+        let a = allowlist();
+        for text in [
+            "[Nick](/person/person_real) called.",
+            "[nick](/person/person_real) called.",
+            "[Example Ltd](/org/org_real) invoiced you.",
+        ] {
+            let (out, n) = sanitize_links(text, &a, "/person/person_subject");
+            assert_eq!(n, 0, "stripped a good link: {text}");
+            assert_eq!(out, text);
+        }
+    }
+
+    /// A day's label is a rendering of the date already in its href, so the
+    /// spelling is not checked — only whether the day was offered.
+    #[test]
+    fn a_listed_day_survives_any_rendering_of_its_date() {
+        let a = allowlist();
+        for text in [
+            "on [September 2, 2026](/day/day_2026-09-02)",
+            "on [September 2](/day/day_2026-09-02)",
+            "on [that Wednesday](/day/day_2026-09-02)",
+        ] {
+            let (out, n) = sanitize_links(text, &a, "/person/person_subject");
+            assert_eq!(n, 0, "stripped a good day link: {text}");
+            assert_eq!(out, text);
+        }
+        let (out, n) = sanitize_links(
+            "on [September 9, 2026](/day/day_2026-09-09)",
+            &a,
+            "/person/person_subject",
+        );
+        assert_eq!(n, 1, "a day that was never offered is not a link");
+        assert_eq!(out, "on September 9, 2026");
+    }
+
+    #[test]
+    fn a_page_does_not_link_itself() {
+        let (out, n) = sanitize_links(
+            "[Nick](/person/person_subject) is your brother.",
+            &allowlist(),
+            "/person/person_subject",
+        );
+        assert_eq!(n, 1);
+        assert_eq!(out, "Nick is your brother.");
+    }
+
+    #[test]
+    fn external_links_and_plain_prose_are_left_alone() {
+        let text = "See [their site](https://example.com) — otherwise plain prose with [brackets] and (parens).";
+        let (out, n) = sanitize_links(text, &allowlist(), "/person/person_subject");
+        assert_eq!(n, 0);
+        assert_eq!(out, text);
+    }
+
     /// `sqlx::query`, so a renamed column breaks at runtime, not build time —
     /// which is how a phantom `ref_count` (renamed to `seen_count` in 0002)
     /// silently killed person and place article generation while org survived.
@@ -458,7 +647,7 @@ mod tests {
             .unwrap();
 
             let entity = DueEntity { id: id.to_string(), kind: kind.to_string(), refs: 1 };
-            let dossier = build_dossier(&pool, &entity)
+            let (dossier, _allowed) = build_dossier(&pool, &entity)
                 .await
                 .unwrap_or_else(|e| panic!("{kind} dossier failed against live schema: {e}"));
             assert!(dossier.contains("Dossier Subject"), "{kind} dossier missing subject name");
