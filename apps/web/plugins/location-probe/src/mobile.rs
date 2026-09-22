@@ -39,6 +39,20 @@ impl<R: Runtime> LocationProbe<R> {
       .map_err(Into::into)
   }
 
+  pub fn push_status(&self) -> crate::Result<PushStatusResponse> {
+    self
+      .0
+      .run_mobile_plugin("pushStatus", StartRequest {})
+      .map_err(Into::into)
+  }
+
+  pub fn request_push(&self) -> crate::Result<PushStatusResponse> {
+    self
+      .0
+      .run_mobile_plugin("requestPush", StartRequest {})
+      .map_err(Into::into)
+  }
+
   pub fn read_rows(&self, payload: RowsRequest) -> crate::Result<RowsResponse> {
     self
       .0

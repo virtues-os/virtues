@@ -83,6 +83,10 @@
 	let version = $state<string>("");
 	let loading = $state(true);
 	let starting = $state(false);
+	/** `authorized` | `unregistered` | `denied` | `not_determined` |
+	 *  `unavailable`, from PushRegistrar.swift. Null until read. */
+	let push = $state<string | null>(null);
+	let allowingPush = $state(false);
 	let enablingHealth = $state(false);
 	let enablingCal = $state(false);
 	let enablingContacts = $state(false);
@@ -119,6 +123,62 @@
 					: "Connected";
 		return { label: "Connected to your server", sub: via, tone: "on" };
 	});
+
+	// The other half of the connection. `conn` is this phone reaching the
+	// server; this is the server reaching this phone. It gets its own row
+	// because its failure is silent everywhere else: with notifications off,
+	// Apple still accepts a push for this phone and reports success, so a
+	// server that cannot reach you looks exactly like one with nothing to say.
+	//
+	// `authorized` means the server HAS this phone's address, not merely that
+	// iOS said yes — `unregistered` is the gap between the two, and this row
+	// must not claim the server can reach a phone it cannot.
+	const notif = $derived.by(() => {
+		switch (push) {
+			case "authorized":
+				return { label: "Notifications on", sub: "Your server can reach this phone", tone: "on", action: null };
+			case "unregistered":
+				return {
+					label: "Notifications allowed",
+					sub: "Your server doesn’t have this phone’s address yet",
+					tone: "off",
+					action: "Try again",
+				};
+			case "not_determined":
+				return {
+					label: "Notifications",
+					sub: "Let your server reach this phone when something needs you",
+					tone: "idle",
+					action: "Allow",
+				};
+			case "denied":
+				return {
+					label: "Notifications off",
+					sub: "Turn them on for Virtues in Settings",
+					tone: "off",
+					action: null,
+				};
+			default:
+				return null; // unavailable, or not read yet: no row, not a fault
+		}
+	});
+
+	async function readPush() {
+		push = (await invoke<{ status: string }>("plugin:location-probe|push_status").catch(() => null))?.status ?? null;
+	}
+
+	/// Only ever from the button. The OS sheet appears the first time; after
+	/// that iOS answers from Settings, and this just re-registers and reports.
+	async function allowPush() {
+		allowingPush = true;
+		try {
+			push = (await invoke<{ status: string }>("plugin:location-probe|request_push")).status;
+		} catch {
+			await readPush();
+		} finally {
+			allowingPush = false;
+		}
+	}
 
 	// Collapse consecutive fixes at the same rounded coord + state into one run,
 	// so a stationary phone shows "7 fixes" not 30 identical lines.
@@ -160,6 +220,9 @@
 		}
 		loading = true;
 		error = null;
+		// Outside the Promise.all below: that array is positional, and a push
+		// status the OS cannot read must not take the whole screen down with it.
+		const pushRead = readPush();
 		try {
 			const [
 				rowsResp,
@@ -213,6 +276,7 @@
 			audioSync = audioSyncResp;
 			radio = radioResp;
 			version = ver;
+			await pushRead;
 		} catch (e) {
 			error = String(e);
 		} finally {
@@ -542,6 +606,15 @@
 	const openMeta = $derived(open ? STREAMS.find((s) => s.key === open)! : null);
 
 	onMount(load);
+	// Notifications are switched on or off in Settings, outside the app, so the
+	// row goes stale the moment the owner leaves to fix it. Re-read on return.
+	onMount(() => {
+		const onVisible = () => {
+			if (document.visibilityState === "visible" && mobileLayout.isNativeShell) readPush();
+		};
+		document.addEventListener("visibilitychange", onVisible);
+		return () => document.removeEventListener("visibilitychange", onVisible);
+	});
 </script>
 
 <div class="device">
@@ -557,6 +630,24 @@
 			</div>
 			<span class="dot" class:on={conn.tone === "on"} class:off={conn.tone === "off"}></span>
 		</div>
+		{#if notif}
+			<div class="stream">
+				<div class="s-icon" class:on={notif.tone === "on"}>
+					<Icon icon="ri:notification-3-line" width={18} />
+				</div>
+				<div class="s-body">
+					<div class="s-title">{notif.label}</div>
+					<div class="s-sub">{notif.sub}</div>
+				</div>
+				{#if notif.action}
+					<button class="s-action" onclick={allowPush} disabled={allowingPush}>
+						{allowingPush ? "Asking…" : notif.action}
+					</button>
+				{:else}
+					<span class="dot" class:on={notif.tone === "on"} class:off={notif.tone === "off"}></span>
+				{/if}
+			</div>
+		{/if}
 	</div>
 
 	<!-- "This phone", not "Streams": under a page titled Settings, the group

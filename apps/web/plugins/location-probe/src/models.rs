@@ -37,3 +37,16 @@ pub struct ProbeRow {
 pub struct RowsResponse {
   pub rows: Vec<ProbeRow>,
 }
+
+/// Whether this phone lets the server reach it, as the OS reports it.
+///
+/// `status` is one of `authorized`, `denied`, `not_determined`, or
+/// `unavailable` (desktop, where there is no push). Lives on this plugin, not a
+/// new one, because this is the always-on plugin that owns the app's launch and
+/// foreground hooks — and a push token has to be re-registered on exactly
+/// those. See `PushRegistrar.swift`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushStatusResponse {
+  pub status: String,
+}
