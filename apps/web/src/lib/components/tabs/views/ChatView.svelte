@@ -1867,8 +1867,12 @@
 											{#each message.parts as part, partIndex (part.type === "text" ? `text-${partIndex}` : (part as any).toolCallId || `part-${partIndex}`)}
 												{#if part.type === "text" && part.text.trim() && partIndex >= bodyFromIndex}
 													{@const shown = reveal.revealed(message.id, part.text)}
+													<!-- No `text-base`. Size and leading are `--md-body-*`,
+													     which resolve to the same 1rem/1.5 Tailwind was
+													     setting - one declaration, so a change to the
+													     register reaches chat rather than passing it by. -->
 													<div
-														class="text-base text-foreground assistant-response"
+														class="text-foreground assistant-response"
 													>
 														<Markdown
 															content={shown.content}

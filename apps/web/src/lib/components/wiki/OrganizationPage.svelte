@@ -137,7 +137,7 @@
 			{#if page.content}
 				<section class="section" id="notes">
 					<div class="notes-content">
-						<Markdown content={page.content} refVariant="quiet" />
+						<Markdown content={page.content} refVariant="quiet" variant="article" />
 					</div>
 				</section>
 			{/if}
@@ -273,11 +273,12 @@
 		margin: 0 0 0.75rem;
 	}
 
+	/* Was 0.875rem with `white-space: pre-wrap` - a markdown renderer set
+	   smaller than a chat message, with source newlines preserved inside the
+	   paragraphs it had already parsed. Both are gone: this is the same
+	   article the person page shows, in the same register. */
 	.notes-content {
-		font-size: 0.875rem;
 		color: var(--color-foreground);
-		line-height: 1.6;
-		white-space: pre-wrap;
 	}
 
 	/* Info list */

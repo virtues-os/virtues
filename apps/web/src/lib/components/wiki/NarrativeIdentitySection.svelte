@@ -76,7 +76,7 @@
 		<p class="quiet">Loading…</p>
 	{:else if content}
 		<article class="essay">
-			<Markdown {content} />
+			<Markdown {content} variant="article" />
 		</article>
 		<footer class="colophon">
 			{#if updatedLabel}
@@ -239,10 +239,10 @@
 	}
 
 	/* Essay register: the serif carries it; Markdown supplies structure. */
+	/* This essay own 1.0625rem/1.65 is what `--md-article-*` was cut from: it
+	   was the best of the five registers and the only one chosen on purpose.
+	   It now reads those tokens like every other article. */
 	.essay {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 1.0625rem;
-		line-height: 1.65;
 		color: var(--color-foreground);
 	}
 

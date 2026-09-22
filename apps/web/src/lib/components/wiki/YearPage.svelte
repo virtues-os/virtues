@@ -185,7 +185,7 @@
 
 		{#if page.article}
 			<div class="prose">
-				<Markdown content={page.article} refVariant="quiet" />
+				<Markdown content={page.article} refVariant="quiet" variant="article" />
 			</div>
 		{/if}
 
@@ -284,10 +284,10 @@
 		line-height: 1.6;
 	}
 
+	/* Type comes from `variant="article"` on the renderer; only the space
+	   above it is this page's business. */
 	.prose {
 		margin-top: 2rem;
-		font-family: var(--font-serif);
-		line-height: 1.7;
 	}
 
 	.days {

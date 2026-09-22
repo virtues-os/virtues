@@ -17,10 +17,28 @@
 		// How inline entity refs render: "link" (default, chat answers) or "quiet"
 		// (dotted-underline prose links for flowing text like the day biography).
 		refVariant?: "link" | "quiet";
+		/**
+		 * The type register. "ui" (default) is the interface's sans — chat, a
+		 * file preview, a PDF note. "article" is the record's serif, for a wiki
+		 * article: a day, a year, a person, a place, an organization, the
+		 * narrative identity.
+		 *
+		 * The VALUES live in `--md-*` (themes.css) and the switch is one class
+		 * in app.css. Every one of these surfaces used to set its own
+		 * font-family and font-size locally, which is how they ended up with
+		 * five sizes between them and how the day article ended up in sans.
+		 */
+		variant?: "ui" | "article";
 	}
 
-	let { content, isStreaming = false, citations, onCitationClick, refVariant = "link" }: Props =
-		$props();
+	let {
+		content,
+		isStreaming = false,
+		citations,
+		onCitationClick,
+		refVariant = "link",
+		variant = "ui"
+	}: Props = $props();
 
 	// Read Shiki theme from CSS variable (defined in themes.css)
 	function getShikiTheme(): BundledTheme {
@@ -113,7 +131,7 @@
 	};
 </script>
 
-<div class="markdown">
+<div class="markdown" class:markdown--article={variant === "article"}>
 		<Streamdown
 			content={processedContent}
 			{sources}
