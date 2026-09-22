@@ -1,6 +1,6 @@
 ---
 title: Upgrading
-description: How a Virtues server moves between releases — channels, the atomic upgrade, dry runs, and rollback.
+description: How a Virtues server moves between releases - channels, the atomic upgrade, dry runs, and rollback.
 updated: 2026-08-27
 ---
 
@@ -10,8 +10,8 @@ Upgrades are one command, run on the server:
 sudo virtues upgrade
 ```
 
-It needs root — the upgrade replaces the installed binary and restarts the
-service — and it's deliberately safe to run on a server you care about: the new
+It needs root - the upgrade replaces the installed binary and restarts the
+service - and it's deliberately safe to run on a server you care about: the new
 release is downloaded and staged completely before anything changes, then
 activated in one atomic flip. The binary, the web app, and the actions runtime
 move together, so you can't end up with a UI newer than the server underneath
@@ -22,9 +22,9 @@ after the flip rolls straight back.
 
 There are two release channels:
 
-- **Stable** — `vX.Y.Z` releases. What a server should be on unless you've
+- **Stable** - `vX.Y.Z` releases. What a server should be on unless you've
   chosen otherwise, and the default for every command below.
-- **Prerelease** — the newest staging build, versioned like
+- **Prerelease** - the newest staging build, versioned like
   `vX.Y.Z-staging.N`. Explicit opt-in via `--pre`. If you've heard it called
   *edge* or *nightly*, this is the same thing.
 
@@ -39,7 +39,7 @@ sudo virtues upgrade --check
 ```
 
 reports what's available without changing anything. Add `--pre` to check the
-prerelease line. This is the dry run — it tells you the version you'd get and
+prerelease line. This is the dry run - it tells you the version you'd get and
 whether the server considers itself ready to take it.
 
 ## Pinning a version
@@ -58,7 +58,7 @@ which defaults to stable.
 sudo virtues rollback
 ```
 
-flips back to the previous release — a pure switch and service restart, with
+flips back to the previous release - a pure switch and service restart, with
 no database surgery. Releases are kept in slots on disk precisely so the last
 known-good one is still there when you want it.
 
