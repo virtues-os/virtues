@@ -1,6 +1,13 @@
 # Reminders — the box's way of reaching the owner
 
-**Status: planned.** Nothing here is built. Written 2026-09-22.
+**Status: phase 1 built, unreleased, unverified on a device.** Written
+2026-09-22. Phase 1 is on `wave` as efe49f8f (box), dcb8613c (phone) and
+a29d8e80 (an audit's five fixes). **The one step left in it is Adam's:** enable
+Push Notifications on the App ID in the developer portal, then add
+`aps-environment` to `virtues_iOS.entitlements`. Adding the entitlement first
+breaks signing. Until it lands, registration fails, the phone reports itself
+unreachable, and both screens say so — which is true, so phase 1 is safe to
+ship ahead of it. Nothing sends yet.
 
 An applet can be woken, can check a condition, and can write to the record.
 It cannot *reach the owner*. `applets-overhaul-plan.md` names this precisely
@@ -140,7 +147,7 @@ owner overrides it.
 |---|---|
 | `app_device.push_address` | The address half of the pair, beside `endpoint_id`, on the row whose revocation already kills reachability for free. |
 | `app_device.push_address_at` | Registration time. **Required** to handle a 410 correctly — see below. |
-| Push authorization in `device_info.permissions` | The self-report already carries collector permissions for exactly this reason: a revoked permission is otherwise indistinguishable from "nothing happened". |
+| ~~Push authorization in `device_info.permissions`~~ | **Built differently.** Authorization is not a second field: the phone reports an explicit `null` address when notifications are off, so "can the box reach this phone" has one source of truth instead of two that can disagree. |
 
 **Never name any of these `device_token`.** That name is already taken on the
 wire by the pairing bearer (`PairingCompleteResponse.device_token`), and APNs
@@ -184,8 +191,9 @@ errors touch a device row:
 - **429 / 503** — retry, back off, touch nothing.
 
 And the genuinely silent case is not an error at all: **if the owner disabled
-notifications, APNs returns 200 and nothing displays.** Only the device's own
-authorization self-report catches it. Surface it in Devices in plain words —
+notifications, APNs returns 200 and nothing displays.** Only the phone knows,
+so the phone says so, as an explicit `null` address on every foreground.
+Surface it in Devices in plain words —
 *"This iPhone has not been reachable since Tuesday"* — because the detection is
 worthless if nothing says so. Re-register on every launch, so most of this
 heals itself the next time the app is opened.
@@ -204,10 +212,27 @@ name is how `credentials` ended up holding two opposite trust directions.
 
 ## Phases
 
-1. **Address.** `push_address` + `push_address_at`, registration at pair time
-   and on every launch, authorization in the permissions self-report, the
-   Devices surface for unreachable. No sending yet. Ships useful on its own:
-   the box can finally say whether it could reach a device.
+1. **Address. BUILT** (see status). `push_address` + `push_address_at`, a
+   CHECK that they are written together, re-registration on every foreground
+   (never on a background wake, never prompting), an explicit `null` for
+   notifications off, revocation clearing the address on all four revoke
+   paths, and a line on both the phone's own screen and its page elsewhere
+   saying whether the server can reach it. What it established for later
+   phases:
+   - The token reaches the box through Rust (`virtues_report_push_address` in
+     the reach plugin), not JS, because JS is not guaranteed to exist when iOS
+     delivers a token. The request builder is `reach_client::push`.
+   - The app delegate is tao's, and Tauri forwards no remote-notification
+     callbacks to plugins, so `PushRegistrar.swift` attaches them to the
+     delegate's class at runtime (`class_addMethod`, call-through if one
+     exists). **Unverified on a device** — the first real test is whether that
+     hook fires.
+   - `push_address_at` is bumped on every accepted report, so it means "last
+     confirmed", which is exactly what an APNs 410's timestamp is compared
+     against.
+   - Phase 2 will also need a `UNUserNotificationCenterDelegate` with
+     `willPresent`: iOS shows nothing for a notification that arrives while the
+     app is in the foreground unless the app asks it to.
 2. **Signer.** Relay through `virtues-api`, `VIRTUES_PUSH_SIGNER_URL`, the
    local-p8 path, full response classification. **Plaintext payload** — the
    push carries the text and iOS displays it, no extension involved.
