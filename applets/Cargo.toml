@@ -94,6 +94,10 @@ path = "strava_activities_sync/main.rs"
 name = "github_stars_sync"
 path = "github_stars_sync/main.rs"
 
+[[bin]]
+name = "x_bookmarks_sync"
+path = "x_bookmarks_sync/main.rs"
+
 # ── Plaid streams (via_proxy with Hosted Link) ──────────────────────────────
 
 [[bin]]
