@@ -275,6 +275,21 @@ pub const CATCHUP_HORIZON_DAYS: i64 = 90;
 /// explicit-date run or a re-cut on new evidence revives it.
 pub const MAX_NARRATION_ATTEMPTS: i32 = 8;
 
+/// What makes a day DUE for an AUTOMATIC narration, as SQL over a `wiki_days`
+/// row `w` that may not exist. `$1` is the attempt ceiling.
+///
+/// One definition, cited by the queue ([`catchup_candidates`]) and by the
+/// freshest day's own check ([`day_is_due`]). It is shared because the two
+/// callers disagreeing is not a style problem: the maintenance hour used to
+/// have no due-check at all, so a day the queue had PARKED after eight failures
+/// was still run, every night, forever — the ceiling applied to the backlog and
+/// not to yesterday.
+const DUE_PREDICATE: &str = "w.narrated_at IS NULL \
+     AND COALESCE(w.narration_attempts, 0) < $1 \
+     AND (w.narration_attempted_at IS NULL \
+          OR w.narration_attempted_at \
+             + interval '1 hour' * power(2, GREATEST(w.narration_attempts, 1) - 1) <= now())";
+
 /// Days strictly before `before` that are un-narrated and DUE — inside the
 /// horizon, not parked, and past their backoff — oldest first. Pure bookkeeping:
 /// this says nothing about whether a day has evidence; [`next_catchup_day`]
@@ -290,23 +305,44 @@ pub async fn catchup_candidates(pool: &PgPool, before: NaiveDate) -> Result<Vec<
     if end < start {
         return Ok(Vec::new());
     }
-    let rows: Vec<NaiveDate> = sqlx::query_scalar(
+    let rows: Vec<NaiveDate> = sqlx::query_scalar(&format!(
         "SELECT d::date \
-         FROM generate_series($1::date, $2::date, interval '1 day') AS d \
+         FROM generate_series($2::date, $3::date, interval '1 day') AS d \
          LEFT JOIN wiki_days w ON w.date = d::date \
-         WHERE w.narrated_at IS NULL \
-           AND COALESCE(w.narration_attempts, 0) < $3 \
-           AND (w.narration_attempted_at IS NULL \
-                OR w.narration_attempted_at \
-                   + interval '1 hour' * power(2, GREATEST(w.narration_attempts, 1) - 1) <= now()) \
-         ORDER BY d ASC",
-    )
+         WHERE {DUE_PREDICATE} \
+         ORDER BY d ASC"
+    ))
+    .bind(MAX_NARRATION_ATTEMPTS)
     .bind(start)
     .bind(end)
-    .bind(MAX_NARRATION_ATTEMPTS)
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+/// Is this ONE day due for an automatic narration?
+///
+/// Same three predicates as the queue, against one date rather than a window —
+/// which is the point of `DUE_PREDICATE` being shared. The freshest day is not
+/// offered by `catchup_candidates` (it belongs to the maintenance hour), so
+/// without this the maintenance hour had no way to ask the question the queue
+/// asks of every other day, and answered it by running the chain regardless.
+///
+/// A day with no `wiki_days` row yet is DUE: every column is NULL, which is
+/// exactly the state of a night nobody has looked at.
+pub async fn day_is_due(pool: &PgPool, date: NaiveDate) -> Result<bool> {
+    let due: bool = sqlx::query_scalar(&format!(
+        "SELECT EXISTS ( \
+             SELECT 1 FROM (SELECT $2::date AS d) g \
+             LEFT JOIN wiki_days w ON w.date = g.d \
+             WHERE {DUE_PREDICATE} \
+         )"
+    ))
+    .bind(MAX_NARRATION_ATTEMPTS)
+    .bind(date)
+    .fetch_one(pool)
+    .await?;
+    Ok(due)
 }
 
 /// The oldest due day that has enough raw evidence to be worth a model call.
@@ -2519,6 +2555,76 @@ mod queue_tests {
         );
         assert_eq!(c.len(), CATCHUP_HORIZON_DAYS as usize - 3);
         assert!(c.windows(2).all(|w| w[0] < w[1]), "oldest first");
+    }
+
+    /// The freshest day gets the same three questions as the backlog.
+    ///
+    /// This is the maintenance hour's whole gate: it does NOT check evidence
+    /// (the chain's own segmenter gate does that, and yesterday is the one day
+    /// worth trying even when its collectors are still landing), so every
+    /// difference between running and skipping yesterday is in here.
+    #[sqlx::test]
+    async fn day_is_due_matches_the_queue_on_one_day(pool: PgPool) {
+        let date = d(2026, 9, 8);
+
+        // No row at all — the night nobody has looked at.
+        assert!(day_is_due(&pool, date).await.unwrap(), "never attempted");
+
+        // Attempt one, tried two hours ago: waits 1h, so it is due again.
+        set_attempts(&pool, date, 1, 2).await;
+        assert!(day_is_due(&pool, date).await.unwrap(), "backoff elapsed");
+
+        // Attempt three, tried an hour ago: waits 4h.
+        set_attempts(&pool, date, 3, 1).await;
+        assert!(
+            !day_is_due(&pool, date).await.unwrap(),
+            "inside its backoff window"
+        );
+
+        // Out of attempts. Before `day_is_due` existed the maintenance hour ran
+        // a parked day every night regardless — this assertion is the fix.
+        set_attempts(&pool, date, MAX_NARRATION_ATTEMPTS, 24 * 30).await;
+        assert!(
+            !day_is_due(&pool, date).await.unwrap(),
+            "parked days stay parked"
+        );
+
+        // Written up: done, whatever the attempt count says.
+        sqlx::query("UPDATE wiki_days SET narrated_at = now(), narration_attempts = 0 WHERE date = $1")
+            .bind(date)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(!day_is_due(&pool, date).await.unwrap(), "already narrated");
+    }
+
+    /// The queue and the freshest day's check must not drift: a date the queue
+    /// would offer is a date `day_is_due` calls due, and the reverse.
+    #[sqlx::test]
+    async fn day_is_due_agrees_with_the_queue(pool: PgPool) {
+        let before = d(2026, 9, 9);
+        let narrated = before - chrono::Duration::days(3);
+        get_or_create_day(&pool, narrated).await.unwrap();
+        sqlx::query("UPDATE wiki_days SET narrated_at = now() WHERE date = $1")
+            .bind(narrated)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let parked = before - chrono::Duration::days(4);
+        set_attempts(&pool, parked, MAX_NARRATION_ATTEMPTS, 24 * 30).await;
+        let cooling = before - chrono::Duration::days(5);
+        set_attempts(&pool, cooling, 3, 1).await;
+        let due = before - chrono::Duration::days(6);
+        set_attempts(&pool, due, 3, 5).await;
+
+        let offered = catchup_candidates(&pool, before).await.unwrap();
+        for date in [narrated, parked, cooling, due] {
+            assert_eq!(
+                offered.contains(&date),
+                day_is_due(&pool, date).await.unwrap(),
+                "queue and single-day check disagree about {date}"
+            );
+        }
     }
 
     /// An empty scratch database has no evidence for any day, so the queue
