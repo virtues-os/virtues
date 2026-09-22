@@ -4,8 +4,8 @@ description: Virtues is a server that holds the data of your life under your own
 updated: 2026-08-28
 ---
 
-Virtues is a server that holds the data of your life — messages, calendar,
-health, location, transactions, recordings, files — on a machine you own, and
+Virtues is a server that holds the data of your life - messages, calendar,
+health, location, transactions, recordings, files - on a machine you own, and
 the software that turns that pile into something readable: a record of your
 days, articles about the people and places in them, and an AI that reasons from
 your actual life rather than a generic profile.
@@ -68,18 +68,18 @@ which is worth ten minutes if the vocabulary feels invented. It partly is.
 
 These docs are written alongside the software and describe what actually ships.
 Pages marked _soon_ in the sidebar are planned. Nothing published here is
-aspirational — if a page says the server does something, it does.
+aspirational - if a page says the server does something, it does.
 
 Every page here is also plain markdown: append `.md` to any docs URL to get the
 source, and [`/llms.txt`](/llms.txt) indexes them all for anything reading on
-your behalf. The manual is versioned with the software it describes — this site
+your behalf. The manual is versioned with the software it describes - this site
 publishes from the released branch, so what you read is what a server actually
 runs.
 
-The engineering record behind all of this — design decisions, audits, measured
-findings — lives in the [repository](https://github.com/virtues-os/virtues)
+The engineering record behind all of this - design decisions, audits, measured
+findings - lives in the [repository](https://github.com/virtues-os/virtues)
 rather than here. It is written for the people and agents building Virtues, and
 it reads that way.
 
-The [Library](/library) holds the essays — what we think this is for. That's the
+The [Library](/library) holds the essays - what we think this is for. That's the
 other register entirely.
