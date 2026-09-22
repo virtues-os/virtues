@@ -26,9 +26,20 @@
 //! other route (`server::webhook`), with no long-lived bearer anywhere. The
 //! secrets in the `credentials` table point the other way: they are what the
 //! box presents to Google or Plaid, never something a caller presents to us,
-//! so nothing checks them here or ever should. The only other token in the
-//! process is `server::faces`, and it is in-memory, single-purpose and minted
-//! behind this extractor, not an alternative to it.
+//! so nothing checks them here or ever should.
+//!
+//! Other tokens DO exist, and are presented by callers and checked outside
+//! this extractor: a page-share token (`/api/s/:token`, public by design), a
+//! pair token (redeemed once at `/api/pair/consume`), a signed OAuth state and
+//! exchange token (one round-trip each), and a face token (`server::faces`,
+//! in-memory, minted behind this extractor). **None of them is a way to
+//! authenticate as a device.** Each opens exactly one thing — one shared page,
+//! one pairing, one OAuth completion, one face load — and not the API.
+//!
+//! (An earlier revision of this paragraph, correcting a false claim, made its
+//! own: it said faces held the only other token in the process. Stated here
+//! because a security doc that has been wrong twice is read carefully or not
+//! at all, and the second error was the kind that reassures.)
 
 use axum::{
     async_trait,
