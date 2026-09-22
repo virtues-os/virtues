@@ -182,7 +182,7 @@ async fn record_device_permissions(
         // in Uploader.swift builds the dictionary by hand, so the two differ,
         // and a mismatch here would silently compare None to None forever:
         // no panic, no error, just an alarm that never fires.
-        for grant in ["full_disk_access", "accessibility"] {
+        for grant in ["full_disk_access", "safari_library", "accessibility"] {
             let was = prev.get(grant).and_then(Value::as_bool);
             let now = health.get(grant).and_then(Value::as_bool);
             match (was, now) {
