@@ -71,6 +71,13 @@ pub struct DeviceListItem {
     pub permissions: Option<Value>,
     /// True if this is the device currently making the request.
     pub is_current: bool,
+    /// When this device last registered a push address, or null if it never
+    /// has or the address has since been cleared. **Deliberately not the
+    /// address itself** — the token is a capability to reach the owner's
+    /// phone and has no business in a list response; the UI only needs to know
+    /// whether the box could reach this device, and when that last became
+    /// true.
+    pub push_address_at: Option<DateTime<Utc>>,
 }
 
 /// `GET /api/devices` — list all active paired devices for the current user.
@@ -83,7 +90,8 @@ pub async fn list_handler(State(pool): State<PgPool>, user: AuthUser) -> impl In
                 device_info->'build'->>'app'     AS app_version, \
                 device_info->>'installed_by'     AS installed_by, \
                 device_info->'permissions'       AS permissions, \
-                (id = $2)                        AS is_current \
+                (id = $2)                        AS is_current, \
+                push_address_at \
          FROM app_device \
          WHERE user_id = $1 AND revoked_at IS NULL \
          ORDER BY last_seen_at DESC NULLS LAST, paired_at DESC",
@@ -346,6 +354,89 @@ pub async fn set_self_node_id(
     }
 }
 
+#[derive(serde::Deserialize)]
+pub struct SelfPushAddressRequest {
+    /// The APNs device token for this install, lowercase hex. Absent or empty
+    /// means "I can no longer be reached" — the owner turned notifications off,
+    /// or the app failed to register — and clears the stored address.
+    #[serde(default)]
+    pub push_address: Option<String>,
+}
+
+/// `POST /api/devices/self/push-address { push_address }` — the calling device
+/// reports where the box can reach it.
+///
+/// The counterpart of `set_self_node_id`, and the deliberate mirror of it: that
+/// one records the KEY a device proves itself with, this one records the
+/// ADDRESS the box reaches it at. Both live on the same row, so revoking a
+/// device kills both at once and neither can outlive the pairing.
+///
+/// **The app must call this on every launch, not only at pair time.** APNs
+/// rotates a token on restore-from-backup, on reinstall, and sometimes across
+/// OS updates, and a box holding a stale one pushes into the void with no
+/// error anyone sees. Re-registering on launch is what heals that.
+///
+/// Sending `null` (or omitting the field) is the *authorization revoked* path
+/// and is not an error: the owner is allowed to turn notifications off, and
+/// the box needs to know it can no longer reach them rather than keep a token
+/// that silently drops everything.
+pub async fn set_self_push_address(
+    State(pool): State<PgPool>,
+    user: AuthUser,
+    Json(body): Json<SelfPushAddressRequest>,
+) -> impl IntoResponse {
+    let address = body
+        .push_address
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    // An APNs token is hex. Reject anything else rather than storing a string
+    // that will fail at Apple with `400 BadDeviceToken` — a response whose
+    // meaning ("your configuration is wrong") is easy to misread as "this
+    // device is gone" and act on by deleting a live registration.
+    if let Some(a) = address {
+        if a.len() > 200 || !a.chars().all(|c| c.is_ascii_hexdigit()) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "push_address must be hex"})),
+            )
+                .into_response();
+        }
+    }
+
+    // Written as a pair, always: the timestamp is what a 410 is compared
+    // against, so an address without one cannot be defended.
+    let res = sqlx::query(
+        "UPDATE app_device \
+            SET push_address = $1, \
+                push_address_at = CASE WHEN $1::text IS NULL THEN NULL ELSE now() END \
+          WHERE id = $2 AND revoked_at IS NULL",
+    )
+    .bind(address)
+    .bind(&user.device_id)
+    .execute(&pool)
+    .await;
+
+    match res {
+        Ok(r) if r.rows_affected() == 1 => {
+            (StatusCode::OK, Json(json!({"ok": true}))).into_response()
+        }
+        // The console pseudo-device has no row, and a device revoked mid-flight
+        // has no live one. Neither is an error worth surfacing to a client that
+        // is only reporting where it can be reached.
+        Ok(_) => (StatusCode::OK, Json(json!({"ok": false}))).into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "set_self_push_address failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
 /// `GET /api/devices/self/reach` — read the box's *current* iroh reach ticket
 /// `{box_node_id, relay_url}`. **Anonymous**: the reach ticket is the box's
 /// public address (its EndpointId + relay URL) — not a secret — and a device
@@ -535,6 +626,88 @@ pub(crate) async fn enroll_peer_core(
 
 #[cfg(test)]
 mod tests {
+    /// `set_self_push_address` writes the address and its timestamp together,
+    /// and clearing writes both back to NULL.
+    ///
+    /// The pair is the point. APNs answers a dead token with `410 Unregistered`
+    /// **and the time it died**, and a send that raced a fresh registration
+    /// comes back with a 410 whose timestamp is OLDER than our registration.
+    /// Acting on that deletes a token that had just arrived, and the device
+    /// goes silently unreachable until the app is next opened. `push_address_at`
+    /// is the only thing that can tell those apart, so an address stored
+    /// without one is a registration that cannot be defended — which is why
+    /// there is a CHECK constraint and not merely a convention.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_push_address_and_its_timestamp_are_written_together(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label) \
+             VALUES ('dev_push1', $1, 'mobile_app', 'Phone')",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .execute(&pool)
+        .await
+        .expect("seed a paired device");
+
+        let set = "UPDATE app_device \
+                      SET push_address = $1, \
+                          push_address_at = CASE WHEN $1::text IS NULL THEN NULL ELSE now() END \
+                    WHERE id = $2 AND revoked_at IS NULL";
+
+        sqlx::query(set)
+            .bind(Some("a1b2c3"))
+            .bind("dev_push1")
+            .execute(&pool)
+            .await
+            .expect("registering must be legal SQL - the handler runs this verbatim");
+
+        let (addr, at): (Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
+            sqlx::query_as("SELECT push_address, push_address_at FROM app_device WHERE id = $1")
+                .bind("dev_push1")
+                .fetch_one(&pool)
+                .await
+                .expect("read back");
+        assert_eq!(addr.as_deref(), Some("a1b2c3"));
+        assert!(at.is_some(), "an address without a timestamp cannot survive a 410");
+
+        // Authorization revoked: the owner turned notifications off. Not an
+        // error — the box must learn it can no longer reach them rather than
+        // keep a token that drops everything silently.
+        sqlx::query(set)
+            .bind(None::<String>)
+            .bind("dev_push1")
+            .execute(&pool)
+            .await
+            .expect("clearing must be legal SQL too");
+
+        let (addr, at): (Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
+            sqlx::query_as("SELECT push_address, push_address_at FROM app_device WHERE id = $1")
+                .bind("dev_push1")
+                .fetch_one(&pool)
+                .await
+                .expect("read back");
+        assert!(addr.is_none() && at.is_none(), "clearing leaves neither half behind");
+    }
+
+    /// And the database refuses the half-written state outright, so no future
+    /// caller can reintroduce it by writing one column.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_address_without_a_timestamp_is_rejected(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label) \
+             VALUES ('dev_push2', $1, 'mobile_app', 'Phone')",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .execute(&pool)
+        .await
+        .expect("seed");
+
+        let bad = sqlx::query("UPDATE app_device SET push_address = 'abc' WHERE id = $1")
+            .bind("dev_push2")
+            .execute(&pool)
+            .await;
+        assert!(bad.is_err(), "an address with no timestamp must not be storable");
+    }
+
     /// The exact shape `revoke_handler` uses to count the OTHER active devices
     /// while holding their row locks.
     ///
