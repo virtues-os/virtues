@@ -153,6 +153,91 @@ pub async fn fetch_page(url: &str) -> Result<FetchedPage> {
     )))
 }
 
+/// An image fetched to keep: its bytes, its type, and where it actually lived.
+#[derive(Debug, Clone)]
+pub struct FetchedImage {
+    pub bytes: Vec<u8>,
+    /// The `image/*` content type the server sent, lowercased.
+    pub mime: String,
+    /// The URL after redirects.
+    pub final_url: String,
+}
+
+/// Fetch an image to store — a saved post's picture, a thumbnail — under the
+/// same address guard and manual-redirect discipline as [`fetch_page`].
+///
+/// This exists because a saved image often lives at a **signed, expiring** URL
+/// (Instagram, most CDNs): by the time a delayed enrichment sweep looked, the
+/// link would be dead. So the sync fetches the bytes now and keeps them; the
+/// image pass reads them from Drive later. Refuses anything that is not an
+/// image, and caps the download so a link that turns out to be a video does not
+/// pull gigabytes.
+pub async fn fetch_image(url: &str, max_bytes: usize) -> Result<FetchedImage> {
+    let mut current = normalize(url)?;
+
+    for _hop in 0..=MAX_REDIRECTS {
+        vet(&current).await?;
+
+        let response = client()?
+            .get(current.as_str())
+            .send()
+            .await
+            .map_err(|e| Error::Network(format!("fetching image {current}: {e}")))?;
+
+        let status = response.status();
+        if status.is_redirection() {
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| {
+                    Error::Http(format!("{current} returned {status} with no Location"))
+                })?;
+            current = current
+                .join(location)
+                .map_err(|e| Error::InvalidInput(format!("bad redirect from {current}: {e}")))?;
+            if !matches!(current.scheme(), "http" | "https") {
+                return Err(Error::InvalidInput(format!(
+                    "refusing redirect to non-http scheme: {current}"
+                )));
+            }
+            continue;
+        }
+        if !status.is_success() {
+            return Err(Error::Http(format!("{current} returned {status}")));
+        }
+
+        let mime = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        if !mime.starts_with("image/") {
+            return Err(Error::InvalidInput(format!(
+                "{current} is {}, not an image",
+                if mime.is_empty() { "of unknown type" } else { &mime }
+            )));
+        }
+
+        let final_url = response.url().to_string();
+        let bytes = read_capped_to(response, max_bytes).await?;
+        return Ok(FetchedImage {
+            bytes,
+            mime,
+            final_url,
+        });
+    }
+
+    Err(Error::Http(format!(
+        "{url} still redirecting after {MAX_REDIRECTS} hops"
+    )))
+}
+
 /// Parse and require an http(s) URL with a host.
 fn normalize(raw: &str) -> Result<url::Url> {
     let parsed = url::Url::parse(raw.trim())
@@ -192,20 +277,29 @@ fn is_readable_type(content_type: &str) -> bool {
     )
 }
 
-/// Read the body, stopping at [`MAX_BODY_BYTES`].
+/// Read a page body, stopping at [`MAX_BODY_BYTES`]. A truncated page is still
+/// worth parsing — the useful part of an article is at the top.
+async fn read_capped(response: reqwest::Response) -> Result<Vec<u8>> {
+    read_capped_to(response, MAX_BODY_BYTES).await
+}
+
+/// Read a body, stopping at `max_bytes`.
 ///
-/// Streamed rather than `bytes()` so a server advertising a small page and then
-/// sending gigabytes is cut off at the cap instead of buffering all of it. A
-/// truncated page is still worth parsing — the useful part of an article is at
-/// the top.
-async fn read_capped(mut response: reqwest::Response) -> Result<Vec<u8>> {
+/// Streamed rather than `bytes()` so a server advertising a small response and
+/// then sending gigabytes is cut off at the cap instead of buffering all of it.
+///
+/// An image, unlike a page, is worthless truncated — a half-read JPEG will not
+/// decode. So the image caller passes a cap it is willing to store *whole* and
+/// treats a body that reaches it as "too big", refusing rather than keeping a
+/// corrupt file; this returns what it read and lets the caller judge length.
+async fn read_capped_to(mut response: reqwest::Response, max_bytes: usize) -> Result<Vec<u8>> {
     let mut body = Vec::with_capacity(64 * 1024);
     while let Some(chunk) = response
         .chunk()
         .await
         .map_err(|e| Error::Network(format!("reading body: {e}")))?
     {
-        let room = MAX_BODY_BYTES.saturating_sub(body.len());
+        let room = max_bytes.saturating_sub(body.len());
         if room == 0 {
             break;
         }
