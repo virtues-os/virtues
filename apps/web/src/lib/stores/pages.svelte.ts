@@ -206,16 +206,10 @@ class PagesStore {
 		// Cache invalidation
 		windowShellStore.invalidateViewCache('page');
 		await this.refresh();
-
-		// Clean up IndexedDB (Yjs offline persistence)
-		// This prevents stale data if the page ID is ever reused
-		if (typeof indexedDB !== 'undefined') {
-			try {
-				indexedDB.deleteDatabase(pageId);
-			} catch (e) {
-				console.warn('[PagesStore] Failed to delete IndexedDB for page:', pageId, e);
-			}
-		}
+		// The Yjs offline doc (IndexedDB, keyed by page id) is deliberately
+		// kept: delete is a trip to Recently deleted now, and a restore
+		// reopens the page against the same doc. Ids are never reused, so a
+		// leftover doc after a purge is a few KB, not a hazard.
 	}
 
 	/**

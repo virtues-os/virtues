@@ -6,12 +6,9 @@
  */
 
 import { defaultKeymap } from '@codemirror/commands';
-import { markdown, markdownKeymap } from '@codemirror/lang-markdown';
+import { markdownKeymap } from '@codemirror/lang-markdown';
 import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
 import { bracketMatching, indentOnInput } from '@codemirror/language';
-// GFM adds Strikethrough, Table, TaskList to the Lezer markdown parser.
-import { GFM } from '@lezer/markdown';
-import { languages } from '@codemirror/language-data';
 import { EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view';
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
@@ -22,6 +19,7 @@ import { smoothCaret } from './extensions/caret';
 import { markdownKeybindings } from './extensions/keybindings';
 import { listRenumber } from './extensions/list-renumber';
 import { renderMode, renderModeCompartment } from './extensions/render-mode';
+import { virtuesMarkdown } from './language';
 import { virtuesTheme } from './theme';
 
 export interface CodeMirrorEditorOptions {
@@ -52,8 +50,8 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 		// Yjs collaboration (sync + cursors + undo via Y.UndoManager)
 		yCollab(ytext, awareness),
 
-		// Markdown language support (GFM = Strikethrough + Table + TaskList)
-		markdown({ codeLanguages: languages, extensions: GFM }),
+		// Markdown language support (GFM + ==highlight==, defined once in language.ts)
+		virtuesMarkdown(),
 
 		// Basic editing features
 		EditorView.lineWrapping,
@@ -145,7 +143,7 @@ export function createReadOnlyEditor(options: ReadOnlyEditorOptions): EditorView
 		state: EditorState.create({
 			doc: content,
 			extensions: [
-				markdown({ codeLanguages: languages, extensions: GFM }),
+				virtuesMarkdown(),
 				EditorView.lineWrapping,
 				virtuesTheme,
 				// Reading is always rendered — raw is an authoring escape hatch.

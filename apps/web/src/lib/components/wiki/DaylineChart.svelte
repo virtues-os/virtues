@@ -1326,7 +1326,7 @@
 
 	.metric-pill:hover:not(.disabled) {
 		color: var(--color-foreground-muted);
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 5%, transparent);
 	}
 
 	.metric-pill.active {

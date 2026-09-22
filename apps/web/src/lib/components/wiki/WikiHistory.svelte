@@ -70,7 +70,7 @@
 			reverted[k] = 'Put back.';
 			entries = await listHistory(50);
 		} catch {
-			reverted[k] = 'That could not be put back.';
+			reverted[k] = "Your server couldn't put that back. The old version is still in this list, so try again.";
 		} finally {
 			reverting = null;
 		}
@@ -91,8 +91,8 @@
 	<p class="quiet">Loading…</p>
 {:else if entries.length === 0}
 	<p class="quiet">
-		Nothing has been rewritten yet. Articles are only maintained when you ask
-		them to be — turn on "Keep this updated" on an article and its edits will
+		The record hasn't rewritten anything yet. The record maintains an article only when
+		you ask it to - turn on "Keep this updated" on an article and its edits will
 		appear here.
 	</p>
 {:else}

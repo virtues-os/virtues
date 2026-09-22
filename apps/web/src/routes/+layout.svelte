@@ -21,7 +21,7 @@
 	// `(app)/+layout.svelte` calls preventDefault on every `dragover`, which
 	// makes the WHOLE document a drop target — necessary, since a drop is only
 	// delivered to a canceled dragover. But the matching `drop` is only handled
-	// by the components that want files (chat composer, Drive, notebooks). Drop
+	// by the components that want files (chat composer, Drive, projects). Drop
 	// a PDF anywhere else and it reaches the browser's default action, which is
 	// to NAVIGATE to the file. In a tab that merely opens the PDF. In the
 	// desktop shell — one window, no back button, no address bar — it replaces

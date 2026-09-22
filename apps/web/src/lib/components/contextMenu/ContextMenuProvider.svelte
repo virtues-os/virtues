@@ -116,7 +116,7 @@
 	// iOS WKWebView never fires `contextmenu` for touch, so every row action
 	// gated behind right-click is unreachable on the phone. Synthesize one
 	// after a still-press; it bubbles to the views' existing oncontextmenu
-	// handlers, so this one hook covers Pages/Drive/Notebooks/etc. at once.
+	// handlers, so this one hook covers Pages/Drive/Projects/etc. at once.
 	const LONG_PRESS_MS = 450;
 	const MOVE_TOLERANCE_PX = 10;
 	let lpTimer: ReturnType<typeof setTimeout> | null = null;

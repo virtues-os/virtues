@@ -218,6 +218,39 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
             table = table,
         );
 
+        // Rows that have LEFT the scope, evicted before the drain.
+        //
+        // `embed_where` is a scope, and a scope can be left: a bookmark is
+        // tombstoned when the browser it came from drops it, a page's `kind`
+        // changes, a record's text is emptied. The backlog query only ever
+        // finds rows to ADD, so the index could grow into a scope and never
+        // leave it. On 2026-09-21 four bookmarks the owner had deleted in
+        // their browser were still being returned to chat and to ⌘K, while
+        // the room that owns them hid all four.
+        //
+        // Deliberately narrow: this evicts rows that still EXIST and no longer
+        // qualify. A record deleted outright is somebody else's job — trash
+        // clears its own index rows eagerly, and orphaned document chunks have
+        // their own sweep — because "the row is gone" and "the row moved out
+        // of scope" fail differently and should not share one blunt DELETE.
+        if let Some(scope) = config.embed_where {
+            match evict_out_of_scope(pool, ont_name, table, scope).await {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(
+                    ontology = ont_name,
+                    evicted = n,
+                    "records left the ontology's scope; their embeddings are gone"
+                ),
+                // An eviction failure must not stop the run: indexing what is
+                // missing matters more than removing what is stale.
+                Err(e) => tracing::error!(
+                    ontology = ont_name,
+                    error = %e,
+                    "could not evict out-of-scope embeddings"
+                ),
+            }
+        }
+
         // Drain loop: keep pulling batches while they come back full. A short
         // batch means the LEFT JOIN found fewer than BATCH_SIZE gaps — backlog
         // drained for this ontology, move on.
@@ -274,6 +307,47 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
         .await;
 
     Ok(total_embedded)
+}
+
+/// Delete this ontology's embeddings for records that no longer satisfy its
+/// `embed_where`, keeping the BM25 corpus stats honest (the same accounting as
+/// `trash::drop_embeddings` and `extraction::sweep_orphaned_embeddings`).
+///
+/// `scope` carries its own leading `AND`, so it is negated as `NOT (TRUE
+/// {scope})`. Three-valued logic is on our side here: a scope that evaluates to
+/// NULL negates to NULL, the row is not matched, and an expression nobody
+/// thought about leaves the index alone rather than emptying it.
+async fn evict_out_of_scope(
+    pool: &PgPool,
+    ontology: &str,
+    table: &str,
+    scope: &str,
+) -> Result<usize> {
+    let mut tx = pool.begin().await?;
+    let dropped: Vec<Option<i64>> = sqlx::query_scalar(&format!(
+        "DELETE FROM search_embeddings se \
+         USING {table} t \
+         WHERE se.ontology = $1 AND t.id = se.record_id AND NOT (TRUE {scope}) \
+         RETURNING se.bm25_len"
+    ))
+    .bind(ontology)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    if !dropped.is_empty() {
+        let dropped_len: i64 = dropped.iter().flatten().sum();
+        sqlx::query(
+            "UPDATE search_index_meta \
+             SET n_docs = GREATEST(n_docs - $1, 0), sum_len = GREATEST(sum_len - $2, 0) \
+             WHERE singleton",
+        )
+        .bind(dropped.len() as i64)
+        .bind(dropped_len)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(dropped.len())
 }
 
 /// Chunks handed to the embedder per HTTP call.
@@ -864,5 +938,97 @@ mod tests {
         let chunks = chunk_text(&emoji_blob);
         assert!(chunks.iter().all(|c| c.len() <= MAX_CHUNK_CHARS));
         assert_eq!(chunks.concat(), emoji_blob);
+    }
+}
+
+/// Eviction, against the real registry scope and the real schema.
+///
+/// The scope is read from the registry rather than written out here: a test
+/// that carries its own copy of the predicate passes while the shipped one is
+/// wrong, which is the failure mode this whole area keeps having.
+#[cfg(test)]
+mod eviction_tests {
+    use super::*;
+
+    #[sqlx::test]
+    async fn a_tombstoned_bookmark_leaves_the_index(pool: PgPool) {
+        let scope = virtues_registry::ontologies::registered_ontologies()
+            .into_iter()
+            .find(|o| o.name == "content_bookmark")
+            .and_then(|o| o.embedding.as_ref().map(|e| e.embed_where))
+            .expect("content_bookmark is a searchable ontology")
+            .expect("its embedding config declares a scope");
+
+        // Two saves with identical text. Only the tombstone is out of scope.
+        for (id, tombstoned) in [("evict-live", false), ("evict-gone", true)] {
+            sqlx::query(
+                "INSERT INTO data_content_bookmark
+                   (id, url, title, occurred_at, source_stream_id, source_table,
+                    source_provider, deleted_at_source)
+                 VALUES ($1, 'https://example.com/a', 'A saved thing', now(), $1,
+                         'test', 'test', CASE WHEN $2 THEN now() ELSE NULL END)",
+            )
+            .bind(id)
+            .bind(tombstoned)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+            sqlx::query(
+                "INSERT INTO search_embeddings
+                   (id, ontology, record_id, model, chunk_index, title, content,
+                    bm25_len, doc_hash, created_at)
+                 VALUES ($1, 'content_bookmark', $2, 'test-model', 0, 'A saved thing',
+                         'A saved thing', 3, 'hash', now())",
+            )
+            .bind(format!("content_bookmark:{id}:0"))
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        sqlx::query(
+            "INSERT INTO search_index_meta (singleton, model, dim, n_docs, sum_len)
+             VALUES (true, 'test-model', 384, 2, 6)
+             ON CONFLICT (singleton) DO UPDATE SET n_docs = 2, sum_len = 6",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let evicted = evict_out_of_scope(
+            &pool,
+            "content_bookmark",
+            "data_content_bookmark",
+            scope,
+        )
+        .await
+        .expect("eviction runs");
+        assert_eq!(evicted, 1, "exactly the tombstoned row should be evicted");
+
+        let left: Vec<String> =
+            sqlx::query_scalar("SELECT record_id FROM search_embeddings ORDER BY record_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(left, vec!["evict-live".to_string()], "wrong row evicted");
+
+        // The corpus statistics every other query is scored against must
+        // follow the delete, or BM25 keeps counting a document that is gone.
+        let (n_docs, sum_len): (i64, i64) =
+            sqlx::query_as("SELECT n_docs, sum_len FROM search_index_meta WHERE singleton")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((n_docs, sum_len), (1, 3), "corpus stats did not follow");
+
+        // Idempotent: a second pass has nothing left to take.
+        assert_eq!(
+            evict_out_of_scope(&pool, "content_bookmark", "data_content_bookmark", scope)
+                .await
+                .unwrap(),
+            0
+        );
     }
 }

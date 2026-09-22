@@ -187,7 +187,7 @@
 			type="button"
 			class="relaunch"
 			onclick={() => void relaunch()}
-			title="Restart into the downloaded update — takes a few seconds"
+			title="Restart into the downloaded update - takes a few seconds"
 		>
 			<span class="relaunch-label">Relaunch to update</span>
 			<span class="relaunch-version">v{stagedVersion}</span>
@@ -198,7 +198,7 @@
 			type="button"
 			class="relaunch"
 			onclick={() => window.location.reload()}
-			title="Your server is serving a newer interface — reload to pick it up"
+			title="Your server is serving a newer interface - reload to pick it up"
 		>
 			<span class="relaunch-label">Reload for the latest</span>
 			{#if distSha}<span class="relaunch-version">{distSha}</span>{/if}

@@ -71,33 +71,112 @@ impl ToolExecutionResult {
     /// reason in `error`. Serializing only `data` handed the model the literal
     /// string `null` — no reason, not even the fact of a failure — so it
     /// confabulated or retried the same call. The reason is the content.
+    ///
+    /// One envelope for every failure: `Tool failed (<tool>, <cause>): <reason>`.
+    /// The wire this box speaks has no error flag on a tool result, so the
+    /// envelope IS the flag, and it used to be three of them stacked —
+    /// `Tool execution failed: Execution failed: Query failed: …` — one per
+    /// layer the error crossed, saying nothing the next did not. The cause is
+    /// the one word that changes what the model should do: `timeout` means
+    /// ask for less, `invalid arguments` means fix the call, `execution` means
+    /// read the reason.
+    ///
+    /// A failure's `data` rides along, capped. A tool that fails WITH output
+    /// — `code_interpreter` puts the traceback in stderr and says only "Code
+    /// execution failed" in `error` — was handing the model the sentence and
+    /// keeping the evidence, so it could not fix the code and the
+    /// repeated-failure guard then refused the identical retry. The data is
+    /// the part it needs.
     pub fn to_llm_content(&self) -> String {
         match &self.result {
             Ok(result) if !result.success => {
                 let reason = result.error.as_deref().unwrap_or("the tool reported a failure");
-                format!("Tool execution failed: {reason}")
+                let mut out = format!("Tool failed ({}, execution): {reason}", self.tool_name);
+                if !result.data.is_null() {
+                    if let Ok(data) = serde_json::to_string(&result.data) {
+                        out.push('\n');
+                        out.push_str(&clip_for_model(&data, FAILURE_DATA_BYTES));
+                    }
+                }
+                out
             }
-            Ok(result) => serde_json::to_string(&result.data)
-                .unwrap_or_else(|_| "Tool completed: success".to_string()),
-            Err(e) => format!("Tool execution failed: {}", e),
+            Ok(result) => {
+                let text = serde_json::to_string(&result.data)
+                    .unwrap_or_else(|_| "Tool completed: success".to_string());
+                clip_for_model(&text, MAX_TOOL_OUTPUT_BYTES)
+            }
+            Err(e) => format!("Tool failed ({}, {}): {}", self.tool_name, e.cause(), e),
         }
     }
 }
 
-/// Errors that can occur during tool execution
+/// How much of one tool's output the turn that called it gets to read.
+///
+/// The turn after it replays at most 32 KiB (`compaction::MAX_REPLAYED_TOOL_BYTES`),
+/// but the calling turn saw everything, and measured on a real box the
+/// ninetieth-percentile result was 94 KB — a `semantic_search` with fifty
+/// previews, a page, a web result set — with nothing capping it but
+/// `sql_query`'s own 256 KiB. Ninety-six KiB is about 24k tokens, where the
+/// coding harnesses converge (Claude Code truncates tool output at 25k
+/// tokens). Past it the model is told how much it did not see and what to do
+/// about it, which is the difference between a cap and a silent loss.
+pub const MAX_TOOL_OUTPUT_BYTES: usize = 96 * 1024;
+
+/// How much of a FAILED tool's data rides with the failure. A traceback fits
+/// in a fraction of this; a failure that returns more than this is returning
+/// its whole output under the wrong flag.
+const FAILURE_DATA_BYTES: usize = 8 * 1024;
+
+/// Cut at a character boundary and say what was cut. The instruction at the
+/// end is the same one the replay clip carries, because the fix is the same:
+/// ask for less.
+fn clip_for_model(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_string();
+    }
+    let mut cut = max;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!(
+        "{}\n… [{} more bytes not shown. Ask for less: a narrower window, fewer results, or one record by id.]",
+        &text[..cut],
+        text.len() - cut
+    )
+}
+
+/// Errors that can occur during tool execution.
+///
+/// The Display strings carry no "failed" prefix of their own: the envelope
+/// in `to_llm_content` names the tool and the cause once, and the UI's error
+/// text (`to_event`) is this string alone, so a prefix here was printed
+/// twice and stripped once on each side.
 #[derive(Debug, thiserror::Error)]
 pub enum ToolExecutionError {
-    #[error("Tool execution timed out after {0:?}")]
+    #[error("no result after {0:?}. Ask for less — a narrower window, fewer rows — or split the request")]
     Timeout(Duration),
 
-    #[error("Tool not found: {0}")]
+    #[error("no tool named {0}")]
     NotFound(String),
 
-    #[error("Invalid arguments: {0}")]
+    #[error("{0}")]
     InvalidArguments(String),
 
-    #[error("Execution failed: {0}")]
+    #[error("{0}")]
     ExecutionFailed(String),
+}
+
+impl ToolExecutionError {
+    /// The one word in the failure envelope that changes what the model
+    /// should do next.
+    pub fn cause(&self) -> &'static str {
+        match self {
+            Self::Timeout(_) => "timeout",
+            Self::NotFound(_) => "not found",
+            Self::InvalidArguments(_) => "invalid arguments",
+            Self::ExecutionFailed(_) => "execution",
+        }
+    }
 }
 
 impl From<ToolError> for ToolExecutionError {
@@ -178,6 +257,24 @@ async fn execute_single(
         "Executing tool"
     );
 
+    // Arguments the model sent that were not JSON. The stream used to replace
+    // them with `{}` silently, so the tool failed on a missing required field
+    // and the model was told "'sql' is required" about a call it had written
+    // in full. Say what actually happened, so the next attempt fixes the
+    // JSON rather than the arguments.
+    if let Some(bad) = tool_call.arguments.get(super::stream::UNPARSEABLE_ARGUMENTS_KEY) {
+        let why = bad.get("error").and_then(|v| v.as_str()).unwrap_or("not valid JSON");
+        let raw = bad.get("raw").and_then(|v| v.as_str()).unwrap_or("");
+        tracing::warn!(tool_call_id = %tool_call.id, tool_name = %tool_call.name, error = %why, "tool call arguments were not JSON");
+        return ToolExecutionResult {
+            tool_call_id: tool_call.id.clone(),
+            tool_name: tool_call.name.clone(),
+            result: Err(ToolExecutionError::InvalidArguments(format!(
+                "the arguments were not valid JSON ({why}). Send the call again with well-formed JSON. What arrived began: {raw}"
+            ))),
+        };
+    }
+
     // `dispatch_subagents` fans out several nested agent loops in parallel and routinely runs for
     // minutes — far past the default per-tool timeout. Give it a long dedicated ceiling so it isn't
     // killed mid-research (the workers have their own step + per-call limits as the real bounds).
@@ -210,12 +307,13 @@ async fn execute_single(
     .await;
 
     let result = match result {
-        Ok(Ok(result)) => {
+        Ok(Ok(mut result)) => {
             tracing::info!(
                 tool_call_id = %tool_call.id,
                 success = result.success,
                 "Tool execution completed"
             );
+            attach_query_ref(tool_call, context, &mut result);
             Ok(result)
         }
         Ok(Err(e)) => {
@@ -242,6 +340,31 @@ async fn execute_single(
         tool_name: tool_call.name.clone(),
         result,
     }
+}
+
+/// A citable ref for the query itself.
+///
+/// A row cites its own `/record/…` ref. A count, a sum, a trend cites
+/// nothing: it was computed over rows, and no one row is the source. So the
+/// pattern answers — the ones where trust is decided — carried a number with
+/// no way to open what it came from. `/chat/{chat}/tool/{call}` is that way:
+/// the UI's citation context already indexes every tool call by id and the
+/// panel already renders `rows` as a table, so the link opens the rows the
+/// figure was computed from. Set here rather than in the tool because the
+/// tool never learns its own call id.
+fn attach_query_ref(tool_call: &ToolCall, context: &ToolContext, result: &mut ToolResult) {
+    if tool_call.name != "sql_query" || !result.success {
+        return;
+    }
+    let Some(chat_id) = context.chat_id.as_deref() else { return };
+    let Some(obj) = result.data.as_object_mut() else { return };
+    if !obj.get("rows").is_some_and(|r| r.is_array()) {
+        return;
+    }
+    obj.insert(
+        "ref".to_string(),
+        Value::String(format!("/chat/{chat_id}/tool/{}", tool_call.id)),
+    );
 }
 
 /// Build the tool result message for the LLM
@@ -337,6 +460,75 @@ pub fn build_assistant_tool_message(
     }
 
     msg
+}
+
+#[cfg(test)]
+mod query_ref_tests {
+    use super::*;
+
+    fn ctx(chat: Option<&str>) -> ToolContext {
+        ToolContext { chat_id: chat.map(str::to_string), ..Default::default() }
+    }
+
+    fn call(name: &str) -> ToolCall {
+        ToolCall { id: "call_9".into(), name: name.into(), arguments: serde_json::json!({}) }
+    }
+
+    /// Rows from sql_query get the query's own ref; anything else is left
+    /// alone — a failure, another tool, a result with no rows, a run with no
+    /// chat to point into.
+    #[test]
+    fn only_a_successful_sql_result_with_rows_gets_the_query_ref() {
+        let mut r = ToolResult::success(serde_json::json!({"rows": [{"n": 3}]}));
+        attach_query_ref(&call("sql_query"), &ctx(Some("chat_1")), &mut r);
+        assert_eq!(r.data["ref"], "/chat/chat_1/tool/call_9");
+
+        let mut r = ToolResult::success(serde_json::json!({"rows": [{"n": 3}]}));
+        attach_query_ref(&call("semantic_search"), &ctx(Some("chat_1")), &mut r);
+        assert!(r.data.get("ref").is_none());
+
+        let mut r = ToolResult::success(serde_json::json!({"rows": [{"n": 3}]}));
+        attach_query_ref(&call("sql_query"), &ctx(None), &mut r);
+        assert!(r.data.get("ref").is_none());
+
+        let mut r = ToolResult::success(serde_json::json!({"tables": {}}));
+        attach_query_ref(&call("sql_query"), &ctx(Some("chat_1")), &mut r);
+        assert!(r.data.get("ref").is_none());
+
+        let mut r = ToolResult::error("nope");
+        attach_query_ref(&call("sql_query"), &ctx(Some("chat_1")), &mut r);
+        assert!(r.data.get("ref").is_none());
+    }
+
+    /// The envelope, and the evidence riding with a failure.
+    #[test]
+    fn a_failure_is_one_envelope_with_its_data() {
+        let r = ToolExecutionResult {
+            tool_call_id: "c".into(),
+            tool_name: "code_interpreter".into(),
+            result: Ok(ToolResult {
+                success: false,
+                data: serde_json::json!({"stderr": "Traceback…\nNameError: x"}),
+                error: Some("Code execution failed: NameError: x".into()),
+                attachments: vec![],
+            }),
+        };
+        let text = r.to_llm_content();
+        assert!(text.starts_with("Tool failed (code_interpreter, execution): Code execution failed: NameError: x\n"), "{text}");
+        assert!(text.contains("Traceback"), "the data rides along: {text}");
+
+        let r = ToolExecutionResult {
+            tool_call_id: "c".into(),
+            tool_name: "sql_query".into(),
+            result: Err(ToolExecutionError::Timeout(Duration::from_secs(30))),
+        };
+        let text = r.to_llm_content();
+        assert!(text.starts_with("Tool failed (sql_query, timeout): no result after 30s"), "{text}");
+
+        let big = "x".repeat(MAX_TOOL_OUTPUT_BYTES + 10);
+        let clipped = clip_for_model(&big, MAX_TOOL_OUTPUT_BYTES);
+        assert!(clipped.contains("10 more bytes not shown"), "{}", &clipped[clipped.len() - 120..]);
+    }
 }
 
 #[cfg(test)]

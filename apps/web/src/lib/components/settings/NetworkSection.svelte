@@ -117,7 +117,7 @@
 			if (tries > 15) {
 				switching = null;
 				joinError =
-					"Lost the box after the switch. If it joined a different network than this device is on, it's reachable again once you're both somewhere that connects them — or via remote access.";
+					"Lost your server after the switch. If it joined a different network than this device is on, it's reachable again once you're both somewhere that connects them, or via remote access.";
 				return;
 			}
 			watchTimer = setTimeout(tick, 3000);
@@ -237,7 +237,7 @@
 
 	{#if switching}
 		<p class="mt-4 text-sm text-foreground-muted">
-			{switching === 'sending' ? 'Asking the box to switch…' : 'The box is switching networks — reconnecting…'}
+			{switching === 'sending' ? 'Asking your server to switch…' : 'Your server is switching networks. Reconnecting…'}
 		</p>
 	{:else if chosen && chosen.secured}
 		<div class="joinform">
@@ -245,7 +245,7 @@
 			{#if joinError}<p class="mb-2 text-xs warntext">{joinError}</p>{/if}
 			{#if chosen.enterprise}
 				<p class="mb-2 text-xs text-foreground-subtle">
-					This network uses per-person sign-in — the account its operator gave you.
+					This network uses per-person sign-in - the account its operator gave you.
 				</p>
 				<input
 					class="field"

@@ -101,10 +101,7 @@
 	}
 
 	function handleNewChat() {
-		windowShellStore.openTabFromRoute("/", {
-			label: "New Chat",
-			forceNew: true,
-		});
+		windowShellStore.openTabFromRoute("/", { label: "New Chat" });
 	}
 </script>
 

@@ -28,7 +28,7 @@
 			key: "location",
 			title: "Location",
 			icon: "ri:map-pin-line",
-			why: "Builds your timeline of places — even in the background, recorded on your server.",
+			why: "Builds your timeline of places - even in the background, recorded on your server.",
 			enableCmd: "plugin:location-probe|start_probe",
 			state: "off",
 		},
@@ -36,7 +36,7 @@
 			key: "health",
 			title: "Health",
 			icon: "ri:heart-pulse-line",
-			why: "Heart rate, steps, sleep and more from Apple Health — three years of history.",
+			why: "Heart rate, steps, sleep and more from Apple Health - three years of history.",
 			enableCmd: "plugin:health|enable",
 			statusCmd: "plugin:health|status",
 			state: "off",
@@ -63,7 +63,7 @@
 			key: "finance",
 			title: "Finance",
 			icon: "ri:bank-card-line",
-			why: "Apple Card, Cash and connected accounts — three years of transactions.",
+			why: "Apple Card, Cash and connected accounts - three years of transactions.",
 			enableCmd: "plugin:finance|enable",
 			statusCmd: "plugin:finance|status",
 			state: "off",
@@ -72,7 +72,7 @@
 			key: "audio",
 			title: "Audio",
 			icon: "ri:mic-line",
-			why: "Ambient sound of your day — conversations, places, atmosphere — recorded and transcribed on your box.",
+			why: "Ambient sound of your day - conversations, places, atmosphere - recorded and transcribed on your server.",
 			enableCmd: "plugin:audio|enable",
 			statusCmd: "plugin:audio|status",
 			state: "off",
@@ -117,8 +117,7 @@
 		<div class="body">
 			<h1>Set up Virtues</h1>
 			<p class="intro">
-				Choose what this phone collects. Everything is stored on <b>your own box</b> —
-				you can change any of this later in <b>This device</b>.
+				Choose what this phone collects. Your phone stores everything on <b>your own box</b>. You can change any of this later in <b>This device</b>.
 			</p>
 
 			{#each streams as s (s.key)}
@@ -217,7 +216,7 @@
 		height: 40px;
 		flex: none;
 		border-radius: 10px;
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		color: var(--color-foreground-muted);
 	}
 	.c-icon.on {
@@ -267,7 +266,7 @@
 		color: var(--color-foreground-muted);
 		padding: 4px 10px;
 		border-radius: 8px;
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 	}
 	.foot {
 		flex: none;

@@ -25,10 +25,10 @@
 1 virtues-core/src/api/entities.rs	let is_home = req.set_as_home.unwrap_or(false);
 2 virtues-core/src/api/entity_article_gen.rs	.unwrap_or_default();
 1 virtues-core/src/api/home.rs	.ok()
-1 virtues-core/src/api/notebooks.rs	let name = req.name.as_deref().unwrap_or(&existing.name).trim().to_string();
-2 virtues-core/src/api/notebooks.rs	touch_notebook(pool, notebook_id).await.ok();
 1 virtues-core/src/api/pages.rs	let version_number = max_version.unwrap_or(0) + 1;
 1 virtues-core/src/api/pair.rs	.ok()
+1 virtues-core/src/api/projects.rs	let name = req.name.as_deref().unwrap_or(&existing.name).trim().to_string();
+2 virtues-core/src/api/projects.rs	touch_project(pool, project_id).await.ok();
 1 virtues-core/src/api/settings_byo.rs	.ok()
 1 virtues-core/src/api/settings_byo.rs	.unwrap_or(false)
 1 virtues-core/src/api/setup_phrase.rs	.unwrap_or(false)

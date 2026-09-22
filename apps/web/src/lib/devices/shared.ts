@@ -100,12 +100,12 @@ export const PERMISSION_COPY: Record<
 > = {
 	full_disk_access: {
 		label: 'Full Disk Access',
-		costs: "iMessages and Safari history can't be read",
+		costs: "your Mac can't read iMessages or Safari history",
 		open: openFullDiskAccess
 	},
 	accessibility: {
 		label: 'Accessibility',
-		costs: 'app events are recorded without window titles',
+		costs: 'your Mac records app events without window titles',
 		open: openAccessibilitySettings
 	}
 };
@@ -130,7 +130,7 @@ export function deniedPermissions(device: Pick<Device, 'permissions'>) {
 		if ((p as Record<string, unknown>)[key] === false) names.add(key);
 	}
 	return [...names].map(
-		(name) => PERMISSION_COPY[name] ?? { label: name, costs: "some data can't be read" }
+		(name) => PERMISSION_COPY[name] ?? { label: name, costs: "your Mac can't read some data" }
 	);
 }
 
@@ -211,7 +211,7 @@ export async function revokeDeviceFlow(device: Device): Promise<boolean> {
 		title: device.is_current ? 'Revoke this device?' : `Revoke "${device.label}"?`,
 		body: device.is_current
 			? `${device.label} is the device you're using. You'll be signed out immediately.`
-			: 'It loses access to the box right away.',
+			: 'It loses access to your server right away.',
 		confirmLabel: 'Revoke',
 		danger: true
 	});
@@ -222,7 +222,7 @@ export async function revokeDeviceFlow(device: Device): Promise<boolean> {
 		if (resp.status === 409) {
 			toast.error('Cannot revoke the only active device', {
 				description:
-					'Run `virtues sudo` on the box to confirm before deleting your last paired device.'
+					'Run `virtues sudo` on your server to confirm before deleting your last paired device.'
 			});
 			return false;
 		}

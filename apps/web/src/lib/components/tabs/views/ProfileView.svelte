@@ -261,7 +261,7 @@
 									saveField("home_timezone", val || null)}
 							/>
 							<span class="field-hint"
-								>IANA timezone of where this box lives (auto-detected from the
+								>IANA timezone of where this server lives (auto-detected from the
 								server). Only change it if you physically relocate the appliance.</span
 							>
 						</div>

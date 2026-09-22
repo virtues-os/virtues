@@ -66,7 +66,7 @@
 		if (!yjsDoc) return;
 		const ok = await confirmAction({
 			title: 'Restore this version?',
-			body: 'The current content is replaced. A snapshot of it is saved first, so this is undoable.',
+			body: "This replaces what's on the page now. Your server saves a snapshot first, so you can undo it.",
 			confirmLabel: 'Restore',
 		});
 		if (!ok) return;

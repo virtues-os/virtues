@@ -1,5 +1,7 @@
 # Schema audit — every table, every field (2026-08-28)
 
+*Notebooks were renamed to projects on 2026-09-21 (`app_notebooks` → `app_projects`, `/notebook/…` → `/project/…`); the names below are as they were.*
+
 *Four parallel audits (app_\*, data_\*, wiki_\*/search_\*, infra + the chain)
 over the 82 tables of the post-squash schema, each column checked against
 actual reads and writes in the code, with row counts from a fielded box.

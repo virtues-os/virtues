@@ -52,7 +52,7 @@
 		<EmptyState
 			icon="ri:image-2-line"
 			title="No app media yet"
-			message="Images the app generates or you paste into pages and chats are kept here."
+			message="Your server keeps the images the app generates, and the ones you paste into pages and chats."
 			class="h-full"
 		/>
 	{:else}
@@ -65,7 +65,7 @@
 			</div>
 			<div class="flex items-center gap-1.5 text-xs text-foreground-muted">
 				<Icon icon="ri:lock-2-line" />
-				Read-only — used by the app
+				Read-only - used by the app
 			</div>
 		</div>
 

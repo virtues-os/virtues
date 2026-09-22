@@ -7,6 +7,25 @@
 
 type FetchFn = typeof fetch;
 
+/**
+ * The sentence a person reads when a call fails.
+ *
+ * A status code is not copy. Every one of these used to reach the screen
+ * verbatim - "Failed to load bookmark: 404" is what a broken route looked
+ * like to the person who hit it, and a bad save rendered the server's raw
+ * JSON. The code goes to the console, where it is useful; the screen gets
+ * what happened and what to do about it.
+ */
+async function failure(res: Response, fallback: string): Promise<Error> {
+	const detail = await res
+		.clone()
+		.text()
+		.catch(() => "");
+	console.warn(`bookmarks: ${res.status} on ${res.url}`, detail);
+	return new Error(fallback);
+}
+
+
 export interface BookmarkApi {
 	id: string;
 	url: string;
@@ -76,7 +95,7 @@ export async function getBookmarksPage(
 
 	const res = await fetchFn(`/api/bookmarks?${params}`, { cache: "no-store" });
 	if (!res.ok) {
-		throw new Error(`Failed to load bookmarks: ${res.status}`);
+		throw await failure(res, "Your server couldn't list your bookmarks. Try again.");
 	}
 	return res.json();
 }
@@ -105,7 +124,14 @@ export async function getBookmark(
 	const res = await fetchFn(`/api/bookmarks/${encodeURIComponent(id)}`, {
 		cache: "no-store",
 	});
-	if (!res.ok) throw new Error(`Failed to load bookmark: ${res.status}`);
+	if (!res.ok) {
+		throw await failure(
+			res,
+			res.status === 404
+				? "That bookmark isn't on your server. Go back to Bookmarks to see what is."
+				: "Your server couldn't open that bookmark. Try again."
+		);
+	}
 	return res.json();
 }
 
@@ -126,8 +152,12 @@ export async function updateBookmarkNote(
 		body: JSON.stringify({ note }),
 	});
 	if (!res.ok) {
-		const detail = await res.text().catch(() => "");
-		throw new Error(detail || `Failed to save note: ${res.status}`);
+		throw await failure(
+			res,
+			res.status === 404
+				? "That bookmark isn't on your server, so the note has nowhere to go."
+				: "Your server couldn't save that note. Try again."
+		);
 	}
 	return res.json();
 }
@@ -143,8 +173,12 @@ export async function saveBookmark(
 		body: JSON.stringify(body),
 	});
 	if (!res.ok) {
-		const detail = await res.text().catch(() => "");
-		throw new Error(detail || `Failed to save bookmark: ${res.status}`);
+		throw await failure(
+			res,
+			res.status === 400
+				? "That isn't an address your server can save. Enter one starting with http:// or https://."
+				: "Your server couldn't save that link. Try again."
+		);
 	}
 	return res.json();
 }

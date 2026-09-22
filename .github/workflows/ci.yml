@@ -199,6 +199,13 @@ jobs:
       - name: Improv wire shapes agree across languages
         run: tools/check-improv-wire.py
 
+      # The same ratchet over the UI-copy rules in agents/build/voice.md. The
+      # tree carries a real backlog, so this fails only when a count goes UP:
+      # new copy may not add a passive with no actor, a fourth name for the
+      # server, or a dev word on a screen. Lower one and commit the baseline.
+      - name: No new copy-voice regressions
+        run: tools/check-copy.py
+
       # Create the one thing `#[sqlx::test]`'s throwaway databases SHARE.
       #
       # Roles are cluster-wide, not per-database, and migration 0052 does

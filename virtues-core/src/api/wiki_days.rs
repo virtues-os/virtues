@@ -276,18 +276,40 @@ async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Result<Vec<Scor
         // 4. Score each cycle
         let mut scored: Vec<ScoredSleepCycle> = vec![];
         for (start, end, dominant) in &cycles {
+            // The bounds arrive as RFC3339 TEXT from the stage JSON, and
+            // `occurred_at` is a timestamptz. Binding the strings asks Postgres
+            // for `timestamp with time zone >= text`, which it refuses — and
+            // because `sqlx::query` is untyped, that shipped as a runtime error
+            // instead of a compile one. Every day that HAS sleep cycles failed
+            // here, so day_summary_eod could not narrate it and retried the
+            // same day every hour, forever.
+            let window = match (
+                DateTime::parse_from_rfc3339(start),
+                DateTime::parse_from_rfc3339(end),
+            ) {
+                (Ok(s), Ok(e)) => Some((s.with_timezone(&Utc), e.with_timezone(&Utc))),
+                // Unparseable bounds cost this cycle its heart rate, not its
+                // row: the cycle itself is real and still worth reporting.
+                _ => None,
+            };
+
             // Get avg HR during this cycle window
-            let avg_hr: Option<f64> = sqlx::query_scalar(
-                r#"SELECT AVG(CAST(bpm AS REAL))
+            let avg_hr: Option<f64> = match window {
+                Some((from, to)) => sqlx::query_scalar(
+                    r#"SELECT AVG(CAST(bpm AS REAL))
                FROM data_health_heart_rate
                WHERE occurred_at >= $1 AND occurred_at < $2"#,
-            )
-            .bind(start)
-            .bind(end)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| Error::Database(format!("Failed to read sleep-cycle heart rate: {e}")))?
-            .flatten();
+                )
+                .bind(from)
+                .bind(to)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| {
+                    Error::Database(format!("Failed to read sleep-cycle heart rate: {e}"))
+                })?
+                .flatten(),
+                None => None,
+            };
 
             let autonomic_z = match (avg_hr, baseline_std > 0.0) {
                 (Some(hr), true) => {

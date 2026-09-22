@@ -244,21 +244,81 @@
 	opacity: 0.4;
 }
 
-/* Ordered list markers (1., 2.) — subtler than content but still readable */
-.cm-list-marker {
-	color: var(--color-foreground-muted);
-	font-weight: 500;
-}
+/* List lines — a hanging indent for bullet/ordered/task lists.
 
-/* Bullet dot (replaces -, *, + on non-active lines) */
-.cm-bullet-dot {
-	color: var(--color-foreground-muted);
-}
+   Geometry: an ALCOVE (the marker column) plus one STEP per nesting level,
+   the level coming from the parsed tree as a `.cm-list-depth-N` class
+   (live-preview.ts). The text starts at the margin, so wrapped rows return
+   under the first row's text; the marker hangs in the alcove.
 
-/* List lines — consistent horizontal padding for bullet/ordered lists */
+   MARGIN, not padding, and only horizontally (the "padding, never margin"
+   rule above is about vertical margins collapsing). drawSelection measures
+   the left edge of every wrapped-selection row from the padding-left and
+   text-indent of the FIRST .cm-line in the viewport, so a per-line-type
+   padding-left (or a negative text-indent, the classic hanging-indent
+   recipe) makes a paragraph selection start one indent in whenever a list
+   line is scrolled to the top (@codemirror/view rectanglesForRange).
+   Horizontal margin is invisible to that measurement. The 4px is the base
+   .cm-line padding (theme.ts) so the text lands exactly on the margin. */
 .cm-list-line {
-	padding-left: 1.25rem !important;
-	padding-right: 0.5rem !important;
+	--cm-list-alcove: 1.75rem;
+	--cm-list-step: 1.25rem;
+	--cm-list-depth: 0;
+	position: relative;
+	margin-left: calc(var(--cm-list-alcove) + var(--cm-list-depth) * var(--cm-list-step) - 4px);
+	margin-right: calc(0.5rem - 4px);
+}
+.cm-list-depth-1 { --cm-list-depth: 1; }
+.cm-list-depth-2 { --cm-list-depth: 2; }
+.cm-list-depth-3 { --cm-list-depth: 3; }
+.cm-list-depth-4 { --cm-list-depth: 4; }
+.cm-list-depth-5 { --cm-list-depth: 5; }
+
+/* The list marker — one widget standing in for the marker, its trailing
+   space and the structural indent (live-preview.ts). Hung in the alcove the
+   same way .cm-heading-mark hangs the `#`: absolutely positioned at its
+   static (line-start) position and pulled left by its own width, so it takes
+   no inline room, the text never moves, and every marker — bullet, number or
+   the caret line's raw `-` — ends at the same right edge, one gap from the
+   text. Ordered markers are therefore right-aligned in the alcove for free.
+   No pointer events, so a click on the glyph lands in the text. */
+.cm-list-marker {
+	position: absolute;
+	transform: translateX(-100%);
+	padding-right: 0.45em;
+	line-height: inherit;
+	white-space: pre;
+	color: var(--color-foreground-muted);
+	user-select: none;
+	pointer-events: none;
+}
+
+/* A task item's checkbox (checkboxes.ts replaces `- [ ] `, and the list pass
+   above hides only the indent in front of it) hangs in the same alcove, so
+   task text lines up with sibling bullet text. It keeps its pointer events —
+   the click still lands on the box. Its static position is the top of the
+   row, so it is centered on the row by hand; 14px is its height (.cm-checkbox). */
+.cm-list-line .cm-checkbox {
+	position: absolute;
+	transform: translateX(-100%);
+	margin: calc((1lh - 14px) / 2) 0 0 -0.45em;
+}
+
+/* Ordered markers (1., 2.) — subtler than content but still readable, with
+   tabular digits so 9. and 10. share a right edge. */
+.cm-list-marker-ordered {
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+}
+
+/* The raw marker (-, *, +, 1.) on the caret line of a focused editor — the
+   same dim mono treatment as the revealed heading `#`, at the text's own
+   size so the swap from glyph to marker is not a jump in the alcove. */
+.cm-list-marker-raw {
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 0.9em;
+	color: var(--color-foreground-subtle);
+	opacity: 0.55;
 }
 
 /* =============================================================================
@@ -505,12 +565,24 @@
    LIVE PREVIEW — BLOCKQUOTE
    ============================================================================= */
 
+/* Indent via horizontal margin for the same drawSelection reason as
+   .cm-list-line; the bar is a pseudo-element pulled back into the margin so
+   it stays at the content's left edge without any line padding. */
 .cm-blockquote-line {
-	border-left: var(--md-quote-border);
-	padding-left: 1.25rem !important;
-	padding-right: 0.5rem !important;
+	position: relative;
+	margin-left: calc(1.25rem - 4px);
+	margin-right: calc(0.5rem - 4px);
 	color: var(--color-foreground-muted);
 	font-style: italic;
+}
+.cm-blockquote-line::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: calc(4px - 1.25rem);
+	border-left: var(--md-quote-border);
+	pointer-events: none;
 }
 
 /* =============================================================================
@@ -629,7 +701,36 @@
 	padding: 0.5rem 0;
 }
 
-/* --- Table --- */
+/* --- Scroll container ---
+ * The one overflow box, and a SEPARATE element from the wrapper on purpose:
+ * the drag handles and + strips are positioned outside the wrapper's box
+ * (top: -20px, left: -24px, right: -20px, bottom: -20px), and an overflow
+ * container clips whatever lies outside it. So the wrapper stays
+ * overflow-visible and owns the controls; this box owns the scrolling.
+ *
+ * `width: 0; min-width: 100%` is what keeps a wide table from widening the
+ * editor. `.cm-content` is a flex item of `.cm-scroller`, so its minimum width
+ * is its content's min-content width — and a scroll container's min-content
+ * contribution is still its contents', scrollable or not. A box with a
+ * definite width of 0 contributes nothing; the percentage min-width is then
+ * resolved against the real column at layout time. Without this the whole
+ * editor scrolled sideways on a phone instead of the table. */
+.cm-table-scroll {
+	width: 0;
+	min-width: 100%;
+	overflow-x: auto;
+	overscroll-behavior-x: contain;
+	-webkit-overflow-scrolling: touch;
+}
+
+/* --- Table ---
+ * `width: 100%` plus a per-cell floor, rather than `width: max-content`. A
+ * table can never be narrower than its columns' minimum widths, so once the
+ * floors add up past the column the table overflows the scroll box and
+ * scrolls instead of squishing — five short columns on a phone. Below that
+ * point it still fills the column and wraps prose inside cells, which
+ * max-content would not: a sentence in a cell would become one long line to
+ * scroll sideways through, on the desktop reading column as well as a phone. */
 .cm-table-widget {
 	width: 100%;
 	border-collapse: separate;
@@ -643,6 +744,8 @@
 .cm-table-widget th,
 .cm-table-widget td {
 	padding: var(--md-cell-pad);
+	/* The floor that turns "squish" into "scroll" — see .cm-table-widget. */
+	min-width: 5rem;
 	border-bottom: 1px solid var(--md-table-border-color);
 	border-right: 1px solid var(--md-table-border-color);
 }
@@ -704,6 +807,9 @@
 	left: 0;
 	right: 0;
 	height: 20px;
+	/* Handles are placed from live cell rects, so a column scrolled out of
+	   the scroll box gets a handle outside the wrapper. Clip it. */
+	overflow: hidden;
 }
 
 .cm-table-row-controls {
@@ -1109,4 +1215,33 @@
 	.cm-editor .cm-cursorLayer.cm-caret-blinking .cm-cursor {
 		animation: none;
 	}
+}
+
+/* =============================================================================
+   MOBILE OVERFLOW HYGIENE
+   =============================================================================
+   The failure this section guards against: on a phone, one long unbroken
+   token — a URL, a base64 blob, a hash — or one wide block widget makes the
+   whole page scroll sideways, and every line of prose walks off the right
+   edge with it.
+
+   `.cm-content` is a flex item of `.cm-scroller`. A flex item's default
+   `min-width: auto` resolves to its min-content width, so any child that
+   refuses to shrink (a table sized `max-content`, an unwrapped token) widens
+   the content box itself rather than overflowing it, and the scroller then
+   grows a horizontal scrollbar for the entire document. `min-width: 0` pins
+   the content box to the column; a wide child now overflows its OWN box and
+   has to own its horizontal scroll (the table wrapper does; `overflow-x`
+   there is that wrapper's business, not this rule's).
+
+   Long tokens inside a line are already handled and deliberately NOT restated
+   here: every editor in this app installs `EditorView.lineWrapping`, and
+   CodeMirror's base theme puts `word-break: break-word; overflow-wrap:
+   anywhere` on `.cm-lineWrapping` (the `.cm-content` element), which every
+   `.cm-line` inherits. A second copy on `.cm-line` would change nothing and
+   would be the rule someone later "fixes" one of. If an editor is ever
+   mounted without line wrapping, its content is `white-space: pre` and no
+   wrap rule would apply anyway. */
+.cm-editor .cm-content {
+	min-width: 0;
 }

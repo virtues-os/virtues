@@ -649,7 +649,7 @@
 		height: 1.125rem;
 		margin-right: 0.375rem;
 		border-radius: 50%;
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
 		font-size: 0.6875rem;
 		font-weight: 600;
 		color: var(--color-foreground, #111827);

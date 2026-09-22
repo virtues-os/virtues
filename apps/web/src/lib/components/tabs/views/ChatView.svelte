@@ -1,6 +1,8 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { notifyTrashed, routeIfOpen } from "$lib/utils/toasts";
+	import { toast } from "svelte-sonner";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
 	import { getInitializationPromise } from "$lib/stores/models.svelte";
@@ -28,6 +30,7 @@
 		isSettledLine,
 		introductionsRecorded,
 		eyebrowsFor,
+		railTurns,
 	} from "$lib/components/chat/state/transcript";
 	import {
 		AttachmentsController,
@@ -37,6 +40,7 @@
 	import { ModelChoiceController } from "$lib/components/chat/state/modelChoice.svelte";
 	import { OpeningRevealController } from "$lib/components/chat/state/openingReveal.svelte";
 	import { ToolSideEffects } from "$lib/components/chat/state/toolSideEffects";
+	import { toolErrorDetail, toolErrorSummary } from "$lib/components/chat/state/toolError";
 	import { observeComposerReserve } from "$lib/components/chat/state/composerReserve";
 	import { readDraft, writeDraft, NEW_CHAT_DRAFT_ID } from "$lib/components/chat/state/drafts";
 
@@ -51,7 +55,8 @@
 		findWriteItUpOutput,
 	} from "$lib/components/chat/interview/interview";
 	import Composing from "$lib/components/chat/Composing.svelte";
-	import Trivet from "$lib/components/chat/Trivet.svelte";
+	import ConversationRail from "$lib/components/chat/ConversationRail.svelte";
+	import RestingMark from "$lib/components/chat/RestingMark.svelte";
 	// Getting started — the room after the founder's letter. Same shape as
 	// the interview: the id decides everything, the top of the room is
 	// synthetic and rebuilt from derived state, the cards do the work.
@@ -211,31 +216,31 @@
 	let citationPanelOpen = $state(false);
 	let selectedCitation = $state<Citation | null>(null);
 
-	// The Notebook (room) this chat lives in — at most one. Its id is sent with
+	// The Project (room) this chat lives in — at most one. Its id is sent with
 	// each message (drives the agent's active-space context + server-side
 	// binding). Read-only here now: the picker that used to set it from this
 	// view is gone, so the binding is seeded from the session row and changed
-	// where the filing happens — in the notebook.
-	let chatNotebookId = $state<string | null>(null);
-	// Which conversation chatNotebookId was seeded for. Seeding happens ONCE per
+	// where the filing happens — in the project.
+	let chatProjectId = $state<string | null>(null);
+	// Which conversation chatProjectId was seeded for. Seeding happens ONCE per
 	// conversation (when its session row is available, or once the session list
 	// has finished loading and confirms there's no row yet) so a later session
 	// refresh can never clobber a room the user just picked locally.
-	let seededNotebookFor = $state<string | null>(null);
+	let seededProjectFor = $state<string | null>(null);
 
 	$effect(() => {
 		const id = conversationId;
-		if (seededNotebookFor === id) return;
+		if (seededProjectFor === id) return;
 		const session = chatSessions.sessions.find((s) => s.conversation_id === id);
 		if (session) {
-			chatNotebookId = session.notebook_id ?? null;
-			seededNotebookFor = id;
+			chatProjectId = session.project_id ?? null;
+			seededProjectFor = id;
 		} else if (!chatSessions.isLoading) {
 			// Sessions are loaded and this chat has no row yet (brand-new, not yet
 			// persisted) — start unfiled; the create path binds it from the first
-			// message's notebookId.
-			chatNotebookId = null;
-			seededNotebookFor = id;
+			// message's projectId.
+			chatProjectId = null;
+			seededProjectFor = id;
 		}
 	});
 
@@ -282,6 +287,23 @@
 	// opens a page beside the chat, edit_page animates one (see
 	// state/toolSideEffects for why both seed before they act).
 	const tools = new ToolSideEffects();
+
+	/**
+	 * Did the turn go on after the tool call at `index` — another call, or
+	 * reply text? A failed call the model then recovered from is working-out
+	 * and belongs in the thinking block with the other calls; one the turn
+	 * ended on is what the person got instead of an answer, and stays in the
+	 * body. Measured on a live box: nine of nine sql_query failures in two
+	 * weeks were a guessed column followed by the right one, and every one
+	 * sat in the transcript in red, in full, beside a correct answer.
+	 */
+	function turnMovedPast(parts: any[], index: number): boolean {
+		return parts.some(
+			(p: any, i: number) =>
+				i > index &&
+				(p.type.startsWith("tool-") || (p.type === "text" && p.text?.trim())),
+		);
+	}
 
 	// Effect to handle create_page side effects (auto-open new pages)
 	// Only triggers for pages created during this session, not when reopening old chats
@@ -462,6 +484,20 @@
 	async function retryLastTurn() {
 		danglingTurn = false;
 		if (!isGhost) {
+			// The box refused this send because a turn was still running
+			// (turn_in_progress). The message the person just typed was
+			// never saved and sits at the end of the transcript; rejoining
+			// would stream the OLD reply under it and lose it on reload.
+			// Back to the composer it goes, and the rejoin picks up the reply
+			// that was already being written.
+			if (/turn_in_progress/.test(chat.error?.message ?? "")) {
+				const last = chat.messages[chat.messages.length - 1];
+				if (last && last.role === "user") {
+					const text = messageText(last).trim();
+					if (text && !input.trim()) input = text;
+					chat.messages = chat.messages.slice(0, -1);
+				}
+			}
 			const settled = { done: false };
 			const resume = chat
 				.resumeStream()
@@ -479,6 +515,10 @@
 				await new Promise((r) => setTimeout(r, 50));
 			}
 			if (chat.status === "submitted" || chat.status === "streaming") return;
+			// Still pending after 8s: a slow link, not a 204. Regenerating now
+			// could race a rejoin that lands a moment later; leave the card
+			// and let the person press again.
+			if (!settled.done) return;
 
 			await reloadMessages();
 			const last = chat.messages[chat.messages.length - 1];
@@ -502,10 +542,10 @@
 		currentChatConversationId === INTERVIEW_CHAT_ID || isGettingStartedChat(currentChatConversationId),
 	);
 
-	// Getter for the chat's Notebook (room) ID — sent with each message so the agent
+	// Getter for the chat's Project (room) ID — sent with each message so the agent
 	// gets the active-space context block and the server keeps the binding fresh.
-	function getNotebookId(): string | null {
-		return chatNotebookId;
+	function getProjectId(): string | null {
+		return chatProjectId;
 	}
 
 	// Get or create chat instance for the current conversationId
@@ -519,7 +559,7 @@
 			chat = chatInstances.getOrCreate({
 				conversationId,
 				getModel: () => models.idForWire(),
-				getNotebookId,
+				getProjectId,
 				getActivePageContext: activePageContext,
 				getPersona: () => selectedPersona,
 				getAgentMode: () => selectedAgentMode,
@@ -699,19 +739,19 @@
 
 	// Load conversation data on mount
 	onMount(() => {
-		// (The notebook list used to be fetched here for the breadcrumb's name
+		// (The project list used to be fetched here for the breadcrumb's name
 		// and accent. The app layout already loads it, and nothing in this view
-		// renders a notebook's name any more.)
+		// renders a project's name any more.)
 
-		// Claim any prompt handed off from Home / ⌘K / "Ask this notebook"
+		// Claim any prompt handed off from Home / ⌘K / "Ask this project"
 		// (consume-once, synchronously — so only this freshly-opened chat sends it).
 		const initialPrompt = pendingPrompt.take();
-		// If the ask came from a notebook, bind this new chat to it before the
+		// If the ask came from a project, bind this new chat to it before the
 		// first message so the create path files it + grounds retrieval there.
-		const seededNotebook = pendingPrompt.takeNotebook();
-		if (seededNotebook) {
-			chatNotebookId = seededNotebook;
-			seededNotebookFor = conversationId;
+		const seededProject = pendingPrompt.takeProject();
+		if (seededProject) {
+			chatProjectId = seededProject;
+			seededProjectFor = conversationId;
 		}
 		(async () => {
 			// Stage 1: Models must load first (other code depends on model list)
@@ -842,6 +882,21 @@
 	 *  clip paint at its edge. Without this the plate lost both ends. */
 	const roomHoldsPlate = $derived(uniqueMessages.some((m) => m.id === GS_INTERVIEW_OPENING_ID));
 
+	// ── the rail ───────────────────────────────────────────────────────────
+	// The owner's turns as an index down the left gutter. Not in the two
+	// authored rooms: the interview and getting-started are a walk with their
+	// own choreography, and a table of contents over a walk is furniture
+	// arguing with the floor.
+	/** The pane's width, which decides whether there is a gutter to put it in. */
+	let pageWidth = $state(0);
+	const railTurnList = $derived(
+		mobileLayout.isMobile ||
+			isGettingStartedChat(currentChatConversationId) ||
+			currentChatConversationId === INTERVIEW_CHAT_ID
+			? []
+			: railTurns(uniqueMessages),
+	);
+
 	/** The one line per step that carries its number — keyed by message id. */
 	const eyebrowFor = $derived(
 		eyebrowsFor(uniqueMessages as { id: string; subject?: string }[]),
@@ -952,11 +1007,11 @@
 	let selectedAgentMode = $state<AgentModeId>('chat');
 	let selectedPersona = $state<string>('default');
 
-	// Retrieval scope. 'scoped' (grounded in a notebook's items only) still
+	// Retrieval scope. 'scoped' (grounded in a project's items only) still
 	// exists on the wire and in the retriever — what's gone is the pill above
 	// the composer that switched it, which was a permanent piece of chrome for
 	// a setting almost nobody moved. Every chat is 'open': the whole graph,
-	// with the notebook up-weighted when there is one. If scoped comes back it
+	// with the project up-weighted when there is one. If scoped comes back it
 	// belongs somewhere it can be explained, not as a two-state word.
 	const chatMode = 'open' as const;
 
@@ -1129,13 +1184,21 @@
 	const canManageChat = $derived(!isEmpty && !isGhost && !isGettingStartedChat(currentChatConversationId));
 
 	async function deleteThisChat() {
+		// Read before the delete: the title comes off the session row that is
+		// about to go, and Undo has to put back the tab this closes.
+		const name = chatTitle;
+		const reopen = routeIfOpen(`/chat/${conversationId}`);
 		try {
 			windowShellStore.closeTabsByRoute(`/chat/${conversationId}`);
 			await deleteChat(conversationId);
 			chatSessions.remove(conversationId);
 			windowShellStore.invalidateViewCache("chat");
+			notifyTrashed({ kind: "chat", id: conversationId, name, reopen });
 		} catch (e) {
 			console.error("[ChatView] Failed to delete chat:", e);
+			toast.error(`Your server couldn't delete "${name}"`, {
+				description: "It's still here. Try again",
+			});
 		}
 	}
 
@@ -1608,7 +1671,7 @@
 						</button>
 					{/if}
 				</div>
-				<div class="page-container" class:is-empty={isEmpty}>
+				<div class="page-container" class:is-empty={isEmpty} bind:clientWidth={pageWidth}>
 					<!-- Messages area -->
 					<div
 						bind:this={scrollContainer}
@@ -1952,22 +2015,30 @@
 														<span>Generating image…</span>
 													</div>
 												{/if}
-												{:else if part.type.startsWith("tool-") && (part as any).state === "output-error" && !inInterview}
-													<!-- A live static tool part carries no `toolName` (only its
+												{:else if part.type.startsWith("tool-") && (part as any).state === "output-error" && !inInterview && !turnMovedPast(message.parts, partIndex)}
+													{@const errorText = (part as any).errorText as string | undefined}
+													{@const errorDetail = toolErrorDetail(errorText)}
+													<!-- Only a failure the turn ENDED on: it is what the person
+													     got instead of an answer. One the model recovered from
+													     is in the thinking block (see turnMovedPast).
+													     A live static tool part carries no `toolName` (only its
 													     `tool-<name>` type); a reloaded row does. Read the name
-													     off the type so the line never says "Error:  failed". -->
+													     off the type so the line never says "Error:  failed".
+													     The text was written for the model: its first line is
+													     the message, and the column list it was handed sits
+													     behind a disclosure. -->
 													<div
 														class="tool-error mb-3 text-sm text-error p-3 bg-error-subtle rounded-lg"
 													>
-														<span
-															class="font-medium"
-															>Error:</span
-														>
-														{(part as any).toolName ?? part.type.slice("tool-".length)}
-														failed
-														{#if (part as any).errorText}
-															- {(part as any)
-																.errorText}
+														<span class="font-medium">Your assistant couldn't finish</span>
+														{(part as any).toolName ?? part.type.slice("tool-".length)}.
+														Ask it to try again, or narrow what you asked for.{#if errorText}
+															{toolErrorSummary(errorText)}{/if}
+														{#if errorDetail}
+															<details class="mt-2">
+																<summary class="cursor-pointer text-xs opacity-80">Details</summary>
+																<pre class="mt-1 whitespace-pre-wrap font-mono text-xs opacity-90">{errorDetail}</pre>
+															</details>
 														{/if}
 													</div>
 												{/if}
@@ -1995,6 +2066,8 @@
 												<StoppedNotice reason="unattended" />
 											{:else if messageMetadata.get(message.id)?.maxSteps}
 												<StoppedNotice reason="max_steps" />
+											{:else if messageMetadata.get(message.id)?.budget}
+												<StoppedNotice reason="budget" />
 											{/if}
 
 											<!-- What to do with an answer once it exists.
@@ -2079,20 +2152,20 @@
 									     the chapters the person just named. -->
 									<ChapterLifelineLive />
 								{/if}
-								<!-- One element, two poses: the mark's points while a turn
-								     works, the figure they imply while it does not. Always
+								<!-- One mark, two poses: the ∴ moving while a turn works,
+								     the same ∴ holding still while it does not. Always
 								     something in the margin, so nothing jumps when the turn
 								     starts — and the room is never empty of its occupant. -->
 								{#if chat.status === "submitted" || chat.status === "streaming"}
 									<Composing label="Composing a reply" />
 								{:else}
-									<Trivet />
+									<RestingMark />
 								{/if}
 							{:else if inInterview}
 								{#if reveal.chars || chat.status === "submitted" || chat.status === "streaming"}
 									<Composing label="Composing a reply" />
 								{:else}
-									<Trivet />
+									<RestingMark />
 								{/if}
 							{:else if isAwaitingResponse && !lastAssistantMessage}
 								<div class="flex justify-start">
@@ -2140,6 +2213,14 @@
 										/>
 						</div>
 					</div>
+
+					<!-- The turns index, in the gutter beside the column. Outside the
+					     scroller so it holds still while the transcript moves, and only
+					     once the pane is wide enough to have a gutter — below that the
+					     column takes the whole pane and the rail would sit on the words. -->
+					{#if !isEmpty && pageWidth >= 1000}
+						<ConversationRail turns={railTurnList} {scrollContainer} />
+					{/if}
 
 					{#if isEmpty && !isGhost && attachments.count === 0}
 						<!-- The opening image: the mark assembling itself in the space

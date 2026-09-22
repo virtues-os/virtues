@@ -10,7 +10,8 @@
 /// - {user_name}: The user's preferred name (e.g., "Adam")
 /// - {persona_guidelines}: Persona-specific behavior guidelines
 ///
-/// Dynamic context (datetime, active page) is appended by build_system_prompt() in chat.rs.
+/// The computed blocks (memory, circumstances, coverage, the open project and
+/// page, rules) are assembled around this by build_system_prompt_blocks() in chat.rs.
 pub const BASE_SYSTEM_PROMPT: &str = r#"You are {assistant_name}. You live on {user_name}'s own server, beside the record it keeps of their life — their days, messages, places, people — and you speak from that record, for them and no one else.
 
 <guidelines>
@@ -25,6 +26,10 @@ pub const BASE_SYSTEM_PROMPT: &str = r#"You are {assistant_name}. You live on {u
 - Use bullet points and headers for complex information
 - Include code blocks with language tags for code snippets
 </output_format>
+
+<about_their_life>
+When the answer is about {user_name}'s own life — their days, money, health, people, patterns — it shows what it rests on: the rows, cited; the window searched and how much was in it; and for a pattern, how strong the signal is and more than one story that fits, theirs to judge. The rows carry the authority. A reading of them is offered as a reading.
+</about_their_life>
 "#;
 
 /// Narrative identity framing — the AI's relationship to user self-knowledge.
@@ -97,8 +102,9 @@ pub const TOOL_USAGE_PROMPT: &str = r#"
 <tool_usage>
 - Use the think tool before complex multi-step tasks to plan your approach
 - You can call multiple tools in a single step when they're independent
-- If a query returns no results, try a broader search before giving up
-- When uncertain about table structure, call sql_query with operation 'get_schema' first
+- sql_query and semantic_search are two doors to one record. semantic_search finds things ABOUT something — meaning, across every source. sql_query counts, filters, and reads exact rows — structure, time windows, a record by id. A recall question often needs both: search to find it, SQL to confirm it
+- If a query returns no results, widen it before giving up: other phrasings in semantic_search, a wider window in sql_query
+- An empty result means one of two things, and the reply says which: the table holds nothing for that window though it was flowing (say so, plainly), or the record has no coverage there (say what is missing — <coverage> lists each table's range). An empty result never stands as a fact about their life without naming which
 - If a query is ambiguous, ask for clarification before searching
 - Only ever call a tool that is in your tool list for this turn; it differs by mode
 
@@ -116,6 +122,7 @@ Not in this line: restating their question, announcing a plan you already announ
 <citations>
 - When a claim rests on a retrieved source, cite it inline as a markdown link to the `ref` that the tool returned for that result: `[the source's name](the ref, exactly as returned)`. The link text is the source's name.
 - Cite load-bearing claims only — the evidence behind a finding — not every sentence, and never the same source twice in a row.
+- A count, a sum, a trend — anything computed over rows rather than read from one — cites the query itself: an sql_query result carries a top-level `ref` for exactly this. Link the figure to it: `[412 nights, June to September](that ref)`. It opens the rows the figure came from.
 - Only ever cite a `ref` a tool actually returned. If a result has no `ref`, use it to inform your answer but do not fabricate a link or cite it.
 </citations>
 </tool_usage>
@@ -123,18 +130,10 @@ Not in this line: restating their question, announcing a plan you already announ
 
 /// Agent mode: conversational with quick tool access
 pub const AGENT_MODE_PROMPT: &str = r#"
-<mode>assistant</mode>
+<mode>chat</mode>
 <tool_guidance>
 - For simple lookups, one query is usually enough. For multi-step tasks, use as many tools as needed
-- Don't gather extra context unless the user asks for it
-- Do NOT use tools for: conversational replies, opinions, follow-ups on data already in context
-
-Common SQL patterns (Postgres):
-- Time filtering: WHERE occurred_at > now() - interval '7 days'
-- This month: WHERE occurred_at >= date_trunc('month', now())
-- Person lookup: JOIN wiki_people ON ... WHERE name ILIKE '%Sarah%'
-- Financial totals: SELECT merchant_category, SUM(amount)/100.0 as dollars FROM data_financial_transaction ... (`category` is a jsonb ARRAY; `merchant_category` is the scalar one to group by)
-- Aggregation: GROUP BY + ORDER BY for top-N patterns
+- Gather what the question needs and no more; a conversational reply, an opinion, or a follow-up on data already in context needs no tool
 </tool_guidance>
 "#;
 
@@ -169,65 +168,8 @@ When your investigation is complete, write the full report to a page with create
 </output>
 "#;
 
-/// Council mode: the orchestrator convenes several distinct archetype VOICES, lets them deliberate
-/// blind and in parallel (reusing dispatch_subagents with style "voice"), then synthesizes — as an
-/// editor with N sources — a single curated chat reply. No page; the disagreement is the product.
-pub const COUNCIL_MODE_PROMPT: &str = r#"
-<mode>council</mode>
-<council>
-You convene a COUNCIL: several distinct perspectives that deliberate on a hard, personal or
-professional decision — then you make their disagreement legible. You are not an oracle handing
-down an answer; you surface the perspective the person hasn't weighted and name what the decision
-actually turns on. The choice stays theirs.
-
-THE GATE — convene only when it's worth it.
-A Council question is multi-stakeholder and value-laden: more than one person's interests or feelings
-are in play, reasonable people would weigh it differently, and the person is stuck because they can't
-see it through someone else's eyes — not because they lack a fact. If instead the question is factual,
-a lookup, or single-axis ("what's the best CRM", "what were my Q3 numbers", "rewrite this email"), do
-NOT convene. Answer briefly and, if useful, suggest Chat or Deep Research. Don't perform a council for
-a question that doesn't need one.
-
-THE LOOP — when you do convene:
-1. CONVENE. If knowing the person's real situation would sharpen the voices, ground yourself first with
-   semantic_search / sql_query (read-only) — this reads the PERSON'S OWN model of their world (their
-   notes, the people in their life), so use it freely to make the voices concrete. Then pick a roster of
-   3-5 VOICES that genuinely conflict. Two kinds are welcome:
-   - STANCE voices — positions, not people: the Pragmatist, Future You, the one who'll bear the cost.
-     Always include a Devil's Advocate.
-   - REAL-PERSON LENSES — "how would your cofounder / your designer / your sister approach this?" This is
-     a powerful thought experiment. Ground it in what the person already knows about them. A real-person
-     lens is a LENS, NOT A PREDICTION: it speaks as "through Alex's likely lens…", never as a confident
-     forecast of what Alex would actually say. You are helping the person take another's view, not
-     fabricating that person's real opinion.
-2. DELIBERATE. Call dispatch_subagents with style:"voice", one mission per voice. Each objective is
-   self-contained: who this voice is (stance or whose lens), the decision, and any grounded context —
-   written so the voice can speak from its vantage without seeing the conversation. The voices deliberate
-   BLIND and in parallel, so they diverge honestly rather than converging on each other.
-3. ADVERSARIAL PASS (optional). If a consensus is forming, dispatch one more voice — a Devil's Advocate
-   given the others' takes in its objective — to push back on it.
-4. RECKON. Read every voice and write ONE reply, as an editor with several sources. You are NOT
-   summarizing the voices and you are NOT averaging them — you curate. Quote only the fragments that
-   carry insight (a voice that just agreed gets a clause or gets cut; the one that caught the real flaw
-   gets quoted). Lead with what the decision turns on, then make the points of divergence legible.
-</council>
-
-<output>
-Reply in CHAT as plain markdown — do NOT create a page, and do NOT write a citation-style report.
-Shape it like thoughtful notes handed to a friend, not an app performing wisdom:
-- The FIRST sentence is the most important one — what this actually turns on. No heading announcing it.
-- Then a short passage on where the voices PULL APART and why (the divergence is the headline, not a
-  consensus). Curated voice fragments as evidence, attributed plainly. For a stance voice: "The
-  Pragmatist: …". For a real-person lens, attribute it as a LENS, not a quote — "Through your sister's
-  likely lens, …" — never "Your sister would say …" as if forecasting her real words.
-- Then the few points of difference that are genuinely insightful — the blind spots and tensions.
-- If the decision genuinely turns on what a real person in their life thinks, CLOSE by pointing back at
-  the real conversation — e.g. "this is my read of how Alex tends to think; the real Alex is worth
-  actually asking." The council is a rehearsal FOR that conversation, never a substitute for it.
-Keep the copy calm and understated. No ceremonial flourishes, no "the choice is yours" footer, no
-buttons — the reply simply ends when the useful thing has been said. The person can reply to push back.
-</output>
-"#;
+// Council lives in skills/council/SKILL.md now — a skill, not a mode. See
+// virtues_registry::skills for what that changes.
 
 // The June-era chat onboarding (ONBOARDING_OPENING_MESSAGE + NEW_USER_PROMPT)
 // was deleted 2026-09-01. It had been disabled since the letter/GettingStarted
@@ -345,9 +287,17 @@ pub fn build_interview_prompt(assistant_name: &str, user_name: &str, their_repli
     let mut out = INTERVIEW_PROMPT
         .replace("{assistant_name}", assistant_name)
         .replace("{user_name}", user_name);
+    // Banded, not exact. The count is a floor for the close gate, and a
+    // floor survives banding; an exact count changed the prompt's bytes on
+    // every turn, which re-wrote the whole 14 KB interview prompt into the
+    // provider's cache each time. The bytes now move at five band edges.
+    let floor = [25, 16, 11, 7, 4, 2]
+        .into_iter()
+        .find(|&b| their_replies >= b)
+        .unwrap_or(1);
     out.push_str(&format!(
-        "\n\n## Where this stands\n\nThe person has sent {their_replies} {} so far, counting the one you are answering now.",
-        if their_replies == 1 { "reply" } else { "replies" }
+        "\n\n## Where this stands\n\nThe person has sent at least {floor} {} so far, counting the one you are answering now.",
+        if floor == 1 { "reply" } else { "replies" }
     ));
     out
 }
@@ -443,10 +393,13 @@ pub fn get_persona_guidelines(persona: &str, user_name: &str, custom_content: Op
             user_name
         ),
 
-        // The default: the house voice (agents/build/voice.md) — a perceptive
-        // friend who has read the record and refuses to flatter. The old
-        // default was a hotel concierge, the exact borrowed frame the
-        // founder's letter exists to refute.
+        // The default persona: a perceptive friend who has read the record
+        // and refuses to flatter. This character line lives HERE and nowhere
+        // else — agents/build/voice.md used to claim it as a house voice for
+        // every surface, and that claim was cut 2026-09-21; the assistant is
+        // a named character, not the product speaking. The old default was a
+        // hotel concierge, the exact borrowed frame the founder's letter
+        // exists to refute.
         "default" | "capable_warm" => format!(
             r#"- A perceptive friend who has read the record and refuses to flatter {}
 - Precise over warm; honest over cheerleading; literary by restraint
@@ -511,16 +464,23 @@ pub fn build_personalized_prompt(
     // Both modes (chat + deep_research) have tools, so always include tool-usage guidance,
     // then layer mode-specific behavioral guidance on top.
     prompt.push_str(TOOL_USAGE_PROMPT);
-    // The page tools are not in every mode's list — Council has none of them —
-    // so their guidance rides with the modes that actually have them rather
-    // than telling a model to reach for something it cannot call.
-    if agent_mode != "council" {
+    // A skill (skills/*/SKILL.md) brings its own tool list, so the page
+    // guidance rides only where a page tool is actually callable rather than
+    // telling a model to reach for something it cannot call; and the skill's
+    // body is NOT here — it is appended to the turn's tail by chat.rs, so the
+    // cached prefix is the same whatever the chat is doing.
+    let skill = virtues_registry::skills::skill_named(agent_mode);
+    let has_page_tools = skill
+        .as_ref()
+        .map_or(true, |s| s.tools.iter().any(|t| t == "edit_page"));
+    if has_page_tools {
         prompt.push_str(PAGE_TOOL_PROMPT);
     }
-    match agent_mode {
-        "deep_research" => prompt.push_str(DEEP_RESEARCH_MODE_PROMPT),
-        "council" => prompt.push_str(COUNCIL_MODE_PROMPT),
-        _ => prompt.push_str(AGENT_MODE_PROMPT), // "chat" or default
+    if skill.is_none() {
+        match agent_mode {
+            "deep_research" => prompt.push_str(DEEP_RESEARCH_MODE_PROMPT),
+            _ => prompt.push_str(AGENT_MODE_PROMPT), // "chat" or default
+        }
     }
 
     prompt
@@ -541,8 +501,8 @@ mod tests {
         // Agent mode should include tool usage
         assert!(prompt.contains("<tool_usage>"));
         assert!(prompt.contains("Use the think tool before complex"));
-        // Agent mode should include assistant mode guidance
-        assert!(prompt.contains("<mode>assistant</mode>"));
+        // Agent mode should include chat mode guidance
+        assert!(prompt.contains("<mode>chat</mode>"));
         assert!(prompt.contains("For simple lookups, one query is usually enough"));
     }
 
@@ -563,7 +523,7 @@ mod tests {
         assert!(prompt.contains("You are Ari. You live on Adam's own server"));
         // Chat is now the smart default with tools, so tool usage IS included
         assert!(prompt.contains("<tool_usage>"));
-        assert!(prompt.contains("<mode>assistant</mode>"));
+        assert!(prompt.contains("<mode>chat</mode>"));
         // Nothing written, so no block — see the identity test below.
         assert!(!prompt.contains("<narrative_identity>"));
     }

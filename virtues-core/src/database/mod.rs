@@ -159,7 +159,7 @@ impl Database {
             .unwrap_or(false);
         // The early return has to prove ALL THREE columns are right, not just
         // this one. `search_vectors`, `search_topic_cache` and
-        // `app_notebooks.centroid` share one embedding geometry and are resized
+        // `app_projects.centroid` share one embedding geometry and are resized
         // together below — but the loop is not a transaction, so a failure
         // partway leaves some converted and some not. Guarding on
         // `search_vectors` alone meant every later boot took this return and
@@ -167,7 +167,7 @@ impl Database {
         // dimension drifted before (see 0060's header: "Every centroid write
         // failed the dimension check").
         let centroid_ok = self
-            .vector_column_type("app_notebooks", "centroid")
+            .vector_column_type("app_projects", "centroid")
             .await?
             .as_deref()
             .is_some_and(|t| t.trim_start().starts_with("halfvec") && parse_vector_dim(t) == Some(target));
@@ -213,16 +213,16 @@ impl Database {
                 "ALTER TABLE search_topic_cache ALTER COLUMN embedding \
                  TYPE halfvec({target}) USING embedding::halfvec({target})"
             ),
-            // The notebook magnet's centroid rides the same geometry as
+            // The project magnet's centroid rides the same geometry as
             // `search_vectors` — a width mismatch fails every centroid write and
             // read (migration 0060 pins a default width, but the live dimension
             // is set here). Migrations run before this, so the column exists.
             // Unlike the derived vectors above it is NOT wiped by reindex, so NULL
-            // it first: the centroid is re-derivable (the mean of a notebook's
+            // it first: the centroid is re-derivable (the mean of a project's
             // members) and the next magnet run rebuilds it.
-            "UPDATE app_notebooks SET centroid = NULL WHERE centroid IS NOT NULL".to_string(),
+            "UPDATE app_projects SET centroid = NULL WHERE centroid IS NOT NULL".to_string(),
             format!(
-                "ALTER TABLE app_notebooks ALTER COLUMN centroid \
+                "ALTER TABLE app_projects ALTER COLUMN centroid \
                  TYPE halfvec({target}) USING centroid::halfvec({target})"
             ),
             // Build parameters stated, not inherited. Omitting `WITH` gets

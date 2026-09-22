@@ -99,8 +99,13 @@ pub const CHAPTER_PREFIX: &str = "chapter";
 // Sidebar pins (user's globally-pinned URLs)
 pub const PIN_PREFIX: &str = "pin";
 
-// Notebook Layer (Organization system)
-pub const NOTEBOOK_PREFIX: &str = "nb";
+// Project Layer (Organization system)
+//
+// Projects were "notebooks" until migration 0029 renamed them. The VALUE stays
+// "nb": every existing project id, ref URL, pin and member row carries it, and
+// rewriting ids across foreign keys and stored JSON on live boxes is not worth
+// a cosmetic letter. New projects mint `nb_…` too, so there is one id shape.
+pub const PROJECT_PREFIX: &str = "nb";
 
 // Document annotations (highlights + margin notes on drive files)
 pub const ANNOTATION_PREFIX: &str = "anno";

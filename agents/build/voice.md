@@ -1,13 +1,31 @@
 # Voice
 
-> The one voice for onboarding microcopy, AI-generated prose, and every other
-> surface where Virtues speaks: **a perceptive friend who has read the data and
-> refuses to flatter you.** Second person, active, precise-over-warm,
-> honest-not-cheerleading, literary-by-restraint. Show the architecture, don't
-> assert the virtue ("Stays on your box. We can't read it." — never "your
-> privacy matters to us").
+> Three things, none of them a voice: the **claim rules** every surface obeys,
+> the **register for in-app copy**, and the **bank** of lines written for the
+> letter and kept for the website, the film, and the colophon.
+>
+> **There is no house voice, and this file no longer claims one.** Until
+> 2026-09-21 the header announced "the one voice for every surface where
+> Virtues speaks: a perceptive friend who has read the data and refuses to
+> flatter you." That line was a description of how the founder's letter should
+> feel, written during its August rewrite, and it was promoted into a style by
+> accident. Walk the surfaces and nobody named Virtues ever speaks: the letter
+> is Adam's, signed and first person; the day page and the articles are the
+> record read back, governed by [wiki-editor.md](wiki-editor.md) and the day
+> prompt; the life document is the person's own words; the assistant is a
+> named character whose line lives in `agent/prompt.rs`; the website is the
+> company's, and outside this repo. Everything else is copy. A stylized voice
+> over all of that gave UI strings the letter's length and cleverness, and
+> nothing else.
+>
+> What survives is discipline about claims, one plain register for the
+> product's furniture, and a file of good lines.
 
-## Register rules (settled during the 2026-08 letter rewrite)
+## Claim rules
+
+Settled during the 2026-08 letter rewrite; they apply to every sentence on
+every surface — the letter, copy, the manual, the assistant's turns. These are
+not tone. They are about what a sentence is allowed to assert.
 
 - **Headings are titles, not sentences** — no trailing periods.
 - **Artifacts, not features.** Name what a person would point at (the record,
@@ -24,11 +42,169 @@
 - **"Data" vs "the record":** their word when it is being weaponized (ads,
   algorithms, addictions extract *data*); our word when it is being kept (you
   hold *the record*). The letter uses both, on purpose, on opposite sides.
-- **One command per document.** The founder's letter permits itself exactly one
-  imperative (the ∴ thesis line). Everything else states, shows, or asks.
-- **No corporate "we"** in a document signed by a person.
 - **The ∴ mark is logic before it is a logo.** When it appears in prose it must
   actually mean *therefore* — premises above, conclusion after.
+- **Show the architecture, don't assert the virtue.** "Stays on your box. We
+  can't read it." — never "your privacy matters to us."
+
+Two rules belong to the letter alone, because it is signed by a person:
+
+- **One command per document.** The letter permits itself exactly one
+  imperative. Everything else states, shows, or asks.
+- **No corporate "we"** in a document signed by a person.
+
+## UI copy
+
+Settled 2026-09-14 (the Billing pass — "I don't like much of your current copy
+and tone and voice") and 2026-09-21 (Paul Henry's copy principles, the voice
+rules of which are folded in here; his scope and process lists stay his).
+In-app prose — settings pages, hints under controls, empty states, status and
+error text, applet descriptions, pairing screens, Atlas emails — is the
+product's furniture: read mid-task, on the way to something else. The tell that
+it has drifted: a settings page narrating its own design history, or a hint
+that reads like a paragraph of the letter.
+
+**Register.** Warm and plain, and concise. Second person; a sparing, confident
+"we" where Virtues itself acts ("We can't read it"). Sentences medium and
+conversational — one turn each, about twenty words. Keep the reason: the page
+still says *why*, in plain words, not as a story. No flourish, no performed
+enthusiasm. The stance is Apple, Cursor, virtues.com.
+
+**Clear, then short, then characterful — in that order.** Nielsen Norman's
+ranking, and it settles what yields when they pull against each other: a few
+extra words are right when they buy understanding, and character is the thing
+that goes first, not clarity. "Concise" here means *nothing spare*, never
+*fewer words than the meaning needs*. An agent told only to be brief cuts the
+reason and leaves a label.
+
+**Tone varies; the register doesn't.** Apple's rule, and the right one: the
+words are the same everywhere, the temperature follows the situation. Light
+where something went right, straight where something went wrong, never cute at
+either end. A finished backup may sound pleased. A failed payment says what
+happened and what to do.
+
+**Mechanics** — Apple's, with two overrides:
+
+- Active, verb-first. **Sentence case everywhere** — headings, buttons, labels,
+  menu items. Apple asks you to pick one style per element type and hold it;
+  we hold one for all of them, and the SPA already does. Contractions on.
+- **Over 25 words, split it.** GOV.UK's trigger, and unlike "about twenty" it
+  is testable. Twenty is the target; twenty-five is the line where you stop
+  and break the sentence in two.
+- **A button names its outcome, in the person's intent.** Verb plus object,
+  never the mechanism and never a bare acknowledgement: "Write my chapters",
+  not "Submit"; "Delete 3 pages", not "OK".
+- Fragments (titles, hints under a control, chips) take no trailing period.
+  Full sentences keep theirs.
+- Serial comma. No exclamation points. Capitalize the first word after a colon
+  when a full sentence follows.
+- **Hyphens, not em dashes, in UI strings** — even where the em dash would be
+  correct. The letter, the manual, and this workshop keep theirs.
+- **"Computer", not "Mac"**, on any surface a PC user can reach: the SPA, the
+  box's own screens, the manual. Vague beats wrong. The Mac desktop app may
+  say "Mac"; it runs nowhere else.
+- **One name per thing, the same on every screen.** *Recovery phrase*, *Server
+  ID*, *applet*, *Standing*, *Balance*, *Wallet activity*, *on-device*,
+  *sidecar*, *face*, *pairing*, *relay*. Vendors in the vendor's own
+  capitalization: Stripe, Postgres, Radxa, Qualcomm, Anthropic, OpenAI,
+  Google, Ollama, LM Studio.
+- American spelling, in UI and in comments.
+
+### The sentence shapes
+
+**A passive sentence is a missing subject. Name it, or hand the sentence to
+the person.** This is the first rule because it is the one our own copy keeps
+breaking, and because in this product the missing subject is never innocent.
+"Your account is written." Written by whom? Answer *the server* and you have
+contradicted the title of the page it sits on, "In your own words". Answer
+*you* and the sentence is both true and active. The passive was the copy
+dodging the product's central claim about who authored the thing.
+
+So: where the claim is that a thing is theirs, **the person is the actor**.
+Where the server actually did something, including failing, **name the
+server**. A sweep on 2026-09-21 found roughly one string in ten passive across
+the SPA and the API's error text; these four are the worked examples, all from
+the interview's close.
+
+| Was | Is |
+|---|---|
+| What you said is arranged in two places. Both are yours: the machine never rewrites them, and anything to add or correct is done on the page. | These are your words, in two places. Nothing rewrites them but you, and you can edit either page whenever you like. |
+| Your partition of the life, a page each. | Every chapter you named, a page each. |
+| Not written this time. The document is safe. | Your server couldn't write the chapters. Everything you said is safe. |
+| No page yet — it is written when the interview is closed. | No page yet. Finish the interview to create it. |
+
+Note what the last two do: one names the server because the server is what
+failed, and the other hands the verb to the person. "The machine" is not one
+of the two names (see the Words list); it was the passive wearing a noun.
+
+The rest, in order of how much of our copy they change:
+
+- **The reader is the subject, not the software.** "Turn on file sharing to
+  reach the box from your laptop", never "Virtues allows you to…" or "This
+  setting lets you…". *Allow*, *lets you*, *enable*, *capability*, and
+  *functionality* are all signs the sentence has the wrong subject.
+- **No "we" in a failure.** "Couldn't reach the box", never "We're having
+  trouble reaching the box" — who is *we* to someone whose server is in their
+  own house? The one "we" that stays is the claim about the company itself:
+  "We can't read it."
+- **An error is two parts: what happened, then how to fix it.** Both present,
+  or it isn't finished. "Choose a password of at least eight characters" beats
+  "That password is too short"; instruct rather than scold. Put the message
+  beside the thing that failed. No *oops*, no *uh-oh*, no bare "Invalid
+  input". If words can't rescue an error most people will hit, the interaction
+  is wrong, not the sentence.
+- **Say the consequence before anything irreversible**, in the same breath as
+  the action, not after it. The interview's close writes the document once and
+  retires the room, and said so nowhere until it was over. A person cannot
+  consent to a door they did not know was one-way.
+- **A setting says what it does when it's on.** The person infers the off
+  case. Add a sentence under the label only when the label can't carry it, and
+  link to a setting rather than describing where it lives.
+- **An empty state** points at the next action and holds nothing that matters,
+  because it disappears. **Possessives are sparing** — "Projects", not "Your
+  projects" — and the perspective doesn't switch mid-screen.
+
+**Words.** Turn on / turn off, not enable / disable. Choose for menu items,
+select for objects. Enter, not type or input. Quit, not exit. Cancel, not kill.
+Appears, not displays. After, not once. Whether when there are two outcomes, if
+for a condition. Because, not since. Want, not wish. To, not in order to. By,
+with, or through, not via. For example, not e.g. And so on, not etc. Rewrite
+and/or. *Can* is ability, *may* is permission, *might* is possibility — which
+is why **"cannot"** carries so much weight for us, and why it is only ever used
+where the incapability is real. GOV.UK's vague-verb list is banned outright:
+*deliver*, *impact*, *leverage*, *utilise*, *streamline*. So is schema
+vocabulary on a screen — *partition*, *entity*, *primitive*, *provenance*,
+*payload*, *endpoint*, *instance*, *surface* — which is the glossary leaking
+into the product.
+
+**Don't give the box a mind.** The assistant is a named character and may think,
+notice, or wonder. The box, the record, an applet, and the software do not want,
+try, believe, or feel. Apple takes a passive sentence over an anthropomorphic
+one, and so do we. Define an acronym on first use or don't use it. Humor lives
+in examples, if anywhere.
+
+**Claims.** Three rules that run before a line is written or rewritten, because
+review catches a bad line and misses a missing one:
+
+- **A line that states a behavior, benefit, or guarantee is checked against
+  the shipping build.** If the build doesn't do it, the line is deleted, not
+  polished. "Your data stays on the server" was cut the day it stopped being
+  true; a cleaner-sounding false claim is still a false claim.
+- **A line about where data physically lives trades clarity for accuracy,
+  never the reverse.** If the accurate wording is unreadable, leave it standing
+  and flag it — do not simplify it into something vaguer.
+- **A screen where the app could appear to change or lose the person's data
+  says, in one plain line, what happened and that the data is safe.** "I can't
+  show them again. Your data is still here." The absent reassurance is the
+  thing reviews miss.
+
+**What this section does not govern.** Names — a button label, a section
+header, an applet's `display_name` — are identifiers with a human face;
+renaming one is a code change with mirrors (sidebar, URL, tests, docs) and
+lands as a bundle or not at all. Error codes (`not_linked`, `vault_unreadable`),
+log lines, env vars, and column names are contracts, not copy; the human
+sentence beside a code is fair game, the code is not. The CLI and installer
+print through their own vocabulary (∴ ✓ · ⚠ ✖) and are not covered here.
 
 ## The name, reframed (2026-08-24)
 

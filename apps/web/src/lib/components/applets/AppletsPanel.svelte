@@ -84,7 +84,7 @@
 
 	function startChatFlow() {
 		newMenuOpen = false;
-		windowShellStore.openTabFromRoute('/chat', { forceNew: true });
+		windowShellStore.openTabFromRoute('/chat');
 	}
 
 	function startGitImportFlow() {
@@ -341,9 +341,8 @@
 		<div>
 			<h2>Applets</h2>
 			<p class="subtitle">
-				Things that run for you. Ask in chat — "remind me on the 25th,"
-				"a dashboard of my heart rate," "write my examen each morning" —
-				and it becomes an applet: scheduled, triggered, or always on.
+				Things that run for you. Ask in chat - "remind me on the 25th,"
+				"a dashboard of my heart rate," "write my examen each morning", and it becomes an applet: scheduled, triggered, or always on.
 			</p>
 		</div>
 		<div class="header-applets">
@@ -365,7 +364,7 @@
 					class="show-system-btn"
 					class:active={showFinished}
 					onclick={() => (showFinished = !showFinished)}
-					title="Applets whose lifecycle completed — a one-off reminder that fired, or an `until` condition that came true. Their work and their run history are still here."
+					title="Applets whose lifecycle completed - a one-off reminder that fired, or an `until` condition that came true. Their work and their run history are still here."
 				>
 					{showFinished ? 'Hide' : 'Show'} finished ({finished.length})
 				</button>
@@ -465,7 +464,7 @@
 		{loading}
 		error={err}
 		emptyIcon="ri:flashlight-line"
-		emptyMessage="Nothing runs for you yet. Ask in chat — “write my examen each morning,” “remind me on the 25th,” “a dashboard of my heart rate” — and it becomes an applet."
+		emptyMessage="Nothing runs for you yet. Ask in chat - “write my examen each morning,” “remind me on the 25th,” “a dashboard of my heart rate”, and it becomes an applet."
 		searchPlaceholder="Search applets…"
 		pageSize={50}
 		onItemClick={openCard}

@@ -158,10 +158,10 @@ pub async fn dispatch(
         let tx = tx.clone();
         let cancel = cancel.clone();
         // The orchestrator's scope is the worker's scope. Built from
-        // `Default` before, which meant no notebook and `Weighted`: inside a
+        // `Default` before, which meant no project and `Weighted`: inside a
         // grounded chat the orchestrator was told "answer ONLY from these
         // materials" while every worker it sent out searched the whole record.
-        let scope = (context.notebook_id.clone(), context.scope_mode);
+        let scope = (context.project_id.clone(), context.scope_mode);
         handles.push(tokio::spawn(async move {
             run_one_worker(
                 pool,
@@ -276,11 +276,11 @@ async fn run_one_worker(
     };
     let messages = build_context_for_llm(&[], None, 0, Some(&system_prompt), None);
 
-    let (notebook_id, scope_mode) = scope;
+    let (project_id, scope_mode) = scope;
     let context = ToolContext {
         user_id: Some("subagent".to_string()),
         // A worker searches where the turn that sent it is allowed to search.
-        notebook_id,
+        project_id,
         scope_mode,
         // Workers don't re-emit panel updates or spawn sub-workers.
         ..Default::default()

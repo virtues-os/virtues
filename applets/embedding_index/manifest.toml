@@ -1,5 +1,5 @@
 name = "Embedding Indexer"
-description = "Keeps search working on meaning, so you can find things you cannot name exactly."
+description = "Keeps search working on meaning, so you can find things you can't name exactly."
 owner = "system"
 command = ["embedding_index"]
 triggers = ["cron"]

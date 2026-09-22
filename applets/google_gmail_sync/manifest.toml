@@ -1,5 +1,5 @@
 name = "Google Mail"
-description = "Keeps your Gmail here."
+description = "Keeps your Gmail on your server."
 owner = "system"
 command = ["google_gmail_sync"]
 triggers = ["cron", "manual"]

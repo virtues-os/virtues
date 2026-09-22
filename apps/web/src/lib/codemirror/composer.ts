@@ -17,9 +17,8 @@
  */
 
 import { defaultKeymap, history, historyKeymap, insertNewline } from '@codemirror/commands';
-import { markdown, markdownKeymap } from '@codemirror/lang-markdown';
+import { markdownKeymap } from '@codemirror/lang-markdown';
 import { syntaxTree } from '@codemirror/language';
-import { GFM } from '@lezer/markdown';
 import { Compartment, EditorState, type Extension, Prec } from '@codemirror/state';
 import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view';
 
@@ -28,6 +27,7 @@ import { markdownKeybindings } from './extensions/keybindings';
 import { listRenumber } from './extensions/list-renumber';
 import { mouseFreeze } from './extensions/mouse-freeze';
 import { entityLinks } from './extensions/ref-links';
+import { virtuesMarkdown } from './language';
 import { virtuesTheme } from './theme';
 
 /** Pasted text longer than this becomes an attachment rather than a wall in
@@ -271,10 +271,10 @@ export function createComposerEditor(options: ComposerOptions): ComposerEditor {
 			doc,
 			extensions: [
 				history(),
-				// GFM so list/task/strikethrough context resolves for the
-				// continue-markup and formatting commands. No code languages:
-				// nothing is highlighted in a message box.
-				markdown({ extensions: GFM }),
+				// The shared dialect so list/task/strikethrough context resolves
+				// for the continue-markup and formatting commands. No code
+				// languages: nothing is highlighted in a message box.
+				virtuesMarkdown({ codeLanguages: false }),
 				EditorView.lineWrapping,
 				smoothCaret,
 				composerKeymap,

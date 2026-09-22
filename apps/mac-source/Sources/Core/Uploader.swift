@@ -408,12 +408,19 @@ class Uploader {
     /// old to say".
     private func collectorHealthPayload() -> [String: Any] {
         guard let health = CollectorHealth.load() else { return [:] }
-        return [
+        var payload: [String: Any] = [
             "full_disk_access": health.fullDiskAccess,
             "accessibility": health.accessibility,
             "denied": health.deniedCapabilities,
             "checked_at": ISO8601DateFormatter().string(from: health.updatedAt),
             "stale": health.isStale,
         ]
+        // Sent only when the daemon has something to say about it. A Mac with
+        // no Safari data reports nothing, and the box must read that as "not
+        // asked", not as a denial.
+        if let safari = health.safariLibrary {
+            payload["safari_library"] = safari
+        }
+        return payload
     }
 }

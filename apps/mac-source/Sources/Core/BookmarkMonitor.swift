@@ -33,6 +33,10 @@ final class BookmarkMonitor {
     private let queue: Queue
     private var timer: DispatchSourceTimer?
 
+    /// The last failure printed per store, so a standing failure is reported
+    /// when it starts and when it changes rather than on every tick.
+    private var lastError: [String: String] = [:]
+
     /// Same cadence as the other monitors; almost every tick is a no-op hash
     /// check on a handful of small files.
     private let syncInterval: TimeInterval = 300
@@ -92,9 +96,20 @@ final class BookmarkMonitor {
                     browser: source.id,
                     recordsJSON: String(decoding: json, as: UTF8.self))
                 setLastHash(hash, for: source.id)
+                lastError[source.id] = nil
                 print("✓ bookmarks[\(source.id)]: snapshot queued (\(records.count) records)")
             } catch {
-                print("⚠️ bookmarks[\(source.id)] sync failed: \(error)")
+                // Once per distinct failure, not once per tick. A permission
+                // that is denied is denied every five minutes forever: this
+                // Mac's log held 1,551 identical Safari lines, which is how a
+                // real failure becomes something a person scrolls past. The
+                // grant itself is reported through CollectorHealth, which is
+                // where a box or a person should learn about it.
+                let described = "\(error)"
+                if lastError[source.id] != described {
+                    lastError[source.id] = described
+                    print("⚠️ bookmarks[\(source.id)] sync failed: \(described)")
+                }
             }
         }
     }

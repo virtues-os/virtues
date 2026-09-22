@@ -377,7 +377,7 @@ pub async fn set_home_place(pool: &PgPool, place_id: String) -> Result<()> {
 ///
 /// Everything moves in one transaction: the entity refs (which carry the whole
 /// interaction history), the aliases a human authored, and the routes stored as
-/// free text in `app_pins` / `app_notebook_items` — the trap 0071 documented
+/// free text in `app_pins` / `app_project_items` — the trap 0071 documented
 /// when it dropped `wiki_things` and had to sweep `/thing/` urls in the same
 /// migration. Columns orgs do not have (emails, phones, socials) are preserved
 /// into `metadata` rather than dropped: reclassifying is a filing correction,
@@ -454,7 +454,7 @@ pub async fn reclassify_person_as_organization(pool: &PgPool, person_id: String)
     // that looks openable and is not.
     let old_url = format!("/person/{}", person_id);
     let new_url = format!("/org/{}", org_id);
-    for table in ["app_pins", "app_notebook_items"] {
+    for table in ["app_pins", "app_project_items"] {
         sqlx::query(&format!("UPDATE {table} SET url = $1 WHERE url = $2"))
             .bind(&new_url)
             .bind(&old_url)
@@ -476,7 +476,7 @@ pub async fn reclassify_person_as_organization(pool: &PgPool, person_id: String)
     .unwrap_or(false);
     if is_self {
         return Err(Error::InvalidInput(
-            "That person is you — reclassifying yourself as an organization is not what you meant"
+            "That person is you - reclassifying yourself as an organization is not what you meant"
                 .into(),
         ));
     }
@@ -549,7 +549,7 @@ pub async fn create_organization(pool: &PgPool, name: &str) -> Result<String> {
 /// Deleting an entity used to leave a trail: `delete_place` dropped the row and
 /// nothing else, so its `wiki_refs` survived as edges pointing at a
 /// vanished id, its article page stayed searchable and citable, and any pin or
-/// notebook item kept a `/place/<id>` url that rendered as a row nothing could
+/// project item kept a `/place/<id>` url that rendered as a row nothing could
 /// open. None of that is visible from the delete button, which is exactly why
 /// it lasted.
 ///
@@ -582,7 +582,7 @@ async fn purge_subject(
     // Routes stored as free text — the trap 0071 documented when it dropped
     // wiki_things and had to sweep `/thing/` urls in the same migration.
     let url = format!("/{route_prefix}/{id}");
-    for table in ["app_pins", "app_notebook_items"] {
+    for table in ["app_pins", "app_project_items"] {
         sqlx::query(&format!("DELETE FROM {table} WHERE url = $1"))
             .bind(&url)
             .execute(pool)
@@ -603,7 +603,7 @@ pub async fn delete_person(pool: &PgPool, id: String) -> Result<()> {
     .map_err(|e| Error::Database(format!("Failed to check self person: {}", e)))?;
     if is_self {
         return Err(Error::InvalidInput(
-            "That person is you — deleting yourself from your own record is not what you meant"
+            "That person is you - deleting yourself from your own record is not what you meant"
                 .into(),
         ));
     }

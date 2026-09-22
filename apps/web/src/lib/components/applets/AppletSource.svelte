@@ -94,7 +94,7 @@
 					? 'Shipped with Virtues'
 					: listing.forked_from
 						? `Forked from ${listing.forked_from}`
-						: 'Lives on this box — authored or imported'}
+						: 'Lives on this server - authored or imported'}
 				· <code>{listing.dir}</code>
 			</span>
 			{#if listing.origin_root === 'shipped'}
@@ -134,7 +134,7 @@
 					</li>
 				{/each}
 				{#if listing.truncated}
-					<li class="more">More files than can be listed here.</li>
+					<li class="more">More files than fit here.</li>
 				{/if}
 			</ul>
 
@@ -214,7 +214,7 @@
 		background: var(--color-muted, #f3f4f6);
 	}
 	.files button.active {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
 		font-weight: 500;
 	}
 	.files button:disabled {

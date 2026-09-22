@@ -254,7 +254,7 @@ pub async fn display_state_handler(
         // Deliberately terse: a LAN caller learns only that this door is shut,
         // not whether a code exists or what shape it has.
         return (StatusCode::FORBIDDEN, Json(serde_json::json!({
-            "error": "display state is available only on the box itself"
+            "error": "Only your server itself can report its display."
         })))
         .into_response();
     }

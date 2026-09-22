@@ -1148,8 +1148,18 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 // Tags are deliberately not part of this test: a bookmark whose
                 // only text is a folder name is a bare link, and the folder is
                 // already searchable as structure.
+                //
+                // A tombstone is out of scope too. `deleted_at_source` means the
+                // bookmark is gone from the browser or account it came from, and
+                // the room hides those — so a retriever that still returns them
+                // contradicts the shelf: chat cited four bookmarks the owner had
+                // deleted in Dia while the room showed none of them. The row and
+                // the note survive, the detail page still opens (a link should
+                // find something), and a re-add clears the tombstone and puts it
+                // back in the index on the next pass.
                 embed_where: Some(
-                    "AND btrim(COALESCE(t.title, '') || COALESCE(t.description, '') \
+                    "AND t.deleted_at_source IS NULL \
+                     AND btrim(COALESCE(t.title, '') || COALESCE(t.description, '') \
                      || COALESCE(t.note, '') || COALESCE(t.extraction_text, '')) <> ''",
                 ),
             }),
@@ -1212,7 +1222,10 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 // The document changes as the conversation grows, so its time is
                 // when it last did.
                 timestamp_sql: "t.updated_at",
-                embed_where: None,
+                // A trashed chat leaves the index (migration 0030; `api::trash`
+                // drops its rows) and must not be re-embedded while it waits
+                // to be purged or restored.
+                embed_where: Some("AND t.deleted_at IS NULL"),
             }),
             // Entity extraction on the same unit as retrieval. Chats carried NO
             // entity refs before, so a conversation about Rachel was unreachable
@@ -1237,7 +1250,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 label_sql: "COALESCE(t.title, 'Chat')",
                 preview_sql: "CAST(t.message_count AS TEXT) || ' messages'",
                 id_sql: "t.id",
-                extra_where: None,
+                extra_where: Some("AND t.deleted_at IS NULL"),
                 use_date_filter: true,
             }),
             continuous_agg: None,
@@ -1278,8 +1291,9 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 author_sql: None,
                 timestamp_sql: "t.updated_at",
                 // `app_pages` now holds two kinds of document (migration 0081).
-                // This descriptor owns only the ones a person wrote.
-                embed_where: Some("AND t.kind = 'page'"),
+                // This descriptor owns only the ones a person wrote — and not
+                // the ones they trashed (migration 0030).
+                embed_where: Some("AND t.kind = 'page' AND t.deleted_at IS NULL"),
             }),
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -1289,7 +1303,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 label_sql: "COALESCE(t.icon || ' ', '') || COALESCE(t.title, 'Untitled')",
                 preview_sql: "NULL",
                 id_sql: "t.id",
-                extra_where: Some("AND t.kind = 'page'"),
+                extra_where: Some("AND t.kind = 'page' AND t.deleted_at IS NULL"),
                 use_date_filter: true,
             }),
             continuous_agg: None,
@@ -1334,7 +1348,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 preview_sql: "SUBSTR(COALESCE(t.content, ''), 1, 200)",
                 author_sql: None,
                 timestamp_sql: "t.updated_at",
-                embed_where: Some("AND t.kind = 'article'"),
+                embed_where: Some("AND t.kind = 'article' AND t.deleted_at IS NULL"),
             }),
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -1644,7 +1658,7 @@ mod tests {
     /// nightly cron reported success throughout. A day assembled from a hole is a
     /// day the LLM then writes a confident account of.
     ///
-    /// The template lives in `api::wiki::get_day_sources`. This test is the only
+    /// The template lives in `api::wiki_streams::get_day_sources`. This test is the only
     /// thing standing between that convention and the next person who writes a
     /// filter that reads perfectly well in isolation.
     /// `is_activation_signal` sat on all 22 ontologies, read by nobody, while the

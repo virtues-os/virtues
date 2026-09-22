@@ -1,6 +1,6 @@
 //! The magnet: a container that fills itself.
 //!
-//! A notebook is a folder — you drag material in. Turn `auto_add_materials` on
+//! A project is a folder — you drag material in. Turn `auto_add_materials` on
 //! and it becomes a magnet: material that resembles what is already inside
 //! attaches on its own. This is the whole of it:
 //!
@@ -12,7 +12,7 @@
 //!
 //! ## Why not just cosine against the centroid
 //!
-//! Because it does not work, and the first run proved it. A notebook seeded
+//! Because it does not work, and the first run proved it. A project seeded
 //! "Buying a house in Bouldin Creek" scored its one true piece of evidence —
 //! *"That Bouldin Creek house on S 3rd just came back on the market"* — at
 //! 0.513, while an unrelated design meeting sat at 0.450. The right answer
@@ -46,9 +46,9 @@
 //!
 //! ## Why there is a seed
 //!
-//! An empty notebook has no members to average, so a pure member-mean magnet
+//! An empty project has no members to average, so a pure member-mean magnet
 //! can never start — it needs material to attract material. The seed breaks
-//! that circle: a notebook's name and instructions are *already* a statement of
+//! that circle: a project's name and instructions are *already* a statement of
 //! what belongs. "My prayer life" is a usable query on day one, before it holds
 //! a single member. The members then pull the centroid toward what the
 //! container has actually turned out to be about, which is the part the user
@@ -56,17 +56,17 @@
 //!
 //! ## The self-attachment trap
 //!
-//! A notebook's own chat messages are embedded, and they are *by construction*
+//! A project's own chat messages are embedded, and they are *by construction*
 //! the nearest neighbours of its own centroid — you have been talking about
-//! exactly this subject in exactly this notebook. Unguarded, the magnet
-//! attaches the notebook's conversation back into the notebook, forever, and
+//! exactly this subject in exactly this project. Unguarded, the magnet
+//! attaches the project's conversation back into the project, forever, and
 //! the centroid drifts toward its own echo. `EXCLUDE_OWN_CHAT` is not a nicety.
 //!
 //! ## What it attaches
 //!
 //! Routes, of the form `/record/{ontology}/{record_id}` — the same route the
 //! model cites with. A member and a citation are the same primitive: chat
-//! scoped to a notebook cites its evidence by emitting a member's route. Nothing
+//! scoped to a project cites its evidence by emitting a member's route. Nothing
 //! is attached that cannot be opened.
 //!
 //! ## Reversibility
@@ -107,8 +107,8 @@ const RECALL: i64 = 60;
 /// see and delete, not one that takes an afternoon.
 const MAX_ATTACH: usize = 50;
 
-/// Which container the magnet is running for. Today that is only notebooks
-/// (`NOTEBOOK`); the indirection stays so a second container could reuse the
+/// Which container the magnet is running for. Today that is only projects
+/// (`PROJECT`); the indirection stays so a second container could reuse the
 /// same machinery against a different table without touching the magnet.
 #[derive(Debug, Clone, Copy)]
 pub struct Target {
@@ -131,10 +131,10 @@ pub struct Target {
     pub exclude_own_chat: bool,
 }
 
-pub const NOTEBOOK: Target = Target {
-    table: "app_notebooks",
-    members_table: "app_notebook_items",
-    owner_col: "notebook_id",
+pub const PROJECT: Target = Target {
+    table: "app_projects",
+    members_table: "app_project_items",
+    owner_col: "project_id",
     seed_sql: "name || COALESCE(E'\n' || instructions, '')",
     claim_sql: "name",
     exclude_own_chat: true,
@@ -145,7 +145,7 @@ pub const NOTEBOOK: Target = Target {
 ///
 /// Members that carry no embedding (a pinned person, a place) are silently
 /// skipped rather than faked. A place has no prose; there is nothing to average
-/// in. It still belongs to the notebook — it simply does not steer the magnet.
+/// in. It still belongs to the project — it simply does not steer the magnet.
 pub async fn recompute_centroid(pool: &PgPool, t: Target, owner_id: &str) -> Result<bool> {
     let seed: Option<String> = sqlx::query_scalar(&format!(
         "SELECT {} FROM {} WHERE id = $1",
@@ -279,7 +279,7 @@ pub async fn attach(pool: &PgPool, t: Target, owner_id: &str) -> Result<u32> {
     // rotted, and the `search()`-clamped-to-20 starvation lived here too).
     let engine = SemanticSearchEngine::new(std::sync::Arc::new(pool.clone()));
 
-    // Exclude the container's existing members and (for a notebook) its own chat
+    // Exclude the container's existing members and (for a project) its own chat
     // BEFORE recall. These are the nearest neighbours of the container's own
     // centroid, so excluding them post-recall would let them consume the RECALL
     // budget and starve fresh candidates — worse the more the container holds.
@@ -292,7 +292,7 @@ pub async fn attach(pool: &PgPool, t: Target, owner_id: &str) -> Result<u32> {
     .await?;
     if t.exclude_own_chat {
         let own: Vec<String> = sqlx::query_scalar(
-            "SELECT '/record/app_chat/' || c.id FROM app_chats c WHERE c.notebook_id = $1",
+            "SELECT '/record/app_chat/' || c.id FROM app_chats c WHERE c.project_id = $1",
         )
         .bind(owner_id)
         .fetch_all(pool)
@@ -387,11 +387,11 @@ pub async fn attach(pool: &PgPool, t: Target, owner_id: &str) -> Result<u32> {
     let mut attached = 0u32;
     for (c, margin) in admitted {
         let insert = sqlx::query(
-            "INSERT INTO app_notebook_items (notebook_id, url, role, added_by, sort_order)
+            "INSERT INTO app_project_items (project_id, url, role, added_by, sort_order)
              VALUES ($1, $2, 'library', 'magnet',
                      (SELECT COALESCE(MAX(sort_order), -1) + 1
-                        FROM app_notebook_items WHERE notebook_id = $1))
-             ON CONFLICT (notebook_id, url) DO NOTHING",
+                        FROM app_project_items WHERE project_id = $1))
+             ON CONFLICT (project_id, url) DO NOTHING",
         )
         .bind(owner_id)
         .bind(&c.url);

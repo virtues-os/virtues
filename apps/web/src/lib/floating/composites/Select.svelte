@@ -201,7 +201,7 @@
 	}
 
 	.select-option.highlighted {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: var(--hover-bg);
 	}
 
 	.select-option.selected {

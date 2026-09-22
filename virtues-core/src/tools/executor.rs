@@ -53,10 +53,10 @@ pub struct ToolContext {
     pub page_id: Option<String>,
     /// User ID
     pub user_id: Option<String>,
-    /// Notebook ID
-    pub notebook_id: Option<String>,
-    /// How the notebook shapes retrieval: Weighted (Open chat) or Exclusive
-    /// (Scoped/grounded chat). Meaningless without a notebook_id.
+    /// Project ID
+    pub project_id: Option<String>,
+    /// How the project shapes retrieval: Weighted (Open chat) or Exclusive
+    /// (Scoped/grounded chat). Meaningless without a project_id.
     pub scope_mode: crate::search::ScopeMode,
     /// Chat ID (for permission checking)
     pub chat_id: Option<String>,
@@ -85,7 +85,7 @@ impl Default for ToolContext {
         Self {
             page_id: None,
             user_id: None,
-            notebook_id: None,
+            project_id: None,
             scope_mode: crate::search::ScopeMode::default(),
             chat_id: None,
             applet_id: None,
@@ -393,7 +393,7 @@ impl ToolExecutor {
             "web_search" => self.web_search.execute(arguments).await,
             "semantic_search" => {
                 self.semantic_search
-                    .execute(arguments, context.notebook_id.as_deref(), context.scope_mode)
+                    .execute(arguments, context.project_id.as_deref(), context.scope_mode)
                     .await
             }
             "sql_query" => self.sql_query.execute(arguments).await,
@@ -573,7 +573,7 @@ impl ToolExecutor {
         // talking to. Parse via THE ref parser (it strips ?page=N viewer
         // params a stored route carries); the local rsplit this replaces kept
         // the query string, so `/drive/file_abc?page=3` — the exact form the
-        // notebook block hands the model — refused a file that exists. Bare
+        // project block hands the model — refused a file that exists. Bare
         // ids pass through, minus any params the model copied along.
         let file_id = crate::api::refs::split_ref(raw)
             .map(|(_, id)| id)
@@ -1226,20 +1226,24 @@ impl ToolExecutor {
                 }))),
                 Err(e) => Ok(ToolResult::error(format!("Failed to fetch organization: {}", e))),
             }
-        } else if let Some(notebook_id) = item_url.strip_prefix("/notebook/") {
-            match crate::api::notebooks::get_notebook(pool, notebook_id).await {
+        } else if let Some(project_id) = item_url
+            .strip_prefix("/project/")
+            // Legacy spelling — old messages still cite `/notebook/{id}`.
+            .or_else(|| item_url.strip_prefix("/notebook/"))
+        {
+            match crate::api::projects::get_project(pool, project_id).await {
                 Ok(detail) => {
                     let members: Vec<&str> =
                         detail.items.iter().map(|i| i.url.as_str()).collect();
                     Ok(ToolResult::success(serde_json::json!({
-                        "type": "notebook",
-                        "id": detail.notebook.id,
-                        "name": detail.notebook.name,
-                        "status": detail.notebook.current_status,
+                        "type": "project",
+                        "id": detail.project.id,
+                        "name": detail.project.name,
+                        "status": detail.project.current_status,
                         "members": members,
                     })))
                 }
-                Err(e) => Ok(ToolResult::error(format!("Failed to fetch notebook: {}", e))),
+                Err(e) => Ok(ToolResult::error(format!("Failed to fetch project: {}", e))),
             }
         } else if item_url.starts_with("http://") || item_url.starts_with("https://") {
             // External URL — content lives outside Virtues. Return guidance to use web tools.
@@ -1250,7 +1254,7 @@ impl ToolExecutor {
             })))
         } else {
             Ok(ToolResult::error(format!(
-                "Unsupported item URL type: {}. Supported: /page/, /chat/, /notebook/, /person/, /place/, /org/, or https://",
+                "Unsupported item URL type: {}. Supported: /page/, /chat/, /project/, /person/, /place/, /org/, or https://",
                 item_url
             )))
         }
@@ -1307,7 +1311,7 @@ mod live_read_asset {
 
         let mut refused: Vec<String> = Vec::new();
         for id in &ids {
-            // A ref URL, the form the model reads in the notebook block — the
+            // A ref URL, the form the model reads in the project block — the
             // bare-id path is the same call with the prefix stripped.
             let out = ex
                 .execute_read_asset(serde_json::json!({ "file_id": format!("/drive/{id}") }))

@@ -85,6 +85,51 @@ BEGIN
     UPDATE wiki_days SET date = date + park_days;
     UPDATE wiki_days SET date = date - park_days + shift_days;
 
+    -- `wiki_chapters` moves row by row, both columns together, in an order
+    -- that never asks two chapters to share a day.
+    --
+    -- The table carries an EXCLUDE constraint (`wiki_chapters_no_overlap`,
+    -- migration 0015) over `daterange(started_at, coalesce(ended_at,
+    -- 'infinity'))`, and the generic loop below moves ONE COLUMN PER
+    -- STATEMENT. Moving `ended_at` alone stretches every chapter forward over
+    -- the start of the next one, and the constraint -- checked per row, never
+    -- deferred -- aborts the whole block. That is what happened here: the
+    -- re-anchor ran hourly until the seed grew a second chapter, then failed
+    -- every hour from 2026-09-18 while the demo's instrumented day sat still.
+    --
+    -- The park trick used for `wiki_days` above CANNOT work here. An open
+    -- chapter -- the one you are living in, `ended_at IS NULL` -- covers
+    -- `[started_at, infinity)`, and nothing can be parked clear of infinity;
+    -- parking the others simply collides with it out in the parked range.
+    --
+    -- Order solves it instead. Every chapter moves by the same amount, so the
+    -- gaps between them are preserved; only the intermediate states can
+    -- collide. Moving forward, take the LAST chapter first -- it grows into
+    -- empty time ahead, and the open one merely shrinks from the left. Moving
+    -- backward, take the first. Either way a chapter only ever moves into
+    -- space its neighbour has already left.
+    FOR r IN
+        SELECT id FROM wiki_chapters
+        ORDER BY started_at DESC
+    LOOP
+        CONTINUE WHEN shift_days < 0;
+        UPDATE wiki_chapters
+           SET started_at = started_at + shift_days,
+               ended_at   = ended_at   + shift_days
+         WHERE id = r.id;
+    END LOOP;
+
+    FOR r IN
+        SELECT id FROM wiki_chapters
+        ORDER BY started_at ASC
+    LOOP
+        CONTINUE WHEN shift_days > 0;
+        UPDATE wiki_chapters
+           SET started_at = started_at + shift_days,
+               ended_at   = ended_at   + shift_days
+         WHERE id = r.id;
+    END LOOP;
+
     FOR r IN
         SELECT c.table_name, c.column_name, c.data_type
         FROM information_schema.columns c
@@ -111,6 +156,9 @@ BEGIN
           AND NOT (c.table_name = 'wiki_people' AND c.column_name = 'birthday')
           -- Already handled above, and it must not be moved twice.
           AND NOT (c.table_name = 'wiki_days' AND c.column_name = 'date')
+          -- Handled above, both columns at once, and it must not move twice.
+          AND NOT (c.table_name = 'wiki_chapters'
+                   AND c.column_name IN ('started_at', 'ended_at'))
         ORDER BY c.table_name, c.column_name
     LOOP
         IF r.data_type = 'date' THEN

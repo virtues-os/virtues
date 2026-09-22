@@ -81,7 +81,7 @@
 			await setArticleMaintenance(subjectType, subjectId, next ? 'auto' : 'never');
 		} catch (e) {
 			maintained = !next;
-			failed = e instanceof Error ? e.message : 'Could not change that';
+			failed = e instanceof Error ? e.message : "Your server couldn't change that. Try again.";
 		}
 	}
 
@@ -121,8 +121,8 @@
 			     longer means "you edited it once": editing an article does not
 			     take the record's pen away, so this line must not imply it. -->
 			{maintained
-				? 'Written and kept by the record'
-				: 'Written from the record — not kept updated; new evidence arrives as notes'}{revisedLabel
+				? 'The record wrote this and keeps it current'
+				: 'The record wrote this and no longer updates it. New evidence arrives as notes'}{revisedLabel
 				? ` · revised ${revisedLabel}`
 				: ''}
 			{#if canWrite}
@@ -148,8 +148,8 @@
 		</p>
 		{#if maintained && canWrite}
 			<p class="regime-hint">
-				Anything you write here stays as you wrote it — the record edits around your
-				sentences, and every change it makes is listed in History, where you can put any
+				Anything you write here stays as you wrote it - the record edits around your
+				sentences, and History lists every change it makes, listed in History, where you can put any
 				version back.
 			</p>
 		{/if}

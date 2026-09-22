@@ -1,5 +1,5 @@
 name = "Daily Readings"
-description = "Keeps the coming fortnight of daily readings on the box, so the morning does not wait on a website."
+description = "Keeps the next two weeks of readings on your server, so your morning doesn't wait on a website."
 owner = "user"
 triggers = ["cron", "manual"]
 

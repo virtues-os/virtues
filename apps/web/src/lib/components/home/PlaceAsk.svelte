@@ -62,7 +62,7 @@
 			if (!ok) throw new Error("rejected");
 			skip();
 		} catch {
-			error = "That didn't save. Your server may be offline — try again.";
+			error = "That didn't save. Your server may be offline. Try again.";
 		} finally {
 			saving = false;
 		}
