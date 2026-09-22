@@ -490,7 +490,7 @@ export interface WikiArticleApi {
 	subject_type: string;
 	subject_id: string;
 	page_id: string;
-	/** always | auto | never — see `Maintenance`. */
+	/** auto | never — see `Maintenance`. */
 	maintenance: Maintenance;
 }
 
@@ -772,7 +772,15 @@ export async function revertArticle(
 }
 
 /** How an article is maintained: always, auto, or never. */
-export type Maintenance = 'always' | 'auto' | 'never';
+/**
+ * How the record keeps an article: `auto` (the default — revised when the
+ * evidence beneath it moves, at most monthly, never within six hours of your
+ * own edit) or `never`.
+ *
+ * There was an `always` until 2026-09-22. It behaved identically to `auto`,
+ * because the only reader tests `<> 'never'` — see migration 0034.
+ */
+export type Maintenance = 'auto' | 'never';
 
 export async function setArticleMaintenance(
 	subjectType: string,
