@@ -40,11 +40,6 @@ import {
 } from "$lib/codemirror/extensions/review-marks";
 import { aiSession } from "./aiSession.svelte";
 import { aiCaret, aiTrail, aiTelegraph, aiPresenceClear } from "./aiPresence";
-import {
-	getSelectedModel,
-	getDefaultModel,
-	getInitializationPromise,
-} from "$lib/stores/models.svelte";
 
 const CONTEXT_CHARS = 1200;
 const FLUSH_MS = 30;
@@ -227,16 +222,21 @@ class AiCursorSession {
 	}
 
 	async run(): Promise<void> {
-		// The catalog is for DISPLAY here too: the box resolves the model when
-		// we send none (see `api/model_choice.rs`), so an editor that could not
-		// reach the catalog still edits. This used to hard-fail with "no model
-		// available" — the pages editor never triggers the fetch itself, so it
-		// was one flaky request away from that on every inline edit.
-		await getInitializationPromise();
-		if (this.aborted) return this.cleanup();
-
-		const model = getSelectedModel()?.id ?? getDefaultModel()?.id;
-
+		// This editor has no model picker, so it names no model: the box
+		// resolves the slot, which means the owner's pin in Settings is what
+		// answers here (`api/model_choice.rs`).
+		//
+		// It used to send `getSelectedModel()?.id ?? getDefaultModel()?.id`,
+		// and both halves were wrong. The first is the CHAT composer's display
+		// value, which is not a choice anyone made about a page. The second is
+		// the cloud default, and sending it explicitly reads to the box as a
+		// deliberate per-turn pin — it OUTRANKED the model the person pinned in
+		// Settings, silently, on a surface that never offered them the choice.
+		// Settings promises "pick a model to pin it, we won't change it"; this
+		// was the one path that changed it.
+		//
+		// It also used to hard-fail with "no model available" when the catalog
+		// had not loaded, which the pages editor never triggers itself.
 		aiSession.set("thinking");
 
 		const { state } = this.view;
@@ -282,7 +282,6 @@ class AiCursorSession {
 			const pageTitle = this.pageTitle?.trim() || undefined;
 			const stream = streamCompletion(
 				{
-					...(model && { model }),
 					intent: this.intent,
 					instruction: this.instruction,
 					selection,
@@ -371,7 +370,7 @@ class AiCursorSession {
 	/** How to get rid of what the AI just did, phrased for what it actually did. */
 	private recoveryHint(): string {
 		return this.didWrap
-			? "The suggestion is marked in the page — reject it to restore your text."
+			? "The suggestion is marked in the page. Reject it to restore your text."
 			: "Press ⌘Z to undo.";
 	}
 
