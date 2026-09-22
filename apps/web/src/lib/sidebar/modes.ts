@@ -15,7 +15,24 @@
 export interface ModeRow {
 	id: string;
 	label: string;
+	/**
+	 * A Remix name. NOT rendered by the mode panel — kept because the rows are
+	 * also the one written list of what each room contains, and a few other
+	 * surfaces read it.
+	 */
 	icon: string;
+	/**
+	 * An `AtlasIcon` glyph — the shell's own set, the one the rail is drawn in.
+	 * The panel renders THIS and never `icon`: a column of Remix glyphs hanging
+	 * off an Atlas rail tile is two icon languages in one sidebar, which is how
+	 * the panel ended up with no glyphs at all.
+	 *
+	 * Omitted means no glyph, and the label carries the row alone. Settings,
+	 * Developer, Sources and Drive are all still in that state; each needs its
+	 * glyphs drawn into `AtlasIcon` before it can be turned on, and until then
+	 * they render exactly as they always have.
+	 */
+	glyph?: string;
 	/** Route opened when the row is clicked. */
 	href: string;
 	/**
@@ -174,12 +191,13 @@ export const WIKI_MODE: SidebarMode = {
 	rows: [
 		// Not `/day/<date>`: `/day` resolves to the current day on its own, and a
 		// date baked in here would be stale by morning.
-		{ id: 'today', label: 'Today', icon: 'ri:sun-line', href: '/day', group: 'Time' },
-		{ id: 'days', label: 'Days', icon: 'ri:calendar-line', href: '/wiki/days', group: 'Time' },
+		{ id: 'today', label: 'Today', icon: 'ri:sun-line', glyph: 'day', href: '/day', group: 'Time' },
+		{ id: 'days', label: 'Days', icon: 'ri:calendar-line', glyph: 'calendar', href: '/wiki/days', group: 'Time' },
 		{
 			id: 'years',
 			label: 'Years',
 			icon: 'ri:calendar-2-line',
+			glyph: 'years',
 			href: '/wiki/years',
 			group: 'Time',
 		},
@@ -190,6 +208,7 @@ export const WIKI_MODE: SidebarMode = {
 			id: 'chapters',
 			label: 'Chapters',
 			icon: 'ri:contacts-book-2-line',
+			glyph: 'chapters',
 			href: '/wiki/chapters',
 			group: 'Time',
 		},
@@ -200,6 +219,7 @@ export const WIKI_MODE: SidebarMode = {
 			id: 'lifeline',
 			label: 'Lifeline',
 			icon: 'ri:pulse-line',
+			glyph: 'lifeline',
 			href: '/wiki/lifeline',
 			group: 'Time',
 		},
@@ -209,14 +229,23 @@ export const WIKI_MODE: SidebarMode = {
 			// not the name of the subject, and the room is the owner's own page.
 			label: 'You',
 			icon: 'ri:user-star-line',
+			glyph: 'identity',
 			href: '/wiki/identity',
 			group: 'Subjects',
 		},
-		{ id: 'people', label: 'People', icon: 'ri:user-line', href: '/wiki/people', group: 'Subjects' },
+		{
+			id: 'people',
+			label: 'People',
+			icon: 'ri:user-line',
+			glyph: 'people',
+			href: '/wiki/people',
+			group: 'Subjects',
+		},
 		{
 			id: 'places',
 			label: 'Places',
 			icon: 'ri:map-pin-line',
+			glyph: 'places',
 			href: '/wiki/places',
 			group: 'Subjects',
 		},
@@ -226,6 +255,7 @@ export const WIKI_MODE: SidebarMode = {
 			id: 'orgs',
 			label: 'Organizations',
 			icon: 'ri:building-line',
+			glyph: 'organizations',
 			href: '/wiki/orgs',
 			group: 'Subjects',
 		},
@@ -238,6 +268,7 @@ export const WIKI_MODE: SidebarMode = {
 			id: 'stories',
 			label: 'Stories',
 			icon: 'ri:book-2-line',
+			glyph: 'stories',
 			href: '/wiki/stories',
 			group: 'Subjects',
 		},
@@ -245,7 +276,13 @@ export const WIKI_MODE: SidebarMode = {
 		// what that consent produced — without it the record edits its own prose
 		// in a room nobody visits. No heading: it is about the wiki, not a way
 		// into it.
-		{ id: 'history', label: 'History', icon: 'ri:history-line', href: '/wiki/history' },
+		{
+			id: 'history',
+			label: 'History',
+			icon: 'ri:history-line',
+			glyph: 'history',
+			href: '/wiki/history',
+		},
 	],
 };
 
