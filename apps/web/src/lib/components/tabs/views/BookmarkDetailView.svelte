@@ -104,7 +104,7 @@
 	const stateNote = $derived.by(() => {
 		switch (bookmark?.state) {
 			case 'held':
-				return "Not read yet - the pass that reads images isn't built.";
+				return "Not read yet. Your server can't read this file - it reads pages and images so far.";
 			case 'queued':
 				return 'Not read yet. The next sweep will pick it up.';
 			case 'failed':

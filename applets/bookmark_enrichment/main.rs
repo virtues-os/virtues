@@ -42,13 +42,13 @@ async fn main() -> Result<()> {
     if summary.remaining > 0 {
         parts.push(format!("{} awaiting enrichment", summary.remaining));
     }
-    // Reported apart from `remaining` on purpose: these are held back until the
-    // pixel pass exists, so folding them into the backlog would show a number
-    // that cannot move and read as a stall.
-    if summary.awaiting_pixels > 0 {
+    // Reported apart from `remaining` on purpose: no pass reads these (video,
+    // audio, a file that left Drive), so folding them into the backlog would
+    // show a number that cannot move and read as a stall.
+    if summary.unreadable_assets > 0 {
         parts.push(format!(
-            "{} held for the image pass",
-            summary.awaiting_pixels
+            "{} held: files no pass reads yet",
+            summary.unreadable_assets
         ));
     }
     if summary.hit_daily_cap {
