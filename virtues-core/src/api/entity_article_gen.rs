@@ -467,8 +467,9 @@ impl LinkAllowlist {
 /// so `[Maya](/person/wrong_id)` becomes `Maya` rather than disappearing.
 ///
 ///   1. The href was never offered.
-///   2. The href was offered, but under a different name. This is the observed
-///      failure: the right words over someone else's id.
+///   2. The href was offered, but under a name the label does not fit. This is
+///      the observed failure: the right words over someone else's id. The test
+///      is `wiki_editor::label_fits`, shared with the revision path.
 ///   3. The href is the article's own subject. A page does not link itself.
 ///
 /// A day link is checked for membership only. Its label is a rendering of the
@@ -493,10 +494,13 @@ fn sanitize_links(article: &str, allowed: &LinkAllowlist, self_href: &str) -> (S
             } else if href.starts_with("/day/") {
                 allowed.days.contains(href)
             } else {
-                allowed
-                    .entities
-                    .get(href)
-                    .is_some_and(|name| name.trim().eq_ignore_ascii_case(label.trim()))
+                // Same comparison the editor's `check_links` makes on the
+                // revision path, so the two halves of the wiki cannot drift
+                // into disagreeing about which links are honest. It is
+                // deliberately generous: "Soph" fits "Soph Auciello".
+                allowed.entities.get(href).is_some_and(|name| {
+                    crate::api::wiki_editor::label_fits(label, std::slice::from_ref(name))
+                })
             };
             if keep {
                 c[0].to_string()
