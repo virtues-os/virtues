@@ -63,9 +63,11 @@
 			     actually is rather than re-sorting it, so a list that breaks the
 			     rule shows the repeat instead of hiding it.
 
-			     Falling OUT of a group (History at the foot of the wiki) draws a
-			     rule instead of a heading: the row is set apart without being
-			     given a category of one. -->
+			     A mode is either all grouped (Wiki) or all ungrouped (the rest),
+			     so a row that falls OUT of a group renders nothing special. The
+			     one that used to — History, under a rule at the foot — is gone;
+			     if a trailing loose row comes back it needs a separator again,
+			     and this is where it goes. -->
 			{#if row.group !== mode.rows[i - 1]?.group}
 				{#if row.group}
 					<!-- A div, NOT an h3: `app.css` makes every h1-h6 in the app
@@ -74,8 +76,6 @@
 					     (Pinned, Projects, Today, Recent) are divs for the same
 					     reason, and this matches their metrics exactly. -->
 					<div class="mode-group" class:first={i === 0}>{row.group}</div>
-				{:else if i > 0}
-					<hr class="mode-rule" />
 				{/if}
 			{/if}
 			<button
@@ -141,11 +141,6 @@
 		margin-top: 2px;
 	}
 
-	.mode-rule {
-		margin: 10px 12px 6px;
-		border: none;
-		border-top: 1px solid var(--color-border-subtle);
-	}
 
 	.mode-row {
 		display: flex;
