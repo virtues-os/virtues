@@ -12,6 +12,8 @@
  * Entered and left on purpose, it's well-defined no matter what the panes show.
  */
 
+import { getLocalDateSlug } from '$lib/utils/dateUtils';
+
 export interface ModeRow {
 	id: string;
 	label: string;
@@ -35,6 +37,14 @@ export interface ModeRow {
 	glyph?: string;
 	/** Route opened when the row is clicked. */
 	href: string;
+	/**
+	 * Overrides the active mark's default rule, which is "the route is `href`
+	 * or sits under it". Needed by exactly one kind of row: a door whose href
+	 * RESOLVES to somewhere else. `/day` lands on today, and under the default
+	 * rule the row then stayed lit on every other day of your life — a row
+	 * labelled Today, highlighted, while you read September 2nd.
+	 */
+	activeWhen?: (route: string) => boolean;
 	/**
 	 * Heading this row sits under. Rows carrying the same group must be
 	 * ADJACENT — the panel emits a heading wherever the group changes, so a
@@ -195,9 +205,20 @@ export const WIKI_MODE: SidebarMode = {
 	id: 'wiki',
 	title: 'Wiki',
 	rows: [
-		// Not `/day/<date>`: `/day` resolves to the current day on its own, and a
-		// date baked in here would be stale by morning.
-		{ id: 'today', label: 'Today', icon: 'ri:sun-line', glyph: 'day', href: '/day', group: 'Time' },
+		{
+			id: 'today',
+			label: 'Today',
+			icon: 'ri:sun-line',
+			glyph: 'day',
+			// Not `/day/<date>`: `/day` resolves to the current day on its own,
+			// and a date baked in here would be stale by morning.
+			href: '/day',
+			// Which is also why the mark needs its own rule — the route you end
+			// up on is dated, and only TODAY's date is this row.
+			activeWhen: (route) =>
+				route === '/day' || route === `/day/day_${getLocalDateSlug(new Date())}`,
+			group: 'Time',
+		},
 		{ id: 'days', label: 'Days', icon: 'ri:calendar-line', glyph: 'calendar', href: '/wiki/days', group: 'Time' },
 		{
 			id: 'years',

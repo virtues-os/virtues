@@ -40,7 +40,11 @@
 		if (!route) return null;
 		let best: string | null = null;
 		for (const row of mode.rows) {
-			const hit = route === row.href || route.startsWith(row.href + '/');
+			// A row may override the prefix rule; Today does, because `/day`
+			// resolves to a dated route and only today's is this row.
+			const hit = row.activeWhen
+				? row.activeWhen(route)
+				: route === row.href || route.startsWith(row.href + '/');
 			if (hit && (best === null || row.href.length > best.length)) best = row.href;
 		}
 		return best;
