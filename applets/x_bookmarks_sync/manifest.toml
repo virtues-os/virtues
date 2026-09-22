@@ -1,0 +1,12 @@
+name = "X Bookmarks"
+description = "Files the posts you bookmark on X with your bookmarks."
+owner = "system"
+command = ["x_bookmarks_sync"]
+triggers = ["cron", "manual"]
+# Offset from GitHub stars' 15/30 so two bookmark syncs don't wake together.
+schedule = "0 20/30 * * * *"
+per_credential = true
+source = { id = "x" }
+
+# Ontologies this applet writes — drives "what would fill this stream".
+writes = ["content_bookmark"]
