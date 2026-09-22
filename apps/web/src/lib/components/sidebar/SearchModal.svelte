@@ -343,6 +343,32 @@
 		}
 	}
 
+	/**
+	 * Where a content hit opens, and what to call it.
+	 *
+	 * Most indexed records have no view of their own, so they open in the raw
+	 * record view. The ones that DO have a room must go there instead: a
+	 * bookmark found here used to land on the database row - `Enrichment
+	 * Attempts: 0` beside the note - because the detail page was built and only
+	 * the room's own clicks were repointed at it.
+	 *
+	 * The label matters for the same reason. An untitled hit fell back to the
+	 * ontology name, so the tab was called "content_bookmark".
+	 */
+	function contentTarget(
+		ontology: string,
+		recordId: string,
+		title?: string | null,
+	): { route: string; label: string } {
+		if (ontology === "content_bookmark") {
+			return { route: `/bookmark/${recordId}`, label: title || "Bookmark" };
+		}
+		return {
+			route: `/record/${ontology}/${recordId}`,
+			label: title || ontology,
+		};
+	}
+
 	function selectCurrentItem() {
 		const row = orderedRows[selectedIndex];
 		if (!row) return;
@@ -374,13 +400,16 @@
 				});
 				onClose();
 				break;
-			case "content":
-				windowShellStore.openTabFromRoute(
-					`/record/${row.item.ontology}/${row.item.record_id}`,
-					{ label: row.item.title || row.item.ontology },
+			case "content": {
+				const target = contentTarget(
+					row.item.ontology,
+					row.item.record_id,
+					row.item.title,
 				);
+				windowShellStore.openTabFromRoute(target.route, { label: target.label });
 				onClose();
 				break;
+			}
 		}
 	}
 
@@ -695,10 +724,14 @@
 								class:selected={selectedIndex === index}
 								data-result-index={index}
 								onclick={() => {
-									windowShellStore.openTabFromRoute(
-										`/record/${hit.ontology}/${hit.record_id}`,
-										{ label: hit.title || hit.ontology },
+									const target = contentTarget(
+										hit.ontology,
+										hit.record_id,
+										hit.title,
 									);
+									windowShellStore.openTabFromRoute(target.route, {
+										label: target.label,
+									});
 									onClose();
 								}}
 								onmouseenter={() => (selectedIndex = index)}
