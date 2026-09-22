@@ -19,6 +19,14 @@
 //!     history with no query path is retention risk, not history — and was
 //!     dropped 2026-08-28.
 //!
+//!   - Chats, pages and projects in the trash past `TRASH_RETENTION_DAYS`
+//!     are purged through `api::trash::purge_expired`, which is the same
+//!     hard delete the Recently deleted room's "Delete forever" performs —
+//!     index rows and membership sweep included.
+//!
+//!   - `app_visits` rows past `VISIT_RETENTION_DAYS` are pruned; frecency
+//!     never reads further back than that anyway.
+//!
 //! No job queue, no worker pool, no PID file — one tokio task spawned by
 //! `server::run`. Stops when the daemon stops.
 
@@ -60,7 +68,7 @@ pub fn spawn(pool: PgPool) {
         loop {
             tick.tick().await;
             match run_once(&pool).await {
-                Ok(Counts { pair_tokens: 0, sudo_requests: 0, archived: 0, telemetry: 0 }) => {
+                Ok(Counts { pair_tokens: 0, sudo_requests: 0, archived: 0, telemetry: 0, trash: 0, visits: 0 }) => {
                     // quiet
                 }
                 Ok(c) => tracing::info!(
@@ -68,6 +76,8 @@ pub fn spawn(pool: PgPool) {
                     sudo_requests = c.sudo_requests,
                     archived = c.archived,
                     telemetry = c.telemetry,
+                    trash = c.trash,
+                    visits = c.visits,
                     "sweeper: cleaned"
                 ),
                 Err(e) => tracing::warn!("sweeper tick failed: {e:#}"),
@@ -82,6 +92,8 @@ struct Counts {
     sudo_requests: u64,
     archived: u64,
     telemetry: u64,
+    trash: u64,
+    visits: u64,
 }
 
 async fn run_once(pool: &PgPool) -> Result<Counts, sqlx::Error> {
@@ -134,10 +146,30 @@ async fn run_once(pool: &PgPool) -> Result<Counts, sqlx::Error> {
     .await?
     .rows_affected();
 
+    // Its own error type and its own log line: a failed purge must not take
+    // the auth sweep down with it, and must not pass as "0 purged" either.
+    let trash = match crate::api::trash::purge_expired(pool).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!("sweeper: trash purge failed: {e:#}");
+            0
+        }
+    };
+
+    let visits = match crate::api::visits::prune(pool).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!("sweeper: visits prune failed: {e:#}");
+            0
+        }
+    };
+
     Ok(Counts {
         pair_tokens,
         sudo_requests,
         archived,
         telemetry,
+        trash,
+        visits,
     })
 }

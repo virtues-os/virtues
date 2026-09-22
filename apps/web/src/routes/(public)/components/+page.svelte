@@ -170,7 +170,7 @@
 		},
 		{
 			name: "Category hues",
-			blurb: "The fixed palette used to color user-chosen things (notebooks, sources). Not theme-semantic — they are the same in every theme.",
+			blurb: "The fixed palette used to color user-chosen things (projects, sources). Not theme-semantic — they are the same in every theme.",
 			tokens: [
 				"cat-purple", "cat-purple-light", "cat-indigo", "cat-violet",
 				"cat-pink", "cat-rose", "cat-orange", "cat-yellow",

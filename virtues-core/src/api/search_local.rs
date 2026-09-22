@@ -11,7 +11,7 @@
 //! the user is about to discard by typing another character. Committing to a
 //! query (Enter into full search) is where that pass belongs.
 //!
-//! Objects (a page, a chat, a notebook — the things you *navigate to*) are not
+//! Objects (a page, a chat, a project — the things you *navigate to*) are not
 //! here either: the client already holds those in its stores and matches them
 //! locally with zero latency. This endpoint is only the content half, and the
 //! palette groups the two rather than interleaving them — their scores are on
@@ -82,7 +82,7 @@ pub async fn search_local(
     let query_vector = pgvector::Vector::from(query_vec);
     let terms = crate::search::bm25::tokens(&query);
 
-    // No NOTEBOOK scoping: that is the notebook's own surface, not this one.
+    // No PROJECT scoping: that is the project's own surface, not this one.
     // Ontology scoping is different — it is the caller saying which room they
     // are standing in, and an empty list means the whole house.
     let filters = SearchFilters {

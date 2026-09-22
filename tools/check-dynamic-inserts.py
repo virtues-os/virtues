@@ -36,7 +36,7 @@ def defaulted_of(table, url):
 
 # ── Phase 2: the model-facing catalog must not advertise phantom columns ──
 #
-# `sql_query.rs`'s `key_columns` are what the agent is TOLD it can query. The
+# The catalog's `key_columns` are what the agent is TOLD it can query. The
 # audit of 2026-08-28 found eight advertised columns that no writer had ever
 # populated (`ref_count`, `url`, `event_type`, `credit_limit`, …): the model
 # was being steered into queries that select real-but-forever-NULL columns —
@@ -51,6 +51,9 @@ METADATA = re.compile(
     r'key_columns:\s*&\[(?P<cols>.*?)\]',
     re.S,
 )
+# `#[cfg(test)] mod ...` — the test module's own header, not a test-only
+# `use` or a single `#[cfg(test)]` item above real code.
+TEST_MOD = re.compile(r'#\[cfg\(test\)\]\s*(?:pub\s+)?mod\b')
 INSERT = re.compile(r'INSERT INTO\s+(?P<table>[a-z_]+)[\s\\]*\((?P<cols>[^)]*)\)', re.S | re.I)
 UPDATE_HEAD = re.compile(r'UPDATE\s+(?P<table>[a-z_]+)\b', re.I)
 ASSIGN = re.compile(r'([a-z_]+)\s*=')
@@ -82,8 +85,16 @@ WRITTEN_BY_DDL = {
     ("wiki_day_prose", "day_id"), ("wiki_day_prose", "date"), ("wiki_day_prose", "prose"),
 }
 
+# The catalog moved out of `virtues-core/src/tools/sql_query.rs` into its own
+# registry crate during the projects/trash work. This read followed the old
+# path and found an empty file's worth of matches — zero entries, which this
+# check reports rather than passing silently, because a scraper that stops
+# matching would otherwise wave every drifted column through.
+CATALOG_SRC = "crates/virtues-registry/src/sql_catalog.rs"
+
+
 def catalog(root):
-    src = (root / "virtues-core/src/tools/sql_query.rs").read_text()
+    src = (root / CATALOG_SRC).read_text()
     out = {}
     for m in METADATA.finditer(src):
         out[m.group("table")] = re.findall(r'"([a-z_]+)"', m.group("cols"))
@@ -93,7 +104,7 @@ def check_catalog(url, written, cache, bad):
     root = pathlib.Path(".")
     entries = catalog(root)
     if not entries:
-        bad.append("catalog: parsed ZERO TableMetadata entries — the regex no longer matches sql_query.rs")
+        bad.append(f"catalog: parsed ZERO TableMetadata entries — the regex no longer matches {CATALOG_SRC}")
         return 0
     n = 0
     for table, cols in entries.items():
@@ -131,10 +142,17 @@ def main():
         txt = f.read_text(errors="ignore")
         # Ignore test modules: their fixtures use invented table names, and a
         # fixture that does not match the schema is not a defect.
+        #
+        # The MODULE, not any `#[cfg(test)]`. Cutting at the first attribute
+        # truncated a file at a test-only `use` on line 28 and lost the real
+        # writer at line 179, so three columns this check exists to protect
+        # read as never-written. A cut that silently shortens the haystack
+        # makes this check quieter, never louder: exactly the failure it is
+        # here to catch.
         if f.suffix == ".rs":
-            cut = txt.find("#[cfg(test)]")
-            if cut != -1:
-                txt = txt[:cut]
+            m = TEST_MOD.search(txt)
+            if m:
+                txt = txt[:m.start()]
         for m in INSERT.finditer(txt):
             note(m.group("table"), re.findall(r"[a-z_]+", m.group("cols")))
         for table, assigns in update_assignments(txt):

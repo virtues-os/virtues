@@ -6,7 +6,7 @@
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { getKeepMenuItems } from "$lib/utils/contextMenuItems";
-	import { confirmAction } from "$lib/stores/dialog.svelte";
+	import { notifyTrashed, routeIfOpen } from "$lib/utils/toasts";
 	import { Button, Page } from "$lib";
 	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
@@ -94,14 +94,12 @@
 				icon: "ri:delete-bin-line",
 				variant: "destructive",
 				dividerBefore: true,
+				// No confirm: the page goes to Recently deleted and the toast
+				// carries the Undo.
 				action: async () => {
-					const ok = await confirmAction({
-						title: "Delete page?",
-						body: `"${page.title}" will be deleted. Notebooks that reference it will drop the link.`,
-						confirmLabel: "Delete",
-						danger: true,
-					});
-					if (ok) await pagesStore.removePage(page.id);
+					const reopen = routeIfOpen(`/page/${page.id}`);
+					await pagesStore.removePage(page.id);
+					notifyTrashed({ kind: "page", id: page.id, name: page.title, reopen });
 				},
 			},
 		];
@@ -267,7 +265,7 @@
 		font-size: 0.6875rem;
 		font-weight: 500;
 		border-radius: var(--radius-full);
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
 		color: var(--color-foreground-muted);
 	}
 	.tag-more {

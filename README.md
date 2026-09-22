@@ -58,7 +58,7 @@ reach the server by key.
 *Early software. The [releases page](https://github.com/virtues-os/virtues/releases)
 says what exists; expect rough edges, and expect us to say where they are.*
 
-<img src=".github/images/shots/day-page.png" alt="The day page for Wednesday 2 September, open beside a sidebar of notebooks: a first-person account of the day — a call that ran past two, a slow morning, a short errand, six hours at the desk — with the people and organizations in it rendered as links into their own pages." width="100%">
+<img src=".github/images/shots/day-page.png" alt="The day page for Wednesday 2 September, open beside a sidebar of projects: a first-person account of the day — a call that ran past two, a slow morning, a short errand, six hours at the desk — with the people and organizations in it rendered as links into their own pages." width="100%">
 
 <a id="diy-quickstart"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-diy-quickstart-dark.svg"><img alt="DIY quickstart" src=".github/images/headings/h2-diy-quickstart-light.svg" height="28"></picture>

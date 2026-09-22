@@ -77,7 +77,7 @@ describe('the box speaks the UI message stream protocol', () => {
 			| { state: string; errorText?: string }
 			| undefined;
 		expect(page?.state).toBe('output-error');
-		expect(page?.errorText).toBe('the page could not be written');
+		expect(page?.errorText).toBe("Your server couldn't write the page.");
 
 		// Reasoning arrived as its own part.
 		expect(types).toContain('reasoning');

@@ -17,9 +17,24 @@ import Foundation
 /// probing. A reader that finds no file, or a stale one, must say so — silently
 /// falling back to its own probe is the bug this replaces.
 struct CollectorHealth: Codable {
-    /// Can the daemon read `~/Library/Messages/chat.db`? Gates iMessages *and*
-    /// Safari history, which live behind the same grant.
+    /// Can the daemon read `~/Library/Messages/chat.db`? This is iMessages, and
+    /// it is ONE grant, not the whole of Full Disk Access - see `safariLibrary`.
     var fullDiskAccess: Bool
+    /// Can the daemon read `~/Library/Safari`? Gates Safari bookmarks and
+    /// history.
+    ///
+    /// Split out because it is not the same grant, however much the name
+    /// suggests it. On 2026-09-21 this Mac's daemon read the Messages database
+    /// happily while every Safari bookmark read came back "Operation not
+    /// permitted" - 1,551 of them in one log - and the record said
+    /// `fullDiskAccess: true`, so the box was told the collector was healthy
+    /// and the Bookmarks shelf simply looked like a Mac with one browser on it.
+    /// One boolean standing in for several grants can only ever be wrong in
+    /// this direction: the door that fails is the one nobody probed.
+    ///
+    /// Optional because a collector older than this field reports nothing, and
+    /// "not reported" must not read as either a grant or a denial.
+    var safariLibrary: Bool?
     /// Can the daemon observe window/focus state?
     var accessibility: Bool
     /// When the daemon last evaluated the above.
@@ -43,6 +58,7 @@ struct CollectorHealth: Codable {
     var deniedCapabilities: [String] {
         var denied: [String] = []
         if !fullDiskAccess { denied.append("full_disk_access") }
+        if safariLibrary == false { denied.append("safari_library") }
         if !accessibility { denied.append("accessibility") }
         return denied
     }
@@ -54,9 +70,28 @@ struct CollectorHealth: Codable {
     static func probeCurrentProcess() -> CollectorHealth {
         CollectorHealth(
             fullDiskAccess: MessageMonitor.canReadMessagesDB(),
+            safariLibrary: canReadSafariLibrary(),
             accessibility: AXIsProcessTrusted(),
             updatedAt: Date()
         )
+    }
+
+    /// One real read-open of a file inside `~/Library/Safari`, for the same
+    /// reason `canReadMessagesDB` opens the chat database rather than stat-ing
+    /// it: a stat does not trip TCC, so it neither measures the grant nor gets
+    /// this executable listed in System Settings for the user to toggle.
+    ///
+    /// `nil` when Safari has left nothing to read, which is not a denial - a
+    /// Mac with no Safari data owes us no grant, and reporting one as missing
+    /// would put a permanent warning on a box that is working perfectly.
+    private static func canReadSafariLibrary() -> Bool? {
+        let candidates = ["~/Library/Safari/Bookmarks.plist", "~/Library/Safari/History.db"]
+            .map { NSString(string: $0).expandingTildeInPath }
+            .filter { FileManager.default.fileExists(atPath: $0) }
+        guard let path = candidates.first else { return nil }
+        guard let handle = FileHandle(forReadingAtPath: path) else { return false }
+        defer { try? handle.close() }
+        return (try? handle.read(upToCount: 1)) != nil
     }
 
     /// Probe and persist. Called by the daemon on startup and on every

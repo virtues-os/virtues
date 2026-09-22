@@ -132,22 +132,118 @@ RULES:
 /// no cap. A 1000-token cap sat here for a summary the prompt itself bounds
 /// in words; on a Lite pin that thinks (the default glm-4.7-flash lists a
 /// toggle) it was spent thinking.
+/// The most history one summarizer call is handed, in bytes (~60k tokens).
+///
+/// Compaction fires at 85% of the CHAT model's window, and the whole
+/// uncompacted history used to go to the Lite model in ONE call. On a 500k
+/// window that is a 480k-token request, which no Lite model takes: the call
+/// failed, compaction failed, and the turn went out uncompacted — the exact
+/// turn that was too big. The history is summarized in batches instead, each
+/// folding the previous summary in, which is the shape the prompt already
+/// describes ("previous summary" + "new messages").
+const SUMMARY_INPUT_BYTES: usize = 240_000;
+/// One message larger than this (a pasted document, a tool result) is cut
+/// in the summarizer's input. The transcript keeps the whole thing.
+const SUMMARY_MESSAGE_BYTES: usize = 60_000;
+/// Per summarizer call, not per compaction: a long history is several calls.
+const SUMMARY_CALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// The most calls one compaction makes. The turn's response does not open
+/// until compaction returns, so this bounds what a person waits through:
+/// four calls is ~1MB of history and a few minutes at worst. Older batches
+/// beyond it are not read; the summary says so.
+const SUMMARY_MAX_BATCHES: usize = 4;
+
+/// Cut the messages into runs that each fit one summarizer call. A message
+/// counts at most `SUMMARY_MESSAGE_BYTES` because that is all of it the call
+/// sees. Never empty: an empty input is one empty batch.
+fn summary_batches(messages: &[ChatMessage]) -> Vec<&[ChatMessage]> {
+    let mut batches: Vec<&[ChatMessage]> = Vec::new();
+    let mut start = 0;
+    let mut size = 0usize;
+    for (i, msg) in messages.iter().enumerate() {
+        let len = msg.content.len().min(SUMMARY_MESSAGE_BYTES) + 32;
+        if i > start && size + len > SUMMARY_INPUT_BYTES {
+            batches.push(&messages[start..i]);
+            start = i;
+            size = 0;
+        }
+        size += len;
+    }
+    batches.push(&messages[start..]);
+    batches
+}
+
 async fn generate_summary(
     pool: &PgPool,
     messages: &[ChatMessage],
     existing_summary: Option<&str>,
 ) -> Result<String> {
-    // Build the content to summarize
+    let batches = summary_batches(messages);
+
+    if batches.len() > 1 {
+        tracing::info!(
+            batches = batches.len(),
+            messages = messages.len(),
+            "compaction: summarizing in batches"
+        );
+    }
+
+    let mut summary: Option<String> = existing_summary.map(str::to_string);
+
+    // Bounded: the oldest batches past the cap are not summarized, and the
+    // summary carries a line saying how much it does not cover.
+    let skip = batches.len().saturating_sub(SUMMARY_MAX_BATCHES);
+    if skip > 0 {
+        let dropped: usize = batches[..skip].iter().map(|b| b.len()).sum();
+        tracing::warn!(dropped_messages = dropped, batches = batches.len(), "compaction: history past the batch cap is not summarized");
+        let note = format!("[{dropped} earlier messages are not represented in this summary.]");
+        summary = Some(match summary {
+            Some(s) => format!("{s}\n{note}"),
+            None => note,
+        });
+    }
+
+    for batch in &batches[skip..] {
+        let next = timeout(
+            SUMMARY_CALL_TIMEOUT,
+            summarize_batch(pool, batch, summary.as_deref()),
+        )
+        .await
+        .map_err(|_| crate::Error::Other(
+            "Your assistant couldn't summarize this chat in time, so the turn didn't go out. \
+             Everything said so far is safe. Send it again."
+                .to_string(),
+        ))??;
+        // An empty reply is a refusal or a model that spent its output
+        // elsewhere. Stored, it would replace every earlier batch with
+        // nothing and advance the index past them; the caller keeps the old
+        // summary and the turn goes out uncompacted instead.
+        if next.trim().is_empty() {
+            return Err(crate::Error::Other(
+                "Your assistant couldn't summarize this chat, so the turn didn't go out. \
+                 Everything said so far is safe. Send it again."
+                    .to_string(),
+            ));
+        }
+        summary = Some(next);
+    }
+    Ok(summary.unwrap_or_default())
+}
+
+/// One summarizer call: the previous summary, then these messages.
+async fn summarize_batch(
+    pool: &PgPool,
+    messages: &[ChatMessage],
+    existing_summary: Option<&str>,
+) -> Result<String> {
     let mut content = String::new();
 
-    // Include existing summary if present
     if let Some(summary) = existing_summary {
         content.push_str("=== PREVIOUS SUMMARY ===\n");
         content.push_str(summary);
         content.push_str("\n\n=== NEW MESSAGES TO INCORPORATE ===\n");
     }
 
-    // Format messages for summarization
     for msg in messages {
         let role_label = match msg.role.as_str() {
             "user" => "User",
@@ -156,9 +252,19 @@ async fn generate_summary(
             _ => &msg.role,
         };
 
-        content.push_str(&format!("{}: {}\n\n", role_label, msg.content));
+        let body = if msg.content.len() > SUMMARY_MESSAGE_BYTES {
+            // On a char boundary, so a cut inside a multibyte character
+            // does not panic.
+            let mut end = SUMMARY_MESSAGE_BYTES;
+            while !msg.content.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}\n[… {} more bytes not shown]", &msg.content[..end], msg.content.len() - end)
+        } else {
+            msg.content.clone()
+        };
+        content.push_str(&format!("{}: {}\n\n", role_label, body));
 
-        // Include tool calls if present
         if let Some(tool_calls) = &msg.tool_calls {
             for tc in tool_calls {
                 content.push_str(&format!("  [Tool: {}]\n", tc.tool_name));
@@ -326,30 +432,21 @@ pub async fn compact_chat(
         });
     };
 
-    // Generate new summary with timeout to prevent hanging. The model is the
-    // Lite slot through the owner's background pin, resolved by the helper.
-    let new_summary = timeout(
-        Duration::from_secs(60),
-        generate_summary(
-            pool,
-            messages_to_summarize,
-            conversation_summary.as_deref(),
-        ),
+    // The model is the Lite slot through the owner's background pin,
+    // resolved by the helper. The timeout is per summarizer call, inside.
+    let new_summary = generate_summary(
+        pool,
+        messages_to_summarize,
+        conversation_summary.as_deref(),
     )
-    .await
-    .map_err(|_| crate::Error::Other("Summary generation timed out after 60s".to_string()))??;
+    .await?;
 
-    // Calculate previous and new usage percentages
-    // Look up context window from model registry, fallback to conservative default
+    // Calculate previous and new usage percentages, against the window the
+    // turn will actually be sent to (BYO included — see `turn_context_window`).
     let context_window = if let Some(model_id) = &options.model_id {
-        match crate::api::models::get_model(model_id).await {
-            Ok(model_info) => crate::api::token_estimation::context_window_or_assumed(
-                model_info.context_window.map(|w| w as i64),
-            ),
-            Err(_) => crate::api::token_estimation::ASSUMED_CONTEXT_WINDOW,
-        }
+        crate::api::chat_usage::turn_context_window(pool, model_id).await
     } else {
-        200_000 // Conservative default if no model specified
+        crate::api::token_estimation::ASSUMED_CONTEXT_WINDOW
     };
     let previous_estimate = estimate_session_context(&messages, None, None, context_window);
     let verbatim_messages = &messages[split_index..];
@@ -618,7 +715,7 @@ pub fn build_context_for_llm(
                         // an error object in the result position tells the model
                         // the tool succeeded and returned something odd.
                         let content = match (error_text, output) {
-                            (Some(err), _) => format!("Tool execution failed: {err}"),
+                            (Some(err), _) => format!("Tool failed ({tool_name}): {err}"),
                             (None, Some(serde_json::Value::String(s))) => s.clone(),
                             (None, Some(res)) => res.to_string(),
                             (None, None) => "the tool did not finish".to_string(),
@@ -990,6 +1087,51 @@ mod tests {
 
 
     use super::*;
+
+    fn text(role: &str, content: String) -> ChatMessage {
+        ChatMessage {
+            id: None,
+            role: role.to_string(),
+            content,
+            timestamp: Timestamp::parse("2024-01-01T00:00:00Z").unwrap(),
+            model: None,
+            provider: None,
+            agent_id: None,
+            tool_calls: None,
+            reasoning: None,
+            intent: None,
+            subject: None,
+            reasoning_details: None,
+            parts: None,
+        }
+    }
+
+    /// The summarizer used to be handed the whole history in one call: at
+    /// 85% of a 500k window that is ~480k tokens, which no Lite model takes,
+    /// so compaction failed on exactly the turn that needed it.
+    #[test]
+    fn a_long_history_is_summarized_in_bounded_batches() {
+        // 30 messages of 20k bytes = 600k, three times the per-call cap.
+        let messages: Vec<ChatMessage> = (0..30)
+            .map(|i| text(if i % 2 == 0 { "user" } else { "assistant" }, "x".repeat(20_000)))
+            .collect();
+        let batches = summary_batches(&messages);
+        assert!(batches.len() >= 3, "expected several batches, got {}", batches.len());
+        assert_eq!(batches.iter().map(|b| b.len()).sum::<usize>(), 30, "every message lands once");
+        for b in &batches {
+            let bytes: usize = b.iter().map(|m| m.content.len() + 32).sum();
+            assert!(bytes <= SUMMARY_INPUT_BYTES, "a batch of {bytes} bytes exceeds the cap");
+        }
+
+        // One message past the cap on its own is still one batch: it is cut
+        // inside the call, not dropped.
+        let huge = vec![text("user", "y".repeat(SUMMARY_INPUT_BYTES * 2))];
+        assert_eq!(summary_batches(&huge).len(), 1);
+
+        // A short history is one call, as before.
+        let short = vec![text("user", "hi".into()), text("assistant", "hello".into())];
+        assert_eq!(summary_batches(&short).len(), 1);
+    }
 
     #[test]
     fn test_build_context_without_summary() {

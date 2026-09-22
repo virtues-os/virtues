@@ -130,7 +130,7 @@ fn check_same_origin(headers: &HeaderMap) -> Option<Response> {
 // had typed it. Every CLI already knows what to do with a path.
 //
 // These land in the user's home, not the drive's media store: `media` is
-// app-level content (page embeds, notebook sources), while this is a scratch
+// app-level content (page embeds, project sources), while this is a scratch
 // file belonging to a shell session.
 // ---------------------------------------------------------------------------
 
@@ -437,7 +437,7 @@ fn session_command(tmux: Option<&Path>, path: &str, home: Option<&str>) -> Comma
         }
         None => {
             tracing::warn!(
-                "tmux not found on PATH — terminal sessions will not survive disconnects"
+                "tmux not found on PATH - terminal sessions will not survive disconnects"
             );
             let mut cmd = CommandBuilder::new(&shell);
             cmd.arg("-l");

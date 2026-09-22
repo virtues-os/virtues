@@ -147,6 +147,8 @@ pub enum FinishReason {
     EndTurn,
     /// Hit maximum steps limit
     MaxSteps,
+    /// The turn spent its cost or wall-clock budget between steps.
+    BudgetExceeded,
     /// A tool requires user action (e.g., binding a page)
     AwaitingUser,
     /// An error occurred

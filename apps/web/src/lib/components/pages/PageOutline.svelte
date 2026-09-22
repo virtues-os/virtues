@@ -126,7 +126,7 @@
 	}
 	.outline-bar:hover {
 		color: var(--color-foreground);
-		background: var(--color-surface-elevated, color-mix(in srgb, var(--color-foreground) 6%, transparent));
+		background: var(--hover-bg);
 	}
 	.outline-current {
 		overflow: hidden;
@@ -187,7 +187,7 @@
 			background 0.12s ease;
 	}
 	.outline-item:hover {
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 5%, transparent);
 		color: var(--color-foreground-muted);
 	}
 	.outline-item.active {

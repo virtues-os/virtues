@@ -91,7 +91,7 @@
 		<div class="empty">
 			<p class="empty-lead">Nothing written yet.</p>
 			<p class="empty-body">
-				Your document is written from the interview — a conversation, not a
+				Your document is written from the interview - a conversation, not a
 				form. When you close it there, it lands here and on its own page,
 				in your words and in the first person.
 			</p>

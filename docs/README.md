@@ -20,9 +20,10 @@ Virtues. Pages here are written for the people *running* it.
   as `<slug>.md` for agents and curl).
 - **Slugs are paths.** `operate/upgrading.md` publishes at
   `/docs/operate/upgrading`. `index.md` is the `/docs` landing page.
-- **Write in the practical register** (see `../agents/build/voice.md` and the website's
-  `DESIGN.md`): tight, specific, technical. The philosophical voice lives in
-  the Library, not here.
+- **Write in the practical register** (the claim rules and the copy register in
+  `../agents/build/voice.md`, and the website's `DESIGN.md`): tight, specific,
+  technical. The manual has no voice of its own to perform; it has claims to
+  get right.
 - **Claim only what ships.** A manual page describes the released system. If a
   feature is half-built, its page stays `"planned"` in the manifest until the
   feature lands. The workshop is where in-progress design lives.

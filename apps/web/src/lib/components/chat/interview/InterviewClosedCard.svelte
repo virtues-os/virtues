@@ -52,16 +52,16 @@
 
 	const chaptersNote = $derived(
 		chaptersError
-			? 'Not written this time. The document is safe.'
+			? "Your server couldn't write the chapters. Everything you said is safe."
 			: chaptersWritten > 0
 				? `${chaptersWritten} ${chaptersWritten === 1 ? 'chapter' : 'chapters'}, a page each.`
-				: 'Your partition of the life, a page each.'
+				: 'Every chapter you named, a page each.'
 	);
 
 	const lede = $derived(
 		chaptersError
-			? 'What you said is arranged on one page. It is yours: the machine never rewrites it, and anything to add or correct is done on the page.'
-			: 'What you said is arranged in two places. Both are yours: the machine never rewrites them, and anything to add or correct is done on the page.'
+			? 'These are your words, on one page. Nothing rewrites them but you, and you can edit the page whenever you like.'
+			: 'These are your words, in two places. Nothing rewrites them but you, and you can edit either page whenever you like.'
 	);
 </script>
 

@@ -116,19 +116,19 @@
 				</div>
 			</div>
 			<p class="hint">
-				The repo is cloned locally and any folder containing a
+				Your server clones the repo locally and any folder containing a
 				<code>manifest.toml</code> becomes an applet; a
 				<code>sources.toml</code> adds sources.
 			</p>
 			<p class="hint">
 				Pin to a tag or a commit rather than a branch if you want the code to
-				stay put — a branch moves under you on the next import.
+				stay put - a branch moves under you on the next import.
 			</p>
 			<p class="hint">
 				<strong>Public</strong> HTTPS URLs work without auth.
 				<strong>Private</strong> repos: use the SSH URL
-				(<code>git@host:owner/repo.git</code>) and make sure your key
-				is loaded in <code>ssh-agent</code> first.
+				(<code>git@host:owner/repo.git</code>) and make sure you've loaded
+				your key in <code>ssh-agent</code> first.
 			</p>
 			{#if error}
 				<div class="error">{error}</div>
@@ -151,7 +151,7 @@
 <SudoModal
 	action="import_applet_package"
 	title="Install a package from Git"
-	description="Installing runs code you did not write on this box. Approve at the box itself by running `virtues sudo` — the same confirmation used for changing an API key."
+	description="Installing runs code you did not write on this server. Approve at the server itself by running `virtues sudo`, the same confirmation used for changing an API key."
 	actionPayload={{ url: url.trim(), ref: ref.trim() || 'main' }}
 	bind:show={showSudo}
 	onApproved={(id) => runImport(id)}

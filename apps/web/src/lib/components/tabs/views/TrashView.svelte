@@ -1,555 +1,281 @@
+<!--
+	Recently deleted — one list for everything deleted anywhere in the app.
+
+	Chats, pages and projects (the box's `api::trash`, migration 0030) and
+	Drive files (the older `/api/drive/trash`) wait here 30 days with a
+	restore, and then the server removes them for good. Two APIs, one room:
+	a second "trash" would be two lists that must agree, and the person
+	deleting a page does not care which table it lived in.
+
+	Restore needs no confirm — it is the safe direction. Delete forever and
+	Empty are the two one-way doors in the app, and they get the dangerous
+	dialog: red button, the consequence said in the same breath.
+-->
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
 	import { Button, IconButton, Page } from "$lib";
-	import type { DriveFile } from "$lib/api/client";
+	import type { DriveFile, TrashItem, TrashKind } from "$lib/api/client";
 	import {
 		listDriveTrash,
 		restoreDriveFile,
 		purgeDriveFile,
 		emptyDriveTrash,
+		listTrash,
+		restoreTrashed,
+		purgeTrashed,
+		emptyTrash,
 	} from "$lib/api/client";
-	import Icon from "$lib/components/Icon.svelte";
-	import Modal from "$lib/components/Modal.svelte";
 	import UniversalDataGrid, {
 		type Column,
 	} from "$lib/components/datagrid/UniversalDataGrid.svelte";
+	import { confirmAction } from "$lib/stores/dialog.svelte";
+	import { refreshAfterRestore } from "$lib/utils/toasts";
+	import { toast } from "svelte-sonner";
 	import { onMount } from "svelte";
-	import { paneActions } from "$lib/stores/paneActions.svelte";
-	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 
-	let { tab, active }: { tab: Tab; active: boolean } = $props();
+	let { tab: _tab, active: _active }: { tab: Tab; active: boolean } = $props();
 
-	// Back-to-Drive is navigation, which belongs with the other navigation in
-	// the pane toolbar rather than floating beside the heading.
-	$effect(() =>
-		paneActions.set(tab.id, [
-			{
-				id: "trash.back",
-				label: "Back to Drive",
-				icon: "ri:arrow-left-line",
-				run: navigateToDrive,
-			},
-		]),
-	);
+	const RETENTION_DAYS = 30;
 
-	// State
-	let trashFiles = $state<DriveFile[]>([]);
-	let loading = $state(true);
-	let error = $state<string | null>(null);
+	type RowKind = TrashKind | "file";
 
-	// Modal state
-	let fileToRestore = $state<DriveFile | null>(null);
-	let restoring = $state(false);
-	let fileToPurge = $state<DriveFile | null>(null);
-	let purging = $state(false);
-	let showEmptyTrashModal = $state(false);
-	let emptyingTrash = $state(false);
-
-	// Toast notification
-	let toastMessage = $state<string | null>(null);
-	let toastTimeout: ReturnType<typeof setTimeout> | null = null;
-
-	onMount(async () => {
-		await loadTrash();
-	});
-
-	function showToast(message: string) {
-		if (toastTimeout) clearTimeout(toastTimeout);
-		toastMessage = message;
-		toastTimeout = setTimeout(() => {
-			toastMessage = null;
-		}, 3000);
+	/** One row, whichever store it came from. `id` is the grid's key. */
+	interface TrashRow {
+		id: string;
+		kind: RowKind;
+		title: string;
+		/** Where it was: a Drive path, or the kind for the rest. */
+		detail: string;
+		deleted_at: string;
+		expires_at: string;
+		days_remaining: number;
+		raw: TrashItem | DriveFile;
 	}
 
-	async function loadTrash() {
+	let rows = $state<TrashRow[]>([]);
+	let loading = $state(true);
+	let error = $state<string | null>(null);
+	let busy = $state(false);
+
+	onMount(() => {
+		load();
+	});
+
+	const KIND_LABEL: Record<RowKind, string> = {
+		chat: "Chat",
+		page: "Page",
+		project: "Project",
+		file: "File",
+	};
+
+	const KIND_ICON: Record<RowKind, string> = {
+		chat: "ri:chat-3-line",
+		page: "ri:file-text-line",
+		project: "ri:folder-3-line",
+		file: "ri:file-line",
+	};
+
+	function daysLeft(expiresAt: string): number {
+		const ms = new Date(expiresAt).getTime() - Date.now();
+		return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
+	}
+
+	function addDays(iso: string, days: number): string {
+		return new Date(new Date(iso).getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+	}
+
+	function fromRecord(item: TrashItem): TrashRow {
+		return {
+			id: `${item.kind}:${item.id}`,
+			kind: item.kind,
+			title: item.title,
+			detail: KIND_LABEL[item.kind],
+			deleted_at: item.deleted_at,
+			expires_at: item.expires_at,
+			days_remaining: daysLeft(item.expires_at),
+			raw: item,
+		};
+	}
+
+	function fromFile(file: DriveFile): TrashRow {
+		const deleted = file.deleted_at ?? new Date().toISOString();
+		const expires = addDays(deleted, RETENTION_DAYS);
+		return {
+			id: `file:${file.id}`,
+			kind: "file",
+			title: file.filename,
+			detail: file.path || "Drive",
+			deleted_at: deleted,
+			expires_at: expires,
+			days_remaining: daysLeft(expires),
+			raw: file,
+		};
+	}
+
+	async function load() {
 		loading = true;
 		error = null;
 		try {
-			trashFiles = await listDriveTrash();
+			const [records, files] = await Promise.all([listTrash(), listDriveTrash()]);
+			rows = [...records.map(fromRecord), ...files.map(fromFile)].sort(
+				(a, b) => new Date(b.deleted_at).getTime() - new Date(a.deleted_at).getTime(),
+			);
 		} catch (e) {
-			error = e instanceof Error ? e.message : "Failed to load trash";
+			error = e instanceof Error ? e.message : "Couldn't load Recently deleted";
 		} finally {
 			loading = false;
 		}
 	}
 
-	// Calculate days remaining until permanent deletion
-	function getDaysRemaining(deletedAt: string): number {
-		const deleted = new Date(deletedAt);
-		const now = new Date();
-		const thirtyDaysAfter = new Date(
-			deleted.getTime() + 30 * 24 * 60 * 60 * 1000,
-		);
-		const remaining = thirtyDaysAfter.getTime() - now.getTime();
-		return Math.max(0, Math.ceil(remaining / (24 * 60 * 60 * 1000)));
+	async function restore(row: TrashRow) {
+		if (busy) return;
+		busy = true;
+		error = null;
+		try {
+			if (row.kind === "file") await restoreDriveFile((row.raw as DriveFile).id);
+			else await restoreTrashed(row.kind, (row.raw as TrashItem).id);
+			await Promise.all([load(), refreshAfterRestore(row.kind)]);
+			toast(`Restored "${row.title}"`);
+		} catch (e) {
+			error = e instanceof Error ? e.message : `Couldn't restore "${row.title}"`;
+		} finally {
+			busy = false;
+		}
 	}
 
-	// Format bytes
-	function formatBytes(bytes: number): string {
-		if (bytes < 1024) return `${bytes} B`;
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-		if (bytes < 1024 * 1024 * 1024)
-			return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-		return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+	async function purge(row: TrashRow) {
+		if (busy) return;
+		const ok = await confirmAction({
+			title: "Delete forever?",
+			body: `"${row.title}" will be gone for good. This can't be undone.`,
+			confirmLabel: "Delete forever",
+			danger: true,
+		});
+		if (!ok) return;
+		busy = true;
+		error = null;
+		try {
+			if (row.kind === "file") await purgeDriveFile((row.raw as DriveFile).id);
+			else await purgeTrashed(row.kind, (row.raw as TrashItem).id);
+			await load();
+			toast(`Deleted "${row.title}" forever`);
+		} catch (e) {
+			error = e instanceof Error ? e.message : `Couldn't delete "${row.title}"`;
+		} finally {
+			busy = false;
+		}
 	}
 
-	// Format date
-	function formatDate(dateStr: string): string {
-		const date = new Date(dateStr);
-		return date.toLocaleDateString(undefined, {
+	async function emptyAll() {
+		if (busy || rows.length === 0) return;
+		const n = rows.length;
+		const ok = await confirmAction({
+			title: "Empty Recently deleted?",
+			body: `All ${n} ${n === 1 ? "item" : "items"} will be gone for good. This can't be undone.`,
+			confirmLabel: `Delete ${n} ${n === 1 ? "item" : "items"} forever`,
+			danger: true,
+		});
+		if (!ok) return;
+		busy = true;
+		error = null;
+		try {
+			const [records, files] = await Promise.all([emptyTrash(), emptyDriveTrash()]);
+			await load();
+			toast(`Deleted ${records.deleted_count + files.deleted_count} items forever`);
+		} catch (e) {
+			error = e instanceof Error ? e.message : "Couldn't empty Recently deleted";
+		} finally {
+			busy = false;
+		}
+	}
+
+	function formatDate(iso: string): string {
+		return new Date(iso).toLocaleDateString(undefined, {
 			month: "short",
 			day: "numeric",
 			year: "numeric",
 		});
 	}
 
-	// Get icon for file type
-	function getFileIcon(file: DriveFile): string {
-		if (file.is_folder) return "ri:folder-fill";
-
-		const ext = file.filename.split(".").pop()?.toLowerCase();
-		const mime = file.mime_type?.toLowerCase() || "";
-
-		if (
-			mime.startsWith("image/") ||
-			["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext || "")
-		) {
-			return "ri:image-fill";
-		}
-		if (
-			mime.startsWith("video/") ||
-			["mp4", "mov", "avi", "mkv", "webm"].includes(ext || "")
-		) {
-			return "ri:movie-fill";
-		}
-		if (
-			mime.startsWith("audio/") ||
-			["mp3", "wav", "ogg", "m4a", "flac"].includes(ext || "")
-		) {
-			return "ri:music-fill";
-		}
-		if (["pdf"].includes(ext || "")) return "ri:file-pdf-fill";
-		if (["doc", "docx"].includes(ext || "")) return "ri:file-word-fill";
-		if (["xls", "xlsx"].includes(ext || "")) return "ri:file-excel-fill";
-		if (["ppt", "pptx"].includes(ext || "")) return "ri:file-ppt-fill";
-		if (
-			[
-				"js",
-				"ts",
-				"jsx",
-				"tsx",
-				"py",
-				"rs",
-				"go",
-				"java",
-				"cpp",
-				"c",
-				"h",
-			].includes(ext || "")
-		) {
-			return "ri:file-code-fill";
-		}
-		if (
-			["txt", "md", "json", "yaml", "yml", "toml", "xml", "csv"].includes(
-				ext || "",
-			)
-		) {
-			return "ri:file-text-fill";
-		}
-		if (["zip", "tar", "gz", "rar", "7z"].includes(ext || "")) {
-			return "ri:file-zip-fill";
-		}
-
-		return "ri:file-fill";
-	}
-
-	// Get icon color for file type
-	function getFileIconColor(file: DriveFile): string {
-		if (file.is_folder) return "text-warning";
-
-		const ext = file.filename.split(".").pop()?.toLowerCase();
-		const mime = file.mime_type?.toLowerCase() || "";
-
-		if (
-			mime.startsWith("image/") ||
-			["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext || "")
-		) {
-			return "text-foreground-muted";
-		}
-		if (
-			mime.startsWith("video/") ||
-			["mp4", "mov", "avi", "mkv", "webm"].includes(ext || "")
-		) {
-			return "text-error";
-		}
-		if (
-			mime.startsWith("audio/") ||
-			["mp3", "wav", "ogg", "m4a", "flac"].includes(ext || "")
-		) {
-			return "text-foreground-muted";
-		}
-		if (["pdf"].includes(ext || "")) return "text-error";
-		if (["doc", "docx"].includes(ext || "")) return "text-primary";
-		if (["xls", "xlsx"].includes(ext || "")) return "text-success";
-
-		return "text-foreground-subtle";
-	}
-
-	// Restore file from trash
-	async function handleRestore() {
-		if (!fileToRestore) return;
-
-		restoring = true;
-		error = null;
-
-		try {
-			await restoreDriveFile(fileToRestore.id);
-			trashFiles = await listDriveTrash();
-			showToast(`"${fileToRestore.filename}" restored`);
-			fileToRestore = null;
-		} catch (e) {
-			error = e instanceof Error ? e.message : "Restore failed";
-		} finally {
-			restoring = false;
-		}
-	}
-
-	// Permanently delete file
-	async function handlePurge() {
-		if (!fileToPurge) return;
-
-		purging = true;
-		error = null;
-
-		try {
-			await purgeDriveFile(fileToPurge.id);
-			trashFiles = await listDriveTrash();
-			showToast(`"${fileToPurge.filename}" permanently deleted`);
-			fileToPurge = null;
-		} catch (e) {
-			error = e instanceof Error ? e.message : "Permanent delete failed";
-		} finally {
-			purging = false;
-		}
-	}
-
-	// Empty entire trash
-	async function handleEmptyTrash() {
-		emptyingTrash = true;
-		error = null;
-
-		try {
-			const result = await emptyDriveTrash();
-			trashFiles = [];
-			showToast(`${result.deleted_count} items permanently deleted`);
-			showEmptyTrashModal = false;
-		} catch (e) {
-			error = e instanceof Error ? e.message : "Failed to empty trash";
-		} finally {
-			emptyingTrash = false;
-		}
-	}
-
-	function navigateToDrive() {
-		windowShellStore.openTabFromRoute("/drive");
-	}
-
-	// Grid items: DriveFile + computed expiry countdown
-	type TrashItem = DriveFile & { days_remaining: number };
-
-	const trashItems: TrashItem[] = $derived(
-		trashFiles.map((file) => ({
-			...file,
-			days_remaining: file.deleted_at
-				? getDaysRemaining(file.deleted_at)
-				: 30,
-		})),
-	);
-
-	// Column definitions
-	const columns: Column<TrashItem>[] = [
-		{
-			key: "filename",
-			label: "Name",
-			icon: "ri:file-line",
-			width: "40%",
-			minWidth: "200px",
-		},
-		{
-			key: "size_bytes",
-			label: "Size",
-			icon: "ri:hard-drive-2-line",
-			width: "12%",
-			minWidth: "90px",
-			getValue: (file) =>
-				file.is_folder ? null : formatBytes(file.size_bytes),
-		},
+	const columns: Column<TrashRow>[] = [
+		{ key: "title", label: "Name", width: "40%", minWidth: "200px" },
+		{ key: "detail", label: "Was", width: "18%", minWidth: "100px", hideOnMobile: true },
 		{
 			key: "deleted_at",
 			label: "Deleted",
-			icon: "ri:time-line",
-			width: "18%",
+			width: "16%",
 			minWidth: "110px",
 			hideOnMobile: true,
-			getValue: (file) =>
-				file.deleted_at ? formatDate(file.deleted_at) : null,
+			getValue: (row) => formatDate(row.deleted_at),
 		},
 		{
 			key: "days_remaining",
-			label: "Expires",
-			icon: "ri:hourglass-line",
-			width: "15%",
-			minWidth: "100px",
-		},
-		{
-			key: "id",
-			label: "",
-			width: "72px",
-			sortable: false,
+			label: "Gone in",
+			width: "14%",
+			minWidth: "90px",
+			getValue: (row) =>
+				row.days_remaining === 0
+					? "today"
+					: `${row.days_remaining} ${row.days_remaining === 1 ? "day" : "days"}`,
 		},
 	];
 </script>
 
 <Page
-	title="Trash"
-	description="Items in Trash are automatically deleted after 30 days"
+	title="Recently deleted"
+	description="Deleted chats, pages, projects and files stay here for 30 days. After that your server removes them for good."
 	maxWidth="wide"
 >
-		<!-- Toolbar -->
-		<div class="flex items-center justify-between mb-4">
-			<span class="text-sm text-foreground-muted">
-				{trashFiles.length}
-				{trashFiles.length === 1 ? "item" : "items"}
-			</span>
-			{#if trashFiles.length > 0}
-				<Button
-					variant="danger"
-					size="sm"
-					icon="ri:delete-bin-line"
-					onclick={() => (showEmptyTrashModal = true)}
-					>Empty Trash</Button
-				>
-			{/if}
-		</div>
-
-		<!-- Error Message -->
-		{#if error}
-			<div
-				class="bg-error/10 border border-error/20 rounded-lg p-4 mb-4"
-			>
-				<p class="text-sm text-error">{error}</p>
-			</div>
+	{#snippet actions()}
+		{#if rows.length > 0}
+			<Button variant="danger" size="sm" icon="ri:delete-bin-line" disabled={busy} onclick={emptyAll}>
+				Empty
+			</Button>
 		{/if}
+	{/snippet}
 
-		<!-- Trash Grid -->
-		<UniversalDataGrid
-			items={trashItems}
-			{columns}
-			entityType="trash"
-			{loading}
-			emptyIcon="ri:delete-bin-line"
-			emptyMessage="Trash is empty — deleted files are kept here for 30 days before being permanently removed"
-			loadingMessage="Loading trash..."
-			searchPlaceholder="Search trash..."
-			onRefresh={loadTrash}
-		>
-			{#snippet tableRow(file: TrashItem)}
-				{@const isWarning = file.days_remaining <= 7}
-				{@const isCritical = file.days_remaining <= 3}
-				<td class="px-3 py-2.5">
-					<div class="flex items-center gap-3">
-						<Icon
-							icon={getFileIcon(file)}
-							class="text-xl {getFileIconColor(file)} opacity-50"
-						/>
-						<div>
-							<span class="text-sm text-foreground"
-								>{file.filename}</span
-							>
-							<p class="text-xs text-foreground-subtle">
-								{file.path}
-							</p>
-						</div>
-					</div>
-				</td>
-				<td class="px-3 py-2.5 text-sm text-foreground-muted">
-					{file.is_folder ? "—" : formatBytes(file.size_bytes)}
-				</td>
-				<td class="px-3 py-2.5 text-sm text-foreground-muted hide-mobile">
-					{file.deleted_at ? formatDate(file.deleted_at) : "—"}
-				</td>
-				<td class="px-3 py-2.5">
-					<span
-						class="text-xs px-2 py-1 rounded-full {isCritical
-							? 'bg-error/10 text-error'
-							: isWarning
-								? 'bg-warning/10 text-warning'
-								: 'text-foreground-muted'}"
-					>
-						{file.days_remaining}
-						{file.days_remaining === 1 ? "day" : "days"}
-					</span>
-				</td>
-				<td class="px-3 py-2.5 text-right">
-					<div class="flex items-center justify-end gap-1">
-						<IconButton
-							icon="ri:arrow-go-back-line"
-							label="Restore {file.filename}"
-							size="sm"
-							onclick={(e) => {
-								e.stopPropagation();
-								fileToRestore = file;
-							}}
-						/>
-						<IconButton
-							icon="ri:delete-bin-7-line"
-							label="Delete {file.filename} forever"
-							size="sm"
-							variant="danger"
-							onclick={(e) => {
-								e.stopPropagation();
-								fileToPurge = file;
-							}}
-						/>
-					</div>
-				</td>
-			{/snippet}
+	{#if error}
+		<div class="bg-error/10 border border-error/20 rounded-lg p-4 mb-4">
+			<p class="text-sm text-error">{error}</p>
+		</div>
+	{/if}
 
-			{#snippet card(file: TrashItem)}
-				<div class="flex flex-col items-center gap-2 text-center">
-					<Icon
-						icon={getFileIcon(file)}
-						class="text-3xl {getFileIconColor(file)} opacity-50"
-					/>
-					<span class="text-sm font-medium text-foreground break-all"
-						>{file.filename}</span
-					>
-					<span class="text-xs text-foreground-muted">
-						{file.days_remaining}
-						{file.days_remaining === 1 ? "day" : "days"} left
-					</span>
-					<div class="flex items-center gap-1">
-						<IconButton
-							icon="ri:arrow-go-back-line"
-							label="Restore {file.filename}"
-							size="sm"
-							onclick={(e) => {
-								e.stopPropagation();
-								fileToRestore = file;
-							}}
-						/>
-						<IconButton
-							icon="ri:delete-bin-7-line"
-							label="Delete {file.filename} forever"
-							size="sm"
-							variant="danger"
-							onclick={(e) => {
-								e.stopPropagation();
-								fileToPurge = file;
-							}}
-						/>
-					</div>
-				</div>
-			{/snippet}
-		</UniversalDataGrid>
-</Page>
-
-<!-- Toast Notification -->
-{#if toastMessage}
-	<div
-		class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200"
+	<UniversalDataGrid
+		items={rows}
+		{columns}
+		entityType="trash"
+		{loading}
+		rowIcon={(row) => KIND_ICON[row.kind]}
+		emptyIcon="ri:delete-bin-line"
+		emptyMessage="Nothing here. Anything you delete waits here for 30 days before it's gone."
+		loadingMessage="Loading…"
+		searchPlaceholder="Search Recently deleted"
+		defaultViewMode="table"
+		mobileViewMode="table"
+		onRefresh={load}
 	>
-		<div
-			class="bg-foreground text-background px-4 py-2 rounded-lg shadow-lg text-sm"
-		>
-			{toastMessage}
-		</div>
-	</div>
-{/if}
-
-<!-- Restore Confirmation Modal -->
-<Modal
-	open={!!fileToRestore}
-	onClose={() => (fileToRestore = null)}
-	title="Restore {fileToRestore?.is_folder ? 'Folder' : 'File'}?"
-	width="sm"
->
-	<p class="text-foreground-muted">
-		"{fileToRestore?.filename}" will be restored to its original location.
-		{#if fileToRestore?.is_folder}
-			This includes all contents inside the folder.
-		{/if}
-	</p>
-	{#snippet footer()}
-		<Button
-			variant="secondary"
-			size="sm"
-			onclick={() => (fileToRestore = null)}>Cancel</Button
-		>
-		<Button size="sm" loading={restoring} onclick={handleRestore}
-			>Restore</Button
-		>
-	{/snippet}
-</Modal>
-
-<!-- Purge Confirmation Modal -->
-<Modal
-	open={!!fileToPurge}
-	onClose={() => (fileToPurge = null)}
-	title="Delete Forever?"
-	width="sm"
->
-	<p class="text-foreground-muted">
-		"{fileToPurge?.filename}" will be permanently deleted.
-		{#if fileToPurge?.is_folder}
-			This includes all contents inside the folder.
-		{/if}
-	</p>
-	<p class="text-error font-medium mt-2">This action cannot be undone.</p>
-	{#snippet footer()}
-		<Button
-			variant="secondary"
-			size="sm"
-			onclick={() => (fileToPurge = null)}>Cancel</Button
-		>
-		<Button variant="danger" size="sm" loading={purging} onclick={handlePurge}
-			>Delete Forever</Button
-		>
-	{/snippet}
-</Modal>
-
-<!-- Empty Trash Confirmation Modal -->
-<Modal
-	open={showEmptyTrashModal}
-	onClose={() => (showEmptyTrashModal = false)}
-	title="Empty Trash?"
-	width="sm"
->
-	<p class="text-foreground-muted">
-		All {trashFiles.length}
-		{trashFiles.length === 1 ? "item" : "items"} in Trash will be permanently
-		deleted.
-	</p>
-	<p class="text-error font-medium mt-2">This action cannot be undone.</p>
-	{#snippet footer()}
-		<Button
-			variant="secondary"
-			size="sm"
-			onclick={() => (showEmptyTrashModal = false)}>Cancel</Button
-		>
-		<Button
-			variant="danger"
-			size="sm"
-			loading={emptyingTrash}
-			onclick={handleEmptyTrash}>Empty Trash</Button
-		>
-	{/snippet}
-</Modal>
-
-<style>
-	@media (max-width: 768px) {
-		.hide-mobile {
-			display: none;
-		}
-	}
-</style>
+		{#snippet rowActions(row: TrashRow)}
+			<IconButton
+				icon="ri:arrow-go-back-line"
+				label={`Restore ${row.title}`}
+				size="sm"
+				disabled={busy}
+				onclick={(e) => {
+					e.stopPropagation();
+					restore(row);
+				}}
+			/>
+			<IconButton
+				icon="ri:delete-bin-7-line"
+				label={`Delete ${row.title} forever`}
+				size="sm"
+				variant="danger"
+				disabled={busy}
+				onclick={(e) => {
+					e.stopPropagation();
+					purge(row);
+				}}
+			/>
+		{/snippet}
+	</UniversalDataGrid>
+</Page>

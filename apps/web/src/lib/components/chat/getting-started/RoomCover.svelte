@@ -1,56 +1,63 @@
 <!--
-	The room's frontispiece: a graphite study of the library's garden doors,
-	the centre pair standing open.
+	The room's frontispiece: a watercolor of a scholar's window — ferns and a
+	monstera on the sill, botanical prints, a row of books and an inkwell on
+	the desk, morning light through old glass.
 
-	It is a MASK, not a picture. The drawing is one ink, so the PNG carries
-	only its alpha and the page paints it with the foreground token —
-	graphite on paper in the light theme, chalk on ink in the dark one. No
-	rectangle, no paper colour of its own to clash with the page, and it
-	needs no border or fade to stop looking like a component: the drawing
-	simply trails off into the page at its edges, because the study does.
+	It is paint, not a mask. The graphite study that stood here was one ink
+	on alpha, so the page could tint it with the foreground token and it
+	flipped to chalk on a dark theme for free. A watercolor has its own
+	colors, so the trick is different: the white of the paper is knocked out
+	to alpha (unmultiplied against white, `tools`-side, once), which is what
+	a wash on a page IS — pigment over whatever the paper is. On a light
+	theme the picture sits straight on the page and trails off into it at
+	the edges, because the painting does. On a dark theme pigment over ink
+	would read as a smudge, so the figure lays a paper card under it: a
+	tipped-in plate, the way a book carries a color plate on its own stock.
+	The card's paper and inset are driven by `--identity-dark`, the flag each
+	dark theme already sets beside its palette, so no theme is named here.
 
-	The oil painting that stood here first ran the full width of the pane
-	and made the room read as two products stacked — a cinematic band over a
-	column of chat. This sits inside the column, at the measure of the words.
+	It sits inside the column, at the measure of the words. The oil painting
+	that stood here first ran the full width of the pane and made the room
+	read as two products stacked.
 -->
 <script lang="ts">
 	let visible = $state(false);
-	// The mask has no intrinsic paint, so there is no load event to wait on
-	// the way an <img> gives one; fade the block in once it is in the DOM.
-	$effect(() => {
-		const id = requestAnimationFrame(() => (visible = true));
-		return () => cancelAnimationFrame(id);
-	});
 </script>
 
-<figure
-	class="cover"
-	class:visible
-	role="img"
-	aria-label="A pencil study of a library's garden doors, the centre pair standing open onto a lawn and a stone urn"
-></figure>
+<figure class="cover" class:visible>
+	<img
+		src="/covers/getting-started.png"
+		alt="A watercolor of a scholar's window: ferns and a monstera on the sill beside botanical prints, a row of books and an inkwell on the desk below, morning light through old glass"
+		width="1600"
+		height="529"
+		decoding="async"
+		onload={() => (visible = true)}
+	/>
+</figure>
 
 <style>
 	.cover {
+		/* The paper card exists only where `--identity-dark` is 1: on a light
+		   theme both the tint and the inset compute to nothing, and the
+		   painting sits directly on the page. */
+		--plate-dark: var(--identity-dark, 0);
+		--plate-paper: #f3efe6;
 		margin: 0 0 1.5rem;
-		width: 100%;
-		aspect-ratio: 1600 / 529;
-		background-color: var(--color-foreground);
-		/* Graphite reads heavy at full strength against body copy; this is a
-		   drawing in the margin of the page, not the page's subject. */
+		padding: calc(var(--plate-dark) * 14px);
+		border-radius: calc(var(--plate-dark) * 6px);
+		background: color-mix(in srgb, var(--plate-paper) calc(var(--plate-dark) * 100%), transparent);
 		opacity: 0;
 		transition: opacity 0.6s ease;
-		-webkit-mask-image: url("/covers/getting-started.png");
-		mask-image: url("/covers/getting-started.png");
-		-webkit-mask-size: contain;
-		mask-size: contain;
-		-webkit-mask-repeat: no-repeat;
-		mask-repeat: no-repeat;
-		-webkit-mask-position: center;
-		mask-position: center;
 	}
 	.cover.visible {
-		opacity: 0.78;
+		/* A plate in the margin of the page, not the page's subject. */
+		opacity: 0.92;
+	}
+	.cover img {
+		display: block;
+		width: 100%;
+		height: auto;
+		aspect-ratio: 1600 / 529;
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.cover {

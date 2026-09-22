@@ -108,7 +108,7 @@ pub async fn list_handler(State(pool): State<PgPool>, user: AuthUser) -> impl In
 
 /// Bare-pool device list for the `virtues device ls` CLI. No `AuthUser` — the
 /// on-box operator is the owner (physical access = you). Non-revoked devices,
-/// newest-active first. Returns `(id, kind, label, node_id, last_seen_at,
+/// newest-active first. Returns `(id, kind, label, endpoint_id, last_seen_at,
 /// version)` — version prefers the native app's release over the UI bundle's
 /// (same preference the web Devices list renders; the bundle identity mirrors
 /// the box for app devices and is only the headline for a collector).
@@ -117,7 +117,7 @@ pub async fn list_devices_cli(
 ) -> Result<Vec<(String, String, String, Option<String>, Option<DateTime<Utc>>, Option<String>)>, sqlx::Error>
 {
     sqlx::query_as(
-        "SELECT id, kind, label, node_id, last_seen_at, \
+        "SELECT id, kind, label, endpoint_id, last_seen_at, \
                 COALESCE(device_info->'build'->>'app', \
                          device_info->'build'->>'version') AS version \
          FROM app_device \
@@ -129,9 +129,12 @@ pub async fn list_devices_cli(
 }
 
 /// Bare-pool device revoke for the `virtues device rm` CLI. Mirrors the HTTP
-/// revoke's core in one transaction (mark the device revoked + revoke its
-/// credential rows), then kicks `after_pairing_change` so the de-allowlist +
-/// atlas re-report happen immediately. `Ok(false)` if no such active device.
+/// revoke's core in one transaction — mark the device revoked, which is the
+/// whole of it, since a device's only credential is its allowlisted iroh key
+/// (this line used to claim it also revoked the device's credential rows; the
+/// body below says the opposite, and the body is right) — then kicks
+/// `after_pairing_change` so the de-allowlist + atlas re-report happen
+/// immediately. `Ok(false)` if no such active device.
 pub async fn revoke_device_cli(pool: &PgPool, device_id: &str) -> Result<bool, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let affected = sqlx::query(
@@ -322,7 +325,7 @@ pub async fn set_self_node_id(
     if node_id.is_empty() {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "missing_node_id"}))).into_response();
     }
-    match sqlx::query("UPDATE app_device SET node_id = $1 WHERE id = $2 AND revoked_at IS NULL")
+    match sqlx::query("UPDATE app_device SET endpoint_id = $1 WHERE id = $2 AND revoked_at IS NULL")
         .bind(node_id)
         .bind(&user.device_id)
         .execute(&pool)
@@ -451,7 +454,7 @@ impl EnrollError {
 }
 
 /// Core peer enrollment shared by `enroll_peer` (HTTP) and the link-a-device
-/// approve step: insert `app_device{node_id=peer, source_id}`, allowlist +
+/// approve step: insert `app_device{endpoint_id=peer, source_id}`, allowlist +
 /// register the EndpointId with atlas, then fan out the device's ingest actions.
 /// No bearer changes hands — the peer's proven key is its credential.
 pub(crate) async fn enroll_peer_core(
@@ -485,8 +488,8 @@ pub(crate) async fn enroll_peer_core(
         tracing::warn!(error = %e, "enroll_peer_core: begin tx failed");
         EnrollError::Internal
     })?;
-    // Idempotent on node_id: re-enrolling the same peer UPDATEs its row and
-    // returns the existing id (rather than 500-ing on the unique node_id).
+    // Idempotent on endpoint_id: re-enrolling the same peer UPDATEs its row and
+    // returns the existing id (rather than 500-ing on the unique endpoint_id).
     let device_id = crate::api::pair::insert_device_row(
         &mut tx,
         &device_id,
@@ -560,7 +563,7 @@ mod tests {
         .bind("dev_nobody")
         .fetch_all(&mut *tx)
         .await
-        .expect("row-locking count must be legal SQL — see the doc comment");
+        .expect("row-locking count must be legal SQL - see the doc comment");
         assert!(rows.is_empty(), "no devices exist in a scratch database");
 
         // And prove the old shape is genuinely rejected, so this test fails
@@ -607,7 +610,7 @@ mod tests {
                     "test phone",
                     &serde_json::json!({}),
                     None,
-                    Some(id), // node_id — distinct per case, so neither conflicts
+                    Some(id), // endpoint_id — distinct per case, so neither conflicts
                     None,
                     seen_now,
                 )

@@ -14,9 +14,15 @@
  * toggle semantics and the error handling can't drift between five copies.
  *
  * NOT to be confused with `data_content_bookmark` (ingested saved links —
- * GitHub stars, browser bookmarks) or with `app_notebook_items.role`, which is
+ * GitHub stars, browser bookmarks) or with `app_project_items.role`, which is
  * retrieval scope. Same English word, three different concepts; this is the
  * navigational one.
+ *
+ * Pins live under "Pinned" at the top of the Home panel. They were "the
+ * Desk" behind a Home tile on the rail; the tile is gone (2026-09-21) and so
+ * is the word — "pin" and "unpin" are the verbs, and "Pinned" is the place.
+ * A chat, a project, an applet or a page can be pinned; anything with a url
+ * can, in fact, but those four are what the menus offer.
  */
 import { pinsStore } from '$lib/stores/pins.svelte';
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
@@ -107,12 +113,10 @@ export function pinMenuItem(
 	const pinned = isPinned(target.url);
 	return {
 		id: 'pin-sidebar',
-		// Says what happens, and names where it goes — "Pin" alone doesn't
-		// answer "pin it to what?" when three different things in this app
-		// could plausibly be the destination. The destination has a name now,
-		// so the verb uses it: the Desk is where things you're working on go,
-		// and "add to desk" is the same sentence the zone header speaks.
-		label: pinned ? 'Take off the desk' : 'Add to desk',
+		// "Pin" used to be "Add to desk", when the destination was a room with
+		// a name. Now the destination is the section labeled Pinned, at the top
+		// of the Home panel, and the plain verb is the one the label speaks.
+		label: pinned ? 'Unpin' : 'Pin',
 		icon: pinned ? 'ri:pushpin-fill' : 'ri:pushpin-line',
 		dividerBefore: opts.dividerBefore ?? true,
 		action: async () => {

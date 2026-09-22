@@ -82,7 +82,7 @@
 			<p class="pl-11">
 				Open Virtues on the device you're adding and scan the same QR from its
 				pairing screen, or type the code shown beside it. The link is still
-				good — nothing here used it up.
+				good. Nothing here used it up.
 			</p>
 		</div>
 	{:else}
@@ -115,13 +115,13 @@
 				<li>
 					<span class="text-foreground">From an already-paired device:</span>
 					open Settings → Devices → <span class="text-foreground">Add device</span>,
-					then scan that QR from the Virtues app on this device — the app holds
+					then scan that QR from the Virtues app on this device - the app holds
 					the key, so pairing has to finish there rather than in a browser.
 				</li>
 			</ol>
 
 			<p class="pl-11 text-xs">
-				No passwords, no email. The only way in is to prove you're at the box or
+				No passwords, no email. The only way in is to prove you're at your server or
 				you already have a paired device.
 			</p>
 		</div>

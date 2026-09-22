@@ -105,9 +105,9 @@
 		if (!action || !isSystem) return null;
 		switch (action.origin) {
 			case 'source':
-				return 'Part of a source you connected. Its settings come from the connection — disconnect the source to remove it.';
+				return 'Part of a source you connected. Its settings come from the connection - disconnect the source to remove it.';
 			default:
-				return 'Built in. It keeps the box running, so it can be turned off but not deleted — reconcile would recreate it.';
+				return 'Built in. It keeps your server running, so you can turn it off but not delete it - reconcile would recreate it.';
 		}
 	});
 
@@ -560,15 +560,14 @@
 							<div class="pipeline-note">
 								<Icon icon="ri:terminal-line" width="14" />
 								<span>
-									Compiled program, run fresh each time it fires —
-									<code>{action.command?.join(' ') ?? 'built in'}</code>.
+									Compiled program, run fresh each time it fires - <code>{action.command?.join(' ') ?? 'built in'}</code>.
 									No model is involved.
 								</span>
 							</div>
 						{/if}
 						{#if isSystem && isAgent}
 							<span class="hint">
-								<Icon icon="ri:lock-line" width="12" /> Read-only — this prompt ships with the applet
+								<Icon icon="ri:lock-line" width="12" /> Read-only. This prompt ships with the applet
 							</span>
 						{:else if customized}
 							<!-- The only channel an edited applet has. A prompt you
@@ -578,7 +577,7 @@
 							<div class="prompt-drift">
 								<span>
 									You've edited this. The version that ships with the applet
-									has changed since — improvements and fixes land there, not
+									has changed since - improvements and fixes land there, not
 									here.
 								</span>
 								<TextAction inline onclick={useShippedPrompt}>
@@ -610,7 +609,7 @@
 							<span class="chip">{t === 'cron' ? 'schedule' : t}</span>
 						{/each}
 						{#if triggers.length === 0}
-							<span class="readonly-value dim">nothing — it never runs on its own</span>
+							<span class="readonly-value dim">nothing. It never runs on its own</span>
 						{/if}
 					</div>
 				</div>
@@ -620,8 +619,8 @@
 						<span class="label">Only when</span>
 						<code class="readonly-value mono">{action.condition}</code>
 						<span class="hint">
-							Checked before each run. When it is false the run is skipped, not
-							failed.
+							Checked before each run. When it's false your server skips the
+							run rather than failing it.
 						</span>
 					</div>
 				{/if}
@@ -657,7 +656,7 @@
 						rows="6"
 						bind:value={edit.memory}
 						oninput={markDirty}
-						placeholder="Empty — this applet has not written itself any notes yet."
+						placeholder="Empty. This applet has not written itself any notes yet."
 					></textarea>
 					<span class="hint">
 						What this applet wrote down for its own next run. Yours to read, and
@@ -683,7 +682,7 @@
 				<section class="source-block">
 					<h3>Source</h3>
 					<p class="muted">
-						The code this applet runs. Read-only — editing forks it onto this box.
+						The code this applet runs. Read-only - editing forks it onto this server.
 					</p>
 					<AppletSource appletId={action.id} />
 				</section>
@@ -821,7 +820,7 @@
 					{/each}
 				</ul>
 				{#if !dropData}
-					<p class="keep-note dim">Its data will be kept and can outlive the applet.</p>
+					<p class="keep-note dim">Your server keeps its data, which can outlive the applet.</p>
 				{/if}
 			{/if}
 		</div>

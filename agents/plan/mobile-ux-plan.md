@@ -56,7 +56,7 @@ trustworthy in OUR wry version before any code.
 ## Phase 2 — Touch reachability (long-press → existing context menus)
 
 Row actions (rename/delete/open…) live only in `oncontextmenu` menus
-(PagesView, DriveView, NotebookDetailView) — unreachable on touch.
+(PagesView, DriveView, ProjectDetailView) — unreachable on touch.
 - Wire long-press (pointerdown + ~450ms, cancel on move/scroll) in ONE place —
   `ContextMenuProvider` — dispatching the same menu open. All three views
   inherit it.
@@ -80,7 +80,7 @@ Row actions (rename/delete/open…) live only in `oncontextmenu` menus
 ## Phase 4 — Lists: one grid decision fixes every list view
 
 `UniversalDataGrid` already has card mode + `hideOnMobile`. Two changes inside
-the grid, inherited by Pages/Notebooks/History/Drive/Person/Actions-history:
+the grid, inherited by Pages/Projects/History/Drive/Person/Actions-history:
 - Phone default = card view (table remains a user choice).
 - `.table-view` gets an `overflow-x: auto` wrapper (today overflow is CLIPPED
   by the fixed shell — unreadable, unscrollable).

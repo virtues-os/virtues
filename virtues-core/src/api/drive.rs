@@ -563,7 +563,9 @@ pub async fn upload_file(
     // Check quota
     if !check_quota(config, size_bytes).await? {
         return Err(Error::InvalidInput(
-            "Not enough free space on the box's disk.".into(),
+            "Your server is out of space, so it didn't save this file. Empty the trash in Drive or \
+             delete something large, then upload again."
+                .into(),
         ));
     }
 
@@ -706,7 +708,9 @@ pub async fn upload_system_file(
     // Check quota
     if !check_quota(config, size_bytes).await? {
         return Err(Error::InvalidInput(
-            "Not enough free space on the box's disk.".into(),
+            "Your server is out of space, so it didn't save this file. Empty the trash in Drive or \
+             delete something large, then upload again."
+                .into(),
         ));
     }
 
@@ -887,7 +891,7 @@ pub async fn download_file(
     // Check if this is a lake object - these need special handling via storage layer
     if is_lake_object_id(file_id) {
         return Err(Error::InvalidInput(
-            "Lake objects must be downloaded via the storage API".into(),
+            "Download lake objects through the storage API".into(),
         ));
     }
 
@@ -959,7 +963,7 @@ pub async fn download_file_stream(
     // Check if this is a lake object
     if is_lake_object_id(file_id) {
         return Err(Error::InvalidInput(
-            "Lake objects must be downloaded via the storage API".into(),
+            "Download lake objects through the storage API".into(),
         ));
     }
 
@@ -1012,69 +1016,48 @@ pub async fn delete_file(pool: &PgPool, _config: &DriveConfig, file_id: &str) ->
     // No usage tally here: the old trash_bytes/trash_count columns were
     // written on every path and read by nothing (dropped 2026-08-28) —
     // anything that wants trash totals computes from app_drive_files.
-    if file.is_folder {
-        // Recursively soft-delete folder contents
-        soft_delete_folder_recursive(pool, &file.id).await?;
-    } else {
-        // Soft delete single file (mark as deleted, keep on disk)
-        sqlx::query("UPDATE app_drive_files SET deleted_at = now() WHERE id = $1")
-            .bind(file_id)
-            .execute(pool)
-            .await
-            .map_err(|e| Error::Database(format!("Failed to soft delete file: {e}")))?;
-    }
+
+    // A file is a subtree of one, so a folder and a file take the same path.
+    soft_delete_subtree(pool, &file.id).await?;
 
     Ok(())
 }
 
-/// Recursively soft-delete a folder and its contents.
-/// Returns (total_bytes, total_count) of all affected items.
-async fn soft_delete_folder_recursive(pool: &PgPool, folder_id: &str) -> Result<(i64, i64)> {
-    // Get all non-deleted children
-    let children = sqlx::query_as::<_, DriveFile>(
+/// Soft-delete a row and everything under it, in one statement.
+///
+/// The single statement is the point, not an optimization: `now()` is the
+/// transaction timestamp, so every row this takes gets the *same* `deleted_at`,
+/// and that shared stamp is the only record of which rows one delete took.
+/// `restore_file` reads it to put back exactly this delete — a row-at-a-time
+/// recursion stamps each row with its own transaction's clock, and a restore
+/// then cannot tell this delete's rows from a file the user trashed on its own.
+///
+/// Rows already in the trash are left alone, and the walk stops at them: a
+/// folder trashed earlier keeps its own stamp, so restoring it later still
+/// restores its own contents.
+async fn soft_delete_subtree(pool: &PgPool, root_id: &str) -> Result<()> {
+    sqlx::query(
         r#"
-        SELECT id, path, filename, mime_type, size_bytes,
-               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
-        FROM app_drive_files
-        WHERE parent_id = $1 AND deleted_at IS NULL
+        WITH RECURSIVE subtree AS (
+            SELECT id FROM app_drive_files
+            WHERE id = $1 AND deleted_at IS NULL
+            UNION ALL
+            SELECT child.id
+            FROM app_drive_files child
+            JOIN subtree ON child.parent_id = subtree.id
+            WHERE child.deleted_at IS NULL
+        )
+        UPDATE app_drive_files
+        SET deleted_at = now()
+        WHERE id IN (SELECT id FROM subtree)
         "#,
     )
-    .bind(folder_id)
-    .fetch_all(pool)
+    .bind(root_id)
+    .execute(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to list folder contents: {e}")))?;
+    .map_err(|e| Error::Database(format!("Failed to soft delete: {e}")))?;
 
-    let mut total_bytes = 0i64;
-    let mut total_count = 0i64;
-
-    // Recursively soft-delete children
-    for child in children {
-        if child.is_folder {
-            let (bytes, count) = Box::pin(soft_delete_folder_recursive(pool, &child.id)).await?;
-            total_bytes += bytes;
-            total_count += count;
-        } else {
-            // Soft delete the file
-            sqlx::query("UPDATE app_drive_files SET deleted_at = now() WHERE id = $1")
-                .bind(&child.id)
-                .execute(pool)
-                .await
-                .map_err(|e| Error::Database(format!("Failed to soft delete file: {e}")))?;
-            total_bytes += child.size_bytes;
-            total_count += 1;
-        }
-    }
-
-    // Soft delete the folder itself
-    sqlx::query("UPDATE app_drive_files SET deleted_at = now() WHERE id = $1")
-        .bind(folder_id)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to soft delete folder: {e}")))?;
-
-    total_count += 1; // count the folder itself
-
-    Ok((total_bytes, total_count))
+    Ok(())
 }
 
 /// Recursively permanently delete a folder and its contents from storage and DB
@@ -1176,78 +1159,162 @@ pub async fn list_trash(pool: &PgPool) -> Result<Vec<DriveFile>> {
     Ok(files)
 }
 
-/// Restore a file from trash
+/// Restore a file or folder from trash.
 ///
-/// If the file's parent folder was also deleted, it will be restored too.
-/// If there's a naming conflict, the file will be auto-renamed.
+/// Restores exactly what one delete took, and nothing else. `delete_file`
+/// stamps every row in a subtree with one `deleted_at`, so that timestamp is
+/// the batch marker: restoring a folder clears the trash flag on the
+/// descendants carrying the same stamp and leaves anything trashed separately
+/// — a file the user deleted on its own beforehand — where it is.
+///
+/// Ancestors come back as empty shells. Restoring one file out of a trashed
+/// folder needs somewhere to put it, not its siblings back.
+///
+/// Folders trashed by the row-at-a-time delete this replaced carry a different
+/// stamp on every row, so those still restore as a shell — their contents are
+/// listed in Recently deleted individually and restore from there.
 pub async fn restore_file(pool: &PgPool, file_id: &str) -> Result<DriveFile> {
     let file = get_file_metadata(pool, file_id).await?;
 
-    // Check if file is actually in trash
-    if file.deleted_at.is_none() {
+    let Some(batch) = file.deleted_at else {
         return Err(Error::InvalidInput("File is not in trash".into()));
-    }
+    };
 
-    // If parent exists and is deleted, restore it first (recursive up)
+    // Up first: a restored row needs a live parent to appear under.
     if let Some(ref parent_id) = file.parent_id {
-        let parent = get_file_metadata(pool, parent_id).await;
-        if let Ok(parent_file) = parent {
-            if parent_file.deleted_at.is_some() {
-                Box::pin(restore_file(pool, parent_id)).await?;
-            }
-        }
+        restore_ancestors(pool, parent_id).await?;
     }
 
-    // Check for naming conflict with existing files
+    let restored_path = restore_row(pool, &file.id, &file.path, &file.filename).await?;
+
+    // Then down, for a folder: the rows this same delete trashed.
+    if file.is_folder {
+        restore_subtree(pool, &file.id, &restored_path, batch).await?;
+    }
+
+    get_file_metadata(pool, file_id).await
+}
+
+/// Walk up from a parent, restoring each trashed ancestor — the row only.
+///
+/// Deliberately not `restore_file`: that would restore the ancestor's whole
+/// subtree, so pulling one file out of the trash would drag back every sibling
+/// the same delete took.
+async fn restore_ancestors(pool: &PgPool, parent_id: &str) -> Result<()> {
+    // absent-ok: a missing parent row means the file restores at its path with
+    // no folder row above it, which is what the listing already tolerates.
+    let Ok(parent) = get_file_metadata(pool, parent_id).await else {
+        return Ok(());
+    };
+
+    if parent.deleted_at.is_none() {
+        return Ok(());
+    }
+
+    if let Some(ref grandparent_id) = parent.parent_id {
+        Box::pin(restore_ancestors(pool, grandparent_id)).await?;
+    }
+
+    restore_row(pool, &parent.id, &parent.path, &parent.filename).await?;
+
+    Ok(())
+}
+
+/// Clear `deleted_at` on one row at `target_path`, renaming past any live
+/// occupant of that path. Returns the path the row ended up with.
+///
+/// The rename is defensive. Every writer that could take a trashed row's path
+/// — `upload_file`, `create_folder`, `move_file`, `get_unique_path` — counts
+/// trashed rows when it checks, precisely so a live row cannot sit on one. It
+/// stays because the id is derived from the path and a collision here would be
+/// silent, and because the returned path is what the subtree below is rebuilt
+/// from.
+async fn restore_row(
+    pool: &PgPool,
+    id: &str,
+    target_path: &str,
+    filename: &str,
+) -> Result<String> {
     let conflict = sqlx::query_scalar::<_, String>(
         r#"
         SELECT id FROM app_drive_files
         WHERE path = $1 AND deleted_at IS NULL AND id != $2
         "#,
     )
-    .bind(&file.path)
-    .bind(file_id)
+    .bind(target_path)
+    .bind(id)
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to check conflict: {e}")))?;
 
-    if conflict.is_some() {
-        // Auto-rename: find unique name
-        let new_path = get_unique_path(pool, &file.path).await?;
-        let new_filename = PathBuf::from(&new_path)
+    let (path, filename) = if conflict.is_some() {
+        let unique = get_unique_path(pool, target_path).await?;
+        let renamed = PathBuf::from(&unique)
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| file.filename.clone());
-
-        sqlx::query(
-            r#"
-            UPDATE app_drive_files
-            SET deleted_at = NULL, path = $1, filename = $2, updated_at = now()
-            WHERE id = $3
-            "#,
-        )
-        .bind(&new_path)
-        .bind(&new_filename)
-        .bind(file_id)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to restore file: {e}")))?;
+            .unwrap_or_else(|| filename.to_string());
+        (unique, renamed)
     } else {
-        // No conflict, just restore
-        sqlx::query(
-            r#"
-            UPDATE app_drive_files
-            SET deleted_at = NULL, updated_at = now()
-            WHERE id = $1
-            "#,
-        )
-        .bind(file_id)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to restore file: {e}")))?;
+        (target_path.to_string(), filename.to_string())
+    };
+
+    sqlx::query(
+        r#"
+        UPDATE app_drive_files
+        SET deleted_at = NULL, path = $1, filename = $2, updated_at = now()
+        WHERE id = $3
+        "#,
+    )
+    .bind(&path)
+    .bind(&filename)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to restore file: {e}")))?;
+
+    Ok(path)
+}
+
+/// Restore the descendants that `batch` took, under an already-restored folder.
+///
+/// Top-down, one row at a time, because each child's path is rebuilt from its
+/// restored parent's: if a folder was renamed past a conflict on the way back,
+/// everything beneath it has to move with it, and each row gets its own
+/// conflict check as it lands.
+///
+/// `deleted_at = batch` is an exact match on purpose. Folders trashed before
+/// this delete carry an earlier stamp and stay in the trash with their own
+/// contents intact, restorable on their own.
+async fn restore_subtree(
+    pool: &PgPool,
+    folder_id: &str,
+    folder_path: &str,
+    batch: Timestamp,
+) -> Result<()> {
+    let children = sqlx::query_as::<_, DriveFile>(
+        r#"
+        SELECT id, path, filename, mime_type, size_bytes,
+               is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
+        FROM app_drive_files
+        WHERE parent_id = $1 AND deleted_at = $2
+        "#,
+    )
+    .bind(folder_id)
+    .bind(batch)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to list trashed folder contents: {e}")))?;
+
+    for child in children {
+        let target_path = format!("{}/{}", folder_path, child.filename);
+        let restored_path = restore_row(pool, &child.id, &target_path, &child.filename).await?;
+
+        if child.is_folder {
+            Box::pin(restore_subtree(pool, &child.id, &restored_path, batch)).await?;
+        }
     }
 
-    get_file_metadata(pool, file_id).await
+    Ok(())
 }
 
 /// Permanently delete a single file (bypasses trash or from trash)
@@ -1824,6 +1891,139 @@ mod tests {
         assert!(!is_protected_path("documents"));
         assert!(!is_protected_path("photos/vacation"));
         assert!(!is_protected_path(".other")); // other hidden folders are not protected
+    }
+
+    // =========================================================================
+    // Trash: delete and restore have to take and give back the same rows
+    // =========================================================================
+
+    /// Insert a row directly. `upload_file` wants a storage backend and a soft
+    /// delete never touches one, so the table is the whole fixture. Ids and
+    /// parent links are built the way the writers build them — from the path.
+    async fn seed(pool: &PgPool, path: &str, is_folder: bool) -> String {
+        let id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &[path]);
+        let buf = PathBuf::from(path);
+        let filename = buf
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let parent_id = buf
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .filter(|p| !p.is_empty())
+            .map(|p| ids::generate_id(ids::DRIVE_FILE_PREFIX, &[&p]));
+
+        sqlx::query(
+            "INSERT INTO app_drive_files (id, path, filename, size_bytes, parent_id, is_folder)
+             VALUES ($1, $2, $3, 0, $4, $5)",
+        )
+        .bind(&id)
+        .bind(path)
+        .bind(&filename)
+        .bind(&parent_id)
+        .bind(is_folder)
+        .execute(pool)
+        .await
+        .expect("seed row");
+
+        id
+    }
+
+    async fn is_trashed(pool: &PgPool, path: &str) -> bool {
+        sqlx::query_scalar::<_, Option<Timestamp>>(
+            "SELECT deleted_at FROM app_drive_files WHERE path = $1",
+        )
+        .bind(path)
+        .fetch_one(pool)
+        .await
+        .expect("row still exists")
+        .is_some()
+    }
+
+    /// Restore gives back everything that delete took, down the tree — and
+    /// leaves alone a file the user had trashed on its own beforehand.
+    ///
+    /// Before this was symmetric, restoring a folder handed back an empty
+    /// shell: the delete walked down, the restore only walked up, and the
+    /// contents stayed in the trash with a live parent above them.
+    #[sqlx::test]
+    async fn restoring_a_folder_brings_back_what_that_delete_took(pool: PgPool) {
+        seed(&pool, "docs", true).await;
+        seed(&pool, "docs/notes.txt", false).await;
+        seed(&pool, "docs/sub", true).await;
+        seed(&pool, "docs/sub/deep.txt", false).await;
+        seed(&pool, "docs/old.txt", false).await;
+
+        // Trashed on its own an hour ago. Stamped explicitly rather than by a
+        // second delete call so the test turns on the stamp, not on whether
+        // two transactions happened to land on different microseconds.
+        sqlx::query("UPDATE app_drive_files SET deleted_at = now() - interval '1 hour' WHERE path = $1")
+            .bind("docs/old.txt")
+            .execute(&pool)
+            .await
+            .expect("trash the odd one out");
+
+        let folder_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &["docs"]);
+        soft_delete_subtree(&pool, &folder_id).await.expect("delete");
+
+        assert!(is_trashed(&pool, "docs/sub/deep.txt").await, "delete walks down");
+
+        restore_file(&pool, &folder_id).await.expect("restore");
+
+        assert!(!is_trashed(&pool, "docs").await);
+        assert!(!is_trashed(&pool, "docs/notes.txt").await);
+        assert!(!is_trashed(&pool, "docs/sub").await);
+        assert!(!is_trashed(&pool, "docs/sub/deep.txt").await);
+        assert!(
+            is_trashed(&pool, "docs/old.txt").await,
+            "a file trashed before this delete is not part of it"
+        );
+    }
+
+    /// Restoring one file out of a trashed folder gives it a place to live,
+    /// not its siblings back.
+    #[sqlx::test]
+    async fn restoring_one_file_leaves_its_siblings_in_the_trash(pool: PgPool) {
+        seed(&pool, "photos", true).await;
+        let a = seed(&pool, "photos/a.jpg", false).await;
+        seed(&pool, "photos/b.jpg", false).await;
+
+        let folder_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &["photos"]);
+        soft_delete_subtree(&pool, &folder_id).await.expect("delete");
+
+        restore_file(&pool, &a).await.expect("restore");
+
+        assert!(!is_trashed(&pool, "photos").await, "the parent comes back as a shell");
+        assert!(!is_trashed(&pool, "photos/a.jpg").await);
+        assert!(is_trashed(&pool, "photos/b.jpg").await);
+    }
+
+    /// A folder already in the trash keeps its own delete. The later delete
+    /// stops at it, so restoring the outer folder leaves it trashed — and
+    /// restoring it afterwards still brings its own contents back.
+    #[sqlx::test]
+    async fn an_earlier_delete_keeps_its_own_batch(pool: PgPool) {
+        seed(&pool, "work", true).await;
+        seed(&pool, "work/archive", true).await;
+        seed(&pool, "work/archive/old.pdf", false).await;
+
+        let archive_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &["work/archive"]);
+        let work_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &["work"]);
+
+        soft_delete_subtree(&pool, &archive_id).await.expect("delete archive");
+        soft_delete_subtree(&pool, &work_id).await.expect("delete work");
+
+        restore_file(&pool, &work_id).await.expect("restore work");
+        assert!(!is_trashed(&pool, "work").await);
+        assert!(is_trashed(&pool, "work/archive").await);
+        assert!(is_trashed(&pool, "work/archive/old.pdf").await);
+
+        restore_file(&pool, &archive_id).await.expect("restore archive");
+        assert!(!is_trashed(&pool, "work/archive").await);
+        assert!(
+            !is_trashed(&pool, "work/archive/old.pdf").await,
+            "the earlier delete's own stamp still identifies its rows"
+        );
     }
 
     #[test]

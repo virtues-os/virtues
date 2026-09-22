@@ -196,7 +196,7 @@ pub async fn webhook(
                         applet_id = %applet_id,
                         proven_device = %user.device_id,
                         error = %e,
-                        "webhook: could not resolve action ownership — denying"
+                        "webhook: could not resolve action ownership - denying"
                     );
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,

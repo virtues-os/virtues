@@ -52,7 +52,7 @@
 			await load();
 		} catch (e) {
 			chapterError = ch.id;
-			errorText = e instanceof Error ? e.message : 'Could not save that';
+			errorText = e instanceof Error ? e.message : "Your server couldn't save that. Try again.";
 		}
 	}
 
@@ -68,7 +68,7 @@
 			await load();
 		} catch (e) {
 			chapterError = ch.id;
-			errorText = e instanceof Error ? e.message : 'Could not do that';
+			errorText = e instanceof Error ? e.message : "Your server couldn't do that. Try again.";
 		}
 	}
 
@@ -103,8 +103,8 @@
 	<header class="mast">
 		<h1>Chapters</h1>
 		<p class="standfirst">
-			Your life, divided the way you divided it — named in the interview, never
-			inferred. Every day the record holds falls inside exactly one of these.
+			Your life, divided the way you divided it. You named every chapter in the
+			interview yourself. Every day the record holds falls inside exactly one of them.
 		</p>
 	</header>
 
@@ -128,7 +128,7 @@
 							<p class="chapter-note changepoint">Ended when: {ch.changepoint}</p>
 						{/if}
 						{#if missingNote === ch.id}
-							<p class="chapter-note changepoint">No page yet — it is written when the interview is closed.</p>
+							<p class="chapter-note changepoint">No page yet. Finish the interview to create it.</p>
 						{/if}
 					</button>
 					<p class="chapter-actions">
@@ -164,9 +164,8 @@
 		<div class="empty">
 			<p class="empty-lead">No chapters yet.</p>
 			<p class="empty-body">
-				They are written when the interview is closed — rough names and
-				rough years, in your words. Each one becomes a page you can keep
-				writing in.
+				You name them in the interview, in rough names and rough years of
+				your own. Each one becomes a page you can keep writing in.
 			</p>
 			<button class="btn primary" onclick={openInterview}>Open the interview</button>
 		</div>

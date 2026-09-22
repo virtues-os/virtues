@@ -73,7 +73,7 @@
 		}
 		out.push({
 			label: "Home",
-			note: firstDay ? "Every morning, a page." : "Where the record is read.",
+			note: firstDay ? "Every morning, a page." : "Where you read the record.",
 			go: () => void goto("/home"),
 		});
 		return out;
@@ -120,7 +120,7 @@
 
 	.door:hover {
 		border-color: var(--color-border);
-		background: color-mix(in srgb, var(--color-foreground) 3%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 3%, transparent);
 	}
 
 	.door:focus-visible {

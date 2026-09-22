@@ -185,7 +185,7 @@ pub async fn stream_days(db: &Database, days: i64) -> Result<StreamDaysResponse>
 /// live) so the caller leads with what needs attention.
 pub async fn stream_health(db: &Database) -> Result<Vec<StreamHealth>> {
     // Ingest streams only. Chats/pages are user content in the same registry,
-    // not sources, so a quiet notebook must not read as a broken pipe.
+    // not sources, so a quiet project must not read as a broken pipe.
     let streams: Vec<_> = virtues_registry::ontologies::registered_ontologies()
         .into_iter()
         .filter(|o| o.table_name.starts_with("data_"))

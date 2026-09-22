@@ -199,7 +199,7 @@ async fn main() -> Result<()> {
     //    reader is the reason this column exists rather than the scorer just
     //    reading `search_vectors`: the search index is populated by a separate
     //    15-minute cron and will not have seen these ids yet.
-    //    Note this is NOT the notebook magnet's input — that reads
+    //    Note this is NOT the project magnet's input — that reads
     //    `search_vectors` directly (see magnet.rs) and is unaffected by
     //    anything in this chain.
     let novelty_count = virtues::dayline::novelty::compute_novelty_for_day(&pool, date)

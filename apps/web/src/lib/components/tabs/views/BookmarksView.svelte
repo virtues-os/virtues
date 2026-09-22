@@ -84,7 +84,7 @@
 			url = '';
 			revision += 1;
 		} catch (err) {
-			saveError = err instanceof Error ? err.message : 'Could not save that URL';
+			saveError = err instanceof Error ? err.message : "Your server couldn't save that link. Try again.";
 		} finally {
 			saving = false;
 		}
@@ -287,7 +287,7 @@
 
 <Page
 	title="Bookmarks"
-	description="Everything you kept from the web — browser bookmarks, starred repositories, and links you saved by hand."
+	description="Everything you kept from the web - browser bookmarks, starred repositories, and links you saved by hand."
 	maxWidth="wide"
 >
 	{#snippet actions()}
@@ -327,7 +327,7 @@
 		onItemClick={open}
 		rowHref={detailRoute}
 		emptyIcon="ri:bookmark-line"
-		emptyMessage="Nothing saved yet — paste a link above, or connect a browser."
+		emptyMessage="Nothing saved yet - paste a link above, or connect a browser."
 		loadingMessage="Reading the shelf..."
 		searchPlaceholder="Search bookmarks..."
 	>

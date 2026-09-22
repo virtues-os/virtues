@@ -50,7 +50,7 @@
 		const ok = await updatePlace(page.id, { is_audio_muted: next });
 		if (!ok) {
 			muted = !next;
-			muteFailed = "Could not change that";
+			muteFailed = "Your server couldn't change that. Try again.";
 		}
 	}
 
@@ -198,7 +198,7 @@
 									onclick={toggleMuted}
 									title={muted
 										? "The phone keeps no audio while you are here. Turn this off to record here again."
-										: "Ask the phone to keep no audio while you are here. The mic stays on; nothing is kept."}
+										: "Ask the phone to keep no audio while you are here. The mic stays on, and your phone keeps nothing."}
 								>
 									{muted ? "Not recording here" : "Don't record here"}
 								</TextAction>

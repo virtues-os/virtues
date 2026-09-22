@@ -47,9 +47,9 @@ primitive below cannot.**
 - **Story** is a *throughline*: non-contiguous, overlapping, resumes — at any
   scale. An afternoon (the recital), a year (learning to juggle), a trait
   (learning patience) — and the throughline may be a *question* rather than a
-  narrative: a notebook-style investigation worked through the person's own
-  data ("why do I get sad at work sometimes"). Declared by the person, never
-  inferred.
+  narrative: an investigation worked through the person's own data, the
+  kind a project holds ("why do I get sad at work sometimes"). Declared by
+  the person, never inferred.
 - A calendrical article is written once, when its period closes, and never
   again. The live maintenance load is four time-articles at any moment,
   whether the person is twenty or eighty.
@@ -121,6 +121,18 @@ The registry in
 [`virtues-core/src/api/subjects.rs`](../../virtues-core/src/api/subjects.rs) is
 this section in code: one row per subject, and everything that varies by kind
 hangs off it.
+
+## Project
+
+**Project** is a working lens over the record: material gathered around a
+question, with chat grounded in what was gathered rather than in
+everything. It is a workspace, not a subject: it is not on the clock and
+earns no article. In code it is `app_projects`, its contents are
+`app_project_items`, a chat is bound to one by `app_chats.project_id`, the
+API is `/api/projects`, and the routes are `/projects` and `/project/{id}`;
+ids keep the `nb_` prefix. A project cannot contain a project. It was
+**Notebook** until 2026-09-21, so an older commit message or record that
+says notebook means this.
 
 ## Provenance
 

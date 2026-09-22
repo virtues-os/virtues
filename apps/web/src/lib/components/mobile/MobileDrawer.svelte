@@ -13,7 +13,8 @@
 	 *     shouting day-bucket headers between them — one quiet section label,
 	 *     then rows.
 	 *   - Two regions, not one list: the mast and the doors (Search, New
-	 *     chat, All chats, Settings) are pinned chrome; only Recents scrolls,
+	 *     chat, Pages, Applets, All chats, Settings) are pinned chrome; only the
+	 *     lists scroll — Projects, then Recents, the desktop panel's order —
 	 *     and a hairline appears under the doors once the list has slid
 	 *     beneath them — the way a navigation bar earns its rule. There used
 	 *     to be a bottom bar too (search pill, compose), and search down there
@@ -34,13 +35,17 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
+	import { projectStore } from "$lib/stores/project.svelte";
 	import { search } from "$lib/stores/search.svelte";
 
 	// Refresh the list whenever the drawer opens: it is the moment the user is
 	// looking at it, the GET is small, and a stale list here reads as lost
 	// conversations. The layout's boot-time load covers first paint.
 	$effect(() => {
-		if (mobileLayout.drawerOpen) void chatSessions.refresh();
+		if (mobileLayout.drawerOpen) {
+			void chatSessions.refresh();
+			void projectStore.load();
+		}
 	});
 
 	const activeRoute = $derived(windowShellStore.activeTab?.route ?? "");
@@ -59,6 +64,13 @@
 	function openSearch() {
 		mobileLayout.closeDrawer();
 		search.show();
+	}
+
+	/** A page is written the way a chat is started, so its door stands under New chat. */
+	async function newPage() {
+		const { pagesStore } = await import("$lib/stores/pages.svelte");
+		const page = await pagesStore.createNewPage();
+		go(`/page/${page.id}`, page.title);
 	}
 
 	/** The list has scrolled under the doors; draw the rule between them. */
@@ -137,6 +149,24 @@
 			<AtlasIcon name="new-chat" bare />
 			<span class="row-text">New chat</span>
 		</button>
+		<!-- The word is the list, the + is the new one — the desktop panel's
+		     shape. No hover on a phone, so the + is always drawn. -->
+		<div class="row row-split">
+			<button class="row-main" onclick={() => go("/page", "Pages")}>
+				<AtlasIcon name="pages" bare />
+				<span class="row-text">Pages</span>
+			</button>
+			<button class="row-plus" onclick={newPage} aria-label="New page">
+				<Icon icon="ri:add-line" width={20} />
+			</button>
+		</div>
+		<!-- Applets is a door beside New chat, here as on the desktop panel:
+		     an applet is something you run from a chat, so its door stands
+		     beside the chat's. -->
+		<button class="row" onclick={() => go("/applets", "Applets")}>
+			<AtlasIcon name="applets" bare />
+			<span class="row-text">Applets</span>
+		</button>
 		<button class="row" onclick={() => go("/chat-history", "All Chats")}>
 			<AtlasIcon name="chats" bare />
 			<span class="row-text">All chats</span>
@@ -148,6 +178,24 @@
 	</div>
 
 	<div class="body" onscroll={(e) => (scrolled = e.currentTarget.scrollTop > 0)}>
+		{#if projectStore.projects.length > 0}
+			<!-- The rooms a chat can live in, above the chats themselves: the
+			     same order as the desktop panel. No empty state — a section
+			     with nothing in it is a feature announcing itself. -->
+			<div class="section-label">Projects</div>
+			{#each projectStore.projects as p (p.id)}
+				{@const route = `/project/${p.id}`}
+				<button
+					class="chat-row"
+					class:active={activeRoute === route}
+					aria-current={activeRoute === route ? "page" : undefined}
+					onclick={() => go(route, p.name || "Project")}
+				>
+					<span class="chat-title">{p.name || "Untitled"}</span>
+					<span class="chat-when">{p.chat_count === 1 ? "1 chat" : `${p.chat_count} chats`}</span>
+				</button>
+			{/each}
+		{/if}
 		<div class="section-label">Recents</div>
 		{#each recentSessions as s (s.conversation_id)}
 			{@const route = `/chat/${s.conversation_id}`}
@@ -220,7 +268,7 @@
 		transition: background-color 0.25s ease-out;
 	}
 	.close-btn:active {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
 		transition-duration: 0s;
 	}
 
@@ -265,7 +313,7 @@
 		padding: 0 14px;
 		border: 0;
 		border-radius: 999px;
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 5%, transparent);
 		color: var(--color-foreground-muted);
 		font-size: 15px;
 		text-align: left;
@@ -274,7 +322,7 @@
 		transition: background-color 0.25s ease-out;
 	}
 	.search-pill:active {
-		background: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 10%, transparent);
 		transition-duration: 0s;
 	}
 	/* Atlas ships a .sidebar-icon color of its own (the desktop sidebar's);
@@ -291,6 +339,43 @@
 		-webkit-overflow-scrolling: touch;
 		overscroll-behavior: contain;
 		padding: 0 10px calc(12px + env(safe-area-inset-bottom));
+	}
+
+	/* A row that is two controls: the word and a + at its right edge. The
+	   outer keeps the row's box; the inner buttons split it. */
+	.row-split {
+		padding: 0;
+	}
+	.row-main {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		min-height: 48px;
+		padding: 0 10px;
+		border: 0;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+	}
+	.row-plus {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 44px;
+		min-height: 48px;
+		border: 0;
+		border-radius: 10px;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+	}
+	.row-plus:active {
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 	}
 
 	/* Voice 1 of 2: a row. One size, one weight, everywhere in the list. */
@@ -311,7 +396,7 @@
 		transition: background-color 0.25s ease-out;
 	}
 	.row:active {
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		transition-duration: 0s;
 	}
 	.row :global(svg) {
@@ -344,10 +429,10 @@
 		transition: background-color 0.25s ease-out;
 	}
 	.chat-row.active {
-		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 7%, transparent);
 	}
 	.chat-row:active {
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		transition-duration: 0s;
 	}
 
