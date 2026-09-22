@@ -56,7 +56,22 @@
 
 <div class="mode-panel">
 	<nav class="mode-rows">
-		{#each mode.rows as row (row.id)}
+		{#each mode.rows as row, i (row.id)}
+			<!-- A heading wherever the group changes. Rows of a group must be
+			     adjacent (modes.ts says so); this renders whatever the list
+			     actually is rather than re-sorting it, so a list that breaks the
+			     rule shows the repeat instead of hiding it.
+
+			     Falling OUT of a group (History at the foot of the wiki) draws a
+			     rule instead of a heading: the row is set apart without being
+			     given a category of one. -->
+			{#if row.group !== mode.rows[i - 1]?.group}
+				{#if row.group}
+					<h3 class="mode-group" class:first={i === 0}>{row.group}</h3>
+				{:else if i > 0}
+					<hr class="mode-rule" />
+				{/if}
+			{/if}
 			<button
 				type="button"
 				class="mode-row"
@@ -80,6 +95,32 @@
 		gap: 2px;
 		/* No inset of its own — the panel body already insets. */
 		padding: 0;
+	}
+
+	/* Quiet, small-caps, foreground-subtle: a heading here is an aid to
+	   scanning, not a row. It must never read as clickable — the rows beside it
+	   are the only things in this panel that go anywhere. */
+	.mode-group {
+		margin: 14px 0 4px;
+		padding: 0 12px;
+		font-size: 0.6875rem;
+		font-weight: 500;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--color-foreground-subtle);
+		user-select: none;
+	}
+
+	/* The panel body already insets from the top; the first group would
+	   otherwise sit lower than the panel title it follows. */
+	.mode-group.first {
+		margin-top: 2px;
+	}
+
+	.mode-rule {
+		margin: 10px 12px 6px;
+		border: none;
+		border-top: 1px solid var(--color-border-subtle);
 	}
 
 	.mode-row {

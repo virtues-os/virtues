@@ -104,10 +104,14 @@ export const ROOMS: Room[] = [
 		// Chats, projects, applets and pages are all reached from this panel,
 		// so the pane that holds one lights this tile: the rail is a lens over
 		// where you are, and where you are is "in something Home led you to".
+		//
+		// `/day` is NOT here any more — see Wiki. A day is a wiki article, its
+		// components live in `components/wiki/`, and the panel that lists days
+		// is the wiki's. Home owning it meant reading yesterday lit the Home
+		// tile while the Wiki panel sat there with the day's own index in it.
 		owns: [
 			'/',
 			'/home',
-			'/day',
 			'/chat',
 			'/chat-history',
 			'/project',
@@ -126,7 +130,12 @@ export const ROOMS: Room[] = [
 		icon: 'wiki',
 		chord: '⌥⌘R',
 		href: '/wiki',
-		owns: ['/wiki'],
+		// `/day` and `/year` are wiki articles that happen to live at short
+		// routes; `/person`, `/place` and `/org` are the entity articles. All of
+		// them are reached from this panel and all of them render a wiki page,
+		// so all of them light this tile. Home held `/day` until 2026-09-22,
+		// which is why reading a day used to light the wrong room.
+		owns: ['/wiki', '/day', '/year', '/person', '/place', '/org'],
 		panel: { kind: 'rows', modeId: 'wiki' },
 		group: 'library',
 	},
