@@ -221,9 +221,26 @@ extension.** Everything above is unchanged by it — same column, same signer,
 same registration, same error handling. Encryption changes only what goes in
 the `alert` field. The Swift is about thirty lines; the cost is the plumbing
 around it (a second Xcode target inside a Tauri-generated project, an App Group
-and shared keychain access group for the key, a key minted at pair time, HPKE
-on both ends, and a sane fallback body for when the extension times out and iOS
+and shared keychain access group for the key, a key minted at pair time, and a sane fallback body for when the extension times out and iOS
 shows the payload unmodified). Do it when the feature has earned it.
+
+**The crypto itself is about an hour, and is not the reason to defer.**
+`virtues_helpers::crypto::seal_aes_256_gcm` already exists, is CI-linted, and
+seals as `nonce(12) || ciphertext || tag(16)` — byte-for-byte what CryptoKit's
+`AES.GCM.SealedBox(combined:)` expects, so the device side is two lines and
+needs no HPKE, no age, no curve conversion and no new dependency. The only
+missing piece is a shared key, and it needs no agreement protocol: mint 32
+random bytes at pair time and hand them over the iroh channel the
+raw-public-key handshake has already authenticated, keychain on the device and
+`TokenEncryptor` at rest on the box, exactly as `credentials` does it. **Do not
+derive it from the device's iroh key** — that is one key doing authentication
+and encryption, the same conflation this plan's own thesis is about. The
+tradeoff to accept knowingly is no forward secrecy: a stolen device key
+decrypts past pushes, which is tolerable because whoever holds it also holds
+that device's iroh credential and therefore the whole record. Overhead is 28
+bytes plus base64, so a 200-character reminder is about 300 bytes against a
+4KB budget. So the v1/v2 line is binary and it is drawn at the extension, not
+at the encryption: build the NSE and encryption comes free with it.
 
 Phase 1 is worth doing before anything else is decided: it is additive, it has
 no cloud dependency, and it converts an invisible failure into a visible one.
