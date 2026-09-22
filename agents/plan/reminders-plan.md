@@ -209,14 +209,21 @@ name is how `credentials` ended up holding two opposite trust directions.
    Devices surface for unreachable. No sending yet. Ships useful on its own:
    the box can finally say whether it could reach a device.
 2. **Signer.** Relay through `virtues-api`, `VIRTUES_PUSH_SIGNER_URL`, the
-   local-p8 path, full response classification. Blind tickets here or in 5.
-3. **Encrypted payload + extension.** Key at pair time, encrypt on the box,
-   decrypt in the NSE.
-4. **Reminders.** The applet archetype, the evaluator invariants, the authoring
+   local-p8 path, full response classification. **Plaintext payload** — the
+   push carries the text and iOS displays it, no extension involved.
+3. **Reminders.** The applet archetype, the evaluator invariants, the authoring
    loop, the Devices/applet surfaces. **Gated on data triggers** (phase 4 of
    `applets-overhaul-plan.md`) for anything ingest-shaped; cron + condition
    covers the rest at a latency cost, exactly as that plan says.
-5. **Blind tickets**, if not taken in 2.
+
+**v2, deferred on purpose: the encrypted payload + notification-service
+extension.** Everything above is unchanged by it — same column, same signer,
+same registration, same error handling. Encryption changes only what goes in
+the `alert` field. The Swift is about thirty lines; the cost is the plumbing
+around it (a second Xcode target inside a Tauri-generated project, an App Group
+and shared keychain access group for the key, a key minted at pair time, HPKE
+on both ends, and a sane fallback body for when the extension times out and iOS
+shows the payload unmodified). Do it when the feature has earned it.
 
 Phase 1 is worth doing before anything else is decided: it is additive, it has
 no cloud dependency, and it converts an invisible failure into a visible one.
@@ -235,11 +242,38 @@ no cloud dependency, and it converts an invisible failure into a visible one.
 - **Contentless wake plus a fetch from the extension.** Superseded by the
   encrypted payload: it put a cold iroh dial on the user-visible path and
   failed precisely when the box was unreachable.
+- **Mac-first notifications.** Free to build and genuinely zero-infrastructure,
+  but a desktop banner is a weak product surface and would not have told us
+  whether the feature is any good. Dropped 2026-09-22.
+- **A channel list — Telegram, Slack, Discord, Signal, email — with the owner's
+  own credential.** Tempting, and more sovereign than APNs in one real sense
+  (the box talks straight to the service and we are nowhere in the path). But
+  it answers "who delivers this" with a settings screen, and the first thing to
+  ship should be the box's own voice on the owner's own phone. Keep it in the
+  back pocket: once a destination field exists, each sink is about a day.
+- **Linq / iMessage as the channel.** Bidirectional and genuinely more than a
+  notification system — a reply loop, no app required, reaches every Apple
+  device the owner owns. Refused on identity, not capability: **every reminder
+  would transit a vendor's servers in the clear**, which inverts the one claim
+  the product is built on, kills the DIY tier (no self-hoster gets an account),
+  and brings an A2P compliance stack — opt-out keywords, line reputation,
+  volume ramps — to the job of telling someone their own reminder. Possible
+  v2 as an **inbound** door (the owner texting their box is the owner's act,
+  not the box publishing their record) or as an explicit per-reminder opt-out
+  of the house.
+- **Web Push / VAPID.** The only architecture needing no Apple team key, no
+  signer and no entitlement — the box would sign with its own key. Refused
+  because it does not work in a WKWebView, so it would require owners to
+  install a home-screen PWA *instead of* the App Store app. A product fork, not
+  a feature.
+- **Blind tickets** (Privacy Pass at the signer). A week of work for a property
+  that egress IP undermines anyway: it removes the durable database join but
+  the signer still sees where the request came from. Say plainly what the
+  signer sees instead. Revisit only if it becomes a real objection.
 
 ## Open
 
-- Blind tickets in phase 2 or phase 5 — roughly a week either way.
-- Whether to pursue the time-sensitive capability now or after phase 4.
+- Whether to pursue the time-sensitive capability now or after phase 3.
 - Whether the drain cadence should tighten while a reminder depends on
   phone-sourced data. Needs the battery cost of a shortened
   `CONSTRAINED_DRAIN_SECS` measured on a real device first.
