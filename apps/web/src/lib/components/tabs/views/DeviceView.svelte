@@ -185,8 +185,8 @@
 	 * looks exactly like a box with nothing to say. Only the device's own
 	 * registration distinguishes them.
 	 *
-	 * Shown for apps only. A sensor or a CLI has nothing to notify, and an
-	 * absent row there would read as a fault rather than as "not applicable".
+	 * Shown for phones only. A sensor, a CLI and a desktop app have nothing to
+	 * notify, and a row there would read as a fault rather than "not applicable".
 	 */
 	const notifying = $derived.by(() => {
 		if (!device?.push_address_at) {
@@ -235,7 +235,9 @@
 					>
 						{reaching.text}
 					</div>
-					{#if hasApp && !local}
+					<!-- Phones only. A desktop app has no push at all, so on a Mac's page
+					     "allow notifications" would be advice with nothing behind it. -->
+					{#if device.kind === "mobile_app" && !local}
 						<div
 							class="text-xs mt-0.5"
 							class:text-warning={notifying.tone === "warning"}

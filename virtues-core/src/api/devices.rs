@@ -146,7 +146,7 @@ pub async fn list_devices_cli(
 pub async fn revoke_device_cli(pool: &PgPool, device_id: &str) -> Result<bool, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let affected = sqlx::query(
-        "UPDATE app_device SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL",
+        "UPDATE app_device SET revoked_at = now(), push_address = NULL, push_address_at = NULL WHERE id = $1 AND revoked_at IS NULL",
     )
     .bind(device_id)
     .execute(&mut *tx)
@@ -269,7 +269,7 @@ pub async fn revoke_handler(
 
     // Apply the revoke.
     if let Err(e) = sqlx::query(
-        "UPDATE app_device SET revoked_at = now() WHERE id = $1",
+        "UPDATE app_device SET revoked_at = now(), push_address = NULL, push_address_at = NULL WHERE id = $1",
     )
     .bind(&device_id)
     .execute(&mut *tx)
@@ -422,10 +422,12 @@ pub async fn set_self_push_address(
         Ok(r) if r.rows_affected() == 1 => {
             (StatusCode::OK, Json(json!({"ok": true}))).into_response()
         }
-        // The console pseudo-device has no row, and a device revoked mid-flight
-        // has no live one. Neither is an error worth surfacing to a client that
-        // is only reporting where it can be reached.
-        Ok(_) => (StatusCode::OK, Json(json!({"ok": false}))).into_response(),
+        // No live row: the console pseudo-device, or a device revoked mid-flight.
+        // NOT a 200. The phone reads any 2xx as "the box now holds my address"
+        // and says so on its own screen, so a success status here would let a
+        // phone claim a reach the box does not have — the one lie this whole
+        // endpoint exists to prevent.
+        Ok(_) => (StatusCode::NOT_FOUND, Json(json!({"error": "no_live_device"}))).into_response(),
         Err(e) => {
             tracing::warn!(error = %e, "set_self_push_address failed");
             (
@@ -658,7 +660,7 @@ mod tests {
             .bind("dev_push1")
             .execute(&pool)
             .await
-            .expect("registering must be legal SQL - the handler runs this verbatim");
+            .expect("registering must be legal SQL; set_self_push_address runs this statement verbatim");
 
         let (addr, at): (Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
             sqlx::query_as("SELECT push_address, push_address_at FROM app_device WHERE id = $1")
@@ -686,6 +688,33 @@ mod tests {
                 .await
                 .expect("read back");
         assert!(addr.is_none() && at.is_none(), "clearing leaves neither half behind");
+    }
+
+    /// Revoking a device takes its address with it. The plan and migration 0033
+    /// both say revocation kills reachability "for free"; without this it was
+    /// only true if every future sender remembered to filter `revoked_at` — a
+    /// convention, one forgotten WHERE clause from pushing to a phone its owner
+    /// had just unpaired.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn revoking_a_device_forgets_where_to_reach_it(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label, push_address, push_address_at) \
+             VALUES ('dev_push3', $1, 'mobile_app', 'Phone', 'a1b2', now())",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .execute(&pool)
+        .await
+        .expect("seed a reachable device");
+
+        assert!(super::revoke_device_cli(&pool, "dev_push3").await.expect("revoke"));
+
+        let (addr, at): (Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
+            sqlx::query_as("SELECT push_address, push_address_at FROM app_device WHERE id = $1")
+                .bind("dev_push3")
+                .fetch_one(&pool)
+                .await
+                .expect("read back");
+        assert!(addr.is_none() && at.is_none(), "a revoked device must not stay reachable");
     }
 
     /// And the database refuses the half-written state outright, so no future
