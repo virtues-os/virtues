@@ -33,9 +33,15 @@ private func virtues_report_push_address(_ address: UnsafePointer<CChar>?) -> In
 final class PushRegistrar {
   static let shared = PushRegistrar()
 
-  /// Serializes reports and owns the dedupe state below. Every read and write of
-  /// `accepted`/`acceptedAt`/`waiters` happens on this queue.
+  /// Owns the state below. Every read and write of `accepted`, `acceptedAt`,
+  /// `lastFailed`, `reportedThisLaunch` and `waiters` happens here — and
+  /// **nothing here ever blocks**, because `request`'s timeout is scheduled on
+  /// this queue and has to be able to fire while a report is stuck.
   private let queue = DispatchQueue(label: "com.virtues.push", qos: .utility)
+  /// The blocking report to the box (up to ~10s, DNS included) runs here, off
+  /// `queue`. A first version ran it on `queue` itself, so the "never hang the
+  /// button past 10s" timeout sat behind the very call it was meant to escape.
+  private let ffiQueue = DispatchQueue(label: "com.virtues.push.ffi", qos: .utility)
   private var hooksInstalled = false
 
   /// What the box last ACCEPTED. Outer nil = never; `.some(nil)` = the box
@@ -81,7 +87,14 @@ final class PushRegistrar {
     if UIApplication.shared.applicationState == .active { refresh() }
   }
 
-  @objc private func onActive() { refresh() }
+  /// Hooks are retried here as well as at start: if the delegate did not exist
+  /// yet at plugin init, a one-shot install would leave the token callback
+  /// uninstalled for the life of the process, and every report after it would
+  /// simply never happen — no error, no log, no line on any screen.
+  @objc private func onActive() {
+    installDelegateHooks()
+    refresh()
+  }
 
   // MARK: - Status for the UI
 
@@ -163,25 +176,29 @@ final class PushRegistrar {
         self.drainWaiters()
         return
       }
-      let rc: Int32
-      if let address {
-        rc = address.withCString { virtues_report_push_address($0) }
-      } else {
-        rc = virtues_report_push_address(nil)
+      self.ffiQueue.async {
+        let rc: Int32
+        if let address {
+          rc = address.withCString { virtues_report_push_address($0) }
+        } else {
+          rc = virtues_report_push_address(nil)
+        }
+        self.queue.async {
+          self.reportedThisLaunch = true
+          if rc == 0 {
+            self.accepted = .some(address)
+            self.acceptedAt = Date()
+            self.lastFailed = false
+            UserDefaults.standard.set(address ?? "", forKey: Self.acceptedKey)
+          } else {
+            self.lastFailed = true
+            // Not retried here: the next foreground reports again, and iOS
+            // re-issues the token on every registerForRemoteNotifications.
+            NSLog("[virtues push] box did not accept the report (rc=%d)", rc)
+          }
+          self.drainWaiters()
+        }
       }
-      self.reportedThisLaunch = true
-      if rc == 0 {
-        self.accepted = .some(address)
-        self.acceptedAt = Date()
-        self.lastFailed = false
-        UserDefaults.standard.set(address ?? "", forKey: Self.acceptedKey)
-      } else {
-        self.lastFailed = true
-        // Not retried here: the next foreground reports again, and iOS re-issues
-        // the token on every registerForRemoteNotifications.
-        NSLog("[virtues push] box did not accept the report (rc=%d)", rc)
-      }
-      self.drainWaiters()
     }
   }
 
@@ -202,9 +219,11 @@ final class PushRegistrar {
   /// define the method, and then there is nothing to preserve. If it does (a
   /// future tao, another SDK), wrap it so ours runs and theirs still does.
   private func installDelegateHooks() {
-    guard !hooksInstalled, let delegate = UIApplication.shared.delegate,
-      let cls = object_getClass(delegate)
-    else { return }
+    guard !hooksInstalled else { return }
+    guard let delegate = UIApplication.shared.delegate, let cls = object_getClass(delegate) else {
+      NSLog("[virtues push] no app delegate yet; token callback not installed, will retry on activation")
+      return
+    }
     hooksInstalled = true
 
     Self.hook(

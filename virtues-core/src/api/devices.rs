@@ -354,6 +354,16 @@ pub async fn set_self_node_id(
     }
 }
 
+/// Whether `a` is shaped like an APNs device token: non-empty hex, bounded.
+///
+/// Deliberately NOT a fixed length. Tokens have been 64 hex characters for
+/// years, but Apple documents them as variable-length and says not to assume
+/// a size — a length check here would be the kind of assumption that
+/// unregisters every phone on the day it changes. 200 only bounds the column.
+fn is_push_address(a: &str) -> bool {
+    !a.is_empty() && a.len() <= 200 && a.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 #[derive(serde::Deserialize)]
 pub struct SelfPushAddressRequest {
     /// The APNs device token for this install, lowercase hex. Absent or empty
@@ -396,7 +406,7 @@ pub async fn set_self_push_address(
     // meaning ("your configuration is wrong") is easy to misread as "this
     // device is gone" and act on by deleting a live registration.
     if let Some(a) = address {
-        if a.len() > 200 || !a.chars().all(|c| c.is_ascii_hexdigit()) {
+        if !is_push_address(a) {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({"error": "push_address must be hex"})),
@@ -628,6 +638,18 @@ pub(crate) async fn enroll_peer_core(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_push_address_is_hex_of_any_reasonable_length() {
+        use super::is_push_address;
+        assert!(is_push_address(&"a1".repeat(32)), "today's 64-char token");
+        assert!(is_push_address(&"0f".repeat(50)), "a longer one Apple is free to issue");
+        assert!(is_push_address("ABCDEF0123"), "case is not ours to police");
+        assert!(!is_push_address(""), "empty is the clear path, never an address");
+        assert!(!is_push_address("not-a-token"), "Apple would answer 400 BadDeviceToken");
+        assert!(!is_push_address("<a1b2 c3d4>"), "Data.description, the classic Swift slip");
+        assert!(!is_push_address(&"a".repeat(201)), "bounded by the column");
+    }
+
     /// `set_self_push_address` writes the address and its timestamp together,
     /// and clearing writes both back to NULL.
     ///

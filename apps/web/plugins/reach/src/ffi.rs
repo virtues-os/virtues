@@ -179,7 +179,8 @@ pub extern "C" fn virtues_recover_connection() -> i32 {
 /// NULL to report "unreachable" (notifications turned off, or registration
 /// failed). Called from Swift's push registrar, **only while the app is
 /// active**: this dials, and a background wake must not spend a dial on it.
-/// Blocks for up to ~10s, so call it off the main thread.
+/// Blocks for at most ~10s in total — DNS and endpoint build included — so
+/// call it off the main thread.
 ///
 /// Returns 0 when the box accepted the report, and a negative code otherwise
 /// (-1 not paired, -2 no client, -3 request failed or timed out, -4 box
@@ -203,30 +204,34 @@ pub extern "C" fn virtues_report_push_address(address: *const c_char) -> i32 {
   let Some(rec) = store.load().ok().flatten() else {
     return -1;
   };
+  // ONE bound around everything, not just the request. `ensure_client` can
+  // cold-build an endpoint and resolve the box's LAN name through the system
+  // resolver with no timeout of its own, and a first version that timed only
+  // the request left the Swift caller's serial queue — and every report behind
+  // it — waiting on a DNS lookup for as long as iOS cared to take.
   tauri::async_runtime::block_on(async move {
-    let Some(client) = crate::ensure_client(&rec).await else {
-      return -2;
-    };
-    let Ok(raw) = virtues_reach_client::push::push_address_request(address.as_deref()) else {
-      return -5;
-    };
-    let resp = match tokio::time::timeout(
-      std::time::Duration::from_secs(10),
-      client.request(&raw),
-    )
-    .await
-    {
-      Ok(Ok(r)) => r,
-      _ => return -3,
-    };
-    match virtues_reach_client::handoff::split_response(&resp) {
-      Ok((status, _)) if (200..300).contains(&status) => 0,
-      Ok((status, body)) => {
-        tracing::warn!(status, body = %body, "box refused push-address report");
-        -4
+    let work = async {
+      let Some(client) = crate::ensure_client(&rec).await else {
+        return -2;
+      };
+      let Ok(raw) = virtues_reach_client::push::push_address_request(address.as_deref()) else {
+        return -5;
+      };
+      let Ok(resp) = client.request(&raw).await else {
+        return -3;
+      };
+      match virtues_reach_client::handoff::split_response(&resp) {
+        Ok((status, _)) if (200..300).contains(&status) => 0,
+        Ok((status, body)) => {
+          tracing::warn!(status, body = %body, "box refused push-address report");
+          -4
+        }
+        Err(_) => -3,
       }
-      Err(_) => -3,
-    }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), work)
+      .await
+      .unwrap_or(-3)
   })
 }
 

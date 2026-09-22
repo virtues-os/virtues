@@ -146,7 +146,7 @@ owner overrides it.
 | Change | Why |
 |---|---|
 | `app_device.push_address` | The address half of the pair, beside `endpoint_id`, on the row whose revocation already kills reachability for free. |
-| `app_device.push_address_at` | Registration time. **Required** to handle a 410 correctly — see below. |
+| `app_device.push_address_at` | When the box last heard this address was good — bumped on every accepted report, so it means *last confirmed*, not first registration. **Required** to handle a 410 correctly — see below. |
 | ~~Push authorization in `device_info.permissions`~~ | **Built differently.** Authorization is not a second field: the phone reports an explicit `null` address when notifications are off, so "can the box reach this phone" has one source of truth instead of two that can disagree. |
 
 **Never name any of these `device_token`.** That name is already taken on the
