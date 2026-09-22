@@ -195,8 +195,11 @@
 				tone: "warning" as const,
 			};
 		}
+		// "confirmed", not "since": the phone re-reports on every foreground, so
+		// this is when the server last heard the address was good — which is also
+		// the moment an APNs 410 is compared against.
 		return {
-			text: `Your server can notify this device, since ${formatTimeAgo(device.push_address_at)}`,
+			text: `Your server can notify this device · confirmed ${formatTimeAgo(device.push_address_at).toLowerCase()}`,
 			tone: "muted" as const,
 		};
 	});

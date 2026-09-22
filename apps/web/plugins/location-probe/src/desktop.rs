@@ -26,6 +26,16 @@ impl<R: Runtime> LocationProbe<R> {
     Ok(StartResponse { started: false })
   }
 
+  /// Desktop has no push. `unavailable` rather than `denied`: the UI hides the
+  /// row for it instead of telling someone to fix a setting that does not exist.
+  pub fn push_status(&self) -> crate::Result<PushStatusResponse> {
+    Ok(PushStatusResponse { status: "unavailable".into() })
+  }
+
+  pub fn request_push(&self) -> crate::Result<PushStatusResponse> {
+    Ok(PushStatusResponse { status: "unavailable".into() })
+  }
+
   pub fn read_rows(&self, _payload: RowsRequest) -> crate::Result<RowsResponse> {
     Ok(RowsResponse { rows: vec![] })
   }

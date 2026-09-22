@@ -173,6 +173,63 @@ pub extern "C" fn virtues_recover_connection() -> i32 {
   tauri::async_runtime::block_on(crate::recover_connection())
 }
 
+/// Tell the box where it can reach this device — or that it no longer can.
+///
+/// `address` is the APNs token as a NUL-terminated lowercase-hex C string, or
+/// NULL to report "unreachable" (notifications turned off, or registration
+/// failed). Called from Swift's push registrar, **only while the app is
+/// active**: this dials, and a background wake must not spend a dial on it.
+/// Blocks for up to ~10s, so call it off the main thread.
+///
+/// Returns 0 when the box accepted the report, and a negative code otherwise
+/// (-1 not paired, -2 no client, -3 request failed or timed out, -4 box
+/// refused, -5 bad string). A failure is not retried here: the registrar
+/// reports again on the next foreground, and iOS re-issues the token on every
+/// `registerForRemoteNotifications`, so the next launch heals it.
+///
+/// # Safety
+/// `address` must be NULL or a valid NUL-terminated C string for the call.
+#[no_mangle]
+pub extern "C" fn virtues_report_push_address(address: *const c_char) -> i32 {
+  let address = if address.is_null() {
+    None
+  } else {
+    match unsafe { CStr::from_ptr(address) }.to_str() {
+      Ok(s) => Some(s.to_owned()),
+      Err(_) => return -5,
+    }
+  };
+  let store = crate::FileStore::new();
+  let Some(rec) = store.load().ok().flatten() else {
+    return -1;
+  };
+  tauri::async_runtime::block_on(async move {
+    let Some(client) = crate::ensure_client(&rec).await else {
+      return -2;
+    };
+    let Ok(raw) = virtues_reach_client::push::push_address_request(address.as_deref()) else {
+      return -5;
+    };
+    let resp = match tokio::time::timeout(
+      std::time::Duration::from_secs(10),
+      client.request(&raw),
+    )
+    .await
+    {
+      Ok(Ok(r)) => r,
+      _ => return -3,
+    };
+    match virtues_reach_client::handoff::split_response(&resp) {
+      Ok((status, _)) if (200..300).contains(&status) => 0,
+      Ok((status, body)) => {
+        tracing::warn!(status, body = %body, "box refused push-address report");
+        -4
+      }
+      Err(_) => -3,
+    }
+  })
+}
+
 /// Force the linker to keep the C ABI symbols in the app's static lib. Call once
 /// from the plugin `init` (which is in the link graph); referencing the function
 /// pointer pulls this object out of the archive so Swift can find the symbol.
@@ -182,9 +239,11 @@ pub(crate) fn keep_symbols() {
   let recover: extern "C" fn() -> i32 = virtues_recover_connection;
   let app_bg: extern "C" fn(i32) = virtues_app_background;
   let radio: extern "C" fn(i32) = virtues_radio_constrained;
+  let push: extern "C" fn(*const c_char) -> i32 = virtues_report_push_address;
   std::hint::black_box(enqueue as *const ());
   std::hint::black_box(drain as *const ());
   std::hint::black_box(recover as *const ());
   std::hint::black_box(app_bg as *const ());
   std::hint::black_box(radio as *const ());
+  std::hint::black_box(push as *const ());
 }
