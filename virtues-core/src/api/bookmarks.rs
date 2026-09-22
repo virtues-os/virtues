@@ -64,7 +64,7 @@ pub struct BookmarkListItem {
     /// "repository". The one machine-derived field worth a facet, because it
     /// answers "what kind of thing is this" better than the source does.
     pub medium: Option<String>,
-    /// What the box knows about this row so far: see [`STATE_SQL`].
+    /// What the box knows about this row so far: see [`state_sql`].
     pub state: String,
 }
 
@@ -72,19 +72,29 @@ pub struct BookmarkListItem {
 ///
 /// Derived here rather than in the client because the rule involves columns
 /// the client should not have to reason about (`metadata.asset_id`, the
-/// `/drive/file_` url form) — and because the same expression has to serve
-/// both the SELECT and the facet's WHERE.
+/// `/drive/file_` url form, the drive file's type) — and because the same
+/// expression has to serve both the SELECT and the facet's WHERE.
 ///
 /// The states are the ones a person can act on, not the ones the queue uses
 /// internally: `held` and `queued` are both `pending` in the table, but only
-/// one of them is waiting on something that exists.
-const STATE_SQL: &str = "CASE \
-     WHEN enrichment_status = 'done' THEN 'enriched' \
-     WHEN enrichment_status = 'failed' THEN 'failed' \
-     WHEN enrichment_status = 'skipped' THEN 'skipped' \
-     WHEN metadata->>'asset_id' IS NOT NULL OR starts_with(url, '/drive/file_') \
-          THEN 'held' \
-     ELSE 'queued' END";
+/// one of them is waiting on something that exists. `queued` is a page or an
+/// image the sweep will read; `held` is an asset no pass reads yet — video,
+/// audio, a file that left Drive. It used to mean every asset, until the image
+/// pass arrived; the definition is borrowed from the sweep's own claim query
+/// (`bookmark_enrichment::image_asset_sql`) so the room can never say an image
+/// is waiting on a pass that is already reading it.
+fn state_sql() -> String {
+    format!(
+        "CASE \
+         WHEN enrichment_status = 'done' THEN 'enriched' \
+         WHEN enrichment_status = 'failed' THEN 'failed' \
+         WHEN enrichment_status = 'skipped' THEN 'skipped' \
+         WHEN {asset} AND NOT {image} THEN 'held' \
+         ELSE 'queued' END",
+        asset = crate::bookmark_enrichment::ASSET_BACKED_SQL,
+        image = crate::bookmark_enrichment::image_asset_sql(),
+    )
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ListBookmarksQuery {
@@ -103,7 +113,7 @@ pub struct ListBookmarksQuery {
     pub bookmark_type: Option<String>,
     #[serde(default)]
     pub medium: Option<String>,
-    /// One of the [`STATE_SQL`] values.
+    /// One of the [`state_sql`] values.
     #[serde(default)]
     pub state: Option<String>,
 }
@@ -134,9 +144,9 @@ pub struct ShelfCounts {
     pub enriched: i64,
     /// Fetchable pages the sweep will get to.
     pub queued: i64,
-    /// Asset-backed saves waiting on the image pass, which does not exist yet.
-    /// Counted apart from `queued` so a number that cannot move is never shown
-    /// as a backlog that should be draining.
+    /// Assets no pass reads yet — video, audio, a file that left Drive. Counted
+    /// apart from `queued` so a number that cannot move is never shown as a
+    /// backlog that should be draining.
     pub held: i64,
 }
 
@@ -147,6 +157,7 @@ pub struct ShelfCounts {
 /// the table, because a note they wrote on it is theirs and a re-add should
 /// restore rather than duplicate.
 pub async fn list_bookmarks(db: &PgPool, q: ListBookmarksQuery) -> Result<BookmarkPage> {
+    let state_sql = state_sql();
     let limit = q.limit.clamp(1, 200);
     let offset = q.offset.max(0);
     // `%` and `_` in a user's search string are LIKE wildcards, not text —
@@ -173,7 +184,7 @@ pub async fn list_bookmarks(db: &PgPool, q: ListBookmarksQuery) -> Result<Bookma
            AND ($2::text IS NULL OR source_platform = $2)
            AND ($3::text IS NULL OR bookmark_type = $3)
            AND ($4::text IS NULL OR extraction->>'medium' = $4)
-           AND ($5::text IS NULL OR ({STATE_SQL}) = $5)"
+           AND ($5::text IS NULL OR ({state_sql}) = $5)"
     );
 
     let platform = blank_to_none(&q.platform);
@@ -196,7 +207,7 @@ pub async fn list_bookmarks(db: &PgPool, q: ListBookmarksQuery) -> Result<Bookma
         "SELECT id, url, title, description, note, source_platform, bookmark_type,
                 author, tags, thumbnail_url, occurred_at AS timestamp,
                 extraction->>'medium' AS medium,
-                ({STATE_SQL}) AS state
+                ({state_sql}) AS state
            FROM data_content_bookmark
            {where_sql}
           ORDER BY occurred_at {}, id
@@ -216,9 +227,9 @@ pub async fn list_bookmarks(db: &PgPool, q: ListBookmarksQuery) -> Result<Bookma
     // Deliberately unfiltered: this is the shelf's state, not the view's.
     let counts: ShelfCounts = sqlx::query_as(&format!(
         "SELECT
-           COUNT(*) FILTER (WHERE ({STATE_SQL}) = 'enriched') AS enriched,
-           COUNT(*) FILTER (WHERE ({STATE_SQL}) = 'queued')   AS queued,
-           COUNT(*) FILTER (WHERE ({STATE_SQL}) = 'held')     AS held
+           COUNT(*) FILTER (WHERE ({state_sql}) = 'enriched') AS enriched,
+           COUNT(*) FILTER (WHERE ({state_sql}) = 'queued')   AS queued,
+           COUNT(*) FILTER (WHERE ({state_sql}) = 'held')     AS held
          FROM data_content_bookmark
          WHERE deleted_at_source IS NULL"
     ))
@@ -239,12 +250,13 @@ pub async fn list_bookmarks(db: &PgPool, q: ListBookmarksQuery) -> Result<Bookma
 /// a project, a pinned tab — should open something rather than 404. The
 /// `deleted_at_source` field is in the payload so the view can say so.
 pub async fn get_bookmark(db: &PgPool, id: &str) -> Result<BookmarkDetail> {
+    let state_sql = state_sql();
     sqlx::query_as::<_, BookmarkDetail>(&format!(
         "SELECT id, url, title, description, note, source_platform, bookmark_type,
                 author, tags, thumbnail_url, occurred_at AS timestamp, deleted_at_source,
                 enrichment_model, extraction,
                 extraction->>'medium' AS medium,
-                ({STATE_SQL}) AS state
+                ({state_sql}) AS state
            FROM data_content_bookmark WHERE id = $1"
     ))
     .bind(id)
@@ -535,6 +547,72 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+    }
+
+    /// The room and the sweep must agree about images. `held` used to mean
+    /// every asset; once the image pass reads images, a room still calling an
+    /// image "held" would tell a person their screenshot is waiting on a pass
+    /// that is already reading it. Both sides take the rule from
+    /// `bookmark_enrichment::image_asset_sql`; this pins that they do.
+    #[sqlx::test]
+    async fn the_room_calls_an_image_queued_and_a_video_held(pool: PgPool) {
+        for (fid, mime) in [("file_room_img", "image/webp"), ("file_room_vid", "video/quicktime")] {
+            sqlx::query(
+                "INSERT INTO app_drive_files (id, path, filename, mime_type, size_bytes)
+                 VALUES ($1, $2, $1, $3, 10)",
+            )
+            .bind(fid)
+            .bind(format!("/test/{fid}"))
+            .bind(mime)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        for (id, url) in [
+            ("room:img", "/drive/file_room_img"),
+            ("room:vid", "/drive/file_room_vid"),
+        ] {
+            sqlx::query(
+                "INSERT INTO data_content_bookmark
+                   (id, url, title, occurred_at, source_stream_id, source_table, source_provider)
+                 VALUES ($1, $2, $1, now(), $1, 'test', 'test')",
+            )
+            .bind(id)
+            .bind(url)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let page = list_bookmarks(
+            &pool,
+            ListBookmarksQuery {
+                offset: 0,
+                limit: 50,
+                search: Some("room:".into()),
+                dir: None,
+                platform: None,
+                bookmark_type: None,
+                medium: None,
+                state: None,
+            },
+        )
+        .await
+        .expect("list");
+        let state_of = |id: &str| {
+            page.items
+                .iter()
+                .find(|i| i.id == id)
+                .unwrap_or_else(|| panic!("{id} missing"))
+                .state
+                .clone()
+        };
+        assert_eq!(state_of("room:img"), "queued", "an image the pass will read is not held");
+        assert_eq!(state_of("room:vid"), "held", "no pass reads video yet");
+        assert_eq!((page.counts.queued, page.counts.held), (1, 1));
+
+        // The detail read uses the same rule.
+        assert_eq!(get_bookmark(&pool, "room:img").await.unwrap().state, "queued");
     }
 
     /// The detail endpoints on a migrated database — same reason as above:

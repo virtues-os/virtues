@@ -70,6 +70,37 @@ pub async fn system_completion(
     thinking: super::request::Thinking,
     temperature: f32,
 ) -> Result<String> {
+    system_completion_content(
+        pool,
+        slot,
+        feature,
+        system_prompt,
+        serde_json::Value::String(user_prompt.to_string()),
+        thinking,
+        temperature,
+    )
+    .await
+}
+
+/// [`system_completion`] with the user turn as raw message content: a string,
+/// or an OpenAI-shaped array of content parts. The parts form is how a
+/// background job shows the model pixels — a `text` part followed by
+/// `{"type":"image_url","image_url":{"url":"data:<mime>;base64,..."}}`, the
+/// same blocks a pasted screenshot produces in chat (see
+/// `agent::executor::build_attachment_message`).
+///
+/// A second entry point rather than a second function: model resolution, the
+/// thinking lever, spend tagging and every failure mode stay in one place, and
+/// only the shape of one message differs.
+pub async fn system_completion_content(
+    pool: &PgPool,
+    slot: ModelSlot,
+    feature: &'static str,
+    system_prompt: &str,
+    user_content: serde_json::Value,
+    thinking: super::request::Thinking,
+    temperature: f32,
+) -> Result<String> {
     let model = background_model_for_slot(pool, slot).await?;
     let byo = crate::api::settings_byo::byo_is_active(pool).await;
     let facts = crate::api::model_catalog::reasoning_facts(&model);
@@ -85,7 +116,7 @@ pub async fn system_completion(
     if !system_prompt.trim().is_empty() {
         messages.push(json!({"role": "system", "content": system_prompt}));
     }
-    messages.push(json!({"role": "user", "content": user_prompt}));
+    messages.push(json!({"role": "user", "content": user_content}));
     let request = super::request::ChatCompletionRequest {
         model: model.clone(),
         messages,
