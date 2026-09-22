@@ -168,8 +168,14 @@ export const DEVELOPER_MODE: SidebarMode = {
  *     identity is a subject of this wiki like any other, and because the
  *     owner is the subject every other one is oriented around.
  *
- * History sits alone at the foot, under no heading: it is not a way into the
- * record, it is the log of what the editor did to it.
+ * WHAT ALSO LEFT: "History", the log of every edit the record made to its own
+ * prose (`/wiki/history`, still there, still linked from an article). It sat
+ * alone at the foot under a rule and read as mystery meat — it is neither a
+ * time nor a subject, so neither heading claimed it, and on a box where the
+ * editor has never run it opens on nothing. It earns a row back when the
+ * editor is switched on and there is something in it: the bargain for granting
+ * maintenance is that every resulting edit is visible, and that bargain needs
+ * a door only once edits exist.
  *
  * WHAT LEFT: "Overview". Its href was `/wiki`, which is also the Wiki tile's
  * own destination on the rail — the tile and the first row of its panel were
@@ -271,17 +277,6 @@ export const WIKI_MODE: SidebarMode = {
 			glyph: 'stories',
 			href: '/wiki/stories',
 			group: 'Subjects',
-		},
-		// The review surface. Maintenance is the consent; this is where you see
-		// what that consent produced — without it the record edits its own prose
-		// in a room nobody visits. No heading: it is about the wiki, not a way
-		// into it.
-		{
-			id: 'history',
-			label: 'History',
-			icon: 'ri:history-line',
-			glyph: 'history',
-			href: '/wiki/history',
 		},
 	],
 };

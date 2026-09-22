@@ -129,9 +129,11 @@
 		// you sit down and read.
 		stories:
 			'<path d="M8 4.9v8.2"/><path d="M8 4.9C6.7 3.9 5 3.6 3.1 3.7v8c1.9-.1 3.6.2 4.9 1.2 1.3-1 3-1.3 4.9-1.2v-8c-1.9-.1-3.6.2-4.9 1.2z"/>',
-		// HISTORY. A clock with hands. `settings` is also a circle, so the two
-		// are kept apart by what is inside: a dial has one tick and a filled
-		// hub, a clock has two hands and no hub.
+		// HISTORY. Drawn but currently UNATTACHED — the wiki panel's History row
+		// was removed the same day, and the glyph is kept for when it returns.
+		// A clock with hands: `settings` is also a circle, so the two are kept
+		// apart by what is inside — a dial has one tick and a filled hub, a
+		// clock has two hands and no hub.
 		history: '<circle cx="8" cy="8" r="5.3"/><path d="M8 4.8V8l2.5 1.7"/>',
 	};
 
