@@ -15,6 +15,7 @@ these are not promises.
 
 | Doc | Status | What it's for |
 |---|---|---|
+| [wiki-retrieval-plan.md](wiki-retrieval-plan.md) | Planned | The wiki is 0.16% of the retrieval corpus and competes as a peer, so the compression loses to what it compressed 500:1 — and the 914 resolved subjects are not indexed at all. Subject stubs (no model call), then weight, then two-stage routing through `wiki_refs`. |
 | [ai-door-plan.md](ai-door-plan.md) | Mostly built | One AI door: tokens are resolved, never guessed. The proxy stops inventing a 4096 cap and forwards the `reasoning` object; background jobs declare a thinking mode instead of a number; the stream emits `finish` with a reason. **Phases 1–4 are built on `wave`** — what is left is deploying the proxy and Phase 5. Replaces the two 16k hotfixes. |
 | [applet-authoring-plan.md](applet-authoring-plan.md) | Planned | Phase 3: chat intent → folder → check → reconcile → gate → enabled applet. The capability and param-schema contract. |
 | [applets-overhaul-plan.md](applets-overhaul-plan.md) | Planned | "A user-space systemd with an AI author." Design locked 2026-07-19. Supersedes architecture.md at the concept/UX layer; the execution engine stays. |
