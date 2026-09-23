@@ -5,9 +5,7 @@ updated: 2026-09-03
 ---
 
 The short answer: a Linux machine with 8 GB of RAM, a real SSD, and an
-ordinary internet connection. **No GPU is required.** The rest of this page is
-what each of those is for, so you can tell which corner you're cutting when
-you cut one.
+ordinary internet connection. **No GPU is required.**
 
 ## The machine
 
@@ -65,10 +63,9 @@ it provisions anything, and tells you which tier you're on:
 | Spinning disk | Expect multi-second searches |
 | NFS or SMB | Don't. PostgreSQL on a network filesystem is a known corruption risk |
 
-It also times `fsync` and says so when the number is physically impossible
-for the medium - a disk that acknowledges flushes without performing them
-will lose data on a power cut, and that is worth knowing before your record
-is on it rather than after.
+Note: some disks confirm a write before the data is physically saved, so a
+power cut can still lose it. The installer times `fsync` to catch this and
+flags a disk whose numbers are impossible for its medium.
 
 None of these warnings block the install; they inform it. `virtues doctor`
 re-reports storage later. To put the data somewhere other than
@@ -111,7 +108,7 @@ machine fast enough".
 
 ## Network
 
-Outbound only. Virtues opens **no inbound port** and needs no forwarding
+Outbound only. Virtues doesn't open **any inbound port** and needs no forwarding
 rule; a paired device reaches the server by key, over paths described in
 [Reaching your server](/docs/operate/reach). During the install it needs to
 reach `github.com` for the release and `apt.postgresql.org` for PostgreSQL,

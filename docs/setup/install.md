@@ -17,10 +17,10 @@ minutes later you have a working server.
 Before installing, read these two pages first:
 
 1. [What to run it on](/docs/setup/requirements) for details on minimum
-specs and supported OS.
+   specs and supported OS.
 2. [Setting up inference](/docs/inference) to configure your embedding and
-rerank models. The installer asks for their URLs before it does anything 
-else.
+   rerank models. The installer asks for their URLs before it does anything
+   else.
 
 ## Read it before you run it
 

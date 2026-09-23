@@ -26,7 +26,7 @@ Three paths, tried in order, all invisible to you:
    some corporate and mobile networks won't. The connection upgrades itself to
    a direct path if one becomes possible.
 
-**No inbound port is ever opened at home.** The server dials out; nothing dials
+**The server never opens an inbound port at home.** The server dials out; nothing dials
 in. That's why this works on a normal home router with no configuration and no
 port forwarding.
 
@@ -83,13 +83,13 @@ When a direct path isn't possible, traffic passes through a relay we run. The
 honest description:
 
 - **It cannot read anything.** The connection is encrypted end-to-end between
-  your device and your server, with keys the relay never holds. It forwards
-  packets it has no ability to open.
+  your device and your server, with keys that never reach the relay. The relay forwards
+  every packet without reading it.
 - **It does see** which two device keys are talking to each other, the IP
   addresses they connect from, and how much traffic passes and when. That's
   unavoidable for anything that forwards packets - a relay that couldn't see
   volume and timing couldn't move the bytes.
-- **It admits everyone.** The relay asks no one who you are: no account, no
+- **It admits everyone.** The relay requires no identity: no account, no
   subscription, no sign-in. It defends itself with rate limits, not identity.
   Reachability is part of owning the server, not something you rent.
 

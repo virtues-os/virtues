@@ -63,7 +63,7 @@ existing file.
   every member, which is what makes verification and restore able to detect
   a damaged archive.
 
-Because the environment file rides along, **the archive is exactly as
+Because the archive includes the environment file, **it is equally as
 sensitive as the server itself.** Treat a backup tarball the way you'd treat the
 machine.
 
@@ -95,7 +95,7 @@ registered drive that happens to be attached; drives that aren't plugged in
 are skipped quietly rather than failing. Registering a drive is, in practice,
 the entire setup.
 
-On a drive the archive is split: a full snapshot of the database, environment
+On a drive, the backup splits into a full snapshot of the database, environment
 file and applets, plus separate incremental archives of the lake. Old full
 snapshots are pruned only when the drive starts filling up, and the newest is
 never removed - on a roomy disk you keep a run of them. Lake increments are
