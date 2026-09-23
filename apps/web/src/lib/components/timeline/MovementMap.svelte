@@ -2,6 +2,7 @@
 	import { browser } from "$app/environment";
 	import { onDestroy, onMount } from "svelte";
 	import "leaflet/dist/leaflet.css";
+	import { atlasLayer } from "$lib/map/atlas";
 
 	export type MapPoint = {
 		lat: number;
@@ -235,17 +236,12 @@
 		// Drop Leaflet's own "Leaflet" flag — the data credit stays.
 		map.attributionControl.setPrefix(false);
 
-		// Tiles are served + cached by the box itself (see agents/record/map-atlas-plan.md):
-		// the browser never talks to a third-party tile provider, and cached areas
-		// keep working offline. Upstream (CartoDB Positron) attribution is preserved.
-		L.tileLayer("/api/map/tiles/light/{z}/{x}/{y}", {
-			maxZoom: 19,
-			attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
-			// Blank tile when the box is offline / upstream fails → grey gaps, not broken images.
-			errorTileUrl: "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=",
-		}).addTo(map);
-
+		// The basemap is served + cached by the box itself ($lib/map/atlas): the
+		// browser never talks to a third-party tile provider, and cached areas
+		// keep working offline. The layer carries the data credit.
 		render();
+		const basemap = await atlasLayer("light");
+		if (basemap && map) basemap.addTo(map);
 	});
 
 	$effect(() => {
