@@ -11,9 +11,9 @@ sudo virtues upgrade
 ```
 
 It needs root - the upgrade replaces the installed binary and restarts the
-service - and it's deliberately safe to run on a server you care about: the new
-release is downloaded and staged completely before anything changes, then
-activated in one atomic flip. The binary, the web app, and the actions runtime
+service - and it's deliberately safe to run on a server you care about: it downloads and
+stages the new release completely before anything changes, then activates it
+in one atomic flip. The binary, the web app, and the actions runtime
 move together, so you can't end up with a UI newer than the server underneath
 it. A failure before the flip leaves the server exactly as it was; a failure
 after the flip rolls straight back.
@@ -59,7 +59,7 @@ sudo virtues rollback
 ```
 
 flips back to the previous release - a pure switch and service restart, with
-no database surgery. Releases are kept in slots on disk precisely so the last
+no database surgery. The server keeps releases in slots on disk precisely so the last
 known-good one is still there when you want it.
 
 ## If upgrade says your install is too old
