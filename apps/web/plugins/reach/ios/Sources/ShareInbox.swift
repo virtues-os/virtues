@@ -121,7 +121,34 @@ enum ShareInbox {
       }
     }
     if moved > 0 { NSLog("[ShareInbox] moved %d share(s) to the outbox", moved) }
+    sweepOrphans(in: inbox, names: names)
     return moved
+  }
+
+  /// A picture whose JSON never arrived — the extension was killed between
+  /// copying the file and writing the record — is never drained, because only
+  /// `.json` files are. Left alone it sits in the shared container forever.
+  ///
+  /// Only past `orphanAge`: the extension writes the picture FIRST, so for a few
+  /// seconds a share in progress looks exactly like an orphan, and deleting it
+  /// would lose a save that was about to complete.
+  static let orphanAge: TimeInterval = 24 * 60 * 60
+
+  private static func sweepOrphans(in inbox: URL, names: [String]) {
+    let fm = FileManager.default
+    let now = Date()
+    for name in names where name.hasSuffix(".image") {
+      let id = String(name.dropLast(".image".count))
+      guard !fm.fileExists(atPath: inbox.appendingPathComponent("\(id).json").path) else {
+        continue
+      }
+      let url = inbox.appendingPathComponent(name)
+      guard let modified = (try? fm.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date,
+        now.timeIntervalSince(modified) > orphanAge
+      else { continue }
+      try? fm.removeItem(at: url)
+      NSLog("[ShareInbox] removed an orphaned picture %@", id)
+    }
   }
 
   /// Decode, shrink to `maxPixel` on the longest side, and re-encode as JPEG.

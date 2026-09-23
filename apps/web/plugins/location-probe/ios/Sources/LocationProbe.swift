@@ -16,6 +16,10 @@ private func virtues_enqueue(_ stream: UnsafePointer<CChar>, _ json: UnsafePoint
 @_silgen_name("virtues_drain_blocking")
 private func virtues_drain_blocking(_ timeoutSecs: Int32) -> Int32
 
+// Move share-sheet saves onto the outbox (the reach plugin's ShareInbox.swift).
+@_silgen_name("virtues_share_inbox_drain")
+private func virtues_share_inbox_drain() -> Int32
+
 // Re-arm audio recording (audio plugin). The piggyback: location keeps the app
 // alive + fires callbacks, giving audio a heartbeat to recover the mic after an
 // interruption/kill. No-op unless audio is enabled+authorized. Whether iOS
@@ -352,6 +356,10 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     NSLog("[LocationProbe] bg drain start, budget=%ds", budget)
 
     DispatchQueue.global(qos: .utility).async { [weak self] in
+      // Shares first. This is the wake that fires most — whenever the phone
+      // moves — so it is the one that lets a share made while the app is
+      // closed reach the box without the app ever being opened.
+      _ = virtues_share_inbox_drain()
       let rc = virtues_drain_blocking(budget)
       NSLog("[LocationProbe] bg drain done rc/count=%d", rc)
       DispatchQueue.main.async {

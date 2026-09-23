@@ -409,7 +409,7 @@ built and committed; nothing is wired into the Xcode project yet, on purpose.
 |---|---|---|
 | Extension ("Save to Virtues", optional note) | `apps/web/src-tauri/gen/apple/ShareExtension/` | written, typechecks (Swift 5 + 6); **in no target** |
 | App-side drain, inbox → outbox as `bookmark` | `plugins/reach/ios/Sources/ShareInbox.swift` | in the app; a no-op until the App Group exists |
-| Drain on foreground + on the background wake | `ReachPlugin.swift` init, `BackgroundSync.swift` | in the app |
+| Drain on foreground, location wake, and processing task | `ReachPlugin.swift` init, `LocationProbe.swift`, `BackgroundSync.swift` | in the app |
 | Box: `image_data` → Drive → `asset_id` | `applets/ios_ingest/bookmark.rs` `externalize_images` | built, tested |
 | Image pass reads it | `bookmark_enrichment::enrich_image` | built, tested |
 
