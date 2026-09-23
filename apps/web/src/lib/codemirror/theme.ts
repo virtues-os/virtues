@@ -48,13 +48,18 @@ export const virtuesTheme = EditorView.theme({
 	// background, screen does the same for light text on dark themes. The
 	// token is set per scheme in themes.css. pointer-events: none keeps clicks
 	// reaching the text; the caret layer is already above (z-index 150).
+	//
+	// The blend goes on each rect, never on the layer: WebKit (the Mac and iOS
+	// apps) silently drops `mix-blend-mode` on the layer itself, so the lifted
+	// selection painted opaque and erased the text under it. Chromium blends
+	// either way, which is why it only showed in the apps.
 	'& .cm-selectionLayer': {
 		zIndex: '1 !important',
 		pointerEvents: 'none',
-		mixBlendMode: 'var(--selection-blend, multiply)',
 	},
 	'.cm-selectionBackground': {
 		background: 'var(--color-highlight) !important',
+		mixBlendMode: 'var(--selection-blend, multiply)',
 	},
 	'&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
 		background: 'var(--color-highlight) !important',
