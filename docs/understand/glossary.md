@@ -60,7 +60,7 @@ from. Refs are what make a claim checkable rather than merely plausible; when
 the server tells you something about your life, a ref is how you see why it
 thinks so.
 
-**Wiki** - where all of the above lands: the record's own encyclopedia. Days
+**Wiki** - your encyclopedia, where all of your information is collected. Days
 and their events on one axis, people, places, and organizations on the other,
 articles accumulating on both - and your chapters and narrative identity
 giving the whole thing its coordinates.
