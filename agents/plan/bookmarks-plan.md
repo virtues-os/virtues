@@ -431,19 +431,31 @@ audio road. The box keeps the picture in Drive and the image pass reads it.
    committed `virtues_iOS.entitlements`). Before step 1 this breaks signing of
    every build — the profile would not carry it, the same trap the FinanceKit
    comment in `project.yml` describes.
-3. Add the `ShareExtension` target to `project.yml` (`type: app-extension`,
-   sources `ShareExtension`, its `Info.plist` and entitlements, bundle id
-   `com.virtues.app.share`, `DEVELOPMENT_TEAM`), and embed it from
-   `virtues_iOS` as a target dependency.
-4. Regenerate the project deliberately, then diff the `.pbxproj`: confirm
-   `DEVELOPMENT_TEAM` survived and decide about the pending `AppIcon.icon`
-   entry that regeneration will also pull in (see the notes in `project.yml`).
-5. **Versions must match or App Store upload fails.** An extension's
-   `CFBundleShortVersionString`/`CFBundleVersion` must equal its parent app's.
-   Tauri overwrites the APP's from `tauri.ios.conf.json` at build time and does
-   not touch the extension's (`$(MARKETING_VERSION)` /
-   `$(CURRENT_PROJECT_VERSION)`), so set those build settings from the same
-   version, or they drift on the first bump.
+3. **Add the target surgically — NEVER by regenerating.** Measured 2026-09-23
+   against a scratch copy: `xcodegen generate` on today's `project.yml` deletes
+   five keys from the app's `Info.plist` that Tauri merges in and `project.yml`
+   does not carry — `NSBluetoothAlwaysUsageDescription` (iOS kills an app that
+   touches Bluetooth without it: BLE onboarding crashes),
+   `NSHealthUpdateUsageDescription` (App Store validation fails), the camera and
+   photo-library strings chat attachments need, and the icon keys — rolls the
+   version string back, and changes 26 `.pbxproj` lines, pulling in the pending
+   `AppIcon.icon` work. Add the one target by editing the project in place
+   (Xcode's New Target, or a scripted edit with the `xcodeproj` gem), and review
+   a diff that contains the extension and nothing else. Mirror it into
+   `project.yml` only so the spec stays truthful — never generate from it.
+4. **Give the extension a real version.** Its `Info.plist` reads
+   `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)`, and the project
+   defines neither — Tauri writes the APP's version straight into the app's
+   `Info.plist` — so as written the extension's version is blank, an invalid
+   bundle. It must also equal the app's or App Store upload fails. Stamp it from
+   the app's version at build time (a run-script phase on the extension), not
+   by hand.
+5. **Release the box first.** A phone whose app has the extension, talking to a
+   box without `externalize_images`, loses screenshot-only shares silently: the
+   old arm ignores `image_data`, finds nothing to point at, skips the share — and
+   still answers success, so the phone deletes it. The app cannot tell which
+   version its box runs, so ordering is the only guard: the box release reaches
+   boxes before the app update ships.
 6. On a real phone: share a Safari link and a screenshot, and measure the time
    until each is on the box. That is the one number the design rests on (the
    background wake, not an `openURL` hack).
