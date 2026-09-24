@@ -19,16 +19,16 @@ yet viewed needs the network, and the service "may discontinue at any time".
 ```
                         once, then every ~90 days, and when you travel
 Protomaps planet build ─────────── range reads ───────────▶ box: maps/
-(one static .pmtiles file)                                   world.pmtiles      z0–6, everywhere
+(one static .pmtiles file)                                   world.pmtiles      z0–7, everywhere
                                                              cells/10-x-y.pmtiles  z0–14, one per z10 cell
 
 browser ── /api/map/vt/{world|local}/z/x/y ──▶ box ── mmap read ──▶ tile
         ── /api/map/fonts, /api/map/sprite ──▶ box ── shipped assets
 ```
 
-- **World overview** (`world.pmtiles`): the whole planet at z0–6, 45 MB.
-  MapLibre scales it up past z6, so the map always shows coastlines,
-  countries, highways and city names, anywhere, offline.
+- **World overview** (`world.pmtiles`): the whole planet at z0–7, 188 MB.
+  MapLibre scales it up past z7, so the map always shows coastlines,
+  countries, highways, regional roads and city names, anywhere, offline.
 - **Your places** (`cells/`): full street detail (z14) for every z10 cell the
   person's location history touches, plus the ring of cells around each. A z10
   cell is about 35 km across at mid-latitudes. One small archive per cell, so
@@ -94,21 +94,31 @@ until their phone reports.
 
 ## Where the planet comes from
 
+**Decided: Virtues hosts the planet, and boxes pull from us.**
+
 Protomaps publishes daily planet builds at `build.protomaps.com/YYYYMMDD.pmtiles`,
 keeps one week of them, and says "hotlinking … discouraged; copy the tileset
-to your own storage." Reading ranges to cut an extract is the use their docs
-point to, but a fleet doing it against their bucket is not.
+to your own storage." So we copy it.
 
-- **Default source: a Virtues mirror.** Copy one build a month to R2 at a
-  stable URL (name to be chosen). R2 has no egress fees;
-  storage for ~140 GB is a few dollars a month. It is keyless and needs no
-  account; the box only does HTTP `Range` GETs.
+- **Weekly**, a job streams the newest build straight into R2
+  (`curl … | rclone rcat`, multipart, no local disk, so it fits a GitHub
+  Action or the cloud EC2). The file is copied byte for byte, never rebuilt.
+- **Layout:** `planet/YYYYMMDD.pmtiles` plus a small `planet/latest.json`
+  naming the current one. Keep the previous build for a week, so an extract
+  that started before the switch does not 404 halfway.
+- **Cost:** about 138 GB per build (z0–15), two builds live, at R2's
+  $0.015/GB-month ≈ **$4 a month**. R2 charges nothing for egress, and the
+  reads an extract makes (tens of range GETs per cell) cost fractions of a
+  cent across the whole fleet.
+- **The box only does HTTP `Range` GETs.** No key, no account, no API.
 - **Configurable** (`VIRTUES_MAPS_SOURCE`), so a DIY box can point at
   `build.protomaps.com` or its own copy.
-- **The honest privacy line:** whoever serves the planet file sees which byte
-  ranges a box reads, which reveals roughly which z10 cells it wants. This
-  happens once per cell, not per view. The ring around each cell blurs it a
-  little, and asking for coarser cells blurs it more at a cost in megabytes.
+- **The honest privacy line:** the host sees which byte ranges a box reads,
+  which reveals roughly which z10 cells it wants, once per cell. With our
+  mirror that host is Virtues, not a third party, and R2 keeps no per-request
+  access log unless we turn one on. The manual should say so plainly.
+- **Attribution travels with the data:** the build's metadata carries
+  `© OpenStreetMap`, which the mirror preserves by copying the file whole.
 
 ## Refresh
 
@@ -119,16 +129,26 @@ changes slowly, and a map three months old is fine.
 
 ## Travel
 
-This is the one real product decision (below). While someone is somewhere
-new, the nightly job cannot help until their phone's points reach the box.
+**Still open.** The map views in Virtues look back more than they navigate:
+day pages, the timeline, a place's page. A trip viewed from home a day later
+has its cells by then under any option below. The gap is the live view, while
+the trip is happening.
 
-- **Strict offline:** new cells arrive the night after the points do. Until
-  then, the world overview shows.
-- **Fill-in on view (optional):** when a tile is missing, the box reads that
-  one tile from the planet mirror (same schema, a `get_tile` over
-  `HttpBackend` with cached directories), serves it, and marks the cell for
-  the nightly job. This works on a trip with network and is keyless, but it
-  sends per-view reads to the mirror, so it is weaker privacy than strict mode.
+| Option | How | For | Against |
+|---|---|---|---|
+| A. Nightly | The nightly job extracts new cells | Simplest; reveals only where you went, once per cell | A trip's first day shows the world overview only |
+| B. On arrival | Extract as soon as the box ingests points in an uncovered cell | Minutes, not a night; same privacy as A | Needs the phone's points to reach the box; a GPS glitch triggers a download (debounce on N points) |
+| C. On view, per cell | A map opened over an uncovered cell asks the box to extract that cell; it fills in within seconds | Covers places you look at but never visited (a wiki place, an imported photo's coordinates) | Reveals what you looked at, not only where you went; still once per cell |
+| D. From the calendar | A flight or hotel event with a location pre-extracts the destination days before | Ready before you land | Only as good as the calendar data; guessing a destination from a title is a guess |
+| E. On view, per tile | Read the missing tile live from the mirror | Instant | A request per view, to the mirror: the weakest privacy, and no offline copy |
+
+E is dominated by C and should not be built. **Recommendation: B, plus C for
+places you view but never visited, both on by default, both under one
+setting:** "Download maps for new places" (on). Off means nightly only. D is
+a later add-on with the same plumbing.
+
+Imported history (a years-long location export) backfills cells through the
+same job, under the disk cap.
 
 ## Build order
 
@@ -145,19 +165,17 @@ new, the nightly job cannot help until their phone's points reach the box.
 4. **Retire OpenFreeMap.** Delete the `/api/map/style`, `vt`, `fonts` and
    `sprite` proxy handlers and the `map_atlas/` cache, the same way
    `map_tiles/` was retired.
-5. **Refresh + travel.** The 90-day swap and, if chosen, fill-in on view.
-6. **Mirror.** A monthly job (virtues-api cron or a GitHub Action) copying the
+5. **Refresh + travel.** The 90-day swap and the travel triggers chosen above.
+6. **Mirror.** A weekly job (virtues-api cron or a GitHub Action) copying the
    latest build to R2.
 
 The theme can follow the house palette: a Protomaps flavor is only a table of
 colors, so paper and ink are a small change, not a fork.
 
-## Decisions for Adam
+## Decisions
 
-1. **Travel:** strict offline, or fill-in on view (default off, or on)?
-2. **Disk cap for your places:** propose 2 GB, evicting the cells with the
-   fewest points first.
-3. **World detail:** z6 (45 MB), or z7 (188 MB) for regional roads at the
-   edges of your places?
-4. **Mirror:** run the R2 mirror, or point boxes at `build.protomaps.com`
-   and accept its week-long URLs?
+1. **Travel:** open; see the table above.
+2. **Disk cap for your places:** 4 GB. When a new cell would exceed it,
+   evict the cells with the fewest points first. The world file does not count.
+3. **World detail:** z0–7, 188 MB.
+4. **Planet source:** a Virtues mirror on R2, refreshed weekly.
