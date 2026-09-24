@@ -110,6 +110,8 @@ export interface ComposerOptions {
 	onAttach?: (files: File[]) => void;
 	/** Escape with nothing else to close. Return true if handled. */
 	onEscape?: () => boolean;
+	/** Shift+Tab outside a code fence: cycle the chat's mode. */
+	onShiftTab?: () => void;
 	extensions?: Extension[];
 }
 
@@ -155,6 +157,7 @@ export function createComposerEditor(options: ComposerOptions): ComposerEditor {
 		onHeight,
 		onAttach,
 		onEscape,
+		onShiftTab,
 		extensions: extraExtensions = [],
 	} = options;
 
@@ -207,7 +210,18 @@ export function createComposerEditor(options: ComposerOptions): ComposerEditor {
 			},
 			{ key: 'Shift-Enter', run: continueOrBreak },
 			{ key: 'Mod-Enter', run: submit },
-			{ key: 'Tab', run: indentInFence, shift: dedentInFence },
+			{
+				key: 'Tab',
+				run: indentInFence,
+				// In a fence it dedents, like any code editor; everywhere else it
+				// switches the chat's mode, the way Shift+Tab does in a coding agent.
+				shift: (view) => {
+					if (dedentInFence(view)) return true;
+					if (!onShiftTab) return false;
+					onShiftTab();
+					return true;
+				},
+			},
 			{
 				key: 'Escape',
 				run: (view) => {

@@ -3,6 +3,7 @@
 	import { cubicOut } from "svelte/easing";
 	import ThinkingMark from "./ThinkingMark.svelte";
 	import { toolErrorSummary } from "$lib/components/chat/state/toolError";
+	import type { AgentModeId } from "$lib/config/agentModes";
 
 	interface ToolCallPart {
 		type: string;
@@ -38,7 +39,7 @@
 		 * construction, turns that go out to the record — so the mark starts a
 		 * dimension up rather than waiting for the first tool to prove it.
 		 */
-		agentMode?: "chat" | "deep_research" | "council";
+		agentMode?: AgentModeId;
 	}
 
 	let {
@@ -82,6 +83,7 @@
 		semantic_search: 4,
 		sql_query: 4,
 		sql_write: 4,
+		shell: 4,
 		web_search: 4,
 		read_asset: 4,
 		get_page_content: 4,
@@ -426,6 +428,14 @@
 				return tense(pending, "Revising an article", "Revised an article");
 			case "sql_write":
 				return tense(pending, "Writing to your records", "Wrote to your records");
+			case "shell": {
+				// The command itself, not a paraphrase: in sudo mode this line
+				// is the owner's record of what ran on their server.
+				const command = ((input.command as string) || "").trim().split("\n")[0];
+				const shown = command.length > 90 ? `${command.slice(0, 89)}…` : command;
+				const verb = tense(pending, "Running", "Ran");
+				return shown ? `${verb} ${shown}` : tense(pending, "Running a command", "Ran a command");
+			}
 			case "set_user_name":
 			case "set_assistant_name":
 				return tense(pending, "Learning a name", "Learned a name");

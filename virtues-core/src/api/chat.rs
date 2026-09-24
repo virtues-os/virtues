@@ -2123,6 +2123,10 @@ fn create_agent_stream(
                 ),
                 None => match request.agent_mode.as_str() {
                     "deep_research" => (50, 10_000_000, std::time::Duration::from_secs(25 * 60)),
+                    // The owner's bypass: ceilings high enough that no real
+                    // admin session meets them. The dollar cap stays as the
+                    // one thing between a looping model and the bill.
+                    "sudo" => (500, 50_000_000, std::time::Duration::from_secs(4 * 60 * 60)),
                     _ => (20, 2_500_000, std::time::Duration::from_secs(8 * 60)), // "chat" or default
                 },
             };
@@ -2131,7 +2135,13 @@ fn create_agent_stream(
         let agent = AgentLoop::new_with_yjs(pool.clone(), yjs_state)
         .with_config(AgentConfig {
             max_steps,
-            tool_timeout: std::time::Duration::from_secs(30),
+            // Sudo: a long restore or migration through sql_* must not be
+            // cut off at 30s. The shell has its own ceiling in agent::executor.
+            tool_timeout: if request.agent_mode == "sudo" {
+                std::time::Duration::from_secs(crate::tools::shell::MAX_TIMEOUT_SECS)
+            } else {
+                std::time::Duration::from_secs(30)
+            },
             parallel_tools: true,
         })
         .with_budget(crate::agent::TurnBudget {
@@ -2166,6 +2176,7 @@ fn create_agent_stream(
             worker_budget: Some(worker_budget),
             temporary,
             ghost_permissions: Some(ghost_permissions.clone()),
+            sudo: request.agent_mode == "sudo",
         };
 
         let tools = crate::tools::get_tools_for_agent_mode(&request.agent_mode);
