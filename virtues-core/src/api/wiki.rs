@@ -441,6 +441,21 @@ pub async fn update_person(
     .await
     .map_err(|e| Error::Database(format!("Failed to update person: {}", e)))?;
 
+    // An owner rename ends the contact's claim on the name: from here on the iOS
+    // contacts ingest keeps its spellings as aliases and leaves `name` alone
+    // (see `contact_owns_name` in applets/ios_ingest/contacts.rs).
+    if req.name.is_some() {
+        sqlx::query(
+            "UPDATE wiki_people \
+             SET metadata = metadata || jsonb_build_object('name_edited_at', now()) \
+             WHERE id = $1",
+        )
+        .bind(&id)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to mark person rename: {}", e)))?;
+    }
+
     get_person(pool, id).await
 }
 
