@@ -35,7 +35,7 @@ export const virtuesTheme = EditorView.theme({
 	'&.cm-focused': {
 		outline: 'none',
 	},
-	// `.cm-cursor` gets its shape and color from theme.css (the caret is a bar,
+	// `.cm-cursor` gets its shape and color from extensions/caret.css (the caret is a bar,
 	// not a border); the drop cursor stays a plain rule.
 	'.cm-dropCursor': {
 		borderLeftColor: 'var(--color-primary)',

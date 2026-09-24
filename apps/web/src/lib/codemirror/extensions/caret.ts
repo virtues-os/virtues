@@ -42,6 +42,10 @@
 import type { Extension } from '@codemirror/state';
 import { drawSelection, EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 
+// The look travels with the behavior: every editor that turns this on
+// (the page editor and the chat composer) gets its CSS. See caret.css.
+import './caret.css';
+
 /** How long the caret stays solid after the last keystroke or move. */
 const BLINK_DELAY_MS = 500;
 
