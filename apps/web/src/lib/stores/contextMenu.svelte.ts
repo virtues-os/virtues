@@ -8,6 +8,8 @@
 export interface ContextMenuItem {
 	id: string;
 	label: string;
+	/** A second line, for a row that explains a choice rather than naming one. */
+	description?: string;
 	icon?: string;
 	/**
 	 * Paints the icon. The only caller is a swatch — a menu row that IS a
@@ -89,6 +91,7 @@ class ContextMenuStore {
 	 * Hide the context menu
 	 */
 	hide() {
+		this.cancelSubmenuClose();
 		this.visible = false;
 		this.focusedIndex = -1;
 		this.openSubmenuId = null;
@@ -117,6 +120,7 @@ class ContextMenuStore {
 	 * Open a submenu
 	 */
 	openSubmenu(itemId: string) {
+		this.cancelSubmenuClose();
 		this.openSubmenuId = itemId;
 	}
 
@@ -124,7 +128,30 @@ class ContextMenuStore {
 	 * Close the currently open submenu
 	 */
 	closeSubmenu() {
+		this.cancelSubmenuClose();
 		this.openSubmenuId = null;
+	}
+
+	/**
+	 * The pointer left a submenu's row or the submenu itself. Close after a
+	 * short grace, so the diagonal trip from the row into the submenu (which
+	 * crosses neither) does not shut it; arriving in either cancels.
+	 */
+	private submenuCloseTimer: ReturnType<typeof setTimeout> | null = null;
+
+	scheduleSubmenuClose(delayMs = 150) {
+		this.cancelSubmenuClose();
+		this.submenuCloseTimer = setTimeout(() => {
+			this.submenuCloseTimer = null;
+			this.openSubmenuId = null;
+		}, delayMs);
+	}
+
+	cancelSubmenuClose() {
+		if (this.submenuCloseTimer) {
+			clearTimeout(this.submenuCloseTimer);
+			this.submenuCloseTimer = null;
+		}
 	}
 
 	/**
