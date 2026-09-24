@@ -1,5 +1,6 @@
 //! CLI module - command-line interface for Virtues
 
+pub mod auto_update;
 pub mod backup;
 pub mod channel;
 pub mod backup_volume;
@@ -103,6 +104,11 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // Same — the staged half of an upgrade; the new binary's `migrate`
             // touches the DB after the flip, not this process.
             unreachable!("Activate command should be handled in main.rs");
+        }
+
+        Commands::AutoUpdate => {
+            // Same — prepare then activate, both of which avoid the DB.
+            unreachable!("AutoUpdate command should be handled in main.rs");
         }
 
         Commands::Channel { .. } => {

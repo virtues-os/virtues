@@ -78,6 +78,10 @@ pub struct ToolContext {
     pub temporary: bool,
     /// Where a ghost's grants live for as long as the ghost does.
     pub ghost_permissions: Option<crate::api::chat_permissions::GhostPermissions>,
+    /// The turn is in sudo mode: the owner chose it for this chat. Nothing
+    /// asks before it runs, and `shell` runs at all. Set only by the chat
+    /// handler — applet runs and subagents build their context without it.
+    pub sudo: bool,
 }
 
 impl Default for ToolContext {
@@ -94,6 +98,7 @@ impl Default for ToolContext {
             worker_budget: None,
             temporary: false,
             ghost_permissions: None,
+            sudo: false,
         }
     }
 }
@@ -268,6 +273,10 @@ impl ToolExecutor {
         if !Self::PERMISSION_REQUIRED.contains(&tool_name) {
             return Ok(None);
         }
+        // Sudo mode is the owner saying "don't ask" for this chat.
+        if context.sudo && context.applet_id.is_none() {
+            return Ok(None);
+        }
         // Only interactive chat is gated. Autonomous action runs set `applet_id` (and may carry a
         // linked `chat_id`) but have no user present to approve, so they must run ungated.
         if context.applet_id.is_some() {
@@ -396,8 +405,26 @@ impl ToolExecutor {
                     .execute(arguments, context.project_id.as_deref(), context.scope_mode)
                     .await
             }
+            // Sudo: the database tools run any statement on any table, as the
+            // app's own role. `list_tables` / `get_schema` stay as they are.
+            "sql_query" | "sql_write"
+                if context.sudo
+                    && context.applet_id.is_none()
+                    && arguments.get("operation").and_then(|v| v.as_str()).unwrap_or("query")
+                        == "query" =>
+            {
+                super::sql_sudo::execute(&self._pool, arguments).await
+            }
             "sql_query" => self.sql_query.execute(arguments).await,
             "sql_write" => super::sql_write::execute(&self._pool, arguments).await,
+            // The tool lists already keep it out of every other mode; this is
+            // the second lock, for a model that names a tool it was not given.
+            "shell" if context.sudo && context.applet_id.is_none() => {
+                super::shell::execute(arguments).await
+            }
+            "shell" => Err(ToolError::ExecutionFailed(
+                "shell runs only in sudo mode, which the owner turns on in the chat".into(),
+            )),
             "read_asset" => self.execute_read_asset(arguments).await,
             "code_interpreter" => self.execute_code_interpreter(arguments).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.

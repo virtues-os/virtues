@@ -57,14 +57,10 @@
 		contextMenu.executeAction(subItem);
 	}
 
+	// Leaving the submenu closes it, unless the pointer is headed back to
+	// its own row, which cancels the close on arrival.
 	function handleMouseLeave() {
-		// Small delay before closing to allow moving to submenu
-		setTimeout(() => {
-			if (contextMenu.openSubmenuId === item.id) {
-				// Check if mouse is over the submenu
-				// If not, close it
-			}
-		}, 100);
+		if (contextMenu.openSubmenuId === item.id) contextMenu.scheduleSubmenuClose();
 	}
 </script>
 
@@ -75,6 +71,7 @@
 	style="top: {position.y}px; left: {position.x}px"
 	role="menu"
 	aria-label={item.label}
+	onmouseenter={() => contextMenu.cancelSubmenuClose()}
 	onmouseleave={handleMouseLeave}
 >
 	{#each item.submenu ?? [] as subItem (subItem.id)}
@@ -104,10 +101,17 @@
 				</span>
 			{/if}
 
-			<span class="item-label">{subItem.label}</span>
+			<span class="item-words">
+				<span class="item-label">{subItem.label}</span>
+				{#if subItem.description}
+					<span class="item-description">{subItem.description}</span>
+				{/if}
+			</span>
 
 			{#if subItem.shortcut}
 				<span class="item-shortcut">{subItem.shortcut}</span>
+			{:else if subItem.checked}
+				<span class="item-check"><Icon icon="ri:check-line" width="14" /></span>
 			{/if}
 		</button>
 
@@ -187,6 +191,25 @@
 	.menu-item.disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+
+	.item-words {
+		display: flex;
+		flex-direction: column;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.item-description {
+		font-size: 12px;
+		line-height: 1.3;
+		color: var(--color-foreground-muted);
+	}
+
+	.item-check {
+		display: flex;
+		margin-left: auto;
+		color: var(--color-foreground-muted);
 	}
 
 	.menu-item.destructive {

@@ -27,6 +27,8 @@ mod executor;
 mod web_search;
 pub(crate) mod sql_query;
 pub(crate) mod sql_write;
+pub(crate) mod shell;
+pub(crate) mod sql_sudo;
 mod page_editor;
 mod semantic_search;
 pub mod applet_schema;
@@ -50,6 +52,7 @@ pub fn get_tool_definitions_for_llm() -> Vec<serde_json::Value> {
     virtues_registry::tools::default_tools()
         .into_iter()
         .filter(|tool| !tool.is_system)
+        .filter(|tool| !SUDO_ONLY_TOOLS.contains(&tool.id.as_str()))
         .map(|tool| {
             serde_json::json!({
                 "type": "function",
@@ -64,9 +67,11 @@ pub fn get_tool_definitions_for_llm() -> Vec<serde_json::Value> {
 }
 
 /// Get ALL tool definitions including system tools (for action runners).
+/// Still not the sudo-only ones: "all" has never meant "a root shell".
 pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
     virtues_registry::tools::default_tools()
         .into_iter()
+        .filter(|tool| !SUDO_ONLY_TOOLS.contains(&tool.id.as_str()))
         .map(|tool| {
             serde_json::json!({
                 "type": "function",
@@ -79,6 +84,11 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
         })
         .collect()
 }
+
+/// Tools that exist only in sudo mode: the owner's admin shell. Every other
+/// tool list is built by filtering these out or by an allowlist that never
+/// names them, and the executor refuses them outside a sudo turn as well.
+pub(crate) const SUDO_ONLY_TOOLS: &[&str] = &["shell"];
 
 /// The explicit allowlist for a headless applet run — the runtime capability
 /// table from agents/plan/applet-authoring-plan.md §B, enforced. What an applet's
@@ -198,6 +208,8 @@ const DEEP_RESEARCH_TOOLS: &[&str] = &[
 ///
 /// Agent modes:
 /// - "chat": All tools (smart default; write/act tools confirm before running)
+/// - "sudo": everything chat has, plus `shell`, and nothing asks first — the
+///   owner's bypass mode. See `tools::shell`.
 /// - "deep_research": read-only research tools + `dispatch_subagents` (fan-out) + `create_page`
 ///   (the report artifact). No other edit/act tools — see `DEEP_RESEARCH_TOOLS`.
 /// - a skill's name (`council`): the tools its file declares — see `virtues_registry::skills`.
@@ -245,6 +257,25 @@ pub fn get_tools_for_agent_mode(agent_mode: &str) -> Vec<serde_json::Value> {
                 })
             })
             .collect(),
+        None if agent_mode == "sudo" => {
+            let mut tools = get_tool_definitions_for_llm();
+            tools.extend(
+                virtues_registry::tools::default_tools()
+                    .into_iter()
+                    .filter(|tool| SUDO_ONLY_TOOLS.contains(&tool.id.as_str()))
+                    .map(|tool| {
+                        serde_json::json!({
+                            "type": "function",
+                            "function": {
+                                "name": tool.id,
+                                "description": tool.llm_description,
+                                "parameters": tool.parameters,
+                            }
+                        })
+                    }),
+            );
+            tools
+        }
         None => {
             // "chat" mode or default: all tools
             get_tool_definitions_for_llm()
@@ -456,5 +487,41 @@ mod slot_model_smoke {
              loop depends on this; see Gemini 3",
             calls.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod sudo_scope {
+    use super::*;
+
+    fn names(tools: &[serde_json::Value]) -> Vec<String> {
+        tools
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    #[test]
+    fn only_sudo_mode_lists_the_shell() {
+        assert!(names(&get_tools_for_agent_mode("sudo")).contains(&"shell".to_string()));
+        for listing in [
+            get_tools_for_agent_mode("chat"),
+            get_tools_for_agent_mode("deep_research"),
+            get_tools_for_agent_mode("council"),
+            get_tools_for_agent_mode("anything-else"),
+            get_tool_definitions_for_llm(),
+            get_all_tool_definitions_for_llm(),
+            get_tools_for_applet(),
+            get_tools_for_subagent(),
+        ] {
+            assert!(!names(&listing).contains(&"shell".to_string()));
+        }
+    }
+
+    #[test]
+    fn sudo_mode_keeps_everything_chat_has() {
+        let chat = names(&get_tools_for_agent_mode("chat"));
+        let sudo = names(&get_tools_for_agent_mode("sudo"));
+        assert!(chat.iter().all(|t| sudo.contains(t)));
     }
 }

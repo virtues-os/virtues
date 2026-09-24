@@ -24,10 +24,14 @@
 		type UpdateStatus
 	} from '$lib/api/client';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
+	import { autoUpdateOf, setAutoUpdate, type AutoUpdateStatus } from '$lib/api/autoUpdate';
 
 	let status = $state<UpdateStatus | null>(null);
 	let loading = $state(true);
 	let switching = $state(false);
+	let auto = $state<AutoUpdateStatus | null>(null);
+	let autoSaving = $state(false);
+	let autoError = $state<string | null>(null);
 
 	/** null = idle. Otherwise the box is being replaced under us. */
 	let restart = $state<{ phase: 'going' | 'back'; error?: string } | null>(null);
@@ -42,6 +46,8 @@
 		loading = true;
 		try {
 			status = await getUpdateStatus();
+			// An older server doesn't report it; the row just doesn't show.
+			auto = autoUpdateOf(status);
 		} catch (err) {
 			console.error('[updates] check failed:', err);
 			status = null;
@@ -49,6 +55,33 @@
 			loading = false;
 		}
 	}
+
+	async function toggleAuto() {
+		if (!auto || autoSaving) return;
+		autoSaving = true;
+		autoError = null;
+		try {
+			auto = await setAutoUpdate(!auto.enabled);
+		} catch (err) {
+			autoError = err instanceof Error ? err.message : String(err);
+		} finally {
+			autoSaving = false;
+		}
+	}
+
+	/** `v0.1.10-3f2a9c1` -> `v0.1.10`: the slot id carries the commit for disk, not for people. */
+	const releaseName = (slot: string) => slot.replace(/-[0-9a-f]{7,}$/, '');
+
+	const when = (iso: string) =>
+		new Date(iso).toLocaleString(undefined, {
+			month: 'short',
+			day: 'numeric',
+			hour: 'numeric',
+			minute: '2-digit'
+		});
+
+	const hourLabel = (h: number) =>
+		new Date(2000, 0, 1, h).toLocaleTimeString(undefined, { hour: 'numeric' });
 
 	async function switchChannel(channel: 'stable' | 'prerelease') {
 		if (switching || status?.channel === channel) return;
@@ -234,7 +267,7 @@
 							switchChannel(e.currentTarget.value as 'stable' | 'prerelease')}
 					>
 						<option value="stable">Main — released builds</option>
-						<option value="prerelease">Nightly — unreleased, may break</option>
+						<option value="prerelease">Staging — unreleased, may break</option>
 					</select>
 					{#if status.channel === 'prerelease'}
 						<span class="risk">
@@ -245,6 +278,46 @@
 				</div>
 			</dd>
 		</dl>
+
+		{#if auto}
+			<div class="auto">
+				<div class="auto-row">
+					<div>
+						<p class="auto-title">Install updates automatically</p>
+						<p class="note">
+							Your server installs new releases on its channel around {hourLabel(auto.hour)}
+							and restarts. Connected devices reconnect on their own.
+						</p>
+					</div>
+					<button
+						class="switch"
+						class:on={auto.enabled}
+						role="switch"
+						aria-checked={auto.enabled}
+						aria-label="Install updates automatically"
+						disabled={autoSaving}
+						onclick={toggleAuto}
+					></button>
+				</div>
+				{#if auto.install && !auto.install.ok}
+					<p class="note auto-failed">
+						Your server couldn't install {releaseName(auto.install.to)} on
+						{when(auto.install.at)} and went back to {auto.install.from}. It tries again
+						when a newer release comes out, or you can install it below.
+					</p>
+					{#if auto.install.error}<p class="note">{auto.install.error}</p>{/if}
+				{:else if auto.problem}
+					<p class="note auto-failed">{auto.problem}</p>
+				{:else if auto.install}
+					<p class="note">
+						Installed {releaseName(auto.install.to)} automatically on {when(auto.install.at)}.
+					</p>
+				{/if}
+				{#if autoError}
+					<p class="note auto-failed">Couldn't change this setting: {autoError}. Try again.</p>
+				{/if}
+			</div>
+		{/if}
 
 		{#if status.check_error}
 			<!-- "Couldn't check" and "up to date" are very different claims, and
@@ -315,7 +388,7 @@
 
 		{#if aheadOfStable}
 			<p class="note">
-				On Nightly you're usually ahead of the last stable release. Switching
+				On Staging you're usually ahead of the last stable release. Switching
 				back to Main stops new prereleases; it doesn't move your server backwards,
 				so nothing changes until stable catches up.
 			</p>
@@ -477,6 +550,69 @@
 	/* The one affirmative action in this section carries `Button`'s `primary`,
 	   so it is the filled one beside an outlined "Check again" — the same claim
 	   the hand-rolled rule here used to make in its own colors. */
+
+	.auto {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.auto-row {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 16px;
+	}
+
+	.auto-row p {
+		margin: 0;
+	}
+
+	.auto-title {
+		font-size: 13px;
+	}
+
+	.auto-failed {
+		color: var(--error);
+	}
+
+	.switch {
+		width: 44px;
+		height: 26px;
+		border-radius: 13px;
+		background: var(--color-border);
+		position: relative;
+		flex: none;
+		border: 0;
+		cursor: pointer;
+		transition: background 150ms ease;
+		padding: 0;
+	}
+	.switch.on {
+		background: var(--color-success);
+	}
+	.switch::after {
+		content: '';
+		position: absolute;
+		top: 3px;
+		left: 3px;
+		width: 20px;
+		height: 20px;
+		border-radius: 50%;
+		background: var(--color-background);
+		transition: transform 150ms ease;
+	}
+	.switch.on::after {
+		transform: translateX(18px);
+	}
+	.switch:focus-visible {
+		outline: 2px solid var(--color-foreground);
+		outline-offset: 3px;
+	}
+	.switch:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
 
 	.apply-error {
 		color: var(--error);

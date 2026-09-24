@@ -232,6 +232,10 @@
 						focused={contextMenu.focusedIndex === index}
 						onHover={() => {
 							contextMenu.focusedIndex = index;
+							// Onto a sibling row: its submenu, if one is open, goes.
+							if (contextMenu.openSubmenuId && contextMenu.openSubmenuId !== item.id) {
+								contextMenu.closeSubmenu();
+							}
 							// Update rect when hovering for submenu positioning
 							const wrapper = document.querySelector(`[data-item-id="${item.id}"]`);
 							if (wrapper) {

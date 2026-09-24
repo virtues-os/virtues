@@ -51,6 +51,9 @@
 
 	function handleMouseLeave() {
 		item.onMouseLeave?.();
+		if (item.submenu && contextMenu.openSubmenuId === item.id) {
+			contextMenu.scheduleSubmenuClose();
+		}
 	}
 </script>
 
@@ -61,6 +64,7 @@
 <MenuItem
 	icon={item.icon}
 	label={item.label}
+	description={item.description}
 	shortcut={item.shortcut}
 	checked={item.checked}
 	destructive={item.variant === 'destructive'}

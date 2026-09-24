@@ -86,9 +86,13 @@
 			{#each fields as field (field)}
 				<label>
 					<span>{field}</span>
+					<!-- A getter, not `values[field]`: the effect that seeds `values`
+					     runs after this first renders, and binding `undefined` into
+					     Input's `$bindable("")` throws — the modal never mounted, so
+					     every api_key Connect did nothing. -->
 					<Input
 						type="password"
-						bind:value={values[field]}
+						bind:value={() => values[field] ?? '', (v) => (values[field] = v)}
 						placeholder={`Paste your ${field}`}
 					/>
 				</label>
