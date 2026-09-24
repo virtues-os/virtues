@@ -236,9 +236,9 @@
 		// Drop Leaflet's own "Leaflet" flag — the data credit stays.
 		map.attributionControl.setPrefix(false);
 
-		// The basemap is served + cached by the box itself ($lib/map/atlas): the
-		// browser never talks to a third-party tile provider, and cached areas
-		// keep working offline. The layer carries the data credit.
+		// The basemap comes from the box itself ($lib/map/atlas), never a tile
+		// provider, and there is none until the box has its own map files. The
+		// layer carries the data credit when it exists.
 		render();
 		const basemap = await atlasLayer("light");
 		if (basemap && map) basemap.addTo(map);
