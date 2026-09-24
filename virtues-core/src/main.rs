@@ -695,6 +695,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ─── `virtues auto-update` ──────────────────────────────────────────────
+    // The nightly pass the server fires: prepare, then activate. Root, no DB.
+    if let Some(Commands::AutoUpdate) = &cli.command {
+        match virtues::cli::auto_update::run().await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: auto-update failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // DATABASE_URL (Postgres) must be set — no default. Fail loudly if missing.
     // It's already in the process env, so subprocess actions inherit it as-is.
     let database_url = virtues::database::normalize_database_url()?;
@@ -918,9 +930,9 @@ fn maybe_reexec_as_service_user() {
     // database, add it to BOTH.
     //
     // Deliberately absent: the root-only lifecycle verbs — `upgrade`,
-    // `prepare`, `activate`, `rollback`, `deprovision`, `uninstall`,
-    // `image-check`, `bringup` — which drive systemd and must NOT drop
-    // privilege.
+    // `prepare`, `activate`, `auto-update`, `rollback`, `deprovision`,
+    // `uninstall`, `image-check`, `bringup` — which drive systemd and must NOT
+    // drop privilege.
     const DB_COMMANDS: &[&str] = &[
         "init", "pair", "link", "login", "subscribe", "sudo", "backup", "reset", "status",
         "migrate", "seed",

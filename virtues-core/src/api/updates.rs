@@ -21,18 +21,23 @@
 //! · **Downloading** happens on a timer only on `stable`, where a release lands
 //!   every few weeks. On `prerelease` a build lands most days and gets
 //!   installed rarely, so a box on that channel checks and waits to be asked.
-//! · **Activating** — the part that restarts the box and runs migrations — is
-//!   never automatic. See below.
+//! · **Activating** — the part that restarts the box and runs migrations —
+//!   happens once a night, on both channels, unless the owner turns it off.
 //!
 //! ## On applying in the background
 //!
-//! Nothing here ever activates a release on its own, and that is a considered
-//! position rather than an unfinished one. A vendor who auto-ships to a fleet
-//! can do it safely because they watch that fleet and halt a bad rollout;
-//! virtues deliberately has no such telemetry, so it has no way to notice a bad
-//! release and no way to stop one. The human pressing the button IS the halt
-//! mechanism — every box that hasn't pressed it is a box a bad build never
-//! reached. Preparation is what makes pressing it cheap.
+//! This module used to refuse to activate anything on its own: with no fleet
+//! telemetry there is no way to notice a bad release and halt it, so the human
+//! pressing the button was the halt mechanism. In practice the button went
+//! unpressed — boxes sat three and four stable releases behind, carrying bugs
+//! that had long been fixed. A box that never updates is its own kind of bad
+//! release, and one no rollback can reach.
+//!
+//! So the nightly pass (`virtues auto-update`, fired by [`spawn`]) installs
+//! what it prepared, and the halts moved into the box itself: preflight refuses
+//! a release the schema can't take, activation dumps the database before any
+//! migration and flips back on failure, and a release that failed once is
+//! never retried automatically. The owner can still turn the whole thing off.
 
 use serde::{Deserialize, Serialize};
 
@@ -242,6 +247,19 @@ pub const PREPARE_INTERVAL: std::time::Duration = std::time::Duration::from_secs
 /// whole mechanism exists to avoid.
 pub const PREPARE_FIRST_DELAY: std::time::Duration = std::time::Duration::from_secs(300);
 
+/// Transient unit the nightly pass runs under — `journalctl -u virtues-auto-update`.
+const AUTO_UPDATE_UNIT: &str = "virtues-auto-update";
+
+/// Local hour the nightly pass starts, in the box's own timezone. Before the
+/// 04:00 backup applet, so the night's backup captures the release the box
+/// will actually run tomorrow — and the activation takes its own pre-migration
+/// dump regardless.
+const NIGHTLY_HOUR: u32 = 3;
+
+/// Spread over the half hour after [`NIGHTLY_HOUR`], so every box on a channel
+/// doesn't ask GitHub for the same tarball in the same second.
+const NIGHTLY_JITTER_SECS: i64 = 30 * 60;
+
 /// Kick off a background prepare, if this box is one that should do that.
 ///
 /// Returns `Ok(false)` when the box deliberately skips — not a real install, or
@@ -302,6 +320,72 @@ pub fn spawn_prepare() -> Result<bool> {
     Ok(true)
 }
 
+/// Fire the nightly pass in its own unit. Same shape as [`spawn_prepare`], and
+/// for the same reasons — plus the one [`apply`] documents: activation restarts
+/// `virtues.service`, so it cannot live in this process's cgroup.
+pub fn spawn_auto_update() -> Result<bool> {
+    if !std::path::Path::new(BINARY_PATH).exists() {
+        return Ok(false);
+    }
+    if !crate::cli::auto_update::enabled() {
+        return Ok(false);
+    }
+
+    let output = std::process::Command::new("sudo")
+        .args([
+            "-n",
+            "systemd-run",
+            "--unit",
+            AUTO_UPDATE_UNIT,
+            "--collect",
+            "--description",
+            "virtues auto-update (nightly)",
+            BINARY_PATH,
+            "auto-update",
+        ])
+        .output()
+        .map_err(|e| Error::Other(format!("could not invoke sudo systemd-run: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        return Err(Error::Other(if detail.is_empty() {
+            format!("systemd-run exited {}", output.status)
+        } else {
+            detail.to_string()
+        }));
+    }
+    Ok(true)
+}
+
+/// The next nightly slot strictly after `now`: [`NIGHTLY_HOUR`] local, plus
+/// this box's fixed offset into the jitter window.
+///
+/// The box's system timezone, the same one `home_timezone` is read from, so
+/// "3 AM" is the owner's night. A DST gap at that hour falls back to UTC for
+/// that one night rather than skipping it.
+fn next_nightly(now: chrono::DateTime<chrono::Utc>, jitter_secs: i64) -> chrono::DateTime<chrono::Utc> {
+    use chrono::{Duration, TimeZone};
+    let tz: chrono_tz::Tz = crate::timezone::system_timezone()
+        .and_then(|name| name.parse().ok())
+        .unwrap_or(chrono_tz::UTC);
+    let local = now.with_timezone(&tz);
+    let mut day = local.date_naive();
+    loop {
+        let at = day.and_hms_opt(NIGHTLY_HOUR, 0, 0).expect("valid hour");
+        let slot = tz
+            .from_local_datetime(&at)
+            .earliest()
+            .map(|t| t.with_timezone(&chrono::Utc))
+            .unwrap_or_else(|| chrono::Utc.from_utc_datetime(&at))
+            + Duration::seconds(jitter_secs);
+        if slot > now {
+            return slot;
+        }
+        day = day.succ_opt().expect("date in range");
+    }
+}
+
 /// Run [`spawn_prepare`] on a timer for the life of the server.
 ///
 /// Deliberately fire-and-forget. Nothing downstream waits on the result,
@@ -330,6 +414,98 @@ pub fn spawn() {
             tokio::time::sleep(PREPARE_INTERVAL).await;
         }
     });
+
+    // The nightly pass. Fixed per process, so a box restarted mid-window
+    // doesn't draw a second slot the same night.
+    let jitter = rand::random_range(0..NIGHTLY_JITTER_SECS);
+    tokio::spawn(async move {
+        loop {
+            let at = next_nightly(chrono::Utc::now(), jitter);
+            // Wake at least hourly and re-check the wall clock: a monotonic
+            // sleep of many hours drifts from it across a suspend or a clock
+            // step, and the whole point is to land at night.
+            loop {
+                let left = at - chrono::Utc::now();
+                if left <= chrono::Duration::zero() {
+                    break;
+                }
+                let step = left.to_std().unwrap_or_default().min(std::time::Duration::from_secs(3600));
+                tokio::time::sleep(step).await;
+            }
+            match tokio::task::spawn_blocking(spawn_auto_update).await {
+                Ok(Ok(true)) => tracing::info!("update: nightly auto-update started"),
+                Ok(Ok(false)) => {}
+                Ok(Err(e)) => tracing::warn!("update: nightly auto-update did not start: {e}"),
+                Err(e) => tracing::warn!("update: auto-update task panicked: {e}"),
+            }
+            // Never twice in one window, even if the unit returned instantly.
+            tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
+        }
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Automatic updates (Settings)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct AutoUpdateStatus {
+    pub enabled: bool,
+    /// Local hour the nightly pass starts, for the Settings sentence.
+    pub hour: u32,
+    #[serde(flatten)]
+    pub last: crate::cli::auto_update::LastRun,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetAutoUpdateRequest {
+    pub enabled: bool,
+}
+
+fn auto_update_status() -> AutoUpdateStatus {
+    AutoUpdateStatus {
+        enabled: crate::cli::auto_update::enabled(),
+        hour: NIGHTLY_HOUR,
+        last: crate::cli::auto_update::last(),
+    }
+}
+
+/// GET /api/system/update/auto
+pub async fn auto_update_handler() -> axum::response::Response {
+    use axum::response::IntoResponse;
+    axum::Json(auto_update_status()).into_response()
+}
+
+/// PUT /api/system/update/auto — `{ "enabled": bool }`
+pub async fn set_auto_update_handler(
+    axum::Json(req): axum::Json<SetAutoUpdateRequest>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    match crate::cli::auto_update::set_enabled(req.enabled) {
+        Ok(()) => axum::Json(auto_update_status()).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn next_nightly_is_strictly_after_now_and_within_a_day() {
+        for h in 0..24 {
+            let now = Utc.with_ymd_and_hms(2026, 9, 24, h, 17, 0).unwrap();
+            let at = next_nightly(now, 600);
+            assert!(at > now);
+            assert!(at - now <= chrono::Duration::hours(25));
+        }
+    }
 }
 
 /// Start an upgrade and return immediately.
