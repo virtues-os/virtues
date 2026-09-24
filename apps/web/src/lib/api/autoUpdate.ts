@@ -1,5 +1,9 @@
 /**
  * Automatic updates - the nightly pass (`virtues auto-update`, api/updates.rs).
+ *
+ * Rides the existing update endpoints: `GET /api/system/update` carries
+ * `auto_update`, and `PUT /api/system/update/channel` takes `auto_update`
+ * beside `channel`.
  */
 
 export interface AutoUpdateInstall {
@@ -21,22 +25,21 @@ export interface AutoUpdateStatus {
 	problem: string | null;
 }
 
-export async function getAutoUpdate(): Promise<AutoUpdateStatus> {
-	const res = await fetch('/api/system/update/auto');
-	if (!res.ok) throw new Error(`Failed to get automatic update status: ${res.statusText}`);
-	return res.json();
+/** Absent on a server that predates automatic updates. */
+export function autoUpdateOf(status: object | null): AutoUpdateStatus | null {
+	return (status as { auto_update?: AutoUpdateStatus } | null)?.auto_update ?? null;
 }
 
 export async function setAutoUpdate(enabled: boolean): Promise<AutoUpdateStatus> {
-	const res = await fetch('/api/system/update/auto', {
+	const res = await fetch('/api/system/update/channel', {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ enabled })
+		body: JSON.stringify({ auto_update: enabled })
 	});
-	if (!res.ok) {
+	const body = await res.json().catch(() => null);
+	if (!res.ok || !body?.auto_update) {
 		// The server's own reason, e.g. a state root it can't write.
-		const body = await res.json().catch(() => null);
-		throw new Error(body?.error ?? res.statusText);
+		throw new Error(body?.message ?? body?.error ?? res.statusText);
 	}
-	return res.json();
+	return body.auto_update;
 }

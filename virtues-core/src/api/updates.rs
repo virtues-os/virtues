@@ -81,11 +81,17 @@ pub struct UpdateStatus {
     /// Set when the lookup failed, so the UI can say "couldn't check" instead
     /// of "up to date" — those are very different claims.
     pub check_error: Option<String>,
+    /// The nightly pass: whether it is on, and what it last did.
+    pub auto_update: AutoUpdateStatus,
 }
 
+/// Body of `PUT /api/system/update/channel`, which carries both update
+/// preferences. Each field is optional so either can change alone; older
+/// clients send only `channel`.
 #[derive(Debug, Deserialize)]
 pub struct SetChannelRequest {
-    pub channel: String,
+    pub channel: Option<String>,
+    pub auto_update: Option<bool>,
 }
 
 /// Current version + channel, and whether the channel has something newer.
@@ -156,6 +162,7 @@ pub async fn status() -> UpdateStatus {
                 update_available,
                 staged,
                 check_error: None,
+                auto_update: auto_update_status(),
             }
         }
         Err(e) => UpdateStatus {
@@ -170,6 +177,7 @@ pub async fn status() -> UpdateStatus {
             update_available: staged.is_some(),
             staged,
             check_error: Some(e.to_string()),
+            auto_update: auto_update_status(),
         },
     }
 }
@@ -183,23 +191,28 @@ pub async fn status() -> UpdateStatus {
 /// until stable catches up. The UI has to say that plainly, or it reads as the
 /// setting having silently failed.
 pub fn set_channel(req: SetChannelRequest) -> Result<UpdateChannelResponse> {
-    let channel = Channel::parse(&req.channel).ok_or_else(|| {
-        Error::Other(format!(
-            "unknown channel {:?} — expected 'stable' or 'prerelease'",
-            req.channel
-        ))
-    })?;
-
-    channel::set(channel)?;
+    if let Some(name) = &req.channel {
+        let channel = Channel::parse(name).ok_or_else(|| {
+            Error::Other(format!(
+                "unknown channel {name:?} — expected 'stable' or 'prerelease'"
+            ))
+        })?;
+        channel::set(channel)?;
+    }
+    if let Some(on) = req.auto_update {
+        crate::cli::auto_update::set_enabled(on)?;
+    }
 
     Ok(UpdateChannelResponse {
-        channel: channel.as_str().to_string(),
+        channel: channel::current().as_str().to_string(),
+        auto_update: auto_update_status(),
     })
 }
 
 #[derive(Debug, Serialize)]
 pub struct UpdateChannelResponse {
     pub channel: String,
+    pub auto_update: AutoUpdateStatus,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -457,38 +470,11 @@ pub struct AutoUpdateStatus {
     pub last: crate::cli::auto_update::LastRun,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct SetAutoUpdateRequest {
-    pub enabled: bool,
-}
-
 fn auto_update_status() -> AutoUpdateStatus {
     AutoUpdateStatus {
         enabled: crate::cli::auto_update::enabled(),
         hour: NIGHTLY_HOUR,
         last: crate::cli::auto_update::last(),
-    }
-}
-
-/// GET /api/system/update/auto
-pub async fn auto_update_handler() -> axum::response::Response {
-    use axum::response::IntoResponse;
-    axum::Json(auto_update_status()).into_response()
-}
-
-/// PUT /api/system/update/auto — `{ "enabled": bool }`
-pub async fn set_auto_update_handler(
-    axum::Json(req): axum::Json<SetAutoUpdateRequest>,
-) -> axum::response::Response {
-    use axum::http::StatusCode;
-    use axum::response::IntoResponse;
-    match crate::cli::auto_update::set_enabled(req.enabled) {
-        Ok(()) => axum::Json(auto_update_status()).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
     }
 }
 
