@@ -62,7 +62,15 @@ private let isoMillis: ISO8601DateFormatter = {
 public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   public static let shared = LocationProbe()
 
-  private let manager = CLLocationManager()
+  /// Created in `configure()`, on the main thread, never in `init`.
+  /// CoreLocation delivers delegate callbacks on the run loop of the thread
+  /// that CREATED the manager, and `shared` can be first touched off-main:
+  /// Tauri runs plugin commands on its `ipc` queue, and the audio plugin's
+  /// init (reached from its `resume` command at launch) pushes its muted
+  /// places here before `start` gets to run. A manager born on that queue
+  /// hears nothing: permission granted, updates started, and not one fix,
+  /// auth change or error ever arrives.
+  private var manager: CLLocationManager!
   private var configured = false
   private var updating = false
   private var wantPrompt = false
@@ -143,6 +151,10 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   /// already authorized and never shows a dialog; `prompt = true` (explicit
   /// "Enable" opt-in) requests permission when undetermined. Idempotent.
   public func start(prompt: Bool) {
+    if !Thread.isMainThread {
+      DispatchQueue.main.async { [weak self] in self?.start(prompt: prompt) }
+      return
+    }
     configure()
     wantPrompt = wantPrompt || prompt
 
@@ -164,6 +176,7 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   private func configure() {
     if configured { return }
     configured = true
+    manager = CLLocationManager()
     manager.delegate = self
     manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
     manager.allowsBackgroundLocationUpdates = true
@@ -229,6 +242,8 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     }
     wantedRegions = rs
     regionsPickedAt = nil
+    // Before `start`, only remember them: `beginUpdates` applies the set.
+    guard configured else { return }
     applyRegions(around: manager.location)
   }
 
