@@ -324,7 +324,8 @@ async fn merge_into_person(db: &PgPool, person_id: &str, contact: &ContactRecord
     let current_name: String = row.try_get("name")?;
     let existing_aliases: Vec<String> = row
         .try_get::<Option<Value>, _>("aliases")?
-        .and_then(|v| serde_json::from_value(v).ok())
+        .map(serde_json::from_value)
+        .transpose()?
         .unwrap_or_default();
 
     // These columns are JSONB / DATE — read them as native types, not String.

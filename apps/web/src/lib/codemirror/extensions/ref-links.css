@@ -38,3 +38,10 @@
 	text-decoration-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
 	color: var(--color-primary);
 }
+
+/* §7: keep the information (the color change on hover), drop the travel. */
+@media (prefers-reduced-motion: reduce) {
+	.cm-ref-link {
+		transition: none;
+	}
+}
