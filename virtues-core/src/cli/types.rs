@@ -393,6 +393,14 @@ pub enum Commands {
     /// cleanly if nothing is staged.
     Activate,
 
+    /// The nightly update pass: `prepare`, then `activate`, on this box's
+    /// channel. The server runs this every night unless automatic updates are
+    /// turned off in Settings; running it by hand does the same work.
+    ///
+    /// A release that failed to activate is not retried here — the box waits
+    /// for a newer build, or for `virtues activate` by hand.
+    AutoUpdate,
+
     /// Start the HTTP server
     #[command(hide = true)]
     Server {
