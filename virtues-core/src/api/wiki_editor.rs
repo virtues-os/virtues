@@ -283,24 +283,110 @@ pub fn check_edit(new_text: &str, theirs: &[String], removed: &[String]) -> Resu
     Ok(())
 }
 
-/// Every subject a piece of prose links to, as `(type, id)`.
+/// Every subject a piece of prose links to, as `(label, route, id)`.
 ///
 /// Links are written as `[label](/person/person_ab12)`, so the shape is fixed
 /// and a regex would be overkill.
-pub fn linked_subjects(text: &str) -> Vec<(String, String)> {
+///
+/// The LABEL is carried because a link can be wrong while pointing at
+/// something that exists — see [`label_fits`].
+pub fn linked_refs(text: &str) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
     for (i, _) in text.match_indices("](/") {
         let rest = &text[i + 3..];
         let Some(end) = rest.find(')') else { continue };
         let target = &rest[..end];
         let mut parts = target.splitn(2, '/');
-        if let (Some(kind), Some(id)) = (parts.next(), parts.next()) {
-            if !kind.is_empty() && !id.is_empty() && !id.contains('/') {
-                out.push((kind.to_string(), id.to_string()));
-            }
+        let (Some(kind), Some(id)) = (parts.next(), parts.next()) else { continue };
+        if kind.is_empty() || id.is_empty() || id.contains('/') {
+            continue;
         }
+        // Walk back over `[label]` to the bracket that opened it. A label may
+        // contain no `]`, which is what makes this findable at all.
+        let label = text[..i]
+            .rfind('[')
+            .map(|open| text[open + 1..i].to_string())
+            .unwrap_or_default();
+        out.push((label, kind.to_string(), id.to_string()));
     }
     out
+}
+
+/// Every subject a piece of prose links to, as `(type, id)`.
+pub fn linked_subjects(text: &str) -> Vec<(String, String)> {
+    linked_refs(text)
+        .into_iter()
+        .map(|(_, kind, id)| (kind, id))
+        .collect()
+}
+
+/// Is `label` a fair way to write a subject whose known names are `names`?
+///
+/// Exactly equal, or one is a subset of the other's words: "Soph" fits "Soph
+/// Auciello", and "Nick" fits an alias of "Nick". What does NOT fit is the
+/// observed failure — a name with no word in common with the thing it points
+/// at, "Theo Kovac" over the id belonging to Anton Fenwick.
+///
+/// Deliberately generous. A false positive here silently deletes a correct
+/// link (first-draft path) or refuses a legitimate edit (editor path), and a
+/// shortened or affectionate name for someone is the normal way to write about
+/// them. The failure being caught is not subtle and does not need a subtle
+/// test.
+pub fn label_fits(label: &str, names: &[String]) -> bool {
+    fn words(s: &str) -> std::collections::HashSet<String> {
+        s.split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .map(|w| w.to_lowercase())
+            .collect()
+    }
+    let l = words(label);
+    if l.is_empty() {
+        // Nothing to disagree with. An empty label is a different problem.
+        return true;
+    }
+    names.iter().any(|n| {
+        let w = words(n);
+        !w.is_empty() && (l.is_subset(&w) || w.is_subset(&l))
+    })
+}
+
+/// Every name a subject answers to: its own, its nickname, its aliases.
+///
+/// `aliases` is jsonb on all three entity tables and `nickname` exists only on
+/// people, which is why this is per-table rather than one query.
+async fn known_names(
+    pool: &sqlx::PgPool,
+    table: &str,
+    id: &str,
+) -> Result<Vec<String>> {
+    let row: Option<(String, Option<serde_json::Value>)> =
+        sqlx::query_as(&format!("SELECT name, aliases FROM {table} WHERE id = $1"))
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to read {table} names: {e}")))?;
+    let Some((name, aliases)) = row else {
+        return Ok(Vec::new());
+    };
+    let mut names = vec![name];
+    if let Some(serde_json::Value::Array(items)) = aliases {
+        names.extend(items.into_iter().filter_map(|v| match v {
+            serde_json::Value::String(s) => Some(s),
+            _ => None,
+        }));
+    }
+    if table == "wiki_people" {
+        if let Ok(Some(n)) = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT nickname FROM wiki_people WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        {
+            names.extend(n);
+        }
+    }
+    Ok(names.into_iter().filter(|n| !n.trim().is_empty()).collect())
 }
 
 /// Every link in a piece of prose that does not point at a real subject, each
@@ -318,7 +404,7 @@ pub fn linked_subjects(text: &str) -> Vec<(String, String)> {
 /// object, so there the same finding is reported and not enforced.
 pub async fn dead_links(pool: &sqlx::PgPool, text: &str) -> Result<Vec<String>> {
     let mut found = Vec::new();
-    for (route, id) in linked_subjects(text) {
+    for (label, route, id) in linked_refs(text) {
         // Resolve through the ID, not the route segment. A route is not a
         // subject_type (`/org/…` is an organization), and keying on the
         // segment meant a hand-written match that named five kinds and let
@@ -363,6 +449,30 @@ pub async fn dead_links(pool: &sqlx::PgPool, text: &str) -> Result<Vec<String>> 
                 "links to /{route}/{id}, which does not exist — link only \
                  the exact ids you were given, and never an id from an example"
             ));
+            continue;
+        }
+
+        // The id is real. Is it the one the SENTENCE is about?
+        //
+        // Existence was the whole check until 2026-09-22, and it passes the
+        // failure that actually happens: an audit of 24 generated articles
+        // found person links 0 correct and 3 mismatched, every mismatched one
+        // pointing at an id that exists perfectly well and belongs to somebody
+        // else. One article labelled its own subject with another person's id.
+        //
+        // Only the three entity kinds are checked. A day, a year or a chapter
+        // is labelled with a rendering of what its id already says — "September
+        // 2, 2026", "September 2" — and there is no name to disagree with.
+        if matches!(subject.kind, "person" | "place" | "organization") {
+            let names = known_names(pool, table, &id).await?;
+            if !names.is_empty() && !label_fits(&label, &names) {
+                found.push(format!(
+                    "calls /{route}/{id} \"{label}\", but that id is {} — \
+                     a link has to point at the one you named, or say the name \
+                     without linking it",
+                    names[0]
+                ));
+            }
         }
     }
     Ok(found)
@@ -1265,6 +1375,82 @@ mod tests {
             ],
             "an external URL is not a subject link"
         );
+    }
+
+    #[test]
+    fn labels_are_read_back_with_their_links() {
+        let found = linked_refs(
+            "You met [Nick](/person/person_nick01) on [3 March](/day/day_2026-03-03), \
+             and see [the site](https://example.com).",
+        );
+        assert_eq!(
+            found,
+            vec![
+                ("Nick".into(), "person".into(), "person_nick01".into()),
+                ("3 March".into(), "day".into(), "day_2026-03-03".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_shortened_or_aliased_name_fits_and_a_stranger_does_not() {
+        let names = vec!["Soph Auciello".to_string(), "Soph".to_string()];
+        assert!(label_fits("Soph Auciello", &names));
+        assert!(label_fits("soph", &names), "case does not matter");
+        assert!(label_fits("Soph", &names), "a first name is how people write");
+        assert!(
+            !label_fits("David Okafor", &names),
+            "no word in common is the failure being caught"
+        );
+        assert!(label_fits("", &names), "an empty label is a different problem");
+    }
+
+    /// The failure an existence check cannot see: the id is real, and it is
+    /// somebody else's. Reproduced from an audit of 24 generated articles in
+    /// which person links were 0 correct and 3 mismatched.
+    #[sqlx::test]
+    async fn a_real_id_under_the_wrong_name_is_reported(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO wiki_people (id, name, nickname) \
+             VALUES ('person_a', 'Nick', NULL), ('person_b', 'David Okafor', 'Dave')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let problems = dead_links(&pool, "You met [Nick](/person/person_b) for lunch.")
+            .await
+            .unwrap();
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("David Okafor"), "{}", problems[0]);
+
+        // And the honest versions of the same sentence, including the nickname
+        // and a first name, are left alone.
+        for text in [
+            "You met [David Okafor](/person/person_b) for lunch.",
+            "You met [Dave](/person/person_b) for lunch.",
+            "You met [David](/person/person_b) for lunch.",
+            "You met [Nick](/person/person_a) for lunch.",
+        ] {
+            let clean = dead_links(&pool, text).await.unwrap();
+            assert!(clean.is_empty(), "refused an honest link: {text} -> {clean:?}");
+        }
+    }
+
+    /// A day is labelled with a rendering of the date its id already carries,
+    /// so there is no name to disagree with and the check must not invent one.
+    #[sqlx::test]
+    async fn a_day_link_is_not_held_to_a_name(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO wiki_days (id, date) VALUES ('day_2026-03-03', '2026-03-03')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for label in ["March 3, 2026", "March 3", "that Tuesday"] {
+            let clean = dead_links(&pool, &format!("on [{label}](/day/day_2026-03-03)"))
+                .await
+                .unwrap();
+            assert!(clean.is_empty(), "{label} -> {clean:?}");
+        }
     }
 
     /// The finding is separate from the policy: the wiki refuses on the first

@@ -15,9 +15,17 @@
 //!   "note": "the green door",               // optional, the user's own words
 //!   "title": "…", "source_app": "com.burbn.instagram",
 //!   "content_hash": "9f2c…",                // optional; identity for assets
+//!   "image_data": "iVBORw0KGgo…",           // optional; the picture itself, base64
+//!   "image_mime": "image/png",              // optional; a hint — the bytes decide
 //!   "timestamp": "2026-02-11T23:14:00Z"
 //! }
 //! ```
+//!
+//! **`image_data` is the share sheet's picture, sent inline** — the same road
+//! audio takes (`microphone::externalize_blobs`). [`externalize_images`] takes
+//! it out of the record BEFORE the record is archived, keeps it in Drive, and
+//! leaves `asset_id` + `content_hash` in its place; from there the record is an
+//! ordinary asset share, and the image pass reads the picture.
 //!
 //! **`url` means where the thing IS, not where it came from** — the contract
 //! settled in the plan. A share carrying a source URL keeps it and names the
@@ -26,9 +34,13 @@
 //! to `source_platform`, never into the URL.
 
 use anyhow::{anyhow, Result};
+use base64::Engine;
 use chrono::Utc;
 use serde_json::{json, Value};
 use sqlx::PgPool;
+use virtues::api::DriveConfig;
+use virtues::bookmark_media::{sha256_hex, store_image_bytes_in};
+use virtues::storage::Storage;
 use virtues_helpers::bookmarks::{upsert_bookmarks, BookmarkRow};
 use virtues_helpers::ios::{parse_timestamp, IOS_PROVIDER};
 
@@ -53,6 +65,92 @@ fn platform_of(source_app: Option<&str>) -> Option<String> {
         }
         .to_string(),
     )
+}
+
+/// What a share's `image_data` turns into, decided without touching storage.
+#[derive(Debug)]
+enum SharedImage {
+    /// No picture on this share.
+    Absent,
+    /// A picture to keep, with the type its sender claimed (a hint only).
+    Keep { bytes: Vec<u8>, declared_mime: String },
+    /// A picture that can never be kept — it will not decode on any retry. The
+    /// share survives without it.
+    Unusable(String),
+}
+
+/// Take the picture OUT of a share record, whatever becomes of it.
+///
+/// Out unconditionally: the record is archived to the lake next, and the base64
+/// must not ride along — the Drive copy is the picture's one home, as the lake
+/// object is audio's.
+fn take_shared_image(rec: &mut Value) -> SharedImage {
+    let Some(raw) = rec.as_object_mut().and_then(|o| o.remove("image_data")) else {
+        return SharedImage::Absent;
+    };
+    let Some(b64) = raw.as_str() else {
+        return SharedImage::Unusable("image_data was not a string".into());
+    };
+    let declared_mime = rec
+        .get("image_mime")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    match base64::engine::general_purpose::STANDARD.decode(b64.trim()) {
+        Ok(bytes) if !bytes.is_empty() => SharedImage::Keep {
+            bytes,
+            declared_mime,
+        },
+        Ok(_) => SharedImage::Unusable("image_data was empty".into()),
+        Err(e) => SharedImage::Unusable(format!("image_data did not decode: {e}")),
+    }
+}
+
+/// Keep each shared picture in Drive and point its record at it.
+///
+/// Runs BEFORE the records are archived — the microphone arm's order — so the
+/// lake holds the record, never a second base64 copy of the picture.
+///
+/// Failure is split by whether a retry could help. A picture that will not
+/// decode, or is not an image, or is over the cap, will be the same on every
+/// retry: it is dropped, the share itself is kept, and a share left with
+/// nothing to point at is counted by `write_bookmarks`. Anything else — the
+/// disk, the database — is transient, so the batch fails and the phone's
+/// outbox, which is at-least-once, sends it again. A share is not lost to a
+/// hiccup.
+pub async fn externalize_images(
+    db: &PgPool,
+    storage: &Storage,
+    records: &[Value],
+) -> Result<Vec<Value>> {
+    let config = DriveConfig::new(std::sync::Arc::new(storage.clone()));
+    let mut out = Vec::with_capacity(records.len());
+    for record in records {
+        let mut rec = record.clone();
+        match take_shared_image(&mut rec) {
+            SharedImage::Absent => {}
+            SharedImage::Unusable(why) => {
+                tracing::warn!(why, "shared image dropped; keeping the share without it");
+            }
+            SharedImage::Keep {
+                bytes,
+                declared_mime,
+            } => match store_image_bytes_in(db, &config, &bytes, &declared_mime).await {
+                Ok(stored) => {
+                    rec["asset_id"] = json!(stored.file_id);
+                    // The bytes' own hash is the identity: re-sharing the same
+                    // screenshot upserts. It outranks any hash the phone sent.
+                    rec["content_hash"] = json!(sha256_hex(&bytes));
+                }
+                Err(virtues::error::Error::InvalidInput(reason)) => {
+                    tracing::warn!(reason, "shared image refused; keeping the share without it");
+                }
+                Err(e) => return Err(anyhow!("could not store a shared image: {e}")),
+            },
+        }
+        out.push(rec);
+    }
+    Ok(out)
 }
 
 /// Write shared items as bookmarks. Returns (written, skipped).
@@ -183,6 +281,40 @@ pub async fn write_bookmarks(db: &PgPool, records: &[Value]) -> Result<(usize, u
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_share_without_a_picture_is_left_alone() {
+        let mut rec = json!({ "url": "https://example.com/a" });
+        assert!(matches!(take_shared_image(&mut rec), SharedImage::Absent));
+        assert_eq!(rec, json!({ "url": "https://example.com/a" }));
+    }
+
+    #[test]
+    fn a_picture_is_taken_out_of_the_record_and_decoded() {
+        let mut rec = json!({ "image_data": "iVBORw0KGgo=", "image_mime": "image/png", "note": "n" });
+        match take_shared_image(&mut rec) {
+            SharedImage::Keep { bytes, declared_mime } => {
+                assert_eq!(&bytes[..4], &[0x89, b'P', b'N', b'G']);
+                assert_eq!(declared_mime, "image/png");
+            }
+            other => panic!("expected Keep, got {other:?}"),
+        }
+        assert!(rec.get("image_data").is_none(), "the base64 must not reach the archive");
+        assert_eq!(rec["note"], "n", "the rest of the share is untouched");
+    }
+
+    #[test]
+    fn a_picture_that_will_never_decode_is_dropped_but_still_removed() {
+        for bad in [json!("not base64 !!"), json!(""), json!(42)] {
+            let mut rec = json!({ "url": "https://example.com/a", "image_data": bad });
+            assert!(
+                matches!(take_shared_image(&mut rec), SharedImage::Unusable(_)),
+                "{rec}"
+            );
+            assert!(rec.get("image_data").is_none(), "removed even when unusable");
+            assert_eq!(rec["url"], "https://example.com/a", "the share survives");
+        }
+    }
 
     #[test]
     fn known_apps_map_to_platform_names() {

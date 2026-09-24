@@ -12,12 +12,49 @@
  * Entered and left on purpose, it's well-defined no matter what the panes show.
  */
 
+import { getLocalDateSlug } from '$lib/utils/dateUtils';
+
 export interface ModeRow {
 	id: string;
 	label: string;
+	/**
+	 * A Remix name. NOT rendered by the mode panel — kept because the rows are
+	 * also the one written list of what each room contains, and a few other
+	 * surfaces read it.
+	 */
 	icon: string;
+	/**
+	 * An `AtlasIcon` glyph — the shell's own set, the one the rail is drawn in.
+	 * The panel renders THIS and never `icon`: a column of Remix glyphs hanging
+	 * off an Atlas rail tile is two icon languages in one sidebar, which is how
+	 * the panel ended up with no glyphs at all.
+	 *
+	 * Omitted means no glyph, and the label carries the row alone. Settings,
+	 * Developer, Sources and Drive are all still in that state; each needs its
+	 * glyphs drawn into `AtlasIcon` before it can be turned on, and until then
+	 * they render exactly as they always have.
+	 */
+	glyph?: string;
 	/** Route opened when the row is clicked. */
 	href: string;
+	/**
+	 * Overrides the active mark's default rule, which is "the route is `href`
+	 * or sits under it". Needed by exactly one kind of row: a door whose href
+	 * RESOLVES to somewhere else. `/day` lands on today, and under the default
+	 * rule the row then stayed lit on every other day of your life — a row
+	 * labelled Today, highlighted, while you read September 2nd.
+	 */
+	activeWhen?: (route: string) => boolean;
+	/**
+	 * Heading this row sits under. Rows carrying the same group must be
+	 * ADJACENT — the panel emits a heading wherever the group changes, so a
+	 * group interrupted and resumed prints its heading twice.
+	 *
+	 * Omitted means no heading: the row stands apart at the foot, after a rule.
+	 * A mode whose rows all omit it renders exactly as it did before groups
+	 * existed, which is every mode but the wiki.
+	 */
+	group?: string;
 }
 
 export interface SidebarMode {
@@ -36,7 +73,11 @@ export const SETTINGS_MODE: SidebarMode = {
 	id: 'settings',
 	title: 'Settings',
 	rows: [
-		{ id: 'you', label: 'You', icon: 'ri:user-line', href: '/virtues/you' },
+		// "Profile", not "You". `/virtues/you` renders ProfileView — a name, an
+		// avatar, an account. The wiki has the other "You", the narrative
+		// identity, and two rows with one label in two rooms is a question the
+		// user has to answer by clicking both.
+		{ id: 'you', label: 'Profile', icon: 'ri:user-line', href: '/virtues/you' },
 		{
 			id: 'assistant',
 			label: 'Assistant',
@@ -123,44 +164,141 @@ export const DEVELOPER_MODE: SidebarMode = {
  * Wiki. The third mode, and the first one that isn't a settings surface — the
  * wiki outgrew a row of underline tabs the same way Developer did.
  *
- * Ordered as the record reads rather than alphabetically: what it is
- * (Overview), what you wrote about it (Narrative Identity), when it
- * happened (Days, Years), and who/where/what it involved (People, Places,
- * Orgs). People/Places/Orgs were one "Entities" tab with a filter; at eight
- * rows there is room to name them.
+ * TWO AXES, NAMED. Eleven rows in one flat list was the rail's own problem
+ * moved a level down: the rail was cut from ten tiles to six because "a rail of
+ * ten indistinguishable glyphs is a memorisation tax rather than a contents
+ * page" (see `rooms.ts`), and the wiki panel then grew to eleven. A list that
+ * long is not read, it is scanned for the word you already wanted.
+ *
+ * The record only ever answers two questions, so the panel asks them in the
+ * user's order:
+ *
+ *   TIME — when did it happen. A day, a year, an era you named, the whole line.
+ *   SUBJECTS — who and what it involved. You first, because the narrative
+ *     identity is a subject of this wiki like any other, and because the
+ *     owner is the subject every other one is oriented around.
+ *
+ * WHAT ALSO LEFT: "History", the log of every edit the record made to its own
+ * prose (`/wiki/history`, still there, still linked from an article). It sat
+ * alone at the foot under a rule and read as mystery meat — it is neither a
+ * time nor a subject, so neither heading claimed it, and on a box where the
+ * editor has never run it opens on nothing. It earns a row back when the
+ * editor is switched on and there is something in it: the bargain for granting
+ * maintenance is that every resulting edit is visible, and that bargain needs
+ * a door only once edits exist.
+ *
+ * WHAT LEFT: "Overview". Its href was `/wiki`, which is also the Wiki tile's
+ * own destination on the rail — the tile and the first row of its panel were
+ * the same click. The page is untouched; only the second door to it is gone.
+ *
+ * WHAT ARRIVED: "Today", the day page. The day is the most-read page in the
+ * product and the panel had no row for it — only "Days", the index. The index
+ * is still there, one row down, for the day that is not today.
+ *
+ * People/Places/Organizations stay three rows even though the content folds
+ * them into one entities index (the legacy segment presets its type filter —
+ * see `LEGACY_TYPE` in WikiView). Under a heading that names what they have in
+ * common, three doors to one filtered room reads as a choice rather than as
+ * three rooms that turn out to be one.
  */
 export const WIKI_MODE: SidebarMode = {
 	id: 'wiki',
 	title: 'Wiki',
 	rows: [
-		{ id: 'overview', label: 'Overview', icon: 'ri:book-2-line', href: '/wiki' },
+		{
+			id: 'today',
+			label: 'Today',
+			icon: 'ri:sun-line',
+			glyph: 'day',
+			// Not `/day/<date>`: `/day` resolves to the current day on its own,
+			// and a date baked in here would be stale by morning.
+			href: '/day',
+			// Which is also why the mark needs its own rule — the route you end
+			// up on is dated, and only TODAY's date is this row.
+			activeWhen: (route) =>
+				route === '/day' || route === `/day/day_${getLocalDateSlug(new Date())}`,
+			group: 'Time',
+		},
+		{ id: 'days', label: 'Days', icon: 'ri:calendar-line', glyph: 'calendar', href: '/wiki/days', group: 'Time' },
+		{
+			id: 'years',
+			label: 'Years',
+			icon: 'ri:calendar-2-line',
+			glyph: 'years',
+			href: '/wiki/years',
+			group: 'Time',
+		},
+		// The life's own partition — authored in the interview, never inferred.
+		// Its own row: wiki_chapters is structure, not part of the identity
+		// document.
+		{
+			id: 'chapters',
+			label: 'Chapters',
+			icon: 'ri:contacts-book-2-line',
+			glyph: 'chapters',
+			href: '/wiki/chapters',
+			group: 'Time',
+		},
 		// The shape of the record before you read a word of it — and it needs no
-		// articles and no model, which is the point.
-		{ id: 'lifeline', label: 'Lifeline', icon: 'ri:pulse-line', href: '/wiki/lifeline' },
+		// articles and no model, which is the point. Last in Time because it is
+		// the widest lens, not the first thing you reach for.
+		{
+			id: 'lifeline',
+			label: 'Lifeline',
+			icon: 'ri:pulse-line',
+			glyph: 'lifeline',
+			href: '/wiki/lifeline',
+			group: 'Time',
+		},
 		{
 			id: 'identity',
 			// "You", not "Narrative Identity": that is the name of the artifact,
 			// not the name of the subject, and the room is the owner's own page.
 			label: 'You',
 			icon: 'ri:user-star-line',
+			glyph: 'identity',
 			href: '/wiki/identity',
+			group: 'Subjects',
 		},
-		// The life's own partition — authored in the interview, never inferred.
-		// Its own room: wiki_chapters is structure, not part of the identity
-		// document.
-		{ id: 'chapters', label: 'Chapters', icon: 'ri:contacts-book-2-line', href: '/wiki/chapters' },
-		// Beside Chapters on purpose: both are subjects the person named, and
-		// neither is derived from the record the way Days and Years are.
-		{ id: 'stories', label: 'Stories', icon: 'ri:book-2-line', href: '/wiki/stories' },
-		{ id: 'days', label: 'Days', icon: 'ri:calendar-line', href: '/wiki/days' },
-		{ id: 'years', label: 'Years', icon: 'ri:calendar-2-line', href: '/wiki/years' },
-		{ id: 'people', label: 'People', icon: 'ri:user-line', href: '/wiki/people' },
-		{ id: 'places', label: 'Places', icon: 'ri:map-pin-line', href: '/wiki/places' },
-		{ id: 'orgs', label: 'Orgs', icon: 'ri:building-line', href: '/wiki/orgs' },
-		// The review surface. Maintenance is the consent; this is where you see
-		// what that consent produced — without it the record edits its own prose
-		// in a room nobody visits.
-		{ id: 'history', label: 'History', icon: 'ri:history-line', href: '/wiki/history' },
+		{
+			id: 'people',
+			label: 'People',
+			icon: 'ri:user-line',
+			glyph: 'people',
+			href: '/wiki/people',
+			group: 'Subjects',
+		},
+		{
+			id: 'places',
+			label: 'Places',
+			icon: 'ri:map-pin-line',
+			glyph: 'places',
+			href: '/wiki/places',
+			group: 'Subjects',
+		},
+		{
+			// "Organizations", spelled out. The panel has the width, and "Orgs" was
+			// the only abbreviation in a product that writes in sentences.
+			id: 'orgs',
+			label: 'Organizations',
+			icon: 'ri:building-line',
+			glyph: 'organizations',
+			href: '/wiki/orgs',
+			group: 'Subjects',
+		},
+		// A subject, not a span — which is exactly what `api/stories.rs` says
+		// separates a story from a chapter: "Piano & Composition" is a thing the
+		// record is about, "the Berlin years" is a stretch of it. Both are named
+		// by the person rather than derived, which is why they used to sit
+		// together; the two axes split them, and the split is the right one.
+		{
+			id: 'stories',
+			label: 'Stories',
+			icon: 'ri:book-2-line',
+			glyph: 'stories',
+			href: '/wiki/stories',
+			group: 'Subjects',
+		},
 	],
 };
 

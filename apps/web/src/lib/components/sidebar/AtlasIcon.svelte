@@ -71,9 +71,83 @@
 			'<path d="M2.8 7.4 8 3.1l5.2 4.3"/><path d="M4.2 8.5v4.4h7.6V8.5"/><path d="M6.7 12.9V9.8h2.6v3.1"/>',
 		settings:
 			'<circle cx="8" cy="8" r="5.2"/><path d="M8 2.8v2.7"/><circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none"/>',
+
+		// ── The wiki's own rows ────────────────────────────────────────────
+		// Drawn here rather than pulled from Remix for the reason the set
+		// exists: the Wiki tile on the rail is an Atlas globe, and a panel of
+		// Remix glyphs hanging off it is two icon languages in one column.
+		// Same grid as the rest — 16px box, ~12px of ink, nothing touching an
+		// edge — so they sit level with `calendar` and `pages` above them.
+
+		// TODAY. A sun on the horizon, not a calendar leaf: Days already has
+		// the calendar, and the two rows are adjacent.
+		day:
+			'<path d="M2.7 11.7h10.6"/><path d="M4.9 11.7a3.1 3.1 0 0 1 6.2 0"/><path d="M8 4.2v1.5M4.5 5.7l1 1M11.5 5.7l-1 1"/>',
+		// YEARS. Growth rings — a section through something that grew. The
+		// eccentricity is the whole drawing: concentric rings are a bullseye,
+		// which is what the first attempt looked like at any size. Each ring
+		// steps down and left, so the wide side reads as the good years.
+		years:
+			'<circle cx="8" cy="8" r="5.3"/><circle cx="7.1" cy="8.7" r="3.3"/><circle cx="6.5" cy="9.3" r="1.4"/>',
+		// CHAPTERS. A line cut into stretches — the life's own partition, which
+		// is what a chapter is. Drawn as a rule with two crossbars rather than
+		// as a segmented capsule: the capsule version read as a battery at
+		// every size. It is line-based on purpose, like Lifeline two rows
+		// down — both are the life seen as one line, one divided and one not.
+		//
+		// Not a book. Stories is the open book and `projects` is the closed
+		// one; a third would be the set's third book and nobody's second guess.
+		// Three stretches of a life, staggered and of different lengths. Two
+		// earlier drawings failed the only test that matters here, which is
+		// 15px: a segmented capsule read as a battery, and a rule with two
+		// crossbars read as two plus signs at full size and as a smudged dash
+		// at row size. Bars survive it — and the STAGGER is what keeps them
+		// from being the align-left glyph every icon set ships.
+		chapters: '<path d="M2.7 4.7h6.6M6.2 8h7.1M3.6 11.3h5.2"/>',
+		// LIFELINE. One continuous stroke that rises and falls. The only glyph
+		// in the set with no enclosure, because the thing it names has no edge.
+		lifeline:
+			'<path d="M2.5 10.4c1.7 0 2.1-4.3 3.7-4.3s1.9 5.2 3.4 5.2 1.8-3.2 3.5-3.2"/>',
+		// YOU. One figure, facing out. People is the same figure twice; the
+		// difference has to survive at 16px, so this one is centred and larger
+		// and that one is a pair.
+		identity:
+			'<circle cx="8" cy="5.9" r="2.5"/><path d="M3.5 13.3a4.6 4.6 0 0 1 9 0"/>',
+		people:
+			'<circle cx="6.2" cy="6" r="2.2"/><path d="M2.5 12.9a3.8 3.8 0 0 1 7.4 0"/><path d="M10.5 4.2a2.2 2.2 0 0 1 0 3.6"/><path d="M11.3 9.4a3.8 3.8 0 0 1 2.2 3.5"/>',
+		// PLACES. The pin, which is the one interface symbol in the set. A
+		// drawn object was tried — a waystone, a folded map — and both are mush
+		// at this size; the pin is the only shape that survives it.
+		places:
+			'<path d="M8 13.5c0-.1 4.2-4 4.2-6.8a4.2 4.2 0 1 0-8.4 0c0 2.8 4.2 6.7 4.2 6.8z"/><circle cx="8" cy="6.6" r="1.4"/>',
+		// ORGANIZATIONS. A facade with windows and a door. Deliberately NOT a
+		// portico: the columns-and-pediment drawing is a roof over a box, which
+		// is what `home` already is, and the two are four rows apart.
+		organizations:
+			'<rect x="3.4" y="2.9" width="9.2" height="10.5" rx="1.1"/><path d="M5.8 5.6h1.3M8.9 5.6h1.3M5.8 8.2h1.3M8.9 8.2h1.3"/><path d="M6.8 13.4v-2.5h2.4v2.5"/>',
+		// STORIES. An open book. Chapters is the divided bar; this is the thing
+		// you sit down and read.
+		stories:
+			'<path d="M8 4.9v8.2"/><path d="M8 4.9C6.7 3.9 5 3.6 3.1 3.7v8c1.9-.1 3.6.2 4.9 1.2 1.3-1 3-1.3 4.9-1.2v-8c-1.9-.1-3.6.2-4.9 1.2z"/>',
+		// HISTORY. Drawn but currently UNATTACHED — the wiki panel's History row
+		// was removed the same day, and the glyph is kept for when it returns.
+		// A clock with hands: `settings` is also a circle, so the two are kept
+		// apart by what is inside — a dial has one tick and a filled hub, a
+		// clock has two hands and no hub.
+		history: '<circle cx="8" cy="8" r="5.3"/><path d="M8 4.8V8l2.5 1.7"/>',
 	};
 
-	const paths = $derived(GLYPHS[name] ?? GLYPHS.pages);
+	// Unknown names fall back to `pages` rather than drawing nothing, which is
+	// forgiving in production and silent in development — a typo'd name looks
+	// like a deliberate sheet of paper. The warning is the only thing that
+	// tells you which row is lying.
+	const paths = $derived.by(() => {
+		const hit = GLYPHS[name];
+		if (!hit && import.meta.env.DEV) {
+			console.warn(`AtlasIcon: no glyph named "${name}" — drawing "pages" instead`);
+		}
+		return hit ?? GLYPHS.pages;
+	});
 </script>
 
 <svg

@@ -1,0 +1,22 @@
+name = "Instagram Saves"
+description = "Files the posts you save on Instagram with your bookmarks."
+owner = "system"
+command = ["instagram_saves_sync"]
+triggers = ["cron", "manual"]
+# Twice a day, 10:00 and 22:00 box-local — an hour off the X and GitHub syncs so
+# no two wake together. Saved posts are not time-sensitive, and Instagram flags
+# rapid automated access. Drop the `,22` for once a day.
+schedule = "0 0 10,22 * * *"
+per_credential = true
+source = { id = "instagram" }
+
+# Ontologies this applet writes — drives "what would fill this stream".
+writes = ["content_bookmark"]
+
+# Last, because a TOML table claims every key after it: `writes` above this line
+# would otherwise become `config.limits.writes`, silently.
+#
+# This sync also downloads each saved image into Drive for the image pass, so a
+# first backfill does per-item network work beyond the 300s default.
+[config.limits]
+timeout_s = 600

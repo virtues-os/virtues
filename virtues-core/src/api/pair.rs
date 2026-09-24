@@ -524,7 +524,7 @@ pub async fn reopen_onboarding_handler(
 /// revoked device keep talking, which is the whole thing being undone.
 pub async fn revoke_all_devices(pool: &PgPool) -> Result<(u64, u64), sqlx::Error> {
     let mut tx = pool.begin().await?;
-    let devices = sqlx::query("UPDATE app_device SET revoked_at = now() WHERE revoked_at IS NULL")
+    let devices = sqlx::query("UPDATE app_device SET revoked_at = now(), push_address = NULL, push_address_at = NULL WHERE revoked_at IS NULL")
         .execute(&mut *tx)
         .await?
         .rows_affected();

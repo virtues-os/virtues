@@ -9,7 +9,6 @@
 	import Markdown from "$lib/components/Markdown.svelte";
 	import StoppedNotice from "$lib/components/StoppedNotice.svelte";
 	import Icon from "$lib/components/Icon.svelte";
-	import SelectionPopover from "$lib/components/SelectionPopover.svelte";
 	import ContextIndicator from "$lib/components/ContextIndicator.svelte";
 
 	// ── the controller ─────────────────────────────────────────────────────
@@ -36,7 +35,6 @@
 		AttachmentsController,
 		formatFileSize,
 	} from "$lib/components/chat/state/attachments.svelte";
-	import { StagedRefsController } from "$lib/components/chat/state/stagedRefs.svelte";
 	import { ModelChoiceController } from "$lib/components/chat/state/modelChoice.svelte";
 	import { OpeningRevealController } from "$lib/components/chat/state/openingReveal.svelte";
 	import { ToolSideEffects } from "$lib/components/chat/state/toolSideEffects";
@@ -155,15 +153,6 @@
 	// and sent automatically when the turn finishes (Cursor-style chips above the
 	// composer). Local to the view — a tab drag-away mid-queue is an accepted edge.
 	let queuedMessages = $state<string[]>([]);
-
-	// Track D: highlight-to-reference (see state/stagedRefs).
-	const refs = new StagedRefsController();
-
-	// Repaint whenever the staged set changes.
-	$effect(() => {
-		void refs.staged;
-		refs.repaint();
-	});
 
 	// Track E1: multimodal attachments (see state/attachments).
 	const attachments = new AttachmentsController();
@@ -643,7 +632,6 @@
 			danglingTurn = false;
 			queuedMessages = [];
 			input = "";
-			refs.clear();
 			attachments.items = [];
 			attachments.dragActive = false;
 			// Reset page create tracking (for auto-open)
@@ -865,8 +853,6 @@
 		if (currentChatConversationId) {
 			chatInstances.release(currentChatConversationId);
 		}
-		// Clear any staged highlight ranges from the global CSS highlight registry.
-		refs.clear();
 	});
 
 	// Derive thinking state from chat status
@@ -1381,14 +1367,6 @@
 			return;
 		}
 
-		// Track D: prepend any staged highlight references as quoted context +
-		// comments. Only present on a direct send (cleared before queue-drain).
-		if (refs.staged.length > 0) {
-			const refsBlock = refs.serialize();
-			messageToSend = refsBlock + (messageToSend ? `\n\n${messageToSend}` : "");
-			refs.clear();
-		}
-
 		// Track E1: block sending if an attachment isn't supported by the active
 		// model — the capability banner prompts a switch instead.
 		if (models.capabilityIssue) return;
@@ -1544,16 +1522,6 @@
 		return () => mobileLayout.setChatChrome(null);
 	});
 </script>
-
-<svelte:window onmouseup={(e) => refs.handleWindowMouseup(e)} />
-
-{#if refs.draft && !isGettingStartedChat(currentChatConversationId)}
-	<SelectionPopover
-		rect={refs.draft.rect}
-		onAdd={() => refs.add()}
-		onClose={() => (refs.draft = null)}
-	/>
-{/if}
 
 {#if lightbox}
 	<MediaLightbox
@@ -1867,8 +1835,12 @@
 											{#each message.parts as part, partIndex (part.type === "text" ? `text-${partIndex}` : (part as any).toolCallId || `part-${partIndex}`)}
 												{#if part.type === "text" && part.text.trim() && partIndex >= bodyFromIndex}
 													{@const shown = reveal.revealed(message.id, part.text)}
+													<!-- No `text-base`. Size and leading are `--md-body-*`,
+													     which resolve to the same 1rem/1.5 Tailwind was
+													     setting - one declaration, so a change to the
+													     register reaches chat rather than passing it by. -->
 													<div
-														class="text-base text-foreground assistant-response"
+														class="text-foreground assistant-response"
 													>
 														<Markdown
 															content={shown.content}
@@ -2328,30 +2300,6 @@
 								{/if}
 							</div>
 						{/if}
-						{#if refs.staged.length > 0}
-							<div class="staged-refs">
-								{#each refs.staged as r (r.id)}
-									<div class="staged-ref">
-										<Icon
-											icon="ri:double-quotes-l"
-											width="13"
-											class="staged-ref-mark"
-										/>
-										<div class="staged-ref-body">
-											<span class="staged-ref-quote">{r.text}</span>
-										</div>
-										<button
-											type="button"
-											class="queued-remove"
-											aria-label="Remove reference"
-											onclick={() => refs.remove(r.id)}
-										>
-											<Icon icon="ri:close-line" width="13" />
-										</button>
-									</div>
-								{/each}
-							</div>
-						{/if}
 						{#if queuedMessages.length > 0}
 							<div class="queued-messages">
 								{#each queuedMessages as q, i (i)}
@@ -2394,7 +2342,7 @@
 							/>
 						{:else}
 						<ChatInput
-							allowEmptySubmit={refs.staged.length > 0 || attachments.count > 0}
+							allowEmptySubmit={attachments.count > 0}
 							onAttach={(f) => attachments.add(f)}
 							bind:value={input}
 							bind:focused={inputFocused}
@@ -2449,53 +2397,6 @@
 		width: 100%;
 		display: flex;
 		position: relative;
-	}
-
-	/* Track D in-text reference mark — the app's own warm highlight token, one
-	   marker for every staged reference. Painted via the CSS Custom Highlight API
-	   (no DOM mutation, no reflow), so it's theme-aware for free. */
-	:global(::highlight(vref)) {
-		background-color: var(--color-highlight);
-		color: var(--color-highlight-foreground);
-	}
-
-	.staged-refs {
-		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
-		margin-bottom: 0.5rem;
-	}
-
-	.staged-ref {
-		display: flex;
-		align-items: baseline;
-		gap: 0.4375rem;
-		padding: 0.375rem 0.5rem 0.375rem 0.625rem;
-		border: 1px solid var(--color-border-subtle);
-		border-radius: 0.625rem;
-		background: var(--color-surface-elevated);
-	}
-
-	.staged-ref :global(.staged-ref-mark) {
-		flex-shrink: 0;
-		color: var(--color-foreground-subtle);
-		transform: translateY(1px);
-	}
-
-	.staged-ref-body {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.0625rem;
-	}
-
-	.staged-ref-quote {
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 
 	.chat-container {

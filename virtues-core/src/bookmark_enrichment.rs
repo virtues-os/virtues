@@ -24,9 +24,12 @@
 //! - **It never writes the user's words.** `note` is the one user-authored
 //!   column and no pass here touches it. The model proposes; the user disposes.
 //!
-//! Today this is the text path: fetch a page, read it with the Lite slot. The
-//! Omni (pixels/audio) path arrives with the iOS share sheet, which is what
-//! puts images in the table in the first place.
+//! Two paths, one record. A page is fetched and read by the Lite slot. An image
+//! — a screenshot, a shared photo, the picture behind an Instagram save — is
+//! read from Drive and shown to the Omni slot. Both write the same extraction
+//! record, so an image becomes findable by the same text search as a page:
+//! everything becomes text, and there is still one index. Video and audio are
+//! not read yet; they stay `pending` and unclaimed (see `image_asset_sql`).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -146,12 +149,13 @@ pub struct EnrichmentSummary {
     /// because the queue drained — the difference the run summary must state,
     /// or a throttled queue looks identical to an empty one.
     pub hit_daily_cap: bool,
-    /// Fetchable pages still queued.
+    /// Pages and images still queued — everything a pass will read.
     pub remaining: i64,
-    /// Asset-backed bookmarks (screenshots, shared images) held back because
-    /// the pixel pass is not built. Counted separately so a number that cannot
-    /// move yet is never reported as a backlog that should be draining.
-    pub awaiting_pixels: i64,
+    /// Asset-backed bookmarks no pass reads — video, audio, a file that left
+    /// Drive. Images are no longer here: the image pass reads them. Counted
+    /// separately so a number that cannot move is never reported as a backlog
+    /// that should be draining.
+    pub unreadable_assets: i64,
 }
 
 #[derive(Debug)]
@@ -159,6 +163,13 @@ struct Claimed {
     id: String,
     url: String,
     attempts: i32,
+    /// The drive file behind an asset-backed bookmark; `None` for a page. The
+    /// claim only hands out an asset when it is an image still in Drive.
+    asset_file_id: Option<String>,
+    /// Where the save came from, as observed at capture ("instagram", "x"). It
+    /// is honest context for the image pass; the model is never asked to guess
+    /// a source from pixels.
+    source_platform: Option<String>,
 }
 
 fn daily_cap() -> i64 {
@@ -183,9 +194,9 @@ pub async fn run_enrichment_job(db: &PgPool) -> Result<EnrichmentSummary> {
     let allowance = (cap - done_today.0).max(0);
     if allowance == 0 {
         summary.hit_daily_cap = true;
-        let (remaining, awaiting_pixels) = queue_counts(db).await?;
+        let (remaining, unreadable_assets) = queue_counts(db).await?;
         summary.remaining = remaining;
-        summary.awaiting_pixels = awaiting_pixels;
+        summary.unreadable_assets = unreadable_assets;
         return Ok(summary);
     }
 
@@ -218,9 +229,9 @@ pub async fn run_enrichment_job(db: &PgPool) -> Result<EnrichmentSummary> {
     }
 
     summary.hit_daily_cap = summary.enriched as i64 >= allowance;
-    let (remaining, awaiting_pixels) = queue_counts(db).await?;
+    let (remaining, unreadable_assets) = queue_counts(db).await?;
     summary.remaining = remaining;
-    summary.awaiting_pixels = awaiting_pixels;
+    summary.unreadable_assets = unreadable_assets;
     Ok(summary)
 }
 
@@ -232,19 +243,56 @@ pub async fn run_enrichment_job(db: &PgPool) -> Result<EnrichmentSummary> {
 /// (the pure case — a camera-roll screenshot, whose address is where it lives,
 /// because there is nowhere it came from).
 ///
-/// SQL rather than Rust because the claim query has to exclude these before
-/// handing them out. `->>` instead of the `?` containment operator on purpose:
-/// `?` is a bind-parameter marker in enough tooling to be worth avoiding.
-const ASSET_BACKED_SQL: &str =
-    "(metadata->>'asset_id' IS NOT NULL OR starts_with(url, '/drive/file_'))";
+/// SQL rather than Rust because the claim query has to decide before handing a
+/// row out. `->>` instead of the `?` containment operator on purpose: `?` is a
+/// bind-parameter marker in enough tooling to be worth avoiding.
+///
+/// Columns are qualified with the table name because these fragments are
+/// spliced into queries that also open an `EXISTS` over `app_drive_files`,
+/// where a bare `url` or `metadata` would be one rename away from binding to
+/// the wrong table. Every query they are spliced into reads
+/// `FROM data_content_bookmark` unaliased.
+pub const ASSET_BACKED_SQL: &str = "(data_content_bookmark.metadata->>'asset_id' IS NOT NULL \
+     OR starts_with(data_content_bookmark.url, '/drive/file_'))";
 
-/// Counts for the run summary: pages waiting, and assets waiting on a pass that
-/// does not exist yet.
+/// The drive file id behind an asset-backed bookmark: `metadata.asset_id`
+/// where the source gave one, else the id in a `/drive/file_…` url (`/drive/`
+/// is seven characters, so the id starts at the eighth).
+pub const ASSET_FILE_ID_SQL: &str = "COALESCE(data_content_bookmark.metadata->>'asset_id', \
+     CASE WHEN starts_with(data_content_bookmark.url, '/drive/file_') \
+          THEN substring(data_content_bookmark.url from 8) END)";
+
+/// An asset the image pass can read: an image that is still in Drive.
+///
+/// This is what narrows `held`. It used to mean every asset, because no pass
+/// read pixels; now it means an asset no pass reads — a video, an audio clip, a
+/// file that left Drive. The claim query and the room's state both take their
+/// definition from here, so "the box will read this" and "the room says the box
+/// will read this" cannot disagree.
+pub fn image_asset_sql() -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM app_drive_files f \
+                  WHERE f.id = {ASSET_FILE_ID_SQL} \
+                    AND f.deleted_at IS NULL \
+                    AND f.mime_type LIKE 'image/%')"
+    )
+}
+
+/// Largest image the pass sends. This is one background call, not a chat turn
+/// whose context carries the image into every later turn — so it is roomier
+/// than chat's 5MB. Base64 inflates by 4/3, and 10MB raw lands near 13MB
+/// encoded, inside the ~20MB inline-request ceiling vision providers enforce.
+/// Above it the row is skipped with the size stated, never sent to fail.
+const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+
+/// Counts for the run summary: what the sweep will read (pages and images),
+/// and assets no pass reads.
 async fn queue_counts(db: &PgPool) -> Result<(i64, i64)> {
+    let image = image_asset_sql();
     let row: (i64, i64) = sqlx::query_as(&format!(
         "SELECT
-           COUNT(*) FILTER (WHERE NOT {ASSET_BACKED_SQL}),
-           COUNT(*) FILTER (WHERE {ASSET_BACKED_SQL})
+           COUNT(*) FILTER (WHERE NOT {ASSET_BACKED_SQL} OR {image}),
+           COUNT(*) FILTER (WHERE {ASSET_BACKED_SQL} AND NOT {image})
          FROM data_content_bookmark
           WHERE enrichment_status = 'pending' AND deleted_at_source IS NULL"
     ))
@@ -263,7 +311,8 @@ async fn queue_counts(db: &PgPool) -> Result<(i64, i64)> {
 /// 'pending' rather than being marked skipped, so a re-add — which clears the
 /// tombstone — picks them straight back up.
 async fn claim_next(db: &PgPool) -> Result<Option<Claimed>> {
-    let row: Option<(String, String, i32)> = sqlx::query_as(&format!(
+    let image = image_asset_sql();
+    let row: Option<(String, String, i32, Option<String>, Option<String>)> = sqlx::query_as(&format!(
             r#"
             UPDATE data_content_bookmark SET
                 enrichment_status = 'enriching',
@@ -273,13 +322,15 @@ async fn claim_next(db: &PgPool) -> Result<Option<Claimed>> {
             WHERE id = (
                 SELECT id FROM data_content_bookmark
                  WHERE deleted_at_source IS NULL
-                   -- Asset-backed bookmarks are held back rather than claimed
-                   -- and marked. They stay 'pending' with no attempt recorded,
-                   -- so when the pixel pass lands, deleting this one clause
-                   -- picks up every screenshot ever saved — no re-queue
-                   -- migration, no terminal state to undo, no attempt budget
-                   -- burned failing at something never tried.
-                   AND NOT {ASSET_BACKED_SQL}
+                   -- Pages, and images still in Drive. Any other asset (video,
+                   -- audio) is held back rather than claimed and marked: it
+                   -- stays 'pending' with no attempt recorded, so when a pass
+                   -- for it lands, widening this one clause picks up every one
+                   -- ever saved — no re-queue, no terminal state to undo, no
+                   -- attempt budget burned failing at something never tried.
+                   -- That is how the image pass arrived: the clause excluding
+                   -- every asset narrowed to this one.
+                   AND (NOT {ASSET_BACKED_SQL} OR {image})
                    AND (
                      enrichment_status = 'pending'
                      -- A claim abandoned by a killed run becomes available again.
@@ -297,7 +348,7 @@ async fn claim_next(db: &PgPool) -> Result<Option<Claimed>> {
                  LIMIT 1
                  FOR UPDATE SKIP LOCKED
             )
-            RETURNING id, url, enrichment_attempts
+            RETURNING id, url, enrichment_attempts, {ASSET_FILE_ID_SQL}, source_platform
             "#
     ))
     .bind(STALE_CLAIM_SECS)
@@ -306,7 +357,13 @@ async fn claim_next(db: &PgPool) -> Result<Option<Claimed>> {
     .fetch_optional(db)
     .await?;
 
-    Ok(row.map(|(id, url, attempts)| Claimed { id, url, attempts }))
+    Ok(row.map(|(id, url, attempts, asset_file_id, source_platform)| Claimed {
+        id,
+        url,
+        attempts,
+        asset_file_id,
+        source_platform,
+    }))
 }
 
 enum Outcome {
@@ -315,6 +372,10 @@ enum Outcome {
 }
 
 async fn enrich_one(db: &PgPool, item: &Claimed) -> Result<Outcome> {
+    if let Some(file_id) = item.asset_file_id.as_deref() {
+        return enrich_image(db, item, file_id).await;
+    }
+
     let page = match fetch::fetch_page(&item.url).await {
         Ok(p) => p,
         // A URL we refuse on policy (a private address, a content type this
@@ -330,10 +391,44 @@ async fn enrich_one(db: &PgPool, item: &Claimed) -> Result<Outcome> {
     }
 
     let record = compose_record(db, &page).await?;
-    let model = crate::api::model_catalog::model_for_slot(ModelSlot::Lite);
+    write_record(
+        db,
+        &item.id,
+        page.article.title.as_deref(),
+        page.article
+            .description
+            .as_deref()
+            .or(record.description.as_deref()),
+        page.article.image_url.as_deref(),
+        &record,
+        ModelSlot::Lite,
+    )
+    .await?;
 
-    // COALESCE on the way in: a sync source that supplied a title owns it, and
-    // enrichment must not overwrite what a source asserted. It fills gaps only.
+    Ok(Outcome::Enriched)
+}
+
+/// Write a finished record back. Shared by the page and image paths so there is
+/// one definition of what "enriched" writes.
+///
+/// COALESCE on the way in: a sync source that supplied a title owns it, and
+/// enrichment must not overwrite what a source asserted. It fills gaps only.
+///
+/// `enrichment_model` is the model that actually ran. It used to be the slot
+/// DEFAULT while `system_completion` resolved Lite through the owner's
+/// background pin, so a pinned owner saw a model credited on the page that had
+/// never read it — the module promises this column says "what produced the
+/// current record", and now it does.
+async fn write_record(
+    db: &PgPool,
+    id: &str,
+    title: Option<&str>,
+    description: Option<&str>,
+    thumbnail_url: Option<&str>,
+    record: &ExtractionRecord,
+    slot: ModelSlot,
+) -> Result<()> {
+    let model = crate::virtues_api::completion::background_model_for_slot(db, slot).await?;
     sqlx::query(
         r#"
         UPDATE data_content_bookmark SET
@@ -349,16 +444,11 @@ async fn enrich_one(db: &PgPool, item: &Claimed) -> Result<Outcome> {
         WHERE id = $1
         "#,
     )
-    .bind(&item.id)
-    .bind(page.article.title.as_deref())
-    .bind(
-        page.article
-            .description
-            .as_deref()
-            .or(record.description.as_deref()),
-    )
-    .bind(page.article.image_url.as_deref())
-    .bind(serde_json::to_value(&record).unwrap_or(Value::Null))
+    .bind(id)
+    .bind(title)
+    .bind(description)
+    .bind(thumbnail_url)
+    .bind(serde_json::to_value(record).unwrap_or(Value::Null))
     // The rendering the search index reads. Written here rather than assembled
     // from JSONB in embed_text_sql so there is one definition of how a record
     // reads, and it is the tested one.
@@ -366,8 +456,116 @@ async fn enrich_one(db: &PgPool, item: &Claimed) -> Result<Outcome> {
     .bind(model)
     .execute(db)
     .await?;
+    Ok(())
+}
 
+/// Read an image bookmark: load the picture from Drive and show it to the Omni
+/// slot, which writes the same extraction record the page path writes.
+///
+/// No title is written. A page has a `<title>` its author chose; an image has
+/// none, and a model's description is not one — so the room keeps saying
+/// "Saved image" rather than a headline the box made up.
+async fn enrich_image(db: &PgPool, item: &Claimed, file_id: &str) -> Result<Outcome> {
+    let storage = crate::storage::Storage::file(
+        crate::storage::lake::lake_root()
+            .to_string_lossy()
+            .into_owned(),
+    )
+    .map_err(|e| Error::Storage(format!("storage unavailable: {e}")))?;
+    let config = crate::api::DriveConfig::new(std::sync::Arc::new(storage));
+
+    let (file, bytes) = match crate::api::drive::download_file(db, &config, file_id).await {
+        Ok(v) => v,
+        // Gone from Drive, or not a file: there is nothing to read, and a retry
+        // cannot bring it back. The claim checked it was there; this is the
+        // race where it left between the claim and the read.
+        Err(Error::NotFound(reason)) | Err(Error::InvalidInput(reason)) => {
+            return Ok(Outcome::Skipped(reason))
+        }
+        // A storage error is transient until proven otherwise — back to the
+        // queue with backoff.
+        Err(e) => return Err(e),
+    };
+
+    let mime = file.mime_type.clone().unwrap_or_default();
+    if !mime.starts_with("image/") {
+        return Ok(Outcome::Skipped(format!(
+            "the saved file is {}, not an image",
+            if mime.is_empty() { "an unknown type" } else { &mime }
+        )));
+    }
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Ok(Outcome::Skipped(format!(
+            "the image is {:.1}MB, over the {}MB limit for reading it",
+            bytes.len() as f64 / 1_048_576.0,
+            MAX_IMAGE_BYTES / 1_048_576
+        )));
+    }
+
+    let record = read_image(db, &bytes, &mime, &image_context(item)).await?;
+    write_record(
+        db,
+        &item.id,
+        None,
+        record.description.as_deref(),
+        None,
+        &record,
+        ModelSlot::Omni,
+    )
+    .await?;
     Ok(Outcome::Enriched)
+}
+
+/// Show the Omni slot one image and get its record back.
+///
+/// Split from `enrich_image` so the model call has one definition whether the
+/// bytes come from Drive or from a test: the parts are built, sent, and parsed
+/// here and nowhere else.
+async fn read_image(
+    db: &PgPool,
+    bytes: &[u8],
+    mime: &str,
+    context: &str,
+) -> Result<ExtractionRecord> {
+    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+    let content = serde_json::json!([
+        { "type": "text", "text": context },
+        { "type": "image_url", "image_url": { "url": format!("data:{mime};base64,{encoded}") } }
+    ]);
+
+    // Same discipline as the page path: description, not invention — thinking
+    // off, temperature zero, spend tagged to this feature.
+    let raw = crate::virtues_api::completion::system_completion_content(
+        db,
+        ModelSlot::Omni,
+        "bookmark_enrichment",
+        IMAGE_SYSTEM_PROMPT,
+        content,
+        crate::virtues_api::request::Thinking::Off,
+        0.0,
+    )
+    .await
+    .map_err(|e| Error::ExternalApi(format!("image enrichment request failed: {e}")))?;
+
+    parse_record(&raw)
+}
+
+/// The text that rides with the image: only what was observed about the save.
+///
+/// A source URL and platform are facts the capture recorded, so they go in —
+/// they are the difference between "a photo of a chair" and "a chair someone
+/// posted on Instagram". A `/drive/file_…` url is the box's own address for the
+/// file, not a source, so it stays out. The model is never asked to supply a
+/// source it was not given.
+fn image_context(item: &Claimed) -> String {
+    let mut lines = vec!["A person saved this image.".to_string()];
+    if let Some(platform) = item.source_platform.as_deref().filter(|p| !p.trim().is_empty()) {
+        lines.push(format!("Saved from: {platform}"));
+    }
+    if item.url.starts_with("http://") || item.url.starts_with("https://") {
+        lines.push(format!("Source URL: {}", item.url));
+    }
+    lines.join("\n")
 }
 
 async fn mark_terminal(db: &PgPool, id: &str, status: &str, reason: Option<&str>) -> Result<()> {
@@ -397,6 +595,23 @@ Rules:
 - Report only what the page actually says. Never invent facts, names, or numbers.
 - Any field you cannot fill honestly: use null, or an empty array. "Unknown" is a correct answer and costs nothing; a guess is a lie that gets stored.
 - likely_queries are phrases a HUMAN would type from memory — "that cream house with the green door", "rust async book chapter on pinning" — not keyword soup and not a restatement of the title.
+- NEVER guess WHY the person saved this. You do not know, and inventing a reason is worse than leaving it out. There is no field for it."#;
+
+/// The image path's prompt. Same record, same honesty rules as the page prompt,
+/// plus the three that only pixels need: words in the picture are its content,
+/// a face is never a name, and a source is never guessed.
+const IMAGE_SYSTEM_PROMPT: &str = r#"You describe an image a person saved, so they can find it again later by searching in their own words.
+
+Return ONLY a JSON object, no prose and no code fences:
+{"description":"1-3 sentences, what this image IS and what it shows","medium":"photo|screenshot|design|illustration|diagram|chart|text|social_post|product|other","subject":["3-8 concrete things it shows or is about"],"entities":["people, organizations, products, places named in visible text or on a visible logo"],"style":"the visual vocabulary a designer would search with: palette, typography, composition, material, era","likely_queries":["3-6 things this person might later type to find this image again"]}
+
+Rules:
+- Describe only what is visible. Never invent facts, names, places, or numbers.
+- If the image contains words — a screenshot of a post, an article, a slide, an interface — the words ARE the content. Carry the distinctive phrases into the description and likely_queries verbatim.
+- Never identify a person from their face. Name someone only when their name is written in the image.
+- Never guess where the image came from or what address it had. The source, when known, is given to you; when it is not, leave it out.
+- Any field you cannot fill honestly: use null, or an empty array. "Unknown" is a correct answer and costs nothing; a guess is a lie that gets stored.
+- likely_queries are phrases a HUMAN would type from memory — "that cream house with the green door", "the brutalist chair with brass legs" — not keyword soup.
 - NEVER guess WHY the person saved this. You do not know, and inventing a reason is worse than leaving it out. There is no field for it."#;
 
 async fn compose_record(db: &PgPool, page: &fetch::FetchedPage) -> Result<ExtractionRecord> {
@@ -669,5 +884,134 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+    }
+}
+
+/// The image pass's two decisions, tested where they are made: which rows the
+/// claim hands out, and what the model is told about a save.
+#[cfg(test)]
+mod image_pass_tests {
+    use super::*;
+
+    fn claimed(url: &str, platform: Option<&str>) -> Claimed {
+        Claimed {
+            id: "b".into(),
+            url: url.into(),
+            attempts: 0,
+            asset_file_id: Some("file_x".into()),
+            source_platform: platform.map(String::from),
+        }
+    }
+
+    #[test]
+    fn context_carries_only_what_the_capture_observed() {
+        let c = image_context(&claimed("https://instagram.com/p/abc", Some("instagram")));
+        assert!(c.contains("Saved from: instagram"));
+        assert!(c.contains("Source URL: https://instagram.com/p/abc"));
+    }
+
+    #[test]
+    fn the_boxs_own_drive_address_is_not_offered_as_a_source() {
+        // `/drive/file_…` is where the box keeps the file, not where it came
+        // from. Handing it to the model as a "source" would invite it to reason
+        // about a place that does not exist.
+        let c = image_context(&claimed("/drive/file_abc", None));
+        assert!(!c.contains("Source URL"), "{c}");
+        assert!(!c.contains("Saved from"), "{c}");
+    }
+
+    #[test]
+    fn a_blank_platform_is_left_out_rather_than_printed_empty() {
+        let c = image_context(&claimed("/drive/file_abc", Some("  ")));
+        assert!(!c.contains("Saved from"), "{c}");
+    }
+
+    /// The claim is the whole policy: an image still in Drive is read, every
+    /// other asset is held — untouched, with no attempt spent — so a future
+    /// pass for video or audio picks them straight up.
+    #[sqlx::test]
+    async fn images_are_claimed_and_every_other_asset_is_held(pool: PgPool) {
+        // (id, drive file id, mime, trashed)
+        for (fid, mime, trashed) in [
+            ("file_img", "image/png", false),
+            ("file_ig", "image/jpeg", false),
+            ("file_vid", "video/mp4", false),
+            ("file_gone", "image/png", true),
+        ] {
+            sqlx::query(
+                "INSERT INTO app_drive_files (id, path, filename, mime_type, size_bytes, deleted_at)
+                 VALUES ($1, $2, $3, $4, 10, CASE WHEN $5 THEN now() ELSE NULL END)",
+            )
+            .bind(fid)
+            .bind(format!("/test/{fid}"))
+            .bind(format!("{fid}.bin"))
+            .bind(mime)
+            .bind(trashed)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // (bookmark id, url, metadata, platform, occurred year for ordering)
+        for (id, url, meta, platform, year) in [
+            ("page", "https://example.com/a", "{}", "web", 2030),
+            ("shot", "/drive/file_img", "{}", "ios", 2031),
+            ("ig", "https://instagram.com/p/x", r#"{"asset_id":"file_ig"}"#, "instagram", 2032),
+            ("video", "/drive/file_vid", "{}", "ios", 2033),
+            ("trashed", "/drive/file_gone", "{}", "ios", 2034),
+            ("missing", "/drive/file_never_uploaded", "{}", "ios", 2035),
+        ] {
+            sqlx::query(
+                "INSERT INTO data_content_bookmark
+                   (id, url, occurred_at, source_stream_id, source_table, source_provider,
+                    source_platform, metadata)
+                 VALUES ($1, $2, make_timestamptz($5, 1, 1, 0, 0, 0), $1, 'test', 'test',
+                         $4, $3::jsonb)",
+            )
+            .bind(id)
+            .bind(url)
+            .bind(meta)
+            .bind(platform)
+            .bind(year)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Drain the claim. The database is this test's own, so every row the
+        // queue will ever hand out is one of ours.
+        let mut claimed = Vec::new();
+        while let Some(c) = claim_next(&pool).await.unwrap() {
+            claimed.push(c);
+        }
+        let ids: Vec<&str> = claimed.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, vec!["ig", "shot", "page"], "newest first, images and pages only");
+
+        // Both asset shapes resolve to their drive file, and a page has none.
+        let by_id = |id: &str| claimed.iter().find(|c| c.id == id).unwrap();
+        assert_eq!(by_id("shot").asset_file_id.as_deref(), Some("file_img"));
+        assert_eq!(by_id("ig").asset_file_id.as_deref(), Some("file_ig"), "metadata.asset_id wins");
+        assert_eq!(by_id("ig").source_platform.as_deref(), Some("instagram"));
+        assert!(by_id("page").asset_file_id.is_none());
+
+        // Video, a trashed image, and a file that never arrived: all held,
+        // untouched, no retry budget spent on a pass that cannot read them.
+        let held: Vec<(String, String, i32)> = sqlx::query_as(
+            "SELECT id, enrichment_status, enrichment_attempts FROM data_content_bookmark
+              WHERE id IN ('video', 'trashed', 'missing') ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(held.len(), 3);
+        for (id, status, attempts) in held {
+            assert_eq!(status, "pending", "{id} was claimed but no pass can read it");
+            assert_eq!(attempts, 0, "{id} spent a retry attempt");
+        }
+
+        // The run summary's split agrees with the claim: nothing readable left
+        // pending, three held.
+        let (remaining, unreadable) = queue_counts(&pool).await.unwrap();
+        assert_eq!((remaining, unreadable), (0, 3));
     }
 }

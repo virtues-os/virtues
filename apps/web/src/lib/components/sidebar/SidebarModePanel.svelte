@@ -14,6 +14,7 @@
 	 */
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import type { SidebarMode } from '$lib/sidebar/modes';
+	import AtlasIcon from './AtlasIcon.svelte';
 
 	interface Props {
 		mode: SidebarMode;
@@ -39,7 +40,11 @@
 		if (!route) return null;
 		let best: string | null = null;
 		for (const row of mode.rows) {
-			const hit = route === row.href || route.startsWith(row.href + '/');
+			// A row may override the prefix rule; Today does, because `/day`
+			// resolves to a dated route and only today's is this row.
+			const hit = row.activeWhen
+				? row.activeWhen(route)
+				: route === row.href || route.startsWith(row.href + '/');
 			if (hit && (best === null || row.href.length > best.length)) best = row.href;
 		}
 		return best;
@@ -56,17 +61,49 @@
 
 <div class="mode-panel">
 	<nav class="mode-rows">
-		{#each mode.rows as row (row.id)}
+		{#each mode.rows as row, i (row.id)}
+			<!-- A heading wherever the group changes. Rows of a group must be
+			     adjacent (modes.ts says so); this renders whatever the list
+			     actually is rather than re-sorting it, so a list that breaks the
+			     rule shows the repeat instead of hiding it.
+
+			     A mode is either all grouped (Wiki) or all ungrouped (the rest),
+			     so a row that falls OUT of a group renders nothing special. The
+			     one that used to — History, under a rule at the foot — is gone;
+			     if a trailing loose row comes back it needs a separator again,
+			     and this is where it goes. -->
+			{#if row.group !== mode.rows[i - 1]?.group}
+				{#if row.group}
+					<!-- A div, NOT an h3: `app.css` makes every h1-h6 in the app
+					     serif, so a heading element here rendered the sidebar's
+					     one serif word. The Home panel's own group labels
+					     (Pinned, Projects, Today, Recent) are divs for the same
+					     reason, and this matches their metrics exactly. -->
+					<div class="mode-group" class:first={i === 0}>{row.group}</div>
+				{/if}
+			{/if}
 			<button
 				type="button"
 				class="mode-row"
 				class:active={activeHref === row.href}
 				onclick={() => open(row.href, row.label)}
 			>
-				<!-- No glyph. The rail carries the picture-language now, and
-				     design.md is explicit: "the words should carry a contents
-				     page." Eleven Remix icons down the Record panel was icon soup
-				     in a second icon family. -->
+				<!-- The glyph is optional and Atlas-only. The rule it used to
+				     break is design.md's "icons assist, labels lead — eight
+				     identical 16px icons at FULL CONTRAST in a column is what
+				     makes a sidebar look like every other sidebar"; the objection
+				     is the full-contrast uniform column, not the picture. Dressed
+				     by `.sidebar-icon` (muted, half opacity, full strength only
+				     on hover and where you are) it is a hint, which is what the
+				     rule asks for, and it is the same treatment the Home panel's
+				     rows have always had.
+
+				     The other half of the old objection stands and is why this
+				     takes `glyph` rather than `icon`: eleven REMIX glyphs under
+				     an Atlas rail tile was two icon families in one column. -->
+				{#if row.glyph}
+					<AtlasIcon name={row.glyph} size={15} />
+				{/if}
 				<span>{row.label}</span>
 			</button>
 		{/each}
@@ -81,6 +118,35 @@
 		/* No inset of its own — the panel body already insets. */
 		padding: 0;
 	}
+
+	/* The Home panel's group label, to the pixel: 12px, subtle, sentence case,
+	   no tracking and no caps. The sidebar has one way of naming a group of
+	   rows and this is it — a second treatment would make Wiki's panel a
+	   different piece of furniture from Home's, in the one part of the app a
+	   user sees every minute.
+
+	   It is an aid to scanning, not a row: quieter than the rows beside it, and
+	   it must never read as clickable. Home's label IS a button (it folds its
+	   group); these do not fold, so no hover, no cursor. */
+	.mode-group {
+		display: flex;
+		align-items: center;
+		height: 24px;
+		margin-top: 12px;
+		padding: 0 6px 0 12px;
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+		user-select: none;
+	}
+
+	/* The panel body already insets from the top; the first group would
+	   otherwise sit lower than the panel title it follows. 4px, not the 2px
+	   this shipped with for an hour — padding and margin are on the 4px grid
+	   and `design-lint.sh` counts every exception. */
+	.mode-group.first {
+		margin-top: 4px;
+	}
+
 
 	.mode-row {
 		display: flex;

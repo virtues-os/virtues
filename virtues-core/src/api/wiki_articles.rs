@@ -239,21 +239,24 @@ pub struct SubjectBacklink {
     pub is_article: bool,
 }
 
-/// How an article is maintained, in the vocabulary the column actually has.
+/// How an article is maintained: `auto` or `never`, and nothing else.
 ///
-/// The UI shipped with a two-state toggle (`set_auto_update`, now retired)
-/// that could only say auto or never. The column carries a third — `always`,
-/// for an article someone wants revisited whenever anything moves — and a
-/// two-state control must not silently flatten it.
+/// This used to accept a third value, `always`, described here as "for an
+/// article someone wants revisited whenever anything moves". It never did
+/// that. The only reader of the column is `wiki_editor::due_articles`, which
+/// tests `maintenance <> 'never'` — so `always` and `auto` selected the same
+/// articles on the same interval behind the same drift gate, and nothing in
+/// the app could produce the third value anyway. Migration 0034 took it out of
+/// the constraint; this is the same removal one layer up.
 pub async fn set_maintenance(
     pool: &PgPool,
     subject_type: &str,
     subject_id: &str,
     mode: &str,
 ) -> Result<()> {
-    if !matches!(mode, "always" | "auto" | "never") {
+    if !matches!(mode, "auto" | "never") {
         return Err(Error::InvalidInput(format!(
-            "maintenance is always, auto or never — not {mode:?}"
+            "maintenance is auto or never — not {mode:?}"
         )));
     }
     let n = sqlx::query!(
@@ -572,6 +575,40 @@ mod tests {
         // (The old `date must stay NULL` assertion is gone with the column —
         // reflections were retired 2026-08-03, the column dropped 2026-08-28;
         // day-source separation is enforced by `kind` now, asserted above.)
+    }
+
+    /// The column had a third value that behaved exactly like `auto`, because
+    /// the only reader tests `<> 'never'`. Both halves of its removal are
+    /// asserted here: the validator refuses the word, and the constraint that
+    /// migration 0034 rewrote refuses it underneath even if the validator ever
+    /// stops.
+    #[sqlx::test]
+    async fn maintenance_is_auto_or_never_and_always_is_gone(pool: PgPool) {
+        let a = create_article(&pool, "person", "person_m1", "Nick", "Prose.")
+            .await
+            .unwrap();
+        assert_eq!(a.maintenance, "auto");
+
+        for mode in ["auto", "never"] {
+            set_maintenance(&pool, "person", "person_m1", mode)
+                .await
+                .unwrap_or_else(|e| panic!("{mode} should be accepted: {e}"));
+        }
+
+        let refused = set_maintenance(&pool, "person", "person_m1", "always")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("auto or never"), "{refused}");
+
+        let by_the_schema = sqlx::query("UPDATE wiki_articles SET maintenance = 'always' WHERE id = $1")
+            .bind(&a.id)
+            .execute(&pool)
+            .await;
+        assert!(
+            by_the_schema.is_err(),
+            "the check constraint must refuse it too, not just the validator"
+        );
     }
 
     /// Articles are storage-identical to pages, so nothing but this predicate

@@ -66,6 +66,40 @@ icon = "ri:github-fill"
 description = "Sync your starred repositories as bookmarks. Uses a personal access token (read-only)."
 auth = { kind = "api_key", fields = ["token"] }
 
+# Session cookies, not OAuth: X has no read API for your own bookmarks that a
+# personal appliance can use (the v2 endpoint caps at ~800 and paginates
+# unreliably), so this replays the same authenticated GraphQL call the web
+# client makes. The two values are the session: `auth_token` (the login) and
+# `ct0` (the CSRF token, sent back as `x-csrf-token`). A spike proved the box
+# can replay this from its own IP with nothing else — no `x-client-transaction-id`,
+# no `cf_clearance` (agents/plan/bookmarks-plan.md §6). Pasted for now; a
+# collector that harvests both from the browser cookie store is the same secret
+# by another door.
+[[source]]
+id = "x"
+display_name = "X"
+icon = "ri:twitter-x-fill"
+description = "Sync the posts you bookmark on X. Uses your session cookies (auth_token and ct0), read-only."
+auth = { kind = "api_key", fields = ["auth_token", "ct0"] }
+
+# Session cookies, like X: Instagram has no read API for your own saved posts,
+# so this replays the same authenticated call the web app makes for its Saved
+# feed. The whole cookie jar is the credential — the login `sessionid`, the
+# `csrftoken` (echoed in the `x-csrftoken` header), plus the device cookies the
+# server checks. A spike proved the box replays it (200 from the box's own IP);
+# whether `x-ig-www-claim` is also required is unresolved. Only `cookies` is
+# asked for — the connect form makes every field required, and that header is
+# painful to find by hand. If it proves necessary, the collector harvest (which
+# sees the live request) supplies it as an optional `www_claim` secret the
+# applet already reads. Each saved post's image is copied into Drive (its CDN
+# URL expires), so the image pass can read it (agents/plan/bookmarks-plan.md §5).
+[[source]]
+id = "instagram"
+display_name = "Instagram"
+icon = "ri:instagram-line"
+description = "Sync the posts you save on Instagram. Uses your session cookies, read-only."
+auth = { kind = "api_key", fields = ["cookies"] }
+
 # One-time import (NOT a living/cron'd source): the user uploads an export file
 # which is parsed box-side and ingested once. Modeled as a source so it gets a
 # catalog tile + uniform dedup; its action is manual-trigger only (no cron).

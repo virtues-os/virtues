@@ -29,6 +29,17 @@ class LocationProbePlugin: Plugin {
     invoke.resolve(["started": true])
   }
 
+  /// Whether the server can reach this phone. Never prompts.
+  @objc public func pushStatus(_ invoke: Invoke) throws {
+    PushRegistrar.shared.status { invoke.resolve(["status": $0]) }
+  }
+
+  /// The owner pressed "Allow": the OS sheet if it has never been shown, then
+  /// register and report. Resolves once the box has the answer.
+  @objc public func requestPush(_ invoke: Invoke) throws {
+    PushRegistrar.shared.request { invoke.resolve(["status": $0]) }
+  }
+
   /// Return the rows the native side has written to SQLite.
   @objc public func readRows(_ invoke: Invoke) throws {
     let limit = (try? invoke.parseArgs(RowsArgs.self))?.limit ?? 200
@@ -45,5 +56,9 @@ func initPlugin() -> Plugin {
   ReachMonitor.shared.start()
   // Register for MetricKit's daily battery/network/location digests.
   Metrics.shared.start()
+  // Keep the box told where it can reach this phone. Installs the token
+  // callback on the app delegate, then reports on every foreground — never on a
+  // background relaunch, and never prompts. See PushRegistrar.swift.
+  PushRegistrar.shared.start()
   return LocationProbePlugin()
 }

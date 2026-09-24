@@ -606,7 +606,7 @@
 							</button>
 						</h2>
 						<div class="lead-content">
-							<Markdown content={summaryText} refVariant="quiet" />
+							<Markdown content={summaryText} refVariant="quiet" variant="article" />
 						</div>
 					</section>
 				{/if}
@@ -884,13 +884,6 @@
 
 	.lead-content {
 		position: relative;
-	}
-
-	.lead-text {
-		font-size: 0.9375rem;
-		line-height: 1.7;
-		color: var(--color-foreground);
-		margin: 0;
 	}
 
 	:global(.spin-icon) {

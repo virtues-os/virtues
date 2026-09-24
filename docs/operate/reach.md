@@ -1,6 +1,6 @@
 ---
 title: Reaching your server
-description: How your phone and laptop connect to your Virtues server at home and away — pairing devices, what the relay can and cannot see, and what to expect when the network changes.
+description: How your phone and laptop connect to your Virtues server at home and away - pairing devices, what the relay can and cannot see, and what to expect when the network changes.
 updated: 2026-08-28
 ---
 
@@ -12,7 +12,7 @@ network. This is how that works.
 ## The shape of it
 
 Every device and every server has its own cryptographic key. That key *is* its
-identity — there's no password, no account cookie, no bearer token to steal.
+identity - there's no password, no account cookie, no bearer token to steal.
 Your phone dials your server by its key, and the server answers only devices whose
 keys are on its allowlist.
 
@@ -22,18 +22,18 @@ Three paths, tried in order, all invisible to you:
    straight to each other. Nothing leaves the building.
 2. **Direct across the internet.** The two ends punch through their routers
    and connect to each other without a middleman.
-3. **Through a relay**, when the network won't allow a direct connection —
+3. **Through a relay**, when the network won't allow a direct connection -
    some corporate and mobile networks won't. The connection upgrades itself to
    a direct path if one becomes possible.
 
-**No inbound port is ever opened at home.** The server dials out; nothing dials
+**The server never opens an inbound port at home.** The server dials out; nothing dials
 in. That's why this works on a normal home router with no configuration and no
 port forwarding.
 
 ## What you connect with
 
 The iPhone app and the desktop app. Both speak the key-based protocol; a
-plain web browser can't, because it has no key to prove it's yours — a browser
+plain web browser can't, because it has no key to prove it's yours - a browser
 pointed at the server on your own network is refused like any other stranger.
 
 So: the apps, or a terminal on the server itself.
@@ -45,7 +45,7 @@ routes, and which one you take depends on where you are.
 
 **Your first phone, during setup**, connects over Bluetooth. The server shows a
 four-word phrase on its screen and the phone has to send it back before the
-server will do anything — proof you can see the machine, rather than proof you
+server will do anything - proof you can see the machine, rather than proof you
 know a secret.
 
 **Any later device** pairs with a code from the server:
@@ -59,13 +59,13 @@ yours, each code is fresh and single-use. If your phone is on the same network
 as the server, the app can scan a QR instead.
 
 **A phone joining from a different network** can be handed its identity by a
-laptop that's already paired, from the Devices screen — one scan and it's in,
+laptop that's already paired, from the Devices screen - one scan and it's in,
 with no network path needed between the two devices.
 
 > That handoff QR **contains a private key**. Anyone who photographs it while
 > it's on screen gets access to your server. Don't display it on a shared screen
 > or a video call, and if you suspect someone caught it, revoke the device
-> immediately — it appears in Devices the moment it pairs.
+> immediately - it appears in Devices the moment it pairs.
 
 To see and manage what's connected:
 
@@ -83,22 +83,22 @@ When a direct path isn't possible, traffic passes through a relay we run. The
 honest description:
 
 - **It cannot read anything.** The connection is encrypted end-to-end between
-  your device and your server, with keys the relay never holds. It forwards
-  packets it has no ability to open.
+  your device and your server, with keys that never reach the relay. The relay forwards
+  every packet without reading it.
 - **It does see** which two device keys are talking to each other, the IP
   addresses they connect from, and how much traffic passes and when. That's
-  unavoidable for anything that forwards packets — a relay that couldn't see
+  unavoidable for anything that forwards packets - a relay that couldn't see
   volume and timing couldn't move the bytes.
-- **It admits everyone.** The relay asks no one who you are: no account, no
+- **It admits everyone.** The relay requires no identity: no account, no
   subscription, no sign-in. It defends itself with rate limits, not identity.
   Reachability is part of owning the server, not something you rent.
 
-We'd rather state that plainly than round it up to "blind." The strong claim —
-that we can't read your life — is true and rests on the encryption, not on
+We'd rather state that plainly than round it up to "blind." The strong claim -
+that we can't read your life - is true and rests on the encryption, not on
 promises about the relay's memory.
 
 Your server knows the relay's address out of the server, so it is reachable from
-your first boot with no account at all — the same way every connected product
+your first boot with no account at all - the same way every connected product
 ships its rendezvous servers built in. It's a default, not a requirement:
 Settings → System → Network names the relay in use and carries the off switch,
 and a server with the relay off works normally on your own network.
@@ -124,7 +124,7 @@ Some behavior is worth recognizing so it doesn't read as a fault:
   idle and the battery lasts. It isn't continuously connected, by design.
 - **A server that was just set up** can take a few minutes to become reachable
   from outside your home, as it settles into a relay.
-- **On restrictive networks** — some workplaces, some mobile carriers — the
+- **On restrictive networks** - some workplaces, some mobile carriers - the
   direct path fails and everything rides the relay. That's slower, and
   expected rather than broken.
 - **Guest and coworking Wi-Fi that isolates clients** blocks devices on the

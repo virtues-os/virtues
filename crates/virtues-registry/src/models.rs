@@ -74,8 +74,10 @@ pub enum ModelSlot {
     /// pipeline): a verbatim transcript PLUS scene/mood/music/entities from raw
     /// audio. This is NOT plain speech-to-text: Whisper and `*-transcribe`
     /// endpoints emit words only and MUST NOT be assigned here — the model has
-    /// to accept audio input and reason over it. Like Image, it's a system
-    /// slot, not a user-facing picker entry.
+    /// to accept audio input and reason over it. It must accept IMAGES too: the
+    /// bookmark image pass (`bookmark_enrichment::enrich_image`) sends pixels
+    /// here, so an audio-only model in this slot fails every saved screenshot.
+    /// Like Image, it's a system slot, not a user-facing picker entry.
     Omni,
 }
 

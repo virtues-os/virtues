@@ -174,6 +174,35 @@
 		if (!device?.last_seen_at) return { text: "Never reached your server", tone: "warning" as const };
 		return { text: `Last reached ${formatTimeAgo(device.last_seen_at)}`, tone: "muted" as const };
 	});
+
+	/**
+	 * The other direction, and the only place it is ever said.
+	 *
+	 * `reaching` is the device reaching the server. This is the server reaching
+	 * the device, and it is worth its own line because the failure is silent at
+	 * every other layer: Apple accepts a push for a phone whose owner turned
+	 * notifications off and reports success, so a box that cannot reach a phone
+	 * looks exactly like a box with nothing to say. Only the device's own
+	 * registration distinguishes them.
+	 *
+	 * Shown for phones only. A sensor, a CLI and a desktop app have nothing to
+	 * notify, and a row there would read as a fault rather than "not applicable".
+	 */
+	const notifying = $derived.by(() => {
+		if (!device?.push_address_at) {
+			return {
+				text: "Your server cannot send notifications to this device. Open the app and allow notifications.",
+				tone: "warning" as const,
+			};
+		}
+		// "confirmed", not "since": the phone re-reports on every foreground, so
+		// this is when the server last heard the address was good — which is also
+		// the moment an APNs 410 is compared against.
+		return {
+			text: `Your server can notify this device · confirmed ${formatTimeAgo(device.push_address_at).toLowerCase()}`,
+			tone: "muted" as const,
+		};
+	});
 </script>
 
 {#if res.loading}
@@ -206,6 +235,17 @@
 					>
 						{reaching.text}
 					</div>
+					<!-- Phones only. A desktop app has no push at all, so on a Mac's page
+					     "allow notifications" would be advice with nothing behind it. -->
+					{#if device.kind === "mobile_app" && !local}
+						<div
+							class="text-xs mt-0.5"
+							class:text-warning={notifying.tone === "warning"}
+							class:text-foreground-muted={notifying.tone === "muted"}
+						>
+							{notifying.text}
+						</div>
+					{/if}
 				</div>
 			</div>
 		</Card>

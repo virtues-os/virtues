@@ -6,7 +6,7 @@
 	dot here, so "where was I at 2pm" is answered by moving the mouse rather
 	than by reading two charts and doing the join in your head.
 
-	Tiles come from the box's own atlas (`/api/map/tiles`, see
+	The basemap comes from the box's own atlas (`$lib/map/atlas`, see
 	agents/record/map-atlas-plan.md): cached on the box after first fetch, so the
 	browser never hands the day's coordinates to a third-party tile server and
 	areas you actually live in keep working offline. The panel is display-only
@@ -15,7 +15,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from "svelte";
 	import "leaflet/dist/leaflet.css";
-	import { backendUrl } from "$lib/config/backend";
+	import { atlasLayer } from "$lib/map/atlas";
 	import type { TimelineDayPoint } from "$lib/wiki/api";
 
 	interface Props {
@@ -50,27 +50,24 @@
 		return gap > 30 * 60_000 ? null : best;
 	});
 
-	/** The atlas caches both Carto styles; follow the app's own scheme. */
+	/** The atlas has a light and a dark style; follow the app's own scheme. */
 	function tileStyle(): "light" | "dark" {
 		const flag = getComputedStyle(document.documentElement).getPropertyValue("--identity-dark").trim();
 		return flag === "1" ? "dark" : "light";
 	}
 
-	// `backendUrl`, not a bare path: tiles load from <img src>, which the
-	// mobile shell's fetch proxy never sees.
-	function setTiles() {
+	// The credit rides on the layer (the atlas sets it), so it survives the
+	// theme swap, which rebuilds the layer. Crediting the map data is a
+	// condition of using it, display-only panel or not.
+	let tilesFor = 0;
+	async function setTiles() {
 		if (!map || !L) return;
+		const ticket = ++tilesFor;
+		const next = await atlasLayer(tileStyle());
+		// A later swap, or teardown, won the race: drop this one.
+		if (ticket !== tilesFor || !map) return;
 		tiles?.remove();
-		tiles = L.tileLayer(backendUrl(`/api/map/tiles/${tileStyle()}/{z}/{x}/{y}`), {
-			maxZoom: 19,
-			// Carried on the layer so it survives the theme swap, which
-			// rebuilds the layer. Crediting the map data is a condition of
-			// using it, display-only panel or not.
-			attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
-			// Blank tile when the box is offline / upstream fails — grey gaps,
-			// not broken images.
-			errorTileUrl: "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=",
-		}).addTo(map);
+		tiles = next?.addTo(map) ?? null;
 	}
 
 	function renderTrack() {

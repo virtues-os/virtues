@@ -309,13 +309,13 @@
 	// carries the standing.
 </script>
 
-<!-- Desktop: bottom-right, out of the way of the pane toolbar and the ⌘K modal.
-     Mobile keeps top-center — it's the platform convention there, and the
-     offset clears the notch/Dynamic Island on the edge-to-edge shell (env() is
-     0 on desktop, so the desktop offset is the stock 16px gap). -->
+<!-- Top-center everywhere, as onboarding and auth already are. On desktop the
+     offset drops the toast just below the chrome row (tab bar + pane toolbar),
+     so it reads as falling out of the chrome rather than sitting on it. On the
+     phone the offset clears the notch/Dynamic Island instead. -->
 <Toaster
-	position={mobileLayout.isMobile ? "top-center" : "bottom-right"}
-	offset="max(16px, env(safe-area-inset-bottom))"
+	position="top-center"
+	offset="calc(var(--chrome-row-h, 40px) + 8px)"
 	mobileOffset="max(16px, env(safe-area-inset-top))"
 	toastOptions={{
 		style: `
