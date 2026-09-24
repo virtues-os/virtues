@@ -5,7 +5,7 @@
 # Cloud services (virtues-atlas / virtues-api) deploy as Docker images to ECR.
 
 .DEFAULT_GOAL := help
-.PHONY: help init commit migration dev seed dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
+.PHONY: help init hooks commit migration dev seed dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
         dev-link dev-reset dev-wipe-mac dev-clean dev-pull dev-real db db-stop deploy-atlas deploy-virtues-api _ecr-push mac-app mac-dev web-test \
         iroh-ffi-ios iroh-ffi-mac ios-release flash
 
@@ -125,6 +125,11 @@ help: ## Show this help
 # sweeps up other agents' work.
 #
 # See the Branching section of CLAUDE.md. Never bare `git add -A` in this repo.
+
+# The pre-commit hook runs CI's ratchets against the tree being committed, so a
+# +1 is refused here instead of failing on `wave`. See tools/githooks/pre-commit.
+hooks: ## Install the repo's git hooks (pre-commit ratchets)
+	@git config core.hooksPath tools/githooks && echo "hooks installed: core.hooksPath = tools/githooks"
 
 commit: ## Safely commit only your files: MSG="..." FILES="path ..."
 	@[ -n "$(MSG)" ]   || { echo "error: MSG is required  —  make commit MSG=\"fix(x): y\" FILES=\"a b\""; exit 1; }

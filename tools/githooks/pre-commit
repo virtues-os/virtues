@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Run CI's ratchets against the content being COMMITTED, not the working tree.
+#
+# Installed by `make hooks` (core.hooksPath → tools/githooks).
+#
+# The ratchets (design-lint.sh, check-copy.py, check-swallowed-queries.sh) fail
+# CI when a count rises by one. Run in this checkout they measure every agent's
+# uncommitted edits at once, so an author sees a number that is not the one CI
+# will see, and pushes a +1 that looked clean here. That was the single most
+# common red run on `wave` in 2026-09.
+#
+# The index git hands this hook IS the commit. For `git commit -- <paths>` (what
+# `make commit` runs) git builds a temporary index of HEAD plus those paths and
+# points GIT_INDEX_FILE at it; for a bare `git commit` it is the real index.
+# Either way, exporting that index gives exactly the tree CI will check out, and
+# nobody else's in-flight edits can reach it.
+#
+#   Skip once:  VIRTUES_SKIP_RATCHETS=1 git commit ...   (or --no-verify)
+
+set -uo pipefail
+
+[ "${VIRTUES_SKIP_RATCHETS:-}" = 1 ] && exit 0
+
+# Only the paths these ratchets read. A commit touching none of them (docs,
+# a migration, a workflow) has nothing to measure.
+git diff --cached --quiet HEAD -- apps/web/src applets virtues-core tools crates services 2>/dev/null && exit 0
+
+tmp=$(mktemp -d) || exit 1
+trap 'rm -rf "$tmp"' EXIT
+
+# 1.8k files; the export takes well under a second.
+git checkout-index -a --prefix="$tmp/" || { echo "pre-commit: could not export the commit's tree" >&2; exit 1; }
+
+failed=""
+for check in tools/design-lint.sh tools/check-copy.py tools/check-swallowed-queries.sh; do
+    [ -x "$tmp/$check" ] || continue
+    if ! out=$("$tmp/$check" 2>&1); then
+        failed="$failed $check"
+        printf '\n── %s ─────────────────────────────\n%s\n' "$check" "$out" >&2
+    fi
+done
+
+if [ -n "$failed" ]; then
+    cat >&2 <<EOF
+
+✖ commit refused: a ratchet rose in the content being committed —$failed
+  This is the tree CI will check (HEAD + your paths), not the working tree,
+  so another agent's uncommitted edits are not the cause.
+  Fix the count, or VIRTUES_SKIP_RATCHETS=1 to commit anyway (CI will still fail).
+EOF
+    exit 1
+fi
+exit 0
