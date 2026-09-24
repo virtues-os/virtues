@@ -20,6 +20,21 @@ pub(crate) async fn resume_probe<R: Runtime>(app: AppHandle<R>) -> Result<StartR
   app.location_probe().resume_probe()
 }
 
+/// Whether the server can reach this phone. Never prompts.
+#[command]
+pub(crate) async fn push_status<R: Runtime>(app: AppHandle<R>) -> Result<PushStatusResponse> {
+  app.location_probe().push_status()
+}
+
+/// The owner asked to let the server reach this phone: show the OS prompt if it
+/// has never been shown, then register and report. Only ever called from a
+/// button the owner pressed — asking cold, at launch, is how an app earns a
+/// permanent "Don't Allow".
+#[command]
+pub(crate) async fn request_push<R: Runtime>(app: AppHandle<R>) -> Result<PushStatusResponse> {
+  app.location_probe().request_push()
+}
+
 #[command]
 pub(crate) async fn read_rows<R: Runtime>(
   app: AppHandle<R>,

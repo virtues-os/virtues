@@ -1,6 +1,6 @@
 ---
 title: When something breaks
-description: Diagnosing a Virtues server that won't start, won't answer, or is behaving strangely — services, logs, health commands, and where everything lives.
+description: Diagnosing a Virtues server that won't start, won't answer, or is behaving strangely - services, logs, health commands, and where everything lives.
 updated: 2026-09-14
 ---
 
@@ -47,7 +47,7 @@ prints the same thing in a stable form that's easy to paste.
 virtues doctor
 ```
 
-Reports how the inference stack resolved on this hardware — which accelerator
+Reports how the inference stack resolved on this hardware - which accelerator
 was found, whether this build links CUDA, and whether each model is present or
 would need downloading. It doesn't touch the database, so it still answers
 when other things are broken.
@@ -79,7 +79,7 @@ sudo journalctl -u virtues -n 200 --no-pager
 
 ## The pieces
 
-Beyond the main service, a server runs the inference sidecars — and on hardware
+Beyond the main service, a server runs the inference sidecars - and on hardware
 with an NPU, one daemon replaces both:
 
 | Unit | What it is |
@@ -131,22 +131,22 @@ sudo virtues rollback
 ```
 
 That returns the binary, the web app, and the actions runtime together. The
-database is not rolled back — migrations only move forward, and the previous
+database is not rolled back - migrations only move forward, and the previous
 release tolerates a newer schema. [Upgrading](/docs/operate/upgrading) has the
 full model.
 
 ## You can't reach the server
 
 If the server is healthy but your phone or laptop can't get to it, that's a
-different problem with its own page —
+different problem with its own page -
 see [Reaching your server](/docs/operate/reach). The short version: check that
 the device is still on the allowlist with `virtues device ls`, and re-pair
 with `virtues pair` if it isn't.
 
 ## Search results are wrong or empty
 
-If the server reports a model fingerprint or dimension mismatch — usually after
-changing models — the index was built by a different model than the one now
+If the server reports a model fingerprint or dimension mismatch - usually after
+changing models - the index was built by a different model than the one now
 answering:
 
 ```bash
@@ -166,7 +166,7 @@ recoverable by definition, just slow.
 
 `virtues restore` replaces the server's state from a backup. It's destructive and
 there's no dry run, so read [Backup & restore](/docs/operate/backup-and-restore)
-before reaching for it — particularly the part about needing the key you were
+before reaching for it - particularly the part about needing the key you were
 shown once.
 
 To remove Virtues from the machine entirely, `sudo virtues uninstall` prints

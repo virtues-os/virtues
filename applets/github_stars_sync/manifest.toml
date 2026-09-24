@@ -3,7 +3,10 @@ description = "Files the repositories you star on GitHub with your bookmarks."
 owner = "system"
 command = ["github_stars_sync"]
 triggers = ["cron", "manual"]
-schedule = "0 15/30 * * * *"
+# Twice a day, 08:00 and 20:00 box-local — an hour off the X bookmarks sync so
+# the two don't wake together. Stars are not time-sensitive; 30-minutely was
+# never warranted. Drop the `,20` for once a day.
+schedule = "0 0 8,20 * * *"
 per_credential = true
 source = { id = "github" }
 

@@ -1,13 +1,13 @@
 ---
 title: Setting up inference
-description: Virtues searches your record with two local models — an embedder and a reranker — that you run yourself. The contracts they must speak, the llama.cpp commands that serve them, which models work, and how to point the server at them.
+description: Virtues searches your record with two local models - an embedder and a reranker - that you run yourself. The contracts they must speak, the llama.cpp commands that serve them, which models work, and how to point the server at them.
 updated: 2026-09-03
 ---
 
 Search over your own life needs two small models running near your data: an
 **embedder**, which turns everything in your record into vectors, and a
 **reranker**, which re-scores the candidates a search turns up. Neither is
-the model that writes — that one is remote, and this page has nothing to do
+the model that writes - that one is remote, and this page has nothing to do
 with it.
 
 Skip this page if you're on hardware we build - both are set up for you. On
@@ -26,7 +26,7 @@ Two HTTP contracts:
 
 Without an embedder there is no semantic search and no indexing at all.
 Without a reranker search still works, ranked by vector similarity and
-lexical fusion alone, at slightly lower precision — a real option, not a
+lexical fusion alone, at slightly lower precision - a real option, not a
 degraded mode to be ashamed of.
 
 Both endpoints must be on **your own machine, your LAN, or your VPN**. The
@@ -39,7 +39,7 @@ does, and means what it says: inference traffic may leave your network.
 
 ## Why this is yours to run
 
-We provision inference on exactly one board — our own, where we know the
+We provision inference on exactly one board - our own, where we know the
 accelerator, the driver stack, and what happens after a power cut. We do not
 install GPU or NPU inference software on hardware we cannot test, because
 doing so produces more broken servers than it saves keystrokes. So the generic
@@ -47,10 +47,10 @@ path is that you own the endpoint and we validate it at the door.
 
 The installer offers three answers:
 
-- **Our hardware** — detected from the device tree. Inference is built in.
-- **Bring your own endpoint** *(recommended for everything else)* — you run
+- **Our hardware** - detected from the device tree. Inference is built in.
+- **Bring your own endpoint** *(recommended for everything else)* - you run
   the servers; the installer probes them, records what it found, and pins it.
-- **Quick trial** — a bundled CPU-only model server with our two models
+- **Quick trial** - a bundled CPU-only model server with our two models
   and no configuration. Honestly slow, explicitly not a deployment. It
   exists so you can watch the product move in five minutes; stand up real
   endpoints before you load real data.
@@ -63,7 +63,7 @@ Headless installs skip the picker with `VIRTUES_INFERENCE=manual` (plus
 
 [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` speaks
 both contracts and is what we run in production, so the recipes below are the
-ones our own units use rather than a plausible guess. One server per model —
+ones our own units use rather than a plausible guess. One server per model -
 a single `llama-server` process hosts one model, and the two want different
 flags.
 
@@ -91,7 +91,7 @@ What the flags are doing, since these are the ones that matter:
   Not interchangeable. The reranker is a cross-encoder; `rank` is what makes
   `/v1/rerank` exist at all.
 - **`-ngl 0` on the embedder, `-ngl 99` on the reranker.** The two workloads
-  want opposite hardware — see the reasoning in
+  want opposite hardware - see the reasoning in
   [What to run it on](/docs/setup/requirements#the-accelerator-question). If
   you have no GPU, `-ngl 99` is harmless; if you do, the reranker needs
   whatever group membership your distribution puts on the GPU device nodes,
@@ -100,18 +100,18 @@ What the flags are doing, since these are the ones that matter:
   windows of about 128 tokens and caps rerank documents near 256, so a larger
   context buys nothing and costs half a gigabyte of buffers.
 - **`-np 1` and `--cache-ram 0`.** One request slot instead of the automatic
-  four, and no prompt cache — every input here is unique, so the cache is
+  four, and no prompt cache - every input here is unique, so the cache is
   pure reservation. Together with the context size these cut each server from
   roughly 2.5 GB resident to about 1 GB.
 
 If you want the servers to survive a reboot, run each as a systemd unit. The
-two units Virtues writes on the bundled path — `virtues-embed.service` and
-`virtues-rerank.service`, both in `/etc/systemd/system/` — are a fair
+two units Virtues writes on the bundled path - `virtues-embed.service` and
+`virtues-rerank.service`, both in `/etc/systemd/system/` - are a fair
 template: loopback-only, unprivileged, `ProtectSystem=strict`,
 `Restart=on-failure` with a start limit so a permanently broken server ends
 up visibly `failed` rather than restarting forever.
 
-Other servers work too, as long as they speak the contract below —
+Other servers work too, as long as they speak the contract below -
 [Ollama](https://ollama.com), vLLM, or a vendor's NPU runtime. Read
 [the contract](#the-contract-in-full) before you commit to one; there is
 exactly one required route per endpoint, and it is the obvious one.
@@ -125,7 +125,7 @@ reranker, use a build made for your hardware.
 
 Anything that emits sentence embeddings will work. These are the ones we run
 or would reach for, with the two properties that actually matter for
-configuration — the width of the vector, and whether the model
+configuration - the width of the vector, and whether the model
 wants a prefix on its inputs:
 
 | Embedding model | Dims | Prompt prefixes |
@@ -157,7 +157,7 @@ Four things to know before you pick:
 embedded without its prefixes loses recall quality; a symmetric model given
 prefixes gains noise in every vector. The installer resolves them from the
 model name for the five families above, and you can always set
-`VIRTUES_EMBED_QUERY_PROMPT` / `VIRTUES_EMBED_DOC_PROMPT` yourself — your
+`VIRTUES_EMBED_QUERY_PROMPT` / `VIRTUES_EMBED_DOC_PROMPT` yourself - your
 model's `config_sentence_transformers.json` is where its own answer lives.
 Unknown model, no prefix, is the safe default and what you get.
 
@@ -166,7 +166,7 @@ of the vector column, up to **4000 dimensions**, which is the ceiling
 pgvector's index supports. Above that you must truncate.
 
 **Truncation is only safe for models trained for it.** Setting
-`VIRTUES_EMBED_DIMS` slices vectors to a narrower width — a third of the
+`VIRTUES_EMBED_DIMS` slices vectors to a narrower width - a third of the
 storage and a faster index for very little quality on a Matryoshka-trained
 model like EmbeddingGemma or nomic. On a model that was *not* trained that
 way it destroys the vector. It is opt-in per model, never a default, and
@@ -185,7 +185,7 @@ With the servers running, install:
 curl -sSL https://virtues.com/sh | sudo sh
 ```
 
-The first thing it asks — before it touches a package, a service, or a disk —
+The first thing it asks - before it touches a package, a service, or a disk -
 is how you want inference. Choose bring-your-own and give it the two URLs
 (`http://localhost:18181` and `http://localhost:18182` for the recipes
 above; the rerank prompt takes an empty answer). It then probes what you gave
@@ -201,7 +201,7 @@ later:
 | `VIRTUES_EMBED_URL` | Base URL of the embedding server |
 | `VIRTUES_RERANK_URL` | Base URL of the rerank server, if you have one |
 | `VIRTUES_EMBED_MODEL` | The `model` name sent in each request. llama.cpp ignores it; Ollama routes by it and 404s on a name it hasn't pulled |
-| `VIRTUES_EMBED_DIMS` | Stored vector width — set only to truncate a Matryoshka model |
+| `VIRTUES_EMBED_DIMS` | Stored vector width - set only to truncate a Matryoshka model |
 | `VIRTUES_EMBED_QUERY_PROMPT` / `_DOC_PROMPT` | The model's prefixes, quoted so trailing spaces survive |
 | `VIRTUES_EMBED_FINGERPRINT` | Pinned identity of the model behind the URL |
 
@@ -223,7 +223,7 @@ Recovering from that is one command:
 virtues configure-inference
 ```
 
-It re-probes the endpoint, reports what changed, and — on your confirmation —
+It re-probes the endpoint, reports what changed, and - on your confirmation -
 clears the derived index, re-pins the fingerprint and dimensions, resizes the
 vector column, and lets indexing rebuild. **Your source data is never
 touched.** Embeddings are a cache; treat them as one. `virtues reindex`
@@ -240,19 +240,19 @@ If you're bringing a server we haven't named, this is exactly what it must
 do.
 
 **`GET /health` is optional.** It isn't part of the OpenAI shape, and plenty
-of good servers don't have it — Ollama answers 404 there while serving
+of good servers don't have it - Ollama answers 404 there while serving
 embeddings perfectly. Virtues asks for it when the embedder and reranker
 start, purely as a shortcut: a 2xx means "ready" without paying for an
 inference, and `llama-server` answers it once the model is loaded. Any other
 answer is treated as *unknown*, not as failure, and the endpoint is then
-verified by asking it to embed — which the runtime does immediately
+verified by asking it to embed - which the runtime does immediately
 afterwards regardless. What is fatal is nothing accepting a connection at all.
 
 `virtues doctor` follows the same ladder, so a server without the route reads
 as `✓ serving (no /health)` rather than being condemned.
 
-**`POST /v1/embeddings`** takes `{"input": [...], "model": "..."}` — always an
-array, `model` always present — and must return:
+**`POST /v1/embeddings`** takes `{"input": [...], "model": "..."}` - always an
+array, `model` always present - and must return:
 
 ```json
 { "data": [ { "index": 0, "embedding": [0.01, -0.02] } ] }
@@ -270,8 +270,8 @@ and must return:
 
 The score field may be spelled `relevance_score` (llama.cpp's and Jina's
 spelling, above) or `score` (Cohere-style); both are accepted, at setup and at
-search time alike. The number is read as an ordering only — Virtues sorts by
-it and then normalizes — so any strictly increasing scale works, bounded or
+search time alike. The number is read as an ordering only - Virtues sorts by
+it and then normalizes - so any strictly increasing scale works, bounded or
 not.
 
 **`GET /v1/models`** is optional. When a server offers it, Virtues records
@@ -298,7 +298,7 @@ virtues doctor
 ```
 
 Its Inference section names the accelerator it resolved, the models on disk,
-and — separately, because the two questions are not the same — whether
+and - separately, because the two questions are not the same - whether
 anything is actually *serving* at each URL. A server whose model server has been
 crash-looping for a week still has both model files exactly where they were
 put; only the live rows can tell you that search is broken. Every finding

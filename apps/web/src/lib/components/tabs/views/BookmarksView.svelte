@@ -210,7 +210,7 @@
 
 	/** Only said when it changes what you are looking at. */
 	function stateNote(item: BookmarkApi): string | null {
-		if (item.state === 'held') return 'image not read yet';
+		if (item.state === 'held') return "can't be read yet";
 		if (item.state === 'queued') return 'not read yet';
 		if (item.state === 'failed') return "couldn't be read";
 		return null;
@@ -253,7 +253,7 @@
 		options: [
 			{ value: 'enriched', label: 'Read' },
 			{ value: 'queued', label: 'Not read yet' },
-			{ value: 'held', label: 'Waiting on images' },
+			{ value: 'held', label: "Can't read yet" },
 		],
 	};
 
@@ -377,7 +377,7 @@
 				<span>{counts.queued} still to read</span>
 			{/if}
 			{#if counts.held > 0}
-				<span>{counts.held} waiting on the image pass</span>
+				<span>{counts.held} your server can't read yet</span>
 			{/if}
 		</p>
 	{/if}

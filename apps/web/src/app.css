@@ -284,10 +284,26 @@ h6 {
 /* Markdown Styles - Using semantic colors */
 .markdown {
 	color: var(--color-foreground);
-	line-height: 1.5;
+	font-family: var(--md-body-family);
+	font-size: var(--md-body-size);
+	line-height: var(--md-body-lh);
 	width: 100%;
 	overflow-wrap: break-word;
 	word-break: break-word;
+}
+
+/* A wiki article — a day, a year, a person, a place, an organization, the
+   narrative identity. Same renderer, the other register.
+
+   It redefines the body tokens ON ITSELF rather than restating the rules, so
+   everything already citing them (`.markdown p`, `li`, blockquote) follows
+   without a second set of selectors to keep in step. That is the whole reason
+   the token layer exists: the surfaces that fell out of sync did so by each
+   writing its own font-size. */
+.markdown--article {
+	--md-body-family: var(--md-article-family);
+	--md-body-size: var(--md-article-size);
+	--md-body-lh: var(--md-article-lh);
 }
 
 /* Heading VALUES come from the --md-* tokens in themes.css — one definition,

@@ -47,8 +47,10 @@ export interface BookmarkApi {
 
 /**
  * `held` and `queued` are both pending on the box; they are separate here
- * because only one of them is waiting on something that exists. `held` means
- * the artifact is an image and the pass that reads images is not built.
+ * because only one of them is waiting on something that exists. `queued` is a
+ * page or an image the sweep will read. `held` is a file no pass reads yet —
+ * video, audio, or a file that left Drive. (It meant every image until the
+ * image pass arrived; the box derives it from the sweep's own claim rule.)
  */
 export type BookmarkState =
 	| "enriched"

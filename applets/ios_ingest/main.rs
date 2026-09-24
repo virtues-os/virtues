@@ -105,14 +105,12 @@ async fn main() -> Result<()> {
         // the payload's `stream` field; it fans into data_content_bookmark the
         // same way every other arm fans into its ontology.
         "bookmark" => {
-            let recs = archive(
-                &db,
-                &storage,
-                "bookmark",
-                payload,
-                records(payload, "bookmark")?,
-            )
-            .await?;
+            // Pictures FIRST, the microphone arm's order: a shared image is kept
+            // in Drive and its base64 taken out before the record is archived,
+            // so the lake never holds a second copy of it.
+            let recs = records(payload, "bookmark")?;
+            let recs = bookmark::externalize_images(&db, &storage, recs).await?;
+            let recs = archive(&db, &storage, "bookmark", payload, &recs).await?;
             let (written, skipped) = bookmark::write_bookmarks(&db, &recs).await?;
             if skipped > 0 {
                 format!("bookmarks: {written} written, {skipped} with nothing to point at")

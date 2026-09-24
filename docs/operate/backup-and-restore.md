@@ -1,6 +1,6 @@
 ---
 title: Backup & restore
-description: How to protect a Virtues server — minting the recovery key the server will never hold, backing up to a drive, verifying archives, and restoring.
+description: How to protect a Virtues server - minting the recovery key the server will never hold, backing up to a drive, verifying archives, and restoring.
 updated: 2026-08-28
 ---
 
@@ -14,7 +14,7 @@ usual: get the key wrong and every archive you ever make is unreadable.
 ## First: mint the recovery key
 
 Backups are encrypted with [age](https://age-encryption.org), and your server
-stores only the *public* half — enough to write an archive, never enough to
+stores only the *public* half - enough to write an archive, never enough to
 read one back. Create the keypair once:
 
 ```bash
@@ -27,7 +27,7 @@ are equally unable to decrypt your archives. It also means the consequence
 lands entirely on you.
 
 **Put the key somewhere it will outlive the server, and make more than one copy.**
-A password manager, a printout in a drawer, a note in a safe — the failure to
+A password manager, a printout in a drawer, a note in a safe - the failure to
 plan for is a house fire or a dropped laptop, not a burglar. There is no
 escrow, no "email me a reset", and no support path that recovers it. Losing
 this key turns every backup you own into noise.
@@ -44,26 +44,26 @@ sudo virtues backup
 
 Writes one self-contained encrypted archive to
 `/var/lib/virtues/backups/`, named for the moment it was taken and ending
-`.tar.gz.age`. Use `--output <path>` to put it somewhere else — an external
-drive you mounted by hand, for instance — and `--force` to overwrite an
+`.tar.gz.age`. Use `--output <path>` to put it somewhere else - an external
+drive you mounted by hand, for instance - and `--force` to overwrite an
 existing file.
 
 ### What's inside
 
-- The **database**, as a full dump. Your server's identity lives in here too —
+- The **database**, as a full dump. Your server's identity lives in here too -
   the network key that *is* this server, the certificate authority, the list of
-  paired devices — so the archive carries who your server is as well as what it
+  paired devices - so the archive carries who your server is as well as what it
   knows.
 - The **environment file**, which holds the encryption key that makes the
   database's stored credentials readable. Without it a dump restores into
   gibberish, which is why a backup refuses to run when it can't find one.
-- The **data lake** — recordings, uploads, files.
+- The **data lake** - recordings, uploads, files.
 - **Authored applets**, the ones written on the server rather than shipped with it.
 - A **manifest** recording the binary and schema versions, plus a SHA-256 for
   every member, which is what makes verification and restore able to detect
   a damaged archive.
 
-Because the environment file rides along, **the archive is exactly as
+Because the archive includes the environment file, **it is equally as
 sensitive as the server itself.** Treat a backup tarball the way you'd treat the
 machine.
 
@@ -95,10 +95,10 @@ registered drive that happens to be attached; drives that aren't plugged in
 are skipped quietly rather than failing. Registering a drive is, in practice,
 the entire setup.
 
-On a drive the archive is split: a full snapshot of the database, environment
+On a drive, the backup splits into a full snapshot of the database, environment
 file and applets, plus separate incremental archives of the lake. Old full
 snapshots are pruned only when the drive starts filling up, and the newest is
-never removed — on a roomy disk you keep a run of them. Lake increments are
+never removed - on a roomy disk you keep a run of them. Lake increments are
 never pruned at all, because the lake is the part that only ever grows and
 can't be re-derived. A run refuses to start if it would leave under a gigabyte
 free.
@@ -113,7 +113,7 @@ virtues backup --verify /path/to/archive.tar.gz.age --key-file /path/to/key
 
 This decrypts the archive, extracts it, and re-hashes every file against the
 manifest. It writes nothing and doesn't need a working database, so it's safe
-to run against an old archive on a different machine — which is also the way
+to run against an old archive on a different machine - which is also the way
 to prove your saved key actually works before you need it to.
 
 Do this by hand from time to time. Nothing verifies archives on a schedule
@@ -130,7 +130,7 @@ sudo virtues restore /path/to/archive.tar.gz.age --key-file /path/to/key
 ```
 
 Unlike backup, this runs as root. From a registered drive, pass the mount
-path — not the volume's name or id:
+path - not the volume's name or id:
 
 ```bash
 sudo virtues restore --from-volume /path/to/mount --key-file /path/to/key
@@ -161,7 +161,7 @@ optimism:
   are entirely your responsibility.
 - **Nothing verifies archives on a schedule.** `--verify` is manual.
 - **The Settings panel is read-only.** It shows whether backups are current,
-  stale, or failing, but there is no button — backup and restore are terminal
+  stale, or failing, but there is no button - backup and restore are terminal
   verbs today.
 
 If you're moving to new hardware rather than recovering the same server, ask

@@ -123,11 +123,26 @@ pub async fn resolve_turn_model(
     if !honors_pin(agent_mode) {
         return Ok(crate::api::model_catalog::model_for_slot(slot));
     }
-    match slot {
-        ModelSlot::Chat => crate::api::assistant_profile::get_chat_model(pool).await,
-        ModelSlot::Coding => crate::api::assistant_profile::get_coding_model(pool).await,
-        other => Ok(crate::api::model_catalog::model_for_slot(other)),
-    }
+    let standing = match slot {
+        ModelSlot::Chat => crate::api::assistant_profile::get_chat_model(pool).await?,
+        ModelSlot::Coding => crate::api::assistant_profile::get_coding_model(pool).await?,
+        other => crate::api::model_catalog::model_for_slot(other),
+    };
+
+    // A STORED pin can be empty too, and that one is worse than the wire's:
+    // `get_chat_model` falls back on SQL NULL only, and the profile PATCH
+    // binds whatever string it is given, so `{"chat_model_id": ""}` persists
+    // an empty pin that outlives the request. Guarding only the wire would
+    // leave the same empty model id reaching the gateway, from a value the
+    // person cannot see or clear from the picker. This door promises a
+    // non-empty model; it has to mean it wherever the id came from.
+    Ok(non_empty(standing).unwrap_or_else(|| crate::api::model_catalog::model_for_slot(slot)))
+}
+
+/// `Some` only for a string with something in it. One definition of "empty",
+/// used for both the wire field and the stored pin.
+fn non_empty(s: String) -> Option<String> {
+    (!s.trim().is_empty()).then_some(s)
 }
 
 #[cfg(test)]
@@ -221,6 +236,20 @@ mod tests {
             resolve_turn_model(&pool, None, "interview").await.unwrap(),
             crate::api::model_catalog::model_for_slot(ModelSlot::Chat)
         );
+    }
+
+    #[sqlx::test]
+    async fn an_empty_stored_pin_cannot_reach_the_gateway(pool: PgPool) {
+        // The profile PATCH binds the string it is handed, so this row state
+        // is reachable from the API even though the web UI maps "" to NULL.
+        sqlx::query("UPDATE app_assistant_profile SET chat_model_id = ''")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let got = resolve_turn_model(&pool, None, "chat").await.unwrap();
+        assert!(!got.trim().is_empty(), "resolved an empty model id");
+        assert_eq!(got, crate::api::model_catalog::model_for_slot(ModelSlot::Chat));
     }
 
     /// The wire contract, end to end, for the three bodies that actually

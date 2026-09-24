@@ -88,6 +88,14 @@
 	// which the rail's Wiki panel renders. People/Places/Orgs stay their own rows
 	// there even though the content folds them into one Entities index — the
 	// legacy segment presets the index's type filter (see LEGACY_TYPE below).
+	//
+	// Two sections here have no row in that panel, on purpose:
+	//   - `overview` is the wiki's front page at `/wiki`, which is the Wiki
+	//     TILE's own destination on the rail. It had a row too until
+	//     2026-09-22 — the tile and the first row of its panel being the same
+	//     click.
+	//   - the day page is its own route (`/day`), not a `/wiki/<section>` one,
+	//     so the panel's "Today" row points outside this view.
 
 	type Section = 'overview' | 'stories' | 'days' | 'years' | 'entities' | 'identity' | 'chapters' | 'history' | 'lifeline';
 

@@ -38,7 +38,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
     .invoke_handler(tauri::generate_handler![
       commands::start_probe,
       commands::resume_probe,
-      commands::read_rows
+      commands::read_rows,
+      commands::push_status,
+      commands::request_push
     ])
     .setup(|app, api| {
       #[cfg(mobile)]

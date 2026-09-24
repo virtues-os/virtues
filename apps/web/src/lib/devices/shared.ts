@@ -53,6 +53,18 @@ export type Device = {
 	// under its app instead of showing one Mac as two unrelated rows.
 	installed_by: string | null;
 	is_current: boolean;
+	/**
+	 * When this device last told the box where to reach it with a push, or
+	 * null if it never has or the address has since been cleared.
+	 *
+	 * The address itself is deliberately not here: a push token is a
+	 * capability to reach the owner's phone, and a list response has no use
+	 * for one. Null on a phone is the state worth showing, because a device
+	 * the box cannot reach fails silently — Apple accepts a push for a phone
+	 * whose owner turned notifications off and returns success, so nothing
+	 * else anywhere would ever say so.
+	 */
+	push_address_at: string | null;
 };
 
 export type DevicesResponse = { devices: Device[] };

@@ -51,18 +51,17 @@ async fn main() -> Result<()> {
             let now_local = chrono::Utc::now().with_timezone(&tz);
             let yesterday = now_local.date_naive() - chrono::Duration::days(1);
 
-            // Catch-up first. `narrated_at` has been written since day segmentation
+            // Two jobs share this hourly tick, and their ORDER is the whole of
+            // what follows.
+            //
+            // THE BACKLOG. `narrated_at` has been written since day segmentation
             // shipped and never read as a work queue, so a box that was asleep,
             // restarting, or erroring during the maintenance hour lost that day
             // *permanently* — the chain only ever looked at `yesterday`, and
             // nothing ever went back. Days older than yesterday are definitively
-            // settled, so they can be fused at any hour; the maintenance hour only
-            // needs to gate the freshest day, whose late collector data (audio
-            // still transcribing, final visits) has not landed yet.
-            //
-            // One day per tick, oldest first: the chain is two LLM calls deep, and
-            // an hourly cron drains a backlog soon enough without risking a run
-            // that blows its timeout.
+            // settled, so they can be fused at any hour. One day per tick, oldest
+            // first: the chain is two LLM calls deep, and an hourly cron drains a
+            // backlog soon enough without risking a run that blows its timeout.
             //
             // The queue lives in `day_summary` (next to the segmenter's own gate,
             // which it reuses) and keys on three things — none of them the day's
@@ -77,32 +76,84 @@ async fn main() -> Result<()> {
             //   3. an ATTEMPT BUDGET with exponential backoff — a deterministic
             //      failure costs `MAX_NARRATION_ATTEMPTS` calls spread over days,
             //      not one an hour until the day silently ages out.
-            let pending = match virtues::api::day_summary::next_catchup_day(&pool, yesterday).await
-            {
-                Ok(d) => d,
-                Err(e) => {
-                    // Never let the repair path take down the normal path.
-                    tracing::warn!(error = %e, "catch-up scan failed; falling back to the maintenance hour");
-                    None
+            //
+            // YESTERDAY, at the maintenance hour, once its late collector data
+            // (audio still transcribing, final visits) has landed.
+            //
+            // THE BACKLOG USED TO GO FIRST, unconditionally, and that starves the
+            // one day anybody is going to read. The backlog reaches ninety days
+            // back and drains at one day per hour, so any import — a phone's
+            // history, a mail archive, a re-cut — puts months of Junes in front
+            // of last night, and `yesterday` is simply never reached: not at the
+            // maintenance hour, not at any hour, until the whole backlog is gone.
+            // It is not a stall anyone sees, either, because the applet reports
+            // success every hour while writing 1997.
+            //
+            // Measured on a real box on 2026-09-22: the nine most recent days had
+            // no article and no events, `narration_attempts = 0` — never even
+            // offered — while that day's runs wrote July 15th through 23rd.
+            //
+            // So the freshest day goes first and is NOT preemptable. It costs the
+            // backlog one slot in twenty-four, and it bounds how stale the day
+            // page can be at one day rather than at the length of the queue.
+            let is_maintenance_hour = now_local.hour() as i32 == hour;
+
+            // Ask of yesterday exactly what the queue asks of every other day.
+            // Before this existed the maintenance hour ran the chain on yesterday
+            // no matter what, so a day that had failed its eight attempts was
+            // retried nightly forever — the attempt ceiling governed the backlog
+            // and not the one day it ran most often.
+            //
+            // On an error, treat it as due: the check is a guard on the normal
+            // path, not a gate in front of it, and a box that cannot read
+            // `wiki_days` has a larger problem than one wasted pair of calls.
+            let yesterday_due = if is_maintenance_hour {
+                match virtues::api::day_summary::day_is_due(&pool, yesterday).await {
+                    Ok(due) => due,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "due check failed; running yesterday anyway");
+                        true
+                    }
                 }
-            };
-            let date = if let Some(pending) = pending {
-                tracing::info!(date = %pending, "catching up an unnarrated day");
-                pending
             } else {
-                if now_local.hour() as i32 != hour {
-                    // Any other hour, nothing pending: no-op. The chain only runs
-                    // on a completed day, at the maintenance hour.
-                    let skip = format!(
-                        "skipped: local hour {}, maintenance {}",
-                        now_local.hour(),
-                        hour
-                    );
-                    tracing::info!(%skip, "not the maintenance hour — no-op");
-                    return output(&skip, &input.config);
-                }
-                // The maintenance hour: yesterday is complete. Run the whole chain.
+                false
+            };
+
+            let date = if yesterday_due {
+                tracing::info!(date = %yesterday, "the maintenance hour — writing up yesterday");
                 yesterday
+            } else {
+                let pending =
+                    match virtues::api::day_summary::next_catchup_day(&pool, yesterday).await {
+                        Ok(d) => d,
+                        Err(e) => {
+                            // Never let the repair path take down the normal path.
+                            tracing::warn!(error = %e, "catch-up scan failed");
+                            None
+                        }
+                    };
+                match pending {
+                    Some(pending) => {
+                        tracing::info!(date = %pending, "catching up an unnarrated day");
+                        pending
+                    }
+                    None => {
+                        // Nothing to do: either it is not the maintenance hour and
+                        // the backlog is empty, or it is and yesterday is already
+                        // written (or parked).
+                        let skip = if is_maintenance_hour {
+                            "skipped: yesterday is written and the backlog is empty".to_string()
+                        } else {
+                            format!(
+                                "skipped: local hour {}, maintenance {}",
+                                now_local.hour(),
+                                hour
+                            )
+                        };
+                        tracing::info!(%skip, "nothing due — no-op");
+                        return output(&skip, &input.config);
+                    }
+                }
             };
 
             // Count the attempt BEFORE the chain runs, so a run that times out or

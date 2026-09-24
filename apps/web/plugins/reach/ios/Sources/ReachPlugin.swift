@@ -159,5 +159,8 @@ private func excludeVirtuesDirFromBackup() {
 @_cdecl("init_plugin_reach")
 func initPlugin() -> Plugin {
   excludeVirtuesDirFromBackup()
+  // Shares made from the share sheet while the app was closed leave on the
+  // next foreground; see ShareInbox.swift.
+  ShareInbox.observeForeground()
   return ReachPlugin()
 }
