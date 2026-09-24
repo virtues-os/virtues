@@ -8,41 +8,62 @@ rewrite the record.
 ## The goal
 
 The map needs no key, no account and no API, costs nothing to run, and works
-with the network unplugged for everywhere the person actually lives their life.
-Nothing about which streets they look at leaves the box.
+with the network unplugged. **Nobody, Virtues included, can tell from a
+download where the person lives or which places they look at.**
 
-The OpenFreeMap proxy meets the first two and fails the rest: every area not
-yet viewed needs the network, and the service "may discontinue at any time".
+The OpenFreeMap proxy fails the last two: every unseen area needs the network,
+and every tile request names a street.
+
+## The one idea: everybody downloads the same bytes
+
+A box never asks for *its* area. It downloads **fixed, pre-cut bundles**, and
+every box in the same bundle downloads the identical file. The server learns
+which bundles a box took and nothing finer.
+
+A bundle is one z5 tile: about 1,000 km across at mid-latitudes, several US
+states or a large European country. The request reveals which square the box
+is in, which is coarser than what its IP address already tells any server it
+connects to. The residual leak is travel: a box in one bundle taking another
+says the owner has an interest there (see Travel).
+
+**The whole-world option removes even that.** The planet at z12 is 18 GB,
+the same file for every box on Earth, and it carries every street and street
+name.
+
+An earlier draft of this plan had the box cut its own extract by range-reading
+the planet. That told the server roughly which ~35 km squares each box wanted.
+It is superseded, and the box no longer needs an extractor at all.
 
 ## The shape
 
 ```
-                        once, then every ~90 days, and when you travel
-Protomaps planet build ─────────── range reads ───────────▶ box: maps/
-(one static .pmtiles file)                                   world.pmtiles      z0–7, everywhere
-                                                             cells/10-x-y.pmtiles  z0–14, one per z10 cell
+weekly, Virtues-run job
+build.protomaps.com/YYYYMMDD.pmtiles ──extract──▶ R2: maps/<build>/world.pmtiles        z0–7, 188 MB
+                                                      maps/<build>/b5-<x>-<y>.pmtiles   z0–14 per z5 tile
+                                                      maps/<build>/planet-z12.pmtiles   18 GB (whole-world option)
+                                                      maps/latest.json                  build + sha256 per file
 
-browser ── /api/map/vt/{world|local}/z/x/y ──▶ box ── mmap read ──▶ tile
+box ── plain GET of whole files (resumable, checksummed) ──▶ /var/lib/virtues/maps/
+browser ── /api/map/vt/{world|detail}/z/x/y ──▶ box ── mmap read ──▶ tile
         ── /api/map/fonts, /api/map/sprite ──▶ box ── shipped assets
 ```
 
-- **World overview** (`world.pmtiles`): the whole planet at z0–7, 188 MB.
-  MapLibre scales it up past z7, so the map always shows coastlines,
-  countries, highways, regional roads and city names, anywhere, offline.
-- **Your places** (`cells/`): full street detail (z14) for every z10 cell the
-  person's location history touches, plus the ring of cells around each. A z10
-  cell is about 35 km across at mid-latitudes. One small archive per cell, so
-  growth is additive and eviction is a file delete.
+- **World overview** (`world.pmtiles`, z0–7, 188 MB): every box, first boot.
+  Coastlines, countries, highways, regional roads and city names, anywhere.
+- **Detail bundles** (`b5-x-y.pmtiles`, z0–14): the box takes the bundle
+  its location history sits in (below). 0.3–3 GB each.
+- **Whole world** (`planet-z12.pmtiles`, 18 GB): opt-in instead of bundles.
+  No leak at all, fully offline everywhere, with no shops or POIs and fewer
+  alleys than z14.
 - **The style** is generated in the SPA from `@protomaps/basemaps` (BSD-3):
-  a `world` source drawn underneath, then a `local` source on top with its
-  background layer removed, so the world shows through wherever no cell exists.
-  The box serves no style.
+  a `world` source underneath, then a `detail` source on top with its
+  background layer removed so the world shows through outside a bundle. The
+  box serves no style.
 - **Fonts and icons** ship with the box as package data: 14 MB of Noto (OFL)
   and 180 KB of sprites in five themes, from `protomaps/basemaps-assets`.
-- **No table, no migration.** A `maps/manifest.json` records the build each
-  file came from. The data lives outside the lake (e.g.
-  `/var/lib/virtues/maps`) because it is a regenerable cache and `virtues
-  backup` archives the whole lake.
+- **No table, no migration.** `maps/manifest.json` records the build and
+  bundles on disk. The data lives outside the lake because it is a
+  regenerable cache and `virtues backup` archives the whole lake.
 
 ## What the spike proved
 
@@ -50,132 +71,120 @@ All in a scratch crate, nothing on `wave`.
 
 | Question | Answer |
 |---|---|
-| Can the box cut a region without go-pmtiles? | Yes. A 200-line Rust extractor (own v3 header and directory reader, `pmtiles` crate's writer) cut a metro at z14 in 28 range requests. All 1,714 tiles came out byte-identical to `go-pmtiles extract`. |
-| Can the box serve it? | Yes. `pmtiles` `AsyncPmTilesReader<MmapBackend>` in axum, tiles passed through gzipped with `Content-Encoding: gzip`. |
+| Can the box serve `.pmtiles`? | Yes. `pmtiles` `AsyncPmTilesReader<MmapBackend>` in axum, tiles passed through gzipped with `Content-Encoding: gzip`. |
 | Does it render? | Yes. Protomaps light and dark in MapLibre, labels and icons from local files, zero third-party requests. |
-| Does the edge of your places show? | At z8, barely: the world overview carries highways, lakes and towns across it. At street zoom outside your cells you see only highways and a city name. That is the cost, and what "Travel" below is for. |
+| Does a bundle's edge show? | At z8, barely: the world file carries highways, lakes and towns across it. At street zoom outside every bundle you see only highways and city names. |
+| What does less detail cost? | At z15 downtown: z12 data keeps every street and its name, blocks, parks and water, with no POIs. z13 adds alleys and minor streets. z14 adds shops, museums and restaurants. |
 | Attribution | `© OpenStreetMap` in MapLibre's compact control: a small pill with an ⓘ. ODbL requires the credit, and the OSMF guidelines accept it collapsed behind an ⓘ. |
+| Style trap | The detail source's `background` layer must be dropped, or it paints over the world source everywhere outside the bundle. |
 
-The crate's `Header` and `DirEntry` fields are `pub(crate)`, which is why the
-extractor reads the format itself. The spike version buffers everything in
-memory and fetches serially, so it took 49s where go-pmtiles took 14s. The real
-one streams spans to the writer and fetches four at a time.
+The spike also built a Rust extractor (own PMTiles v3 reader, the crate's
+writer) that matched `go-pmtiles extract` byte for byte. Bundles make it
+unnecessary on the box; the weekly job uses `go-pmtiles`.
 
 ## Sizes (build 2026-09-24, measured by dry-run)
 
-| What | Size |
-|---|---|
-| World z0–6 / z0–7 / z0–8 | 45 MB / 188 MB / 555 MB |
-| One z10 cell at z14: rural / suburban / Manhattan / London / Paris | 0.6 / 5 / 13 / 19 / 20 MB |
-| A metro area (z14) | ~26–40 MB |
-| A US state (z14, Texas) | 661 MB |
-| Continental US (z13 / z15) | 4.2 GB / 19 GB |
-| Planet (z15) | ~138 GB |
+| What | z12 | z13 | z14 |
+|---|---|---|---|
+| World overview | z0–7: 188 MB (z0–6: 45 MB) | | |
+| Bundle: rural Montana | | 143 MB | 298 MB |
+| Bundle: central Texas | | 160 MB | 350 MB |
+| Bundle: New York | | 266 MB | 577 MB |
+| Bundle: Tokyo | | 323 MB | 683 MB |
+| Bundle: London | | 602 MB | 1.2 GB |
+| Bundle: Paris (densest found) | | 1.5 GB | 2.9 GB |
+| North America | 4.2 GB | 8.8 GB | |
+| Europe | 6.6 GB | 13 GB | 24 GB |
+| **Planet** | **18 GB** | 36 GB | ~138 GB at z15 |
 
-z14 is about 40% of z15 and looks the same, because MapLibre overzooms z14.
-A home area of two cells plus its ring is 12–18 cells, so **tens of MB**. A
-person with twenty cities in their history is roughly 1–3 GB at the worst.
+## Which bundles
 
-On the dev copy of real data, two months of location history covers **2** z10
-cells.
-
-## Which cells
-
-Nightly, on the box:
-
-1. Take `data_location_point`, bucket it into z10 cells, and keep cells with
-   at least N points (N≈20), so a flight or a GPS glitch does not download a
-   county.
-2. Add the one-cell ring around each.
-3. Diff against `manifest.json`, and extract only the new cells.
-
-People with no location data yet get the world overview and nothing else,
-until their phone reports.
-
-## Where the planet comes from
-
-**Decided: Virtues hosts the planet, and boxes pull from us.**
-
-Protomaps publishes daily planet builds at `build.protomaps.com/YYYYMMDD.pmtiles`,
-keeps one week of them, and says "hotlinking … discouraged; copy the tileset
-to your own storage." So we copy it.
-
-- **Weekly**, a job streams the newest build straight into R2
-  (`curl … | rclone rcat`, multipart, no local disk, so it fits a GitHub
-  Action or the cloud EC2). The file is copied byte for byte, never rebuilt.
-- **Layout:** `planet/YYYYMMDD.pmtiles` plus a small `planet/latest.json`
-  naming the current one. Keep the previous build for a week, so an extract
-  that started before the switch does not 404 halfway.
-- **Cost:** about 138 GB per build (z0–15), two builds live, at R2's
-  $0.015/GB-month ≈ **$4 a month**. R2 charges nothing for egress, and the
-  reads an extract makes (tens of range GETs per cell) cost fractions of a
-  cent across the whole fleet.
-- **The box only does HTTP `Range` GETs.** No key, no account, no API.
-- **Configurable** (`VIRTUES_MAPS_SOURCE`), so a DIY box can point at
-  `build.protomaps.com` or its own copy.
-- **The honest privacy line:** the host sees which byte ranges a box reads,
-  which reveals roughly which z10 cells it wants, once per cell. With our
-  mirror that host is Virtues, not a third party, and R2 keeps no per-request
-  access log unless we turn one on. The manual should say so plainly.
-- **Attribution travels with the data:** the build's metadata carries
-  `© OpenStreetMap`, which the mirror preserves by copying the file whole.
-
-## Refresh
-
-Every ~90 days, re-extract all cells and the world file from the current
-build into `.tmp` files, then swap each one atomically. Readers hold an mmap,
-so the swap goes through an `ArcSwap` of readers, never an in-place write. OSM
-changes slowly, and a map three months old is fine.
+- **Home:** nightly, bucket `data_location_point` into z5 tiles, keep tiles
+  with at least N points (N≈20, so a flight's GPS trace downloads nothing),
+  and fetch any bundle not on disk.
+- **Near an edge:** if a cluster of points sits within ~50 km of a bundle's
+  edge, also take the neighbor. It is still a fixed file everyone near that
+  edge takes, so the privacy class is the same.
+- **No location data yet:** the world overview only, until the phone reports.
+- **Disk cap: 4 GB of bundles.** Over the cap, evict the bundle with the
+  fewest points, never the one holding the most. The world file does not
+  count. The whole-world option replaces bundles and ignores the cap.
 
 ## Travel
 
-**Still open.** The map views in Virtues look back more than they navigate:
-day pages, the timeline, a place's page. A trip viewed from home a day later
-has its cells by then under any option below. The gap is the live view, while
-the trip is happening.
+A bundle changes only when you cross ~1,000 km, so most trips never trigger a
+download. The question is what a box does when one does:
 
-| Option | How | For | Against |
-|---|---|---|---|
-| A. Nightly | The nightly job extracts new cells | Simplest; reveals only where you went, once per cell | A trip's first day shows the world overview only |
-| B. On arrival | Extract as soon as the box ingests points in an uncovered cell | Minutes, not a night; same privacy as A | Needs the phone's points to reach the box; a GPS glitch triggers a download (debounce on N points) |
-| C. On view, per cell | A map opened over an uncovered cell asks the box to extract that cell; it fills in within seconds | Covers places you look at but never visited (a wiki place, an imported photo's coordinates) | Reveals what you looked at, not only where you went; still once per cell |
-| D. From the calendar | A flight or hotel event with a location pre-extracts the destination days before | Ready before you land | Only as good as the calendar data; guessing a destination from a title is a guess |
-| E. On view, per tile | Read the missing tile live from the mirror | Instant | A request per view, to the mirror: the weakest privacy, and no offline copy |
+| Option | For | Against |
+|---|---|---|
+| A. Take it the night after the points arrive | Simple; the map of the trip is complete by the time you look back at it | The server learns the owner went somewhere in that square, and roughly when |
+| B. Take it as soon as ~20 points arrive | Ready during the trip | Same leak as A, and sooner |
+| C. Never take travel bundles | Zero travel leak | Trips outside home show only the world overview |
+| D. Whole world | Zero leak, travel solved everywhere | 18 GB, and z12 detail (no POIs) |
 
-E is dominated by C and should not be built. **Recommendation: B, plus C for
-places you view but never visited, both on by default, both under one
-setting:** "Download maps for new places" (on). Off means nightly only. D is
-a later add-on with the same plumbing.
+Timing is the part a bundle cannot hide. A download of bundle X on the day a
+trip starts says when, even though the bytes say nothing. A random delay of
+up to a few days (A with jitter) blurs it at the cost of freshness.
 
-Imported history (a years-long location export) backfills cells through the
-same job, under the disk cap.
+**Recommendation:** A with jitter by default, and D offered in Settings as
+"Download the whole world (18 GB)" for anyone who wants the leak gone.
+
+## Where the bundles come from
+
+**Decided: Virtues hosts them, and boxes pull from us.**
+
+- **Weekly**, a job reads the newest `build.protomaps.com/YYYYMMDD.pmtiles`
+  by range and cuts the world file, every land-touching z5 bundle and the
+  z12 planet straight to R2. It is one client reading one build a week,
+  which is the use Protomaps' docs point to. The fleet never touches
+  Protomaps.
+- **Layout:** `maps/<build>/…` plus `maps/latest.json` naming the build and a
+  sha256 per file. Keep the previous build for a week so a download that
+  started before the switch does not 404.
+- **Cost:** bundles total about the planet at z14 (~55–60 GB, estimated from
+  z14 ≈ 40% of z15), plus 18 GB for z12 and 188 MB for the world file, so
+  ~80 GB per build and ~160 GB with two builds live. At R2's
+  $0.015/GB-month that is **about $2.50 a month**. R2 charges nothing for
+  egress.
+- **Box refresh:** every ~90 days, take the files named by `latest.json`
+  into `.tmp`, verify the sha256, and swap atomically. Readers hold an mmap,
+  so the swap goes through an `ArcSwap`, never an in-place write.
+- **Configurable** (`VIRTUES_MAPS_SOURCE`), so a DIY box can point at its own
+  copy of the same layout.
+- **Privacy line for the manual:** "Your server downloads maps in regions
+  about 1,000 km across, the same files every server in that region takes.
+  Nothing it downloads says where in the region you live or which places you
+  look at. A download outside your home region shows you were interested in
+  that region. Download the whole world instead to avoid even that."
 
 ## Build order
 
-1. **Serve.** `maps/` reader registry (world + cells), `/api/map/vt/{world|local}/z/x/y`,
-   fonts and sprites from package data, and the installer carrying the assets.
-   The world file downloads on first boot.
-2. **Extract.** The Rust extractor made production-grade (streaming, four
-   fetches at a time, retries, and a check that the result holds every tile
-   id it was asked for), plus the nightly cell job and `manifest.json`.
-3. **Frontend.** `$lib/map/atlas.ts` builds the style from
+1. **Serve.** `maps/` reader registry (world + detail),
+   `/api/map/vt/{world|detail}/z/x/y`, fonts and sprites from package data,
+   the installer carrying the assets.
+2. **Mirror job.** Weekly cut to R2 with `go-pmtiles` (an Action or the cloud
+   EC2), `latest.json`, sha256 per file.
+3. **Download.** Resumable, checksummed whole-file GETs; the nightly bundle
+   chooser; the 4 GB cap; the whole-world setting.
+4. **Frontend.** `$lib/map/atlas.ts` builds the style from
    `@protomaps/basemaps`, and Leaflet's attribution becomes a compact ⓘ.
    `MovementMap` and `DayGround` are unchanged: they already take
    `atlasLayer(style)`.
-4. **Retire OpenFreeMap.** Delete the `/api/map/style`, `vt`, `fonts` and
-   `sprite` proxy handlers and the `map_atlas/` cache, the same way
-   `map_tiles/` was retired.
-5. **Refresh + travel.** The 90-day swap and the travel triggers chosen above.
-6. **Mirror.** A weekly job (virtues-api cron or a GitHub Action) copying the
-   latest build to R2.
+5. **Retire OpenFreeMap.** Delete the proxy handlers and the `map_atlas/`
+   cache, the same way `map_tiles/` was retired.
+6. **Refresh + travel**, per the decision below.
 
 The theme can follow the house palette: a Protomaps flavor is only a table of
-colors, so paper and ink are a small change, not a fork.
+colors.
 
 ## Decisions
 
-1. **Travel:** open; see the table above.
-2. **Disk cap for your places:** 4 GB. When a new cell would exceed it,
-   evict the cells with the fewest points first. The world file does not count.
+1. **Privacy model (proposed):** fixed bundles, the same bytes for everyone
+   in them. Nothing a box downloads names a place finer than ~1,000 km.
+2. **Disk cap:** 4 GB of bundles.
 3. **World detail:** z0–7, 188 MB.
-4. **Planet source:** a Virtues mirror on R2, refreshed weekly.
+4. **Source:** Virtues cuts bundles weekly to R2; boxes pull from us.
+5. **Travel:** open; recommendation above (A with jitter, whole world as a
+   setting).
+6. **Bundle detail:** z14 (0.3–3 GB) or z13 (half the size, no POIs)?
+   Recommend z14.
