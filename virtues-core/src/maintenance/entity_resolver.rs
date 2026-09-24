@@ -12,7 +12,8 @@
 //! This task closes that gap the same way `sweeper` and `pair_rotator` do — a
 //! single tokio interval loop owned by `server::run`. It re-resolves a rolling
 //! lookback window so the in-progress day stays current; resolution is
-//! idempotent (visits upsert by id, entity refs dedup on a unique key, merchant
+//! idempotent (a re-clustered stay merges into its stored visit by time and
+//! distance, entity refs dedup on a unique key, merchant
 //! lookups skip already-linked rows), so overlapping runs are safe.
 
 use std::sync::Arc;
@@ -37,6 +38,12 @@ const LOOKBACK_HOURS: i64 = 30;
 /// DB error must not take the daemon down.
 pub fn spawn(db: Arc<Database>) {
     tokio::spawn(async move {
+        // Before the first pass, and in this task so it never races the
+        // writer. A no-op unless stored visits overlap.
+        if let Err(e) = crate::entity_resolution::places::repair_overlapping_visits(&db).await {
+            tracing::warn!(error = %e, "visit overlap repair failed (will retry next start)");
+        }
+
         // `Skip` so a slow resolution pass (large backlog) doesn't queue
         // catch-up ticks.
         let mut ticker = interval(TICK);

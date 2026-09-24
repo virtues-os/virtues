@@ -932,6 +932,179 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     Ok(())
 }
 
+/// What repairing the stored visits should do.
+#[derive(Debug, Default, PartialEq)]
+struct VisitRepair {
+    /// Rows that survive with a new span.
+    reshape: Vec<(String, DateTime<Utc>, DateTime<Utc>)>,
+    /// Surviving row → the rows folded into it, whose place link it may inherit.
+    absorbed: Vec<(String, Vec<String>)>,
+    /// Every row to delete: the absorbed, and rows a rival left too short to keep.
+    delete: Vec<String>,
+}
+
+/// Replay every stored visit, in start order, through `plan_visit_write` as if
+/// it were arriving now. What comes out is the table the fixed writer would
+/// have produced: one row per stay, no minute claimed twice. The earlier row
+/// wins a clash between places, which is the writer's "stored row keeps its
+/// minutes" rule applied in time order.
+fn plan_visit_repair(mut rows: Vec<StoredVisit>) -> VisitRepair {
+    rows.sort_by(|a, b| (a.start, &a.id).cmp(&(b.start, &b.id)));
+    let original: std::collections::HashMap<String, (DateTime<Utc>, DateTime<Utc>)> =
+        rows.iter().map(|r| (r.id.clone(), (r.start, r.end))).collect();
+    let gap = chrono::Duration::minutes(TEMPORAL_GAP_MINUTES);
+
+    // Kept rows stay disjoint and sorted by start, so their ends ascend too and
+    // only a suffix of them can touch the next row.
+    let mut kept: Vec<StoredVisit> = Vec::new();
+    let mut folded: std::collections::HashMap<String, Vec<String>> = Default::default();
+    let mut delete: Vec<String> = Vec::new();
+
+    for row in rows {
+        let from = kept.partition_point(|k| k.end < row.start - gap);
+        match plan_visit_write((row.start, row.end), (row.latitude, row.longitude), &kept[from..]) {
+            VisitWrite::Extend { keeper, absorb, span } => {
+                let mut into = folded.remove(&keeper).unwrap_or_default();
+                kept.retain(|k| !absorb.contains(&k.id));
+                for id in absorb {
+                    into.extend(folded.remove(&id).unwrap_or_default());
+                    into.push(id.clone());
+                    delete.push(id);
+                }
+                if let Some(k) = kept.iter_mut().find(|k| k.id == keeper) {
+                    (k.start, k.end) = span;
+                }
+                into.push(row.id.clone());
+                delete.push(row.id);
+                folded.insert(keeper, into);
+            }
+            VisitWrite::Insert { span } => {
+                kept.push(StoredVisit { start: span.0, end: span.1, ..row });
+            }
+            VisitWrite::Skip => delete.push(row.id),
+        }
+    }
+
+    let reshape = kept
+        .iter()
+        .filter(|k| original.get(&k.id) != Some(&(k.start, k.end)))
+        .map(|k| (k.id.clone(), k.start, k.end))
+        .collect();
+    let mut absorbed: Vec<(String, Vec<String>)> = folded.into_iter().collect();
+    absorbed.sort();
+    VisitRepair { reshape, absorbed, delete }
+}
+
+/// Collapse visits already stored on top of each other.
+///
+/// Rows written before the writer matched on time and distance are the same
+/// stay stored many times over (summed durations ran to several times the
+/// hours they covered), and the rolling re-cluster only ever revisits its last
+/// 30 hours, so history would stay that way. Guarded on the defect itself —
+/// it does nothing unless two stored visits overlap — so it is a no-op after
+/// its first run, and runs again only if something reintroduces the overlap.
+/// One transaction: a box never shows a half-repaired timeline.
+pub async fn repair_overlapping_visits(db: &Database) -> Result<usize> {
+    let pool = db.pool();
+    let overlapping: bool = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM (
+                SELECT started_at,
+                       max(COALESCE(ended_at, started_at)) OVER (
+                           ORDER BY started_at, id
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS prior_end
+                FROM data_location_visit
+            ) v
+            WHERE v.started_at < v.prior_end
+        )
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+    if !overlapping {
+        return Ok(0);
+    }
+
+    let mut tx = pool.begin().await?;
+    let rows: Vec<StoredVisit> = sqlx::query_as::<_, (String, DateTime<Utc>, DateTime<Utc>, f64, f64)>(
+        "SELECT id, started_at, COALESCE(ended_at, started_at), latitude, longitude \
+         FROM data_location_visit FOR UPDATE",
+    )
+    .fetch_all(&mut *tx)
+    .await?
+    .into_iter()
+    .map(|(id, start, end, latitude, longitude)| StoredVisit { id, start, end, latitude, longitude })
+    .collect();
+    let before = rows.len();
+    let plan = plan_visit_repair(rows);
+
+    for (id, start, end) in &plan.reshape {
+        sqlx::query(
+            "UPDATE data_location_visit \
+             SET started_at = $2, ended_at = $3, duration_minutes = $4, updated_at = now() \
+             WHERE id = $1",
+        )
+        .bind(id)
+        .bind(start)
+        .bind(end)
+        .bind((*end - *start).num_minutes() as i32)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    // A surviving row with no place link inherits one from a row folded into
+    // it, so the stay stays attached to its place once the duplicates go.
+    for (keeper, folded) in &plan.absorbed {
+        let place: Option<String> = sqlx::query_scalar(
+            "SELECT r.entity_id FROM wiki_refs r \
+             WHERE r.source_table = 'data_location_visit' AND r.entity_type = 'place' \
+               AND r.source_id = ANY($2) \
+               AND NOT EXISTS (SELECT 1 FROM wiki_refs k \
+                   WHERE k.source_table = 'data_location_visit' AND k.entity_type = 'place' \
+                     AND k.source_id = $1) \
+             ORDER BY r.occurred_at, r.id LIMIT 1",
+        )
+        .bind(keeper)
+        .bind(folded)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(place) = place {
+            sqlx::query(
+                "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at) \
+                 SELECT $1, 'place', $2, 'data_location_visit', $3, 'location', started_at \
+                 FROM data_location_visit WHERE id = $3 \
+                 ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING",
+            )
+            .bind(ids::generate_id("eref", &[keeper, &place, "location"]))
+            .bind(&place)
+            .bind(keeper)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+
+    sqlx::query(
+        "DELETE FROM wiki_refs WHERE source_table = 'data_location_visit' AND source_id = ANY($1)",
+    )
+    .bind(&plan.delete)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM data_location_visit WHERE id = ANY($1)")
+        .bind(&plan.delete)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    tracing::info!(
+        before,
+        after = before - plan.delete.len(),
+        reshaped = plan.reshape.len(),
+        "repaired overlapping visits"
+    );
+    Ok(plan.delete.len())
+}
+
 /// Find or create a place entity for the given coordinates
 ///
 /// This function checks if a place entity exists within its configured radius.
@@ -1186,6 +1359,39 @@ mod tests {
         );
         assert_eq!(got, Some((at(70), at(100))));
         assert_eq!(longest_uncovered((at(0), at(10)), [(at(0), at(10))].into_iter()), None);
+    }
+
+    /// The pre-fix shape: one stay stored as a staircase of rows that all end
+    /// together, plus a rival at another place overlapping the tail.
+    #[test]
+    fn repair_collapses_a_staircase_and_clips_a_rival() {
+        let rows = vec![
+            stored("s1", 0, 180, HERE.0, HERE.1),
+            stored("s2", 15, 180, NEAR.0, NEAR.1),
+            stored("s3", 30, 180, HERE.0, HERE.1),
+            stored("away", 170, 240, FAR.0, FAR.1),
+            stored("blip", 175, 185, FAR.0, FAR.1),
+        ];
+        let plan = plan_visit_repair(rows);
+        assert_eq!(
+            plan.absorbed,
+            vec![
+                ("away".into(), vec!["blip".into()]),
+                ("s1".into(), vec!["s2".into(), "s3".into()]),
+            ]
+        );
+        // `away` loses the ten minutes `s1` already held; `blip` is the same
+        // stay as `away` and folds into it.
+        assert_eq!(plan.reshape, vec![("away".into(), at(180), at(240))]);
+        let mut deleted = plan.delete.clone();
+        deleted.sort();
+        assert_eq!(deleted, vec!["blip", "s2", "s3"]);
+    }
+
+    #[test]
+    fn repair_of_a_clean_table_is_empty() {
+        let rows = vec![stored("a", 0, 60, HERE.0, HERE.1), stored("b", 90, 120, FAR.0, FAR.1)];
+        assert_eq!(plan_visit_repair(rows), VisitRepair::default());
     }
 
     #[test]
