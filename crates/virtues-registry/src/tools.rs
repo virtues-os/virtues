@@ -82,6 +82,7 @@ pub fn default_tools() -> Vec<ToolConfig> {
         semantic_search_tool(),
         sql_query_tool(),
         sql_write_tool(),
+        shell_tool(),
         code_interpreter_tool(),
         dispatch_subagents_tool(),
         create_page_tool(),
@@ -1106,6 +1107,49 @@ Add RETURNING to get rows back (capped at 500); otherwise the result is rows_aff
         category: ToolCategory::Data,
         icon: "ri:database-2-line".to_string(),
         display_order: 7,
+        is_system: false,
+    }
+}
+
+/// Shell tool — a command on the server itself, as its admin account.
+/// Sudo mode only: `get_tools_for_agent_mode` lists it for no other mode and
+/// the executor refuses it outside a sudo turn.
+fn shell_tool() -> ToolConfig {
+    ToolConfig {
+        id: "shell".to_string(),
+        name: "Shell".to_string(),
+        description: "Run a command on the server, with sudo".to_string(),
+        llm_description: r#"Run a shell command on the server this assistant runs on, as its admin account, which has passwordless sudo. Anything a person could do over ssh is possible: read and change files anywhere, query or change any database, read logs, manage services, install packages.
+
+The command runs through bash -c with no terminal and no stdin, so anything that prompts reads nothing: pass -y / --yes / --no-pager, and never open an editor or a pager. Returns exit_code, stdout and stderr; long output keeps its beginning and its end.
+
+- Database: psql "$DATABASE_URL" -c '…' as the app's role, or sudo -u postgres psql virtues -c '…' as the superuser.
+- Logs: journalctl -u virtues --no-pager -n 200 (add -p warning, --since "1 hour ago").
+- Long jobs: raise timeout_seconds (default 120, max 3600), or run them in the background with output to a file (nohup … >/tmp/job.log 2>&1 &) and check the file later.
+
+This server is running this conversation: restarting the virtues service, rebooting, or killing its process ends the turn mid-reply, so do that last."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["command"],
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The command line, run with bash -c"
+                },
+                "timeout_seconds": {
+                    "type": "integer",
+                    "description": "Kill the command after this many seconds (default 120, max 3600)"
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Working directory (default: the account's home)"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:terminal-box-line".to_string(),
+        display_order: 8,
         is_system: false,
     }
 }

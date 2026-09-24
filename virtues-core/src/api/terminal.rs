@@ -270,7 +270,7 @@ async fn handle_socket(mut socket: WebSocket, size: PtySize) {
 /// the `virtues` HOME has no profile to source, so each session would otherwise
 /// start with the bare service PATH and lose whatever was installed last
 /// session — the binary persists on disk, but nothing points PATH at it.
-fn session_path(home: Option<&str>) -> String {
+pub(crate) fn session_path(home: Option<&str>) -> String {
     let service_path = std::env::var("PATH").unwrap_or_default();
     let Some(home) = home else {
         return service_path;

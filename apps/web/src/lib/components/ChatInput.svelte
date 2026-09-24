@@ -7,6 +7,8 @@
 	import { closeOpenFence, createComposerEditor, type ComposerEditor } from "$lib/codemirror/composer";
 	import { createRefPicker, insertRef } from "$lib/codemirror/extensions/ref-picker";
 	import { ATTACH_ACCEPT } from "$lib/components/chat/state/attachments.svelte";
+	import { AGENT_MODES, getModeById, nextMode, type AgentModeId } from "$lib/config/agentModes";
+	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 
 	let {
 		value = $bindable(""),
@@ -20,6 +22,8 @@
 		onAttach = undefined as ((files: File[]) => void) | undefined,
 		onSubmit = undefined as ((content: string) => void) | undefined,
 		onStop = undefined as (() => void) | undefined,
+		agentMode = undefined as AgentModeId | undefined,
+		onModeChange = undefined as ((mode: AgentModeId) => void) | undefined,
 	}: {
 		value?: string;
 		disabled?: boolean;
@@ -32,12 +36,78 @@
 		onAttach?: (files: File[]) => void;
 		onSubmit?: (content: string) => void;
 		onStop?: () => void;
+		/** The chat's mode. The chip under the pill shows it when it is not plain chat. */
+		agentMode?: AgentModeId;
+		/** Chosen from the (+) menu or the chip, or cycled with Shift+Tab. */
+		onModeChange?: (mode: AgentModeId) => void;
 	} = $props();
 
+	const activeMode = $derived(agentMode && agentMode !== "chat" ? getModeById(agentMode) : undefined);
+
 	let fileInputEl: HTMLInputElement | null = $state(null);
+	let cameraInputEl: HTMLInputElement | null = $state(null);
 
 	function pickFiles() {
 		fileInputEl?.click();
+	}
+
+	function cycleMode() {
+		if (agentMode && onModeChange) onModeChange(nextMode(agentMode));
+	}
+
+	// The (+) menu: what you add to the message, then how it is handled.
+	// Nothing else goes in here — a menu of every option is a junk drawer.
+	function modeRows(): ContextMenuItem[] {
+		return AGENT_MODES.map((m) => ({
+			id: `mode-${m.id}`,
+			label: m.name,
+			description: m.description,
+			icon: m.icon,
+			checked: m.id === (agentMode ?? "chat"),
+			action: () => onModeChange?.(m.id),
+		}));
+	}
+
+	function openMenu(anchorEl: HTMLElement, onlyModes = false) {
+		const items: ContextMenuItem[] = [];
+		if (!onlyModes && onAttach) {
+			items.push({ id: "attach", label: "Add files", icon: "ri:attachment-2", action: pickFiles });
+			// A phone has a camera a tap away; a desktop's "take a photo" is
+			// a webcam nobody means.
+			if (mobileLayout.isMobile) {
+				items.push({
+					id: "camera",
+					label: "Take a photo",
+					icon: "ri:camera-line",
+					action: () => cameraInputEl?.click(),
+				});
+			}
+		}
+		if (onModeChange) {
+			const rows = modeRows();
+			if (onlyModes) {
+				items.push(...rows);
+			} else if (mobileLayout.isMobile) {
+				// Fly-out submenus are fiddly under a thumb: the modes sit in
+				// the same sheet.
+				items.push(...rows);
+			} else {
+				const current = getModeById(agentMode ?? "chat");
+				items.push({
+					id: "mode",
+					label: "Mode",
+					icon: current?.icon ?? "ri:chat-3-line",
+					shortcut: current && current.id !== "chat" ? current.name : undefined,
+					submenu: rows,
+				});
+			}
+		}
+		if (items.length === 0) return;
+		const r = anchorEl.getBoundingClientRect();
+		contextMenu.show({ x: r.left, y: r.top }, items, {
+			anchor: { x: r.left, y: r.top, width: r.width, height: r.height },
+			placement: "top-start",
+		});
 	}
 
 	function onFilesPicked(e: Event) {
@@ -205,6 +275,7 @@
 			},
 			onHeight: setHeight,
 			onAttach,
+			onShiftTab: cycleMode,
 			onEscape: () => {
 				if (showEntityPicker) {
 					closeEntityPicker();
@@ -244,25 +315,43 @@
 		class="chat-input-wrapper bg-surface border border-border-strong cursor-text"
 		class:focused={isFocused}
 		class:multiline={isMultiline}
+		class:sudo={agentMode === "sudo"}
 		onclick={handleWrapperClick}
 		role="textbox"
 		tabindex="-1"
 	>
-		{#if onAttach}
+		{#if onAttach || onModeChange}
 			<button
 				type="button"
-				onclick={pickFiles}
+				onclick={(e) => {
+					e.stopPropagation();
+					// No modes here (another composer): a one-row menu is just
+					// an extra click, so (+) picks files straight away.
+					if (onModeChange) openMenu(e.currentTarget);
+					else pickFiles();
+				}}
 				class="pill-btn attach-button"
-				aria-label="Attach files"
-				title="Attach images, PDFs, audio, or text"
+				aria-label="Add files or change mode"
+				aria-haspopup="menu"
+				title="Add files or change mode"
 			>
 				<Icon icon="ri:add-line" width="18" />
 			</button>
+		{/if}
+		{#if onAttach}
 			<input
 				bind:this={fileInputEl}
 				type="file"
 				multiple
 				accept={ATTACH_ACCEPT}
+				class="sr-only"
+				onchange={onFilesPicked}
+			/>
+			<input
+				bind:this={cameraInputEl}
+				type="file"
+				accept="image/*"
+				capture="environment"
 				class="sr-only"
 				onchange={onFilesPicked}
 			/>
@@ -315,6 +404,29 @@
 			/>
 		{/if}
 	</div>
+
+	{#if activeMode}
+		<div class="mode-row">
+			<button
+				type="button"
+				class="mode-chip"
+				style:color={activeMode.color}
+				onclick={(e) => {
+					e.stopPropagation();
+					openMenu(e.currentTarget, true);
+				}}
+				aria-haspopup="menu"
+				title="Change mode (Shift+Tab)"
+			>
+				<Icon icon={activeMode.icon} width="13" style="color: inherit" />
+				<span class="mode-name">{activeMode.name}</span>
+				<span class="mode-description">{activeMode.description}</span>
+			</button>
+			{#if !mobileLayout.isMobile}
+				<span class="mode-hint">Shift+Tab to switch</span>
+			{/if}
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -355,6 +467,47 @@
 
 	.chat-input-wrapper.focused {
 		border-color: var(--color-primary) !important;
+	}
+
+	/* Sudo mode holds the border in the error color, focused or not: the
+	   state has to be impossible to miss while typing into it. */
+	.chat-input-wrapper.sudo,
+	.chat-input-wrapper.sudo.focused {
+		border-color: var(--color-error) !important;
+	}
+
+	.mode-row {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+		padding: 0.375rem 0.875rem 0;
+		font-size: 0.75rem;
+		line-height: 1rem;
+	}
+
+	.mode-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3125rem;
+		min-width: 0;
+		cursor: pointer;
+	}
+
+	.mode-name {
+		font-weight: 500;
+	}
+
+	.mode-description {
+		color: var(--color-foreground-muted);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.mode-hint {
+		margin-left: auto;
+		flex-shrink: 0;
+		color: var(--color-foreground-subtle);
 	}
 
 	.chat-input {

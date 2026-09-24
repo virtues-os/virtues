@@ -1,56 +1,47 @@
 /**
  * Agent Mode Configuration
  *
- * Defines available agent modes that control tool availability.
- * Similar to Cursor's Agent/Chat modes.
+ * The modes the composer cycles through with Shift+Tab. The id goes to the
+ * server as `agentMode`, which picks the turn's tools and prompt
+ * (`tools::get_tools_for_agent_mode`, `agent::prompt`).
+ *
+ * `sudo` is the owner's bypass: a shell on the server with passwordless sudo,
+ * and nothing asks before it runs. It lasts for one chat and starts off every
+ * time a chat opens.
  */
 
-export type AgentModeId = 'chat' | 'deep_research' | 'council';
+export type AgentModeId = 'chat' | 'deep_research' | 'sudo';
 
 export interface AgentMode {
 	id: AgentModeId;
 	name: string;
 	description: string;
 	icon: string;
-	/** Background color for pill indicator (null = no background) */
+	/** Color of the composer chip (null = the quiet default) */
 	color: string | null;
-	/** Maximum tool calls per turn (0 = no tools) */
-	maxToolCalls: number;
-	/** Tool category access */
-	tools: {
-		search: boolean;
-		data: boolean;
-		edit: boolean;
-	};
 }
 
 export const AGENT_MODES: AgentMode[] = [
 	{
 		id: 'chat',
 		name: 'Chat',
-		description: 'Fast, acts on confirmation',
+		description: 'Asks before changing anything',
 		icon: 'ri:chat-3-line',
-		color: null, // No background for default
-		maxToolCalls: 20,
-		tools: { search: true, data: true, edit: true }
+		color: null
 	},
 	{
 		id: 'deep_research',
-		name: 'Deep Research',
-		description: 'Investigate your life & the web',
+		name: 'Deep research',
+		description: 'Investigates your records and the web',
 		icon: 'ri:search-eye-line',
-		color: 'var(--color-info)',
-		maxToolCalls: 50,
-		tools: { search: true, data: true, edit: false }
+		color: 'var(--color-info)'
 	},
 	{
-		id: 'council',
-		name: 'Council',
-		description: 'Weigh a hard decision from many perspectives',
-		icon: 'ri:group-line',
-		color: 'var(--color-warning)',
-		maxToolCalls: 40,
-		tools: { search: true, data: true, edit: false }
+		id: 'sudo',
+		name: 'Sudo',
+		description: 'Full access to the server, nothing asks first',
+		icon: 'ri:terminal-box-line',
+		color: 'var(--color-error)'
 	}
 ];
 
@@ -58,15 +49,8 @@ export function getModeById(id: AgentModeId): AgentMode | undefined {
 	return AGENT_MODES.find((m) => m.id === id);
 }
 
-export function getDefaultMode(): AgentMode {
-	return AGENT_MODES[0];
-}
-
-/**
- * Get the next mode in the cycle (for Shift+Tab)
- */
-export function getNextMode(currentId: AgentModeId): AgentMode {
-	const currentIndex = AGENT_MODES.findIndex((m) => m.id === currentId);
-	const nextIndex = (currentIndex + 1) % AGENT_MODES.length;
-	return AGENT_MODES[nextIndex];
+/** The mode after `id`, wrapping — what Shift+Tab moves to. */
+export function nextMode(id: AgentModeId): AgentModeId {
+	const i = AGENT_MODES.findIndex((m) => m.id === id);
+	return AGENT_MODES[(i + 1) % AGENT_MODES.length].id;
 }

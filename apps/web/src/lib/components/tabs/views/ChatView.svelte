@@ -543,6 +543,9 @@
 			// Release old instance if we had one
 			if (currentChatConversationId) {
 				chatInstances.release(currentChatConversationId);
+				// A mode belongs to the chat it was chosen in. Sudo above all
+				// must not follow the view into the next conversation.
+				selectedAgentMode = 'chat';
 			}
 			// Get or create new instance with model, space, active page, persona, and agent mode getters
 			chat = chatInstances.getOrCreate({
@@ -1805,7 +1808,7 @@
 											{#if subagents.length > 0}
 												<SubagentPanel
 													{subagents}
-													variant={selectedAgentMode === 'council' ? 'voice' : 'research'}
+													variant="research"
 												/>
 											{/if}
 
@@ -2353,6 +2356,8 @@
 							placeholder={isGhost ? "Ask Virtues (temporary)" : "Ask Virtues"}
 							onSubmit={(text) => handleChatSubmit(text)}
 							onStop={() => handleChatStop()}
+							agentMode={selectedAgentMode}
+							onModeChange={(mode) => (selectedAgentMode = mode)}
 						/>
 						{/if}
 
