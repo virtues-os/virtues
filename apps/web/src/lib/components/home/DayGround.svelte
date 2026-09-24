@@ -6,10 +6,10 @@
 	dot here, so "where was I at 2pm" is answered by moving the mouse rather
 	than by reading two charts and doing the join in your head.
 
-	The basemap comes from the box's own atlas (`$lib/map/atlas`, see
-	agents/record/map-atlas-plan.md): cached on the box after first fetch, so the
-	browser never hands the day's coordinates to a third-party tile server and
-	areas you actually live in keep working offline. The panel is display-only
+	The basemap comes from `$lib/map/atlas`, which has none until the box
+	serves its own map files (agents/plan/offline-maps-plan.md). No tile
+	request leaves for a third party in the meantime; the track draws on the
+	panel's own ground. The panel is display-only
 	— no drag, no zoom — because it answers the deck's scrub, not the mouse.
 -->
 <script lang="ts">
