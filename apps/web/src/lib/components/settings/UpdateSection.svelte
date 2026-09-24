@@ -24,7 +24,7 @@
 		type UpdateStatus
 	} from '$lib/api/client';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
-	import { getAutoUpdate, setAutoUpdate, type AutoUpdateStatus } from '$lib/api/autoUpdate';
+	import { autoUpdateOf, setAutoUpdate, type AutoUpdateStatus } from '$lib/api/autoUpdate';
 
 	let status = $state<UpdateStatus | null>(null);
 	let loading = $state(true);
@@ -45,11 +45,9 @@
 	async function check() {
 		loading = true;
 		try {
-			[status, auto] = await Promise.all([
-				getUpdateStatus(),
-				// An older server has no such endpoint; the row just doesn't show.
-				getAutoUpdate().catch(() => null)
-			]);
+			status = await getUpdateStatus();
+			// An older server doesn't report it; the row just doesn't show.
+			auto = autoUpdateOf(status);
 		} catch (err) {
 			console.error('[updates] check failed:', err);
 			status = null;
