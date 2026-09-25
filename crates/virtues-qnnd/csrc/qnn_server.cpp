@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include <atomic>
 #include <mutex>
 #include <thread>
 #include "QNN/QnnInterface.h"
@@ -150,6 +151,16 @@ static bool loadModel(Model& m, const QNN_SYSTEM_INTERFACE_VER_TYPE& sysIf){
   return true;
 }
 
+// Consecutive graphExecute failures, across every model and connection. When the
+// cDSP crashes (the kernel logs "crash detected in cdsp" and restarts it), every
+// context this process loaded is gone, and each execute fails from then on. The
+// process itself stays alive, so systemd's Restart=on-failure never fires and
+// search is silently dead until someone restarts us. Three in a row means the
+// session is gone rather than one bad call, so exit and let systemd reload the
+// contexts onto the recovered cDSP. A success resets the count.
+static std::atomic<int> g_execFailures{0};
+static const int kMaxExecFailures = 3;
+
 static int execModel(Model& m, const uint8_t* payload, size_t nbytes){
   size_t need=0; for(auto& io:m.ins) need+=io.byteSize;
   if (nbytes!=need){ fprintf(stderr,"bad payload %zu != %zu\n", nbytes, need); return -1; }
@@ -163,7 +174,18 @@ static int execModel(Model& m, const uint8_t* payload, size_t nbytes){
     Qnn_Tensor_t t=m.outs[i].desc; setClientBuf(t, m.outBufs[i].data(), m.outs[i].byteSize); tout.push_back(t);
   }
   Qnn_ErrorHandle_t e=qnn.graphExecute(m.graph, tin.data(), tin.size(), tout.data(), tout.size(), nullptr, nullptr);
-  if (e!=QNN_SUCCESS){ fprintf(stderr,"graphExecute 0x%lx\n",(unsigned long)e); return -2; }
+  if (e!=QNN_SUCCESS){
+    int n=++g_execFailures;
+    fprintf(stderr,"graphExecute 0x%lx (%d in a row)\n",(unsigned long)e, n);
+    if (n>=kMaxExecFailures){
+      fprintf(stderr,"FATAL: %d graphExecute failures in a row, so the cDSP session is gone; "
+                     "exiting for systemd to restart us\n", n);
+      fflush(stderr);
+      _exit(3);  // not exit(): other threads are mid-request, and atexit teardown can hang on them
+    }
+    return -2;
+  }
+  g_execFailures.store(0);
   // dequantize/convert outputs to fp32
   float* dst=m.outF32.data();
   for(size_t i=0;i<m.outs.size();i++){

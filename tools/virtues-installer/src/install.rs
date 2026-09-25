@@ -354,7 +354,10 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
         .replace("__QNN_DIR__", &qnn_dir.display().to_string());
     fs::write("/etc/systemd/system/virtues-qnnd.service", body)
         .context("writing virtues-qnnd.service")?;
+    arm_hardware_watchdog()?;
 
+    // Also applies the watchdog drop-in: `daemon-reload` re-reads system.conf.d
+    // (verified on the lab Dragon; no daemon-reexec needed).
     let mut cmd = Command::new("systemctl");
     cmd.arg("daemon-reload");
     run_step("Install NPU daemon unit", cmd).await?;
@@ -365,6 +368,42 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
     cmd.args(["restart", "virtues-qnnd"]);
     run_step("Start NPU daemon", cmd).await
 }
+
+/// Where the watchdog drop-in lives. Uninstall removes it by this path, which
+/// must match `system_repairs::WATCHDOG_DROPIN` in core.
+const WATCHDOG_DROPIN: &str = "/etc/systemd/system.conf.d/10-virtues-watchdog.conf";
+
+/// Have systemd ping the SoC's hardware watchdog, so a hung kernel reboots the
+/// box instead of waiting for someone to pull the plug.
+///
+/// This lives beside the NPU daemon because the NPU is what hangs the kernel.
+/// Loading a context binary the cDSP can't map crashes the cDSP, and this
+/// kernel's FastRPC driver (6.18.2-3-qcom) then frees reserved DMA pages as the
+/// process exits. The box logged `BUG: Bad page state` sixty times and stopped
+/// answering on every interface. There was no OOM and no panic, so nothing
+/// rebooted it. `qnnd` shares that cDSP, so any Dragon can hit it.
+///
+/// Dragon only, DIY included, because we are the ones driving its NPU. A
+/// server with no NPU work from us keeps its own systemd settings. Skipped
+/// when there is no `/dev/watchdog0`.
+///
+/// 30 s is inside `qcom_wdt`'s 32 s hardware maximum. systemd pings at half the
+/// interval, so a healthy box never comes close. `RebootWatchdogSec` keeps its
+/// default of 10 min, which already covers a hung shutdown.
+fn arm_hardware_watchdog() -> Result<()> {
+    if !Path::new("/dev/watchdog0").exists() {
+        ui::skip("No hardware watchdog on this board");
+        return Ok(());
+    }
+    fs::create_dir_all("/etc/systemd/system.conf.d").context("mkdir system.conf.d")?;
+    fs::write(WATCHDOG_DROPIN, WATCHDOG_CONF).context("writing the watchdog drop-in")?;
+    ui::ok("Hardware watchdog on: a hung box reboots itself within 30 s");
+    Ok(())
+}
+
+/// One copy for the installer (fresh installs) and core's `dragon-watchdog`
+/// repair (the existing fleet, on upgrade), so the two can't drift.
+const WATCHDOG_CONF: &str = include_str!("../../../virtues-core/src/cli/watchdog.conf");
 
 /// Host-lib directories inside a QAIRT SDK, best first.
 ///
