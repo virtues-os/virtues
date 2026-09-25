@@ -27,7 +27,7 @@
 # failures one round trip at a time. This would have found the same four for a
 # fraction of it, each attached to the commit that caused it.
 #
-# THIS IS NOT A WALL. No branch here has protection, so a red `wave` blocks
+# THIS IS NOT A WALL. No ruleset requires these checks, so a red `wave` blocks
 # nothing — it is information, delivered while the commit is still the thing you
 # were just looking at. `ci.yml` remains the real gate: tests, clippy, the
 # migration append-only check and the schema checks all still run there.
@@ -122,3 +122,32 @@ jobs:
       # question every failure this gate exists for answered with "no".
       - name: cargo check
         run: cargo check --workspace
+
+  # ci.yml's append-only check, copied for contributor PRs into `wave`: ci.yml
+  # no longer runs on them, and an edited applied migration must be caught
+  # before it merges, not at the next `wave` → `staging` PR. sqlx checksums the
+  # bytes, so any edit — even a comment — is a boot refusal on every box that
+  # applied it. Keep the two steps in sync. Git only, so it runs on a free
+  # GitHub-hosted runner rather than a paid one.
+  migrations-append-only:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `git merge-base` against the PR base needs the history.
+          fetch-depth: 0
+      - name: Applied migrations are append-only
+        run: |
+          git fetch --no-tags origin ${{ github.base_ref }}
+          base=$(git merge-base FETCH_HEAD HEAD)
+          drift=$(git diff --name-status --no-renames "$base" HEAD -- \
+                    virtues-core/migrations services/virtues-atlas/migrations \
+                  | grep -E '^\s*[MD]\s' | grep -E '\.sql$' || true)
+          if [ -n "$drift" ]; then
+            echo "✖ applied migration files modified or deleted:"
+            echo "$drift"
+            echo "Migrations are append-only once merged — revert the edit; new behavior gets a NEW migration."
+            exit 1
+          fi
+          echo "✓ migrations are append-only against $base"
