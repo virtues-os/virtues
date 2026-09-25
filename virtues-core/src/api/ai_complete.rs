@@ -151,6 +151,7 @@ pub async fn ai_complete_handler(
                 // ceiling sized for the answer is spent on the thinking and
                 // returns nothing. The prompt bounds the edit.
                 None,
+                None, // one call, no conversation to keep on one server
                 move |event| {
                     if let AgentEvent::TextDelta { content } = event {
                         let _ = tx.send(content);

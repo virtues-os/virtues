@@ -83,6 +83,7 @@ pub async fn stream_llm_response<F>(
     provider_options: Option<Value>,
     temperature: Option<f32>,
     max_tokens: Option<u32>,
+    session_affinity: Option<&str>,
     mut emit: F,
 ) -> Result<LlmStreamResult, StreamError>
 where
@@ -111,7 +112,7 @@ where
     // happens before the body opens; mid-stream top-up is impossible.
     let response = match config
         .client
-        .stream("/v1/ai/chat/completions", &body)
+        .stream_affine("/v1/ai/chat/completions", &body, session_affinity)
         .await
         .map_err(|e| StreamError::Connection(e.to_string()))?
     {
