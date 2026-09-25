@@ -1,186 +1,65 @@
 <script lang="ts">
+	/**
+	 * The four slot pickers at the top of Settings → Assistant.
+	 *
+	 * The full catalog sits at the bottom of the same page (ModelCatalog). Both
+	 * read and write `modelSlots`, so a choice made in one shows in the other at
+	 * once. There used to be a separate Models page with its own copy of the
+	 * pin controls and its own words for them, which is how one setting came to
+	 * have five names.
+	 */
 	import { onMount } from "svelte";
 	import UniversalPicker from "./UniversalPicker.svelte";
 	import TextAction from "./TextAction.svelte";
 	import {
-		getRecommendedModels,
-		getAssistantProfile,
-		updateAssistantProfile,
-	} from "$lib/api/client";
-	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+		modelSlots,
+		SLOTS,
+		type SlotConfig,
+		type CatalogModel,
+	} from "$lib/stores/modelSlots.svelte";
 
-	interface Model {
-		id?: string;
-		model_id?: string;
-		display_name?: string;
-		displayName?: string;
-		provider?: string;
-		input_cost_per_1k?: number | null;
-		output_cost_per_1k?: number | null;
-		/** true for the curated "Virtues Recommended" set; false/undefined for
-		 *  the rest of the live gateway catalog (capabilities gateway-declared). */
-		recommended?: boolean;
-	}
+	/** The Recommended row's key. Empty, because the picker needs a string and
+	 *  no model id is empty. It saves as a JSON `null`. */
+	const RECOMMENDED = "";
 
-	interface SlotConfig {
-		key: SlotKey;
-		label: string;
-		description: string;
-		dbField: string;
-	}
+	type Option = Pick<CatalogModel, "model_id" | "display_name"> &
+		Partial<CatalogModel>;
 
-	type SlotKey = "chat" | "lite" | "coding" | "image";
+	onMount(() => modelSlots.load());
 
-	/** Sentinel for "no pin — follow the Virtues default". Empty string, because
-	 *  that is what an unset slot already reads as, and it round-trips to a JSON
-	 *  `null` in saveSlot(). */
-	const DEFAULT = "";
-
-	const SLOTS: SlotConfig[] = [
-		{
-			key: "chat",
-			label: "Chat",
-			description: "Default for conversations",
-			dbField: "chat_model_id",
-		},
-		{
-			key: "lite",
-			label: "Lite",
-			description: "Titles, summaries, background work",
-			dbField: "lite_model_id",
-		},
-		{
-			key: "coding",
-			label: "Coding",
-			description: "Code generation",
-			dbField: "coding_model_id",
-		},
-		{
-			key: "image",
-			label: "Image",
-			description: "Text-to-image",
-			dbField: "image_model_id",
-		},
-	];
-
-	let loading = $state(true);
-	let error = $state<string | null>(null);
-	let saveError = $state<string | null>(null);
-	let models = $state<Model[]>([]);
-	/** What each slot resolves to when unpinned — served live by the box, which
-	 *  gets it from virtues-api. Swapping a default is a cloud change, not a
-	 *  release, so this is fetched rather than hardcoded. */
-	let slotDefaults = $state<Record<string, string>>({});
-	let slotValues = $state<Record<SlotKey, string>>({
-		chat: DEFAULT,
-		lite: DEFAULT,
-		coding: DEFAULT,
-		image: DEFAULT,
-	});
-
-	onMount(loadData);
-
-	async function loadData() {
-		loading = true;
-		error = null;
-		try {
-			// /recommended carries both the picker list and the live slot map.
-			const [data, profile] = await Promise.all([
-				getRecommendedModels<any>(),
-				getAssistantProfile<any>().catch(() => null),
-			]);
-
-			models = Array.isArray(data) ? data : data.data || [];
-			slotDefaults = data.slots || {};
-
-			if (profile) {
-				// NULL means unpinned → Virtues default.
-				slotValues = {
-					chat: profile.chat_model_id || DEFAULT,
-					lite: profile.lite_model_id || DEFAULT,
-					coding: profile.coding_model_id || DEFAULT,
-					image: profile.image_model_id || DEFAULT,
-				};
-			}
-		} catch (e) {
-			error =
-				e instanceof Error
-					? e.message
-					: "Failed to load model settings";
-			console.error("Failed to load model settings:", e);
-		} finally {
-			loading = false;
-		}
-	}
-
-	/** The list a slot shows: the "Virtues default" row, then the vouched set,
-	 *  plus whatever this slot is currently pinned to (so a catalog pick still
-	 *  displays here). The full ~240-model gateway list used to ride along and
-	 *  made the dropdown unreadable — browsing lives in Settings → Models now,
-	 *  which has the table, filters, and retention facts a comparison needs. */
-	function optionsFor(slot: SlotConfig): Model[] {
-		const resolved = slotDefaults[slot.key];
-		const name = resolved ? modelName(byId(resolved)) || resolved : null;
+	/** The list a slot shows: the Recommended row, then the suggested set,
+	 *  plus whatever this slot is set to now (so a catalog choice still
+	 *  displays here). Browsing all ~240 models is the table below. */
+	function optionsFor(slot: SlotConfig): Option[] {
+		const name = modelSlots.nameOf(modelSlots.recommended[slot.key]);
+		const current = modelSlots.chosen[slot.key];
 		return [
 			{
-				model_id: DEFAULT,
-				display_name: name
-					? `Virtues default · ${name}`
-					: "Virtues default",
+				model_id: RECOMMENDED,
+				display_name: name ? `Recommended · ${name}` : "Recommended",
 			},
-			...models.filter(
-				(m) => m.recommended || modelId(m) === slotValues[slot.key],
+			...modelSlots.models.filter(
+				(m) => m.recommended || m.model_id === current,
 			),
 		];
 	}
 
-	function byId(id: string): Model | undefined {
-		return models.find((m) => modelId(m) === id);
+	/** Section label for the dropdown. Empty = the ungrouped Recommended row.
+	 *  The suggested set was grouped as "Recommended" too, the same word as the
+	 *  row above it that means "follow Virtues", so it is "Suggested" now. */
+	function groupOf(model: Option): string {
+		if (model.model_id === RECOMMENDED) return "";
+		return model.recommended ? "Suggested" : "Chosen from the catalog";
 	}
 
-	/** Section label for the dropdown. Empty = the ungrouped "default" row.
-	 *  Only the vouched set and the slot's own pin survive optionsFor, so a
-	 *  non-recommended entry here is by definition the pinned one. */
-	function groupOf(model: Model): string {
-		if (modelId(model) === DEFAULT) return "";
-		return model.recommended ? "Recommended" : "Pinned from the catalog";
+	function searchTextOf(model: Option): string {
+		return [model.display_name, model.provider ?? "", model.model_id].join(" ");
 	}
 
-	/** What a search query matches: name, provider, and id. */
-	function searchTextOf(model: Model): string {
-		return [modelName(model), model.provider ?? "", modelId(model)].join(" ");
-	}
-
-	function modelId(model: Model): string {
-		return model.model_id ?? model.id ?? "";
-	}
-
-	function modelName(model?: Model): string {
-		if (!model) return "";
-		return model.display_name || model.displayName || modelId(model);
-	}
-
-	async function saveSlot(slot: SlotConfig, model: Model) {
-		const id = modelId(model);
-		const previous = slotValues[slot.key];
-		slotValues[slot.key] = id;
-		saveError = null;
-
-		// `null` clears the pin — the backend reads that as "follow the default"
-		// (a plain omitted key would be a no-op; see assistant_profile.rs).
-		const body: Record<string, string | null> = {
-			[slot.dbField]: id === DEFAULT ? null : id,
-		};
-
-		try {
-			await updateAssistantProfile(body);
-		} catch (e) {
-			// Roll the optimistic update back — showing a value that was never
-			// saved is worse than showing the old one.
-			slotValues[slot.key] = previous;
-			saveError = `Couldn't save ${slot.label}. ${e instanceof Error ? e.message : ""}`.trim();
-			console.error(`Failed to save ${slot.key} model:`, e);
-		}
+	function scrollToCatalog() {
+		document
+			.getElementById("model-catalog")
+			?.scrollIntoView({ behavior: "smooth", block: "start" });
 	}
 </script>
 
@@ -189,21 +68,22 @@
 		class="flex items-center justify-between px-4 py-3 border-b border-border"
 	>
 		<h2 class="text-sm font-medium text-foreground">AI Models</h2>
-		{#if saveError}
-			<span class="text-xs text-error">{saveError}</span>
+		{#if modelSlots.saveError}
+			<span class="text-xs text-error">{modelSlots.saveError}</span>
 		{/if}
 	</div>
 
-	{#if loading}
+	{#if !modelSlots.loaded && modelSlots.loading}
 		<div class="text-center py-6 text-sm text-foreground-muted">
 			Loading models...
 		</div>
-	{:else if error}
-		<div class="text-center py-6 text-sm text-error">{error}</div>
+	{:else if modelSlots.error}
+		<div class="text-center py-6 text-sm text-error">{modelSlots.error}</div>
 	{:else}
 		<div class="grid grid-cols-2 gap-4 p-4">
 			{#each SLOTS as slot}
-				{@const pinned = slotValues[slot.key] !== DEFAULT}
+				{@const chosen = modelSlots.chosen[slot.key]}
+				{@const recommended = modelSlots.recommended[slot.key]}
 				<div>
 					<div class="text-sm font-medium text-foreground mb-2">
 						{slot.label}
@@ -213,10 +93,14 @@
 					</div>
 					<UniversalPicker
 						items={optionsFor(slot)}
-						value={slotValues[slot.key]}
-						getKey={(m) => modelId(m) || "__default__"}
-						getValue={(m) => modelId(m)}
-						onSelect={(m) => saveSlot(slot, m)}
+						value={chosen ?? RECOMMENDED}
+						getKey={(m) => m.model_id || "__recommended__"}
+						getValue={(m) => m.model_id}
+						onSelect={(m) =>
+							modelSlots.choose(
+								slot,
+								m.model_id === RECOMMENDED ? null : m.model_id,
+							)}
 						width="w-full"
 						maxHeight="max-h-64"
 						searchable={true}
@@ -226,13 +110,13 @@
 					>
 						{#snippet trigger(currentModel, disabled, open)}
 							<div
-								class="w-full px-3 py-2 bg-background border border-border rounded-md text-sm flex items-center justify-between hover:border-border-strong transition-colors {pinned
+								class="w-full px-3 py-2 bg-background border border-border rounded-md text-sm flex items-center justify-between hover:border-border-strong transition-colors {chosen
 									? 'text-foreground'
 									: 'text-foreground-muted'}"
 							>
 								<span class="truncate"
 									>{currentModel
-										? modelName(currentModel)
+										? currentModel.display_name
 										: "Select model..."}</span
 								>
 								<svg
@@ -253,17 +137,17 @@
 							</div>
 						{/snippet}
 						{#snippet item(model, isSelected)}
-							{@const isDefaultRow = modelId(model) === DEFAULT}
+							{@const isRecommendedRow = model.model_id === RECOMMENDED}
 							<div
-								class="px-3 py-2 flex items-center justify-between gap-2 {isDefaultRow
+								class="px-3 py-2 flex items-center justify-between gap-2 {isRecommendedRow
 									? 'border-b border-border'
 									: ''}"
 							>
 								<span
-									class="text-sm truncate min-w-0 {isDefaultRow
+									class="text-sm truncate min-w-0 {isRecommendedRow
 										? 'text-foreground-muted'
 										: 'text-foreground'}"
-									>{modelName(model)}{#if model.provider && !isDefaultRow}<span
+									>{model.display_name}{#if model.provider && !isRecommendedRow}<span
 											class="text-foreground-subtle"
 										>
 											· {model.provider}</span
@@ -287,25 +171,33 @@
 							</div>
 						{/snippet}
 					</UniversalPicker>
+					{#if chosen}
+						<div class="mt-1.5 flex items-center gap-2 flex-wrap text-xs text-foreground-subtle">
+							<span>
+								{#if recommended && recommended === chosen}
+									Your choice, same as recommended. It stays if the recommendation changes.
+								{:else if recommended}
+									Your choice. Recommended: {modelSlots.nameOf(recommended)}.
+								{:else}
+									Your choice.
+								{/if}
+							</span>
+							<TextAction quiet onclick={() => modelSlots.choose(slot, null)}>
+								Use recommended
+							</TextAction>
+						</div>
+					{/if}
 				</div>
 			{/each}
 		</div>
 		<div class="px-4 pb-4 -mt-1 space-y-1.5">
 			<p class="text-xs text-foreground-subtle">
-				A slot on <span class="text-foreground-muted"
-					>Virtues default</span
-				>
-				follows whatever model we currently recommend, and moves when we move
-				it. Pick a model to pin it. We won't change it.
+				A slot on <span class="text-foreground-muted">Recommended</span>
+				changes when Virtues recommends a different model. Choose a model to
+				keep it until you change it.
 			</p>
-			<TextAction
-				quiet
-				onclick={() =>
-					windowShellStore.navigate("/virtues/models", {
-						label: "Settings",
-					})}
-			>
-				Browse all {models.length} models in the catalog →
+			<TextAction quiet onclick={scrollToCatalog}>
+				Compare all {modelSlots.models.length} models below
 			</TextAction>
 		</div>
 	{/if}

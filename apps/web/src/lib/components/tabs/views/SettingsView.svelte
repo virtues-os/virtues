@@ -11,7 +11,7 @@
 	and nothing nests a tab group inside a tab group.
 
 	  You          /virtues/you            — profile, theme
-	  Assistant    /virtues/assistant      — name, persona, model
+	  Assistant    /virtues/assistant      — name, models (pickers + catalog), style
 	  Billing      /virtues/billing        — subscription, balance, routing, and
 	                                         the AI calls that draw it down
 	  System       /virtues/system         — the machine, measured (read-only)
@@ -48,7 +48,6 @@
 
 	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 	import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
-	import ModelsView from '$lib/components/tabs/views/ModelsView.svelte';
 	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
 	import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
@@ -68,6 +67,9 @@
 		'/virtues/account': '/virtues/you',
 		'/virtues/profile': '/virtues/you',
 		'/virtues/account/assistant': '/virtues/assistant',
+		// Models was its own section until 2026-09-25. The catalog table is the
+		// bottom of Assistant now, under the slot pickers it serves.
+		'/virtues/models': '/virtues/assistant',
 		// Billing and Usage merged into Plan (2026-08-31): one subject seen from
 		// two ends — what you are on, what is left, what drew it down. Both of
 		// their own doors redirect too, because they were live sections with
@@ -159,7 +161,6 @@
 	type Section =
 		| 'you'
 		| 'assistant'
-		| 'models'
 		| 'billing'
 		| 'system'
 		| 'devices'
@@ -168,7 +169,6 @@
 
 	const SECTIONS = [
 		'assistant',
-		'models',
 		'billing',
 		'system',
 		'devices',
@@ -208,8 +208,6 @@
 			<ProfileView {tab} {active} />
 		{:else if section === 'assistant'}
 			<AssistantView {tab} {active} />
-		{:else if section === 'models'}
-			<ModelsView {tab} {active} />
 		{:else if section === 'billing'}
 			<BillingView {tab} {active} />
 		{:else if section === 'system'}

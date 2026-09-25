@@ -84,10 +84,10 @@ export const SETTINGS_MODE: SidebarMode = {
 			icon: 'ri:sparkling-line',
 			href: '/virtues/assistant',
 		},
-		// The full gateway catalog as a table — prices, capabilities, retention.
-		// Assistant keeps the per-slot pickers (the pinning control); this is
-		// the room for comparing ~240 models, which no dropdown can host.
-		{ id: 'models', label: 'Models', icon: 'ri:cpu-line', href: '/virtues/models' },
+		// No Models row. The catalog table lives at the bottom of Assistant,
+		// under the slot pickers it serves (2026-09-25). As its own room it was
+		// a second place holding the same setting, with its own words for it.
+		// `/virtues/models` still opens Assistant, for links already out there.
 		// Billing and Usage were two rows answering one question. The balance
 		// sat on one page and the calls that drew it down on another, so
 		// neither could answer "is that number going where I think it is?" —

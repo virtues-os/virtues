@@ -206,8 +206,11 @@ pub struct ChatRequest {
     /// User's timezone (IANA format, e.g., "America/Los_Angeles")
     #[serde(default)]
     pub timezone: Option<String>,
-    /// AI persona for system prompt customization (per-chat)
+    /// Retired (migration 0035): the prompt reads the owner's style notes from
+    /// the profile, not a per-request persona. Still accepted so a client that
+    /// sends it is not rejected.
     #[serde(default = "default_persona")]
+    #[allow(dead_code)]
     pub persona: String,
     /// Agent mode controlling tool availability (agent, chat, research)
     #[serde(rename = "agentMode", default = "default_agent_mode")]
@@ -1010,16 +1013,15 @@ async fn build_rules(pool: &PgPool) -> String {
 /// Build system prompt with dynamic context and personalization.
 ///
 /// Assembles the block registry in `build_system_prompt_blocks`: base
-/// (identity + persona + narrative identity + tools + mode) → precedence →
+/// (identity + character + style notes + narrative identity + tools + mode) → precedence →
 /// memory → circumstances → coverage → active_project → active_context →
 /// rules; the cache split falls before the first per-turn block..
-/// Loads user name, assistant name, persona, and narrative identity from profiles.
+/// Loads user name, assistant name, style notes, and narrative identity from profiles.
 async fn build_system_prompt(
     pool: &PgPool,
     active_page: Option<&ActivePageContext>,
     timezone: Option<&str>,
     agent_mode: &str,
-    persona_id: &str,
     project_id: Option<&str>,
 ) -> (String, String) {
     use crate::api::assistant_profile::get_assistant_name;
@@ -1071,7 +1073,6 @@ async fn build_system_prompt(
         active_page,
         timezone,
         agent_mode,
-        persona_id,
         project_id,
         &assistant_name,
         &user_name,
@@ -1090,14 +1091,12 @@ async fn build_system_prompt_blocks(
     active_page: Option<&ActivePageContext>,
     timezone: Option<&str>,
     agent_mode: &str,
-    persona_id: &str,
     project_id: Option<&str>,
     assistant_name: &str,
     user_name: &str,
 ) -> (String, String, Vec<crate::agent::prompt_blocks::RenderedBlock>) {
     use crate::agent::prompt::build_personalized_prompt;
     use crate::agent::prompt_blocks::{assemble, Author, Block, BlockMeta, Cadence, Mood};
-    use crate::api::personas::get_persona_content;
 
     let blocks: Vec<Block<'_>> = vec![
         // The fused head: base identity + persona + narrative identity + tool
@@ -1107,13 +1106,22 @@ async fn build_system_prompt_blocks(
         Block {
             meta: BlockMeta { tag: "base", author: Author::System, mood: Mood::Declarative, rung: 40, cadence: Cadence::Slow },
             body: Box::pin(async move {
-                let persona_content = get_persona_content(pool, persona_id).await.ok().flatten();
+                // The owner's style notes, beneath the character. A failed read
+                // is logged and the turn goes on without them: the character
+                // alone is the product's voice, and a chat must not fail over
+                // a paragraph of preferences.
+                let style_notes = match crate::api::assistant_profile::get_assistant_profile(pool).await {
+                    Ok(profile) => profile.style_notes,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "style notes unavailable; prompt carries the character alone");
+                        None
+                    }
+                };
                 let narrative_identity = build_narrative_identity(pool).await;
                 Some(build_personalized_prompt(
                     assistant_name,
                     user_name,
-                    persona_id,
-                    persona_content.as_deref(),
+                    style_notes.as_deref(),
                     agent_mode,
                     &narrative_identity,
                 ))
@@ -1288,7 +1296,7 @@ fn build_active_page_block(active_page: Option<&ActivePageContext>) -> Option<St
 #[cfg(test)]
 pub(crate) async fn build_system_prompt_for_audit(pool: &PgPool) -> String {
     let (stable, volatile) =
-        build_system_prompt(pool, None, Some("America/Chicago"), "default", "default", None).await;
+        build_system_prompt(pool, None, Some("America/Chicago"), "default", None).await;
     format!("{stable}{volatile}")
 }
 
@@ -1946,7 +1954,7 @@ async fn chat_handler_inner(
     // gets the marker, `system_tail` is the per-turn tail (the open page's live
     // text, and the rules that deliberately sit behind it) which must stay
     // OUTSIDE the cached block or it invalidates the prefix on every keystroke.
-    let (mut system_prompt, system_tail) = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, effective_project_id.as_deref()).await;
+    let (mut system_prompt, system_tail) = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, effective_project_id.as_deref()).await;
     // Scoped (grounded) chat: retrieval is hard-filtered to the project's
     // items (ScopeMode::Exclusive in ToolContext); this line sets the matching
     // answer contract. Only meaningful inside a project.
@@ -3017,7 +3025,7 @@ mod tests {
     #[sqlx::test]
     async fn a_skill_rides_in_the_tail_and_chat_carries_none(pool: PgPool) {
         let (stable, volatile, rendered) = build_system_prompt_blocks(
-            &pool, None, Some("America/Chicago"), "council", "default", None, "Ari", "Adam",
+            &pool, None, Some("America/Chicago"), "council", None, "Ari", "Adam",
         )
         .await;
         assert!(rendered.iter().any(|r| r.tag == "skill"), "council renders its skill block");
@@ -3027,7 +3035,7 @@ mod tests {
         assert!(!stable.contains("<page_tools>"), "council has no page tools, so no page guidance");
 
         let (stable, volatile, rendered) = build_system_prompt_blocks(
-            &pool, None, Some("America/Chicago"), "chat", "default", None, "Ari", "Adam",
+            &pool, None, Some("America/Chicago"), "chat", None, "Ari", "Adam",
         )
         .await;
         assert!(!rendered.iter().any(|r| r.tag == "skill"));
@@ -3042,7 +3050,7 @@ mod tests {
             .await
             .unwrap();
         let (stable, volatile, rendered) = build_system_prompt_blocks(
-            &pool, None, Some("America/Chicago"), "default", "default", None, "Ari",
+            &pool, None, Some("America/Chicago"), "default", None, "Ari",
             "Adam",
         )
         .await;
@@ -3199,7 +3207,6 @@ mod live_prompt_audit {
                 &pool,
                 None,
                 Some("America/Chicago"),
-                "default",
                 "default",
                 nb,
             )

@@ -48,8 +48,27 @@ pub struct UpdateAssistantProfileRequest {
     pub image_model_id: Option<Option<String>>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
-    /// AI persona/tone: capable_warm, professional, casual, adaptive
+    /// Retired: the prompt no longer reads it (migration 0035). Still accepted
+    /// so an older client's save does not fail.
     pub persona: Option<String>,
+    /// The owner's notes on how to be spoken to. An empty or all-whitespace
+    /// value clears them (stored as NULL); see `normalize_style_notes`.
+    pub style_notes: Option<String>,
+}
+
+/// Longest the style notes may be, in characters. They ride in every chat's
+/// system prompt, so they are a paragraph, not a document.
+pub const STYLE_NOTES_MAX_CHARS: usize = 1_000;
+
+/// Trim, clear on empty, and cap at `STYLE_NOTES_MAX_CHARS` on a char
+/// boundary. The UI enforces the cap too; this is the one a direct API call
+/// meets.
+pub fn normalize_style_notes(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.chars().take(STYLE_NOTES_MAX_CHARS).collect())
 }
 
 /// Get the assistant profile (singleton row)
@@ -104,6 +123,7 @@ pub async fn update_assistant_profile(
     add_field!(request.enabled_tools, "enabled_tools");
     add_field!(request.ui_preferences, "ui_preferences");
     add_field!(request.persona, "persona");
+    add_field!(request.style_notes, "style_notes");
 
     if set_clauses.is_empty() {
         // No updates requested, just return current profile
@@ -148,6 +168,9 @@ pub async fn update_assistant_profile(
     }
     if let Some(v) = &request.persona {
         q = q.bind(v);
+    }
+    if let Some(v) = &request.style_notes {
+        q = q.bind(normalize_style_notes(v));
     }
     q = q.bind(profile_id);
 
@@ -234,6 +257,16 @@ pub async fn get_persona(db: &PgPool) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Blank clears; anything else is trimmed and capped on a char boundary.
+    #[test]
+    fn style_notes_are_trimmed_cleared_and_capped() {
+        assert_eq!(normalize_style_notes("   \n "), None);
+        assert_eq!(normalize_style_notes("  Short answers.  ").as_deref(), Some("Short answers."));
+        let long = "é".repeat(STYLE_NOTES_MAX_CHARS + 50);
+        let capped = normalize_style_notes(&long).unwrap();
+        assert_eq!(capped.chars().count(), STYLE_NOTES_MAX_CHARS);
+    }
 
     /// The three states a slot field must be able to express. Collapsing any two
     /// of them breaks something: fold null into absent and a pinned slot can

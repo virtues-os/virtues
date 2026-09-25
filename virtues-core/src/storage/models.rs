@@ -96,11 +96,17 @@ pub struct AssistantProfile {
     pub image_model_id: Option<String>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
-    /// AI persona/tone: selected persona ID
+    /// Retired persona id. Unread by the prompt since migration 0035; kept a
+    /// release so an older client that still writes it does not fail.
     pub persona: Option<String>,
-    /// JSON blob storing persona definitions: { "items": [...], "hidden": [...] }
-    /// Column is `jsonb` (migration 0003) — bind as `serde_json::Value`, not String.
+    /// Retired persona definitions: { "items": [...], "hidden": [...] }.
+    /// Unread by the prompt since migration 0035, same reason as `persona`.
+    /// Column is `jsonb` — bind as `serde_json::Value`, not String.
     pub personas: Option<serde_json::Value>,
+    /// How the owner wants to be spoken to, in their own words. Added beneath
+    /// the assistant's character in the prompt, never in place of it.
+    /// NULL = no notes. Migration 0035.
+    pub style_notes: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
