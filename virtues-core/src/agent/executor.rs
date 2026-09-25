@@ -112,11 +112,12 @@ impl ToolExecutionResult {
 
 /// How much of one tool's output the turn that called it gets to read.
 ///
-/// The turn after it replays at most 32 KiB (`compaction::MAX_REPLAYED_TOOL_BYTES`),
-/// but the calling turn saw everything, and measured on a real box the
-/// ninetieth-percentile result was 94 KB — a `semantic_search` with fifty
-/// previews, a page, a web result set — with nothing capping it but
-/// `sql_query`'s own 256 KiB. Ninety-six KiB is about 24k tokens, where the
+/// The next turn replays at most 32 KiB (`compaction::MAX_REPLAYED_TOOL_BYTES`)
+/// and every turn after that 2 KiB, but the calling turn saw everything, and
+/// measured on a real box the ninetieth-percentile result was 94 KB — a
+/// `semantic_search` with fifty previews, a page, a web result set — with
+/// nothing capping it but `sql_query`'s own limit (then 256 KiB, now 64 KiB).
+/// Ninety-six KiB is about 24k tokens, where the
 /// coding harnesses converge (Claude Code truncates tool output at 25k
 /// tokens). Past it the model is told how much it did not see and what to do
 /// about it, which is the difference between a cap and a silent loss.

@@ -2,9 +2,10 @@
 	import type { Tab } from '$lib/tabs/types';
 	import { Page } from '$lib';
 	import ModelSettings from '$lib/components/ModelSettings.svelte';
-	import PersonaSettings from '$lib/components/PersonaSettings.svelte';
+	import StyleNotesSettings from '$lib/components/StyleNotesSettings.svelte';
 	import AssistantNameSettings from '$lib/components/AssistantNameSettings.svelte';
 	import MemorySettings from '$lib/components/MemorySettings.svelte';
+	import ModelCatalog from '$lib/components/ModelCatalog.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 </script>
@@ -19,7 +20,10 @@
 	<div class="space-y-6">
 		<AssistantNameSettings />
 		<ModelSettings />
-		<PersonaSettings />
+		<StyleNotesSettings />
 		<MemorySettings />
+		<!-- Last: it is the long one. The pickers in ModelSettings are the
+		     summary; this is where the models get compared. -->
+		<ModelCatalog />
 	</div>
 </Page>

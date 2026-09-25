@@ -67,10 +67,72 @@
 		// door, not the outline-house-in-a-circle every icon set ships. It is
 		// the one glyph whose room is a PLACE rather than a kind of thing,
 		// which is why it gets the most literal drawing in the set.
+		// Setup: a flag on its pole — a place you set out from.
+		setup: '<path d="M4.2 13.8V2.6"/><path d="M4.2 3.1h7.9l-1.9 2.6 1.9 2.6H4.2"/>',
 		home:
 			'<path d="M2.8 7.4 8 3.1l5.2 4.3"/><path d="M4.2 8.5v4.4h7.6V8.5"/><path d="M6.7 12.9V9.8h2.6v3.1"/>',
 		settings:
 			'<circle cx="8" cy="8" r="5.2"/><path d="M8 2.8v2.7"/><circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none"/>',
+
+		// ── Settings' own rows ─────────────────────────────────────────────
+		// Drawn objects under the dial, for the same reason the wiki's rows
+		// are: a panel of Remix glyphs under an Atlas rail tile is two icon
+		// languages in one column.
+		// Profile: an ID card, a portrait and two lines. Not a bust: `identity`
+		// is the bust, and it means the wiki's You, which is not this page.
+		profile:
+			'<rect x="2.3" y="3.6" width="11.4" height="8.8" rx="1.2"/><circle cx="6" cy="7.2" r="1.4"/><path d="M3.9 10.6a2.2 2.2 0 0 1 4.2 0"/><path d="M9.4 6.8h2.6M9.4 9.2h2.6"/>',
+		// Assistant: a quill. The assistant writes to you; the applets'
+		// sparkle already means "made by a model" elsewhere.
+		assistant:
+			'<path d="M12.9 3.1C8.8 3.4 5.6 6.4 4.6 11"/><path d="M12.9 3.1c-.3 3.5-2.8 6.2-6.6 7"/><path d="M4.6 11 3.3 13.4"/>',
+		// Billing: a coin, rim and face.
+		billing:
+			'<circle cx="8" cy="8" r="5.3"/><circle cx="8" cy="8" r="3.3"/><path d="M8 6.5v3"/>',
+		// System: the server, two bays and their status lights.
+		system:
+			'<rect x="2.8" y="3" width="10.4" height="4.3" rx="1"/><rect x="2.8" y="8.7" width="10.4" height="4.3" rx="1"/><circle cx="5.2" cy="5.15" r="0.6" fill="currentColor" stroke="none"/><circle cx="5.2" cy="10.85" r="0.6" fill="currentColor" stroke="none"/>',
+		// Devices: a laptop with a phone beside it. `device` (the phone alone)
+		// is the drawer's "This device" door, one device; this page is all of
+		// them.
+		devices:
+			'<rect x="2" y="3.6" width="8.4" height="6" rx="0.9"/><path d="M1.2 11.8h9.8"/><rect x="11.4" y="6" width="3.4" height="6.8" rx="0.8"/>',
+		// Display: a monitor on its stand, the panel on the server.
+		display:
+			'<rect x="2.2" y="2.8" width="11.6" height="7.6" rx="1"/><path d="M8 10.4v2.5M5.4 13.1h5.2"/>',
+
+		// ── Developer's own rows ───────────────────────────────────────────
+		// SQL: a table, a header row and a key column. Not the stacked-cylinder
+		// database, which `sources` already declined to be.
+		sql: '<rect x="2.5" y="3" width="11" height="10" rx="1.2"/><path d="M2.5 6.4h11M2.5 9.7h11M6.3 6.4v6.6"/>',
+		// Terminal: a window with the prompt inside it. The rail's Developer
+		// door is the bare prompt; this is the place you type it.
+		terminal:
+			'<rect x="2.2" y="3" width="11.6" height="10" rx="1.2"/><path d="M4.8 6.6l2 1.7-2 1.7"/><path d="M8.4 10.2h2.8"/>',
+		// ── Sources' and Drive's own rows ──────────────────────────────────
+		// Activity reuses `history` and Bookmarks reuses `bookmarks`: same
+		// object, same meaning, so no second drawing of it.
+		// Overview: four tiles of a summary, not a speedometer dashboard.
+		overview:
+			'<rect x="2.5" y="2.5" width="4.8" height="6" rx="1"/><rect x="8.7" y="2.5" width="4.8" height="3.6" rx="1"/><rect x="8.7" y="7.5" width="4.8" height="6" rx="1"/><rect x="2.5" y="10" width="4.8" height="3.5" rx="1"/>',
+		// Catalog: a card-catalog cabinet, two drawers and their pulls. The
+		// library the sidebar is built on keeps its catalog in one of these.
+		catalog:
+			'<rect x="2.5" y="4" width="11" height="8.5" rx="1.2"/><path d="M2.5 8.2h11"/><path d="M6.8 6.1h2.4M6.8 10.4h2.4"/>',
+		// Files: a folder with its tab.
+		files: '<path d="M2.5 4.6a1 1 0 0 1 1-1h3l1.3 1.5h4.7a1 1 0 0 1 1 1v6.4a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>',
+		// Streams: two lines running on, each with somewhere to go. Not the
+		// lake's waves: a stream moves, the lake holds.
+		streams:
+			'<path d="M2.5 5.2h9M2.5 10.8h9"/><path d="M9.6 3.4l1.9 1.8-1.9 1.8M9.6 9l1.9 1.8-1.9 1.8"/>',
+		// App media: a photograph, sun and hills.
+		media:
+			'<rect x="2.3" y="3.3" width="11.4" height="9.4" rx="1.2"/><circle cx="5.8" cy="6.6" r="1.1"/><path d="M2.6 11.6l3.4-3 2.4 2 2.2-1.8 2.8 2.4"/>',
+		// Recently deleted: the bin, lid and body.
+		trash:
+			'<path d="M3 4.6h10M6.3 4.6V3.2h3.4v1.4"/><path d="M4.2 4.6l.7 8.2a1 1 0 0 0 1 .9h4.2a1 1 0 0 0 1-.9l.7-8.2"/>',
+		// Lake: water, three lines of it. The raw archive everything drains to.
+		lake: '<path d="M2.2 6.2c1.2-1 2.4-1 3.6 0s2.4 1 3.6 0 2.4-1 3.6 0"/><path d="M2.2 9.2c1.2-1 2.4-1 3.6 0s2.4 1 3.6 0 2.4-1 3.6 0"/><path d="M3.8 12.2c1-.8 2-.8 3 0s2 .8 3 0"/>',
 
 		// ── The wiki's own rows ────────────────────────────────────────────
 		// Drawn here rather than pulled from Remix for the reason the set

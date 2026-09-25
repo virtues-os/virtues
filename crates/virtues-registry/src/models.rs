@@ -175,7 +175,20 @@ pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
         //                       because it is a smaller model and this slot
         //                       answers the hard turns; revisit if per-user
         //                       cost ever becomes the binding constraint.
-        ModelSlot::Chat => "anthropic/claude-sonnet-5",
+        //
+        // Took the slot from `anthropic/claude-sonnet-5` on 2026-09-25, on
+        // cost. Chat spend is almost all INPUT: a real 26-turn chat on
+        // 2026-09-24 billed 2.0M input tokens against 25k output. The gateway
+        // lists grok-4.7 at $1.20/M input, $3.60/M output and $0.30/M cached,
+        // against Sonnet 5's $2.00 / $10.00 / $0.20. It is `zdr: all` and
+        // `no_training: all`, so the retention reason that moved this slot
+        // off grok-4.5 does not apply.
+        //
+        // Known gaps: no `pdf` input modality, so a PDF attachment makes the
+        // composer offer a model that reads PDFs (`modelChoice.svelte.ts`).
+        // Caching is implicit and per server, so it leans on the session
+        // affinity header (`BearerClient::stream_affine`) for its hit rate.
+        ModelSlot::Chat => "spacexai/grok-4.7",
         // Also off grok-4.5 (`zdr: none`), and onto a model that is both
         // cheaper and cleaner here. Benched 2026-08-27 by EXECUTING what each
         // model wrote against six cases rather than reading it:

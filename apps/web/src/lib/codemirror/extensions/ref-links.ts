@@ -26,6 +26,7 @@ import { dragJustEnded, isMouseSelecting } from './mouse-freeze';
 import { getEntityTypeFromRoute } from '$lib/utils/refRoutes';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import RefPreview from '$lib/components/RefPreview.svelte';
+import './ref-links.css';
 
 // =============================================================================
 // URL Classification

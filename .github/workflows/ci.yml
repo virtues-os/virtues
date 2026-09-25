@@ -27,7 +27,11 @@ on:
       - "**/*.md"
       - ".github/images/**"
       - LICENSE
+  # Only PRs toward a release branch. A contributor's `feat/*` PR into `wave`
+  # gets wave.yml's lean gate instead; this full gate still runs on that work
+  # when `wave` itself goes to `staging`.
   pull_request:
+    branches: [main, staging]
     paths-ignore:
       - "docs/**"
       - "**/*.md"
@@ -330,7 +334,8 @@ jobs:
       # bricked every upgrade. New files are welcome; .sql.pending
       # placeholders may be consumed; everything else is append-only. A
       # deliberate squash is the one exception, and it edits this step
-      # knowingly.
+      # knowingly. wave.yml carries a copy for PRs into `wave` — keep them in
+      # sync.
       - name: Applied migrations are append-only
         if: github.event_name == 'pull_request'
         run: |

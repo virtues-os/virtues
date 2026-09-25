@@ -646,7 +646,18 @@ pub fn build_context_for_llm(
     // window.
     let recent_messages = &messages[effective_start_index.min(messages.len())..];
 
-    for msg in recent_messages {
+    // The last reply is the one a follow-up usually asks about, so its tool
+    // results replay generously. Every earlier turn's replay small: that turn
+    // already wrote what it found into its answer. See
+    // `OLDER_REPLAYED_TOOL_BYTES`.
+    let last_reply = recent_messages.iter().rposition(|m| m.role == "assistant");
+
+    for (index, msg) in recent_messages.iter().enumerate() {
+        let replay_cap = if Some(index) == last_reply {
+            MAX_REPLAYED_TOOL_BYTES
+        } else {
+            OLDER_REPLAYED_TOOL_BYTES
+        };
         // Skip checkpoint messages - they're metadata, not conversation
         if msg.role == "checkpoint" {
             continue;
@@ -720,7 +731,7 @@ pub fn build_context_for_llm(
                             (None, Some(res)) => res.to_string(),
                             (None, None) => "the tool did not finish".to_string(),
                         };
-                        let content = clip_replayed_output(content);
+                        let content = clip_replayed_output(content, replay_cap);
                         tool_results.push(serde_json::json!({
                             "role": "tool",
                             "tool_call_id": tool_call_id,
@@ -851,12 +862,26 @@ pub fn build_context_for_llm(
 /// turn needs to know what was found, and can call again.
 const MAX_REPLAYED_TOOL_BYTES: usize = 32 * 1024;
 
-fn clip_replayed_output(content: String) -> String {
-    if content.len() <= MAX_REPLAYED_TOOL_BYTES {
+/// How much of one tool's output replays once a newer reply exists.
+///
+/// Measured on a real box on 2026-09-24: one research turn ran 14 tool calls
+/// returning 170 KB. At the 32 KiB clip every later call re-sent about 48k
+/// tokens of it. That chat's next 20 or so model calls cost roughly half its
+/// $2.71, all to repeat rows the model had already turned into prose. Two KiB
+/// keeps enough to recognize the result; the answer written from it carries
+/// the rest, and the note says how to get the rows back.
+///
+/// Deterministic on purpose. The clipped form is identical on every later
+/// request, so a provider's prefix cache still matches. The one cache miss is
+/// the turn where a result steps down from the last reply's cap to this one.
+const OLDER_REPLAYED_TOOL_BYTES: usize = 2 * 1024;
+
+fn clip_replayed_output(content: String, max: usize) -> String {
+    if content.len() <= max {
         return content;
     }
     // On a char boundary, or `String::truncate` panics on multi-byte text.
-    let mut cut = MAX_REPLAYED_TOOL_BYTES;
+    let mut cut = max;
     while cut > 0 && !content.is_char_boundary(cut) {
         cut -= 1;
     }
@@ -1307,6 +1332,66 @@ mod tests {
         // The unanswered call is still answered, or the request is rejected
         // for the gap.
         assert_eq!(context[2]["tool_call_id"], "call-1");
+    }
+
+    /// The last reply's tool results replay at the generous cap; every earlier
+    /// reply's replay small, and the same way on every request.
+    #[test]
+    fn older_tool_results_replay_small_and_the_last_reply_keeps_its_own() {
+        fn turn(role: &str, text: &str, call: Option<(&str, String)>) -> ChatMessage {
+            let mut parts = vec![UIPart::Text { text: text.to_string() }];
+            if let Some((id, output)) = call {
+                parts.push(UIPart::ToolInvocation {
+                    tool_call_id: id.to_string(),
+                    tool_name: "sql_query".to_string(),
+                    input: serde_json::json!({ "sql": "SELECT 1" }),
+                    state: "output-available".to_string(),
+                    output: Some(serde_json::Value::String(output)),
+                    error_text: None,
+                });
+            }
+            ChatMessage {
+                id: None,
+                role: role.to_string(),
+                content: text.to_string(),
+                timestamp: Timestamp::parse("2024-01-01T00:00:00Z").unwrap(),
+                model: None,
+                provider: None,
+                agent_id: None,
+                tool_calls: None,
+                reasoning: None,
+                intent: None,
+                subject: None,
+                reasoning_details: None,
+                parts: Some(parts),
+            }
+        }
+        let big = "r".repeat(20 * 1024);
+        let messages = vec![
+            turn("user", "look it up", None),
+            turn("assistant", "Found it.", Some(("old", big.clone()))),
+            turn("user", "and the other one", None),
+            turn("assistant", "Found that too.", Some(("new", big.clone()))),
+            turn("user", "thanks", None),
+        ];
+
+        let context = build_context_for_llm(&messages, None, 0, None, None);
+        let result = |id: &str| {
+            context
+                .iter()
+                .find(|m| m["tool_call_id"] == id)
+                .and_then(|m| m["content"].as_str())
+                .expect("the call is answered")
+                .to_string()
+        };
+
+        let old = result("old");
+        assert!(old.len() < 3 * 1024, "an earlier turn replays ~2 KiB, got {}", old.len());
+        assert!(old.contains("call the tool again"), "and says how to get the rest");
+        assert_eq!(result("new"), big, "the last reply's result is under its cap, whole");
+
+        let again = build_context_for_llm(&messages, None, 0, None, None);
+        assert_eq!(context, again, "byte-identical per request, so a prefix cache matches");
     }
 
     /// A turn that said nothing and only called something keeps its calls.
