@@ -118,6 +118,23 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   private let moveThreshold: CLLocationDistance = 60
   private let movingSpeed: CLLocationSpeed = 1.5
 
+  // MARK: - Still check (a floor under the fix cadence)
+  //
+  // Coarse mode's 100 m filter means a phone that sits still records nothing
+  // for hours, and "sitting still" then looks exactly like "collector dead" —
+  // which is how a dead manager went unnoticed for ten days. So the 5-minute
+  // drain timer also asks: no fix logged for `stillCheckAfter`? Then take one
+  // reading at 100 m accuracy (Wi-Fi indoors; its own MetricKit bucket, so
+  // its cost is measured apart from movement GPS) with the filter off, keep
+  // the best fresh fix for up to `stillCheckWindow`, log it flagged `still`,
+  // and restore the mode. Motion logic is skipped for the window: a 100 m fix
+  // against a coarse anchor would read as movement and buy 5 min of GNSS.
+  private var stillCheckStartedAt: Date?
+  private var stillCheckBest: CLLocation?
+  private let stillCheckAfter: TimeInterval = 240
+  private let stillCheckWindow: TimeInterval = 20
+  private let stillCheckGoodEnough: CLLocationAccuracy = 100
+
   /// Guards against overlapping background drains.
   private var isDraining = false
 
@@ -202,7 +219,10 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     let t = DispatchSource.makeTimerSource(queue: drainTimerQueue)
     t.schedule(deadline: .now() + minBgDrainInterval, repeating: minBgDrainInterval,
                leeway: .seconds(60))
-    t.setEventHandler { [weak self] in self?.maybeDrainInBackground() }
+    t.setEventHandler { [weak self] in
+      self?.maybeStillCheck()
+      self?.maybeDrainInBackground()
+    }
     drainTimer = t
     t.resume()
   }
@@ -327,16 +347,24 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
 
   public func locationManager(_ m: CLLocationManager, didUpdateLocations locs: [CLLocation]) {
     guard let l = locs.last else { return }
-    updateMotion(l)  // mode logic sees every callback, before the log throttle
     virtues_audio_location(l.coordinate.latitude, l.coordinate.longitude, l.horizontalAccuracy)
     refreshRegions(around: l)
-    let now = Date()
-    if let last = lastFixAt, now.timeIntervalSince(last) < minFixInterval { return }
-    lastFixAt = now
+    if stillCheckStartedAt != nil {
+      stillCheckSaw(l)
+      return
+    }
+    updateMotion(l)  // mode logic sees every callback, before the log throttle
+    if let last = lastFixAt, Date().timeIntervalSince(last) < minFixInterval { return }
+    record(l, still: false)
+  }
+
+  /// Log one fix locally, enqueue it for the box, and ride its wake.
+  private func record(_ l: CLLocation, still: Bool) {
+    lastFixAt = Date()
     // Local rolling log (device-screen "recent activity" + background badge).
-    write(lat: l.coordinate.latitude, lon: l.coordinate.longitude, source: "update")
+    write(lat: l.coordinate.latitude, lon: l.coordinate.longitude, source: still ? "still" : "update")
     // Durable delivery: full-field record → shared outbox → box.
-    enqueueFix(l)
+    enqueueFix(l, still: still)
     // Piggyback: re-arm audio (no-op unless enabled). Location keeps the app
     // alive and fires here regularly, so this is audio's best shot at recovering
     // the mic in the background after a call/interruption without a foreground.
@@ -344,6 +372,50 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     // If this fix arrived while backgrounded (incl. a cold sig-loc relaunch),
     // drain to the box now — the foreground loop won't run until next launch.
     maybeDrainInBackground()
+  }
+
+  /// Drain-timer tick: start a still check if no fix has been logged lately.
+  private func maybeStillCheck() {
+    if !Thread.isMainThread {
+      DispatchQueue.main.async { [weak self] in self?.maybeStillCheck() }
+      return
+    }
+    guard updating, stillCheckStartedAt == nil else { return }
+    if let last = lastFixAt, Date().timeIntervalSince(last) < stillCheckAfter { return }
+    let started = Date()
+    stillCheckStartedAt = started
+    stillCheckBest = nil
+    // Precise mode already asks for better than 100 m; only loosen the filter.
+    if mode == .coarse { manager.desiredAccuracy = kCLLocationAccuracyHundredMeters }
+    manager.distanceFilter = kCLDistanceFilterNone
+    DispatchQueue.main.asyncAfter(deadline: .now() + stillCheckWindow) { [weak self] in
+      guard let self = self, self.stillCheckStartedAt == started else { return }
+      self.finishStillCheck()
+    }
+  }
+
+  private func stillCheckSaw(_ l: CLLocation) {
+    // A cached fix from before the check proves nothing about now.
+    guard let started = stillCheckStartedAt, l.horizontalAccuracy >= 0,
+      l.timestamp >= started.addingTimeInterval(-1) else { return }
+    if stillCheckBest.map({ l.horizontalAccuracy < $0.horizontalAccuracy }) ?? true {
+      stillCheckBest = l
+    }
+    if l.horizontalAccuracy <= stillCheckGoodEnough { finishStillCheck() }
+  }
+
+  private func finishStillCheck() {
+    guard stillCheckStartedAt != nil else { return }
+    stillCheckStartedAt = nil
+    applySettings(mode)
+    guard let best = stillCheckBest else {
+      // Console only: a marker per miss would, every 5 min, push real fixes
+      // out of the 300-row window the device screen reads.
+      NSLog("[LocationProbe] still check: no fresh fix in %.0fs", stillCheckWindow)
+      return
+    }
+    stillCheckBest = nil
+    record(best, still: true)
   }
 
   /// On a background/sig-loc wake, hold an OS background-task assertion and run
@@ -385,7 +457,10 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   }
 
   /// Build a box-shaped location record and enqueue it into the Rust outbox.
-  private func enqueueFix(_ l: CLLocation) {
+  private func enqueueFix(_ l: CLLocation, still: Bool) {
+    // `still` marks a still-check reading: proof of presence, not movement.
+    var raw: [String: Any] = ["app_state": appStateString()]
+    if still { raw["still"] = true }
     var rec: [String: Any] = [
       "timestamp": isoMillis.string(from: l.timestamp),
       "latitude": l.coordinate.latitude,
@@ -397,7 +472,7 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
       // Provenance: whether this fix was captured while the app was active or
       // running autonomously in the background. The box stores `raw_data` into
       // metadata.ios_raw, so this lands as a queryable signal (no box change).
-      "raw_data": ["app_state": appStateString()],
+      "raw_data": raw,
     ]
     if l.course >= 0 { rec["course"] = l.course }
     if let floor = l.floor { rec["floor_level"] = floor.level }
@@ -441,7 +516,15 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   private func apply(_ new: PowerMode, reason: String) {
     if mode == new { return }
     mode = new
-    switch new {
+    // A still check restores `mode` when it ends; let it, rather than cut it short.
+    if stillCheckStartedAt == nil { applySettings(new) }
+    // Lands in the rolling log → visible under Recent activity, and greppable
+    // in the device console for the battery A/B.
+    writeMarker(source: "mode=\(new == .precise ? "precise" : "coarse") (\(reason))")
+  }
+
+  private func applySettings(_ m: PowerMode) {
+    switch m {
     case .precise:
       manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
       manager.distanceFilter = kCLDistanceFilterNone
@@ -449,9 +532,6 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
       manager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
       manager.distanceFilter = 100
     }
-    // Lands in the rolling log → visible under Recent activity, and greppable
-    // in the device console for the battery A/B.
-    writeMarker(source: "mode=\(new == .precise ? "precise" : "coarse") (\(reason))")
   }
 
   /// Audio plugin push (via C ABI): recording health drives how lazy location
