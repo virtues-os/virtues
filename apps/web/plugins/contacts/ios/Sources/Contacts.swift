@@ -57,7 +57,11 @@ public final class ContactsCollector {
       let keys: [CNKeyDescriptor] = [
         CNContactIdentifierKey as CNKeyDescriptor,
         CNContactGivenNameKey as CNKeyDescriptor,
+        CNContactMiddleNameKey as CNKeyDescriptor,
         CNContactFamilyNameKey as CNKeyDescriptor,
+        CNContactPreviousFamilyNameKey as CNKeyDescriptor,
+        CNContactNicknameKey as CNKeyDescriptor,
+        CNContactRelationsKey as CNKeyDescriptor,
         CNContactOrganizationNameKey as CNKeyDescriptor,
         CNContactPhoneNumbersKey as CNKeyDescriptor,
         CNContactEmailAddressesKey as CNKeyDescriptor,
@@ -86,6 +90,19 @@ public final class ContactsCollector {
       "phones": phones,
       "emails": emails,
     ]
+    if !c.middleName.isEmpty { rec["middleName"] = c.middleName }
+    if !c.previousFamilyName.isEmpty { rec["previousFamilyName"] = c.previousFamilyName }
+    if !c.nickname.isEmpty { rec["nickname"] = c.nickname }
+    // Related names ("partner", "mother") as the owner wrote them on the card.
+    // The box records a relationship only from here or from the owner's own edit.
+    let relations: [[String: String]] = c.contactRelations.compactMap {
+      (rel: CNLabeledValue<CNContactRelation>) -> [String: String]? in
+      let name = rel.value.name.trimmingCharacters(in: CharacterSet.whitespaces)
+      guard !name.isEmpty else { return nil }
+      let label = rel.label.map { CNLabeledValue<CNContactRelation>.localizedString(forLabel: $0) } ?? ""
+      return ["label": label, "name": name]
+    }
+    if !relations.isEmpty { rec["relations"] = relations }
     if !c.organizationName.isEmpty { rec["organizationName"] = c.organizationName }
     if let b = c.birthday, let y = b.year, let m = b.month, let d = b.day {
       rec["birthday"] = String(format: "%04d-%02d-%02d", y, m, d)

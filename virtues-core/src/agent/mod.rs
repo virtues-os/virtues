@@ -191,13 +191,37 @@ impl AgentLoop {
             // `includeThoughts`. The catalog carries the right options per
             // family (`ReasoningFacts::display_options`), and a BYO endpoint,
             // which never sees the gateway's providerOptions, gets none.
-            let display_options: Option<Value> = if crate::api::settings_byo::byo_is_active(&pool).await {
+            //
+            // And ask the gateway to place the cache markers. Our own marker
+            // sits on the system prompt only, so on a model that caches
+            // explicitly (Anthropic) the conversation behind it was re-billed
+            // in full on every step. `caching: auto` adds a marker on the last
+            // message, so each step reads the previous step's prompt from
+            // cache, plus one before the last user message. With ours that is
+            // three of the four a request may carry. On a model that caches
+            // implicitly (xAI, OpenAI, Google) the gateway changes nothing.
+            let byo = crate::api::settings_byo::byo_is_active(&pool).await;
+            let gateway_options: Option<Value> = if byo {
                 None
             } else {
-                crate::api::model_catalog::reasoning_facts(&model)
+                let mut options = crate::api::model_catalog::reasoning_facts(&model)
                     .map(|f| f.display_options)
-                    .filter(|v| v.as_object().is_some_and(|o| !o.is_empty()))
+                    .filter(|v| v.is_object())
+                    .unwrap_or_else(|| serde_json::json!({}));
+                let gateway = options
+                    .as_object_mut()
+                    .expect("filtered to an object above")
+                    .entry("gateway")
+                    .or_insert_with(|| serde_json::json!({}));
+                if let Some(gateway) = gateway.as_object_mut() {
+                    gateway.insert("caching".into(), serde_json::json!("auto"));
+                }
+                Some(options)
             };
+            // Which conversation this call belongs to, so the provider can send
+            // it to the server that already holds its cache. The proxy hashes
+            // it before it leaves; see `BearerClient::stream_affine`.
+            let session_affinity = context.chat_id.clone();
 
             // Emit loop started
             yield AgentEvent::LoopStarted {
@@ -253,7 +277,8 @@ impl AgentLoop {
 
                 tracing::info!(step, "Agent loop step");
 
-                let provider_options = display_options.clone();
+                let provider_options = gateway_options.clone();
+                let affinity = session_affinity.clone();
 
                 // Stream events through a channel for incremental delivery.
                 // Previously events were collected into a Vec and yielded in a
@@ -281,6 +306,7 @@ impl AgentLoop {
                         // now the box says it, and the proxy default can go.
                         Some(0.7),
                         None, // agent loop: no fixed output cap
+                        affinity.as_deref(),
                         |event| {
                             let _ = ev_tx.send(event);
                         },
@@ -354,6 +380,24 @@ impl AgentLoop {
 
                 if let Some(cost) = result.usage.as_ref().and_then(|u| u.cost_micros) {
                     spent_micros += cost;
+                }
+
+                // One line per model call. The usage table sums a chat's calls
+                // into one row, which could show that a chat cost $2.71 but
+                // not which call did. Counts and ids only, never content.
+                if let Some(usage) = result.usage.as_ref() {
+                    tracing::info!(
+                        step,
+                        model = %model,
+                        chat_id = context.chat_id.as_deref().unwrap_or(""),
+                        prompt_tokens = usage.prompt_tokens,
+                        cache_read_tokens = usage.cache_read_tokens.unwrap_or(0),
+                        completion_tokens = usage.completion_tokens,
+                        reasoning_tokens = usage.reasoning_tokens.unwrap_or(0),
+                        cost_micros = usage.cost_micros.unwrap_or(0),
+                        tool_calls = result.tool_calls.len(),
+                        "model call usage"
+                    );
                 }
 
                 // The step's reasoning blocks, for the row and for the echo

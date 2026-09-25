@@ -144,6 +144,35 @@ see above), not from `main` — the tag stays correct after `main` moves. Merge 
 `main` and `staging`. This is the one case that leaves `wave`, and it needs the
 human.
 
+### Contributors in their own clone
+
+Everything above is about the shared checkout. A contributor working in their
+own clone on their own machine has none of those hazards, so they use ordinary
+branches:
+
+```
+main ← staging ← wave ← feat/<thing>
+```
+
+- Branch from `wave` as `feat/<thing>`; PR back into `wave`, never straight to
+  `staging`. Merging is the review gate — unfinished work stays on the branch,
+  so nothing needs a feature flag to stay out of a prerelease.
+- Never push to `wave` directly. The PR is the only way in.
+- Stay current with `git merge origin/wave`. The branch is yours; rebase it if
+  you prefer, but never force-push anything shared.
+- A PR into `wave` gets the lean gate (`wave.yml`: compile + lint). The full
+  gate — tests, Postgres, the migration append-only check — runs when `wave`
+  goes to `staging`, so run `cargo test -p virtues --lib` locally before asking
+  for review.
+- **Migrations:** a number is claimed on `wave`, not in your branch —
+  `make migration` in your own clone commits a claim nobody else can see. Ask
+  for one before writing SQL (the claim is made in the shared checkout and
+  pushed), then `git merge origin/wave` to pick up the `.sql.pending`
+  placeholder and write into it. Two branches that each invent `0035` cannot
+  both merge.
+- "Never commit anything from a real life", "Where writing goes", and every
+  loaded rule in `.claude/rules/` apply unchanged.
+
 > **Naming:** `edge` is a release-channel identifier (a git *tag*, and an alias
 > users type for the prerelease channel — see `cli/channel.rs`). Never name a
 > branch `edge`; the tag/branch ambiguity breaks ref resolution.

@@ -8,7 +8,7 @@
 /// Placeholders:
 /// - {assistant_name}: The assistant's name (e.g., "Ari")
 /// - {user_name}: The user's preferred name (e.g., "Adam")
-/// - {persona_guidelines}: Persona-specific behavior guidelines
+/// - {persona_guidelines}: The character, then the owner's style notes
 ///
 /// The computed blocks (memory, circumstances, coverage, the open project and
 /// page, rules) are assembled around this by build_system_prompt_blocks() in chat.rs.
@@ -358,82 +358,49 @@ pub fn build_getting_started_prompt(assistant_name: &str, user_name: &str, state
     out
 }
 
-/// Get persona-specific guidelines.
+/// The assistant's character: the lines every chat carries.
 ///
-/// If custom_content is provided (from database), uses that with {user_name} placeholder replaced.
-/// Otherwise falls back to hardcoded defaults for known persona IDs.
+/// A perceptive friend who has read the record and refuses to flatter. This
+/// character line lives HERE and nowhere else — agents/build/voice.md used to
+/// claim it as a house voice for every surface, and that claim was cut
+/// 2026-09-21; the assistant is a named character, not the product speaking.
 ///
-/// Persona archetypes:
-/// - standard: Neutral, no personality
-/// - concierge: Anticipatory service
-/// - analyst: Structured thinking
-/// - coach: Growth-focused teaching
-pub fn get_persona_guidelines(persona: &str, user_name: &str, custom_content: Option<&str>) -> String {
-    // If custom content is provided, use it (replace placeholder)
-    if let Some(content) = custom_content {
-        return content.replace("{user_name}", user_name);
-    }
-
-    // Fallback to hardcoded defaults for known personas
-    match persona {
-        "standard" => format!(
-            r#"- Respond helpfully and accurately to {}
-- Match the complexity of your response to the question
-- Be direct and get to the point
-- No particular personality - just competent assistance"#,
-            user_name
-        ),
-
-        "concierge" => format!(
-            r#"- Anticipate what {} might need next, and say so plainly
-- A perceptive friend who has read the record and refuses to flatter
-- Precise over warm; honest over cheerleading
-- Handle requests gracefully, without ceremony"#,
-            user_name
-        ),
-
-        "analyst" => format!(
-            r#"- Break down complex topics systematically for {}
-- Present information in structured, organized formats
-- Consider multiple angles before reaching conclusions
-- Back up observations with reasoning
-- Think of yourself as a thorough research analyst"#,
-            user_name
-        ),
-
-        "coach" => format!(
-            r#"- Help {} think through problems, not just solve them
-- Ask clarifying questions to understand the real goal
-- Name progress when the record shows it; never perform enthusiasm
-- Explain the "why" behind suggestions"#,
-            user_name
-        ),
-
-        // The default persona: a perceptive friend who has read the record
-        // and refuses to flatter. This character line lives HERE and nowhere
-        // else — agents/build/voice.md used to claim it as a house voice for
-        // every surface, and that claim was cut 2026-09-21; the assistant is
-        // a named character, not the product speaking. The old default was a
-        // hotel concierge, the exact borrowed frame the founder's letter
-        // exists to refute.
-        "default" | "capable_warm" => format!(
-            r#"- A perceptive friend who has read the record and refuses to flatter {}
+/// There is one character. Until migration 0035 the owner picked one of four
+/// stored personas (Standard, Concierge, Analyst, Coach) or wrote their own,
+/// and the pick REPLACED these lines. This character was not one of the four,
+/// so choosing anything switched it off, and Standard swapped it for "no
+/// particular personality", which a real box was running. What the owner wants
+/// changed now goes in their style notes, beneath these lines
+/// (`style_notes_block`).
+pub fn character_guidelines(user_name: &str) -> String {
+    format!(
+        r#"- A perceptive friend who has read the record and refuses to flatter {}
 - Precise over warm; honest over cheerleading; literary by restraint
 - Anticipate what they might need next, and say so plainly
 - Show the evidence, don't assert the virtue
 - No performed enthusiasm, no ceremony"#,
-            user_name
-        ),
+        user_name
+    )
+}
 
-        // Default fallback - use standard (neutral) persona
-        _ => format!(
-            r#"- Respond helpfully and accurately to {}
-- Match the complexity of your response to the question
-- Be direct and get to the point
-- No particular personality - just competent assistance"#,
-            user_name
-        ),
-    }
+/// The owner's style notes, beneath the character. Empty when there are none,
+/// so a box without notes carries no empty tag.
+///
+/// The notes win where they and the character disagree about manner. The
+/// assistant is theirs, and a note that loses to the lines above it is a
+/// setting that does nothing. They govern how things are said, not what is
+/// true: the record and the rules about citing it are untouched.
+///
+/// Notes carried over from a retired persona may hold `{user_name}`; it is
+/// substituted here, because the base template's pass has already run.
+pub fn style_notes_block(style_notes: Option<&str>, user_name: &str) -> String {
+    let Some(notes) = style_notes.map(str::trim).filter(|n| !n.is_empty()) else {
+        return String::new();
+    };
+    format!(
+        "\n\n{user_name}'s own notes on how they like to be spoken to. Where these and the lines above disagree about manner, these win. They change how you say things, never what is true.\n<style_notes>\n{}\n</style_notes>",
+        notes.replace("{user_name}", user_name)
+    )
 }
 
 /// Build the full personalized system prompt.
@@ -444,19 +411,21 @@ pub fn get_persona_guidelines(persona: &str, user_name: &str, custom_content: Op
 /// # Arguments
 /// * `assistant_name` - The assistant's name (e.g., "Ari")
 /// * `user_name` - The user's preferred name
-/// * `persona_id` - The persona identifier
-/// * `persona_content` - Optional custom persona content from database
+/// * `style_notes` - The owner's notes on how to be spoken to (None if unset)
 /// * `agent_mode` - Agent mode controlling tool availability
 /// * `narrative_identity` - User's narrative identity content (empty string if none set)
 pub fn build_personalized_prompt(
     assistant_name: &str,
     user_name: &str,
-    persona_id: &str,
-    persona_content: Option<&str>,
+    style_notes: Option<&str>,
     agent_mode: &str,
     narrative_identity: &str,
 ) -> String {
-    let guidelines = get_persona_guidelines(persona_id, user_name, persona_content);
+    let guidelines = format!(
+        "{}{}",
+        character_guidelines(user_name),
+        style_notes_block(style_notes, user_name)
+    );
 
     let mut prompt = BASE_SYSTEM_PROMPT
         .replace("{assistant_name}", assistant_name)
@@ -512,10 +481,10 @@ mod tests {
 
     #[test]
     fn test_build_personalized_prompt_agent_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "agent", "");
+        let prompt = build_personalized_prompt("Ari", "Adam", None, "agent", "");
 
         assert!(prompt.contains("You are Ari. You live on Adam's own server"));
-        assert!(prompt.contains("Respond helpfully and accurately to Adam"));
+        assert!(prompt.contains("refuses to flatter Adam"));
         // No narrative identity written, so no block about reading one.
         assert!(!prompt.contains("<narrative_identity>"));
         // Agent mode should include tool usage
@@ -528,17 +497,17 @@ mod tests {
 
     #[test]
     fn test_build_personalized_prompt_sudo_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "sudo", "");
+        let prompt = build_personalized_prompt("Ari", "Adam", None, "sudo", "");
         assert!(prompt.contains("<mode>sudo</mode>"));
         assert!(!prompt.contains("<mode>chat</mode>"));
         assert!(prompt.contains("<sudo>"));
-        let chat = build_personalized_prompt("Ari", "Adam", "standard", None, "chat", "");
+        let chat = build_personalized_prompt("Ari", "Adam", None, "chat", "");
         assert!(!chat.contains("<sudo>"));
     }
 
     #[test]
     fn test_build_personalized_prompt_deep_research_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "deep_research", "");
+        let prompt = build_personalized_prompt("Ari", "Adam", None, "deep_research", "");
 
         assert!(prompt.contains("<tool_usage>"));
         // Deep research mode should include research guidance (thorough exploration)
@@ -548,7 +517,7 @@ mod tests {
 
     #[test]
     fn test_build_personalized_prompt_chat_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "chat", "");
+        let prompt = build_personalized_prompt("Ari", "Adam", None, "chat", "");
 
         assert!(prompt.contains("You are Ari. You live on Adam's own server"));
         // Chat is now the smart default with tools, so tool usage IS included
@@ -561,51 +530,46 @@ mod tests {
     /// Council has no page tools, so it must not be told to reach for them.
     #[test]
     fn page_guidance_rides_with_the_modes_that_have_page_tools() {
-        let council = build_personalized_prompt("Ari", "Adam", "standard", None, "council", "");
+        let council = build_personalized_prompt("Ari", "Adam", None, "council", "");
         assert!(!council.contains("get_page_content"));
         assert!(!council.contains("edit_page"));
 
-        let chat = build_personalized_prompt("Ari", "Adam", "standard", None, "chat", "");
+        let chat = build_personalized_prompt("Ari", "Adam", None, "chat", "");
         assert!(chat.contains("get_page_content"));
     }
 
+    /// The character is always there. It used to be one of five choices, and
+    /// the one a real box had picked was "no particular personality".
     #[test]
-    fn test_persona_guidelines_analyst() {
-        let guidelines = get_persona_guidelines("analyst", "Sarah", None);
+    fn the_character_is_always_present() {
+        let prompt = build_personalized_prompt("Ari", "Sarah", None, "chat", "");
+        assert!(prompt.contains("refuses to flatter Sarah"));
+        assert!(!prompt.contains("No particular personality"));
+        assert!(!prompt.contains("<style_notes>"), "no notes, no empty tag");
+    }
 
-        assert!(guidelines.contains("Break down complex topics systematically"));
-        assert!(guidelines.contains("Sarah"));
+    /// Notes sit beneath the character, not in place of it, and win on manner.
+    #[test]
+    fn style_notes_ride_beneath_the_character() {
+        let notes = "  Talk to {user_name} like a coach. Short sentences.  ";
+        let prompt = build_personalized_prompt("Ari", "Alice", Some(notes), "chat", "");
+        let character = prompt.find("refuses to flatter Alice").expect("character kept");
+        let block = prompt.find("<style_notes>").expect("notes present");
+        assert!(character < block, "notes come after the character");
+        assert!(prompt.contains("Talk to Alice like a coach. Short sentences.\n</style_notes>"));
+        assert!(prompt.contains("these win"));
     }
 
     #[test]
-    fn test_unknown_persona_defaults_to_standard() {
-        let guidelines = get_persona_guidelines("unknown_persona", "Test", None);
-
-        assert!(guidelines.contains("Respond helpfully and accurately"));
-    }
-
-    #[test]
-    fn test_custom_persona_content() {
-        let custom = "- Be friendly to {user_name}\n- Help them learn";
-        let guidelines = get_persona_guidelines("any_id", "Alice", Some(custom));
-
-        assert!(guidelines.contains("Be friendly to Alice"));
-        assert!(guidelines.contains("Help them learn"));
-    }
-
-    #[test]
-    fn test_build_prompt_with_custom_content() {
-        let custom = "- Custom guideline for {user_name}";
-        let prompt = build_personalized_prompt("Ari", "Bob", "custom_persona", Some(custom), "agent", "");
-
-        assert!(prompt.contains("Custom guideline for Bob"));
-        assert!(prompt.contains("You are Ari. You live on Bob's own server"));
+    fn blank_style_notes_are_no_notes() {
+        let prompt = build_personalized_prompt("Ari", "Bob", Some("   \n "), "chat", "");
+        assert!(!prompt.contains("<style_notes>"));
     }
 
     #[test]
     fn test_narrative_identity_section_with_data() {
         let prompt = build_personalized_prompt(
-            "Ari", "Adam", "standard", None, "agent",
+            "Ari", "Adam", None, "agent",
             "I am a builder and teacher. I care about craft, clarity, and helping others grow.",
         );
 
@@ -625,12 +589,12 @@ mod tests {
     /// empty. This is the default state of every new box.
     #[test]
     fn the_identity_block_is_absent_when_nothing_is_written() {
-        let empty = build_personalized_prompt("Ari", "Adam", "standard", None, "agent", "");
+        let empty = build_personalized_prompt("Ari", "Adam", None, "agent", "");
         assert!(!empty.contains("<narrative_identity>"));
         assert!(!empty.contains("Do not manufacture connections"));
 
         let written =
-            build_personalized_prompt("Ari", "Adam", "standard", None, "agent", "I am a builder.");
+            build_personalized_prompt("Ari", "Adam", None, "agent", "I am a builder.");
         assert!(written.contains("<narrative_identity>"));
         assert!(written.contains("Do not manufacture connections"));
         assert!(written.contains("Never lecture, nudge, or coach unless asked"));

@@ -163,6 +163,14 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
     for f in &m.extra_files {
         report(std::fs::remove_file(f).is_ok(), &format!("removed {f}"));
     }
+    // Not in `extra_files`: boxes installed before it existed get it from an
+    // upgrade's repair pass, which doesn't rewrite the manifest. Removing it
+    // hands the watchdog back to the OS default (off) at the reload below.
+    let watchdog = crate::cli::system_repairs::WATCHDOG_DROPIN;
+    let had_watchdog = std::path::Path::new(watchdog).exists();
+    if had_watchdog {
+        report(std::fs::remove_file(watchdog).is_ok(), &format!("removed {watchdog}"));
+    }
     // NetworkManager and polkit both re-read their drop-in directories on
     // their own schedule; nudge them so the grant is gone now rather than at
     // the next reload.
@@ -174,7 +182,7 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
     // this boot — and the data dir it requires is about to be deleted, which
     // would leave the machine's Postgres refusing to start until someone
     // reloaded by hand.
-    if m.extra_files.iter().any(|f| f.starts_with("/etc/systemd/")) {
+    if had_watchdog || m.extra_files.iter().any(|f| f.starts_with("/etc/systemd/")) {
         run_quiet("systemctl", &["daemon-reload"]);
     }
 

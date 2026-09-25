@@ -114,6 +114,7 @@ pub async fn create_streaming_response<F, Fut>(
     catalog: &crate::catalog::Catalog,
     model: &str,
     request: serde_json::Value,
+    session_affinity: Option<&str>,
     on_complete: F,
 ) -> Result<Response, ProxyError>
 where
@@ -125,10 +126,15 @@ where
     // One pass-through for both paths; `stream: true` adds stream_options.
     let body = upstream_body(request, &provider.model_name, true, catalog.enforce_zdr(model));
 
-    let response = client
+    let mut upstream = client
         .post(&provider.endpoint)
         .header("Authorization", format!("Bearer {}", provider.api_key))
-        .header("Content-Type", "application/json")
+        .header("Content-Type", "application/json");
+    // Already hashed by the caller; see `routes::ai::session_affinity`.
+    if let Some(affinity) = session_affinity {
+        upstream = upstream.header("x-session-affinity", affinity);
+    }
+    let response = upstream
         .json(&body)
         .send()
         .await
