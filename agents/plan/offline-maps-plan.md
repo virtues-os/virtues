@@ -1,10 +1,10 @@
 # Offline maps: Protomaps on the box
 
-**Status: planned, spike green, decisions settled (2026-09-24).** The maps
-have no basemap today ([record](../record/map-atlas-plan.md)): CARTO went
-key-only, and the OpenFreeMap stopgap was removed because it leaked every
-viewed street. This plan gives the box its own map files. When it ships,
-delete this plan and rewrite the record.
+**Status: step 1 built on `wave` (2026-09-25); steps 2–5 open.** The box
+serves maps from its own files (`virtues-core/src/maps`, `$lib/map/atlas.ts`),
+but no box has any files until downloads land, so released maps still have no
+basemap ([record](../record/map-atlas-plan.md)). When it ships, delete this
+plan and rewrite the record.
 
 ## The goal
 
@@ -49,9 +49,10 @@ The unit is **days present**, not visits or summed durations:
 
 - A day counts for an area if the person spent at least an hour in it,
   measured from `data_location_point`, which every source produces.
-- **Do not sum `data_location_visit.duration_minutes`.** On the dev copy of
-  real data the visits overlap (12,397 overlapping pairs): their durations sum
-  to 3,583 hours while their union covers 529. A separate task is fixing that.
+- **Do not sum `data_location_visit.duration_minutes`.** On `virtues_boxcopy`
+  the visits overlap (12,397 overlapping pairs): their durations sum to 3,583
+  hours while their union covers 529. That database is the scrubbed demo copy,
+  so confirm on dragon before treating it as a collector bug.
 - Visit counts would reward errands: ten coffee runs are not ten times one
   week.
 
@@ -111,17 +112,20 @@ browser ──▶ box /api/map/vt/{world|home|visited}/z/x/y ──▶ mmap read
 ## On the box
 
 - **Reader registry:** world, plus the home and visited files on disk, each an
-  `AsyncPmTilesReader<MmapBackend>` (`pmtiles` crate, MIT/Apache). A tile
-  request goes to the home file covering it, then visited, then world. Tiles
-  pass through gzipped with `Content-Encoding: gzip`.
+  `AsyncPmTilesReader<MmapBackend>` (`pmtiles` crate, MIT/Apache). Each tier is
+  its own route and its own MapLibre source, because a source has one max
+  zoom: merging tiers server-side would leave visited areas blank above z13.
+  Tiles pass through gzipped with `Content-Encoding: gzip`.
 - **No table, no migration.** `maps/manifest.json` records build, tier and
   file. The data lives outside the lake because it is a regenerable cache and
   `virtues backup` archives the whole lake.
 - **Legacy caches:** delete `map_tiles/` (CARTO, including its cached
   watermarks) and `map_atlas/` (OpenFreeMap, staging boxes only) from the lake
   on first start.
-- **Fonts and icons** ship with the box as package data: 14 MB of Noto (OFL)
-  and 180 KB of sprites, from `protomaps/basemaps-assets`.
+- **Fonts and icons** (14 MB of Noto, OFL, and 180 KB of sprites, from
+  `protomaps/basemaps-assets`) come from the file host as one more fixed
+  download beside `world.pmtiles`, into `maps/assets/`. Same for every box,
+  and no installer change.
 
 ## In the SPA
 
@@ -154,9 +158,18 @@ All in a scratch crate, nothing on `wave`.
 
 ## Build order
 
-1. **Box serves local files.** Reader registry, tile/font/sprite routes, the
-   style in the SPA, the ⓘ credit, legacy-cache purge. Developed against
-   hand-placed files.
+1. **Box serves local files. BUILT 2026-09-25.** `virtues-core/src/maps`
+   reads `maps_root()` (`VIRTUES_MAPS_DIR`, else `/var/lib/virtues/maps`, else
+   `data/maps` in a checkout): `world.pmtiles`, `visited-z5-<x>-<y>.pmtiles`,
+   `home-z7-<x>-<y>.pmtiles`, and `assets/fonts`, `assets/sprites`. Routes:
+   `/api/map/sources` (what the box holds, as bounds), `/api/map/vt/:tier/…`
+   (204 where nothing is held), `/api/map/fonts/…`, `/api/map/sprite/…`.
+   `maps::reload()` is the hook the downloader calls after a swap. The CARTO and
+   OpenFreeMap caches are deleted on first use. `tools/maps-dev.sh [LON LAT]`
+   cuts a dev set (~550 MB) with the Protomaps CLI. Verified in the browser:
+   light and dark, all three tiers, no request off the box. Still open from
+   this step: the credit is a plain "© OpenStreetMap" line, not yet collapsed
+   behind an ⓘ, and the MapLibre worker is unverified on iOS.
 2. **File host.** Adam provisions an OVH or Hetzner box (~250 GB disk,
    included bandwidth); nginx with `secure_link` and no access log; the
    monthly cut job with `go-pmtiles` and `index.json`.

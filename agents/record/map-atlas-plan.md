@@ -1,13 +1,14 @@
 # Map tiles
 
-**Today the maps have no basemap.** Every Leaflet map in the app
-(`MovementMap`, `DayGround`) draws its own background, tracks, pins and
-tooltips, and fetches no tiles from anyone. The box is getting its own map
-files instead (`agents/plan/offline-maps-plan.md`).
-When that ships, this record is rewritten to describe it.
+**Today the maps have no basemap on any real box.** Every Leaflet map in the
+app (`MovementMap`, `DayGround`) draws its own background, tracks, pins and
+tooltips, and fetches no tiles from anyone. The box can now draw maps from its
+own Protomaps files (`virtues-core/src/maps`), but no box has any until
+downloads are built (`agents/plan/offline-maps-plan.md`). When that ships,
+this record is rewritten to describe it.
 
 `$lib/map/atlas.ts` is the one seam: `atlasLayer(style)` returns the basemap
-layer, and returns null until the box has map files.
+layer, or null when the box holds no map files.
 
 ## History
 
