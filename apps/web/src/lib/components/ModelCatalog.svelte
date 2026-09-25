@@ -1,126 +1,64 @@
 <!--
-	Models — the full gateway catalog as a browsable table.
+	Every model the gateway carries, as a table, at the bottom of Settings →
+	Assistant.
 
-	The Assistant page's four slot pickers are for *pinning*; at ~240 language
-	models a dropdown is no place to compare anything. This room is for
-	*finding*: every model virtues-api currently mirrors from the gateway, with
+	The slot pickers above it are for choosing. At ~240 language models a
+	dropdown is no place to compare anything, so this table is for finding:
 	prices, context, capabilities, and the two retention facts (ZDR, training)
-	as columns you can sort and filter on. Click a row for details and the pin
-	controls.
+	as columns to sort and filter on. A row expands to the same choose/Use
+	recommended controls the pickers have. Both write through `modelSlots`.
 
-	Every fact here is the gateway's, fetched live — nothing on this page is
+	This was a separate Settings page ("Models") until 2026-09-25. Two places
+	holding one setting, each with its own words for it, is what made going
+	back to the recommendation hard to find.
+
+	Every fact here is the gateway's, fetched live. Nothing on this page is
 	hand-maintained (see api/model_catalog.rs for what happened when it was).
 
 	The Retention column reports the posture AFTER enforcement, not the
 	gateway's raw tri-state: virtues-api sets `zeroDataRetention` on every call
-	whose model has any zero-retention endpoint, so a `some` model is pinned to
-	those endpoints and is genuinely zero-retention here. Only `none` — no such
-	endpoint exists — is retained, and picking one is a deliberate, per-slot
-	choice that leaves every other slot untouched.
+	whose model has any zero-retention endpoint, so a `some` model is held to
+	those endpoints and is zero-retention here. Only `none` (no such endpoint
+	exists) is retained, and choosing one is a per-slot decision that leaves
+	every other slot untouched.
 -->
 <script lang="ts">
-	import type { Tab } from "$lib/tabs/types";
-	import { Page, Badge, Button } from "$lib";
+	import { onMount } from "svelte";
+	import { Badge, Button } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import UniversalDataGrid, {
 		type Column,
 	} from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import type { FilterDef } from "$lib/components/datagrid/types";
 	import {
-		getRecommendedModels,
-		getAssistantProfile,
-		updateAssistantProfile,
-	} from "$lib/api/client";
-	import { createResource } from "$lib/utils/resource.svelte";
+		modelSlots,
+		SLOTS,
+		type CatalogModel,
+	} from "$lib/stores/modelSlots.svelte";
 
-	let { tab, active }: { tab: Tab; active: boolean } = $props();
-
-	interface ApiModel {
-		model_id: string;
-		display_name: string;
-		provider: string;
-		context_window?: number | null;
-		max_output_tokens?: number | null;
-		supports_tools?: boolean | null;
-		supports_vision?: boolean | null;
-		supports_pdf?: boolean | null;
-		supports_audio?: boolean | null;
-		input_cost_per_1k?: number | null;
-		output_cost_per_1k?: number | null;
-		recommended?: boolean;
-		/** "all" | "some" | "none" | null — null is unknown, not "none". */
-		zdr?: string | null;
-		no_training?: string | null;
-	}
+	onMount(() => modelSlots.load());
 
 	/** Grid rows need an `id`; the model id is one. */
-	type ModelRow = ApiModel & { id: string };
+	type ModelRow = CatalogModel & { id: string };
 
-	const res = createResource(() => getRecommendedModels<any>());
-	const profileRes = createResource(() =>
-		getAssistantProfile<any>().catch(() => null),
+	const rows = $derived<ModelRow[]>(
+		modelSlots.models.map((m) => ({ ...m, id: m.model_id })),
 	);
 
-	const rows = $derived.by<ModelRow[]>(() => {
-		const data: ApiModel[] = Array.isArray(res.data)
-			? res.data
-			: (res.data?.data ?? []);
-		return data.map((m) => ({ ...m, id: m.model_id }));
-	});
+	// The table lists language models, so the Image slot has no row to choose
+	// from here. Its picker above is the only control for it.
+	const TABLE_SLOTS = SLOTS.filter((s) => s.key !== "image");
 
-	/** What each slot resolves to when unpinned — the cloud's choice. */
-	const slotDefaults = $derived<Record<string, string>>(res.data?.slots ?? {});
-
-	// The user's pins, kept locally so a pin from this page reflects without a
-	// refetch. Same field reading as ModelSettings.
-	let pins = $state<Record<SlotKey, string | null>>({
-		chat: null,
-		lite: null,
-		coding: null,
-	});
-	$effect(() => {
-		const p = profileRes.data;
-		if (!p) return;
-		pins = {
-			chat: p.chat_model_id || null,
-			lite: p.lite_model_id || null,
-			coding: p.coding_model_id || null,
-		};
-	});
-
-	// The chat-facing slots only. Image never appears here (this list is the
-	// gateway's language models) and Omni is a fixed system slot.
-	type SlotKey = "chat" | "lite" | "coding";
-	const SLOTS: { key: SlotKey; label: string; dbField: string }[] = [
-		{ key: "chat", label: "Chat", dbField: "chat_model_id" },
-		{ key: "lite", label: "Lite", dbField: "lite_model_id" },
-		{ key: "coding", label: "Coding", dbField: "coding_model_id" },
-	];
-
-	let saveError = $state<string | null>(null);
-
-	async function setPin(slot: (typeof SLOTS)[number], modelId: string | null) {
-		const previous = pins[slot.key];
-		pins[slot.key] = modelId;
-		saveError = null;
-		// `null` clears the pin — the backend reads that as "follow the default".
-		const body: Record<string, string | null> = { [slot.dbField]: modelId };
-		try {
-			await updateAssistantProfile(body);
-		} catch (e) {
-			pins[slot.key] = previous;
-			saveError =
-				`Couldn't save ${slot.label}. ${e instanceof Error ? e.message : ""}`.trim();
-		}
-	}
-
-	/** Slot chips for a row: a pin beats the default it displaces. */
-	function slotChips(m: ModelRow): { label: string; pinned: boolean }[] {
-		const out: { label: string; pinned: boolean }[] = [];
-		for (const s of SLOTS) {
-			if (pins[s.key] === m.model_id) out.push({ label: s.label, pinned: true });
-			else if (!pins[s.key] && slotDefaults[s.key] === m.model_id)
-				out.push({ label: s.label, pinned: false });
+	/** Slot chips for a row. The recommended model keeps its chip while a
+	 *  choice overrides it, so the table always shows where "Use recommended"
+	 *  goes. */
+	function slotChips(m: ModelRow): { label: string; chosen: boolean }[] {
+		const out: { label: string; chosen: boolean }[] = [];
+		for (const s of TABLE_SLOTS) {
+			if (modelSlots.chosen[s.key] === m.model_id)
+				out.push({ label: `${s.label} · your choice`, chosen: true });
+			if (modelSlots.recommended[s.key] === m.model_id)
+				out.push({ label: `${s.label} · recommended`, chosen: false });
 		}
 		return out;
 	}
@@ -164,7 +102,7 @@
 		return `${Math.round(ctx / 1000)}K`;
 	}
 
-	const CAPS: { key: keyof ApiModel; label: string; icon: string }[] = [
+	const CAPS: { key: keyof CatalogModel; label: string; icon: string }[] = [
 		{ key: "supports_tools", label: "tools", icon: "ri:tools-line" },
 		{ key: "supports_vision", label: "vision", icon: "ri:eye-line" },
 		{ key: "supports_pdf", label: "pdf", icon: "ri:file-text-line" },
@@ -271,20 +209,20 @@
 	]);
 </script>
 
-<Page
-	title="Models"
-	description="Every model the gateway carries. Requests go only to zero-retention endpoints wherever the model has any."
-	maxWidth="wide"
->
-	{#if saveError}
-		<div class="mb-3 text-sm text-error">{saveError}</div>
-	{/if}
+<section id="model-catalog" class="space-y-3 scroll-mt-6">
+	<div>
+		<h2 class="text-sm font-medium text-foreground">All models</h2>
+		<p class="text-xs text-foreground-subtle mt-0.5">
+			Every model the gateway carries. Requests go only to zero-retention
+			endpoints wherever the model has any. Open a row to choose it for a slot.
+		</p>
+	</div>
 
-	{#if res.data?.catalog_cold}
+	{#if modelSlots.catalogCold}
 		<!-- Two rows with no explanation reads as "the catalog is two models".
 		     Say what this list actually is and that it heals itself. -->
 		<div
-			class="mb-3 flex items-start gap-2 rounded-md border border-border bg-surface-alt px-3 py-2 text-xs text-foreground-muted"
+			class="flex items-start gap-2 rounded-md border border-border bg-surface-alt px-3 py-2 text-xs text-foreground-muted"
 		>
 			<Icon icon="ri:cloud-off-line" class="mt-0.5 shrink-0" width="14" />
 			<span>
@@ -300,10 +238,10 @@
 		{columns}
 		{filters}
 		entityType="models"
-		loading={res.loading}
-		error={res.error}
-		onRetry={res.reload}
-		onRefresh={res.reload}
+		loading={modelSlots.loading && !modelSlots.loaded}
+		error={modelSlots.error}
+		onRetry={() => modelSlots.load(true)}
+		onRefresh={() => modelSlots.load(true)}
 		emptyIcon="ri:cpu-line"
 		emptyMessage="Your server hasn't reached the cloud yet, so there are no models to list. Refresh once it's back online."
 		loadingMessage="Loading the catalog..."
@@ -315,12 +253,12 @@
 				<div class="flex items-center gap-2 flex-wrap">
 					<span class="text-sm font-medium text-foreground truncate">{m.display_name}</span>
 					{#each slotChips(m) as chip}
-						<!-- "Chat" = this model currently fills that slot. Outline =
-						     our default doing so; filled = the user pinned it. -->
-						{#if chip.pinned}
+						<!-- Filled = the person's choice for that slot. Outline = what
+						     Virtues recommends for it, shown even while overridden. -->
+						{#if chip.chosen}
 							<Badge variant="primary">{chip.label}</Badge>
 						{:else}
-							<Badge outline>{chip.label} default</Badge>
+							<Badge outline>{chip.label}</Badge>
 						{/if}
 					{/each}
 				</div>
@@ -407,33 +345,42 @@
 					{/if}
 				</p>
 				<div class="flex items-center gap-2 flex-wrap">
-					{#each SLOTS as slot}
-						{@const isPinned = pins[slot.key] === m.model_id}
+					{#each TABLE_SLOTS as slot}
+						{@const isChosen = modelSlots.chosen[slot.key] === m.model_id}
+						{@const isRecommended = modelSlots.recommended[slot.key] === m.model_id}
+						<!-- Secondary, not primary: going back to Recommended is a real
+						     action but not what this page is for, and claret read as a
+						     warning here. -->
 						<Button
-							variant={isPinned ? "primary" : "ghost"}
+							variant={isChosen ? "secondary" : "ghost"}
 							onclick={(e: MouseEvent) => {
 								// The row click owns expand/collapse; this must not also toggle it.
 								e.stopPropagation();
-								setPin(slot, isPinned ? null : m.model_id);
+								modelSlots.choose(slot, isChosen ? null : m.model_id);
 							}}
 						>
-							{#if isPinned}
-								<Icon icon="ri:pushpin-fill" width="13" />
-								{slot.label} — unpin
+							{#if isChosen}
+								<Icon icon="ri:arrow-go-back-line" width="13" />
+								Use recommended for {slot.label.toLowerCase()}
+							{:else if isRecommended && !modelSlots.chosen[slot.key]}
+								<!-- Already this model, by recommendation. Choosing it
+								     keeps it when the recommendation moves. -->
+								<Icon icon="ri:pushpin-line" width="13" />
+								Keep for {slot.label.toLowerCase()}
 							{:else}
 								<Icon icon="ri:pushpin-line" width="13" />
-								Use for {slot.label}
+								Use for {slot.label.toLowerCase()}
 							{/if}
 						</Button>
 					{/each}
 					<span class="text-xs text-foreground-subtle">
-						Unpinned slots follow the Virtues default.
+						A slot on Recommended changes when Virtues recommends a different model. Your choice stays until you change it.
 					</span>
 				</div>
 			</div>
 		{/snippet}
 	</UniversalDataGrid>
-</Page>
+</section>
 
 <style>
 	/* Matches the grid's own hideOnMobile header behavior, which a custom
