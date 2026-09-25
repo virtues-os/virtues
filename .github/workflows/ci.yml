@@ -334,7 +334,8 @@ jobs:
       # bricked every upgrade. New files are welcome; .sql.pending
       # placeholders may be consumed; everything else is append-only. A
       # deliberate squash is the one exception, and it edits this step
-      # knowingly.
+      # knowingly. wave.yml carries a copy for PRs into `wave` — keep them in
+      # sync.
       - name: Applied migrations are append-only
         if: github.event_name == 'pull_request'
         run: |
