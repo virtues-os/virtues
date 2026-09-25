@@ -42,12 +42,22 @@ on:
       - "**/*.md"
       - ".github/images/**"
       - LICENSE
+  # A contributor's `feat/*` PR into `wave`. ci.yml's full gate is limited to
+  # PRs toward staging/main, so this is the check those PRs get.
+  pull_request:
+    branches: [wave]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/images/**"
+      - LICENSE
 
 # 60-90 commits a day land here. Without this that would be 60-90 runs; with
 # it, a burst collapses to one run at the next quiet moment, which is the only
-# reason the arithmetic above holds.
+# reason the arithmetic above holds. Keyed by ref so a PR run and a `wave` push
+# run never cancel each other.
 concurrency:
-  group: wave-gate
+  group: wave-gate-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:

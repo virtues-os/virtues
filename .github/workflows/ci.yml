@@ -27,7 +27,11 @@ on:
       - "**/*.md"
       - ".github/images/**"
       - LICENSE
+  # Only PRs toward a release branch. A contributor's `feat/*` PR into `wave`
+  # gets wave.yml's lean gate instead; this full gate still runs on that work
+  # when `wave` itself goes to `staging`.
   pull_request:
+    branches: [main, staging]
     paths-ignore:
       - "docs/**"
       - "**/*.md"
