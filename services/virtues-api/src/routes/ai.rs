@@ -43,6 +43,27 @@ use crate::entitlement::{self, Account};
 use crate::providers::{calculate_cost, get_provider_config, merge_provider_options, upstream_body};
 use crate::AppState;
 
+/// The box names the conversation a call belongs to (`X-Virtues-Session`) so
+/// the provider can route it to the server already holding its prompt cache.
+/// That header is what the gateway forwards to providers that support session
+/// affinity (`x-session-affinity`, AI Gateway docs, "Improve cache hits with
+/// cache affinity"). It asks for an opaque value with no personal data, never
+/// reused across unrelated sessions. So the proxy sends a hash of account plus
+/// session rather than the box's chat id. Two boxes with the same fixed chat
+/// id (`chat_getting_started`) then never share a key.
+///
+/// `None` when the box sent nothing usable. A box that predates the header
+/// gets exactly the request it always got.
+pub(crate) fn session_affinity(headers: &HeaderMap, account_id: &str) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let session = headers.get("x-virtues-session")?.to_str().ok()?;
+    if session.is_empty() || session.len() > 128 {
+        return None;
+    }
+    let digest = Sha256::digest(format!("{account_id}\n{session}").as_bytes());
+    Some(digest[..16].iter().map(|b| format!("{b:02x}")).collect())
+}
+
 /// Pre-flight budget gate. AI cost is only known after the response, so we
 /// charge post-success — but we must still refuse to *start* a call when the
 /// wallet can't plausibly cover it, otherwise a $0 account chats for free
@@ -89,7 +110,9 @@ async fn chat_completions(
         return resp;
     }
 
-    let _ = &headers; // X-Virtues-Purpose accepted but ignored (v3 no-op)
+    // X-Virtues-Purpose is accepted but ignored (v3 no-op). X-Virtues-Session
+    // is read, hashed and forwarded; see `session_affinity`.
+    let affinity = session_affinity(&headers, &ent.account_id);
 
     // Streaming: hand off to streaming.rs with a charge callback that
     // applies the resolved cost via entitlement::charge() once the
@@ -103,6 +126,7 @@ async fn chat_completions(
             &state.catalog,
             &model,
             request,
+            affinity.as_deref(),
             move |cost_micros| async move {
                 if let Err(e) =
                     entitlement::settle(&pool_clone, &account_id, cost_micros).await
@@ -122,14 +146,15 @@ async fn chat_completions(
     let provider = get_provider_config(&model, &state.config);
     let body = upstream_body(request, &provider.model_name, false, state.catalog.enforce_zdr(&model));
 
-    let upstream = state
+    let mut upstream = state
         .http_client
         .post(&provider.endpoint)
         .header("Authorization", format!("Bearer {}", provider.api_key))
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await;
+        .header("Content-Type", "application/json");
+    if let Some(affinity) = &affinity {
+        upstream = upstream.header("x-session-affinity", affinity);
+    }
+    let upstream = upstream.json(&body).send().await;
 
     let resp = match upstream {
         Ok(r) => r,
@@ -324,4 +349,33 @@ fn err(status: StatusCode, code: &str, message: &str) -> Response {
         Json(json!({ "error": { "code": code, "message": message } })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::session_affinity;
+    use axum::http::HeaderMap;
+
+    fn headers(session: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert("x-virtues-session", session.parse().unwrap());
+        h
+    }
+
+    /// Stable per conversation, distinct per account, and never the raw id.
+    #[test]
+    fn the_affinity_key_is_a_per_account_hash_of_the_session() {
+        let a = session_affinity(&headers("chat_getting_started"), "acct_a").unwrap();
+        assert_eq!(a, session_affinity(&headers("chat_getting_started"), "acct_a").unwrap());
+        assert_ne!(a, session_affinity(&headers("chat_getting_started"), "acct_b").unwrap());
+        assert_ne!(a, session_affinity(&headers("chat_other"), "acct_a").unwrap());
+        assert!(!a.contains("chat"), "the chat id does not reach the gateway");
+        assert_eq!(a.len(), 32);
+    }
+
+    #[test]
+    fn no_header_means_no_affinity() {
+        assert_eq!(session_affinity(&HeaderMap::new(), "acct_a"), None);
+        assert_eq!(session_affinity(&headers(&"x".repeat(129)), "acct_a"), None);
+    }
 }

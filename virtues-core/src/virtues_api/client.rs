@@ -814,6 +814,28 @@ impl BearerClient {
     /// caller to stream; non-recoverable 402s (card_declined, wallet_expired, …)
     /// come back as `StreamOutcome::Error` with the drained body.
     pub async fn stream(&self, path: &str, body: &Value) -> Result<StreamOutcome> {
+        self.stream_affine(path, body, None).await
+    }
+
+    /// [`Self::stream`], naming the conversation the call belongs to.
+    ///
+    /// Providers keep a prompt's cache on the server that computed it. xAI
+    /// says requests without a routing key are spread across servers and
+    /// miss often. That fits a real chat on 2026-09-24 that read 43% of its
+    /// prompt from cache, and a new chat's first call that read 128 tokens of
+    /// a 15k system prompt. The key rides as `X-Virtues-Session`. virtues-api
+    /// hashes it with the account before forwarding it to the gateway as
+    /// `x-session-affinity`, so the raw chat id never leaves. A proxy that
+    /// predates this ignores the header, and the call works as before.
+    ///
+    /// Not sent on the BYO path: the header means something only to our
+    /// proxy, and a BYO endpoint is not our proxy.
+    pub async fn stream_affine(
+        &self,
+        path: &str,
+        body: &Value,
+        session_affinity: Option<&str>,
+    ) -> Result<StreamOutcome> {
         // BYO fork — the streaming twin of the one in `post_json`. Gated on
         // the same `is_ai_path` predicate so the two cannot drift, even though
         // every caller of `stream()` today is already an AI route.
@@ -824,7 +846,7 @@ impl BearerClient {
         }
 
         let bearer = self.ensure_bearer().await?;
-        let resp = self.send_stream(path, body, &bearer).await?;
+        let resp = self.send_stream(path, body, &bearer, session_affinity).await?;
 
         if resp.status().as_u16() == 402 {
             let err_body = resp.text().await.unwrap_or_default();
@@ -851,7 +873,7 @@ impl BearerClient {
                         let _ = record_topup_success(&self.pool).await;
                         tracing::info!(amount_micros, "auto-top-up funded; retrying stream");
                         let bearer = self.ensure_bearer().await?;
-                        let retry = self.send_stream(path, body, &bearer).await?;
+                        let retry = self.send_stream(path, body, &bearer, session_affinity).await?;
                         return Ok(Self::classify_stream(retry).await);
                     }
                     other => {
@@ -884,12 +906,22 @@ impl BearerClient {
         path: &str,
         body: &Value,
         bearer: &str,
+        session_affinity: Option<&str>,
     ) -> Result<reqwest::Response> {
-        self.stream_http
+        let mut request = self
+            .stream_http
             .post(format!("{}{}", self.api_url.trim_end_matches('/'), path))
             .header("Authorization", format!("Bearer {}", bearer))
             .header("X-Virtues-Purpose", self.purpose.as_str())
-            .header("Content-Type", "application/json")
+            .header("Content-Type", "application/json");
+        // A value reqwest cannot put in a header fails the whole send, and the
+        // key only ever buys a cache hit, so anything unusual is left off.
+        if let Some(session) = session_affinity
+            .filter(|s| !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_graphic()))
+        {
+            request = request.header("X-Virtues-Session", session);
+        }
+        request
             .json(body)
             .send()
             .await

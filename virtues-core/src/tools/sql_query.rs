@@ -543,7 +543,7 @@ impl SqlQueryTool {
             result["truncated"] = serde_json::json!({
                 "returned": returned,
                 "shown": kept,
-                "why": "the result was too large to carry; select fewer columns or narrow the query",
+                "why": "the result was too large to carry. Aggregate (count, group by), filter by date or id, or select fewer columns, rather than asking for the rest",
             });
         }
         Ok(ToolResult::success(result))
@@ -638,11 +638,15 @@ fn mentions_table(lowered_query: &str, table: &str) -> bool {
 
 /// How much of one query's result may ride into the conversation.
 ///
-/// Every byte here is paid for twice: once in the turn that asked, and again on
-/// every turn after it, because the result is persisted and replayed. 256 KB is
-/// roughly 64k tokens — generous for an answer, and far below the 2.4 MB a
-/// plain `SELECT * … LIMIT 200` over the mail table produces.
-const MAX_RESULT_BYTES: usize = 256 * 1024;
+/// Every byte here is paid for on every later step of the turn that asked, and
+/// again when the result is replayed. 64 KiB is about 16k tokens: room for a
+/// real answer, well under the executor's 96 KiB byte clip. Stopping here drops
+/// whole rows and names the count. A byte clip past it would cut a row in half
+/// and say nothing about how many rows existed.
+///
+/// Was 256 KiB until 2026-09-25. A real box sent one 130 KB result through
+/// five steps of one turn, then replayed it into the rest of that chat.
+const MAX_RESULT_BYTES: usize = 64 * 1024;
 
 /// Convert Postgres rows to JSON array
 pub fn convert_rows_to_json(rows: &[sqlx::postgres::PgRow]) -> Vec<serde_json::Value> {
