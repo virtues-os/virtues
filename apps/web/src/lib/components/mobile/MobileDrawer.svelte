@@ -37,6 +37,9 @@
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
 	import { search } from "$lib/stores/search.svelte";
+	import { goto } from "$app/navigation";
+	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
+	import { setup } from "$lib/components/setup/setup.svelte";
 
 	// Refresh the list whenever the drawer opens: it is the moment the user is
 	// looking at it, the GET is small, and a stale list here reads as lost
@@ -59,6 +62,15 @@
 	function go(route: string, label: string) {
 		windowShellStore.openTabFromRoute(route, { label });
 		mobileLayout.closeDrawer();
+	}
+
+	// The phone's Setup tile: the desktop rail's, as the drawer's first row,
+	// while any step of Setup is not done (skipped included).
+	const setupOpen = $derived(gettingStarted.loaded && !gettingStarted.unsupported && !setup.complete);
+
+	function continueSetup() {
+		mobileLayout.closeDrawer();
+		void goto(`/setup/${setup.resumeAt ?? "welcome"}`);
 	}
 
 	function openSearch() {
@@ -141,6 +153,13 @@
 		<!-- Search is a field, not a door: the one filled shape in the column,
 		     so the eye finds it without reading. The pill treatment is the
 		     old bottom bar's, moved up. -->
+		{#if setupOpen}
+			<button class="setup-row" onclick={continueSetup}>
+				<AtlasIcon name="setup" bare />
+				<span class="row-text">Continue setup</span>
+				<span class="setup-count">{setup.doneCount}/{setup.steps.length}</span>
+			</button>
+		{/if}
 		<button class="search-pill" onclick={openSearch}>
 			<AtlasIcon name="search" bare />
 			<span>Search</span>
@@ -379,6 +398,31 @@
 	}
 
 	/* Voice 1 of 2: a row. One size, one weight, everywhere in the list. */
+	/* Setup's standing call to act: the one row in primary ink, as the rail's
+	   tile is on desktop. */
+	.setup-row {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		width: 100%;
+		min-height: 48px;
+		margin-bottom: 8px;
+		padding: 0 14px;
+		border: 0;
+		border-radius: 12px;
+		background: var(--color-primary);
+		color: var(--color-background);
+		text-align: left;
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+	}
+	.setup-count {
+		margin-left: auto;
+		font-size: 13px;
+		font-variant-numeric: tabular-nums;
+		opacity: 0.8;
+	}
+
 	.row {
 		display: flex;
 		align-items: center;

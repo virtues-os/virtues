@@ -64,8 +64,8 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		// the second gate must be a door, not a wall — and a door that asks
 		// again every launch is a wall with extra steps.
 		//
-		// /founders-letter lives in the (onboarding) route group with its own
-		// layout, so neither redirect can loop.
+		// /setup lives in the (onboarding) route group with its own layout,
+		// so neither redirect can loop.
 		// RETRY, because "couldn't ask" is not "nothing to do".
 		//
 		// This runs the instant the desktop app hands over after pairing, when
@@ -102,16 +102,16 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 				// Connecting AI is the getting-started room's first step now.
 				// `active` covers both finished and dismissed, which is the whole
 				// reason it replaced a separate skipped flag.
-				// A status of `onboarding` opens the letter on its own, whatever
-				// the record already holds — it is what `skip-onboarding
-				// {skipped:false}` sets, and the only way to see the letter
-				// again on a box that has a source. The letter's exit turns it
-				// `active`, so this cannot trap anyone.
+				// A status of `onboarding` opens Setup on its own, whatever the
+				// record already holds — it is what `skip-onboarding
+				// {skipped:false}` sets, and the only way to walk Setup again on
+				// a box that has a source. Setup's close turns it `active`, so
+				// this cannot trap anyone.
 				if (
 					setup.onboarding_status === 'onboarding' ||
 					(setup.onboarding_complete === false && setup.onboarding_status !== 'active')
 				) {
-					throw redirect(303, '/founders-letter');
+					throw redirect(303, '/setup');
 				}
 			}
 		} catch (e) {

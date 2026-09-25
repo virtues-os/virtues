@@ -27,21 +27,26 @@
 	 * One even rhythm for every room; only the utility pair is set apart, by the
 	 * spacer that pushes it to the foot.
 	 *
-	 * Two objects on the rail are not rooms: the ∴ mark at the head, and Setup
-	 * at the foot of the spacer while getting started is unfinished. Each has
-	 * a job of its own (toggle the sidebar; open the getting-started chat),
-	 * neither takes the occupied or selected state, and Setup leaves on
-	 * graduation without moving anything — it sits at the bottom of the
-	 * spacer, so its going only lengthens the gap.
+	 * One object on the rail is not a room: the ∴ mark at the head, which
+	 * toggles the sidebar.
+	 *
+	 * SETUP IS A ROOM, at the very top, above Home, while any step of Setup is
+	 * not done (2026-09-23 as Getting started; Setup since 2026-09-24). It was
+	 * a tile at the foot of the spacer that opened a chat; now its panel lists
+	 * the steps and sends you back into the full-screen flow. It is the one
+	 * tile in primary ink while unselected — the standing call to act, and it
+	 * expires — and its label counts what is done ("5/7"). It leaves the rail
+	 * once every step is done, which only moves Home up into its place.
 	 */
 	import AtlasIcon from './AtlasIcon.svelte';
-	import SetupTile from './SetupTile.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarRoom } from '$lib/stores/sidebarRoom.svelte';
 	import { sidebarState } from '$lib/stores/sidebarState.svelte';
 	import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
+	import { setup } from '$lib/components/setup/setup.svelte';
 	import { roomForRoute, roomsInGroup, type Room } from '$lib/sidebar/rooms';
 
+	const setupRooms = roomsInGroup('setup');
 	const primary = roomsInGroup('primary');
 	const library = roomsInGroup('library');
 	const utility = roomsInGroup('utility');
@@ -59,6 +64,20 @@
 			if (room) ids.add(room.id);
 		}
 		return ids;
+	});
+
+	// Skipped is not done: a step set aside keeps the tile, because Finish
+	// later and Skip both mean "not now", never "not ever". The count is the
+	// flow's own seven, read off the same derived state the flow reads.
+	const setupOpen = $derived(gettingStarted.loaded && !gettingStarted.unsupported && !setup.complete);
+	const setupCount = $derived(`${setup.doneCount}/${setup.steps.length}`);
+
+	// A room that leaves the rail cannot stay selected: once Setup is done
+	// the panel falls back to Home rather than showing steps with no tile.
+	$effect(() => {
+		if (gettingStarted.loaded && !setupOpen && sidebarRoom.selectedId === 'setup') {
+			sidebarRoom.select('home');
+		}
 	});
 
 	const selectedId = $derived(sidebarRoom.selectedId);
@@ -156,6 +175,7 @@
 			class="rail-item"
 			class:selected={isSelected(room)}
 			class:occupied={occupied.has(room.id) && !isSelected(room)}
+			class:setup={room.group === 'setup'}
 			aria-label={room.label}
 			aria-pressed={isSelected(room)}
 			title={`${room.label} · ${room.chord}`}
@@ -164,18 +184,17 @@
 			<span class="rail-tile">
 				<AtlasIcon name={room.icon} size={20} stroke={1.0} bare />
 			</span>
-			<span class="rail-label">{room.label}</span>
+			<span class="rail-label">{room.group === 'setup' ? `${room.label} ${setupCount}` : room.label}</span>
 		</button>
 	{/snippet}
 
+	{#if setupOpen}
+		{#each setupRooms as room (room.id)}{@render railItem(room)}{/each}
+	{/if}
 	{#each primary as room (room.id)}{@render railItem(room)}{/each}
 	{#each library as room (room.id)}{@render railItem(room)}{/each}
 
 	<div class="rail-spacer" aria-hidden="true"></div>
-
-	{#if gettingStarted.loaded && !gettingStarted.unsupported && !gettingStarted.graduated}
-		<SetupTile />
-	{/if}
 
 	{#each utility as room (room.id)}{@render railItem(room)}{/each}
 </nav>
@@ -360,6 +379,36 @@
 		background: var(--active-bg);
 	}
 	.rail-item.selected :global(svg) { opacity: 1; }
+
+	/* Getting started: the one filled object on the rail, in the theme's
+	   primary, so an unfinished setup is impossible to miss (Adam, 09-23:
+	   "patently obvious"). The text takes the page's own background — white
+	   on every light theme, and still legible on a dark theme whose primary
+	   is light — the same pairing the letter's button uses, since the themes
+	   carry no on-primary token. It expires with setup, so the loudness does
+	   too. Selected keeps the fill and adds a ring, because the fill cannot
+	   also be the selected state's word here. */
+	.rail-item.setup,
+	.rail-item.setup:hover,
+	.rail-item.setup.occupied {
+		color: var(--color-background);
+		background: var(--color-primary);
+	}
+	.rail-item.setup:hover {
+		background: color-mix(in srgb, var(--color-primary) 88%, var(--color-foreground));
+	}
+	.rail-item.setup :global(svg) {
+		opacity: 1;
+	}
+	.rail-item.setup.selected {
+		background: var(--color-primary);
+		/* Inset: the rail clips at its right edge, so an outer ring would be
+		   cut off on one side. */
+		box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-background) 55%, transparent);
+	}
+	.rail-item.setup:focus-visible {
+		outline-offset: 3px;
+	}
 
 	.rail-item:focus-visible {
 		outline: 2px solid var(--color-primary);

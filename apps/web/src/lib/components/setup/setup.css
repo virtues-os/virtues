@@ -1,0 +1,95 @@
+/*
+	Setup's four laws, as CSS (agents/plan/setup-plan.md, "The four laws").
+
+	ONE STAGE. Paper and a breath of grain under every step, painted once by
+	the route (`.setup-stage`) and never repainted: steps change ON it, so a
+	step change is never a fade through a blank page.
+
+	ONE MOTION. Three durations, one ease, one spring for anything pressed,
+	one way text arrives. Every animation in Setup reads these, and
+	motion.ts mirrors them for Svelte transitions. Before 2026-09-25 there
+	were six motion styles with their own timings each; Arc's polish is
+	mostly that it has one.
+
+	ONE ALIGNMENT. Every step's title, sentence and way forward sit on the
+	center line (StepFrame); only a step's own work (cards, a map, a form)
+	takes the width it needs.
+*/
+
+:root {
+	--m-quick: 180ms;
+	--m-base: 360ms;
+	--m-slow: 640ms;
+	/* The one ease: quick to leave, long to settle. */
+	--m-ease: cubic-bezier(0.22, 0.8, 0.24, 1);
+	/* The one spring, for presses and anything that lands: a touch past, then
+	   home. linear() is Safari 17.2+ / Chrome 113+; older engines take the
+	   ease. */
+	--m-spring: var(--m-ease);
+}
+@supports (transition-timing-function: linear(0, 1)) {
+	:root {
+		--m-spring: linear(
+			0, 0.062 4.5%, 0.23 9.6%, 0.738 21%, 0.917 26.3%, 1.041 32%,
+			1.087 36.4%, 1.098 40.8%, 1.084 46.4%, 1.013 60.8%, 0.994 70.6%, 1
+		);
+	}
+}
+
+/* ── the stage ──────────────────────────────────────────────────────── */
+.setup-stage {
+	position: fixed;
+	inset: 0;
+	z-index: 0;
+	pointer-events: none;
+	background: var(--color-surface);
+}
+.setup-stage::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	opacity: 0.035;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ── the one way text arrives ───────────────────────────────────────── */
+@keyframes setup-rise {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+		filter: blur(4px);
+	}
+}
+.setup-rise {
+	animation: setup-rise var(--m-slow) var(--m-ease) both;
+	animation-delay: var(--rise-delay, 0ms);
+}
+
+/* ── pressables ─────────────────────────────────────────────────────── */
+/* Every button in Setup gives under the finger and springs back, rather
+   than only dimming on hover. */
+.setup-go,
+.setup-past,
+.ob-btn {
+	transition:
+		opacity var(--m-quick) ease,
+		transform var(--m-base) var(--m-spring),
+		background-color var(--m-quick) ease !important;
+}
+.setup-go:active:not(:disabled),
+.setup-past:active:not(:disabled),
+.ob-btn:active:not(:disabled) {
+	transform: scale(0.97);
+	transition-duration: 90ms !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.setup-rise {
+		animation: none;
+	}
+	.setup-go:active:not(:disabled),
+	.setup-past:active:not(:disabled),
+	.ob-btn:active:not(:disabled) {
+		transform: none;
+	}
+}

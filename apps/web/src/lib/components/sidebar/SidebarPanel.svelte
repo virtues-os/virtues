@@ -19,6 +19,7 @@
 	 */
 	import SidebarModePanel from './SidebarModePanel.svelte';
 	import HomePanel from './panels/HomePanel.svelte';
+	import SetupPanel from '$lib/components/setup/SetupPanel.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { SIDEBAR_MODES } from '$lib/sidebar/modes';
 	import type { Room } from '$lib/sidebar/rooms';
@@ -41,7 +42,7 @@
 
 <div class="panel">
 	<div class="panel-head">
-		<span class="panel-title">{room.label}</span>
+		<span class="panel-title">{room.title ?? room.label}</span>
 		<!-- The head used to carry a room's quick-add (+). The verbs live as
 		     doors in the Home panel now, where they are read as words. -->
 	</div>
@@ -49,6 +50,8 @@
 	<div class="panel-body">
 		{#if room.panel.kind === 'home'}
 			<HomePanel />
+		{:else if room.panel.kind === 'setup'}
+			<SetupPanel />
 		{:else if mode}
 			<SidebarModePanel {mode} />
 		{:else}

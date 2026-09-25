@@ -2251,6 +2251,19 @@ pub async fn wiki_update_chapter_handler(
     api_response(crate::api::narrative_draft::update_chapter(state.db.pool(), &id, &edit).await)
 }
 
+/// Replace every chapter with the timeline the person drew in Getting started.
+/// Refused once the chapters have pages of their own; see `replace_chapters`.
+pub async fn wiki_replace_chapters_handler(
+    State(state): State<AppState>,
+    Json(req): Json<crate::api::narrative_draft::ReplaceChapters>,
+) -> Response {
+    api_response(
+        crate::api::narrative_draft::replace_chapters(state.db.pool(), &req.chapters)
+            .await
+            .map(|chapters| serde_json::json!({ "chapters": chapters })),
+    )
+}
+
 /// Unname a chapter, leaving the years it covered as an unnamed stretch.
 pub async fn wiki_delete_chapter_handler(
     State(state): State<AppState>,
