@@ -29,10 +29,10 @@ export interface ModeRow {
 	 * off an Atlas rail tile is two icon languages in one sidebar, which is how
 	 * the panel ended up with no glyphs at all.
 	 *
-	 * Omitted means no glyph, and the label carries the row alone. Settings,
-	 * Developer, Sources and Drive are all still in that state; each needs its
-	 * glyphs drawn into `AtlasIcon` before it can be turned on, and until then
-	 * they render exactly as they always have.
+	 * Omitted means no glyph, and the label carries the row alone. Every mode
+	 * has its glyphs as of 2026-09-25. A new row needs its glyph drawn into
+	 * `AtlasIcon` first; until then it renders as a label alone, which is
+	 * better than naming a glyph that does not exist and getting `pages`.
 	 */
 	glyph?: string;
 	/** Route opened when the row is clicked. */
@@ -77,11 +77,12 @@ export const SETTINGS_MODE: SidebarMode = {
 		// avatar, an account. The wiki has the other "You", the narrative
 		// identity, and two rows with one label in two rooms is a question the
 		// user has to answer by clicking both.
-		{ id: 'you', label: 'Profile', icon: 'ri:user-line', href: '/virtues/you' },
+		{ id: 'you', label: 'Profile', icon: 'ri:user-line', glyph: 'profile', href: '/virtues/you' },
 		{
 			id: 'assistant',
 			label: 'Assistant',
 			icon: 'ri:sparkling-line',
+			glyph: 'assistant',
 			href: '/virtues/assistant',
 		},
 		// No Models row. The catalog table lives at the bottom of Assistant,
@@ -101,7 +102,7 @@ export const SETTINGS_MODE: SidebarMode = {
 		// the room actually holds is what AI costs and how it gets paid for —
 		// standing, balance, the endpoint you can route around us to, the
 		// Stripe door, and the call log. That is billing.
-		{ id: 'billing', label: 'Billing', icon: 'ri:bank-card-line', href: '/virtues/billing' },
+		{ id: 'billing', label: 'Billing', icon: 'ri:bank-card-line', glyph: 'billing', href: '/virtues/billing' },
 		// Was one door, "Box", which was a container rather than a subject: it
 		// stacked a Wi-Fi picker, an update installer, an 8-chapter telemetry
 		// console and a revoke-everything button on one scroll, and two of those
@@ -113,18 +114,18 @@ export const SETTINGS_MODE: SidebarMode = {
 		// one (/virtues/system/network, /virtues/system/display) — one row in
 		// the sidebar, still a page each, because appending four chapters of
 		// screen settings to eight of telemetry makes a scroll nobody reads.
-		{ id: 'system', label: 'System', icon: 'ri:server-line', href: '/virtues/system' },
+		{ id: 'system', label: 'System', icon: 'ri:server-line', glyph: 'system', href: '/virtues/system' },
 		// Devices owns every participant, and the SERVER is the first of them.
 		// "Software" was its own row describing the release the server runs —
 		// which is a fact about a device, on a page that could not show you the
 		// device. Splitting them is what let a collector claim 1.0.0 next to an
 		// app claiming 1.0.25 with neither screen able to say which was wrong.
-		{ id: 'devices', label: 'Devices', icon: 'ri:device-line', href: '/virtues/devices' },
+		{ id: 'devices', label: 'Devices', icon: 'ri:device-line', glyph: 'devices', href: '/virtues/devices' },
 		// The screen on the server itself. Its own room, not a page under System:
 		// it is four chapters about a physical panel — what it shows, its hours,
 		// other screens — which is a subject someone comes to deliberately, not a
 		// reading they glance at while checking temperatures.
-		{ id: 'display', label: 'Display', icon: 'ri:tv-2-line', href: '/virtues/display' },
+		{ id: 'display', label: 'Display', icon: 'ri:tv-2-line', glyph: 'display', href: '/virtues/display' },
 		// SQL, Terminal and Lake are NOT here. They lived in this list for a
 		// while, on the argument that they already sit under `/virtues/*` —
 		// true of the route, and beside the point for the nav: they are tools,
@@ -145,14 +146,15 @@ export const DEVELOPER_MODE: SidebarMode = {
 	id: 'developer',
 	title: 'Developer',
 	rows: [
-		{ id: 'sql', label: 'SQL', icon: 'ri:terminal-box-line', href: '/virtues/developer/sql' },
+		{ id: 'sql', label: 'SQL', icon: 'ri:terminal-box-line', glyph: 'sql', href: '/virtues/developer/sql' },
 		{
 			id: 'terminal',
 			label: 'Terminal',
 			icon: 'ri:terminal-line',
+			glyph: 'terminal',
 			href: '/virtues/developer/terminal',
 		},
-		{ id: 'lake', label: 'Lake', icon: 'ri:database-2-line', href: '/virtues/developer/lake' },
+		{ id: 'lake', label: 'Lake', icon: 'ri:database-2-line', glyph: 'lake', href: '/virtues/developer/lake' },
 		// Telemetry moved out and became Settings → Usage. Activity — the
 		// auth-audit log — is gone; what it reported on (what is paired, what
 		// you can revoke) is Devices' job, and it had a second reading of the
@@ -319,9 +321,9 @@ export const SOURCES_MODE: SidebarMode = {
 	id: 'sources',
 	title: 'Sources',
 	rows: [
-		{ id: 'overview', label: 'Overview', icon: 'ri:dashboard-line', href: '/sources' },
-		{ id: 'catalog', label: 'Catalog', icon: 'ri:apps-line', href: '/sources/catalog' },
-		{ id: 'activity', label: 'Activity', icon: 'ri:history-line', href: '/sources/activity' },
+		{ id: 'overview', label: 'Overview', icon: 'ri:dashboard-line', glyph: 'overview', href: '/sources' },
+		{ id: 'catalog', label: 'Catalog', icon: 'ri:apps-line', glyph: 'catalog', href: '/sources/catalog' },
+		{ id: 'activity', label: 'Activity', icon: 'ri:history-line', glyph: 'history', href: '/sources/activity' },
 	],
 };
 
@@ -335,11 +337,11 @@ export const DRIVE_MODE: SidebarMode = {
 	id: 'drive',
 	title: 'Drive',
 	rows: [
-		{ id: 'files', label: 'Files', icon: 'ri:hard-drive-2-line', href: '/storage' },
-		{ id: 'streams', label: 'Streams', icon: 'ri:database-2-line', href: '/storage/streams' },
-		{ id: 'media', label: 'App Media', icon: 'ri:image-2-line', href: '/storage/media' },
-		{ id: 'bookmarks', label: 'Bookmarks', icon: 'ri:bookmark-line', href: '/bookmarks' },
-		{ id: 'trash', label: 'Recently deleted', icon: 'ri:delete-bin-line', href: '/storage/trash' },
+		{ id: 'files', label: 'Files', icon: 'ri:hard-drive-2-line', glyph: 'files', href: '/storage' },
+		{ id: 'streams', label: 'Streams', icon: 'ri:database-2-line', glyph: 'streams', href: '/storage/streams' },
+		{ id: 'media', label: 'App Media', icon: 'ri:image-2-line', glyph: 'media', href: '/storage/media' },
+		{ id: 'bookmarks', label: 'Bookmarks', icon: 'ri:bookmark-line', glyph: 'bookmarks', href: '/bookmarks' },
+		{ id: 'trash', label: 'Recently deleted', icon: 'ri:delete-bin-line', glyph: 'trash', href: '/storage/trash' },
 	],
 };
 
