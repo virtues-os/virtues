@@ -458,6 +458,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/timeline/day/:date", get(api::timeline_get_day_handler))
         // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
         .route("/api/today/:date/streams", get(api::today_streams_handler))
+        // The box's own maps: tiles out of local .pmtiles archives, never a
+        // tile provider. agents/plan/offline-maps-plan.md
+        .route("/api/map/sources", get(crate::maps::sources_handler))
+        .route("/api/map/vt/:tier/:z/:x/:y", get(crate::maps::tile_handler))
+        .route("/api/map/fonts/:fontstack/:range", get(crate::maps::glyphs_handler))
+        .route("/api/map/sprite/:file", get(crate::maps::sprite_handler))
         // Home-page loops — weather · upcoming calendar · unnamed-place backlog
         .route("/api/weather/current", get(api::weather_now_handler))
         .route("/api/calendar/upcoming", get(api::calendar_upcoming_handler))

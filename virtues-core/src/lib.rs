@@ -26,6 +26,7 @@ pub mod ids;
 pub mod inference_report;
 pub mod install_manifest;
 pub mod magnet;
+pub mod maps;
 pub mod maintenance;
 pub mod middleware;
 pub mod bookmark_enrichment;
