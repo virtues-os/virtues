@@ -16,23 +16,13 @@
 -->
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import {
-		Page,
-		Button,
-		IconButton,
-		Badge,
-		LoadingState,
-		ErrorState,
-	} from "$lib";
+	import { Page, Button, Badge } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import UniversalDataGrid, {
 		type Column,
 	} from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import {
 		listDevices,
-		pairMint,
-		pairDeny,
-		pairStatus as pairStatusApi,
 		getUpdateStatus,
 		getSystemTelemetry,
 		type UpdateStatus,
@@ -43,6 +33,8 @@
 	import { isTauri } from "$lib/utils/platform";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import ReopenSection from "$lib/components/settings/ReopenSection.svelte";
+	import DevicePairModal from "$lib/components/sources/DevicePairModal.svelte";
+	import Modal from "$lib/components/Modal.svelte";
 	import {
 		kindLabel,
 		kindIcon,
@@ -229,109 +221,25 @@
 		windowShellStore.navigate(rowHref(row), { label: "Settings" });
 	}
 
-	// "+ Add device" modal state.
+	// "+ Add device": which kind, then the one add-a-device sheet Setup and
+	// Sources use (DevicePairModal). This view used to mint its own
+	// `/pair#t=` QR, which the phone's scanner cannot read (it reads handoff
+	// codes only), while the phone's own screen told people to come here for
+	// it. One sheet everywhere now. (Setup review, 2026-09-25.)
 	let addOpen = $state(false);
-	let mintLoading = $state(false);
-	let mintError = $state<string | null>(null);
-	let mintedToken = $state<string | null>(null);
-	let mintedUrl = $state<string | null>(null);
-	let mintedQrSvg = $state<string | null>(null);
-	let mintedTokenId = $state<string | null>(null);
-	let mintedExpiresAt = $state<string | null>(null);
-	// No "pending": an authenticated mint is authorized on the spot, so the
-	// confirm round-trip (and the /api/pair/confirm route it called, which no
-	// longer exists) is gone.
-	let pairStatus = $state<"authorized" | "consumed" | "expired" | "denied" | "idle">(
-		"idle"
-	);
-	let consumedByLabel = $state<string | null>(null);
-	let pollHandle: ReturnType<typeof setInterval> | null = null;
+	let pairing = $state<{ deviceType: "ios" | "mac"; displayName: string } | null>(null);
 
 	async function revoke(device: Device) {
 		if (await revokeDeviceFlow(device)) await res.reload();
 	}
 
-	function stopPolling() {
-		if (pollHandle) {
-			clearInterval(pollHandle);
-			pollHandle = null;
-		}
-	}
-
-	async function startAdd() {
+	function startAdd() {
 		addOpen = true;
-		mintError = null;
-		mintedToken = null;
-		mintedUrl = null;
-		mintedTokenId = null;
-		mintedExpiresAt = null;
-		pairStatus = "idle";
-		consumedByLabel = null;
-		mintLoading = true;
-		try {
-			// No intended_kind. This minted "Add device" without one is redeemed
-			// by whatever scans it — a phone, a Mac, the CLI — and the device
-			// declares its own kind at consume. Naming one here meant naming
-			// "browser", which the token's CHECK constraint rejects, so this
-			// button failed on every click with `mint_failed`.
-			const data = await pairMint();
-			mintedToken = data.token;
-			mintedUrl = data.pair_url;
-			mintedQrSvg = data.qr_svg;
-			mintedTokenId = data.id;
-			mintedExpiresAt = data.expires_at;
-			// Authenticated mints are minted `authorized` (see mint_pair_token) —
-			// there is no confirm round-trip to wait through.
-			pairStatus = "authorized";
-			pollHandle = setInterval(pollStatus, 2000);
-		} catch (e) {
-			mintError = e instanceof Error ? e.message : "Could not mint pair token";
-		} finally {
-			mintLoading = false;
-		}
 	}
 
-	async function denyPair() {
-		if (!mintedTokenId) return;
-		await pairDeny(mintedTokenId);
-		pairStatus = "denied";
-		stopPolling();
-	}
-
-	async function pollStatus() {
-		if (!mintedTokenId) return;
-		try {
-			const data = await pairStatusApi(mintedTokenId);
-			pairStatus = data.status as typeof pairStatus;
-			if (data.consumed_by_label) {
-				consumedByLabel = data.consumed_by_label;
-			}
-			if (
-				data.status === "consumed" ||
-				data.status === "expired" ||
-				data.status === "denied"
-			) {
-				stopPolling();
-				if (data.status === "consumed") {
-					toast.success("New device paired");
-					await res.reload();
-				}
-			}
-		} catch {
-			/* swallow */
-		}
-	}
-
-	function closeAdd() {
-		stopPolling();
+	function choose(kind: "ios" | "mac") {
 		addOpen = false;
-	}
-
-	function copyUrl() {
-		if (mintedUrl) {
-			navigator.clipboard.writeText(mintedUrl);
-			toast.success("URL copied");
-		}
+		pairing = kind === "ios" ? { deviceType: "ios", displayName: "iPhone" } : { deviceType: "mac", displayName: "computer" };
 	}
 
 	// Shown whenever we ARE a Mac app, not only on the `is_current` row.
@@ -625,99 +533,59 @@
 	<ReopenSection />
 </Page>
 
-{#if addOpen}
-	<!-- Modal backdrop. Click outside dismisses; the inner stops propagation. -->
-	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4"
-		onclick={closeAdd}
-		onkeydown={(e) => e.key === "Escape" && closeAdd()}
-		role="dialog"
-		tabindex="-1"
-	>
-		<div
-			class="w-full max-w-md rounded-xl bg-surface border border-border shadow-xl p-6"
-			onclick={(e) => e.stopPropagation()}
-			onkeydown={(e) => e.stopPropagation()}
-			role="document"
-		>
-			<div class="flex items-center justify-between mb-4">
-				<h2 class="text-lg font-semibold">Add a device</h2>
-				<IconButton
-					icon="ri:close-line"
-					label="Close"
-					size="xs"
-					onclick={closeAdd}
-				/>
-			</div>
-
-			{#if mintLoading}
-				<LoadingState />
-			{:else if mintError}
-				<ErrorState message={mintError} />
-			{:else if mintedUrl}
-				<div class="space-y-4">
-					{#if pairStatus === "authorized"}
-						<div class="rounded-lg bg-surface-alt border border-border p-3 text-sm">
-							<div class="flex items-center gap-2">
-								<Icon icon="ri:loader-4-line" class="animate-spin text-foreground-muted" />
-								<span class="text-foreground-muted">
-									Waiting for the new device to open the link…
-								</span>
-							</div>
-						</div>
-
-						<div
-							class="rounded-lg border border-border bg-white p-4 flex items-center justify-center"
-						>
-							{#if mintedQrSvg}
-								<!-- Rendered server-side; the SVG is fully self-contained,
-								     never touches a third party. -->
-								<div class="w-56 h-56 [&_svg]:w-full [&_svg]:h-full">
-									{@html mintedQrSvg}
-								</div>
-							{/if}
-						</div>
-
-						<div>
-							<div class="text-xs text-foreground-muted mb-1">
-								Or open this URL on the new device:
-							</div>
-							<div class="flex gap-2">
-								<input
-									readonly
-									value={mintedUrl}
-									class="flex-1 text-xs font-mono px-2 py-1.5 rounded border border-border bg-surface"
-								/>
-								<Button variant="ghost" onclick={copyUrl}>Copy</Button>
-							</div>
-						</div>
-					{:else if pairStatus === "consumed"}
-						<div class="rounded-lg bg-surface-alt border border-border p-4 text-sm flex items-start gap-3">
-							<Icon icon="ri:check-line" class="text-success mt-0.5" />
-							<div>
-								<div class="font-medium">Device paired</div>
-								{#if consumedByLabel}
-									<div class="text-foreground-muted text-xs mt-0.5">
-										{consumedByLabel}
-									</div>
-								{/if}
-							</div>
-						</div>
-						<Button variant="primary" onclick={closeAdd} class="w-full">Done</Button>
-					{:else if pairStatus === "expired"}
-						<ErrorState message="This pair token expired. Close and try again." />
-						<Button variant="ghost" onclick={closeAdd} class="w-full">Close</Button>
-					{:else if pairStatus === "denied"}
-						<div class="text-sm text-foreground-muted">Pair denied.</div>
-						<Button variant="ghost" onclick={closeAdd} class="w-full">Close</Button>
-					{/if}
-				</div>
-			{/if}
-		</div>
+<Modal open={addOpen} onClose={() => (addOpen = false)} title="Add a device" width="sm">
+	<div class="add-choices">
+		<button type="button" class="add-choice" onclick={() => choose("ios")}>
+			<Icon icon="ri:smartphone-line" width="22" />
+			<span>An iPhone</span>
+		</button>
+		<button type="button" class="add-choice" onclick={() => choose("mac")}>
+			<Icon icon="ri:macbook-line" width="22" />
+			<span>A computer</span>
+		</button>
 	</div>
+</Modal>
+
+{#if pairing}
+	<DevicePairModal
+		deviceType={pairing.deviceType}
+		displayName={pairing.displayName}
+		open={true}
+		onClose={() => (pairing = null)}
+		onSuccess={() => {
+			pairing = null;
+			toast.success("New device paired");
+			void res.reload();
+		}}
+	/>
 {/if}
 
 <style>
+	.add-choices {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.75rem;
+	}
+	.add-choice {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.6rem;
+		padding: 1.4rem 1rem;
+		border: none;
+		border-radius: 14px;
+		box-shadow: inset 0 0 0 1px var(--color-border);
+		background: var(--color-surface);
+		font: inherit;
+		font-size: 14px;
+		color: var(--color-foreground);
+		cursor: pointer;
+		transition: box-shadow 0.15s ease, background 0.15s ease;
+	}
+	.add-choice:hover {
+		background: color-mix(in srgb, var(--color-foreground) 4%, var(--color-surface));
+	}
+
 	/* The presence dot. Green = spoke to the box inside the window (or IS the
 	   box, or is the device reading this); grey = a timestamp instead. */
 	.dot {

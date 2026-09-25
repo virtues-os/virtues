@@ -28,9 +28,17 @@ pub const GETTING_STARTED_CHAT_ID: &str = "chat_getting_started";
 /// The chat mode the room runs in: its own prompt, three tools, no data.
 pub const AGENT_MODE: &str = "getting_started";
 
-/// The four steps, in walking order. This is the ceiling; a fifth is a plan
-/// change, not a registry entry.
-pub const STEP_IDS: [&str; 4] = ["connect_ai", "introductions", "connect_world", "interview"];
+/// The steps, in walking order. `timeline` was split out of `interview` on
+/// 2026-09-24 for Setup (agents/plan/setup-plan.md), where drawing the
+/// chapters and the interview are separate, separately skippable steps. The
+/// retiring chat room never asks it (see [`script`]).
+pub const STEP_IDS: [&str; 5] = [
+    "connect_ai",
+    "introductions",
+    "connect_world",
+    "timeline",
+    "interview",
+];
 
 /// The tools the room's model may call. Registry ids (`virtues_registry::tools`).
 pub const TOOLS: &[&str] = &["skip_step", "record_introductions"];
@@ -155,6 +163,7 @@ fn title(id: &str) -> &'static str {
         "connect_ai" => "Connect AI",
         "introductions" => "Introductions",
         "connect_world" => "Integrations",
+        "timeline" => "Timeline",
         "interview" => "Your story",
         _ => "",
     }
@@ -203,36 +212,35 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
 
     type ProfileRow = (
         Option<String>,
-        Option<String>,
-        Option<chrono::NaiveDate>,
         Vec<String>,
         Option<chrono::DateTime<chrono::Utc>>,
     );
     let profile = sqlx::query_as::<_, ProfileRow>(
-        "SELECT preferred_name, full_name, birth_date, getting_started_dismissed, \
-                interview_started_at \
+        "SELECT preferred_name, getting_started_dismissed, interview_started_at \
            FROM app_user_profile LIMIT 1",
     )
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("read profile for getting started: {e}")))?;
     // absent-ok: no profile row yet IS the fresh box — nothing named, nothing skipped.
-    let (preferred_name, full_name, birth_date, dismissed, interview_started_at) =
-        profile.unwrap_or((None, None, None, Vec::new(), None));
-    /* Introductions need a name AND a birth date.
+    let (preferred_name, dismissed, interview_started_at) =
+        profile.unwrap_or((None, Vec::new(), None));
+    /* Introductions are made when the person has said what to call them.
      *
-     * A name alone is not evidence that anyone was asked: signing in to a
-     * subscription fills `full_name` from the account, which silently settled
-     * this step, skipped the only beat that asks anything, and left the birth
-     * date — the ruler the whole lifeline is drawn against — unrequested. The
-     * date cannot arrive from anywhere but the person, so it is the honest
-     * gate. Either name still satisfies the name half: someone who gives only
-     * "Nick Ari" and no nickname has introduced themselves.
+     * `preferred_name` ONLY, never `full_name`: signing in to a subscription
+     * fills `full_name` from the account, which once silently settled this
+     * step without anyone being asked. The preferred name is asked in exactly
+     * one place — the naming step of Getting started — so it is the honest
+     * gate.
+     *
+     * The birth date USED to be the other half of this gate (the lifeline is
+     * drawn against it). Since 2026-09-23 it is asked on the timeline itself,
+     * the last step, as the timeline's left edge — so gating the second step
+     * on it held introductions open until the very end.
      */
-    let named = [&preferred_name, &full_name]
-        .into_iter()
-        .any(|n| n.as_deref().is_some_and(|n| !n.trim().is_empty()));
-    let introduced = named && birth_date.is_some();
+    let introduced = preferred_name
+        .as_deref()
+        .is_some_and(|n| !n.trim().is_empty());
     let skipped = |id: &str| dismissed.iter().any(|d| d == id);
 
     let status = |id: &str, is_done: bool| {
@@ -301,6 +309,20 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
         Some(names.join("; "))
     };
 
+    /* The timeline is done when any chapter exists, an unnamed stretch
+     * included: someone who drew their life and left a stretch unnamed has
+     * still drawn it. The interview's close also writes chapters, so an
+     * interview finished first settles this too, which is true.
+     *
+     * The interview is done only by its document. For one day (2026-09-23)
+     * chapters settled it as well, when the two were one step; now they are
+     * two, and a drawn timeline says nothing about whether anyone was
+     * interviewed.
+     */
+    let has_chapters: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM wiki_chapters)")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| Error::Database(format!("check chapters for getting started: {e}")))?;
     let interview_done = done("narrative_identity_ready");
     let interview_started = interview_started_at.is_some();
 
@@ -349,6 +371,17 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
             sources: Some(source_names.clone()),
             underway: false,
             acknowledged: skipped("connect_world"),
+        },
+        Step {
+            id: "timeline",
+            title: title("timeline"),
+            status: status("timeline", has_chapters),
+            via: None,
+            detail: None,
+            connected: None,
+            sources: None,
+            underway: false,
+            acknowledged: skipped("timeline"),
         },
         Step {
             id: "interview",
@@ -580,6 +613,12 @@ fn list(items: &[String]) -> String {
 fn script(state: &GettingStartedState) -> Vec<(String, String)> {
     let mut out = vec![("welcome".to_string(), WELCOME.to_string())];
     for s in &state.steps {
+        // The chat room predates the timeline step and is retiring with the
+        // Start room; it never learned to ask for it, and an open timeline
+        // must not stall its walk before the interview.
+        if s.id == "timeline" {
+            continue;
+        }
         match s.status {
             StepStatus::Open => {
                 out.push((format!("ask:{}", s.id), ask_line(s)));
@@ -789,10 +828,14 @@ pub async fn skip_handler(
 mod tests {
     use super::*;
 
+    /// The four statuses are the chat room's walk (connect_ai,
+    /// introductions, connect_world, interview); `timeline`, which the room
+    /// never asks, takes the interview's status.
     fn state(statuses: [StepStatus; 4], ai: bool, _door_used: bool) -> GettingStartedState {
+        let [ai_s, intro, world, interview] = statuses;
         let steps = STEP_IDS
             .iter()
-            .zip(statuses)
+            .zip([ai_s, intro, world, interview, interview])
             .map(|(id, status)| Step {
                 id,
                 title: title(id),
@@ -891,11 +934,12 @@ mod tests {
     }
 
     /// A name can arrive without anyone being asked — signing in to a
-    /// subscription fills `full_name` from the account — so a name alone
-    /// must not settle introductions. The birth date can only come from the
-    /// person, and the lifeline is drawn against it.
+    /// subscription fills `full_name` from the account — so the account's
+    /// name must not settle introductions. Only the name the person gave to be
+    /// called by does, and the birth date is no longer part of it (it moved to
+    /// the timeline step).
     #[sqlx::test(migrations = "./migrations")]
-    async fn a_name_alone_does_not_settle_introductions(pool: PgPool) -> sqlx::Result<()> {
+    async fn only_the_preferred_name_settles_introductions(pool: PgPool) -> sqlx::Result<()> {
         std::env::remove_var("VIRTUES_DEV_SKIP_SETUP");
         sqlx::query("INSERT INTO app_user_profile DEFAULT VALUES")
             .execute(&pool)
@@ -914,7 +958,14 @@ mod tests {
             "a name from the account is not an introduction"
         );
 
+        // A birth date does not settle it either; it belongs to the timeline.
         sqlx::query("UPDATE app_user_profile SET birth_date = DATE '1997-06-06'")
+            .execute(&pool)
+            .await?;
+        let s = compute(&pool).await.unwrap();
+        assert_eq!(s.step("introductions").unwrap().status, StepStatus::Open);
+
+        sqlx::query("UPDATE app_user_profile SET preferred_name = 'Nick'")
             .execute(&pool)
             .await?;
         let s = compute(&pool).await.unwrap();
@@ -963,9 +1014,40 @@ mod tests {
         Ok(())
     }
 
+    /// Drawing chapters settles the timeline and leaves the interview open:
+    /// they are two steps, and only the document settles the interview.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn drawn_chapters_settle_the_timeline_not_the_interview(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
+        std::env::remove_var("VIRTUES_DEV_SKIP_SETUP");
+        sqlx::query("INSERT INTO app_user_profile DEFAULT VALUES")
+            .execute(&pool)
+            .await
+            // absent-ok: the migrations may already seed the one profile row.
+            .ok();
+
+        let s = compute(&pool).await.unwrap();
+        assert_eq!(s.step("timeline").unwrap().status, StepStatus::Open);
+        assert_eq!(s.step("interview").unwrap().status, StepStatus::Open);
+
+        sqlx::query(
+            "INSERT INTO wiki_chapters (id, title, started_at) \
+             VALUES ('chapter_test', 'Childhood', '1990-01-01')",
+        )
+        .execute(&pool)
+        .await?;
+        let s = compute(&pool).await.unwrap();
+        assert_eq!(s.step("timeline").unwrap().status, StepStatus::Done);
+        assert_eq!(s.step("interview").unwrap().status, StepStatus::Open);
+        assert!(!s.interview_underway(), "a drawn timeline is not an interview in progress");
+        Ok(())
+    }
+
     #[test]
-    fn step_ids_are_the_four() {
+    fn step_ids_are_the_five() {
         assert!(is_step("connect_ai"));
+        assert!(is_step("timeline"));
         assert!(is_step("interview"));
         assert!(!is_step("further"));
         assert!(!is_step("first_day"));

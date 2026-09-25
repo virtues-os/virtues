@@ -24,6 +24,7 @@
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
+	import { appOpening } from "$lib/stores/appOpening";
 	import { sidebarState } from "$lib/stores/sidebarState.svelte";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import Icon from "$lib/components/Icon.svelte";
@@ -72,6 +73,19 @@
 
 	// Track initialization state
 	let initialized = $state(false);
+
+	// THE APP OPENING (2026-09-23). Armed by Setup's close just before
+	// it hands a new owner into the app; read once, on this first render, so
+	// the class is there from the first frame. The ∴ at the head of the rail
+	// beats — premise, premise, therefore, the same figure the cold open drew
+	// — the rooms cascade down out of it, the panel and the pane settle in,
+	// and the Setup tile lights once. Every other mount opens plainly.
+	let opening = $state(appOpening.consume());
+	$effect(() => {
+		if (!opening) return;
+		const t = setTimeout(() => (opening = false), 3000);
+		return () => clearTimeout(t);
+	});
 
 	// The sidebar panel and the main pane merge into one white card, divided by
 	// a single line, whenever the panel is open: the pane drops its left margin,
@@ -342,6 +356,7 @@
 <div
 	class="app-shell flex h-screen w-full bg-surface-elevated"
 	class:mobile-shell={mobileLayout.isMobile}
+	class:opening
 	style="background-image: var(--surface-elevated-image); background-size: var(--surface-elevated-size);"
 >
 	<!-- Desktop sidebar — hidden on the mobile (bottom-tab) shell -->
@@ -468,6 +483,85 @@
 <style>
 	main {
 		view-transition-name: main-content;
+	}
+
+	/* ── the app opening ───────────────────────────────────────────────
+	   See `opening` in the script. Times are from the first frame of the
+	   shell; the view transition is fading it in over the first ~0.6s, so
+	   the mark's beat starts while the letter is still going. */
+	.app-shell.opening :global(.rail-mark .mark-dot.left) {
+		animation: opening-premise 560ms ease-out 220ms both;
+	}
+	.app-shell.opening :global(.rail-mark .mark-dot.right) {
+		animation: opening-premise 560ms ease-out 360ms both;
+	}
+	.app-shell.opening :global(.rail-mark .mark-dot.apex) {
+		animation: opening-conclude 820ms ease-out 500ms both;
+	}
+	/* The rooms fall out of the mark, top to bottom. */
+	.app-shell.opening :global(.rail > .rail-item) {
+		animation: opening-room 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+		animation-delay: 560ms;
+	}
+	.app-shell.opening :global(.rail > .rail-item:nth-child(3)) { animation-delay: 610ms; }
+	.app-shell.opening :global(.rail > .rail-item:nth-child(4)) { animation-delay: 660ms; }
+	.app-shell.opening :global(.rail > .rail-item:nth-child(5)) { animation-delay: 710ms; }
+	.app-shell.opening :global(.rail > .rail-item:nth-child(6)) { animation-delay: 760ms; }
+	.app-shell.opening :global(.rail > .rail-item:nth-child(n + 7)) { animation-delay: 840ms; }
+	/* The Setup tile arrives first and then lights once — the one call to act. */
+	.app-shell.opening :global(.rail > .rail-item.setup) {
+		animation:
+			opening-room 520ms cubic-bezier(0.2, 0.7, 0.2, 1) 560ms both,
+			opening-lamp 1300ms ease-out 1500ms both;
+	}
+	.app-shell.opening :global(.panel-card),
+	.app-shell.opening :global(.panel-card-left) {
+		animation: opening-panel 640ms cubic-bezier(0.2, 0.7, 0.2, 1) 720ms both;
+	}
+	.app-shell.opening > main {
+		animation: opening-pane 760ms cubic-bezier(0.2, 0.7, 0.2, 1) 880ms both;
+	}
+
+	@keyframes opening-premise {
+		0% { transform: scale(0); }
+		55% { transform: scale(1.3); }
+		100% { transform: scale(1); }
+	}
+	@keyframes opening-conclude {
+		0% { transform: scale(0); }
+		45% { transform: scale(1.4); }
+		75% { transform: scale(0.94); }
+		100% { transform: scale(1); }
+	}
+	@keyframes opening-room {
+		from {
+			opacity: 0;
+			transform: translateY(-6px);
+		}
+	}
+	/* Lit from inside and receding to the rim: an outer glow would be
+	   clipped by the rail's right edge. */
+	@keyframes opening-lamp {
+		0% { box-shadow: inset 0 0 0 32px color-mix(in srgb, var(--color-background) 32%, transparent); }
+		100% { box-shadow: inset 0 0 0 0 color-mix(in srgb, var(--color-background) 0%, transparent); }
+	}
+	@keyframes opening-panel {
+		from {
+			opacity: 0;
+			transform: translateX(-14px);
+		}
+	}
+	@keyframes opening-pane {
+		from {
+			opacity: 0;
+			transform: translateY(12px) scale(0.99);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.app-shell.opening :global(*),
+		.app-shell.opening > main {
+			animation: none !important;
+		}
 	}
 
 	/* The merge/unmerge has to travel at the SAME SPEED as the sidebar, or the

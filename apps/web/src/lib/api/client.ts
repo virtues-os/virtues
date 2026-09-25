@@ -1250,6 +1250,51 @@ export async function updateProfile(profile: Partial<Profile>): Promise<Profile>
 }
 
 // =============================================================================
+// Chapters - the person's own named eras (wiki_chapters)
+// =============================================================================
+
+export type DatePrecision = 'year' | 'month' | 'day';
+
+/** One chapter as the box stores it. Dates are `"YYYY-MM-DD"`. */
+export interface LifeChapter {
+	id: string;
+	kind: 'chapter' | 'unknown';
+	title: string | null;
+	started_at: string;
+	ended_at: string | null;
+	is_current: boolean;
+	started_precision: DatePrecision;
+	ended_precision: DatePrecision | null;
+	changepoint: string | null;
+	summary: string | null;
+}
+
+/** One band from the timeline editor. The last may run to now (`ended_at: null`);
+ *  every other band must end exactly where the next begins. */
+export interface LifeChapterInput {
+	title: string;
+	started_at: string;
+	started_precision?: DatePrecision;
+	ended_at: string | null;
+	ended_precision?: DatePrecision | null;
+}
+
+/** `GET /api/wiki/chapters`, oldest first. Throws on failure, unlike the
+ *  wiki's `getChapters`, so a caller can tell "none yet" from "unreachable". */
+export async function listLifeChapters(): Promise<LifeChapter[]> {
+	const body = await apiGet<{ chapters: LifeChapter[] }>('/wiki/chapters');
+	return body?.chapters ?? [];
+}
+
+/** `PUT /api/wiki/chapters` - replace every chapter with this list, in one
+ *  transaction. The box refuses (400) once the chapters have pages of their
+ *  own; the error message says so in words. */
+export async function replaceLifeChapters(chapters: LifeChapterInput[]): Promise<LifeChapter[]> {
+	const body = await apiSend<{ chapters: LifeChapter[] }>('PUT', '/wiki/chapters', { chapters });
+	return body?.chapters ?? [];
+}
+
+// =============================================================================
 // Drive - Personal File Storage
 // =============================================================================
 
@@ -2322,7 +2367,7 @@ export async function skipOnboarding(skipped = true): Promise<void> {
 
 // ---- Getting started: one room, one derived truth (api/getting_started.rs) ----
 
-export type GettingStartedStepId = 'connect_ai' | 'introductions' | 'connect_world' | 'interview';
+export type GettingStartedStepId = 'connect_ai' | 'introductions' | 'connect_world' | 'timeline' | 'interview';
 
 export interface GettingStartedStep {
 	id: GettingStartedStepId;

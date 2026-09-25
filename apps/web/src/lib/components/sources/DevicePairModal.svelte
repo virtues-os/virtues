@@ -35,7 +35,6 @@
 	// mint→consume flow as the Mac code, just rendered as a QR instead of digits.
 	// The QR carries no secrets (only the pair URL), so cancelling simply denies
 	// the pending token — nothing to revoke.
-	let qrSvg = $state<string>("");
 	let qrSourceId = $state<string>("");
 	// Shared polling state (used by both iOS QR and Mac flows)
 	let pairingData = $state<PairingInitResponse | null>(null);
@@ -127,7 +126,6 @@
 			const response = await api.initiatePairing("ios", displayName);
 			pairingData = response;
 			qrSourceId = response.source_id;
-			qrSvg = response.qr_svg ?? "";
 			// Same window as the countdown this modal already runs.
 			const door = await openPairDoor(timeRemaining);
 			doorOrigin = door?.origin ?? null;
@@ -145,11 +143,20 @@
 		}
 	}
 
+	/** Where the phone should point: the server's origin, from the pair URL. */
+	function serverOrigin(pairUrl: string | undefined): string {
+		if (!pairUrl) return "…";
+		try {
+			return new URL(pairUrl).origin;
+		} catch {
+			return pairUrl;
+		}
+	}
+
 	function retryQRPairing() {
 		hasTimedOut = false;
 		pairingData = null;
 		qrSourceId = "";
-		qrSvg = "";
 		error = null;
 		initiateQRPairing();
 	}
@@ -271,7 +278,6 @@
 	/** Clear iOS/Mac flow state so the next open starts a fresh pairing. */
 	function resetLocalState() {
 		qrSourceId = "";
-		qrSvg = "";
 		pairingData = null;
 		hasTimedOut = false;
 		error = null;
@@ -329,14 +335,16 @@
 {#snippet getTheApp(device: string)}
 	<!-- A code is meaningless without the app to type it into, so it leads. -->
 	<p class="text-sm text-foreground-muted mb-4">
-		<span class="step-n">1</span> Install Virtues on your {device} —
+		<span class="step-n">1</span> Install Virtues on your {device} from
 		<TextAction inline onclick={() => void openExternal(DOWNLOADS_URL)}>
 			virtues.com/downloads
 		</TextAction>
 	</p>
 {/snippet}
 
-<Modal open={open} onClose={handleClose} title="Connect {displayName}" width="md">
+<!-- "Computer", not "Mac": this sheet is served to any device, and a PC
+     user can reach it (agents/build/voice.md, UI copy). -->
+<Modal open={open} onClose={handleClose} title={deviceType === "mac" ? "Add your computer" : `Add your ${displayName || "iPhone"}`} width="md">
 	{#if deviceType === "ios"}
 		<!-- iOS Flow: QR Code Primary + Manual Fallback -->
 		<div class="space-y-5">
@@ -443,51 +451,42 @@
 								</div>
 								<p class="door-note">
 									{#if handoffQr}
-										In the app, choose Enter an address manually and type these —
-										needs the phone on this computer's network.
+										In the app, choose Enter an address manually and type these. Your
+										iPhone needs to be on this computer's network.
 									{:else}
-										Works from anywhere this computer and your iPhone are together —
-										your server doesn't have to be on the same network.
+										Works anywhere this computer and your iPhone share a network. Your
+										server doesn't have to be on it.
 									{/if}
 								</p>
 							</div>
 						{/if}
 					{/if}
 
-					<!-- QR Code (server-rendered SVG encoding /pair#t=<token>), framed
-					     with hairline corner brackets so it reads like a scan target,
-					     not a clip-art box.
-
-					     Hidden while a door is open, because it encodes the BOX's LAN
-					     URL — the one address that is wrong precisely when the door is
-					     the reason you're here. Showing a scan target pointing
-					     somewhere other than the address printed above it is worse
-					     than showing no scan target: nothing can scan it today anyway
-					     (the app has no scanner and registers no URL scheme). When a
-					     scannable path exists, this becomes a QR of the door itself. -->
-					{#if !doorOrigin}
-					<div class="qr-frame mb-5">
-						<span class="qr-corner qr-corner--tl"></span>
-						<span class="qr-corner qr-corner--tr"></span>
-						<span class="qr-corner qr-corner--bl"></span>
-						<span class="qr-corner qr-corner--br"></span>
-						<div class="rounded-xl bg-white p-4">
+					<!-- THE ADDRESS AND CODE, when there is neither a scan code nor a
+					     door: a plain browser, or an app too old to make either. This
+					     used to be a QR of `/pair#t=<token>` on the server's own
+					     address, under a line telling the person to type an address
+					     it never showed. Nothing can scan that QR (the app's scanner
+					     reads handoff codes only), so the sheet now shows what the
+					     person actually types. (Setup review, 2026-09-25.) -->
+					{#if !doorOrigin && !handoffQr}
+						<div class="door mb-5">
 							{#if isInitiating}
-								<div class="w-[232px] h-[232px] flex items-center justify-center">
-									<Icon icon="ri:loader-4-line" width="22" class="animate-spin text-neutral-400" />
+								<Icon icon="ri:loader-4-line" width="20" class="animate-spin text-neutral-400" />
+							{:else if pairingData}
+								<div class="door-row">
+									<span class="door-label">Address</span>
+									<span class="door-value">{serverOrigin(pairingData.pair_url)}</span>
 								</div>
-							{:else if qrSvg}
-								<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-								<div class="w-[232px] h-[232px] [&>svg]:w-full [&>svg]:h-full">
-									{@html qrSvg}
+								<div class="door-row">
+									<span class="door-label">Code</span>
+									<span class="door-value">{pairingData.token ?? "…"}</span>
 								</div>
+								<p class="door-note">Your iPhone needs to be on the same network as your server.</p>
 							{:else}
-								<div class="w-[232px] h-[232px] flex items-center justify-center">
-									<p class="text-sm text-error">Failed to generate QR</p>
-								</div>
+								<p class="text-sm text-error">Your server couldn't make a pairing code. Close this and try again.</p>
 							{/if}
 						</div>
-					</div>
 					{/if}
 
 					<!-- Status -->
@@ -538,10 +537,10 @@
 				</div>
 			{:else if pairingData}
 				<div class="space-y-6">
-					{@render getTheApp('Mac')}
+					{@render getTheApp('computer')}
 					<div>
 						<p class="text-sm text-foreground-muted mb-4">
-							<span class="step-n">2</span> Enter this code in Virtues on that Mac:
+							<span class="step-n">2</span> Enter this code in Virtues on that computer:
 						</p>
 						<div class="font-mono text-2xl font-medium tracking-[0.3em] text-foreground py-4 break-all">
 							{pairingData.token ?? "…"}
@@ -560,7 +559,7 @@
 					     than a numbered step: it is what to do if that best-effort
 					     install didn't take, not part of the two-beat flow. -->
 					<p class="text-xs text-foreground-subtle">
-						Collection switches on automatically. If it doesn't, open
+						The app turns on collecting by itself. If it doesn't, open
 						Sources → This Mac in that app.
 					</p>
 

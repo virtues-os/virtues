@@ -47,7 +47,11 @@ class ChatSessionStore {
 
 		try {
 			const data = await listChats<{ conversations?: ChatSession[] }>();
-			this.sessions = data.conversations || [];
+			// The getting-started chat is not a conversation anyone started:
+			// the server seeds it, and since 2026-09-24 it only carries the
+			// interview behind Setup's one-question pages. Listed, it showed
+			// up as "Getting started — chat" in every recents list.
+			this.sessions = (data.conversations || []).filter((c) => c.conversation_id !== HIDDEN_CHAT);
 		} catch (err) {
 			console.error('Error loading chat sessions:', err);
 			this.error = err instanceof Error ? err.message : 'Failed to load sessions';
@@ -132,4 +136,7 @@ class ChatSessionStore {
 }
 
 // Export singleton instance
+/** Mirrors getting_started::GETTING_STARTED_CHAT_ID on the server. */
+const HIDDEN_CHAT = 'chat_getting_started';
+
 export const chatSessions = new ChatSessionStore();

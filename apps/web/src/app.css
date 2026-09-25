@@ -713,3 +713,93 @@ body.focus-mode main {
 	border: none !important;
 	border-radius: 0 !important;
 }
+/* =============================================================================
+   THE APP OPENING — the letter set down (view transition half)
+   The founder's letter adds html.app-opening around the one view transition
+   that carries a new owner from the letter into the app. The old page (the
+   letter) shrinks back and dries away; the new one (the shell) comes up
+   under it. The shell's own opening — the ∴ beat and the rail cascade — lives
+   in the (app) layout and plays inside the live new-state snapshot, which is
+   why `main-content` (named in that layout) is left unanimated here. Global
+   because these pseudo-elements must be styled on both sides of a navigation
+   between two route groups.
+   ============================================================================= */
+html.app-opening::view-transition-old(root) {
+	animation: app-opening-recede 560ms cubic-bezier(0.4, 0, 0.2, 1) both;
+	transform-origin: 50% 35%;
+}
+html.app-opening::view-transition-new(root) {
+	animation: app-opening-arrive 520ms ease 140ms both;
+}
+html.app-opening::view-transition-new(main-content) {
+	animation: none;
+}
+@keyframes app-opening-recede {
+	to {
+		opacity: 0;
+		transform: scale(0.94);
+		filter: blur(3px);
+	}
+}
+@keyframes app-opening-arrive {
+	from {
+		opacity: 0;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	html.app-opening::view-transition-old(root),
+	html.app-opening::view-transition-new(root) {
+		animation: none;
+	}
+}
+
+/* ── Setup: the theme turned through the ∴ (setup/themeReveal.ts) ──────────
+   The new theme is revealed through three circles centered on the mark's
+   dots: a breath in, a pop past their size, then a push until they cover
+   the window. The old frame holds still underneath. */
+@property --vr {
+	syntax: '<length>';
+	inherits: false;
+	initial-value: 0px;
+}
+html.theme-reveal::view-transition-old(root) {
+	animation: none;
+}
+html.theme-reveal::view-transition-new(root) {
+	animation: theme-reveal 1250ms both;
+	-webkit-mask:
+		radial-gradient(circle at var(--rx1) var(--ry1), #000 var(--vr), transparent calc(var(--vr) + 1px)),
+		radial-gradient(circle at var(--rx2) var(--ry2), #000 var(--vr), transparent calc(var(--vr) + 1px)),
+		radial-gradient(circle at var(--rx3) var(--ry3), #000 var(--vr), transparent calc(var(--vr) + 1px));
+	mask:
+		radial-gradient(circle at var(--rx1) var(--ry1), #000 var(--vr), transparent calc(var(--vr) + 1px)),
+		radial-gradient(circle at var(--rx2) var(--ry2), #000 var(--vr), transparent calc(var(--vr) + 1px)),
+		radial-gradient(circle at var(--rx3) var(--ry3), #000 var(--vr), transparent calc(var(--vr) + 1px));
+}
+@keyframes theme-reveal {
+	0% {
+		--vr: var(--r0);
+		animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1);
+	}
+	/* the breath in */
+	14% {
+		--vr: calc(var(--r0) * 0.55);
+		animation-timing-function: cubic-bezier(0.3, 1.6, 0.5, 1);
+	}
+	/* the pop */
+	32% {
+		--vr: calc(var(--r0) * 1.5);
+		animation-timing-function: cubic-bezier(0.7, 0, 0.84, 0);
+	}
+	/* the push */
+	100% {
+		--vr: 150vmax;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	html.theme-reveal::view-transition-new(root) {
+		animation: none;
+		-webkit-mask: none;
+		mask: none;
+	}
+}

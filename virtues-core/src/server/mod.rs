@@ -865,10 +865,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         // Wiki - Telos
         // Wiki - Act
-        // Wiki - Chapter (the life's partition, written by the interview)
+        // Wiki - Chapter (the life's partition, written by the interview or
+        // drawn on the Getting started timeline; PUT replaces the whole list)
         .route(
             "/api/wiki/chapters",
-            get(crate::api::narrative_draft::chapters_handler),
+            get(crate::api::narrative_draft::chapters_handler)
+                .put(api::wiki_replace_chapters_handler),
         )
         // Wiki - Day
         .route("/api/wiki/days", get(api::wiki_list_days_handler))

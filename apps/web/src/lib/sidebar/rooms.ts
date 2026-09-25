@@ -58,7 +58,14 @@
  * now holds only the two rooms that are actually utilities.
  */
 
-export type RoomGroup = 'primary' | 'library' | 'utility';
+/**
+ * `setup` holds one room, Setup, drawn ABOVE Home and only while a step of
+ * Setup is not done (skipped counts as not done). It is a room like the
+ * others — a tile that swaps the panel — and its panel lists the steps; the
+ * steps themselves run full screen at /setup. It leaves the rail once every
+ * step is done.
+ */
+export type RoomGroup = 'setup' | 'primary' | 'library' | 'utility';
 
 /** What fills the panel body under the room's title. */
 export type RoomPanel =
@@ -66,6 +73,8 @@ export type RoomPanel =
 	| { kind: 'rows'; modeId: string }
 	/** The Home panel: doors, Pinned, Projects, the recent chats. */
 	| { kind: 'home' }
+	/** Setup: the steps, and the way back into them. */
+	| { kind: 'setup' }
 	/** Nothing live yet — the panel offers the room's full page. */
 	| { kind: 'stub' };
 
@@ -73,6 +82,9 @@ export interface Room {
 	id: string;
 	/** Leads on the rail. Icons assist; labels lead. */
 	label: string;
+	/** The panel's title when the rail's one-word label is not the room's
+	 *  name. */
+	title?: string;
 	/** An `AtlasIcon` glyph name. */
 	icon: string;
 	/**
@@ -95,6 +107,19 @@ export interface Room {
 }
 
 export const ROOMS: Room[] = [
+	{
+		// One word for the process everywhere: the flow, the tile, the panel.
+		// It owns no tab route — the steps run full screen at /setup, outside
+		// the shell, so no pane ever selects this room by its route.
+		id: 'setup',
+		label: 'Setup',
+		icon: 'setup',
+		chord: '⌥⌘G',
+		href: '/setup',
+		owns: [],
+		panel: { kind: 'setup' },
+		group: 'setup',
+	},
 	{
 		id: 'home',
 		label: 'Home',
