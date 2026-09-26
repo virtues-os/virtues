@@ -876,8 +876,10 @@ fn serialize_event(event: &StreamEvent) -> String {
 
 /// Per-turn tool budgets in plain chat. Four searches: Anthropic puts a
 /// simple factual question at one to three, and the chat prompt asks for one
-/// parallel batch plus at most one more. Deep research, sudo and skills are
-/// uncapped here; their ceilings are steps, cost and time.
+/// parallel batch plus at most one more — and says "four" in words, which
+/// `the_chat_search_cap_is_the_one_the_prompt_states` holds it to. Deep
+/// research, sudo and skills are uncapped here; their ceilings are steps,
+/// cost and time.
 const CHAT_TOOL_CAPS: &[(&str, u32)] = &[("web_search", 4)];
 
 /// Maximum characters for page content in system prompt
@@ -2127,38 +2129,40 @@ fn create_agent_stream(
         // and twenty thirty-second tools is ten minutes. First figures,
         // 2026-09-21; the journal line "turn stopped at its budget" is how
         // they get revised.
-        let (max_steps, max_cost_micros, max_wall_clock) =
+        //
+        // Plain chat also thinks at low effort and has a search budget.
+        // Effort governs how many tool calls a model makes as well as how
+        // long it thinks, and chat ran at the provider default — high, on
+        // most — which is how "what's on tonight" became thirteen searches.
+        // The other modes keep the model's default and no caps.
+        use crate::agent::{Thinking, TurnBudget};
+        let spend = |micros: i64, minutes: u64| TurnBudget {
+            max_cost_micros: Some(micros),
+            max_wall_clock: Some(std::time::Duration::from_secs(minutes * 60)),
+            tool_caps: &[],
+        };
+        let (max_steps, budget, thinking) =
             match virtues_registry::skills::skill_named(&request.agent_mode) {
                 // A skill's ceilings come from its file.
                 Some(skill) => (
                     skill.max_steps,
-                    (skill.max_cost_usd * 1_000_000.0).round() as i64,
-                    std::time::Duration::from_secs(skill.max_minutes * 60),
+                    spend((skill.max_cost_usd * 1_000_000.0).round() as i64, skill.max_minutes),
+                    Thinking::Default,
                 ),
                 None => match request.agent_mode.as_str() {
-                    "deep_research" => (50, 10_000_000, std::time::Duration::from_secs(25 * 60)),
+                    "deep_research" => (50, spend(10_000_000, 25), Thinking::Default),
                     // The owner's bypass: ceilings high enough that no real
                     // admin session meets them. The dollar cap stays as the
                     // one thing between a looping model and the bill.
-                    "sudo" => (500, 50_000_000, std::time::Duration::from_secs(4 * 60 * 60)),
-                    _ => (20, 2_500_000, std::time::Duration::from_secs(8 * 60)), // "chat" or default
+                    "sudo" => (500, spend(50_000_000, 4 * 60), Thinking::Default),
+                    // "chat" or default
+                    _ => (
+                        20,
+                        TurnBudget { tool_caps: CHAT_TOOL_CAPS, ..spend(2_500_000, 8) },
+                        Thinking::Low,
+                    ),
                 },
             };
-
-        // Plain chat thinks at low effort and gets a search budget; the
-        // other modes keep the model's default and no caps. Effort governs how
-        // many tool calls a model makes as well as how long it thinks, and
-        // chat was running at the provider default — high, on most — which
-        // is how "what's on tonight" became thirteen searches. The cap is the
-        // number the chat prompt's `<web>` block states. A skill brings its
-        // own ceilings and is left as it was.
-        let plain_chat = virtues_registry::skills::skill_named(&request.agent_mode).is_none()
-            && !matches!(request.agent_mode.as_str(), "deep_research" | "sudo");
-        let (thinking, tool_caps) = if plain_chat {
-            (crate::agent::Thinking::Low, CHAT_TOOL_CAPS)
-        } else {
-            (crate::agent::Thinking::Default, &[][..])
-        };
 
         // Create AgentLoop with YjsState for real-time page editing
         let agent = AgentLoop::new_with_yjs(pool.clone(), yjs_state)
@@ -2173,12 +2177,8 @@ fn create_agent_stream(
             },
             parallel_tools: true,
             thinking,
-            tool_caps,
         })
-        .with_budget(crate::agent::TurnBudget {
-            max_cost_micros: Some(max_cost_micros),
-            max_wall_clock: Some(max_wall_clock),
-        });
+        .with_budget(budget);
 
         // Side-channel for live Deep Research subagent status. The dispatch_subagents tool sends
         // worker updates on `subagent_tx`; the select! loop below drains `subagent_rx` and streams
@@ -2870,6 +2870,13 @@ pub async fn cancel_chat_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_chat_search_cap_is_the_one_the_prompt_states() {
+        let cap = CHAT_TOOL_CAPS.iter().find(|(t, _)| *t == "web_search").map(|(_, n)| *n);
+        assert_eq!(cap, Some(4), "change the <web> block's \"Four searches\" with it");
+        assert!(crate::agent::prompt::AGENT_MODE_PROMPT.contains("Four searches is the most a turn gets"));
+    }
 
     fn tool(id: &str, name: &str, result: Option<serde_json::Value>) -> crate::api::chats::ToolCall {
         crate::api::chats::ToolCall {

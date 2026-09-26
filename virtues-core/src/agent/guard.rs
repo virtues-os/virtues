@@ -20,19 +20,6 @@
 //!    tool is closed for the rest of the turn, and the model is told to
 //!    answer with what it has and say what it could not get.
 //!
-//! A third rule is not about failure at all:
-//!
-//! 3. **A capped tool stops at its cap.** A mode can give a tool a per-turn
-//!    budget ([`RepeatGuard::with_caps`]; chat caps `web_search`). A call past
-//!    it is refused the same way, telling the model to answer with what it
-//!    has. The refusal is not recorded as a failure — the tool did not fail,
-//!    the turn ran out of it.
-//!
-//! Why refuse rather than drop the tool from the next request, as the AI
-//! SDK's `prepareStep` examples do: a conversation holding tool calls must
-//! still declare those tools, and the tool list is the front of the
-//! provider's cache key, so changing it mid-turn re-bills the whole prefix.
-//!
 //! Consecutive, not total — that distinction was measured, not chosen. On a
 //! live box (2026-09-18) one turn made sixteen `sql_query` calls of which
 //! four failed and twelve succeeded, interleaved, and the answer was right. A
@@ -71,13 +58,6 @@ struct ToolLedger {
 #[derive(Default)]
 pub struct RepeatGuard {
     tools: HashMap<String, ToolLedger>,
-    /// Per-turn call budgets, by tool name. Empty: no tool is capped.
-    caps: &'static [(&'static str, u32)],
-    /// Calls admitted so far this turn, by tool name, for the caps.
-    admitted: HashMap<String, u32>,
-    /// Calls refused for a cap rather than a failure, so `record` can leave
-    /// them out of the failure ledger.
-    over_cap: HashSet<String>,
 }
 
 impl RepeatGuard {
@@ -85,19 +65,10 @@ impl RepeatGuard {
         Self::default()
     }
 
-    /// A guard that also holds each named tool to a per-turn call budget.
-    pub fn with_caps(caps: &'static [(&'static str, u32)]) -> Self {
-        Self { caps, ..Self::default() }
-    }
-
-    fn cap(&self, tool: &str) -> Option<u32> {
-        self.caps.iter().find(|(name, _)| *name == tool).map(|(_, n)| *n)
-    }
-
     /// Split a step's tool calls into the ones to run and the ones refused,
     /// each refusal already shaped as a failed result the loop can emit and
     /// record like any other.
-    pub fn admit(&mut self, calls: &[ToolCall]) -> (Vec<ToolCall>, Vec<ToolExecutionResult>) {
+    pub fn admit(&self, calls: &[ToolCall]) -> (Vec<ToolCall>, Vec<ToolExecutionResult>) {
         let mut run = Vec::with_capacity(calls.len());
         let mut refused = Vec::new();
         // Within one step the same call can appear twice (parallel calls
@@ -105,22 +76,9 @@ impl RepeatGuard {
         // so track fingerprints seen in this step as well.
         let mut seen_this_step: HashSet<(String, String)> = HashSet::new();
         for call in calls {
-            let used = self.admitted.get(&call.name).copied().unwrap_or(0);
-            let verdict = match self.cap(&call.name) {
-                Some(cap) if used >= cap => {
-                    self.over_cap.insert(call.id.clone());
-                    Some(format!(
-                        "The {} budget for this turn is spent ({cap} calls). Answer now with what \
-                         you have, and name anything you could not confirm.",
-                        call.name
-                    ))
-                }
-                _ => self.verdict(call, &seen_this_step),
-            };
-            match verdict {
+            match self.verdict(call, &seen_this_step) {
                 None => {
                     seen_this_step.insert((call.name.clone(), fingerprint(&call.arguments)));
-                    *self.admitted.entry(call.name.clone()).or_default() += 1;
                     run.push(call.clone());
                 }
                 Some(reason) => {
@@ -172,9 +130,6 @@ impl RepeatGuard {
     /// Record every result of a step — the ones that ran and the ones refused.
     pub fn record(&mut self, calls: &[ToolCall], results: &[ToolExecutionResult]) {
         for r in results {
-            if self.over_cap.contains(&r.tool_call_id) {
-                continue;
-            }
             let ledger = self.tools.entry(r.tool_name.clone()).or_default();
             if r.is_success() {
                 ledger.consecutive_failures = 0;
@@ -328,45 +283,9 @@ mod tests {
         assert!(refused[0].to_llm_content().contains("closed"));
     }
 
-    fn search(id: &str, q: &str) -> ToolCall {
-        call(id, "web_search", serde_json::json!({"query": q}))
-    }
-
-    #[test]
-    fn a_capped_tool_stops_at_its_cap_across_steps_and_within_one() {
-        static CAPS: &[(&str, u32)] = &[("web_search", 3)];
-        let mut g = RepeatGuard::with_caps(CAPS);
-
-        // A parallel batch of two, both run.
-        let batch = [search("1", "a"), search("2", "b")];
-        let (run, refused) = g.admit(&batch);
-        assert_eq!(run.len(), 2);
-        assert!(refused.is_empty());
-        g.record(&batch, &[ok(&batch[0]), ok(&batch[1])]);
-
-        // The next batch of two: one fits, one is over.
-        let batch = [search("3", "c"), search("4", "d")];
-        let (run, refused) = g.admit(&batch);
-        assert_eq!(run.len(), 1);
-        assert_eq!(refused.len(), 1);
-        assert_eq!(refused[0].tool_call_id, "4");
-        let said = refused[0].to_llm_content();
-        assert!(said.contains("budget for this turn is spent"), "{said}");
-
-        // An over-cap refusal is not a failure: it leaves no ledger entry.
-        let mut results = vec![ok(&batch[0])];
-        results.extend(refused);
-        g.record(&batch, &results);
-        assert!(g.tools.get("web_search").is_some_and(|l| l.consecutive_failures == 0));
-
-        // An uncapped tool is untouched by another tool's cap.
-        let (run, _) = g.admit(&[sql("5", "SELECT 1")]);
-        assert_eq!(run.len(), 1);
-    }
-
     #[test]
     fn the_same_call_twice_in_one_step_runs_once() {
-        let mut g = RepeatGuard::new();
+        let g = RepeatGuard::new();
         let a = sql("1", "SELECT date FROM wiki_days");
         let b = sql("2", "SELECT date FROM wiki_days");
         let (run, refused) = g.admit(&[a, b]);
