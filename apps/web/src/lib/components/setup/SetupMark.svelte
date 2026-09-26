@@ -173,7 +173,7 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 6px;
-		padding: 6px 10px;
+		padding: 6px 8px;
 		border: none;
 		border-radius: 12px;
 		background: none;
@@ -186,7 +186,7 @@
 	}
 	/* The label is there when asked for: on hover, on focus, with the list. */
 	.label {
-		font-size: 11.5px;
+		font-size: 12px;
 		letter-spacing: 0.01em;
 		color: var(--color-foreground-subtle);
 		white-space: nowrap;
@@ -242,25 +242,24 @@
 		margin: 0;
 		padding: 6px;
 		list-style: none;
-		border-radius: 14px;
+		border-radius: 12px;
 		background: var(--color-surface-elevated, var(--color-surface));
-		box-shadow:
-			0 0 0 1px var(--color-border),
-			0 12px 32px color-mix(in srgb, var(--color-foreground) 12%, transparent);
+		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
+		outline-offset: -1px;
 		animation: setup-rise var(--m-base) var(--m-ease) both;
 		z-index: 2;
 	}
 	.list button {
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: 8px;
 		width: 100%;
-		padding: 7px 10px;
+		padding: 6px 8px;
 		border: none;
-		border-radius: 9px;
+		border-radius: 6px;
 		background: none;
 		font: inherit;
-		font-size: 13.5px;
+		font-size: 14px;
 		color: var(--color-foreground);
 		text-align: left;
 		cursor: pointer;
@@ -278,7 +277,7 @@
 	}
 	.n {
 		width: 1.1em;
-		font-size: 11.5px;
+		font-size: 12px;
 		color: var(--color-foreground-subtle);
 		font-variant-numeric: tabular-nums;
 	}
@@ -286,18 +285,20 @@
 		width: 7px;
 		height: 7px;
 		border-radius: 50%;
-		box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-foreground) 25%, transparent);
+		outline: 1.5px solid color-mix(in srgb, var(--color-foreground) 25%, transparent);
+		outline-offset: -1.5px;
 	}
 	.state[data-status="done"] {
 		background: var(--color-foreground);
 		box-shadow: none;
 	}
 	.state[data-status="skipped"] {
-		box-shadow: inset 0 0 0 1.5px var(--color-foreground);
+		outline: 1.5px solid var(--color-foreground);
+		outline-offset: -1.5px;
 	}
 	.aside {
 		margin-left: auto;
-		font-size: 11.5px;
+		font-size: 12px;
 		color: var(--color-foreground-subtle);
 	}
 	.scrim {

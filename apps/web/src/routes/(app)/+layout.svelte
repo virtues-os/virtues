@@ -539,11 +539,10 @@
 			transform: translateY(-6px);
 		}
 	}
-	/* Lit from inside and receding to the rim: an outer glow would be
-	   clipped by the rail's right edge. */
+	/* Lit, then fading to its own ground: a wash of light, not a glow (a
+	   shadow of any kind is out of the grammar, design-grammar.md §6). */
 	@keyframes opening-lamp {
-		0% { box-shadow: inset 0 0 0 32px color-mix(in srgb, var(--color-background) 32%, transparent); }
-		100% { box-shadow: inset 0 0 0 0 color-mix(in srgb, var(--color-background) 0%, transparent); }
+		from { background-color: color-mix(in srgb, var(--color-background) 32%, transparent); }
 	}
 	@keyframes opening-panel {
 		from {

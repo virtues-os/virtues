@@ -375,11 +375,10 @@
 		max-width: 25rem;
 		margin: 0 auto;
 		padding: 1.75rem 1.75rem 1.5rem;
-		border-radius: 18px;
+		border-radius: 12px;
 		background: var(--color-surface-overlay, var(--color-surface));
-		box-shadow:
-			0 0 0 1px color-mix(in srgb, var(--color-foreground) 8%, transparent),
-			0 18px 48px -22px color-mix(in srgb, var(--color-foreground) 22%, transparent);
+		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
+		outline-offset: -1px;
 		text-align: left;
 		animation: setup-rise var(--m-slow) var(--m-ease) both;
 		animation-delay: 120ms;
@@ -390,7 +389,7 @@
 	}
 	.kind {
 		margin: 0;
-		font-size: 12.5px;
+		font-size: 13px;
 		letter-spacing: 0.02em;
 		color: var(--color-foreground-subtle);
 	}
@@ -415,7 +414,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.6rem;
-		font-size: 14.5px;
+		font-size: 15px;
 		color: var(--color-foreground);
 	}
 	.covers li {
@@ -425,7 +424,7 @@
 	}
 	.covers :global(svg) {
 		flex: none;
-		color: var(--color-success, #2f8f5b);
+		color: var(--color-success);
 	}
 	:global(.setup-go.wide) {
 		width: 100%;
@@ -434,7 +433,7 @@
 	.fine {
 		margin: 0.7rem 0 0;
 		text-align: center;
-		font-size: 12.5px;
+		font-size: 13px;
 		color: var(--color-foreground-subtle);
 	}
 	.card-row {
@@ -468,7 +467,7 @@
 	}
 	.why-head {
 		font-family: var(--font-sans, system-ui);
-		font-size: 12.5px;
+		font-size: 13px;
 		letter-spacing: 0.02em;
 		color: var(--color-foreground-subtle);
 	}
@@ -507,7 +506,7 @@
 	.link:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 3px;
-		border-radius: 2px;
+		border-radius: 0;
 	}
 	.dot {
 		color: var(--color-foreground-subtle);
@@ -584,7 +583,7 @@
 	.check svg {
 		display: block;
 		fill: none;
-		stroke: var(--color-success, #2f8f5b);
+		stroke: var(--color-success);
 		stroke-width: 1.6;
 		stroke-linecap: round;
 		stroke-linejoin: round;

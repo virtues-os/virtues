@@ -919,7 +919,7 @@
 		text-wrap: balance;
 	}
 	.sub {
-		margin: 18px auto 0;
+		margin: 16px auto 0;
 		max-width: 34em;
 		font-family: var(--font-sans);
 		font-size: 15px;
@@ -955,7 +955,7 @@
 	.advance:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 8px;
-		border-radius: 8px;
+		border-radius: 6px;
 	}
 	.stage > svg {
 		position: absolute;
@@ -1121,7 +1121,7 @@
 		border: 0;
 		background: transparent;
 		cursor: copy;
-		border-radius: 5px;
+		border-radius: 6px;
 	}
 	.band-hit:focus-visible {
 		outline: 2px solid var(--color-primary);
@@ -1138,14 +1138,14 @@
 		position: absolute;
 		display: flex;
 		align-items: center;
-		gap: 2px;
+		gap: 0;
 	}
 	.label input {
 		width: var(--w);
 		max-width: 22ch;
 		min-width: 0;
 		margin: 0;
-		padding: 2px 1px 3px;
+		padding: 0 0 4px;
 		border: 0;
 		border-bottom: 1px solid transparent;
 		border-radius: 0;
@@ -1209,7 +1209,7 @@
 	.handle {
 		position: absolute;
 		width: 22px;
-		margin: 0 0 0 -11px;
+		margin: 0 0 0 -12px;
 		padding: 0;
 		border: 0;
 		background: transparent;
@@ -1223,9 +1223,9 @@
 		top: 0;
 		bottom: 0;
 		width: 1.5px;
-		margin-left: -0.75px;
+		margin-left: 0;
 		background: var(--color-primary);
-		border-radius: 1px;
+		border-radius: 0;
 		transition: transform 150ms ease;
 	}
 	.tick::before {
@@ -1235,7 +1235,7 @@
 		top: -3px;
 		width: 7px;
 		height: 7px;
-		margin-left: -3.5px;
+		margin-left: -4px;
 		border-radius: 50%;
 		background: var(--color-background);
 		border: 1.5px solid var(--color-primary);
@@ -1252,7 +1252,7 @@
 		outline: none;
 	}
 	.handle:focus-visible .tick {
-		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 25%, transparent);
+		outline: 3px solid color-mix(in srgb, var(--color-primary) 25%, transparent);
 	}
 
 	.birth {
@@ -1276,7 +1276,7 @@
 	.birth select,
 	.birth input {
 		margin: 0;
-		padding: 2px 1px 3px;
+		padding: 0 0 4px;
 		border: 0;
 		border-bottom: 1px solid var(--color-border);
 		border-radius: 0;
@@ -1314,7 +1314,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		gap: 18px;
+		gap: 16px;
 		flex-wrap: wrap;
 	}
 	.quiet {
@@ -1338,7 +1338,7 @@
 	.primary:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 3px;
-		border-radius: 4px;
+		border-radius: 6px;
 	}
 	.add {
 		position: absolute;
@@ -1346,7 +1346,7 @@
 		color: var(--color-primary);
 	}
 	.primary {
-		padding: 10px 20px;
+		padding: 8px 20px;
 		border: 0;
 		border-radius: 999px;
 		background: var(--color-primary);
@@ -1386,7 +1386,7 @@
 		.actions .primary {
 			order: 5;
 			flex-basis: 100%;
-			padding: 13px 20px;
+			padding: 12px 20px;
 			font-size: 15px;
 		}
 	}

@@ -572,9 +572,8 @@
 		align-items: center;
 		gap: 0.6rem;
 		padding: 1.4rem 1rem;
-		border: none;
-		border-radius: 14px;
-		box-shadow: inset 0 0 0 1px var(--color-border);
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
 		background: var(--color-surface);
 		font: inherit;
 		font-size: 14px;

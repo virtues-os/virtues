@@ -342,7 +342,11 @@
 					{:else if step === "timeline"}
 						<StepTimeline onnext={() => advance("timeline")} onskip={() => skip("timeline")} />
 					{:else if step === "interview"}
-						<StepInterview onnext={() => advance("interview")} onskip={() => skip("interview")} />
+						<StepInterview
+							onnext={() => advance("interview")}
+							onskip={() => skip("interview")}
+							ondraw={() => go("timeline")}
+						/>
 					{/if}
 				</div>
 			{/key}
@@ -413,7 +417,7 @@
 	.later:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 3px;
-		border-radius: 3px;
+		border-radius: 0;
 	}
 
 	.corner {
@@ -422,7 +426,7 @@
 		top: max(16px, env(safe-area-inset-top));
 		right: 16px;
 		display: flex;
-		gap: 2px;
+		gap: 0;
 	}
 	/* On a phone the nine dots take most of the top line; the corner
 	   tightens so it clears them down to a 360px screen. */
@@ -480,10 +484,8 @@
 		/* The overlay color is the one every theme designs to sit above its
 		   page; the shadow and hairline do the lifting. */
 		background: var(--color-surface-overlay, var(--color-surface));
-		box-shadow:
-			0 0 0 1px color-mix(in srgb, var(--color-foreground) 7%, transparent),
-			0 1px 2px color-mix(in srgb, var(--color-foreground) 5%, transparent),
-			0 24px 60px -24px color-mix(in srgb, var(--color-foreground) 18%, transparent);
+		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
+		outline-offset: -1px;
 		animation: sheet-in 900ms var(--m-spring) both;
 		transition:
 			transform var(--m-base) var(--m-ease),
@@ -526,7 +528,6 @@
 		transform: translateX(-50%);
 		/* A fixed box at left: 50% only has half the window to wrap in. */
 		white-space: nowrap;
-		box-shadow: 0 10px 30px -10px color-mix(in srgb, var(--color-foreground) 35%, transparent);
 	}
 	.pin:active:not(:disabled) {
 		transform: translateX(-50%) scale(0.97);
