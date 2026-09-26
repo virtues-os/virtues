@@ -624,7 +624,8 @@
 	}
 
 	.door-value {
-		font-family: var(--font-mono, monospace);
+		font-family: var(--font-sans, system-ui);
+		font-variant-numeric: tabular-nums;
 		font-size: 15px;
 		color: var(--color-foreground);
 		user-select: all;
@@ -651,7 +652,7 @@
 		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
 		font-size: 0.6875rem;
 		font-weight: 600;
-		color: var(--color-foreground, #111827);
+		color: var(--color-foreground);
 	}
 	@reference "../../../app.css";
 

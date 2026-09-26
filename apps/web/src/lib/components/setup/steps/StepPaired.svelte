@@ -37,7 +37,7 @@
 	.check svg {
 		display: block;
 		fill: none;
-		stroke: var(--color-success, #2f8f5b);
+		stroke: var(--color-success);
 		stroke-width: 1.4;
 		stroke-linecap: round;
 		stroke-linejoin: round;

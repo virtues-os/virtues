@@ -407,7 +407,7 @@
 		width: 100%;
 		min-height: 48px;
 		margin-bottom: 8px;
-		padding: 0 14px;
+		padding: 0 16px;
 		border: 0;
 		border-radius: 12px;
 		background: var(--color-primary);

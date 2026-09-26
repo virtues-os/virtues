@@ -110,7 +110,7 @@
 	}
 
 	.count {
-		margin: 2px 12px 10px;
+		margin: 0 12px 8px;
 		font-size: 12px;
 		color: var(--color-foreground-subtle);
 		font-variant-numeric: tabular-nums;
@@ -123,13 +123,13 @@
 		gap: 6px;
 		align-self: flex-start;
 		margin: 0 12px 12px;
-		padding: 6px 14px;
+		padding: 6px 16px;
 		border: none;
 		border-radius: 999px;
 		background: var(--color-primary);
 		color: var(--color-background);
 		font: inherit;
-		font-size: 12.5px;
+		font-size: 13px;
 		cursor: pointer;
 		transition: opacity 0.15s ease;
 	}
@@ -152,14 +152,14 @@
 		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: 0;
 		position: relative;
 	}
 
 	.row {
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: 8px;
 		width: 100%;
 		min-height: var(--sidebar-interactive-height, 32px);
 		padding: 6px 12px;
@@ -211,21 +211,23 @@
 		opacity: 0.35;
 	}
 	.settled .mark svg path {
-		stroke: var(--color-success, #2f8f5b);
+		stroke: var(--color-success);
 		stroke-width: 1.6;
 	}
 	.step:not(.settled) .mark {
 		border-radius: 50%;
-		box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 35%, transparent);
+		outline: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+		outline-offset: -1px;
 	}
 	/* The step to do now carries the one call to act in the panel: primary
 	   ink on its number, and nothing else. */
 	.selected:not(.settled) .mark {
-		box-shadow: inset 0 0 0 1.2px var(--color-primary);
+		outline: 1.2px solid var(--color-primary);
+		outline-offset: -1.2px;
 		color: var(--color-primary);
 	}
 	.num {
-		font-size: 10.5px;
+		font-size: 11px;
 		font-weight: 500;
 		line-height: 1;
 		font-variant-numeric: tabular-nums;
@@ -252,7 +254,7 @@
 		gap: 4px;
 	}
 	.group {
-		font-size: 11.5px;
+		font-size: 12px;
 		color: var(--color-foreground-muted);
 	}
 	.badges {
@@ -263,25 +265,27 @@
 	.badge {
 		display: inline-flex;
 		align-items: center;
-		gap: 3px;
-		padding: 1px 7px;
+		gap: 4px;
+		padding: 0 6px;
 		border-radius: 999px;
 		font-size: 11px;
 		line-height: 17px;
 		color: var(--color-foreground-subtle);
-		box-shadow: inset 0 0 0 1px var(--color-border);
+		outline: 1px solid var(--color-border);
+		outline-offset: -1px;
 		transition:
 			color 0.4s ease,
 			background 0.4s ease;
 	}
 	.badge.on {
 		color: var(--color-foreground);
-		background: color-mix(in srgb, var(--color-success, #2f8f5b) 10%, transparent);
-		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-success, #2f8f5b) 30%, transparent);
+		background: color-mix(in srgb, var(--color-success) 10%, transparent);
+		outline: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent);
+		outline-offset: -1px;
 	}
 	.badge svg {
 		fill: none;
-		stroke: var(--color-success, #2f8f5b);
+		stroke: var(--color-success);
 		stroke-width: 1.6;
 		stroke-linecap: round;
 		stroke-linejoin: round;

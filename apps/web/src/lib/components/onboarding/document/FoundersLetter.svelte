@@ -428,7 +428,7 @@
 	.note .head {
 		margin-bottom: 0.35rem;
 		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 11.5px;
+		font-size: 12px;
 		letter-spacing: 0.06em;
 		color: var(--color-foreground-subtle);
 	}
@@ -469,7 +469,7 @@
 	   header's shout. */
 	.where {
 		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 11.5px;
+		font-size: 12px;
 		letter-spacing: 0.06em;
 		color: var(--color-foreground-subtle);
 	}
@@ -617,8 +617,8 @@
 		   intersected with the ink and slid across it left to right, so the
 		   name appears as if written: the edge is a pen's width of fade, not
 		   a wipe's hard line, and the easing slows into the last stroke. */
-		-webkit-mask-image: url("/images/adam_signature.png"), linear-gradient(90deg, #000 44%, transparent 56%);
-		mask-image: url("/images/adam_signature.png"), linear-gradient(90deg, #000 44%, transparent 56%);
+		-webkit-mask-image: url("/images/adam_signature.png"), linear-gradient(90deg, black 44%, transparent 56%);
+		mask-image: url("/images/adam_signature.png"), linear-gradient(90deg, black 44%, transparent 56%);
 		-webkit-mask-repeat: no-repeat;
 		mask-repeat: no-repeat;
 		-webkit-mask-size: contain, 230% 100%;

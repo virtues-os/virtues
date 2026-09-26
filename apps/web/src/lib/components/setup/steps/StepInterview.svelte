@@ -9,6 +9,13 @@
 	interview is not a chat, it is a sequence of questions, so each screen
 	holds the one being asked and a place to answer it.
 
+	CHAPTERS COME FROM THE TIMELINE, ONCE. Setup has a step for drawing them,
+	so the interview never teaches them a second time: with none drawn, its
+	first screen offers the Timeline (or a plain start without them), and a
+	start without them asks for them in one plain line, not the chat room's
+	opening essay and example table, which repeated the step before it
+	(2026-09-25).
+
 	THE TIMELINE IS THE FIRST ANSWER. The interview opens by asking for your
 	chapters, and in Setup you have just drawn them. So when chapters exist,
 	beginning sends them as the first reply, in words, and the first screen
@@ -48,7 +55,22 @@
 	import { setup } from "../setup.svelte";
 	import StepFrame from "../StepFrame.svelte";
 
-	let { onnext, onskip }: { onnext: () => void; onskip?: () => void } = $props();
+	let {
+		onnext,
+		onskip,
+		ondraw,
+	}: {
+		onnext: () => void;
+		onskip?: () => void;
+		/** Back to the Timeline, to draw the chapters the interview starts from. */
+		ondraw?: () => void;
+	} = $props();
+
+	/** Setup's own ask for chapters when none were drawn: one line. */
+	const ASK_CHAPTERS =
+		"Let's start with the chapters of your life. What would you call them, roughly in order? Rough names and rough years are enough.";
+	/** Drawn chapters are sent for you at most once per visit. */
+	let chaptersSent = false;
 
 	type Phase = "loading" | "intro" | "asking" | "waiting" | "closed";
 	let phase = $state<Phase>("loading");
@@ -136,7 +158,17 @@
 		}
 		const last = turns[turns.length - 1];
 		if (!last) {
-			ask(INTERVIEW_OPENING_ASK, true);
+			// Begun, and nothing said yet: drawn chapters are the first answer
+			// (again, if the first send never landed); without them, one line.
+			if (chapters.length > 0 && !chaptersSent) {
+				chaptersSent = true;
+				await send(chaptersInWords(chapters));
+				return;
+			}
+			// In Setup with nothing drawn, the first screen again: it offers
+			// the Timeline rather than asking for chapters in a text box.
+			if (ondraw) phase = "intro";
+			else ask(INTERVIEW_OPENING_ASK, true);
 			return;
 		}
 		if (last.role === "assistant" && last.text) {
@@ -217,8 +249,10 @@
 			error = "Your server couldn't start the interview. Try again.";
 			return;
 		}
-		if (chapters.length > 0) await send(chaptersInWords(chapters));
-		else ask(INTERVIEW_OPENING_ASK, true);
+		if (chapters.length > 0) {
+			chaptersSent = true;
+			await send(chaptersInWords(chapters));
+		} else ask(ondraw ? ASK_CHAPTERS : INTERVIEW_OPENING_ASK, !ondraw);
 	}
 
 	/** The reply streaming in, shown as it is written. */
@@ -278,12 +312,23 @@
 				{/each}
 			</ol>
 		{/if}
+		{#if chapters.length === 0 && ondraw}
+			<p class="note centered-note">It starts from the chapters of your life. Draw them first, and the interview picks up from there.</p>
+		{/if}
 		{#if error}<p class="err" role="alert">{error}</p>{/if}
 		{#snippet actions()}
-			<button type="button" class="setup-go" onclick={begin}>
-				Begin the interview
-				<Icon icon="ri:arrow-right-line" width="16" />
-			</button>
+			{#if chapters.length === 0 && ondraw}
+				<button type="button" class="setup-go" onclick={ondraw}>
+					Draw your chapters
+					<Icon icon="ri:arrow-right-line" width="16" />
+				</button>
+				<button type="button" class="setup-past" onclick={begin}>Begin without them</button>
+			{:else}
+				<button type="button" class="setup-go" onclick={begin}>
+					Begin the interview
+					<Icon icon="ri:arrow-right-line" width="16" />
+				</button>
+			{/if}
 			{#if onskip}
 				<button type="button" class="setup-past" onclick={onskip}>Skip for now</button>
 			{/if}
@@ -393,6 +438,11 @@
 		line-height: 1.5;
 		color: var(--color-foreground-subtle);
 	}
+	.note.centered-note {
+		max-width: 30rem;
+		margin: 1.5rem auto 0;
+		text-align: center;
+	}
 	.keys {
 		margin-left: auto;
 		font-size: 12px;
@@ -447,7 +497,8 @@
 		gap: 8px;
 		padding: 6px 12px;
 		border-radius: 999px;
-		box-shadow: inset 0 0 0 1px var(--color-border);
+		outline: 1px solid var(--color-border);
+		outline-offset: -1px;
 	}
 	.chip-title {
 		font-family: var(--font-serif, Georgia, serif);
@@ -482,7 +533,7 @@
 	textarea:focus {
 		outline: none;
 		border-color: color-mix(in srgb, var(--color-primary) 55%, var(--color-border));
-		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 14%, transparent);
+		outline: 3px solid color-mix(in srgb, var(--color-primary) 14%, transparent);
 	}
 	.row {
 		display: flex;
@@ -505,7 +556,7 @@
 	.check svg {
 		display: block;
 		fill: none;
-		stroke: var(--color-success, #2f8f5b);
+		stroke: var(--color-success);
 		stroke-width: 1.4;
 		stroke-linecap: round;
 		stroke-linejoin: round;

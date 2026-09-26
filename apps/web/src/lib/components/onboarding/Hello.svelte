@@ -371,8 +371,8 @@
 		width: min(980px, 88vw);
 		aspect-ratio: 2640 / 716;
 		pointer-events: none;
-		-webkit-mask-image: linear-gradient(90deg, #000 44%, transparent 56%);
-		mask-image: linear-gradient(90deg, #000 44%, transparent 56%);
+		-webkit-mask-image: linear-gradient(90deg, black 44%, transparent 56%);
+		mask-image: linear-gradient(90deg, black 44%, transparent 56%);
 		-webkit-mask-repeat: no-repeat;
 		mask-repeat: no-repeat;
 		-webkit-mask-size: 230% 100%;

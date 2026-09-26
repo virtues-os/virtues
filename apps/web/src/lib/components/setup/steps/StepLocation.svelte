@@ -351,12 +351,13 @@
 	.chart {
 		position: relative;
 		width: 100%;
-		border-radius: 16px;
+		border-radius: 12px;
 		overflow: hidden;
 		background:
 			radial-gradient(120% 90% at 50% 40%, color-mix(in srgb, var(--color-primary) 3%, transparent), transparent 70%),
 			color-mix(in srgb, var(--color-foreground) 2.5%, var(--color-surface));
-		box-shadow: inset 0 0 0 1px var(--color-border);
+		outline: 1px solid var(--color-border);
+		outline-offset: -1px;
 	}
 	svg {
 		display: block;
@@ -373,7 +374,7 @@
 	svg:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
-		border-radius: 16px;
+		border-radius: 12px;
 	}
 
 	.grid line {
@@ -507,7 +508,7 @@
 		font: inherit;
 		font-size: 15px;
 		padding: 0.6rem 0.8rem;
-		border-radius: 10px;
+		border-radius: 6px;
 		border: 1px solid var(--color-border);
 		background: var(--color-surface);
 		color: var(--color-foreground);

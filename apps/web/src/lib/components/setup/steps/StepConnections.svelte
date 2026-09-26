@@ -347,15 +347,15 @@
 		flex-direction: column;
 		gap: 1.1rem;
 		padding: 1.25rem 1.25rem 1.1rem;
-		border-radius: 16px;
-		box-shadow:
-			inset 0 0 0 1px var(--color-border),
-			0 14px 36px -24px color-mix(in srgb, var(--color-foreground) 22%, transparent);
+		border-radius: 12px;
+		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
+		outline-offset: -1px;
 		background: var(--color-surface-overlay, var(--color-surface));
 		transition: box-shadow 0.4s ease;
 	}
 	.card.paired {
-		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-success, #2f8f5b) 35%, var(--color-border));
+		outline: 1px solid color-mix(in srgb, var(--color-success) 35%, var(--color-border));
+		outline-offset: -1px;
 	}
 
 	.card-head {
@@ -383,7 +383,7 @@
 	}
 	.card-title p {
 		margin: 0.3rem 0 0;
-		font-size: 13.5px;
+		font-size: 14px;
 		line-height: 1.45;
 		color: var(--color-foreground-muted);
 	}
@@ -397,11 +397,12 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		padding: 3px 10px 3px 8px;
+		padding: 4px 8px 4px 8px;
 		border-radius: 999px;
-		font-size: 12.5px;
+		font-size: 13px;
 		color: var(--color-foreground-muted);
-		box-shadow: inset 0 0 0 1px var(--color-border);
+		outline: 1px solid var(--color-border);
+		outline-offset: -1px;
 		transition:
 			color 0.5s ease,
 			background 0.5s ease,
@@ -420,20 +421,20 @@
 	   a glow first, then the dot. */
 	.badge.on {
 		color: var(--color-foreground);
-		background: color-mix(in srgb, var(--color-success, #2f8f5b) 8%, transparent);
-		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-success, #2f8f5b) 30%, transparent);
+		background: color-mix(in srgb, var(--color-success) 8%, transparent);
+		outline: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent);
+		outline-offset: -1px;
 	}
 	.badge.on .light {
-		background: var(--color-success, #2f8f5b);
-		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success, #2f8f5b) 18%, transparent);
+		background: var(--color-success);
+		outline: 3px solid color-mix(in srgb, var(--color-success) 18%, transparent);
 		animation: lamp 900ms ease-out 1;
 	}
 	@keyframes lamp {
 		0% {
-			box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-success, #2f8f5b) 55%, transparent);
 		}
 		100% {
-			box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success, #2f8f5b) 18%, transparent);
+			outline: 3px solid color-mix(in srgb, var(--color-success) 18%, transparent);
 		}
 	}
 
@@ -450,7 +451,8 @@
 	.card-act :global(.setup-go.quiet) {
 		background: transparent;
 		color: var(--color-foreground);
-		box-shadow: inset 0 0 0 1px var(--color-border);
+		outline: 1px solid var(--color-border);
+		outline-offset: -1px;
 	}
 	.done-line {
 		display: inline-flex;
@@ -458,14 +460,14 @@
 		gap: 0.35rem;
 		margin: 0;
 		font-size: 14px;
-		color: var(--color-success, #2f8f5b);
+		color: var(--color-success);
 	}
 
 	.payoff {
 		margin: -0.4rem 0 0;
-		font-size: 12.5px;
+		font-size: 13px;
 		line-height: 1.45;
-		color: var(--color-success, #2f8f5b);
+		color: var(--color-success);
 	}
 	.hint {
 		margin: 0.6rem 0 0;
@@ -475,14 +477,14 @@
 	}
 	.error {
 		margin: 1rem 0 0;
-		font-size: 13.5px;
+		font-size: 14px;
 		color: var(--color-error);
 	}
 
 	.more {
 		margin: 1.5rem 0 0;
 		text-align: center;
-		font-size: 13.5px;
+		font-size: 14px;
 		color: var(--color-foreground-muted);
 	}
 	.sr-only {
