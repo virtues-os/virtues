@@ -128,13 +128,31 @@ Not in this line: restating their question, announcing a plan you already announ
 </tool_usage>
 "#;
 
-/// Agent mode: conversational with quick tool access
+/// Agent mode: conversational with quick tool access.
+///
+/// The `<web>` block is a search budget stated in words, and the loop enforces
+/// the same number (`CHAT_TOOL_CAPS` in api/chat.rs). It exists because of a
+/// real turn: "what's on tonight in Austin for the Harvest Moon" drew thirteen
+/// sequential searches — the moon's date, which the reply had already stated,
+/// then a showtime for every event it found. The pattern follows the
+/// providers' own guidance: Anthropic's "simple factual queries typically use
+/// 1–3 searches", OpenAI's low-eagerness `<context_gathering>` (one parallel
+/// batch, stop on convergence, a budget the model may answer under).
 pub const AGENT_MODE_PROMPT: &str = r#"
 <mode>chat</mode>
 <tool_guidance>
 - For simple lookups, one query is usually enough. For multi-step tasks, use as many tools as needed
 - Gather what the question needs and no more; a conversational reply, an opinion, or a follow-up on data already in context needs no tool
+- Answer from what you already know when it is stable: dates of recurring events, astronomy, geography, history, how things work, anything already said in this conversation. Do not search to confirm what you just said
 </tool_guidance>
+<web>
+Search the web only for what is live, local, or likely to have changed: tonight's events, weather, prices, scores, news, opening hours.
+
+- Send the searches a question needs as ONE parallel batch, usually 1–3 queries that cover it from different angles. Ask for more results per query rather than running more queries.
+- Then answer. Search again only if the batch left the core question unanswered, and then once, as one more batch. Four searches is the most a turn gets.
+- Do not look up details per item — a showtime for each event, a price for each option — unless they asked for it. Give the list with links; they will ask about the one they want.
+- An answer with a gap named ("I couldn't confirm the start time") beats another search.
+</web>
 "#;
 
 /// Sudo mode: the owner's bypass. Chat's guidance still applies; this adds the
@@ -493,6 +511,7 @@ mod tests {
         // Agent mode should include chat mode guidance
         assert!(prompt.contains("<mode>chat</mode>"));
         assert!(prompt.contains("For simple lookups, one query is usually enough"));
+        assert!(prompt.contains("<web>"));
     }
 
     #[test]

@@ -19,7 +19,7 @@ pub struct WebSearchArgs {
     /// this API beats a bare keyword search — it disambiguates a short query.
     #[serde(default)]
     pub objective: Option<String>,
-    /// Number of results (1-10, default 5)
+    /// Number of results (1-10, default [`DEFAULT_RESULTS`])
     #[serde(default)]
     pub num_results: Option<u8>,
     /// Freshness: max age (hours) of a cached result before re-fetching live.
@@ -27,6 +27,12 @@ pub struct WebSearchArgs {
     #[serde(default)]
     pub max_age_hours: Option<u32>,
 }
+
+/// Results per search when the model does not say. Eight rather than five:
+/// a turn that got five thin results ran another query to fill the gap, and
+/// every extra step re-sends the whole conversation, which costs more than
+/// three more passages in this one.
+pub const DEFAULT_RESULTS: u8 = 8;
 
 /// Web search result for LLM
 #[derive(Debug, Serialize)]
@@ -64,7 +70,9 @@ impl WebSearchTool {
         let request = search_api::SearchRequest {
             objective: args.objective,
             query: args.query.clone(),
-            max_results: args.num_results,
+            // Sent explicitly, not left to the gateway: the schema tells the
+            // model the default, so the default must be the one that runs.
+            max_results: Some(args.num_results.unwrap_or(DEFAULT_RESULTS).clamp(1, 10)),
             // The tool speaks hours because that is the unit a model reasons
             // in; the API wants seconds.
             max_age_seconds: args.max_age_hours.map(|h| h.saturating_mul(3600)),

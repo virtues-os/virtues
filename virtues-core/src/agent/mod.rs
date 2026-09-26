@@ -57,7 +57,8 @@ use crate::server::yjs::YjsState;
 
 pub use executor::{ExecutorConfig, ToolExecutionError, ToolExecutionResult};
 pub use protocol::{AgentEvent, ErrorCode, FinishReason, StepReason};
-pub use stream::{LlmConfig, LlmStreamResult, StreamError, ToolCall, TokenUsage};
+pub use stream::{LlmConfig, LlmStreamResult, StepOptions, StreamError, ToolCall, TokenUsage};
+pub use crate::virtues_api::request::Thinking;
 
 /// Configuration for the AgentLoop
 #[derive(Debug, Clone)]
@@ -68,6 +69,15 @@ pub struct AgentConfig {
     pub tool_timeout: Duration,
     /// Whether to execute multiple tools in parallel
     pub parallel_tools: bool,
+    /// How hard the model thinks on every step, turned into the request by
+    /// `reasoning_for` against what the catalog says the model accepts.
+    /// `Default` sends nothing and leaves the provider's own default, which
+    /// for most is its highest-but-one effort — and effort governs how many
+    /// tool calls a model makes, not only how long it thinks.
+    pub thinking: Thinking,
+    /// Per-turn call budgets by tool name, enforced by the guard (see
+    /// `guard`). Empty: no tool is capped.
+    pub tool_caps: &'static [(&'static str, u32)],
 }
 
 impl Default for AgentConfig {
@@ -76,6 +86,8 @@ impl Default for AgentConfig {
             max_steps: 20,
             tool_timeout: Duration::from_secs(30),
             parallel_tools: true,
+            thinking: Thinking::Default,
+            tool_caps: &[],
         }
     }
 }
@@ -180,7 +192,12 @@ impl AgentLoop {
             // How this turn ends. Assigned at each break; reported once, below.
             let mut finish = protocol::FinishReason::EndTurn;
             // Per turn: which tools have failed, and how — see `guard`.
-            let mut repeat_guard = guard::RepeatGuard::new();
+            let mut repeat_guard = guard::RepeatGuard::with_caps(config.tool_caps);
+            // Set once the turn has been told to answer now — at its last
+            // step, or when a budget ran out — holding the reason, which is
+            // still how the turn ended even when the tool-less step that
+            // follows answers well. See where it is set.
+            let mut wrap_reason: Option<protocol::FinishReason> = None;
             // Per turn: what it has cost and how long it has run, for the
             // budget. Checked where the step ceiling is.
             let turn_started = std::time::Instant::now();
@@ -218,6 +235,13 @@ impl AgentLoop {
                 }
                 Some(options)
             };
+            // The turn's effort, in whichever spelling this model and endpoint
+            // take. Computed once: the model does not change mid-turn.
+            let (reasoning, reasoning_effort) = crate::virtues_api::request::reasoning_for(
+                config.thinking,
+                crate::api::model_catalog::reasoning_facts(&model).as_ref(),
+                byo,
+            );
             // Which conversation this call belongs to, so the provider can send
             // it to the server that already holds its cache. The proxy hashes
             // it before it leaves; see `BearerClient::stream_affine`.
@@ -240,7 +264,9 @@ impl AgentLoop {
                     }
                 }
 
-                // Check max steps.
+                // Check max steps. Normally unreachable now — the last step is
+                // sent tool-less (below) and ends in text — but a model that
+                // calls a tool anyway still has to stop somewhere.
                 //
                 // Not an `error` event: the SDK treats one as fatal — it throws
                 // out of the stream, so everything after it is discarded and a
@@ -262,7 +288,13 @@ impl AgentLoop {
                 let over_clock = budget
                     .max_wall_clock
                     .is_some_and(|cap| turn_started.elapsed() >= cap);
-                if over_cost || over_clock {
+                // Over budget the first time: one more step, tool-less, so the
+                // turn ends in an answer from what it gathered rather than in
+                // silence after a tool result. That step can take the spend a
+                // step past the cap; a cap that ended turns with nothing said
+                // cost the whole turn instead. Over budget again after it:
+                // stop.
+                if (over_cost || over_clock) && wrap_reason.is_some() {
                     tracing::warn!(
                         step,
                         spent_micros,
@@ -275,9 +307,33 @@ impl AgentLoop {
                     break;
                 }
 
+                // The forced final answer. On the last step the ceiling
+                // allows, or the first step over a budget, the model is told
+                // to answer and sent `tool_choice: none`. Before this the
+                // twentieth step could be a tool call, and the turn ended on
+                // its result with no reply at all.
+                let last_step = step == config.max_steps || over_cost || over_clock;
+                if last_step && wrap_reason.is_none() {
+                    wrap_reason = Some(if over_cost || over_clock {
+                        protocol::FinishReason::BudgetExceeded
+                    } else {
+                        protocol::FinishReason::MaxSteps
+                    });
+                    tracing::info!(step, over_cost, over_clock, "last step: asking for the answer, tools off");
+                    messages.push(serde_json::json!({
+                        "role": "user",
+                        "content": "[System: no more tool calls this turn. Answer now from what you have, and say briefly what you could not check.]"
+                    }));
+                }
+
                 tracing::info!(step, "Agent loop step");
 
                 let provider_options = gateway_options.clone();
+                let step_options = StepOptions {
+                    reasoning: reasoning.clone(),
+                    reasoning_effort: reasoning_effort.clone(),
+                    tool_choice: wrap_reason.is_some().then(|| serde_json::json!("none")),
+                };
                 let affinity = session_affinity.clone();
 
                 // Stream events through a channel for incremental delivery.
@@ -306,6 +362,7 @@ impl AgentLoop {
                         // now the box says it, and the proxy default can go.
                         Some(0.7),
                         None, // agent loop: no fixed output cap
+                        step_options,
                         affinity.as_deref(),
                         |event| {
                             let _ = ev_tx.send(event);
@@ -415,6 +472,8 @@ impl AgentLoop {
                         // as one it did. It is still not an `error` event —
                         // see the ceiling above — it is how this turn ended.
                         finish = protocol::FinishReason::OutputLimit;
+                    } else if let Some(reason) = wrap_reason {
+                        finish = reason;
                     }
                     yield AgentEvent::step_complete(step, result.finish_reason);
                     break;
@@ -422,6 +481,15 @@ impl AgentLoop {
 
                 // We have tool calls - emit step complete
                 yield AgentEvent::step_complete(step, StepReason::ToolCalls);
+
+                // Told to answer and called a tool anyway (a provider that
+                // ignores `tool_choice: none`). Running it would only feed a
+                // step that is not coming; end the turn on why it ended.
+                if let Some(reason) = wrap_reason {
+                    tracing::warn!(step, "tool call on the tool-less last step; ending the turn");
+                    finish = reason;
+                    break;
+                }
 
                 // Execute tools
                 tracing::info!(
@@ -544,7 +612,7 @@ impl AgentLoop {
 
                 // 3. Inject turn limit warning when running low on steps
                 let steps_remaining = config.max_steps.saturating_sub(step);
-                if steps_remaining <= 3 && steps_remaining > 0 {
+                if steps_remaining <= 3 && steps_remaining > 1 {
                     // "Steps" — model calls — not "tool calls": one step can
                     // carry several calls, and a model told it had two calls
                     // left when it had two steps rationed the wrong thing.
@@ -592,5 +660,7 @@ mod tests {
         assert_eq!(config.max_steps, 20);
         assert_eq!(config.tool_timeout, Duration::from_secs(30));
         assert!(config.parallel_tools);
+        assert_eq!(config.thinking, Thinking::Default);
+        assert!(config.tool_caps.is_empty());
     }
 }
