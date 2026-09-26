@@ -68,6 +68,22 @@ pub struct TokenUsage {
     pub cost_micros: Option<i64>,
 }
 
+/// Per-request settings beyond the conversation. The default is what every
+/// call sent before these existed: the model's own reasoning default, and
+/// `tool_choice: auto` whenever tools are present.
+#[derive(Debug, Clone, Default)]
+pub struct StepOptions {
+    /// From `virtues_api::request::reasoning_for` — the gateway object, and
+    /// the effort alias a BYO endpoint reads. At most one is ever set.
+    pub reasoning: Option<crate::virtues_api::request::Reasoning>,
+    pub reasoning_effort: Option<String>,
+    /// Replaces the `auto` sent with tools. The loop sends `"none"` on a
+    /// turn's last step so it ends in an answer rather than another call.
+    /// The tools stay in the request either way: a conversation holding tool
+    /// calls must still declare them, and the provider's cache keys on them.
+    pub tool_choice: Option<Value>,
+}
+
 /// Stream an LLM response and emit events
 ///
 /// This function:
@@ -83,6 +99,7 @@ pub async fn stream_llm_response<F>(
     provider_options: Option<Value>,
     temperature: Option<f32>,
     max_tokens: Option<u32>,
+    options: StepOptions,
     session_affinity: Option<&str>,
     mut emit: F,
 ) -> Result<LlmStreamResult, StreamError>
@@ -100,7 +117,13 @@ where
         stream: Some(true),
         max_tokens,
         tools: if tools.is_empty() { None } else { Some(tools.to_vec()) },
-        tool_choice: if tools.is_empty() { None } else { Some(serde_json::json!("auto")) },
+        tool_choice: if tools.is_empty() {
+            None
+        } else {
+            Some(options.tool_choice.unwrap_or_else(|| serde_json::json!("auto")))
+        },
+        reasoning: options.reasoning,
+        reasoning_effort: options.reasoning_effort,
         provider_options,
         temperature,
         ..Default::default()

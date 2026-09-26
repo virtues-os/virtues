@@ -874,6 +874,12 @@ fn serialize_event(event: &StreamEvent) -> String {
     }
 }
 
+/// Per-turn tool budgets in plain chat. Four searches: Anthropic puts a
+/// simple factual question at one to three, and the chat prompt asks for one
+/// parallel batch plus at most one more. Deep research, sudo and skills are
+/// uncapped here; their ceilings are steps, cost and time.
+const CHAT_TOOL_CAPS: &[(&str, u32)] = &[("web_search", 4)];
+
 /// Maximum characters for page content in system prompt
 /// ~10K chars ≈ 2.5K tokens, leaving room for rest of context
 const MAX_PAGE_CONTENT_CHARS: usize = 10_000;
@@ -2139,6 +2145,21 @@ fn create_agent_stream(
                 },
             };
 
+        // Plain chat thinks at low effort and gets a search budget; the
+        // other modes keep the model's default and no caps. Effort governs how
+        // many tool calls a model makes as well as how long it thinks, and
+        // chat was running at the provider default — high, on most — which
+        // is how "what's on tonight" became thirteen searches. The cap is the
+        // number the chat prompt's `<web>` block states. A skill brings its
+        // own ceilings and is left as it was.
+        let plain_chat = virtues_registry::skills::skill_named(&request.agent_mode).is_none()
+            && !matches!(request.agent_mode.as_str(), "deep_research" | "sudo");
+        let (thinking, tool_caps) = if plain_chat {
+            (crate::agent::Thinking::Low, CHAT_TOOL_CAPS)
+        } else {
+            (crate::agent::Thinking::Default, &[][..])
+        };
+
         // Create AgentLoop with YjsState for real-time page editing
         let agent = AgentLoop::new_with_yjs(pool.clone(), yjs_state)
         .with_config(AgentConfig {
@@ -2151,6 +2172,8 @@ fn create_agent_stream(
                 std::time::Duration::from_secs(30)
             },
             parallel_tools: true,
+            thinking,
+            tool_caps,
         })
         .with_budget(crate::agent::TurnBudget {
             max_cost_micros: Some(max_cost_micros),
