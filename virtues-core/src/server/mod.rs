@@ -168,6 +168,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // times (with an overlap window) so the panel and `virtues pair` always have
     // a valid code to display. See `crate::maintenance::pair_rotator`.
     crate::maintenance::pair_rotator::spawn(client.database.pool().clone());
+    // The box's own maps: daily, fetch the map squares its owner's life
+    // covers and drop the ones it no longer does. See `crate::maps::sync`.
+    crate::maps::sync::spawn(client.database.pool().clone());
 
     // Setup access point. An appliance arrives with no network and a display
     // its owner cannot type on, so the box raises its own wifi and the phone

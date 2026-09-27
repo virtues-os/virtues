@@ -18,6 +18,7 @@ square: one sequential read of a build is the use Protomaps' docs point to.
 
     cut.py                        full monthly run (systemd timer)
     cut.py --remote --limit 3     dry run against build.protomaps.com, a few squares
+    cut.py --remote --only=-97.74,30.27   dev: the squares holding one point (`=`: a western longitude starts with -)
 """
 
 import argparse
@@ -126,6 +127,7 @@ def main() -> None:
     ap.add_argument("--build", help="Protomaps build date YYYYMMDD (default: newest)")
     ap.add_argument("--remote", action="store_true", help="range-read the build instead of downloading it (dry runs only)")
     ap.add_argument("--limit", type=int, help="cut at most N squares per tier (dry runs only)")
+    ap.add_argument("--only", metavar="LON,LAT", help="cut only the squares holding this point (dev and tests)")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--keep", type=int, default=2, help="builds to keep, the newest included")
     args = ap.parse_args()
@@ -164,6 +166,11 @@ def main() -> None:
     for tier, sz, maxz in TIERS:
         squares = land_squares(world, sz)
         log(f"{tier}: {len(squares)} land squares at z{sz}")
+        if args.only:
+            lon, lat = (float(v) for v in args.only.split(","))
+            n = 2 ** sz
+            here = (int((lon + 180) / 360 * n), int((1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * n))
+            squares = [sq for sq in squares if sq == here]
         if args.limit:
             squares = squares[: args.limit]
         for x, y in squares:
