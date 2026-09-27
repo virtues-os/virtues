@@ -48,6 +48,7 @@
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import { getChat, listLifeChapters, type LifeChapter } from "$lib/api/client";
+	import { readNextChapter } from "../nextChapter";
 	import { GETTING_STARTED_CHAT_ID } from "$lib/components/chat/getting-started/getting-started";
 	import { INTERVIEW_OPENING_ASK, INTERVIEW_OPENING_BODY } from "$lib/components/chat/interview/interview";
 	import { toUiMessage } from "$lib/components/chat/state/transcript";
@@ -236,7 +237,9 @@
 			const to = c.ended_at ? c.ended_at.slice(0, 4) : "now";
 			return `- ${c.title?.trim() || "A stretch I haven't named"} (${from} to ${to})`;
 		});
-		return `These are my chapters, from the timeline I drew:\n\n${lines.join("\n")}`;
+		const next = readNextChapter();
+		const ahead = next ? `\n\nAnd the next chapter, I think: ${next}` : "";
+		return `These are my chapters, from the timeline I drew:\n\n${lines.join("\n")}${ahead}`;
 	}
 
 	async function begin() {

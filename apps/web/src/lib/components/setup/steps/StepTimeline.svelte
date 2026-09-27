@@ -1,35 +1,46 @@
 <!--
-	Getting started, last step: build your timeline.
+	Setup: your chapters.
 
-	One continuous experience in five beats, from the designer's step map
-	("6 · Your story"):
+	THE STEP'S ONE JOB is the structure of a life: its chapters, named, with
+	rough edges. What each one was and what ended it is the interview's job,
+	the next step, which starts from these and writes the person's words onto
+	them (narrative_draft.rs, `words_for_drawn`). So this step asks for names
+	and years and nothing else, and says rough is fine.
 
-	  a  "Imagine your life as a timeline."  a dot draws itself into an arrow
-	  b  example chapters settle onto it one by one, the camera following
-	  c  the camera pulls back: the whole example, birth to now
-	  d  "Now build yours."  the hand-off
-	  e  the example labels wipe away and the line becomes theirs: birth at
-	     the left edge (this is the ONE place onboarding asks for it), bands
-	     they add by clicking the line, names written on the band, boundaries
-	     dragged or nudged a year at a time
+	The framing is McAdams' (the Life Story Interview opens the same way):
+	your life as a book, and its contents page. About two to seven chapters
+	is what people give; ten is the ceiling here, two the floor.
 
-	a-d advance on their own timing, about ten seconds in all (tightened
-	from sixteen, 2026-09-25), or on a click; "Skip intro" jumps to e.
+	The intro is about five seconds, three beats, one object:
 
-	The example is plainly an example ("An example" rides above it, and its
-	chapters are the generic ones most lives share). It never pretends to be
-	them; it shows the shape they are about to draw.
+	  a  "If your life were a book / What would its chapters be?"
+	     the line draws itself, birth to now
+	  b  "Where did your life turn?"  an example's chapters settle onto it,
+	     a tick at each turn
+	  c  "Now write yours"  the example's later chapters fold into one blank
+	     stretch; what is left is exactly their starting line: Childhood, to
+	     13, then the chapter that came next, unnamed
 
-	WHAT A SAVE WRITES. The whole list, in one PUT: the timeline owns every
-	chapter while it is open. The first band starts on the birth date; every
-	later band starts on January 1 of its year (precision 'year', which is
-	what the drag snaps to); the last runs to now (ended_at null). The box
-	refuses the replace once the chapters have pages of their own, and says
-	so; that message is shown beside the button as-is.
+	and then the editor draws the same line in the same place, so the example
+	visibly becomes theirs. It plays once per device; a return opens on the
+	editor. Reduced motion shows the example still, with a button on.
+
+	AGES, NOT YEARS, ARE THE TRUTH. Each boundary is stored as the age it
+	falls at, so the birth year can be mistyped and fixed without moving or
+	deleting a chapter (it once deleted every chapter before a typo'd year).
+	People remember chapters by age; the line shows both.
+
+	On a phone the line is a preview and the chapters are a list: a fingertip
+	on a 300px line is three years wide, and names on it collide.
+
+	WHAT A SAVE WRITES. The whole list, in one PUT: the first band starts on
+	the birth date; every later band starts on January 1 of the year it
+	begins (precision 'year'); the last runs to now. The box refuses the
+	replace once the chapters have pages of their own, and says so.
 -->
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { blur } from 'svelte/transition';
+	import { fade } from 'svelte/transition';
 	import {
 		ApiError,
 		getProfile,
@@ -39,55 +50,49 @@
 		type DatePrecision,
 		type LifeChapterInput,
 	} from '$lib/api/client';
+	import { M, rise, sink } from '../motion';
+	import { readNextChapter, writeNextChapter } from '../nextChapter';
 
 	// `onskip` sets the step aside (Setup records it); without one, skipping
 	// just moves on.
 	let { onnext, onskip }: { onnext?: () => void; onskip?: () => void } = $props();
 
-	type Beat = 'a' | 'b' | 'c' | 'd' | 'e';
+	const MIN = 2;
+	const MAX = 10;
+	const SEED_AGE = 13;
+	const INTRO_KEY = 'virtues-timeline-intro';
+
+	type Beat = 'a' | 'b' | 'c' | 'e';
 
 	// ------------------------------------------------------------------
 	// Motion
 	// ------------------------------------------------------------------
 
 	let reduced = $state(false);
-	onMount(() => {
-		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-		reduced = mq.matches;
-		const on = (e: MediaQueryListEvent) => (reduced = e.matches);
-		mq.addEventListener('change', on);
-		return () => mq.removeEventListener('change', on);
-	});
-	const ms = (n: number) => (reduced ? 0 : n);
 	const touch = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
 
 	// ------------------------------------------------------------------
-	// The example (beats a-d). Abstract years, 0 = birth.
+	// The example (beats a-c). Ages, 0 = birth. Fictional, and personal in
+	// the way theirs will be: a school, a place, a person, a home. The last
+	// one is named, never "Now", which is the line's end, not a chapter.
 	// ------------------------------------------------------------------
 
-	const SAMPLE_SPAN = 40;
+	const SAMPLE_SPAN = 38;
 	const SAMPLE: { title: string; from: number; to: number }[] = [
-		{ title: 'Childhood', from: 0, to: 13 },
-		{ title: 'High school', from: 13, to: 18 },
-		{ title: 'College', from: 18, to: 22 },
-		{ title: 'First job', from: 22, to: 27 },
-		{ title: 'A new city', from: 27, to: 34 },
-		{ title: 'Now', from: 34, to: SAMPLE_SPAN },
+		{ title: 'Childhood', from: 0, to: SEED_AGE },
+		{ title: 'The band years', from: SEED_AGE, to: 19 },
+		{ title: 'Chicago', from: 19, to: 26 },
+		{ title: 'Married', from: 26, to: 33 },
+		{ title: 'The farm', from: 33, to: SAMPLE_SPAN },
 	];
 
-	const HEADLINES: Record<Beat, string> = {
-		a: 'Imagine your life as a timeline',
-		b: 'Each stretch of it has a name',
-		c: 'Seen whole, it has a shape',
-		d: 'Now build yours',
-		e: 'Now build yours',
-	};
-
-	let beat = $state<Beat>('a');
+	let beat = $state<Beat | null>(null);
 	let lineDrawn = $state(false);
 	let shownBands = $state(0);
-	let wiped = $state(false);
+	let folded = $state(false);
 	let editorShown = $state(false);
+	/** Opened on chapters they saved before: no intro, and a different head. */
+	let returning = $state(false);
 
 	let timers: ReturnType<typeof setTimeout>[] = [];
 	function later(fn: () => void, delay: number) {
@@ -98,53 +103,46 @@
 		timers = [];
 	}
 
-	/** Enter a beat and schedule its own choreography and the next beat. */
 	function enter(next: Beat) {
 		clearTimers();
 		beat = next;
 		switch (next) {
 			case 'a':
-				lineDrawn = false;
-				shownBands = 0;
-				later(() => (lineDrawn = true), ms(500));
-				later(() => enter('b'), reduced ? 2000 : 2400);
+				later(() => (lineDrawn = true), 160);
+				later(() => enter('b'), 1900);
 				break;
 			case 'b':
 				lineDrawn = true;
-				shownBands = 0;
-				SAMPLE.forEach((_, i) => later(() => (shownBands = i + 1), ms(400) + i * (reduced ? 300 : 480)));
-				later(() => enter('c'), (reduced ? 300 : 480) * SAMPLE.length + 900);
+				SAMPLE.forEach((_, i) => later(() => (shownBands = i + 1), 120 + i * 240));
+				later(() => enter('c'), 3300);
 				break;
 			case 'c':
 				lineDrawn = true;
 				shownBands = SAMPLE.length;
-				later(() => enter('d'), 2000);
-				break;
-			case 'd':
-				lineDrawn = true;
-				shownBands = SAMPLE.length;
-				later(() => enter('e'), 1800);
+				folded = true;
+				later(() => enter('e'), 900);
 				break;
 			case 'e':
 				lineDrawn = true;
 				shownBands = SAMPLE.length;
-				wiped = true;
-				later(() => (editorShown = true), ms(900));
-				later(() => focusFirstEmpty(), ms(1400));
+				folded = true;
+				editorShown = true;
+				try {
+					localStorage.setItem(INTRO_KEY, '1');
+				} catch {
+					// seen again next time; nothing lost
+				}
+				later(() => focusFirst(), M.base + 60);
 				break;
 		}
 	}
 
-	/** A click on the stage during the intro moves it along one beat. */
+	/** A click on the example moves it along one beat. */
 	function advance() {
-		if (beat === 'a') enter('b');
+		if (reduced) enter('e');
+		else if (beat === 'a') enter('b');
 		else if (beat === 'b') enter('c');
-		else if (beat === 'c') enter('d');
-		else if (beat === 'd') enter('e');
-	}
-
-	function skipIntro() {
-		enter('e');
+		else if (beat === 'c') enter('e');
 	}
 
 	$effect(() => () => clearTimers());
@@ -156,53 +154,32 @@
 	let width = $state(720);
 	const PAD_L = 28;
 	const PAD_R = 36;
-	const H = 300;
-	const LINE_Y = 176;
 	const BAND_H = 30;
 	const inner = $derived(Math.max(1, width - PAD_L - PAD_R));
+	/** A phone: the line is a preview, the chapters a list. */
+	const listMode = $derived(width < 520);
+	const LINE_Y = $derived(listMode ? 64 : 132);
+	const H = $derived(listMode ? 124 : 240);
+	const labelPx = $derived(listMode ? 14 : 17);
 
-	/** Camera for the example: zoomed onto the newest band while they
-	 *  arrive (b), pulled back to the whole line from c on. */
-	const CAM_ZOOM = 1.9;
-	const camera = $derived.by(() => {
-		if (beat !== 'b' || shownBands === 0) return { s: 1, tx: 0 };
-		const band = SAMPLE[Math.min(shownBands, SAMPLE.length) - 1];
-		const focus = PAD_L + ((band.from + band.to) / 2 / SAMPLE_SPAN) * inner;
-		const tx = Math.min(0, Math.max(width - width * CAM_ZOOM, width * 0.55 - focus * CAM_ZOOM));
-		return { s: CAM_ZOOM, tx };
-	});
-	const sx = (y: number) => PAD_L + (y / SAMPLE_SPAN) * inner;
-
-	/** The example's labels, in rows so a short chapter's name never runs
-	 *  into the next one's ("High schoolCollege" at the whole view). Row 0
-	 *  stands above the line; a label that would collide drops BELOW it, on
-	 *  a leader, because a leader rising past the row above struck through
-	 *  the neighbor's name. Widths are estimated from the 17px serif; the
-	 *  rows hold at any zoom, because the labels scale with the camera. */
-	const LABEL_ROW = 22;
-	const sampleRow = $derived.by(() => {
-		const ends: number[] = [];
-		return SAMPLE.map((b) => {
+	const sx = (age: number) => PAD_L + (age / SAMPLE_SPAN) * inner;
+	/** The example's names alternate above and below the line, so neighbors
+	 *  never meet; one that would run off the end is set against it. */
+	const sampleLabel = $derived(
+		SAMPLE.map((b, i) => {
 			const x = sx(b.from) + 4;
-			let r = ends.findIndex((e) => x >= e + 10);
-			if (r < 0) {
-				r = ends.length;
-				ends.push(0);
-			}
-			ends[r] = x + b.title.length * 8.6;
-			return r;
-		});
-	});
-	/** A label the camera has panned past the left edge is hidden, rather
-	 *  than showing its last letters ("ool"). */
-	const offstage = (from: number) => camera.tx + (sx(from) + 4) * camera.s < 0;
-	/** Baseline of a sample label: above the band on row 0, under it after. */
-	const sampleY = (row: number) =>
-		row === 0 ? LINE_Y - BAND_H / 2 - 12 : LINE_Y + BAND_H / 2 + 18 + (row - 1) * LABEL_ROW;
-	const sampleRows = $derived(Math.max(0, ...sampleRow));
+			const est = b.title.length * labelPx * 0.5;
+			const end = x + est > PAD_L + inner;
+			return {
+				x: end ? PAD_L + inner - 2 : x,
+				anchor: end ? 'end' : 'start',
+				y: i % 2 === 0 ? LINE_Y - BAND_H / 2 - 10 : LINE_Y + BAND_H / 2 + labelPx + 6,
+			};
+		}),
+	);
 
 	// ------------------------------------------------------------------
-	// Their timeline (beat e)
+	// Their chapters (beat e)
 	// ------------------------------------------------------------------
 
 	const now = new Date();
@@ -225,11 +202,18 @@
 
 	const birthYear = $derived.by(() => {
 		const y = Number(birthYearText);
-		return Number.isInteger(y) && y >= 1900 && y <= thisYear ? y : null;
+		return /^\d{4}$/.test(birthYearText) && y >= 1900 && y <= thisYear ? y : null;
 	});
 	const birthKnown = $derived(birthYear !== null);
-	const t0 = $derived(birthYear !== null ? birthYear + (birthMonth - 1) / 12 : thisYear - 30);
+	/** A full four digits that isn't a birth year: said, not ignored. */
+	const birthWrong = $derived(/^\d{4}$/.test(birthYearText) && birthYear === null);
+	/** Until they give a year, the line is the example's own span, so the
+	 *  hand-off from the example is exact. */
+	const base = $derived(birthYear ?? Math.floor(nowFrac - SAMPLE_SPAN));
+	const t0 = $derived(birthYear !== null ? birthYear + (birthMonth - 1) / 12 : nowFrac - SAMPLE_SPAN);
 	const t1 = $derived(Math.max(nowFrac, t0 + 1));
+	/** Their age this year: the last age a chapter can begin at. */
+	const ageNow = $derived(thisYear - base);
 	const tx = (t: number) => PAD_L + ((t - t0) / (t1 - t0)) * inner;
 	const tAt = (x: number) => t0 + ((x - PAD_L) / inner) * (t1 - t0);
 
@@ -237,99 +221,147 @@
 		key: number;
 		title: string;
 	}
-	let nextKey = 1;
-	let bands = $state<Band[]>([{ key: 0, title: '' }]);
-	/** bounds[k] = the year band k+1 starts. Always strictly increasing. */
-	let bounds = $state<number[]>([]);
+	let nextKey = 2;
+	let bands = $state<Band[]>([
+		{ key: 0, title: 'Childhood' },
+		{ key: 1, title: '' },
+	]);
+	/** ages[k] = the age chapter k+1 begins at. Strictly increasing. */
+	let ages = $state<number[]>([SEED_AGE]);
+	let touched = $state(false);
 
-	const firstYear = $derived(Math.floor(t0) + 1);
-	const bandStart = (i: number) => (i === 0 ? t0 : bounds[i - 1]);
-	const bandEnd = (i: number) => (i === bands.length - 1 ? t1 : bounds[i]);
+	/** They all fit before now. A birth year typo can break this; it never
+	 *  moves or deletes a chapter, it only stops the save and says why. */
+	const fits = $derived(ages.every((a) => a >= 1 && a <= ageNow));
+	/** Where each boundary is drawn: squeezed inside the line when they don't
+	 *  fit, so nothing leaves the page while the year is wrong. */
+	const shown = $derived(
+		ages.map((a, k) => Math.max(k + 1, Math.min(a, ageNow - (ages.length - 1 - k)))),
+	);
+	const yearOf = (k: number) => base + shown[k];
+	const bandStart = (i: number) => (i === 0 ? t0 : yearOf(i - 1));
+	const bandEnd = (i: number) => (i === bands.length - 1 ? t1 : yearOf(i));
 
-	/** A new boundary can go at year y inside band i. */
-	function canSplit(i: number, y: number) {
-		const lo = i === 0 ? firstYear : bounds[i - 1] + 1;
-		const hi = i === bands.length - 1 ? thisYear : bounds[i] - 1;
-		return y >= lo && y <= hi;
+	function lo(k: number) {
+		return k === 0 ? 1 : ages[k - 1] + 1;
 	}
+	function hi(k: number) {
+		return k === ages.length - 1 ? ageNow : ages[k + 1] - 1;
+	}
+	/** Band i can take a new boundary at age a. */
+	function canSplit(i: number, a: number) {
+		if (bands.length >= MAX || !fits) return false;
+		const l = i === 0 ? 1 : ages[i - 1] + 1;
+		const h = i === bands.length - 1 ? ageNow : ages[i] - 1;
+		return a >= l && a <= h;
+	}
+	const canAdd = $derived(
+		bands.length < MAX && fits && bands.some((_, i) => {
+			const l = i === 0 ? 1 : ages[i - 1] + 1;
+			const h = i === bands.length - 1 ? ageNow : ages[i] - 1;
+			return h >= l;
+		}),
+	);
 
-	function split(i: number, y: number) {
-		if (!canSplit(i, y)) return;
+	function split(i: number, a: number, then: 'name' | 'year' = 'name') {
+		if (!canSplit(i, a)) return;
 		const band: Band = { key: nextKey++, title: '' };
 		bands.splice(i + 1, 0, band);
-		bounds.splice(i, 0, y);
+		ages.splice(i, 0, a);
+		touched = true;
 		saveError = null;
-		tick().then(() => labelEls.get(band.key)?.focus());
+		tick().then(() => {
+			if (then === 'year') openYear(i);
+			else nameEls.get(band.key)?.focus();
+		});
 	}
 
-	/** Remove band i; its years go to a neighbor. */
-	function remove(i: number) {
-		if (bands.length === 1) return;
-		const key = bands[i].key;
-		bands.splice(i, 1);
-		// Band 0 owns the birth edge, so its end boundary goes; any other band
-		// hands its years to the band before it.
-		bounds.splice(i === 0 ? 0 : i - 1, 1);
-		labelEls.delete(key);
-		const focusTo = bands[Math.max(0, i - 1)];
-		tick().then(() => bandEls.get(focusTo.key)?.focus());
-	}
-
-	/** The button's way to add a chapter: split the band that runs to now,
-	 *  so chapters added one after another arrive in the order they were
-	 *  lived. When that band is a single year, the widest band gives way. */
-	function addChapter() {
+	/** "What came next": a new chapter after the last, placed at a guess the
+	 *  person corrects straight away (its year opens for them). */
+	function addNext() {
 		const last = bands.length - 1;
-		const lastMid = Math.round((bandStart(last) + bandEnd(last)) / 2);
-		if (canSplit(last, lastMid)) {
-			split(last, lastMid);
+		const from = last === 0 ? 1 : ages[last - 1] + 1;
+		const guess = Math.max(from, Math.round((from - 1 + ageNow) / 2));
+		if (canSplit(last, guess)) {
+			split(last, guess, 'year');
 			return;
 		}
-		if (canSplit(last, thisYear)) {
-			split(last, thisYear);
-			return;
-		}
+		// The last chapter is a single year: the widest one gives way.
 		let best = -1;
-		let bestSpan = 0;
+		let span = 0;
 		bands.forEach((_, i) => {
-			const lo = i === 0 ? firstYear : bounds[i - 1] + 1;
-			const hi = i === bands.length - 1 ? thisYear : bounds[i] - 1;
-			if (hi - lo + 1 > bestSpan) {
-				bestSpan = hi - lo + 1;
+			const l = i === 0 ? 1 : ages[i - 1] + 1;
+			const h = i === bands.length - 1 ? ageNow : ages[i] - 1;
+			if (h - l + 1 > span) {
+				span = h - l + 1;
 				best = i;
 			}
 		});
 		if (best < 0) return;
-		const mid = Math.round((bandStart(best) + bandEnd(best)) / 2);
-		const lo = best === 0 ? firstYear : bounds[best - 1] + 1;
-		const hi = best === bands.length - 1 ? thisYear : bounds[best] - 1;
-		split(best, Math.min(hi, Math.max(lo, mid)));
-	}
-	const canAdd = $derived(bands.some((_, i) => {
-		const lo = i === 0 ? firstYear : bounds[i - 1] + 1;
-		const hi = i === bands.length - 1 ? thisYear : bounds[i] - 1;
-		return hi >= lo;
-	}));
-
-	/** Keep every boundary lawful after the birth edge moves: a boundary at
-	 *  or before birth folds its band into the next. */
-	function normalizeAfterBirth() {
-		while (bounds.length && bounds[0] < firstYear) {
-			bounds.splice(0, 1);
-			const [gone] = bands.splice(0, 1);
-			if (!bands[0].title.trim()) bands[0].title = gone.title;
-		}
+		const l = best === 0 ? 1 : ages[best - 1] + 1;
+		const h = best === bands.length - 1 ? ageNow : ages[best] - 1;
+		split(best, Math.round((l + h) / 2), 'year');
 	}
 
-	function boundClamp(k: number, y: number) {
-		const lo = k === 0 ? firstYear : bounds[k - 1] + 1;
-		const hi = k === bounds.length - 1 ? thisYear : bounds[k + 1] - 1;
-		return Math.min(hi, Math.max(lo, y));
+	// Undo: one step, for the two things that take away (a remove and a join).
+	let undo = $state<{ bands: Band[]; ages: number[]; said: string; key: number } | null>(null);
+	let undoTimer: ReturnType<typeof setTimeout> | null = null;
+	function keep(said: string, key: number) {
+		undo = { bands: bands.map((b) => ({ ...b })), ages: [...ages], said, key };
+		if (undoTimer) clearTimeout(undoTimer);
+		undoTimer = setTimeout(() => (undo = null), 8000);
+	}
+	function restore() {
+		if (!undo) return;
+		const key = undo.key;
+		bands = undo.bands;
+		ages = undo.ages;
+		undo = null;
+		tick().then(() => nameEls.get(key)?.focus());
+	}
+	$effect(() => () => {
+		if (undoTimer) clearTimeout(undoTimer);
+	});
+
+	const titleOf = (b: Band | undefined) => (b?.title.trim() ? `“${b.title.trim()}”` : 'the unnamed chapter');
+
+	/** Remove band i; its years go to the chapter before it (the first
+	 *  chapter's go to the one after, since birth stays put). */
+	function remove(i: number) {
+		if (bands.length <= 1) return;
+		const heir = bands[i === 0 ? 1 : i - 1];
+		const gone = bands[i];
+		const said = gone.title.trim()
+			? `Removed ${titleOf(gone)}. Its years went to ${titleOf(heir)}.`
+			: `Removed a chapter. Its years went to ${titleOf(heir)}.`;
+		keep(said, gone.key);
+		bands.splice(i, 1);
+		ages.splice(i === 0 ? 0 : i - 1, 1);
+		nameEls.delete(gone.key);
+		touched = true;
+		tick().then(() => nameEls.get(heir.key)?.focus());
 	}
 
-	// Drag
+	/** Join band k+1 into band k (a boundary removed). */
+	function join(k: number) {
+		const left = bands[k];
+		const right = bands[k + 1];
+		keep(`Joined ${titleOf(right)} into ${titleOf(left)}.`, right.key);
+		if (!left.title.trim()) left.title = right.title;
+		bands.splice(k + 1, 1);
+		ages.splice(k, 1);
+		touched = true;
+		tick().then(() => bandEls.get(bands[k].key)?.focus());
+	}
+
+	function clampAge(k: number, a: number) {
+		return Math.min(hi(k), Math.max(lo(k), a));
+	}
+
+	// Drag a boundary
 	let stageEl = $state<HTMLDivElement | null>(null);
 	let dragging = $state<number | null>(null);
+	let hoverTick = $state<number | null>(null);
 	function xOf(e: MouseEvent) {
 		const r = stageEl?.getBoundingClientRect();
 		return r ? e.clientX - r.left : 0;
@@ -341,95 +373,159 @@
 		e.preventDefault();
 	}
 	function onHandleMove(e: PointerEvent, k: number) {
-		if (dragging !== k) return;
-		bounds[k] = boundClamp(k, Math.round(tAt(xOf(e))));
-	}
-	function onHandleUp() {
-		dragging = null;
+		if (dragging !== k || !fits) return;
+		const a = clampAge(k, Math.round(tAt(xOf(e))) - base);
+		if (a !== ages[k]) {
+			ages[k] = a;
+			touched = true;
+		}
 	}
 	function onHandleKey(e: KeyboardEvent, k: number) {
 		const step = e.shiftKey ? 5 : 1;
-		if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
-			bounds[k] = boundClamp(k, bounds[k] - step);
-		} else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
-			bounds[k] = boundClamp(k, bounds[k] + step);
-		} else if (e.key === 'Home') {
-			bounds[k] = boundClamp(k, -Infinity);
-		} else if (e.key === 'End') {
-			bounds[k] = boundClamp(k, Infinity);
-		} else if (e.key === 'Delete' || e.key === 'Backspace') {
-			// Removing a boundary joins the two bands; the earlier name stays.
-			const right = bands[k + 1];
-			if (!bands[k].title.trim()) bands[k].title = right.title;
-			bands.splice(k + 1, 1);
-			bounds.splice(k, 1);
-			tick().then(() => bandEls.get(bands[k].key)?.focus());
-		} else {
-			return;
-		}
+		if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') ages[k] = clampAge(k, ages[k] - step);
+		else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') ages[k] = clampAge(k, ages[k] + step);
+		else if (e.key === 'Home') ages[k] = clampAge(k, -Infinity);
+		else if (e.key === 'End') ages[k] = clampAge(k, Infinity);
+		else if (e.key === 'Enter') openYear(k);
+		else if (e.key === 'Delete' || e.key === 'Backspace') join(k);
+		else return;
+		touched = true;
 		e.preventDefault();
 	}
 
+	// A boundary's year, entered rather than dragged: a four-digit year, or an
+	// age ("18").
+	let yearOpen = $state<number | null>(null);
+	let yearText = $state('');
+	let yearEl = $state<HTMLInputElement | null>(null);
+	async function openYear(k: number) {
+		if (!birthKnown) {
+			nudgeBirth();
+			return;
+		}
+		yearOpen = k;
+		yearText = String(yearOf(k));
+		await tick();
+		yearEl?.focus();
+		yearEl?.select();
+	}
+	function commitYear(k: number, then?: 'next') {
+		const n = Number(yearText.trim());
+		if (Number.isInteger(n) && yearText.trim()) {
+			const a = n >= 1000 ? n - base : n;
+			ages[k] = clampAge(k, a);
+			touched = true;
+		}
+		yearOpen = null;
+		if (then === 'next') tick().then(() => nameEls.get(bands[k + 1]?.key)?.focus());
+	}
+	function onYearKey(e: KeyboardEvent, k: number) {
+		if (e.key === 'Enter') {
+			commitYear(k, 'next');
+			e.preventDefault();
+		} else if (e.key === 'Escape') {
+			yearOpen = null;
+			tick().then(() => handleEls.get(k)?.focus());
+			e.preventDefault();
+		}
+	}
+
 	// Clicking a band adds a boundary where you clicked
-	let ghost = $state<{ i: number; y: number } | null>(null);
+	let ghost = $state<{ i: number; a: number } | null>(null);
 	function onBandMove(e: PointerEvent, i: number) {
-		const y = Math.round(tAt(xOf(e)));
-		ghost = canSplit(i, y) ? { i, y } : null;
+		if (!birthKnown) return;
+		const a = Math.round(tAt(xOf(e))) - base;
+		ghost = canSplit(i, a) ? { i, a } : null;
 	}
 	function onBandClick(e: MouseEvent, i: number) {
 		// A keyboard "click" (Enter/Space) has no position; rename instead.
 		if (e.detail === 0) return;
-		const y = Math.round(tAt(xOf(e)));
-		if (canSplit(i, y)) {
-			split(i, y);
+		if (!birthKnown) {
+			nudgeBirth();
+			return;
+		}
+		const a = Math.round(tAt(xOf(e))) - base;
+		if (canSplit(i, a)) {
+			split(i, a);
 			ghost = null;
 		} else {
-			labelEls.get(bands[i].key)?.focus();
+			nameEls.get(bands[i].key)?.focus();
+			if (bands.length >= MAX) hint = 'Ten chapters is the most. Join two to make room for another.';
 		}
 	}
 	function onBandKey(e: KeyboardEvent, i: number) {
 		if (e.key === 'Enter' || e.key === ' ') {
-			labelEls.get(bands[i].key)?.focus();
-			labelEls.get(bands[i].key)?.select();
+			nameEls.get(bands[i].key)?.focus();
+			nameEls.get(bands[i].key)?.select();
 			e.preventDefault();
 		} else if (e.key === '+' || e.key === '=') {
-			const mid = Math.round((bandStart(i) + bandEnd(i)) / 2);
-			if (canSplit(i, mid)) split(i, mid);
+			const l = i === 0 ? 1 : ages[i - 1] + 1;
+			const h = i === bands.length - 1 ? ageNow : ages[i] - 1;
+			split(i, Math.round((l + h) / 2), 'year');
 			e.preventDefault();
 		} else if ((e.key === 'Delete' || e.key === 'Backspace') && bands.length > 1) {
 			remove(i);
 			e.preventDefault();
 		}
 	}
-	function onLabelKey(e: KeyboardEvent, i: number) {
-		if (e.key === 'Enter' || e.key === 'Escape') {
-			bandEls.get(bands[i].key)?.focus();
+	/** Enter in a name moves on: to the next chapter, or, on the last one,
+	 *  to a new one ("what came next"). */
+	function onNameKey(e: KeyboardEvent, i: number) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			if (!bands[i].title.trim()) return;
+			if (i < bands.length - 1) nameEls.get(bands[i + 1].key)?.focus();
+			else if (canAdd) addNext();
+			else (e.currentTarget as HTMLInputElement).blur();
+		} else if (e.key === 'Escape') {
+			(e.currentTarget as HTMLInputElement).blur();
 			e.preventDefault();
 		}
 	}
 
-	const labelEls = new Map<number, HTMLInputElement>();
+	const nameEls = new Map<number, HTMLInputElement>();
 	const bandEls = new Map<number, HTMLElement>();
-	function registerLabel(el: HTMLInputElement, key: number) {
-		labelEls.set(key, el);
-		return { destroy: () => { if (labelEls.get(key) === el) labelEls.delete(key); } };
+	const handleEls = new Map<number, HTMLElement>();
+	function registerName(el: HTMLInputElement, key: number) {
+		nameEls.set(key, el);
+		return { destroy: () => { if (nameEls.get(key) === el) nameEls.delete(key); } };
 	}
 	function registerBand(el: HTMLElement, key: number) {
 		bandEls.set(key, el);
 		return { destroy: () => { if (bandEls.get(key) === el) bandEls.delete(key); } };
 	}
-	function focusFirstEmpty() {
+	function registerHandle(el: HTMLElement, k: number) {
+		handleEls.set(k, el);
+		return {
+			update: (nk: number) => { handleEls.set(nk, el); },
+			destroy: () => { if (handleEls.get(k) === el) handleEls.delete(k); },
+		};
+	}
+	let birthYearEl = $state<HTMLInputElement | null>(null);
+	function focusFirst() {
 		if (birthYear === null) {
-			birthYearEl?.focus();
+			birthYearEl?.focus({ preventScroll: true });
 			return;
 		}
 		const empty = bands.find((b) => !b.title.trim());
-		if (empty) labelEls.get(empty.key)?.focus();
+		if (empty) nameEls.get(empty.key)?.focus({ preventScroll: true });
 	}
-	let birthYearEl = $state<HTMLInputElement | null>(null);
 
-	/** Labels stack into rows when bands are too narrow to hold them. */
+	/** Anything that needs the year, pressed before there is one, points at
+	 *  the year instead of doing nothing. */
+	let nudged = $state(false);
+	function nudgeBirth() {
+		nudged = false;
+		tick().then(() => (nudged = true));
+		birthYearEl?.focus();
+		hint = null;
+	}
+
+	/** Names stand above the line, stacking up a row when a chapter is too
+	 *  narrow to hold its own. */
 	const NARROW = 104;
+	const placeholderOf = (i: number) =>
+		i === 0 ? 'Your first chapter' : i === 1 ? 'What came next?' : 'Name this chapter';
 	const layout = $derived.by(() => {
 		let narrowRun = 0;
 		return bands.map((b, i) => {
@@ -444,29 +540,21 @@
 				narrowRun = 0;
 			}
 			// A narrow band hard against the right edge writes its name leftward,
-			// so a focused label never runs off the pane.
+			// so a focused name never runs off the pane.
 			const alignRight = w < 150 && x1 > width - 150;
-			return { x0, x1, w, row, alignRight };
+			const chars = (b.title.trim() || placeholderOf(i)).length;
+			return { x0, x1, w, row, alignRight, chars };
 		});
 	});
 
-	/** THE EDITOR SITS UNDER ITS INSTRUCTION. The stage keeps the intro's
-	 *  height, which the example's labels need; the editor's names stand on
-	 *  the line, so without this the line sat ~300px below the sentence
-	 *  telling you to click it. The stage rises by the room its label rows
-	 *  don't use: a name on the first row sits 121px down the stage, so a
-	 *  rise of 190 leaves it just under the sentence, and each extra row
-	 *  gives back 30. */
-	const editorPull = $derived(Math.max(0, 190 - Math.max(0, ...layout.map((l) => l.row)) * 30));
-
-	/** Which boundary years have room to be printed: a year that would
-	 *  overprint its neighbor, or "Now", stays silent until its mark is held. */
-	const YEAR_GAP = 38;
+	/** Which boundary years have room to be printed: one that would overprint
+	 *  its neighbor, or the end of the line, stays quiet until it is held. */
+	const YEAR_GAP = 44;
 	const yearRoom = $derived.by(() => {
 		let last = -Infinity;
 		const endX = PAD_L + inner;
-		return bounds.map((y) => {
-			const x = tx(y);
+		return shown.map((a) => {
+			const x = tx(base + a);
 			const ok = x - last >= YEAR_GAP && endX - x >= YEAR_GAP;
 			if (ok) last = x;
 			return ok;
@@ -474,13 +562,60 @@
 	});
 
 	const unnamed = $derived(bands.filter((b) => !b.title.trim()).length);
-	const canSave = $derived(birthKnown && unnamed === 0);
+	const canSave = $derived(birthKnown && unnamed === 0 && bands.length >= MIN && fits);
+
+	/** A passing word from the editor: a refused split, a limit. */
+	let hint = $state<string | null>(null);
+
+	/** One instruction at a time, under the headline. */
+	const instruction = $derived.by(() => {
+		if (!birthKnown) return 'Start with the year you were born.';
+		if (bands.length < 3 && !returning)
+			return `${touch && !listMode ? 'Tap' : listMode ? 'Add' : 'Click'} ${listMode ? 'the chapters that followed' : 'the line where your life turned'}. Three to seven chapters is plenty, and rough years are fine.`;
+		return 'Three to seven chapters is plenty, and rough years are fine.';
+	});
+
+	/** The line under the buttons, most pressing first. */
+	const status = $derived.by(() => {
+		if (saveError) return { error: true, text: saveError };
+		if (birthWrong) return { error: true, text: `Enter the year you were born, 1900 to ${thisYear}.` };
+		if (birthKnown && !fits)
+			return { error: true, text: 'These chapters run past this year. Check the year you were born.' };
+		if (confirmSkip) return { error: false, text: 'Skipping leaves out the chapters you drew here.' };
+		if (hint) return { error: false, text: hint };
+		// Before a year, the line under the headline already asks for it.
+		if (!birthKnown) return null;
+		if (bands.length < MIN) return { error: false, text: 'Add one more chapter to save.' };
+		if (unnamed > 0)
+			return {
+				error: false,
+				text: `${unnamed === 1 ? 'One chapter needs' : `${unnamed} chapters need`} a name before you can save.`,
+			};
+		return null;
+	});
+	$effect(() => {
+		// A hint is for the moment it answers; the next edit clears it.
+		void bands.length;
+		void ages.length;
+		hint = null;
+	});
 
 	// ------------------------------------------------------------------
 	// Load and save
 	// ------------------------------------------------------------------
 
+	let nextChapter = $state('');
+
 	onMount(() => {
+		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+		reduced = mq.matches;
+		nextChapter = readNextChapter();
+		let seen = false;
+		try {
+			seen = localStorage.getItem(INTRO_KEY) === '1';
+		} catch {
+			// no storage: the intro plays, which is the safe default
+		}
 		let cancelled = false;
 		(async () => {
 			const [profile, chapters] = await Promise.all([
@@ -494,18 +629,22 @@
 				birthYearText = bd.slice(0, 4);
 				birthMonth = Number(bd.slice(5, 7)) || 1;
 			}
-			const named = chapters.filter((c) => c.kind === 'chapter' || c.title);
 			if (chapters.length) {
-				// They have drawn this before: open on their timeline, not the example.
+				// They have drawn this before: open on theirs, not the example.
+				const start = Number(chapters[0].started_at.slice(0, 4));
+				const from = birthYear ?? start;
+				if (birthYear === null) birthYearText = String(start);
 				bands = chapters.map((c) => ({ key: nextKey++, title: c.title ?? '' }));
-				bounds = chapters.slice(1).map((c) => Number(c.started_at.slice(0, 4)));
-				if (birthYear !== null) normalizeAfterBirth();
-				if (named.length) {
-					enter('e');
-					return;
-				}
+				ages = chapters.slice(1).map((c) => Number(c.started_at.slice(0, 4)) - from);
+				returning = chapters.some((c) => c.title);
 			}
-			enter('a');
+			if (returning || seen) enter('e');
+			else if (reduced) {
+				// Still: the whole example at once, and a button on.
+				beat = 'a';
+				lineDrawn = true;
+				shownBands = SAMPLE.length;
+			} else enter('a');
 		})();
 		return () => {
 			cancelled = true;
@@ -514,6 +653,7 @@
 
 	let saving = $state(false);
 	let saveError = $state<string | null>(null);
+	let confirmSkip = $state(false);
 
 	function sentence(msg: string) {
 		const s = msg.trim();
@@ -538,12 +678,13 @@
 			const last = bands.length - 1;
 			const payload: LifeChapterInput[] = bands.map((b, i) => ({
 				title: b.title.trim(),
-				started_at: i === 0 ? birthDate : `${bounds[i - 1]}-01-01`,
+				started_at: i === 0 ? birthDate : `${birthYear + ages[i - 1]}-01-01`,
 				started_precision: i === 0 ? birthPrecision : 'year',
-				ended_at: i === last ? null : `${bounds[i]}-01-01`,
+				ended_at: i === last ? null : `${birthYear + ages[i]}-01-01`,
 				ended_precision: i === last ? null : 'year',
 			}));
 			await replaceLifeChapters(payload);
+			writeNextChapter(nextChapter);
 			onnext?.();
 		} catch (e) {
 			saveError =
@@ -555,131 +696,130 @@
 		}
 	}
 
+	function skip() {
+		if (touched && !confirmSkip) {
+			confirmSkip = true;
+			return;
+		}
+		(onskip ?? onnext)?.();
+	}
+
 	const spanLabel = (i: number) => {
-		const from = i === 0 ? (birthYear ?? '') : bounds[i - 1];
-		const to = i === bands.length - 1 ? 'now' : bounds[i];
+		const from = i === 0 ? (birthYear ?? 'birth') : yearOf(i - 1);
+		const to = i === bands.length - 1 ? 'now' : yearOf(i);
 		return `${from} to ${to}`;
 	};
+	/** "2004 · age 13", or just the age before there is a year. */
+	const tickLabel = (k: number, full: boolean) =>
+		birthKnown ? (full ? `${yearOf(k)} · age ${shown[k]}` : String(yearOf(k))) : `age ${shown[k]}`;
+
+	function onWindowKey(e: KeyboardEvent) {
+		if (beat && beat !== 'e' && e.key === 'Escape') {
+			enter('e');
+			return;
+		}
+		// ⌘Z/Ctrl+Z undoes a remove, unless a field has its own undo to do.
+		const el = document.activeElement;
+		const field = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+		if (undo && !field && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+			e.preventDefault();
+			restore();
+		}
+	}
+
+	const heads: Record<Beat, { h: string; s: string }> = {
+		a: { h: 'If your life were a book', s: 'What would its chapters be?' },
+		b: { h: 'Where did your life turn?', s: 'A move, a school, a person, a loss. Each turn begins a chapter.' },
+		c: { h: 'Now write yours', s: '' },
+		e: { h: 'Now write yours', s: '' },
+	};
+	const head = $derived(
+		beat === 'e' && returning
+			? { h: 'Your chapters', s: '' }
+			: beat
+				? heads[beat]
+				: { h: '', s: '' },
+	);
+	const sub = $derived(beat === 'e' ? instruction : head.s);
 </script>
 
-<section class="timeline-step" class:editing={beat === 'e'}>
+<svelte:window onkeydown={onWindowKey} />
+
+<section class="timeline-step" class:editing={beat === 'e'} class:list={listMode}>
 	<header class="head">
-		<div class="headline-slot" aria-live="polite">
-			{#key HEADLINES[beat]}
-				<h1
-					class="headline"
-					in:blur={{ duration: ms(1100), amount: 10, delay: ms(150) }}
-					out:blur={{ duration: ms(500), amount: 8 }}
-				>
-					{HEADLINES[beat]}
-				</h1>
+		<div class="slot headline-slot" aria-live="polite">
+			{#key head.h}
+				<h1 class="headline" in:rise={{ delay: M.quick }} out:sink>{head.h}</h1>
 			{/key}
 		</div>
-		<!-- One instruction at a time: the year first, because nothing on the
-		     line works without it; then the line. "Tap" on a touch screen. -->
-		<p class="sub" class:show={editorShown}>
-			{#if !birthKnown}
-				Start with the year you were born.
-			{:else}
-				{touch ? 'Tap' : 'Click'} the line to add a chapter, then name it.
-			{/if}
-		</p>
+		<div class="slot sub-slot">
+			{#key sub}
+				<p class="sub" in:rise={{ delay: M.quick + 80, y: 4 }} out:sink>{sub}</p>
+			{/key}
+		</div>
 	</header>
 
-	<div
-		class="stage"
-		bind:this={stageEl}
-		bind:clientWidth={width}
-		style:height="{H}px"
-		style:margin-top={editorShown ? `calc(clamp(8px, 4vh, 40px) - ${editorPull}px)` : undefined}
-	>
-		{#if beat !== 'e'}
-			<!-- The whole stage moves the intro along a beat -->
+	<div class="stage" bind:this={stageEl} bind:clientWidth={width} style:height="{H}px">
+		{#if beat && beat !== 'e'}
 			<button type="button" class="advance" aria-label="Continue" onclick={advance}></button>
 		{/if}
-		<!-- The example, beats a-d -->
-		<svg
-			class="intro"
-			class:gone={editorShown}
-			width={width}
-			height={H}
-			viewBox="0 0 {width} {H}"
-			aria-hidden="true"
-		>
-			<text class="eyebrow" class:show={shownBands > 0 && !wiped} x={PAD_L} y={18}>
+
+		<!-- The example, beats a-c -->
+		<svg class="intro" class:gone={editorShown} {width} height={H} viewBox="0 0 {width} {H}" aria-hidden="true">
+			<text class="eyebrow" class:show={shownBands > 0 && !folded} x={width / 2} y={Math.max(12, LINE_Y - 76)} text-anchor="middle">
 				An example
 			</text>
-			<g
-				class="camera"
-				style:transform="translate({camera.tx}px, 0) scale({camera.s})"
-				style:transform-origin="0 {LINE_Y}px"
-			>
-				{#each SAMPLE as band, i (band.title)}
-					<g class="sband" class:show={i < shownBands}>
-						<rect
-							x={sx(band.from) + 1}
-							y={LINE_Y - BAND_H / 2}
-							width={Math.max(0, sx(band.to) - sx(band.from) - 2)}
-							height={BAND_H}
-							rx="3"
-							class:alt={i % 2 === 1}
-						/>
-						{#if sampleRow[i] > 0}
-							<line
-								class="sleader"
-								class:wiped
-								x1={sx(band.from) + 4}
-								x2={sx(band.from) + 4}
-								y1={LINE_Y + BAND_H / 2 + 3}
-								y2={sampleY(sampleRow[i]) - 13}
-							/>
-						{/if}
-						<text
-							class="slabel"
-							class:wiped
-							class:offstage={beat === 'b' && offstage(band.from)}
-							style:transition-delay="{wiped ? i * 90 : 0}ms"
-							x={sx(band.from) + 4}
-							y={sampleY(sampleRow[i])}
-						>
-							{band.title}
-						</text>
-					</g>
-				{/each}
+			{#each SAMPLE as band, i (band.title)}
+				<g class="sband" class:show={i < shownBands} class:folded={folded && i > 0} style:--i={i}>
+					<rect
+						x={sx(band.from) + 1}
+						y={LINE_Y - BAND_H / 2}
+						width={Math.max(0, sx(band.to) - sx(band.from) - 2)}
+						height={BAND_H}
+						rx="3"
+						class:alt={i % 2 === 1}
+					/>
+					{#if i > 0}
+						<line class="sturn" x1={sx(band.from)} x2={sx(band.from)} y1={LINE_Y - BAND_H / 2 - 6} y2={LINE_Y + BAND_H / 2 + 6} />
+					{/if}
+					<text
+						class="slabel"
+						style:font-size="{labelPx}px"
+						x={sampleLabel[i].x}
+						y={sampleLabel[i].y}
+						text-anchor={sampleLabel[i].anchor}
+					>
+						{band.title}
+					</text>
+				</g>
+			{/each}
+			<!-- What the example folds into: their first chapter and the blank one after -->
+			<rect
+				class="seed-rest"
+				class:show={folded}
+				x={sx(SEED_AGE) + 1}
+				y={LINE_Y - BAND_H / 2}
+				width={Math.max(0, sx(SAMPLE_SPAN) - sx(SEED_AGE) - 2)}
+				height={BAND_H}
+				rx="3"
+			/>
+			<line class="sturn keep" class:show={shownBands > 1} x1={sx(SEED_AGE)} x2={sx(SEED_AGE)} y1={LINE_Y - BAND_H / 2 - 6} y2={LINE_Y + BAND_H / 2 + 6} />
 
-				<rect
-					class="line"
-					class:drawn={lineDrawn}
-					x={PAD_L}
-					y={LINE_Y - 0.75}
-					width={inner}
-					height="1.5"
-				/>
-				<circle class="origin" cx={PAD_L} cy={LINE_Y} r="5" />
-				<path
-					class="arrow"
-					class:show={lineDrawn}
-					d="M {PAD_L + inner - 1} {LINE_Y - 6} L {PAD_L + inner + 9} {LINE_Y} L {PAD_L + inner - 1} {LINE_Y + 6}"
-				/>
-				<text class="end" class:show={beat === 'c' || beat === 'd'} x={PAD_L} y={LINE_Y + 40 + sampleRows * LABEL_ROW}>Birth</text>
-				<text
-					class="end"
-					class:show={beat === 'c' || beat === 'd'}
-					x={PAD_L + inner + 8}
-					y={LINE_Y + 40 + sampleRows * LABEL_ROW}
-					text-anchor="end">Now</text
-				>
-			</g>
+			<rect class="line" class:drawn={lineDrawn} x={PAD_L} y={LINE_Y - 0.75} width={inner} height="1.5" />
+			<circle class="origin" cx={PAD_L} cy={LINE_Y} r="5" />
+			<path
+				class="arrow"
+				class:show={lineDrawn}
+				d="M {PAD_L + inner - 1} {LINE_Y - 6} L {PAD_L + inner + 9} {LINE_Y} L {PAD_L + inner - 1} {LINE_Y + 6}"
+			/>
+			<text class="end" class:show={lineDrawn} x={PAD_L} y={LINE_Y + 48}>Birth</text>
+			<text class="end" class:show={lineDrawn} x={PAD_L + inner + 8} y={LINE_Y + 48} text-anchor="end">Now</text>
 		</svg>
 
 		<!-- Theirs, beat e -->
 		{#if editorShown}
-			<div
-				class="editor"
-				class:unborn={!birthKnown}
-				in:blur={{ duration: ms(700), amount: 6 }}
-			>
-				<svg class="axis" width={width} height={H} viewBox="0 0 {width} {H}" aria-hidden="true">
+			<div class="editor" class:unborn={!birthKnown} in:fade={{ duration: reduced ? 0 : M.base }}>
+				<svg class="axis" {width} height={H} viewBox="0 0 {width} {H}" aria-hidden="true">
 					{#each bands as band, i (band.key)}
 						{@const l = layout[i]}
 						<rect
@@ -692,7 +832,7 @@
 							height={BAND_H}
 							rx="3"
 						/>
-						{#if l.row > 0}
+						{#if l.row > 0 && !listMode}
 							<line
 								class="leader"
 								x1={l.alignRight ? l.x1 - 4 : l.x0 + 4}
@@ -700,6 +840,9 @@
 								y1={LINE_Y - BAND_H / 2 - 4}
 								y2={LINE_Y - BAND_H / 2 - 12 - l.row * 30 + 6}
 							/>
+						{/if}
+						{#if listMode}
+							<text class="band-n" x={l.x0 + l.w / 2} y={LINE_Y - 4} text-anchor="middle">{l.w > 14 ? i + 1 : ''}</text>
 						{/if}
 					{/each}
 					<rect class="line drawn" x={PAD_L} y={LINE_Y - 0.75} width={inner} height="1.5" />
@@ -709,171 +852,294 @@
 						d="M {PAD_L + inner - 1} {LINE_Y - 6} L {PAD_L + inner + 9} {LINE_Y} L {PAD_L + inner - 1} {LINE_Y + 6}"
 					/>
 					{#if ghost && dragging === null}
-						<line
-							class="ghost"
-							x1={tx(ghost.y)}
-							x2={tx(ghost.y)}
-							y1={LINE_Y - BAND_H / 2 - 6}
-							y2={LINE_Y + BAND_H / 2 + 6}
-						/>
-						<text class="year ghost-year" x={tx(ghost.y)} y={LINE_Y + 42} text-anchor="middle">
-							+ {ghost.y}
+						<line class="ghost" x1={tx(base + ghost.a)} x2={tx(base + ghost.a)} y1={LINE_Y - BAND_H / 2 - 6} y2={LINE_Y + BAND_H / 2 + 6} />
+						<text class="year ghost-year" x={tx(base + ghost.a)} y={LINE_Y + 48} text-anchor="middle">
+							+ {base + ghost.a} · age {ghost.a}
 						</text>
 					{/if}
-					{#each bounds as y, k (bands[k + 1]?.key ?? k)}
-						<text
-							class="year"
-							class:active={dragging === k}
-							class:hidden={dragging !== k &&
-								(!yearRoom[k] ||
-									(ghost !== null && dragging === null && Math.abs(tx(ghost.y) - tx(y)) < 34))}
-							x={tx(y)}
-							y={LINE_Y + 42}
-							text-anchor="middle">{y}</text
-						>
-					{/each}
-					<text class="year end-year" x={PAD_L + inner + 8} y={LINE_Y + 42} text-anchor="end">Now</text>
+					<text class="year end-year" x={PAD_L + inner + 8} y={LINE_Y + 48} text-anchor="end">Now</text>
 				</svg>
 
-				<!-- Birth, at the left edge: first in the tab order, as on the line -->
-				<fieldset class="birth" style:left="{PAD_L - 6}px" style:top="{LINE_Y + 58}px">
-					<legend>Born</legend>
-					<select bind:value={birthMonth} aria-label="Birth month" onchange={normalizeAfterBirth}>
-						{#each MONTHS as m, i}
-							<option value={i + 1}>{m}</option>
-						{/each}
-					</select>
-					<input
-						class="birth-year"
-						type="text"
-						inputmode="numeric"
-						maxlength="4"
-						placeholder="Year"
-						aria-label="Birth year"
-						bind:this={birthYearEl}
-						bind:value={birthYearText}
-						oninput={() => {
-							saveError = null;
-							if (birthYear !== null) normalizeAfterBirth();
-						}}
-					/>
-				</fieldset>
+				{#if !listMode}
+					<!-- Birth, at the start of the line: first in the tab order, as on the line -->
+					<fieldset class="birth" class:nudged style:left="{PAD_L - 6}px" style:top="{LINE_Y + 62}px">
+						<legend>Born</legend>
+						<span class="month"><select bind:value={birthMonth} aria-label="Birth month">
+							{#each MONTHS as m, i}
+								<option value={i + 1}>{m}</option>
+							{/each}
+						</select></span>
+						<input
+							class="birth-year"
+							type="text"
+							inputmode="numeric"
+							maxlength="4"
+							placeholder="Year"
+							aria-label="Birth year"
+							aria-invalid={birthWrong}
+							bind:this={birthYearEl}
+							bind:value={birthYearText}
+							oninput={() => {
+								saveError = null;
+								nudged = false;
+							}}
+						/>
+					</fieldset>
 
-				<!-- Adding a chapter belongs with the line, opposite Born, not
-				     with the way forward. -->
-				{#if birthKnown}
 					<button
 						type="button"
 						class="quiet add"
 						style:right="{PAD_R - 8}px"
 						style:top="{LINE_Y + 62}px"
-						onclick={addChapter}
-						disabled={!canAdd}
-						in:blur={{ duration: ms(400), amount: 3 }}
+						onclick={() => (birthKnown ? addNext() : nudgeBirth())}
+						disabled={birthKnown && !canAdd}
 					>
 						+ Add a chapter
 					</button>
-				{/if}
 
-				<!-- Per band, in tab order: the band (click to add a boundary there,
-				     Enter to rename), its name, then the boundary that ends it
-				     (drag, or arrow keys a year at a time). -->
-				{#each bands as band, i (band.key)}
-					{@const l = layout[i]}
-					<button
-						type="button"
-						class="band-hit"
-						use:registerBand={band.key}
-						style:left="{l.x0}px"
-						style:width="{Math.max(0, l.w)}px"
-						style:top="{LINE_Y - BAND_H / 2 - 4}px"
-						style:height="{BAND_H + 8}px"
-						aria-label="{band.title.trim() || 'Unnamed chapter'}, {spanLabel(i)}"
-						aria-keyshortcuts="Enter Plus Delete"
-						onpointermove={(e) => onBandMove(e, i)}
-						onpointerleave={() => (ghost = null)}
-						onclick={(e) => onBandClick(e, i)}
-						onkeydown={(e) => onBandKey(e, i)}
-					></button>
+					{#each bands as band, i (band.key)}
+						{@const l = layout[i]}
+						<button
+							type="button"
+							class="band-hit"
+							use:registerBand={band.key}
+							style:left="{l.x0}px"
+							style:width="{Math.max(0, l.w)}px"
+							style:top="{LINE_Y - BAND_H / 2 - 4}px"
+							style:height="{BAND_H + 8}px"
+							aria-label="{band.title.trim() || 'Unnamed chapter'}, {spanLabel(i)}"
+							aria-keyshortcuts="Enter Plus Delete"
+							onpointermove={(e) => onBandMove(e, i)}
+							onpointerleave={() => (ghost = null)}
+							onclick={(e) => onBandClick(e, i)}
+							onkeydown={(e) => onBandKey(e, i)}
+						></button>
 
-					<div
-						class="label"
-						class:right={l.alignRight}
-						style:left={l.alignRight ? undefined : `${l.x0 + 3}px`}
-						style:right={l.alignRight ? `${width - l.x1 + 3}px` : undefined}
-						style:top="{LINE_Y - BAND_H / 2 - 40 - l.row * 30}px"
-						style:--w="{l.row > 0
-							? Math.max(l.w - 8, Math.min(220, 24 + band.title.trim().length * 9))
-							: Math.max(56, l.w - 8)}px"
-					>
-						<input
-							type="text"
-							maxlength="120"
-							placeholder="Name it"
-							aria-label="Name of the chapter from {spanLabel(i)}"
-							bind:value={band.title}
-							use:registerLabel={band.key}
-							onkeydown={(e) => onLabelKey(e, i)}
-							oninput={() => (saveError = null)}
-						/>
-						{#if bands.length > 1}
-							<button
-								type="button"
-								class="remove"
-								aria-label="Remove {band.title.trim() || 'this chapter'}"
-								onclick={() => remove(i)}
-							>
-								<svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true">
-									<path d="M1.5 1.5 L8.5 8.5 M8.5 1.5 L1.5 8.5" />
-								</svg>
-							</button>
-						{/if}
-					</div>
+						<div
+							class="label"
+							class:right={l.alignRight}
+							style:left={l.alignRight ? undefined : `${l.x0 + 3}px`}
+							style:right={l.alignRight ? `${width - l.x1 + 3}px` : undefined}
+							style:top="{LINE_Y - BAND_H / 2 - 40 - l.row * 30}px"
+							style:--w="{l.row > 0 ? Math.max(l.w - 8, Math.min(220, 24 + l.chars * 9)) : Math.max(64, l.w - 32)}px"
+						>
+							<input
+								type="text"
+								maxlength="120"
+								placeholder={placeholderOf(i)}
+								aria-label="Name of the chapter from {spanLabel(i)}"
+								bind:value={band.title}
+								use:registerName={band.key}
+								onkeydown={(e) => onNameKey(e, i)}
+								oninput={() => {
+									saveError = null;
+									touched = true;
+									confirmSkip = false;
+								}}
+							/>
+							{#if bands.length > 1}
+								<button
+									type="button"
+									class="remove"
+									aria-label="Remove {band.title.trim() || 'this chapter'}"
+									onclick={() => remove(i)}
+								>
+									<svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true">
+										<path d="M1.5 1.5 L8.5 8.5 M8.5 1.5 L1.5 8.5" />
+									</svg>
+								</button>
+							{/if}
+						</div>
+					{/each}
 
-					{#if i < bounds.length}
-						{@const y = bounds[i]}
+					{#each ages as _, k (bands[k + 1]?.key ?? k)}
+						{@const x = tx(yearOf(k))}
 						<div
 							class="handle"
-							class:active={dragging === i}
+							class:active={dragging === k}
 							role="slider"
 							tabindex="0"
-							aria-label="Start of {bands[i + 1]?.title.trim() || 'the next chapter'}"
-							aria-valuenow={y}
-							aria-valuemin={i === 0 ? firstYear : bounds[i - 1] + 1}
-							aria-valuemax={i === bounds.length - 1 ? thisYear : bounds[i + 1] - 1}
-							aria-valuetext={String(y)}
-							style:left="{tx(y)}px"
+							use:registerHandle={k}
+							aria-label="Start of {bands[k + 1]?.title.trim() || 'the next chapter'}. Enter to type a year."
+							aria-valuenow={yearOf(k)}
+							aria-valuemin={base + lo(k)}
+							aria-valuemax={base + hi(k)}
+							aria-valuetext={tickLabel(k, true)}
+							style:left="{x}px"
 							style:top="{LINE_Y - BAND_H / 2 - 8}px"
 							style:height="{BAND_H + 16}px"
-							onpointerdown={(e) => onHandleDown(e, i)}
-							onpointermove={(e) => onHandleMove(e, i)}
-							onpointerup={onHandleUp}
-							onpointercancel={onHandleUp}
-							onkeydown={(e) => onHandleKey(e, i)}
+							onpointerdown={(e) => onHandleDown(e, k)}
+							onpointermove={(e) => onHandleMove(e, k)}
+							onpointerup={() => (dragging = null)}
+							onpointercancel={() => (dragging = null)}
+							onpointerenter={() => (hoverTick = k)}
+							onpointerleave={() => (hoverTick = null)}
+							onkeydown={(e) => onHandleKey(e, k)}
 						>
 							<span class="tick" aria-hidden="true"></span>
 						</div>
-					{/if}
-				{/each}
+						{#if yearOpen === k}
+							<input
+								class="year-input"
+								style:left="{x}px"
+								style:top="{LINE_Y + 30}px"
+								type="text"
+								inputmode="numeric"
+								maxlength="4"
+								aria-label="Year {bands[k + 1]?.title.trim() || 'the next chapter'} began, or your age then"
+								bind:this={yearEl}
+								bind:value={yearText}
+								onkeydown={(e) => onYearKey(e, k)}
+								onblur={() => yearOpen === k && commitYear(k)}
+							/>
+						{:else}
+							{@const full = dragging === k || hoverTick === k}
+							<button
+								type="button"
+								class="year-btn"
+								class:active={full}
+								class:quiet-year={!full && !yearRoom[k] && ghost === null}
+								class:hidden={ghost !== null && dragging === null && Math.abs(tx(base + ghost.a) - x) < 60}
+								style:left="{x}px"
+								style:top="{LINE_Y + 32}px"
+								tabindex="-1"
+								onclick={() => openYear(k)}
+							>
+								{tickLabel(k, full)}
+							</button>
+						{/if}
+					{/each}
+				{/if}
 			</div>
 		{/if}
 	</div>
 
+	{#if editorShown && listMode}
+		<!-- The phone's editor: one row per chapter, the line above as its map -->
+		<div class="rows" in:rise={{ delay: M.quick }}>
+			<fieldset class="birth birth-row" class:nudged>
+				<legend>Born</legend>
+				<span class="month"><select bind:value={birthMonth} aria-label="Birth month">
+					{#each MONTHS as m, i}
+						<option value={i + 1}>{m}</option>
+					{/each}
+				</select></span>
+				<input
+					class="birth-year"
+					type="text"
+					inputmode="numeric"
+					maxlength="4"
+					placeholder="Year"
+					aria-label="Birth year"
+					aria-invalid={birthWrong}
+					bind:this={birthYearEl}
+					bind:value={birthYearText}
+					oninput={() => {
+						saveError = null;
+						nudged = false;
+					}}
+				/>
+			</fieldset>
+			<ol class="chapter-list">
+				{#each bands as band, i (band.key)}
+					<li class="row" class:empty={!band.title.trim()}>
+						<span class="n" aria-hidden="true">{i + 1}</span>
+						<input
+							class="row-name"
+							type="text"
+							maxlength="120"
+							placeholder={placeholderOf(i)}
+							aria-label="Name of chapter {i + 1}, {spanLabel(i)}"
+							bind:value={band.title}
+							use:registerName={band.key}
+							onkeydown={(e) => onNameKey(e, i)}
+							oninput={() => {
+								saveError = null;
+								touched = true;
+								confirmSkip = false;
+							}}
+						/>
+						{#if i === 0}
+							<span class="row-from">{birthKnown ? `from ${birthYear}` : 'from birth'}</span>
+						{:else if yearOpen === i - 1}
+							<input
+								class="row-year"
+								type="text"
+								inputmode="numeric"
+								maxlength="4"
+								aria-label="Year chapter {i + 1} began, or your age then"
+								bind:this={yearEl}
+								bind:value={yearText}
+								onkeydown={(e) => onYearKey(e, i - 1)}
+								onblur={() => yearOpen === i - 1 && commitYear(i - 1)}
+							/>
+						{:else}
+							<button type="button" class="row-from row-year-btn" onclick={() => openYear(i - 1)}>
+								from {birthKnown ? yearOf(i - 1) : `age ${shown[i - 1]}`}
+							</button>
+						{/if}
+						{#if bands.length > 1}
+							<button
+								type="button"
+								class="row-remove"
+								aria-label="Remove {band.title.trim() || `chapter ${i + 1}`}"
+								onclick={() => remove(i)}
+							>
+								<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+									<path d="M1.5 1.5 L8.5 8.5 M8.5 1.5 L1.5 8.5" />
+								</svg>
+							</button>
+						{/if}
+					</li>
+				{/each}
+			</ol>
+			<button
+				type="button"
+				class="quiet add-row"
+				onclick={() => (birthKnown ? addNext() : nudgeBirth())}
+				disabled={birthKnown && !canAdd}
+			>
+				+ Add a chapter
+			</button>
+		</div>
+	{/if}
+
+	{#if editorShown && birthKnown}
+		<!-- The one line that looks forward -->
+		<label class="next" in:rise={{ delay: M.base }}>
+			<span>And the next chapter?</span>
+			<input
+				type="text"
+				maxlength="120"
+				placeholder="Optional"
+				bind:value={nextChapter}
+				onkeydown={(e) => e.key === 'Enter' && canSave && save()}
+			/>
+		</label>
+	{/if}
+
 	<footer class="foot">
-		{#if beat !== 'e'}
-			<button type="button" class="quiet" onclick={skipIntro}>Skip intro</button>
+		{#if beat && beat !== 'e'}
+			{#if reduced}
+				<button type="button" class="primary" onclick={() => enter('e')}>Write yours</button>
+			{:else}
+				<button type="button" class="quiet" onclick={() => enter('e')}>Skip intro</button>
+			{/if}
 		{:else if editorShown}
-			<div class="actions" in:blur={{ duration: ms(600), amount: 4, delay: ms(200) }}>
+			<div class="actions" in:rise={{ delay: M.base + 80 }}>
 				<button type="button" class="primary" onclick={save} disabled={!canSave || saving}>
-					{saving ? 'Saving' : 'Save my chapters'}
+					{saving ? 'Saving…' : 'Save my chapters'}
 				</button>
-				<button type="button" class="quiet" onclick={() => (onskip ?? onnext)?.()}>Skip for now</button>
+				<button type="button" class="quiet" onclick={skip}>
+					{confirmSkip ? 'Skip anyway' : 'Skip for now'}
+				</button>
 			</div>
-			<p class="status" role={saveError ? 'alert' : undefined}>
-				{#if saveError}
-					<span class="error">{saveError}</span>
-				{:else if unnamed > 0 && birthKnown}
-					{unnamed === 1 ? 'One chapter needs' : `${unnamed} chapters need`} a name before you can save.
+			<p class="status" role={status?.error ? 'alert' : 'status'}>
+				{#if undo}
+					<span>{undo.said}</span>
+					<button type="button" class="link" onclick={restore}>Undo</button>
+				{:else if status}
+					<span class:error={status.error}>{status.text}</span>
 				{:else}
 					&nbsp;
 				{/if}
@@ -883,8 +1149,6 @@
 </section>
 
 <style>
-	/* Setup's one column (StepFrame): every step starts at the same left
-	   edge, so the line is the column's width rather than the window's. */
 	.timeline-step {
 		display: flex;
 		flex-direction: column;
@@ -892,53 +1156,62 @@
 		width: 100%;
 		max-width: 44rem;
 		margin: 0 auto;
-		padding: clamp(2.5rem, 8vh, 5.5rem) 16px 4rem;
+		padding: clamp(40px, 8vh, 88px) 16px 64px;
 		box-sizing: border-box;
 		color: var(--color-foreground);
 	}
 
-	/* ---------- headline ---------- */
-	/* On the center line, like every step (setup.css, one alignment). */
+	/* ---------- head ---------- */
+	/* On the center line, like every step (setup.css, one alignment). Both
+	   lines hold their height, so a change of words never moves the line. */
 	.head {
-		min-height: 150px;
 		text-align: center;
 	}
-	.headline-slot {
+	.slot {
 		display: grid;
 	}
-	.headline {
+	.slot > :global(*) {
 		grid-area: 1 / 1;
+	}
+	.headline {
 		margin: 0;
 		font-family: var(--font-serif);
 		font-weight: 400;
-		font-style: normal;
-		font-size: clamp(2rem, 4vw, 2.75rem);
+		font-size: clamp(32px, 4vw, 44px);
 		line-height: 1.08;
 		letter-spacing: -0.015em;
 		color: var(--color-foreground);
 		text-wrap: balance;
 	}
+	.headline-slot {
+		min-height: 1.1em;
+		font-size: clamp(32px, 4vw, 44px);
+	}
+	.sub-slot {
+		min-height: 48px;
+		margin-top: 12px;
+	}
 	.sub {
-		margin: 16px auto 0;
-		max-width: 34em;
+		margin: 0 auto;
+		max-width: 32em;
 		font-family: var(--font-sans);
 		font-size: 15px;
 		line-height: 1.5;
 		color: var(--color-foreground-muted);
-		opacity: 0;
-		transition: opacity 700ms ease 300ms;
-	}
-	.sub.show {
-		opacity: 1;
+		text-wrap: balance;
 	}
 
 	/* ---------- stage ---------- */
 	.stage {
 		position: relative;
 		width: 100%;
+		margin-top: clamp(24px, 6vh, 56px);
+	}
+	.list .stage {
+		margin-top: 16px;
+	}
+	.stage {
 		overflow-x: clip;
-		margin-top: clamp(8px, 4vh, 40px);
-		transition: margin-top 700ms cubic-bezier(0.3, 0.7, 0.2, 1);
 		user-select: none;
 		-webkit-user-select: none;
 	}
@@ -964,24 +1237,18 @@
 	}
 
 	/* the example */
-	.stage > svg.intro {
-		/* the camera zooms past the edges; the pane never scrolls sideways */
-		overflow: hidden;
-		transition: opacity 600ms ease;
+	.intro {
+		transition: opacity var(--m-base) var(--m-ease);
 	}
 	.intro.gone {
 		opacity: 0;
 	}
-	.camera {
-		transition: transform 1400ms cubic-bezier(0.25, 0.7, 0.2, 1);
-	}
-
 	.line {
 		fill: var(--color-primary);
 		transform-box: fill-box;
 		transform-origin: left center;
 		transform: scaleX(0);
-		transition: transform 2200ms cubic-bezier(0.45, 0, 0.2, 1);
+		transition: transform 900ms var(--m-ease);
 	}
 	.line.drawn {
 		transform: scaleX(1);
@@ -996,7 +1263,7 @@
 		stroke-linecap: round;
 		stroke-linejoin: round;
 		opacity: 0;
-		transition: opacity 500ms ease 2000ms;
+		transition: opacity var(--m-base) var(--m-ease) 700ms;
 	}
 	.arrow.show {
 		opacity: 1;
@@ -1015,7 +1282,7 @@
 	}
 	.sband {
 		opacity: 0;
-		transition: opacity 900ms ease;
+		transition: opacity var(--m-base) var(--m-ease);
 	}
 	.sband.show {
 		opacity: 1;
@@ -1023,8 +1290,8 @@
 	.sband rect {
 		transform-box: fill-box;
 		transform-origin: left center;
-		transform: scaleX(0.4);
-		transition: transform 900ms cubic-bezier(0.25, 0.7, 0.2, 1);
+		transform: scaleX(0.3);
+		transition: transform var(--m-slow) var(--m-spring);
 	}
 	.sband.show rect {
 		transform: scaleX(1);
@@ -1032,27 +1299,55 @@
 	.slabel {
 		font-family: var(--font-serif-ui, var(--font-serif));
 		font-weight: 400;
-		font-size: 17px;
 		fill: var(--color-foreground);
-		clip-path: inset(0 0 0 0);
+		opacity: 0;
+		transform: translateY(6px);
 		transition:
-			clip-path 700ms cubic-bezier(0.6, 0, 0.3, 1),
-			opacity 700ms ease;
+			opacity var(--m-slow) var(--m-ease) 80ms,
+			transform var(--m-slow) var(--m-ease) 80ms;
 	}
-	.slabel.wiped {
-		clip-path: inset(0 0 0 100%);
+	.sband.show .slabel {
+		opacity: 1;
+		transform: none;
+	}
+	.sturn {
+		stroke: var(--color-primary);
+		stroke-width: 1.5;
+	}
+	/* The later chapters fold away into one blank stretch: names first,
+	   then fills, left to right. */
+	.sband.folded .slabel {
 		opacity: 0;
+		transform: translateY(-4px);
+		transition:
+			opacity var(--m-quick) linear calc(var(--i) * 40ms),
+			transform var(--m-quick) linear calc(var(--i) * 40ms);
 	}
-	.slabel.offstage {
+	.sband.folded rect,
+	.sband.folded .sturn {
 		opacity: 0;
+		transition: opacity var(--m-base) var(--m-ease) calc(120ms + var(--i) * 60ms);
 	}
-	.sleader {
-		stroke: color-mix(in srgb, var(--color-foreground) 25%, transparent);
+	.sturn.keep {
+		opacity: 0;
+		transition: opacity var(--m-base) var(--m-ease);
+	}
+	.sturn.keep.show {
+		opacity: 1;
+	}
+	.seed-rest,
+	.band.empty {
+		fill: color-mix(in srgb, var(--color-primary) 6%, transparent);
+		stroke: color-mix(in srgb, var(--color-primary) 40%, transparent);
 		stroke-width: 1;
-		transition: opacity 700ms ease;
+		stroke-dasharray: 3 3;
 	}
-	.sleader.wiped {
+	.seed-rest {
 		opacity: 0;
+		transition: opacity var(--m-slow) var(--m-ease) 200ms;
+	}
+	.seed-rest.show {
+		opacity: 1;
 	}
 	.eyebrow,
 	.end {
@@ -1061,33 +1356,29 @@
 		letter-spacing: 0.04em;
 		fill: var(--color-foreground-muted);
 		opacity: 0;
-		transition: opacity 700ms ease;
+		transition: opacity var(--m-base) var(--m-ease);
+	}
+	.end {
+		transition-delay: 500ms;
 	}
 	.eyebrow.show,
 	.end.show {
 		opacity: 1;
 	}
 
-	/* ---------- their timeline ---------- */
+	/* ---------- their chapters ---------- */
 	.editor {
 		position: absolute;
 		inset: 0;
-		transition: opacity 400ms ease;
-	}
-	.editor.unborn .band-hit,
-	.editor.unborn .label,
-	.editor.unborn .axis .band {
-		opacity: 0.35;
-		pointer-events: none;
 	}
 	.band {
-		transition: fill 300ms ease;
+		transition: fill var(--m-base) ease;
 	}
-	.band.empty {
-		fill: color-mix(in srgb, var(--color-primary) 7%, transparent);
-		stroke: color-mix(in srgb, var(--color-primary) 35%, transparent);
-		stroke-width: 1;
-		stroke-dasharray: 3 3;
+	.band-n {
+		font-family: var(--font-sans);
+		font-size: 11px;
+		font-variant-numeric: tabular-nums;
+		fill: var(--color-foreground-muted);
 	}
 	.leader {
 		stroke: color-mix(in srgb, var(--color-primary) 40%, transparent);
@@ -1104,14 +1395,9 @@
 		font-size: 12px;
 		font-variant-numeric: tabular-nums;
 		fill: var(--color-foreground-muted);
-		transition: opacity 150ms ease;
 	}
-	.year.active,
 	.ghost-year {
 		fill: var(--color-primary);
-	}
-	.year.hidden {
-		opacity: 0;
 	}
 
 	.band-hit {
@@ -1123,22 +1409,25 @@
 		cursor: copy;
 		border-radius: 6px;
 	}
+	.editor.unborn .band-hit {
+		cursor: pointer;
+	}
 	.band-hit:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 1px;
 	}
 
-	.label.right {
-		flex-direction: row-reverse;
-	}
-	.label.right input {
-		text-align: right;
-	}
 	.label {
 		position: absolute;
 		display: flex;
 		align-items: center;
 		gap: 0;
+	}
+	.label.right {
+		flex-direction: row-reverse;
+	}
+	.label.right input {
+		text-align: right;
 	}
 	.label input {
 		width: var(--w);
@@ -1149,39 +1438,40 @@
 		border: 0;
 		border-bottom: 1px solid transparent;
 		border-radius: 0;
-		/* opaque, so a neighbor's leader line passes behind the name */
-		background: var(--color-surface);
+		/* Clear: the stage's grain runs under a name, so any fill reads as a
+		   box. A stacked name's leader rises beside the names, not through. */
+		background: transparent;
 		font-family: var(--font-serif-ui, var(--font-serif));
 		font-weight: 400;
-		font-style: normal;
 		font-size: 17px;
 		line-height: 1.2;
 		color: var(--color-foreground);
 		text-overflow: ellipsis;
 		outline: none;
 		transition:
-			border-color 200ms ease,
-			width 200ms ease;
+			border-color var(--m-quick) ease,
+			width var(--m-quick) ease;
 	}
-	.label input::placeholder {
+	.label input::placeholder,
+	.row-name::placeholder,
+	.next input::placeholder {
 		color: var(--color-foreground-subtle, var(--color-foreground-muted));
 	}
 	.label input:hover {
 		border-bottom-color: var(--color-border);
 	}
 	.label input:focus {
-		width: max(var(--w), 14ch);
+		width: max(var(--w), 16ch);
 		border-bottom-color: var(--color-primary);
 		position: relative;
 		z-index: 2;
-		/* the room's own paper, so a widened name covers its neighbor cleanly */
-		background: var(--color-surface);
 	}
 	.remove {
 		display: grid;
 		place-items: center;
-		width: 18px;
-		height: 18px;
+		flex: none;
+		width: 24px;
+		height: 24px;
 		padding: 0;
 		border: 0;
 		border-radius: 50%;
@@ -1189,12 +1479,14 @@
 		color: var(--color-foreground-muted);
 		cursor: pointer;
 		opacity: 0;
-		transition: opacity 150ms ease;
+		transition: opacity var(--m-quick) ease;
 	}
-	.remove path {
+	.remove path,
+	.row-remove path {
 		stroke: currentColor;
 		stroke-width: 1.3;
 		stroke-linecap: round;
+		fill: none;
 	}
 	.label:hover .remove,
 	.label:focus-within .remove,
@@ -1208,7 +1500,7 @@
 
 	.handle {
 		position: absolute;
-		width: 22px;
+		width: 24px;
 		margin: 0 0 0 -12px;
 		padding: 0;
 		border: 0;
@@ -1223,24 +1515,23 @@
 		top: 0;
 		bottom: 0;
 		width: 1.5px;
-		margin-left: 0;
 		background: var(--color-primary);
-		border-radius: 0;
-		transition: transform 150ms ease;
 	}
 	.tick::before {
 		content: '';
 		position: absolute;
 		left: 50%;
 		top: -3px;
-		width: 7px;
-		height: 7px;
+		width: 8px;
+		height: 8px;
 		margin-left: -4px;
 		border-radius: 50%;
-		background: var(--color-background);
+		background: var(--color-surface);
 		border: 1.5px solid var(--color-primary);
 		box-sizing: border-box;
-		transition: transform 150ms ease;
+		transition:
+			transform var(--m-quick) ease,
+			background var(--m-quick) ease;
 	}
 	.handle:hover .tick::before,
 	.handle.active .tick::before,
@@ -1253,6 +1544,50 @@
 	}
 	.handle:focus-visible .tick {
 		outline: 3px solid color-mix(in srgb, var(--color-primary) 25%, transparent);
+	}
+
+	.year-btn,
+	.year-input {
+		position: absolute;
+		transform: translateX(-50%);
+		font-family: var(--font-sans);
+		font-size: 12px;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+	.year-btn {
+		padding: 4px 6px;
+		border: 0;
+		border-radius: 6px;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		cursor: text;
+		transition:
+			opacity var(--m-quick) ease,
+			color var(--m-quick) ease;
+	}
+	.year-btn:hover,
+	.year-btn.active {
+		color: var(--color-primary);
+	}
+	.year-btn.quiet-year,
+	.year-btn.hidden {
+		opacity: 0;
+	}
+	.year-btn.quiet-year:hover {
+		opacity: 1;
+	}
+	.year-input {
+		width: 6ch;
+		padding: 4px 0;
+		border: 0;
+		border-bottom: 1px solid var(--color-primary);
+		border-radius: 0;
+		background: var(--color-surface);
+		color: var(--color-foreground);
+		text-align: center;
+		outline: none;
+		z-index: 3;
 	}
 
 	.birth {
@@ -1290,22 +1625,188 @@
 		-webkit-appearance: none;
 	}
 	.birth select {
+		padding-right: 16px;
 		cursor: pointer;
+	}
+	/* A menu should look like one: a small chevron in the ink of the field */
+	.month {
+		position: relative;
+	}
+	.month::after {
+		content: '';
+		position: absolute;
+		right: 4px;
+		top: 50%;
+		width: 5px;
+		height: 5px;
+		margin-top: -6px;
+		border-right: 1.5px solid var(--color-foreground-muted);
+		border-bottom: 1.5px solid var(--color-foreground-muted);
+		transform: rotate(45deg);
+		pointer-events: none;
 	}
 	.birth-year {
 		width: 4.2ch;
 		font-variant-numeric: tabular-nums;
 	}
 	.birth select:focus,
-	.birth input:focus {
+	.birth input:focus,
+	.editor.unborn .birth-year,
+	.rows .birth-year:placeholder-shown {
 		border-bottom-color: var(--color-primary);
 	}
-	.editor.unborn .birth-year {
+	.birth-year[aria-invalid='true'] {
+		border-bottom-color: var(--color-error, var(--color-primary));
+	}
+	/* Pointed at, when something needed the year first */
+	.birth.nudged .birth-year {
+		animation: nudge var(--m-slow) var(--m-ease);
+	}
+	@keyframes nudge {
+		20% {
+			transform: translateX(-4px);
+		}
+		40% {
+			transform: translateX(4px);
+		}
+		60% {
+			transform: translateX(-2px);
+		}
+		80% {
+			transform: translateX(2px);
+		}
+	}
+
+	/* ---------- the phone's rows ---------- */
+	.rows {
+		margin-top: 8px;
+	}
+	.birth-row {
+		position: static;
+		justify-content: center;
+		margin-bottom: 16px;
+	}
+	.chapter-list {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		border-top: 1px solid var(--color-border);
+	}
+	.row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-height: 48px;
+		border-bottom: 1px solid var(--color-border);
+	}
+	.n {
+		width: 16px;
+		flex: none;
+		font-family: var(--font-sans);
+		font-size: 12px;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground-muted);
+	}
+	.row-name {
+		flex: 1;
+		min-width: 0;
+		margin: 0;
+		padding: 12px 0;
+		border: 0;
+		background: transparent;
+		font-family: var(--font-serif-ui, var(--font-serif));
+		font-size: 17px;
+		color: var(--color-foreground);
+		outline: none;
+	}
+	.row-from {
+		flex: none;
+		font-family: var(--font-sans);
+		font-size: 13px;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground-muted);
+	}
+	.row-year-btn {
+		min-height: 44px;
+		padding: 0 4px;
+		border: 0;
+		background: transparent;
+		color: var(--color-primary);
+		cursor: pointer;
+	}
+	.row-year {
+		width: 6ch;
+		padding: 8px 0;
+		border: 0;
+		border-bottom: 1px solid var(--color-primary);
+		background: transparent;
+		font-family: var(--font-sans);
+		font-size: 16px;
+		text-align: center;
+		color: var(--color-foreground);
+		outline: none;
+	}
+	.row-remove {
+		display: grid;
+		place-items: center;
+		flex: none;
+		width: 44px;
+		height: 44px;
+		margin-right: -12px;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+	}
+	.add-row {
+		display: block;
+		min-height: 44px;
+		margin: 4px auto 0;
+		color: var(--color-primary);
+	}
+
+	/* ---------- the next chapter ---------- */
+	.next {
+		display: flex;
+		align-items: baseline;
+		justify-content: center;
+		gap: 12px;
+		margin: 24px auto 0;
+		font-family: var(--font-sans);
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+	.next input {
+		width: min(16em, 50vw);
+		padding: 0 0 4px;
+		border: 0;
+		border-bottom: 1px solid var(--color-border);
+		border-radius: 0;
+		background: transparent;
+		font-family: var(--font-serif-ui, var(--font-serif));
+		font-size: 17px;
+		color: var(--color-foreground);
+		outline: none;
+	}
+	.next input:focus {
 		border-bottom-color: var(--color-primary);
+	}
+	.list .next {
+		flex-direction: column;
+		align-items: center;
+		gap: 4px;
+	}
+	.list .next input {
+		width: 100%;
+		text-align: center;
 	}
 
 	/* ---------- footer ---------- */
 	.foot {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
 		margin-top: auto;
 		padding-top: 28px;
 		min-height: 88px;
@@ -1316,6 +1817,7 @@
 		justify-content: center;
 		gap: 16px;
 		flex-wrap: wrap;
+		width: 100%;
 	}
 	.quiet {
 		padding: 6px 0;
@@ -1325,7 +1827,7 @@
 		font-size: 14px;
 		color: var(--color-foreground-muted);
 		cursor: pointer;
-		transition: color 150ms ease;
+		transition: color var(--m-quick) ease;
 	}
 	.quiet:hover:not(:disabled) {
 		color: var(--color-foreground);
@@ -1335,7 +1837,11 @@
 		cursor: default;
 	}
 	.quiet:focus-visible,
-	.primary:focus-visible {
+	.primary:focus-visible,
+	.link:focus-visible,
+	.year-btn:focus-visible,
+	.row-year-btn:focus-visible,
+	.row-remove:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 3px;
 		border-radius: 6px;
@@ -1344,6 +1850,11 @@
 		position: absolute;
 		z-index: 2;
 		color: var(--color-primary);
+	}
+	.add:hover:not(:disabled) {
+		color: var(--color-primary);
+		text-decoration: underline;
+		text-underline-offset: 4px;
 	}
 	.primary {
 		padding: 8px 20px;
@@ -1355,8 +1866,8 @@
 		font-size: 14px;
 		cursor: pointer;
 		transition:
-			background 150ms ease,
-			opacity 150ms ease;
+			background var(--m-quick) ease,
+			opacity var(--m-quick) ease;
 	}
 	.primary:hover:not(:disabled) {
 		background: var(--color-primary-hover, var(--color-primary));
@@ -1366,33 +1877,46 @@
 		cursor: default;
 	}
 	.status {
+		display: flex;
+		align-items: baseline;
+		justify-content: center;
+		gap: 8px;
 		margin: 12px 0 0;
 		min-height: 1.4em;
-		text-align: right;
+		text-align: center;
 		font-family: var(--font-sans);
 		font-size: 13px;
 		color: var(--color-foreground-muted);
+		text-wrap: balance;
 	}
 	.error {
 		color: var(--color-error, var(--color-foreground));
 	}
+	.link {
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		color: var(--color-primary);
+		cursor: pointer;
+		text-decoration: underline;
+		text-underline-offset: 3px;
+	}
 
 	@media (max-width: 560px) {
-		.status {
-			text-align: left;
-		}
-		/* On a phone the one filled button takes its own full-width row
-		   under the two quiet ones. */
+		/* On a phone the one filled button takes its own full-width row under
+		   the quiet one. */
 		.actions .primary {
-			order: 5;
+			order: -1;
 			flex-basis: 100%;
 			padding: 12px 20px;
 			font-size: 15px;
 		}
+		.actions .quiet {
+			min-height: 44px;
+		}
 	}
 
-	/* No travel, instant. Svelte's transitions read `reduced` for their own
-	   durations; this catches the CSS ones. */
 	@media (prefers-reduced-motion: reduce) {
 		.timeline-step *,
 		.timeline-step *::before {
