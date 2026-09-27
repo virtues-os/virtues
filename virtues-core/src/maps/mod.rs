@@ -31,6 +31,8 @@ use axum::{
 use pmtiles::{AsyncPmTilesReader, Compression, MmapBackend, TileCoord};
 use serde::Serialize;
 
+pub mod sync;
+
 /// Where the maps live on an installed box, beside the lake rather than in
 /// it: the archives are a regenerable cache, and `virtues backup` archives
 /// the whole lake.

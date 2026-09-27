@@ -15,7 +15,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from "svelte";
 	import "leaflet/dist/leaflet.css";
-	import { atlasLayer } from "$lib/map/atlas";
+	import { atlasLayer, compactCredit } from "$lib/map/atlas";
 	import type { TimelineDayPoint } from "$lib/wiki/api";
 
 	interface Props {
@@ -128,8 +128,9 @@
 			touchZoom: false,
 			tap: false,
 		});
-		// Drop Leaflet's own "Leaflet" flag — the data credit stays.
+		// Drop Leaflet's own "Leaflet" flag — the data credit stays, as an ⓘ.
 		map.attributionControl.setPrefix(false);
+		compactCredit(map);
 		setTiles();
 		renderTrack();
 		renderMark();

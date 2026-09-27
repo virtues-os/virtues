@@ -1,10 +1,13 @@
 # Offline maps: Protomaps on the box
 
-**Status: step 1 built on `wave` (2026-09-25); steps 2–5 open.** The box
-serves maps from its own files (`virtues-core/src/maps`, `$lib/map/atlas.ts`),
-but no box has any files until downloads land, so released maps still have no
-basemap ([record](../record/map-atlas-plan.md)). When it ships, delete this
-plan and rewrite the record.
+**Status: steps 1–4 built on `wave` (2026-09-27); what is left is running it.**
+The code is done end to end: the box serves its own map files, virtues-api
+serves the files to boxes, the monthly cut job produces them, and the box
+downloads what its owner's history calls for. No box has files yet because the
+cut has never run on the real server, which is still being provisioned
+(agents/plan/cloud-consolidation-plan.md). Released maps have no basemap until
+then ([record](../record/map-atlas-plan.md)). When it ships, delete this plan
+and rewrite the record.
 
 ## The goal
 
@@ -160,24 +163,35 @@ All in a scratch crate, nothing on `wave`.
    `data/maps` in a checkout): `world.pmtiles`, `visited-z5-<x>-<y>.pmtiles`,
    `home-z7-<x>-<y>.pmtiles`, and `assets/fonts`, `assets/sprites`. Routes:
    `/api/map/sources` (what the box holds, as bounds), `/api/map/vt/:tier/…`
-   (204 where nothing is held), `/api/map/fonts/…`, `/api/map/sprite/…`.
-   `maps::reload()` is the hook the downloader calls after a swap. The CARTO and
-   OpenFreeMap caches are deleted on first use. `tools/maps-dev.sh [LON LAT]`
-   cuts a dev set (~550 MB) with the Protomaps CLI. Verified in the browser:
-   light and dark, all three tiers, no request off the box. Still open from
-   this step: the credit is a plain "© OpenStreetMap" line, not yet collapsed
-   behind an ⓘ, and the MapLibre worker is unverified on iOS.
-2. **Serve from virtues-api.** After the cloud consolidation lands: the
-   monthly cut job as a systemd timer, `/v1/maps/index` and
-   `/v1/maps/<build>/<file>` behind `BearerAuth`, excluded from tracing.
-3. **Fonts and icons as a download** (`assets.tar`), so the box needs no
-   installer change.
-4. **Box downloads.** Importance scoring, tier selection, resumable
-   checksummed downloads, the 4 GB cap, the 90-day refresh.
-5. **Manual page:** where maps come from, and the privacy line: "Your server
+   (204 where nothing is held), `/api/map/fonts/…`, `/api/map/sprite/…`. The
+   CARTO and OpenFreeMap caches are deleted on first use.
+   `tools/maps-dev.sh [LON LAT]` cuts a dev set (~550 MB).
+2. **virtues-api serves the files. BUILT 2026-09-27.**
+   `services/virtues-api/src/routes/maps.rs`: `/v1/maps/index` and
+   `/v1/maps/<build>/<file>` (with `Range`), behind `BearerAuth`, merged after
+   `TraceLayer`. Verified at `RUST_LOG=debug`: no log line from either route.
+3. **The monthly cut. BUILT 2026-09-27.** `deploy/maps/cut.py` plus a systemd
+   timer. A dry run on the 20260927 build found 751 land squares at z5 and
+   9,175 at z7; `--only=LON,LAT` cuts one point's squares for dev.
+4. **Box downloads. BUILT 2026-09-27.** `virtues-core/src/maps/sync.rs`,
+   daily (off in dev unless `VIRTUES_MAPS_SYNC=1`): days-present scoring, tier
+   selection, the budgets, resumable downloads checked against the index's
+   sha256, the 90-day refresh, removal of squares no longer picked, assets
+   unpacked, readers reloaded. Verified end to end against a local
+   virtues-api: a week in one place downloads world, home, visited and
+   assets; a restart downloads nothing; with the history gone the home and
+   visited files are removed. The credit collapses to an ⓘ
+   (`compactCredit`, styles in `app.css`).
+5. **Run it.** On the new server: install the cut job, first cut, mount
+   `/srv/maps` into virtues-api, then a real box's first sync.
+6. **Manual page:** where maps come from, and the privacy line: "Your server
    downloads maps in fixed regions, the same files every server in that region
    takes, so nothing it downloads says where in the region you live or what
    you look at. The server that hands them out keeps no logs."
+
+Still open: the MapLibre worker is unverified on iOS, and the thresholds
+(one hour a day, seven days for home, two for visited) were tuned on synthetic
+tracks, not a real history.
 
 ## Decisions
 

@@ -111,6 +111,25 @@ async function buildStyle(style: AtlasStyle, have: Sources): Promise<StyleSpecif
 	} as StyleSpecification;
 }
 
+/**
+ * Collapse the map's data credit to an ⓘ that opens on hover, focus or tap
+ * (styles in app.css). The OSMF attribution guidelines accept a collapsed
+ * credit as long as it opens for anyone who looks for it.
+ */
+export function compactCredit(map: Leaflet.Map): void {
+	const el = map.attributionControl?.getContainer();
+	if (!el) return;
+	el.classList.add("atlas-credit");
+	el.tabIndex = 0;
+	el.setAttribute("role", "button");
+	el.setAttribute("aria-label", "Map data credit");
+	el.addEventListener("click", (e) => {
+		// A tap on the open credit's link follows it; anywhere else toggles.
+		if ((e.target as HTMLElement).closest("a")) return;
+		el.classList.toggle("is-open");
+	});
+}
+
 let engine: Promise<typeof import("@maplibre/maplibre-gl-leaflet")> | null = null;
 
 function loadEngine() {

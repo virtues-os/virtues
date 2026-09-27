@@ -803,3 +803,27 @@ html.theme-reveal::view-transition-new(root) {
 		mask: none;
 	}
 }
+
+/* ===================================
+   Map credit
+   =================================== */
+
+/* The OpenStreetMap credit on every map ($lib/map/atlas.ts `compactCredit`).
+   The data's license requires it; the OSMF attribution guidelines accept it
+   collapsed behind an ⓘ, as long as it opens for anyone who looks. It opens on
+   hover, on keyboard focus, and on a tap, which toggles `is-open`. */
+.leaflet-control-attribution.atlas-credit {
+	cursor: pointer;
+}
+.leaflet-control-attribution.atlas-credit:not(.is-open):not(:hover):not(:focus-visible) {
+	font-size: 0;
+	padding: 0 4px;
+	background: transparent;
+}
+.leaflet-control-attribution.atlas-credit:not(.is-open):not(:hover):not(:focus-visible)::before {
+	content: "ⓘ";
+	/* design-ok: a map control glyph, sized like Leaflet's own chrome. */
+	font-size: 12px;
+	line-height: 1.4;
+	color: var(--color-foreground-muted);
+}
