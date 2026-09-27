@@ -58,7 +58,7 @@ pub async fn get_chat_usage_handler(
     State(state): State<AppState>,
     Path(chat_id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_chat_usage(state.db.pool(), chat_id).await)
+    api_response(crate::api::chat_usage::get_chat_usage(state.db.pool(), chat_id).await)
 }
 
 /// Compact a chat (summarize older messages)

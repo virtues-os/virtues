@@ -156,15 +156,15 @@ pub fn routes() -> Router<AppState> {
 
 /// Get user profile
 pub async fn get_profile_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::get_profile(state.db.pool()).await)
+    api_response(crate::api::profile::get_profile(state.db.pool()).await)
 }
 
 /// Update user profile
 pub async fn update_profile_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::UpdateProfileRequest>,
+    Json(request): Json<crate::api::profile::UpdateProfileRequest>,
 ) -> Response {
-    api_response(crate::api::update_profile(state.db.pool(), request).await)
+    api_response(crate::api::profile::update_profile(state.db.pool(), request).await)
 }
 
 // =============================================================================
@@ -173,15 +173,15 @@ pub async fn update_profile_handler(
 
 /// Get assistant profile
 pub async fn get_assistant_profile_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::get_assistant_profile(state.db.pool()).await)
+    api_response(crate::api::assistant_profile::get_assistant_profile(state.db.pool()).await)
 }
 
 /// Update assistant profile
 pub async fn update_assistant_profile_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::UpdateAssistantProfileRequest>,
+    Json(request): Json<crate::api::assistant_profile::UpdateAssistantProfileRequest>,
 ) -> Response {
-    api_response(crate::api::update_assistant_profile(state.db.pool(), request).await)
+    api_response(crate::api::assistant_profile::update_assistant_profile(state.db.pool(), request).await)
 }
 
 // =============================================================================
@@ -190,12 +190,12 @@ pub async fn update_assistant_profile_handler(
 
 /// List all available models
 pub async fn list_models_handler() -> Response {
-    api_response(crate::api::list_models().await)
+    api_response(crate::api::models::list_models().await)
 }
 
 /// Get a specific model by ID
 pub async fn get_model_handler(Path(model_id): Path<String>) -> Response {
-    api_response(crate::api::get_model(&model_id).await)
+    api_response(crate::api::models::get_model(&model_id).await)
 }
 
 /// The picker plus the live slot map — what "Virtues default · <model>" needs.
@@ -204,13 +204,13 @@ pub async fn get_model_handler(Path(model_id): Path<String>) -> Response {
 /// route adds `slots`, so the settings UI can name the model a slot currently
 /// resolves to without a second round trip.
 pub async fn list_models_with_slots_handler() -> Response {
-    api_response(crate::api::list_models_with_slots().await)
+    api_response(crate::api::models::list_models_with_slots().await)
 }
 
 /// Per-stream ingest freshness, worst-first. The signal that was missing when
 /// messages, the calendar sync, and finance each went dark unnoticed.
 pub async fn stream_health_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::stream_health(&state.db).await)
+    api_response(crate::api::stream_health::stream_health(&state.db).await)
 }
 
 #[derive(Debug, Deserialize)]
@@ -238,15 +238,15 @@ pub async fn places_details_handler(
     State(state): State<AppState>,
     Query(request): Query<crate::api::places::PlaceDetailsRequest>,
 ) -> Response {
-    api_response(crate::api::get_place_details(state.db.pool(), request).await)
+    api_response(crate::api::places::get_place_details(state.db.pool(), request).await)
 }
 
 /// Get autocomplete predictions for an address query
 pub async fn places_autocomplete_handler(
     State(state): State<AppState>,
-    Query(request): Query<crate::api::AutocompleteRequest>,
+    Query(request): Query<crate::api::places::AutocompleteRequest>,
 ) -> Response {
-    match crate::api::autocomplete(state.db.pool(), request).await {
+    match crate::api::places::autocomplete(state.db.pool(), request).await {
         Ok(response) => {
             (StatusCode::OK, Json(response)).into_response()
         }
@@ -584,9 +584,9 @@ pub async fn billing_link_status_handler(State(pool): State<sqlx::PgPool>) -> Re
 /// Search Unsplash photos for cover images
 pub async fn unsplash_search_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::UnsplashSearchRequest>,
+    Json(request): Json<crate::api::unsplash::SearchRequest>,
 ) -> Response {
-    api_response(crate::api::unsplash_search(state.db.pool(), request).await)
+    api_response(crate::api::unsplash::search(state.db.pool(), request).await)
 }
 
 // ============================================================================
@@ -595,14 +595,14 @@ pub async fn unsplash_search_handler(
 
 /// GET /api/system/update — current version, channel, and what's available.
 pub async fn update_status_handler() -> Response {
-    (StatusCode::OK, Json(crate::api::update_status().await)).into_response()
+    (StatusCode::OK, Json(crate::api::updates::status().await)).into_response()
 }
 
 /// PUT /api/system/update/channel — follow stable or prerelease.
 pub async fn set_channel_handler(
-    Json(request): Json<crate::api::SetChannelRequest>,
+    Json(request): Json<crate::api::updates::SetChannelRequest>,
 ) -> Response {
-    api_response(crate::api::set_channel(request))
+    api_response(crate::api::updates::set_channel(request))
 }
 
 /// POST /api/system/update/apply — start an upgrade.
@@ -615,8 +615,8 @@ pub async fn set_channel_handler(
 ///
 /// Runs it detached and answers immediately for the same reason.
 pub async fn apply_update_handler() -> Response {
-    match crate::api::apply_update() {
+    match crate::api::updates::apply() {
         Ok(body) => (StatusCode::ACCEPTED, Json(body)).into_response(),
-        Err(e) => api_response::<crate::api::ApplyResponse>(Err(e)),
+        Err(e) => api_response::<crate::api::updates::ApplyResponse>(Err(e)),
     }
 }

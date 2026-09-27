@@ -38,7 +38,7 @@ pub struct WebhookResponse {
 pub struct AppState {
     pub db: Arc<Database>,
     pub storage: Arc<crate::storage::Storage>,
-    pub drive_config: crate::api::DriveConfig,
+    pub drive_config: crate::api::drive::DriveConfig,
     pub tool_executor: Option<Arc<crate::tools::ToolExecutor>>,
     pub yjs_state: super::yjs::YjsState,
     pub chat_cancel_state: ChatCancellationState,
