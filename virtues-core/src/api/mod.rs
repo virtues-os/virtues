@@ -46,7 +46,6 @@ pub mod coverage;
 pub mod narrative_draft;
 pub mod bookmarks;
 pub mod pages;
-pub mod personas;
 pub mod updates;
 pub mod live_turn;
 pub mod pins;
@@ -116,7 +115,6 @@ pub use drive::{
     move_file as move_drive_file,
     purge_file as purge_drive_file,
     purge_old_trash as purge_old_drive_trash,
-    reconcile_usage as reconcile_drive_usage,
     restore_file as restore_drive_file,
     reextract_file as reextract_drive_file,
     upload_file as upload_drive_file,
@@ -224,11 +222,6 @@ pub use chat_usage::{
     record_chat_usage, ChatUsageInfo, CompactionStatus, UsageData,
 };
 pub use developer::{execute_sql, list_tables, ExecuteSqlRequest};
-pub use personas::{
-    create_persona, get_persona, get_persona_content, hide_persona, list_all_personas,
-    list_personas, reset_personas, unhide_persona, update_persona, CreatePersonaRequest, Persona,
-    PersonaListResponse, PersonasData, UpdatePersonaRequest,
-};
 pub use profile::{get_display_name, get_profile, update_profile, UpdateProfileRequest};
 pub use system_update::CURRENT_COMMIT;
 pub use token_estimation::{

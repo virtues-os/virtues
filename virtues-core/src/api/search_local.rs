@@ -1,7 +1,7 @@
 //! Local content search — the server half of ⌘K.
 //!
-//! Distinct from `/api/search/web` (Exa), which reaches outside the box. This
-//! one only ever returns what the box has already indexed, and is the only
+//! Distinct from the agent's `web_search` tool (Exa), which reaches outside
+//! the box. This one only ever returns what the box has already indexed, and is the only
 //! search the command palette calls.
 //!
 //! **No reranker.** The palette runs on every keystroke, so this stops at

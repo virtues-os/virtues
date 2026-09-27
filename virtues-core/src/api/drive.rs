@@ -1765,62 +1765,6 @@ async fn get_or_create_folder_record(pool: &PgPool, path: &str) -> Result<Option
     Ok(id)
 }
 
-/// Reconcile database usage with actual filesystem
-///
-/// Scans the filesystem and updates the usage table to match reality.
-/// Useful after manual file operations or crash recovery.
-pub async fn reconcile_usage(pool: &PgPool, config: &DriveConfig) -> Result<DriveUsage> {
-    tracing::info!("Reconciling drive usage with filesystem");
-
-    // Calculate actual drive usage from database records
-    let (drive_bytes, file_count, folder_count): (i64, i64, i64) = sqlx::query_as(
-        r#"
-        SELECT
-            -- SUM(bigint) is NUMERIC, which sqlx will not read as i64; the
-            -- two CASE sums are over int literals and land as bigint already.
-            COALESCE(SUM(size_bytes), 0)::bigint,
-            COALESCE(SUM(CASE WHEN is_folder = FALSE THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN is_folder = TRUE THEN 1 ELSE 0 END), 0)
-        FROM app_drive_files
-        "#,
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to calculate usage: {e}")))?;
-
-    // Upsert, same reason as update_usage_add: the singleton is born on first
-    // write, and a reconcile is exactly the path that runs on a box where the
-    // row never got born — as an UPDATE it silently repaired nothing there.
-    sqlx::query(
-        r#"
-        INSERT INTO app_drive_usage
-            (id, drive_bytes, file_count, folder_count)
-        VALUES ($4, $1, $2, $3)
-        ON CONFLICT (id) DO UPDATE
-        SET drive_bytes = $1,
-            file_count = $2,
-            folder_count = $3,
-            updated_at = now()
-        "#,
-    )
-    .bind(drive_bytes)
-    .bind(file_count)
-    .bind(folder_count)
-    .bind(USAGE_SINGLETON_ID)
-    .execute(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to update usage: {e}")))?;
-
-    tracing::info!(
-        "Reconciled: {} drive bytes, {} files, {} folders",
-        drive_bytes,
-        file_count,
-        folder_count
-    );
-
-    get_drive_usage(pool, config).await
-}
-
 // =============================================================================
 // Tests
 // =============================================================================
