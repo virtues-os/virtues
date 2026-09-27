@@ -206,12 +206,6 @@ pub struct ChatRequest {
     /// User's timezone (IANA format, e.g., "America/Los_Angeles")
     #[serde(default)]
     pub timezone: Option<String>,
-    /// Retired (migration 0035): the prompt reads the owner's style notes from
-    /// the profile, not a per-request persona. Still accepted so a client that
-    /// sends it is not rejected.
-    #[serde(default = "default_persona")]
-    #[allow(dead_code)]
-    pub persona: String,
     /// Agent mode controlling tool availability (agent, chat, research)
     #[serde(rename = "agentMode", default = "default_agent_mode")]
     pub agent_mode: String,
@@ -385,10 +379,6 @@ fn default_chat_mode() -> String {
 
 fn default_agent() -> String {
     "auto".to_string()
-}
-
-fn default_persona() -> String {
-    "default".to_string()
 }
 
 fn default_agent_mode() -> String {
@@ -1566,11 +1556,6 @@ async fn chat_handler_inner(
         .message_id
         .clone()
         .unwrap_or_else(|| format!("msg_{}", generate_id()));
-
-    // The June-era chat onboarding is DELETED (2026-09-01) — onboarding is
-    // the founder's letter + Home's getting-started page, and the assistant's
-    // first conversation is an ordinary one. onboarding_status still gates
-    // those surfaces; the chat no longer reads it.
 
     // Ensure chat exists - use ON CONFLICT DO NOTHING to handle race conditions
     let chat_id_str = request.chat_id.clone();
