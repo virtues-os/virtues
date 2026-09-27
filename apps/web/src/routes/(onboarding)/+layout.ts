@@ -1,5 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutLoad } from './$types';
+import { prePair } from '$lib/components/setup/prepair.svelte';
 
 // Session gate for the (onboarding) group. The same rule as (app)/+layout.ts
 // but without the profile / server-status fetches, since Setup runs before
@@ -12,6 +13,9 @@ import type { LayoutLoad } from './$types';
 // or a session with no user is unpaired; anything else is the server being
 // unreachable for a moment, which Setup says itself (`session: null`).
 export const load: LayoutLoad = async ({ fetch }) => {
+	// No server yet (the phone, before pairing): Setup's first half runs
+	// here, and there is no session to ask for.
+	if (prePair.active) return { session: null };
 	try {
 		// One retry after a beat: on the phone this rides the iroh loopback,
 		// which can still be rebuilding right after the app resumes.

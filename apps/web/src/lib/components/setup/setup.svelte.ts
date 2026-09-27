@@ -17,9 +17,11 @@
  * only, how far through Welcome and the letter someone has read, which no
  * row can say (see `introStage`).
  *
- * Server and Wi-Fi are done by construction in the web app: nothing reaches
- * `/setup` without a paired device on a connected server. They move into
- * this flow when it runs before pairing (the plan's slice 2).
+ * Account, Server and Wi-Fi are the first half, before this device has a
+ * server (`prepair.svelte.ts`). On the phone they run here, from the app's
+ * own copy; anywhere Setup is reached through a server they are done by
+ * construction, since nothing gets there without a paired device on a
+ * connected server.
  */
 import {
 	getProfile,
@@ -32,10 +34,12 @@ import {
 	type GettingStartedStepId,
 } from '$lib/api/client';
 import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
+import { prePair } from './prepair.svelte';
 
 export type SetupStepId =
 	| 'welcome'
 	| 'letter'
+	| 'account'
 	| 'server'
 	| 'wifi'
 	| 'subscription'
@@ -69,6 +73,7 @@ export interface SetupStep {
 export const ORDER: SetupStepId[] = [
 	'welcome',
 	'letter',
+	'account',
 	'server',
 	'wifi',
 	'subscription',
@@ -81,6 +86,7 @@ export const ORDER: SetupStepId[] = [
 const LABELS: Record<SetupStepId, string> = {
 	welcome: 'Welcome',
 	letter: 'Letter',
+	account: 'Account',
 	server: 'Server',
 	wifi: 'Wi-Fi',
 	subscription: 'Subscription',
@@ -96,6 +102,7 @@ const OPTIONAL = new Set<SetupStepId>(['connections', 'timeline', 'interview']);
 export const SERVER: Record<SetupStepId, GettingStartedStepId | null> = {
 	welcome: null,
 	letter: null,
+	account: null,
 	server: null,
 	wifi: null,
 	subscription: 'connect_ai',
@@ -117,6 +124,7 @@ export function labelOf(id: SetupStepId): string {
 const INTO: Record<SetupStepId, string> = {
 	welcome: 'Begin',
 	letter: 'Read the letter',
+	account: 'Sign in',
 	server: 'Find your server',
 	wifi: 'Connect to Wi-Fi',
 	subscription: 'Choose how your assistant thinks',
@@ -175,6 +183,12 @@ class SetupStore {
 	}
 
 	refresh(): Promise<void> {
+		// No server yet: there is nothing to read, and every step after the
+		// first half is simply still to do.
+		if (prePair.active) {
+			this.loaded = true;
+			return Promise.resolve();
+		}
 		if (this.inflight) return this.inflight;
 		this.inflight = (async () => {
 			// Each read stands alone: a failed stream read must not hide the
@@ -260,6 +274,10 @@ class SetupStore {
 			const need = id === 'welcome' ? 1 : 2;
 			return this.introStage >= need || !this.fresh ? 'done' : 'open';
 		}
+		// The first half: settled here, on this device, before any server.
+		if (id === 'account') return !prePair.active || prePair.accountSettled ? 'done' : 'open';
+		if (id === 'server') return !prePair.active || prePair.serverOpen ? 'done' : 'open';
+		if (id === 'wifi') return prePair.active ? 'open' : 'done';
 		const key = SERVER[id];
 		if (!key) return 'done';
 		const own = gettingStarted.step(key)?.status;
