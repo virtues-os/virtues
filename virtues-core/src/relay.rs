@@ -558,6 +558,17 @@ async fn allowed_ids(db: &PgPool) -> Result<Vec<EndpointId>, sqlx::Error> {
     Ok(ids)
 }
 
+/// Is `id` one of this box's paired, non-revoked devices? The same set the
+/// transport admits, read fresh — for proofs that arrive outside iroh (the
+/// Bluetooth owner proof on an offline box), where there is no connection for
+/// the allowlist to guard. A query error is an `Err`, never a `false` or a
+/// `true`: the caller refuses on it.
+// Its one caller is the BlueZ half of `ble_provision`, which only builds on Linux.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) async fn is_paired_endpoint(db: &PgPool, id: &EndpointId) -> Result<bool, sqlx::Error> {
+    Ok(allowed_ids(db).await?.contains(id))
+}
+
 /// Build + install the live allowlist for `serve`.
 ///
 /// A failed query leaves the previous set in place: on a rebind that is the

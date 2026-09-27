@@ -882,6 +882,13 @@ impl ReachState {
     Ok(self.status().await)
   }
 
+  /// Sign an offline box's owner challenge with this device's paired key —
+  /// the moved-box path (Improv `0x88`/`0x89`). The key never leaves the
+  /// store; only the public id and the signature come back.
+  pub fn sign_owner_proof(&self, nonce: &[u8]) -> anyhow::Result<virtues_reach_client::owner::OwnerProof> {
+    virtues_reach_client::owner::sign_owner_proof(self.store.as_ref(), nonce)
+  }
+
   /// LAPTOP SIDE of the pairing handoff: mint an identity for a phone that
   /// cannot reach the box, enroll its public half, and return the QR that
   /// carries the result. See `virtues_reach_client::handoff` for the shape and
@@ -1105,6 +1112,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::improv_provision,
       commands::improv_pair,
       commands::improv_disconnect,
+      commands::improv_owner_claim,
       commands::outbox_stats,
       commands::drain_now,
       commands::radio_stats,

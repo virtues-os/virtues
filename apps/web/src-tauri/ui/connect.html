@@ -993,7 +993,15 @@
         } catch (e) {
           return { boxes: [], error: String(e) };
         }
-        const boxes = ((r && r.boxes) || []).map((b) => ({ ...b, name: prettyBoxName(b.name) }));
+        // State 0x01 is a CLAIMED server that lost its network and is asking
+        // its owner for help (virtues-core `ble_provision`, owner mode). This
+        // screen only sets up NEW servers — the words don't open a claimed one
+        // — so offering it here strands the person on a phrase that can never
+        // work. The owner's path lives in the app (`$lib/tauri/boxRadio`).
+        const NEEDS_OWNER = 1;
+        const boxes = ((r && r.boxes) || [])
+          .filter((b) => b.improvState !== NEEDS_OWNER)
+          .map((b) => ({ ...b, name: prettyBoxName(b.name) }));
         return { boxes, error: (r && r.error) || '' };
       }
 
@@ -2459,9 +2467,10 @@ its devices apart — type its address.",
           // pairing, bench 2026-08-24) — but GENEROUSLY: the box may spend up
           // to ~45s completing its ticket (grant redeem + relay bind) before
           // it answers, and cutting it off mid-wait would re-create the very
-          // incomplete-ticket problem the wait exists to solve.
+          // incomplete-ticket problem the wait exists to solve. Above the
+          // clients' own 70s (PAIR_TIMEOUT), so their answer wins the race.
           const res = await withDeadline(
-            invoke('plugin:reach|improv_pair', { id: server.bleId }), 70000);
+            invoke('plugin:reach|improv_pair', { id: server.bleId }), 80000);
           if (res && res.ok) {
             say('Paired - opening your server…', 'ok');
             invoke('plugin:reach|improv_disconnect').catch(() => {});

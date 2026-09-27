@@ -25,10 +25,10 @@ pub mod protocol;
 pub mod client;
 
 pub use protocol::{
-    build_result, build_rpc, chunk_for_results, parse_result, parse_rpc, service_data, Command,
-    ImprovError, State, CHAR_CAPABILITIES, CHAR_CURRENT_STATE, CHAR_ERROR_STATE, CHAR_RPC_COMMAND,
+    build_result, build_rpc, chunk_for_results, owner_proof_message, parse_result, parse_rpc,
+    service_data, Command, ImprovError, State, OWNER_PROOF_CONTEXT, CHAR_CAPABILITIES, CHAR_CURRENT_STATE, CHAR_ERROR_STATE, CHAR_RPC_COMMAND,
     CHAR_RPC_RESULT, SERVICE_DATA_UUID_16, SERVICE_UUID,
 };
 
 #[cfg(feature = "client")]
-pub use client::{FoundBox, ImprovClient, Network};
+pub use client::{classify, Failure, FailureKind, FoundBox, ImprovClient, Network};

@@ -20,6 +20,7 @@ const COMMANDS: &[&str] = &[
   "improv_provision",
   "improv_pair",
   "improv_disconnect",
+  "improv_owner_claim",
   "outbox_stats",
   "drain_now",
   "radio_stats",
