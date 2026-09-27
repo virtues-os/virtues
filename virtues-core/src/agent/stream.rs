@@ -38,8 +38,6 @@ pub const UNPARSEABLE_ARGUMENTS_KEY: &str = "__unparseable_arguments";
 pub struct LlmStreamResult {
     /// The accumulated text content
     pub content: String,
-    /// The accumulated reasoning content (if any)
-    pub reasoning: String,
     /// The gateway's `reasoning_details` for this step, merged by index:
     /// each block's text joined across deltas, the last signature kept.
     pub reasoning_details: Vec<Value>,
@@ -154,9 +152,7 @@ where
     
     // Accumulated content
     let mut full_content = String::new();
-    let mut reasoning_content = String::new();
     let mut reasoning_details: Vec<Value> = Vec::new();
-    let mut in_reasoning = false;
     
     // Tool call tracking
     let mut tool_calls_map: HashMap<i64, (String, String, String)> = HashMap::new();
@@ -248,10 +244,6 @@ where
                                 .and_then(|r| r.as_str());
                             if let Some(reasoning) = reasoning {
                                 if !reasoning.is_empty() {
-                                    if !in_reasoning {
-                                        in_reasoning = true;
-                                    }
-                                    reasoning_content.push_str(reasoning);
                                     emit(AgentEvent::reasoning(reasoning));
                                 }
                             }
@@ -454,7 +446,6 @@ where
 
     Ok(LlmStreamResult {
         content: full_content,
-        reasoning: reasoning_content,
         reasoning_details,
         tool_calls,
         finish_reason,
