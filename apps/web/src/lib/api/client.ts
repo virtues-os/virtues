@@ -233,16 +233,12 @@ export async function mintFaceToken(
 	return request(`/applets/${encodeURIComponent(appletId)}/face-token`);
 }
 
-export async function listApplets(): Promise<Applet[]> {
-	const res = await fetch(`${API_BASE}/applets`);
-	if (!res.ok) throw new Error(`Failed to list applets: ${res.statusText}`);
-	return res.json();
+export function listApplets(): Promise<Applet[]> {
+	return apiGet<Applet[]>('/applets');
 }
 
-export async function getApplet(id: string): Promise<Applet> {
-	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`);
-	if (!res.ok) throw new Error(`Failed to get applet: ${res.statusText}`);
-	return res.json();
+export function getApplet(id: string): Promise<Applet> {
+	return apiGet<Applet>(`/applets/${encodeURIComponent(id)}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -274,18 +270,16 @@ export interface LocalSearchResponse {
  * a GET would put it in the URL, browser history, and every access log along the
  * way.
  */
-export async function searchLocal(
+export function searchLocal(
 	q: string,
 	opts: { limit?: number; signal?: AbortSignal } = {},
 ): Promise<LocalSearchResponse> {
-	const res = await fetch(`${API_BASE}/search/local`, {
+	return request<LocalSearchResponse>('/search/local', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ q, limit: opts.limit }),
 		signal: opts.signal,
 	});
-	if (!res.ok) throw new Error(`Search failed: ${res.statusText}`);
-	return res.json();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -327,19 +321,12 @@ export interface UpdateStatus {
 	check_error: string | null;
 }
 
-export async function getUpdateStatus(): Promise<UpdateStatus> {
-	const res = await fetch(`${API_BASE}/system/update`);
-	if (!res.ok) throw new Error(`Failed to get update status: ${res.statusText}`);
-	return res.json();
+export function getUpdateStatus(): Promise<UpdateStatus> {
+	return apiGet<UpdateStatus>('/system/update');
 }
 
 export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promise<void> {
-	const res = await fetch(`${API_BASE}/system/update/channel`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ channel }),
-	});
-	if (!res.ok) throw new Error(`Failed to set channel: ${res.statusText}`);
+	await apiSend('PUT', '/system/update/channel', { channel });
 }
 
 export interface ReopenOnboardingResponse {
@@ -354,19 +341,8 @@ export interface ReopenOnboardingResponse {
  *
  * This device is revoked too — the caller loses its own session, by design.
  */
-export async function reopenOnboarding(): Promise<ReopenOnboardingResponse> {
-	const res = await fetch(`${API_BASE}/pair/reopen-onboarding`, { method: 'POST' });
-	if (!res.ok) {
-		let detail = res.statusText;
-		try {
-			const body = await res.json();
-			if (body?.error) detail = body.error;
-		} catch {
-			/* non-JSON body — the status text is all we have */
-		}
-		throw new Error(detail);
-	}
-	return res.json();
+export function reopenOnboarding(): Promise<ReopenOnboardingResponse> {
+	return apiSend<ReopenOnboardingResponse>('POST', '/pair/reopen-onboarding');
 }
 
 export interface ApplyUpdateResponse {
@@ -382,23 +358,12 @@ export interface ApplyUpdateResponse {
  * not when it finishes — the upgrade restarts the box, so there is no response
  * to wait for. Watch `boxReachable` for the box going away and coming back.
  *
- * The error text is the box's own, because "update failed" with nothing behind
- * it is what sends someone to SSH in to find out why.
+ * The error text is the box's own (request() surfaces its `error`/`message`),
+ * because "update failed" with nothing behind it is what sends someone to SSH
+ * in to find out why.
  */
-export async function applyUpdate(): Promise<ApplyUpdateResponse> {
-	const res = await fetch(`${API_BASE}/system/update/apply`, { method: 'POST' });
-	if (!res.ok) {
-		let detail = res.statusText;
-		try {
-			const body = await res.json();
-			if (body?.error) detail = body.error;
-			else if (body?.message) detail = body.message;
-		} catch {
-			/* non-JSON body — the status text is all we have */
-		}
-		throw new Error(detail);
-	}
-	return res.json();
+export function applyUpdate(): Promise<ApplyUpdateResponse> {
+	return apiSend<ApplyUpdateResponse>('POST', '/system/update/apply');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -495,59 +460,37 @@ export interface Pin {
 	color: string | null;
 }
 
-export async function listPins(): Promise<Pin[]> {
-	const res = await fetch(`${API_BASE}/pins`);
-	if (!res.ok) throw new Error(`Failed to list pins: ${res.statusText}`);
-	return res.json();
+export function listPins(): Promise<Pin[]> {
+	return apiGet<Pin[]>('/pins');
 }
 
-export async function createPin(req: {
+export function createPin(req: {
 	url: string;
 	label?: string | null;
 	icon?: string | null;
 	color?: string | null;
 }): Promise<Pin> {
-	const res = await fetch(`${API_BASE}/pins`, {
-		method: 'POST',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify(req)
-	});
-	if (!res.ok) throw new Error(`Failed to pin: ${res.statusText}`);
-	return res.json();
+	return apiSend<Pin>('POST', '/pins', req);
 }
 
-export async function updatePin(
+export function updatePin(
 	id: string,
 	req: { label?: string | null; icon?: string | null; sort_order?: number; color?: string | null }
 ): Promise<Pin> {
-	const res = await fetch(`${API_BASE}/pins/${encodeURIComponent(id)}`, {
-		method: 'PATCH',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify(req)
-	});
-	if (!res.ok) throw new Error(`Failed to update pin: ${res.statusText}`);
-	return res.json();
+	return apiSend<Pin>('PATCH', `/pins/${encodeURIComponent(id)}`, req);
 }
 
 export async function deletePin(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/pins/${encodeURIComponent(id)}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete pin: ${res.statusText}`);
+	await apiSend('DELETE', `/pins/${encodeURIComponent(id)}`);
 }
 
 export async function reorderPins(urls: string[]): Promise<void> {
-	const res = await fetch(`${API_BASE}/pins/reorder`, {
-		method: 'PUT',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ urls })
-	});
-	if (!res.ok) throw new Error(`Failed to reorder pins: ${res.statusText}`);
+	await apiSend('PUT', '/pins/reorder', { urls });
 }
 
 /** POST /api/admin/reconcile — re-reads manifests and upserts applet rows. */
-export async function adminReconcile(): Promise<{ upserted: number }> {
-	const res = await fetch(`${API_BASE}/admin/reconcile`, { method: 'POST' });
-	if (!res.ok) throw new Error(`Reconcile failed: ${res.statusText}`);
-	return res.json();
+export function adminReconcile(): Promise<{ upserted: number }> {
+	return apiSend<{ upserted: number }>('POST', '/admin/reconcile');
 }
 
 /**
@@ -555,7 +498,7 @@ export async function adminReconcile(): Promise<{ upserted: number }> {
  * and runs the standard scanner. Any folder under the slug containing a
  * `manifest.toml` becomes an action. Returns added/updated/removed ids.
  */
-export async function importActionsFromGit(body: {
+export function importActionsFromGit(body: {
 	url: string;
 	ref?: string;
 	/** From `/api/sudo/request` — importing runs someone else's code. */
@@ -572,16 +515,7 @@ export async function importActionsFromGit(body: {
 	updated: string[];
 	removed: string[];
 }> {
-	const res = await fetch(`${API_BASE}/admin/applets/import-git`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body)
-	});
-	if (!res.ok) {
-		const text = await res.text().catch(() => res.statusText);
-		throw new Error(text || `Import failed: ${res.statusText}`);
-	}
-	return res.json();
+	return apiSend('POST', '/admin/applets/import-git', body);
 }
 
 export interface PatchAppletBody {
@@ -595,28 +529,15 @@ export interface PatchAppletBody {
 	memory?: string | null;
 }
 
-export async function patchApplet(id: string, patch: PatchAppletBody): Promise<Applet> {
-	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`, {
-		method: 'PATCH',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(patch)
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to update applet: ${res.statusText}`);
-	}
-	return res.json();
+export function patchApplet(id: string, patch: PatchAppletBody): Promise<Applet> {
+	return apiSend<Applet>('PATCH', `/applets/${encodeURIComponent(id)}`, patch);
 }
 
 export async function deleteApplet(id: string, dropData = false): Promise<void> {
-	const q = dropData ? '?drop_data=true' : '';
-	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}${q}`, {
-		method: 'DELETE'
+	await request(`/applets/${encodeURIComponent(id)}`, {
+		method: 'DELETE',
+		query: { drop_data: dropData ? 'true' : undefined },
 	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to delete applet: ${res.statusText}`);
-	}
 }
 
 /** One line of an applet's log: consecutive runs that shared an outcome,
@@ -637,25 +558,14 @@ export interface AppletLogEntry {
 	cost_micros: number;
 }
 
-export async function getAppletLog(id: string, limit = 50): Promise<AppletLogEntry[]> {
-	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/log?limit=${limit}`);
-	if (!res.ok) throw new Error(`Failed to load log: ${res.statusText}`);
-	return res.json();
+export function getAppletLog(id: string, limit = 50): Promise<AppletLogEntry[]> {
+	return apiGet<AppletLogEntry[]>(`/applets/${encodeURIComponent(id)}/log`, { limit });
 }
 
 /** Say something to an applet — the `message` wake. Returns once the run row
  *  exists; the agent turn continues detached. */
-export async function messageApplet(id: string, message: string): Promise<{ run_id: string | null; status: string }> {
-	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/message`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ message })
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to send: ${res.statusText}`);
-	}
-	return res.json();
+export function messageApplet(id: string, message: string): Promise<{ run_id: string | null; status: string }> {
+	return apiSend('POST', `/applets/${encodeURIComponent(id)}/message`, { message });
 }
 
 /** The private tables an applet owns — shown on the delete confirm so the user
@@ -740,19 +650,17 @@ export async function getAppletSourceFile(
 	);
 }
 
-export async function listRuns(opts?: {
+export function listRuns(opts?: {
 	limit?: number;
 	status?: string;
 	applet_id?: string;
 }): Promise<AppletRun[]> {
-	const params = new URLSearchParams();
-	if (opts?.limit != null) params.set('limit', String(opts.limit));
-	if (opts?.status) params.set('status', opts.status);
-	if (opts?.applet_id) params.set('applet_id', opts.applet_id);
-	const qs = params.toString();
-	const res = await fetch(`${API_BASE}/runs${qs ? `?${qs}` : ''}`);
-	if (!res.ok) throw new Error(`Failed to list runs: ${res.statusText}`);
-	return res.json();
+	// `||` keeps the old rule: an empty status/applet_id is left off the query.
+	return apiGet<AppletRun[]>('/runs', {
+		limit: opts?.limit,
+		status: opts?.status || undefined,
+		applet_id: opts?.applet_id || undefined,
+	});
 }
 
 // ============================================================================
