@@ -279,8 +279,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/health", get(health))
         // Public, LAN-reachable box health — boot gates + inference resolution.
         // No secrets; the first-run web page / appliance screen poll this
-        // before any owner session exists. (Full identity detail stays behind
-        // the session-authed /api/box/status.)
+        // before any owner session exists. Full identity detail stays in the
+        // `virtues status` CLI.
         .route(
             "/api/box/health",
             get(crate::api::box_status::box_health_handler),
@@ -494,12 +494,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/oauth/callback",
             axum::routing::get(crate::api::source_auth::oauth_callback_handler),
         )
-        // Box health for the phone app's status screen (same data as the
-        // `virtues status` CLI — one source of truth in api::box_status).
-        .route(
-            "/api/box/status",
-            get(crate::api::box_status::box_status_handler),
-        )
         // Actions API
         .route(
             "/api/applets",
@@ -677,7 +671,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/billing/portal",
             post(api::create_billing_portal_handler),
         )
-        .route("/api/billing/claim", post(api::claim_billing_handler))
         .route("/api/billing/subscribe", post(api::subscribe_billing_handler))
         // Wallet balance + recent ledger (proxied from virtues-api /v1/usage).
         .route("/api/billing/usage", get(api::billing_usage_handler))
