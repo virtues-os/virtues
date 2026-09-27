@@ -6,7 +6,7 @@
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use super::protocol::{AgentEvent, StepReason};
 
@@ -155,7 +155,11 @@ where
     let mut reasoning_details: Vec<Value> = Vec::new();
     
     // Tool call tracking
-    let mut tool_calls_map: HashMap<i64, (String, String, String)> = HashMap::new();
+    // Keyed by the provider's call index and ordered by it, so the calls come
+    // out in the order the model made them. A HashMap here returned them in
+    // arbitrary order: the echoed assistant message (the next step's cache
+    // prefix) varied run to run, and so did which call a per-tool cap refused.
+    let mut tool_calls_map: BTreeMap<i64, (String, String, String)> = BTreeMap::new();
     let mut tool_calls_started: HashSet<i64> = HashSet::new();
     
     // Token usage
