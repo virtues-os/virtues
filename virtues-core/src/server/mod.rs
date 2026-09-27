@@ -27,8 +27,9 @@ use crate::Virtues;
 
 /// Run the HTTP ingestion server with integrated scheduler
 pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
-    // Validate required environment variables early
-    validate_environment()?;
+    // Resolved, not re-derived — a log line that disagreed with the writer
+    // would be worse than no log line at all.
+    tracing::info!("Using storage path: {}", crate::storage::lake::lake_root().display());
 
     // Prove the lake is writable before serving. Every applet that ingests
     // anything writes here as the `virtues` user, and when the directory was
@@ -355,9 +356,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/display/button",
             get(crate::api::display::display_button_handler),
         )
-        // `/api/display/qr` and `/api/display/link-qr` are gone — the panel is
-        // one screen now and renders no QR at all. See api/display.rs.
-        //
         // Wifi provisioning over the setup AP. The one unauthenticated WRITE
         // surface on the box, and unauthenticated by necessity: the phone that
         // just joined the AP has no credential yet, because obtaining one is
@@ -377,26 +375,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/provision/status",
             get(crate::api::provision::status_handler),
         )
-        // `/portal` and `/provision` are GONE (2026-08-17), and the deletion is
-        // the point rather than a cleanup.
-        //
-        // They were the browser half of onboarding: a phone joins the setup AP,
-        // a captive sheet opens, the owner hands over their home wifi. Every
-        // part of that is now impossible or unwanted. Pairing needs a held iroh
-        // key, so the browser could provision wifi and then strand the owner one
-        // step from the end — it served a user who cannot exist. The captive
-        // sheet itself was suppressed rather than exploited (iOS renders it in a
-        // stripped WebKit, force-reopens it, and caches it per-SSID across
-        // upgrades). And BLE carries the whole conversation now, on a radio that
-        // survives the switchover the AP path died on.
-        //
-        // What replaced them: `maintenance::ble_provision` (Improv), and
-        // `/api/network/*` for a claimed box that needs to move networks.
-        //
-        // The `/provision` → `/portal` redirect is gone with them. It existed to
-        // un-teach phones that had cached the old SPA URL, and every such phone
-        // met a box during the two weeks that flow was live — none of which are
-        // customer boxes.
+        // No browser provisioning (`/portal`, `/provision`), on purpose: pairing
+        // needs a held iroh key a browser cannot have, and iOS captive sheets
+        // misbehave. BLE (`maintenance::ble_provision`) and `/api/network/*` do it.
         // Auth — pair-only model. Public consume + session probe (returns the
         // AuthUser resolved from the request's proven iroh key, if any).
         // /api/pair/{mint,confirm,deny,status} are auth'd and live under the
@@ -428,7 +409,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // legacy Bearer device-token kept only as a fallback for external,
         // non-iroh callers. Lives in public_routes so the bearer fallback path
         // isn't force-rejected by the AuthUser route_layer.
-        // Per-route body limit override (router-wide cap is 105MB): iOS audio
+        // Per-route body limit override (router-wide cap is 260MB): iOS audio
         // batches are base64 AAC and can dwarf the other streams on backfill.
         // A body over the cap is rejected by the Json extractor before the
         // handler runs, which historically surfaced as a bogus "no stream
@@ -518,9 +499,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/setup/link/poll",         post(crate::api::setup::link_poll_handler))
         // ─── Source OAuth + API-key connect flows ────────────────────
         // Device pairing (iOS / Mac / sensor) lives at /api/pair/* (above).
-        // The legacy /api/pairing/initiate + /api/pairing/complete routes
-        // were removed in v1 — iOS now pairs via /api/pair/consume with
-        // kind = "mobile_app".
         .route(
             "/api/connect/:source_id/start",
             post(crate::api::source_auth::oauth_start_handler),
@@ -569,7 +547,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(crate::api::applet_source::fork_handler),
         )
         // Chat-export upload (Tier 3 one-time import). Per-route body limit
-        // overrides the router-wide 105MB cap — ChatGPT exports can be larger.
+        // overrides the router-wide 260MB cap — ChatGPT exports can be larger.
         .route(
             "/api/chat-import/upload",
             post(api::chat_import_upload_handler)
@@ -858,11 +836,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/organization/:id",
             get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
         )
-        // Wiki - Thing: retired. Things are gone entirely as of the wiki_things
-        // drop — topics are universals, things were particulars, and a
-        // particular now accumulates as a floating mention until something
-        // promotes it. This comment used to point at /api/things, which no
-        // longer exists.
         // Wiki - Narrative Identity. Read-only: the document is edited on its
         // page, and the retired abridged copy took its PUT with it.
         .route(
@@ -1430,7 +1403,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     };
 
     // Plain HTTP on :8000 is the only listener. The box has no TLS surface —
-    // paired daemons reach the box over a WG tunnel (which provides encryption
+    // paired daemons reach the box over iroh (which provides encryption
     // + authentication), and the box's own browser hits localhost (Secure
     // Context per W3C, no cert required). See [[localhost-daemon-trust]] in
     // MEMORY.md for the architectural commitment.
@@ -1478,20 +1451,6 @@ fn build_transport(
 }
 
 /// Validate required environment variables at startup
-fn validate_environment() -> Result<()> {
-    // Log storage path being used. Resolved, not re-derived — a log line that
-    // disagreed with the writer would be worse than no log line at all.
-    tracing::info!(
-        "Using storage path: {}",
-        crate::storage::lake::lake_root().display()
-    );
-
-    tracing::debug!("Environment validation passed");
-    Ok(())
-}
-
-/// Honest 404 for unknown /api and /auth paths — see the comment where this
-/// is routed. `no-store` so a transient miss can never poison an HTTP cache.
 /// Stamp `Cache-Control: no-store` on every HTML document the static server
 /// hands out, leaving hashed assets alone.
 ///
@@ -1796,6 +1755,8 @@ async fn stamp_box_build(
     res
 }
 
+/// Honest 404 for unknown /api and /auth paths — see the comment where this
+/// is routed. `no-store` so a transient miss can never poison an HTTP cache.
 async fn api_not_found_handler(uri: axum::http::Uri) -> impl IntoResponse {
     (
         axum::http::StatusCode::NOT_FOUND,

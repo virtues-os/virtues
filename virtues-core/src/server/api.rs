@@ -63,9 +63,6 @@ fn success_message(message: &str) -> Response {
         .into_response()
 }
 
-// Legacy source/stream/OAuth/plaid/ontology/catalog handlers were
-// removed in the actions cutover.
-
 // ============================================================================
 // Actions + runs API
 // ============================================================================
@@ -538,7 +535,7 @@ pub async fn message_applet_handler(
     }
 }
 
-/// GET /api/actions/:id — single action with its last run inlined.
+/// GET /api/applets/:id — single applet with its last run inlined.
 pub async fn get_applet_handler(
     State(state): State<AppState>,
     Path(applet_id): Path<String>,
@@ -588,7 +585,7 @@ pub async fn get_applet_handler(
     }
 }
 
-/// POST /api/actions — create a user-owned action.
+/// POST /api/applets — create a user-owned applet.
 #[derive(Debug, Deserialize)]
 pub struct CreateAppletBody {
     pub name: String,
@@ -634,7 +631,7 @@ pub async fn create_applet_handler(
     }
 }
 
-/// PATCH /api/actions/:id — partial update. Enforces system-owner guard.
+/// PATCH /api/applets/:id — partial update. Enforces system-owner guard.
 pub async fn patch_applet_handler(
     State(state): State<AppState>,
     Path(applet_id): Path<String>,
@@ -704,11 +701,10 @@ pub async fn get_applet_data_handler(
     }
 }
 
-/// GET /api/actions/:id/runs?limit=&offset= — paginated run history.
+/// GET /api/applets/:id/runs?limit= — run history, newest first.
 #[derive(Debug, Deserialize)]
 pub struct RunsQuery {
     pub limit: Option<i64>,
-    pub offset: Option<i64>,
     pub status: Option<String>,
     pub applet_id: Option<String>,
 }
@@ -736,7 +732,7 @@ pub async fn list_applet_runs_handler(
     }
 }
 
-/// GET /api/runs?status=&applet_id=&limit=&offset= — global run history.
+/// GET /api/runs?status=&applet_id=&limit= — global run history.
 pub async fn list_runs_handler(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
@@ -1267,8 +1263,6 @@ pub async fn stream_days_handler(
 ) -> Response {
     api_response(crate::api::stream_health::stream_days(&state.db, q.days.unwrap_or(84)).await)
 }
-
-// Plaid Link handlers were removed in the actions cutover.
 
 // ============================================================================
 // Onboarding API
@@ -2455,30 +2449,12 @@ pub async fn wiki_update_organization_handler(
     api_response(crate::api::update_organization(state.db.pool(), id, request).await)
 }
 
-// --- Thing ---
-
-// Thing handlers retired — use /api/things (thing_*_handler) as the single
-// source over wiki_things.
-
 // --- Narrative Identity ---
 
 /// Get narrative identity
 pub async fn wiki_get_narrative_identity_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::get_narrative_identity(state.db.pool()).await)
 }
-
-
-// --- Telos ---
-
-
-
-// --- Act ---
-
-
-
-// --- Chapter ---
-
-
 
 // --- Day ---
 
