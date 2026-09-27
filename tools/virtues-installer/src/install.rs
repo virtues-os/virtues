@@ -170,6 +170,19 @@ async fn systemctl(args: &[&str], label: &str) -> Result<()> {
     run_step(label, cmd).await
 }
 
+/// Best-effort `systemctl`: output captured and discarded, failure ignored.
+async fn systemctl_try(args: &[&str]) {
+    let _ = Command::new("systemctl").args(args).output().await;
+}
+
+/// `mkdir -p` the parent, then write the file.
+fn install_file(path: &str, body: &str) -> Result<()> {
+    if let Some(parent) = Path::new(path).parent() {
+        fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
+    }
+    fs::write(path, body).with_context(|| format!("writing {path}"))
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Inference sidecars — llama-server hosting the embed + rerank GGUFs
 // ────────────────────────────────────────────────────────────────────────
@@ -226,15 +239,9 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
         fs::write(format!("/etc/systemd/system/{unit}.service"), body)
             .with_context(|| format!("writing {unit}.service"))?;
     }
-    let mut cmd = Command::new("systemctl");
-    cmd.arg("daemon-reload");
-    run_step("Install inference sidecar units", cmd).await?;
-    let mut cmd = Command::new("systemctl");
-    cmd.args(["enable", "virtues-embed", "virtues-rerank"]);
-    run_step("Enable inference sidecars", cmd).await?;
-    let mut cmd = Command::new("systemctl");
-    cmd.args(["restart", "virtues-embed", "virtues-rerank"]);
-    run_step("Start inference sidecars", cmd).await
+    systemctl(&["daemon-reload"], "Install inference sidecar units").await?;
+    systemctl(&["enable", "virtues-embed", "virtues-rerank"], "Enable inference sidecars").await?;
+    systemctl(&["restart", "virtues-embed", "virtues-rerank"], "Start inference sidecars").await
 }
 
 /// libpdfium — native PDF text extraction for the `document_extraction`
@@ -330,9 +337,7 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
             Err(e) => {
                 // A previous install may have left the loop running; stopping
                 // it is the useful half of this branch.
-                let mut cmd = Command::new("systemctl");
-                cmd.args(["disable", "--now", "virtues-qnnd"]);
-                let _ = cmd.output().await;
+                systemctl_try(&["disable", "--now", "virtues-qnnd"]).await;
                 ui::warn(&format!(
                     "could not obtain the QAIRT runtime libs ({e}) — NPU daemon NOT installed, \
                      so this box has no embedding or rerank endpoint and semantic search will \
@@ -358,15 +363,9 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
 
     // Also applies the watchdog drop-in: `daemon-reload` re-reads system.conf.d
     // (verified on the lab Dragon; no daemon-reexec needed).
-    let mut cmd = Command::new("systemctl");
-    cmd.arg("daemon-reload");
-    run_step("Install NPU daemon unit", cmd).await?;
-    let mut cmd = Command::new("systemctl");
-    cmd.args(["enable", "virtues-qnnd"]);
-    run_step("Enable NPU daemon", cmd).await?;
-    let mut cmd = Command::new("systemctl");
-    cmd.args(["restart", "virtues-qnnd"]);
-    run_step("Start NPU daemon", cmd).await
+    systemctl(&["daemon-reload"], "Install NPU daemon unit").await?;
+    systemctl(&["enable", "virtues-qnnd"], "Enable NPU daemon").await?;
+    systemctl(&["restart", "virtues-qnnd"], "Start NPU daemon").await
 }
 
 /// Where the watchdog drop-in lives. Uninstall removes it by this path, which
@@ -395,8 +394,7 @@ fn arm_hardware_watchdog() -> Result<()> {
         ui::skip("No hardware watchdog on this board");
         return Ok(());
     }
-    fs::create_dir_all("/etc/systemd/system.conf.d").context("mkdir system.conf.d")?;
-    fs::write(WATCHDOG_DROPIN, WATCHDOG_CONF).context("writing the watchdog drop-in")?;
+    install_file(WATCHDOG_DROPIN, WATCHDOG_CONF)?;
     ui::ok("Hardware watchdog on: a hung box reboots itself within 30 s");
     Ok(())
 }
@@ -759,9 +757,7 @@ pub async fn configure_mdns() -> Result<()> {
         ui::skip("Hostname already 'virtues'");
     }
 
-    fs::create_dir_all("/etc/avahi/services").context("/etc/avahi/services")?;
-    fs::write("/etc/avahi/services/virtues.service", AVAHI_SERVICE)
-        .context("writing avahi service")?;
+    install_file("/etc/avahi/services/virtues.service", AVAHI_SERVICE)?;
 
     let mut cmd = Command::new("bash");
     cmd.args([
@@ -1042,16 +1038,11 @@ async fn harden_postgres() -> Result<()> {
     let instance = active_pg_instance().await;
     let unit = instance.as_deref().unwrap_or("postgresql");
     let dropin_dir = format!("/etc/systemd/system/{unit}.service.d");
-    fs::create_dir_all(&dropin_dir)
-        .with_context(|| format!("creating {dropin_dir}"))?;
-    fs::write(
-        format!("{dropin_dir}/virtues-durability.conf"),
+    install_file(
+        &format!("{dropin_dir}/virtues-durability.conf"),
         "[Service]\n# Never SIGKILL Postgres mid-WAL-replay after an unclean\n# shutdown — recovery can exceed the 90s default on a large index.\nTimeoutStartSec=infinity\n",
-    )
-    .context("writing postgres durability drop-in")?;
-    let mut cmd = Command::new("systemctl");
-    cmd.arg("daemon-reload");
-    run_step("Postgres: recovery-safe startup timeout", cmd).await?;
+    )?;
+    systemctl(&["daemon-reload"], "Postgres: recovery-safe startup timeout").await?;
 
     // WAL/checkpoint tuning via ALTER SYSTEM (writes postgresql.auto.conf).
     // All reloadable — no restart needed.
@@ -1399,16 +1390,12 @@ pub async fn install_systemd_unit(cfg: &InstallConfig, appliance: bool) -> Resul
         install_firstboot_unit(cfg)?;
     }
 
-    let mut cmd = Command::new("systemctl");
-    cmd.arg("daemon-reload");
-    run_step("Install systemd unit", cmd).await?;
+    systemctl(&["daemon-reload"], "Install systemd unit").await?;
 
     if appliance {
         // Ordered Before=virtues.service, so it must be enabled or the ordering
         // never applies — an enabled-but-inert oneshot is the normal steady state.
-        let mut en = Command::new("systemctl");
-        en.args(["enable", "virtues-firstboot"]);
-        run_step("Enable first-boot unit", en).await?;
+        systemctl(&["enable", "virtues-firstboot"], "Enable first-boot unit").await?;
     }
     Ok(())
 }
@@ -1438,27 +1425,25 @@ pub async fn install_systemd_unit(cfg: &InstallConfig, appliance: bool) -> Resul
 pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
     // Kiosk runtime. `libwebkit2gtk-4.1-0` is already the Tauri webview on
     // Linux, so this is the same engine the desktop app uses.
-    let mut deps = Command::new("apt-get");
-    deps.args([
-        "install",
-        "-y",
-        "-qq",
-        "cage",
-        "seatd",
-        "python3-gi",
-        "gir1.2-webkit2-4.1",
-        "gir1.2-gtk-3.0",
-        // BLE provisioning (maintenance::ble_provision): the Improv service
-        // needs bluetoothd running. Radxa's image ships it, but the appliance
-        // profile must not depend on that staying true.
-        "bluez",
-        // growpart, for firstboot §1e: masters are cut shrunk
-        // (tools/shrink-image.sh) and the first boot on real hardware grows
-        // the rootfs back to fill whatever card it landed on.
-        "cloud-guest-utils",
-    ]);
-    deps.env("DEBIAN_FRONTEND", "noninteractive");
-    run_step("Install display runtime (cage + WebKit)", deps).await?;
+    apt_install(
+        "Install display runtime (cage + WebKit)",
+        &[
+            "cage",
+            "seatd",
+            "python3-gi",
+            "gir1.2-webkit2-4.1",
+            "gir1.2-gtk-3.0",
+            // BLE provisioning (maintenance::ble_provision): the Improv service
+            // needs bluetoothd running. Radxa's image ships it, but the appliance
+            // profile must not depend on that staying true.
+            "bluez",
+            // growpart, for firstboot §1e: masters are cut shrunk
+            // (tools/shrink-image.sh) and the first boot on real hardware grows
+            // the rootfs back to fill whatever card it landed on.
+            "cloud-guest-utils",
+        ],
+    )
+    .await?;
 
     // Boot text on the glass. From power to cage the panel used to be pure
     // black — `quiet splash` hides the kernel and systemd entirely, so nobody
@@ -1496,13 +1481,9 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
 
     // BLE provisioning needs bluetoothd up from boot; installing bluez does
     // not reliably enable it on a server image.
-    let mut bt = Command::new("systemctl");
-    bt.args(["enable", "--now", "bluetooth"]);
-    run_step("Enable bluetooth service", bt).await?;
+    systemctl(&["enable", "--now", "bluetooth"], "Enable bluetooth service").await?;
 
-    let mut seat = Command::new("systemctl");
-    seat.args(["enable", "--now", "seatd"]);
-    let _ = seat.output().await;
+    systemctl_try(&["enable", "--now", "seatd"]).await;
 
     enable_unattended_security_upgrades().await?;
 
@@ -1518,9 +1499,7 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
     // Scoped to the three actions onboarding actually needs rather than the
     // whole `org.freedesktop.NetworkManager.*` tree: raise the AP, join a
     // network, and persist the resulting connection.
-    fs::create_dir_all("/etc/polkit-1/rules.d").context("mkdir polkit rules.d")?;
-    fs::write("/etc/polkit-1/rules.d/50-virtues-network.rules", POLKIT_NETWORK_RULE)
-        .context("writing polkit network rule")?;
+    install_file("/etc/polkit-1/rules.d/50-virtues-network.rules", POLKIT_NETWORK_RULE)?;
     ui::ok("NetworkManager control granted to the virtues user");
 
     // The data disk is real on an appliance, so Postgres must wait for it.
@@ -1540,14 +1519,10 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
     //
     // A drop-in, so an apt upgrade of systemd does not overwrite it, and so the
     // reason is legible next to the setting rather than buried in a vendor file.
-    fs::create_dir_all("/etc/systemd/logind.conf.d").context("mkdir logind.conf.d")?;
-    fs::write("/etc/systemd/logind.conf.d/10-virtues-power-key.conf", LOGIND_POWER_KEY)
-        .context("writing the logind power-key drop-in")?;
+    install_file("/etc/systemd/logind.conf.d/10-virtues-power-key.conf", LOGIND_POWER_KEY)?;
     // reload-or-restart rather than restart: restarting logind on a box with an
     // active session kills it.
-    let mut reload = Command::new("systemctl");
-    reload.args(["reload-or-restart", "systemd-logind"]);
-    let _ = reload.output().await;
+    systemctl_try(&["reload-or-restart", "systemd-logind"]).await;
     ui::ok("Power key handed to Virtues (hold 3s to forget devices)");
 
     // Retire the captive-portal plumbing, on every run.
@@ -1589,31 +1564,23 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
         vec!["disable", "lightdm"],
         vec!["set-default", "multi-user.target"],
     ] {
-        let mut c = Command::new("systemctl");
-        c.args(&args);
         // Absent units are the normal case — most boxes have exactly one
         // display manager, or none — so a failure here is not interesting.
-        let _ = c.output().await;
+        systemctl_try(&args).await;
     }
     ui::ok("Boot trimmed (no desktop session, no wait-online, no vendor auto-update)");
 
     // The kiosk shim + unit.
-    fs::create_dir_all("/usr/local/lib/virtues").context("mkdir /usr/local/lib/virtues")?;
-    fs::write("/usr/local/lib/virtues/display.py", DISPLAY_SHIM)
-        .context("writing display.py")?;
+    install_file("/usr/local/lib/virtues/display.py", DISPLAY_SHIM)?;
     fs::write(
         "/etc/systemd/system/virtues-display.service",
         DISPLAY_UNIT_TEMPLATE.replace("__DATA_DIR__", &cfg.data_dir.display().to_string()),
     )
     .context("writing virtues-display.service")?;
 
-    let mut reload = Command::new("systemctl");
-    reload.arg("daemon-reload");
-    let _ = reload.output().await;
+    systemctl_try(&["daemon-reload"]).await;
 
-    let mut en = Command::new("systemctl");
-    en.args(["enable", "virtues-display"]);
-    run_step("Install display kiosk", en).await
+    systemctl(&["enable", "virtues-display"], "Install display kiosk").await
 }
 
 /// Automatic OS security patching.
@@ -1652,9 +1619,7 @@ async fn enable_unattended_security_upgrades() -> Result<()> {
 
     // The timers ship disabled on a server image; enable them explicitly.
     for timer in ["apt-daily.timer", "apt-daily-upgrade.timer"] {
-        let mut t = Command::new("systemctl");
-        t.args(["enable", "--now", timer]);
-        let _ = t.output().await;
+        systemctl_try(&["enable", "--now", timer]).await;
     }
     ui::ok("Automatic OS security updates enabled (security pocket only, no auto-reboot)");
     Ok(())
@@ -1690,10 +1655,8 @@ async fn retire_captive_artifacts() {
     let existed = std::path::Path::new(UNIT_PATH).exists()
         || std::path::Path::new(DNSMASQ_CONF).exists();
 
-    for args in [vec!["stop", UNIT], vec!["disable", UNIT]] {
-        let mut c = Command::new("systemctl");
-        c.args(&args);
-        let _ = c.output().await;
+    for args in [["stop", UNIT], ["disable", UNIT]] {
+        systemctl_try(&args).await;
     }
     let _ = fs::remove_file(UNIT_PATH);
     let _ = fs::remove_file(DNSMASQ_CONF);
@@ -1710,9 +1673,7 @@ async fn retire_captive_artifacts() {
     let _ = ipt.output().await;
 
     if existed {
-        let mut c = Command::new("systemctl");
-        c.arg("daemon-reload");
-        let _ = c.output().await;
+        systemctl_try(&["daemon-reload"]).await;
         ui::ok("Removed the retired captive-portal DNS + :80 redirect");
     }
 }
@@ -2457,9 +2418,11 @@ pub async fn relocate_postgres_to_data_dir(cfg: &InstallConfig) -> Result<()> {
     // pg_control second — the copy read them on opposite sides of that write),
     // and the relocated cluster PANICked with "could not locate a valid
     // checkpoint record". Naming the instance makes systemctl wait for it.
-    let mut stop = Command::new("systemctl");
-    stop.args(["stop", "postgresql", &format!("postgresql@{ver}-main")]);
-    run_step("Stop Postgres for the move", stop).await?;
+    systemctl(
+        &["stop", "postgresql", &format!("postgresql@{ver}-main")],
+        "Stop Postgres for the move",
+    )
+    .await?;
 
     // Belt and braces: the postmaster pid file is removed as the very last act
     // of a shutdown, after the checkpoint is on disk. If it is still there,
@@ -2570,12 +2533,12 @@ async fn pg_is_ready() -> bool {
 /// would be wrong there — `mountpoint` would fail on a perfectly good install.
 /// We are a guest on that machine and its Postgres is not ours to constrain.
 fn install_postgres_mount_guard(cfg: &InstallConfig) -> Result<()> {
-    let dir = "/etc/systemd/system/postgresql@.service.d";
-    fs::create_dir_all(dir).with_context(|| format!("mkdir {dir}"))?;
     let body = PG_MOUNT_GUARD_TEMPLATE
         .replace("__DATA_DIR__", &cfg.data_dir.display().to_string());
-    fs::write(format!("{dir}/10-virtues-data-mount.conf"), body)
-        .context("writing postgres mount guard drop-in")?;
+    install_file(
+        "/etc/systemd/system/postgresql@.service.d/10-virtues-data-mount.conf",
+        &body,
+    )?;
     ui::ok("Postgres will not start without the data disk");
     Ok(())
 }
