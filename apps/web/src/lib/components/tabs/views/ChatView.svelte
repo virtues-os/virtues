@@ -542,9 +542,13 @@
 		}
 	}
 
-	// Initialize chat on first render
+	// Swap the chat instance when the conversation changes, and on first
+	// render. `conversationId` is the only dependency on purpose: the rest of
+	// what ensureChatInstance reads (the draft, `input`, the instance id it
+	// writes) is part of the swap, not a reason to run it again.
 	$effect(() => {
-		ensureChatInstance();
+		conversationId;
+		untrack(ensureChatInstance);
 	});
 
 	// Watch for tab.route changes to reset state when switching conversations
