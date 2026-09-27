@@ -27,6 +27,67 @@ use crate::Virtues;
 
 /// Run the HTTP ingestion server with integrated scheduler
 pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
+    // Awaited before anything is spawned: the scheduler resolves cron
+    // timezones from home_timezone and schedules the templates reconciled here.
+    preflight(&client).await;
+
+    // Yjs state is shared by the server and the scheduler.
+    let yjs_state = yjs::YjsState::new(client.database.pool().clone());
+    yjs_state.start_save_processor();
+    tracing::info!("Yjs WebSocket server initialized");
+
+    spawn_background(&client, &yjs_state);
+
+    let app = build_app(build_state(&client, yjs_state.clone()));
+
+    // iroh reach: the box is an iroh Endpoint that serves this same axum app
+    // (LAN-direct → hole-punch → our relay), reachable by EndpointId with no
+    // public inbound port. Serves a clone of the fully-layered `app`; the
+    // :8000 TCP listener below keeps serving LAN/loopback + the desktop :7117
+    // helper. See `crate::relay`.
+    crate::relay::maybe_spawn(client.database.pool().clone(), app.clone());
+
+    let transport = build_transport(host, port);
+    let listener = transport.bind().await?;
+
+    tracing::info!("Server listening on {}", transport.describe());
+
+    // DIY discovery aid: the operator ran `compose up` and knows their host, so
+    // just point them at the web UI + the CLI dashboard. `0.0.0.0` means "all
+    // interfaces" — they reach it at this box's LAN IP.
+    let shown = if host == "0.0.0.0" || host == "::" {
+        format!("http://<this-box-ip>:{port}")
+    } else {
+        format!("http://{host}:{port}")
+    };
+    tracing::info!("Open the Virtues web UI at {shown}  ·  run `virtues status` for setup steps");
+
+    // Plain HTTP on :8000 is the only listener. The box has no TLS surface —
+    // paired daemons reach the box over iroh (which provides encryption
+    // + authentication), and the box's own browser hits localhost (Secure
+    // Context per W3C, no cert required). See [[localhost-daemon-trust]] in
+    // MEMORY.md for the architectural commitment.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
+
+    // The Yjs save queue holds the owner's most recent typing for up to
+    // ~2.5s; flush it so a restart or self-update doesn't drop it.
+    yjs_state.flush_pending_saves().await;
+    tracing::info!("Server shutting down gracefully");
+
+    // The scheduler and other background tasks stop when the process exits.
+    Ok(())
+}
+
+/// Best-effort startup checks, awaited in order. A failure is logged and the
+/// box serves anyway.
+async fn preflight(client: &Virtues) {
+    let pool = client.database.pool();
+
     // Resolved, not re-derived — a log line that disagreed with the writer
     // would be worse than no log line at all.
     tracing::info!("Using storage path: {}", crate::storage::lake::lake_root().display());
@@ -52,85 +113,130 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         Err(e) => tracing::error!(error = %e, "could not open the lake for a write probe"),
     }
 
-
     // Reap runs left in `running` by a crash/restart mid-execution, so a stale
     // lock doesn't survive a reboot. (The concurrency gate also age-bounds stale
     // runs at request time; this just keeps the runs table honest on boot.)
-    match crate::scheduler::applets::cleanup_stale_runs(client.database.pool()).await {
+    match crate::scheduler::applets::cleanup_stale_runs(pool).await {
         Ok(n) if n > 0 => tracing::info!("Reaped {} stale 'running' action run(s) on startup", n),
         Ok(_) => {}
         Err(e) => tracing::warn!("Failed to reap stale action runs: {}", e),
     }
 
     // Auto-detect server readiness (skips setup screen if previously hydrated)
-    if let Err(e) = crate::api::ensure_server_status(client.database.pool()).await {
+    if let Err(e) = crate::api::ensure_server_status(pool).await {
         tracing::warn!("Failed to ensure server status: {}", e);
     }
 
     // Seed home_timezone from the box's own system clock once, before the
     // scheduler resolves cron timezones. Idempotent. See agents/record/timezone-model.md.
-    if let Err(e) = crate::api::profile::ensure_home_timezone(client.database.pool()).await {
+    if let Err(e) = crate::api::profile::ensure_home_timezone(pool).await {
         tracing::warn!("Failed to seed home_timezone: {}", e);
     }
 
     // Face-reader grants: idempotent default-deny SELECT surface for applet
     // faces (data_*/wiki_* tables + applet_* schemas). Best-effort.
-    if let Err(e) = faces::ensure_applet_db_grants(client.database.pool()).await {
+    if let Err(e) = faces::ensure_applet_db_grants(pool).await {
         tracing::warn!("face reader grants failed: {e}");
     }
 
     // Eager identity bringup: ensure the loopback console device exists so the
-    // box's own browser is authenticated. Best-effort — a failure here must not
-    // stop the box from serving. (The box's TLS identity is its own cert,
-    // obtained at relay spawn; no keypair to mint here.)
-    {
-        let pool = client.database.pool();
-        if let Err(e) = crate::middleware::auth::ensure_console_device(pool).await {
-            tracing::warn!("identity bringup: ensure_console_device failed: {e}");
-        }
+    // box's own browser is authenticated. (The box's TLS identity is its own
+    // cert, obtained at relay spawn; no keypair to mint here.)
+    if let Err(e) = crate::middleware::auth::ensure_console_device(pool).await {
+        tracing::warn!("identity bringup: ensure_console_device failed: {e}");
     }
 
     // Sanity-check the pgvector-backed search_vectors table is reachable.
     // Schema creation happens via 0008_search_and_vectors.sql; this probe just
     // confirms the migration ran.
-    {
-        let search_engine = crate::search::SemanticSearchEngine::new(
-            Arc::new(client.database.pool().clone()),
-        );
-        if let Err(e) = search_engine.ensure_vec_table().await {
-            tracing::warn!("Failed to probe search_vectors table: {}", e);
-        }
+    let search_engine = crate::search::SemanticSearchEngine::new(Arc::new(pool.clone()));
+    if let Err(e) = search_engine.ensure_vec_table().await {
+        tracing::warn!("Failed to probe search_vectors table: {}", e);
     }
 
-    // Initialize Yjs state early (needed by both server and scheduler)
-    let yjs_state = yjs::YjsState::new(client.database.pool().clone());
-    yjs_state.start_save_processor();
-    tracing::info!("Yjs WebSocket server initialized");
+    // Reconcile action templates from per-folder manifests — creates/updates
+    // system action rows. Safe to call on every startup (user-managed runtime
+    // state preserved).
+    if let Err(e) = crate::applet_templates::reconcile_templates(pool).await {
+        tracing::warn!("Failed to reconcile action templates: {}", e);
+    }
+}
+
+/// Everything that runs beside the server for the life of the process.
+fn spawn_background(client: &Virtues, yjs_state: &yjs::YjsState) {
+    let pool = client.database.pool();
 
     // System telemetry: the Jetson GPU monitor (idle-gated tegrastats) and the
     // box-local time-series sampler (1/min → app_system_samples) behind the
     // System/Telemetry views. Both are no-ops/best-effort on non-Jetson hosts.
     crate::api::system_telemetry::start_gpu_monitor();
-    crate::api::system_telemetry::start_system_sampler(client.database.pool().clone());
-
-    // Reconcile action templates from per-folder manifests — creates/updates
-    // system action rows. Safe to call on every startup (user-managed runtime
-    // state preserved).
-    if let Err(e) = crate::applet_templates::reconcile_templates(client.database.pool()).await {
-        tracing::warn!("Failed to reconcile action templates: {}", e);
-    }
+    crate::api::system_telemetry::start_system_sampler(pool.clone());
 
     // Model facts (prices, context windows, which ids still exist) are fetched
     // from virtues-api, never compiled in. Refreshes on boot and 6-hourly; an
     // unreachable cloud keeps the last snapshot rather than emptying the
     // picker. See api::model_catalog.
-    crate::api::model_catalog::spawn(client.database.pool().clone());
+    crate::api::model_catalog::spawn(pool.clone());
 
-    // Start the scheduler in the background
-    let db_pool = client.database.pool().clone();
-    let scheduler_yjs = yjs_state.clone();
-    let _scheduler_handle = tokio::spawn(async move {
-        match crate::Scheduler::new(db_pool, scheduler_yjs).await {
+    spawn_scheduler(pool.clone(), yjs_state.clone());
+
+    // Auth-table sweeper: deletes expired pair tokens + sudo requests every
+    // 10 minutes, archives `app_auth_event` rows older than 90 days. See
+    // `crate::maintenance::sweeper`.
+    crate::maintenance::sweeper::spawn(pool.clone());
+
+    // Release preparation: on the stable channel, fetch + preflight the next
+    // release ahead of time so installing it is a restart rather than a
+    // download. Never activates anything — see `api::updates`.
+    crate::api::updates::spawn();
+
+    // Pair-code rotator: keeps a fresh universal standing pair code alive at all
+    // times (with an overlap window) so the panel and `virtues pair` always have
+    // a valid code to display. See `crate::maintenance::pair_rotator`.
+    crate::maintenance::pair_rotator::spawn(pool.clone());
+
+    // The box's own maps: daily, fetch the map squares its owner's life
+    // covers and drop the ones it no longer does. See `crate::maps::sync`.
+    crate::maps::sync::spawn(pool.clone());
+
+    // Setup access point. An appliance arrives with no network and a display
+    // its owner cannot type on, so the box raises its own wifi and the phone
+    // does the typing. Up while unclaimed, down once a device pairs — NOT down
+    // when the box gets wifi, which would drop the network the phone is still
+    // sitting on mid-provision. No-op on a DIY box. See maintenance::setup_ap.
+    crate::maintenance::setup_ap::spawn(pool.clone());
+
+    // BLE wifi provisioning — the Improv service, and the PRIMARY setup path
+    // (the AP above is the frozen fallback). Advertised while unclaimed, gone
+    // once a device pairs. No-op on a DIY box and on non-Linux dev hosts. See
+    // maintenance::ble_provision for the week of hardware findings that led
+    // here.
+    crate::maintenance::ble_provision::spawn(pool.clone());
+
+    // The button behind the case. Held for three seconds, it forgets every
+    // paired device — and nothing else: not the network, not the account, not
+    // the data, and not the phrase. Anyone who can open the case can make that
+    // nuisance; only someone holding the four words can then claim the box.
+    // No-op off an appliance. See maintenance::reset_button.
+    crate::maintenance::reset_button::spawn(pool.clone());
+
+    spawn_review_pair_code(pool.clone());
+
+    // Entity resolver: periodically turns raw lake primitives (location points,
+    // transactions, calendar attendees) into ontology surfaces (visits/places,
+    // merchant orgs, people) via `entity_resolution::resolve_entities`, so the
+    // day page / timeline fill as the lake does. See `maintenance::entity_resolver`.
+    crate::maintenance::entity_resolver::spawn(client.database.clone());
+
+    // Hours — the screen's sleep schedule, enforced server-side because sleep
+    // is a precedence state (a held button must wake dark glass). No-op off
+    // an appliance. See api::system_display::sleep_engine.
+    crate::api::system_display::sleep_engine::spawn(pool.clone());
+}
+
+fn spawn_scheduler(pool: sqlx::PgPool, yjs_state: yjs::YjsState) {
+    tokio::spawn(async move {
+        match crate::Scheduler::new(pool, yjs_state).await {
             Ok(mut sched) => {
                 match sched.sync_jobs().await {
                     Ok(n) => tracing::info!("Scheduled {n} cron actions"),
@@ -152,96 +258,48 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             }
         }
     });
+}
 
-    // Auth-table sweeper: deletes expired pair tokens + sudo requests every
-    // 10 minutes, archives `app_auth_event` rows older than 90 days. Lives
-    // in-process — same lifecycle as the HTTP server, ends when the daemon
-    // ends. See `crate::maintenance::sweeper`.
-    crate::maintenance::sweeper::spawn(client.database.pool().clone());
-
-    // Release preparation: on the stable channel, fetch + preflight the next
-    // release ahead of time so installing it is a restart rather than a
-    // download. Never activates anything — see `api::updates`.
-    crate::api::updates::spawn();
-
-    // Pair-code rotator: keeps a fresh universal standing pair code alive at all
-    // times (with an overlap window) so the panel and `virtues pair` always have
-    // a valid code to display. See `crate::maintenance::pair_rotator`.
-    crate::maintenance::pair_rotator::spawn(client.database.pool().clone());
-    // The box's own maps: daily, fetch the map squares its owner's life
-    // covers and drop the ones it no longer does. See `crate::maps::sync`.
-    crate::maps::sync::spawn(client.database.pool().clone());
-
-    // Setup access point. An appliance arrives with no network and a display
-    // its owner cannot type on, so the box raises its own wifi and the phone
-    // does the typing. Up while unclaimed, down once a device pairs — NOT down
-    // when the box gets wifi, which would drop the network the phone is still
-    // sitting on mid-provision. No-op on a DIY box. See maintenance::setup_ap.
-    crate::maintenance::setup_ap::spawn(client.database.pool().clone());
-
-    // BLE wifi provisioning — the Improv service, and the PRIMARY setup path
-    // (the AP above is the frozen fallback). Advertised while unclaimed, gone
-    // once a device pairs. No-op on a DIY box and on non-Linux dev hosts. See
-    // maintenance::ble_provision for the week of hardware findings that led
-    // here.
-    crate::maintenance::ble_provision::spawn(client.database.pool().clone());
-
-    // The button behind the case. Held for three seconds, it forgets every
-    // paired device — and nothing else: not the network, not the account, not
-    // the data, and not the phrase. Anyone who can open the case can make that
-    // nuisance; only someone holding the four words can then claim the box.
-    // No-op off an appliance. See maintenance::reset_button.
-    crate::maintenance::reset_button::spawn(client.database.pool().clone());
-
-    // Persistent review pair code, for App Store review boxes only. No-op
-    // unless VIRTUES_REVIEW_PAIR_CODE is set, so customer boxes are untouched.
-    // A failure here is loud but not fatal: a demo box that came up without
-    // its code is useless to a reviewer, and the operator needs to see that,
-    // but it must not take down a box that is otherwise healthy.
-    {
-        let pool = client.database.pool().clone();
-        tokio::spawn(async move {
-            match crate::api::pair::ensure_review_code(&pool).await {
-                Ok(Some(_)) => {
-                    tracing::warn!(
-                        "REVIEW PAIR CODE ACTIVE — this box accepts a permanent pairing code. \
-                         Only ever correct on a disposable box holding synthetic data."
+/// Persistent review pair code, for App Store review boxes only. No-op
+/// unless VIRTUES_REVIEW_PAIR_CODE is set, so customer boxes are untouched.
+/// A failure here is loud but not fatal: a demo box that came up without
+/// its code is useless to a reviewer, and the operator needs to see that,
+/// but it must not take down a box that is otherwise healthy.
+fn spawn_review_pair_code(pool: sqlx::PgPool) {
+    tokio::spawn(async move {
+        match crate::api::pair::ensure_review_code(&pool).await {
+            Ok(Some(_)) => {
+                tracing::warn!(
+                    "REVIEW PAIR CODE ACTIVE — this box accepts a permanent pairing code. \
+                     Only ever correct on a disposable box holding synthetic data."
+                );
+                // A review box is public and therefore behind a reverse
+                // proxy, and that combination silently disarms the only
+                // thing standing between a 6-digit code and a permanent
+                // allowlisted device. `rate_limit_ip` believes
+                // `X-Forwarded-For` only when VIRTUES_TRUSTED_PROXY is set;
+                // otherwise `consume_handler` falls back to the socket peer,
+                // which behind a proxy is loopback — and loopback is exempt
+                // from the limiter by design. Net effect: unlimited guesses
+                // at a 1M keyspace, with nothing logged and nothing to see.
+                if !crate::middleware::trusted_proxy_configured() {
+                    tracing::error!(
+                        "REVIEW PAIR CODE IS UNRATE-LIMITED — VIRTUES_TRUSTED_PROXY is not \
+                         set. If this box is public behind a reverse proxy, /api/pair/consume \
+                         sees every request as loopback and the 10-per-IP-per-30-min limit \
+                         never runs, so the code can be brute-forced. Set \
+                         VIRTUES_TRUSTED_PROXY=1 and restart."
                     );
-                    // A review box is public and therefore behind a reverse
-                    // proxy, and that combination silently disarms the only
-                    // thing standing between a 6-digit code and a permanent
-                    // allowlisted device. `rate_limit_ip` believes
-                    // `X-Forwarded-For` only when VIRTUES_TRUSTED_PROXY is set;
-                    // otherwise `consume_handler` falls back to the socket peer,
-                    // which behind a proxy is loopback — and loopback is exempt
-                    // from the limiter by design. Net effect: unlimited guesses
-                    // at a 1M keyspace, with nothing logged and nothing to see.
-                    // Measured on the review box on 2026-09-03: twelve straight
-                    // attempts, twelve 401s, no 429.
-                    if !crate::middleware::trusted_proxy_configured() {
-                        tracing::error!(
-                            "REVIEW PAIR CODE IS UNRATE-LIMITED — VIRTUES_TRUSTED_PROXY is not \
-                             set. If this box is public behind a reverse proxy, /api/pair/consume \
-                             sees every request as loopback and the 10-per-IP-per-30-min limit \
-                             never runs, so the code can be brute-forced. Set \
-                             VIRTUES_TRUSTED_PROXY=1 and restart."
-                        );
-                    }
                 }
-                Ok(None) => {}
-                Err(e) => tracing::error!("review pair code not installed: {e:#}"),
             }
-        });
-    }
+            Ok(None) => {}
+            Err(e) => tracing::error!("review pair code not installed: {e:#}"),
+        }
+    });
+}
 
-    // Entity resolver: periodically turns raw lake primitives (location points,
-    // transactions, calendar attendees) into ontology surfaces (visits/places,
-    // merchant orgs, people) via `entity_resolution::resolve_entities`. Without
-    // this the resolution only ran from the CLI, so the day page / timeline had
-    // nothing to show even while the lake filled. See `maintenance::entity_resolver`.
-    crate::maintenance::entity_resolver::spawn(client.database.clone());
-
-    // Create ToolExecutor (optional - fails gracefully if VIRTUES_API_INTERNAL_SECRET not set)
+fn build_state(client: &Virtues, yjs_state: yjs::YjsState) -> AppState {
+    // Optional — fails gracefully if VIRTUES_API_INTERNAL_SECRET is not set.
     let tool_executor = crate::tools::ToolExecutor::from_env(client.database.pool().clone())
         .map(Arc::new)
         .ok();
@@ -252,29 +310,216 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("ToolExecutor not initialized - VIRTUES_API_INTERNAL_SECRET may not be set");
     }
 
-    // Initialize chat cancellation state for stopping in-progress requests
-    let chat_cancel_state = crate::api::chat::ChatCancellationState::new();
-    // Turns outlive their requests; this is where a client finds one to rejoin.
-    let live_turns = crate::api::live_turn::LiveTurns::new();
-
-    // Create drive config with shared storage backend
-    let drive_config = crate::api::DriveConfig::new(client.storage.clone());
-
-    let state = AppState {
+    AppState {
         db: client.database.clone(),
         storage: client.storage.clone(),
-        drive_config,
+        drive_config: crate::api::DriveConfig::new(client.storage.clone()),
         tool_executor,
-        yjs_state: yjs_state.clone(),
-        chat_cancel_state,
+        yjs_state,
+        // Stops in-progress chat requests.
+        chat_cancel_state: crate::api::chat::ChatCancellationState::new(),
         ghost_permissions: crate::api::chat_permissions::GhostPermissions::new(),
-        live_turns,
+        // Turns outlive their requests; this is where a client finds one to rejoin.
+        live_turns: crate::api::live_turn::LiveTurns::new(),
+    }
+}
+
+/// The whole HTTP app: both routers, the shared layers, the API 404s, the SPA
+/// and CORS. What the TCP listener and the iroh endpoint both serve.
+fn build_app(state: AppState) -> Router {
+    // Merge public + protected, apply shared state and body limits, then
+    // wrap in the security layers (response headers).
+    let app = public_routes()
+        .merge(protected_routes(&state))
+        .with_state(state)
+        .layer(middleware::from_fn(crate::middleware::security::headers_layer))
+        .layer(DefaultBodyLimit::max(260 * 1024 * 1024)); // 260MB (slightly above 250MB file limit for multipart overhead)
+
+    // API namespaces must NEVER fall through to the SPA fallback below: an
+    // unknown /api path answered with a cacheable 200 index.html poisons
+    // clients — the browser caches HTML against the API URL and keeps serving
+    // it after the route ships (same failure class as the /health story in
+    // apps/web/vite.config.ts). Unknown API routes are an honest JSON 404.
+    let app = app
+        .route("/api/*__unmatched", axum::routing::any(api_not_found_handler))
+        .route("/auth/*__unmatched", axum::routing::any(api_not_found_handler));
+
+    let app = match static_service() {
+        Some(service) => app.fallback_service(service),
+        None => app,
     };
 
-    // ============================================================
-    // Public routes (no authentication required)
-    // ============================================================
-    let public_routes = Router::new()
+    let app = app.layer(cors_layer());
+
+    // Outermost, so every response — API, static, fallback — carries the build
+    // stamp the SPA's staleness watcher compares.
+    let app = app.layer(axum::middleware::from_fn(stamp_box_build));
+
+    // Outside even that: the request span has to be open before any other
+    // layer logs, or the first lines of a request are the ones without a key.
+    app.layer(axum::middleware::from_fn(request_id))
+}
+
+/// The SvelteKit static build, falling back to 200.html for SPA routing, or
+/// `None` when there is no build to serve.
+///
+/// The directory comes from `api::web_bundle` rather than being read again
+/// here: `/api/web-bundle/version` describes whatever this serves, and two
+/// copies of the same `STATIC_DIR` default were one edit away from making
+/// that a lie.
+fn static_service() -> Option<
+    impl tower::Service<
+            axum::extract::Request,
+            Response = axum::response::Response,
+            Error = std::convert::Infallible,
+            Future = impl Send + 'static,
+        > + Clone
+        + Send
+        + 'static,
+> {
+    use tower_http::services::{ServeDir, ServeFile};
+
+    let static_path = crate::api::web_bundle::static_dir();
+    if !static_path.is_dir() {
+        tracing::info!(
+            "No static directory found at: {} - static serving disabled",
+            static_path.display()
+        );
+        return None;
+    }
+
+    let fallback_file = static_path.join("200.html");
+    // `precompressed_gzip`: the build writes a `.gz` beside every
+    // compressible asset (apps/web/scripts/precompress.mjs), and ServeDir
+    // hands that sibling to a client that accepts gzip and the original to
+    // one that does not. The box never compresses at runtime; the Mac,
+    // which fetches the SPA from the box on every cold start, moves ~0.8 MB
+    // instead of ~2.6 MB.
+    let serve_dir = if fallback_file.exists() {
+        ServeDir::new(&static_path)
+            .precompressed_gzip()
+            .fallback(ServeFile::new(fallback_file))
+    } else {
+        // Try index.html as fallback if 200.html doesn't exist
+        let index_file = static_path.join("index.html");
+        ServeDir::new(&static_path)
+            .precompressed_gzip()
+            .fallback(ServeFile::new(index_file))
+    };
+
+    tracing::info!("Static file serving enabled from: {}", static_path.display());
+    // HTML DOCUMENTS ARE NEVER CACHED. `ServeDir` sends `last-modified` and
+    // no `cache-control`, which licenses a browser to cache heuristically —
+    // and that once made the appliance's panel keep rendering a three-day-old
+    // UI after an upgrade, through a service restart and a power cycle. The
+    // shell names content-hashed JS chunks, so a stale shell resurrects the
+    // entire stale page while the box serves the new one, and the only
+    // symptom is a screen that quietly lies about its own version.
+    //
+    // The other half of that rule: `/_app/immutable/*` is content-hashed and
+    // IS cached hard. The shell is the only thing that must be re-fetched,
+    // because it is the thing that names the rest.
+    Some(
+        tower::ServiceBuilder::new()
+            .layer(axum::middleware::from_fn(static_cache_policy))
+            .service(serve_dir),
+    )
+}
+
+/// CORS: the app is a bundled SPA at its own `tauri://` origin that calls
+/// this API cross-origin over the iroh loopback, so some cross-origin access
+/// must be allowed. It is an ALLOWLIST, not `Any`.
+///
+/// There are two ways to be the owner:
+///
+///   1. a paired iroh key, and
+///   2. being on loopback (`middleware/auth.rs` — a request from 127.0.0.1
+///      with no forwarding header IS the owner).
+///
+/// And the desktop app binds `127.0.0.1:7117` and splices whatever connects
+/// to it over its own paired identity. So with `Any`, the owner runs the app,
+/// then visits any web page — an ad, a forum, a compromised site — and that
+/// page's `fetch('http://127.0.0.1:7117/api/drive/files')` is authenticated
+/// as the owner and its reply readable; with `allow_methods(Any)` +
+/// `allow_headers(Any)` preflighted POSTs succeed too, including
+/// `/api/developer/sql`.
+///
+/// A remote page's origin is `https://whatever.example`, which matches none
+/// of the arms below, so the browser refuses to hand it the response. The
+/// app, the box's own web UI, and local development all still match.
+///
+/// `server/faces.rs` keeps its own `*` header deliberately: faces are served
+/// into an opaque-origin iframe under a strict CSP and carry no ambient
+/// authority. `api/terminal.rs` does an explicit same-origin check for the
+/// same reason this layer exists.
+fn cors_layer() -> tower_http::cors::CorsLayer {
+    tower_http::cors::CorsLayer::new()
+        .allow_origin(tower_http::cors::AllowOrigin::predicate(
+            |origin: &axum::http::HeaderValue, req| {
+                origin.to_str().is_ok_and(|o| {
+                    // A face lives in `<iframe sandbox="allow-scripts">`,
+                    // whose opaque origin serializes as the literal
+                    // "null". This layer answers the CORS preflight before
+                    // faces.rs's own `*` header can, so without this arm
+                    // the sandboxed face's fetch to its bridge is refused
+                    // and the panel silently renders no data. Scoped to
+                    // the face routes only: a face carries no ambient
+                    // authority (face token + face_reader role), and
+                    // everything else keeps rejecting "null".
+                    face_origin_allowed(
+                        o,
+                        req.uri.path(),
+                        req.headers
+                            .get(axum::http::header::HOST)
+                            .and_then(|h| h.to_str().ok()),
+                    )
+                })
+            },
+        ))
+        .allow_credentials(false)
+        .allow_methods(tower_http::cors::Any)
+        .allow_headers(tower_http::cors::Any)
+        // Cross-origin callers (the app's own tauri:// origin) may READ the
+        // build stamp — it's how a page notices the box moved under it.
+        .expose_headers([axum::http::HeaderName::from_static(
+            "x-virtues-box-build",
+        )])
+}
+
+/// Ctrl+C / SIGTERM. SIGTERM is the one that matters: systemd sends it on
+/// every `systemctl restart virtues` (so every self-update), and its default
+/// action kills the process outright, skipping the Yjs flush after `serve`.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
+            }
+            // Registering the handler failed — fall back rather than
+            // refusing to start. A box that cannot shut down cleanly is
+            // still better than a box that will not run.
+            Err(e) => {
+                tracing::warn!(error = %e, "could not listen for SIGTERM; Ctrl+C only");
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+    tracing::info!("shutdown signal received");
+}
+
+/// The unauthenticated surface. Kept in one function so it can be reviewed
+/// as a whole: everything here answers without an `AuthUser`.
+fn public_routes() -> Router<AppState> {
+    Router::new()
         // Health check
         .route("/health", get(health))
         // Public, LAN-reachable box health — boot gates + inference resolution.
@@ -285,9 +530,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/box/health",
             get(crate::api::box_status::box_health_handler),
         )
-        // Setup/onboarding state machine (agents/build/onboarding.md) — public-on-LAN
-        // for the same reason as /api/box/health: the wizard + panel render it
-        // pre-auth, and it carries only booleans + step copy.
         // Who is this box — name + claimed, for discovery chips. Public like
         // its neighbours; the name is already broadcast over the air (AP SSID,
         // BLE advertisement), so the LAN learns nothing new. See api/identity.
@@ -295,6 +537,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/box/identity",
             get(crate::api::identity::identity_handler),
         )
+        // Setup/onboarding state machine (agents/build/onboarding.md) — public-on-LAN
+        // for the same reason as /api/box/health: the wizard + panel render it
+        // pre-auth, and it carries only booleans + step copy.
         .route(
             "/api/setup/state",
             get(crate::api::box_status::setup_state_handler),
@@ -409,12 +654,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/devices/applet-ids",
             get(api::device_applet_ids_handler),
-        );
+        )
+}
 
-    // ============================================================
-    // Protected routes (authentication required via route_layer)
-    // ============================================================
-    let protected_routes = Router::new()
+/// Everything that requires a resolved `AuthUser` (proven iroh key /
+/// loopback console / dev fallback).
+fn protected_routes(state: &AppState) -> Router<AppState> {
+    Router::new()
         // Face-token mint — AUTHENTICATED. The authed app mints a short-lived
         // per-applet token and passes it into the iframe `src` (?vt=). This is
         // the gate on the whole face data door (faces.rs).
@@ -1138,251 +1384,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/ws/yjs/:page_id", get(yjs_websocket_handler))
         // Blanket auth: all routes in this group require a resolved AuthUser
         // (proven iroh key / loopback console / dev fallback).
-        .route_layer(middleware::from_extractor_with_state::<AuthUser, _>(state.clone()));
-
-    // Merge public + protected, apply shared state and body limits, then
-    // wrap in the security layers (response headers).
-    //
-    // The connectivity-probe interceptor that used to sit outermost here is
-    // gone with `/portal`. It answered iOS/Android/Windows probes with their
-    // vendor's success token so the captive sheet would never open — a real
-    // fix, but for a condition that only arises on the setup AP's own subnet,
-    // and its other half redirected `10.42.0.1/` to a portal that no longer
-    // exists. It also ran a Host-header comparison on every request to every
-    // box forever, to serve a network that a customer box never raises.
-    let app = public_routes
-        .merge(protected_routes)
-        .with_state(state.clone())
-        .layer(middleware::from_fn(crate::middleware::security::headers_layer))
-        .layer(DefaultBodyLimit::max(260 * 1024 * 1024)); // 260MB (slightly above 250MB file limit for multipart overhead)
-
-    // API namespaces must NEVER fall through to the SPA fallback below: an
-    // unknown /api path answered with a cacheable 200 index.html poisons
-    // clients — the browser caches HTML against the API URL and keeps serving
-    // it after the route ships (same failure class as the /health story in
-    // apps/web/vite.config.ts). Unknown API routes are an honest JSON 404.
-    let app = app
-        .route("/api/*__unmatched", axum::routing::any(api_not_found_handler))
-        .route("/auth/*__unmatched", axum::routing::any(api_not_found_handler));
-
-    // Add static file serving for SPA frontend
-    // This serves the SvelteKit static build and falls back to 200.html for SPA routing
-    //
-    // The directory comes from `api::web_bundle` rather than being read again
-    // here: `/api/web-bundle/version` describes whatever this serves, and two
-    // copies of the same `STATIC_DIR` default were one edit away from making
-    // that a lie.
-    let static_path = crate::api::web_bundle::static_dir();
-
-    let app = if static_path.is_dir() {
-        use tower_http::services::{ServeDir, ServeFile};
-
-        let fallback_file = static_path.join("200.html");
-        // `precompressed_gzip`: the build writes a `.gz` beside every
-        // compressible asset (apps/web/scripts/precompress.mjs), and ServeDir
-        // hands that sibling to a client that accepts gzip and the original to
-        // one that does not. The box never compresses at runtime; the Mac,
-        // which fetches the SPA from the box on every cold start, moves ~0.8 MB
-        // instead of ~2.6 MB. A build without siblings serves exactly as before.
-        let serve_dir = if fallback_file.exists() {
-            ServeDir::new(&static_path)
-                .precompressed_gzip()
-                .fallback(ServeFile::new(fallback_file))
-        } else {
-            // Try index.html as fallback if 200.html doesn't exist
-            let index_file = static_path.join("index.html");
-            ServeDir::new(&static_path)
-                .precompressed_gzip()
-                .fallback(ServeFile::new(index_file))
-        };
-
-        tracing::info!("Static file serving enabled from: {}", static_path.display());
-        // HTML DOCUMENTS ARE NEVER CACHED. `ServeDir` sends `last-modified` and
-        // no `cache-control`, which licenses a browser to cache heuristically —
-        // and on 2026-08-10 that made the appliance's panel keep rendering a
-        // three-day-old UI after an upgrade, through a service restart and a
-        // power cycle. The shell names content-hashed JS chunks, so a stale
-        // shell resurrects the entire stale page while the box serves the new
-        // one, and the only symptom is a screen that quietly lies about its own
-        // version.
-        //
-        // The other half of that rule: `/_app/immutable/*` is content-hashed
-        // and IS cached hard. Until 2026-09-14 nothing set that header either,
-        // so every hashed chunk was heuristically cached and re-fetched — a
-        // cold Mac start pulled the whole SPA from the box each time. The
-        // shell is the only thing that must be re-fetched, because it is the
-        // thing that names the rest.
-        app.fallback_service(tower::ServiceBuilder::new()
-            .layer(axum::middleware::from_fn(static_cache_policy))
-            .service(serve_dir))
-    } else {
-        tracing::info!(
-            "No static directory found at: {} - static serving disabled",
-            static_path.display()
-        );
-        app
-    };
-
-    // CORS: the app is a bundled SPA at its own `tauri://` origin that calls
-    // this API cross-origin over the iroh loopback, so some cross-origin access
-    // must be allowed. It is an ALLOWLIST, not `Any`.
-    //
-    // `Any` was wrong here, and the reasoning that justified it — "auth is the
-    // proven iroh key, not Origin/cookies, so relaxing same-origin never
-    // relaxes the transport allowlist" — was true of the iroh credential and
-    // missed the second one. There are two ways to be the owner:
-    //
-    //   1. a paired iroh key (what that comment was about), and
-    //   2. being on loopback (`middleware/auth.rs` — a request from 127.0.0.1
-    //      with no forwarding header IS the owner).
-    //
-    // And the desktop app binds `127.0.0.1:7117` and splices whatever connects
-    // to it over its own paired identity. So: the owner runs the app, then
-    // visits any web page — an ad, a forum, a compromised site. That page runs
-    // `fetch('http://127.0.0.1:7117/api/drive/files')`. The box authenticates it
-    // as the owner, and `Access-Control-Allow-Origin: *` let the attacker's page
-    // READ the reply. `allow_methods(Any)` + `allow_headers(Any)` meant
-    // preflighted POSTs succeeded too — including `/api/developer/sql`.
-    //
-    // A remote page's origin is `https://whatever.example`, which matches none
-    // of the arms below, so the browser refuses to hand it the response. The
-    // app, the box's own web UI, and local development all still match.
-    //
-    // `server/faces.rs` keeps its own `*` header deliberately: faces are served
-    // into an opaque-origin iframe under a strict CSP and carry no ambient
-    // authority. `api/terminal.rs` already does an explicit same-origin check
-    // for the same reason this layer now exists.
-    let app = app.layer(
-        tower_http::cors::CorsLayer::new()
-            .allow_origin(tower_http::cors::AllowOrigin::predicate(
-                |origin: &axum::http::HeaderValue, req| {
-                    origin.to_str().is_ok_and(|o| {
-                        // A face lives in `<iframe sandbox="allow-scripts">`,
-                        // whose opaque origin serializes as the literal
-                        // "null". This layer answers the CORS preflight before
-                        // faces.rs's own `*` header can, so without this arm
-                        // the sandboxed face's fetch to its bridge is refused
-                        // and the panel silently renders no data. Scoped to
-                        // the face routes only: a face carries no ambient
-                        // authority (face token + face_reader role), and
-                        // everything else keeps rejecting "null".
-                        face_origin_allowed(
-                            o,
-                            req.uri.path(),
-                            req.headers
-                                .get(axum::http::header::HOST)
-                                .and_then(|h| h.to_str().ok()),
-                        )
-                    })
-                },
-            ))
-            .allow_credentials(false)
-            .allow_methods(tower_http::cors::Any)
-            .allow_headers(tower_http::cors::Any)
-            // Cross-origin callers (the app's own tauri:// origin) may READ the
-            // build stamp — it's how a page notices the box moved under it.
-            .expose_headers([axum::http::HeaderName::from_static(
-                "x-virtues-box-build",
-            )]),
-    );
-
-    // Outermost, so every response — API, static, fallback — carries the build
-    // stamp the SPA's staleness watcher compares.
-    let app = app.layer(axum::middleware::from_fn(stamp_box_build));
-
-    // Outside even that: the request span has to be open before any other
-    // layer logs, or the first lines of a request are the ones without a key.
-    let app = app.layer(axum::middleware::from_fn(request_id));
-
-    // iroh reach: the box is an iroh Endpoint that serves this same axum app
-    // (LAN-direct → hole-punch → our relay), reachable by EndpointId with no
-    // public inbound port. Serves a clone of `app`; the :8000 TCP listener below
-    // keeps serving LAN/loopback + the desktop :7117 helper. See `crate::relay`.
-    crate::relay::maybe_spawn(client.database.pool().clone(), app.clone());
-
-    // Hours — the screen's sleep schedule, enforced server-side because sleep
-    // is a precedence state (a held button must wake dark glass). No-op off
-    // an appliance. See api::system_display::sleep_engine.
-    crate::api::system_display::sleep_engine::spawn(client.database.pool().clone());
-
-    let transport = build_transport(host, port);
-    let listener = transport.bind().await?;
-
-    tracing::info!("Server listening on {}", transport.describe());
-
-    // DIY discovery aid: the operator ran `compose up` and knows their host, so
-    // just point them at the web UI + the CLI dashboard. `0.0.0.0` means "all
-    // interfaces" — they reach it at this box's LAN IP.
-    {
-        let shown = if host == "0.0.0.0" || host == "::" {
-            format!("http://<this-box-ip>:{port}")
-        } else {
-            format!("http://{host}:{port}")
-        };
-        tracing::info!("Open the Virtues web UI at {shown}  ·  run `virtues status` for setup steps");
-    }
-
-    // Run the server with graceful shutdown — Ctrl+C / SIGTERM.
-    //
-    // SIGTERM is the one that matters and it was missing. `ctrl_c()` is SIGINT
-    // only; systemd sends SIGTERM, whose default action kills the process
-    // outright. So `systemctl restart virtues` — which every self-update runs
-    // — skipped the whole shutdown path below, including the Yjs flush that
-    // exists specifically because restarts were dropping the owner's last
-    // seconds of typing. The comment on this line claimed SIGTERM for months
-    // while the code handled only the signal a daemon never receives.
-    let shutdown_signal = async move {
-        #[cfg(unix)]
-        {
-            use tokio::signal::unix::{signal, SignalKind};
-            match signal(SignalKind::terminate()) {
-                Ok(mut term) => {
-                    tokio::select! {
-                        _ = tokio::signal::ctrl_c() => {}
-                        _ = term.recv() => {}
-                    }
-                }
-                // Registering the handler failed — fall back rather than
-                // refusing to start. A box that cannot shut down cleanly is
-                // still better than a box that will not run.
-                Err(e) => {
-                    tracing::warn!(error = %e, "could not listen for SIGTERM; Ctrl+C only");
-                    let _ = tokio::signal::ctrl_c().await;
-                }
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = tokio::signal::ctrl_c().await;
-        }
-        tracing::info!("shutdown signal received");
-    };
-
-    // Plain HTTP on :8000 is the only listener. The box has no TLS surface —
-    // paired daemons reach the box over iroh (which provides encryption
-    // + authentication), and the box's own browser hits localhost (Secure
-    // Context per W3C, no cert required). See [[localhost-daemon-trust]] in
-    // MEMORY.md for the architectural commitment.
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown_signal)
-    .await?;
-
-    // Flush queued page edits before the process goes away.
-    //
-    // The note that used to sit here said no flush was needed — true of the old
-    // StreamWriter, never true of the Yjs save queue, which holds the owner's
-    // most recent typing for up to ~2.5s. Without this, every `systemctl
-    // restart virtues` and every self-update dropped it.
-    yjs_state.flush_pending_saves().await;
-    tracing::info!("Server shutting down gracefully");
-
-    // Note: scheduler runs in background and will stop when the process exits
-    // The handle is dropped here, but the task continues running
-
-    Ok(())
+        .route_layer(middleware::from_extractor_with_state::<AuthUser, _>(state.clone()))
 }
 
 /// Build the server transport for this build profile.
@@ -1406,7 +1408,6 @@ fn build_transport(
     Box::new(virtues_helpers::transport::RealServerTransport::new(host, port))
 }
 
-/// Validate required environment variables at startup
 /// Stamp `Cache-Control: no-store` on every HTML document the static server
 /// hands out, leaving hashed assets alone.
 ///
