@@ -24,34 +24,12 @@ fn sanitize_content_disposition(filename: &str) -> String {
 
 /// Helper to convert Result to Response with proper status code
 fn api_response<T: Serialize>(result: crate::error::Result<T>) -> Response {
-    match result {
-        Ok(data) => (StatusCode::OK, Json(data)).into_response(),
-        Err(e) => error_response(e),
-    }
+    result.map(Json).into_response()
 }
 
 /// Helper to convert Error to Response with appropriate status code
 fn error_response(error: Error) -> Response {
-    let (status, message) = match &error {
-        Error::NotFound(_) => (StatusCode::NOT_FOUND, error.to_string()),
-        Error::Unauthorized(_) => (StatusCode::UNAUTHORIZED, error.to_string()),
-        Error::InvalidInput(_) => (StatusCode::BAD_REQUEST, error.to_string()),
-        Error::Database(msg) if msg.contains("already has an active") => {
-            (StatusCode::CONFLICT, error.to_string())
-        }
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
-    };
-
-    // A 500 that only the client sees is a 500 nobody finds. The bookmarks
-    // list answered `no column found for name: timestamp` for a month while
-    // a sweep of the journal for errors showed nothing, because this was the
-    // one place the error passed through and it said nothing. The request
-    // span already carries method, path and request id.
-    if status.is_server_error() {
-        tracing::error!(status = status.as_u16(), error = %error, "request failed");
-    }
-
-    (status, Json(serde_json::json!({ "error": message }))).into_response()
+    error.into_response()
 }
 
 /// Helper to create a success message response
@@ -116,13 +94,7 @@ pub async fn trigger_applet_handler(
     .await
     {
         Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-                .into_response();
-        }
+        Err(e) => return error_response(e),
     };
 
     run_status_response(result, &applet_id)
@@ -424,11 +396,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
 
             (StatusCode::OK, Json(actions)).into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+        Err(e) => error_response(e.into()),
     }
 }
 
@@ -480,16 +448,11 @@ pub async fn applet_log_handler(
     State(state): State<AppState>,
     Path(applet_id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
-) -> Response {
+) -> Result<Json<Vec<crate::scheduler::applets::LogEntry>>, Error> {
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    match crate::scheduler::applets::collapsed_log(state.db.pool(), &applet_id, limit).await {
-        Ok(entries) => (StatusCode::OK, Json(entries)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+    Ok(Json(
+        crate::scheduler::applets::collapsed_log(state.db.pool(), &applet_id, limit).await?,
+    ))
 }
 
 /// POST /api/applets/:id/message — say something to an applet.
@@ -527,11 +490,7 @@ pub async fn message_applet_handler(
         .await
     {
         Ok(result) => run_status_response(result, &applet_id),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+        Err(e) => error_response(e),
     }
 }
 
@@ -620,14 +579,7 @@ pub async fn create_applet_handler(
     .await
     {
         Ok(action) => (StatusCode::CREATED, Json(action)).into_response(),
-        Err(e) => {
-            let status = match e.http_status() {
-                400 => StatusCode::BAD_REQUEST,
-                404 => StatusCode::NOT_FOUND,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            (status, Json(serde_json::json!({ "error": e.to_string() }))).into_response()
-        }
+        Err(e) => error_response(e),
     }
 }
 
@@ -636,18 +588,10 @@ pub async fn patch_applet_handler(
     State(state): State<AppState>,
     Path(applet_id): Path<String>,
     Json(patch): Json<serde_json::Value>,
-) -> Response {
-    match crate::scheduler::applets::update_applet(state.db.pool(), &applet_id, &patch).await {
-        Ok(action) => (StatusCode::OK, Json(action)).into_response(),
-        Err(e) => {
-            let status = match e.http_status() {
-                400 => StatusCode::BAD_REQUEST,
-                404 => StatusCode::NOT_FOUND,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            (status, Json(serde_json::json!({ "error": e.to_string() }))).into_response()
-        }
-    }
+) -> Result<Json<crate::scheduler::applets::Applet>, Error> {
+    Ok(Json(
+        crate::scheduler::applets::update_applet(state.db.pool(), &applet_id, &patch).await?,
+    ))
 }
 
 /// DELETE /api/applets/:id?drop_data= — delete a user-owned applet. System rows
@@ -663,18 +607,9 @@ pub async fn delete_applet_handler(
     State(state): State<AppState>,
     Path(applet_id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<DeleteAppletQuery>,
-) -> Response {
-    match crate::scheduler::applets::delete_applet(state.db.pool(), &applet_id, q.drop_data).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => {
-            let status = match e.http_status() {
-                400 => StatusCode::BAD_REQUEST,
-                404 => StatusCode::NOT_FOUND,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            (status, Json(serde_json::json!({ "error": e.to_string() }))).into_response()
-        }
-    }
+) -> Result<StatusCode, Error> {
+    crate::scheduler::applets::delete_applet(state.db.pool(), &applet_id, q.drop_data).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// GET /api/applets/:id/data — the tables an applet owns in its private
@@ -683,22 +618,10 @@ pub async fn delete_applet_handler(
 pub async fn get_applet_data_handler(
     State(state): State<AppState>,
     Path(applet_id): Path<String>,
-) -> Response {
-    match crate::scheduler::applets::applet_data_tables(state.db.pool(), &applet_id).await {
-        Ok(tables) => {
-            let schema = crate::scheduler::applets::applet_schema_name(&applet_id);
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({ "schema": schema, "tables": tables })),
-            )
-                .into_response()
-        }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+) -> Result<Json<serde_json::Value>, Error> {
+    let tables = crate::scheduler::applets::applet_data_tables(state.db.pool(), &applet_id).await?;
+    let schema = crate::scheduler::applets::applet_schema_name(&applet_id);
+    Ok(Json(serde_json::json!({ "schema": schema, "tables": tables })))
 }
 
 /// GET /api/applets/:id/runs?limit= — run history, newest first.
@@ -713,46 +636,32 @@ pub async fn list_applet_runs_handler(
     State(state): State<AppState>,
     Path(applet_id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
-) -> Response {
+) -> Result<Json<Vec<crate::scheduler::applets::AppletRun>>, Error> {
     let limit = q.limit.unwrap_or(20).clamp(1, 200);
-    match crate::scheduler::applets::query_runs(
+    let runs = crate::scheduler::applets::query_runs(
         state.db.pool(),
         Some(&applet_id),
         q.status.as_deref(),
         limit,
     )
-    .await
-    {
-        Ok(runs) => (StatusCode::OK, Json(runs)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+    .await?;
+    Ok(Json(runs))
 }
 
 /// GET /api/runs?status=&applet_id=&limit= — global run history.
 pub async fn list_runs_handler(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
-) -> Response {
+) -> Result<Json<Vec<crate::scheduler::applets::AppletRun>>, Error> {
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    match crate::scheduler::applets::query_runs(
+    let runs = crate::scheduler::applets::query_runs(
         state.db.pool(),
         q.applet_id.as_deref(),
         q.status.as_deref(),
         limit,
     )
-    .await
-    {
-        Ok(runs) => (StatusCode::OK, Json(runs)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+    .await?;
+    Ok(Json(runs))
 }
 
 // ============================================================================
@@ -760,15 +669,10 @@ pub async fn list_runs_handler(
 // ============================================================================
 
 /// GET /api/credentials — list all credentials (active + pending + revoked).
-pub async fn list_credentials_handler(State(state): State<AppState>) -> Response {
-    match crate::api::list_credentials(state.db.pool()).await {
-        Ok(creds) => (StatusCode::OK, Json(creds)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+pub async fn list_credentials_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::api::CredentialListItem>>, Error> {
+    Ok(Json(crate::api::list_credentials(state.db.pool()).await?))
 }
 
 // ============================================================================
@@ -897,12 +801,7 @@ pub async fn patch_credential_handler(
     if let Some(active) = body.is_active {
         if !active {
             if let Err(e) = crate::api::revoke_credential(pool, &credential_id).await {
-                let status = if e.http_status() == 404 {
-                    StatusCode::NOT_FOUND
-                } else {
-                    StatusCode::INTERNAL_SERVER_ERROR
-                };
-                return (status, Json(serde_json::json!({ "error": e.to_string() }))).into_response();
+                return error_response(e);
             }
         } else {
             // Re-activating is not supported via PATCH. A revoked device must
@@ -942,13 +841,7 @@ pub async fn delete_credential_handler(
             .await
         {
             Ok(s) => s,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": e.to_string() })),
-                )
-                    .into_response()
-            }
+            Err(e) => return error_response(e.into()),
         };
 
     let result = match status.as_ref().map(|s| s.0.as_str()) {
@@ -966,14 +859,7 @@ pub async fn delete_credential_handler(
 
     match result {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => {
-            let status_code = if e.http_status() == 404 {
-                StatusCode::NOT_FOUND
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            };
-            (status_code, Json(serde_json::json!({ "error": e.to_string() }))).into_response()
-        }
+        Err(e) => error_response(e),
     }
 }
 
@@ -1090,17 +976,10 @@ pub async fn execute_sql_handler(
 }
 
 /// List all tables
-pub async fn list_tables_handler(State(state): State<AppState>) -> Response {
-    match crate::api::list_tables(state.db.pool()).await {
-        Ok(tables) => (StatusCode::OK, Json(tables)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": e.to_string()
-            })),
-        )
-            .into_response(),
-    }
+pub async fn list_tables_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<String>>, Error> {
+    Ok(Json(crate::api::list_tables(state.db.pool()).await?))
 }
 
 
@@ -1732,10 +1611,7 @@ pub async fn unsplash_search_handler(
     State(state): State<AppState>,
     Json(request): Json<crate::api::UnsplashSearchRequest>,
 ) -> Response {
-    match crate::api::unsplash_search(state.db.pool(), request).await {
-        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(e) => error_response(e),
-    }
+    api_response(crate::api::unsplash_search(state.db.pool(), request).await)
 }
 
 
