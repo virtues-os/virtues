@@ -448,6 +448,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/sudo/request",       post(crate::api::sudo::request_handler))
         .route("/api/sudo/status/:id",    get(crate::api::sudo::status_handler))
         // ─── Audit log ────────────────────────────────────────────────
+        // No UI calls this; it is the one way to read app_auth_event, which
+        // agents/record/auth-model.md relies on. Not dead code.
         .route("/api/audit/auth",         get(crate::api::audit::list_handler))
         // ─── Client reports ───────────────────────────────────────────
         // The one door a paired device reports its OWN failures through; they
