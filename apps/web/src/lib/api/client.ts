@@ -707,32 +707,16 @@ export interface Credential {
 	sync_state?: 'connected' | 'backfilling' | 'live';
 }
 
-export async function listCredentials(): Promise<Credential[]> {
-	const res = await fetch(`${API_BASE}/credentials`);
-	if (!res.ok) throw new Error(`Failed to list credentials: ${res.statusText}`);
-	return res.json();
+export function listCredentials(): Promise<Credential[]> {
+	return apiGet<Credential[]>('/credentials');
 }
 
 export async function renameCredential(id: string, name: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/credentials/${encodeURIComponent(id)}`, {
-		method: 'PATCH',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name })
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to rename credential: ${res.statusText}`);
-	}
+	await apiSend('PATCH', `/credentials/${encodeURIComponent(id)}`, { name });
 }
 
 export async function revokeCredential(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/credentials/${encodeURIComponent(id)}`, {
-		method: 'DELETE'
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to revoke credential: ${res.statusText}`);
-	}
+	await apiSend('DELETE', `/credentials/${encodeURIComponent(id)}`);
 }
 
 // Source catalog
@@ -767,10 +751,8 @@ export interface SourceCatalogItem {
 /**
  * Fetch the source catalog (one tile per `[[source]]` in templates.toml).
  */
-export async function listSourceCatalog(): Promise<SourceCatalogItem[]> {
-	const res = await fetch(`${API_BASE}/sources`);
-	if (!res.ok) throw new Error(`Failed to list sources: ${res.statusText}`);
-	return res.json();
+export function listSourceCatalog(): Promise<SourceCatalogItem[]> {
+	return apiGet<SourceCatalogItem[]>('/sources');
 }
 
 /** One ingest stream's freshness. `status` is worst-first from the API. */
@@ -854,17 +836,8 @@ export interface PairMintResponse {
 }
 
 /** POST /api/pair/mint — auth'd. Mint a `pending` token to add a device. */
-async function pairMint(intendedKind?: string): Promise<PairMintResponse> {
-	const res = await fetch(`${API_BASE}/pair/mint`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ intended_kind: intendedKind ?? null })
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `pair_mint failed: ${res.statusText}`);
-	}
-	return res.json();
+function pairMint(intendedKind?: string): Promise<PairMintResponse> {
+	return apiSend<PairMintResponse>('POST', '/pair/mint', { intended_kind: intendedKind ?? null });
 }
 
 /** DELETE /api/devices/:id — best-effort, no confirmation.
@@ -876,18 +849,16 @@ async function pairMint(intendedKind?: string): Promise<PairMintResponse> {
  *  stays quiet (409 on a last-remaining device is a legitimate refusal here,
  *  not something to surface). */
 export async function revokeDevice(id: string): Promise<void> {
-	await fetch(`${API_BASE}/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {
+	await apiSend('DELETE', `/devices/${encodeURIComponent(id)}`).catch(() => {
 		/* benign — the row may already be gone */
 	});
 }
 
 /** POST /api/pair/deny/:id — auth'd. Cancel an outstanding token (e.g. modal close). */
 export async function pairDeny(id: string): Promise<void> {
-	await fetch(`${API_BASE}/pair/deny/${encodeURIComponent(id)}`, { method: 'POST' }).catch(
-		() => {
-			/* benign — token may have already been consumed/expired */
-		}
-	);
+	await apiSend('POST', `/pair/deny/${encodeURIComponent(id)}`).catch(() => {
+		/* benign — token may have already been consumed/expired */
+	});
 }
 
 export interface PairStatusResponse {
@@ -897,10 +868,8 @@ export interface PairStatusResponse {
 }
 
 /** GET /api/pair/status/:id — auth'd. Poll for the new device redeeming. */
-async function pairStatus(id: string): Promise<PairStatusResponse> {
-	const res = await fetch(`${API_BASE}/pair/status/${encodeURIComponent(id)}`);
-	if (!res.ok) throw new Error(`pair_status failed: ${res.statusText}`);
-	return res.json();
+function pairStatus(id: string): Promise<PairStatusResponse> {
+	return apiGet<PairStatusResponse>(`/pair/status/${encodeURIComponent(id)}`);
 }
 
 export interface ChatImportResponse {
@@ -942,13 +911,8 @@ export interface MintCollectorResponse {
  * installing the local collector on THIS machine (handed to
  * `installCollector(token)` via the Tauri bridge).
  */
-export async function mintCollectorToken(): Promise<MintCollectorResponse> {
-	const res = await fetch(`${API_BASE}/pair/mint-collector`, { method: 'POST' });
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `mint_collector failed: ${res.statusText}`);
-	}
-	return res.json();
+export function mintCollectorToken(): Promise<MintCollectorResponse> {
+	return apiSend<MintCollectorResponse>('POST', '/pair/mint-collector');
 }
 
 export interface OauthStartResponse {
@@ -956,23 +920,11 @@ export interface OauthStartResponse {
 }
 
 /** POST /api/connect/:source_id/start — sign state, return proxy redirect URL. */
-export async function oauthStart(
+export function oauthStart(
 	source_id: string,
 	opts: { existing_credential_id?: string; return_url?: string } = {}
 ): Promise<OauthStartResponse> {
-	const res = await fetch(
-		`${API_BASE}/connect/${encodeURIComponent(source_id)}/start`,
-		{
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(opts)
-		}
-	);
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `oauth_start failed: ${res.statusText}`);
-	}
-	return res.json();
+	return apiSend<OauthStartResponse>('POST', `/connect/${encodeURIComponent(source_id)}/start`, opts);
 }
 
 export interface ApiKeyCompleteResponse {
@@ -980,24 +932,16 @@ export interface ApiKeyCompleteResponse {
 }
 
 /** POST /api/connect/:source_id/complete — encrypt + store a pasted token. */
-export async function apikeyComplete(
+export function apikeyComplete(
 	source_id: string,
 	name: string,
 	fields: Record<string, string>
 ): Promise<ApiKeyCompleteResponse> {
-	const res = await fetch(
-		`${API_BASE}/connect/${encodeURIComponent(source_id)}/complete`,
-		{
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name, fields })
-		}
+	return apiSend<ApiKeyCompleteResponse>(
+		'POST',
+		`/connect/${encodeURIComponent(source_id)}/complete`,
+		{ name, fields }
 	);
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `apikey_complete failed: ${res.statusText}`);
-	}
-	return res.json();
 }
 
 // Device Pairing
@@ -1079,20 +1023,12 @@ export interface Profile {
 	getting_started_dismissed?: string[];
 }
 
-export async function getProfile(): Promise<Profile> {
-	const res = await fetch(`${API_BASE}/profile`);
-	if (!res.ok) throw new Error(`Failed to get profile: ${res.statusText}`);
-	return res.json();
+export function getProfile(): Promise<Profile> {
+	return apiGet<Profile>('/profile');
 }
 
-export async function updateProfile(profile: Partial<Profile>): Promise<Profile> {
-	const res = await fetch(`${API_BASE}/profile`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(profile)
-	});
-	if (!res.ok) throw new Error(`Failed to update profile: ${res.statusText}`);
-	return res.json();
+export function updateProfile(profile: Partial<Profile>): Promise<Profile> {
+	return apiSend<Profile>('PUT', '/profile', profile);
 }
 
 // =============================================================================
