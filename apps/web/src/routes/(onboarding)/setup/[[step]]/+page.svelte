@@ -7,9 +7,16 @@
   progress is the mark itself (SetupMark), which Welcome's big ∴ flies up
   to become. The four laws are in agents/plan/setup-plan.md.
 
-  Nine steps, a dot each: Welcome (the cold open, with light or dark), the
-  founder's letter, Server, Wi-Fi, Subscription, Names, Connections,
-  Timeline, Interview. Everything through Names is required. The last three
+  Ten steps: Welcome (the cold open, with light or dark), the founder's
+  letter, Account, Server, Wi-Fi, Subscription, Names, Connections, Timeline,
+  Interview. Everything through Names is required.
+
+  THE FIRST HALF (Account, Server, Wi-Fi, and pairing at Wi-Fi's end) runs
+  here only before this device has a server: on the iPhone, whose shell
+  opens /setup from its own copy of the app when unpaired, or in dev with
+  `?radio=fake` (prepair.svelte.ts). Anywhere else those three are done by
+  construction. Sign-in comes first because the account's grant has to
+  cross the Bluetooth link before pairing. The last three
   each carry a Skip, and "Finish later" opens the app with whatever is left
   waiting on the rail's Setup tile. Setup ends once, with the dots drawing
   together into the ∴ and the app opening beneath it.
@@ -38,6 +45,11 @@
 	import { setup, isSetupStep, intoLabel, SERVER, type SetupStepId } from "$lib/components/setup/setup.svelte";
 	import { score } from "$lib/components/setup/score.svelte";
 	import StepPaired from "$lib/components/setup/steps/StepPaired.svelte";
+	import StepAccount from "$lib/components/setup/steps/StepAccount.svelte";
+	import StepServer from "$lib/components/setup/steps/StepServer.svelte";
+	import StepWifi from "$lib/components/setup/steps/StepWifi.svelte";
+	import StepPairing from "$lib/components/setup/steps/StepPairing.svelte";
+	import { prePair } from "$lib/components/setup/prepair.svelte";
 	import StepSubscription from "$lib/components/setup/steps/StepSubscription.svelte";
 	import StepNames from "$lib/components/setup/steps/StepNames.svelte";
 	import StepConnections from "$lib/components/setup/steps/StepConnections.svelte";
@@ -144,6 +156,13 @@
 
 	onMount(() => {
 		void (async () => {
+			// No server yet: the first half runs here, and there is nothing
+			// to reach until it pairs.
+			if (prePair.active) {
+				ready = true;
+				route();
+				return;
+			}
 			await setup.refresh();
 			if (!gettingStarted.loaded || (!gettingStarted.state && !gettingStarted.unsupported)) {
 				unreachable = true;
@@ -203,6 +222,29 @@
 		const i = steps.findIndex((s) => s.id === from);
 		const next = steps.slice(i + 1).find((s) => s.status !== "done");
 		if (next) go(next.id);
+		else await finish();
+	}
+
+	/** The link is gone or they chose another server: back to finding it. */
+	async function lost() {
+		await prePair.forget();
+		go("server");
+	}
+
+	/**
+	 * Paired: the second half reads the server, in place, so the mark and the
+	 * stage carry on without a reload. If the server can't be read yet (the
+	 * phone's connection to it is seconds old), reload into Setup, which
+	 * then starts from wherever the server says things stand.
+	 */
+	async function paired() {
+		await setup.refresh();
+		if (!gettingStarted.loaded || (!gettingStarted.state && !gettingStarted.unsupported)) {
+			location.replace("/setup");
+			return;
+		}
+		const at = setup.resumeAt;
+		if (at) go(at);
 		else await finish();
 	}
 
@@ -332,6 +374,18 @@
 								{letterLabel}
 								<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 12h13M13 6.5 18.5 12 13 17.5" /></svg>
 							</button>
+						{/if}
+					{:else if step === "account"}
+						<StepAccount onnext={() => advance("account")} />
+					{:else if step === "server" && prePair.active}
+						<StepServer onnext={() => advance("server")} />
+					{:else if step === "wifi" && prePair.active}
+						<!-- Without an open link (a reload drops it) Wi-Fi isn't
+						     reachable, and the step guard sends it back to Server. -->
+						{#if prePair.link && prePair.online}
+							<StepPairing onpaired={paired} onlost={lost} />
+						{:else if prePair.link}
+							<StepWifi link={prePair.link} onjoined={() => (prePair.online = true)} onlost={lost} />
 						{/if}
 					{:else if step === "server" || step === "wifi"}
 						<StepPaired which={step} onnext={() => advance(step)} />

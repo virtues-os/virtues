@@ -185,9 +185,20 @@ before it ships.
 
 ### Not built, and why
 
-- **Setup before pairing (slice 2)** and **phone and server in lockstep**:
-  app builds and real hardware; the lockstep also needs the Bluetooth session
-  to report typed words, a wire change.
+- **Setup before pairing (slice 2): built for the iPhone 2026-09-27,
+  unverified on hardware.** Order is now Welcome → Letter → **Account** (sign
+  in first: atlas email code, because the grant must cross Bluetooth before
+  `pair()`) → Server (find, four words, save the recovery phrase) → Wi-Fi
+  (takes a `BoxWifiLink` only) → pairing → Subscription (passes itself over
+  when the account pays) → the rest. All over `$lib/tauri/boxRadio.ts`;
+  state in `lib/components/setup/prepair.svelte.ts`; the unpaired iPhone
+  shell opens `/setup` (`src-tauri/src/lib.rs`). Walk it in a browser with
+  `?radio=fake` (code 123456, words mango burly skull dough). Still open:
+  the Mac (no baked SPA, so it keeps `connect.html`), the command-line
+  server's 6-digit code, joining as a second device, and a first real
+  iPhone Bluetooth pair.
+- **Phone and server in lockstep**: needs the Bluetooth session to report
+  typed words, a wire change.
 - **Answering the interview out loud**: needs a transcription route for the
   web app. Until then, touch screens point at the keyboard's own dictation.
 - **Your city as the drawing**: needs an image route and storage, and a
