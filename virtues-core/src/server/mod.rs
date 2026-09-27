@@ -543,12 +543,15 @@ fn public_routes() -> Router<AppState> {
             "/api/setup/state",
             get(crate::api::box_status::setup_state_handler),
         )
+        // Authenticated by the handler's own `AuthUser`, like the
+        // getting-started routes below.
         .route(
             "/api/setup/skip-onboarding",
             post(crate::api::box_status::skip_onboarding_handler),
         )
         // Getting started, derived: the four steps, the lock, the first day.
-        // Authenticated, unlike /api/setup/state — it reads the profile.
+        // Authenticated, unlike /api/setup/state — it reads the profile — by
+        // an `AuthUser` in each handler rather than the route_layer.
         .route(
             "/api/getting-started",
             get(crate::api::getting_started::state_handler),
@@ -632,11 +635,9 @@ fn public_routes() -> Router<AppState> {
             "/api/s/:token/files/:file_id",
             get(api::pages::shared_file_download_handler),
         )
-        // Webhook ingestion. Authenticated primarily by the proven iroh key
-        // (Option<AuthUser>) — the owner's devices POST over iroh — with the
-        // legacy Bearer device-token kept only as a fallback for external,
-        // non-iroh callers. Lives in public_routes so the bearer fallback path
-        // isn't force-rejected by the AuthUser route_layer.
+        // Webhook ingestion. Authenticated by the proven iroh key — the
+        // handler takes a hard `AuthUser`, so an unauthenticated caller is
+        // rejected there rather than by the route_layer.
         // Per-route body limit override (router-wide cap is 260MB): iOS audio
         // batches are base64 AAC and can dwarf the other streams on backfill.
         // A body over the cap is rejected by the Json extractor before the
@@ -648,8 +649,8 @@ fn public_routes() -> Router<AppState> {
         )
         // Device re-fetch for stream → applet_id map. Used by paired devices
         // whose Keychain entry predates the webhook unification, or after
-        // templates.toml adds a new stream. Same device-token bearer auth as
-        // the webhook endpoint.
+        // templates.toml adds a new stream. Authenticated like the webhook:
+        // a hard `AuthUser` in the handler.
         .route(
             "/api/devices/applet-ids",
             get(api::applets::device_applet_ids_handler),
