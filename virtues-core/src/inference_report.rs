@@ -2,9 +2,8 @@
 //!
 //! v0.1.1 routes all local ML through two llama-server sidecars that the
 //! installer ships and pins (embedding on :18181, rerank on :18182 — see
-//! `search/embedder.rs` / `search/reranker.rs`). Three callers (`virtues
-//! doctor`, `setup`'s status banner, and the web `/api/box/status` route)
-//! consume this report shape.
+//! `search/embedder.rs` / `search/reranker.rs`). Two callers (`virtues
+//! doctor` and `setup`'s status banner) consume this report shape.
 
 use std::path::PathBuf;
 

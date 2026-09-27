@@ -805,7 +805,7 @@ pub struct ConsumeResponse {
 /// `relay_url` is `None` on an unclaimed/LAN box; `direct_addrs` are the box's
 /// LAN/VPN sockets for zero-third-party direct dialing. A device prefers direct
 /// (same network) and falls back to the relay (remote). Refreshable from
-/// `box/status` or `GET /api/devices/self/reach`.
+/// `GET /api/devices/self/reach`.
 pub(crate) struct BoxReach {
     pub node_id: String,
     pub relay_url: Option<String>,
