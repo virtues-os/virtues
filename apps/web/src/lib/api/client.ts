@@ -1502,7 +1502,7 @@ export interface ChatMessage {
 /**
  * Update a chat (title and/or icon)
  */
-export async function updateChat(
+export function updateChat(
 	chatId: string,
 	updates: {
 		title?: string;
@@ -1517,34 +1517,14 @@ export async function updateChat(
 	icon_color?: string | null;
 	updated_at: string;
 }> {
-	const res = await fetch(`${API_BASE}/chats/${chatId}`, {
-		method: 'PATCH',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(updates)
-	});
-
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to update chat: ${res.statusText}`);
-	}
-
-	return res.json();
+	return apiSend('PATCH', `/chats/${chatId}`, updates);
 }
 
 /**
  * Delete a chat
  */
-export async function deleteChat(chatId: string): Promise<{ deleted: boolean }> {
-	const res = await fetch(`${API_BASE}/chats/${chatId}`, {
-		method: 'DELETE'
-	});
-
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to delete chat: ${res.statusText}`);
-	}
-
-	return res.json();
+export function deleteChat(chatId: string): Promise<{ deleted: boolean }> {
+	return apiSend<{ deleted: boolean }>('DELETE', `/chats/${chatId}`);
 }
 
 // =============================================================================
@@ -1642,25 +1622,17 @@ export function unarchiveProject(id: string): Promise<void> {
 }
 
 /** GET /api/projects/:id — a Project with its ordered members. */
-export async function getProject(id: string): Promise<ProjectDetail> {
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(id)}`);
-	if (!res.ok) throw new Error(`Failed to get project: ${res.statusText}`);
-	return res.json();
+export function getProject(id: string): Promise<ProjectDetail> {
+	return apiGet<ProjectDetail>(`/projects/${encodeURIComponent(id)}`);
 }
 
 /** POST /api/projects — create a Project. */
-export async function createProject(body: {
+export function createProject(body: {
 	name: string;
 	icon?: string | null;
 	accent_color?: string | null;
 }): Promise<Project> {
-	const res = await fetch(`${API_BASE}/projects`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body)
-	});
-	if (!res.ok) throw new Error(`Failed to create project: ${res.statusText}`);
-	return res.json();
+	return apiSend<Project>('POST', '/projects', body);
 }
 
 /**
@@ -1668,7 +1640,7 @@ export async function createProject(body: {
  * (`icon`/`accent_color`/`current_status`): omit the key to leave unchanged,
  * send `null` to clear, send a value to set.
  */
-export async function updateProject(
+export function updateProject(
 	id: string,
 	patch: {
 		name?: string;
@@ -1679,19 +1651,12 @@ export async function updateProject(
 		sort_order?: number;
 	}
 ): Promise<Project> {
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(id)}`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(patch)
-	});
-	if (!res.ok) throw new Error(`Failed to update project: ${res.statusText}`);
-	return res.json();
+	return apiSend<Project>('PUT', `/projects/${encodeURIComponent(id)}`, patch);
 }
 
 /** DELETE /api/projects/:id */
 export async function deleteProject(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete project: ${res.statusText}`);
+	await apiSend('DELETE', `/projects/${encodeURIComponent(id)}`);
 }
 
 // =============================================================================
@@ -1720,50 +1685,32 @@ export interface ViewEntity {
 // =============================================================================
 
 /** POST /api/projects/:id/items — add a member URL to a Project. */
-export async function addProjectItem(projectId: string, url: string): Promise<ProjectItem> {
-	const sanitizedUrl = sanitizeUrl(url);
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/items`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url: sanitizedUrl })
+export function addProjectItem(projectId: string, url: string): Promise<ProjectItem> {
+	return apiSend<ProjectItem>('POST', `/projects/${encodeURIComponent(projectId)}/items`, {
+		url: sanitizeUrl(url),
 	});
-	if (!res.ok) throw new Error(`Failed to add project item: ${res.statusText}`);
-	return res.json();
 }
 
 /** DELETE /api/projects/:id/items — remove a member URL from a Project. */
 export async function removeProjectItem(projectId: string, url: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/items`, {
-		method: 'DELETE',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url })
-	});
-	if (!res.ok) throw new Error(`Failed to remove project item: ${res.statusText}`);
+	await apiSend('DELETE', `/projects/${encodeURIComponent(projectId)}/items`, { url });
 }
 
 /** PUT /api/projects/:id/items/reorder — set the member order by URL. */
 export async function reorderProjectItems(projectId: string, urls: string[]): Promise<void> {
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/items/reorder`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ urls })
-	});
-	if (!res.ok) throw new Error(`Failed to reorder project items: ${res.statusText}`);
+	await apiSend('PUT', `/projects/${encodeURIComponent(projectId)}/items/reorder`, { urls });
 }
 
 /** PUT /api/projects/:id/items/role — set what a member is to the project. */
-export async function setProjectItemRole(
+export function setProjectItemRole(
 	projectId: string,
 	url: string,
 	role: ProjectItemRole
 ): Promise<ProjectItem> {
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/items/role`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url, role })
+	return apiSend<ProjectItem>('PUT', `/projects/${encodeURIComponent(projectId)}/items/role`, {
+		url,
+		role,
 	});
-	if (!res.ok) throw new Error(`Failed to set member role: ${res.statusText}`);
-	return res.json();
 }
 
 /**
@@ -1771,10 +1718,8 @@ export async function setProjectItemRole(
  * Built only from things explicitly filed or linked (`[@ref]`); nothing is
  * inferred, so an entity merely mentioned inside a PDF will not appear.
  */
-export async function getProjectGraph(projectId: string): Promise<ProjectGraph> {
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/graph`);
-	if (!res.ok) throw new Error(`Failed to load project graph: ${res.statusText}`);
-	return res.json();
+export function getProjectGraph(projectId: string): Promise<ProjectGraph> {
+	return apiGet<ProjectGraph>(`/projects/${encodeURIComponent(projectId)}/graph`);
 }
 
 // =============================================================================
@@ -1828,51 +1773,33 @@ export interface RefSearchResponse {
 /**
  * List all pages with optional pagination and workspace filter
  */
-export async function listPages(limit?: number, offset?: number, project_id?: string): Promise<PageListResponse> {
-	const params = new URLSearchParams();
-	if (limit !== undefined) params.set('limit', String(limit));
-	if (offset !== undefined) params.set('offset', String(offset));
-	if (project_id !== undefined) params.set('project_id', project_id);
-
-	const url = params.toString() ? `${API_BASE}/pages?${params}` : `${API_BASE}/pages`;
-	const res = await fetch(url);
-
-	if (!res.ok) throw new Error(`Failed to list pages: ${res.statusText}`);
-	return res.json();
+export function listPages(limit?: number, offset?: number, project_id?: string): Promise<PageListResponse> {
+	return apiGet<PageListResponse>('/pages', { limit, offset, project_id });
 }
 
 /**
  * Get a single page by ID
  */
-export async function getPage(id: string): Promise<Page> {
-	const res = await fetch(`${API_BASE}/pages/${id}`);
-	if (!res.ok) throw new Error(`Failed to get page: ${res.statusText}`);
-	return res.json();
+export function getPage(id: string): Promise<Page> {
+	return apiGet<Page>(`/pages/${id}`);
 }
 
 /**
  * Create a new page
  */
-export async function createPage(
+export function createPage(
 	title: string,
 	content: string = '',
 	project_id: string | null = null,
 	options?: { icon?: string; cover_url?: string; tags?: string }
 ): Promise<Page> {
-	const res = await fetch(`${API_BASE}/pages`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ title, content, projectId: project_id, ...options })
-	});
-
-	if (!res.ok) throw new Error(`Failed to create page: ${res.statusText}`);
-	return res.json();
+	return apiSend<Page>('POST', '/pages', { title, content, projectId: project_id, ...options });
 }
 
 /**
  * Update an existing page
  */
-export async function updatePage(
+export function updatePage(
 	id: string,
 	updates: {
 		title?: string;
@@ -1884,35 +1811,22 @@ export async function updatePage(
 		tags?: string | null;
 	}
 ): Promise<Page> {
-	const res = await fetch(`${API_BASE}/pages/${id}`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(updates)
-	});
-
-	if (!res.ok) throw new Error(`Failed to update page: ${res.statusText}`);
-	return res.json();
+	return apiSend<Page>('PUT', `/pages/${id}`, updates);
 }
 
 /**
  * Delete a page by ID
  */
 export async function deletePage(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/pages/${id}`, {
-		method: 'DELETE'
-	});
-
-	if (!res.ok) throw new Error(`Failed to delete page: ${res.statusText}`);
+	await apiSend('DELETE', `/pages/${id}`);
 }
 
 /**
  * Search entities for autocomplete in the page editor
  * Used when typing [[ to link to entities
  */
-export async function searchRefs(query: string): Promise<RefSearchResponse> {
-	const res = await fetch(`${API_BASE}/pages/search/refs?q=${encodeURIComponent(query)}`);
-	if (!res.ok) throw new Error(`Failed to search entities: ${res.statusText}`);
-	return res.json();
+export function searchRefs(query: string): Promise<RefSearchResponse> {
+	return apiGet<RefSearchResponse>('/pages/search/refs', { q: query });
 }
 
 // Page Sharing
@@ -1938,40 +1852,27 @@ export interface SharedPage {
  * authoritative Yjs doc and broadcasts it, so an open editor merges the block
  * instead of being clobbered by a content replace.
  */
-export async function appendToPage(pageId: string, markdown: string): Promise<{ content: string }> {
-	const res = await fetch(`${API_BASE}/pages/${encodeURIComponent(pageId)}/append`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ markdown })
+export function appendToPage(pageId: string, markdown: string): Promise<{ content: string }> {
+	return apiSend<{ content: string }>('POST', `/pages/${encodeURIComponent(pageId)}/append`, {
+		markdown,
 	});
-	if (!res.ok) {
-		const e = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(e.error || 'Failed to append to page');
-	}
-	return res.json();
 }
 
-export async function createPageShare(pageId: string): Promise<PageShare> {
-	const res = await fetch(`${API_BASE}/pages/${pageId}/share`, { method: 'POST' });
-	if (!res.ok) throw new Error(`Failed to create share: ${res.statusText}`);
-	return res.json();
+export function createPageShare(pageId: string): Promise<PageShare> {
+	return apiSend<PageShare>('POST', `/pages/${pageId}/share`);
 }
 
 export async function getPageShare(pageId: string): Promise<PageShare | null> {
-	const res = await fetch(`${API_BASE}/pages/${pageId}/share`);
-	if (!res.ok) throw new Error(`Failed to get share: ${res.statusText}`);
-	return await res.json() ?? null;
+	return (await apiGet<PageShare | null>(`/pages/${pageId}/share`)) ?? null;
 }
 
 export async function deletePageShare(pageId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/pages/${pageId}/share`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete share: ${res.statusText}`);
+	await apiSend('DELETE', `/pages/${pageId}/share`);
 }
 
-export async function getSharedPage(token: string): Promise<SharedPage> {
-	const res = await fetch(`${API_BASE}/s/${token}`);
-	if (!res.ok) throw new Error(`Page not found`);
-	return res.json();
+/** Throws {@link ApiError}; the public viewer keys "no longer shared" off a 404. */
+export function getSharedPage(token: string): Promise<SharedPage> {
+	return apiGet<SharedPage>(`/s/${token}`);
 }
 
 // ============================================================================
@@ -1990,9 +1891,7 @@ export interface Backlink {
 
 /** Get inbound references (pages that link to the given page). */
 export async function getPageBacklinks(pageId: string): Promise<Backlink[]> {
-	const res = await fetch(`${API_BASE}/pages/${pageId}/backlinks`);
-	if (!res.ok) throw new Error(`Failed to get backlinks: ${res.statusText}`);
-	const data = await res.json();
+	const data = await apiGet<{ backlinks?: Backlink[] }>(`/pages/${pageId}/backlinks`);
 	return data.backlinks ?? [];
 }
 
