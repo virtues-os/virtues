@@ -277,8 +277,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let public_routes = Router::new()
         // Health check
         .route("/health", get(health))
-        // App server info (for device pairing)
-        .route("/api/app/server-info", get(server_info))
         // Public, LAN-reachable box health — boot gates + inference resolution.
         // No secrets; the first-run web page / appliance screen poll this
         // before any owner session exists. (Full identity detail stays behind
@@ -300,23 +298,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/setup/state",
             get(crate::api::box_status::setup_state_handler),
-        )
-        // What the box actually holds, counted — the reveal's first movement.
-        // Read-only and derived entirely from tables the caller could already
-        // read, so it adds no reach, only arithmetic.
-        .route("/api/census", get(crate::api::census::census_handler))
-        // Draft the document from the answers. POST because it spends money and
-        // rewrites the document — not something a refresh should trigger.
-        .route(
-            "/api/narrative/draft",
-            post(crate::api::narrative_draft::draft_handler),
-        )
-        // The rules the assistant must obey. Read to review them, POST to
-        // replace the set with what was confirmed.
-        .route(
-            "/api/narrative/rules",
-            get(crate::api::narrative_draft::rules_handler)
-                .post(crate::api::narrative_draft::save_rules_handler),
         )
         .route(
             "/api/setup/skip-onboarding",
@@ -459,7 +440,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/pair/deny/:id",      post(crate::api::pair::deny_handler))
         // ─── Devices: unified list + revoke ───────────────────────────
         .route("/api/devices",            get(crate::api::devices::list_handler))
-        .route("/api/devices/self/node-id", post(crate::api::devices::set_self_node_id))
         .route("/api/devices/self/push-address", post(crate::api::devices::set_self_push_address))
         .route("/api/devices/self/reach",   get(crate::api::devices::get_self_reach))
         .route("/api/devices/enroll-peer",  post(crate::api::devices::enroll_peer))
@@ -556,13 +536,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::chat_import_upload_handler)
                 .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
-        .route(
-            "/api/chat-import/status",
-            get(api::chat_import_status_handler),
-        )
         .route("/api/applets/:id/runs", get(api::list_applet_runs_handler))
         .route("/api/applets/:id/log", get(api::applet_log_handler))
-        .route("/api/applets/runs/:id", get(api::get_applet_run_handler))
         .route("/api/runs", get(api::list_runs_handler))
         // Credentials API
         .route("/api/credentials", get(api::list_credentials_handler))
@@ -692,17 +667,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::list_models_with_slots_handler),
         )
         .route("/api/models/:id", get(api::get_model_handler))
-        // Personas API
-        .route("/api/personas", get(api::list_personas_handler))
-        .route("/api/personas", post(api::create_persona_handler))
-        .route("/api/personas/:id", get(api::get_persona_handler))
-        .route("/api/personas/:id", put(api::update_persona_handler))
-        .route("/api/personas/:id", delete(api::hide_persona_handler))
-        .route(
-            "/api/personas/:id/unhide",
-            post(api::unhide_persona_handler),
-        )
-        .route("/api/personas/reset", post(api::reset_personas_handler))
         // Per-stream ingest freshness — surfaces a stalled source instead of
         // letting it rot silently.
         .route("/api/streams/health", get(api::stream_health_handler))
@@ -730,8 +694,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/billing/link/status",
             get(api::billing_link_status_handler),
         )
-        // Search API (Exa) — reaches outside the box
-        .route("/api/search/web", post(api::web_search_handler))
         // Local content search — the ⌘K palette. Never leaves the box.
         .route("/api/search/local", post(api::search_local_handler))
         // Unsplash API (cover image search)
@@ -772,10 +734,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         .route("/api/drive/upload", post(api::upload_drive_file_handler))
         .route("/api/drive/folders", post(api::create_drive_folder_handler))
-        .route(
-            "/api/drive/reconcile",
-            post(api::reconcile_drive_usage_handler),
-        )
         // Drive trash endpoints
         .route("/api/drive/media", get(api::list_drive_media_handler))
         .route("/api/drive/trash", get(api::list_drive_trash_handler))
@@ -1804,19 +1762,6 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
             }
         })),
     )
-}
-
-/// Server info endpoint for device pairing
-/// Returns the API endpoint URL for iOS device configuration
-async fn server_info() -> impl IntoResponse {
-    // Resolution: PUBLIC_API_URL (explicit override) → BACKEND_URL → localhost fallback
-    let api_endpoint = std::env::var("PUBLIC_API_URL")
-        .or_else(|_| std::env::var("BACKEND_URL"))
-        .unwrap_or_else(|_| "http://localhost:8000".to_string());
-
-    Json(serde_json::json!({
-        "apiEndpoint": api_endpoint
-    }))
 }
 
 /// The routes a sandboxed (opaque-origin) applet face is allowed to reach:

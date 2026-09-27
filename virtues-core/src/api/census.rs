@@ -24,12 +24,10 @@
 //! cache, and `make dev` builds with `SQLX_OFFLINE=true` — a macro here would
 //! wedge every other agent's build the moment this landed.
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::Serialize;
 use sqlx::PgPool;
 
 use crate::error::Result;
-use crate::server::AppState;
 
 /// One line of the census: a thing the box holds, and how many of it.
 #[derive(Debug, Serialize)]
@@ -251,24 +249,4 @@ pub async fn census(pool: &PgPool) -> Result<Census> {
         earliest_names: earliest_names(pool).await,
         first_day: first_narrated_day(pool).await,
     })
-}
-
-/// Authenticated, like everything else that reads the record. The counts are
-/// small numbers, but they describe a person's life in aggregate and there is
-/// no reason for them to be readable before a session exists.
-pub async fn census_handler(
-    State(state): State<AppState>,
-    _user: crate::middleware::auth::AuthUser,
-) -> impl IntoResponse {
-    match census(state.db.pool()).await {
-        Ok(c) => (StatusCode::OK, Json(c)).into_response(),
-        Err(e) => {
-            tracing::warn!(error = %e, "census failed");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-                .into_response()
-        }
-    }
 }

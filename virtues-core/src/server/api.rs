@@ -45,21 +45,6 @@ fn success_message(message: &str) -> Response {
 // Actions + runs API
 // ============================================================================
 
-/// Get a single action run by ID (used for polling status)
-pub async fn get_applet_run_handler(
-    State(state): State<AppState>,
-    Path(run_id): Path<String>,
-) -> Response {
-    match crate::scheduler::applets::get_run(state.db.pool(), &run_id).await {
-        Ok(run) => (StatusCode::OK, Json(run)).into_response(),
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
 /// Optional body for manual trigger — forwarded as the action payload.
 #[derive(Debug, Deserialize, Default)]
 pub struct TriggerAppletBody {
@@ -170,44 +155,6 @@ pub async fn chat_import_upload_handler(
         )
             .into_response(),
         Err(e) => error_response(crate::error::Error::Other(e.to_string())),
-    }
-}
-
-/// GET /api/chat-import/status — what chat-import has already landed, so the
-/// sources UI can show a real "connected" state for a source that mints no
-/// credential. Counts come from the ingested rows themselves, not from run
-/// summaries (the latest run of a re-import says "0 new", which is true of the
-/// run and misleading as a status).
-pub async fn chat_import_status_handler(State(state): State<AppState>) -> Response {
-    let row = sqlx::query(
-        r#"SELECT COUNT(*) AS messages,
-                  COUNT(DISTINCT conversation_id) AS conversations,
-                  COALESCE(ARRAY_AGG(DISTINCT provider) FILTER (WHERE provider IS NOT NULL), '{}') AS providers
-             FROM data_content_conversation
-            WHERE source_table = 'chat_import'"#,
-    )
-    .fetch_one(state.db.pool())
-    .await;
-
-    match row {
-        Ok(r) => {
-            use sqlx::Row;
-            let messages: i64 = r.get("messages");
-            let conversations: i64 = r.get("conversations");
-            let providers: Vec<String> = r.get("providers");
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "messages": messages,
-                    "conversations": conversations,
-                    "providers": providers,
-                })),
-            )
-                .into_response()
-        }
-        Err(e) => error_response(crate::error::Error::Database(format!(
-            "failed to read chat-import status: {e}"
-        ))),
     }
 }
 
@@ -1067,61 +1014,6 @@ pub async fn list_models_with_slots_handler() -> Response {
     api_response(crate::api::list_models_with_slots().await)
 }
 
-// =============================================================================
-// Personas API
-// =============================================================================
-
-/// List all personas (excluding hidden ones)
-pub async fn list_personas_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_personas(state.db.pool()).await)
-}
-
-/// Get a specific persona by ID
-pub async fn get_persona_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::get_persona(state.db.pool(), &id).await)
-}
-
-/// Create a new custom persona
-pub async fn create_persona_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::CreatePersonaRequest>,
-) -> Response {
-    api_response(crate::api::create_persona(state.db.pool(), request).await)
-}
-
-/// Update an existing persona
-pub async fn update_persona_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<crate::api::UpdatePersonaRequest>,
-) -> Response {
-    api_response(crate::api::update_persona(state.db.pool(), &id, request).await)
-}
-
-/// Hide a persona (soft delete for system, hard delete for custom)
-pub async fn hide_persona_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::hide_persona(state.db.pool(), &id).await)
-}
-
-/// Unhide a previously hidden persona
-pub async fn unhide_persona_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::unhide_persona(state.db.pool(), &id).await)
-}
-
-/// Reset personas to defaults (re-seed from registry)
-pub async fn reset_personas_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::reset_personas(state.db.pool()).await)
-}
-
 /// Per-stream ingest freshness, worst-first. The signal that was missing when
 /// messages, the calendar sync, and finance each went dark unnoticed.
 pub async fn stream_health_handler(State(state): State<AppState>) -> Response {
@@ -1565,42 +1457,6 @@ pub async fn billing_link_status_handler(State(pool): State<sqlx::PgPool>) -> Re
 // =============================================================================
 // System Update API Handlers
 // =============================================================================
-
-// =============================================================================
-// Web Search API Handler
-// =============================================================================
-
-/// Perform a web search.
-pub async fn web_search_handler(
-    State(state): State<AppState>,
-    Json(request): Json<WebSearchRequest>,
-) -> Response {
-    let search = crate::api::web_search::SearchRequest {
-        objective: request.objective,
-        query: request.query,
-        max_results: request.num_results,
-        max_age_seconds: request.max_age_hours.map(|h: u32| h.saturating_mul(3600)),
-    };
-
-    match crate::api::web_search::search(state.db.pool(), search).await {
-        Ok(response) => {
-            (StatusCode::OK, Json(response)).into_response()
-        }
-        Err(e) => error_response(e),
-    }
-}
-
-/// Body for `POST /api/search/web`.
-#[derive(Debug, serde::Deserialize)]
-pub struct WebSearchRequest {
-    pub query: String,
-    #[serde(default)]
-    pub objective: Option<String>,
-    #[serde(default)]
-    pub num_results: Option<u8>,
-    #[serde(default)]
-    pub max_age_hours: Option<u32>,
-}
 
 // =============================================================================
 // Unsplash API Handler
@@ -3367,11 +3223,6 @@ pub async fn create_drive_folder_handler(
         Ok(folder) => (StatusCode::CREATED, Json(folder)).into_response(),
         Err(e) => error_response(e),
     }
-}
-
-/// POST /api/drive/reconcile - Reconcile usage with storage (admin)
-pub async fn reconcile_drive_usage_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::reconcile_drive_usage(state.db.pool(), &state.drive_config).await)
 }
 
 // =============================================================================
