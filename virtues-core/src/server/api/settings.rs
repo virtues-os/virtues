@@ -5,12 +5,150 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
+    routing::{get, post, put},
     Json,
+    Router,
 };
 use serde::Deserialize;
 
 use super::{api_response, error_response};
 use crate::server::AppState;
+
+/// This area's authenticated routes. Merged into the protected router, whose
+/// `route_layer` requires a resolved `AuthUser`.
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        // ─── Billing settings (BYO key) ───────────────────────────────
+        // BYO routes inference around virtues-api entirely: box calls
+        // upstream directly. Save/delete are sudo-gated (change_byo_key);
+        // status is a non-secret read for the Billing page.
+        .route("/api/settings/byo-key",   get(crate::api::settings_byo::status_handler)
+                                          .post(crate::api::settings_byo::save_handler)
+                                          .delete(crate::api::settings_byo::delete_handler))
+        // ─── Web bundle (the box IS the update server) ────────────────
+        // What UI build this box serves, and the build itself. A client that
+        // can only run a bundle the box handed it cannot get ahead of the box,
+        // which is the point — see api/web_bundle.rs.
+        .route("/api/web-bundle/version", get(crate::api::web_bundle::version_handler))
+        .route("/api/web-bundle/tarball", get(crate::api::web_bundle::tarball_handler))
+        // ─── Billing-state aggregator (local view) ────────────────────
+        .route("/api/billing/state",           get(crate::api::billing_state::state_handler))
+        .route("/api/billing/auto-topup",      post(crate::api::billing_state::set_auto_topup_handler))
+        // Setup wizard transitions (agents/build/onboarding.md) — session-authed; the
+        // wizard reads progress from the public /api/setup/state.
+        .route("/api/setup/subscribe/start",   post(crate::api::setup::subscribe_start_handler))
+        .route("/api/setup/login/start",       post(crate::api::setup::login_start_handler))
+        .route("/api/setup/link/poll",         post(crate::api::setup::link_poll_handler))
+        // Profile API
+        .route(
+            "/api/profile",
+            get(get_profile_handler).put(update_profile_handler),
+        )
+        // Places API (Google Places proxy)
+        .route(
+            "/api/places/autocomplete",
+            get(places_autocomplete_handler),
+        )
+        .route(
+            "/api/places/details",
+            get(places_details_handler),
+        )
+        // Assistant Profile API
+        .route(
+            "/api/assistant-profile",
+            get(get_assistant_profile_handler).put(update_assistant_profile_handler),
+        )
+        // Models API
+        .route("/api/models", get(list_models_handler))
+        .route(
+            "/api/models/recommended",
+            get(list_models_with_slots_handler),
+        )
+        .route("/api/models/:id", get(get_model_handler))
+        // Per-stream ingest freshness — surfaces a stalled source instead of
+        // letting it rot silently.
+        .route("/api/streams/health", get(stream_health_handler))
+        .route("/api/streams/days", get(stream_days_handler))
+        // Subscription & Billing API
+        .route("/api/subscription", get(get_subscription_handler))
+        .route(
+            "/api/billing/portal",
+            post(create_billing_portal_handler),
+        )
+        .route("/api/billing/subscribe", post(subscribe_billing_handler))
+        // Wallet balance + recent ledger (proxied from virtues-api /v1/usage).
+        .route("/api/billing/usage", get(billing_usage_handler))
+        // Box-local AI spend breakdown (app_ai_calls) for the Usage tab.
+        .route("/api/usage/summary", get(usage_summary_handler))
+        // Paged individual AI calls (app_ai_calls) for the Usage page's log.
+        .route("/api/telemetry/ai-calls", get(ai_calls_handler))
+        // Device-authorization link flow (web "Connect subscription").
+        .route(
+            "/api/billing/link/start",
+            post(billing_link_start_handler),
+        )
+        .route(
+            "/api/billing/link/status",
+            get(billing_link_status_handler),
+        )
+        // Unsplash API (cover image search)
+        .route("/api/unsplash/search", post(unsplash_search_handler))
+        // System (operator surface — apps + logs)
+        // Live host snapshot + persisted history for the System/Telemetry views.
+        .route(
+            "/api/system/telemetry",
+            get(crate::api::system_telemetry::telemetry_handler),
+        )
+        .route(
+            "/api/system/history",
+            get(crate::api::system_telemetry::history_handler),
+        )
+        // Box network management (Settings → Box → Network) — the authed
+        // successors to the setup-phase /api/provision/* surface, which
+        // correctly evaporates at claim time, so a box on a captive guest
+        // network still has a way to leave. See api/network.rs.
+        .route("/api/network/status", get(crate::api::network::status_handler))
+        .route("/api/network/scan",   get(crate::api::network::scan_handler))
+        .route("/api/network/join",   post(crate::api::network::join_handler))
+        // The rendezvous, named and switchable (open-relay-plan §Work 2).
+        .route(
+            "/api/network/relay",
+            get(crate::api::network::relay_status_handler)
+                .put(crate::api::network::relay_toggle_handler),
+        )
+        // Box updates (Settings → Box)
+        .route("/api/system/update", get(update_status_handler))
+        .route(
+            "/api/system/update/channel",
+            put(set_channel_handler),
+        )
+        .route(
+            "/api/system/update/apply",
+            post(apply_update_handler),
+        )
+        // The box's attached screen (Settings → Display). Deliberately NOT in
+        // the loopback-only /api/display/* family: that module's uniform
+        // box-local rule is its security argument, and these are the paired
+        // device's side of the glass — panel facts, the ambient face choice,
+        // and the restart verb. Nothing here carries the setup phrase.
+        .route(
+            "/api/system/display",
+            get(crate::api::system_display::get_display_settings_handler),
+        )
+        .route(
+            "/api/system/display/face",
+            put(crate::api::system_display::set_display_face_handler),
+        )
+        .route(
+            "/api/system/display/hours",
+            put(crate::api::system_display::set_display_hours_handler),
+        )
+        .route(
+            "/api/system/display/restart",
+            post(crate::api::system_display::restart_display_handler),
+        )
+}
+
 
 // =============================================================================
 // Profile API

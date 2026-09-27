@@ -9,23 +9,15 @@ use serde::Serialize;
 
 use crate::error::Error;
 
-// One file per area of the app. Re-exported flat so a handler is addressed
-// as `api::<name>` wherever it is routed.
-mod applets;
-mod chat;
-mod drive;
-mod library;
-mod pages;
-mod settings;
-mod wiki;
-
-pub use applets::*;
-pub use chat::*;
-pub use drive::*;
-pub use library::*;
-pub use pages::*;
-pub use settings::*;
-pub use wiki::*;
+// One file per area of the app, each with the handlers and the
+// authenticated `routes()` for that area.
+pub mod applets;
+pub mod chat;
+pub mod drive;
+pub mod library;
+pub mod pages;
+pub mod settings;
+pub mod wiki;
 
 /// Sanitize a filename for use in Content-Disposition headers.
 /// Removes characters that could cause header injection or parsing issues.
