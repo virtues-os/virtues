@@ -342,50 +342,6 @@ export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promis
 	if (!res.ok) throw new Error(`Failed to set channel: ${res.statusText}`);
 }
 
-/** One line of the census: a thing the box holds, and how many of it. */
-export interface CensusLine {
-	id: string;
-	/** Plural, lowercase, already in the words a person would use. */
-	label: string;
-	count: number;
-}
-
-export interface Census {
-	/** Only non-empty lines. A box with nothing connected returns []. */
-	lines: CensusLine[];
-	total: number;
-	earliest: string | null;
-	latest: string | null;
-	span_days: number;
-	/** The record's first named senders, in the order it met them —
-	 *  chronology, never significance. Empty when none are presentable. */
-	earliest_names: string[];
-	/** `"YYYY-MM-DD"` of the first day the box narrated; null until one exists. */
-	first_day: string | null;
-}
-
-/** What the box actually holds, counted — the reveal's first movement. */
-export async function getCensus(): Promise<Census> {
-	const res = await fetch(`${API_BASE}/census`);
-	if (!res.ok) throw new Error(`Failed to read the census: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Replace the rule set with exactly what was confirmed.
- *
- * A replace, not an append: this is the screen where someone sees every rule
- * their box obeys, so leaving it has to mean the list says what they saw.
- */
-export async function saveNarrativeRules(rules: string[]): Promise<void> {
-	const res = await fetch(`${API_BASE}/narrative/rules`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ rules }),
-	});
-	if (!res.ok) throw new Error(`Couldn't save your rules: ${res.statusText}`);
-}
-
 export interface ReopenOnboardingResponse {
 	devices: number;
 	credentials: number;
@@ -990,7 +946,7 @@ export interface PairMintResponse {
 }
 
 /** POST /api/pair/mint — auth'd. Mint a `pending` token to add a device. */
-export async function pairMint(intendedKind?: string): Promise<PairMintResponse> {
+async function pairMint(intendedKind?: string): Promise<PairMintResponse> {
 	const res = await fetch(`${API_BASE}/pair/mint`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -1033,7 +989,7 @@ export interface PairStatusResponse {
 }
 
 /** GET /api/pair/status/:id — auth'd. Poll for the new device redeeming. */
-export async function pairStatus(id: string): Promise<PairStatusResponse> {
+async function pairStatus(id: string): Promise<PairStatusResponse> {
 	const res = await fetch(`${API_BASE}/pair/status/${encodeURIComponent(id)}`);
 	if (!res.ok) throw new Error(`pair_status failed: ${res.statusText}`);
 	return res.json();
@@ -1065,24 +1021,6 @@ export async function uploadChatImport(
 		const err = await res.json().catch(() => ({ error: res.statusText }));
 		throw new Error(err.error || `chat_import upload failed: ${res.statusText}`);
 	}
-	return res.json();
-}
-
-/** What chat-import has already landed on the box (empty = never imported). */
-export interface ChatImportStatus {
-	messages: number;
-	conversations: number;
-	/** Distinct providers seen in the imported rows, e.g. ["claude"]. */
-	providers: string[];
-}
-
-/**
- * GET /api/chat-import/status — connected-state for the chat-import source,
- * which mints no credential; the imported rows themselves are the evidence.
- */
-export async function getChatImportStatus(): Promise<ChatImportStatus> {
-	const res = await fetch(`${API_BASE}/chat-import/status`);
-	if (!res.ok) throw new Error(`Failed to read chat-import status: ${res.statusText}`);
 	return res.json();
 }
 
@@ -2515,26 +2453,6 @@ export function deleteByoKey<T = unknown>(sudoRequestId?: string): Promise<T> {
 	return apiSend<T>('DELETE', '/settings/byo-key', { sudo_request_id: sudoRequestId });
 }
 
-// ── Personas ─────────────────────────────────────────────────────────────────
-export function listPersonas<T = unknown>(): Promise<T> {
-	return apiGet<T>('/personas');
-}
-export function createPersona<T = unknown>(body: { title: string; content: string }): Promise<T> {
-	return apiSend<T>('POST', '/personas', body);
-}
-export function updatePersona<T = unknown>(id: string, updates: object): Promise<T> {
-	return apiSend<T>('PUT', `/personas/${encodeURIComponent(id)}`, updates);
-}
-export function deletePersona<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('DELETE', `/personas/${encodeURIComponent(id)}`);
-}
-export function unhidePersona<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('POST', `/personas/${encodeURIComponent(id)}/unhide`);
-}
-export function resetPersonas<T = unknown>(): Promise<T> {
-	return apiSend<T>('POST', '/personas/reset');
-}
-
 // ── Chats (extras beyond createChat/updateChat/deleteChat above) ──────────────
 export function listChats<T = unknown>(): Promise<T> {
 	return apiGet<T>('/chats');
@@ -2681,7 +2599,4 @@ export function getDriveMedia<T = unknown>(): Promise<T> {
 }
 export function searchUnsplash<T = unknown>(body: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/unsplash/search', body);
-}
-export function getServerInfo<T = unknown>(): Promise<T> {
-	return apiGet<T>('/app/server-info');
 }
