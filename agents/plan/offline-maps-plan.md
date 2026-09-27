@@ -72,40 +72,37 @@ The unit is **days present**, not visits or summed durations:
 
 ## Serving and gating
 
-```
-monthly job on the file host
-build.protomaps.com/YYYYMMDD.pmtiles ──go-pmtiles extract──▶ file host (OVH or Hetzner, nginx, no access log)
-                                                               maps/<build>/world.pmtiles
-                                                               maps/<build>/home-z7-<x>-<y>.pmtiles     z15
-                                                               maps/<build>/visited-z5-<x>-<y>.pmtiles  z13
-                                                               maps/<build>/index.json  (sha256 per file)
+virtues-api serves the files itself, from the server it is moving to
+(agents/plan/cloud-consolidation-plan.md). No signed links, no second server.
 
-box ──Bearer key──▶ virtues-api /maps/sign ──▶ short-lived signed URL (≈1 hour)
-box ──signed URL──▶ file host (nginx secure_link) ──▶ whole file, resumable ──▶ /var/lib/virtues/maps/
+```
+monthly systemd timer on the virtues-api box
+build.protomaps.com/YYYYMMDD.pmtiles ──go-pmtiles extract──▶ /srv/maps/<build>/world.pmtiles
+                                                              /srv/maps/<build>/home-z7-<x>-<y>.pmtiles     z15
+                                                              /srv/maps/<build>/visited-z5-<x>-<y>.pmtiles  z13
+                                                              /srv/maps/<build>/assets.tar                  fonts + sprites
+                                                              /srv/maps/<build>/index.json                  sha256 per file
+
+box ──Bearer key──▶ virtues-api GET /v1/maps/index, GET /v1/maps/<build>/<file> (Range) ──▶ /var/lib/virtues/maps/
 browser ──▶ box /api/map/vt/{world|home|visited}/z/x/y ──▶ mmap read
 ```
 
-- **Everything is gated.** `/maps/sign` sits beside `routes/unsplash.rs` and
-  uses the same `BearerAuth`. A lapsed subscription gets a 402, so no new files
+- **Everything is gated.** The maps routes sit beside `routes/unsplash.rs` and
+  use the same `BearerAuth`. A lapsed subscription gets a 402, so no new files
   or refreshes, but what is on the box keeps working. A free self-hosted box
   points `VIRTUES_MAPS_SOURCE` at its own copy of the same layout.
-- **No AWS in the data path.** virtues-api (EC2) only signs, a few hundred
-  bytes per file. The gigabytes come from a box on OVH or Hetzner, where
-  bandwidth is included or about a dollar a TB, against AWS's ~$90 a TB. Keep
-  it separate from the relay, so map downloads never compete with relay
-  traffic.
-- **No logs, on both sides.** The file host runs nginx with `access_log off`
-  and sees only a signature and an IP. virtues-api sees which account signed
-  for which file, and its maps route records neither path nor account. Today
-  `TraceLayer::new_for_http()` (`services/virtues-api/src/main.rs`) records
-  request URIs at debug level, so the maps route has to be excluded from it.
+- **Unmetered bandwidth.** That server pays nothing per GB sent.
+- **No logs.** virtues-api sees which account took which file, and the maps
+  routes record neither path nor account. Today `TraceLayer::new_for_http()`
+  (`services/virtues-api/src/main.rs`) records request URIs at debug level, so
+  the maps routes are excluded from it. Caddy's access log stays off for them.
 - **Storage:** one build is ~175 GB (home z15 squares ≈ the planet at z15 over
   land, visited z13, world). Keep the old build a few days so in-flight
   downloads finish, then delete it.
 - **Box refresh:** every ~90 days, download into `.tmp`, verify the sha256,
   swap atomically. Readers hold an mmap, so the swap goes through an
   `ArcSwap`, never an in-place write.
-- **License:** the files are OpenStreetMap data under the ODbL. The file host
+- **License:** the files are OpenStreetMap data under the ODbL. The index
   carries a one-line license and attribution notice, and every map shows
   `© OpenStreetMap` in a compact ⓘ control, which the OSMF guidelines accept.
 
@@ -123,7 +120,7 @@ browser ──▶ box /api/map/vt/{world|home|visited}/z/x/y ──▶ mmap read
   watermarks) and `map_atlas/` (OpenFreeMap, staging boxes only) from the lake
   on first start.
 - **Fonts and icons** (14 MB of Noto, OFL, and 180 KB of sprites, from
-  `protomaps/basemaps-assets`) come from the file host as one more fixed
+  `protomaps/basemaps-assets`) come from virtues-api as one more fixed
   download beside `world.pmtiles`, into `maps/assets/`. Same for every box,
   and no installer change.
 
@@ -170,10 +167,11 @@ All in a scratch crate, nothing on `wave`.
    light and dark, all three tiers, no request off the box. Still open from
    this step: the credit is a plain "© OpenStreetMap" line, not yet collapsed
    behind an ⓘ, and the MapLibre worker is unverified on iOS.
-2. **File host.** Adam provisions an OVH or Hetzner box (~250 GB disk,
-   included bandwidth); nginx with `secure_link` and no access log; the
-   monthly cut job with `go-pmtiles` and `index.json`.
-3. **Signing.** `/maps/sign` on virtues-api, excluded from request tracing.
+2. **Serve from virtues-api.** After the cloud consolidation lands: the
+   monthly cut job as a systemd timer, `/v1/maps/index` and
+   `/v1/maps/<build>/<file>` behind `BearerAuth`, excluded from tracing.
+3. **Fonts and icons as a download** (`assets.tar`), so the box needs no
+   installer change.
 4. **Box downloads.** Importance scoring, tier selection, resumable
    checksummed downloads, the 4 GB cap, the 90-day refresh.
 5. **Manual page:** where maps come from, and the privacy line: "Your server
@@ -184,12 +182,13 @@ All in a scratch crate, nothing on `wave`.
 ## Decisions
 
 1. **Privacy:** fixed pre-cut files, identical for everyone in a square, plus
-   no logs on the signing route and the file host.
+   no logs on the virtues-api maps routes.
 2. **Tiers:** home z15 (~300 km squares), visited z13 (~1,000 km squares),
    world z0–7. No whole-world option.
 3. **Importance:** days present with a one-year half-life; 90+ lifetime days
    keeps a former home; 2+ days for visited.
 4. **Cap:** 4 GB for home plus visited.
-5. **Hosting:** files on our own OVH or Hetzner box, never AWS; virtues-api
-   only signs. Everything gated; a lapsed subscription keeps what it has.
+5. **Hosting:** virtues-api serves the files from its own server, with
+   unmetered bandwidth. Everything gated; a lapsed subscription keeps what it
+   has.
 6. **OpenFreeMap:** removed, not shipped.
