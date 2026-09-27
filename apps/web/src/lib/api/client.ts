@@ -1098,13 +1098,8 @@ export interface DriveFile {
 
 /** Queue a file for (re-)extraction (retry after a failure, or after
  * installing a missing extractor). */
-export async function reextractDriveFile(fileId: string): Promise<DriveFile> {
-	const res = await fetch(`${API_BASE}/drive/files/${fileId}/reextract`, { method: 'POST' });
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || 'Failed to queue extraction');
-	}
-	return res.json();
+export function reextractDriveFile(fileId: string): Promise<DriveFile> {
+	return apiSend<DriveFile>('POST', `/drive/files/${fileId}/reextract`);
 }
 
 // ── Annotations (document highlights + margin notes, researcher-plan D2) ──
@@ -1130,10 +1125,8 @@ export interface Annotation {
 	updated_at: string;
 }
 
-export async function listAnnotations(fileId: string): Promise<Annotation[]> {
-	const res = await fetch(`${API_BASE}/annotations?file_id=${encodeURIComponent(fileId)}`);
-	if (!res.ok) throw new Error(`Failed to list annotations: ${res.statusText}`);
-	return res.json();
+export function listAnnotations(fileId: string): Promise<Annotation[]> {
+	return apiGet<Annotation[]>('/annotations', { file_id: fileId });
 }
 
 /** A highlight enriched with its file's name, for the project Highlights tab. */
@@ -1154,7 +1147,7 @@ export function downloadMarkdown(filename: string, markdown: string): void {
 	URL.revokeObjectURL(url);
 }
 
-export async function createAnnotation(body: {
+export function createAnnotation(body: {
 	file_id: string;
 	page_num?: number | null;
 	quote_text: string;
@@ -1164,34 +1157,18 @@ export async function createAnnotation(body: {
 	color?: string;
 	note_md?: string;
 }): Promise<Annotation> {
-	const res = await fetch(`${API_BASE}/annotations`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body)
-	});
-	if (!res.ok) {
-		const e = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(e.error || 'Failed to create annotation');
-	}
-	return res.json();
+	return apiSend<Annotation>('POST', '/annotations', body);
 }
 
-export async function updateAnnotation(
+export function updateAnnotation(
 	id: string,
 	body: { color?: string; note_md?: string }
 ): Promise<Annotation> {
-	const res = await fetch(`${API_BASE}/annotations/${id}`, {
-		method: 'PATCH',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body)
-	});
-	if (!res.ok) throw new Error(`Failed to update annotation: ${res.statusText}`);
-	return res.json();
+	return apiSend<Annotation>('PATCH', `/annotations/${id}`, body);
 }
 
 export async function deleteAnnotation(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/annotations/${id}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete annotation: ${res.statusText}`);
+	await apiSend('DELETE', `/annotations/${id}`);
 }
 
 export interface DriveUsage {
@@ -1216,10 +1193,8 @@ export interface DriveUsage {
 /**
  * Get drive storage usage and quota information
  */
-export async function getDriveUsage(): Promise<DriveUsage> {
-	const res = await fetch(`${API_BASE}/drive/usage`);
-	if (!res.ok) throw new Error(`Failed to get drive usage: ${res.statusText}`);
-	return res.json();
+export function getDriveUsage(): Promise<DriveUsage> {
+	return apiGet<DriveUsage>('/drive/usage');
 }
 
 export interface BackupVolumeStatus {
@@ -1244,38 +1219,23 @@ export interface BackupStatus {
  * Backup freshness. The one number that matters is `age_seconds` — if the box
  * died now, that is how much would be lost.
  */
-export async function getBackupStatus(): Promise<BackupStatus> {
-	const res = await fetch(`${API_BASE}/backup/status`);
-	if (!res.ok) throw new Error(`Failed to get backup status: ${res.statusText}`);
-	return res.json();
+export function getBackupStatus(): Promise<BackupStatus> {
+	return apiGet<BackupStatus>('/backup/status');
 }
 
 /**
  * List files in a directory
  * @param path - Directory path (empty string for root)
  */
-export async function listDriveFiles(path: string = ''): Promise<DriveFile[]> {
-	const params = new URLSearchParams();
-	if (path) params.set('path', path);
-
-	const res = await fetch(`${API_BASE}/drive/files?${params}`);
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to list files: ${res.statusText}`);
-	}
-	return res.json();
+export function listDriveFiles(path: string = ''): Promise<DriveFile[]> {
+	return apiGet<DriveFile[]>('/drive/files', { path: path || undefined });
 }
 
 /**
  * Get file metadata by ID
  */
-export async function getDriveFile(fileId: string): Promise<DriveFile> {
-	const res = await fetch(`${API_BASE}/drive/files/${fileId}`);
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to get file: ${res.statusText}`);
-	}
-	return res.json();
+export function getDriveFile(fileId: string): Promise<DriveFile> {
+	return apiGet<DriveFile>(`/drive/files/${fileId}`);
 }
 
 /** One raw life-graph record (the data viewer / citation target). */
@@ -1290,15 +1250,10 @@ export interface OntologyRecord {
 }
 
 /** Fetch a single raw record by ontology + id — backs the data viewer. */
-export async function getRecord(ontology: string, recordId: string): Promise<OntologyRecord> {
-	const res = await fetch(
-		`${API_BASE}/records/${encodeURIComponent(ontology)}/${encodeURIComponent(recordId)}`
+export function getRecord(ontology: string, recordId: string): Promise<OntologyRecord> {
+	return apiGet<OntologyRecord>(
+		`/records/${encodeURIComponent(ontology)}/${encodeURIComponent(recordId)}`
 	);
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to get record: ${res.statusText}`);
-	}
-	return res.json();
 }
 
 /**
@@ -1375,82 +1330,42 @@ export async function downloadDriveFile(fileId: string): Promise<{ file: DriveFi
  * Delete a file or folder
  */
 export async function deleteDriveFile(fileId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/drive/files/${fileId}`, { method: 'DELETE' });
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to delete file: ${res.statusText}`);
-	}
+	await apiSend('DELETE', `/drive/files/${fileId}`);
 }
 
 /**
  * Create a folder
  */
-export async function createDriveFolder(path: string, name: string): Promise<DriveFile> {
-	const res = await fetch(`${API_BASE}/drive/folders`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ path, name })
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to create folder: ${res.statusText}`);
-	}
-	return res.json();
+export function createDriveFolder(path: string, name: string): Promise<DriveFile> {
+	return apiSend<DriveFile>('POST', '/drive/folders', { path, name });
 }
 
 /**
  * Move or rename a file/folder
  */
-export async function moveDriveFile(fileId: string, newPath: string): Promise<DriveFile> {
-	const res = await fetch(`${API_BASE}/drive/files/${fileId}/move`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ new_path: newPath })
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to move file: ${res.statusText}`);
-	}
-	return res.json();
+export function moveDriveFile(fileId: string, newPath: string): Promise<DriveFile> {
+	return apiSend<DriveFile>('PUT', `/drive/files/${fileId}/move`, { new_path: newPath });
 }
 
 /**
  * List files in trash
  */
-export async function listDriveTrash(): Promise<DriveFile[]> {
-	const res = await fetch(`${API_BASE}/drive/trash`);
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to list trash: ${res.statusText}`);
-	}
-	return res.json();
+export function listDriveTrash(): Promise<DriveFile[]> {
+	return apiGet<DriveFile[]>('/drive/trash');
 }
 
 /**
  * Restore a file from trash
  */
-export async function restoreDriveFile(fileId: string): Promise<DriveFile> {
-	const res = await fetch(`${API_BASE}/drive/files/${fileId}/restore`, {
-		method: 'POST'
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to restore file: ${res.statusText}`);
-	}
-	return res.json();
+export function restoreDriveFile(fileId: string): Promise<DriveFile> {
+	return apiSend<DriveFile>('POST', `/drive/files/${fileId}/restore`);
 }
 
 /**
  * Permanently delete a file (skip trash)
  */
 export async function purgeDriveFile(fileId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/drive/files/${fileId}/purge`, {
-		method: 'DELETE'
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to permanently delete file: ${res.statusText}`);
-	}
+	await apiSend('DELETE', `/drive/files/${fileId}/purge`);
 }
 
 // ============================================================================
@@ -1514,15 +1429,8 @@ export function getFrecency(): Promise<Frecency[]> {
 /**
  * Empty entire trash (permanently delete all trashed files)
  */
-export async function emptyDriveTrash(): Promise<{ deleted_count: number }> {
-	const res = await fetch(`${API_BASE}/drive/trash/empty`, {
-		method: 'POST'
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to empty trash: ${res.statusText}`);
-	}
-	return res.json();
+export function emptyDriveTrash(): Promise<{ deleted_count: number }> {
+	return apiSend<{ deleted_count: number }>('POST', '/drive/trash/empty');
 }
 
 // =============================================================================
