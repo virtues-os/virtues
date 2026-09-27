@@ -11,6 +11,7 @@ mod store;
 
 pub mod handoff;
 pub mod outbox;
+pub mod owner;
 pub mod pair;
 pub mod pair_door;
 pub mod provision;

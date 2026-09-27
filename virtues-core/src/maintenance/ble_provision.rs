@@ -21,12 +21,23 @@
 //! provisioning the box; the generic-client interop is a non-goal, not a
 //! feature.
 //!
-//! **Lifecycle: advertised while the box is UNCLAIMED, gone once claimed.**
-//! Deliberately *not* "while offline": an unclaimed box on ethernet still
-//! advertises, in the `Provisioned` state, because the advertisement doubles
-//! as discovery — the app can read the box's URL over BLE instead of
-//! subnet-scanning, which was its own source of flakiness. Claiming is what
-//! ends setup, exactly as with the display's screens and the (frozen) SoftAP.
+//! **Lifecycle: advertised while the box is UNCLAIMED — and again whenever a
+//! claimed box has been OFFLINE for [`OFFLINE_GRACE_SECS`].**
+//!
+//! Unclaimed: deliberately *not* "while offline". An unclaimed box on ethernet
+//! still advertises, in the `Provisioned` state, because the advertisement
+//! doubles as discovery — the app can read the box's URL over BLE instead of
+//! subnet-scanning, which was its own source of flakiness.
+//!
+//! Claimed and offline: the moved box. Set up at home, switched on at the
+//! office, it has no network it knows, so no relay and no LAN can reach it,
+//! and until 2026-09-25 nothing could — the owner saw "Can't reach your
+//! server" with no way out short of a cable or a reset. Now it advertises
+//! `AuthorizationRequired`, and ONLY an already-paired device can open it, by
+//! signing a challenge with the iroh key the box allowlisted at pairing (`0x88`
+//! / `0x89`). The owner session that buys may scan and join wifi and nothing
+//! else. The phrase opens nothing on a claimed box. The moment it is back
+//! online the service goes quiet again.
 //!
 //! **Authorization: a four-word phrase gate replaces Improv's own
 //! authorization-required state.** `0x86 ClaimSetup` must present the words
@@ -44,6 +55,41 @@
 
 #![allow(dead_code)] // the protocol layer is used only from the linux half
 
+/// How long a CLAIMED box must be offline before it advertises for its owner.
+///
+/// Long enough that a router reboot or a slow DHCP at boot never lights the
+/// radio; short enough that someone who just carried the box to a new place
+/// finds it asking by the time they have the app open.
+pub const OFFLINE_GRACE_SECS: u64 = 90;
+
+/// How long an owner challenge (`0x88`) stays redeemable. One round trip plus
+/// a signature — seconds, not minutes.
+const CHALLENGE_TTL_SECS: u64 = 60;
+
+/// Most owner challenges outstanding at once. A household has a handful of
+/// devices; the cap only exists so radios in range cannot grow the table.
+const MAX_CHALLENGES: usize = 16;
+
+/// Check an owner proof's CRYPTOGRAPHY: that `signature_hex` is `endpoint_id`'s
+/// signature over [`owner_proof_message`] of `nonce`. Returns the parsed id so
+/// the caller can check it against the allowlist — which this deliberately
+/// does not do, so it can be tested without a database.
+///
+/// `None` for every failure alike (bad hex, wrong length, bad signature): the
+/// box answers all of them with the same `NotAuthorized`.
+pub(crate) fn verify_owner_signature(
+    nonce: &[u8],
+    endpoint_id: &str,
+    signature_hex: &str,
+) -> Option<virtues_iroh::EndpointId> {
+    use std::str::FromStr;
+    let id = virtues_iroh::EndpointId::from_str(endpoint_id.trim()).ok()?;
+    let bytes: [u8; 64] = hex::decode(signature_hex.trim()).ok()?.try_into().ok()?;
+    let sig = virtues_iroh::Signature::from_bytes(&bytes);
+    id.verify(&owner_proof_message(nonce), &sig).ok()?;
+    Some(id)
+}
+
 // ─── Improv protocol ────────────────────────────────────────────────────────
 //
 // The wire format lives in `virtues-improv`, shared with the DESKTOP client
@@ -56,7 +102,8 @@
 // The crate's `client` feature is OFF here on purpose: the box is a GATT
 // server and must not carry a BLE client stack it will never use.
 pub use virtues_improv::protocol::{
-    build_result, chunk_for_results, parse_rpc, service_data, Command, ImprovError, State,
+    build_result, chunk_for_results, owner_proof_message, parse_rpc, service_data, Command,
+    ImprovError, State,
     CHAR_CAPABILITIES, CHAR_CURRENT_STATE, CHAR_ERROR_STATE, CHAR_RPC_COMMAND, CHAR_RPC_RESULT,
     SERVICE_DATA_UUID_16, SERVICE_UUID,
 };
@@ -90,8 +137,25 @@ mod server {
         /// connection object, because BlueZ gives us no disconnect signal here.
         /// The approximation is sound: a dropped connection sends no more
         /// commands, so the session ages out. The address is not the security —
-        /// the phrase is; this only decides *which* proven peer is mid-setup.
-        session: Option<(String, std::time::Instant)>,
+        /// the phrase (or the owner's signature) is; this only decides *which*
+        /// proven peer is mid-setup.
+        session: Option<(String, std::time::Instant, SessionKind)>,
+        /// Outstanding owner challenges, one per BLE peer: the nonce and when
+        /// it was issued. Single use — taken, not read, by `0x89`.
+        ///
+        /// Per peer, not one slot for the box: with one slot, any radio in
+        /// range could ask for a challenge every second and keep replacing the
+        /// owner's before they could answer it.
+        challenges: std::collections::HashMap<String, ([u8; 32], std::time::Instant)>,
+    }
+
+    /// What proved a session, and so what it may do.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum SessionKind {
+        /// The four-word phrase on an unclaimed box: wifi, grant, pair.
+        Setup,
+        /// A paired device's signature on a claimed box: wifi only.
+        Owner,
     }
 
     /// How long a claimed setup session survives without a command. Long enough
@@ -109,6 +173,7 @@ mod server {
                 error_tx: None,
                 result_tx: None,
                 session: None,
+                challenges: std::collections::HashMap::new(),
             }
         }
 
@@ -126,13 +191,13 @@ mod server {
             }
         }
 
-        /// Is `peer` the live setup session? Refreshes its idle clock, so an
-        /// active setup never times out mid-flow.
-        fn session_is(&mut self, peer: &str) -> bool {
+        /// Is `peer` the live session, opened by `kind`? Refreshes its idle
+        /// clock, so an active setup never times out mid-flow.
+        fn session_is(&mut self, peer: &str, kind: SessionKind) -> bool {
             let timeout = Duration::from_secs(SESSION_IDLE_TIMEOUT_SECS);
             match &self.session {
-                Some((addr, last)) if addr == peer && last.elapsed() < timeout => {
-                    self.session = Some((peer.to_string(), std::time::Instant::now()));
+                Some((addr, last, k)) if addr == peer && *k == kind && last.elapsed() < timeout => {
+                    self.session = Some((peer.to_string(), std::time::Instant::now(), kind));
                     true
                 }
                 _ => false,
@@ -140,15 +205,44 @@ mod server {
         }
 
         /// Open the session for `peer`, replacing any stale one.
-        fn claim_session(&mut self, peer: &str) {
-            self.session = Some((peer.to_string(), std::time::Instant::now()));
+        fn claim_session(&mut self, peer: &str, kind: SessionKind) {
+            self.session = Some((peer.to_string(), std::time::Instant::now(), kind));
+        }
+
+        /// Issue a fresh owner challenge to `peer`, replacing only ITS
+        /// outstanding one. Expired challenges are dropped on the way, and the
+        /// table is capped so a crowd of radios cannot grow it without bound.
+        fn issue_challenge(&mut self, peer: &str) -> [u8; 32] {
+            use rand::RngCore;
+            let ttl = Duration::from_secs(CHALLENGE_TTL_SECS);
+            self.challenges.retain(|_, (_, at)| at.elapsed() < ttl);
+            if self.challenges.len() >= MAX_CHALLENGES && !self.challenges.contains_key(peer) {
+                // Evict the oldest. A real owner answers in seconds, so the
+                // oldest entry is the one least likely to be theirs.
+                if let Some(oldest) =
+                    self.challenges.iter().min_by_key(|(_, (_, at))| *at).map(|(k, _)| k.clone())
+                {
+                    self.challenges.remove(&oldest);
+                }
+            }
+            let mut nonce = [0u8; 32];
+            rand::rng().fill_bytes(&mut nonce);
+            self.challenges.insert(peer.to_string(), (nonce, std::time::Instant::now()));
+            nonce
+        }
+
+        /// Take `peer`'s outstanding challenge if it is still fresh. Taking it
+        /// even on the way to a failed proof is the point: one nonce, one try.
+        fn take_challenge(&mut self, peer: &str) -> Option<[u8; 32]> {
+            let (nonce, at) = self.challenges.remove(peer)?;
+            (at.elapsed() < Duration::from_secs(CHALLENGE_TTL_SECS)).then_some(nonce)
         }
 
         /// Whether some OTHER peer currently holds the session — used only to
         /// log, never to leak who.
         fn session_held_elsewhere(&self, peer: &str) -> bool {
             let timeout = Duration::from_secs(SESSION_IDLE_TIMEOUT_SECS);
-            matches!(&self.session, Some((addr, last)) if addr != peer && last.elapsed() < timeout)
+            matches!(&self.session, Some((addr, last, _)) if addr != peer && last.elapsed() < timeout)
         }
 
         async fn send_result(&mut self, packet: Vec<u8>) {
@@ -202,29 +296,50 @@ mod server {
         }
         tokio::spawn(async move {
             let mut serving: Option<ServeHandles> = None;
+            // When a CLAIMED box was first seen offline, for the grace period.
+            let mut offline_since: Option<std::time::Instant> = None;
             let mut tick = tokio::time::interval(Duration::from_secs(RECONCILE_SECS));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tick.tick().await;
-                // Fails CLOSED (a DB blip must not re-advertise the Improv
-                // service on a claimed box). See `api::pair::is_unclaimed`.
+                // Fails CLOSED (a DB blip must not re-advertise the SETUP
+                // service on a claimed box). See `api::pair::is_unclaimed`. A
+                // blip on a claimed, offline box lands on the owner-gated
+                // service, which admits no one the database cannot vouch for.
                 let claimed = !crate::api::pair::is_unclaimed(&pool).await;
-                // Connectivity changed since the service came up? Re-serve, so
-                // the advertisement and state characteristic tell the truth.
+                let online = crate::cli::link::has_internet();
+                offline_since = match (claimed && !online, offline_since) {
+                    (true, None) => Some(std::time::Instant::now()),
+                    (true, since) => since,
+                    (false, _) => None,
+                };
+                let asking_owner = offline_since
+                    .map(|t| t.elapsed() >= Duration::from_secs(OFFLINE_GRACE_SECS))
+                    .unwrap_or(false);
+                let want = !claimed || asking_owner;
+
+                // Claim state or connectivity changed since the service came
+                // up? Re-serve, so the advertisement and state characteristic
+                // tell the truth. (A claimed box going online is covered by
+                // `want` turning false.)
                 if let Some(h) = &serving {
-                    if !claimed && h.online_at_serve != crate::cli::link::has_internet() {
-                        tracing::info!("ble_provision: connectivity changed, re-serving with fresh state");
+                    if h.claimed_at_serve != claimed || (!claimed && h.online_at_serve != online) {
+                        tracing::info!("ble_provision: claim or connectivity changed, re-serving with fresh state");
                         serving = None;
                     }
                 }
-                match (claimed, serving.is_some()) {
-                    (true, true) => {
-                        tracing::info!("ble_provision: box is claimed, stopping Improv service");
+                match (want, serving.is_some()) {
+                    (false, true) => {
+                        tracing::info!("ble_provision: box is claimed and online, stopping Improv service");
                         serving = None; // handles drop → unregister + stop advertising
                     }
-                    (false, false) => match serve(pool.clone()).await {
+                    (true, false) => match serve(pool.clone(), claimed).await {
                         Ok(h) => {
-                            tracing::info!("ble_provision: Improv service up, advertising");
+                            if claimed {
+                                tracing::warn!("ble_provision: claimed box offline, advertising for its owner");
+                            } else {
+                                tracing::info!("ble_provision: Improv service up, advertising");
+                            }
                             serving = Some(h);
                         }
                         Err(e) => {
@@ -252,9 +367,12 @@ mod server {
         /// online" for hours after losing its network — the app told the user
         /// to tap a chip that could not exist (seen live 2026-08-11).
         online_at_serve: bool,
+        /// Whether this is the owner-gated service. The first pairing flips a
+        /// box from one to the other, and the state byte must follow.
+        claimed_at_serve: bool,
     }
 
-    async fn serve(pool: PgPool) -> bluer::Result<ServeHandles> {
+    async fn serve(pool: PgPool, claimed: bool) -> bluer::Result<ServeHandles> {
         use bluer::gatt::local::{
             Application, Characteristic, CharacteristicNotify, CharacteristicNotifyMethod,
             CharacteristicRead, CharacteristicWrite, CharacteristicWriteMethod, Service,
@@ -269,7 +387,13 @@ mod server {
         // has_internet, not primary_ip: a captive guest network hands out
         // IPs while blocking traffic, and advertising Provisioned on one
         // routes the app away from the wifi picker the owner still needs.
-        let initial = if crate::cli::link::has_internet() {
+        //
+        // A claimed box only serves while offline and says so with the one
+        // state the spec reserves for "prove yourself first".
+        let online = crate::cli::link::has_internet();
+        let initial = if claimed {
+            State::AuthorizationRequired
+        } else if online {
             State::Provisioned
         } else {
             State::Authorized
@@ -458,7 +582,8 @@ mod server {
             _adv: adv_handle,
             _app: app_handle,
             _session: session,
-            online_at_serve: initial == State::Provisioned,
+            online_at_serve: online,
+            claimed_at_serve: claimed,
         })
     }
 
@@ -480,6 +605,103 @@ mod server {
         // A new command clears the previous error — the client is acting again.
         improv.lock().await.set_error(ImprovError::None).await;
 
+        // ── which box are we? ──
+        //
+        // Asked per command, not fixed at serve time: the first pairing flips
+        // an unclaimed box to claimed mid-conversation. Fails closed — a DB
+        // error reads as claimed, the stricter of the two gates.
+        let claimed = !crate::api::pair::is_unclaimed(&pool).await;
+        if claimed {
+            owner_gate(improv, pool, cmd, peer).await;
+            return;
+        }
+        if matches!(cmd, Command::OwnerChallenge | Command::OwnerProve { .. }) {
+            // Nobody owns an unclaimed box yet; its door is the phrase.
+            improv.lock().await.set_error(ImprovError::NotAuthorized).await;
+            return;
+        }
+        dispatch(improv, pool, cmd, peer, SessionKind::Setup).await;
+    }
+
+    /// The claimed box's door. Only the owner challenge and proof are open;
+    /// wifi, the scan and device info need an OWNER session; setup's own
+    /// commands (phrase, grant, pair) are refused outright — a claimed box is
+    /// set up, and none of them has a meaning here that is not an attack.
+    ///
+    /// The scan and device info are gated too, unlike on an unclaimed box: a
+    /// claimed box belongs to someone, and which networks it can see and what
+    /// it runs are theirs, not the corridor's.
+    async fn owner_gate(improv: Arc<Mutex<Improv>>, pool: PgPool, cmd: Command, peer: String) {
+        match cmd {
+            Command::OwnerChallenge => {
+                let nonce = improv.lock().await.issue_challenge(&peer);
+                improv
+                    .lock()
+                    .await
+                    .send_result(build_result(0x88, &[&hex::encode(nonce)]))
+                    .await;
+            }
+            Command::OwnerProve { endpoint_id, signature } => {
+                let Some(nonce) = improv.lock().await.take_challenge(&peer) else {
+                    tracing::warn!("ble_provision: owner proof with no live challenge");
+                    improv.lock().await.set_error(ImprovError::NotAuthorized).await;
+                    return;
+                };
+                let Some(id) = verify_owner_signature(&nonce, &endpoint_id, &signature) else {
+                    tracing::warn!("ble_provision: owner proof failed its signature");
+                    improv.lock().await.set_error(ImprovError::NotAuthorized).await;
+                    return;
+                };
+                // The signature proves the key; the allowlist proves the key is
+                // one of ours and not revoked. A query error refuses — it must
+                // never read as "paired".
+                match crate::relay::is_paired_endpoint(&pool, &id).await {
+                    Ok(true) => {
+                        let mut g = improv.lock().await;
+                        g.claim_session(&peer, SessionKind::Owner);
+                        g.set_state(State::Authorized).await;
+                        g.send_result(build_result(0x89, &["ok"])).await;
+                        tracing::info!(device = %id.fmt_short(), "ble_provision: owner session opened");
+                    }
+                    Ok(false) => {
+                        tracing::warn!(device = %id.fmt_short(), "ble_provision: owner proof from a device this box does not trust");
+                        improv.lock().await.set_error(ImprovError::NotAuthorized).await;
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "ble_provision: owner proof — device lookup failed, refusing");
+                        improv.lock().await.set_error(ImprovError::NotAuthorized).await;
+                    }
+                }
+            }
+            Command::WifiSettings { .. }
+            | Command::EnterpriseSettings { .. }
+            | Command::ScanWifi
+            | Command::DeviceInfo
+            | Command::Identify => {
+                if !improv.lock().await.session_is(&peer, SessionKind::Owner) {
+                    tracing::warn!("ble_provision: refusing a command on a claimed box — no owner session");
+                    improv.lock().await.set_error(ImprovError::NotAuthorized).await;
+                    return;
+                }
+                dispatch(improv, pool, cmd, peer, SessionKind::Owner).await;
+            }
+            Command::ClaimSetup { .. } | Command::ClaimGrant { .. } | Command::PairConsume { .. } => {
+                tracing::warn!("ble_provision: refusing a setup command on a claimed box");
+                improv.lock().await.set_error(ImprovError::NotAuthorized).await;
+            }
+        }
+    }
+
+    /// Run a command the gate has already admitted. `kind` is the session the
+    /// caller's gate requires for configuring commands; the owner gate checks
+    /// its own before calling, so for it this re-check is a no-op refresh.
+    async fn dispatch(
+        improv: Arc<Mutex<Improv>>,
+        pool: PgPool,
+        cmd: Command,
+        peer: String,
+        kind: SessionKind,
+    ) {
         // ── the gate ──
         //
         // Everything that CONFIGURES the box requires a claimed setup session,
@@ -505,7 +727,7 @@ mod server {
                 // to hand codes to the app — were deleted 2026-08-24.
                 | Command::PairConsume { .. }
         );
-        if needs_session && !improv.lock().await.session_is(&peer) {
+        if needs_session && !improv.lock().await.session_is(&peer, kind) {
             let held = improv.lock().await.session_held_elsewhere(&peer);
             tracing::warn!(
                 held_by_another = held,
@@ -514,7 +736,7 @@ mod server {
             improv.lock().await.set_error(ImprovError::NotAuthorized).await;
             return;
         }
-        if needs_session {
+        if needs_session && kind == SessionKind::Setup {
             // Authorized work is happening: keep the panel's "setting up with…"
             // line alive. Empty label — the name came with the claim and is
             // held there; see `setup_phrase::note_session`.
@@ -644,7 +866,7 @@ mod server {
                 tokio::spawn(async move {
                     if crate::api::setup_phrase::verify(&pool, &phrase).await {
                         let mut g = improv.lock().await;
-                        g.claim_session(&peer);
+                        g.claim_session(&peer, SessionKind::Setup);
                         // The words are spent, so they leave the panel and this
                         // name takes their place — confirmation ON THE BOX that
                         // what the owner typed landed here, and a race they did
@@ -661,6 +883,8 @@ mod server {
                     }
                 });
             }
+            // Handled by `owner_gate`; an unclaimed box refused them above.
+            Command::OwnerChallenge | Command::OwnerProve { .. } => {}
             // 0x84 (LinkCode) and 0x85 (PairCode) handlers were deleted
             // 2026-08-24 with their opcodes — the grant (0x82) and the codeless
             // 0x83 made both code hand-offs pointless. parse_rpc answers the
@@ -902,3 +1126,63 @@ pub use server::spawn;
 /// no-op so `server::run` can call it unconditionally.
 #[cfg(not(target_os = "linux"))]
 pub fn spawn(_pool: sqlx::PgPool) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use virtues_iroh::SecretKey;
+
+    fn device() -> SecretKey {
+        SecretKey::from_bytes(&[7u8; 32])
+    }
+
+    fn sign(key: &SecretKey, nonce: &[u8]) -> String {
+        hex::encode(key.sign(&owner_proof_message(nonce)).to_bytes())
+    }
+
+    #[test]
+    fn a_paired_devices_signature_over_the_nonce_verifies() {
+        let key = device();
+        let nonce = [42u8; 32];
+        let id = verify_owner_signature(&nonce, &key.public().to_string(), &sign(&key, &nonce));
+        assert_eq!(id, Some(key.public()));
+    }
+
+    #[test]
+    fn a_signature_over_another_nonce_is_refused() {
+        // The replay case: a proof captured for one challenge must be worthless
+        // for the next. The box never reissues a nonce, and this pins that a
+        // proof is bound to the nonce it signed.
+        let key = device();
+        let sig = sign(&key, &[1u8; 32]);
+        assert_eq!(verify_owner_signature(&[2u8; 32], &key.public().to_string(), &sig), None);
+    }
+
+    #[test]
+    fn someone_elses_key_cannot_sign_for_a_paired_device() {
+        let paired = device();
+        let stranger = SecretKey::from_bytes(&[9u8; 32]);
+        let nonce = [3u8; 32];
+        let forged = sign(&stranger, &nonce);
+        assert_eq!(verify_owner_signature(&nonce, &paired.public().to_string(), &forged), None);
+    }
+
+    #[test]
+    fn a_bare_signature_without_the_context_is_refused() {
+        // Domain separation: a signature over the raw nonce (what some other
+        // protocol might one day ask this key to sign) must not open the box.
+        let key = device();
+        let nonce = [4u8; 32];
+        let raw = hex::encode(key.sign(&nonce).to_bytes());
+        assert_eq!(verify_owner_signature(&nonce, &key.public().to_string(), &raw), None);
+    }
+
+    #[test]
+    fn malformed_proofs_are_refused_not_panicked_on() {
+        let key = device();
+        let id = key.public().to_string();
+        assert_eq!(verify_owner_signature(&[0u8; 32], &id, "zz"), None);
+        assert_eq!(verify_owner_signature(&[0u8; 32], &id, "abcd"), None);
+        assert_eq!(verify_owner_signature(&[0u8; 32], "not-a-key", &"00".repeat(64)), None);
+    }
+}

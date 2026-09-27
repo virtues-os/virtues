@@ -147,6 +147,15 @@ mod desktop {
     virtues_improv::ImprovClient::shared()
   }
 
+  /// `{ok: false, code, error}` for a desktop client failure. `code` is the
+  /// classified `FailureKind`, never read out of the words — the web side
+  /// (`$lib/tauri/boxRadio`) branches on it, and the Swift plugin sends the
+  /// same field, so one screen handles both platforms.
+  pub(super) fn failure(e: &anyhow::Error) -> serde_json::Value {
+    let (code, error) = virtues_improv::classify(e);
+    serde_json::json!({ "ok": false, "code": code, "error": error })
+  }
+
   /// Mirror the Swift plugin's `trigger("improv-progress", …)`. Tauri's
   /// `addPluginListener('reach', 'improv-progress', …)` listens on this exact
   /// event name, so one JS listener serves both platforms.
@@ -279,7 +288,7 @@ pub(crate) async fn improv_claim<R: Runtime>(
     // there are no words to save.
     return Ok(match desktop::client().claim_setup(&id, &phrase, &label).await {
       Ok(gated) => serde_json::json!({ "ok": true, "gated": gated }),
-      Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
+      Err(e) => desktop::failure(&e),
     });
   }
   #[cfg(target_os = "android")]
@@ -324,7 +333,10 @@ pub(crate) async fn improv_wifi_scan<R: Runtime>(
           "enterprise": n.enterprise,
         })).collect::<Vec<_>>()
       }),
-      Err(e) => serde_json::json!({ "networks": [], "error": format!("{e:#}") }),
+      Err(e) => {
+        let (code, error) = virtues_improv::classify(&e);
+        serde_json::json!({ "networks": [], "code": code, "error": error })
+      }
     });
   }
   #[cfg(target_os = "android")]
@@ -369,7 +381,7 @@ pub(crate) async fn improv_provision<R: Runtime>(
         .await
       {
         Ok(url) => serde_json::json!({ "ok": true, "url": url }),
-        Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
+        Err(e) => desktop::failure(&e),
       },
     );
   }
@@ -405,7 +417,7 @@ pub(crate) async fn improv_grant<R: Runtime>(
     let _ = &app;
     return Ok(match desktop::client().claim_grant(&id, &grant).await {
       Ok(()) => serde_json::json!({ "ok": true }),
-      Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
+      Err(e) => desktop::failure(&e),
     });
   }
   #[cfg(target_os = "android")]
@@ -472,7 +484,7 @@ pub(crate) async fn improv_pair<R: Runtime>(
     // `resolve_source_id` files it as `__device__`: paired, no fan-out.
     match desktop::client().pair(&id, kind, "", label, &identity.node_id).await {
       Ok(b) => b,
-      Err(e) => return Ok(serde_json::json!({ "ok": false, "error": format!("{e:#}") })),
+      Err(e) => return Ok(desktop::failure(&e)),
     }
   };
 
@@ -514,6 +526,87 @@ pub(crate) async fn improv_disconnect<R: Runtime>(app: AppHandle<R>) -> Result<(
     let _ = app;
     Ok(())
   }
+}
+
+/// Open an OWNER session on a claimed box that has lost its network — the
+/// moved-box path (Improv `0x88` challenge, `0x89` proof).
+///
+/// The box hands out a one-time nonce; this device signs it with the iroh key
+/// the box allowlisted at pairing and hands back the signature. Afterwards the
+/// same `improv_wifi_scan` / `improv_provision` the setup flow uses work on
+/// this connection — and nothing else does.
+///
+/// Returns `{ok: true}` or `{ok: false, code, error}`, where `code` is one of
+/// the `BoxRadioErrorCode`s in `src/lib/tauri/boxRadio.ts`: `refused` (not this
+/// device's server, or revoked), `not-found`, `timeout`, `unsupported` (the
+/// box predates the command), `failed`. The web side tries the next server in
+/// range on `refused`, so that code has to be right.
+#[command]
+pub(crate) async fn improv_owner_claim<R: Runtime>(
+  app: AppHandle<R>,
+  id: String,
+) -> Result<serde_json::Value> {
+  use crate::ReachExt;
+  let fail = |code: &str, error: String| Ok(serde_json::json!({ "ok": false, "code": code, "error": error }));
+
+  #[cfg(target_os = "ios")]
+  {
+    use tauri::Manager;
+    let handle = app.state::<crate::IosPluginHandle<R>>();
+    let ch: serde_json::Value = handle
+      .0
+      .run_mobile_plugin("improv_owner_challenge", serde_json::json!({ "id": id }))
+      .map_err(|e| crate::Error::Reach(e.to_string()))?;
+    if ch.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+      return Ok(ch); // Swift already speaks {ok, code, error}
+    }
+    let nonce = match ch.get("nonce").and_then(|v| v.as_str()).and_then(|h| hex_bytes(h)) {
+      Some(n) => n,
+      None => return fail("failed", "Your server sent a challenge this app couldn't read.".into()),
+    };
+    let proof = match app.reach().sign_owner_proof(&nonce) {
+      Ok(p) => p,
+      Err(e) => return fail("failed", format!("{e:#}")),
+    };
+    return handle
+      .0
+      .run_mobile_plugin(
+        "improv_owner_prove",
+        serde_json::json!({ "id": id, "endpointId": proof.endpoint_id, "signature": proof.signature_hex }),
+      )
+      .map_err(|e| crate::Error::Reach(e.to_string()));
+  }
+
+  #[cfg(not(any(target_os = "ios", target_os = "android")))]
+  {
+    let nonce = match desktop::client().owner_challenge(&id).await {
+      Ok(n) => n,
+      Err(e) => return Ok(desktop::failure(&e)),
+    };
+    let proof = match app.reach().sign_owner_proof(&nonce) {
+      Ok(p) => p,
+      Err(e) => return fail("failed", format!("{e:#}")),
+    };
+    return match desktop::client().owner_prove(&id, &proof.endpoint_id, &proof.signature_hex).await {
+      Ok(()) => Ok(serde_json::json!({ "ok": true })),
+      Err(e) => Ok(desktop::failure(&e)),
+    };
+  }
+
+  #[cfg(target_os = "android")]
+  {
+    let _ = (app, id, fail);
+    Err(crate::Error::Reach("Bluetooth isn't available on Android yet".into()))
+  }
+}
+
+#[cfg(target_os = "ios")]
+fn hex_bytes(s: &str) -> Option<Vec<u8>> {
+  let s = s.trim();
+  if s.len() % 2 != 0 {
+    return None;
+  }
+  (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()
 }
 
 // `wifi_join`/`wifi_forget` (NEHotspotConfiguration) were deleted 2026-08-18.

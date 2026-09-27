@@ -26,7 +26,9 @@ pub const CHAR_CAPABILITIES: &str = "00467768-6228-2272-4663-277478268005";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum State {
-    /// Unused by this box — see `ble_provision`'s module docs on authorization.
+    /// A CLAIMED box that has lost its network and is asking its owner for
+    /// help: only one of its already-paired devices can open it (`0x88`/`0x89`).
+    /// An unclaimed box never advertises this — its gate is the phrase.
     AuthorizationRequired = 0x01,
     Authorized = 0x02,
     Provisioning = 0x03,
@@ -63,11 +65,11 @@ impl ImprovError {
     /// hit, and "usually a wrong password" is the true and useful reading.
     pub fn describe(code: u8) -> String {
         match code {
-            0x01 => "The box couldn't read that request — try again.".into(),
-            0x02 => "This box doesn't support that step.".into(),
-            0x03 => "The box couldn't join that network — usually a wrong password.".into(),
-            0x04 => "The box refused the request.".into(),
-            other => format!("Setup failed on the box (error {other})."),
+            0x01 => "Your server couldn't read that request. Try again.".into(),
+            0x02 => "Your server doesn't support that step yet.".into(),
+            0x03 => "Your server couldn't join that network. Check the Wi-Fi password.".into(),
+            0x04 => "Your server refused the request.".into(),
+            other => format!("Your server couldn't finish that step (error {other})."),
         }
     }
 }
@@ -149,6 +151,46 @@ pub enum Command {
     /// and a race they did not start reads as a name they do not recognise.
     /// May be empty; the panel then says only that a device is setting up.
     ClaimSetup { phrase: String, label: String },
+    /// `0x88` — OUR extension: ask a CLAIMED box for an owner challenge. No data.
+    ///
+    /// The moved-box path. A box that was set up at home and switched on at
+    /// the office has no internet, so no relay and no LAN can reach it — the
+    /// radio is the only way in. It advertises again (state
+    /// [`State::AuthorizationRequired`]), and the owner's device proves it is
+    /// one of the box's paired devices: the box answers this with a fresh
+    /// random nonce, and `0x89` returns it signed.
+    ///
+    /// Result: `[nonce_hex]` (32 random bytes). Single use, bound to the BLE
+    /// peer that asked, short-lived.
+    OwnerChallenge,
+    /// `0x89` — OUR extension: prove ownership. `[endpoint_id, signature]`,
+    /// both hex.
+    ///
+    /// `endpoint_id` is this device's iroh EndpointId — the ed25519 public key
+    /// the box already allowlists for it (`app_device.endpoint_id`), so
+    /// pairing IS the enrollment and nothing new is stored anywhere. The
+    /// signature is over [`owner_proof_message`] of the nonce from `0x88`. A
+    /// valid proof from a non-revoked device opens an OWNER session on this
+    /// connection, which may scan and join wifi — and nothing else: no pair, no
+    /// account grant. Revoking the device in Settings revokes this too.
+    ///
+    /// Result: `["ok"]`, or error `NotAuthorized` for every failure alike.
+    OwnerProve { endpoint_id: String, signature: String },
+}
+
+/// Domain separation for the owner proof. A device's iroh key signs nothing
+/// else in this codebase today; the prefix guarantees that if it ever does,
+/// neither signature can stand in for the other.
+pub const OWNER_PROOF_CONTEXT: &[u8] = b"virtues/improv/owner-proof/v1\n";
+
+/// The exact bytes a device signs for `0x89`: the context, then the raw nonce.
+/// One function, used by the box to verify and by every client to sign, so the
+/// two cannot drift the way the pair shape once did across Rust and Swift.
+pub fn owner_proof_message(nonce: &[u8]) -> Vec<u8> {
+    let mut m = Vec::with_capacity(OWNER_PROOF_CONTEXT.len() + nonce.len());
+    m.extend_from_slice(OWNER_PROOF_CONTEXT);
+    m.extend_from_slice(nonce);
+    m
 }
 
 // 0x84 (LinkCode) and 0x85 (PairCode) were DELETED 2026-08-24 (one-wire-plan).
@@ -158,7 +200,8 @@ pub enum Command {
 // code just so the app could hand it straight back in 0x83 — the codeless,
 // session-authorized 0x83 does that hand-off box-internally. Do not reuse the
 // opcodes: a stale client sending them gets UnknownCommand, which is the
-// honest answer.
+// honest answer. 0x87 is skipped too: it was drafted in the one-wire plan and
+// cut, and the plan doc still names it.
 
 impl Command {
     /// The command byte this variant travels as.
@@ -172,6 +215,8 @@ impl Command {
             Command::ClaimGrant { .. } => 0x82,
             Command::PairConsume { .. } => 0x83,
             Command::ClaimSetup { .. } => 0x86,
+            Command::OwnerChallenge => 0x88,
+            Command::OwnerProve { .. } => 0x89,
         }
     }
 }
@@ -247,6 +292,20 @@ pub fn parse_rpc(packet: &[u8]) -> Result<Command, ImprovError> {
             }
             Ok(Command::ClaimSetup { phrase, label })
         }
+        0x88 => {
+            if !data.is_empty() {
+                return Err(ImprovError::InvalidPacket);
+            }
+            Ok(Command::OwnerChallenge)
+        }
+        0x89 => {
+            let (endpoint_id, rest) = take_string(data).ok_or(ImprovError::InvalidPacket)?;
+            let (signature, rest) = take_string(rest).ok_or(ImprovError::InvalidPacket)?;
+            if endpoint_id.is_empty() || signature.is_empty() || !rest.is_empty() {
+                return Err(ImprovError::InvalidPacket);
+            }
+            Ok(Command::OwnerProve { endpoint_id, signature })
+        }
         _ => Err(ImprovError::UnknownCommand),
     }
 }
@@ -295,7 +354,10 @@ pub fn build_result(command_id: u8, strings: &[&str]) -> Vec<u8> {
 pub fn build_rpc(cmd: &Command) -> Vec<u8> {
     let data = match cmd {
         Command::WifiSettings { ssid, password } => pack_strings(&[ssid, password]),
-        Command::Identify | Command::DeviceInfo | Command::ScanWifi => Vec::new(),
+        Command::Identify | Command::DeviceInfo | Command::ScanWifi | Command::OwnerChallenge => {
+            Vec::new()
+        }
+        Command::OwnerProve { endpoint_id, signature } => pack_strings(&[endpoint_id, signature]),
         Command::EnterpriseSettings { ssid, identity, password } => {
             pack_strings(&[ssid, identity, password])
         }
@@ -588,10 +650,46 @@ mod tests {
                 phrase: "mango-burly-skull-dough".into(),
                 label: "Adam's Mac".into(),
             },
+            Command::OwnerChallenge,
+            Command::OwnerProve { endpoint_id: "ab".repeat(32), signature: "cd".repeat(64) },
         ] {
             let wire = build_rpc(&cmd);
             assert_eq!(parse_rpc(&wire), Ok(cmd.clone()), "round trip failed for {cmd:?}");
         }
+    }
+
+    #[test]
+    fn an_owner_proof_fits_one_frame() {
+        // A real proof is a 64-hex-char EndpointId and a 128-hex-char
+        // signature: 194 data bytes against the frame's 255. If either ever
+        // grows (a longer key, base32), this is where it stops fitting —
+        // `pack_strings` would truncate silently and every proof would fail.
+        let wire = build_rpc(&Command::OwnerProve {
+            endpoint_id: "ab".repeat(32),
+            signature: "cd".repeat(64),
+        });
+        assert_eq!(wire[1] as usize, 1 + 64 + 1 + 128);
+        assert!(wire.len() <= 255 + 3);
+    }
+
+    #[test]
+    fn owner_prove_refuses_empty_fields() {
+        assert_eq!(parse_rpc(&raw(0x89, &[0, 0])), Err(ImprovError::InvalidPacket));
+    }
+
+    #[test]
+    fn owner_challenge_takes_no_data() {
+        assert_eq!(parse_rpc(&raw(0x88, &[])), Ok(Command::OwnerChallenge));
+        assert_eq!(parse_rpc(&raw(0x88, &[1, b'x'])), Err(ImprovError::InvalidPacket));
+    }
+
+    #[test]
+    fn the_owner_message_is_context_then_nonce() {
+        // Both ends build it from this function; pin the layout anyway, since a
+        // Swift or JS signer would have to reproduce it byte for byte.
+        let m = owner_proof_message(&[1, 2, 3]);
+        assert!(m.starts_with(b"virtues/improv/owner-proof/v1\n"));
+        assert_eq!(&m[m.len() - 3..], &[1, 2, 3]);
     }
 
     #[test]
@@ -601,6 +699,7 @@ mod tests {
         // and the opcodes must never be silently reused.
         assert_eq!(parse_rpc(&frame(0x84, Vec::new())), Err(ImprovError::UnknownCommand));
         assert_eq!(parse_rpc(&frame(0x85, Vec::new())), Err(ImprovError::UnknownCommand));
+        assert_eq!(parse_rpc(&frame(0x87, Vec::new())), Err(ImprovError::UnknownCommand));
     }
 
     #[test]
