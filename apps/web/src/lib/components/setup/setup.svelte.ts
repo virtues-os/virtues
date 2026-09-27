@@ -263,6 +263,10 @@ class SetupStore {
 		const key = SERVER[id];
 		if (!key) return 'done';
 		const own = gettingStarted.step(key)?.status;
+		// A required step can't be set aside. The server still keeps skips a
+		// retired command once wrote against the subscription, and taking one
+		// at its word walked people past a step Setup never offers to skip.
+		if (own === 'skipped' && !OPTIONAL.has(id)) return 'open';
 		if (own) return own;
 		// A server older than the timeline step: its interview status is the
 		// nearest truth (it once counted drawn chapters too).

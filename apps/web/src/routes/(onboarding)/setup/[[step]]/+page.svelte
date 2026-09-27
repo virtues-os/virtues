@@ -257,7 +257,9 @@
 
 {#if unreachable}
 	<div class="center">
-		<p class="err" in:fade>Couldn't reach your server. Make sure you're on the same network, then reload this page.</p>
+		<!-- Over the relay "the same network" is not the fix, and was untrue. -->
+		<p class="err" in:fade>Couldn't reach your server. Check that it's on and connected to the internet, then try again.</p>
+		<button type="button" class="setup-go" in:fade onclick={() => location.reload()}>Try again</button>
 	</div>
 {:else if !ready}
 	<div class="center" aria-hidden="true"></div>
@@ -367,12 +369,18 @@
 		min-height: 100vh;
 		display: grid;
 		place-items: center;
+		align-content: center;
+		gap: 16px;
 		padding: 0 16px;
 	}
 	.err {
 		max-width: 28rem;
-		font-size: 14px;
-		color: var(--color-error);
+		margin: 0;
+		font-size: 15px;
+		line-height: 1.5;
+		text-align: center;
+		text-wrap: balance;
+		color: var(--color-foreground);
 	}
 
 	/* The steps sit under the dots, which are fixed at the top. */

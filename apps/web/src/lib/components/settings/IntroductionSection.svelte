@@ -56,8 +56,10 @@
 			// `onboarding` is what the app-shell guard reads; Setup's close
 			// sets it back to `active`, so this cannot strand anyone. From the
 			// first step: every step is done or reopened, so all are reachable.
+			// From Welcome, so the walk replays with the letter in it; it went
+			// to the Server receipt, past both.
 			await skipOnboarding(false);
-			await goto('/setup/server');
+			await goto('/setup/welcome');
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			busy = false;

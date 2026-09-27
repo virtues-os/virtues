@@ -450,7 +450,7 @@ pub async fn start_interview_handler(
         )
             .into_response();
     }
-    answer(speak_then_state(pool).await)
+    answer(compute(pool).await)
 }
 
 /// Skip (or un-skip) a step: the one stored fact about getting started.
@@ -655,6 +655,13 @@ fn script(state: &GettingStartedState) -> Vec<(String, String)> {
 /// Only the room's own lines are touched (`gs:` subjects). The person's turns
 /// carry no subject, and other subjects — a stopped turn's `cancelled`, a
 /// truncated one's `length` — are not the room's to remove.
+///
+/// RETIRED FROM EVERY CALLER (2026-09-27). Setup replaced the room, and the
+/// interview it hosts shares this chat, so the script kept landing between
+/// the interview's turns: "Getting started… Four things" after every skip
+/// and every reply, hidden by Setup's filter but read by the chapter
+/// extractor and shown to anyone who opened the old room. Kept, with its
+/// tests, until the room's chat mode is removed with it.
 pub async fn narrate(pool: &PgPool, state: &GettingStartedState) -> Result<()> {
     let lines = script(state);
     /* THE FLOOR. Reconciling to the script alone can rewind the room past
@@ -746,19 +753,6 @@ pub async fn narrate(pool: &PgPool, state: &GettingStartedState) -> Result<()> {
     Ok(())
 }
 
-/// The state, with whatever the room owes said first. Every handler answers
-/// through this: a step settled by a POST has to leave its line in the
-/// thread, or the conversation silently skips a beat.
-async fn speak_then_state(pool: &PgPool) -> Result<GettingStartedState> {
-    let s = compute(pool).await?;
-    if let Err(e) = narrate(pool, &s).await {
-        // The state is still true if the room could not speak: say so and
-        // answer, rather than failing the read over a line of dialogue.
-        tracing::warn!(error = %e, "getting-started narration failed");
-    }
-    Ok(s)
-}
-
 fn answer(r: Result<GettingStartedState>) -> axum::response::Response {
     match r {
         Ok(s) => (StatusCode::OK, Json(s)).into_response(),
@@ -776,14 +770,7 @@ fn answer(r: Result<GettingStartedState>) -> axum::response::Response {
 /// `GET /api/getting-started`
 pub async fn state_handler(State(state): State<AppState>, _user: AuthUser) -> impl IntoResponse {
     match compute(state.db.pool()).await {
-        Ok(s) => {
-            // The room says what it owes before answering: this endpoint is
-            // read after every change, so it is where the thread catches up.
-            if let Err(e) = narrate(state.db.pool(), &s).await {
-                tracing::warn!(error = %e, "getting-started narration failed");
-            }
-            (StatusCode::OK, Json(s)).into_response()
-        }
+        Ok(s) => (StatusCode::OK, Json(s)).into_response(),
         Err(e) => {
             tracing::warn!(error = %e, "getting-started state failed");
             (
@@ -821,7 +808,7 @@ pub async fn skip_handler(
         };
         return (code, Json(serde_json::json!({ "error": e.to_string() }))).into_response();
     }
-    answer(speak_then_state(pool).await)
+    answer(compute(pool).await)
 }
 
 #[cfg(test)]

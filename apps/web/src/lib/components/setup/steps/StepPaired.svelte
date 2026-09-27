@@ -3,7 +3,9 @@
 
 	Nothing reaches `/setup` in the web app without a paired device on a
 	connected server, so here both are receipts: what is already true, and
-	the way on. They become real screens when Setup runs before pairing, in
+	the way on. Only what this device can know: it reached the server. Not
+	how (over the relay "it's on your network" was false), and not over what
+	(an ethernet server has no Wi-Fi to report). They become real screens when Setup runs before pairing, in
 	the apps (setup-plan.md, slice 2).
 -->
 <script lang="ts">
@@ -17,7 +19,7 @@
 	title={which === "server" ? "You paired this device with your server" : "Your server is online"}
 	subtitle={which === "server"
 		? "This device and your server have exchanged keys, so they know each other from here on."
-		: "It's on your network, which is how this device reached it."}
+		: "This device just reached it, so it's connected and ready."}
 >
 	<span class="check" aria-hidden="true">
 		<svg viewBox="0 0 48 48" width="56" height="56">

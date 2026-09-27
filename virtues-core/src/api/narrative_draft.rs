@@ -110,10 +110,13 @@ pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
     // material), but they stay in the input because a person's answer often
     // only makes sense against the question it answered.
     let (source_chat, since) = crate::api::getting_started::interview_source(pool).await?;
+    // The retired room's scripted lines (`gs:` subjects) share this chat and
+    // are nobody's words: not the person's, not the interviewer's.
     let turns: Vec<(String, String)> = sqlx::query_as(
         "SELECT role, content FROM app_chat_messages \
          WHERE chat_id = $1 AND role IN ('user', 'assistant') \
            AND content <> '' \
+           AND COALESCE(subject, '') NOT LIKE 'gs:%' \
            AND ($2::timestamptz IS NULL OR created_at >= $2) \
          ORDER BY sequence_num ASC",
     )
@@ -440,6 +443,7 @@ async fn chapters_from_interview(pool: &PgPool) -> Result<usize> {
         "SELECT role, content FROM app_chat_messages \
          WHERE chat_id = $1 AND role IN ('user', 'assistant') \
            AND content <> '' \
+           AND COALESCE(subject, '') NOT LIKE 'gs:%' \
            AND ($2::timestamptz IS NULL OR created_at >= $2) \
          ORDER BY sequence_num ASC",
     )

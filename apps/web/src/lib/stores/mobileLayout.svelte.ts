@@ -28,31 +28,6 @@ function detectViewport(): boolean {
 
 // Shell flag is sticky (a phone never becomes a desktop mid-session); the
 // viewport fallback is reactive so dev-browser resizing flips the chrome.
-//
-// `__VIRTUES_PAIRED__` is baked into the window's init script when the shell
-// BUILDS the window, so on the very launch that pairs, a reload from
-// connect.html still reads the stale `false` — and the first-run permission
-// cards silently waited for the next cold launch. The connect shell therefore
-// leaves a marker in localStorage (same `virtues://localhost` origin) the
-// moment pairing finishes; it bridges exactly that one session. Once the baked
-// flag itself says paired, the marker has done its job and is cleared —
-// including after an unpair, so it can never resurrect a forgotten pairing.
-const JUST_PAIRED_KEY = "virtues-just-paired";
-
-function detectPaired(): boolean {
-	if (typeof window === "undefined") return false;
-	const baked =
-		(window as unknown as { __VIRTUES_PAIRED__?: boolean }).__VIRTUES_PAIRED__ === true;
-	try {
-		if (baked) {
-			localStorage.removeItem(JUST_PAIRED_KEY);
-			return true;
-		}
-		return localStorage.getItem(JUST_PAIRED_KEY) === "true";
-	} catch {
-		return baked;
-	}
-}
 
 /**
  * What the active chat wants the shell's top-right button to be.
@@ -70,20 +45,10 @@ export interface ChatChrome {
 	toggleGhost: () => void;
 }
 
-const ONBOARDING_KEY = "virtues-onboarding-done";
-
 const shellMobile = detectShellFlag();
-const shellPaired = detectPaired();
 let viewportMobile = $state(detectViewport());
 let drawerOpen = $state(false);
 let chatChrome = $state<ChatChrome | null>(null);
-// First-run "Set up your streams" flow — shown once on the paired phone shell.
-let onboardingOpen = $state(
-	shellMobile &&
-		shellPaired &&
-		typeof localStorage !== "undefined" &&
-		localStorage.getItem(ONBOARDING_KEY) !== "true"
-);
 
 if (typeof window !== "undefined" && !shellMobile) {
 	window.addEventListener("resize", () => {
@@ -122,18 +87,5 @@ export const mobileLayout = {
 	},
 	setChatChrome(chrome: ChatChrome | null) {
 		chatChrome = chrome;
-	},
-	/** First-run stream-setup flow (paired native shell, once). */
-	get onboardingOpen(): boolean {
-		return onboardingOpen;
-	},
-	/** Dismiss onboarding (Done or Skip) and don't show it again. */
-	finishOnboarding() {
-		onboardingOpen = false;
-		if (typeof localStorage !== "undefined") localStorage.setItem(ONBOARDING_KEY, "true");
-	},
-	/** Re-open onboarding on demand (e.g. from the device screen). */
-	openOnboarding() {
-		onboardingOpen = true;
 	},
 };

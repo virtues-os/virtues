@@ -5,7 +5,6 @@
 	import { UnifiedSidebar } from "$lib/components/sidebar";
 	import { SplitContainer } from "$lib/components/tabs";
 	import MobileShell from "$lib/components/mobile/MobileShell.svelte";
-	import MobileOnboarding from "$lib/components/mobile/MobileOnboarding.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
 	import SearchModal from "$lib/components/sidebar/SearchModal.svelte";
@@ -395,11 +394,10 @@
 	</main>
 </div>
 
-<!-- First-run stream setup (phone shell only). The shell itself carries all
-     other mobile chrome — the drawer and the top bar live inside it. -->
-{#if mobileLayout.isMobile}
-	<MobileOnboarding />
-{/if}
+<!-- The phone's first-run stream setup lived here as its own screen. Setup's
+     Connections step asks for this phone's streams now, and This device turns
+     on the rest, so a second "Set up Virtues" after Setup asked again with a
+     different list (2026-09-27). -->
 
 <!-- Focus mode: floating exit affordance (chrome is hidden via body.focus-mode) -->
 {#if pageDisplay.focusMode}
