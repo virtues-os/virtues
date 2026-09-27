@@ -1,16 +1,100 @@
-//! Applets, their runs, credentials and sources, plus the admin and developer surfaces.
+//! Applets, their runs, credentials and sources, plus the admin and
+//! developer surfaces.
 
 use axum::{
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
+    routing::{get, patch, post},
     Json,
+    Router,
 };
 use serde::{Deserialize, Serialize};
 
 use super::error_response;
 use crate::error::Error;
 use crate::server::AppState;
+
+/// This area's authenticated routes. Merged into the protected router, whose
+/// `route_layer` requires a resolved `AuthUser`.
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        // Face-token mint — AUTHENTICATED. The authed app mints a short-lived
+        // per-applet token and passes it into the iframe `src` (?vt=). This is
+        // the gate on the whole face data door (faces.rs).
+        .route("/api/applets/:id/face-token", get(crate::server::faces::mint_face_token_handler))
+        // ─── Source OAuth + API-key connect flows ────────────────────
+        // Device pairing (iOS / Mac / sensor) lives at /api/pair/* (server/mod.rs).
+        .route(
+            "/api/connect/:source_id/start",
+            post(crate::api::source_auth::oauth_start_handler),
+        )
+        .route(
+            "/api/connect/:source_id/complete",
+            post(crate::api::source_auth::apikey_complete_handler),
+        )
+        .route(
+            "/oauth/callback",
+            get(crate::api::source_auth::oauth_callback_handler),
+        )
+        // Actions API
+        .route(
+            "/api/applets",
+            get(list_applets_handler).post(create_applet_handler),
+        )
+        .route(
+            "/api/applets/:id",
+            get(get_applet_handler)
+                .patch(patch_applet_handler)
+                .delete(delete_applet_handler),
+        )
+        .route("/api/applets/:id/run", post(trigger_applet_handler))
+        .route("/api/applets/:id/message", post(message_applet_handler))
+        .route("/api/applets/:id/data", get(get_applet_data_handler))
+        // Read the applet's own code. Read-only, owner-authed like everything
+        // in this group; see api/applet_source.rs for why it guards harder than
+        // the face server does.
+        .route(
+            "/api/applets/:id/source",
+            get(crate::api::applet_source::list_handler),
+        )
+        .route(
+            "/api/applets/:id/source/*path",
+            get(crate::api::applet_source::file_handler),
+        )
+        .route(
+            "/api/applets/:id/fork",
+            post(crate::api::applet_source::fork_handler),
+        )
+        // Chat-export upload (Tier 3 one-time import). Per-route body limit
+        // overrides the router-wide 260MB cap — ChatGPT exports can be larger.
+        .route(
+            "/api/chat-import/upload",
+            post(chat_import_upload_handler)
+                .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
+        )
+        .route("/api/applets/:id/runs", get(list_applet_runs_handler))
+        .route("/api/applets/:id/log", get(applet_log_handler))
+        .route("/api/runs", get(list_runs_handler))
+        // Credentials API
+        .route("/api/credentials", get(list_credentials_handler))
+        .route(
+            "/api/credentials/:id",
+            patch(patch_credential_handler).delete(delete_credential_handler),
+        )
+        // Source catalog (drives the Sources tile grid)
+        .route("/api/sources", get(list_sources_handler))
+        // Admin API — LLM-authoring on-ramp for new actions
+        .route("/api/admin/reconcile", post(admin_reconcile_handler))
+        .route(
+            "/api/admin/applets/import-git",
+            post(import_git_applets_handler),
+        )
+        // Developer API
+        .route("/api/developer/sql", post(execute_sql_handler))
+        .route("/api/developer/tables", get(list_tables_handler))
+}
+
 
 // ============================================================================
 // Actions + runs API

@@ -5,12 +5,116 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
+    routing::{delete, get, patch, post, put},
     Json,
+    Router,
 };
 use serde::Deserialize;
 
 use super::{api_response, error_response, success_message};
 use crate::server::AppState;
+
+/// This area's authenticated routes. Merged into the protected router, whose
+/// `route_layer` requires a resolved `AuthUser`.
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        // Lake API
+        .route("/api/lake/summary", get(get_lake_summary_handler))
+        .route("/api/lake/streams", get(list_lake_streams_handler))
+        // Bookmarks API (saved web content — the manual capture door)
+        .route(
+            "/api/bookmarks",
+            get(list_bookmarks_handler).post(save_bookmark_handler),
+        )
+        .route("/api/bookmarks/:id", get(get_bookmark_handler))
+        // The note has its own route rather than a general PATCH: every other
+        // column here belongs to a source or to the enrichment pass, and an
+        // endpoint that could write them would eventually be used to.
+        .route(
+            "/api/bookmarks/:id/note",
+            patch(update_bookmark_note_handler),
+        )
+        // Sidebar pins API
+        .route(
+            "/api/pins",
+            get(list_pins_handler).post(create_pin_handler),
+        )
+        .route("/api/pins/reorder", put(reorder_pins_handler))
+        .route(
+            "/api/pins/:id",
+            patch(update_pin_handler).delete(delete_pin_handler),
+        )
+        // Recently deleted: chats, pages and projects wait here 30 days.
+        // Every chat, page and project DELETE lands a thing here; these are
+        // the only doors to a hard delete.
+        .route("/api/trash", get(list_trash_handler))
+        .route("/api/trash/empty", post(empty_trash_handler))
+        .route(
+            "/api/trash/:kind/:id/restore",
+            post(restore_trash_handler),
+        )
+        .route("/api/trash/:kind/:id", delete(purge_trash_handler))
+        // The visits log: what the owner opens, for ⌘K's frecency prior.
+        .route("/api/visits", post(record_visit_handler))
+        .route("/api/visits/frecency", get(frecency_handler))
+        // Projects API (the "room" a chat lives in)
+        .route(
+            "/api/projects",
+            get(list_projects_handler).post(create_project_handler),
+        )
+        .route(
+            "/api/projects/:id",
+            get(get_project_handler)
+                .put(update_project_handler)
+                .delete(delete_project_handler),
+        )
+        .route("/api/projects/:id/archive", post(archive_project_handler))
+        .route("/api/projects/:id/unarchive", post(unarchive_project_handler))
+        // Project membership (items come back inside GET /api/projects/:id)
+        .route(
+            "/api/projects/:id/items",
+            post(add_project_item_handler).delete(remove_project_item_handler),
+        )
+        .route(
+            "/api/projects/:id/items/reorder",
+            put(reorder_project_items_handler),
+        )
+        .route(
+            "/api/projects/:id/items/role",
+            put(set_project_item_role_handler),
+        )
+        .route("/api/projects/:id/graph", get(project_graph_handler))
+        // LEGACY ALIAS: `/api/notebooks…` for clients built before the
+        // notebook→project rename (migration 0029). Phones self-update both
+        // ahead of boxes and behind them, so an old app can be talking to a
+        // new box for weeks; the alias costs one route-table entry each. Same
+        // handlers, same bodies (request fields accept `notebookId` via a
+        // serde alias). Remove once no supported client build says "notebook".
+        .route(
+            "/api/notebooks",
+            get(list_projects_handler).post(create_project_handler),
+        )
+        .route(
+            "/api/notebooks/:id",
+            get(get_project_handler)
+                .put(update_project_handler)
+                .delete(delete_project_handler),
+        )
+        .route(
+            "/api/notebooks/:id/items",
+            post(add_project_item_handler).delete(remove_project_item_handler),
+        )
+        .route(
+            "/api/notebooks/:id/items/reorder",
+            put(reorder_project_items_handler),
+        )
+        .route(
+            "/api/notebooks/:id/items/role",
+            put(set_project_item_role_handler),
+        )
+        .route("/api/notebooks/:id/graph", get(project_graph_handler))
+}
+
 
 // ============================================================================
 // Bookmarks Handlers (saved web content — data_content_bookmark)

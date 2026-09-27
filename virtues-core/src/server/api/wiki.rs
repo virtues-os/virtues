@@ -5,13 +5,256 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
+    routing::{delete, get, post, put},
     Json,
+    Router,
 };
 use serde::Deserialize;
 
 use super::{api_response, error_response, success_message};
 use crate::error::Error;
 use crate::server::AppState;
+
+/// This area's authenticated routes. Merged into the protected router, whose
+/// `route_layer` requires a resolved `AuthUser`.
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        // Timeline day (location chunks for movement map)
+        .route("/api/timeline/day/:date", get(timeline_get_day_handler))
+        // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
+        .route("/api/today/:date/streams", get(today_streams_handler))
+        // Home-page loops — weather · upcoming calendar · unnamed-place backlog
+        .route("/api/weather/current", get(weather_now_handler))
+        .route("/api/calendar/upcoming", get(calendar_upcoming_handler))
+        .route("/api/places/unnamed", get(unnamed_places_handler))
+        // Entities API - Places
+        .route(
+            "/api/entities/places",
+            get(list_places_handler).post(create_place_handler),
+        )
+        .route(
+            "/api/entities/places/:id",
+            get(get_place_handler)
+                .put(update_place_handler)
+                .delete(delete_place_handler),
+        )
+        .route(
+            "/api/assistant/memories",
+            get(list_assistant_memories_handler),
+        )
+        .route(
+            "/api/assistant/memories/:id",
+            put(edit_assistant_memory_handler)
+                .delete(retire_assistant_memory_handler),
+        )
+        .route(
+            "/api/wiki/notes/:subject_type/:subject_id",
+            get(list_notes_handler).post(create_note_handler),
+        )
+        .route(
+            "/api/wiki/notes/:id/resolve",
+            put(resolve_note_handler),
+        )
+        .route(
+            "/api/wiki/notes-open-count",
+            get(open_notes_count_handler),
+        )
+        .route(
+            "/api/wiki/lifeline",
+            get(lifeline_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/ground",
+            get(lifeline_ground_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/clock",
+            get(lifeline_clock_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/feed",
+            get(lifeline_feed_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/processed",
+            get(lifeline_processed_handler),
+        )
+        .route(
+            "/api/wiki/history",
+            get(history_feed_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id/history",
+            get(article_history_handler),
+        )
+        .route(
+            "/api/wiki/subjects/:subject_type/:subject_id/backlinks",
+            get(subject_backlinks_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id",
+            get(get_article_handler).post(write_article_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id/maintenance",
+            put(set_article_maintenance_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id/revert",
+            post(revert_article_handler),
+        )
+        .route(
+            "/api/entities/people",
+            post(create_person_handler),
+        )
+        .route(
+            "/api/entities/people/:id",
+            delete(delete_person_handler),
+        )
+        .route(
+            "/api/entities/orgs/:id",
+            delete(delete_org_handler),
+        )
+        .route(
+            "/api/entities/people/:id/reclassify-as-org",
+            post(reclassify_person_handler),
+        )
+        // ── Wiki API ────────────────────────────────────────────────────
+        //
+        // TWO ADDRESSING SHAPES, and both are right. Don't unify them.
+        //
+        //   generic   /api/wiki/articles/:subject_type/:subject_id
+        //             /api/wiki/notes/:subject_type/:subject_id
+        //             /api/wiki/subjects/:subject_type/:subject_id/backlinks
+        //   per-kind  /api/wiki/person/:id, /place/:id, /organization/:id
+        //
+        // The test is whether the PAYLOAD varies by kind. An article is the
+        // same row whatever it is about, so its route takes the subject as a
+        // parameter and one handler serves every rung. An entity's own fields
+        // are not: a person has a relationship, a place has coordinates, an
+        // organization has a type. A generic entity route would return a union
+        // the client has to discriminate anyway — the per-kind route has
+        // already done that, in the one place it costs nothing.
+        //
+        // What was genuinely wrong here was duplicate SPELLINGS of one route,
+        // not the shape: organizations had four routes for two handlers.
+        //
+        // Wiki - Person
+        // Mention review queue (entity resolution HITL)
+        .route("/api/wiki/people", get(wiki_list_people_handler))
+        .route(
+            "/api/wiki/person/:id",
+            get(wiki_get_person_handler).put(wiki_update_person_handler),
+        )
+        // Wiki - Place
+        .route("/api/wiki/places", get(wiki_list_places_handler))
+        .route(
+            "/api/wiki/place/:id",
+            get(wiki_get_place_handler).put(wiki_update_place_handler),
+        )
+        // Wiki - Organization. The table is `wiki_orgs` and the id prefix is
+        // `org_`, but the ROUTE spells it out, matching `subject_type =
+        // 'organization'` everywhere else. `/orgs` and `/org/:id` also existed,
+        // pointed at these same handlers, and no client has ever called either.
+        .route(
+            "/api/wiki/organizations",
+            get(wiki_list_organizations_handler),
+        )
+        .route(
+            "/api/wiki/organization/:id",
+            get(wiki_get_organization_handler).put(wiki_update_organization_handler),
+        )
+        // Wiki - Narrative Identity. Read-only: the document is edited on its
+        // page, and the retired abridged copy took its PUT with it.
+        .route(
+            "/api/wiki/narrative-identity",
+            get(wiki_get_narrative_identity_handler),
+        )
+        // Wiki - Chapter (the life's partition, written by the interview or
+        // drawn on the Getting started timeline; PUT replaces the whole list)
+        .route(
+            "/api/wiki/chapters",
+            get(crate::api::narrative_draft::chapters_handler)
+                .put(wiki_replace_chapters_handler),
+        )
+        // Wiki - Day
+        .route("/api/wiki/days", get(wiki_list_days_handler))
+        .route("/api/wiki/activity", get(wiki_day_activity_handler))
+        .route("/api/wiki/on-this-day", get(wiki_on_this_day_handler))
+        .route(
+            "/api/wiki/entity/:id/records",
+            get(wiki_entity_records_handler),
+        )
+        .route(
+            "/api/wiki/entity/:id/records/facets",
+            get(wiki_entity_record_facets_handler),
+        )
+        .route("/api/wiki/day/:date", get(wiki_get_day_handler))
+        .route(
+            "/api/wiki/stories",
+            get(wiki_list_stories_handler).post(wiki_create_story_handler),
+        )
+        .route(
+            "/api/wiki/story/:id",
+            get(wiki_get_story_handler)
+                .put(wiki_update_story_handler)
+                .delete(wiki_delete_story_handler),
+        )
+        .route(
+            "/api/wiki/story/:id/article",
+            post(wiki_start_story_article_handler),
+        )
+        .route(
+            "/api/wiki/chapter/:id",
+            put(wiki_update_chapter_handler)
+                .delete(wiki_delete_chapter_handler),
+        )
+        .route("/api/wiki/me", get(wiki_me_handler))
+        .route("/api/wiki/years", get(wiki_list_years_handler))
+        .route(
+            "/api/wiki/year/:year",
+            get(wiki_get_year_handler).put(wiki_update_year_handler),
+        )
+        .route(
+            "/api/wiki/year/:year/article",
+            post(wiki_write_year_article_handler),
+        )
+        // Wiki - Temporal Events
+        .route(
+            "/api/wiki/day/:date/events",
+            get(wiki_get_day_events_handler),
+        )
+        .route("/api/wiki/events", post(wiki_create_event_handler))
+        .route(
+            "/api/wiki/events/:id",
+            put(wiki_update_event_handler).delete(wiki_delete_event_handler),
+        )
+        .route(
+            "/api/wiki/day/:day_id/auto-events",
+            delete(wiki_delete_auto_events_handler),
+        )
+        // Wiki - Day Sources (ontology data)
+        .route(
+            "/api/wiki/day/:date/sources",
+            get(wiki_get_day_sources_handler),
+        )
+        // Wiki - Day Chats (in-app + external AI conversations)
+        .route(
+            "/api/wiki/day/:date/chats",
+            get(wiki_get_day_chats_handler),
+        )
+        // Wiki - Day Streams (dynamic ontology queries)
+        .route(
+            "/api/wiki/day/:date/streams",
+            get(wiki_get_day_streams_handler),
+        )
+        // Wiki - Day heart rate (the Autonomic chart)
+        .route(
+            "/api/wiki/day/:date/heart-rate",
+            get(day_heart_rate_handler),
+        )
+}
+
 
 // =============================================================================
 // Entities API - Places

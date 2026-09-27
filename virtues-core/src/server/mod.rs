@@ -9,7 +9,7 @@ use axum::{
     extract::DefaultBodyLimit,
     middleware,
     response::IntoResponse,
-    routing::{delete, get, patch, post, put},
+    routing::{get, post},
     Json, Router,
 };
 
@@ -20,7 +20,6 @@ use std::sync::Arc;
 // modules outside `server` (api::display, …) legitimately name it. Importing it
 // privately here made `crate::server::AppState` fail to resolve for them.
 pub use self::webhook::AppState;
-use self::yjs::yjs_websocket_handler;
 use crate::error::Result;
 use crate::middleware::auth::AuthUser;
 use crate::Virtues;
@@ -615,7 +614,7 @@ fn public_routes() -> Router<AppState> {
             "/api/pair/consume",
             post(crate::api::pair::consume_handler),
         )
-        .route("/auth/session", get(api::auth_session_handler))
+        .route("/auth/session", get(api::chat::auth_session_handler))
         // Applet faces — the CORS-permissive, token-gated leaves only. The
         // mint route is AUTHENTICATED (in protected_routes): the token is the
         // sole gate on the data door, so obtaining one must require owner auth.
@@ -628,10 +627,10 @@ fn public_routes() -> Router<AppState> {
         .route("/face/:applet_id/", get(faces::face_index_handler))
         .route("/face/:applet_id/*path", get(faces::face_file_handler))
         // Public page sharing (token-based access, no session needed)
-        .route("/api/s/:token", get(api::get_shared_page_handler))
+        .route("/api/s/:token", get(api::pages::get_shared_page_handler))
         .route(
             "/api/s/:token/files/:file_id",
-            get(api::shared_file_download_handler),
+            get(api::pages::shared_file_download_handler),
         )
         // Webhook ingestion. Authenticated primarily by the proven iroh key
         // (Option<AuthUser>) — the owner's devices POST over iroh — with the
@@ -653,37 +652,40 @@ fn public_routes() -> Router<AppState> {
         // the webhook endpoint.
         .route(
             "/api/devices/applet-ids",
-            get(api::device_applet_ids_handler),
+            get(api::applets::device_applet_ids_handler),
         )
 }
 
 /// Everything that requires a resolved `AuthUser` (proven iroh key /
-/// loopback console / dev fallback).
+/// loopback console / dev fallback): each area's `routes()`, plus the
+/// devices, pairing, sudo, audit, maps and terminal routes that belong to no
+/// area.
 fn protected_routes(state: &AppState) -> Router<AppState> {
     Router::new()
-        // Face-token mint — AUTHENTICATED. The authed app mints a short-lived
-        // per-applet token and passes it into the iframe `src` (?vt=). This is
-        // the gate on the whole face data door (faces.rs).
-        .route("/api/applets/:id/face-token", get(faces::mint_face_token_handler))
-        // Timeline day (location chunks for movement map)
-        .route("/api/timeline/day/:date", get(api::timeline_get_day_handler))
-        // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
-        .route("/api/today/:date/streams", get(api::today_streams_handler))
+        .merge(api::applets::routes())
+        .merge(api::settings::routes())
+        .merge(api::wiki::routes())
+        .merge(api::chat::routes())
+        .merge(api::drive::routes())
+        .merge(api::pages::routes())
+        .merge(api::library::routes())
         // The box's own maps: tiles out of local .pmtiles archives, never a
         // tile provider. agents/plan/offline-maps-plan.md
         .route("/api/map/sources", get(crate::maps::sources_handler))
         .route("/api/map/vt/:tier/:z/:x/:y", get(crate::maps::tile_handler))
         .route("/api/map/fonts/:fontstack/:range", get(crate::maps::glyphs_handler))
         .route("/api/map/sprite/:file", get(crate::maps::sprite_handler))
-        // Home-page loops — weather · upcoming calendar · unnamed-place backlog
-        .route("/api/weather/current", get(api::weather_now_handler))
-        .route("/api/calendar/upcoming", get(api::calendar_upcoming_handler))
-        .route("/api/places/unnamed", get(api::unnamed_places_handler))
         // ─── Pair-only auth: "+ Add device" from a paired session ─────
         .route("/api/pair/mint",          post(crate::api::pair::mint_handler))
         .route("/api/pair/mint-collector", post(crate::api::pair::mint_collector_handler))
         .route("/api/pair/status/:id",    get(crate::api::pair::status_handler))
         .route("/api/pair/deny/:id",      post(crate::api::pair::deny_handler))
+        // Re-open onboarding: revoke every device, keep the data — a box-wide
+        // action a paired device may take, guarded by being paired.
+        .route(
+            "/api/pair/reopen-onboarding",
+            post(crate::api::pair::reopen_onboarding_handler),
+        )
         // ─── Devices: unified list + revoke ───────────────────────────
         .route("/api/devices",            get(crate::api::devices::list_handler))
         .route("/api/devices/self/push-address", post(crate::api::devices::set_self_push_address))
@@ -707,667 +709,6 @@ fn protected_routes(state: &AppState) -> Router<AppState> {
             post(crate::api::events::report_handler)
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
-        // ─── Billing settings (BYO key) ───────────────────────────────
-        // BYO routes inference around virtues-api entirely: box calls
-        // upstream directly. Save/delete are sudo-gated (change_byo_key);
-        // status is a non-secret read for the Billing page.
-        .route("/api/settings/byo-key",   get(crate::api::settings_byo::status_handler)
-                                          .post(crate::api::settings_byo::save_handler)
-                                          .delete(crate::api::settings_byo::delete_handler))
-        // ─── Web bundle (the box IS the update server) ────────────────
-        // What UI build this box serves, and the build itself. A client that
-        // can only run a bundle the box handed it cannot get ahead of the box,
-        // which is the point — see api/web_bundle.rs.
-        .route("/api/web-bundle/version", get(crate::api::web_bundle::version_handler))
-        .route("/api/web-bundle/tarball", get(crate::api::web_bundle::tarball_handler))
-        // ─── Billing-state aggregator (local view) ────────────────────
-        .route("/api/billing/state",           get(crate::api::billing_state::state_handler))
-        .route("/api/billing/auto-topup",      post(crate::api::billing_state::set_auto_topup_handler))
-        // Setup wizard transitions (agents/build/onboarding.md) — session-authed; the
-        // wizard reads progress from the public /api/setup/state.
-        .route("/api/setup/subscribe/start",   post(crate::api::setup::subscribe_start_handler))
-        .route("/api/setup/login/start",       post(crate::api::setup::login_start_handler))
-        .route("/api/setup/link/poll",         post(crate::api::setup::link_poll_handler))
-        // ─── Source OAuth + API-key connect flows ────────────────────
-        // Device pairing (iOS / Mac / sensor) lives at /api/pair/* (above).
-        .route(
-            "/api/connect/:source_id/start",
-            post(crate::api::source_auth::oauth_start_handler),
-        )
-        .route(
-            "/api/connect/:source_id/complete",
-            post(crate::api::source_auth::apikey_complete_handler),
-        )
-        .route(
-            "/oauth/callback",
-            axum::routing::get(crate::api::source_auth::oauth_callback_handler),
-        )
-        // Actions API
-        .route(
-            "/api/applets",
-            get(api::list_applets_handler).post(api::create_applet_handler),
-        )
-        .route(
-            "/api/applets/:id",
-            get(api::get_applet_handler)
-                .patch(api::patch_applet_handler)
-                .delete(api::delete_applet_handler),
-        )
-        .route("/api/applets/:id/run", post(api::trigger_applet_handler))
-        .route("/api/applets/:id/message", post(api::message_applet_handler))
-        .route("/api/applets/:id/data", get(api::get_applet_data_handler))
-        // Read the applet's own code. Read-only, owner-authed like everything
-        // in this group; see api/applet_source.rs for why it guards harder than
-        // the face server does.
-        .route(
-            "/api/applets/:id/source",
-            get(crate::api::applet_source::list_handler),
-        )
-        .route(
-            "/api/applets/:id/source/*path",
-            get(crate::api::applet_source::file_handler),
-        )
-        .route(
-            "/api/applets/:id/fork",
-            post(crate::api::applet_source::fork_handler),
-        )
-        // Chat-export upload (Tier 3 one-time import). Per-route body limit
-        // overrides the router-wide 260MB cap — ChatGPT exports can be larger.
-        .route(
-            "/api/chat-import/upload",
-            post(api::chat_import_upload_handler)
-                .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
-        )
-        .route("/api/applets/:id/runs", get(api::list_applet_runs_handler))
-        .route("/api/applets/:id/log", get(api::applet_log_handler))
-        .route("/api/runs", get(api::list_runs_handler))
-        // Credentials API
-        .route("/api/credentials", get(api::list_credentials_handler))
-        .route(
-            "/api/credentials/:id",
-            patch(api::patch_credential_handler).delete(api::delete_credential_handler),
-        )
-        // Source catalog (drives the Sources tile grid)
-        .route("/api/sources", get(api::list_sources_handler))
-        // Profile API
-        .route("/api/profile", get(api::get_profile_handler))
-        .route("/api/profile", put(api::update_profile_handler))
-        // Entities API - Places
-        .route(
-            "/api/entities/places",
-            get(api::list_places_handler).post(api::create_place_handler),
-        )
-        .route(
-            "/api/entities/places/:id",
-            get(api::get_place_handler)
-                .put(api::update_place_handler)
-                .delete(api::delete_place_handler),
-        )
-        .route(
-            "/api/assistant/memories",
-            axum::routing::get(api::list_assistant_memories_handler),
-        )
-        .route(
-            "/api/assistant/memories/:id",
-            axum::routing::put(api::edit_assistant_memory_handler)
-                .delete(api::retire_assistant_memory_handler),
-        )
-        .route(
-            "/api/wiki/notes/:subject_type/:subject_id",
-            axum::routing::get(api::list_notes_handler).post(api::create_note_handler),
-        )
-        .route(
-            "/api/wiki/notes/:id/resolve",
-            axum::routing::put(api::resolve_note_handler),
-        )
-        .route(
-            "/api/wiki/notes-open-count",
-            axum::routing::get(api::open_notes_count_handler),
-        )
-        .route(
-            "/api/wiki/lifeline",
-            axum::routing::get(api::lifeline_handler),
-        )
-        .route(
-            "/api/wiki/lifeline/ground",
-            axum::routing::get(api::lifeline_ground_handler),
-        )
-        .route(
-            "/api/wiki/lifeline/clock",
-            axum::routing::get(api::lifeline_clock_handler),
-        )
-        .route(
-            "/api/wiki/lifeline/feed",
-            axum::routing::get(api::lifeline_feed_handler),
-        )
-        .route(
-            "/api/wiki/lifeline/processed",
-            axum::routing::get(api::lifeline_processed_handler),
-        )
-        .route(
-            "/api/wiki/history",
-            axum::routing::get(api::history_feed_handler),
-        )
-        .route(
-            "/api/wiki/articles/:subject_type/:subject_id/history",
-            axum::routing::get(api::article_history_handler),
-        )
-        .route(
-            "/api/wiki/subjects/:subject_type/:subject_id/backlinks",
-            axum::routing::get(api::subject_backlinks_handler),
-        )
-        .route(
-            "/api/wiki/articles/:subject_type/:subject_id",
-            get(api::get_article_handler).post(api::write_article_handler),
-        )
-        .route(
-            "/api/wiki/articles/:subject_type/:subject_id/maintenance",
-            axum::routing::put(api::set_article_maintenance_handler),
-        )
-        .route(
-            "/api/wiki/articles/:subject_type/:subject_id/revert",
-            axum::routing::post(api::revert_article_handler),
-        )
-        .route(
-            "/api/entities/people",
-            axum::routing::post(api::create_person_handler),
-        )
-        .route(
-            "/api/entities/people/:id",
-            axum::routing::delete(api::delete_person_handler),
-        )
-        .route(
-            "/api/entities/orgs/:id",
-            axum::routing::delete(api::delete_org_handler),
-        )
-        .route(
-            "/api/entities/people/:id/reclassify-as-org",
-            axum::routing::post(api::reclassify_person_handler),
-        )
-        // Places API (Google Places proxy)
-        .route(
-            "/api/places/autocomplete",
-            get(api::places_autocomplete_handler),
-        )
-        .route(
-            "/api/places/details",
-            get(api::places_details_handler),
-        )
-        // Assistant Profile API
-        .route(
-            "/api/assistant-profile",
-            get(api::get_assistant_profile_handler),
-        )
-        .route(
-            "/api/assistant-profile",
-            put(api::update_assistant_profile_handler),
-        )
-        // Models API
-        .route("/api/models", get(api::list_models_handler))
-        .route(
-            "/api/models/recommended",
-            get(api::list_models_with_slots_handler),
-        )
-        .route("/api/models/:id", get(api::get_model_handler))
-        // Per-stream ingest freshness — surfaces a stalled source instead of
-        // letting it rot silently.
-        .route("/api/streams/health", get(api::stream_health_handler))
-        .route("/api/streams/days", get(api::stream_days_handler))
-        // Subscription & Billing API
-        .route("/api/subscription", get(api::get_subscription_handler))
-        .route(
-            "/api/billing/portal",
-            post(api::create_billing_portal_handler),
-        )
-        .route("/api/billing/subscribe", post(api::subscribe_billing_handler))
-        // Wallet balance + recent ledger (proxied from virtues-api /v1/usage).
-        .route("/api/billing/usage", get(api::billing_usage_handler))
-        // Box-local AI spend breakdown (app_ai_calls) for the Usage tab.
-        .route("/api/usage/summary", get(api::usage_summary_handler))
-        // Paged individual AI calls (app_ai_calls) for the Usage page's log.
-        .route("/api/telemetry/ai-calls", get(api::ai_calls_handler))
-        // Device-authorization link flow (web "Connect subscription").
-        .route(
-            "/api/billing/link/start",
-            post(api::billing_link_start_handler),
-        )
-        .route(
-            "/api/billing/link/status",
-            get(api::billing_link_status_handler),
-        )
-        // Local content search — the ⌘K palette. Never leaves the box.
-        .route("/api/search/local", post(api::search_local_handler))
-        // Unsplash API (cover image search)
-        .route("/api/unsplash/search", post(api::unsplash_search_handler))
-        // Annotations API (document highlights + margin notes)
-        .route(
-            "/api/annotations",
-            get(api::list_annotations_handler).post(api::create_annotation_handler),
-        )
-        .route(
-            "/api/annotations/:id",
-            patch(api::update_annotation_handler).delete(api::delete_annotation_handler),
-        )
-        // Bulk annotation export as markdown (D4.3)
-        .route(
-            "/api/annotations/export",
-            get(api::export_file_annotations_handler),
-        )
-        // Drive API (user file storage)
-        .route(
-            "/api/drive/files/:id/reextract",
-            post(api::reextract_drive_file_handler),
-        )
-        .route("/api/drive/usage", get(api::get_drive_usage_handler))
-        .route("/api/backup/status", get(api::get_backup_status_handler))
-        .route("/api/drive/files", get(api::list_drive_files_handler))
-        .route(
-            "/api/drive/files/:id",
-            get(api::get_drive_file_handler).delete(api::delete_drive_file_handler),
-        )
-        .route(
-            "/api/drive/files/:id/download",
-            get(api::download_drive_file_handler),
-        )
-        .route(
-            "/api/drive/files/:id/move",
-            put(api::move_drive_file_handler),
-        )
-        .route("/api/drive/upload", post(api::upload_drive_file_handler))
-        .route("/api/drive/folders", post(api::create_drive_folder_handler))
-        // Drive trash endpoints
-        .route("/api/drive/media", get(api::list_drive_media_handler))
-        .route("/api/drive/trash", get(api::list_drive_trash_handler))
-        .route(
-            "/api/drive/trash/empty",
-            post(api::empty_drive_trash_handler),
-        )
-        .route(
-            "/api/drive/files/:id/restore",
-            post(api::restore_drive_file_handler),
-        )
-        .route(
-            "/api/drive/files/:id/purge",
-            delete(api::purge_drive_file_handler),
-        )
-        // Media API (content-addressed storage for page-embedded media)
-        .route("/api/media/upload", post(api::upload_media_handler))
-        .route("/api/media/:id", get(api::get_media_handler))
-        // ── Wiki API ────────────────────────────────────────────────────
-        //
-        // TWO ADDRESSING SHAPES, and both are right. Don't unify them.
-        //
-        //   generic   /api/wiki/articles/:subject_type/:subject_id
-        //             /api/wiki/notes/:subject_type/:subject_id
-        //             /api/wiki/subjects/:subject_type/:subject_id/backlinks
-        //   per-kind  /api/wiki/person/:id, /place/:id, /organization/:id
-        //
-        // The test is whether the PAYLOAD varies by kind. An article is the
-        // same row whatever it is about, so its route takes the subject as a
-        // parameter and one handler serves every rung. An entity's own fields
-        // are not: a person has a relationship, a place has coordinates, an
-        // organization has a type. A generic entity route would return a union
-        // the client has to discriminate anyway — the per-kind route has
-        // already done that, in the one place it costs nothing.
-        //
-        // What was genuinely wrong here was duplicate SPELLINGS of one route,
-        // not the shape: organizations had four routes for two handlers.
-        //
-        // Wiki - Person
-        // Mention review queue (entity resolution HITL)
-        .route("/api/wiki/people", get(api::wiki_list_people_handler))
-        .route(
-            "/api/wiki/person/:id",
-            get(api::wiki_get_person_handler).put(api::wiki_update_person_handler),
-        )
-        // Wiki - Place
-        .route("/api/wiki/places", get(api::wiki_list_places_handler))
-        .route(
-            "/api/wiki/place/:id",
-            get(api::wiki_get_place_handler).put(api::wiki_update_place_handler),
-        )
-        // Wiki - Organization. The table is `wiki_orgs` and the id prefix is
-        // `org_`, but the ROUTE spells it out, matching `subject_type =
-        // 'organization'` everywhere else. `/orgs` and `/org/:id` also existed,
-        // pointed at these same handlers, and no client has ever called either.
-        .route(
-            "/api/wiki/organizations",
-            get(api::wiki_list_organizations_handler),
-        )
-        .route(
-            "/api/wiki/organization/:id",
-            get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
-        )
-        // Wiki - Narrative Identity. Read-only: the document is edited on its
-        // page, and the retired abridged copy took its PUT with it.
-        .route(
-            "/api/wiki/narrative-identity",
-            get(api::wiki_get_narrative_identity_handler),
-        )
-        // Wiki - Telos
-        // Wiki - Act
-        // Wiki - Chapter (the life's partition, written by the interview or
-        // drawn on the Getting started timeline; PUT replaces the whole list)
-        .route(
-            "/api/wiki/chapters",
-            get(crate::api::narrative_draft::chapters_handler)
-                .put(api::wiki_replace_chapters_handler),
-        )
-        // Wiki - Day
-        .route("/api/wiki/days", get(api::wiki_list_days_handler))
-        .route("/api/wiki/activity", get(api::wiki_day_activity_handler))
-        .route("/api/wiki/on-this-day", get(api::wiki_on_this_day_handler))
-        .route(
-            "/api/wiki/entity/:id/records",
-            get(api::wiki_entity_records_handler),
-        )
-        .route(
-            "/api/wiki/entity/:id/records/facets",
-            get(api::wiki_entity_record_facets_handler),
-        )
-        .route("/api/wiki/day/:date", get(api::wiki_get_day_handler))
-        .route(
-            "/api/wiki/stories",
-            get(api::wiki_list_stories_handler).post(api::wiki_create_story_handler),
-        )
-        .route(
-            "/api/wiki/story/:id",
-            get(api::wiki_get_story_handler)
-                .put(api::wiki_update_story_handler)
-                .delete(api::wiki_delete_story_handler),
-        )
-        .route(
-            "/api/wiki/story/:id/article",
-            axum::routing::post(api::wiki_start_story_article_handler),
-        )
-        .route(
-            "/api/wiki/chapter/:id",
-            axum::routing::put(api::wiki_update_chapter_handler)
-                .delete(api::wiki_delete_chapter_handler),
-        )
-        .route("/api/wiki/me", get(api::wiki_me_handler))
-        .route("/api/wiki/years", get(api::wiki_list_years_handler))
-        .route(
-            "/api/wiki/year/:year",
-            get(api::wiki_get_year_handler).put(api::wiki_update_year_handler),
-        )
-        .route(
-            "/api/wiki/year/:year/article",
-            axum::routing::post(api::wiki_write_year_article_handler),
-        )
-        // Wiki - Temporal Events
-        .route(
-            "/api/wiki/day/:date/events",
-            get(api::wiki_get_day_events_handler),
-        )
-        .route("/api/wiki/events", post(api::wiki_create_event_handler))
-        .route(
-            "/api/wiki/events/:id",
-            put(api::wiki_update_event_handler).delete(api::wiki_delete_event_handler),
-        )
-        .route(
-            "/api/wiki/day/:day_id/auto-events",
-            delete(api::wiki_delete_auto_events_handler),
-        )
-        // Wiki - Day Sources (ontology data)
-        .route(
-            "/api/wiki/day/:date/sources",
-            get(api::wiki_get_day_sources_handler),
-        )
-        // Wiki - Day Chats (in-app + external AI conversations)
-        .route(
-            "/api/wiki/day/:date/chats",
-            get(api::wiki_get_day_chats_handler),
-        )
-        // Wiki - Day Streams (dynamic ontology queries)
-        .route(
-            "/api/wiki/day/:date/streams",
-            get(api::wiki_get_day_streams_handler),
-        )
-        // Wiki - Day heart rate (the Autonomic chart)
-        .route(
-            "/api/wiki/day/:date/heart-rate",
-            get(api::day_heart_rate_handler),
-        )
-        // Admin API — LLM-authoring on-ramp for new actions
-        .route("/api/admin/reconcile", post(api::admin_reconcile_handler))
-        .route(
-            "/api/admin/applets/import-git",
-            post(api::import_git_applets_handler),
-        )
-        // System (operator surface — apps + logs)
-        // Live host snapshot + persisted history for the System/Telemetry views.
-        .route(
-            "/api/system/telemetry",
-            get(crate::api::system_telemetry::telemetry_handler),
-        )
-        .route(
-            "/api/system/history",
-            get(crate::api::system_telemetry::history_handler),
-        )
-        // Developer API
-        .route("/api/developer/sql", post(api::execute_sql_handler))
-        .route("/api/developer/tables", get(api::list_tables_handler))
-        // Lake API
-        .route("/api/lake/summary", get(api::get_lake_summary_handler))
-        .route("/api/lake/streams", get(api::list_lake_streams_handler))
-        // Pages API
-        .route(
-            "/api/pages",
-            get(api::list_pages_handler).post(api::create_page_handler),
-        )
-        .route(
-            "/api/pages/search/refs",
-            get(api::search_refs_handler),
-        )
-        .route(
-            "/api/pages/:id",
-            get(api::get_page_handler)
-                .put(api::update_page_handler)
-                .delete(api::delete_page_handler),
-        )
-        // Raw record viewer — one life-graph row by (ontology, id)
-        .route(
-            "/api/records/:ontology/:record_id",
-            get(api::get_record_handler),
-        )
-        // Page References (backlinks) API
-        .route(
-            "/api/pages/:id/backlinks",
-            get(api::get_page_backlinks_handler),
-        )
-        // Append a markdown block through Yjs (safe with an open editor) — the
-        // synthesis bridge's write path.
-        .route("/api/pages/:id/append", post(api::append_page_handler))
-        // Page Share API
-        .route(
-            "/api/pages/:id/share",
-            post(api::create_page_share_handler)
-                .get(api::get_page_share_handler)
-                .delete(api::delete_page_share_handler),
-        )
-        // Page Versions API
-        .route(
-            "/api/pages/:id/versions",
-            get(api::list_page_versions_handler).post(api::create_page_version_handler),
-        )
-        .route(
-            "/api/pages/versions/:version_id",
-            get(api::get_page_version_handler),
-        )
-        // Box network management (Settings → Box → Network) — the authed
-        // successors to the setup-phase /api/provision/* surface, which
-        // correctly evaporates at claim time. Born of a box marooned on a
-        // captive guest network with no way to leave (2026-08-11). See
-        // api/network.rs.
-        .route("/api/network/status", get(crate::api::network::status_handler))
-        .route("/api/network/scan",   get(crate::api::network::scan_handler))
-        .route("/api/network/join",   post(crate::api::network::join_handler))
-        // The rendezvous, named and switchable (open-relay-plan §Work 2).
-        .route(
-            "/api/network/relay",
-            get(crate::api::network::relay_status_handler)
-                .put(crate::api::network::relay_toggle_handler),
-        )
-        // Box updates (Settings → Box)
-        .route("/api/system/update", get(api::update_status_handler))
-        .route(
-            "/api/system/update/channel",
-            put(api::set_channel_handler),
-        )
-        .route(
-            "/api/system/update/apply",
-            post(api::apply_update_handler),
-        )
-        // The box's attached screen (Settings → Display). Deliberately NOT in
-        // the loopback-only /api/display/* family: that module's uniform
-        // box-local rule is its security argument, and these are the paired
-        // device's side of the glass — panel facts, the ambient face choice,
-        // and the restart verb. Nothing here carries the setup phrase.
-        .route(
-            "/api/system/display",
-            get(crate::api::system_display::get_display_settings_handler),
-        )
-        .route(
-            "/api/system/display/face",
-            put(crate::api::system_display::set_display_face_handler),
-        )
-        .route(
-            "/api/system/display/hours",
-            put(crate::api::system_display::set_display_hours_handler),
-        )
-        .route(
-            "/api/system/display/restart",
-            post(crate::api::system_display::restart_display_handler),
-        )
-        // Re-open onboarding: revoke every device, keep the data. Sits beside
-        // the update routes because it is the same kind of thing — a box-wide
-        // action a paired device may take, guarded by being paired.
-        .route(
-            "/api/pair/reopen-onboarding",
-            post(crate::api::pair::reopen_onboarding_handler),
-        )
-        // Bookmarks API (saved web content — the manual capture door)
-        .route(
-            "/api/bookmarks",
-            get(api::list_bookmarks_handler).post(api::save_bookmark_handler),
-        )
-        .route("/api/bookmarks/:id", get(api::get_bookmark_handler))
-        // The note has its own route rather than a general PATCH: every other
-        // column here belongs to a source or to the enrichment pass, and an
-        // endpoint that could write them would eventually be used to.
-        .route(
-            "/api/bookmarks/:id/note",
-            axum::routing::patch(api::update_bookmark_note_handler),
-        )
-        // Sidebar pins API
-        .route(
-            "/api/pins",
-            get(api::list_pins_handler).post(api::create_pin_handler),
-        )
-        .route("/api/pins/reorder", put(api::reorder_pins_handler))
-        .route(
-            "/api/pins/:id",
-            patch(api::update_pin_handler).delete(api::delete_pin_handler),
-        )
-        // Recently deleted: chats, pages and projects wait here 30 days.
-        // Every DELETE above lands a thing here; these are the only doors to
-        // a hard delete.
-        .route("/api/trash", get(api::list_trash_handler))
-        .route("/api/trash/empty", post(api::empty_trash_handler))
-        .route(
-            "/api/trash/:kind/:id/restore",
-            post(api::restore_trash_handler),
-        )
-        .route("/api/trash/:kind/:id", delete(api::purge_trash_handler))
-        // The visits log: what the owner opens, for ⌘K's frecency prior.
-        .route("/api/visits", post(api::record_visit_handler))
-        .route("/api/visits/frecency", get(api::frecency_handler))
-        // Projects API (the "room" a chat lives in)
-        .route(
-            "/api/projects",
-            get(api::list_projects_handler).post(api::create_project_handler),
-        )
-        .route(
-            "/api/projects/:id",
-            get(api::get_project_handler)
-                .put(api::update_project_handler)
-                .delete(api::delete_project_handler),
-        )
-        .route("/api/projects/:id/archive", post(api::archive_project_handler))
-        .route("/api/projects/:id/unarchive", post(api::unarchive_project_handler))
-        // Project membership (items come back inside GET /api/projects/:id)
-        .route(
-            "/api/projects/:id/items",
-            post(api::add_project_item_handler).delete(api::remove_project_item_handler),
-        )
-        .route(
-            "/api/projects/:id/items/reorder",
-            put(api::reorder_project_items_handler),
-        )
-        .route(
-            "/api/projects/:id/items/role",
-            put(api::set_project_item_role_handler),
-        )
-        .route("/api/projects/:id/graph", get(api::project_graph_handler))
-        // LEGACY ALIAS: `/api/notebooks…` for clients built before the
-        // notebook→project rename (migration 0029). Phones self-update both
-        // ahead of boxes and behind them, so an old app can be talking to a
-        // new box for weeks; the alias costs one route-table entry each. Same
-        // handlers, same bodies (request fields accept `notebookId` via a
-        // serde alias). Remove once no supported client build says "notebook".
-        .route(
-            "/api/notebooks",
-            get(api::list_projects_handler).post(api::create_project_handler),
-        )
-        .route(
-            "/api/notebooks/:id",
-            get(api::get_project_handler)
-                .put(api::update_project_handler)
-                .delete(api::delete_project_handler),
-        )
-        .route(
-            "/api/notebooks/:id/items",
-            post(api::add_project_item_handler).delete(api::remove_project_item_handler),
-        )
-        .route(
-            "/api/notebooks/:id/items/reorder",
-            put(api::reorder_project_items_handler),
-        )
-        .route(
-            "/api/notebooks/:id/items/role",
-            put(api::set_project_item_role_handler),
-        )
-        .route("/api/notebooks/:id/graph", get(api::project_graph_handler))
-        // Chats API
-        .route(
-            "/api/chats",
-            get(api::list_chats_handler).post(api::create_chat_handler),
-        )
-        .route(
-            "/api/chats/:id",
-            get(api::get_chat_handler)
-                .patch(api::update_chat_handler)
-                .delete(api::delete_chat_handler),
-        )
-        .route("/api/chats/title", post(api::generate_chat_title_handler))
-        // Chat Usage & Compaction API
-        .route("/api/chats/:id/usage", get(api::get_chat_usage_handler))
-        .route("/api/chats/:id/compact", post(api::compact_chat_handler))
-        // Chat API (streaming)
-        .route("/api/chat", post(api::chat_handler))
-        .route("/api/chat/cancel", post(api::cancel_chat_handler))
-        .route("/api/chat/:id/stream", get(api::live_turn_stream_handler))
-        .route("/api/ai/complete", post(api::ai_complete_handler))
-        // Chat Edit Permissions API
-        .route(
-            "/api/chats/:id/permissions",
-            get(api::list_chat_permissions_handler).post(api::add_chat_permission_handler),
-        )
-        .route(
-            "/api/chats/:id/permissions/:entity_id",
-            delete(api::remove_chat_permission_handler),
-        )
         // Terminal API (WebSocket)
         .route(
             "/ws/terminal",
@@ -1380,10 +721,10 @@ fn protected_routes(state: &AppState) -> Router<AppState> {
             post(crate::api::terminal::terminal_paste_handler)
                 .layer(DefaultBodyLimit::max(25 * 1024 * 1024)),
         )
-        // Yjs WebSocket (real-time collaborative editing)
-        .route("/ws/yjs/:page_id", get(yjs_websocket_handler))
         // Blanket auth: all routes in this group require a resolved AuthUser
-        // (proven iroh key / loopback console / dev fallback).
+        // (proven iroh key / loopback console / dev fallback). `route_layer`
+        // covers only the routes present when it is called, so every merge
+        // and route above must stay above it.
         .route_layer(middleware::from_extractor_with_state::<AuthUser, _>(state.clone()))
 }
 

@@ -4,12 +4,69 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
+    routing::{get, post},
     Json,
+    Router,
 };
 use serde::Deserialize;
 
 use super::{api_response, error_response, sanitize_content_disposition, success_message};
 use crate::server::AppState;
+
+/// This area's authenticated routes. Merged into the protected router, whose
+/// `route_layer` requires a resolved `AuthUser`.
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        // Local content search — the ⌘K palette. Never leaves the box.
+        .route("/api/search/local", post(search_local_handler))
+        // Pages API
+        .route(
+            "/api/pages",
+            get(list_pages_handler).post(create_page_handler),
+        )
+        .route(
+            "/api/pages/search/refs",
+            get(search_refs_handler),
+        )
+        .route(
+            "/api/pages/:id",
+            get(get_page_handler)
+                .put(update_page_handler)
+                .delete(delete_page_handler),
+        )
+        // Raw record viewer — one life-graph row by (ontology, id)
+        .route(
+            "/api/records/:ontology/:record_id",
+            get(get_record_handler),
+        )
+        // Page References (backlinks) API
+        .route(
+            "/api/pages/:id/backlinks",
+            get(get_page_backlinks_handler),
+        )
+        // Append a markdown block through Yjs (safe with an open editor) — the
+        // synthesis bridge's write path.
+        .route("/api/pages/:id/append", post(append_page_handler))
+        // Page Share API
+        .route(
+            "/api/pages/:id/share",
+            post(create_page_share_handler)
+                .get(get_page_share_handler)
+                .delete(delete_page_share_handler),
+        )
+        // Page Versions API
+        .route(
+            "/api/pages/:id/versions",
+            get(list_page_versions_handler).post(create_page_version_handler),
+        )
+        .route(
+            "/api/pages/versions/:version_id",
+            get(get_page_version_handler),
+        )
+        // Yjs WebSocket (real-time collaborative editing)
+        .route("/ws/yjs/:page_id", get(crate::server::yjs::yjs_websocket_handler))
+}
+
 
 // ============================================================================
 // Pages Handlers

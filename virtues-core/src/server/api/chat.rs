@@ -4,12 +4,50 @@
 use axum::{
     extract::{Path, State},
     response::{IntoResponse, Response},
+    routing::{delete, get, post},
     Json,
+    Router,
 };
 use serde::Deserialize;
 
 use super::{api_response, error_response, success_message};
 use crate::server::AppState;
+
+/// This area's authenticated routes. Merged into the protected router, whose
+/// `route_layer` requires a resolved `AuthUser`.
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        // Chats API
+        .route(
+            "/api/chats",
+            get(list_chats_handler).post(create_chat_handler),
+        )
+        .route(
+            "/api/chats/:id",
+            get(get_chat_handler)
+                .patch(update_chat_handler)
+                .delete(delete_chat_handler),
+        )
+        .route("/api/chats/title", post(generate_chat_title_handler))
+        // Chat Usage & Compaction API
+        .route("/api/chats/:id/usage", get(get_chat_usage_handler))
+        .route("/api/chats/:id/compact", post(compact_chat_handler))
+        // Chat API (streaming)
+        .route("/api/chat", post(chat_handler))
+        .route("/api/chat/cancel", post(cancel_chat_handler))
+        .route("/api/chat/:id/stream", get(live_turn_stream_handler))
+        .route("/api/ai/complete", post(ai_complete_handler))
+        // Chat Edit Permissions API
+        .route(
+            "/api/chats/:id/permissions",
+            get(list_chat_permissions_handler).post(add_chat_permission_handler),
+        )
+        .route(
+            "/api/chats/:id/permissions/:entity_id",
+            delete(remove_chat_permission_handler),
+        )
+}
+
 
 // =============================================================================
 // Chat Usage & Compaction API Handlers

@@ -6,12 +6,75 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
+    routing::{delete, get, patch, post, put},
     Json,
+    Router,
 };
 use serde::Deserialize;
 
 use super::{api_response, error_response, sanitize_content_disposition, success_message};
 use crate::server::AppState;
+
+/// This area's authenticated routes. Merged into the protected router, whose
+/// `route_layer` requires a resolved `AuthUser`.
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        // Annotations API (document highlights + margin notes)
+        .route(
+            "/api/annotations",
+            get(list_annotations_handler).post(create_annotation_handler),
+        )
+        .route(
+            "/api/annotations/:id",
+            patch(update_annotation_handler).delete(delete_annotation_handler),
+        )
+        // Bulk annotation export as markdown (D4.3)
+        .route(
+            "/api/annotations/export",
+            get(export_file_annotations_handler),
+        )
+        // Drive API (user file storage)
+        .route(
+            "/api/drive/files/:id/reextract",
+            post(reextract_drive_file_handler),
+        )
+        .route("/api/drive/usage", get(get_drive_usage_handler))
+        .route("/api/backup/status", get(get_backup_status_handler))
+        .route("/api/drive/files", get(list_drive_files_handler))
+        .route(
+            "/api/drive/files/:id",
+            get(get_drive_file_handler).delete(delete_drive_file_handler),
+        )
+        .route(
+            "/api/drive/files/:id/download",
+            get(download_drive_file_handler),
+        )
+        .route(
+            "/api/drive/files/:id/move",
+            put(move_drive_file_handler),
+        )
+        .route("/api/drive/upload", post(upload_drive_file_handler))
+        .route("/api/drive/folders", post(create_drive_folder_handler))
+        // Drive trash endpoints
+        .route("/api/drive/media", get(list_drive_media_handler))
+        .route("/api/drive/trash", get(list_drive_trash_handler))
+        .route(
+            "/api/drive/trash/empty",
+            post(empty_drive_trash_handler),
+        )
+        .route(
+            "/api/drive/files/:id/restore",
+            post(restore_drive_file_handler),
+        )
+        .route(
+            "/api/drive/files/:id/purge",
+            delete(purge_drive_file_handler),
+        )
+        // Media API (content-addressed storage for page-embedded media)
+        .route("/api/media/upload", post(upload_media_handler))
+        .route("/api/media/:id", get(get_media_handler))
+}
+
 
 // =============================================================================
 // Drive API Handlers (User File Storage)
