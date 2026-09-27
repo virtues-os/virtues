@@ -86,12 +86,12 @@ pub async fn list_pages_handler(
     Query(query): Query<ListPagesQuery>,
 ) -> Response {
     // Note: workspace_id filter removed - views handle filtering now
-    api_response(crate::api::list_pages(state.db.pool(), query.limit, query.offset).await)
+    api_response(crate::api::pages::list_pages(state.db.pool(), query.limit, query.offset).await)
 }
 
 /// GET /api/pages/:id - Get a single page
 pub async fn get_page_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    api_response(crate::api::get_page(state.db.pool(), &id).await)
+    api_response(crate::api::pages::get_page(state.db.pool(), &id).await)
 }
 
 /// GET /api/records/:ontology/:record_id - fetch one raw life-graph record.
@@ -105,9 +105,9 @@ pub async fn get_record_handler(
 /// POST /api/pages - Create a new page
 pub async fn create_page_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::CreatePageRequest>,
+    Json(request): Json<crate::api::pages::CreatePageRequest>,
 ) -> Response {
-    match crate::api::create_page(state.db.pool(), request).await {
+    match crate::api::pages::create_page(state.db.pool(), request).await {
         Ok(page) => (StatusCode::CREATED, Json(page)).into_response(),
         Err(e) => error_response(e),
     }
@@ -117,9 +117,9 @@ pub async fn create_page_handler(
 pub async fn update_page_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::UpdatePageRequest>,
+    Json(request): Json<crate::api::pages::UpdatePageRequest>,
 ) -> Response {
-    api_response(crate::api::update_page(state.db.pool(), &id, request).await)
+    api_response(crate::api::pages::update_page(state.db.pool(), &id, request).await)
 }
 
 /// DELETE /api/pages/:id - Delete a page
@@ -127,7 +127,7 @@ pub async fn delete_page_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    match crate::api::delete_page(state.db.pool(), &id).await {
+    match crate::api::pages::delete_page(state.db.pool(), &id).await {
         Ok(_) => success_message("Page deleted successfully"),
         Err(e) => error_response(e),
     }
@@ -165,7 +165,7 @@ pub async fn get_page_backlinks_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_page_backlinks(state.db.pool(), &id).await)
+    api_response(crate::api::pages::get_page_backlinks(state.db.pool(), &id).await)
 }
 
 /// Query params for entity search
@@ -179,7 +179,7 @@ pub async fn search_refs_handler(
     State(state): State<AppState>,
     Query(query): Query<EntitySearchQuery>,
 ) -> Response {
-    api_response(crate::api::search_refs(state.db.pool(), &query.q).await)
+    api_response(crate::api::pages::search_refs(state.db.pool(), &query.q).await)
 }
 
 // ============================================================================
@@ -191,7 +191,7 @@ pub async fn create_page_share_handler(
     State(state): State<AppState>,
     Path(page_id): Path<String>,
 ) -> Response {
-    match crate::api::create_page_share(state.db.pool(), &page_id).await {
+    match crate::api::pages::create_page_share(state.db.pool(), &page_id).await {
         Ok(share) => (StatusCode::CREATED, Json(share)).into_response(),
         Err(e) => error_response(e),
     }
@@ -202,7 +202,7 @@ pub async fn get_page_share_handler(
     State(state): State<AppState>,
     Path(page_id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_page_share(state.db.pool(), &page_id).await)
+    api_response(crate::api::pages::get_page_share(state.db.pool(), &page_id).await)
 }
 
 /// DELETE /api/pages/:id/share - Revoke the share for a page
@@ -210,7 +210,7 @@ pub async fn delete_page_share_handler(
     State(state): State<AppState>,
     Path(page_id): Path<String>,
 ) -> Response {
-    match crate::api::delete_page_share(state.db.pool(), &page_id).await {
+    match crate::api::pages::delete_page_share(state.db.pool(), &page_id).await {
         Ok(_) => success_message("Share revoked"),
         Err(e) => error_response(e),
     }
@@ -221,7 +221,7 @@ pub async fn get_shared_page_handler(
     State(state): State<AppState>,
     Path(token): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_shared_page(state.db.pool(), &token).await)
+    api_response(crate::api::pages::get_shared_page(state.db.pool(), &token).await)
 }
 
 /// GET /api/s/:token/files/:file_id - Download a file from a shared page (public, no auth)
@@ -231,14 +231,14 @@ pub async fn shared_file_download_handler(
     Path((token, file_id)): Path<(String, String)>,
 ) -> Response {
     // Validate the share token and that this file belongs to the shared page
-    if let Err(e) = crate::api::validate_shared_file(state.db.pool(), &token, &file_id).await {
+    if let Err(e) = crate::api::pages::validate_shared_file(state.db.pool(), &token, &file_id).await {
         return error_response(e);
     }
 
     // Lake objects use in-memory download
-    if crate::api::is_lake_object_id(&file_id) {
+    if crate::api::drive::is_lake_object_id(&file_id) {
         let result =
-            crate::api::download_lake_object(state.db.pool(), &state.storage, &file_id).await;
+            crate::api::drive::download_lake_object(state.db.pool(), &state.storage, &file_id).await;
         return match result {
             Ok((file, content)) => {
                 let content_type = file
@@ -266,7 +266,7 @@ pub async fn shared_file_download_handler(
     }
 
     // Regular drive files: stream from storage
-    let result = crate::api::download_drive_file_stream(
+    let result = crate::api::drive::download_file_stream(
         state.db.pool(),
         &state.drive_config,
         &file_id,
@@ -312,16 +312,16 @@ pub async fn list_page_versions_handler(
     Path(id): Path<String>,
     Query(query): Query<ListVersionsQuery>,
 ) -> Response {
-    api_response(crate::api::list_versions(state.db.pool(), &id, query.limit).await)
+    api_response(crate::api::pages::list_versions(state.db.pool(), &id, query.limit).await)
 }
 
 /// POST /api/pages/:id/versions - Create a new version snapshot
 pub async fn create_page_version_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::CreateVersionRequest>,
+    Json(request): Json<crate::api::pages::CreateVersionRequest>,
 ) -> Response {
-    match crate::api::create_version(state.db.pool(), &id, request).await {
+    match crate::api::pages::create_version(state.db.pool(), &id, request).await {
         Ok(version) => (StatusCode::CREATED, Json(version)).into_response(),
         Err(e) => error_response(e),
     }
@@ -332,7 +332,7 @@ pub async fn get_page_version_handler(
     State(state): State<AppState>,
     Path(version_id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_version(state.db.pool(), &version_id).await)
+    api_response(crate::api::pages::get_version(state.db.pool(), &version_id).await)
 }
 
 // ============================================================================
@@ -347,7 +347,7 @@ pub async fn get_page_version_handler(
 /// posts.
 pub async fn search_local_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::LocalSearchRequest>,
+    Json(request): Json<crate::api::search_local::LocalSearchRequest>,
 ) -> Response {
-    api_response(crate::api::search_local(state.db.pool(), request).await)
+    api_response(crate::api::search_local::search_local(state.db.pool(), request).await)
 }

@@ -262,15 +262,15 @@ pub fn routes() -> Router<AppState> {
 
 /// List all known places
 pub async fn list_places_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_places(state.db.pool()).await)
+    api_response(crate::api::entities::list_places(state.db.pool()).await)
 }
 
 /// Create a place by hand — the phone's "Mute here" and its Google-places door.
 pub async fn create_place_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::CreatePlaceRequest>,
+    Json(request): Json<crate::api::entities::CreatePlaceRequest>,
 ) -> Response {
-    api_response(crate::api::create_place(state.db.pool(), request).await)
+    api_response(crate::api::entities::create_place(state.db.pool(), request).await)
 }
 
 /// Get a specific place by ID
@@ -278,16 +278,16 @@ pub async fn get_place_handler(
     State(state): State<AppState>,
     Path(place_id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_place(state.db.pool(), place_id).await)
+    api_response(crate::api::entities::get_place(state.db.pool(), place_id).await)
 }
 
 /// Update an existing place
 pub async fn update_place_handler(
     State(state): State<AppState>,
     Path(place_id): Path<String>,
-    Json(request): Json<crate::api::UpdatePlaceRequest>,
+    Json(request): Json<crate::api::entities::UpdatePlaceRequest>,
 ) -> Response {
-    api_response(crate::api::update_place(state.db.pool(), place_id, request).await)
+    api_response(crate::api::entities::update_place(state.db.pool(), place_id, request).await)
 }
 
 /// Delete a place
@@ -295,7 +295,7 @@ pub async fn delete_place_handler(
     State(state): State<AppState>,
     Path(place_id): Path<String>,
 ) -> Response {
-    match crate::api::delete_place(state.db.pool(), place_id).await {
+    match crate::api::entities::delete_place(state.db.pool(), place_id).await {
         Ok(_) => success_message("Place deleted successfully"),
         Err(e) => error_response(e),
     }
@@ -901,21 +901,21 @@ pub async fn wiki_get_person_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_person(state.db.pool(), id).await)
+    api_response(crate::api::wiki::get_person(state.db.pool(), id).await)
 }
 
 /// List all people
 pub async fn wiki_list_people_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_people(state.db.pool()).await)
+    api_response(crate::api::wiki::list_people(state.db.pool()).await)
 }
 
 /// Update a person by ID
 pub async fn wiki_update_person_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::UpdateWikiPersonRequest>,
+    Json(request): Json<crate::api::wiki::UpdateWikiPersonRequest>,
 ) -> Response {
-    api_response(crate::api::update_person(state.db.pool(), id, request).await)
+    api_response(crate::api::wiki::update_person(state.db.pool(), id, request).await)
 }
 
 // --- Place ---
@@ -925,21 +925,21 @@ pub async fn wiki_get_place_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_wiki_place(state.db.pool(), id).await)
+    api_response(crate::api::wiki::get_wiki_place(state.db.pool(), id).await)
 }
 
 /// List all places (wiki view)
 pub async fn wiki_list_places_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_wiki_places(state.db.pool()).await)
+    api_response(crate::api::wiki::list_wiki_places(state.db.pool()).await)
 }
 
 /// Update a place by ID (wiki fields)
 pub async fn wiki_update_place_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::UpdateWikiPlaceRequest>,
+    Json(request): Json<crate::api::wiki::UpdateWikiPlaceRequest>,
 ) -> Response {
-    api_response(crate::api::update_wiki_place(state.db.pool(), id, request).await)
+    api_response(crate::api::wiki::update_wiki_place(state.db.pool(), id, request).await)
 }
 
 // --- Organization ---
@@ -949,28 +949,28 @@ pub async fn wiki_get_organization_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_organization(state.db.pool(), id).await)
+    api_response(crate::api::wiki::get_organization(state.db.pool(), id).await)
 }
 
 /// List all organizations
 pub async fn wiki_list_organizations_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_organizations(state.db.pool()).await)
+    api_response(crate::api::wiki::list_organizations(state.db.pool()).await)
 }
 
 /// Update an organization by ID
 pub async fn wiki_update_organization_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::UpdateWikiOrganizationRequest>,
+    Json(request): Json<crate::api::wiki::UpdateWikiOrganizationRequest>,
 ) -> Response {
-    api_response(crate::api::update_organization(state.db.pool(), id, request).await)
+    api_response(crate::api::wiki::update_organization(state.db.pool(), id, request).await)
 }
 
 // --- Narrative Identity ---
 
 /// Get narrative identity
 pub async fn wiki_get_narrative_identity_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::get_narrative_identity(state.db.pool()).await)
+    api_response(crate::api::wiki::get_narrative_identity(state.db.pool()).await)
 }
 
 // --- Day ---
@@ -988,7 +988,7 @@ pub async fn wiki_get_day_handler(
 ) -> Response {
     match date.parse::<chrono::NaiveDate>() {
         Ok(parsed_date) => {
-            api_response(crate::api::get_or_create_day(state.db.pool(), parsed_date).await)
+            api_response(crate::api::wiki_days::get_or_create_day(state.db.pool(), parsed_date).await)
         }
         Err(_) => error_response(Error::InvalidInput(format!(
             "Invalid date format: {}",
@@ -1009,7 +1009,7 @@ pub async fn wiki_list_days_handler(
         .start_date
         .unwrap_or(today - chrono::Duration::days(30));
     let end_date = query.end_date.unwrap_or(today);
-    api_response(crate::api::list_days(state.db.pool(), start_date, end_date).await)
+    api_response(crate::api::wiki_days::list_days(state.db.pool(), start_date, end_date).await)
 }
 
 /// Per-day activity counts for the wiki calendar heatmap
@@ -1022,7 +1022,7 @@ pub async fn wiki_day_activity_handler(
         .start_date
         .unwrap_or(today - chrono::Duration::days(365));
     let end_date = query.end_date.unwrap_or(today);
-    api_response(crate::api::day_activity(state.db.pool(), start_date, end_date).await)
+    api_response(crate::api::wiki_days::day_activity(state.db.pool(), start_date, end_date).await)
 }
 
 #[derive(Deserialize)]
@@ -1036,7 +1036,7 @@ pub async fn wiki_on_this_day_handler(
     Query(query): Query<OnThisDayQuery>,
 ) -> Response {
     let date = query.date.unwrap_or_else(|| chrono::Utc::now().date_naive());
-    api_response(crate::api::on_this_day(state.db.pool(), date).await)
+    api_response(crate::api::wiki_days::on_this_day(state.db.pool(), date).await)
 }
 
 #[derive(Deserialize)]
@@ -1066,7 +1066,7 @@ pub async fn wiki_entity_records_handler(
         .map(String::from)
         .collect();
     api_response(
-        crate::api::get_entity_records_page(
+        crate::api::wiki::get_entity_records_page(
             state.db.pool(),
             &id,
             q.offset.unwrap_or(0),
@@ -1084,7 +1084,7 @@ pub async fn wiki_entity_record_facets_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_entity_record_facets(state.db.pool(), &id).await)
+    api_response(crate::api::wiki::get_entity_record_facets(state.db.pool(), &id).await)
 }
 
 // =============================================================================
@@ -1098,7 +1098,7 @@ pub async fn wiki_get_day_events_handler(
 ) -> Response {
     match date.parse::<chrono::NaiveDate>() {
         Ok(parsed_date) => {
-            api_response(crate::api::get_events_by_date(state.db.pool(), parsed_date).await)
+            api_response(crate::api::wiki_events::get_events_by_date(state.db.pool(), parsed_date).await)
         }
         Err(_) => error_response(Error::InvalidInput(format!(
             "Invalid date format: {}",
@@ -1110,9 +1110,9 @@ pub async fn wiki_get_day_events_handler(
 /// Create a temporal event
 pub async fn wiki_create_event_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::CreateTemporalEventRequest>,
+    Json(request): Json<crate::api::wiki_events::CreateTemporalEventRequest>,
 ) -> Response {
-    match crate::api::create_temporal_event(state.db.pool(), request).await {
+    match crate::api::wiki_events::create_temporal_event(state.db.pool(), request).await {
         Ok(event) => (StatusCode::CREATED, Json(event)).into_response(),
         Err(e) => error_response(e),
     }
@@ -1122,9 +1122,9 @@ pub async fn wiki_create_event_handler(
 pub async fn wiki_update_event_handler(
     State(state): State<AppState>,
     Path(event_id): Path<String>,
-    Json(request): Json<crate::api::UpdateTemporalEventRequest>,
+    Json(request): Json<crate::api::wiki_events::UpdateTemporalEventRequest>,
 ) -> Response {
-    api_response(crate::api::update_temporal_event(state.db.pool(), event_id, request).await)
+    api_response(crate::api::wiki_events::update_temporal_event(state.db.pool(), event_id, request).await)
 }
 
 /// Delete a temporal event
@@ -1132,7 +1132,7 @@ pub async fn wiki_delete_event_handler(
     State(state): State<AppState>,
     Path(event_id): Path<String>,
 ) -> Response {
-    match crate::api::delete_temporal_event(state.db.pool(), event_id).await {
+    match crate::api::wiki_events::delete_temporal_event(state.db.pool(), event_id).await {
         Ok(_) => success_message("Event deleted"),
         Err(e) => error_response(e),
     }
@@ -1143,7 +1143,7 @@ pub async fn wiki_delete_auto_events_handler(
     State(state): State<AppState>,
     Path(day_id): Path<String>,
 ) -> Response {
-    match crate::api::delete_auto_events_for_day(state.db.pool(), day_id).await {
+    match crate::api::wiki_events::delete_auto_events_for_day(state.db.pool(), day_id).await {
         Ok(count) => (
             StatusCode::OK,
             Json(serde_json::json!({ "deleted": count })),
@@ -1160,7 +1160,7 @@ pub async fn timeline_get_day_handler(
 ) -> Response {
     match date.parse::<chrono::NaiveDate>() {
         Ok(parsed_date) => {
-            api_response(crate::api::get_timeline_day(state.db.pool(), parsed_date).await)
+            api_response(crate::api::wiki_days::get_timeline_day(state.db.pool(), parsed_date).await)
         }
         Err(_) => error_response(Error::InvalidInput(format!(
             "Invalid date format: {}",
@@ -1203,7 +1203,7 @@ pub async fn today_streams_handler(
 ) -> Response {
     match date.parse::<chrono::NaiveDate>() {
         Ok(parsed_date) => api_response(
-            crate::api::get_today_streams(state.db.pool(), parsed_date, query.tz.as_deref()).await,
+            crate::api::wiki_streams::get_today_streams(state.db.pool(), parsed_date, query.tz.as_deref()).await,
         ),
         Err(_) => error_response(Error::InvalidInput(format!(
             "Invalid date format: {}",
@@ -1220,7 +1220,7 @@ pub struct LimitQuery {
 
 /// Current weather for the home masthead (null until the weather_sync cron runs).
 pub async fn weather_now_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::get_current_weather(state.db.pool()).await)
+    api_response(crate::api::home::get_current_weather(state.db.pool()).await)
 }
 
 /// The next few calendar events (holidays/birthdays filtered).
@@ -1228,7 +1228,7 @@ pub async fn calendar_upcoming_handler(
     State(state): State<AppState>,
     Query(q): Query<LimitQuery>,
 ) -> Response {
-    api_response(crate::api::get_calendar_upcoming(state.db.pool(), q.limit.unwrap_or(5)).await)
+    api_response(crate::api::home::get_calendar_upcoming(state.db.pool(), q.limit.unwrap_or(5)).await)
 }
 
 /// Places visited but never named — the home "name this place" ask.
@@ -1236,7 +1236,7 @@ pub async fn unnamed_places_handler(
     State(state): State<AppState>,
     Query(q): Query<LimitQuery>,
 ) -> Response {
-    api_response(crate::api::get_unnamed_places(state.db.pool(), q.limit.unwrap_or(3)).await)
+    api_response(crate::api::home::get_unnamed_places(state.db.pool(), q.limit.unwrap_or(3)).await)
 }
 
 /// Get data sources (ontology records) for a day
@@ -1247,7 +1247,7 @@ pub async fn wiki_get_day_sources_handler(
 ) -> Response {
     match date.parse::<chrono::NaiveDate>() {
         Ok(parsed_date) => api_response(
-            crate::api::get_day_sources(state.db.pool(), parsed_date, query.tz.as_deref()).await,
+            crate::api::wiki_streams::get_day_sources(state.db.pool(), parsed_date, query.tz.as_deref()).await,
         ),
         Err(_) => error_response(Error::InvalidInput(format!(
             "Invalid date format: {}",
@@ -1263,7 +1263,7 @@ pub async fn wiki_get_day_chats_handler(
 ) -> Response {
     match date.parse::<chrono::NaiveDate>() {
         Ok(parsed_date) => {
-            api_response(crate::api::get_day_chats(state.db.pool(), parsed_date).await)
+            api_response(crate::api::wiki_streams::get_day_chats(state.db.pool(), parsed_date).await)
         }
         Err(_) => error_response(Error::InvalidInput(format!(
             "Invalid date format: {}",
@@ -1279,7 +1279,7 @@ pub async fn wiki_get_day_streams_handler(
 ) -> Response {
     match date.parse::<chrono::NaiveDate>() {
         Ok(parsed_date) => {
-            api_response(crate::api::get_day_streams(state.db.pool(), parsed_date).await)
+            api_response(crate::api::wiki_streams::get_day_streams(state.db.pool(), parsed_date).await)
         }
         Err(_) => error_response(Error::InvalidInput(format!(
             "Invalid date format: {}",

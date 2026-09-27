@@ -122,7 +122,7 @@ async fn preflight(client: &Virtues) {
     }
 
     // Auto-detect server readiness (skips setup screen if previously hydrated)
-    if let Err(e) = crate::api::ensure_server_status(pool).await {
+    if let Err(e) = crate::api::internal::ensure_server_status(pool).await {
         tracing::warn!("Failed to ensure server status: {}", e);
     }
 
@@ -312,7 +312,7 @@ fn build_state(client: &Virtues, yjs_state: yjs::YjsState) -> AppState {
     AppState {
         db: client.database.clone(),
         storage: client.storage.clone(),
-        drive_config: crate::api::DriveConfig::new(client.storage.clone()),
+        drive_config: crate::api::drive::DriveConfig::new(client.storage.clone()),
         tool_executor,
         yjs_state,
         // Stops in-progress chat requests.

@@ -82,12 +82,12 @@ pub fn routes() -> Router<AppState> {
 
 /// GET /api/drive/usage - Get drive usage statistics
 pub async fn get_drive_usage_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::get_drive_usage(state.db.pool(), &state.drive_config).await)
+    api_response(crate::api::drive::get_drive_usage(state.db.pool(), &state.drive_config).await)
 }
 
 /// GET /api/backup/status - age of the newest good backup, per volume
 pub async fn get_backup_status_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::get_backup_status(state.db.pool()).await)
+    api_response(crate::api::backup_status::get_backup_status(state.db.pool()).await)
 }
 
 /// Query params for listing drive files
@@ -106,7 +106,7 @@ pub async fn list_drive_files_handler(
     State(state): State<AppState>,
     Query(params): Query<ListDriveFilesQuery>,
 ) -> Response {
-    api_response(crate::api::list_drive_files(state.db.pool(), &params.path).await)
+    api_response(crate::api::drive::list_files(state.db.pool(), &params.path).await)
 }
 
 /// GET /api/drive/files/:id - Get file metadata
@@ -114,7 +114,7 @@ pub async fn get_drive_file_handler(
     State(state): State<AppState>,
     Path(file_id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_drive_file(state.db.pool(), &file_id).await)
+    api_response(crate::api::drive::get_file_metadata(state.db.pool(), &file_id).await)
 }
 
 /// GET /api/drive/files/:id/download - Download file content
@@ -206,9 +206,9 @@ pub async fn download_drive_file_handler(
     };
 
     // Lake objects use in-memory download (different storage layer)
-    if crate::api::is_lake_object_id(&file_id) {
+    if crate::api::drive::is_lake_object_id(&file_id) {
         let result =
-            crate::api::download_lake_object(state.db.pool(), &state.storage, &file_id).await;
+            crate::api::drive::download_lake_object(state.db.pool(), &state.storage, &file_id).await;
         return match result {
             Ok((file, content)) => {
                 let content_type = file
@@ -237,7 +237,7 @@ pub async fn download_drive_file_handler(
 
     // Regular drive files: resolve any Range against the stored size, then
     // stream straight from disk — 206 for partials, 416 when unsatisfiable.
-    let meta = match crate::api::get_drive_file(state.db.pool(), &file_id).await {
+    let meta = match crate::api::drive::get_file_metadata(state.db.pool(), &file_id).await {
         Ok(f) => f,
         Err(e) => return error_response(e),
     };
@@ -263,7 +263,7 @@ pub async fn download_drive_file_handler(
         RangeOutcome::Partial(start, len) => Some((start, len)),
     };
 
-    let result = crate::api::download_drive_file_stream(
+    let result = crate::api::drive::download_file_stream(
         state.db.pool(),
         &state.drive_config,
         &file_id,
@@ -318,7 +318,7 @@ pub async fn list_annotations_handler(
     State(state): State<AppState>,
     Query(q): Query<ListAnnotationsQuery>,
 ) -> Response {
-    api_response(crate::api::list_annotations(state.db.pool(), &q.file_id).await)
+    api_response(crate::api::annotations::list_annotations(state.db.pool(), &q.file_id).await)
 }
 
 /// GET /api/annotations/export?file_id=… — a file's highlights as markdown.
@@ -326,7 +326,7 @@ pub async fn export_file_annotations_handler(
     State(state): State<AppState>,
     Query(q): Query<ListAnnotationsQuery>,
 ) -> Response {
-    match crate::api::export_file_annotations_md(state.db.pool(), &q.file_id).await {
+    match crate::api::annotations::export_file_annotations_md(state.db.pool(), &q.file_id).await {
         Ok(md) => markdown_response(md),
         Err(e) => error_response(e),
     }
@@ -344,18 +344,18 @@ fn markdown_response(md: String) -> Response {
 /// POST /api/annotations — create (or upsert) a highlight.
 pub async fn create_annotation_handler(
     State(state): State<AppState>,
-    Json(req): Json<crate::api::CreateAnnotationRequest>,
+    Json(req): Json<crate::api::annotations::CreateAnnotationRequest>,
 ) -> Response {
-    api_response(crate::api::create_annotation(state.db.pool(), req).await)
+    api_response(crate::api::annotations::create_annotation(state.db.pool(), req).await)
 }
 
 /// PATCH /api/annotations/:id — edit note/color.
 pub async fn update_annotation_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(req): Json<crate::api::UpdateAnnotationRequest>,
+    Json(req): Json<crate::api::annotations::UpdateAnnotationRequest>,
 ) -> Response {
-    api_response(crate::api::update_annotation(state.db.pool(), &id, req).await)
+    api_response(crate::api::annotations::update_annotation(state.db.pool(), &id, req).await)
 }
 
 /// DELETE /api/annotations/:id
@@ -363,7 +363,7 @@ pub async fn delete_annotation_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    match crate::api::delete_annotation(state.db.pool(), &id).await {
+    match crate::api::annotations::delete_annotation(state.db.pool(), &id).await {
         Ok(_) => success_message("Annotation deleted"),
         Err(e) => error_response(e),
     }
@@ -374,7 +374,7 @@ pub async fn reextract_drive_file_handler(
     State(state): State<AppState>,
     Path(file_id): Path<String>,
 ) -> Response {
-    api_response(crate::api::reextract_drive_file(state.db.pool(), &file_id).await)
+    api_response(crate::api::drive::reextract_file(state.db.pool(), &file_id).await)
 }
 
 /// DELETE /api/drive/files/:id - Delete a file or folder
@@ -382,7 +382,7 @@ pub async fn delete_drive_file_handler(
     State(state): State<AppState>,
     Path(file_id): Path<String>,
 ) -> Response {
-    match crate::api::delete_drive_file(state.db.pool(), &state.drive_config, &file_id).await {
+    match crate::api::drive::delete_file(state.db.pool(), &state.drive_config, &file_id).await {
         Ok(_) => success_message("File deleted"),
         Err(e) => error_response(e),
     }
@@ -392,10 +392,10 @@ pub async fn delete_drive_file_handler(
 pub async fn move_drive_file_handler(
     State(state): State<AppState>,
     Path(file_id): Path<String>,
-    Json(request): Json<crate::api::DriveMoveFileRequest>,
+    Json(request): Json<crate::api::drive::MoveFileRequest>,
 ) -> Response {
     api_response(
-        crate::api::move_drive_file(
+        crate::api::drive::move_file(
             state.db.pool(),
             &state.drive_config,
             &file_id,
@@ -434,9 +434,9 @@ pub async fn upload_drive_file_handler(
     let mut path: Option<String> = None;
     let mut filename: Option<String> = None;
     let mut mime_type: Option<String> = None;
-    let mut staged: Option<crate::api::StagedUpload> = None;
+    let mut staged: Option<crate::api::drive::StagedUpload> = None;
 
-    let cleanup = |staged: &Option<crate::api::StagedUpload>| {
+    let cleanup = |staged: &Option<crate::api::drive::StagedUpload>| {
         if let Some(s) = staged {
             let p = s.temp_path.clone();
             tokio::spawn(async move {
@@ -526,7 +526,7 @@ pub async fn upload_drive_file_handler(
                         "Failed to stage upload: {e}"
                     )));
                 }
-                staged = Some(crate::api::StagedUpload {
+                staged = Some(crate::api::drive::StagedUpload {
                     temp_path,
                     size_bytes: written as i64,
                     sha256: format!("{:x}", hasher.finalize()),
@@ -536,7 +536,7 @@ pub async fn upload_drive_file_handler(
         }
     }
 
-    let request = crate::api::DriveUploadRequest {
+    let request = crate::api::drive::UploadRequest {
         path: path.unwrap_or_else(|| "uploads".to_string()),
         filename: filename.unwrap_or_else(|| "unnamed".to_string()),
         mime_type,
@@ -545,7 +545,7 @@ pub async fn upload_drive_file_handler(
     match staged {
         Some(staged) => {
             let temp_path = staged.temp_path.clone();
-            match crate::api::upload_drive_file(
+            match crate::api::drive::upload_file(
                 state.db.pool(),
                 &state.drive_config,
                 request,
@@ -570,9 +570,9 @@ pub async fn upload_drive_file_handler(
 /// POST /api/drive/folders - Create a folder
 pub async fn create_drive_folder_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::DriveCreateFolderRequest>,
+    Json(request): Json<crate::api::drive::CreateFolderRequest>,
 ) -> Response {
-    match crate::api::create_drive_folder(state.db.pool(), &state.drive_config, request).await {
+    match crate::api::drive::create_folder(state.db.pool(), &state.drive_config, request).await {
         Ok(folder) => (StatusCode::CREATED, Json(folder)).into_response(),
         Err(e) => error_response(e),
     }
@@ -585,11 +585,11 @@ pub async fn create_drive_folder_handler(
 /// GET /api/drive/trash - List files in trash
 /// GET /api/drive/media — the app's internal assets (.media/). Read-only.
 pub async fn list_drive_media_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_drive_media(state.db.pool()).await)
+    api_response(crate::api::drive::list_media(state.db.pool()).await)
 }
 
 pub async fn list_drive_trash_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_drive_trash(state.db.pool()).await)
+    api_response(crate::api::drive::list_trash(state.db.pool()).await)
 }
 
 /// POST /api/drive/files/:id/restore - Restore a file from trash
@@ -597,7 +597,7 @@ pub async fn restore_drive_file_handler(
     State(state): State<AppState>,
     Path(file_id): Path<String>,
 ) -> Response {
-    api_response(crate::api::restore_drive_file(state.db.pool(), &file_id).await)
+    api_response(crate::api::drive::restore_file(state.db.pool(), &file_id).await)
 }
 
 /// DELETE /api/drive/files/:id/purge - Permanently delete a file (skip trash)
@@ -605,7 +605,7 @@ pub async fn purge_drive_file_handler(
     State(state): State<AppState>,
     Path(file_id): Path<String>,
 ) -> Response {
-    match crate::api::purge_drive_file(state.db.pool(), &state.drive_config, &file_id).await {
+    match crate::api::drive::purge_file(state.db.pool(), &state.drive_config, &file_id).await {
         Ok(_) => success_message("File permanently deleted"),
         Err(e) => error_response(e),
     }
@@ -613,7 +613,7 @@ pub async fn purge_drive_file_handler(
 
 /// POST /api/drive/trash/empty - Empty all files from trash
 pub async fn empty_drive_trash_handler(State(state): State<AppState>) -> Response {
-    match crate::api::empty_drive_trash(state.db.pool(), &state.drive_config).await {
+    match crate::api::drive::empty_trash(state.db.pool(), &state.drive_config).await {
         Ok(count) => (
             StatusCode::OK,
             Json(serde_json::json!({ "deleted_count": count })),
@@ -670,7 +670,7 @@ pub async fn upload_media_handler(
 
     match data {
         Some(bytes) => {
-            match crate::api::upload_media(
+            match crate::api::media::upload_media(
                 state.db.pool(),
                 &state.drive_config,
                 &filename,
@@ -694,5 +694,5 @@ pub async fn get_media_handler(
     State(state): State<AppState>,
     Path(file_id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_media(state.db.pool(), &file_id).await)
+    api_response(crate::api::media::get_media(state.db.pool(), &file_id).await)
 }

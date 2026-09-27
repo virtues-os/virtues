@@ -110,32 +110,32 @@ pub async fn get_bookmark_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_bookmark(state.db.pool(), &id).await)
+    api_response(crate::api::bookmarks::get_bookmark(state.db.pool(), &id).await)
 }
 
 /// PATCH /api/bookmarks/:id/note — write the user's marginalia.
 pub async fn update_bookmark_note_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(req): Json<crate::api::UpdateNoteRequest>,
+    Json(req): Json<crate::api::bookmarks::UpdateNoteRequest>,
 ) -> Response {
-    api_response(crate::api::update_note(state.db.pool(), &id, req).await)
+    api_response(crate::api::bookmarks::update_note(state.db.pool(), &id, req).await)
 }
 
 pub async fn list_bookmarks_handler(
     State(state): State<AppState>,
-    Query(query): Query<crate::api::ListBookmarksQuery>,
+    Query(query): Query<crate::api::bookmarks::ListBookmarksQuery>,
 ) -> Response {
-    api_response(crate::api::list_bookmarks(state.db.pool(), query).await)
+    api_response(crate::api::bookmarks::list_bookmarks(state.db.pool(), query).await)
 }
 
 /// POST /api/bookmarks — save a URL (idempotent on canonical URL). The manual
 /// capture door; enrichment backfills titles/extraction later.
 pub async fn save_bookmark_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::SaveBookmarkRequest>,
+    Json(request): Json<crate::api::bookmarks::SaveBookmarkRequest>,
 ) -> Response {
-    match crate::api::save_bookmark(state.db.pool(), request).await {
+    match crate::api::bookmarks::save_bookmark(state.db.pool(), request).await {
         Ok(saved) => (StatusCode::CREATED, Json(saved)).into_response(),
         Err(e) => error_response(e),
     }
@@ -147,15 +147,15 @@ pub async fn save_bookmark_handler(
 
 /// GET /api/pins — list all pins, ordered by `sort_order`.
 pub async fn list_pins_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_pins(state.db.pool()).await)
+    api_response(crate::api::pins::list_pins(state.db.pool()).await)
 }
 
 /// POST /api/pins — pin a URL (idempotent on URL).
 pub async fn create_pin_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::CreatePinRequest>,
+    Json(request): Json<crate::api::pins::CreatePinRequest>,
 ) -> Response {
-    match crate::api::create_pin(state.db.pool(), request).await {
+    match crate::api::pins::create_pin(state.db.pool(), request).await {
         Ok(pin) => (StatusCode::CREATED, Json(pin)).into_response(),
         Err(e) => error_response(e),
     }
@@ -165,9 +165,9 @@ pub async fn create_pin_handler(
 pub async fn update_pin_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::UpdatePinRequest>,
+    Json(request): Json<crate::api::pins::UpdatePinRequest>,
 ) -> Response {
-    api_response(crate::api::update_pin(state.db.pool(), &id, request).await)
+    api_response(crate::api::pins::update_pin(state.db.pool(), &id, request).await)
 }
 
 /// DELETE /api/pins/:id — unpin.
@@ -175,7 +175,7 @@ pub async fn delete_pin_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    match crate::api::delete_pin(state.db.pool(), &id).await {
+    match crate::api::pins::delete_pin(state.db.pool(), &id).await {
         Ok(_) => success_message("Pin removed"),
         Err(e) => error_response(e),
     }
@@ -191,7 +191,7 @@ pub async fn reorder_pins_handler(
     State(state): State<AppState>,
     Json(request): Json<ReorderPinsRequest>,
 ) -> Response {
-    match crate::api::reorder_pins(state.db.pool(), &request.urls).await {
+    match crate::api::pins::reorder_pins(state.db.pool(), &request.urls).await {
         Ok(_) => success_message("Pins reordered"),
         Err(e) => error_response(e),
     }

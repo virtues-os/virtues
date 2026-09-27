@@ -673,8 +673,8 @@ pub async fn list_runs_handler(
 /// GET /api/credentials — list all credentials (active + pending + revoked).
 pub async fn list_credentials_handler(
     State(state): State<AppState>,
-) -> Result<Json<Vec<crate::api::CredentialListItem>>, Error> {
-    Ok(Json(crate::api::list_credentials(state.db.pool()).await?))
+) -> Result<Json<Vec<crate::api::credentials::CredentialListItem>>, Error> {
+    Ok(Json(crate::api::credentials::list_credentials(state.db.pool()).await?))
 }
 
 // ============================================================================
@@ -791,7 +791,7 @@ pub async fn patch_credential_handler(
 ) -> Response {
     let pool = state.db.pool();
     if let Some(name) = &body.name {
-        if let Err(e) = crate::api::rename_credential(pool, &credential_id, name).await {
+        if let Err(e) = crate::api::credentials::rename_credential(pool, &credential_id, name).await {
             let status = if e.http_status() == 404 {
                 StatusCode::NOT_FOUND
             } else {
@@ -802,7 +802,7 @@ pub async fn patch_credential_handler(
     }
     if let Some(active) = body.is_active {
         if !active {
-            if let Err(e) = crate::api::revoke_credential(pool, &credential_id).await {
+            if let Err(e) = crate::api::credentials::revoke_credential(pool, &credential_id).await {
                 return error_response(e);
             }
         } else {
@@ -854,9 +854,9 @@ pub async fn delete_credential_handler(
             )
                 .into_response()
         }
-        Some("pending") => crate::api::delete_pending_credential(pool, &credential_id).await,
+        Some("pending") => crate::api::credentials::delete_pending_credential(pool, &credential_id).await,
         Some("revoked") => return StatusCode::NO_CONTENT.into_response(),
-        _ => crate::api::revoke_credential(pool, &credential_id).await,
+        _ => crate::api::credentials::revoke_credential(pool, &credential_id).await,
     };
 
     match result {
@@ -963,9 +963,9 @@ pub async fn import_git_applets_handler(
 /// Execute a read-only SQL query
 pub async fn execute_sql_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::ExecuteSqlRequest>,
+    Json(request): Json<crate::api::developer::ExecuteSqlRequest>,
 ) -> Response {
-    match crate::api::execute_sql(state.db.pool(), request).await {
+    match crate::api::developer::execute_sql(state.db.pool(), request).await {
         Ok(results) => (StatusCode::OK, Json(results)).into_response(),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -981,7 +981,7 @@ pub async fn execute_sql_handler(
 pub async fn list_tables_handler(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<String>>, Error> {
-    Ok(Json(crate::api::list_tables(state.db.pool()).await?))
+    Ok(Json(crate::api::developer::list_tables(state.db.pool()).await?))
 }
 
 
