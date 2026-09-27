@@ -2527,8 +2527,7 @@ fn create_agent_stream(
                 }
 
                 // Events we don't need to forward to client
-                AgentEvent::LoopStarted { .. } |
-                AgentEvent::MessageId { .. } => {}
+                AgentEvent::LoopStarted { .. } => {}
               }
             }
           }

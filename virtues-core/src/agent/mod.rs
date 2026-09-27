@@ -26,7 +26,7 @@
 //! use virtues::agent::{AgentLoop, AgentConfig};
 //!
 //! let agent = AgentLoop::new(pool);
-//! let stream = agent.run(messages, tools, context);
+//! let mut stream = agent.run(model, messages, tools, context, cancel_token);
 //!
 //! while let Some(event) = stream.next().await {
 //!     // Handle AgentEvent
@@ -559,12 +559,10 @@ impl AgentLoop {
                 // gateway carries. `None` means the catalog is cold and we do
                 // not know — treated as cannot, because guessing wrong fails
                 // the whole request rather than one attachment.
-                let attachments: Vec<(String, crate::tools::ToolAttachment)> = tool_results
+                let attachments: Vec<crate::tools::ToolAttachment> = tool_results
                     .iter()
-                    .filter_map(|tr| tr.result.as_ref().ok().map(|r| (tr.tool_name.clone(), r)))
-                    .flat_map(|(name, r)| {
-                        r.attachments.iter().map(move |a| (name.clone(), a.clone()))
-                    })
+                    .filter_map(|tr| tr.result.as_ref().ok())
+                    .flat_map(|r| r.attachments.iter().cloned())
                     .collect();
 
                 if !attachments.is_empty() {
@@ -627,7 +625,7 @@ impl AgentLoop {
             // always `EndTurn` and every caller that matched on it — the
             // finish reason on the wire, the row's subject — was matching on
             // dead arms.
-            yield AgentEvent::done_with_reason(step, finish);
+            yield AgentEvent::done(step, finish);
         })
     }
 }

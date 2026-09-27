@@ -94,11 +94,6 @@ pub enum AgentEvent {
         cost_micros: Option<i64>,
     },
 
-    /// Message ID assignment (for persistence)
-    MessageId {
-        id: String,
-    },
-
     // ─────────────────────────────────────────────────────────────────────────
     // Terminal Events
     // ─────────────────────────────────────────────────────────────────────────
@@ -163,36 +158,14 @@ pub enum FinishReason {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
-    /// Too many iterations in the loop
-    MaxStepsExceeded,
     /// LLM API error
     LlmError,
-    /// Tool execution failed
-    ToolError,
-    /// Request was cancelled
-    Cancelled,
     /// The stream ended before the model finished (dropped connection, idle
     /// timeout, gateway error frame). What streamed is kept; it is partial.
     Interrupted,
-    /// The model hit its output cap (`finish_reason: length`) before it
-    /// finished. What streamed is kept; it is partial.
-    OutputLimit,
-    /// Rate limited
-    RateLimited,
-    /// Invalid request
-    InvalidRequest,
-    /// Internal server error
-    Internal,
 }
 
 impl AgentEvent {
-    /// Convert to SSE event format
-    pub fn to_sse_data(&self) -> String {
-        serde_json::to_string(self).unwrap_or_else(|_| {
-            r#"{"type":"error","message":"Failed to serialize event","recoverable":false}"#.to_string()
-        })
-    }
-
     /// Create a text delta event
     pub fn text(content: impl Into<String>) -> Self {
         Self::TextDelta {
@@ -242,15 +215,7 @@ impl AgentEvent {
     }
 
     /// Create a done event
-    pub fn done(total_steps: u32) -> Self {
-        Self::Done {
-            total_steps,
-            finish_reason: FinishReason::EndTurn,
-        }
-    }
-
-    /// Create a done event with a specific finish reason
-    pub fn done_with_reason(total_steps: u32, finish_reason: FinishReason) -> Self {
+    pub fn done(total_steps: u32, finish_reason: FinishReason) -> Self {
         Self::Done {
             total_steps,
             finish_reason,
@@ -274,7 +239,7 @@ mod tests {
     #[test]
     fn test_event_serialization() {
         let event = AgentEvent::text("Hello");
-        let json = event.to_sse_data();
+        let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("text_delta"));
         assert!(json.contains("Hello"));
     }
@@ -282,7 +247,7 @@ mod tests {
     #[test]
     fn test_tool_call_serialization() {
         let event = AgentEvent::tool_start("call_123", "edit_page");
-        let json = event.to_sse_data();
+        let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("tool_call_start"));
         assert!(json.contains("call_123"));
         assert!(json.contains("edit_page"));

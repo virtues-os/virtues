@@ -396,11 +396,11 @@ pub fn build_tool_result_message(tool_call_id: &str, content: &str) -> Value {
 ///
 /// Returns None when nothing survives filtering, so the caller adds no message
 /// at all rather than an empty user turn.
-pub fn build_attachment_message(attachments: &[(String, crate::tools::ToolAttachment)]) -> Option<Value> {
+pub fn build_attachment_message(attachments: &[crate::tools::ToolAttachment]) -> Option<Value> {
     let mut parts: Vec<Value> = Vec::new();
     let mut named: Vec<&str> = Vec::new();
 
-    for (_, att) in attachments {
+    for att in attachments {
         if !att.media_type.starts_with("image/") {
             continue;
         }
@@ -542,15 +542,12 @@ mod attachment_tests {
     use super::*;
     use crate::tools::ToolAttachment;
 
-    fn att(media_type: &str, filename: &str) -> (String, ToolAttachment) {
-        (
-            "read_asset".to_string(),
-            ToolAttachment {
-                media_type: media_type.to_string(),
-                data_url: format!("data:{media_type};base64,AAAA"),
-                filename: filename.to_string(),
-            },
-        )
+    fn att(media_type: &str, filename: &str) -> ToolAttachment {
+        ToolAttachment {
+            media_type: media_type.to_string(),
+            data_url: format!("data:{media_type};base64,AAAA"),
+            filename: filename.to_string(),
+        }
     }
 
     #[test]
