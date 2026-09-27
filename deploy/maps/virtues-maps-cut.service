@@ -1,0 +1,23 @@
+[Unit]
+Description=Cut this month's map files for the boxes (deploy/maps/cut.py)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=virtues-maps
+Group=virtues-maps
+Environment=VIRTUES_MAPS_DIR=/srv/maps
+# go-pmtiles lives in /usr/local/bin; the venv holds the `pmtiles` Python reader.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/virtues-maps/venv/bin/python /opt/virtues-maps/cut.py
+# A full run downloads ~140 GB and cuts ~10,000 squares; give it the day.
+TimeoutStartSec=24h
+Nice=10
+IOSchedulingClass=idle
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/maps

@@ -182,6 +182,10 @@ async fn main() -> Result<()> {
         .merge(routes::ai::router())
         // Middleware
         .layer(TraceLayer::new_for_http())
+        // Map files, merged AFTER the trace layer so it never wraps them:
+        // which squares a box downloads is location data, and these routes
+        // log nothing (routes/maps.rs).
+        .merge(routes::maps::router())
         // F2: no CORS. virtues-api is a server-to-server sidecar (the home box
         // calls it with a Bearer or X-Internal-Secret header). No browser
         // should ever talk to it. The previous `allow_origin: Any +
