@@ -1946,12 +1946,7 @@ export interface SetupState {
  * page back in front of someone on every launch.
  */
 export async function skipOnboarding(skipped = true): Promise<void> {
-	const res = await fetch(`${API_BASE}/setup/skip-onboarding`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ skipped }),
-	});
-	if (!res.ok) throw new Error(`Failed to record onboarding choice: ${res.statusText}`);
+	await apiSend('POST', '/setup/skip-onboarding', { skipped });
 }
 
 // ---- Getting started: one room, one derived truth (api/getting_started.rs) ----
@@ -1985,6 +1980,8 @@ export interface GettingStartedState {
 	interview_started_at: string | null;
 }
 
+/** Raw fetch on purpose: the store reads "unsupported" off `404|Not Found` in
+ *  this message, which request()'s server-supplied text would not carry. */
 export async function getGettingStarted(): Promise<GettingStartedState> {
 	const res = await fetch(`${API_BASE}/getting-started`);
 	if (!res.ok) throw new Error(`Failed to get getting-started state: ${res.statusText}`);
@@ -1992,30 +1989,20 @@ export async function getGettingStarted(): Promise<GettingStartedState> {
 }
 
 /** Skip (or un-skip) one step. Answers with the new state. */
-export async function skipGettingStartedStep(
+export function skipGettingStartedStep(
 	step: GettingStartedStepId,
 	skipped = true
 ): Promise<GettingStartedState> {
-	const res = await fetch(`${API_BASE}/getting-started/skip`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ step, skipped })
-	});
-	if (!res.ok) throw new Error(`Failed to skip step: ${res.statusText}`);
-	return res.json();
+	return apiSend<GettingStartedState>('POST', '/getting-started/skip', { step, skipped });
 }
 
 /** Begin the interview inside the getting-started room. Answers with the new state. */
-export async function startGettingStartedInterview(): Promise<GettingStartedState> {
-	const res = await fetch(`${API_BASE}/getting-started/interview`, { method: 'POST' });
-	if (!res.ok) throw new Error(`Failed to start the interview: ${res.statusText}`);
-	return res.json();
+export function startGettingStartedInterview(): Promise<GettingStartedState> {
+	return apiSend<GettingStartedState>('POST', '/getting-started/interview');
 }
 
-export async function getSetupState(): Promise<SetupState> {
-	const res = await fetch(`${API_BASE}/setup/state`);
-	if (!res.ok) throw new Error(`Failed to get setup state: ${res.statusText}`);
-	return res.json();
+export function getSetupState(): Promise<SetupState> {
+	return apiGet<SetupState>('/setup/state');
 }
 
 
@@ -2041,27 +2028,18 @@ export interface AssistantMemory {
 	updated_at: string;
 }
 
-export async function listAssistantMemories(): Promise<AssistantMemory[]> {
-	const res = await fetch(`${API_BASE}/assistant/memories`);
-	if (!res.ok) throw new Error(`Failed to load memories: ${res.statusText}`);
-	return res.json();
+export function listAssistantMemories(): Promise<AssistantMemory[]> {
+	return apiGet<AssistantMemory[]>('/assistant/memories');
 }
 
 /** Rewrite one memory in your own words. It becomes yours. */
-export async function editAssistantMemory(id: number, body: string): Promise<AssistantMemory> {
-	const res = await fetch(`${API_BASE}/assistant/memories/${id}`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ body }),
-	});
-	if (!res.ok) throw new Error(`Failed to edit memory: ${res.statusText}`);
-	return res.json();
+export function editAssistantMemory(id: number, body: string): Promise<AssistantMemory> {
+	return apiSend<AssistantMemory>('PUT', `/assistant/memories/${id}`, { body });
 }
 
 /** Remove a memory from every future conversation (soft-retired with provenance). */
 export async function retireAssistantMemory(id: number): Promise<void> {
-	const res = await fetch(`${API_BASE}/assistant/memories/${id}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to remove memory: ${res.statusText}`);
+	await apiSend('DELETE', `/assistant/memories/${id}`);
 }
 
 export function getAssistantProfile<T = unknown>(): Promise<T> {
