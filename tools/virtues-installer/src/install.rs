@@ -1646,6 +1646,10 @@ Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
 /// that matters is ordering — stop the unit before deleting it, so its
 /// `ExecStop` gets to remove the iptables rule it added. Deleting the unit
 /// first would strand a NAT rule with nothing left that knows how to undo it.
+///
+/// REMOVE AFTER: every appliance imaged before 2026-08-17 has been reinstalled
+/// or reimaged. Then delete this function, its call in
+/// `apply_appliance_profile`, and the comment above that call.
 async fn retire_captive_artifacts() {
     const UNIT: &str = "virtues-captive-redirect";
     const UNIT_PATH: &str = "/etc/systemd/system/virtues-captive-redirect.service";
@@ -2480,6 +2484,10 @@ pub fn write_install_manifest(
 /// of it itself. Merges rather than clobbers, and never overwrites something
 /// already in the state root — a slug present in both means the state copy is
 /// the live one.
+///
+/// REMOVE AFTER: every box installed before 2026-07-21 (when the state root
+/// arrived) has run an installer that includes this. Then delete this function
+/// and its call.
 fn migrate_applets_out_of_shipped_tree(cfg: &InstallConfig) -> Result<()> {
     let dest_root = cfg.applet_state_dir().join("user");
     let mut moved = 0usize;
