@@ -41,12 +41,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RUST = ROOT / "crates/virtues-improv/src/protocol.rs"
 SWIFT = ROOT / "apps/web/plugins/reach/ios/Sources/ImprovClient.swift"
-BUILD_RS = ROOT / "apps/web/plugins/reach/build.rs"
 PLUGIN = ROOT / "apps/web/plugins/reach/ios/Sources/ReachPlugin.swift"
+COMMANDS_RS = ROOT / "apps/web/plugins/reach/src/commands.rs"
 
 
 def missing_ios_handlers() -> list[str]:
-    """Improv commands declared in build.rs with no @objc method to receive them.
+    """Commands commands.rs forwards to the iOS plugin with no @objc method to
+    receive them.
 
     `virtues_plugin_lockstep` already diffs COMMANDS against Rust's
     generate_handler!, which is why the Rust half is never wrong. It cannot see
@@ -54,12 +55,18 @@ def missing_ios_handlers() -> list[str]:
     commands.rs to a method nobody had written — and iOS setup died at the
     account hand-off with "No command improv_grant found for plugin reach".
 
-    Only `improv_*` commands: those are the ones commands.rs forwards to the
-    mobile plugin. The rest are desktop-only or handled in Rust on both sides.
+    Read from the `run_mobile_plugin("…")` calls themselves, not from build.rs:
+    a declared command can be implemented in Rust on top of other mobile calls
+    (`improv_owner_claim` signs between `improv_owner_challenge` and
+    `improv_owner_prove`), and what Swift must answer is exactly what Rust sends.
     """
-    declared = set(re.findall(r'"(improv_[a-z_]+)"', BUILD_RS.read_text()))
-    implemented = set(re.findall(r"@objc public func (improv_[a-z_]+)", PLUGIN.read_text()))
-    return sorted(declared - implemented)
+    forwarded = set(
+        re.findall(r'run_mobile_plugin(?:::<[^>]*>)?\(\s*"([a-z_]+)"', COMMANDS_RS.read_text())
+    )
+    if not forwarded:
+        sys.exit(f"error: no run_mobile_plugin calls found in {COMMANDS_RS.relative_to(ROOT)}")
+    implemented = set(re.findall(r"@objc public func ([a-z_]+)", PLUGIN.read_text()))
+    return sorted(forwarded - implemented)
 
 
 def box_arity() -> int:
@@ -93,10 +100,10 @@ def main() -> int:
     missing = missing_ios_handlers()
     if missing:
         print(
-            "Improv commands declared but not implemented on iOS: "
+            "Commands forwarded to iOS but not implemented there: "
             + ", ".join(missing)
             + "\n\n"
-            f"  declared:    {BUILD_RS.relative_to(ROOT)} (COMMANDS)\n"
+            f"  forwarded:   {COMMANDS_RS.relative_to(ROOT)} (run_mobile_plugin)\n"
             f"  must handle: {PLUGIN.relative_to(ROOT)} (@objc public func)\n\n"
             "commands.rs forwards these to the mobile plugin by name. A missing "
             "one is not a compile error anywhere — it reaches the user mid-setup "
@@ -118,7 +125,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"✓ Improv: all improv_* commands implemented on iOS; 0x83 agrees at {box} strings")
+    print(f"✓ Improv: every forwarded command implemented on iOS; 0x83 agrees at {box} strings")
     return 0
 
 
