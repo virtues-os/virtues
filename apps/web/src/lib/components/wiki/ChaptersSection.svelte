@@ -103,8 +103,8 @@
 	<header class="mast">
 		<h1>Chapters</h1>
 		<p class="standfirst">
-			Your life, divided the way you divided it. You named every chapter in the
-			interview yourself. Every day the record holds falls inside exactly one of them.
+			Your life, divided the way you divided it. You named every chapter yourself,
+			and every day the record holds falls inside exactly one of them.
 		</p>
 	</header>
 

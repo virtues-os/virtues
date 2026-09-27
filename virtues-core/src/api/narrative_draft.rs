@@ -400,19 +400,39 @@ pub async fn finalize_interview(pool: &PgPool, req: &CloseRequest) -> Result<Fin
     })
 }
 
+/// True when any chapter carries more than the timeline editor writes: the
+/// person's words (`summary`, `changepoint`) or a page of its own.
+const CHAPTERS_BEYOND_A_DRAWING: &str = "SELECT EXISTS ( \
+     SELECT 1 FROM wiki_chapters c \
+      WHERE c.summary IS NOT NULL \
+         OR c.changepoint IS NOT NULL \
+         OR EXISTS (SELECT 1 FROM wiki_articles a \
+                     WHERE a.subject_type = 'chapter' AND a.subject_id = c.id))";
+
 /// Extract the chapters and write wiki_chapters — one writer, once, same as
 /// the document: rows present mean the person owns the table and the machine
-/// never writes it again.
+/// never writes its STRUCTURE again.
+///
+/// A DRAWING IS FILLED, NOT SKIPPED. Setup draws the chapters first (names
+/// and spans, nothing else) and the interview is where the person says what
+/// each one was and what ended it. This used to return early on any row, so
+/// drawing first silently emptied the two fields the interviewer asks for
+/// above all, and every chapter page was seeded blank. Now a table that is
+/// still only a drawing keeps its shape and takes the person's words onto
+/// the chapters they drew.
 async fn chapters_from_interview(pool: &PgPool) -> Result<usize> {
-    let already: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM wiki_chapters)")
-        .fetch_one(pool)
-        .await
-        .map_err(|e| Error::Database(format!("check wiki_chapters: {e}")))?;
-    if already {
-        // The partition stands (one writer, once) — but backfill any chapter
-        // whose article is missing, e.g. rows written before seeding existed.
-        ensure_chapter_articles(pool).await;
-        return Ok(0);
+    let drawn = list_chapters(pool).await?;
+    if !drawn.is_empty() {
+        let beyond: bool = sqlx::query_scalar(CHAPTERS_BEYOND_A_DRAWING)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| Error::Database(format!("check wiki_chapters: {e}")))?;
+        if beyond {
+            // The partition stands (one writer, once) — but backfill any chapter
+            // whose article is missing, e.g. rows written before seeding existed.
+            ensure_chapter_articles(pool).await;
+            return Ok(0);
+        }
     }
 
     let (source_chat, since) = crate::api::getting_started::interview_source(pool).await?;
@@ -438,6 +458,28 @@ async fn chapters_from_interview(pool: &PgPool) -> Result<usize> {
     let raw = call_model(pool, CHAPTERS_PROMPT, &prompt, "narrative_chapters").await?;
     let extracted: Vec<ExtractedChapter> = serde_json::from_str(json_array_in(&raw))
         .map_err(|e| Error::ExternalApi(format!("chapters came back unparseable: {e}")))?;
+
+    if !drawn.is_empty() {
+        let mut filled = 0;
+        for (id, changepoint, summary) in words_for_drawn(&drawn, &extracted) {
+            sqlx::query(
+                "UPDATE wiki_chapters \
+                    SET changepoint = COALESCE(changepoint, $2), \
+                        summary = COALESCE(summary, $3) \
+                  WHERE id = $1",
+            )
+            .bind(&id)
+            .bind(changepoint.as_deref())
+            .bind(summary.as_deref())
+            .execute(pool)
+            .await
+            .map_err(|e| Error::Database(format!("fill chapter {id}: {e}")))?;
+            filled += 1;
+        }
+        ensure_chapter_articles(pool).await;
+        tracing::info!(drawn = drawn.len(), filled, "drawn chapters filled from the interview");
+        return Ok(filled);
+    }
 
     let planned = plan_chapters(extracted);
     if planned.is_empty() {
@@ -480,6 +522,58 @@ async fn chapters_from_interview(pool: &PgPool) -> Result<usize> {
 
     tracing::info!(chapters = planned.len(), "wiki_chapters written from the interview");
     Ok(planned.len())
+}
+
+/// The person's words for each drawn chapter: (id, changepoint, summary).
+///
+/// A drawn chapter matches the extracted one with the same name (case and
+/// spacing aside; the drawing reaches the interview as the person's own
+/// first answer, so the names come back as drawn), else the one starting the
+/// same year. Each extracted chapter is used once, and a chapter nobody said
+/// anything about is left alone. The drawing's shape is never changed here:
+/// names and spans are the person's, edited on the Chapters page.
+fn words_for_drawn(
+    drawn: &[ChapterRow],
+    extracted: &[ExtractedChapter],
+) -> Vec<(String, Option<String>, Option<String>)> {
+    use chrono::Datelike;
+    let norm = |t: &str| {
+        t.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    let said = |x: &Option<String>| x.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let mut used = vec![false; extracted.len()];
+    let mut pick = |row: &ChapterRow, by_name: bool| -> Option<usize> {
+        let i = extracted.iter().enumerate().position(|(i, e)| {
+            !used[i]
+                && if by_name {
+                    matches!((&row.title, &e.title), (Some(a), Some(b)) if norm(a) == norm(b))
+                } else {
+                    e.start_year == row.started_at.year()
+                }
+        })?;
+        used[i] = true;
+        Some(i)
+    };
+    // Names first across the whole drawing, so a year match never takes an
+    // extracted chapter another drawn one names exactly.
+    let mut matched: Vec<Option<usize>> = drawn.iter().map(|r| pick(r, true)).collect();
+    for (k, row) in drawn.iter().enumerate() {
+        if matched[k].is_none() {
+            matched[k] = pick(row, false);
+        }
+    }
+    drawn
+        .iter()
+        .zip(matched)
+        .filter_map(|(row, m)| {
+            let e = &extracted[m?];
+            let (c, s) = (said(&e.changepoint), said(&e.summary));
+            (c.is_some() || s.is_some()).then(|| (row.id.clone(), c, s))
+        })
+        .collect()
 }
 
 /// Each chapter is an ENTITY: seed its wiki article with the person's own
@@ -826,14 +920,7 @@ pub async fn replace_chapters(pool: &PgPool, chapters: &[ChapterInput]) -> Resul
         .await
         .map_err(|e| Error::Database(format!("lock wiki_chapters: {e}")))?;
 
-    let has_more_than_a_drawing: bool = sqlx::query_scalar(
-        "SELECT EXISTS ( \
-             SELECT 1 FROM wiki_chapters c \
-              WHERE c.summary IS NOT NULL \
-                 OR c.changepoint IS NOT NULL \
-                 OR EXISTS (SELECT 1 FROM wiki_articles a \
-                             WHERE a.subject_type = 'chapter' AND a.subject_id = c.id))",
-    )
+    let has_more_than_a_drawing: bool = sqlx::query_scalar(CHAPTERS_BEYOND_A_DRAWING)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| Error::Database(format!("check chapters before replace: {e}")))?;
@@ -1448,6 +1535,64 @@ mod tests {
         let planned = plan_chapters(vec![ch(Some("college"), 2006, Some(2009))]);
         assert_eq!(planned[0].started_precision, "year");
         assert_eq!(planned[0].ended_precision, Some("year"));
+    }
+
+    fn drawn(id: &str, title: &str, start: i32) -> ChapterRow {
+        ChapterRow {
+            id: id.into(),
+            kind: "chapter".into(),
+            title: Some(title.into()),
+            started_at: chrono::NaiveDate::from_ymd_opt(start, 1, 1).unwrap(),
+            ended_at: None,
+            is_current: false,
+            started_precision: "year".into(),
+            ended_precision: None,
+            changepoint: None,
+            summary: None,
+        }
+    }
+
+    fn said(title: Option<&str>, start: i32, changepoint: &str) -> ExtractedChapter {
+        ExtractedChapter {
+            changepoint: Some(changepoint.into()),
+            ..ch(title, start, None)
+        }
+    }
+
+    /// Drawing first used to leave every chapter without its words: the
+    /// interview's pass saw rows and returned. The words now land on the
+    /// chapters as drawn, by name, else by the year it starts.
+    #[test]
+    fn the_interview_fills_the_chapters_that_were_drawn() {
+        let rows = [
+            drawn("a", "Childhood", 1991),
+            drawn("b", "The band years", 2004),
+            drawn("c", "Chicago", 2010),
+        ];
+        let out = words_for_drawn(
+            &rows,
+            &[
+                said(Some("childhood"), 1991, "we moved"),
+                said(Some("Chicago, finally"), 2010, "the job ended"),
+                ch(Some("The  band years"), 2004, None),
+            ],
+        );
+        assert_eq!(
+            out,
+            vec![
+                ("a".into(), Some("we moved".into()), None),
+                ("c".into(), Some("the job ended".into()), None),
+            ],
+            "a name matches across case and spacing, a renamed one by its year, and a chapter with nothing said is left alone"
+        );
+    }
+
+    /// An exact name is never stolen by another drawn chapter's year match.
+    #[test]
+    fn a_name_match_wins_over_a_year_match() {
+        let rows = [drawn("a", "School", 2002), drawn("b", "Leaving", 2002)];
+        let out = words_for_drawn(&rows, &[said(Some("Leaving"), 2002, "I left")]);
+        assert_eq!(out, vec![("b".into(), Some("I left".into()), None)]);
     }
 
     #[test]

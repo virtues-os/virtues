@@ -86,7 +86,7 @@ const LABELS: Record<SetupStepId, string> = {
 	subscription: 'Subscription',
 	names: 'Names',
 	connections: 'Connections',
-	timeline: 'Timeline',
+	timeline: 'Chapters',
 	interview: 'Interview',
 };
 
@@ -122,7 +122,7 @@ const INTO: Record<SetupStepId, string> = {
 	subscription: 'Choose how your assistant thinks',
 	names: 'Name your assistant',
 	connections: 'Connect your devices',
-	timeline: 'Draw your timeline',
+	timeline: 'Write your chapters',
 	interview: 'Start the interview',
 };
 
