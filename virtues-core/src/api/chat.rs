@@ -1992,6 +1992,7 @@ async fn chat_handler_inner(
         cancel_state.clone(),
         request,
         model,
+        effective_project_id,
         api_messages,
         msg_id,
         checkpoint_event,
@@ -2086,6 +2087,9 @@ fn create_agent_stream(
     // rather than re-read off the request so the stream cannot disagree with
     // what the handler decided, or fall back to a default of its own.
     model: String,
+    // The chat's project as the handler resolved it — from the row, not the
+    // request — so the tools search the same project the prompt describes.
+    project_id: Option<String>,
     api_messages: Vec<serde_json::Value>,
     msg_id: String,
     // Emitted first when this turn compacted the chat before it started.
@@ -2179,7 +2183,7 @@ fn create_agent_stream(
         let context = ToolContext {
             page_id: request.active_page.as_ref().and_then(|p| p.page_id.clone()),
             user_id: None,
-            project_id: request.project_id.clone(),
+            project_id,
             scope_mode: if request.chat_mode == "scoped" {
                 crate::search::ScopeMode::Exclusive
             } else {
