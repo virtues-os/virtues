@@ -58,61 +58,45 @@ pub fn routes() -> Router<AppState> {
         .route("/api/visits", post(record_visit_handler))
         .route("/api/visits/frecency", get(frecency_handler))
         // Projects API (the "room" a chat lives in)
-        .route(
-            "/api/projects",
-            get(list_projects_handler).post(create_project_handler),
-        )
-        .route(
-            "/api/projects/:id",
-            get(get_project_handler)
-                .put(update_project_handler)
-                .delete(delete_project_handler),
-        )
+        .merge(project_routes("/api/projects"))
         .route("/api/projects/:id/archive", post(archive_project_handler))
         .route("/api/projects/:id/unarchive", post(unarchive_project_handler))
-        // Project membership (items come back inside GET /api/projects/:id)
-        .route(
-            "/api/projects/:id/items",
-            post(add_project_item_handler).delete(remove_project_item_handler),
-        )
-        .route(
-            "/api/projects/:id/items/reorder",
-            put(reorder_project_items_handler),
-        )
-        .route(
-            "/api/projects/:id/items/role",
-            put(set_project_item_role_handler),
-        )
-        .route("/api/projects/:id/graph", get(project_graph_handler))
         // LEGACY ALIAS: `/api/notebooks…` for clients built before the
         // notebook→project rename (migration 0029). Phones self-update both
         // ahead of boxes and behind them, so an old app can be talking to a
-        // new box for weeks; the alias costs one route-table entry each. Same
-        // handlers, same bodies (request fields accept `notebookId` via a
-        // serde alias). Remove once no supported client build says "notebook".
+        // new box for weeks. Same handlers, same bodies (request fields accept
+        // `notebookId` via a serde alias); archive/unarchive have no alias.
+        // Remove once no supported client build says "notebook".
+        .merge(project_routes("/api/notebooks"))
+}
+
+/// A project, its membership and its graph, under `base`.
+fn project_routes(base: &str) -> Router<AppState> {
+    Router::new()
         .route(
-            "/api/notebooks",
+            base,
             get(list_projects_handler).post(create_project_handler),
         )
         .route(
-            "/api/notebooks/:id",
+            &format!("{base}/:id"),
             get(get_project_handler)
                 .put(update_project_handler)
                 .delete(delete_project_handler),
         )
+        // Project membership (items come back inside GET {base}/:id)
         .route(
-            "/api/notebooks/:id/items",
+            &format!("{base}/:id/items"),
             post(add_project_item_handler).delete(remove_project_item_handler),
         )
         .route(
-            "/api/notebooks/:id/items/reorder",
+            &format!("{base}/:id/items/reorder"),
             put(reorder_project_items_handler),
         )
         .route(
-            "/api/notebooks/:id/items/role",
+            &format!("{base}/:id/items/role"),
             put(set_project_item_role_handler),
         )
-        .route("/api/notebooks/:id/graph", get(project_graph_handler))
+        .route(&format!("{base}/:id/graph"), get(project_graph_handler))
 }
 
 
