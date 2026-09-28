@@ -55,6 +55,9 @@ pub struct UserProfile {
     pub employer: Option<String>,
     // Home place (FK to entities_place)
     pub home_place_id: Option<String>,
+    /// The city they named as home in Setup, as they chose it. A name for the
+    /// assistant, never a location: nothing anchors visits to it.
+    pub home_city: Option<String>,
     /// Which `wiki_people` row is the owner (migration 0080). Soft reference,
     /// no FK — same shape as `home_place_id`. The profile owns the identity;
     /// this names the graph node relationships are anchored to.

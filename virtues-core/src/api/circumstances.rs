@@ -30,6 +30,56 @@ use sqlx::{PgPool, Row};
 /// in a 64-character title would close the block and let what follows read as
 /// instruction. The project block a few hundred lines away already escapes for
 /// this reason; this one only clipped.
+/// The date where they are, else UTC's.
+fn local_date(now: DateTime<Utc>, tz: Option<Tz>) -> chrono::NaiveDate {
+    match tz {
+        Some(tz) => now.with_timezone(&tz).date_naive(),
+        None => now.date_naive(),
+    }
+}
+
+/// Whole years from `born` to `today`; `None` for a birth date in the future.
+fn age_on(born: chrono::NaiveDate, today: chrono::NaiveDate) -> Option<u32> {
+    use chrono::Datelike;
+    let mut years = today.year() - born.year();
+    if (today.month(), today.day()) < (born.month(), born.day()) {
+        years -= 1;
+    }
+    u32::try_from(years).ok()
+}
+
+/// At most this many chapters, the most recent kept: a life told in twenty
+/// eras is still one line, and the latest are the ones a turn is about.
+const MAX_CHAPTERS: usize = 12;
+
+fn chapters_line(
+    rows: &[(String, Option<String>, chrono::NaiveDate, Option<chrono::NaiveDate>)],
+) -> Option<String> {
+    use chrono::Datelike;
+    if rows.is_empty() {
+        return None;
+    }
+    let skip = rows.len().saturating_sub(MAX_CHAPTERS);
+    let named: Vec<String> = rows[skip..]
+        .iter()
+        .map(|(kind, title, from, to)| {
+            let name = match title.as_deref().map(str::trim) {
+                Some(t) if kind != "unknown" && !t.is_empty() => clip(t, 40),
+                _ => "an unnamed stretch".to_string(),
+            };
+            match to {
+                Some(to) => format!("{name} ({} to {})", from.year(), to.year()),
+                None => format!("{name} ({} to now, the current one)", from.year()),
+            }
+        })
+        .collect();
+    let earlier = if skip > 0 { format!("{skip} earlier, then ") } else { String::new() };
+    Some(format!(
+        "Their chapters, as they named them: {earlier}{}.",
+        named.join("; ")
+    ))
+}
+
 fn clip(s: &str, max: usize) -> String {
     let flattened = s.replace('<', "&lt;").replace('>', "&gt;");
     if flattened.chars().count() <= max {
@@ -45,6 +95,7 @@ fn clip(s: &str, max: usize) -> String {
 pub(crate) const SECTIONS: &[&str] = &[
     "clock",
     "identity",
+    "chapters",
     "place",
     "spine",
     "calendar",
@@ -128,16 +179,30 @@ async fn build_section(
             // Standing facts ride here for now; their long-term home is the
             // person's own document, not an hourly block. Home is genuinely
             // circumstantial (it anchors "away").
-            let row = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
-                r#"SELECT p.occupation, p.employer, wp.name
+            // Home is the place they set as home, else the city they named in
+            // Setup: a city says where home is without claiming an address.
+            type IdentityRow = (
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<chrono::NaiveDate>,
+            );
+            let row = sqlx::query_as::<_, IdentityRow>(
+                r#"SELECT p.occupation, p.employer, COALESCE(wp.name, NULLIF(btrim(p.home_city), '')),
+                          p.birth_date
                  FROM app_user_profile p
                  LEFT JOIN wiki_places wp ON p.home_place_id = wp.id
                  WHERE p.id = '00000000-0000-0000-0000-000000000001'"#,
             )
             .fetch_optional(pool)
             .await?;
-            let Some((occ, emp, home)) = row else { return Ok(None) };
+            let Some((occ, emp, home, born)) = row else { return Ok(None) };
             let mut parts = Vec::new();
+            // Their age, from the birth date Setup's Chapters asks for. Said
+            // as a number so the assistant never has to do the arithmetic.
+            if let Some(age) = born.and_then(|b| age_on(b, local_date(now, tz))) {
+                parts.push(format!("{age} years old"));
+            }
             match (occ, emp) {
                 (Some(o), Some(e)) => parts.push(format!("{} at {}", clip(&o, 48), clip(&e, 48))),
                 (Some(o), None) => parts.push(clip(&o, 48)),
@@ -147,6 +212,17 @@ async fn build_section(
                 parts.push(format!("home is {}", clip(&h, 48)));
             }
             Ok((!parts.is_empty()).then(|| format!("They are: {}.", parts.join("; "))))
+        }
+        "chapters" => {
+            // The chapters of their life, as they named them (Setup's
+            // Chapters, or the interview). Only the names and years: what each
+            // meant is in their own document, not here.
+            let rows = sqlx::query_as::<_, (String, Option<String>, chrono::NaiveDate, Option<chrono::NaiveDate>)>(
+                "SELECT kind, title, started_at, ended_at FROM wiki_chapters ORDER BY started_at",
+            )
+            .fetch_all(pool)
+            .await?;
+            Ok(chapters_line(&rows))
         }
         "place" => {
             // The most recent resolved visit — current if still open. The
@@ -391,6 +467,34 @@ async fn build_section(
     }
 }
 
+#[cfg(test)]
+mod line_tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    #[test]
+    fn age_turns_on_the_birthday_not_the_new_year() {
+        assert_eq!(age_on(d(1990, 6, 15), d(2026, 6, 14)), Some(35));
+        assert_eq!(age_on(d(1990, 6, 15), d(2026, 6, 15)), Some(36));
+        assert_eq!(age_on(d(2030, 1, 1), d(2026, 6, 15)), None);
+    }
+
+    #[test]
+    fn a_long_life_keeps_its_latest_chapters() {
+        let rows: Vec<_> = (0..14)
+            .map(|i| ("chapter".to_string(), Some(format!("C{i}")), d(1990 + i, 1, 1), Some(d(1991 + i, 1, 1))))
+            .collect();
+        let line = chapters_line(&rows).unwrap();
+        assert!(line.starts_with("Their chapters, as they named them: 2 earlier, then C2 (1992 to 1993)"), "{line}");
+        assert!(line.ends_with("C13 (2003 to 2004)."), "{line}");
+        assert_eq!(chapters_line(&[]), None);
+    }
+}
+
 /// THE TEST THAT CATCHES THE SILENT-SECTION DISEASE for this block — the
 /// successor to `live_context_sections`, run against the migration-built
 /// scratch schema instead of a live box. Every section is seeded and must
@@ -406,10 +510,26 @@ mod tests {
         let now = Utc::now();
         let iso = |dt: DateTime<Utc>| dt.to_rfc3339();
 
-        // identity
+        // identity: born on New Year's Day thirty years back, so thirty today
+        let born = chrono::NaiveDate::from_ymd_opt(
+            chrono::Datelike::year(&local_date(now, Some(chrono_tz::America::Chicago))) - 30,
+            1,
+            1,
+        )
+        .unwrap();
         sqlx::query(
-            "UPDATE app_user_profile SET occupation = 'Designer', employer = 'Example Co' \
-             WHERE id = '00000000-0000-0000-0000-000000000001'",
+            "UPDATE app_user_profile SET occupation = 'Designer', employer = 'Example Co', \
+             birth_date = $1 WHERE id = '00000000-0000-0000-0000-000000000001'",
+        )
+        .bind(born)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // chapters: two, the second running to now
+        sqlx::query(
+            "INSERT INTO wiki_chapters (id, title, started_at, ended_at) VALUES \
+             ('chapter_t1', 'Childhood', '1996-01-01', '2009-01-01'), \
+             ('chapter_t2', 'The band years', '2009-01-01', NULL)",
         )
         .execute(&pool)
         .await
@@ -504,7 +624,8 @@ mod tests {
         for needle in [
             "<circumstances>",
             "Now: ",
-            "Designer at Example Co",
+            "30 years old; Designer at Example Co",
+            "Their chapters, as they named them: Childhood (1996 to 2009); The band years (2009 to now, the current one).",
             "The Library",
             "Standup",
             "Nick (person_t1)",
