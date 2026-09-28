@@ -125,6 +125,29 @@ pub async fn get_subscription_status(pool: &PgPool, fresh: bool) -> Result<serde
     })
 }
 
+/// Whether a subscription stands behind this box's link, for Setup's
+/// Subscription step. `None` is "atlas can't say", never "no". A cached
+/// "subscribed" is trusted for the full TTL; a cached "free" only briefly,
+/// because the person on that step is about to pay and the step should see
+/// it within one refresh, not five minutes later.
+pub async fn pays(pool: &PgPool) -> Option<bool> {
+    if crate::middleware::auth::is_dev()
+        && std::env::var("VIRTUES_API_KEY").is_ok_and(|b| !b.is_empty())
+    {
+        return Some(true);
+    }
+    let api_key = crate::virtues_api::renew::read_api_key(pool).await.ok()??;
+    let stale_free = cache().lock().ok().is_some_and(|c| {
+        matches!(*c, Some((at, e)) if e != Entitlement::Subscribed && at.elapsed() > Duration::from_secs(10))
+    });
+    match entitlement(&api_key, stale_free).await {
+        Some(Entitlement::Subscribed) => Some(true),
+        // A dead key answers nothing either: the step should offer to link again.
+        Some(Entitlement::Free) | Some(Entitlement::KeyUnknown) => Some(false),
+        None => None,
+    }
+}
+
 fn payload(status: &str, linked: bool, subscribed: bool, known: bool) -> serde_json::Value {
     serde_json::json!({
         "status": status,

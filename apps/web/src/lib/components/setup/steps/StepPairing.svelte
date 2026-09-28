@@ -18,9 +18,9 @@
 	import { BoxRadioError } from "$lib/tauri/boxRadio";
 	import { isIOS, isMacOS } from "$lib/utils/platform";
 
-	let { onpaired, onlost }: { onpaired: () => void; onlost: () => void } = $props();
+	let { onpaired, onlost }: { onpaired: () => Promise<void>; onlost: () => void } = $props();
 
-	let phase = $state<"linking" | "pairing" | "opening" | "grant-failed" | "pair-failed">("linking");
+	let phase = $state<"linking" | "pairing" | "opening" | "silent" | "grant-failed" | "pair-failed">("linking");
 	let error = $state<string | null>(null);
 	let gone = $state(false);
 
@@ -45,13 +45,25 @@
 		error = null;
 		try {
 			await prePair.pair();
-			phase = "opening";
-			onpaired();
 		} catch (e) {
 			error =
 				e instanceof BoxRadioError ? e.message : "Your server didn't finish pairing. Try again.";
 			gone = e instanceof BoxRadioError && (e.code === "not-found" || e.code === "timeout");
 			phase = "pair-failed";
+			return;
+		}
+		await open();
+	}
+
+	/** Paired: open the server. On a computer that waits for it to answer
+	 *  here, which can fail without anything being wrong with the pairing. */
+	async function open() {
+		phase = "opening";
+		error = null;
+		try {
+			await onpaired();
+		} catch {
+			phase = "silent";
 		}
 	}
 
@@ -63,6 +75,8 @@
 	const title = $derived(
 		phase === "opening"
 			? `${here[0].toUpperCase()}${here.slice(1)} is paired`
+			: phase === "silent"
+			? "Your server isn't answering yet"
 			: phase === "grant-failed"
 			? "Your account didn't reach your server"
 			: phase === "pair-failed"
@@ -75,7 +89,9 @@
 			: phase === "pairing"
 				? "Exchanging keys. This can take up to a minute."
 				: phase === "opening"
-					? "Opening your server."
+					? "Opening your server. This can take up to a minute."
+				: phase === "silent"
+					? `It's paired with ${here}, and can take a few minutes to start answering here. Make sure it's still on, then try again.`
 				: phase === "grant-failed"
 					? "You can pair now and link your account in the next step."
 					: gone
@@ -97,7 +113,9 @@
 	<p class="note" class:error role={error ? "alert" : undefined}>{error ?? " "}</p>
 
 	{#snippet actions()}
-		{#if phase === "grant-failed"}
+		{#if phase === "silent"}
+			<button type="button" class="setup-go" onclick={open}>Try again</button>
+		{:else if phase === "grant-failed"}
 			<button type="button" class="setup-go" onclick={pair}>Pair without it</button>
 			<button type="button" class="setup-past" onclick={linkAccount}>Try again</button>
 		{:else if phase === "pair-failed"}

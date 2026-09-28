@@ -67,6 +67,9 @@
 	const loaded = $derived(gettingStarted.loaded);
 	const done = $derived(gettingStarted.loaded && gettingStarted.aiConnected);
 	const via = $derived(gettingStarted.step("connect_ai")?.via ?? null);
+	/** Signed in already (before pairing, or earlier), with no subscription on
+	 *  the account: signing in again would change nothing. */
+	const signedIn = $derived(via === "linked");
 
 	const still =
 		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -195,7 +198,9 @@
 	title={done ? (via === "byo" ? "Your server is using your own AI" : "You've set up your subscription") : "Choose how your assistant thinks"}
 	subtitle={done
 		? undefined
-		: "Your assistant can't answer anything until it has AI to think with. A Virtues subscription gives it the best models there are, or you can connect your own."}
+		: signedIn
+			? "You're signed in, and your account has no subscription yet. Your assistant can't answer anything until it has AI to think with."
+			: "Your assistant can't answer anything until it has AI to think with. A Virtues subscription gives it the best models there are, or you can connect your own."}
 >
 	{#if !loaded}
 		<div class="card placeholder" aria-hidden="true"></div>
@@ -249,13 +254,15 @@
 		</div>
 
 		<div class="links">
-			<button
-				class="link"
-				class:on={mode === "signin" || mode === "sending" || mode === "mailed"}
-				aria-expanded={mode === "signin" || mode === "sending" || mode === "mailed"}
-				onclick={() => open("signin")}>I already have an account</button
-			>
-			<span class="dot" aria-hidden="true">·</span>
+			{#if !signedIn}
+				<button
+					class="link"
+					class:on={mode === "signin" || mode === "sending" || mode === "mailed"}
+					aria-expanded={mode === "signin" || mode === "sending" || mode === "mailed"}
+					onclick={() => open("signin")}>I already have an account</button
+				>
+				<span class="dot" aria-hidden="true">·</span>
+			{/if}
 			<button
 				class="link"
 				class:on={mode === "endpoint" || mode === "saving"}

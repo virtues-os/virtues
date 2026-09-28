@@ -751,9 +751,24 @@
             setupnew.textContent = "Tap again to forget - the server itself isn't touched";
             return;
           }
-          try { await invoke('plugin:reach|forget'); } catch { /* already gone */ }
+          await forgetHere();
           start();
         });
+      }
+
+      /**
+       * Forget the server on this device, and the app's own notes that it was
+       * paired. `virtues-just-paired` bridges the launch that paired; left
+       * behind, the next launch (baked unpaired) trusted it, skipped Setup's
+       * first half, and looked for a server that was gone. The forgot marker
+       * tells Setup this launch has no server, whatever the shell baked.
+       */
+      async function forgetHere() {
+        try { await invoke('plugin:reach|forget'); } catch { /* already gone */ }
+        try {
+          localStorage.removeItem('virtues-just-paired');
+          sessionStorage.setItem('virtues-forgot-server', '1');
+        } catch { /* best effort */ }
       }
 
       function renderBoxForgotUs() {
@@ -767,7 +782,7 @@
           <p class="hint">This forgets the old connection on ${THIS_DEVICE} only — nothing on the
             server is touched.</p>`;
         document.getElementById('repair').addEventListener('click', async () => {
-          try { await invoke('plugin:reach|forget'); } catch { /* already gone */ }
+          await forgetHere();
           start();
         });
       }
@@ -802,7 +817,10 @@
           // cards would wait for the next cold launch. The marker bridges this
           // one session; mobileLayout consumes it (and clears it once the
           // baked flag catches up).
-          try { localStorage.setItem('virtues-just-paired', 'true'); } catch { /* best effort */ }
+          try {
+            localStorage.setItem('virtues-just-paired', 'true');
+            sessionStorage.removeItem('virtues-forgot-server');
+          } catch { /* best effort */ }
           // Give the loopback a beat, then load the bundled SPA at root.
           setTimeout(() => window.location.replace('/'), 400);
           return;

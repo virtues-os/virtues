@@ -172,6 +172,11 @@ pub async fn ai_connected(pool: &PgPool) -> bool {
     linked || crate::api::settings_byo::byo_is_active(pool).await
 }
 
+/// A subscription stands behind the link, or atlas can't say either way.
+async fn pays_or_unknown(pool: &PgPool) -> bool {
+    crate::api::subscription::pays(pool).await != Some(false)
+}
+
 fn dev_skip() -> bool {
     std::env::var("VIRTUES_DEV_SKIP_SETUP")
         .map(|v| v == "1" || v == "true")
@@ -195,9 +200,13 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
     };
 
     let byo = crate::api::settings_byo::byo_is_active(pool).await;
-    // `account` is the linked subscription, or the dev skip marking every
-    // setup step done — which is exactly the dev arm this needs.
-    let account = done("account");
+    // `account` is the link, or the dev skip marking every setup step done —
+    // which is exactly the dev arm this needs. A link is identity, not
+    // billing: Setup signs in before pairing, so a free account links too,
+    // and counting that as AI passed the person over Subscription onto an
+    // empty wallet. So a link counts only when atlas says it pays, or when
+    // atlas can't be asked (an outage must not reopen a paid step).
+    let account = done("account") && (dev_skip() || pays_or_unknown(pool).await);
     let ai_connected = account || byo;
 
     type ProfileRow = (
@@ -325,6 +334,10 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
                 Some("subscription")
             } else if byo {
                 Some("byo")
+            } else if done("account") {
+                // Signed in, nothing paid: the step says so instead of
+                // offering a sign-in they already did.
+                Some("linked")
             } else {
                 None
             },
