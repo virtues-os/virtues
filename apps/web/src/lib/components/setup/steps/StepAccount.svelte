@@ -8,9 +8,13 @@
 	here: the Subscription step, after pairing, passes itself over when the
 	account already pays.
 
-	"Continue without an account" is a real path, for someone running their
-	own models: the server links nothing, and Subscription offers "Use my own
-	AI" after pairing.
+	WHY IT IS HERE, SAID ON THE SCREEN: the assistant can't answer anything
+	without AI, and the subscription is how it gets it. Leaving that out
+	("sign in, and your server links itself…") explained the plumbing and
+	not the point (2026-09-28).
+
+	"Use my own AI instead" is a real path: the server links nothing, and
+	the Subscription step takes their own model's address after pairing.
 -->
 <script lang="ts">
 	import { tick } from "svelte";
@@ -71,12 +75,12 @@
 </script>
 
 <StepFrame
-	title={phase === "code" ? "Check your email" : "Your Virtues account"}
+	title={phase === "code" ? "Check your email" : phase === "done" ? "You're signed in" : "Sign in to Virtues"}
 	subtitle={phase === "code"
-		? `Enter the six-digit code sent to ${email.trim()}.`
+		? `Enter the six-digit code we sent to ${email.trim()}.`
 		: phase === "done"
-			? `You're signed in as ${prePair.account?.email}.`
-			: "Sign in with your email, and your server links itself to your account once it's online. New here? The same code starts one."}
+			? `Your server will use the account for ${prePair.account?.email}.`
+			: "Your assistant can't answer anything without AI, and a Virtues subscription gives it the best models there are. Enter your email to sign in, or to create your account."}
 >
 	{#if phase === "email"}
 		<form class="one" onsubmit={(e) => (e.preventDefault(), send())} in:rise>
@@ -109,14 +113,22 @@
 			/>
 		</form>
 	{/if}
-	<p class="note" class:error role={error ? "alert" : undefined}>{error ?? " "}</p>
+	<p class="note" class:error role={error ? "alert" : undefined}>
+		{#if error}
+			{error}
+		{:else if phase === "email"}
+			We'll email you a six-digit code. If you don't have a subscription yet, you'll set it up after your server is running.
+		{:else}
+			&nbsp;
+		{/if}
+	</p>
 
 	{#snippet actions()}
 		{#if phase === "email"}
 			<button type="button" class="setup-go" onclick={send} disabled={!emailOk || busy}>
 				{busy ? "Sending…" : "Email me a code"}
 			</button>
-			<button type="button" class="setup-past" onclick={without}>Continue without an account</button>
+			<button type="button" class="setup-past" onclick={without}>Use my own AI instead</button>
 		{:else if phase === "code"}
 			<button type="button" class="setup-go" onclick={verify} disabled={digits.length < 6 || busy}>
 				{busy ? "Checking…" : "Sign in"}
@@ -157,10 +169,13 @@
 		max-width: 9em;
 	}
 	.note {
-		margin: 12px 0 0;
-		min-height: 1.5em;
+		max-width: 26rem;
+		margin: 16px auto 0;
+		min-height: 3em;
 		text-align: center;
+		text-wrap: balance;
 		font-size: 14px;
+		line-height: 1.5;
 		color: var(--color-foreground-muted);
 	}
 	.note.error {

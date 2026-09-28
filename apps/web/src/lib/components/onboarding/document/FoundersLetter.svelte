@@ -256,7 +256,7 @@
 			     LIGHT themes — starting with oxford, the one a new box actually
 			     opens on. Masking paints the ink in whatever the theme's foreground
 			     is, correct on all sixteen with no list to maintain. -->
-			<div class="sig" class:written bind:this={sigEl} role="img" aria-label="Adam Jace"></div>
+			<div class="sig" class:written bind:this={sigEl} role="img" aria-label="Adam Jace"><span class="ink"></span></div>
 			<p class="role">Founder, Virtues</p>
 
 			<div class="contacts">
@@ -608,32 +608,41 @@
 		margin-top: 2.75rem;
 	}
 
+	/* THE PEN, as two nested masks rather than two layers of one. The
+	   outer is a soft-edged gradient slid across left to right, so the name
+	   appears as if written: the edge is a pen's width of fade, not a wipe's
+	   hard line, and the easing slows into the last stroke. The inner is the
+	   ink. One element with both layers and `mask-composite: intersect`
+	   drew a solid block beside the name in the Mac app's WebKit, which
+	   added the layers instead of intersecting them (2026-09-28); nesting
+	   intersects by construction, the way Welcome's drawing does it. */
 	.sig {
 		height: 4.6rem;
 		width: 16.9rem;
-		background-color: var(--color-foreground);
 		opacity: 0.85;
-		/* THE PEN. A second mask layer, a soft-edged gradient, is
-		   intersected with the ink and slid across it left to right, so the
-		   name appears as if written: the edge is a pen's width of fade, not
-		   a wipe's hard line, and the easing slows into the last stroke. */
-		-webkit-mask-image: url("/images/adam_signature.png"), linear-gradient(90deg, black 44%, transparent 56%);
-		mask-image: url("/images/adam_signature.png"), linear-gradient(90deg, black 44%, transparent 56%);
+		-webkit-mask-image: linear-gradient(90deg, black 44%, transparent 56%);
+		mask-image: linear-gradient(90deg, black 44%, transparent 56%);
 		-webkit-mask-repeat: no-repeat;
 		mask-repeat: no-repeat;
-		-webkit-mask-size: contain, 230% 100%;
-		mask-size: contain, 230% 100%;
-		-webkit-mask-position: left center, 100% 0;
-		mask-position: left center, 100% 0;
-		-webkit-mask-composite: source-in;
-		mask-composite: intersect;
+		-webkit-mask-size: 230% 100%;
+		mask-size: 230% 100%;
+		-webkit-mask-position: 100% 0;
+		mask-position: 100% 0;
 		transition:
 			-webkit-mask-position 1.8s cubic-bezier(0.5, 0.1, 0.3, 1) 150ms,
 			mask-position 1.8s cubic-bezier(0.5, 0.1, 0.3, 1) 150ms;
 	}
 	.sig.written {
-		-webkit-mask-position: left center, 0 0;
-		mask-position: left center, 0 0;
+		-webkit-mask-position: 0 0;
+		mask-position: 0 0;
+	}
+	.sig .ink {
+		display: block;
+		width: 100%;
+		height: 100%;
+		background-color: var(--color-foreground);
+		-webkit-mask: url("/images/adam_signature.png") left center / contain no-repeat;
+		mask: url("/images/adam_signature.png") left center / contain no-repeat;
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.sig {
