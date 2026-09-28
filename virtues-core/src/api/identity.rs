@@ -25,10 +25,31 @@ use axum::{extract::State, response::IntoResponse, Json};
 
 use crate::server::AppState;
 
-/// What people call this box, everywhere it is named for a person: its
-/// screen, the app's list, Settings. "Virtues 4812" until it has an owner;
-/// after, its assistant's: "Ari's server" (setup-plan.md, "one name": the
-/// name belongs to the assistant, the hardware takes the possessive).
+/// The owner's name and the assistant's, each if set.
+async fn names(pool: &sqlx::PgPool) -> (Option<String>, Option<String>) {
+    let person = match sqlx::query_scalar::<_, Option<String>>(
+        "SELECT preferred_name FROM app_user_profile LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(v) => v.flatten(),
+        Err(e) => {
+            tracing::warn!(error = %e, "box label: couldn't read the owner's name");
+            None
+        }
+    };
+    let assistant = crate::api::assistant_profile::get_assistant_name(pool).await.ok();
+    let set = |s: Option<String>| s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    (set(person), set(assistant))
+}
+
+/// What people call this box in a list: the app's chooser, Settings, the
+/// atlas link page. "Virtues 4812" until it has an owner; after, the
+/// owner's: "Adam's server". The owner, not the assistant, because most
+/// people keep the default assistant name, and "Ari's server" in every
+/// house tells no two servers apart (2026-09-28). "Ari's server" only until
+/// the owner has said what to call them.
 ///
 /// The radio name stays machine-shaped (`Virtues-4812`, `setup_ap::ap_ssid`):
 /// a claimed box only advertises while it is offline, and an apostrophe has
@@ -37,10 +58,36 @@ pub async fn box_label(pool: &sqlx::PgPool) -> String {
     if crate::api::pair::is_unclaimed(pool).await {
         return format!("Virtues {}", crate::codename::box_number());
     }
-    match crate::api::assistant_profile::get_assistant_name(pool).await {
-        Ok(name) if !name.trim().is_empty() => format!("{}'s server", name.trim()),
-        _ => "Your server".into(),
+    let (person, assistant) = names(pool).await;
+    list_name(person.as_deref(), assistant.as_deref())
+}
+
+fn list_name(person: Option<&str>, assistant: Option<&str>) -> String {
+    match (person, assistant) {
+        (Some(p), _) => format!("{p}'s server"),
+        (None, Some(a)) => format!("{a}'s server"),
+        (None, None) => "Your server".into(),
     }
+}
+
+fn face_name(person: Option<&str>, assistant: Option<&str>) -> String {
+    match (person, assistant) {
+        (Some(p), Some(a)) => format!("{p} · {a}"),
+        (Some(one), None) | (None, Some(one)) => one.to_string(),
+        (None, None) => "Your server".into(),
+    }
+}
+
+/// What the box's own screen says: "Virtues 4812" until it has an owner,
+/// then the person and the assistant side by side, "Adam · Ari". The glass
+/// is where the pairing is personal rather than administrative; lists use
+/// `box_label`.
+pub async fn face_label(pool: &sqlx::PgPool) -> String {
+    if crate::api::pair::is_unclaimed(pool).await {
+        return format!("Virtues {}", crate::codename::box_number());
+    }
+    let (person, assistant) = names(pool).await;
+    face_name(person.as_deref(), assistant.as_deref())
 }
 
 pub async fn identity_handler(State(state): State<AppState>) -> impl IntoResponse {
@@ -60,4 +107,23 @@ pub async fn identity_handler(State(state): State<AppState>) -> impl IntoRespons
             .is_some(),
         "online": crate::cli::link::has_internet(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_list_names_the_owner_first() {
+        assert_eq!(list_name(Some("Nick"), Some("Ari")), "Nick's server");
+        assert_eq!(list_name(None, Some("Ari")), "Ari's server", "until the owner has a name");
+        assert_eq!(list_name(None, None), "Your server");
+    }
+
+    #[test]
+    fn the_screen_sets_person_and_assistant_side_by_side() {
+        assert_eq!(face_name(Some("Nick"), Some("Juno")), "Nick · Juno");
+        assert_eq!(face_name(None, Some("Ari")), "Ari");
+        assert_eq!(face_name(None, None), "Your server");
+    }
 }

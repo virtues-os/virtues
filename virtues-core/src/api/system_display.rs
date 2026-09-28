@@ -644,7 +644,7 @@ pub async fn get_display_settings_handler(State(state): State<AppState>) -> Resp
             online,
             connectivity,
             devices,
-            box_name: crate::api::identity::box_label(pool).await,
+            box_name: crate::api::identity::face_label(pool).await,
             data_disk_fault: crate::data_disk::status().message(),
             record,
             record_since,
