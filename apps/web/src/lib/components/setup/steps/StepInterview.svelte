@@ -27,12 +27,13 @@
 	question-level skip on the server, and inventing one would give the
 	interviewer a gap it cannot see.
 
-	THE COUNT. "Question 4" beside the interviewer's name is the number of
-	questions asked since the interview began, read off the same transcript.
-	Nothing says how many are left: the interviewer covers six parts
-	(agent/prompt.rs, "The territory") but the questions per part vary, so a
-	remaining count would be a guess. The intro promises the six parts, which
-	is true by construction, instead of a duration nobody measured.
+	THE PART, NOT THE COUNT (2026-09-28). "Question 4" counted toward
+	nothing, so the interview felt endless while the intro promised six
+	parts. The interviewer now ends each turn with a hidden HTML comment,
+	"part: N" (agent/prompt.rs, "The territory"; never quote the comment's
+	own delimiters in this block, which is itself one), and the eyebrow reads
+	"Part 2 of 6 ·
+	What sets you apart". Until it says, the eyebrow is just its name.
 
 	Everything is derived on arrival: the transcript from the instant the
 	interview began tells which question is open, so leaving mid-interview
@@ -82,8 +83,28 @@
 	let error = $state<string | null>(null);
 	let chapters = $state<LifeChapter[]>([]);
 	let field = $state<HTMLTextAreaElement | null>(null);
-	/** Which question this is, counting from the interview's start. */
-	let number = $state(1);
+	/** Which of the six parts the interviewer says this question is in.
+	 *  It ends each turn with `<!-- part: N -->` (prompt.rs), read here and
+	 *  removed before anything is shown. Null until it says. */
+	let part = $state<number | null>(null);
+	const PARTS = [
+		"Your chapters",
+		"What sets you apart",
+		"Who you admire",
+		"What pulls at you",
+		"What you believe",
+		"A good day",
+	];
+	const MARKER = /<!--\s*part:\s*(\d)\s*-->\s*$/;
+	/** The question without its marker (or the start of one, mid-stream). */
+	function unmarked(text: string): string {
+		return text.replace(MARKER, "").replace(/<!--[^>]*$/, "").trimEnd();
+	}
+	function readPart(text: string) {
+		const m = text.match(MARKER);
+		const n = m ? Number(m[1]) : NaN;
+		if (n >= 1 && n <= PARTS.length) part = n;
+	}
 	const touch = typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
 
 	const name = $derived(setup.assistantName);
@@ -152,7 +173,6 @@
 			return;
 		}
 		const turns = await transcript();
-		number = Math.max(1, asked(turns));
 		if (turns.some((t) => t.closes)) {
 			phase = "closed";
 			return;
@@ -185,7 +205,6 @@
 			/* nothing live to rejoin */
 		}
 		const again = await transcript();
-		number = Math.max(1, asked(again));
 		const tail = again[again.length - 1];
 		if (tail?.role === "assistant" && tail.text) ask(tail.text, false);
 		else {
@@ -193,10 +212,6 @@
 			ask(previousQuestion(again), false);
 			answer = last.text;
 		}
-	}
-
-	function asked(turns: Turn[]): number {
-		return turns.filter((t) => t.role === "assistant" && t.text).length;
 	}
 
 	function previousQuestion(turns: Turn[]): string {
@@ -207,7 +222,8 @@
 	}
 
 	async function ask(text: string, isOpening: boolean) {
-		question = text;
+		readPart(text);
+		question = unmarked(text);
 		opening = isOpening;
 		phase = "asking";
 		await tick();
@@ -262,7 +278,7 @@
 	const streaming = $derived.by(() => {
 		if (phase !== "waiting") return "";
 		const last = chat.messages[chat.messages.length - 1];
-		return last?.role === "assistant" ? textOf(last as never) : "";
+		return last?.role === "assistant" ? unmarked(textOf(last as never)) : "";
 	});
 
 	async function send(text: string) {
@@ -305,7 +321,7 @@
 	>
 		<p class="facts">Six short parts · Skip any question · Finish later and pick up where you left off</p>
 		{#if chapters.length > 0}
-			<p class="note">It starts from the chapters you drew:</p>
+			<p class="note centered-note">It starts from the chapters you drew:</p>
 			<ol class="chips">
 				{#each chapters as c (c.id)}
 					<li>
@@ -316,7 +332,10 @@
 			</ol>
 		{/if}
 		{#if chapters.length === 0 && ondraw}
-			<p class="note centered-note">It starts from the chapters of your life. Draw them first, and the interview picks up from there.</p>
+			<p class="note centered-note">
+				It starts from the chapters of your life. Draw them first, and the interview picks up from there, or
+				<button type="button" class="inline-link" onclick={begin}>begin without them</button>.
+			</p>
 		{/if}
 		{#if error}<p class="err" role="alert">{error}</p>{/if}
 		{#snippet actions()}
@@ -325,7 +344,6 @@
 					Draw your chapters
 					<Icon icon="ri:arrow-right-line" width="16" />
 				</button>
-				<button type="button" class="setup-past" onclick={begin}>Begin without them</button>
 			{:else}
 				<button type="button" class="setup-go" onclick={begin}>
 					Begin the interview
@@ -357,7 +375,7 @@
 	</StepFrame>
 {:else}
 	<section class="sheet" aria-live="polite">
-		<p class="who">{name} · Question {number}</p>
+		<p class="who">{part ? `Part ${part} of ${PARTS.length} · ${PARTS[part - 1]}` : name}</p>
 
 		{#if phase === "waiting"}
 			<div class="question pending" in:fade={{ duration: still ? 0 : 200 }}>
@@ -392,7 +410,7 @@
 				<textarea
 					bind:this={field}
 					bind:value={answer}
-					oninput={grow}
+					oninput={() => (grow(), setup.hear())}
 					onkeydown={onKey}
 					rows="3"
 					placeholder="Your answer"
@@ -426,11 +444,17 @@
 		min-height: 60vh;
 	}
 
+	/* THE QUESTION IS THE PAGE, on the center line like every step: the
+	   assistant's question set large in the serif, as Names asks "And what
+	   should Ari call you?", and the answer written on the paper under it,
+	   not typed into a form (2026-09-28: it was the one left-aligned step,
+	   a small question over a bordered box). */
 	.sheet {
 		width: 100%;
 		max-width: 40rem;
 		margin: 0 auto;
 		padding: clamp(2.5rem, 8vh, 5.5rem) 16px 4rem;
+		text-align: center;
 	}
 	/* Three facts, in the step's quietest type: how long, and the two ways
 	   out, before anyone starts. */
@@ -447,14 +471,14 @@
 		text-align: center;
 	}
 	.keys {
-		margin-left: auto;
+		flex-basis: 100%;
 		font-size: 12px;
 		color: var(--color-foreground-subtle);
 		font-variant-numeric: tabular-nums;
 	}
 
 	.who {
-		margin: 0 0 1rem;
+		margin: 0 0 1.25rem;
 		font-size: 12px;
 		letter-spacing: 0.02em;
 		color: var(--color-foreground-subtle);
@@ -464,15 +488,19 @@
 	   the interviewer's lead-in and question kept together as written. */
 	.question {
 		font-family: var(--font-serif, Georgia, serif);
-		font-size: 1.3rem;
-		line-height: 1.6;
+		font-size: clamp(22px, 2.6vw, 30px);
+		line-height: 1.35;
+		letter-spacing: -0.005em;
 		color: var(--color-foreground);
+		text-wrap: balance;
 	}
 	.question :global(p) {
 		margin: 0 0 0.9em;
 	}
 	.question.pending {
 		min-height: 6rem;
+		display: grid;
+		place-items: center;
 		color: var(--color-foreground-muted);
 	}
 	.mark {
@@ -482,6 +510,7 @@
 
 	.example {
 		margin: 0 0 1.5rem;
+		text-align: left;
 		font-size: 0.95rem;
 		color: var(--color-foreground-muted);
 	}
@@ -491,6 +520,7 @@
 		margin: 0.9rem 0 0;
 		padding: 0;
 		display: flex;
+		justify-content: center;
 		flex-wrap: wrap;
 		gap: 8px;
 	}
@@ -520,31 +550,50 @@
 		flex-direction: column;
 		gap: 1.1rem;
 	}
+	/* Written on the paper: the serif, no box, one hairline that turns
+	   primary while you write. Left-aligned inside the column, because an
+	   answer runs to paragraphs and centered paragraphs don't read. */
 	textarea {
 		width: 100%;
-		min-height: 6rem;
+		min-height: 5.5rem;
 		resize: none;
-		padding: 0.9rem 1rem;
-		border: 1px solid var(--color-border);
-		border-radius: 12px;
-		background: var(--color-background);
+		padding: 0 0 12px;
+		border: 0;
+		border-bottom: 1px solid var(--color-border);
+		border-radius: 0;
+		background: transparent;
 		color: var(--color-foreground);
-		font: inherit;
-		font-size: 1rem;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 19px;
 		line-height: 1.55;
+		text-align: left;
+		outline: none;
+		transition: border-color var(--m-quick) ease;
+	}
+	textarea::placeholder {
+		color: var(--color-foreground-subtle);
 	}
 	textarea:focus {
-		outline: none;
-		border-color: color-mix(in srgb, var(--color-primary) 55%, var(--color-border));
-		outline: 3px solid color-mix(in srgb, var(--color-primary) 14%, transparent);
+		border-bottom-color: var(--color-primary);
 	}
 	.row {
 		display: flex;
 		align-items: center;
+		justify-content: center;
 		flex-wrap: wrap;
 		gap: 1.25rem;
 	}
 
+	.inline-link {
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		color: var(--color-primary);
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		cursor: pointer;
+	}
 	.note {
 		margin: 0;
 		font-size: 14px;

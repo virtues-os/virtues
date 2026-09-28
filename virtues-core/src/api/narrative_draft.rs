@@ -136,7 +136,7 @@ pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
     let mut prompt = String::from("The transcript:\n");
     for (role, content) in &turns {
         let speaker = if role == "user" { "THEM" } else { "INTERVIEWER" };
-        prompt.push_str(&format!("\n{speaker}: {}\n", content.trim()));
+        prompt.push_str(&format!("\n{speaker}: {}\n", without_part_marker(content)));
     }
 
     let raw = call_model(pool, SYSTEM_PROMPT, &prompt, "narrative_draft").await?;
@@ -456,7 +456,7 @@ async fn chapters_from_interview(pool: &PgPool) -> Result<usize> {
     let mut prompt = String::from("The transcript:\n");
     for (role, content) in &turns {
         let speaker = if role == "user" { "THEM" } else { "INTERVIEWER" };
-        prompt.push_str(&format!("\n{speaker}: {}\n", content.trim()));
+        prompt.push_str(&format!("\n{speaker}: {}\n", without_part_marker(content)));
     }
 
     let raw = call_model(pool, CHAPTERS_PROMPT, &prompt, "narrative_chapters").await?;
@@ -526,6 +526,17 @@ async fn chapters_from_interview(pool: &PgPool) -> Result<usize> {
 
     tracing::info!(chapters = planned.len(), "wiki_chapters written from the interview");
     Ok(planned.len())
+}
+
+/// An interviewer turn with its `<!-- part: N -->` line removed: the marker
+/// is for the app's progress ("Part 2 of 6", prompt.rs), never material for
+/// the document or the chapters.
+fn without_part_marker(content: &str) -> &str {
+    let t = content.trim();
+    match t.rfind("<!--") {
+        Some(i) if t[i..].trim_end().ends_with("-->") && t[i..].contains("part:") => t[..i].trim_end(),
+        _ => t,
+    }
 }
 
 /// The person's words for each drawn chapter: (id, changepoint, summary).
@@ -1573,6 +1584,13 @@ mod tests {
         let rows = [drawn("a", "School", 2002), drawn("b", "Leaving", 2002)];
         let out = words_for_drawn(&rows, &[said(Some("Leaving"), 2002, "I left")]);
         assert_eq!(out, vec![("b".into(), Some("I left".into()), None)]);
+    }
+
+    #[test]
+    fn the_part_marker_never_reaches_the_drafter() {
+        assert_eq!(without_part_marker("What ended it?\n\n<!-- part: 1 -->"), "What ended it?");
+        assert_eq!(without_part_marker("What ended it?"), "What ended it?");
+        assert_eq!(without_part_marker("<!-- a note --> kept"), "<!-- a note --> kept");
     }
 
     #[test]
