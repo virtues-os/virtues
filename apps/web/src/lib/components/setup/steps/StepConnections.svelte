@@ -46,7 +46,7 @@
 		openFullDiskAccess,
 		type CollectorStatus,
 	} from "$lib/tauri/bridge";
-	import { setup, type StepPart } from "../setup.svelte";
+	import { setup, intoLabel, type StepPart } from "../setup.svelte";
 	import StepFrame from "../StepFrame.svelte";
 
 	let { eyebrow, onnext }: { eyebrow?: string; onnext: () => void } = $props();
@@ -84,7 +84,7 @@
 				await new Promise((r) => setTimeout(r, 1000));
 			}
 			if (!mac?.running) {
-				error = "The collector installed but didn't start. Try again, or check ~/.virtues/logs/collector.error.log.";
+				error = "The collector installed but didn't start. Try again, and if it still won't, restart this Mac.";
 			}
 			void setup.refresh();
 		} catch (e) {
@@ -305,10 +305,11 @@
 
 	{#snippet actions()}
 		<!-- Until something is on, the card buttons ARE the way forward; a
-		     greyed "Build your timeline" beside them only said "not yet". -->
+		     greyed way forward beside them only said "not yet". The label
+		     names the next step still to do, like every step's does. -->
 		{#if anything}
 			<button type="button" class="setup-go" disabled={busy} onclick={moveOn}>
-				Build your timeline
+				{intoLabel(setup.upNext("connections"))}
 				<Icon icon="ri:arrow-right-line" width="16" />
 			</button>
 		{:else}
