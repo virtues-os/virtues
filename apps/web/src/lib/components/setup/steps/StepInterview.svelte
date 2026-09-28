@@ -50,6 +50,7 @@
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import { getChat, listLifeChapters, type LifeChapter } from "$lib/api/client";
 	import { readNextChapter } from "../nextChapter";
+	import { getMe } from "$lib/wiki/api";
 	import { GETTING_STARTED_CHAT_ID } from "$lib/components/chat/getting-started/getting-started";
 	import { INTERVIEW_OPENING_ASK, INTERVIEW_OPENING_BODY } from "$lib/components/chat/interview/interview";
 	import { toUiMessage } from "$lib/components/chat/state/transcript";
@@ -108,6 +109,37 @@
 	const touch = typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
 
 	const name = $derived(setup.assistantName);
+
+	/** The opening of "In your own words": its first paragraphs, plain, up to
+	 *  about three hundred characters, cut at a sentence. */
+	let excerpt = $state<string[] | null>(null);
+	async function loadExcerpt() {
+		const me = await getMe().catch(() => null);
+		const doc = me?.article?.trim();
+		if (!doc) return;
+		const paras = doc
+			.split(/\n\s*\n/)
+			.map((p) => p.trim())
+			.filter((p) => p && !/^(#|>|[-*] |\d+\. |\|)/.test(p))
+			.map((p) => p.replace(/[*_`]/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/\s+/g, " "));
+		const out: string[] = [];
+		let used = 0;
+		for (const p of paras) {
+			if (used >= 300) break;
+			if (used + p.length <= 360) {
+				out.push(p);
+				used += p.length;
+				continue;
+			}
+			const cut = p.slice(0, 360 - used).match(/^.*[.!?](?=\s|$)/);
+			if (cut) out.push(cut[0]);
+			break;
+		}
+		if (out.length) excerpt = out;
+	}
+	$effect(() => {
+		if (phase === "closed" && excerpt === null) void loadExcerpt();
+	});
 	const still =
 		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
@@ -356,19 +388,27 @@
 		{/snippet}
 	</StepFrame>
 {:else if phase === "closed"}
+	<!-- THE PAYOFF IS ON THE PAGE (2026-09-28). The first time someone sees
+	     themselves written up is what the whole flow builds to, and this
+	     screen used to be a check mark and a sentence about it. It now shows
+	     the opening of "In your own words", set like the letter, and the way
+	     on reads the rest: Setup's close lands on the document. No separate
+	     done icon: the ∴ above is full, which is Setup's one way of saying
+	     done. Without a document (the write-up failed), the plain version. -->
 	<StepFrame
 		title="You've told your story"
-		subtitle="{name} wrote it up from your answers, in your own words. It's in your wiki, and you can change it whenever you like."
+		subtitle={excerpt
+			? `${name} wrote it up from your answers, in your own words:`
+			: `${name} wrote it up from your answers, in your own words. It's in your wiki, and you can change it whenever you like.`}
 	>
-		<span class="check" aria-hidden="true">
-			<svg viewBox="0 0 48 48" width="56" height="56">
-				<circle cx="24" cy="24" r="22" />
-				<path d="M14.5 24.8l6.6 6.3 12.8-13.6" />
-			</svg>
-		</span>
+		{#if excerpt}
+			<blockquote class="excerpt" in:fly={IN}>
+				{#each excerpt as para, i (i)}<p>{para}</p>{/each}
+			</blockquote>
+		{/if}
 		{#snippet actions()}
 			<button type="button" class="setup-go" onclick={onnext}>
-				Finish setup
+				{excerpt ? "Read it all" : "Finish setup"}
 				<Icon icon="ri:arrow-right-line" width="16" />
 			</button>
 		{/snippet}
@@ -605,39 +645,21 @@
 		color: var(--color-error);
 	}
 
-	.check {
-		display: flex;
-		justify-content: center;
+	.excerpt {
+		max-width: 32rem;
+		margin: 0 auto;
+		padding: 0;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 19px;
+		line-height: 1.6;
+		color: var(--color-foreground);
+		text-align: left;
+		text-wrap: pretty;
 	}
-	.check svg {
-		display: block;
-		fill: none;
-		stroke: var(--color-success);
-		stroke-width: 1.4;
-		stroke-linecap: round;
-		stroke-linejoin: round;
+	.excerpt p {
+		margin: 0 0 0.9em;
 	}
-	.check circle {
-		stroke-dasharray: 140;
-		stroke-dashoffset: 140;
-		animation: draw 800ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
-	}
-	.check path {
-		stroke-width: 2;
-		stroke-dasharray: 34;
-		stroke-dashoffset: 34;
-		animation: draw 420ms cubic-bezier(0.2, 0.7, 0.2, 1) 600ms forwards;
-	}
-	@keyframes draw {
-		to {
-			stroke-dashoffset: 0;
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.check circle,
-		.check path {
-			animation: none;
-			stroke-dashoffset: 0;
-		}
+	.excerpt p:last-child {
+		margin-bottom: 0;
 	}
 </style>
