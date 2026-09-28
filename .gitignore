@@ -219,3 +219,7 @@ tmp/*
 # a 30 KB generator and a 412 KB largest-committed seed. Rebuild with
 # `python3 tools/gen-demo-seed.py` (stdlib only), then `seeds/demo3y/run.sh`.
 virtues-core/seeds/demo3y/
+
+# Licensed music (AGsoundtrax, ref AGX-2026-00084): the license grants no right
+# to publish the master, and this repo is public. Ship it from a private path.
+apps/web/static/onboarding/hello.mp3

@@ -11,6 +11,7 @@ mod store;
 
 pub mod handoff;
 pub mod outbox;
+pub mod owner;
 pub mod pair;
 pub mod pair_door;
 pub mod provision;
@@ -23,7 +24,7 @@ pub use model::PairedBox;
 pub use virtues_iroh::install_crypto_provider;
 pub use handoff::HandoffPayload;
 pub use pair_door::serve_pair_door;
-pub use proxy::{build_client, resolve_box_lan, serve_loopback, serve_on, serve_on_provider};
+pub use proxy::{build_client, lan_origin, resolve_box_lan, serve_loopback, serve_on, serve_on_provider};
 pub use scan::{local_private_ipv4s, scan_subnet, DiscoveredBox};
 pub use session::{probe_session, SessionState};
 pub use store::BoxStore;

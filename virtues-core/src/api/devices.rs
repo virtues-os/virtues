@@ -314,46 +314,6 @@ pub async fn revoke_handler(
     (StatusCode::OK, Json(json!({"ok": true}))).into_response()
 }
 
-#[derive(serde::Deserialize)]
-pub struct SelfNodeIdRequest {
-    /// The calling device's iroh EndpointId (hex).
-    pub node_id: String,
-}
-
-/// `POST /api/devices/self/node-id { node_id }` — the calling device (authed by
-/// its own bearer) reports its iroh EndpointId so the box allowlists it on its
-/// iroh transport. This is how a device provisioned off-LAN (QR/iOS), which
-/// wasn't present at consume time to submit `device_node_id`, becomes reachable.
-pub async fn set_self_node_id(
-    State(pool): State<PgPool>,
-    user: AuthUser,
-    Json(body): Json<SelfNodeIdRequest>,
-) -> impl IntoResponse {
-    let node_id = body.node_id.trim();
-    if node_id.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "missing_node_id"}))).into_response();
-    }
-    match sqlx::query("UPDATE app_device SET endpoint_id = $1 WHERE id = $2 AND revoked_at IS NULL")
-        .bind(node_id)
-        .bind(&user.device_id)
-        .execute(&pool)
-        .await
-    {
-        Ok(_) => {
-            // Hot-swap the allowlist + re-report to atlas so the device can reach
-            // the box immediately.
-            crate::relay::after_pairing_change(pool.clone());
-            (StatusCode::OK, Json(json!({"ok": true}))).into_response()
-        }
-        Err(e) => {
-            // Most likely a unique violation — another active device already
-            // holds this EndpointId.
-            tracing::warn!(error = %e, "set_self_node_id failed");
-            (StatusCode::CONFLICT, Json(json!({"error": "node_id_conflict"}))).into_response()
-        }
-    }
-}
-
 /// Whether `a` is shaped like an APNs device token: non-empty hex, bounded.
 ///
 /// Deliberately NOT a fixed length. Tokens have been 64 hex characters for
@@ -376,10 +336,10 @@ pub struct SelfPushAddressRequest {
 /// `POST /api/devices/self/push-address { push_address }` — the calling device
 /// reports where the box can reach it.
 ///
-/// The counterpart of `set_self_node_id`, and the deliberate mirror of it: that
-/// one records the KEY a device proves itself with, this one records the
-/// ADDRESS the box reaches it at. Both live on the same row, so revoking a
-/// device kills both at once and neither can outlive the pairing.
+/// The mirror of `app_device.endpoint_id`: that column records the KEY a
+/// device proves itself with, this one records the ADDRESS the box reaches it
+/// at. Both live on the same row, so revoking a device kills both at once and
+/// neither can outlive the pairing.
 ///
 /// **The app must call this on every launch, not only at pair time.** APNs
 /// rotates a token on restore-from-backup, on reinstall, and sometimes across

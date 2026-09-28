@@ -20,10 +20,20 @@
   TWO SIZES, ONE FAMILY. Serif for the headline and the whole body, one small
   size for the sign-off chrome. Nothing else. The old page ran six body sizes
   and the mixture was the reason it felt unresolved before anyone could say
-  why. (The mono label register left with the figure; the strip above the
-  letter still carries it.)
+  why. (The mono label register survives only as the headword of a margin
+  note and the heads of the ledger.)
+
+  THE MARGIN (2026-09-08). Two things left the column for the margin: the
+  definition of subsidiarity, which used to be a clause inside the first
+  sentence, and the ledger, which used to sit between paragraphs as an
+  exhibit. Both are annotations ON the letter rather than sentences OF it,
+  and an editorial margin is the form that says so — the reader's eye can
+  take them or leave them without the sentence breaking stride. On a narrow
+  window there is no margin, so the notes fold back into the column as
+  indented asides; the prose is identical either way.
 -->
 <script lang="ts">
+	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
 
 	// THE SHELL IS THE ROUTE'S. This used to own its own `.ob-wrap`/`.ob-sheet`
@@ -31,7 +41,9 @@
 	// element on every screen — so it animated in with the content beneath it.
 	// The route now mounts one header above one animated slot, and this is only
 	// the leaf that goes in the slot.
-	let { onbegin }: { onbegin: () => void } = $props();
+	// `beginLabel` names what the one button does where the letter is read:
+	// "Begin setup" as Setup's preface, "Close the letter" when re-read.
+	let { onbegin, beginLabel = "Begin setup" }: { onbegin: () => void; beginLabel?: string } = $props();
 
 	// Up here because they are the likeliest thing on this page to rot, and a
 	// reachable founder is the claim the page rests on — a dead link here costs
@@ -39,6 +51,27 @@
 	const EMAIL = "adam@virtues.com";
 	const X_URL = "https://x.com/adamjaces";
 	const INSTAGRAM_URL = "https://www.instagram.com/aajaces/";
+
+	// The signature writes itself the first time it comes into view.
+	let sigEl = $state<HTMLElement | null>(null);
+	let written = $state(false);
+	onMount(() => {
+		if (!sigEl || !("IntersectionObserver" in window)) {
+			written = true;
+			return;
+		}
+		const io = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((e) => e.isIntersecting)) {
+					written = true;
+					io.disconnect();
+				}
+			},
+			{ threshold: 0.9 },
+		);
+		io.observe(sigEl);
+		return () => io.disconnect();
+	});
 </script>
 
 <div class="letter">
@@ -59,116 +92,109 @@
 		-->
 
 
+		<!-- TWO COLUMNS, ONE ORDER. The prose and the margin are separate
+		     containers so that, on a wide window, the notes flow down their own
+		     column — each starting no higher than the paragraph it annotates and
+		     sliding down past the note above it, the way marginalia actually
+		     stack. (Locking each note to its paragraph's row opened a hole in the
+		     prose wherever a note outran a short paragraph.) On a narrow window both containers
+		     dissolve (display: contents) and `order` interleaves the notes back
+		     under their paragraphs, so the reading order is the same either way. -->
 		<div class="body">
-			<!-- A BELIEF, THEN A QUESTION, in one breath. One continuous motion —
-			     belief, principle, question — no stage directions ("So ask
-			     plainly:" was a command to ask a question the letter asks
-			     anyway) and no fragment drumroll: the question's last word is
-			     "you?", and ¶2's "yours by right" is its answer. The list is
-			     three CATEGORIES, no names — a category cannot be argued with,
-			     and a name invites an argument about that name, which this
-			     paragraph cannot afford. -->
-			<p>
-				I'm Adam Jace, and I started Virtues because I believe in subsidiarity — the old
-				idea that a thing belongs at the most local level that can hold it. Nothing is more
-				local than your own life. So who should hold the whole account of it: a government,
-				a political party, big tech, or you?
-			</p>
+			<div class="prose">
 
-			<!-- THE PREMISE. Two claims: capability (you can hold this yourself)
-			     and title (it is your property — "yours by right", the
-			     private-property register without the legalism of "entitled").
-			     The against-triple names what extraction becomes; the FOR side is
-			     deliberately not stated here — the rest of the letter (the page,
-			     the wiki, the asks, the mirror) IS the for side, shown rather
-			     than listed. The triple chains into vice-is-repetitive, which
-			     explains it. -->
-			<p>
-				Virtues rests on a simple premise: the data of your life is yours by right, and
-				yours to hold. It is the most intimate thing you have, and today it is turned
-				against you — into ads, algorithms, and addictions. Vice is repetitive and
-				profitable, which is why so much is arranged to produce it. Virtue asks for harder
-				things — attention, memory, honesty, intimacy.
-			</p>
+				<!-- THE PREMISE. Two claims: capability (you can hold this yourself)
+				     and title (it is your property — "yours by right", the
+				     private-property register without the legalism of "entitled").
+				     The against-triple names what extraction becomes; the FOR side
+				     is deliberately not stated here — the rest of the letter (the
+				     ledger beside it, the wiki, the asks) IS the for side, shown
+				     rather than listed. The triple chains into vice-is-repetitive,
+				     which explains it. -->
+				<p class="p2">
+					The data of your life is yours by right, and yours to hold. It's the most
+					intimate thing you have, and today it's turned against you: into ads,
+					algorithms, and addictions. Vice is repetitive and profitable, which is why so
+					much is arranged to produce it. Virtue asks for harder things: attention,
+					memory, honesty, intimacy.
+				</p>
 
-			<!-- THE LEDGER. ¶1 called it "the whole account of your life", so the
-			     figure is drawn as an account: one rule across, one rule down,
-			     a debit column and a credit column. Not a diagram — a page from
-			     a book of accounts, which is a form with five centuries of
-			     editorial standing and no AI-slop associations. The entries
-			     pair one-to-one ACROSS the rule, each pair the same raw
-			     material bent opposite ways: ads↔self-knowledge (they study
-			     you to sell; you study yourself for yourself), algorithms↔
-			     memory (their machine processes your past to shape you; yours,
-			     to remind you), addictions↔virtue (the couplet above, drawn).
-			     One ink for both columns — the words carry the judgment. -->
-			<figure
-				class="ledger"
-				role="img"
-				aria-label="The account of your life, as a table. In their cloud: ads, algorithms, addictions. In your home: self-knowledge, memory, virtue."
-			>
-				<p class="origin">your life's data</p>
-				<div class="table">
-					<div class="row heads">
-						<p class="where">in their cloud</p>
-						<p class="where">in your home</p>
-					</div>
-					<div class="row">
-						<p class="entry">ads</p>
-						<p class="entry">self-knowledge</p>
-					</div>
-					<div class="row">
-						<p class="entry">algorithms</p>
-						<p class="entry">memory</p>
-					</div>
-					<div class="row">
-						<p class="entry">addictions</p>
-						<p class="entry">virtue</p>
-					</div>
-				</div>
-			</figure>
+				<!-- THE GIFT. What holding the record BUYS, straight after the
+				     premise that it is yours to hold. The image is the WIKI OF YOUR
+				     LIFE (the product's own word for it, 2026-09-28; it was
+				     "wikipedia"), and the list escalates from logged facts (went,
+				     spoke) through a pattern (the places you keep going back to) to
+				     meaning (the stories that matter most). "The places you go when
+				     you're happy" went the same day: nothing in the record infers
+				     mood (day_summary says "no mood"), and the claim rules delete a
+				     line the build can't back. "Thin at first … a record compounds.
+				     Give it time, then ask:" went too, as fragments narrating a
+				     motif; the paragraph now says plainly that you can ask it. The
+				     daily-page line ("a page will be waiting for you") moved to the
+				     reveal's door, where tomorrow is real. The asks below are this
+				     paragraph's proof, and the letter ends on them — a closing
+				     essay-paragraph was a second summit, cut 2026-08-24 (its lines
+				     are banked in agents/build/voice.md). -->
+				<p class="p3">
+					Every day, Virtues writes the wiki of your life: where you went, who you spoke
+					with, the places you keep going back to, the stories that matter most. You can
+					ask it things like:
+				</p>
+			</div>
 
-			<!-- THE THESIS. The one large claim, introduced by the mark itself —
-			     ∴ is the therefore-sign, so the logo arrives doing its job as
-			     LOGIC: everything above it, the figure included, is premises,
-			     and this line is the conclusion. It is also the only sentence
-			     in the letter allowed to command. Same ink as the prose — the
-			     mark is salient by being a symbol, not by being colored. -->
-			<p class="thesis">
-				<span class="therefore" aria-hidden="true">∴</span> You must protect your life's
-				data to protect your soul.
-			</p>
+			<div class="margin">
 
-			<!-- THE GIFT. What protecting the record BUYS, right after the thesis
-			     commands you to protect it: command, then gift. The image is the
-			     WIKIPEDIA OF YOUR LIFE — instantly graspable, browsable, always
-			     growing — and the list escalates from logged facts (went, spoke,
-			     worked) through an inferred pattern (the places you go when
-			     you're happy) to meaning (the stories that matter most), which
-			     DEMONSTRATES "a record compounds" instead of asserting it. The
-			     daily-page line ("a page will be waiting for you") moved to the
-			     reveal's door, where tomorrow is real. The asks below are this
-			     paragraph's proof, and the letter ends on them — the ∴ is the
-			     one summit; a closing essay-paragraph was a second one, cut
-			     2026-08-24 (its lines are banked in agents/build/voice.md). -->
-			<p>
-				Every day, Virtues writes the wikipedia of your life: where you went, who you
-				spoke with, what you were working on, the places you go when you're happy, the
-				stories that matter most. Thin at first, having only just met you. But a record
-				compounds. Give it time, then ask:
-			</p>
+				<!-- THE LEDGER, in the margin beside the paragraph it draws from.
+				     Drawn as an account: one rule across, one rule down, a debit
+				     column and a credit column. Not a diagram — a page from a book
+				     of accounts, a form with five centuries of editorial standing
+				     and no AI-slop associations. The entries pair one-to-one ACROSS
+				     the rule, each pair the same raw material bent opposite ways:
+				     ads↔self-knowledge (they study you to sell; you study yourself
+				     for yourself), algorithms↔memory (their machine processes your
+				     past to shape you; yours, to remind you), addictions↔virtue.
+				     One ink for both columns — the words carry the judgment.
+				     The ∴ thesis line that used to follow it was cut 2026-09-08:
+				     with the ledger off to the side there is no longer a stack of
+				     premises for a therefore-sign to conclude. -->
+				<figure
+					class="note ledger"
+					role="img"
+					aria-label="The account of your life, as a table. In their cloud: ads, algorithms, addictions. In your home: self-knowledge, memory, virtue."
+				>
+					<p class="head">your life's data</p>
+					<div class="table">
+						<div class="row heads">
+							<p class="where">in their cloud</p>
+							<p class="where">in your home</p>
+						</div>
+						<div class="row">
+							<p class="entry">ads</p>
+							<p class="entry">self-knowledge</p>
+						</div>
+						<div class="row">
+							<p class="entry">algorithms</p>
+							<p class="entry">memory</p>
+						</div>
+						<div class="row">
+							<p class="entry">addictions</p>
+							<p class="entry">virtue</p>
+						</div>
+					</div>
+				</figure>
+			</div>
 		</div>
 
 		<!-- THE ONLY PLACE THE PRODUCT SPEAKS FOR ITSELF.
-		     Four questions, four time horizons — today, yesterday, the
-		     standing ledger, years — each needing a different stream of the
-		     record (the body, the ambient moment, the transactions, the
-		     message history). Every ask must be unanswerable without the
-		     record: a question any bare model handles ("how do I become a
-		     better writer?") is a question this list cannot afford. Third is
-		     the practical one so the list still ends on the emotional deep
-		     cut, which the reveal's "oldest thing it found" line later pays
-		     off.
+		     Three questions, three time horizons — today, yesterday, years —
+		     each needing a different stream of the record (the body, the
+		     ambient moment, the message history). Every ask must be
+		     unanswerable without the record: a question any bare model handles
+		     ("how do I become a better writer?") is a question this list
+		     cannot afford. It ends on the emotional deep cut, which the
+		     reveal's "oldest thing it found" line later pays off. (The
+		     practical one, "What am I still paying for that I never use?",
+		     was cut for length 2026-09-28.)
 
 		     Set as a block rather than bullets — these are things you would say
 		     out loud, and a bulleted list turns speech into a feature grid. Full
@@ -176,26 +202,41 @@
 		<ul class="asks">
 			<li>Why do I have a migraine today?</li>
 			<li>What was the name of the woman I met at the dog park yesterday?</li>
-			<li>What am I still paying for that I never use?</li>
 			<li>Who have I lost touch with that I used to talk to every day?</li>
 		</ul>
 
 		<div class="body">
-			<!-- THE LAST WORD. Two plain sentences after the asks — the grievance
-			     and the turn. The hard words (subsidiarity, the ledger) did
-			     their work upstairs; the close is the line anyone could repeat
-			     at dinner. The you→us shift between the sentences is the
-			     founder stepping in beside the reader for the final clause,
-			     which lands on the cadence every cut spared: more human, and
-			     more virtuous. (The essay-close and the manifesto link were
-			     both cut 2026-08-24 — the essay was a second summit after the
-			     ∴, the link an exit ramp to a cloud-era document the ledger
-			     contradicts; its lines are banked in agents/build/voice.md.) -->
-			<p>
-				Technology has exploited you long enough. This is what it was always supposed to
-				do: make us more human, and more virtuous.
+			<!-- THE FOUNDER'S LAST LINE. After the asks the letter has finished
+			     arguing; what is left is why the person who wrote it started, in
+			     one sentence that glosses its own hard word. It used to open the
+			     letter ("I'm Adam Jace, and I started Virtues because I believe in
+			     digital subsidiarity") with the definition in the margin; the
+			     letter now opens on its premise and the name is on the signature
+			     (2026-09-28). "I built the thing I wished existed. If it's useful
+			     to you, reach out :)" was cut the same day; the contact pills
+			     below say it. The grievance close ("Technology has
+			     exploited you long enough…") went to the bank in
+			     agents/build/voice.md on 2026-09-08; Herbert carries the grievance
+			     now, below. -->
+			<p class="close">
+				I started Virtues because I believe in digital subsidiarity: nothing is more
+				local than your own life.
 			</p>
 		</div>
+
+		<!-- THE LAST WORD IS BORROWED. Herbert says the grievance from sixty years
+		     off, which is the point: it is not new and not ours, and a letter
+		     that ends on someone else's sentence is a letter confident enough not
+		     to need the last word. Set off as a quotation, not a paragraph — the
+		     asks are the reader's voice, the close is the founder's, this is a
+		     third. -->
+		<blockquote class="quote">
+			<p>
+				Once men turned their thinking over to machines in the hope that this would set
+				them free. But that only permitted other men with machines to enslave them.
+			</p>
+			<footer>Frank Herbert, Dune</footer>
+		</blockquote>
 
 		<div class="sign">
 			<!-- MASKED, NOT INVERTED. An earlier version inverted black ink assuming
@@ -203,7 +244,7 @@
 			     LIGHT themes — starting with oxford, the one a new box actually
 			     opens on. Masking paints the ink in whatever the theme's foreground
 			     is, correct on all sixteen with no list to maintain. -->
-			<div class="sig" role="img" aria-label="Adam Jace"></div>
+			<div class="sig" class:written bind:this={sigEl} role="img" aria-label="Adam Jace"><span class="ink"></span></div>
 			<p class="role">Founder, Virtues</p>
 
 			<div class="contacts">
@@ -227,12 +268,12 @@
 			</div>
 		</div>
 
+		<!-- The letter is Setup's preface (setup-plan.md), so it ends on one
+		     button. Its P.S. about the subscription moved to the Subscription
+		     step, with the question it answers. -->
 		<div class="exit">
-			<!-- The letter is the whole of onboarding now, so its close is the
-			     door itself — everything that used to follow lives on Home as
-			     getting-started sections. -->
 			<button class="ob-btn" onclick={onbegin}>
-				Enter Virtues
+				{beginLabel}
 				<Icon icon="ri:arrow-right-line" width="16" />
 			</button>
 		</div>
@@ -240,12 +281,29 @@
 </div>
 
 <style>
-	/* THE WHOLE TYPE SYSTEM. Three sizes, and every rule below refers to these
-	   rather than inventing its own — which is the specific failure the previous
+	/* The one way on, under a rule where the letter ends, in the theme's
+	   primary: the same object as every step's way forward. */
+	.exit {
+		margin-top: 2.5rem;
+		padding-top: 2.25rem;
+		border-top: 1px solid var(--color-border);
+	}
+	.exit :global(.ob-btn) {
+		margin-top: 0;
+		background: var(--color-primary);
+		color: var(--color-background);
+	}
+
+	/* THE WHOLE TYPE SYSTEM. Three sizes (body, the margin's note, the sign-off's
+	   small), and every rule below refers to these rather than inventing its own — which is the specific failure the previous
 	   version accumulated one defensible exception at a time. */
 	.letter {
 		--t-body: 1.0625rem;
+		--t-note: 0.9375rem;
 		--t-small: 13px;
+		/* The margin column and the gutter between it and the prose. */
+		--m-width: 15rem;
+		--m-gutter: 2.5rem;
 	}
 
 	/* The one screen allowed to be louder than the others: it is the cover, and
@@ -293,41 +351,69 @@
 
 	.body p {
 		margin: 0;
+		/* No word left alone on a paragraph's last line ("like:"). */
+		text-wrap: pretty;
 	}
 
-	/* ── the ledger ────────────────────────────────────────────────────── */
+	/* ── the margin ────────────────────────────────────────────────────── */
 
-	/* The one figure in the letter, set as a booktabs table: an inset exhibit
-	   at well under the measure, three horizontal rules (above the heads,
-	   below the heads, under the last row), and NO vertical rules — columns
-	   are separated by whitespace, which is the whole discipline of the form.
-	   Serif entries in the prose's own face; mono only for the heads. The
-	   debit column is muted; each pair reads across its row as an opposition. */
-	.ledger {
-		margin: 1.5rem 0 1rem;
+	/* IN THE COLUMN (no margin yet). Both containers dissolve and their
+	   children become one flex column, `order` putting each note straight
+	   under the paragraph it annotates. */
+	.prose,
+	.margin {
+		display: contents;
 	}
 
-	.origin {
-		margin: 0 0 0.85rem;
-		text-align: center;
+	.p2 { order: 1; }
+	.ledger { order: 2; }
+	.p3 { order: 3; }
+
+
+	/* The note register: the prose's serif one step down, the margin's ink one
+	   step lighter. Headword in the same lowercase mono as the ledger heads, so
+	   the two notes read as one apparatus. In the column, an indented aside
+	   with a hairline — the same device the asks use, so the letter has one
+	   way of saying "beside the text". */
+	.note {
+		margin: 0;
+		padding-left: 1.3rem;
+		border-left: 1px solid var(--color-border);
 		font-family: var(--font-serif, Georgia, serif);
-		font-size: var(--t-body);
-		color: var(--color-foreground);
+		font-size: var(--t-note);
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+		transition: color 0.15s ease;
 	}
 
+	.note p {
+		margin: 0;
+	}
+
+	.note .head {
+		margin-bottom: 0.35rem;
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 12px;
+		letter-spacing: 0.06em;
+		color: var(--color-foreground-subtle);
+	}
+
+	/* The ledger, set as a booktabs table: three horizontal rules (above the
+	   heads, below the heads, under the last row) and NO vertical rules —
+	   columns are separated by whitespace, which is the whole discipline of
+	   the form. Serif entries in the note's face; mono only for the heads. */
 	.table {
-		max-width: 25rem;
-		margin: 0 auto;
+		max-width: 22rem;
 		border-top: 1px solid var(--color-border);
 		border-bottom: 1px solid var(--color-border);
 	}
 
-	/* Equal halves — the heads are a true parallel now (in their cloud / in
-	   your home), so the geometry gets to be one too. */
+	/* Equal halves — the heads are a true parallel (in their cloud / in your
+	   home), so the geometry gets to be one too. */
 	.row {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
-		gap: 2rem;
+		gap: 1rem;
 	}
 
 	.row p {
@@ -335,20 +421,20 @@
 	}
 
 	.row.heads {
-		padding: 0.6rem 0 0.55rem;
+		padding: 0.55rem 0 0.5rem;
 		border-bottom: 1px solid var(--color-border);
-		margin-bottom: 0.55rem;
+		margin-bottom: 0.45rem;
 	}
 
 	.row:last-child {
-		padding-bottom: 0.65rem;
+		padding-bottom: 0.55rem;
 	}
 
 	/* Lowercase mono, gentle tracking: an annotation's whisper, not a column
 	   header's shout. */
 	.where {
 		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 11.5px;
+		font-size: 12px;
 		letter-spacing: 0.06em;
 		color: var(--color-foreground-subtle);
 	}
@@ -357,20 +443,51 @@
 	   words (addictions vs virtue), never by graying a side out. The earlier
 	   muted-left read as a disabled state, not an opinion. */
 	.entry {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: var(--t-body);
-		line-height: 1.85;
+		line-height: 1.8;
 		color: var(--color-foreground);
 	}
 
-	/* The thesis line: same serif, same size, same ink — salience comes from
-	   the mark and the surrounding air, never from shouting or color. */
-	.thesis {
-		margin-top: 0.35rem;
-	}
+	/* THE MARGIN PROPER. Opens only when the window can hold the sheet, a
+	   gutter, and a 15rem margin column with room to spare on both sides:
+	   38 + 2.5 + 15, doubled for symmetry, plus the wrap's padding. Below that
+	   the notes stay in the column — a margin that squeezes the prose is worse
+	   than no margin. The column does NOT move: it stays where the sheet
+	   centers it, and the margin hangs off its right edge into the space that
+	   was already empty. Marginalia are an addition to a page, not a change
+	   to where the page sits. */
+	@media (min-width: 76rem) {
+		.body {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) var(--m-width);
+			column-gap: var(--m-gutter);
+			align-items: start;
+			/* Hangs the margin past the sheet's edge. */
+			margin-right: calc(-1 * (var(--m-width) + var(--m-gutter)));
+		}
 
-	.therefore {
-		margin-right: 0.15rem;
+		.prose {
+			display: flex;
+			flex-direction: column;
+			gap: 1.15rem;
+		}
+
+		/* Notes stack with real air between them — a margin is read in
+		   glances, and two notes close together read as one. */
+		.margin {
+			display: flex;
+			flex-direction: column;
+			gap: 3.5rem;
+		}
+
+		.note {
+			padding-left: 0;
+			border-left: 0;
+		}
+
+
+		.table {
+			max-width: none;
+		}
 	}
 
 	/* Questions someone would say out loud, so they are set as speech: no
@@ -396,10 +513,53 @@
 		text-wrap: pretty;
 	}
 
-	/* The bridge paragraph carries on the letter, so it keeps the body's rhythm
-	   rather than starting a new block. */
+	/* The close carries on the letter after the asks, so it keeps the body's
+	   rhythm rather than starting a new block. */
 	.asks + .body {
 		margin-top: 1.5rem;
+	}
+
+	/* The quotation, framed: a rounded card on the theme's elevated surface,
+	   the same radius the film block uses, so the borrowed voice sits in its
+	   own room rather than continuing the asks' hairline. Serif at the
+	   prose's size; the attribution in the sign-off's small sans. */
+	/* AN EPIGRAPH, NOT A CALLOUT (2026-09-23). The quotation sat in a grey
+	   rounded box — app furniture set down inside a letter. Now it is set the
+	   way a book sets a borrowed line: indented, a step quieter than the
+	   prose, in the same roman serif (never italic), with the attribution in
+	   small type beneath. The indent alone marks it as someone else's words. */
+	.quote {
+		margin: 2.5rem 0 0 2.5rem;
+		padding: 0;
+		max-width: 30rem;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: var(--t-body);
+		line-height: 1.7;
+		color: var(--color-foreground-muted);
+	}
+
+	@media (max-width: 640px) {
+		.quote {
+			margin-left: 1.25rem;
+		}
+	}
+
+	.quote p {
+		margin: 0;
+		text-wrap: pretty;
+	}
+
+	.quote footer {
+		margin-top: 0.6rem;
+		font-family: var(--font-sans, system-ui, sans-serif);
+		font-size: var(--t-small);
+		line-height: 1.6;
+		letter-spacing: 0.01em;
+		color: var(--color-foreground-subtle);
+	}
+
+	.quote footer::before {
+		content: "— ";
 	}
 
 	/* ── sign-off ──────────────────────────────────────────────────────── */
@@ -408,13 +568,46 @@
 		margin-top: 2.75rem;
 	}
 
+	/* THE PEN, as two nested masks rather than two layers of one. The
+	   outer is a soft-edged gradient slid across left to right, so the name
+	   appears as if written: the edge is a pen's width of fade, not a wipe's
+	   hard line, and the easing slows into the last stroke. The inner is the
+	   ink. One element with both layers and `mask-composite: intersect`
+	   drew a solid block beside the name in the Mac app's WebKit, which
+	   added the layers instead of intersecting them (2026-09-28); nesting
+	   intersects by construction, the way Welcome's drawing does it. */
 	.sig {
 		height: 4.6rem;
 		width: 16.9rem;
-		background-color: var(--color-foreground);
 		opacity: 0.85;
-		-webkit-mask: url("/images/adam_signature.png") no-repeat left center / contain;
-		mask: url("/images/adam_signature.png") no-repeat left center / contain;
+		-webkit-mask-image: linear-gradient(90deg, black 44%, transparent 56%);
+		mask-image: linear-gradient(90deg, black 44%, transparent 56%);
+		-webkit-mask-repeat: no-repeat;
+		mask-repeat: no-repeat;
+		-webkit-mask-size: 230% 100%;
+		mask-size: 230% 100%;
+		-webkit-mask-position: 100% 0;
+		mask-position: 100% 0;
+		transition:
+			-webkit-mask-position 1.8s cubic-bezier(0.5, 0.1, 0.3, 1) 150ms,
+			mask-position 1.8s cubic-bezier(0.5, 0.1, 0.3, 1) 150ms;
+	}
+	.sig.written {
+		-webkit-mask-position: 0 0;
+		mask-position: 0 0;
+	}
+	.sig .ink {
+		display: block;
+		width: 100%;
+		height: 100%;
+		background-color: var(--color-foreground);
+		-webkit-mask: url("/images/adam_signature.png") left center / contain no-repeat;
+		mask: url("/images/adam_signature.png") left center / contain no-repeat;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.sig {
+			transition: none;
+		}
 	}
 
 	.role {
@@ -449,20 +642,6 @@
 	.pill:hover {
 		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
 		color: var(--color-foreground);
-	}
-
-	/* The signature ends the letter; the button is the way out of it, not the
-	   last line of the sign-off. A rule separates the two. */
-	.exit {
-		margin-top: 3rem;
-		padding-top: 2.25rem;
-		border-top: 1px solid var(--color-border);
-	}
-
-	/* The button itself is .ob-btn; it sits directly under the rule, so it drops
-	   the shared top margin. */
-	.exit .ob-btn {
-		margin-top: 0;
 	}
 
 </style>

@@ -809,17 +809,6 @@ pub async fn last_run(db: &PgPool, applet_id: &str) -> Result<Option<AppletRun>>
     row.as_ref().map(run_from_row).transpose()
 }
 
-/// Get a run by ID.
-pub async fn get_run(db: &PgPool, run_id: &str) -> Result<AppletRun> {
-    let row = sqlx::query("SELECT * FROM app_applet_runs WHERE id = $1")
-        .bind(run_id)
-        .fetch_optional(db)
-        .await?
-        .ok_or_else(|| Error::NotFound(format!("Run not found: {}", run_id)))?;
-
-    run_from_row(&row)
-}
-
 /// Query runs with filters.
 pub async fn query_runs(
     db: &PgPool,

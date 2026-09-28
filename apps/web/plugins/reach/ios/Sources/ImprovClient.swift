@@ -24,6 +24,11 @@ import CoreBluetooth
 import Foundation
 import UIKit
 
+/// Why a call failed, as a class a screen can branch on. `code` is one of the
+/// `BoxRadioErrorCode`s in `src/lib/tauri/boxRadio.ts`, the same strings the
+/// desktop client's `FailureKind` produces, so one screen handles both.
+typealias ImprovFailure = (code: String, message: String)
+
 final class ImprovClient: NSObject {
   static let shared = ImprovClient()
 
@@ -61,31 +66,70 @@ final class ImprovClient: NSObject {
   /// Scan for Improv boxes for `seconds`, then hand back what was heard.
   /// Filtered on the service UUID, so only Virtues boxes (and other Improv
   /// devices — fine, the name disambiguates) ever appear.
-  func discover(seconds: Double, completion: @escaping ([[String: Any]]) -> Void) {
+  ///
+  /// Completes with `(boxes, reason)`. `reason` is set only when Bluetooth
+  /// itself can't scan (off, not allowed, not on this phone), in words for the
+  /// screen. Until 2026-09-28 this reported an empty list for all of those, so
+  /// "no server here" and "this phone can't look" were the same picture on a
+  /// screen that keeps searching. It also answered the FIRST scan after launch
+  /// with nothing: the central is created on first use and reports `.unknown`
+  /// until CoreBluetooth calls back, so this now waits for it to settle.
+  func discover(seconds: Double, completion: @escaping ([[String: Any]], String?) -> Void) {
     queue.async {
       self.found.removeAll()
-      guard self.central.state == .poweredOn else {
-        // Report empty rather than error: the JS treats "nothing found" and
-        // "no bluetooth" the same way — fall back to other discovery.
-        completion([])
-        return
-      }
-      self.central.scanForPeripherals(
-        withServices: [Self.serviceUUID],
-        options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
-      self.queue.asyncAfter(deadline: .now() + seconds) {
-        self.central.stopScan()
-        let list = self.found.map { (id, entry) -> [String: Any] in
-          [
-            "id": id.uuidString,
-            "name": entry.name,
-            // Byte 0 of the service data: 0x02 ready, 0x04 already online.
-            "improvState": Int(entry.state),
-            "rssi": entry.rssi,
-          ]
+      self.whenSettled(timeout: 3) { state in
+        guard state == .poweredOn else {
+          completion([], Self.describe(state))
+          return
         }
-        completion(list.sorted { ($0["rssi"] as! Int) > ($1["rssi"] as! Int) })
+        self.scan(seconds: seconds) { completion($0, nil) }
       }
+    }
+  }
+
+  /// Wait (on `queue`) until the central has left `.unknown`/`.resetting`, or
+  /// `timeout` passes, then hand over its state.
+  private func whenSettled(timeout: Double, _ then: @escaping (CBManagerState) -> Void) {
+    let state = central.state
+    if state != .unknown && state != .resetting || timeout <= 0 {
+      then(state)
+      return
+    }
+    queue.asyncAfter(deadline: .now() + 0.1) {
+      self.whenSettled(timeout: timeout - 0.1, then)
+    }
+  }
+
+  /// Why this phone can't scan, for a person. `nil` when it can.
+  static func describe(_ state: CBManagerState) -> String? {
+    switch state {
+    case .poweredOn: return nil
+    case .poweredOff: return "Bluetooth is off. Turn it on in Control Center or Settings, then look again."
+    case .unauthorized:
+      return "Virtues isn't allowed to use Bluetooth. Turn it on in Settings, then Privacy & Security, then Bluetooth."
+    case .unsupported: return "This phone can't use Bluetooth."
+    default: return "Bluetooth isn't ready yet. Look again in a moment."
+    }
+  }
+
+  /// The scan itself, on `queue`, once the central is powered on.
+  private func scan(seconds: Double, completion: @escaping ([[String: Any]]) -> Void) {
+    central.scanForPeripherals(
+      withServices: [Self.serviceUUID],
+      options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+    queue.asyncAfter(deadline: .now() + seconds) {
+      self.central.stopScan()
+      let list = self.found.map { (id, entry) -> [String: Any] in
+        [
+          "id": id.uuidString,
+          "name": entry.name,
+          // Byte 0 of the service data: 0x02 ready, 0x04 already online,
+          // 0x01 a claimed server that lost its network and wants its owner.
+          "improvState": Int(entry.state),
+          "rssi": entry.rssi,
+        ]
+      }
+      completion(list.sorted { ($0["rssi"] as! Int) > ($1["rssi"] as! Int) })
     }
   }
 
@@ -163,13 +207,13 @@ final class ImprovClient: NSObject {
   /// predates 0x86 and asked for nothing — every released box is in that state,
   /// so treating it as a failure would make the app unable to set one up.
   func claimSetup(
-    id: String, phrase: String, label: String, completion: @escaping (Bool, String?) -> Void
+    id: String, phrase: String, label: String, completion: @escaping (Bool, ImprovFailure?) -> Void
   ) {
     queue.async {
       self.ensureConnected(id: id) { err in
-        if let err { completion(true, err); return }
+        if let err { completion(true, ("not-found", err)); return }
         var done = false
-        let finish: (Bool, String?) -> Void = { gated, e in
+        let finish: (Bool, ImprovFailure?) -> Void = { gated, e in
           guard !done else { return }
           done = true
           self.onResult = nil
@@ -185,7 +229,7 @@ final class ImprovClient: NSObject {
           // One message for wrong words AND a spent attempt budget: the box
           // refuses to distinguish them, and neither do we, so a guesser
           // learns nothing from the shape of the refusal.
-          finish(true, "That phrase didn't match. Check the words on your server's screen and enter them again.")
+          finish(true, ("refused", "Those words don't match. Check the words on your server's screen."))
         }
         self.onResult = { data in
           if Self.parseResult(data, command: 0x86) != nil { finish(true, nil) }
@@ -198,7 +242,7 @@ final class ImprovClient: NSObject {
         }
         self.write(rpc: Self.buildRPC(command: 0x86, data: payload))
         self.queue.asyncAfter(deadline: .now() + 20) {
-          finish(true, "Your server didn't answer. Try again.")
+          finish(true, ("timeout", "Your server didn't answer. Move closer to it and try again."))
         }
       }
     }
@@ -224,12 +268,12 @@ final class ImprovClient: NSObject {
   /// method nobody had written — so iOS setup reached the account hand-off and
   /// died on "No command improv_grant found for plugin reach". Lockstep diffs
   /// Rust's generate_handler! against COMMANDS and cannot see this file.
-  func claimGrant(id: String, grant: String, completion: @escaping (String?) -> Void) {
+  func claimGrant(id: String, grant: String, completion: @escaping (ImprovFailure?) -> Void) {
     queue.async {
       self.ensureConnected(id: id) { err in
-        if let err { completion(err); return }
+        if let err { completion(("not-found", err)); return }
         var done = false
-        let finish: (String?) -> Void = { e in
+        let finish: (ImprovFailure?) -> Void = { e in
           guard !done else { return }
           done = true
           self.onResult = nil
@@ -243,10 +287,10 @@ final class ImprovClient: NSObject {
           // that kept its key — and it is not a failure of theirs, so say what
           // is true of both without alarming.
           if code == 0x04 {
-            finish("This server is already linked to an account. Skip this step.")
+            finish(("refused", "This server is already linked to an account."))
             return
           }
-          finish("The server couldn't take the account hand-off (error \(code)).")
+          finish(("failed", "Your server couldn't take the account hand-off (error \(code))."))
         }
         self.onResult = { data in
           if Self.parseResult(data, command: 0x82) != nil { finish(nil) }
@@ -257,7 +301,7 @@ final class ImprovClient: NSObject {
         payload.append(contentsOf: bytes)
         self.write(rpc: Self.buildRPC(command: 0x82, data: payload))
         self.queue.asyncAfter(deadline: .now() + 20) {
-          finish("The server didn't answer — try again.")
+          finish(("timeout", "Your server didn't answer. Move closer to it and try again."))
         }
       }
     }
@@ -265,10 +309,10 @@ final class ImprovClient: NSObject {
 
   /// RPC 0x04: ask the BOX what networks it can see. Streams one packet per
   /// network; an empty packet ends the list.
-  func wifiScan(id: String, completion: @escaping ([[String: Any]]?, String?) -> Void) {
+  func wifiScan(id: String, completion: @escaping ([[String: Any]]?, ImprovFailure?) -> Void) {
     queue.async {
       self.ensureConnected(id: id) { err in
-        if let err { completion(nil, err); return }
+        if let err { completion(nil, ("not-found", err)); return }
         var networks: [[String: Any]] = []
         var finished = false
         self.onResult = { data in
@@ -297,7 +341,7 @@ final class ImprovClient: NSObject {
           if !finished {
             finished = true
             self.onResult = nil
-            completion(networks, networks.isEmpty ? "Your server didn't answer the Wi-Fi scan. Try again." : nil)
+            completion(networks, networks.isEmpty ? ("timeout", "Your server didn't answer the Wi-Fi scan. Try again.") : nil)
           }
         }
       }
@@ -311,13 +355,13 @@ final class ImprovClient: NSObject {
   func provision(
     id: String, ssid: String, password: String, identity: String?,
     onProgress: @escaping (String) -> Void,
-    completion: @escaping (String?, String?) -> Void
+    completion: @escaping (String?, ImprovFailure?) -> Void
   ) {
     queue.async {
       self.ensureConnected(id: id) { err in
-        if let err { completion(nil, err); return }
+        if let err { completion(nil, ("not-found", err)); return }
         var done = false
-        let finish: (String?, String?) -> Void = { url, err in
+        let finish: (String?, ImprovFailure?) -> Void = { url, err in
           guard !done else { return }
           done = true
           self.onStateChange = nil
@@ -332,12 +376,14 @@ final class ImprovClient: NSObject {
           if state == 0x04 { onProgress("joined") }
         }
         self.onImprovError = { code in
-          let msg: String
           switch code {
-          case 0x03: msg = "Your server couldn't join that network. Check the Wi-Fi password and try again."
-          default: msg = "Your server couldn't finish setup. Check the Wi-Fi password and try again."
+          case 0x03:
+            finish(nil, ("join-failed", "Your server couldn't join that network. Check the Wi-Fi password."))
+          case 0x04:
+            finish(nil, ("refused", "Your server refused the request."))
+          default:
+            finish(nil, ("failed", "Your server couldn't finish that step (error \(code))."))
           }
-          finish(nil, msg)
         }
         // 0x81 = our enterprise extension (ssid, identity, password); 0x01 =
         // stock Improv (ssid, password). The result echoes whichever we sent.
@@ -360,7 +406,7 @@ final class ImprovClient: NSObject {
         onProgress("sent")
         // A join is bounded by nmcli's own timeout on the box; add slack.
         self.queue.asyncAfter(deadline: .now() + 45) {
-          finish(nil, "Your server didn't answer in time. It may still be joining, so check its screen.")
+          finish(nil, ("timeout", "Your server didn't answer in time. It may still be joining."))
         }
       }
     }
@@ -387,14 +433,14 @@ final class ImprovClient: NSObject {
   /// chunks until an empty terminator; a body starting `error:` is a refusal.
   func pair(
     id: String, label: String, endpointId: String,
-    completion: @escaping (String?, String?) -> Void
+    completion: @escaping (String?, ImprovFailure?) -> Void
   ) {
     queue.async {
       self.ensureConnected(id: id) { err in
-        if let err { completion(nil, err); return }
+        if let err { completion(nil, ("not-found", err)); return }
         var body = ""
         var done = false
-        let finish: (String?, String?) -> Void = { json, err in
+        let finish: (String?, ImprovFailure?) -> Void = { json, err in
           guard !done else { return }
           done = true
           self.onResult = nil
@@ -414,13 +460,13 @@ final class ImprovClient: NSObject {
               // starting setup again.
               switch code {
               case "invalid_or_expired_token":
-                msg = "The server's setup code expired before pairing finished - start setup again."
+                msg = "Your server's setup code expired before pairing finished. Start setup again."
               case "too_many_attempts":
-                msg = "Too many pairing attempts on the server - wait a few minutes and try again."
+                msg = "Too many pairing attempts on your server. Wait a few minutes and try again."
               default:
-                msg = "The server couldn't complete pairing (\(code))."
+                msg = "Your server couldn't complete pairing (\(code))."
               }
-              finish(nil, msg)
+              finish(nil, ("refused", msg))
             } else {
               finish(body, nil)
             }
@@ -443,9 +489,95 @@ final class ImprovClient: NSObject {
         pushString(label)
         pushString(endpointId)
         self.write(rpc: Self.buildRPC(command: 0x83, data: payload))
-        // The box does a local HTTP round-trip (15s timeout) plus BLE frames.
-        self.queue.asyncAfter(deadline: .now() + 25) {
-          finish(nil, "Pairing over Bluetooth timed out. Check your server's screen and try again.")
+        // The server may spend up to 45s finishing its reach ticket, then up to
+        // 15s on its own loopback consume, before it answers. This was 25s
+        // until 2026-09-27 and reported failures the server then completed.
+        // Same bound as PAIR_TIMEOUT in crates/virtues-improv/src/client.rs.
+        self.queue.asyncAfter(deadline: .now() + 70) {
+          finish(nil, ("timeout", "Pairing over Bluetooth timed out. Try again."))
+        }
+      }
+    }
+  }
+
+  // ─── the moved box: prove this phone is one of its own ────────────────────
+
+  /// RPC 0x88: ask a CLAIMED, offline server for a one-time owner challenge.
+  /// Completes with the nonce as hex, or `(code, message)` on failure, where
+  /// `code` is a `BoxRadioErrorCode` (`src/lib/tauri/boxRadio.ts`).
+  ///
+  /// Signing happens in Rust, beside the key (`virtues_reach_client::owner`):
+  /// this file only carries the nonce out and the signature back in, so the
+  /// seed never crosses into Swift.
+  func ownerChallenge(
+    id: String, completion: @escaping (String?, ImprovFailure?) -> Void
+  ) {
+    queue.async {
+      self.ensureConnected(id: id) { err in
+        if let err { completion(nil, ("not-found", err)); return }
+        var done = false
+        let finish: (String?, ImprovFailure?) -> Void = { nonce, e in
+          guard !done else { return }
+          done = true
+          self.onResult = nil
+          self.onImprovError = nil
+          completion(nonce, e)
+        }
+        self.onImprovError = { code in
+          if code == 0x02 {
+            finish(nil, ("unsupported", "Your server needs an update before you can reconnect it over Bluetooth."))
+          } else {
+            finish(nil, ("refused", "This server isn't asking for its owner."))
+          }
+        }
+        self.onResult = { data in
+          if let strings = Self.parseResult(data, command: 0x88) {
+            finish(strings.first ?? "", nil)
+          }
+        }
+        self.write(rpc: Self.buildRPC(command: 0x88, data: []))
+        self.queue.asyncAfter(deadline: .now() + 20) {
+          finish(nil, ("timeout", "Your server didn't answer. Try again."))
+        }
+      }
+    }
+  }
+
+  /// RPC 0x89: present the signed challenge — `[endpoint_id, signature]`, both
+  /// hex, exactly as `Command::OwnerProve` in crates/virtues-improv parses it.
+  /// Success opens a wifi-only session on this connection.
+  func ownerProve(
+    id: String, endpointId: String, signature: String,
+    completion: @escaping (ImprovFailure?) -> Void
+  ) {
+    queue.async {
+      self.ensureConnected(id: id) { err in
+        if let err { completion(("not-found", err)); return }
+        var done = false
+        let finish: (ImprovFailure?) -> Void = { e in
+          guard !done else { return }
+          done = true
+          self.onResult = nil
+          self.onImprovError = nil
+          completion(e)
+        }
+        // One answer for every refusal (not paired, revoked, stale challenge):
+        // the server gives only one, deliberately.
+        self.onImprovError = { _ in
+          finish(("refused", "This server doesn't recognize this phone."))
+        }
+        self.onResult = { data in
+          if Self.parseResult(data, command: 0x89) != nil { finish(nil) }
+        }
+        var payload: [UInt8] = []
+        for v in [endpointId, signature] {
+          let bytes = Array(v.utf8).prefix(255)
+          payload.append(UInt8(bytes.count))
+          payload.append(contentsOf: bytes)
+        }
+        self.write(rpc: Self.buildRPC(command: 0x89, data: payload))
+        self.queue.asyncAfter(deadline: .now() + 20) {
+          finish(("timeout", "Your server didn't answer. Try again."))
         }
       }
     }

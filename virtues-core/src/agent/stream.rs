@@ -6,7 +6,7 @@
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use super::protocol::{AgentEvent, StepReason};
 
@@ -38,8 +38,6 @@ pub const UNPARSEABLE_ARGUMENTS_KEY: &str = "__unparseable_arguments";
 pub struct LlmStreamResult {
     /// The accumulated text content
     pub content: String,
-    /// The accumulated reasoning content (if any)
-    pub reasoning: String,
     /// The gateway's `reasoning_details` for this step, merged by index:
     /// each block's text joined across deltas, the last signature kept.
     pub reasoning_details: Vec<Value>,
@@ -68,6 +66,22 @@ pub struct TokenUsage {
     pub cost_micros: Option<i64>,
 }
 
+/// Per-request settings beyond the conversation. The default is what every
+/// call sent before these existed: the model's own reasoning default, and
+/// `tool_choice: auto` whenever tools are present.
+#[derive(Debug, Clone, Default)]
+pub struct StepOptions {
+    /// From `virtues_api::request::reasoning_for` — the gateway object, and
+    /// the effort alias a BYO endpoint reads. At most one is ever set.
+    pub reasoning: Option<crate::virtues_api::request::Reasoning>,
+    pub reasoning_effort: Option<String>,
+    /// Replaces the `auto` sent with tools. The loop sends `"none"` on a
+    /// turn's last step so it ends in an answer rather than another call.
+    /// The tools stay in the request either way: a conversation holding tool
+    /// calls must still declare them, and the provider's cache keys on them.
+    pub tool_choice: Option<Value>,
+}
+
 /// Stream an LLM response and emit events
 ///
 /// This function:
@@ -83,6 +97,7 @@ pub async fn stream_llm_response<F>(
     provider_options: Option<Value>,
     temperature: Option<f32>,
     max_tokens: Option<u32>,
+    options: StepOptions,
     session_affinity: Option<&str>,
     mut emit: F,
 ) -> Result<LlmStreamResult, StreamError>
@@ -100,7 +115,13 @@ where
         stream: Some(true),
         max_tokens,
         tools: if tools.is_empty() { None } else { Some(tools.to_vec()) },
-        tool_choice: if tools.is_empty() { None } else { Some(serde_json::json!("auto")) },
+        tool_choice: if tools.is_empty() {
+            None
+        } else {
+            Some(options.tool_choice.unwrap_or_else(|| serde_json::json!("auto")))
+        },
+        reasoning: options.reasoning,
+        reasoning_effort: options.reasoning_effort,
         provider_options,
         temperature,
         ..Default::default()
@@ -131,12 +152,14 @@ where
     
     // Accumulated content
     let mut full_content = String::new();
-    let mut reasoning_content = String::new();
     let mut reasoning_details: Vec<Value> = Vec::new();
-    let mut in_reasoning = false;
     
     // Tool call tracking
-    let mut tool_calls_map: HashMap<i64, (String, String, String)> = HashMap::new();
+    // Keyed by the provider's call index and ordered by it, so the calls come
+    // out in the order the model made them. A HashMap here returned them in
+    // arbitrary order: the echoed assistant message (the next step's cache
+    // prefix) varied run to run, and so did which call a per-tool cap refused.
+    let mut tool_calls_map: BTreeMap<i64, (String, String, String)> = BTreeMap::new();
     let mut tool_calls_started: HashSet<i64> = HashSet::new();
     
     // Token usage
@@ -225,10 +248,6 @@ where
                                 .and_then(|r| r.as_str());
                             if let Some(reasoning) = reasoning {
                                 if !reasoning.is_empty() {
-                                    if !in_reasoning {
-                                        in_reasoning = true;
-                                    }
-                                    reasoning_content.push_str(reasoning);
                                     emit(AgentEvent::reasoning(reasoning));
                                 }
                             }
@@ -431,7 +450,6 @@ where
 
     Ok(LlmStreamResult {
         content: full_content,
-        reasoning: reasoning_content,
         reasoning_details,
         tool_calls,
         finish_reason,

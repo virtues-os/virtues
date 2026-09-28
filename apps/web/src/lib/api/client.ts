@@ -233,16 +233,12 @@ export async function mintFaceToken(
 	return request(`/applets/${encodeURIComponent(appletId)}/face-token`);
 }
 
-export async function listApplets(): Promise<Applet[]> {
-	const res = await fetch(`${API_BASE}/applets`);
-	if (!res.ok) throw new Error(`Failed to list applets: ${res.statusText}`);
-	return res.json();
+export function listApplets(): Promise<Applet[]> {
+	return apiGet<Applet[]>('/applets');
 }
 
-export async function getApplet(id: string): Promise<Applet> {
-	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`);
-	if (!res.ok) throw new Error(`Failed to get applet: ${res.statusText}`);
-	return res.json();
+export function getApplet(id: string): Promise<Applet> {
+	return apiGet<Applet>(`/applets/${encodeURIComponent(id)}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -274,18 +270,16 @@ export interface LocalSearchResponse {
  * a GET would put it in the URL, browser history, and every access log along the
  * way.
  */
-export async function searchLocal(
+export function searchLocal(
 	q: string,
 	opts: { limit?: number; signal?: AbortSignal } = {},
 ): Promise<LocalSearchResponse> {
-	const res = await fetch(`${API_BASE}/search/local`, {
+	return request<LocalSearchResponse>('/search/local', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ q, limit: opts.limit }),
 		signal: opts.signal,
 	});
-	if (!res.ok) throw new Error(`Search failed: ${res.statusText}`);
-	return res.json();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -327,63 +321,12 @@ export interface UpdateStatus {
 	check_error: string | null;
 }
 
-export async function getUpdateStatus(): Promise<UpdateStatus> {
-	const res = await fetch(`${API_BASE}/system/update`);
-	if (!res.ok) throw new Error(`Failed to get update status: ${res.statusText}`);
-	return res.json();
+export function getUpdateStatus(): Promise<UpdateStatus> {
+	return apiGet<UpdateStatus>('/system/update');
 }
 
 export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promise<void> {
-	const res = await fetch(`${API_BASE}/system/update/channel`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ channel }),
-	});
-	if (!res.ok) throw new Error(`Failed to set channel: ${res.statusText}`);
-}
-
-/** One line of the census: a thing the box holds, and how many of it. */
-export interface CensusLine {
-	id: string;
-	/** Plural, lowercase, already in the words a person would use. */
-	label: string;
-	count: number;
-}
-
-export interface Census {
-	/** Only non-empty lines. A box with nothing connected returns []. */
-	lines: CensusLine[];
-	total: number;
-	earliest: string | null;
-	latest: string | null;
-	span_days: number;
-	/** The record's first named senders, in the order it met them —
-	 *  chronology, never significance. Empty when none are presentable. */
-	earliest_names: string[];
-	/** `"YYYY-MM-DD"` of the first day the box narrated; null until one exists. */
-	first_day: string | null;
-}
-
-/** What the box actually holds, counted — the reveal's first movement. */
-export async function getCensus(): Promise<Census> {
-	const res = await fetch(`${API_BASE}/census`);
-	if (!res.ok) throw new Error(`Failed to read the census: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Replace the rule set with exactly what was confirmed.
- *
- * A replace, not an append: this is the screen where someone sees every rule
- * their box obeys, so leaving it has to mean the list says what they saw.
- */
-export async function saveNarrativeRules(rules: string[]): Promise<void> {
-	const res = await fetch(`${API_BASE}/narrative/rules`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ rules }),
-	});
-	if (!res.ok) throw new Error(`Couldn't save your rules: ${res.statusText}`);
+	await apiSend('PUT', '/system/update/channel', { channel });
 }
 
 export interface ReopenOnboardingResponse {
@@ -398,19 +341,8 @@ export interface ReopenOnboardingResponse {
  *
  * This device is revoked too — the caller loses its own session, by design.
  */
-export async function reopenOnboarding(): Promise<ReopenOnboardingResponse> {
-	const res = await fetch(`${API_BASE}/pair/reopen-onboarding`, { method: 'POST' });
-	if (!res.ok) {
-		let detail = res.statusText;
-		try {
-			const body = await res.json();
-			if (body?.error) detail = body.error;
-		} catch {
-			/* non-JSON body — the status text is all we have */
-		}
-		throw new Error(detail);
-	}
-	return res.json();
+export function reopenOnboarding(): Promise<ReopenOnboardingResponse> {
+	return apiSend<ReopenOnboardingResponse>('POST', '/pair/reopen-onboarding');
 }
 
 export interface ApplyUpdateResponse {
@@ -426,23 +358,12 @@ export interface ApplyUpdateResponse {
  * not when it finishes — the upgrade restarts the box, so there is no response
  * to wait for. Watch `boxReachable` for the box going away and coming back.
  *
- * The error text is the box's own, because "update failed" with nothing behind
- * it is what sends someone to SSH in to find out why.
+ * The error text is the box's own (request() surfaces its `error`/`message`),
+ * because "update failed" with nothing behind it is what sends someone to SSH
+ * in to find out why.
  */
-export async function applyUpdate(): Promise<ApplyUpdateResponse> {
-	const res = await fetch(`${API_BASE}/system/update/apply`, { method: 'POST' });
-	if (!res.ok) {
-		let detail = res.statusText;
-		try {
-			const body = await res.json();
-			if (body?.error) detail = body.error;
-			else if (body?.message) detail = body.message;
-		} catch {
-			/* non-JSON body — the status text is all we have */
-		}
-		throw new Error(detail);
-	}
-	return res.json();
+export function applyUpdate(): Promise<ApplyUpdateResponse> {
+	return apiSend<ApplyUpdateResponse>('POST', '/system/update/apply');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -539,59 +460,37 @@ export interface Pin {
 	color: string | null;
 }
 
-export async function listPins(): Promise<Pin[]> {
-	const res = await fetch(`${API_BASE}/pins`);
-	if (!res.ok) throw new Error(`Failed to list pins: ${res.statusText}`);
-	return res.json();
+export function listPins(): Promise<Pin[]> {
+	return apiGet<Pin[]>('/pins');
 }
 
-export async function createPin(req: {
+export function createPin(req: {
 	url: string;
 	label?: string | null;
 	icon?: string | null;
 	color?: string | null;
 }): Promise<Pin> {
-	const res = await fetch(`${API_BASE}/pins`, {
-		method: 'POST',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify(req)
-	});
-	if (!res.ok) throw new Error(`Failed to pin: ${res.statusText}`);
-	return res.json();
+	return apiSend<Pin>('POST', '/pins', req);
 }
 
-export async function updatePin(
+export function updatePin(
 	id: string,
 	req: { label?: string | null; icon?: string | null; sort_order?: number; color?: string | null }
 ): Promise<Pin> {
-	const res = await fetch(`${API_BASE}/pins/${encodeURIComponent(id)}`, {
-		method: 'PATCH',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify(req)
-	});
-	if (!res.ok) throw new Error(`Failed to update pin: ${res.statusText}`);
-	return res.json();
+	return apiSend<Pin>('PATCH', `/pins/${encodeURIComponent(id)}`, req);
 }
 
 export async function deletePin(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/pins/${encodeURIComponent(id)}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete pin: ${res.statusText}`);
+	await apiSend('DELETE', `/pins/${encodeURIComponent(id)}`);
 }
 
 export async function reorderPins(urls: string[]): Promise<void> {
-	const res = await fetch(`${API_BASE}/pins/reorder`, {
-		method: 'PUT',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ urls })
-	});
-	if (!res.ok) throw new Error(`Failed to reorder pins: ${res.statusText}`);
+	await apiSend('PUT', '/pins/reorder', { urls });
 }
 
 /** POST /api/admin/reconcile — re-reads manifests and upserts applet rows. */
-export async function adminReconcile(): Promise<{ upserted: number }> {
-	const res = await fetch(`${API_BASE}/admin/reconcile`, { method: 'POST' });
-	if (!res.ok) throw new Error(`Reconcile failed: ${res.statusText}`);
-	return res.json();
+export function adminReconcile(): Promise<{ upserted: number }> {
+	return apiSend<{ upserted: number }>('POST', '/admin/reconcile');
 }
 
 /**
@@ -599,7 +498,7 @@ export async function adminReconcile(): Promise<{ upserted: number }> {
  * and runs the standard scanner. Any folder under the slug containing a
  * `manifest.toml` becomes an action. Returns added/updated/removed ids.
  */
-export async function importActionsFromGit(body: {
+export function importActionsFromGit(body: {
 	url: string;
 	ref?: string;
 	/** From `/api/sudo/request` — importing runs someone else's code. */
@@ -616,16 +515,7 @@ export async function importActionsFromGit(body: {
 	updated: string[];
 	removed: string[];
 }> {
-	const res = await fetch(`${API_BASE}/admin/applets/import-git`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body)
-	});
-	if (!res.ok) {
-		const text = await res.text().catch(() => res.statusText);
-		throw new Error(text || `Import failed: ${res.statusText}`);
-	}
-	return res.json();
+	return apiSend('POST', '/admin/applets/import-git', body);
 }
 
 export interface PatchAppletBody {
@@ -639,28 +529,15 @@ export interface PatchAppletBody {
 	memory?: string | null;
 }
 
-export async function patchApplet(id: string, patch: PatchAppletBody): Promise<Applet> {
-	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`, {
-		method: 'PATCH',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(patch)
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to update applet: ${res.statusText}`);
-	}
-	return res.json();
+export function patchApplet(id: string, patch: PatchAppletBody): Promise<Applet> {
+	return apiSend<Applet>('PATCH', `/applets/${encodeURIComponent(id)}`, patch);
 }
 
 export async function deleteApplet(id: string, dropData = false): Promise<void> {
-	const q = dropData ? '?drop_data=true' : '';
-	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}${q}`, {
-		method: 'DELETE'
+	await request(`/applets/${encodeURIComponent(id)}`, {
+		method: 'DELETE',
+		query: { drop_data: dropData ? 'true' : undefined },
 	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to delete applet: ${res.statusText}`);
-	}
 }
 
 /** One line of an applet's log: consecutive runs that shared an outcome,
@@ -681,25 +558,14 @@ export interface AppletLogEntry {
 	cost_micros: number;
 }
 
-export async function getAppletLog(id: string, limit = 50): Promise<AppletLogEntry[]> {
-	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/log?limit=${limit}`);
-	if (!res.ok) throw new Error(`Failed to load log: ${res.statusText}`);
-	return res.json();
+export function getAppletLog(id: string, limit = 50): Promise<AppletLogEntry[]> {
+	return apiGet<AppletLogEntry[]>(`/applets/${encodeURIComponent(id)}/log`, { limit });
 }
 
 /** Say something to an applet — the `message` wake. Returns once the run row
  *  exists; the agent turn continues detached. */
-export async function messageApplet(id: string, message: string): Promise<{ run_id: string | null; status: string }> {
-	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/message`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ message })
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to send: ${res.statusText}`);
-	}
-	return res.json();
+export function messageApplet(id: string, message: string): Promise<{ run_id: string | null; status: string }> {
+	return apiSend('POST', `/applets/${encodeURIComponent(id)}/message`, { message });
 }
 
 /** The private tables an applet owns — shown on the delete confirm so the user
@@ -784,19 +650,17 @@ export async function getAppletSourceFile(
 	);
 }
 
-export async function listRuns(opts?: {
+export function listRuns(opts?: {
 	limit?: number;
 	status?: string;
 	applet_id?: string;
 }): Promise<AppletRun[]> {
-	const params = new URLSearchParams();
-	if (opts?.limit != null) params.set('limit', String(opts.limit));
-	if (opts?.status) params.set('status', opts.status);
-	if (opts?.applet_id) params.set('applet_id', opts.applet_id);
-	const qs = params.toString();
-	const res = await fetch(`${API_BASE}/runs${qs ? `?${qs}` : ''}`);
-	if (!res.ok) throw new Error(`Failed to list runs: ${res.statusText}`);
-	return res.json();
+	// `||` keeps the old rule: an empty status/applet_id is left off the query.
+	return apiGet<AppletRun[]>('/runs', {
+		limit: opts?.limit,
+		status: opts?.status || undefined,
+		applet_id: opts?.applet_id || undefined,
+	});
 }
 
 // ============================================================================
@@ -843,32 +707,16 @@ export interface Credential {
 	sync_state?: 'connected' | 'backfilling' | 'live';
 }
 
-export async function listCredentials(): Promise<Credential[]> {
-	const res = await fetch(`${API_BASE}/credentials`);
-	if (!res.ok) throw new Error(`Failed to list credentials: ${res.statusText}`);
-	return res.json();
+export function listCredentials(): Promise<Credential[]> {
+	return apiGet<Credential[]>('/credentials');
 }
 
 export async function renameCredential(id: string, name: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/credentials/${encodeURIComponent(id)}`, {
-		method: 'PATCH',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name })
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to rename credential: ${res.statusText}`);
-	}
+	await apiSend('PATCH', `/credentials/${encodeURIComponent(id)}`, { name });
 }
 
 export async function revokeCredential(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/credentials/${encodeURIComponent(id)}`, {
-		method: 'DELETE'
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to revoke credential: ${res.statusText}`);
-	}
+	await apiSend('DELETE', `/credentials/${encodeURIComponent(id)}`);
 }
 
 // Source catalog
@@ -903,10 +751,8 @@ export interface SourceCatalogItem {
 /**
  * Fetch the source catalog (one tile per `[[source]]` in templates.toml).
  */
-export async function listSourceCatalog(): Promise<SourceCatalogItem[]> {
-	const res = await fetch(`${API_BASE}/sources`);
-	if (!res.ok) throw new Error(`Failed to list sources: ${res.statusText}`);
-	return res.json();
+export function listSourceCatalog(): Promise<SourceCatalogItem[]> {
+	return apiGet<SourceCatalogItem[]>('/sources');
 }
 
 /** One ingest stream's freshness. `status` is worst-first from the API. */
@@ -990,17 +836,8 @@ export interface PairMintResponse {
 }
 
 /** POST /api/pair/mint — auth'd. Mint a `pending` token to add a device. */
-export async function pairMint(intendedKind?: string): Promise<PairMintResponse> {
-	const res = await fetch(`${API_BASE}/pair/mint`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ intended_kind: intendedKind ?? null })
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `pair_mint failed: ${res.statusText}`);
-	}
-	return res.json();
+function pairMint(intendedKind?: string): Promise<PairMintResponse> {
+	return apiSend<PairMintResponse>('POST', '/pair/mint', { intended_kind: intendedKind ?? null });
 }
 
 /** DELETE /api/devices/:id — best-effort, no confirmation.
@@ -1012,18 +849,16 @@ export async function pairMint(intendedKind?: string): Promise<PairMintResponse>
  *  stays quiet (409 on a last-remaining device is a legitimate refusal here,
  *  not something to surface). */
 export async function revokeDevice(id: string): Promise<void> {
-	await fetch(`${API_BASE}/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {
+	await apiSend('DELETE', `/devices/${encodeURIComponent(id)}`).catch(() => {
 		/* benign — the row may already be gone */
 	});
 }
 
 /** POST /api/pair/deny/:id — auth'd. Cancel an outstanding token (e.g. modal close). */
 export async function pairDeny(id: string): Promise<void> {
-	await fetch(`${API_BASE}/pair/deny/${encodeURIComponent(id)}`, { method: 'POST' }).catch(
-		() => {
-			/* benign — token may have already been consumed/expired */
-		}
-	);
+	await apiSend('POST', `/pair/deny/${encodeURIComponent(id)}`).catch(() => {
+		/* benign — token may have already been consumed/expired */
+	});
 }
 
 export interface PairStatusResponse {
@@ -1033,10 +868,8 @@ export interface PairStatusResponse {
 }
 
 /** GET /api/pair/status/:id — auth'd. Poll for the new device redeeming. */
-export async function pairStatus(id: string): Promise<PairStatusResponse> {
-	const res = await fetch(`${API_BASE}/pair/status/${encodeURIComponent(id)}`);
-	if (!res.ok) throw new Error(`pair_status failed: ${res.statusText}`);
-	return res.json();
+function pairStatus(id: string): Promise<PairStatusResponse> {
+	return apiGet<PairStatusResponse>(`/pair/status/${encodeURIComponent(id)}`);
 }
 
 export interface ChatImportResponse {
@@ -1068,24 +901,6 @@ export async function uploadChatImport(
 	return res.json();
 }
 
-/** What chat-import has already landed on the box (empty = never imported). */
-export interface ChatImportStatus {
-	messages: number;
-	conversations: number;
-	/** Distinct providers seen in the imported rows, e.g. ["claude"]. */
-	providers: string[];
-}
-
-/**
- * GET /api/chat-import/status — connected-state for the chat-import source,
- * which mints no credential; the imported rows themselves are the evidence.
- */
-export async function getChatImportStatus(): Promise<ChatImportStatus> {
-	const res = await fetch(`${API_BASE}/chat-import/status`);
-	if (!res.ok) throw new Error(`Failed to read chat-import status: ${res.statusText}`);
-	return res.json();
-}
-
 export interface MintCollectorResponse {
 	token: string;
 	expires_at: string;
@@ -1096,13 +911,8 @@ export interface MintCollectorResponse {
  * installing the local collector on THIS machine (handed to
  * `installCollector(token)` via the Tauri bridge).
  */
-export async function mintCollectorToken(): Promise<MintCollectorResponse> {
-	const res = await fetch(`${API_BASE}/pair/mint-collector`, { method: 'POST' });
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `mint_collector failed: ${res.statusText}`);
-	}
-	return res.json();
+export function mintCollectorToken(): Promise<MintCollectorResponse> {
+	return apiSend<MintCollectorResponse>('POST', '/pair/mint-collector');
 }
 
 export interface OauthStartResponse {
@@ -1110,23 +920,11 @@ export interface OauthStartResponse {
 }
 
 /** POST /api/connect/:source_id/start — sign state, return proxy redirect URL. */
-export async function oauthStart(
+export function oauthStart(
 	source_id: string,
 	opts: { existing_credential_id?: string; return_url?: string } = {}
 ): Promise<OauthStartResponse> {
-	const res = await fetch(
-		`${API_BASE}/connect/${encodeURIComponent(source_id)}/start`,
-		{
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(opts)
-		}
-	);
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `oauth_start failed: ${res.statusText}`);
-	}
-	return res.json();
+	return apiSend<OauthStartResponse>('POST', `/connect/${encodeURIComponent(source_id)}/start`, opts);
 }
 
 export interface ApiKeyCompleteResponse {
@@ -1134,24 +932,16 @@ export interface ApiKeyCompleteResponse {
 }
 
 /** POST /api/connect/:source_id/complete — encrypt + store a pasted token. */
-export async function apikeyComplete(
+export function apikeyComplete(
 	source_id: string,
 	name: string,
 	fields: Record<string, string>
 ): Promise<ApiKeyCompleteResponse> {
-	const res = await fetch(
-		`${API_BASE}/connect/${encodeURIComponent(source_id)}/complete`,
-		{
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name, fields })
-		}
+	return apiSend<ApiKeyCompleteResponse>(
+		'POST',
+		`/connect/${encodeURIComponent(source_id)}/complete`,
+		{ name, fields }
 	);
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `apikey_complete failed: ${res.statusText}`);
-	}
-	return res.json();
 }
 
 // Device Pairing
@@ -1233,20 +1023,57 @@ export interface Profile {
 	getting_started_dismissed?: string[];
 }
 
-export async function getProfile(): Promise<Profile> {
-	const res = await fetch(`${API_BASE}/profile`);
-	if (!res.ok) throw new Error(`Failed to get profile: ${res.statusText}`);
-	return res.json();
+export function getProfile(): Promise<Profile> {
+	return apiGet<Profile>('/profile');
 }
 
-export async function updateProfile(profile: Partial<Profile>): Promise<Profile> {
-	const res = await fetch(`${API_BASE}/profile`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(profile)
-	});
-	if (!res.ok) throw new Error(`Failed to update profile: ${res.statusText}`);
-	return res.json();
+export function updateProfile(profile: Partial<Profile>): Promise<Profile> {
+	return apiSend<Profile>('PUT', '/profile', profile);
+}
+
+// =============================================================================
+// Chapters - the person's own named eras (wiki_chapters)
+// =============================================================================
+
+export type DatePrecision = 'year' | 'month' | 'day';
+
+/** One chapter as the box stores it. Dates are `"YYYY-MM-DD"`. */
+export interface LifeChapter {
+	id: string;
+	kind: 'chapter' | 'unknown';
+	title: string | null;
+	started_at: string;
+	ended_at: string | null;
+	is_current: boolean;
+	started_precision: DatePrecision;
+	ended_precision: DatePrecision | null;
+	changepoint: string | null;
+	summary: string | null;
+}
+
+/** One band from the timeline editor. The last may run to now (`ended_at: null`);
+ *  every other band must end exactly where the next begins. */
+export interface LifeChapterInput {
+	title: string;
+	started_at: string;
+	started_precision?: DatePrecision;
+	ended_at: string | null;
+	ended_precision?: DatePrecision | null;
+}
+
+/** `GET /api/wiki/chapters`, oldest first. Throws on failure, unlike the
+ *  wiki's `getChapters`, so a caller can tell "none yet" from "unreachable". */
+export async function listLifeChapters(): Promise<LifeChapter[]> {
+	const body = await apiGet<{ chapters: LifeChapter[] }>('/wiki/chapters');
+	return body?.chapters ?? [];
+}
+
+/** `PUT /api/wiki/chapters` - replace every chapter with this list, in one
+ *  transaction. The box refuses (400) once the chapters have pages of their
+ *  own; the error message says so in words. */
+export async function replaceLifeChapters(chapters: LifeChapterInput[]): Promise<LifeChapter[]> {
+	const body = await apiSend<{ chapters: LifeChapter[] }>('PUT', '/wiki/chapters', { chapters });
+	return body?.chapters ?? [];
 }
 
 // =============================================================================
@@ -1271,13 +1098,8 @@ export interface DriveFile {
 
 /** Queue a file for (re-)extraction (retry after a failure, or after
  * installing a missing extractor). */
-export async function reextractDriveFile(fileId: string): Promise<DriveFile> {
-	const res = await fetch(`${API_BASE}/drive/files/${fileId}/reextract`, { method: 'POST' });
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || 'Failed to queue extraction');
-	}
-	return res.json();
+export function reextractDriveFile(fileId: string): Promise<DriveFile> {
+	return apiSend<DriveFile>('POST', `/drive/files/${fileId}/reextract`);
 }
 
 // ── Annotations (document highlights + margin notes, researcher-plan D2) ──
@@ -1303,10 +1125,8 @@ export interface Annotation {
 	updated_at: string;
 }
 
-export async function listAnnotations(fileId: string): Promise<Annotation[]> {
-	const res = await fetch(`${API_BASE}/annotations?file_id=${encodeURIComponent(fileId)}`);
-	if (!res.ok) throw new Error(`Failed to list annotations: ${res.statusText}`);
-	return res.json();
+export function listAnnotations(fileId: string): Promise<Annotation[]> {
+	return apiGet<Annotation[]>('/annotations', { file_id: fileId });
 }
 
 /** A highlight enriched with its file's name, for the project Highlights tab. */
@@ -1327,7 +1147,7 @@ export function downloadMarkdown(filename: string, markdown: string): void {
 	URL.revokeObjectURL(url);
 }
 
-export async function createAnnotation(body: {
+export function createAnnotation(body: {
 	file_id: string;
 	page_num?: number | null;
 	quote_text: string;
@@ -1337,34 +1157,18 @@ export async function createAnnotation(body: {
 	color?: string;
 	note_md?: string;
 }): Promise<Annotation> {
-	const res = await fetch(`${API_BASE}/annotations`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body)
-	});
-	if (!res.ok) {
-		const e = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(e.error || 'Failed to create annotation');
-	}
-	return res.json();
+	return apiSend<Annotation>('POST', '/annotations', body);
 }
 
-export async function updateAnnotation(
+export function updateAnnotation(
 	id: string,
 	body: { color?: string; note_md?: string }
 ): Promise<Annotation> {
-	const res = await fetch(`${API_BASE}/annotations/${id}`, {
-		method: 'PATCH',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body)
-	});
-	if (!res.ok) throw new Error(`Failed to update annotation: ${res.statusText}`);
-	return res.json();
+	return apiSend<Annotation>('PATCH', `/annotations/${id}`, body);
 }
 
 export async function deleteAnnotation(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/annotations/${id}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete annotation: ${res.statusText}`);
+	await apiSend('DELETE', `/annotations/${id}`);
 }
 
 export interface DriveUsage {
@@ -1389,10 +1193,8 @@ export interface DriveUsage {
 /**
  * Get drive storage usage and quota information
  */
-export async function getDriveUsage(): Promise<DriveUsage> {
-	const res = await fetch(`${API_BASE}/drive/usage`);
-	if (!res.ok) throw new Error(`Failed to get drive usage: ${res.statusText}`);
-	return res.json();
+export function getDriveUsage(): Promise<DriveUsage> {
+	return apiGet<DriveUsage>('/drive/usage');
 }
 
 export interface BackupVolumeStatus {
@@ -1417,38 +1219,23 @@ export interface BackupStatus {
  * Backup freshness. The one number that matters is `age_seconds` — if the box
  * died now, that is how much would be lost.
  */
-export async function getBackupStatus(): Promise<BackupStatus> {
-	const res = await fetch(`${API_BASE}/backup/status`);
-	if (!res.ok) throw new Error(`Failed to get backup status: ${res.statusText}`);
-	return res.json();
+export function getBackupStatus(): Promise<BackupStatus> {
+	return apiGet<BackupStatus>('/backup/status');
 }
 
 /**
  * List files in a directory
  * @param path - Directory path (empty string for root)
  */
-export async function listDriveFiles(path: string = ''): Promise<DriveFile[]> {
-	const params = new URLSearchParams();
-	if (path) params.set('path', path);
-
-	const res = await fetch(`${API_BASE}/drive/files?${params}`);
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to list files: ${res.statusText}`);
-	}
-	return res.json();
+export function listDriveFiles(path: string = ''): Promise<DriveFile[]> {
+	return apiGet<DriveFile[]>('/drive/files', { path: path || undefined });
 }
 
 /**
  * Get file metadata by ID
  */
-export async function getDriveFile(fileId: string): Promise<DriveFile> {
-	const res = await fetch(`${API_BASE}/drive/files/${fileId}`);
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to get file: ${res.statusText}`);
-	}
-	return res.json();
+export function getDriveFile(fileId: string): Promise<DriveFile> {
+	return apiGet<DriveFile>(`/drive/files/${fileId}`);
 }
 
 /** One raw life-graph record (the data viewer / citation target). */
@@ -1463,15 +1250,10 @@ export interface OntologyRecord {
 }
 
 /** Fetch a single raw record by ontology + id — backs the data viewer. */
-export async function getRecord(ontology: string, recordId: string): Promise<OntologyRecord> {
-	const res = await fetch(
-		`${API_BASE}/records/${encodeURIComponent(ontology)}/${encodeURIComponent(recordId)}`
+export function getRecord(ontology: string, recordId: string): Promise<OntologyRecord> {
+	return apiGet<OntologyRecord>(
+		`/records/${encodeURIComponent(ontology)}/${encodeURIComponent(recordId)}`
 	);
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to get record: ${res.statusText}`);
-	}
-	return res.json();
 }
 
 /**
@@ -1548,82 +1330,42 @@ export async function downloadDriveFile(fileId: string): Promise<{ file: DriveFi
  * Delete a file or folder
  */
 export async function deleteDriveFile(fileId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/drive/files/${fileId}`, { method: 'DELETE' });
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to delete file: ${res.statusText}`);
-	}
+	await apiSend('DELETE', `/drive/files/${fileId}`);
 }
 
 /**
  * Create a folder
  */
-export async function createDriveFolder(path: string, name: string): Promise<DriveFile> {
-	const res = await fetch(`${API_BASE}/drive/folders`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ path, name })
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to create folder: ${res.statusText}`);
-	}
-	return res.json();
+export function createDriveFolder(path: string, name: string): Promise<DriveFile> {
+	return apiSend<DriveFile>('POST', '/drive/folders', { path, name });
 }
 
 /**
  * Move or rename a file/folder
  */
-export async function moveDriveFile(fileId: string, newPath: string): Promise<DriveFile> {
-	const res = await fetch(`${API_BASE}/drive/files/${fileId}/move`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ new_path: newPath })
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to move file: ${res.statusText}`);
-	}
-	return res.json();
+export function moveDriveFile(fileId: string, newPath: string): Promise<DriveFile> {
+	return apiSend<DriveFile>('PUT', `/drive/files/${fileId}/move`, { new_path: newPath });
 }
 
 /**
  * List files in trash
  */
-export async function listDriveTrash(): Promise<DriveFile[]> {
-	const res = await fetch(`${API_BASE}/drive/trash`);
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to list trash: ${res.statusText}`);
-	}
-	return res.json();
+export function listDriveTrash(): Promise<DriveFile[]> {
+	return apiGet<DriveFile[]>('/drive/trash');
 }
 
 /**
  * Restore a file from trash
  */
-export async function restoreDriveFile(fileId: string): Promise<DriveFile> {
-	const res = await fetch(`${API_BASE}/drive/files/${fileId}/restore`, {
-		method: 'POST'
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to restore file: ${res.statusText}`);
-	}
-	return res.json();
+export function restoreDriveFile(fileId: string): Promise<DriveFile> {
+	return apiSend<DriveFile>('POST', `/drive/files/${fileId}/restore`);
 }
 
 /**
  * Permanently delete a file (skip trash)
  */
 export async function purgeDriveFile(fileId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/drive/files/${fileId}/purge`, {
-		method: 'DELETE'
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to permanently delete file: ${res.statusText}`);
-	}
+	await apiSend('DELETE', `/drive/files/${fileId}/purge`);
 }
 
 // ============================================================================
@@ -1687,15 +1429,8 @@ export function getFrecency(): Promise<Frecency[]> {
 /**
  * Empty entire trash (permanently delete all trashed files)
  */
-export async function emptyDriveTrash(): Promise<{ deleted_count: number }> {
-	const res = await fetch(`${API_BASE}/drive/trash/empty`, {
-		method: 'POST'
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to empty trash: ${res.statusText}`);
-	}
-	return res.json();
+export function emptyDriveTrash(): Promise<{ deleted_count: number }> {
+	return apiSend<{ deleted_count: number }>('POST', '/drive/trash/empty');
 }
 
 // =============================================================================
@@ -1767,7 +1502,7 @@ export interface ChatMessage {
 /**
  * Update a chat (title and/or icon)
  */
-export async function updateChat(
+export function updateChat(
 	chatId: string,
 	updates: {
 		title?: string;
@@ -1782,34 +1517,14 @@ export async function updateChat(
 	icon_color?: string | null;
 	updated_at: string;
 }> {
-	const res = await fetch(`${API_BASE}/chats/${chatId}`, {
-		method: 'PATCH',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(updates)
-	});
-
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to update chat: ${res.statusText}`);
-	}
-
-	return res.json();
+	return apiSend('PATCH', `/chats/${chatId}`, updates);
 }
 
 /**
  * Delete a chat
  */
-export async function deleteChat(chatId: string): Promise<{ deleted: boolean }> {
-	const res = await fetch(`${API_BASE}/chats/${chatId}`, {
-		method: 'DELETE'
-	});
-
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to delete chat: ${res.statusText}`);
-	}
-
-	return res.json();
+export function deleteChat(chatId: string): Promise<{ deleted: boolean }> {
+	return apiSend<{ deleted: boolean }>('DELETE', `/chats/${chatId}`);
 }
 
 // =============================================================================
@@ -1907,25 +1622,17 @@ export function unarchiveProject(id: string): Promise<void> {
 }
 
 /** GET /api/projects/:id — a Project with its ordered members. */
-export async function getProject(id: string): Promise<ProjectDetail> {
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(id)}`);
-	if (!res.ok) throw new Error(`Failed to get project: ${res.statusText}`);
-	return res.json();
+export function getProject(id: string): Promise<ProjectDetail> {
+	return apiGet<ProjectDetail>(`/projects/${encodeURIComponent(id)}`);
 }
 
 /** POST /api/projects — create a Project. */
-export async function createProject(body: {
+export function createProject(body: {
 	name: string;
 	icon?: string | null;
 	accent_color?: string | null;
 }): Promise<Project> {
-	const res = await fetch(`${API_BASE}/projects`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body)
-	});
-	if (!res.ok) throw new Error(`Failed to create project: ${res.statusText}`);
-	return res.json();
+	return apiSend<Project>('POST', '/projects', body);
 }
 
 /**
@@ -1933,7 +1640,7 @@ export async function createProject(body: {
  * (`icon`/`accent_color`/`current_status`): omit the key to leave unchanged,
  * send `null` to clear, send a value to set.
  */
-export async function updateProject(
+export function updateProject(
 	id: string,
 	patch: {
 		name?: string;
@@ -1944,19 +1651,12 @@ export async function updateProject(
 		sort_order?: number;
 	}
 ): Promise<Project> {
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(id)}`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(patch)
-	});
-	if (!res.ok) throw new Error(`Failed to update project: ${res.statusText}`);
-	return res.json();
+	return apiSend<Project>('PUT', `/projects/${encodeURIComponent(id)}`, patch);
 }
 
 /** DELETE /api/projects/:id */
 export async function deleteProject(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete project: ${res.statusText}`);
+	await apiSend('DELETE', `/projects/${encodeURIComponent(id)}`);
 }
 
 // =============================================================================
@@ -1985,50 +1685,32 @@ export interface ViewEntity {
 // =============================================================================
 
 /** POST /api/projects/:id/items — add a member URL to a Project. */
-export async function addProjectItem(projectId: string, url: string): Promise<ProjectItem> {
-	const sanitizedUrl = sanitizeUrl(url);
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/items`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url: sanitizedUrl })
+export function addProjectItem(projectId: string, url: string): Promise<ProjectItem> {
+	return apiSend<ProjectItem>('POST', `/projects/${encodeURIComponent(projectId)}/items`, {
+		url: sanitizeUrl(url),
 	});
-	if (!res.ok) throw new Error(`Failed to add project item: ${res.statusText}`);
-	return res.json();
 }
 
 /** DELETE /api/projects/:id/items — remove a member URL from a Project. */
 export async function removeProjectItem(projectId: string, url: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/items`, {
-		method: 'DELETE',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url })
-	});
-	if (!res.ok) throw new Error(`Failed to remove project item: ${res.statusText}`);
+	await apiSend('DELETE', `/projects/${encodeURIComponent(projectId)}/items`, { url });
 }
 
 /** PUT /api/projects/:id/items/reorder — set the member order by URL. */
 export async function reorderProjectItems(projectId: string, urls: string[]): Promise<void> {
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/items/reorder`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ urls })
-	});
-	if (!res.ok) throw new Error(`Failed to reorder project items: ${res.statusText}`);
+	await apiSend('PUT', `/projects/${encodeURIComponent(projectId)}/items/reorder`, { urls });
 }
 
 /** PUT /api/projects/:id/items/role — set what a member is to the project. */
-export async function setProjectItemRole(
+export function setProjectItemRole(
 	projectId: string,
 	url: string,
 	role: ProjectItemRole
 ): Promise<ProjectItem> {
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/items/role`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url, role })
+	return apiSend<ProjectItem>('PUT', `/projects/${encodeURIComponent(projectId)}/items/role`, {
+		url,
+		role,
 	});
-	if (!res.ok) throw new Error(`Failed to set member role: ${res.statusText}`);
-	return res.json();
 }
 
 /**
@@ -2036,10 +1718,8 @@ export async function setProjectItemRole(
  * Built only from things explicitly filed or linked (`[@ref]`); nothing is
  * inferred, so an entity merely mentioned inside a PDF will not appear.
  */
-export async function getProjectGraph(projectId: string): Promise<ProjectGraph> {
-	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/graph`);
-	if (!res.ok) throw new Error(`Failed to load project graph: ${res.statusText}`);
-	return res.json();
+export function getProjectGraph(projectId: string): Promise<ProjectGraph> {
+	return apiGet<ProjectGraph>(`/projects/${encodeURIComponent(projectId)}/graph`);
 }
 
 // =============================================================================
@@ -2093,51 +1773,33 @@ export interface RefSearchResponse {
 /**
  * List all pages with optional pagination and workspace filter
  */
-export async function listPages(limit?: number, offset?: number, project_id?: string): Promise<PageListResponse> {
-	const params = new URLSearchParams();
-	if (limit !== undefined) params.set('limit', String(limit));
-	if (offset !== undefined) params.set('offset', String(offset));
-	if (project_id !== undefined) params.set('project_id', project_id);
-
-	const url = params.toString() ? `${API_BASE}/pages?${params}` : `${API_BASE}/pages`;
-	const res = await fetch(url);
-
-	if (!res.ok) throw new Error(`Failed to list pages: ${res.statusText}`);
-	return res.json();
+export function listPages(limit?: number, offset?: number, project_id?: string): Promise<PageListResponse> {
+	return apiGet<PageListResponse>('/pages', { limit, offset, project_id });
 }
 
 /**
  * Get a single page by ID
  */
-export async function getPage(id: string): Promise<Page> {
-	const res = await fetch(`${API_BASE}/pages/${id}`);
-	if (!res.ok) throw new Error(`Failed to get page: ${res.statusText}`);
-	return res.json();
+export function getPage(id: string): Promise<Page> {
+	return apiGet<Page>(`/pages/${id}`);
 }
 
 /**
  * Create a new page
  */
-export async function createPage(
+export function createPage(
 	title: string,
 	content: string = '',
 	project_id: string | null = null,
 	options?: { icon?: string; cover_url?: string; tags?: string }
 ): Promise<Page> {
-	const res = await fetch(`${API_BASE}/pages`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ title, content, projectId: project_id, ...options })
-	});
-
-	if (!res.ok) throw new Error(`Failed to create page: ${res.statusText}`);
-	return res.json();
+	return apiSend<Page>('POST', '/pages', { title, content, projectId: project_id, ...options });
 }
 
 /**
  * Update an existing page
  */
-export async function updatePage(
+export function updatePage(
 	id: string,
 	updates: {
 		title?: string;
@@ -2149,35 +1811,22 @@ export async function updatePage(
 		tags?: string | null;
 	}
 ): Promise<Page> {
-	const res = await fetch(`${API_BASE}/pages/${id}`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(updates)
-	});
-
-	if (!res.ok) throw new Error(`Failed to update page: ${res.statusText}`);
-	return res.json();
+	return apiSend<Page>('PUT', `/pages/${id}`, updates);
 }
 
 /**
  * Delete a page by ID
  */
 export async function deletePage(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/pages/${id}`, {
-		method: 'DELETE'
-	});
-
-	if (!res.ok) throw new Error(`Failed to delete page: ${res.statusText}`);
+	await apiSend('DELETE', `/pages/${id}`);
 }
 
 /**
  * Search entities for autocomplete in the page editor
  * Used when typing [[ to link to entities
  */
-export async function searchRefs(query: string): Promise<RefSearchResponse> {
-	const res = await fetch(`${API_BASE}/pages/search/refs?q=${encodeURIComponent(query)}`);
-	if (!res.ok) throw new Error(`Failed to search entities: ${res.statusText}`);
-	return res.json();
+export function searchRefs(query: string): Promise<RefSearchResponse> {
+	return apiGet<RefSearchResponse>('/pages/search/refs', { q: query });
 }
 
 // Page Sharing
@@ -2203,40 +1852,27 @@ export interface SharedPage {
  * authoritative Yjs doc and broadcasts it, so an open editor merges the block
  * instead of being clobbered by a content replace.
  */
-export async function appendToPage(pageId: string, markdown: string): Promise<{ content: string }> {
-	const res = await fetch(`${API_BASE}/pages/${encodeURIComponent(pageId)}/append`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ markdown })
+export function appendToPage(pageId: string, markdown: string): Promise<{ content: string }> {
+	return apiSend<{ content: string }>('POST', `/pages/${encodeURIComponent(pageId)}/append`, {
+		markdown,
 	});
-	if (!res.ok) {
-		const e = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(e.error || 'Failed to append to page');
-	}
-	return res.json();
 }
 
-export async function createPageShare(pageId: string): Promise<PageShare> {
-	const res = await fetch(`${API_BASE}/pages/${pageId}/share`, { method: 'POST' });
-	if (!res.ok) throw new Error(`Failed to create share: ${res.statusText}`);
-	return res.json();
+export function createPageShare(pageId: string): Promise<PageShare> {
+	return apiSend<PageShare>('POST', `/pages/${pageId}/share`);
 }
 
 export async function getPageShare(pageId: string): Promise<PageShare | null> {
-	const res = await fetch(`${API_BASE}/pages/${pageId}/share`);
-	if (!res.ok) throw new Error(`Failed to get share: ${res.statusText}`);
-	return await res.json() ?? null;
+	return (await apiGet<PageShare | null>(`/pages/${pageId}/share`)) ?? null;
 }
 
 export async function deletePageShare(pageId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/pages/${pageId}/share`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete share: ${res.statusText}`);
+	await apiSend('DELETE', `/pages/${pageId}/share`);
 }
 
-export async function getSharedPage(token: string): Promise<SharedPage> {
-	const res = await fetch(`${API_BASE}/s/${token}`);
-	if (!res.ok) throw new Error(`Page not found`);
-	return res.json();
+/** Throws {@link ApiError}; the public viewer keys "no longer shared" off a 404. */
+export function getSharedPage(token: string): Promise<SharedPage> {
+	return apiGet<SharedPage>(`/s/${token}`);
 }
 
 // ============================================================================
@@ -2255,9 +1891,7 @@ export interface Backlink {
 
 /** Get inbound references (pages that link to the given page). */
 export async function getPageBacklinks(pageId: string): Promise<Backlink[]> {
-	const res = await fetch(`${API_BASE}/pages/${pageId}/backlinks`);
-	if (!res.ok) throw new Error(`Failed to get backlinks: ${res.statusText}`);
-	const data = await res.json();
+	const data = await apiGet<{ backlinks?: Backlink[] }>(`/pages/${pageId}/backlinks`);
 	return data.backlinks ?? [];
 }
 
@@ -2312,17 +1946,12 @@ export interface SetupState {
  * page back in front of someone on every launch.
  */
 export async function skipOnboarding(skipped = true): Promise<void> {
-	const res = await fetch(`${API_BASE}/setup/skip-onboarding`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ skipped }),
-	});
-	if (!res.ok) throw new Error(`Failed to record onboarding choice: ${res.statusText}`);
+	await apiSend('POST', '/setup/skip-onboarding', { skipped });
 }
 
 // ---- Getting started: one room, one derived truth (api/getting_started.rs) ----
 
-export type GettingStartedStepId = 'connect_ai' | 'introductions' | 'connect_world' | 'interview';
+export type GettingStartedStepId = 'connect_ai' | 'introductions' | 'connect_world' | 'timeline' | 'interview';
 
 export interface GettingStartedStep {
 	id: GettingStartedStepId;
@@ -2351,6 +1980,8 @@ export interface GettingStartedState {
 	interview_started_at: string | null;
 }
 
+/** Raw fetch on purpose: the store reads "unsupported" off `404|Not Found` in
+ *  this message, which request()'s server-supplied text would not carry. */
 export async function getGettingStarted(): Promise<GettingStartedState> {
 	const res = await fetch(`${API_BASE}/getting-started`);
 	if (!res.ok) throw new Error(`Failed to get getting-started state: ${res.statusText}`);
@@ -2358,30 +1989,20 @@ export async function getGettingStarted(): Promise<GettingStartedState> {
 }
 
 /** Skip (or un-skip) one step. Answers with the new state. */
-export async function skipGettingStartedStep(
+export function skipGettingStartedStep(
 	step: GettingStartedStepId,
 	skipped = true
 ): Promise<GettingStartedState> {
-	const res = await fetch(`${API_BASE}/getting-started/skip`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ step, skipped })
-	});
-	if (!res.ok) throw new Error(`Failed to skip step: ${res.statusText}`);
-	return res.json();
+	return apiSend<GettingStartedState>('POST', '/getting-started/skip', { step, skipped });
 }
 
 /** Begin the interview inside the getting-started room. Answers with the new state. */
-export async function startGettingStartedInterview(): Promise<GettingStartedState> {
-	const res = await fetch(`${API_BASE}/getting-started/interview`, { method: 'POST' });
-	if (!res.ok) throw new Error(`Failed to start the interview: ${res.statusText}`);
-	return res.json();
+export function startGettingStartedInterview(): Promise<GettingStartedState> {
+	return apiSend<GettingStartedState>('POST', '/getting-started/interview');
 }
 
-export async function getSetupState(): Promise<SetupState> {
-	const res = await fetch(`${API_BASE}/setup/state`);
-	if (!res.ok) throw new Error(`Failed to get setup state: ${res.statusText}`);
-	return res.json();
+export function getSetupState(): Promise<SetupState> {
+	return apiGet<SetupState>('/setup/state');
 }
 
 
@@ -2407,27 +2028,18 @@ export interface AssistantMemory {
 	updated_at: string;
 }
 
-export async function listAssistantMemories(): Promise<AssistantMemory[]> {
-	const res = await fetch(`${API_BASE}/assistant/memories`);
-	if (!res.ok) throw new Error(`Failed to load memories: ${res.statusText}`);
-	return res.json();
+export function listAssistantMemories(): Promise<AssistantMemory[]> {
+	return apiGet<AssistantMemory[]>('/assistant/memories');
 }
 
 /** Rewrite one memory in your own words. It becomes yours. */
-export async function editAssistantMemory(id: number, body: string): Promise<AssistantMemory> {
-	const res = await fetch(`${API_BASE}/assistant/memories/${id}`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ body }),
-	});
-	if (!res.ok) throw new Error(`Failed to edit memory: ${res.statusText}`);
-	return res.json();
+export function editAssistantMemory(id: number, body: string): Promise<AssistantMemory> {
+	return apiSend<AssistantMemory>('PUT', `/assistant/memories/${id}`, { body });
 }
 
 /** Remove a memory from every future conversation (soft-retired with provenance). */
 export async function retireAssistantMemory(id: number): Promise<void> {
-	const res = await fetch(`${API_BASE}/assistant/memories/${id}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to remove memory: ${res.statusText}`);
+	await apiSend('DELETE', `/assistant/memories/${id}`);
 }
 
 export function getAssistantProfile<T = unknown>(): Promise<T> {
@@ -2468,26 +2080,6 @@ export function setByoKey<T = unknown>(body: Record<string, unknown>): Promise<T
 }
 export function deleteByoKey<T = unknown>(sudoRequestId?: string): Promise<T> {
 	return apiSend<T>('DELETE', '/settings/byo-key', { sudo_request_id: sudoRequestId });
-}
-
-// ── Personas ─────────────────────────────────────────────────────────────────
-export function listPersonas<T = unknown>(): Promise<T> {
-	return apiGet<T>('/personas');
-}
-export function createPersona<T = unknown>(body: { title: string; content: string }): Promise<T> {
-	return apiSend<T>('POST', '/personas', body);
-}
-export function updatePersona<T = unknown>(id: string, updates: object): Promise<T> {
-	return apiSend<T>('PUT', `/personas/${encodeURIComponent(id)}`, updates);
-}
-export function deletePersona<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('DELETE', `/personas/${encodeURIComponent(id)}`);
-}
-export function unhidePersona<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('POST', `/personas/${encodeURIComponent(id)}/unhide`);
-}
-export function resetPersonas<T = unknown>(): Promise<T> {
-	return apiSend<T>('POST', '/personas/reset');
 }
 
 // ── Chats (extras beyond createChat/updateChat/deleteChat above) ──────────────
@@ -2636,7 +2228,4 @@ export function getDriveMedia<T = unknown>(): Promise<T> {
 }
 export function searchUnsplash<T = unknown>(body: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/unsplash/search', body);
-}
-export function getServerInfo<T = unknown>(): Promise<T> {
-	return apiGet<T>('/app/server-info');
 }

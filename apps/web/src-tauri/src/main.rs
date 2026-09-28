@@ -1524,7 +1524,18 @@ fn main() {
                 // the existing box, exactly as it does on the phone.
                 WebviewUrl::App("connect.html#setup".into())
             } else if !is_paired() {
-                WebviewUrl::App("connect.html".into())
+                // UNPAIRED, THE MAC OPENS SETUP (2026-09-27): sign in, find
+                // the server, its four words, Wi-Fi and pairing run from the
+                // app's own copy of the web app (tauri.macos.conf.json bakes
+                // it; apps/web/src/lib/components/setup/prepair.svelte.ts),
+                // and after pairing the window hands over to the server's
+                // copy at the same step. Windows and Linux bake nothing yet
+                // and keep the connect page.
+                if cfg!(target_os = "macos") {
+                    WebviewUrl::App("setup".into())
+                } else {
+                    WebviewUrl::App("connect.html".into())
+                }
             } else {
                 match probe_box_session_blocking(1) {
                     Some(true) => WebviewUrl::External(
@@ -1532,6 +1543,14 @@ fn main() {
                             .parse()
                             .unwrap(),
                     ),
+                    // THE MAC RECOVERS IN ITS OWN COPY (2026-09-28): refused
+                    // or unreachable, the window opens `/reconnect` from the
+                    // copy it bakes (tauri.macos.conf.json), which diagnoses
+                    // both itself and can put a moved server back on Wi-Fi
+                    // over Bluetooth (src/lib/components/recovery/). Windows
+                    // and Linux bake nothing yet and keep the connect page.
+                    Some(false) if cfg!(target_os = "macos") => WebviewUrl::App("reconnect".into()),
+                    None if cfg!(target_os = "macos") => WebviewUrl::App("reconnect".into()),
                     Some(false) => WebviewUrl::App("connect.html#reset".into()),
                     None => WebviewUrl::App("connect.html#unreachable".into()),
                 }

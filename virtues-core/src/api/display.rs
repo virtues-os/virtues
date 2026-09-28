@@ -355,7 +355,7 @@ pub async fn display_state_handler(
             connectivity,
             wifi_ssid,
             devices,
-            box_name: crate::codename::pretty(&crate::codename::box_codename()),
+            box_name: crate::api::identity::face_label(pool).await,
             linked,
             setup_phrase,
             phrase_frozen,

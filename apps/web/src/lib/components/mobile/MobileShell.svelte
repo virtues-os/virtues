@@ -31,6 +31,7 @@
 	 * New chat — to the opposite corner, and nothing else.
 	 */
 	import { onMount } from "svelte";
+	import { goto } from "$app/navigation";
 	import Icon from "$lib/components/Icon.svelte";
 	import TabContent from "$lib/components/tabs/TabContent.svelte";
 	import MobileDrawer from "$lib/components/mobile/MobileDrawer.svelte";
@@ -289,18 +290,14 @@
 		{#if reachability.unreachable}
 			<!-- The failure state is the home screen now, so it gets a designed
 			     answer: what's wrong, and the door to the diagnosis. Calm, not
-			     red — the box being asleep is an ordinary morning, not an alarm. -->
+			     red — the box being asleep is an ordinary morning, not an alarm.
+			     The door is /reconnect (2026-09-28), which tells this phone
+			     being offline from the server being off, refused, or moved, and
+			     can put a moved server back on Wi-Fi over Bluetooth. It used to
+			     open This device, which could only say "can't reach". -->
 			<div class="unreachable" role="status">
 				<span class="unreachable-text">Can't reach your server</span>
-				<button
-					class="unreachable-door"
-					onclick={() =>
-						windowShellStore.openTabFromRoute("/virtues/devices/this", {
-							label: "Settings",
-						})}
-				>
-					Settings
-				</button>
+				<button class="unreachable-door" onclick={() => void goto("/reconnect")}>Fix it</button>
 			</div>
 		{/if}
 

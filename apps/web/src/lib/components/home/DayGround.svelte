@@ -6,16 +6,16 @@
 	dot here, so "where was I at 2pm" is answered by moving the mouse rather
 	than by reading two charts and doing the join in your head.
 
-	The basemap comes from `$lib/map/atlas`, which has none until the box
-	serves its own map files (agents/plan/offline-maps-plan.md). No tile
-	request leaves for a third party in the meantime; the track draws on the
-	panel's own ground. The panel is display-only
+	The basemap comes from the box's own map files (`$lib/map/atlas`,
+	virtues-core/src/maps): no tile provider ever sees the day's coordinates,
+	and the map works offline. A box with no map files yet draws the track on
+	the panel's own ground. The panel is display-only
 	— no drag, no zoom — because it answers the deck's scrub, not the mouse.
 -->
 <script lang="ts">
 	import { onDestroy, onMount } from "svelte";
 	import "leaflet/dist/leaflet.css";
-	import { atlasLayer } from "$lib/map/atlas";
+	import { atlasLayer, compactCredit } from "$lib/map/atlas";
 	import type { TimelineDayPoint } from "$lib/wiki/api";
 
 	interface Props {
@@ -128,8 +128,9 @@
 			touchZoom: false,
 			tap: false,
 		});
-		// Drop Leaflet's own "Leaflet" flag — the data credit stays.
+		// Drop Leaflet's own "Leaflet" flag — the data credit stays, as an ⓘ.
 		map.attributionControl.setPrefix(false);
+		compactCredit(map);
 		setTiles();
 		renderTrack();
 		renderMark();

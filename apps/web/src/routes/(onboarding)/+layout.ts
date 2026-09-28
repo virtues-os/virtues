@@ -1,28 +1,41 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutLoad } from './$types';
+import { prePair } from '$lib/components/setup/prepair.svelte';
 
-// Session gate for the (onboarding) group. Mirrors (app)/+layout.ts but
-// skips the profile / server-status fetches since the wizard runs BEFORE
-// the user has set any preferences.
+// Session gate for the (onboarding) group. The same rule as (app)/+layout.ts
+// but without the profile / server-status fetches, since Setup runs before
+// there are preferences to load.
+//
+// ONLY A REAL REJECTION MEANS UNPAIRED. This gate used to send every failure
+// to /pair — a thrown fetch, a 502 while the loopback proxy came up, a parse
+// error — so a paired person on a blip mid-Setup landed on the pairing screen,
+// and Setup's own "couldn't reach your server" screen never showed. A 401/403
+// or a session with no user is unpaired; anything else is the server being
+// unreachable for a moment, which Setup says itself (`session: null`).
 export const load: LayoutLoad = async ({ fetch }) => {
+	// No server yet (the phone, before pairing): Setup's first half runs
+	// here, and there is no session to ask for.
+	if (prePair.active) return { session: null };
 	try {
-		const sessionResponse = await fetch('/auth/session');
-		if (!sessionResponse.ok) {
-			throw redirect(303, '/pair');
+		// One retry after a beat: on the phone this rides the iroh loopback,
+		// which can still be rebuilding right after the app resumes.
+		let res: Response;
+		try {
+			res = await fetch('/auth/session');
+		} catch {
+			await new Promise((r) => setTimeout(r, 1500));
+			res = await fetch('/auth/session');
 		}
-		const sessionData = await sessionResponse.json();
-		if (!sessionData.user) {
-			throw redirect(303, '/pair');
+		if (!res.ok) {
+			if (res.status === 401 || res.status === 403) throw redirect(303, '/pair');
+			return { session: null };
 		}
+		const sessionData = await res.json();
+		if (!sessionData.user) throw redirect(303, '/pair');
 		return { session: sessionData };
 	} catch (error) {
-		// SvelteKit's redirect() throws a Redirect object (has `status`), NOT a
-		// Response — the old `instanceof Response` check never matched, so the
-		// intentional /pair redirects above fell through to the catch-all below.
-		// Re-throw genuine redirects untouched (mirrors (app)/+layout.ts).
+		// SvelteKit's redirect() throws a Redirect object (has `status`).
 		if (error && typeof error === 'object' && 'status' in error) throw error;
-		// Anything else (network, parse error) — punt to login so the user
-		// can retry instead of getting stuck on a half-rendered wizard.
-		throw redirect(303, '/pair');
+		return { session: null };
 	}
 };

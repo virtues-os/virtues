@@ -64,7 +64,7 @@
 1 virtues-core/src/entity_resolution/places.rs	let id = Uuid::parse_str(&row.id).ok()?;
 1 virtues-core/src/search/embedder.rs	.ok()
 1 virtues-core/src/search/query.rs	.unwrap_or((0, 0));
-1 virtues-core/src/server/api.rs	.unwrap_or(0);
+1 virtues-core/src/server/api/applets.rs	.unwrap_or(0);
 1 virtues-core/src/server/yjs.rs	.unwrap_or(false);
 1 virtues-core/src/timezone.rs	.ok()
 1 virtues-core/src/tools/applet_setup.rs	.ok()?;

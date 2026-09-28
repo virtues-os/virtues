@@ -1,6 +1,5 @@
 //! Box health status — one source of truth, several surfaces: the `virtues
-//! status` CLI, the session-authed `GET /api/box/status` (full identity detail
-//! for the phone app), and the public-on-LAN `GET /api/box/health` (the boot
+//! status` CLI (full identity detail), and the public-on-LAN `GET /api/box/health` (the boot
 //! state machine as flat gates + the inference resolution report, secrets
 //! stripped) that the first-run web page and the appliance screen poll.
 //! Composability: the box, a DIY server, the CLI, and the app all report
@@ -178,29 +177,6 @@ async fn degraded_collectors(pool: &PgPool) -> Result<Vec<DegradedCollector>> {
             }
         })
         .collect())
-}
-
-/// `GET /api/box/status` — box health for the phone app's status screen.
-///
-/// Takes `AuthUser` explicitly (not just relying on the protected-route layer)
-/// so this identity-bearing response — WG pubkey, billing state —
-/// is never served unauthenticated even if the route's layer is ever
-/// reordered. The phone reaches it with its device bearer over any transport.
-pub async fn box_status_handler(
-    _user: crate::middleware::auth::AuthUser,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
-    match compute_status(state.db.pool()).await {
-        Ok(status) => (StatusCode::OK, Json(status)).into_response(),
-        Err(e) => {
-            tracing::warn!(error = %e, "box status failed");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-                .into_response()
-        }
-    }
 }
 
 // ─── Public health (first-run web page + appliance screen) ──────────────────
@@ -382,7 +358,7 @@ pub struct SetupState {
 
 /// Compute the setup/onboarding state. Reuses [`compute_status`] for the
 /// vault-backed signals so the wizard, panel, and CLI can never disagree
-/// with `/api/box/status`.
+/// with `virtues status`.
 pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     let s = compute_status(pool).await?;
 

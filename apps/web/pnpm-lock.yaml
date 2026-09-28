@@ -53,6 +53,9 @@ importers:
       '@maplibre/maplibre-gl-leaflet':
         specifier: ^0.1.4
         version: 0.1.4(@types/leaflet@1.9.22)(leaflet@1.9.4)(maplibre-gl@6.11.1)
+      '@protomaps/basemaps':
+        specifier: 5.7.2
+        version: 5.7.2
       '@tauri-apps/api':
         specifier: ^2.11.1
         version: 2.11.1
@@ -664,6 +667,10 @@ packages:
 
   '@polka/url@1.0.0-next.29':
     resolution: {integrity: sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww==}
+
+  '@protomaps/basemaps@5.7.2':
+    resolution: {integrity: sha512-K1Yk6bWdULulYg+R2QRVXx4NzJZan5YQhpejEG0c1/sXruJrfPIPZuakpf3jwAgVmjIRVQwAv+yRafDeN0aaUQ==}
+    hasBin: true
 
   '@rolldown/binding-android-arm-eabi@1.2.7':
     resolution: {integrity: sha512-EypzgnYCwyVY4NDHKzGmNJT5b+XaQEBniHxsMdeIQLB/tcCzZnhqrzHpZFbX9iaxx+5RiB8caATBtfvZP7zVxQ==}
@@ -2875,6 +2882,8 @@ snapshots:
   '@oxc-project/types@0.148.0': {}
 
   '@polka/url@1.0.0-next.29': {}
+
+  '@protomaps/basemaps@5.7.2': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.7':
     optional: true

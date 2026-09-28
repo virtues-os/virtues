@@ -11,6 +11,9 @@ repository = "https://github.com/virtues-os/virtues"
 # iroh reach: dial the box by EndpointId, splice loopback connections / send
 # raw HTTP requests over bi-streams. Shared box/relay reach layer.
 virtues-iroh = { path = "../virtues-iroh" }
+# The owner-proof message format, shared with the box that verifies it.
+# Protocol only (default features): no Bluetooth stack comes with it.
+virtues-improv = { path = "../virtues-improv" }
 
 # Device iroh key generation (seed) + hex encoding for storage.
 rand = "0.9"

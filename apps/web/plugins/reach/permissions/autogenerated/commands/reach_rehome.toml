@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-reach-rehome"
+description = "Enables the reach_rehome command without any pre-configured scope."
+commands.allow = ["reach_rehome"]
+
+[[permission]]
+identifier = "deny-reach-rehome"
+description = "Denies the reach_rehome command without any pre-configured scope."
+commands.deny = ["reach_rehome"]

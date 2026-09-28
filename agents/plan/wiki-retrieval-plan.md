@@ -1,10 +1,33 @@
-# The wiki as the retrieval index, not a document in it
+# Wiki retrieval: find the subject, then its records
 
 **Status: planned.** Nothing here is built. Delete this file when it is.
 
-## The finding
+**Settled (owner, 2026-09-23): the wiki is the index.** Chat retrieves through
+it. This plan is about how, not whether.
 
-Measured on a real box, 2026-09-22:
+## Two axes
+
+**Time is the deterministic one.** A question with a date in it — "what did I
+do in March", "the week of the move" — should land on day articles and
+`wiki_event` rows by date, not by similarity.
+
+**Context is everything else, and the subject is where it resolves.** A person,
+a place, an organization: many records, one thing you can point at.
+
+## What already exists
+
+The two-stage path is built. It is agent-mediated rather than automatic:
+
+- `semantic_search` accepts `entities` (filters through `wiki_refs`) and
+  `date_after` / `date_before`.
+- The agent can find a subject's id with `sql_query` and pass it in.
+
+**What is missing is narrower than the path.** `sql_query` finds a subject only
+by a name it can match. Nothing finds one by nickname, alias, handle, a
+misspelling, or "my old landlord". And nobody has measured whether the agent
+uses the filters at all.
+
+## The corpus, measured on a real box (2026-09-22)
 
 ```
 communication_message       176,779
@@ -19,100 +42,71 @@ app_page                        422
 wiki_article                    372
 ```
 
-The wiki is **0.16%** of the retrieval corpus, and it competes as a peer.
-Hybrid + RRF + rerank will surface the twelve thousand messages *about* a
-person long before the one article that resolved them into her. The
-compression loses to the thing it compressed, about 500 to 1.
+Chunks, not documents. The wiki (`wiki_article` + `wiki_event`) is about 0.8%
+of the pool. Of 914 resolved subjects, 20 are reachable by meaning, through
+their articles; 894 are reachable only by exact name.
 
-`wiki_refs` holds 136,219 rows — the deterministic join between the time axis
-and everything else — and `search/query.rs` uses it only to NARROW results when
-the caller already knows the entity ids, plus an additive project boost.
-Nothing resolves a query to a subject and then walks the refs outward.
+## Step 0 — measure (gates every step that costs anything)
 
-**So the wiki is indexed as content and ignored as structure.** That is the
-whole gap, and it is why the encyclopedia feels absent from chat while being
-present in the database.
+Ten real questions from chat history on the box. For each, record three things:
 
-## The subjects are not in the index at all
+1. Did a wiki chunk appear in what `semantic_search` returned?
+2. Did the agent pass `entities` or a date filter?
+3. Was the answer right?
 
-`search_embeddings` carries no `person`, `place` or `organization` ontology.
-On the same box that is **914 resolved subjects** — 626 people, 228
-organizations, 60 places — none of them retrievable, and only 20 of them
-carrying an article.
+The pattern decides what is wrong. Wiki chunks relevant but ranked out → the
+ranking (step 3). Filters never used → the agent's instructions (step 2). The
+agent could not find the subject → the lookup (step 1).
 
-This is the piece that does not wait on article coverage. A person with no
-article is still a fully resolved thing: a name, aliases, a nickname, handles,
-a relationship category, a ref count, and a set of co-occurring subjects. That
-is a retrievable document today, for every one of the 914, with **no model
-call**. "Who was the woman from the dog park" is a subject lookup, not a
-message search.
+## Step 1 — subject stubs, for fuzzy lookup
 
-## Three moves, in order
+Three `OntologyDescriptor`s in the registry — person, place, organization —
+with `embedding: Some(…)`, `extraction: None`, `day_source: None`. The indexer
+is registry-driven and `EmbeddingConfig` is SQL templates, so this is the
+mechanism `wiki_article` already uses. Embedding only, on the box; no LLM call.
 
-### 1. Subject stubs into the index
+`embed_text_sql` carries what a person would reach for: name, nickname,
+aliases, handles, relationship category, and any content the owner authored on
+the subject.
 
-Declarative. `search/indexer.rs` is registry-driven — it loops
-`registered_ontologies()` filtered to those with an `embedding` config — and
-`EmbeddingConfig` is pure SQL templates (`embed_text_sql`, `title_sql`,
-`preview_sql`, `timestamp_sql`, `embed_where`, `content_type`). `wiki_article`
-and `wiki_event` are already registered this way, so a subject is the same
-mechanism rather than new machinery.
+**Not co-occurring subjects.** The first draft of this plan proposed them;
+measured, subjects share a record 82 times person-with-person, 5 times
+place-with-place, and never person-with-place, across 136,219 refs. There is
+nothing to carry. A question like "the woman from the dog park" resolves
+through the day or the record that mentions both, not through a stub.
 
-Three `OntologyDescriptor`s — person, place, organization — each with
-`embedding: Some(…)`, `extraction: None`, `day_source: None` (a subject is not
-something you did; the `wiki_article` entry above it explains why that field
-matters).
+`timestamp_sql` is the subject's last-seen, from `wiki_refs`. A subject is a
+span rather than a moment, and the time axis belongs to days; last-seen is only
+there so recency ranking has something honest to read.
 
-`embed_text_sql` should carry what makes a subject FINDABLE rather than what
-makes it readable: name, nickname, aliases, handles, relationship category,
-the authored `content`, and — via correlated subquery — the ref count and the
-names it most often co-occurs with. The last is what lets "the woman from the
-dog park" land on a person whose article does not exist and whose name you
-cannot remember.
+## Step 2 — the agent's instructions, if step 0 says so
 
-**Open: what `timestamp_sql` should be.** `t.updated_at` is honest but useless
-— a subject is not on the clock (the glossary is explicit: "a person is not
-past or future"). First-seen/last-seen from `wiki_refs` would make
-time-filtered queries work on subjects, and costs a subquery per row. Decide
-before writing the descriptor, because reindexing 914 rows to change it is
-cheap now and less cheap later.
+If the agent does not pass `entities` or dates when a question calls for them,
+say so in the tool description: find the subject, then filter by it; a dated
+question takes a date filter. Cheaper than any ranking change.
 
-### 2. Weight the wiki lanes
+## Step 3 — weight the wiki, if step 0 says so
 
-`query.rs` already does an additive ≈1σ z-boost for project members — "a
-boost, not a multiply", because the scores can be negative. The same lever,
-pointed at `wiki_article`, `wiki_event` and the new subject ontologies.
+`query.rs` already has an additive ≈1σ z-boost for project members. The same
+lever, pointed at `wiki_article`, `wiki_event` and the stubs. Only if relevant
+wiki chunks are measurably losing on rank.
 
-**Measure before tuning.** Take ten real questions, run them through the
-current path, and count how often a wiki chunk appears at all. If the answer
-is "never", a 1σ bump against a 500:1 imbalance is the wrong instrument and
-move 3 is the only real fix. This measurement is the gate on the other two.
+## Boundary
 
-### 3. Two-stage routing
+Stubs are a read-only lookup. Nothing here writes `wiki_refs` or decides two
+records are the same thing; the graph stays deterministic and owner-authored.
 
-Resolve the query against the small, high-precision subject/article pool
-(hundreds of chunks), then expand through `wiki_refs` to the records
-underneath. The article says *who* and *when*; the refs reach the specific
-record. This is what the paradigm actually asks for and what neither 1 nor 2
-delivers on its own.
+## Found along the way
 
-## The consequence nobody has priced
+`entity_article_gen::build_dossier` builds its link allowlist from the same
+same-record join, so it offers the model almost no subjects to link — which is
+why the first articles invented links. The sanitizer now strips those, but the
+allowlist it checks against is nearly empty. The subjects that appear on the
+same DAYS are the join that has rows: 74,470 person-with-person pairs, 3,135
+organization-with-person, 1,603 person-with-place, against 87 pairs total on
+the same record. Too noisy to embed into a stub, which would make every search
+for one person land on everyone who texted that day; right for an allowlist,
+because the model only links what it chose to mention.
 
-If the wiki is the index, the article acquires a second job: **it must be
-written to be found, not only to be read.** That reframes the prose work.
-Naming a street, an hour, a phrase someone actually used beats summarizing —
-which is the opposite of what the entity prompt was doing when every one of the
-first twenty articles described the record instead of the person.
-
-It also reframes coverage. "0 place articles, 0 organization articles, 20 of
-914 people" stops being a content gap and becomes **holes in the retrieval
-index shaped like the subjects nobody wrote.**
-
-## The open question this plan does not answer
-
-**Is the wiki the index, or a document among documents?**
-
-If it is the index, all three moves are right and the article's job changes.
-If it is a reading surface, the 500:1 is fine, chat should keep searching raw
-records, and only move 1 is worth doing — because a subject stub is useful for
-lookup either way.
+The article gains a second job as well: it is read, and it is found. Concrete
+detail — a street, an hour, a phrase — serves both.

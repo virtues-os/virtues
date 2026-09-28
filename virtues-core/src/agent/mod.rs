@@ -26,7 +26,7 @@
 //! use virtues::agent::{AgentLoop, AgentConfig};
 //!
 //! let agent = AgentLoop::new(pool);
-//! let stream = agent.run(messages, tools, context);
+//! let mut stream = agent.run(model, messages, tools, context, cancel_token);
 //!
 //! while let Some(event) = stream.next().await {
 //!     // Handle AgentEvent
@@ -34,6 +34,7 @@
 //! ```
 
 pub mod applet_runner;
+pub mod caps;
 pub mod executor;
 pub mod guard;
 pub mod subagent;
@@ -57,7 +58,8 @@ use crate::server::yjs::YjsState;
 
 pub use executor::{ExecutorConfig, ToolExecutionError, ToolExecutionResult};
 pub use protocol::{AgentEvent, ErrorCode, FinishReason, StepReason};
-pub use stream::{LlmConfig, LlmStreamResult, StreamError, ToolCall, TokenUsage};
+pub use stream::{LlmConfig, LlmStreamResult, StepOptions, StreamError, ToolCall, TokenUsage};
+pub use crate::virtues_api::request::Thinking;
 
 /// Configuration for the AgentLoop
 #[derive(Debug, Clone)]
@@ -68,6 +70,12 @@ pub struct AgentConfig {
     pub tool_timeout: Duration,
     /// Whether to execute multiple tools in parallel
     pub parallel_tools: bool,
+    /// How hard the model thinks on every step, turned into the request by
+    /// `reasoning_for` against what the catalog says the model accepts.
+    /// `Default` sends nothing and leaves the provider's own default, which
+    /// for most is its highest-but-one effort — and effort governs how many
+    /// tool calls a model makes, not only how long it thinks.
+    pub thinking: Thinking,
 }
 
 impl Default for AgentConfig {
@@ -76,6 +84,7 @@ impl Default for AgentConfig {
             max_steps: 20,
             tool_timeout: Duration::from_secs(30),
             parallel_tools: true,
+            thinking: Thinking::Default,
         }
     }
 }
@@ -93,6 +102,9 @@ pub struct TurnBudget {
     /// Longest the whole turn may run, checked between steps (a step in
     /// flight is not cut; the next one is not started).
     pub max_wall_clock: Option<Duration>,
+    /// Most calls one tool may take in the turn, by tool name. Empty: none
+    /// is capped. See `caps`.
+    pub tool_caps: &'static [(&'static str, u32)],
 }
 
 /// The main agent loop orchestrator
@@ -181,6 +193,8 @@ impl AgentLoop {
             let mut finish = protocol::FinishReason::EndTurn;
             // Per turn: which tools have failed, and how — see `guard`.
             let mut repeat_guard = guard::RepeatGuard::new();
+            // Per turn: calls spent against each capped tool — see `caps`.
+            let mut tool_caps = caps::ToolCaps::new(budget.tool_caps);
             // Per turn: what it has cost and how long it has run, for the
             // budget. Checked where the step ceiling is.
             let turn_started = std::time::Instant::now();
@@ -218,6 +232,13 @@ impl AgentLoop {
                 }
                 Some(options)
             };
+            // The turn's effort, in whichever spelling this model and endpoint
+            // take. Computed once: the model does not change mid-turn.
+            let (reasoning, reasoning_effort) = crate::virtues_api::request::reasoning_for(
+                config.thinking,
+                crate::api::model_catalog::reasoning_facts(&model).as_ref(),
+                byo,
+            );
             // Which conversation this call belongs to, so the provider can send
             // it to the server that already holds its cache. The proxy hashes
             // it before it leaves; see `BearerClient::stream_affine`.
@@ -240,7 +261,9 @@ impl AgentLoop {
                     }
                 }
 
-                // Check max steps.
+                // Check max steps. Unreachable once max_steps >= 1: the last
+                // step ends the turn whatever it returns (see `last_step`).
+                // Kept for a config of zero.
                 //
                 // Not an `error` event: the SDK treats one as fatal — it throws
                 // out of the stream, so everything after it is discarded and a
@@ -262,22 +285,39 @@ impl AgentLoop {
                 let over_clock = budget
                     .max_wall_clock
                     .is_some_and(|cap| turn_started.elapsed() >= cap);
-                if over_cost || over_clock {
+
+                // The forced final answer. On the last step the ceiling
+                // allows, or the first step over a budget, the model is told
+                // to answer and sent `tool_choice: none`, and the turn ends
+                // after this step whatever it returns. Before this the
+                // twentieth step could be a tool call, and the turn ended on
+                // its result with no reply at all; a budget ended it between
+                // steps the same way. The step can take the spend one step
+                // past a budget — a cap that ended turns with nothing said
+                // cost the whole turn instead.
+                let last_step = last_step_reason(step, config.max_steps, over_cost || over_clock);
+                if let Some(reason) = last_step {
                     tracing::warn!(
                         step,
+                        ?reason,
                         spent_micros,
                         elapsed_secs = turn_started.elapsed().as_secs(),
-                        over_cost,
-                        over_clock,
-                        "turn stopped at its budget"
+                        "last step: asking for the answer, tools off"
                     );
-                    finish = protocol::FinishReason::BudgetExceeded;
-                    break;
+                    messages.push(serde_json::json!({
+                        "role": "user",
+                        "content": "[System: no more tool calls this turn. Answer now from what you have, and say briefly what you could not check.]"
+                    }));
                 }
 
                 tracing::info!(step, "Agent loop step");
 
                 let provider_options = gateway_options.clone();
+                let step_options = StepOptions {
+                    reasoning: reasoning.clone(),
+                    reasoning_effort: reasoning_effort.clone(),
+                    tool_choice: last_step.map(|_| serde_json::json!("none")),
+                };
                 let affinity = session_affinity.clone();
 
                 // Stream events through a channel for incremental delivery.
@@ -306,6 +346,7 @@ impl AgentLoop {
                         // now the box says it, and the proxy default can go.
                         Some(0.7),
                         None, // agent loop: no fixed output cap
+                        step_options,
                         affinity.as_deref(),
                         |event| {
                             let _ = ev_tx.send(event);
@@ -415,6 +456,10 @@ impl AgentLoop {
                         // as one it did. It is still not an `error` event —
                         // see the ceiling above — it is how this turn ended.
                         finish = protocol::FinishReason::OutputLimit;
+                    } else if let Some(reason) = last_step {
+                        // The answer came, but the turn was still cut short;
+                        // the notice says so.
+                        finish = reason;
                     }
                     yield AgentEvent::step_complete(step, result.finish_reason);
                     break;
@@ -422,6 +467,15 @@ impl AgentLoop {
 
                 // We have tool calls - emit step complete
                 yield AgentEvent::step_complete(step, StepReason::ToolCalls);
+
+                // Told to answer and called a tool anyway (a provider that
+                // ignores `tool_choice: none`). Running it would only feed a
+                // step that is not coming; end the turn on why it ended.
+                if let Some(reason) = last_step {
+                    tracing::warn!(step, "tool call on the tool-less last step; ending the turn");
+                    finish = reason;
+                    break;
+                }
 
                 // Execute tools
                 tracing::info!(
@@ -435,7 +489,8 @@ impl AgentLoop {
                 // has to change something. The step ceiling still bounds the
                 // turn; this bounds how much of it is spent asking the same
                 // question.
-                let (admitted, refused) = repeat_guard.admit(&result.tool_calls);
+                let (within_caps, over_caps) = tool_caps.admit(result.tool_calls.clone());
+                let (admitted, refused) = repeat_guard.admit(&within_caps);
                 let mut tool_results = executor::execute_tools(
                     &tool_executor,
                     &admitted,
@@ -444,7 +499,10 @@ impl AgentLoop {
                 )
                 .await;
                 tool_results.extend(refused);
-                repeat_guard.record(&result.tool_calls, &tool_results);
+                repeat_guard.record(&within_caps, &tool_results);
+                // After `record`: a call over its cap did not fail, and must
+                // not walk the tool toward the guard's close.
+                tool_results.extend(over_caps);
 
                 // Emit tool results, checking for awaiting_user condition
                 let mut awaiting_user = false;
@@ -501,12 +559,10 @@ impl AgentLoop {
                 // gateway carries. `None` means the catalog is cold and we do
                 // not know — treated as cannot, because guessing wrong fails
                 // the whole request rather than one attachment.
-                let attachments: Vec<(String, crate::tools::ToolAttachment)> = tool_results
+                let attachments: Vec<crate::tools::ToolAttachment> = tool_results
                     .iter()
-                    .filter_map(|tr| tr.result.as_ref().ok().map(|r| (tr.tool_name.clone(), r)))
-                    .flat_map(|(name, r)| {
-                        r.attachments.iter().map(move |a| (name.clone(), a.clone()))
-                    })
+                    .filter_map(|tr| tr.result.as_ref().ok())
+                    .flat_map(|r| r.attachments.iter().cloned())
                     .collect();
 
                 if !attachments.is_empty() {
@@ -544,7 +600,7 @@ impl AgentLoop {
 
                 // 3. Inject turn limit warning when running low on steps
                 let steps_remaining = config.max_steps.saturating_sub(step);
-                if steps_remaining <= 3 && steps_remaining > 0 {
+                if steps_remaining <= 3 && steps_remaining > 1 {
                     // "Steps" — model calls — not "tool calls": one step can
                     // carry several calls, and a model told it had two calls
                     // left when it had two steps rationed the wrong thing.
@@ -569,8 +625,20 @@ impl AgentLoop {
             // always `EndTurn` and every caller that matched on it — the
             // finish reason on the wire, the row's subject — was matching on
             // dead arms.
-            yield AgentEvent::done_with_reason(step, finish);
+            yield AgentEvent::done(step, finish);
         })
+    }
+}
+
+/// Why this step is the turn's last, if it is: a budget ran out, or it is the
+/// last step the ceiling allows.
+fn last_step_reason(step: u32, max_steps: u32, over_budget: bool) -> Option<FinishReason> {
+    if over_budget {
+        Some(FinishReason::BudgetExceeded)
+    } else if step >= max_steps {
+        Some(FinishReason::MaxSteps)
+    } else {
+        None
     }
 }
 
@@ -592,5 +660,17 @@ mod tests {
         assert_eq!(config.max_steps, 20);
         assert_eq!(config.tool_timeout, Duration::from_secs(30));
         assert!(config.parallel_tools);
+        assert_eq!(config.thinking, Thinking::Default);
+        assert!(TurnBudget::default().tool_caps.is_empty());
+    }
+
+    #[test]
+    fn the_last_step_is_the_ceiling_or_the_first_over_budget() {
+        assert_eq!(last_step_reason(1, 20, false), None);
+        assert_eq!(last_step_reason(19, 20, false), None);
+        assert_eq!(last_step_reason(20, 20, false), Some(FinishReason::MaxSteps));
+        // A budget names itself even on the ceiling step.
+        assert_eq!(last_step_reason(20, 20, true), Some(FinishReason::BudgetExceeded));
+        assert_eq!(last_step_reason(3, 20, true), Some(FinishReason::BudgetExceeded));
     }
 }

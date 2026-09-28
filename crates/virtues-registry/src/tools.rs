@@ -529,8 +529,12 @@ You synthesize the results yourself — the search returns evidence, not answers
 For time-sensitive topics (news, sports scores, odds, prices, live data) set
 max_age_hours=1 so results are fresh rather than cached.
 
-Set `objective` to what you are actually trying to learn whenever the query
-alone is ambiguous — it disambiguates a short query and improves results.
+Always set `objective` to what you are actually trying to learn — it
+disambiguates a short query and improves results.
+
+Several angles on one question go out as parallel calls in one step, not one
+after another. For a list (events, options, places) ask for 10 results rather
+than running a second query.
 
 Returns: Relevant web pages with titles, URLs, and the passages judged relevant."#.to_string(),
         parameters: serde_json::json!({
@@ -543,8 +547,8 @@ Returns: Relevant web pages with titles, URLs, and the passages judged relevant.
                 },
                 "num_results": {
                     "type": "integer",
-                    "description": "Number of results (1-10)",
-                    "default": 5,
+                    "description": "Number of results (1-10). Default 8; 10 for a list of options",
+                    "default": 8,
                     "minimum": 1,
                     "maximum": 10
                 },

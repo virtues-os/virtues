@@ -17,36 +17,6 @@ use virtues_helpers::auth::vault;
 pub const SOURCE_ID: &str = "virtues_api";
 const CREDENTIAL_NAME: &str = "Virtues API";
 
-pub struct ClaimResult {
-    pub api_key: String,
-}
-
-/// `POST {atlas}/claim` — exchange a Stripe checkout session for the device
-/// api_key. One-time, at onboarding.
-pub async fn claim(
-    http: &reqwest::Client,
-    atlas_url: &str,
-    session_id: &str,
-) -> Result<ClaimResult> {
-    let resp = http
-        .post(format!("{}/claim", atlas_url.trim_end_matches('/')))
-        .json(&serde_json::json!({ "session_id": session_id }))
-        .send()
-        .await
-        .context("POST /claim")?;
-    if !resp.status().is_success() {
-        let s = resp.status();
-        let b = resp.text().await.unwrap_or_default();
-        return Err(anyhow!("claim failed: {s} — {b}"));
-    }
-    let v: serde_json::Value = resp.json().await?;
-    let api_key = v["api_key"]
-        .as_str()
-        .ok_or_else(|| anyhow!("claim response missing api_key"))?
-        .to_string();
-    Ok(ClaimResult { api_key })
-}
-
 /// Store (or replace) the api_key in the vault. Creates the `virtues_api`
 /// credential on first claim.
 pub async fn store_api_key(db: &PgPool, api_key: &str) -> Result<()> {

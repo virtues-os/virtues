@@ -1,0 +1,11 @@
+[Unit]
+Description=Monthly map cut for the boxes
+
+[Timer]
+# Early in the month, at night; a missed run (server down) runs at next boot.
+OnCalendar=*-*-03 04:00
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

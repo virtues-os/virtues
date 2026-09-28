@@ -257,6 +257,31 @@ The rules that keep it from rotting back into the 63-file pile this replaced:
 - Model selection goes through the slot system and registry — no model-id
   literals in code.
 
+### One way to do a thing
+
+Cruft here has come from two habits. A 2026-09-27 audit found both across
+the server, the chat handler, the agent loop, the chat view, the installer
+and the web API client.
+
+- **A better way replaces the old way in the same change.** When you add a
+  helper, type or pattern that supersedes existing code, move the existing
+  callers onto it in that commit. If that cannot happen in one change, leave a
+  dated `TODO(YYYY-MM-DD): migrate <what>` at the old code. Half-finished
+  migrations are what left 89 raw `fetch` calls beside `client.ts`'s own
+  `request()`, installer steps bypassing `systemctl()`, and three different
+  error-to-status mappings in the server.
+- **Before writing it, look for it.** Grep for an existing helper before
+  adding a second one. Five copies of "decode chat rows into messages" did
+  not start out as a decision.
+- **Delete, don't disable.** Code that is commented out, kept "for later", or
+  unreachable goes. Git keeps it.
+- **Comments state the current reason; the history goes in the commit
+  message.** Write why the code is the way it is now. "This used to…",
+  "was removed in…", and notes about deleted routes or fields belong in git.
+  Keep a comment about something removed only when it stops someone
+  re-adding it, and then keep it to a few lines. A comment that has become
+  false is a bug: fix it when you notice it.
+
 ### Never commit anything from a real life
 
 No real names, phone numbers, addresses, emails, employers, account numbers, or

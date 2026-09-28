@@ -91,7 +91,6 @@
 		getChat,
 		getChatUsage,
 		getAssistantProfile,
-		getProfile,
 		setChatTitle,
 		cancelChat,
 	} from "$lib/api/client";
@@ -178,20 +177,9 @@
 	// Track tab route to reset state when switching conversations
 	// svelte-ignore state_referenced_locally
 	let previousTabRoute = $state<string>(tab.route);
-	let preferredName = $state<string | undefined>(undefined);
-	let onboardingStatus = $state<string>('active');
-	let onboardingStarted = false; // guard to prevent double-trigger
 
 	// AbortController for cancelling in-flight requests on tab switch
 	let tabSwitchAbortController: AbortController | null = null;
-
-	// UI preferences from assistant profile
-	let uiPreferences = $state<{
-		contextIndicator?: {
-			alwaysVisible?: boolean;
-			showThreshold?: number;
-		};
-	}>({});
 
 	// Keep a map of message metadata (agentId, provider, etc.) for rendering
 	let messageMetadata = $state<Map<string, MessageMeta>>(new Map());
@@ -262,14 +250,6 @@
 				console.error('[ChatView] Failed to regenerate after permission grant:', error);
 			}
 		}
-	}
-
-	/**
-	 * Handle permission deny for AI edit
-	 */
-	function handlePermissionDeny() {
-		// User denied permission - no action needed
-		// The tool result already shows the permission was needed
 	}
 
 	// The two tool results that reach outside the transcript — create_page
@@ -380,7 +360,6 @@
 			// Non-critical refresh — leave the current messages in place on failure.
 		}
 	}
-	const handleCompacted = reloadMessages;
 
 	// A chat that opens with your message last and no reply may be a turn the
 	// box is still running (VIR-323): a turn outlives its request now, so ask
@@ -531,12 +510,6 @@
 		currentChatConversationId === INTERVIEW_CHAT_ID || isGettingStartedChat(currentChatConversationId),
 	);
 
-	// Getter for the chat's Project (room) ID — sent with each message so the agent
-	// gets the active-space context block and the server keeps the binding fresh.
-	function getProjectId(): string | null {
-		return chatProjectId;
-	}
-
 	// Get or create chat instance for the current conversationId
 	function ensureChatInstance() {
 		if (currentChatConversationId !== conversationId) {
@@ -551,7 +524,9 @@
 			chat = chatInstances.getOrCreate({
 				conversationId,
 				getModel: () => models.idForWire(),
-				getProjectId,
+				// Sent with each message so the agent gets the active-space
+				// context block and the server keeps the binding fresh.
+				getProjectId: () => chatProjectId,
 				getActivePageContext: activePageContext,
 				getPersona: () => selectedPersona,
 				getAgentMode: () => selectedAgentMode,
@@ -567,9 +542,13 @@
 		}
 	}
 
-	// Initialize chat on first render
+	// Swap the chat instance when the conversation changes, and on first
+	// render. `conversationId` is the only dependency on purpose: the rest of
+	// what ensureChatInstance reads (the draft, `input`, the instance id it
+	// writes) is part of the swap, not a reason to run it again.
 	$effect(() => {
-		ensureChatInstance();
+		conversationId;
+		untrack(ensureChatInstance);
 	});
 
 	// Watch for tab.route changes to reset state when switching conversations
@@ -757,27 +736,13 @@
 			const profilePromise = (async () => {
 				try {
 					const profile = await getAssistantProfile<{
-						ui_preferences?: Record<string, unknown>;
 						chat_model_id?: string;
 						persona?: string;
 					}>();
-					if (profile.ui_preferences) {
-						uiPreferences = profile.ui_preferences;
-					}
 					profileDefaultModelId = profile.chat_model_id;
 					profileDefaultPersona = profile.persona;
 				} catch (error) {
 					console.error("Failed to load assistant profile:", error);
-				}
-			})();
-
-			const namePromise = (async () => {
-				try {
-					const profile = await getProfile();
-					preferredName = profile.preferred_name ?? undefined;
-					onboardingStatus = profile.onboarding_status || 'active';
-				} catch {
-					// Non-critical, continue without preferred name
 				}
 			})();
 
@@ -797,7 +762,7 @@
 				}
 			})() : null;
 
-			await Promise.all([profilePromise, namePromise, conversationPromise]);
+			await Promise.all([profilePromise, conversationPromise]);
 
 			// After the load, not inside it: a failed fetch must still leave
 			// the interview speaking rather than showing a blank room.
@@ -836,16 +801,9 @@
 			if (initialPrompt && isNewChat(tab.route)) {
 				handleChatSubmit(initialPrompt);
 			}
-
-			// Auto-start onboarding for new users with no messages
-			// DISABLED for demo — onboarding was repeating the same message
-			// if (onboardingStatus === 'new' && loadedMessages.length === 0) {
-			// 	setTimeout(() => startOnboarding(), 100);
-			// }
 		})();
 
 		return () => {
-			if (inactivityTimer) clearTimeout(inactivityTimer);
 			if (refreshDataTimeout) clearTimeout(refreshDataTimeout);
 			tabSwitchAbortController?.abort();
 		};
@@ -989,7 +947,6 @@
 
 	// Title generation state
 	let titleGenerated = $state(false);
-	let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
 	let refreshDataTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// Agent mode and persona selection state - used for tool filtering on backend
@@ -1327,35 +1284,6 @@
 		}
 	}
 
-	async function startOnboarding() {
-		if (onboardingStarted || !chat) return;
-		onboardingStarted = true;
-
-		// Generate a fresh conversationId if the current one is stale (from a deleted DB)
-		if (!isNewChat(tab.route)) {
-			conversationId = `chat_${generateHex16()}`;
-		}
-
-		ensureChatInstance();
-
-		// Use the AI SDK flow: send a greeting to trigger the backend's onboarding detection.
-		// The backend sees is_new_user + appends NEW_USER_PROMPT to the system prompt.
-		// Tool calls (set_assistant_name, set_user_name) work natively through the SDK.
-		try {
-			await chat.sendMessage({ text: "👋" });
-		} catch (error) {
-			console.error('[ChatView] Onboarding error:', error);
-		}
-
-		onboardingStatus = 'active';
-
-		// Update tab route to reflect the new chat
-		const newRoute = `/chat/${conversationId}`;
-		previousTabRoute = newRoute;
-		windowShellStore.updateTab(tab.id, { route: newRoute });
-		windowShellStore.invalidateViewCache('chat');
-	}
-
 	async function handleChatSubmit(value: string) {
 		let messageToSend = value.trim();
 
@@ -1538,7 +1466,7 @@
 {#if !chat}
 	<!-- wait for chat to initialize -->
 {:else if isContextView}
-	<ContextViewPanel {conversationId} {active} onCompacted={handleCompacted} />
+	<ContextViewPanel {conversationId} {active} onCompacted={reloadMessages} />
 {:else}
 	<div
 		class="chat-root"
@@ -1869,8 +1797,8 @@
 													entityTitle={output.entity_title}
 													message={output.message}
 													permissionMode={true}
-													onAllow={(id, type, title) => handlePermissionAllow(id, type, title)}
-													onDeny={() => handlePermissionDeny()}
+													onAllow={handlePermissionAllow}
+													onDeny={() => {}}
 												/>
 											{:else if part.type === "tool-record_introductions"}
 												<!-- Nothing here: the receipt goes under the whole
@@ -2375,28 +2303,6 @@
 {/if}
 
 <style>
-	.loading-container {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		height: 100%;
-	}
-
-	.loading-spinner {
-		width: 24px;
-		height: 24px;
-		border: 2px solid var(--color-border);
-		border-top-color: var(--color-primary);
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
 	.chat-root {
 		height: 100%;
 		width: 100%;
@@ -3076,28 +2982,6 @@
 		}
 	}
 
-	.hero-section {
-		text-align: center;
-		opacity: 0;
-		max-height: 0;
-		overflow: hidden;
-	}
-
-	.hero-section.transitions-enabled {
-		transition:
-			opacity 0.3s ease-in-out,
-			max-height 0.3s ease-in-out;
-	}
-
-	.hero-section.visible {
-		opacity: 1;
-		max-height: 150px;
-	}
-
-	.hero-title {
-		text-align: center;
-	}
-
 	.message-wrapper {
 		position: relative;
 		width: 100%;
@@ -3197,41 +3081,6 @@
 	/* Assistant response text - spacing after thinking block */
 	.assistant-response {
 		padding-top: 4px;
-	}
-
-	.shiny-title {
-		overflow: visible;
-		padding-bottom: 0.25rem;
-	}
-
-	.chat-input-wrapper.focused .shiny-title {
-		background-image: linear-gradient(
-			90deg,
-			var(--color-primary) 0%,
-			var(--color-primary) 30%,
-			transparent 55%,
-			var(--color-foreground) 80%,
-			var(--color-foreground) 100%
-		);
-		background-position: 100% center;
-		background-size: 300% auto;
-		-webkit-background-clip: text;
-		background-clip: text;
-		color: var(--color-foreground);
-		-webkit-text-fill-color: transparent;
-		animation: shiny-title 1.18s cubic-bezier(0.3, 0.9, 0.4, 1) forwards;
-	}
-
-	@keyframes shiny-title {
-		0% {
-			background-position: 100% center;
-		}
-		3% {
-			background-position: 100% center;
-		}
-		100% {
-			background-position: 0% center;
-		}
 	}
 
 	.dangling-turn {

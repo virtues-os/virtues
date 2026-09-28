@@ -121,6 +121,17 @@ pub fn codename(sha: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_box_number_is_four_digits_and_stable() {
+        let id = "3f2a9c41d07b4e6fa1c2d3e4f5a6b7c8\n";
+        let n = number_from(id);
+        assert_eq!(n.len(), 4, "got {n}");
+        assert!(n.chars().all(|c| c.is_ascii_digit()), "got {n}");
+        assert_eq!(n, number_from(id), "the same machine keeps its number");
+        assert_eq!(number_from(""), "0000", "no machine-id is honest, not random");
+    }
+
     use super::*;
     use std::collections::HashSet;
 
@@ -172,6 +183,36 @@ pub fn box_codename() -> String {
         return "virtues-box".into();
     }
     codename(&hex)
+}
+
+/// The box's NUMBER: four digits from machine-id, what it goes by until it
+/// has an owner ("Virtues 4812" on its screen, in the app's list, and as the
+/// radio name `Virtues-4812`).
+///
+/// REPLACED THE CODENAME AS THE BOX'S NAME (2026-09-28). An adjective and an
+/// animal ("Quaint Tern") read as a mystery to every beta tester: nobody knew
+/// it was the box's name, let alone why a server was a tern. A number is the
+/// one identity check everyone already knows how to do (a printer, a pairing
+/// code): match the number on the screen. After setup the box takes its
+/// assistant's name instead (`api::identity::box_label`). `box_codename`
+/// stays for the build and the setup phrase's word lists.
+///
+/// Two boxes in one house share a number about one time in ten thousand;
+/// like the codename it is a label, never authorization, and the four words
+/// fail closed on the wrong box.
+pub fn box_number() -> String {
+    let id = std::fs::read_to_string("/etc/machine-id").unwrap_or_default();
+    number_from(&id)
+}
+
+fn number_from(machine_id: &str) -> String {
+    let hex: String = machine_id.trim().chars().filter(|c| c.is_ascii_hexdigit()).take(12).collect();
+    if hex.len() < 12 {
+        // No machine-id (dev Mac, container): stable but honest.
+        return "0000".into();
+    }
+    let n = u64::from_str_radix(&hex, 16).unwrap_or(0) % 10_000;
+    format!("{n:04}")
 }
 
 /// `quaint-tern` → `Quaint Tern`, for humans.

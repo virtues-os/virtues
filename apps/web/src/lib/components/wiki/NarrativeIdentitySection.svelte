@@ -19,6 +19,7 @@
 
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import Markdown from '$lib/components/Markdown.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -48,8 +49,10 @@
 		if (pageId) windowShellStore.openRouteBeside(`/page/${pageId}`);
 	}
 
+	/** The interview runs in Setup now; the old getting-started room this
+	 *  opened is retired. */
 	function openInterview() {
-		windowShellStore.openRouteBeside('/chat/chat_getting_started');
+		void goto('/setup/interview');
 	}
 
 	const updatedLabel = $derived(

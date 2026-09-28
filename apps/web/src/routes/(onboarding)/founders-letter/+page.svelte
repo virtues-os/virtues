@@ -1,153 +1,51 @@
 <!--
-  /founders-letter — the one screen before the app.
+  /founders-letter — the letter, to read again.
 
-  WAS /onboarding, WAS A SEQUENCE, IS NOW A NAMED PAGE (2026-08-31). The
-  four-step flow — letter, introductions, sources, reveal — asked its
-  questions at the one moment the box had nothing to show for them: nothing
-  kicks when a source connects, entities resolve on a 15-minute tick, and the
-  first narrated day lands the following morning. Everything except the letter
-  moved into the app: first as a getting-started page dressed on Home, then
-  from 2026-09-13 as one seeded chat room (see
-  apps/web/src/lib/components/chat/getting-started/, whose four steps are
-  derived from the record rather than stored), and
-  "onboarding" left the vocabulary with it: what remains is a letter, so the
-  route says so. /onboarding and /setup redirect here for old links and
-  OTA-skewed bundles.
+  The letter is Setup's preface now (/setup plays it after Hello, 2026-09-24,
+  agents/plan/setup-plan.md). This route is where it can be read on its own
+  afterward: from the rail's Setup panel, from the profile, from old links.
+  It asks nothing and changes nothing; its one button goes back to wherever
+  the reader came from.
 
-  What stays is the one thing that must be read before the app and cannot
-  retire: the letter. It sets the covenant; the button at its end is the door.
-
-  THE ACCOUNT GATE IS GONE, not moved. It was a toll booth on the reveal (the
-  one onboarding surface that called the models), then a component waiting for
-  a getting-started PAGE that never shipped — the page became the room. Asking
-  for an account is `connect_ai`, the room's first step, spoken as a turn with
-  its buttons under the thread; `AccountGate.svelte` was deleted unreferenced
-  on 2026-09-16.
+  WAS the one screen before the app (2026-08-31), then the letter plus the
+  subscription (2026-09-23). `?read` was how the rail asked to skip the cold
+  open; there is no cold open here any more, so the parameter is simply
+  ignored.
 -->
 <script lang="ts">
 	import { goto } from "$app/navigation";
-	import { onMount } from "svelte";
-	import { fade } from "svelte/transition";
-	import Icon from "$lib/components/Icon.svelte";
-	import { getProfile, updateProfile, getSetupState, skipOnboarding } from "$lib/api/client";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
 
-	type SetupState = {
-		setup_complete: boolean;
-		onboarding_complete: boolean;
-		onboarding_status: string;
-	};
+	const still =
+		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
-	let state_ = $state<SetupState | null>(null);
-	let loading = $state(true);
-	let reduced = $state(false);
-
-	async function refreshState() {
-		try {
-			state_ = await getSetupState();
-		} catch {
-			/* box briefly unreachable — keep last state */
-		} finally {
-			loading = false;
-		}
-	}
-
-	// Cloud/onboarding cross-check for home_timezone (the box's location).
-	// The box normally seeds this from its own system clock; but a datacenter box
-	// reads "UTC", which is wrong. So only fall back to this browser's zone when
-	// the server value is unset or UTC — a real appliance configured at home
-	// keeps its server-detected zone. See agents/record/timezone-model.md.
-	async function captureTimezone() {
-		try {
-			const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-			if (!tz) return;
-			const p = await getProfile();
-			const current = p.home_timezone;
-			if (!current || current === "UTC") {
-				if (current !== tz) await updateProfile({ home_timezone: tz });
-			}
-		} catch {
-			/* non-essential */
-		}
-	}
-
-	onMount(() => {
-		reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-		void refreshState();
-		void captureTimezone();
-	});
-
-	async function enterApp() {
-		// RECORD THE CHOICE FIRST. The app shell redirects back here while the
-		// letter is unread, so leaving without saying "I'm leaving on purpose"
-		// would bounce straight back and read as the button being broken
-		// (2026-08-13).
-		//
-		// Only when it is genuinely unfinished — a completed record is not a
-		// skipped one, and marking it skipped would lose that distinction.
-		// (`skipOnboarding` keeps its wire name: the flag on the box is still
-		// called onboarding_status, and renaming the protocol is a bigger sweep
-		// than a route.)
-		// Release the gate whenever it is holding — by an empty record or by
-		// a status set back to `onboarding` to read the letter again. Keying
-		// this on the record alone left a re-opened letter with no way out.
-		if (state_ && (state_.onboarding_complete === false || state_.onboarding_status === 'onboarding')) {
-			try {
-				await skipOnboarding(true);
-			} catch {
-				// The gate will ask again next launch. Annoying beats trapped:
-				// never let a failed write hold someone out of their own app.
-			}
-		}
-		// After the letter, getting started: the room, not Home, while any of
-		// its four steps is open. The route guard already lands a box with no
-		// model there; this covers the box that has one (BYO, or a dev checkout
-		// with the setup skip) and would otherwise skip straight to Home with
-		// the room only reachable from the sidebar card. A failed read falls
-		// back to Home: never let a blip hold someone in the letter.
-		let next = "/home";
-		try {
-			const res = await fetch("/api/getting-started");
-			if (res.ok) {
-				const gs = (await res.json()) as { graduated?: boolean };
-				if (gs.graduated === false) next = "/chat/chat_getting_started";
-			}
-		} catch {
-			/* Home */
-		}
-		void goto(next);
+	function close() {
+		if (history.length > 1) history.back();
+		else void goto("/home");
 	}
 </script>
 
-{#if loading}
-	<div class="flex min-h-screen items-center justify-center gap-2.5 text-sm text-foreground-muted" in:fade>
-		<Icon icon="ri:loader-4-line" class="animate-spin" />
-		<span>Checking your server…</span>
-	</div>
-{:else if !state_}
-	<div class="flex min-h-screen items-center justify-center px-6">
-		<div class="rounded-xl border border-error/20 bg-error-subtle p-4 text-sm text-error" in:fade>
-			Couldn't reach your server. Make sure you're on the same network, then refresh.
+<div class="ob-wrap letter-in" class:ob-still={still}>
+	<div class="ob-sheet">
+		<div class="ob-page">
+			<FoundersLetter onbegin={close} beginLabel="Close the letter" />
 		</div>
 	</div>
-{:else}
-	<div class="ob-wrap" class:ob-still={reduced}>
-		<div class="ob-sheet">
-			<div class="ob-page">
-				<FoundersLetter onbegin={enterApp} />
-			</div>
-		</div>
-	</div>
-{/if}
+</div>
 
 <style>
-	/* svelte-check does not resolve `@reference`, so a stale path here
-	   typechecks clean and 500s only the style request, which the browser
-	   reports as "failed to fetch dynamically imported module" for the whole
-	   page. Blank screen, no error naming this line. Three levels up from
-	   routes/(onboarding)/founders-letter/. */
-	@reference "../../../app.css";
-
-	/* The shell, type scale and controls come from onboarding.css — see that
-	   file for why they are not here. */
+	.letter-in {
+		animation: letter-in 900ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+	}
+	@keyframes letter-in {
+		from {
+			opacity: 0;
+			transform: translateY(10px);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.letter-in {
+			animation: none;
+		}
+	}
 </style>
