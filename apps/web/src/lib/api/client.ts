@@ -1620,8 +1620,19 @@ export interface ProjectGraph {
 }
 
 /** GET /api/projects/:id — a Project plus its ordered members. */
+/** A chat filed in a project, as the project's own detail lists it. */
+export interface ProjectChat {
+	id: string;
+	title: string;
+	icon: string | null;
+	message_count: number;
+	last_message_at: string;
+}
+
 export interface ProjectDetail extends Project {
 	items: ProjectItem[];
+	/** Every chat filed here. Absent from a box older than the field. */
+	chats?: ProjectChat[];
 }
 
 /** GET /api/projects — all Projects with counts. */

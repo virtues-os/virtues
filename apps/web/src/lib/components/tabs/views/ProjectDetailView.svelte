@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import type { ProjectDetail, ProjectGraph } from '$lib/api/client';
+	import type { ProjectChat, ProjectDetail, ProjectGraph } from '$lib/api/client';
 	import Icon from '$lib/components/Icon.svelte';
 	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
 	import { PROJECT_ICON } from '$lib/utils/iconHelpers';
@@ -104,9 +104,22 @@
 		if (projectId) loadGraph();
 	});
 
-	// Chats filed into this room — sourced from the authoritative session list,
-	// not from membership rows, so removing a member can't desync a chat.
-	const roomChats = $derived(chatSessions.sessions.filter((s) => s.project_id === projectId));
+	// Chats filed into this room, from the project's own detail: every chat
+	// whose `project_id` is this one. The session list holds only the box's
+	// most recent chats, so reading it here dropped a project's older ones. It
+	// stays as the fallback for a box older than `detail.chats`.
+	const roomChats = $derived.by<ProjectChat[]>(() => {
+		if (detail?.chats) return detail.chats;
+		return chatSessions.sessions
+			.filter((s) => s.project_id === projectId)
+			.map((s) => ({
+				id: s.conversation_id,
+				title: s.title ?? '',
+				icon: s.icon,
+				message_count: s.message_count,
+				last_message_at: s.last_message_at || s.first_message_at
+			}));
+	});
 
 	// Members = everything except chats (chats render in their own list).
 	const memberItems = $derived((detail?.items ?? []).filter((i) => !i.url.startsWith('/chat/')));
@@ -265,12 +278,12 @@
 		}));
 
 		const chats: MemberRow[] = roomChats.map((c) => ({
-			id: `/chat/${c.conversation_id}`,
-			url: `/chat/${c.conversation_id}`,
-			name: c.title ?? 'Untitled chat',
+			id: `/chat/${c.id}`,
+			url: `/chat/${c.id}`,
+			name: c.title || 'Untitled chat',
 			kind: 'Chat',
 			status: `${c.message_count} ${c.message_count === 1 ? 'message' : 'messages'}`,
-			added: formatAdded(c.last_message_at ?? c.first_message_at),
+			added: formatAdded(c.last_message_at),
 			icon: c.icon || 'ri:chat-3-line'
 		}));
 

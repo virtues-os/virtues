@@ -109,7 +109,8 @@ class ChatSessionStore {
 					project_id: null,
 					last_updated: null,
 					first_message_at: '',
-					last_message_at: '',
+					// A chat is only titled once it has been talked in.
+					last_message_at: new Date().toISOString(),
 					message_count: 0,
 					model_used: null,
 					provider: '',

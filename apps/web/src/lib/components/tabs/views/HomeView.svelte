@@ -234,7 +234,7 @@
 			route: `/chat/${c.conversation_id}`,
 			title: c.title || "Untitled",
 			kind: "chat",
-			ts: c.last_updated ? Date.parse(c.last_updated) : 0,
+			ts: Date.parse(c.last_message_at || c.last_updated || "") || 0,
 		}));
 		return [...nb, ...pg, ...ch].sort((a, b) => b.ts - a.ts).slice(0, 5);
 	});
