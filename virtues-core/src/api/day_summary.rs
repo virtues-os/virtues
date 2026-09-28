@@ -87,40 +87,6 @@ RULES:
 - RECENT CONTEXT (if provided) is the last few days' event labels — use it only to disambiguate a stretch the dossier leaves ambiguous ("Unknown 18:00-19:00" that lines up with a nightly gym pattern), never to invent evidence this day lacks.
 - The `summary` is the single most load-bearing field: the user reads it AND it is embedded to measure how novel the event was. Make it factual and specific — "Forty minutes at Blue Bottle on Hayes; six messages with Maya about the lease; heart rate mid-70s." Not "a pleasant coffee.""#;
 
-/// THE ARTICLE — the Chat slot. The day's page, written from the record.
-///
-/// It reads the EVENTS, not the raw sources. It is NOT the log (the event timeline
-/// already lists what happened when) — it is a lede plus body sections, an article
-/// in the wiki's sense. The old sentence quota is gone; what replaced it as the
-/// guard against invention is the evidence ceiling (every sentence must trace to
-/// the dossier) and the anti-transcription bar on sections.
-///
-/// This deliberately dropped the old "elevated moves" (fabricated behavioural
-/// fingerprints, forced quantified closers), the literary epigraph, and the W6H
-/// data-quality block — all of which pushed the model to invent meaning the day did
-/// not carry. See agents/record/event-timeline.md and the essay "A Day, Well Written": the
-/// machine records what happened and hands the meaning back.
-const NARRATE_PROMPT: &str = r#"You write the ARTICLE OF THE DAY for a personal wiki — the day's page, in the sense a wikipedia gives that word. It is NOT a log (the event timeline beneath the article already lists what happened, when) and it is not a summary squeezed into a sentence quota. It is prose about the day, written from the record, that read back weeks later drops the reader straight into it.
-
-STRUCTURE — A LEDE, THEN BODY SECTIONS:
-- Open with a LEDE: one short paragraph, no heading, that carries the shape of the day — the few lines that say what this day was. It sets the register for everything beneath it.
-- Beneath the lede, write the article's body as sections under `## ` headings, where the evidence supports them. A section holds something that spans the day or connects its parts — a thread that ran through it, a conversation that turned, a piece of work that moved, the errand that broke the routine. Give each a plain, specific heading (the thing itself, not a category).
-- THE SECTION BAR IS ANTI-TRANSCRIPTION: a section may only exist if it says something the timeline does not already say. Retelling the event list in paragraphs is the one way to fail here. If you cannot name what a section adds beyond the timeline, it does not exist.
-
-LENGTH FOLLOWS THE EVIDENCE — NOT A QUOTA, AND NOT PADDING:
-- A dense day whose record holds real threads earns a real article: a lede and two or three sections. An ordinary day earns a lede and perhaps one. A thin day earns a few lines and stops. There is no sentence ceiling and no floor — the ceiling is the evidence itself: every sentence must trace to something in the dossier.
-- Never pad. An article stretched past its evidence is worse than a short one, because the stretching is where invention lives. A genuinely unremarkable day should say so plainly ("A day much like its neighbours - the office, home, the usual"), never be inflated into significance.
-
-THE ONE HARD RULE — OBSERVE, NEVER INFER:
-- Write only what the evidence shows. Warmth comes from OBSERVED detail (the low sun, the quiet train, the water) — NEVER from asserting an inner state. Do not write that the reader was "content", "productive", "happy", or "tired" as a feeling; do not say they did something "because" of a motive you are guessing at. State a departure or a goodbye as a fact ("the last coffee before she moves"); do not narrate how it felt.
-- No inferred emotion, motive, meaning, or verdict. Never call a day good or bad, well-spent or wasted. Record what happened; hand the meaning back to the reader.
-- This applies to the lede and to every section equally. No feelings, no motives, no verdicts, no invented sensory detail.
-- If given RECENT DAYS (the last two weeks), use them only to recognise a real recurrence or a genuine first ("the first kayak in months", "the same thread as Saturday") — never to manufacture a pattern that isn't plainly there. Empty means a cold start: just say what the day was.
-
-FORMAT:
-- Plain, warm prose — a perceptive friend reflecting the day back, not a novelist. No lists, no bullet points, no epigraph, no closing metric, no "data quality" note. Headings only for body sections; the lede never has one.
-- LINK entities: when you mention a person or place listed under "Entities you may link" below, link it by copying its exact markdown link, e.g. [Maya](/person/person_ab12). Link a given entity once, on first mention. Never invent a link or link anything not in that list. NEVER reproduce the list itself in the output — it is an instruction to you, not a line of the article.
-- Second person, past tense. Output ONLY the prose (markdown), nothing else."#;
 
 // ── Timezone helpers ─────────────────────────────────────────────────────────
 
@@ -578,58 +544,22 @@ fn fingerprint_sources(sources: &[DaySource]) -> String {
     format!("{:x}", sha2::Digest::finalize(h))
 }
 
-/// How many events a day needs before it is worth WRITING about.
+/// NIGHTLY. Write the day's page.
 ///
-/// Your rule, and it was unstatable until now: the events did not exist until the
-/// narration ran, so "narrate a day that has enough events" was a circle. Split
-/// the call and it becomes a sentence.
+/// Reads the day itself, not the segmenter's summaries of it: the writer, its
+/// check and the markdown it produces live in [`crate::api::day_article`].
+/// Segmentation still runs first and still owns the timeline; the article no
+/// longer stands on it.
 ///
-/// A day the segmenter could only cut into two or three blocks — most of them
-/// "Unknown" — has nothing for prose to be about. Asked to write it up anyway, the
-/// model fills the silence, and what it fills it with is invention.
-const MIN_EVENTS_TO_NARRATE: usize = 4;
-
-/// NIGHTLY. Say what the day was.
-///
-/// Reads the EVENTS — not the raw sources. The prompt always claimed it did ("the
-/// event timeline already does that") while being handed the sources anyway. Now
-/// it is true: the narrative stands on the segmentation, which stands on the data.
-///
-/// Returns `None` when the day did not earn a story.
+/// Returns `None` when the day did not earn a page.
 pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDay>> {
-    let day = get_or_create_day(pool, date).await?;
-
-    // The events, now carrying the SCORES that scoring computed between the
-    // detective and here. `novelty_z` is what lets the narrative name the day's
-    // standout — the whole reason scoring sits between the two agents.
-    let events: Vec<DayEventRow> = sqlx::query_as(
-        // `COALESCE(..., '(unlabeled)')` so a NULL label can never fail the String
-        // decode and abort narration for the whole day.
-        "SELECT COALESCE(user_label, auto_label, '(unlabeled)') AS label, event_summary, \
-                started_at, ended_at, novelty_z \
-         FROM wiki_events \
-         WHERE day_id = $1 AND NOT is_unknown AND NOT user_hidden \
-         ORDER BY started_at",
-    )
-    .bind(&day.id)
-    .fetch_all(pool)
-    .await?;
-
     // ALREADY WRITTEN, AND NOTHING ASKED FOR A REWRITE.
     //
-    // `segment_day_events` returns early on an unchanged source fingerprint;
-    // narration had no equivalent guard at all, so every caller — the catch-up
-    // queue, the API, the CLI — paid for a fresh best-model call and wrote back
-    // prose that was usually identical. `narrated_at` is the marker the queue
-    // itself keys on, so honouring it here makes a repeat call free rather than
-    // merely redundant.
-    //
-    // Deliberately NOT a content fingerprint: re-narrating a day whose events
-    // genuinely changed is the right behaviour, and the caller that knows they
-    // changed clears `narrated_at`. Guarding on prose alone would make a re-cut
-    // day permanently unwritable.
-    // `WikiDay` does not carry `narrated_at`, so read it directly rather than
-    // widening a struct that a dozen surfaces deserialize.
+    // `narrated_at` is the marker the queue itself keys on, so honouring it
+    // here makes a repeat call free rather than merely redundant. Deliberately
+    // NOT a content fingerprint: the caller that knows a day changed clears
+    // `narrated_at`. `WikiDay` does not carry it, so read it directly rather
+    // than widening a struct that a dozen surfaces deserialize.
     let already: Option<Option<chrono::DateTime<chrono::Utc>>> =
         sqlx::query_scalar("SELECT narrated_at FROM wiki_days WHERE date = $1")
             .bind(date)
@@ -637,15 +567,6 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
             .await?;
     if already.flatten().is_some() {
         tracing::debug!(date = %date, "already narrated — nothing asked for a rewrite");
-        return Ok(None);
-    }
-
-    if events.len() < MIN_EVENTS_TO_NARRATE {
-        tracing::info!(
-            date = %date,
-            events = events.len(),
-            "not enough of a day to write about - skipping narration (no LLM call)"
-        );
         return Ok(None);
     }
 
@@ -657,68 +578,11 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     let tz: Option<Tz> = day_tz.parse().ok();
     let (start_str, end_str) = day_boundaries_utc(date, Some(&day_tz));
 
-    // The most-novel event, if scoring has run — a SOFT hint the model may lean on
-    // (cold until the baseline warms; brevity does the selection regardless). Kept
-    // because reading `novelty_z` here is what the day-pipeline guard asserts:
-    // scoring sits between the detective and the biography for a reason.
-    let standout = events
-        .iter()
-        .enumerate()
-        .filter_map(|(i, e)| e.novelty_z.map(|z| (i, z)))
-        .max_by(|a, b| a.1.total_cmp(&b.1))
-        .filter(|(_, z)| *z > 0.5)
-        .map(|(i, _)| i);
-
-    // The events, as the source material — a clean list. The biography does NOT
-    // re-list them; brevity forces it to keep only what distinguished the day.
-    let fmt = |t: &chrono::DateTime<chrono::Utc>| match tz {
-        Some(z) => t.with_timezone(&z).format("%H:%M").to_string(),
-        None => t.format("%H:%M").to_string(),
+    let Some(diary) =
+        crate::api::day_article::write_day(pool, date, tz.as_ref(), &start_str, &end_str).await?
+    else {
+        return Ok(None);
     };
-    let mut prompt = format!(
-        "# {}\n\n## The day's events (already logged — do NOT re-list them; write the memory of the day)\n\n",
-        date.format("%A, %B %-d, %Y")
-    );
-    for (i, e) in events.iter().enumerate() {
-        prompt.push_str(&format!("- {}–{} {}", fmt(&e.started_at), fmt(&e.ended_at), e.label));
-        if let Some(s) = e.event_summary.as_deref().filter(|s| !s.trim().is_empty()) {
-            prompt.push_str(&format!(": {s}"));
-        }
-        if Some(i) == standout {
-            prompt.push_str("  (the most unusual beat of the day)");
-        }
-        prompt.push('\n');
-    }
-
-    if let Some(h) = build_health_snapshot(pool, &start_str, &end_str).await? {
-        append_section(&mut prompt, &h);
-    }
-
-    // The last 14 days — only to recognise a real recurrence or a genuine first
-    // ("first kayak in months", "same thread as Saturday"), never to invent a
-    // pattern. Empty on a cold start.
-    let case_file = recent_event_case_file(pool, date, tz.as_ref()).await?;
-    if !case_file.is_empty() {
-        prompt.push_str("\n## Recent days (the last two weeks)\n\n");
-        prompt.push_str(&case_file);
-    }
-
-    // The day's resolved people + places, each as its exact ref-link, so the
-    // biography can cite them the way chat/pages do — `[Name](/person/person_x)` —
-    // which the day page renders as an entity pill (link-when-reading).
-    let entities = day_entities_for_refs(pool, &start_str, &end_str).await?;
-    if !entities.is_empty() {
-        prompt.push_str("\n## Entities you may link (copy the exact markdown link)\n");
-        prompt.push_str(&entities.join("\n"));
-        prompt.push('\n');
-    }
-
-    // Chat slot: this is the narrative call, and the only one left that earns it.
-    // Slot DEFAULT via the completion helper, never the pinned chat model.
-    let raw = call_virtues_api(pool, NARRATE_PROMPT, ModelSlot::Chat, &prompt).await?;
-    let mut diary = parse_virtues_api_response(&raw);
-    diary = strip_prompt_echo(&diary);
-    diary = unlink_uninvited_refs(&diary, &entities);
 
     // The only field narration has ever really set. `epigraph` and
     // `data_quality` went with the prompt that forbids them, and
@@ -952,61 +816,7 @@ fn append_section(prompt: &mut String, section: &PromptSection) {
 
 // ── The dossier ────────────────────────────────────────────────────────────────
 
-/// An event row for narration. `novelty_z` is a soft selection hint (and the
-/// scoring-reaches-the-biography guard); the biography leans on brevity, not scores.
-#[derive(sqlx::FromRow)]
-struct DayEventRow {
-    label: String,
-    event_summary: Option<String>,
-    started_at: chrono::DateTime<chrono::Utc>,
-    ended_at: chrono::DateTime<chrono::Utc>,
-    novelty_z: Option<f64>,
-}
 
-/// The day's resolved people + places, each as its exact ref-link route, so the
-/// biography can cite them the way chat/pages do — `[Name](/person/person_x)` — and
-/// the day page renders them as entity pills.
-async fn day_entities_for_refs(
-    pool: &PgPool,
-    start_str: &str,
-    end_str: &str,
-) -> Result<Vec<String>> {
-    Ok({
-        use sqlx::Row;
-        let rows = sqlx::query(
-            "SELECT 'person' AS kind, pe.id AS id, pe.name AS name \
-         FROM wiki_refs er JOIN wiki_people pe ON pe.id = er.entity_id \
-         WHERE er.entity_type = 'person' \
-           AND er.occurred_at >= $1::timestamptz AND er.occurred_at <= $2::timestamptz \
-         UNION \
-         SELECT 'place', p.id, p.name \
-         FROM wiki_refs er JOIN wiki_places p ON p.id = er.entity_id \
-         WHERE er.entity_type = 'place' \
-           AND er.occurred_at >= $1::timestamptz AND er.occurred_at <= $2::timestamptz \
-         UNION \
-         SELECT 'org', o.id, o.name \
-         FROM wiki_refs er JOIN wiki_orgs o ON o.id = er.entity_id \
-         WHERE er.entity_type = 'organization' \
-           AND er.occurred_at >= $1::timestamptz AND er.occurred_at <= $2::timestamptz",
-        )
-        .bind(start_str)
-        .bind(end_str)
-        .fetch_all(pool)
-        .await?;
-        rows.iter()
-            .filter_map(|r| {
-                let kind: String = r.get("kind");
-                let id: String = r.get("id");
-                let name = r
-                    .try_get::<Option<String>, _>("name")
-                    .ok()
-                    .flatten()
-                    .filter(|s| !s.trim().is_empty())?;
-                Some(format!("- [{name}](/{kind}/{id})"))
-            })
-            .collect()
-    })
-}
 
 /// Cap a free-text field to `n` chars, appending an ellipsis when it was clipped.
 /// This is what bounds the dossier by construction — audio content especially.
@@ -1935,43 +1745,6 @@ async fn recent_event_labels(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>) ->
     })
 }
 
-/// The day-summary's FULL case file — the last 14 days of events, label + summary,
-/// grouped by day. This is where recent context earns its keep, for voice and for
-/// dated temporal echoes. Empty string on a cold start.
-async fn recent_event_case_file(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>) -> Result<String> {
-    Ok({
-        let _ = tz;
-        let rows = sqlx::query_as::<_, (NaiveDate, String, Option<String>)>(
-        "SELECT d.date, COALESCE(e.user_label, e.auto_label, '(unlabeled)') AS label, e.event_summary \
-         FROM wiki_events e JOIN wiki_days d ON d.id = e.day_id \
-         WHERE d.date >= $1 AND d.date < $2 AND NOT e.is_unknown AND NOT e.user_hidden \
-         ORDER BY d.date, e.started_at",
-    )
-    .bind(date - chrono::Duration::days(14))
-    .bind(date)
-    .fetch_all(pool)
-    .await?;
-
-        if rows.is_empty() {
-            return Ok(String::new());
-        }
-
-        use std::collections::BTreeMap;
-        let mut by_day: BTreeMap<NaiveDate, Vec<String>> = BTreeMap::new();
-        for (d, label, summary) in rows {
-            let line = match summary.as_deref().filter(|s| !s.trim().is_empty()) {
-                Some(s) => format!("  - {}: {}", label, cap(s, 200)),
-                None => format!("  - {}", label),
-            };
-            by_day.entry(d).or_default().push(line);
-        }
-        by_day
-            .into_iter()
-            .map(|(d, lines)| format!("{}\n{}", d.format("%A, %B %-d"), lines.join("\n")))
-            .collect::<Vec<_>>()
-            .join("\n\n")
-    })
-}
 
 
 // ── virtues-api call ───────────────────────────────────────────────────────────
@@ -2111,101 +1884,8 @@ fn parse_events_salvaging(raw: &str) -> Option<Vec<LlmEvent>> {
     Some(events)
 }
 
-/// Drop prompt-instruction echo from the article prose.
-///
-/// Observed live (2025-12-16): the model opened its output with
-/// "Entities you may link: [David](/person/…), …" followed by a `---` rule —
-/// the prompt's own instruction header, reproduced as if it were the
-/// article's front matter. The prompt now forbids it, but a prompt is a
-/// request; this is the guarantee. Any line carrying the header is dropped,
-/// along with a horizontal rule left stranded directly beneath it.
-fn strip_prompt_echo(prose: &str) -> String {
-    let mut out: Vec<&str> = Vec::new();
-    let mut dropping_rule = false;
-    for line in prose.lines() {
-        if line.trim_start().starts_with("Entities you may link") {
-            dropping_rule = true;
-            continue;
-        }
-        if dropping_rule {
-            let t = line.trim();
-            if t.is_empty() {
-                continue;
-            }
-            dropping_rule = false;
-            if t.chars().all(|c| c == '-') && t.len() >= 3 {
-                continue;
-            }
-        }
-        out.push(line);
-    }
-    // The drop can leave leading blank lines where the header sat.
-    let joined = out.join("\n");
-    joined.trim_start_matches('\n').to_string()
-}
 
-/// Unlink any entity ref-link the candidate list did not sanction.
-///
-/// Observed live (2025-12-16): a day whose window held ZERO entity refs got
-/// no "Entities you may link" section at all — and the model, knowing the
-/// format from its instructions, fabricated ids in the right shape
-/// (`/person/person_5a4c`) and linked them through the prose. A dead link in
-/// a day article is worse than no link: it looks like the record knows
-/// someone it does not.
-///
-/// The candidate list is the ONLY sanctioned source of ref-links, so this is
-/// exactly decidable: a `/person/`, `/place/` or `/org/` link whose URL is
-/// not in the list is replaced by its own text. The name survives — it is
-/// real prose; the link was the fabrication.
-fn unlink_uninvited_refs(prose: &str, candidates: &[String]) -> String {
-    // The candidate lines are `[Name](/kind/id)`; sanctioned = their URLs.
-    let allowed: std::collections::HashSet<&str> = candidates
-        .iter()
-        .filter_map(|line| {
-            let open = line.find("](")?;
-            let close = line[open + 2..].find(')')?;
-            Some(&line[open + 2..open + 2 + close])
-        })
-        .collect();
 
-    let mut out = String::with_capacity(prose.len());
-    let mut rest = prose;
-    while let Some(start) = rest.find('[') {
-        let Some(mid) = rest[start..].find("](") else {
-            break;
-        };
-        let text_end = start + mid;
-        let url_start = text_end + 2;
-        let Some(url_len) = rest[url_start..].find(')') else {
-            break;
-        };
-        let url = &rest[url_start..url_start + url_len];
-        let is_ref = url.starts_with("/person/") || url.starts_with("/place/") || url.starts_with("/org/");
-        out.push_str(&rest[..start]);
-        if is_ref && !allowed.contains(url) {
-            // The text, shorn of its invented link.
-            out.push_str(&rest[start + 1..text_end]);
-        } else {
-            out.push_str(&rest[start..url_start + url_len + 1]);
-        }
-        rest = &rest[url_start + url_len + 1..];
-    }
-    out.push_str(rest);
-    out
-}
-
-/// The model's reply IS the article. Nothing is split off it.
-///
-/// This used to carve `---EPIGRAPH---` and `---DATA_QUALITY---` off the end
-/// and store both on `wiki_days`. The narrate prompt has forbidden the model
-/// to emit either for months ("no epigraph, no closing metric, no data
-/// quality note"), so both parsed to None on every run while three columns,
-/// a request struct, an HTTP route and a CLI branch went on carrying them.
-/// A parser for output a prompt forbids is not defensive, it is a second
-/// description of the format that nobody keeps true.
-fn parse_virtues_api_response(response: &str) -> String {
-    response.trim().to_string()
-}
 
 /// Store LLM-identified events as wiki_events rows — delete the old cut and land
 /// the new one in ONE transaction.
@@ -2758,49 +2438,7 @@ mod queue_tests {
 mod dossier_tests {
     use super::*;
 
-    /// The exact shape observed live on 2025-12-16: instruction header with
-    /// resolved links, a stranded rule beneath it, then the real article.
-    /// The guard must remove the first two and not touch a legitimate `---`
-    /// elsewhere in the prose.
-    #[test]
-    fn prompt_echo_is_stripped_and_real_rules_survive() {
-        let leaked = "Entities you may link: [David](/person/p_1), [Jess](/person/p_2).\n\n---\n\nA clear, cold Tuesday.\n\n## The dashboard\n\nBody with [David](/person/p_1) linked inline.\n\n---\n\nA closing aside.";
-        let cleaned = strip_prompt_echo(leaked);
-        assert!(cleaned.starts_with("A clear, cold Tuesday."));
-        assert!(!cleaned.contains("Entities you may link"));
-        assert!(
-            cleaned.contains("---"),
-            "a rule that belongs to the article must survive"
-        );
-        assert!(cleaned.contains("[David](/person/p_1) linked inline"));
 
-        // Clean prose passes through untouched.
-        let clean = "A lede.\n\n## A section\n\nProse.";
-        assert_eq!(strip_prompt_echo(clean), clean);
-    }
-
-    /// The 2025-12-16 fabrication: zero candidates offered, yet the model
-    /// linked invented ids through the prose. Sanctioned links survive
-    /// verbatim; invented ones lose the link and keep the name; non-ref
-    /// markdown links are not the guard's business.
-    #[test]
-    fn invented_ref_links_are_unlinked_and_sanctioned_ones_survive() {
-        let candidates = vec!["- [Maya](/person/person_demo_maya)".to_string()];
-        let prose = "Standup with [Maya](/person/person_demo_maya) and \
-                     [David](/person/person_5a4c), then the run at \
-                     [Mueller trails](/place/place_5daf). See \
-                     [the doc](https://example.com/x).";
-        let cleaned = unlink_uninvited_refs(prose, &candidates);
-        assert!(cleaned.contains("[Maya](/person/person_demo_maya)"));
-        assert!(cleaned.contains("and David,"), "invented link keeps its name: {cleaned}");
-        assert!(!cleaned.contains("person_5a4c"));
-        assert!(!cleaned.contains("place_5daf"));
-        assert!(cleaned.contains("[the doc](https://example.com/x)"));
-
-        // Zero candidates: every ref-link is invented by definition.
-        let none = unlink_uninvited_refs("Met [Jess](/person/person_9c2e).", &[]);
-        assert_eq!(none, "Met Jess.");
-    }
 
     /// The GAP regression: a subscribed calendar said "Community Dinner" while the
     /// owner sat at a Mac the whole evening, and the dossier showed only the plan.
