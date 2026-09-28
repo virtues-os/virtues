@@ -76,6 +76,37 @@ def bbox(z: int, x: int, y: int) -> str:
     return f"{lon(x) + e},{lat(y + 1) + e},{lon(x + 1) - e},{lat(y) - e}"
 
 
+def download(url: str, dest: Path) -> None:
+    """Download one very large file, resuming until it is whole.
+
+    A ~140 GB transfer rarely survives in one piece: the host resets long
+    streams (seen: curl 92, HTTP/2 INTERNAL_ERROR, ~37 GB in). curl's --retry
+    does not cover a reset mid-body, so resume from the partial file until its
+    size matches what the server says the file is. HTTP/1.1 because a single
+    long HTTP/2 stream is the thing that gets reset.
+    """
+    head = subprocess.run(["curl", "-fsSIL", "--http1.1", url], capture_output=True, text=True, check=True).stdout
+    sizes = [int(l.split(":", 1)[1]) for l in head.lower().splitlines() if l.startswith("content-length:")]
+    if not sizes:
+        raise RuntimeError(f"{url}: no Content-Length, cannot tell when the download is whole")
+    total = sizes[-1]
+    part = Path(f"{dest}.part")
+    log(f"downloading the planet ({total / 1e9:.0f} GB, resumable)")
+    for attempt in range(1, 61):
+        subprocess.run(["curl", "-fsSL", "--http1.1", "--retry", "10", "--retry-all-errors", "--retry-delay", "5",
+                        "-C", "-", "-o", str(part), url])
+        have = part.stat().st_size if part.exists() else 0
+        if have == total:
+            part.rename(dest)
+            log("✓ planet downloaded")
+            return
+        if have > total:
+            part.unlink()  # a different file behind the same name; start over
+        log(f"download stopped at {have / 1e9:.1f} of {total / 1e9:.1f} GB (attempt {attempt}); resuming")
+        time.sleep(10)
+    raise RuntimeError(f"{url}: gave up after 60 attempts")
+
+
 def extract(pmtiles: str, src: str, out: Path, *args: str) -> None:
     if not any(a.startswith("--bbox=") for a in args) and out.name != "world.pmtiles":
         # Never a bbox-less cut of a square: that is the whole planet (138 GB).
@@ -150,9 +181,7 @@ def main() -> None:
     planet = maps_dir / f"planet-{build}.pmtiles"
     if not args.remote:
         if not planet.exists():
-            log("downloading the planet (~140 GB, resumable)")
-            subprocess.run(["curl", "-fsSL", "--retry", "5", "-C", "-", "-o", f"{planet}.part", src], check=True)
-            Path(f"{planet}.part").rename(planet)
+            download(src, planet)
         src = str(planet)
 
     files = []
