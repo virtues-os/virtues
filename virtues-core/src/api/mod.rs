@@ -28,6 +28,7 @@ pub mod code;
 pub mod compaction;
 pub mod credentials;
 pub mod image_gen;
+pub mod day_article;
 pub mod day_summary;
 pub mod developer;
 pub mod drive;
