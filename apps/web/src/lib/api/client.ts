@@ -1324,6 +1324,17 @@ export async function uploadDriveFile(
 }
 
 /**
+ * Path of a message's stored attachment (an iMessage photo the Mac sent), by
+ * the message row's id and the attachment's position in
+ * `metadata.attachments`. Use as an image src via `backendUrl(...)`. 404 until
+ * the Mac has sent it — iCloud may not have downloaded it yet, and video and
+ * audio are never sent.
+ */
+export function messageAttachmentPath(messageId: string, index: number): string {
+	return `${API_BASE}/messages/${encodeURIComponent(messageId)}/attachments/${index}`;
+}
+
+/**
  * Download a file from drive
  */
 export async function downloadDriveFile(fileId: string): Promise<{ file: DriveFile; blob: Blob }> {

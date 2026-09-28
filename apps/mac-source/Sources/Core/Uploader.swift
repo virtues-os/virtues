@@ -123,6 +123,12 @@ class Uploader {
         totalUploaded += result.uploaded
         totalFailed += result.failed
 
+        // Then attachment bytes and deletions, on posts of their own, after
+        // the messages they belong to (see uploadAttachments).
+        if !isAuthPaused {
+            await uploadAttachments()
+        }
+
         // Log summary
         if totalUploaded > 0 || totalFailed > 0 {
             print("📤 Upload summary: \(totalUploaded) successful, \(totalFailed) failed")
@@ -281,6 +287,144 @@ class Uploader {
             print("Upload error: \(error)")
             retryDelay = min(retryDelay * 2, maxRetryDelay)
             return (0, 0)
+        }
+    }
+
+    // MARK: - Attachments
+
+    /// Bytes sent per cycle, across posts. At the 5-minute cadence this is
+    /// ~14 GB a day at most — a large backfill drains in days without any one
+    /// cycle holding the connection for long.
+    private let attachmentBytesPerCycle = 48 * 1024 * 1024
+    /// Bytes per post, before base64. One attachment over this still goes,
+    /// alone (the cap on a single attachment is 10 MB).
+    private let attachmentBytesPerPost = 12 * 1024 * 1024
+    private let attachmentsPerPost = 8
+
+    /// Send pending deletions, then pending attachment bytes, to `mac_ingest`.
+    ///
+    /// Each post is its own applet run, so a failure holds only that post:
+    /// anything not acknowledged with a 200 stays queued and goes next cycle.
+    /// A file that is not on disk yet (Messages in iCloud downloads lazily) is
+    /// marked unavailable and looked at again later — never an error, and it
+    /// never touches message sync.
+    private func uploadAttachments() async {
+        guard let appletId = await macActivityAppletId(),
+            let url = URL(string: "\(config.apiEndpoint)/webhook/\(appletId)")
+        else { return }
+
+        // Deletions first: the owner removed these, so the box should too
+        // before it is handed anything new.
+        do {
+            let deleted = try queue.pendingDeletionMessageGuids()
+            if !deleted.isEmpty {
+                let payload: [String: Any] = [
+                    "device_id": config.deviceId,
+                    "imessage_deletions": deleted.map { ["message_guid": $0] },
+                ]
+                guard await postAttachmentPayload(payload, to: url) else { return }
+                try queue.markDeletionsSent(deleted)
+                print("✓ Told the box about \(deleted.count) messages deleted in Messages")
+            }
+        } catch {
+            print("⚠️ Attachment deletions: \(error)")
+            return
+        }
+
+        var budget = attachmentBytesPerCycle
+        let candidates: [QueuedAttachment]
+        do {
+            candidates = try queue.getSendableAttachments(limit: 200)
+        } catch {
+            print("⚠️ Attachment queue unreadable: \(error)")
+            return
+        }
+        if candidates.isEmpty { return }
+
+        var batch: [(guid: String, record: [String: Any], bytes: Int)] = []
+        var batchBytes = 0
+        var sent = 0
+        var notYet = 0
+
+        func flush() async -> Bool {
+            guard !batch.isEmpty else { return true }
+            let payload: [String: Any] = [
+                "device_id": config.deviceId,
+                "imessage_attachments": batch.map { $0.record },
+            ]
+            guard await postAttachmentPayload(payload, to: url) else { return false }
+            do {
+                try queue.markAttachmentsUploaded(batch.map { $0.guid })
+            } catch {
+                // The box has them; a re-send is deduplicated there by key.
+                print("⚠️ Could not mark attachments sent: \(error)")
+            }
+            sent += batch.count
+            budget -= batchBytes
+            batch.removeAll()
+            batchBytes = 0
+            return true
+        }
+
+        candidateLoop: for att in candidates {
+            if budget <= 0 { break }
+            switch AttachmentReader.read(att) {
+            case .notYetDownloaded:
+                notYet += 1
+                try? queue.markAttachmentUnavailable(att.attachmentGuid, attempts: att.attempts + 1)
+            case .skip(let why):
+                try? queue.markAttachmentSkipped(att.attachmentGuid, reason: why)
+            case .ready(let data, let mime):
+                if !batch.isEmpty
+                    && (batchBytes + data.count > attachmentBytesPerPost || batch.count >= attachmentsPerPost)
+                {
+                    guard await flush() else { return }
+                    if budget <= 0 { break candidateLoop }
+                }
+                var record: [String: Any] = [
+                    "message_guid": att.messageGuid,
+                    "attachment_guid": att.attachmentGuid,
+                    "index": att.index,
+                    "mime_type": mime,
+                    "data": data.base64EncodedString(),
+                ]
+                if let m = att.mimeType { record["original_mime_type"] = m }
+                if let f = att.filename { record["filename"] = f }
+                batch.append((att.attachmentGuid, record, data.count))
+                batchBytes += data.count
+            }
+        }
+        _ = await flush()
+        if sent > 0 || notYet > 0 {
+            print("📎 Attachments: \(sent) sent, \(notYet) not downloaded yet (will retry)")
+        }
+    }
+
+    /// POST one attachment/deletion payload. True only on a 200.
+    private func postAttachmentPayload(_ payload: [String: Any], to url: URL) async -> Bool {
+        do {
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(Version.clientHeader, forHTTPHeaderField: "X-Virtues-Client")
+            request.setValue(Version.userAgent, forHTTPHeaderField: "User-Agent")
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+            let (data, http) = try await BoxTransport.shared.send(request)
+            switch http.statusCode {
+            case 200:
+                return true
+            case 401:
+                handle401(data)
+            case 404:
+                appletIdIsStale = true
+                cachedAppletId = nil
+            default:
+                print("Attachment upload failed with status: \(http.statusCode)")
+            }
+            return false
+        } catch {
+            print("Attachment upload error: \(error)")
+            return false
         }
     }
 
