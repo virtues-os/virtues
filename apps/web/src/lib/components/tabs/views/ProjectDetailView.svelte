@@ -17,7 +17,6 @@
 	import { Popover } from '$lib/floating';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import { toast } from 'svelte-sonner';
-	import { notifyArchived, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { getRefSummary } from '$lib/utils/refSummary';
 	import {
 		getPage,
@@ -29,7 +28,16 @@
 	} from '$lib/api/client';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
 	import { projectColor } from '$lib/sidebar/pin-colors';
-	import { droppedRefUrl, fileIntoProject, isProjectUrl, removeFromProject } from '$lib/utils/projectActions';
+	import {
+		archiveProject,
+		deleteProject,
+		droppedRefUrl,
+		fileIntoProject,
+		isProjectUrl,
+		openProjects,
+		removeFromProject,
+		unarchiveProject,
+	} from '$lib/utils/projectActions';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
@@ -632,52 +640,18 @@
 	// ---- Archive -------------------------------------------------------------
 	// Reversible, so no confirm. The project stays open in this tab, marked.
 	async function toggleArchive() {
-		const id = projectId;
-		if (!id || !detail) return;
-		// Read both off the detail we have now: `load()` below replaces it, and
-		// the toast is about the project as it was when you clicked.
-		const wasArchived = !!detail.archived_at;
-		const name = detail.name;
-		try {
-			if (wasArchived) await projectStore.unarchive(id);
-			else await projectStore.archive(id);
-			// Only the archive direction gets a toast. Unarchiving is what the
-			// toast's own Undo does, and the project reappearing in the list is
-			// the confirmation.
-			if (!wasArchived) notifyArchived(id, name);
-		} catch (e) {
-			console.error('[ProjectDetailView] archive failed:', e);
-			toast.error(
-				wasArchived
-					? `Your server couldn't reopen "${name}"`
-					: `Your server couldn't archive "${name}"`,
-				{ description: 'Nothing changed. Try again' },
-			);
-		}
+		if (!detail) return;
+		if (detail.archived_at) await unarchiveProject(detail);
+		else await archiveProject(detail);
 	}
 
 	// ---- Delete --------------------------------------------------------------
-	// No confirm. The delete is a trip to Recently deleted and the toast hands
-	// back the Undo, so a dialog asking whether you meant it only stands between
-	// you and a reversible act. Its chats, pages and files stay where they are.
+	// No confirm: a trip to Recently deleted, with the Undo in the toast. Its
+	// chats, pages and files stay where they are. The page it was on goes, so
+	// the window lands on the list.
 	async function doDelete() {
-		const id = projectId;
-		if (!id || !detail) return;
-		// Captured before the delete closes it: Undo should put back the tab you
-		// were looking at, and only if you were looking at one.
-		const reopen = routeIfOpen(`/project/${id}`);
-		const name = detail.name;
-		try {
-			await projectStore.remove(id);
-			windowShellStore.closeTabsByRoute(`/project/${id}`);
-			windowShellStore.openTabFromRoute('/projects', { focusExisting: true });
-			notifyTrashed({ kind: 'project', id, name, reopen });
-		} catch (e) {
-			console.error('[ProjectDetailView] delete failed:', e);
-			toast.error(`Your server couldn't delete "${name}"`, {
-				description: 'It\'s still here. Try again',
-			});
-		}
+		if (!detail) return;
+		if (await deleteProject(detail)) openProjects();
 	}
 
 </script>

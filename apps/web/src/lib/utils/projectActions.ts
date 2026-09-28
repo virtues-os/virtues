@@ -14,6 +14,9 @@ import { projectStore } from '$lib/stores/project.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import { promptText } from '$lib/stores/dialog.svelte';
 import { toast } from 'svelte-sonner';
+import { pendingPrompt } from '$lib/stores/pendingPrompt.svelte';
+import { pinMenuItem } from '$lib/pins/pinAction';
+import { notifyArchived, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 
 export async function newProject(): Promise<void> {
 	const name = (
@@ -285,6 +288,124 @@ export function projectChipMenuItems(
 			icon: 'ri:close-line',
 			dividerBefore: true,
 			action: () => removeFromProject(project, target),
+		},
+	];
+}
+
+// ── A project's own verbs ────────────────────────────────────────────────
+// The sidebar row, the projects page and the project's own header all offer
+// these; one copy each, so a rename or a delete behaves the same from every
+// door.
+
+/**
+ * A new chat that already lives in the project: the draft is staged for the
+ * next chat to claim, as "Ask this project" does, so its first message files
+ * it and grounds retrieval there.
+ */
+export function newChatInProject(project: Pick<Project, 'id'>): void {
+	pendingPrompt.setProject(project.id);
+	windowShellStore.openTabFromRoute('/', { label: 'New chat' });
+}
+
+export async function renameProject(project: Pick<Project, 'id' | 'name'>): Promise<void> {
+	const name = (
+		await promptText({ title: 'Rename project', initialValue: project.name, confirmLabel: 'Rename' })
+	)?.trim();
+	if (!name || name === project.name) return;
+	try {
+		await projectStore.update(project.id, { name });
+	} catch (e) {
+		console.error('[projectActions] rename failed:', e);
+		toast.error(`Your server couldn't rename "${project.name}"`, {
+			description: 'Nothing changed. Try again',
+		});
+	}
+}
+
+/** Reversible, so no confirm: the toast carries the Undo. */
+export async function archiveProject(project: Pick<Project, 'id' | 'name'>): Promise<void> {
+	try {
+		await projectStore.archive(project.id);
+		notifyArchived(project.id, project.name);
+	} catch (e) {
+		console.error('[projectActions] archive failed:', e);
+		toast.error(`Your server couldn't archive "${project.name}"`, {
+			description: 'Nothing changed. Try again',
+		});
+	}
+}
+
+export async function unarchiveProject(project: Pick<Project, 'id' | 'name'>): Promise<void> {
+	try {
+		await projectStore.unarchive(project.id);
+	} catch (e) {
+		console.error('[projectActions] unarchive failed:', e);
+		toast.error(`Your server couldn't reopen "${project.name}"`, {
+			description: 'Nothing changed. Try again',
+		});
+	}
+}
+
+/**
+ * A trip to Recently deleted, with the Undo in the toast. Its chats, pages
+ * and files stay where they are; only the project goes. Returns whether it
+ * went, for a caller that has somewhere to go next.
+ */
+export async function deleteProject(project: Pick<Project, 'id' | 'name'>): Promise<boolean> {
+	const route = `/project/${project.id}`;
+	const reopen = routeIfOpen(route);
+	try {
+		await projectStore.remove(project.id);
+		windowShellStore.closeTabsByRoute(route);
+		notifyTrashed({ kind: 'project', id: project.id, name: project.name, reopen });
+		return true;
+	} catch (e) {
+		console.error('[projectActions] delete failed:', e);
+		toast.error(`Your server couldn't delete "${project.name}"`, {
+			description: "It's still here. Try again",
+		});
+		return false;
+	}
+}
+
+/** The menu on a project itself, wherever it is listed. */
+export function projectRowMenuItems(
+	project: Pick<ProjectSummary, 'id' | 'name' | 'icon' | 'archived_at'>,
+): ContextMenuItem[] {
+	const url = `/project/${project.id}`;
+	if (project.archived_at) {
+		return [
+			{ id: 'open', label: 'Open', icon: PROJECT_ICON, action: () => openProject(project) },
+			{ id: 'unarchive', label: 'Unarchive', icon: 'ri:inbox-unarchive-line', action: () => unarchiveProject(project) },
+			{
+				id: 'delete',
+				label: 'Delete',
+				icon: 'ri:delete-bin-line',
+				variant: 'destructive',
+				dividerBefore: true,
+				action: () => void deleteProject(project),
+			},
+		];
+	}
+	return [
+		{
+			id: 'open-beside',
+			label: 'Open beside',
+			icon: 'ri:layout-column-line',
+			action: () => void windowShellStore.openRouteBeside(url, project.name),
+		},
+		{ id: 'new-chat', label: 'New chat here', icon: 'ri:chat-new-line', action: () => newChatInProject(project) },
+		{ id: 'rename', label: 'Rename', icon: 'ri:edit-line', action: () => renameProject(project) },
+		// No "Add to project": you can't put a project in a project.
+		pinMenuItem({ url, label: project.name, icon: project.icon }),
+		{ id: 'archive', label: 'Archive', icon: 'ri:archive-line', action: () => archiveProject(project) },
+		{
+			id: 'delete',
+			label: 'Delete',
+			icon: 'ri:delete-bin-line',
+			variant: 'destructive',
+			dividerBefore: true,
+			action: () => void deleteProject(project),
 		},
 	];
 }

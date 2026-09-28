@@ -58,7 +58,6 @@
 	import { pagesStore } from '$lib/stores/pages.svelte';
 	import { pinsStore } from '$lib/stores/pins.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { pendingPrompt } from '$lib/stores/pendingPrompt.svelte';
 	import { sidebarZones } from '$lib/stores/sidebarZones.svelte';
 	import { search } from '$lib/stores/search.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
@@ -73,7 +72,7 @@
 	} from '$lib/api/client';
 	import { pinMenuItem, pinIconMenuItem, isPinned, togglePin } from '$lib/pins/pinAction';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
-	import { notifyArchived, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
+	import { notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { toast } from 'svelte-sonner';
 	import { clothFor, projectColor } from '$lib/sidebar/pin-colors';
 	import { isEmoji, PROJECT_ICON } from '$lib/utils/iconHelpers';
@@ -81,8 +80,10 @@
 		droppedRefUrl,
 		fileIntoProject,
 		isRefDrag,
+		newChatInProject,
 		newProject,
 		openProjects,
+		projectRowMenuItems,
 		projectMemberUrl,
 		startRefDrag,
 	} from '$lib/utils/projectActions';
@@ -299,8 +300,7 @@
 	 */
 	function newChatIn(p: ProjectSummary) {
 		closeCard();
-		pendingPrompt.setProject(p.id);
-		windowShellStore.openTabFromRoute('/', { label: 'New chat' });
+		newChatInProject(p);
 	}
 
 // ── the verbs, per kind ────────────────────────────────────────────────
@@ -388,49 +388,6 @@
 		}
 	}
 
-	async function renameProject(p: ProjectSummary) {
-		const next = await promptText({
-			title: 'Rename project',
-			initialValue: p.name,
-			confirmLabel: 'Rename',
-		});
-		const name = next?.trim();
-		if (!name || name === p.name) return;
-		try {
-			await projectStore.update(p.id, { name });
-			relabelTabs(projectRoute(p), name);
-		} catch (e) {
-			console.error('[HomePanel] rename failed:', e);
-		}
-	}
-
-	async function archiveProject(p: ProjectSummary) {
-		closeCard();
-		try {
-			await projectStore.archive(p.id);
-			notifyArchived(p.id, p.name);
-		} catch (e) {
-			console.error('[HomePanel] Failed to archive project:', e);
-			toast.error(`Your server couldn't archive "${p.name}"`, {
-				description: 'Nothing changed. Try again',
-			});
-		}
-	}
-
-	// Its chats and pages stay where they are; only the project is filed away.
-	async function removeProject(p: ProjectSummary) {
-		const reopen = routeIfOpen(projectRoute(p));
-		try {
-			windowShellStore.closeTabsByRoute(projectRoute(p));
-			await projectStore.remove(p.id);
-			notifyTrashed({ kind: 'project', id: p.id, name: p.name, reopen });
-		} catch (e) {
-			console.error('[HomePanel] Failed to delete project:', e);
-			toast.error(`Your server couldn't delete "${p.name}"`, {
-				description: "It's still here. Try again",
-			});
-		}
-	}
 
 	function chatMenu(s: ChatSession): ContextMenuItem[] {
 		const url = chatRoute(s);
@@ -492,33 +449,17 @@
 		];
 	}
 
+	/** The shared project menu; the hover card closes first, one floating thing at a time. */
 	function projectMenu(p: ProjectSummary): ContextMenuItem[] {
-		const url = projectRoute(p);
-		return [
-			{
-				id: 'open-beside',
-				label: 'Open beside',
-				icon: 'ri:layout-column-line',
-				action: () => {
-					windowShellStore.openRouteBeside(url, p.name);
-				},
-			},
-			{ id: 'new-chat', label: 'New chat here', icon: 'ri:chat-new-line', action: () => newChatIn(p) },
-			{ id: 'rename', label: 'Rename', icon: 'ri:edit-line', action: () => renameProject(p) },
-			// No "Add to project" here: you can't put a project in a project.
-			pinMenuItem({ url, label: p.name, icon: p.icon }),
-			// Closing a project is reversible (the Archived fold on Projects), so
-			// no confirm: the row leaving is the feedback.
-			{ id: 'archive', label: 'Archive', icon: 'ri:archive-line', action: () => archiveProject(p) },
-			{
-				id: 'delete',
-				label: 'Delete',
-				icon: 'ri:delete-bin-line',
-				variant: 'destructive',
-				dividerBefore: true,
-				action: () => removeProject(p),
-			},
-		];
+		return projectRowMenuItems(p).map((item) => ({
+			...item,
+			action: item.action
+				? () => {
+						closeCard();
+						return item.action?.();
+					}
+				: undefined,
+		}));
 	}
 
 	function pinMenu(pin: Pin, at: { x: number; y: number }): ContextMenuItem[] {
