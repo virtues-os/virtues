@@ -115,7 +115,10 @@
 	import CompactionCheckpoint from "$lib/components/chat/CompactionCheckpoint.svelte";
 	import ContextViewPanel from "$lib/components/chat/ContextViewPanel.svelte";
 	import { ChatError } from "$lib/components/chat";
-	import type { AgentModeId } from "$lib/config/agentModes";
+	import { availableModes, type AgentModeId } from "$lib/config/agentModes";
+	import LocalModelCard from "$lib/components/chat/local/LocalModelCard.svelte";
+	import LocalStatsLine from "$lib/components/chat/local/LocalStatsLine.svelte";
+	import { localModel } from "$lib/stores/localModel.svelte";
 
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -532,6 +535,7 @@
 				getAgentMode: () => selectedAgentMode,
 				getChatMode: () => chatMode,
 				getTemporary: () => isGhost,
+				getThink: () => localThink,
 			});
 			// The draft this conversation left behind, if the composer is empty.
 			if (!isGhost && !input) {
@@ -709,6 +713,8 @@
 
 	// Load conversation data on mount
 	onMount(() => {
+		// Whether this box offers local mode, asked once per session.
+		void localModel.load();
 		// (The project list used to be fetched here for the breadcrumb's name
 		// and accent. The app layout already loads it, and nothing in this view
 		// renders a project's name any more.)
@@ -951,6 +957,25 @@
 
 	// Agent mode and persona selection state - used for tool filtering on backend
 	let selectedAgentMode = $state<AgentModeId>('chat');
+	// Local mode's "Think first" switch, sent with each local turn.
+	let localThink = $state(false);
+	const isLocal = $derived(selectedAgentMode === 'local');
+
+	// A mode change. Local only on an empty chat, and a local chat stays local:
+	// its history must never ride a later cloud turn, and a stored chat must
+	// never become local. Local chats are temporary chats, so everything that
+	// skips a ghost (drafts, title generation, storage) skips them too.
+	function changeMode(mode: AgentModeId) {
+		if ((mode === 'local' || isLocal) && !isEmpty) return;
+		if (mode === 'local') {
+			isGhost = true;
+			if (conversationId) editAllowListStore.setChatId(conversationId, true);
+		} else if (isLocal) {
+			isGhost = isTemporaryRoute(tab.route);
+			if (conversationId) editAllowListStore.setChatId(conversationId, isGhost);
+		}
+		selectedAgentMode = mode;
+	}
 	let selectedPersona = $state<string>('default');
 
 	// Retrieval scope. 'scoped' (grounded in a project's items only) still
@@ -1367,7 +1392,8 @@
 
 			handedOff = true;
 
-			if (chat.messages.length >= 2 && !isGhost && !titleGenerated) {
+			// Titles come from a cloud model, so a local chat never asks for one.
+			if (chat.messages.length >= 2 && !isGhost && !isLocal && !titleGenerated) {
 				await generateTitle();
 				// Update tab route if it's a new chat
 				if (isNewChat(tab.route)) {
@@ -1436,7 +1462,8 @@
 	// Flip the current (empty) chat into a temporary/ghost chat, or back. Only
 	// allowed before the first message — we can't retroactively un-persist a turn.
 	function toggleGhost() {
-		if (!isEmpty) return;
+		// A local chat is temporary by construction; see changeMode.
+		if (!isEmpty || isLocal) return;
 		isGhost = !isGhost;
 		// The allow list has to know: a ghost's grants stay in the box's memory
 		// and never become rows.
@@ -1590,6 +1617,9 @@
 								     painting and made the room read as two products
 								     stacked. -->
 								<RoomCover />
+							{/if}
+							{#if isLocal && uniqueMessages.length > 0}
+								<LocalModelCard bind:think={localThink} />
 							{/if}
 							{#each uniqueMessages as message, messageIndex (message.id)}
 								{@const isUserMessage = message.role === "user"}
@@ -1972,6 +2002,9 @@
 											{:else if messageMetadata.get(message.id)?.budget}
 												<StoppedNotice reason="budget" />
 											{/if}
+											{#if chatInstances.getLocalStats(conversationId, message.id)}
+												<LocalStatsLine stats={chatInstances.getLocalStats(conversationId, message.id)!} />
+											{/if}
 
 											<!-- What to do with an answer once it exists.
 											     `chat.regenerate()` was reachable ONLY through the
@@ -2147,7 +2180,11 @@
 						</div>
 					{/if}
 
-					{#if isEmpty && isGhost}
+					{#if isEmpty && isLocal}
+						<div class="local-hero" in:fade={{ duration: 300 }}>
+							<LocalModelCard bind:think={localThink} />
+						</div>
+					{:else if isEmpty && isGhost}
 						<div
 							class="ghost-hero"
 							in:fade={{ duration: 300 }}
@@ -2278,14 +2315,15 @@
 							bind:value={input}
 							bind:focused={inputFocused}
 							disabled={false}
-							sendDisabled={chat.status === "submitted" || chat.status === "streaming"}
+							sendDisabled={chat.status === "submitted" || chat.status === "streaming" || (isLocal && !localModel.status.ready)}
 							isStreaming={chat.status === "streaming"}
 							maxWidth="max-w-3xl"
-							placeholder={isGhost ? "Ask Virtues (temporary)" : "Ask Virtues"}
+							placeholder={isLocal ? "Ask the local model" : isGhost ? "Ask Virtues (temporary)" : "Ask Virtues"}
 							onSubmit={(text) => handleChatSubmit(text)}
 							onStop={() => handleChatStop()}
 							agentMode={selectedAgentMode}
-							onModeChange={(mode) => (selectedAgentMode = mode)}
+							onModeChange={changeMode}
+							modes={availableModes(selectedAgentMode, { localSupported: localModel.status.supported, empty: isEmpty })}
 						/>
 						{/if}
 
@@ -2521,6 +2559,26 @@
 		text-align: center;
 		padding: 0 1.5rem;
 		pointer-events: none;
+	}
+
+	/* The local card sits where the ghost title does, above the centered
+	   composer, at the measure of the words. It holds a button and a switch,
+	   so it takes clicks, and it scrolls within itself on a short pane. */
+	.local-hero {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: calc(50% + 52px);
+		z-index: 2;
+		display: flex;
+		justify-content: center;
+		padding: 0 16px;
+		max-height: calc(50% - 64px);
+		overflow-y: auto;
+	}
+	.local-hero > :global(*) {
+		width: 100%;
+		max-width: 40em;
 	}
 
 	.ghost-hero-title {

@@ -7,7 +7,7 @@
 	import { closeOpenFence, createComposerEditor, type ComposerEditor } from "$lib/codemirror/composer";
 	import { createRefPicker, insertRef } from "$lib/codemirror/extensions/ref-picker";
 	import { ATTACH_ACCEPT } from "$lib/components/chat/state/attachments.svelte";
-	import { AGENT_MODES, getModeById, nextMode, type AgentModeId } from "$lib/config/agentModes";
+	import { AGENT_MODES, getModeById, nextMode, type AgentMode, type AgentModeId } from "$lib/config/agentModes";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 
 	let {
@@ -24,6 +24,7 @@
 		onStop = undefined as (() => void) | undefined,
 		agentMode = undefined as AgentModeId | undefined,
 		onModeChange = undefined as ((mode: AgentModeId) => void) | undefined,
+		modes = AGENT_MODES,
 	}: {
 		value?: string;
 		disabled?: boolean;
@@ -40,6 +41,8 @@
 		agentMode?: AgentModeId;
 		/** Chosen from the (+) menu or the chip, or cycled with Shift+Tab. */
 		onModeChange?: (mode: AgentModeId) => void;
+		/** The modes this chat may switch between (see `availableModes`). */
+		modes?: AgentMode[];
 	} = $props();
 
 	const activeMode = $derived(agentMode && agentMode !== "chat" ? getModeById(agentMode) : undefined);
@@ -52,13 +55,13 @@
 	}
 
 	function cycleMode() {
-		if (agentMode && onModeChange) onModeChange(nextMode(agentMode));
+		if (agentMode && onModeChange) onModeChange(nextMode(agentMode, modes));
 	}
 
 	// The (+) menu: what you add to the message, then how it is handled.
 	// Nothing else goes in here — a menu of every option is a junk drawer.
 	function modeRows(): ContextMenuItem[] {
-		return AGENT_MODES.map((m) => ({
+		return modes.map((m) => ({
 			id: `mode-${m.id}`,
 			label: m.name,
 			description: m.description,
@@ -194,6 +197,10 @@
 
 	$effect(() => {
 		editor?.setDisabled(disabled);
+	});
+
+	$effect(() => {
+		editor?.setPlaceholder(placeholder);
 	});
 
 	function setHeight(contentPx: number) {
