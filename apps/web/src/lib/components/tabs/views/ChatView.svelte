@@ -9,7 +9,6 @@
 	import Markdown from "$lib/components/Markdown.svelte";
 	import StoppedNotice from "$lib/components/StoppedNotice.svelte";
 	import Icon from "$lib/components/Icon.svelte";
-	import ContextIndicator from "$lib/components/ContextIndicator.svelte";
 
 	// ── the controller ─────────────────────────────────────────────────────
 	// This view is markup plus thin bindings; the state it renders lives in
@@ -1197,7 +1196,25 @@
 	function openChatMenu(e: MouseEvent) {
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		const pinned = !!windowShellStore.findTab((t) => t.id === tab.id)?.tab.pinned;
-		const items: ContextMenuItem[] = [
+		const items: ContextMenuItem[] = [];
+		if (contextUsage && extractConversationId(tab.route)) {
+			const n = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+			items.push({
+				id: "context",
+				label: `Context ${Math.round(contextUsage.percentage)}%`,
+				description: `${n.format(contextUsage.tokens)} of ${n.format(contextUsage.window)} tokens`,
+				icon: "ri:donut-chart-line",
+				iconColor:
+					contextUsage.status === "critical"
+						? "var(--color-error)"
+						: contextUsage.status === "warning"
+							? "var(--color-warning)"
+							: undefined,
+				dividerAfter: true,
+				action: handleContextClick,
+			});
+		}
+		items.push(
 			{
 				id: "pin",
 				label: pinned ? "Unpin tab" : "Pin tab",
@@ -1212,7 +1229,7 @@
 				dividerBefore: true,
 				action: deleteThisChat,
 			},
-		];
+		);
 		contextMenu.show(
 			{ x: rect.right, y: rect.bottom },
 			items,
@@ -1585,18 +1602,8 @@
 						</button>
 					</div>
 				{/if}
-				<!-- Top-right chrome: temporary-chat toggle + live context ring -->
+				<!-- Top-right chrome: temporary-chat toggle + chat menu (context usage lives in the menu) -->
 				<div class="chat-topbar-right">
-					{#if !isGhost && contextUsage && extractConversationId(tab.route) && !isGettingStartedChat(currentChatConversationId)}
-						<ContextIndicator
-							conversationId={extractConversationId(tab.route)!}
-							usagePercentage={contextUsage.percentage}
-							totalTokens={contextUsage.tokens}
-							contextWindow={contextUsage.window}
-							status={contextUsage.status}
-							onclick={handleContextClick}
-						/>
-					{/if}
 					{#if isGettingStartedChat(currentChatConversationId)}
 						<!-- One door. A glyph through the walk, and a word
 						     ("Stop for now") once the interview is underway,
