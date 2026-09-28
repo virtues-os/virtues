@@ -567,124 +567,114 @@
 		untrack(ensureChatInstance);
 	});
 
-	// Watch for tab.route changes to reset state when switching conversations
+	// A route change is an event, not something derived: the handler below
+	// resets and loads, and nothing it reads should re-run it. Only the route.
 	$effect(() => {
-		const currentTabRoute = tab.route;
-		const currentTabConversationId = extractConversationId(currentTabRoute);
+		const route = tab.route;
+		untrack(() => onRouteChange(route));
+	});
 
-		// If the tab's route changed, reset the chat state
-		if (currentTabRoute !== previousTabRoute) {
-			// IMPORTANT: Skip reset if we're just transitioning from 'new' to a real chat ID
-			// This happens after the first message is sent - we're not switching conversations,
-			// just updating the tab's route to reflect the persisted chat
-			const isSameConversation =
-				isNewChat(previousTabRoute) &&
-				currentTabConversationId === conversationId;
+	/** The tab navigated in place: switch this view to the route's conversation. */
+	function onRouteChange(route: string) {
+		if (route === previousTabRoute) return;
+		const routeConversationId = extractConversationId(route);
 
-			if (isSameConversation) {
-				// Just update the tracking variable, don't reset state
-				previousTabRoute = currentTabRoute;
-				return;
-			}
+		// Not a switch: the first message was sent and the tab's route moved
+		// from "new" to the persisted id of the same conversation. Keep it all.
+		if (isNewChat(previousTabRoute) && routeConversationId === conversationId) {
+			previousTabRoute = route;
+			return;
+		}
 
-			// Cancel any in-flight requests from previous tab
-			tabSwitchAbortController?.abort();
-			tabSwitchAbortController = new AbortController();
-			const signal = tabSwitchAbortController.signal;
+		// Cancel any in-flight load from the previous conversation.
+		tabSwitchAbortController?.abort();
+		tabSwitchAbortController = new AbortController();
+		const signal = tabSwitchAbortController.signal;
 
-			previousTabRoute = currentTabRoute;
+		previousTabRoute = route;
 
-			// Generate new conversationId for new chats, or use the extracted conversationId
-			const newConversationId =
-				currentTabConversationId || `chat_${generateHex16()}`;
-			conversationId = newConversationId;
+		// A new chat gets a fresh id; an existing one keeps the route's.
+		const newConversationId = routeConversationId || `chat_${generateHex16()}`;
+		conversationId = newConversationId;
 
-			// Reset chat state.
-			//
-			// EVERYTHING that belongs to ONE conversation resets here. The list
-			// was incomplete and each omission was its own bug, because
-			// navigation is in-place — `TabContent` keys on `tab.id`, so this
-			// component is NOT remounted and anything left behind silently
-			// becomes the next conversation's state:
-			//
-			//  - `isGhost` leaking meant a saved chat inherited "temporary" and
-			//    every turn in it went out with `temporary: true`, was never
-			//    stored, and was gone on reload — while the toggle that would
-			//    undo it is disabled on a non-empty chat. Silent data loss.
-			//  - `queuedMessages` leaking sent chat A's follow-up into chat B.
-			//  - `input` leaking overwrote B's saved draft with A's text, since
-			//    `draftId` is derived from the route and the debounced writer
-			//    fires after the switch.
-			//  - staged refs pointed into torn-down DOM; staged attachments
-			//    rode along on the first send in the new chat.
-			//
-			// Before adding state to this component, ask whether it belongs to
-			// the conversation or to the view. If the conversation: reset here.
-			chat.messages = [];
-			messageMetadata = new Map();
-			contextUsage = undefined;
-			titleGenerated = false;
-			isAwaitingResponse = false;
-			isGhost = isTemporaryRoute(currentTabRoute);
-			danglingTurn = false;
-			queuedMessages = [];
-			input = "";
-			attachments.items = [];
-			attachments.dragActive = false;
-			// Reset page create tracking (for auto-open)
-			tools.reset();
-			// NOTE: We no longer unbind the active page when switching chats.
-			// Binding is now additive/persistent to the chat session context.
-			// clearBoundPages();
+		// Reset chat state.
+		//
+		// Order matters: this runs before the instance effect swaps `chat`, so
+		// `chat.messages = []` below lands on the instance being left, and the
+		// load further down, which awaits first, writes into the new one.
+		//
+		// EVERYTHING that belongs to ONE conversation resets here. The list
+		// was incomplete and each omission was its own bug, because
+		// navigation is in-place — `TabContent` keys on `tab.id`, so this
+		// component is NOT remounted and anything left behind silently
+		// becomes the next conversation's state:
+		//
+		//  - `isGhost` leaking meant a saved chat inherited "temporary" and
+		//    every turn in it went out with `temporary: true`, was never
+		//    stored, and was gone on reload — while the toggle that would
+		//    undo it is disabled on a non-empty chat. Silent data loss.
+		//  - `queuedMessages` leaking sent chat A's follow-up into chat B.
+		//  - `input` leaking overwrote B's saved draft with A's text, since
+		//    `draftId` is derived from the route and the debounced writer
+		//    fires after the switch.
+		//  - staged refs pointed into torn-down DOM; staged attachments
+		//    rode along on the first send in the new chat.
+		//
+		// Before adding state to this component, ask whether it belongs to
+		// the conversation or to the view. If the conversation: reset here.
+		// (Bound pages are not reset: binding belongs to the chat session.)
+		chat.messages = [];
+		messageMetadata = new Map();
+		contextUsage = undefined;
+		titleGenerated = false;
+		isAwaitingResponse = false;
+		isGhost = isTemporaryRoute(route);
+		danglingTurn = false;
+		queuedMessages = [];
+		input = "";
+		attachments.items = [];
+		attachments.dragActive = false;
+		// Reset page create tracking (for auto-open)
+		tools.reset();
 
-			// Load conversation if switching to an existing one
-			if (currentTabConversationId && !isNewChat(currentTabRoute)) {
-				isLoading = true;
-				(async () => {
-					try {
-						// The signal cancels this load when the tab switches again
-						// mid-fetch.
-						if (!(await loadTranscript(currentTabConversationId, signal))) return;
-						resumeIfDangling();
-						applyInterviewOpening(chat, currentTabConversationId);
-						applyRoomInterviewOpening(chat, currentTabConversationId, gettingStarted.state);
-						// The picker is deliberately left alone on a tab switch:
-						// a chat is not pinned to the model that last answered
-						// it, so it holds the person's pick across chats, and an
-						// unpicked picker keeps showing the slot default.
-						await Promise.all([
-							refreshContextUsage(),
-							editAllowListStore.init(currentTabConversationId),
-						]);
-					} catch (error) {
-						// Ignore abort errors - they're expected when switching tabs
-						if (
-							error instanceof Error &&
-							error.name === "AbortError"
-						)
-							return;
-						console.error(
-							"[ChatView] Error loading conversation on tab change:",
-							error,
-						);
-					} finally {
-						if (!signal.aborted) {
-							isLoading = false;
-							// Scroll to bottom after loading existing chat — but
-							// the getting-started room opens on its cover.
-							setTimeout(() => {
-								if (!openAtStart()) scrollToBottom("instant");
-							}, 10);
-						}
-					}
-				})();
-			} else {
-				// New chat - set chatId so permissions can sync when granted
-				editAllowListStore.setChatId(newConversationId, isGhost);
+		if (!routeConversationId || isNewChat(route)) {
+			// New chat - set chatId so permissions can sync when granted
+			editAllowListStore.setChatId(newConversationId, isGhost);
+			isLoading = false;
+			return;
+		}
+
+		isLoading = true;
+		void loadRouteConversation(routeConversationId, signal);
+	}
+
+	/** Load the conversation a route change switched to, unless another switch overtakes it. */
+	async function loadRouteConversation(id: string, signal: AbortSignal) {
+		try {
+			if (!(await loadTranscript(id, signal))) return;
+			resumeIfDangling();
+			applyInterviewOpening(chat, id);
+			applyRoomInterviewOpening(chat, id, gettingStarted.state);
+			// The picker is deliberately left alone on a tab switch: a chat is
+			// not pinned to the model that last answered it, so it holds the
+			// person's pick across chats, and an unpicked picker keeps showing
+			// the slot default.
+			await Promise.all([refreshContextUsage(), editAllowListStore.init(id)]);
+		} catch (error) {
+			// Aborts are expected: the tab switched again mid-load.
+			if (error instanceof Error && error.name === "AbortError") return;
+			console.error("[ChatView] Error loading conversation on tab change:", error);
+		} finally {
+			if (!signal.aborted) {
 				isLoading = false;
+				// Scroll to bottom after loading existing chat — but the
+				// getting-started room opens on its cover.
+				setTimeout(() => {
+					if (!openAtStart()) scrollToBottom("instant");
+				}, 10);
 			}
 		}
-	});
+	}
 
 	// Rejoin a running turn when the connection or the screen comes back.
 	//
