@@ -26,6 +26,7 @@
  * the session is a bearer token.
  */
 import { boxRadio, BoxRadioError, type NearbyBox, type SetupLink } from '$lib/tauri/boxRadio';
+import { markInApp } from './inApp';
 
 const ATLAS = 'https://atlas.virtues.com';
 const SESSION_KEY = 'virtues-setup-account';
@@ -250,6 +251,7 @@ class PrePair {
 	 * launch, whatever the shell baked when it started.
 	 */
 	startOver(): void {
+		markInApp(false);
 		try {
 			sessionStorage.setItem(FORGOT_KEY, '1');
 			localStorage.removeItem(JUST_PAIRED_KEY);
