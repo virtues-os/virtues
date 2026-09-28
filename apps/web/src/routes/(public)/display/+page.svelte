@@ -551,7 +551,9 @@
 		     last week is worthless) and freeze forever the moment it is claimed.
 		     See agents/record/onboarding-paradigm.md §1.
 
-		     BRAND TOP-LEFT, CODENAME BOTTOM-LEFT (2026-08-19, bench feedback):
+		     BRAND TOP-LEFT, NUMBER BOTTOM-LEFT (2026-08-19 as a codename; the
+		     number "Virtues 4812" since 2026-09-28, and "Adam · Ari" once
+		     claimed). Bench feedback:
 		     an unboxed unit's first screen led with "Honest Kestrel", which reads
 		     as a mystery, not a product — the person at the shelf needs to know
 		     WHAT this is before which one it is. The codename keeps a corner
@@ -749,11 +751,15 @@
 	/* The codename, bottom-left on the setup screen — identity demoted to a
 	   corner, not deleted: it is what you check against the app's box chooser
 	   when two boxes share a house. */
+	/* The number the app asks to match ("Is this the number on your
+	   server's screen?"), so it reads from across a desk: it was 0.72rem
+	   while it only named the box (2026-09-28). */
 	.devname {
 		position: absolute;
 		bottom: 20px;
 		left: 40px;
-		font-size: 0.72rem;
+		font-size: 1.1rem;
+		font-variant-numeric: tabular-nums;
 		color: #55636f;
 		letter-spacing: 0.04em;
 	}
