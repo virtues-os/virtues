@@ -32,6 +32,8 @@ pub fn routes() -> Router<AppState> {
         // Chat Usage & Compaction API
         .route("/api/chats/:id/usage", get(get_chat_usage_handler))
         .route("/api/chats/:id/compact", post(compact_chat_handler))
+        // Files the chat's code runs wrote: the charts under a Python call
+        .route("/api/chats/:id/files/*path", get(chat_file_handler))
         // Chat API (streaming)
         .route("/api/chat", post(chat_handler))
         .route("/api/chat/cancel", post(cancel_chat_handler))
@@ -136,6 +138,40 @@ pub async fn update_chat_handler(
 }
 
 /// Delete a chat
+/// A file from the chat's code workspace (`api::code_env`). Images display
+/// inline; anything else downloads. The model's code wrote these bytes, so the
+/// response is sandboxed: an SVG opened on its own cannot run script on the
+/// box's origin.
+pub async fn chat_file_handler(Path((chat_id, path)): Path<(String, String)>) -> Response {
+    use axum::http::{header, StatusCode};
+    let Some(file) = crate::api::code_env::workspace_file(&chat_id, &path) else {
+        return (StatusCode::NOT_FOUND, "No such file in this chat").into_response();
+    };
+    let bytes = match tokio::fs::read(&file).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(chat_id, path, "reading a chat workspace file: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Your server couldn't read that file")
+                .into_response();
+        }
+    };
+    let (content_type, disposition) = match crate::api::code::image_type(&path) {
+        Some(t) => (t, "inline"),
+        None => ("application/octet-stream", "attachment"),
+    };
+    (
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CONTENT_DISPOSITION, disposition),
+            (header::CONTENT_SECURITY_POLICY, "sandbox; default-src 'none'; style-src 'unsafe-inline'"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::CACHE_CONTROL, "private, no-cache"),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
 pub async fn delete_chat_handler(
     State(state): State<AppState>,
     Path(chat_id): Path<String>,

@@ -25,6 +25,7 @@ pub mod chat_permissions;
 pub mod chat_usage;
 pub mod chats;
 pub mod code;
+pub mod code_env;
 pub mod compaction;
 pub mod credentials;
 pub mod image_gen;

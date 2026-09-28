@@ -26,10 +26,22 @@ pub struct SqlQueryArgs {
     /// Table names (for "get_schema" operation)
     #[serde(default)]
     pub tables: Option<Vec<String>>,
-    /// Max rows to return (default 50, max 200)
+    /// Max rows to return (default 50, max 200; with save_as, max 10,000)
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Also keep the whole result as a CSV of this name in the chat's
+    /// code_interpreter workspace
+    #[serde(default)]
+    pub save_as: Option<String>,
 }
+
+/// Rows a result may keep as a file. The file never enters the conversation,
+/// so it is bounded by disk and the query's own time, not by tokens.
+const MAX_SAVED_ROWS: u32 = 10_000;
+
+/// Rows of a saved result the model is shown, as a check that it asked for
+/// the right thing. The rest it reads in code.
+const SAVED_PREVIEW_ROWS: usize = 20;
 
 /// Column information
 #[derive(Debug, Serialize)]
@@ -51,7 +63,13 @@ impl SqlQueryTool {
     }
 
     /// Execute SQL query tool
-    pub async fn execute(&self, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
+    /// `chat_id` is the saved chat a `save_as` result goes into, or None
+    /// where there is none to keep it (a ghost chat, an applet run).
+    pub async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        chat_id: Option<&str>,
+    ) -> Result<ToolResult, ToolError> {
         let args: SqlQueryArgs = serde_json::from_value(arguments)
             .map_err(|e| ToolError::InvalidParameters(format!("Invalid arguments: {}", e)))?;
 
@@ -70,8 +88,22 @@ impl SqlQueryTool {
                 let sql = args.sql.ok_or_else(|| {
                     ToolError::InvalidParameters("'sql' is required for query operation".into())
                 })?;
-                let limit = args.limit.unwrap_or(50).min(200);
-                self.execute_query(&sql, limit).await
+                let Some(name) = args.save_as else {
+                    let limit = args.limit.unwrap_or(50).min(200);
+                    return self.execute_query(&sql, limit, None).await;
+                };
+                let name = saved_file_name(&name)?;
+                let chat_id = chat_id.ok_or_else(|| {
+                    ToolError::InvalidParameters(
+                        "save_as keeps a file for code_interpreter in a saved chat, and this \
+                         conversation has none. Query without save_as."
+                            .into(),
+                    )
+                })?;
+                let ws = crate::api::code_env::Workspace::for_chat(chat_id)
+                    .map_err(ToolError::ExecutionFailed)?;
+                let limit = args.limit.unwrap_or(MAX_SAVED_ROWS).min(MAX_SAVED_ROWS);
+                self.execute_query(&sql, limit, Some((&ws.dir.join(&name), &name))).await
             }
             _ => Err(ToolError::InvalidParameters(format!(
                 "Unknown operation: '{}'. Use: query, list_tables, get_schema",
@@ -387,7 +419,12 @@ impl SqlQueryTool {
     /// transaction guard) because `sql_query` is in APPLET_RUN_ALLOWED_TOOLS
     /// and SUBAGENT_TOOLS — it runs unattended, over content nobody reviewed,
     /// so the query text can be steered by ingested data.
-    async fn execute_query(&self, sql: &str, limit: u32) -> Result<ToolResult, ToolError> {
+    async fn execute_query(
+        &self,
+        sql: &str,
+        limit: u32,
+        save: Option<(&std::path::Path, &str)>,
+    ) -> Result<ToolResult, ToolError> {
         let sql_lower = sql.trim().to_lowercase();
 
         if !sql_lower.starts_with("select") && !sql_lower.starts_with("with") {
@@ -509,6 +546,25 @@ impl SqlQueryTool {
         // Convert rows to JSON
         let mut json_rows = convert_rows_to_json(&rows);
 
+        // A saved result goes to disk whole and the model sees a preview.
+        let mut saved = None;
+        if let Some((path, name)) = save {
+            let columns: Vec<String> = rows
+                .first()
+                .map(|r| r.columns().iter().map(|c| c.name().to_string()).collect())
+                .unwrap_or_default();
+            write_csv(path, &columns, &json_rows).map_err(|e| {
+                ToolError::ExecutionFailed(format!("Your server couldn't save {name}: {e}"))
+            })?;
+            saved = Some(serde_json::json!({
+                "file": name,
+                "rows": json_rows.len(),
+                "columns": columns,
+                "read_with": format!("pandas.read_csv('{name}') in code_interpreter"),
+            }));
+            json_rows.truncate(SAVED_PREVIEW_ROWS);
+        }
+
         // Make the answer citable. The agent is told to cite a claim by linking
         // the `ref` a tool returned, and to cite nothing when a result has no
         // `ref` — so without this, every fact the model learned from SQL was
@@ -539,6 +595,9 @@ impl SqlQueryTool {
             "row_count": json_rows.len(),
             "rows": json_rows,
         });
+        if let Some(saved) = saved {
+            result["saved"] = saved;
+        }
         if kept < returned {
             result["truncated"] = serde_json::json!({
                 "returned": returned,
@@ -548,6 +607,59 @@ impl SqlQueryTool {
         }
         Ok(ToolResult::success(result))
     }
+}
+
+/// A `save_as` name made safe to be a file in the workspace: a plain name, no
+/// directories, ending `.csv`.
+fn saved_file_name(raw: &str) -> Result<String, ToolError> {
+    let name = raw.trim();
+    let plain = !name.is_empty()
+        && name.len() <= 80
+        && !name.starts_with('.')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
+    if !plain {
+        return Err(ToolError::InvalidParameters(format!(
+            "save_as must be a plain file name like 'sleep.csv' (letters, digits, . - _), not '{raw}'"
+        )));
+    }
+    Ok(if name.to_ascii_lowercase().ends_with(".csv") { name.to_string() } else { format!("{name}.csv") })
+}
+
+/// Write rows as CSV. Mode 0666, because the sandbox's throwaway uid must be
+/// able to replace the file as well as read it.
+fn write_csv(
+    path: &std::path::Path,
+    columns: &[String],
+    rows: &[serde_json::Value],
+) -> std::io::Result<()> {
+    fn cell(v: Option<&serde_json::Value>) -> String {
+        let text = match v {
+            None | Some(serde_json::Value::Null) => return String::new(),
+            Some(serde_json::Value::String(s)) => s.clone(),
+            Some(other) => other.to_string(),
+        };
+        if text.contains([',', '"', '\n', '\r']) {
+            format!("\"{}\"", text.replace('"', "\"\""))
+        } else {
+            text
+        }
+    }
+    let mut out = String::new();
+    let header: Vec<String> = columns.iter().map(|c| cell(Some(&serde_json::Value::String(c.clone())))).collect();
+    out.push_str(&header.join(","));
+    out.push('\n');
+    for row in rows {
+        let line: Vec<String> = columns.iter().map(|c| cell(row.get(c))).collect();
+        out.push_str(&line.join(","));
+        out.push('\n');
+    }
+    std::fs::write(path, out)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666))?;
+    }
+    Ok(())
 }
 
 /// Attach a citable `/record/{ontology}/{id}` to each row, matching the `ref`
@@ -1039,7 +1151,7 @@ mod tests {
         );
 
         let tool = SqlQueryTool::new(Arc::new(pool.clone()));
-        let result = tool.execute_query(sql, 100).await;
+        let result = tool.execute_query(sql, 100, None).await;
 
         assert!(
             result.is_err(),
@@ -1065,7 +1177,25 @@ mod tests {
     #[sqlx::test]
     async fn plain_select_still_succeeds(pool: sqlx::PgPool) {
         let tool = SqlQueryTool::new(Arc::new(pool));
-        let result = tool.execute_query("SELECT 1 AS n", 10).await;
+        let result = tool.execute_query("SELECT 1 AS n", 10, None).await;
         assert!(result.is_ok(), "a plain SELECT must still run: {result:?}");
+    }
+
+    #[test]
+    fn a_saved_name_is_a_plain_csv_in_the_workspace() {
+        assert_eq!(saved_file_name("sleep").unwrap(), "sleep.csv");
+        assert_eq!(saved_file_name("Sleep_2026.CSV").unwrap(), "Sleep_2026.CSV");
+        assert!(saved_file_name("../x.csv").is_err());
+        assert!(saved_file_name("a/b.csv").is_err());
+        assert!(saved_file_name(".hidden").is_err());
+    }
+
+    #[test]
+    fn csv_quotes_what_would_break_a_cell() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.csv");
+        let rows = vec![serde_json::json!({"a": "x, \"y\"", "b": 2, "c": null})];
+        write_csv(&path, &["a".into(), "b".into(), "c".into()], &rows).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "a,b,c\n\"x, \"\"y\"\"\",2,\n");
     }
 }

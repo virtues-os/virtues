@@ -226,6 +226,11 @@ pub async fn purge(pool: &PgPool, kind: TrashKind, id: &str) -> Result<()> {
             tracing::warn!(kind = ?kind, id, "purge: project membership sweep failed: {e}");
         }
     }
+    // The files a chat's code runs left, kept until now so a restored chat
+    // still has them.
+    if matches!(kind, TrashKind::Chat) {
+        crate::api::code_env::remove_chat_workspace(id);
+    }
     Ok(())
 }
 

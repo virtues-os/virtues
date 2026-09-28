@@ -206,10 +206,21 @@ pub struct ToolExecutor {
     yjs_state: Option<YjsState>,
 }
 
+/// Start the code_interpreter packages building on a box that lacks them, so
+/// they are ready before the first chat reaches for them. Not in a debug
+/// build: a developer machine builds them on the first code run instead of
+/// fetching 400 MB whenever the server starts.
+fn warm_code_env() {
+    if !cfg!(debug_assertions) {
+        crate::api::code_env::ensure_env();
+    }
+}
+
 impl ToolExecutor {
     /// Create a new tool executor. Tools that reach virtues-api (web_search)
     /// go through `BearerClient`, which sources the URL + bearer itself.
     pub fn new(pool: PgPool) -> Self {
+        warm_code_env();
         let pool = Arc::new(pool);
         Self {
             web_search: WebSearchTool::new((*pool).clone()),
@@ -224,6 +235,7 @@ impl ToolExecutor {
     /// Create a new tool executor with YjsState for real-time page editing
     /// and action dispatch (required by the `run_applet` tool).
     pub fn new_with_yjs(pool: PgPool, yjs_state: YjsState) -> Self {
+        warm_code_env();
         let pool = Arc::new(pool);
         Self {
             web_search: WebSearchTool::new((*pool).clone()),
@@ -415,7 +427,11 @@ impl ToolExecutor {
             {
                 super::sql_sudo::execute(&self._pool, arguments).await
             }
-            "sql_query" => self.sql_query.execute(arguments).await,
+            "sql_query" => {
+                // A saved chat can keep a result as a file for code_interpreter.
+                let chat_id = context.chat_id.as_deref().filter(|_| !context.temporary);
+                self.sql_query.execute(arguments, chat_id).await
+            }
             "sql_write" => super::sql_write::execute(&self._pool, arguments).await,
             // The tool lists already keep it out of every other mode; this is
             // the second lock, for a model that names a tool it was not given.
@@ -426,7 +442,7 @@ impl ToolExecutor {
                 "shell runs only in sudo mode, which the owner turns on in the chat".into(),
             )),
             "read_asset" => self.execute_read_asset(arguments).await,
-            "code_interpreter" => self.execute_code_interpreter(arguments).await,
+            "code_interpreter" => self.execute_code_interpreter(arguments, context).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
             "dispatch_subagents" => {
                 crate::agent::subagent::dispatch(self._pool.clone(), arguments, context).await
@@ -530,10 +546,12 @@ impl ToolExecutor {
         })))
     }
 
-    /// Execute Python code in sandboxed environment
+    /// Run model-written Python in the sandbox (api/code.rs), in the chat's
+    /// workspace when it has one (api/code_env.rs).
     async fn execute_code_interpreter(
         &self,
         arguments: serde_json::Value,
+        context: &ToolContext,
     ) -> Result<ToolResult, ToolError> {
         let code = arguments
             .get("code")
@@ -545,13 +563,33 @@ impl ToolExecutor {
             .and_then(|v| v.as_u64())
             .unwrap_or(60) as u32;
 
+        crate::api::code_env::ensure_env();
+        // A ghost chat writes nothing down, so it gets a throwaway workspace
+        // like a headless run.
+        let ws = match (&context.chat_id, context.temporary) {
+            (Some(id), false) => crate::api::code_env::Workspace::for_chat(id),
+            _ => crate::api::code_env::Workspace::temporary(),
+        }
+        .map_err(ToolError::ExecutionFailed)?;
+
         let request = crate::api::code::ExecuteCodeRequest {
             code: code.to_string(),
             timeout,
         };
+        let response = crate::api::code::execute_code(request, &ws).await;
 
-        let response = crate::api::code::execute_code(request).await;
-        let data = serde_json::json!({
+        // The chat shows a saved chat's images from its workspace; the model
+        // gets their paths, never bytes.
+        let images: Vec<serde_json::Value> = response
+            .images
+            .iter()
+            .map(|path| match &ws.chat_id {
+                Some(id) => serde_json::json!({ "path": path, "url": format!("/api/chats/{id}/files/{path}") }),
+                None => serde_json::json!({ "path": path }),
+            })
+            .collect();
+
+        let mut data = serde_json::json!({
             "stdout": response.stdout,
             "stderr": response.stderr,
             "exit_code": response.exit_code,
@@ -559,6 +597,19 @@ impl ToolExecutor {
             "truncated": response.truncated,
             "execution_time_ms": response.execution_time_ms,
         });
+        if !images.is_empty() {
+            data["images"] = serde_json::Value::Array(images);
+            data["note"] = serde_json::json!(if ws.chat_id.is_some() {
+                "These images are shown to the owner under this call. Refer to them; do not link them."
+            } else {
+                "Images are shown only in a saved chat; describe the result in text."
+            });
+        }
+        if !response.packages_ready {
+            data["packages"] = serde_json::json!(
+                "not installed yet on this server: standard library only for this call"
+            );
+        }
 
         // A failed run is a failed tool call carrying the whole result, so the
         // model gets the traceback to fix its code from and the chat can show it.
