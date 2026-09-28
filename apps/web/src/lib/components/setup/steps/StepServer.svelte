@@ -5,7 +5,8 @@
 	plugin directly. The beats:
 
 	  looking   the radio looks for servers nearby
-	  choose    "Which server?", by the name its screen shows (`label`);
+	  choose    "Which server?", by the number its screen shows (`label`,
+	            "Virtues 4812");
 	            one that already has an owner is listed but not offered,
 	            because opening a claimed server is its owner's recovery
 	            path, not first setup
@@ -25,8 +26,11 @@
 	import { rise } from "../motion";
 	import { prePair } from "../prepair.svelte";
 	import { boxRadio, BoxRadioError, type NearbyBox } from "$lib/tauri/boxRadio";
+	import { isIOS, isMacOS } from "$lib/utils/platform";
 
 	let { onnext }: { onnext: () => void } = $props();
+
+	const here = isIOS ? "this iPhone" : isMacOS ? "this Mac" : "this device";
 
 	type Phase = "looking" | "choose" | "waking" | "words" | "checking" | "keep";
 	let phase = $state<Phase>(prePair.link ? "keep" : "looking");
@@ -142,17 +146,17 @@
 	);
 	const subtitle = $derived(
 		phase === "looking"
-			? "Looking nearby. Keep this phone within a few steps of it."
+			? `Looking nearby. Keep ${here} within a few steps of it.`
 			: phase === "choose"
 				? open.length === 0
-					? "This phone can't find a new server nearby. Make sure yours has power and sits close by, then look again."
+					? `${here[0].toUpperCase()}${here.slice(1)} can't find a new server nearby. Make sure yours has power and sits close by, then look again.`
 					: open.length === 1
-						? "Is this the name on your server's screen?"
-						: "Choose the one whose name is on its screen."
+						? "Is this the number on your server's screen?"
+						: "Choose the one whose number is on its screen."
 				: phase === "waking"
 					? "One moment."
 					: phase === "keep"
-						? "These four words are your recovery phrase. You need them if you ever reset your server, so keep them somewhere safe, away from this phone."
+						? `These four words are your recovery phrase. You need them if you ever reset your server, so keep them somewhere safe, away from ${here}.`
 						: `${chosen?.label ?? "Your server"} shows them when it's new. After a reset, enter the recovery phrase you saved.`,
 	);
 </script>

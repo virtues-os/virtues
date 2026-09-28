@@ -351,15 +351,21 @@
       // — macOS showed `[Virtues Honest Kestrel]` on the link screen — and the
       // wrapper defeated the prefix strip, so the name kept a `Virtues` the
       // screen had already said. Strip the edges FIRST, then the prefix.
-      const prettyBoxName = (n) =>
-        String(n || 'Your server')
+      // Since 2026-09-28 a server advertises its NUMBER (`Virtues-4812`), and
+      // keeps the brand on screen ("Virtues 4812"), because "4812" alone reads
+      // as nothing; an older server's codename still drops it. Same rule as
+      // boxLabel in apps/web/src/lib/tauri/boxRadio.ts.
+      const prettyBoxName = (n) => {
+        const rest = String(n || 'Your server')
           .replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '')
           .replace(/^Virtues[-_ ]?/i, '')
           .replace(/[-_]+/g, ' ')
           // The client's own fallback is the literal "Virtues box", which the
           // prefix strip turns into "box" — "Setting up box" reads as a bug.
           .replace(/^box$/i, '')
-          .trim() || 'Your server';
+          .trim();
+        return /^\d+$/.test(rest) ? 'Virtues ' + rest : rest || 'Your server';
+      };
       // Where step 2 actually happens. Atlas directly, NOT the memorable
       // `virtues.com/link` this once said: that redirect is still an open
       // decision in agents/plan/linking-plan.md and 404s today, which is exactly what
