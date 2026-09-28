@@ -11,6 +11,7 @@ name = "virtues-installer"
 path = "src/main.rs"
 
 [dependencies]
+virtues-qairt = { path = "../../crates/virtues-qairt" }
 # TUI / prompts — clack-style rail-connected flow (Astro's @clack/prompts
 # style, ported to Rust). One drop-in replacement for dialoguer Select +
 # Confirm + Input that visually shows the install as a connected sequence

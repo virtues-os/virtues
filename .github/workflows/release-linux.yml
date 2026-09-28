@@ -52,6 +52,7 @@ env:
   # daemon (aarch64 only). Public download from Qualcomm's software center; the
   # daemon is header-only against it (dlopen's the runtime libs on the box). Must
   # match the QAIRT the .bin context binaries were compiled with.
+  # qnnd's headers. Must match `QNND.version` in crates/virtues-qairt/src/lib.rs.
   QAIRT_VERSION: 2.42.0.251225
 
 jobs:

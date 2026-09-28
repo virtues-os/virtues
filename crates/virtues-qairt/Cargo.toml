@@ -1,0 +1,22 @@
+[package]
+name = "virtues-qairt"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Fetches pinned Qualcomm QAIRT runtime files from Qualcomm's own SDK zip over HTTP Range. Used by the installer (qnnd's runtime) and by core (the local model's runtime)."
+
+[lib]
+name = "virtues_qairt"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1.0"
+sha2 = "0.10"
+hex = "0.4"
+flate2 = "1.1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-no-provider", "rustls-tls-webpki-roots-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
+
+[dev-dependencies]
+tempfile = "3.10"
