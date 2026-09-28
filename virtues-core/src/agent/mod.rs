@@ -190,8 +190,15 @@ impl AgentLoop {
             // The model does not change mid-turn, so neither do these.
             let facts = crate::api::model_catalog::reasoning_facts(&model);
             let gateway_options = turn::gateway_options(facts.as_ref(), byo);
-            let (reasoning, reasoning_effort) =
-                crate::virtues_api::request::reasoning_for(config.thinking, facts.as_ref(), byo);
+            // An owner's own endpoint gets no reasoning field from the loop: it
+            // never did before chat asked for low effort, and an endpoint whose
+            // model does not reason can refuse `reasoning_effort` outright,
+            // which would fail every turn.
+            let (reasoning, reasoning_effort) = if byo {
+                (None, None)
+            } else {
+                crate::virtues_api::request::reasoning_for(config.thinking, facts.as_ref(), byo)
+            };
 
             yield AgentEvent::LoopStarted { max_steps: config.max_steps };
 
