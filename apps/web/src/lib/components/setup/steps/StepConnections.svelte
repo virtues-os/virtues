@@ -108,6 +108,12 @@
 		{ key: "audio", label: "Audio", enable: "plugin:audio|enable", status: "plugin:audio|status", on: false },
 	]);
 	let allowing = $state(false);
+	/** What stayed off after asking: said by name, with where to fix it. */
+	let denied = $state<string[]>([]);
+	/** Location has no status call and its points take a minute to arrive,
+	 *  so a granted prompt is remembered on this phone and lights the badge
+	 *  at once, rather than "not yet" until the first point lands. */
+	const LOCATION_KEY = "virtues-location-allowed";
 
 	async function readPhone() {
 		for (const s of streams) {
@@ -120,9 +126,16 @@
 				}
 			}
 		}
-		// Location has no status call: arriving points are the proof.
+		// Location has no status call: a prompt this phone granted, or
+		// arriving points, are the proof.
 		const loc = setup.phone.find((p) => p.label === "Location");
-		if (loc?.done) streams[0].on = true;
+		let granted = false;
+		try {
+			granted = localStorage.getItem(LOCATION_KEY) === "1";
+		} catch {
+			/* the points will say so */
+		}
+		if (loc?.done || granted) streams[0].on = true;
 	}
 
 	/** One system prompt per stream, in order. */
@@ -137,7 +150,15 @@
 			} catch {
 				s.on = false;
 			}
+			if (s.key === "location" && s.on) {
+				try {
+					localStorage.setItem(LOCATION_KEY, "1");
+				} catch {
+					/* the points will say so */
+				}
+			}
 		}
+		denied = streams.filter((s) => !s.on).map((s) => s.label);
 		allowing = false;
 		void setup.refresh();
 	}
@@ -213,9 +234,14 @@
 					<button type="button" class="setup-go" disabled={turningOn} onclick={turnOnMac}>
 						{turningOn ? "Turning on…" : "Turn on this Mac"}
 					</button>
+					<p class="hint">
+						Then two permissions: Full Disk Access, which Messages needs, and Accessibility, which is optional.
+					</p>
 				{:else if !mac.hasFullDiskAccess}
 					<button type="button" class="setup-go" onclick={() => openFullDiskAccess()}>Open Full Disk Access</button>
-					<p class="hint">Turn on Virtues Collector there. Your Mac reads Messages and keeps them on your server.</p>
+					<p class="hint">
+						Required for Messages. Turn on Virtues Collector there, and your Mac keeps your messages on your server.
+					</p>
 				{:else if !mac.hasAccessibility}
 					<button type="button" class="setup-go quiet" onclick={() => openAccessibilitySettings()}>
 						Open Accessibility
@@ -262,7 +288,15 @@
 					<button type="button" class="setup-go" disabled={allowing} onclick={allowPhone}>
 						{allowing ? "Asking…" : "Turn on this iPhone"}
 					</button>
-					<p class="hint">Your iPhone asks about each one. Calendar, contacts and more are in This device.</p>
+					{#if denied.length}
+						<p class="hint">
+							{denied.join(" and ")}
+							stayed off. You can turn {denied.length === 1 ? "it" : "them"} on in the
+							Settings app, under Privacy & Security, then come back here.
+						</p>
+					{:else}
+						<p class="hint">Your iPhone asks about each one. Calendar, contacts and more are in This device.</p>
+					{/if}
 				{:else}
 					<p class="done-line"><Icon icon="ri:check-line" width="15" /> Collecting</p>
 				{/if}
@@ -335,6 +369,9 @@
 	.cards {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
+		/* Each card as tall as it is: stretched to its neighbor's height, a
+		   short card's button sat far below its text. */
+		align-items: start;
 		gap: 1rem;
 	}
 	@media (max-width: 640px) {
