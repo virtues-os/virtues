@@ -178,9 +178,10 @@
 
 	let loadedMessages = $state<any[]>([]);
 
-	// Track tab route to reset state when switching conversations
+	// The route the tab-change effect last handled — a transition detector,
+	// not something the markup renders, so a plain variable.
 	// svelte-ignore state_referenced_locally
-	let previousTabRoute = $state<string>(tab.route);
+	let previousTabRoute: string = tab.route;
 
 	// AbortController for cancelling in-flight requests on tab switch
 	let tabSwitchAbortController: AbortController | null = null;
@@ -292,28 +293,21 @@
 		);
 	}
 
-	// Effect to handle create_page side effects (auto-open new pages)
-	// Only triggers for pages created during this session, not when reopening old chats
+	// The tool results that act outside the transcript: auto-open a page
+	// create_page made, and run the presence animation for an edit_page. Only
+	// for calls made during this session, not when reopening old chats — so
+	// nothing runs during the initial load (see state/toolSideEffects).
 	$effect(() => {
-		if (!chat?.messages) return;
-
-		// Don't auto-open during initial load - wait until loading is complete
-		if (isLoading) return;
-
+		if (!chat?.messages || isLoading) return;
 		for (const page of tools.collectNewPages(chat.messages)) {
 			openCreatedPage(page.pageId, page.title);
 		}
+		tools.animateNewEdits(chat.messages);
 	});
 
 	// (The interview's write_it_up auto-open lives in chatInstances.onData —
 	// the backend sends a transient data-narrative-document part, because tool
 	// parts land in the messages array mutably where no effect observes them.)
-
-	// Effect to drive the AI presence animation when a chat `edit_page` lands.
-	$effect(() => {
-		if (!chat?.messages || isLoading) return;
-		tools.animateNewEdits(chat.messages);
-	});
 
 	// Context usage state
 	interface ContextUsageState {
@@ -923,7 +917,7 @@
 	});
 
 	// Track thinking duration
-	let thinkingStartTime = $state<number | null>(null);
+	let thinkingStartTime: number | null = null;
 	let thinkingDuration = $state(0);
 
 	$effect(() => {
@@ -963,12 +957,12 @@
 
 	// Auto-focus chat input when new chat tab becomes active
 	$effect(() => {
-		if (active && isEmpty && !isLoading) {
-			// Small delay to ensure DOM is ready
-			setTimeout(() => {
-				inputFocused = true;
-			}, 50);
-		}
+		if (!active || !isEmpty || isLoading) return;
+		// Small delay to ensure DOM is ready
+		const t = setTimeout(() => {
+			inputFocused = true;
+		}, 50);
+		return () => clearTimeout(t);
 	});
 
 	// Title generation state
@@ -1012,33 +1006,15 @@
 		models.adoptStoreSelection();
 	});
 
-	// Safety timeout
-	let thinkingTimeout: ReturnType<typeof setTimeout> | null = null;
+	// Safety timeout: a turn still thinking after 5 minutes is let go. The
+	// box's stream has no total timeout, only a 300s idle one.
 	$effect(() => {
-		if (isThinking) {
-			thinkingTimeout = setTimeout(() => {
-				if (chat.status === "error") {
-					chat.clearError();
-				} else if (
-					chat.status === "streaming" ||
-					chat.status === "submitted"
-				) {
-					if (chat.clearError) {
-						chat.clearError();
-					}
-				}
-			}, 300000); // 5 minutes: the box's stream has no total timeout any more, only a 300s idle one
-
-			return () => {
-				if (thinkingTimeout) {
-					clearTimeout(thinkingTimeout);
-					thinkingTimeout = null;
-				}
-			};
-		} else if (thinkingTimeout) {
-			clearTimeout(thinkingTimeout);
-			thinkingTimeout = null;
-		}
+		if (!isThinking) return;
+		const t = setTimeout(() => {
+			const s = chat.status;
+			if (s === "error" || s === "streaming" || s === "submitted") chat.clearError();
+		}, 300000);
+		return () => clearTimeout(t);
 	});
 
 	// Derived state for layout mode
@@ -1077,7 +1053,7 @@
 	 *  typed their next message over the top of it. Asking on `ready` closes
 	 *  that window: the answer moves the walk signature, and the effect below
 	 *  re-reads the thread with the new lines in it. */
-	let lastTurnStatus = $state<string | null>(null);
+	let lastTurnStatus: string | null = null;
 	$effect(() => {
 		const status = chat.status;
 		const wasStreaming = lastTurnStatus === "streaming" || lastTurnStatus === "submitted";
@@ -1101,7 +1077,7 @@
 	/** The room speaks server-side, so when its state moves the thread has
 	 *  new lines in it. Re-read on any change of the walk — the step
 	 *  statuses and the interview's start are the whole of it. */
-	let lastWalk = $state<string | null>(null);
+	let lastWalk: string | null = null;
 	$effect(() => {
 		const st = gettingStarted.state;
 		if (!isGettingStartedChat(currentChatConversationId) || !st) return;
