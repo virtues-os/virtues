@@ -33,6 +33,11 @@ const FAKE_PAIRED_KEY = 'virtues-fake-paired';
 /** The app's own record that this launch just paired, which the next launch's
  *  baked flag supersedes (`__VIRTUES_PAIRED__`). */
 const JUST_PAIRED_KEY = 'virtues-just-paired';
+/** This device forgot its server during this launch (`startOver`). The
+ *  shell's `__VIRTUES_PAIRED__` was baked at launch and still says true, so
+ *  without this the flow would go looking for a server that is no longer
+ *  there. Per launch: the next one bakes the truth. */
+const FORGOT_KEY = 'virtues-forgot-server';
 
 type Shell = { __VIRTUES_MOBILE__?: boolean; __VIRTUES_PAIRED__?: boolean; __VIRTUES_BOX_URL__?: string };
 
@@ -63,9 +68,18 @@ function isFake(): boolean {
 	}
 }
 
+function forgotThisLaunch(): boolean {
+	try {
+		return sessionStorage.getItem(FORGOT_KEY) === '1';
+	} catch {
+		return false;
+	}
+}
+
 /** Whether this device still has to find and pair a server here. */
 function unpaired(): boolean {
 	if (typeof window === 'undefined' || !boxRadio.available) return false;
+	if (forgotThisLaunch()) return true;
 	if (isFake()) {
 		try {
 			return sessionStorage.getItem(FAKE_PAIRED_KEY) !== '1';
@@ -199,8 +213,42 @@ class PrePair {
 		}
 	}
 
+	/**
+	 * A device joining a server someone already set up. Setup's first half
+	 * only sets up NEW servers; joining (the QR from the other device on a
+	 * phone, a code on a computer) is still the connect page's, which the
+	 * app ships beside this copy. Its first screen asks "new or existing",
+	 * one tap from the join. Not in the dev fake, which has no connect page.
+	 */
+	get canJoinExisting(): boolean {
+		return this.active && !isFake();
+	}
+	joinExisting(): void {
+		window.location.href = '/connect.html';
+	}
+
 	goWithout(): void {
 		this.withoutAccount = true;
+	}
+
+	/**
+	 * This device just forgot its server (the recovery screen's "Pair again"
+	 * or "Forget this server"): the first half runs again from here, on this
+	 * launch, whatever the shell baked when it started.
+	 */
+	startOver(): void {
+		try {
+			sessionStorage.setItem(FORGOT_KEY, '1');
+			localStorage.removeItem(JUST_PAIRED_KEY);
+		} catch {
+			/* `active` below carries this page; a reload would ask again */
+		}
+		this.link = null;
+		this.box = null;
+		this.words = '';
+		this.wordsKept = false;
+		this.online = false;
+		this.active = boxRadio.available;
 	}
 
 	/** A link the server opened, kept until pairing ends it. */
@@ -270,6 +318,7 @@ class PrePair {
 		try {
 			if (isFake()) sessionStorage.setItem(FAKE_PAIRED_KEY, '1');
 			else localStorage.setItem(JUST_PAIRED_KEY, 'true');
+			sessionStorage.removeItem(FORGOT_KEY);
 		} catch {
 			/* the plugin holds the pairing; this only spares a relaunch */
 		}
