@@ -42,6 +42,7 @@ pub mod prompt;
 pub mod prompt_blocks;
 pub mod protocol;
 pub mod stream;
+mod turn;
 
 use std::pin::Pin;
 use std::time::Duration;
@@ -193,45 +194,12 @@ impl AgentLoop {
             let turn_started = std::time::Instant::now();
             let mut spent_micros: i64 = 0;
 
-            // Ask the model to RETURN its thinking. Claude 5 omits the text
-            // unless told `display: summarized`; Gemini needs
-            // `includeThoughts`. The catalog carries the right options per
-            // family (`ReasoningFacts::display_options`), and a BYO endpoint,
-            // which never sees the gateway's providerOptions, gets none.
-            //
-            // And ask the gateway to place the cache markers. Our own marker
-            // sits on the system prompt only, so on a model that caches
-            // explicitly (Anthropic) the conversation behind it was re-billed
-            // in full on every step. `caching: auto` adds a marker on the last
-            // message, so each step reads the previous step's prompt from
-            // cache, plus one before the last user message. With ours that is
-            // three of the four a request may carry. On a model that caches
-            // implicitly (xAI, OpenAI, Google) the gateway changes nothing.
             let byo = crate::api::settings_byo::byo_is_active(&pool).await;
-            let gateway_options: Option<Value> = if byo {
-                None
-            } else {
-                let mut options = crate::api::model_catalog::reasoning_facts(&model)
-                    .map(|f| f.display_options)
-                    .filter(|v| v.is_object())
-                    .unwrap_or_else(|| serde_json::json!({}));
-                let gateway = options
-                    .as_object_mut()
-                    .expect("filtered to an object above")
-                    .entry("gateway")
-                    .or_insert_with(|| serde_json::json!({}));
-                if let Some(gateway) = gateway.as_object_mut() {
-                    gateway.insert("caching".into(), serde_json::json!("auto"));
-                }
-                Some(options)
-            };
-            // The turn's effort, in whichever spelling this model and endpoint
-            // take. Computed once: the model does not change mid-turn.
-            let (reasoning, reasoning_effort) = crate::virtues_api::request::reasoning_for(
-                config.thinking,
-                crate::api::model_catalog::reasoning_facts(&model).as_ref(),
-                byo,
-            );
+            // The model does not change mid-turn, so neither do these.
+            let facts = crate::api::model_catalog::reasoning_facts(&model);
+            let gateway_options = turn::gateway_options(facts.as_ref(), byo);
+            let (reasoning, reasoning_effort) =
+                crate::virtues_api::request::reasoning_for(config.thinking, facts.as_ref(), byo);
             // Which conversation this call belongs to, so the provider can send
             // it to the server that already holds its cache. The proxy hashes
             // it before it leaves; see `BearerClient::stream_affine`.
@@ -295,7 +263,7 @@ impl AgentLoop {
                         elapsed_secs = turn_started.elapsed().as_secs(),
                         "last step: asking for the answer, tools off"
                     );
-                    messages.push(system_note(
+                    messages.push(turn::system_note(
                         "no more tool calls this turn. Answer now from what you have, and say briefly what you could not check.",
                     ));
                 }
@@ -522,83 +490,14 @@ impl AgentLoop {
                     break;
                 }
 
-                // Build messages for next iteration
-                // 1. Add assistant message with tool calls
-                messages.push(executor::build_assistant_tool_message(
-                    &result.content,
-                    &result.tool_calls,
-                    &result.reasoning_details,
-                ));
-
-                // 2. Add tool result messages
-                for tool_result in &tool_results {
-                    messages.push(executor::build_tool_result_message(
-                        &tool_result.tool_call_id,
-                        &tool_result.to_llm_content(),
-                    ));
-                }
-
-                // 2b. Hand over any media the tools returned, so a file the
-                // model found counts for as much as one the user pasted.
-                //
-                // Gated on the catalog's capability flag rather than a mime
-                // check here: whether an image can be sent is a fact about the
-                // model, and the Chat slot is user-overridable to anything the
-                // gateway carries. `None` means the catalog is cold and we do
-                // not know — treated as cannot, because guessing wrong fails
-                // the whole request rather than one attachment.
-                let attachments: Vec<crate::tools::ToolAttachment> = tool_results
-                    .iter()
-                    .filter_map(|tr| tr.result.as_ref().ok())
-                    .flat_map(|r| r.attachments.iter().cloned())
-                    .collect();
-
-                if !attachments.is_empty() {
-                    match crate::api::model_catalog::supports_vision(&model) {
-                        Some(true) => {
-                            if let Some(msg) = executor::build_attachment_message(&attachments) {
-                                tracing::info!(
-                                    count = attachments.len(),
-                                    "Attaching tool media to next turn"
-                                );
-                                messages.push(msg);
-                            }
-                        }
-                        // Say it in the transcript rather than dropping the
-                        // media silently — the model must be able to tell the
-                        // user it cannot see, instead of reporting an absence.
-                        other => {
-                            let why = if other == Some(false) {
-                                format!("{model} cannot read images")
-                            } else {
-                                format!("image support for {model} is unknown on this box")
-                            };
-                            tracing::warn!(model = %model, "Dropping tool media: {}", why);
-                            messages.push(system_note(&format!(
-                                "the tool returned {} file(s) to look at, but they were not attached because {}. Tell the user you cannot see the file rather than guessing at its contents.",
-                                attachments.len(),
-                                why
-                            )));
-                        }
-                    }
-                }
-
-                // 3. Inject turn limit warning when running low on steps
-                let steps_remaining = config.max_steps.saturating_sub(step);
-                if steps_remaining <= 3 && steps_remaining > 1 {
-                    // "Steps" — model calls — not "tool calls": one step can
-                    // carry several calls, and a model told it had two calls
-                    // left when it had two steps rationed the wrong thing.
-                    messages.push(system_note(&format!(
-                        "{} step{} (model call{}) remaining in this turn. Finish, or say where you got to and what is left.",
-                        steps_remaining,
-                        if steps_remaining == 1 { "" } else { "s" },
-                        if steps_remaining == 1 { "" } else { "s" }
-                    )));
-                    tracing::debug!(steps_remaining, "Injected turn limit warning");
-                }
-
-                // Continue loop for next LLM call
+                turn::append_next_step(
+                    &mut messages,
+                    &model,
+                    &result,
+                    &tool_results,
+                    crate::api::model_catalog::supports_vision(&model),
+                    config.max_steps.saturating_sub(step),
+                );
             }
 
             // How it ended, once, at the end. A trailing unconditional
@@ -609,11 +508,6 @@ impl AgentLoop {
             yield AgentEvent::done(step, finish);
         })
     }
-}
-
-/// A note from the loop to the model, sent as a user message.
-fn system_note(text: &str) -> Value {
-    serde_json::json!({ "role": "user", "content": format!("[System: {text}]") })
 }
 
 /// Whether the person has pressed Stop.
