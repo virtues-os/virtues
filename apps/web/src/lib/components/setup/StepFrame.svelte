@@ -154,7 +154,10 @@
 		outline: 2px solid var(--color-primary);
 		outline-offset: 3px;
 	}
+	/* A quiet link is a line of text, but a thumb needs 44 points: the hit
+	   area reaches past the text without moving anything around it. */
 	:global(.setup-past) {
+		position: relative;
 		padding: 0;
 		border: none;
 		background: none;
@@ -166,5 +169,10 @@
 	}
 	:global(.setup-past:hover) {
 		color: var(--color-foreground);
+	}
+	:global(.setup-past)::after {
+		content: "";
+		position: absolute;
+		inset: -12px -4px;
 	}
 </style>

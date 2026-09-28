@@ -42,7 +42,7 @@
 	starts here and carries on under the letter, and each dot of the mark
 	lands on a soft note, premise, premise, therefore.
 
-	Enter, Space, or → jumps to the settled frame; again goes on. Reduced
+	Enter, Space, →, or a click jumps to the settled frame; the key again goes on. Reduced
 	motion gets the settled frame with no travel.
 -->
 <script lang="ts">
@@ -152,6 +152,16 @@
 		else settle();
 	}
 
+	/** A click or tap anywhere skips the drawing, as Enter does: without it,
+	 *  a pointer had nothing to do for four seconds. Controls answer for
+	 *  themselves. */
+	function onPointer(e: PointerEvent) {
+		score.start();
+		if (phase === "door") return;
+		if (e.target instanceof HTMLElement && e.target.closest("button, input, select, textarea, a")) return;
+		settle();
+	}
+
 	onMount(() => {
 		still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 		score.start();
@@ -170,7 +180,7 @@
 	});
 </script>
 
-<svelte:window onpointerdown={() => score.start()} onpointermove={onMove} onkeydown={onKey} />
+<svelte:window onpointerdown={onPointer} onpointermove={onMove} onkeydown={onKey} />
 
 <div class="hello" class:still class:leaving class:settled={at("door")} role="presentation">
 	<div class="group">

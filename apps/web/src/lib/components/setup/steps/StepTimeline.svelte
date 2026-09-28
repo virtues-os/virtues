@@ -146,6 +146,15 @@
 		else if (beat === 'c') enter('e');
 	}
 
+	/** A tap anywhere during the intro moves it along, as a click on the
+	 *  example does: on a phone the intro held the editor back about eight
+	 *  seconds with nothing for a thumb to do but find "Skip intro". */
+	function onIntroPointer(e: PointerEvent) {
+		if (!beat || beat === 'e') return;
+		if (e.target instanceof HTMLElement && e.target.closest('button, input, select, textarea, a')) return;
+		advance();
+	}
+
 	$effect(() => () => clearTimers());
 
 	// ------------------------------------------------------------------
@@ -564,7 +573,16 @@
 		});
 	});
 
-	const unnamed = $derived(bands.filter((b) => !b.title.trim()).length);
+	/** The last chapter, empty, after every other is named: what Enter on the
+	 *  last name adds, so a person who pressed Enter to finish left one
+	 *  behind. It doesn't hold up saving, and saving drops it (its years go
+	 *  back to the chapter before). */
+	const dangling = $derived(
+		bands.length > MIN &&
+			!bands[bands.length - 1].title.trim() &&
+			bands.slice(0, -1).every((b) => b.title.trim()),
+	);
+	const unnamed = $derived(bands.filter((b) => !b.title.trim()).length - (dangling ? 1 : 0));
 	const canSave = $derived(birthKnown && unnamed === 0 && bands.length >= MIN && fits);
 
 	/** A passing word from the editor: a refused split, a limit. */
@@ -685,6 +703,10 @@
 				await updateProfile({ birth_date: birthDate });
 				storedBirth = birthDate;
 			}
+			if (dangling) {
+				bands.pop();
+				ages.pop();
+			}
 			const last = bands.length - 1;
 			const payload: LifeChapterInput[] = bands.map((b, i) => ({
 				title: b.title.trim(),
@@ -757,7 +779,7 @@
 	const sub = $derived(beat === 'e' ? instruction : head.s);
 </script>
 
-<svelte:window onkeydown={onWindowKey} />
+<svelte:window onkeydown={onWindowKey} onpointerdown={onIntroPointer} />
 
 <section class="timeline-step" class:editing={beat === 'e'} class:list={listMode}>
 	<header class="head">
@@ -1123,10 +1145,11 @@
 		</div>
 	{/if}
 
-	{#if editorShown && birthKnown}
-		<!-- The one line that looks forward -->
+	{#if editorShown && birthKnown && unnamed === 0 && bands.length >= MIN}
+		<!-- The one line that looks forward. Not until the drawn chapters are
+		     named: beside an empty one it read as the place to name it. -->
 		<label class="next" in:rise={{ delay: M.base }}>
-			<span>And the next chapter?</span>
+			<span>What do you hope the next chapter is?</span>
 			<input
 				type="text"
 				maxlength="120"
@@ -1836,6 +1859,17 @@
 		gap: 16px;
 		flex-wrap: wrap;
 		width: 100%;
+	}
+	/* Quiet controls keep a 44-point hit area without taking the room. */
+	.quiet,
+	.link {
+		position: relative;
+	}
+	.quiet::after,
+	.link::after {
+		content: "";
+		position: absolute;
+		inset: -8px -4px;
 	}
 	.quiet {
 		padding: 6px 0;

@@ -31,6 +31,23 @@
 		};
 	}
 
+	/** Focus moves into the dialog as it opens, and back to whatever had it
+	 *  when it closes: otherwise it stays on the page behind the backdrop,
+	 *  and Tab walks controls nobody can see. The dialog itself takes it, so
+	 *  its label is read first and Tab goes on into its contents. */
+	function holdFocus(node: HTMLElement) {
+		const before = document.activeElement as HTMLElement | null;
+		// After the contents mount: a field that focuses itself keeps it.
+		requestAnimationFrame(() => {
+			if (!node.contains(document.activeElement)) node.focus({ preventScroll: true });
+		});
+		return {
+			destroy() {
+				if (before?.isConnected) before.focus({ preventScroll: true });
+			},
+		};
+	}
+
 	function handleBackdropClick(e: MouseEvent) {
 		if (e.target === e.currentTarget) {
 			onClose();
@@ -61,7 +78,7 @@
 {#if open}
 	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
 	<div class="modal-backdrop" onclick={handleBackdropClick} role="presentation" use:portal>
-		<div class="modal {widthClass}" role="dialog" aria-modal="true" aria-label={title}>
+		<div class="modal {widthClass}" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" use:holdFocus>
 			{#if title}
 				<div class="modal-header">
 					<h2 class="modal-title">{title}</h2>
@@ -107,6 +124,7 @@
 	}
 
 	.modal {
+		outline: none;
 		width: 100%;
 		background: var(--surface);
 		border: 1px solid var(--border);

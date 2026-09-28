@@ -108,6 +108,16 @@
 		if (mirror) width = mirror.getBoundingClientRect().width;
 	});
 
+	/** A long name shrinks to fit the screen instead of running off it: the
+	 *  measure stays at full size, and the field scales down from it. */
+	let room = $state(typeof window === "undefined" ? 1024 : window.innerWidth - 32);
+	onMount(() => {
+		const on = () => (room = window.innerWidth - 32);
+		window.addEventListener("resize", on);
+		return () => window.removeEventListener("resize", on);
+	});
+	const fit = $derived(Math.max(0.35, Math.min(1, room / (Math.max(width, 40) + 8))));
+
 	/**
 	 * Typing over the name replaces it. While the field still holds the name
 	 * it opened with, the first printable key takes the whole name's place
@@ -214,7 +224,8 @@
 			oninput={() => setup.hear()}
 			class="name"
 			class:leaving
-			style:width="{Math.max(width, 40) + 8}px"
+			style:width="{Math.max(width, 40) * fit + 8}px"
+			style:font-size={fit < 1 ? `calc(clamp(4.5rem, 13vw, 10rem) * ${fit})` : undefined}
 			aria-label={beat === 1 ? "Your assistant's name" : "What your assistant should call you"}
 			autocomplete={beat === 1 ? "off" : "given-name"}
 			spellcheck="false"

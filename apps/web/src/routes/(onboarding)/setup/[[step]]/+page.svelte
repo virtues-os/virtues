@@ -38,7 +38,7 @@
 	import "$lib/components/setup/setup.css";
 	import { M, rise } from "$lib/components/setup/motion";
 	import { isMacOS } from "$lib/utils/platform";
-	import { getTheme, isValidTheme, setTheme } from "$lib/utils/theme";
+	import { applyTheme, DEFAULT_THEMES, getTheme, isValidTheme, setTheme } from "$lib/utils/theme";
 	import Hello from "$lib/components/onboarding/Hello.svelte";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
 	import SetupMark from "$lib/components/setup/SetupMark.svelte";
@@ -115,6 +115,24 @@
 	}
 
 
+	// ARRIVING ON A STEP PUTS FOCUS ON IT. The button that brought them here
+	// is gone, so focus fell to the page, and Tab started from the top of the
+	// document. Once the new step has faded in, its heading takes focus (a
+	// step that focuses its own field has done so already, and keeps it).
+	$effect(() => {
+		const s = step;
+		if (!ready || !s || s === "welcome") return;
+		const t = setTimeout(() => {
+			const a = document.activeElement;
+			if (a && a !== document.body) return;
+			const h = document.querySelector<HTMLElement>("main.flow h1, main.flow h2");
+			if (!h) return;
+			if (!h.hasAttribute("tabindex")) h.setAttribute("tabindex", "-1");
+			h.focus({ preventScroll: true });
+		}, still ? 60 : M.base + M.quick + 60);
+		return () => clearTimeout(t);
+	});
+
 	// A failed close is said until they move on.
 	$effect(() => {
 		void step;
@@ -174,7 +192,22 @@
 		if (q.has("intro") || q.has("theme")) history.replaceState(history.state, "", page.url.pathname);
 	}
 
+	/** A device with no server has no theme of its own yet: it follows the
+	 *  system's dark mode until someone picks on Welcome. The pick (or this)
+	 *  rides the hand-off and is saved once there is a server to save it.
+	 *  With a server, its stored theme stands. */
+	function followSystemTheme() {
+		if (!prePair.active) return;
+		try {
+			if (localStorage.getItem("virtues-theme")) return;
+			if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) applyTheme(DEFAULT_THEMES.dark);
+		} catch {
+			/* the light default stands */
+		}
+	}
+
 	onMount(() => {
+		followSystemTheme();
 		takeCarried();
 		void (async () => {
 			// No server yet: the first half runs here, and there is nothing
@@ -272,6 +305,8 @@
 		const at = setup.resumeAt;
 		if (at) go(at);
 		else await finish();
+		// The pairing screen stays up until the next step has faded in over it.
+		setTimeout(() => (prePair.handingOver = false), still ? 0 : M.base + M.quick);
 	}
 
 	async function skip(id: SetupStepId) {
@@ -437,10 +472,10 @@
 						<StepAccount onnext={() => advance("account")} />
 					{:else if step === "server" && prePair.active}
 						<StepServer onnext={() => advance("server")} />
-					{:else if step === "wifi" && prePair.active}
+					{:else if step === "wifi" && (prePair.active || prePair.handingOver)}
 						<!-- Without an open link (a reload drops it) Wi-Fi isn't
 						     reachable, and the step guard sends it back to Server. -->
-						{#if prePair.link && prePair.online}
+						{#if (prePair.link && prePair.online) || prePair.handingOver}
 							<StepPairing onpaired={paired} onlost={lost} />
 						{:else if prePair.link}
 							<StepWifi link={prePair.link} onjoined={() => (prePair.online = true)} onlost={lost} />
@@ -532,6 +567,11 @@
 		color: var(--color-foreground);
 		pointer-events: none;
 	}
+	/* A heading holds focus only to place the reader; it isn't a control. */
+	.flow :global(h1[tabindex="-1"]:focus),
+	.flow :global(h2[tabindex="-1"]:focus) {
+		outline: none;
+	}
 	.close-error {
 		position: fixed;
 		z-index: 21;
@@ -576,8 +616,10 @@
 	.corner {
 		position: fixed;
 		z-index: 61;
-		top: max(16px, env(safe-area-inset-top));
-		right: 16px;
+		/* The buttons grew to 44 around the same glyphs; the corner moved
+		   out by the difference so the glyphs stay where they were. */
+		top: max(11px, env(safe-area-inset-top));
+		right: 11px;
 		display: flex;
 		gap: 0;
 	}
@@ -597,13 +639,19 @@
 	.sound {
 		display: grid;
 		place-content: center;
-		width: 34px;
-		height: 34px;
+		width: 44px;
+		height: 44px;
 		border: none;
 		border-radius: 50%;
 		background: transparent;
 		color: var(--color-foreground-subtle);
 		cursor: pointer;
+	}
+	/* "Finish later" is small to look at, but a thumb gets 44 points. */
+	.later::after {
+		content: "";
+		position: absolute;
+		inset: -8px;
 	}
 	.sound:hover {
 		color: var(--color-foreground);

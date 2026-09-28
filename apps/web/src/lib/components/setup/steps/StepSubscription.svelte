@@ -502,6 +502,7 @@
 		margin-top: 1.25rem;
 	}
 	.link {
+		position: relative;
 		padding: 0;
 		border: none;
 		background: none;
@@ -513,6 +514,12 @@
 		text-underline-offset: 3px;
 		cursor: pointer;
 		transition: color 0.15s ease;
+	}
+	/* A 44-point hit area around a line of text. */
+	.link::after {
+		content: "";
+		position: absolute;
+		inset: -12px -4px;
 	}
 	.link:hover,
 	.link.on {

@@ -64,11 +64,12 @@
 </button>
 
 <style>
+	/* 44 points: a thumb's size, though the glyph is 16. */
 	.flip {
 		display: grid;
 		place-content: center;
-		width: 34px;
-		height: 34px;
+		width: 44px;
+		height: 44px;
 		border: none;
 		border-radius: 50%;
 		background: transparent;
