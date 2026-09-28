@@ -1341,6 +1341,11 @@ async fn chat_handler_inner(
     _user: AuthUser,
     Json(request): Json<ChatRequest>,
 ) -> Response {
+    // Where the time before the first model call goes, one log line per turn
+    // ("turn prepared"). Everything here is paid before the first token.
+    let started = std::time::Instant::now();
+    let ms = |since: std::time::Instant| since.elapsed().as_millis() as u64;
+
     // The turn's mode, decided once. Some chats are a mode by id (the
     // interview, the getting-started room), whatever the client sent.
     let mode = ChatMode::resolve(&pool, &request.chat_id, &request.agent_mode).await;
@@ -1354,6 +1359,7 @@ async fn chat_handler_inner(
     if let Some(refusal) = reject_if_unready(&pool, &request, &live_turns, &cancel_state).await {
         return refusal;
     }
+    let t_ready = ms(started);
 
     // Which model answers. One door — the box decides, from the mode and the
     // owner's pin; the request's `model` is a per-turn override and nothing
@@ -1448,11 +1454,13 @@ async fn chat_handler_inner(
 
     // A ghost chat has no usage row to read and no summary to write, so it
     // never compacts.
+    let t_stored = ms(started);
     let checkpoint_event = if temporary {
         None
     } else {
         compact_if_critical(&pool, &chat_id_str, &model).await
     };
+    let t_compacted = ms(started);
 
     let History { conversation_summary, summary_up_to_index, project_id: effective_project_id, messages } =
         match load_history(&pool, &request).await {
@@ -1465,7 +1473,10 @@ async fn chat_handler_inner(
     // gets the marker, `system_tail` is the per-turn tail (the open page's live
     // text, and the rules that deliberately sit behind it) which must stay
     // OUTSIDE the cached block or it invalidates the prefix on every keystroke.
+    let t_history = ms(started);
+    let prompt_started = std::time::Instant::now();
     let (mut system_prompt, system_tail) = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &mode, effective_project_id.as_deref()).await;
+    let prompt_ms = ms(prompt_started);
     // Scoped (grounded) chat: retrieval is hard-filtered to the project's
     // items (ScopeMode::Exclusive in ToolContext); this line sets the matching
     // answer contract. Only meaningful inside a project.
@@ -1500,6 +1511,20 @@ async fn chat_handler_inner(
     // switched or a phone locked does not drop the loop or the assistant row
     // (VIR-323). This response is one watcher on the turn;
     // `GET /api/chat/{id}/stream` is another.
+    tracing::info!(
+        chat_id = %chat_id_str,
+        mode = mode.wire_name(),
+        ready_ms = t_ready,
+        stored_ms = t_stored - t_ready,
+        compaction_ms = t_compacted - t_stored,
+        history_ms = t_history - t_compacted,
+        prompt_ms,
+        prompt_tokens = crate::api::token_estimation::estimate_tokens(&system_prompt)
+            + crate::api::token_estimation::estimate_tokens(&system_tail),
+        total_ms = ms(started),
+        "turn prepared"
+    );
+
     let turn = live_turns.start(&chat_id_str);
     // Registered here, not inside the stream, so the driver holds the same
     // token and can tell its own turn from whichever one holds the slot.
