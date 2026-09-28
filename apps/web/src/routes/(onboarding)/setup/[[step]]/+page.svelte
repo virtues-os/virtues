@@ -31,7 +31,7 @@
   The letter stays readable on its own at /founders-letter.
 -->
 <script lang="ts">
-	import { afterNavigate, goto } from "$app/navigation";
+	import { afterNavigate, goto, replaceState } from "$app/navigation";
 	import { page } from "$app/state";
 	import { onMount } from "svelte";
 	import { fade } from "svelte/transition";
@@ -39,6 +39,7 @@
 	import { M, rise } from "$lib/components/setup/motion";
 	import { isMacOS } from "$lib/utils/platform";
 	import { applyTheme, DEFAULT_THEMES, getTheme, isValidTheme, setTheme } from "$lib/utils/theme";
+	import { THEME_CHOSEN_KEY } from "$lib/components/setup/themeReveal";
 	import Hello from "$lib/components/onboarding/Hello.svelte";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
 	import SetupMark from "$lib/components/setup/SetupMark.svelte";
@@ -181,6 +182,20 @@
 		return () => void titleBar("visible");
 	});
 
+	/** What this copy knows that the server's can't read: how far through the
+	 *  reading they got, and a theme, only if one was picked on Welcome. A
+	 *  followed system mode or this copy's fallback stays here, so the server
+	 *  keeps its own rather than saving a choice nobody made. */
+	function carried(): Record<string, string> {
+		const out: Record<string, string> = { intro: String(setup.introStage) };
+		try {
+			if (localStorage.getItem(THEME_CHOSEN_KEY)) out.theme = getTheme();
+		} catch {
+			/* no theme to carry */
+		}
+		return out;
+	}
+
 	/** What the Mac's own copy handed over (`prePair.handOff`): taken once,
 	 *  then dropped from the address. */
 	function takeCarried() {
@@ -188,8 +203,18 @@
 		const intro = Number(q.get("intro"));
 		if (intro === 1 || intro === 2) setup.passIntro(intro);
 		const theme = q.get("theme");
-		if (theme && isValidTheme(theme) && theme !== getTheme()) void setTheme(theme);
-		if (q.has("intro") || q.has("theme")) history.replaceState(history.state, "", page.url.pathname);
+		if (theme && isValidTheme(theme)) {
+			try {
+				localStorage.setItem(THEME_CHOSEN_KEY, "1");
+			} catch {
+				/* saved on the server below all the same */
+			}
+			// Applied again once saved: the layout's own read of the server's
+			// theme can land between the two and paint the old one.
+			void setTheme(theme).then(() => applyTheme(theme));
+		}
+		// After the router has started (SvelteKit refuses before, in dev).
+		if (q.has("intro") || q.has("theme")) setTimeout(() => replaceState(page.url.pathname, page.state), 0);
 	}
 
 	/** A device with no server has no theme of its own yet: it follows the
@@ -199,8 +224,9 @@
 	function followSystemTheme() {
 		if (!prePair.active) return;
 		try {
-			if (localStorage.getItem("virtues-theme")) return;
-			if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) applyTheme(DEFAULT_THEMES.dark);
+			if (localStorage.getItem(THEME_CHOSEN_KEY)) return;
+			const dark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+			applyTheme(DEFAULT_THEMES[dark ? "dark" : "light"]);
 		} catch {
 			/* the light default stands */
 		}
@@ -294,7 +320,7 @@
 	async function paired() {
 		// A computer carries on in the server's own copy of the app, told how
 		// far through the reading this one got and the theme picked on Welcome.
-		const away = await prePair.handOff({ intro: String(setup.introStage), theme: getTheme() });
+		const away = await prePair.handOff(carried());
 		if (away === "away") return;
 		if (away === "silent") throw new Error("silent");
 		await setup.refresh();
@@ -357,10 +383,13 @@
 	// its mind between the two reads). This page is reused, not remounted, so
 	// it has to leave the close itself.
 	afterNavigate((nav) => {
-		if (!closing || !nav.to?.url.pathname.startsWith("/setup")) return;
+		if (!closing || nav.type === "popstate" || !nav.to?.url.pathname.startsWith("/setup")) return;
 		closing = false;
 		closeError = "Your server still has Setup open. Try again.";
 		void titleBar("overlay");
+		// Bounced to bare /setup: stand on the step still open, not an
+		// empty stage. (Not `route()`, which would close again and loop.)
+		if (!step && setup.resumeAt) void goto(`/setup/${setup.resumeAt}`, { replaceState: true });
 	});
 </script>
 
@@ -627,13 +656,22 @@
 	   tightens so it clears them down to a 360px screen. */
 	@media (max-width: 440px) {
 		.corner {
+			top: max(16px, env(safe-area-inset-top));
 			right: 8px;
 			gap: 0;
 		}
 		.corner :global(.flip),
 		.corner .sound {
+			position: relative;
 			width: 30px;
 			height: 30px;
+		}
+		/* Narrow to leave the dots their line, but a thumb's height. */
+		.corner :global(.flip)::after,
+		.corner .sound::after {
+			content: "";
+			position: absolute;
+			inset: -7px 0;
 		}
 	}
 	.sound {

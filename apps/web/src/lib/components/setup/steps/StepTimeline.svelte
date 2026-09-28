@@ -146,12 +146,13 @@
 		else if (beat === 'c') enter('e');
 	}
 
-	/** A tap anywhere during the intro moves it along, as a click on the
+	/** A tap anywhere during the intro moves it along (a click, so a scroll
+	 *  that starts on the page doesn't), as a click on the
 	 *  example does: on a phone the intro held the editor back about eight
 	 *  seconds with nothing for a thumb to do but find "Skip intro". */
-	function onIntroPointer(e: PointerEvent) {
+	function onIntroPointer(e: MouseEvent) {
 		if (!beat || beat === 'e') return;
-		if (e.target instanceof HTMLElement && e.target.closest('button, input, select, textarea, a')) return;
+		if (e.target instanceof Element && e.target.closest('button, input, select, textarea, a')) return;
 		advance();
 	}
 
@@ -779,7 +780,7 @@
 	const sub = $derived(beat === 'e' ? instruction : head.s);
 </script>
 
-<svelte:window onkeydown={onWindowKey} onpointerdown={onIntroPointer} />
+<svelte:window onkeydown={onWindowKey} onclick={onIntroPointer} />
 
 <section class="timeline-step" class:editing={beat === 'e'} class:list={listMode}>
 	<header class="head">
@@ -1145,7 +1146,7 @@
 		</div>
 	{/if}
 
-	{#if editorShown && birthKnown && unnamed === 0 && bands.length >= MIN}
+	{#if editorShown && birthKnown && bands.length >= MIN && bands.every((b) => b.title.trim())}
 		<!-- The one line that looks forward. Not until the drawn chapters are
 		     named: beside an empty one it read as the place to name it. -->
 		<label class="next" in:rise={{ delay: M.base }}>
@@ -1865,7 +1866,7 @@
 	.link {
 		position: relative;
 	}
-	.quiet::after,
+	.quiet:not(.add-row)::after,
 	.link::after {
 		content: "";
 		position: absolute;

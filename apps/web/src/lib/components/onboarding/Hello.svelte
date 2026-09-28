@@ -155,10 +155,9 @@
 	/** A click or tap anywhere skips the drawing, as Enter does: without it,
 	 *  a pointer had nothing to do for four seconds. Controls answer for
 	 *  themselves. */
-	function onPointer(e: PointerEvent) {
-		score.start();
+	function onClick(e: MouseEvent) {
 		if (phase === "door") return;
-		if (e.target instanceof HTMLElement && e.target.closest("button, input, select, textarea, a")) return;
+		if (e.target instanceof Element && e.target.closest("button, input, select, textarea, a")) return;
 		settle();
 	}
 
@@ -180,7 +179,7 @@
 	});
 </script>
 
-<svelte:window onpointerdown={onPointer} onpointermove={onMove} onkeydown={onKey} />
+<svelte:window onpointerdown={() => score.start()} onclick={onClick} onpointermove={onMove} onkeydown={onKey} />
 
 <div class="hello" class:still class:leaving class:settled={at("door")} role="presentation">
 	<div class="group">

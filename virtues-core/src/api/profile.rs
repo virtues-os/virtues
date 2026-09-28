@@ -133,7 +133,9 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
         query_builder = query_builder.bind(v);
     }
     if let Some(ref v) = request.home_city {
-        query_builder = query_builder.bind(v.trim());
+        // An empty city clears it: NULL, not "".
+        let v = v.trim();
+        query_builder = query_builder.bind((!v.is_empty()).then_some(v));
     }
     if let Some(ref v) = request.self_person_id {
         query_builder = query_builder.bind(v);
