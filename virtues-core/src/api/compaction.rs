@@ -326,66 +326,7 @@ pub async fn compact_chat(
     let summary_up_to_index: i32 = chat_row.get::<i64, _>("summary_up_to_index") as i32;
     let summary_version: i32 = chat_row.get::<i64, _>("summary_version") as i32;
 
-    // Load messages from normalized table
-    let message_rows = sqlx::query(
-        r#"
-        SELECT
-            id, role, content, created_at as timestamp,
-            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details, parts
-        FROM app_chat_messages
-        WHERE chat_id = $1
-        ORDER BY sequence_num ASC
-        "#,
-    )
-    .bind(&chat_id_str)
-    .fetch_all(pool)
-    .await?;
-    
-    let messages: Vec<ChatMessage> = message_rows
-        .into_iter()
-        .map(|row| {
-            use sqlx::Row;
-            let id: String = row.get("id");
-            let role: String = row.get("role");
-            let content: String = row.get("content");
-            let timestamp: Timestamp = row.get("timestamp");
-            let model: Option<String> = row.get("model");
-            let provider: Option<String> = row.get("provider");
-            let agent_id: Option<String> = row.get("agent_id");
-            let reasoning: Option<String> = row.get("reasoning");
-            let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
-            // `parts` carries the attachments. Leaving it out here is why the
-            // gauge never saw a PDF: the estimate is what decides compaction.
-            let parts_raw: Option<serde_json::Value> = row.get("parts");
-            let intent_raw: Option<serde_json::Value> = row.get("intent");
-            let subject: Option<String> = row.get("subject");
-            let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
-
-            let tool_calls = tool_calls_raw.and_then(|tc| {
-                serde_json::from_value(tc)
-                    .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
-                    .ok()
-            });
-            let intent = intent_raw
-                .and_then(|i| serde_json::from_value(i).ok());
-
-            ChatMessage {
-                id: Some(id.clone()),
-                role,
-                content,
-                timestamp,
-                model,
-                provider,
-                agent_id,
-                reasoning,
-                tool_calls,
-                intent,
-                subject,
-                reasoning_details,
-                parts: parts_raw.and_then(|p| crate::api::chat::parts_from_jsonb(p, &id)),
-            }
-        })
-        .collect();
+    let messages = crate::api::chats::load_messages(pool, &chat_id_str).await?;
     
     let message_count = messages.len();
 
@@ -968,66 +909,7 @@ pub async fn needs_compaction(
     let conversation_summary: Option<String> = chat_row.get("conversation_summary");
     let summary_up_to_index: i32 = chat_row.get::<i64, _>("summary_up_to_index") as i32;
 
-    // Load messages from normalized table
-    let message_rows = sqlx::query(
-        r#"
-        SELECT
-            id, role, content, created_at as timestamp,
-            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details, parts
-        FROM app_chat_messages
-        WHERE chat_id = $1
-        ORDER BY sequence_num ASC
-        "#,
-    )
-    .bind(&chat_id_str)
-    .fetch_all(pool)
-    .await?;
-
-    let messages: Vec<ChatMessage> = message_rows
-        .into_iter()
-        .map(|row| {
-            use sqlx::Row;
-            let id: String = row.get("id");
-            let role: String = row.get("role");
-            let content: String = row.get("content");
-            let timestamp: Timestamp = row.get("timestamp");
-            let model: Option<String> = row.get("model");
-            let provider: Option<String> = row.get("provider");
-            let agent_id: Option<String> = row.get("agent_id");
-            let reasoning: Option<String> = row.get("reasoning");
-            let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
-            // `parts` carries the attachments. Leaving it out here is why the
-            // gauge never saw a PDF: the estimate is what decides compaction.
-            let parts_raw: Option<serde_json::Value> = row.get("parts");
-            let intent_raw: Option<serde_json::Value> = row.get("intent");
-            let subject: Option<String> = row.get("subject");
-            let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
-
-            let tool_calls = tool_calls_raw.and_then(|tc| {
-                serde_json::from_value(tc)
-                    .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
-                    .ok()
-            });
-            let intent = intent_raw
-                .and_then(|i| serde_json::from_value(i).ok());
-
-            ChatMessage {
-                id: Some(id.clone()),
-                role,
-                content,
-                timestamp,
-                model,
-                provider,
-                agent_id,
-                reasoning,
-                tool_calls,
-                intent,
-                subject,
-                reasoning_details,
-                parts: parts_raw.and_then(|p| crate::api::chat::parts_from_jsonb(p, &id)),
-            }
-        })
-        .collect();
+    let messages = crate::api::chats::load_messages(pool, &chat_id_str).await?;
 
     // Get verbatim messages (after summary)
     let verbatim_messages = if (summary_up_to_index as usize) < messages.len() {
