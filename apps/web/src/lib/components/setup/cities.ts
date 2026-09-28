@@ -1,11 +1,10 @@
 /**
- * The cities the location step's map is drawn from — the map IS these dots.
+ * The cities the location step offers: the search list, what a tap on the
+ * globe snaps to, and where the globe turns for a zone.
  *
- * No tiles and no coastline data: a world of lit cities on a graticule reads
- * as the world, needs nothing fetched from anyone, and carries exactly the
- * detail the step wants (cities, never streets or shops). Each city carries
- * its real IANA zone, so dropping the pin near one picks a true zone rather
- * than an offset band's guess.
+ * Each city carries its real IANA zone, so choosing one picks a true zone
+ * rather than an offset band's guess. (The land itself is drawn from
+ * globeLand.ts; until 2026-09-28 these dots were the whole map.)
  *
  * Chosen for coverage, not rank: every inhabited continent densely enough to
  * suggest its shape, and at least one city in each zone people commonly
