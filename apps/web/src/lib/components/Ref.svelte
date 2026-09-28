@@ -51,8 +51,8 @@
 			width="11"
 			class="ref-pill-icon"
 		/>@{/if}{displayName}</button
->
-{#if hover.visible && hover.anchor}
+><!-- No whitespace before the preview block: it would render as a space
+     after the name, before the punctuation that follows it. -->{#if hover.visible && hover.anchor}
 	<RefPreview
 		anchor={hover.anchor}
 		type={resolvedType}
