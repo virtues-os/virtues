@@ -85,6 +85,7 @@
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
 	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
+	import { projectMenuItems, targetForTab } from "$lib/utils/projectActions";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import { pendingPrompt } from "$lib/stores/pendingPrompt.svelte";
 	import {
@@ -202,28 +203,49 @@
 	// each message: the agent's active-project context, and on a chat's first
 	// message the server files it there.
 	//
-	// Read from the session row, live. It used to be copied once per
-	// conversation, so filing an open chat from a menu or the project page
-	// left this view grounding answers in the project it had just left, or in
-	// none. The filing happens elsewhere (the project, "Add to project"), and
-	// the store re-reads the sessions whenever it does.
+	// Read live through `chatSessions.projectOf`. It used to be copied once
+	// per conversation, so filing an open chat from a menu or the project
+	// page left this view grounding answers in the project it had just left,
+	// or in none.
 	//
-	// `stagedProject` is the one thing the row cannot know yet: a new chat
-	// opened from a project ("Ask this project", "New chat here") before its
-	// first message has made a row. It stands in while the row has no project
-	// and is dropped once the server confirms the filing, so unfiling the chat
-	// later cannot be undone by a leftover.
-	let stagedProject = $state<{ chat: string; project: string } | null>(null);
-	const sessionProjectId = $derived(
-		chatSessions.sessions.find((s) => s.conversation_id === conversationId)?.project_id ?? null,
-	);
-	const chatProjectId = $derived(
-		sessionProjectId ??
-			(stagedProject?.chat === conversationId ? stagedProject.project : null),
-	);
+	// An unsent chat has no row and nothing on the server to file, so it
+	// carries a draft instead (`projectStore.draftFor`): set by "Ask this
+	// project", "New chat here", dropping its tab on a project, or its own
+	// menu. The draft goes out with the first message, the server files the
+	// chat, and the draft is dropped once the filing comes back, so unfiling
+	// the chat later cannot be undone by a leftover.
+	const savedProjectId = $derived(chatSessions.projectOf(conversationId));
+	// A draft whose project was deleted before the first message is dropped,
+	// not sent: the server would file the chat into a project in the trash.
+	const draftProjectId = $derived.by(() => {
+		const id = projectStore.draftFor(conversationId);
+		return id && (!projectStore.loaded || projectStore.byId(id)) ? id : null;
+	});
+	const chatProjectId = $derived(savedProjectId ?? draftProjectId);
 
 	$effect(() => {
-		if (stagedProject && sessionProjectId === stagedProject.project) stagedProject = null;
+		if (draftProjectId && savedProjectId === draftProjectId) {
+			projectStore.setDraft(conversationId, null);
+		}
+	});
+
+	// A tab showing an unsent chat is fileable by its draft; the store needs to
+	// know which chat that is. "Unsent" is the route, not the session list: a
+	// new chat sits at `/` until its first message, while an old chat can be
+	// missing from the list and still be saved.
+	const unsent = $derived(!extractConversationId(tab.route) && !isGhost && !isGettingStartedChat(conversationId));
+	$effect(() => {
+		projectStore.noteUnsentChat(tab.id, unsent ? conversationId : null);
+	});
+	$effect(() => {
+		const tabId = tab.id;
+		return () => projectStore.noteUnsentChat(tabId, null);
+	});
+
+	// A temporary chat is never written to the box, so it cannot be filed;
+	// turning one on drops the draft rather than grounding a chat nobody keeps.
+	$effect(() => {
+		if (isGhost && draftProjectId) projectStore.setDraft(conversationId, null);
 	});
 
 	// The project, when there is one, is said at the top of the chat: its
@@ -345,8 +367,16 @@
 	 * failed fetch: what a failure means is each caller's call.
 	 */
 	async function loadTranscript(id: string, signal?: AbortSignal): Promise<boolean> {
-		const data = await getChat<{ messages?: any[] }>(id, signal);
+		const data = await getChat<{
+			messages?: any[];
+			conversation?: { project_id?: string | null };
+		}>(id, signal);
 		if (signal?.aborted) return false;
+		// An older chat is not in the session list; its own detail says where
+		// it is filed. A box older than the field leaves it undefined.
+		if (data.conversation && data.conversation.project_id !== undefined) {
+			chatSessions.noteProject(id, data.conversation.project_id ?? null);
+		}
 		chat.messages = deduplicateMessages(data.messages || []).map(
 			toUiMessage,
 		) as unknown as typeof chat.messages;
@@ -711,7 +741,7 @@
 		// first message so the create path files it + grounds retrieval there.
 		const seededProject = pendingPrompt.takeProject();
 		if (seededProject) {
-			stagedProject = { chat: conversationId, project: seededProject };
+			projectStore.setDraft(conversationId, seededProject);
 		}
 		(async () => {
 			// Stage 1: Models must load first (other code depends on model list)
@@ -1112,6 +1142,9 @@
 	// Getting started has no menu: it cannot be deleted or renamed, and its
 	// header holds one control, the door.
 	const canManageChat = $derived(!isEmpty && !isGhost && !inRoom);
+	// The menu also shows on a new, empty chat, for the one thing that makes
+	// sense before the first message: choosing its project.
+	const showChatMenu = $derived(!isGhost && !inRoom);
 
 	async function deleteThisChat() {
 		// Read before the delete: the title comes off the session row that is
@@ -1153,22 +1186,24 @@
 				action: handleContextClick,
 			});
 		}
-		items.push(
-			{
-				id: "pin",
-				label: pinned ? "Unpin tab" : "Pin tab",
-				icon: pinned ? "ri:unpin-line" : "ri:pushpin-line",
-				action: () => windowShellStore.togglePin(tab.id),
-			},
-			{
+		// Filed by url once saved, by draft until then; the same menu either way.
+		items.push(...projectMenuItems(targetForTab(tab)).map((i) => ({ ...i, dividerBefore: false })));
+		items.push({
+			id: "pin",
+			label: pinned ? "Unpin tab" : "Pin tab",
+			icon: pinned ? "ri:unpin-line" : "ri:pushpin-line",
+			action: () => windowShellStore.togglePin(tab.id),
+		});
+		if (canManageChat) {
+			items.push({
 				id: "delete",
 				label: "Delete chat",
 				icon: "ri:delete-bin-line",
 				variant: "destructive",
 				dividerBefore: true,
 				action: deleteThisChat,
-			},
-		);
+			});
+		}
 		contextMenu.show(
 			{ x: rect.right, y: rect.bottom },
 			items,
@@ -1517,6 +1552,9 @@
 						>
 							<ProjectGlyph icon={chatProject.icon} color={chatProject.accent_color} size={14} />
 							<span class="project-crumb-name">{chatProject.name}</span>
+							{#if chatProject.archived_at}
+								<span class="project-crumb-note">Archived</span>
+							{/if}
 						</button>
 					</div>
 				{/if}
@@ -1546,7 +1584,7 @@
 							<Icon icon="ri:ghost-line" width="16" />
 						</button>
 					{/if}
-					{#if canManageChat}
+					{#if showChatMenu}
 						<button
 							type="button"
 							class="chat-menu-btn"
@@ -2233,6 +2271,11 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.project-crumb-note {
+		flex-shrink: 0;
+		color: var(--color-foreground-subtle);
 	}
 
 

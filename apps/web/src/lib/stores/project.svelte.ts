@@ -48,6 +48,20 @@ export class ProjectStore {
 	private details = $state<Map<string, ProjectDetail>>(new Map());
 
 	/**
+	 * Unsent chats and the project each will be filed in.
+	 *
+	 * A new chat has no row until its first message, so there is nothing on
+	 * the server to file. The draft is what it will be filed in: the chat
+	 * sends it with that first message, the server binds it, and the chat
+	 * drops the draft once the session list confirms. Keyed by conversation,
+	 * not tab, because a tab is reused: "New chat" navigates in place.
+	 */
+	private drafts = $state<Record<string, string>>({});
+
+	/** Which unsent chat each tab is showing, so a tab can be filed by drag or menu. */
+	private unsentByTab = $state<Record<string, string>>({});
+
+	/**
 	 * The working set — what the Home panel, ⌘K and "Add to project" list.
 	 * Archived projects are kept out here rather than at each reader, so a
 	 * closed project cannot leak into a menu that forgot to filter.
@@ -160,6 +174,7 @@ export class ProjectStore {
 	 */
 	async addItem(id: string, url: string): Promise<void> {
 		const item = await addProjectItem(id, url);
+		if (isChatUrl(url)) chatSessions.noteProject(url.slice('/chat/'.length), id);
 		const cached = this.details.get(id);
 		if (cached) {
 			const exists = cached.items.some((i) => i.url === item.url);
@@ -177,6 +192,7 @@ export class ProjectStore {
 	/** DELETE /api/projects/:id/items — remove a member URL and update the cached detail. */
 	async removeItem(id: string, url: string): Promise<void> {
 		await removeProjectItem(id, url);
+		if (isChatUrl(url)) chatSessions.noteProject(url.slice('/chat/'.length), null);
 		const cached = this.details.get(id);
 		if (cached) {
 			this.setDetail({ ...cached, items: cached.items.filter((i) => i.url !== url) });
@@ -237,7 +253,33 @@ export class ProjectStore {
 	async setChatProject(chatId: string, projectId: string | null): Promise<void> {
 		const url = `/chat/${chatId}`;
 		await updateChat(chatId, { projectId });
+		chatSessions.noteProject(chatId, projectId);
 		await this.afterMembershipChange(url);
+	}
+
+	draftFor(chatId: string): string | null {
+		return this.drafts[chatId] ?? null;
+	}
+
+	setDraft(chatId: string, projectId: string | null): void {
+		if ((this.drafts[chatId] ?? null) === projectId) return;
+		const next = { ...this.drafts };
+		if (projectId) next[chatId] = projectId;
+		else delete next[chatId];
+		this.drafts = next;
+	}
+
+	/** ChatView says which unsent chat a tab holds, or `null` once it is sent or gone. */
+	noteUnsentChat(tabId: string, chatId: string | null): void {
+		if ((this.unsentByTab[tabId] ?? null) === chatId) return;
+		const next = { ...this.unsentByTab };
+		if (chatId) next[tabId] = chatId;
+		else delete next[tabId];
+		this.unsentByTab = next;
+	}
+
+	unsentChatOf(tabId: string): string | null {
+		return this.unsentByTab[tabId] ?? null;
 	}
 
 	private setDetail(detail: ProjectDetail): void {

@@ -162,6 +162,10 @@ pub struct ConversationMeta {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    /// The project this chat is filed in. On the chat itself because the chat
+    /// list holds only the most recent chats, and an older chat opened from a
+    /// project could not otherwise say where it lives.
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -336,6 +340,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
             id,
             title,
             icon,
+            project_id,
             message_count,
             created_at,
             updated_at
@@ -353,6 +358,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
     let id: String = row.get("id");
     let title: String = row.get("title");
     let icon: Option<String> = row.get("icon");
+    let project_id: Option<String> = row.get("project_id");
     let message_count: i64 = row.get("message_count");
     let created_at: Timestamp = row.get("created_at");
     let updated_at: Timestamp = row.get("updated_at");
@@ -422,7 +428,9 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
     let last_message = messages_response.last();
 
     let first_message_at = created_at;
-    let last_message_at = updated_at;
+    // The newest message, as the chat list reports it; `updated_at` moves on
+    // any change to the row, a filing or a rename included.
+    let last_message_at = last_message.map(|m| m.timestamp.clone()).unwrap_or(updated_at);
 
     let conversation = ConversationMeta {
         conversation_id: id,
@@ -433,6 +441,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
         message_count: message_count as i32,
         model: last_message.and_then(|m| m.model.clone()),
         provider: None, // Provider not stored in MessageResponse
+        project_id,
     };
 
     Ok(ChatDetailResponse {

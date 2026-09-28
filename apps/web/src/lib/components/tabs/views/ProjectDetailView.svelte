@@ -29,7 +29,8 @@
 	} from '$lib/api/client';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
 	import { accentCss } from '$lib/sidebar/pin-colors';
-	import { droppedRefUrl, fileIntoProject, isProjectUrl } from '$lib/utils/projectActions';
+	import { droppedRefUrl, fileIntoProject, isProjectUrl, removeFromProject } from '$lib/utils/projectActions';
+	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
 
@@ -379,17 +380,8 @@
 	}
 
 	async function removeMember(url: string) {
-		const id = projectId;
-		if (!id) return;
-		try {
-			await projectStore.removeItem(id, url);
-		} catch (e) {
-			console.error('[ProjectDetailView] remove failed:', e);
-			toast.error("Your server couldn't remove that from this project", {
-				description: "It's still here. Try again",
-			});
-			return;
-		}
+		if (!detail) return;
+		await removeFromProject(detail, url);
 		await loadGraph();
 	}
 
@@ -441,6 +433,14 @@
 				} as (typeof items)[number]
 			);
 		}
+		// Somewhere else too: a chat moves (it lives in one project), anything
+		// else is filed there as well. The shared menu's own "Remove from" is
+		// left out; this page says it below, as its own verb.
+		const elsewhere = getProjectMenuItems(row.url).map((i) => ({
+			...i,
+			submenu: i.submenu?.filter((s) => s.id !== 'remove-from-project')
+		}));
+		items.push(...(elsewhere as (typeof items)[number][]));
 		items.push({
 			id: 'remove',
 			label: 'Remove from project',

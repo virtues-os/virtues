@@ -6,115 +6,18 @@
  */
 
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
-import { projectStore } from '$lib/stores/project.svelte';
-import { fileIntoProject, projectMemberUrl, projectOfChat } from '$lib/utils/projectActions';
+import { projectMemberUrl, projectMenuItems } from '$lib/utils/projectActions';
 import { pinMenuItem } from '$lib/pins/pinAction';
-import { promptText } from '$lib/stores/dialog.svelte';
-import { toast } from 'svelte-sonner';
-import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 
 /**
- * Get "Add to project" menu items — a submenu of all projects plus a "New project…"
- * action that creates one and adds this URL to it immediately.
- *
- * Organization moved from Things (folders) to notebooks (now projects); the menu
- * binds the item as a project member. Empty when the url is itself a project:
- * the server rejects that with 400, so the menu shouldn't offer it.
- *
- * @param url - The URL of the item (e.g., '/page/page_xyz', 'https://...')
- * @param _name - Reserved for a future display label (membership is URL-native).
+ * "Add to project" for a thing with a url. Empty for anything that cannot be
+ * filed: a list route, a project (you can't put a project in a project), a
+ * new chat's bare `/`. The menu itself is `projectMenuItems`, shared with the
+ * surfaces that file unsent chats.
  */
-export function getAddToProjectMenuItems(
-	url: string,
-	_name?: string | null,
-): ContextMenuItem[] {
-	// A list, a project, or a chat with no id yet has nothing to file. The
-	// tab bar passes whatever route a tab is on, and a bare `/` used to be
-	// filed as a member.
+export function getProjectMenuItems(url: string, _name?: string | null): ContextMenuItem[] {
 	const member = projectMemberUrl(url);
-	if (!member) return [];
-	url = member;
-	const projects = projectStore.projects;
-
-	// A chat lives in one project, and the menu says which: the check is
-	// where it is, picking another moves it, and "Remove from" takes it out.
-	// For anything else, filing is additive and the check is not tracked here.
-	const home = projectOfChat(url);
-
-	const submenu: ContextMenuItem[] = projects.map((s) => ({
-		id: `project-${s.id}`,
-		label: s.name,
-		icon: s.icon || PROJECT_ICON,
-		checked: s.id === home?.id,
-		action: () => fileIntoProject(s, url),
-	}));
-
-	submenu.push({
-		id: 'new-project-with-item',
-		label: 'New project…',
-		icon: 'ri:add-line',
-		dividerBefore: projects.length > 0,
-		action: async () => {
-			// promptText, not window.prompt() — the latter is a no-op in the
-			// Tauri/WKWebView shell, so this menu item did nothing there.
-			const projectName = await promptText({
-				title: 'New project',
-				placeholder: 'Name your project',
-				confirmLabel: 'Create',
-			});
-			if (!projectName?.trim()) return;
-			try {
-				const project = await projectStore.create(projectName.trim());
-				await projectStore.addItem(project.id, url);
-				toast(`Added to ${project.name}`);
-			} catch (e) {
-				console.error('[contextMenuItems] Failed to create project:', e);
-				toast.error("Your server couldn't create that project", {
-					description: 'Nothing changed. Try again',
-				});
-			}
-		},
-	});
-
-	if (home) {
-		submenu.push({
-			id: 'remove-from-project',
-			label: `Remove from ${home.name}`,
-			icon: 'ri:close-line',
-			action: async () => {
-				try {
-					await projectStore.removeItem(home.id, url);
-					toast(`Removed from ${home.name}`);
-				} catch (e) {
-					console.error('[contextMenuItems] Failed to remove from project:', e);
-					toast.error(`Your server couldn't remove this from ${home.name}`, {
-						description: "It's still there. Try again",
-					});
-				}
-			},
-		});
-	}
-
-	return [
-		{
-			id: 'add-to-project',
-			label: home ? 'Move to project' : 'Add to project',
-			icon: 'ri:folder-add-line',
-			dividerBefore: true,
-			submenu,
-		},
-	];
-}
-
-/**
- * Get organization-related menu items (Add to project).
- * Used by tab/sidebar/page context menus.
- */
-export function getProjectMenuItems(
-	url: string,
-	name?: string | null,
-): ContextMenuItem[] {
-	return getAddToProjectMenuItems(url, name);
+	return projectMenuItems(member ? { url: member } : null);
 }
 
 /**
