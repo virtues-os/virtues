@@ -887,6 +887,71 @@ pub(crate) fn render(items: &[Item], keep: &HashMap<usize, bool>, input: &DayInp
     md
 }
 
+// ── The fact strip ─────────────────────────────────────────────────────────
+
+/// The day's facts for the strip under the Abstract. Deterministic only: an
+/// absent fact is `None` or empty, and the page omits it rather than guessing.
+#[derive(Debug, serde::Serialize)]
+pub struct DayFacts {
+    pub temperature_high_c: Option<f64>,
+    pub temperature_low_c: Option<f64>,
+    /// Minutes the microphone was recording, silence included.
+    pub recorded_minutes: i64,
+    /// Recorded stretches, merged, as `[start, end]` instants.
+    pub coverage: Vec<[DateTime<Utc>; 2]>,
+    /// Conversations the owner started with Virtues that day.
+    pub chats: i64,
+}
+
+/// Recorded spans closer than this are one stretch on the strip.
+const COVERAGE_MERGE_MIN: i64 = 10;
+
+pub async fn day_facts(pool: &PgPool, date: NaiveDate) -> Result<DayFacts> {
+    let home_tz = super::profile::get_timezone(pool)
+        .await?
+        .unwrap_or_else(|| "UTC".to_string());
+    let day_tz = crate::timezone::resolve_day_timezone(pool, date, &home_tz).await;
+    let (start, end) = super::day_summary::day_boundaries_utc(date, Some(&day_tz));
+
+    let (high, low): (Option<f64>, Option<f64>) = sqlx::query_as(
+        "SELECT max(temperature_c)::float8, min(temperature_c)::float8 FROM data_environment_weather \
+         WHERE occurred_at >= $1::timestamptz AND occurred_at < $2::timestamptz AND NOT is_forecast",
+    )
+    .bind(&start)
+    .bind(&end)
+    .fetch_one(pool)
+    .await?;
+
+    let spans: Vec<(DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT started_at, COALESCE(ended_at, started_at + interval '5 minutes') \
+         FROM data_communication_transcription \
+         WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz ORDER BY started_at",
+    )
+    .bind(&start)
+    .bind(&end)
+    .fetch_all(pool)
+    .await?;
+    let mut coverage: Vec<[DateTime<Utc>; 2]> = Vec::new();
+    for (s, e) in spans {
+        match coverage.last_mut() {
+            Some(last) if (s - last[1]).num_minutes() <= COVERAGE_MERGE_MIN => last[1] = last[1].max(e),
+            _ => coverage.push([s, e]),
+        }
+    }
+    let recorded_minutes = coverage.iter().map(|[s, e]| (*e - *s).num_minutes()).sum();
+
+    let chats: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM app_chats WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz \
+         AND deleted_at IS NULL",
+    )
+    .bind(&start)
+    .bind(&end)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(DayFacts { temperature_high_c: high, temperature_low_c: low, recorded_minutes, coverage, chats })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

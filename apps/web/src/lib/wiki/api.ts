@@ -1277,6 +1277,24 @@ export interface DayChatApi {
  * In-app chats are navigable; external chats are display-only.
  * @param date - The date in YYYY-MM-DD format
  */
+/** The strip under a day's Abstract. Deterministic facts only; absent is null. */
+export interface DayFactsApi {
+	temperature_high_c: number | null;
+	temperature_low_c: number | null;
+	/** Minutes the microphone was recording, silence included. */
+	recorded_minutes: number;
+	/** Recorded stretches, merged, as [start, end] ISO instants. */
+	coverage: [string, string][];
+	/** Conversations the owner started with Virtues that day. */
+	chats: number;
+}
+
+export async function getDayFacts(date: string, fetchFn: FetchFn = fetch): Promise<DayFactsApi | null> {
+	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/facts`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
 export async function getDayChats(
 	date: string,
 	fetchFn: FetchFn = fetch,
