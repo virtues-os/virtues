@@ -257,7 +257,12 @@
 							: -1;
 			if (s >= 0) scored.push({ c, s });
 		}
+		// A match in the middle of a name ("Lis" in Minneapolis) only counts
+		// when nothing starts with what was entered: a name, a word of one, or
+		// a country.
+		const starts = scored.some((x) => x.s < 3);
 		return scored
+			.filter((x) => !starts || x.s < 3)
 			.sort((a, b) => a.s - b.s || a.c.name.localeCompare(b.c.name))
 			.slice(0, 6)
 			.map((x) => x.c);
@@ -442,9 +447,11 @@
 	}
 	.globe {
 		display: block;
-		/* As large as the window allows with the title and the way forward
-		   still on screen: 400 on a desktop, never under 240. */
-		width: min(100%, 400px, max(240px, 100svh - 440px));
+		/* As large as the window allows with the title, the city, its time
+		   and the way forward all still on screen: the rest of the step takes
+		   about 540px, so a 1280×800 window gets a 260px globe and the button
+		   above the fold. 360 at most, never under 200. */
+		width: min(100%, 360px, max(200px, 100svh - 540px));
 		aspect-ratio: 1;
 		cursor: grab;
 		/* A vertical swipe still scrolls the page on a phone; a sideways one turns the globe. */
