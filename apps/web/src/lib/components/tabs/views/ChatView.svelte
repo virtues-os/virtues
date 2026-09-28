@@ -176,8 +176,6 @@
 		lightbox = { src, alt, rect: el.getBoundingClientRect() };
 	}
 
-	let loadedMessages = $state<any[]>([]);
-
 	// The route the tab-change effect last handled — a transition detector,
 	// not something the markup renders, so a plain variable.
 	// svelte-ignore state_referenced_locally
@@ -354,17 +352,29 @@
 		windowShellStore.openChatContext(conversationId, currentPane);
 	}
 
+	/**
+	 * Fetch a conversation's stored transcript and put it on screen. Every load
+	 * path goes through here — mount, a route change, and the re-reads below —
+	 * so they agree about the shape of a turn (see state/transcript). Returns
+	 * false when `signal` aborted it before anything was written. Throws on a
+	 * failed fetch: what a failure means is each caller's call.
+	 */
+	async function loadTranscript(id: string, signal?: AbortSignal): Promise<boolean> {
+		const data = await getChat<{ messages?: any[] }>(id, signal);
+		if (signal?.aborted) return false;
+		chat.messages = deduplicateMessages(data.messages || []).map(
+			toUiMessage,
+		) as unknown as typeof chat.messages;
+		return true;
+	}
+
 	/** Re-read the stored transcript. Used after a compaction, and after the
 	 *  getting-started room speaks (its lines are appended server-side, so
 	 *  the thread has to be re-read to show them). */
 	async function reloadMessages() {
 		if (!conversationId) return;
 		try {
-			const data = await getChat<{ messages?: any[] }>(conversationId);
-			loadedMessages = data.messages || [];
-			chat.messages = deduplicateMessages(loadedMessages).map(
-				toUiMessage,
-			) as unknown as typeof chat.messages;
+			await loadTranscript(conversationId);
 			// Re-reading drops the interview's opening, which is shown rather
 			// than stored; put it back where it belongs.
 			applyRoomInterviewOpening(chat, conversationId, gettingStarted.state);
@@ -624,7 +634,6 @@
 			// Before adding state to this component, ask whether it belongs to
 			// the conversation or to the view. If the conversation: reset here.
 			chat.messages = [];
-			loadedMessages = [];
 			messageMetadata = new Map();
 			contextUsage = undefined;
 			titleGenerated = false;
@@ -646,36 +655,20 @@
 				isLoading = true;
 				(async () => {
 					try {
-						// Raw fetch (not getChat): this load carries an AbortSignal so
-						// switching tabs mid-load cancels it. The client wrapper has no
-						// signal channel, so this site stays on fetch by design.
-						const response = await fetch(
-							`/api/chats/${currentTabConversationId}`,
-							{ signal },
-						);
-						if (signal.aborted) return; // Check if we were aborted
-						if (response.ok) {
-							const data = await response.json();
-							if (signal.aborted) return; // Check again after parsing
-							loadedMessages = data.messages || [];
-							chat.messages = deduplicateMessages(
-								loadedMessages,
-							).map(toUiMessage) as unknown as typeof chat.messages;
-							resumeIfDangling();
-							applyInterviewOpening(chat, currentTabConversationId);
-							applyRoomInterviewOpening(chat, currentTabConversationId, gettingStarted.state);
-							// The picker is deliberately left alone on a tab
-							// switch. It used to be re-seeded from the model
-							// that last answered THIS conversation, which is
-							// neither the person's choice nor what the next
-							// turn will use — a chat is not pinned to a model.
-							// Leaving it holds their pick across chats, and an
-							// unpicked picker keeps showing the slot default.
-							await Promise.all([
-								refreshContextUsage(),
-								editAllowListStore.init(currentTabConversationId),
-							]);
-						}
+						// The signal cancels this load when the tab switches again
+						// mid-fetch.
+						if (!(await loadTranscript(currentTabConversationId, signal))) return;
+						resumeIfDangling();
+						applyInterviewOpening(chat, currentTabConversationId);
+						applyRoomInterviewOpening(chat, currentTabConversationId, gettingStarted.state);
+						// The picker is deliberately left alone on a tab switch:
+						// a chat is not pinned to the model that last answered
+						// it, so it holds the person's pick across chats, and an
+						// unpicked picker keeps showing the slot default.
+						await Promise.all([
+							refreshContextUsage(),
+							editAllowListStore.init(currentTabConversationId),
+						]);
 					} catch (error) {
 						// Ignore abort errors - they're expected when switching tabs
 						if (
@@ -768,14 +761,7 @@
 
 			const conversationPromise = tabConversationId ? (async () => {
 				try {
-					const data = await getChat<{
-						messages?: any[];
-						conversation?: { model?: string };
-					}>(tabConversationId);
-					loadedMessages = data.messages || [];
-					chat.messages = deduplicateMessages(loadedMessages).map(
-						toUiMessage,
-					) as unknown as typeof chat.messages;
+					await loadTranscript(tabConversationId);
 					resumeIfDangling();
 				} catch (error) {
 					console.error("[ChatView] Error loading conversation:", error);
