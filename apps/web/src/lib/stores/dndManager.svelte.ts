@@ -10,14 +10,14 @@
  * - Tab cross-pane = MOVE (tab moves to other pane)
  * - Sidebar reorder = REORDER (handled locally, not here)
  * - Tab → a project row in the sidebar = FILE (the tab's chat or page joins
- *   the project; the tab stays where it was)
+ *   the project, an unsent chat takes it as its draft; the tab stays put)
  */
 
 import { TRIGGERS } from 'svelte-dnd-action';
 import type { DndEvent } from 'svelte-dnd-action';
 import { windowShellStore, type Tab } from '$lib/stores/window-shell.svelte';
 import { projectStore } from '$lib/stores/project.svelte';
-import { fileIntoProject, projectMemberUrl } from '$lib/utils/projectActions';
+import { fileIntoProject, targetForTab, type FileTarget } from '$lib/utils/projectActions';
 
 /**
  * A project row takes a tab by carrying this attribute with the project's id.
@@ -111,14 +111,14 @@ class DndManager {
 		return this.session !== null;
 	}
 
-	/** The member url the dragged tab would file, or null if it has none. */
-	get draggedMemberUrl(): string | null {
-		const route = this.session?.item.tab?.route;
-		return route ? projectMemberUrl(route) : null;
+	/** What the dragged tab would file, or null if it has nothing to file. */
+	get draggedTarget(): FileTarget | null {
+		const tab = this.session?.item.tab;
+		return tab ? targetForTab(tab) : null;
 	}
 
 	private trackPointer = (e: MouseEvent | TouchEvent) => {
-		if (!this.draggedMemberUrl) return;
+		if (!this.draggedTarget) return;
 		const pt = 'touches' in e ? e.touches[0] : e;
 		if (!pt) return;
 		let id: string | null = null;
@@ -185,7 +185,7 @@ class DndManager {
 	): Promise<void> {
 		const { items, info } = e.detail;
 		const currentSession = this.session;
-		const url = this.draggedMemberUrl;
+		const fileTarget = this.draggedTarget;
 		const target = this.projectTarget ? projectStore.byId(this.projectTarget) : undefined;
 
 		// Always end session
@@ -199,9 +199,9 @@ class DndManager {
 		// Let go over a project row: file the tab's thing there. The tab itself
 		// goes back where it was, which is what the library does for a drop
 		// outside its zones.
-		if (url && target) {
+		if (fileTarget && target) {
 			setItems(items as T[]);
-			void fileIntoProject(target, url);
+			void fileIntoProject(target, fileTarget);
 			return;
 		}
 

@@ -39,6 +39,36 @@ class ChatSessionStore {
 	}
 
 	/**
+	 * Projects of chats the list does not hold. The list is the box's most
+	 * recent chats only, so an older chat opened from a project would read as
+	 * unfiled; its own detail (and every filing this client does) lands here.
+	 */
+	private knownProjects = $state<Record<string, string | null>>({});
+
+	/** The project a chat is filed in: its row when listed, else what this client learned. */
+	projectOf(chatId: string): string | null {
+		const row = this.sessions.find((s) => s.conversation_id === chatId);
+		if (row) return row.project_id ?? null;
+		return this.knownProjects[chatId] ?? null;
+	}
+
+	/**
+	 * Record where a chat now lives, at once, on its row and off it. Every
+	 * surface that shows a chat's project reads it through `projectOf`, so a
+	 * filing shows the moment the server says yes, not a round trip later.
+	 */
+	noteProject(chatId: string, projectId: string | null) {
+		if ((this.knownProjects[chatId] ?? null) !== projectId) {
+			this.knownProjects = { ...this.knownProjects, [chatId]: projectId };
+		}
+		if (this.sessions.some((s) => s.conversation_id === chatId && (s.project_id ?? null) !== projectId)) {
+			this.sessions = this.sessions.map((s) =>
+				s.conversation_id === chatId ? { ...s, project_id: projectId } : s,
+			);
+		}
+	}
+
+	/**
 	 * Load sessions from the API
 	 */
 	async load() {
