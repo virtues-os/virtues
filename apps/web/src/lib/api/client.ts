@@ -1649,9 +1649,12 @@ export interface ProjectDetail extends Project {
 /** GET /api/projects — all Projects with counts. */
 export async function listProjects(opts?: {
 	includeArchived?: boolean;
+	/** Only the projects holding this member url (a page asking where it is filed). */
+	member?: string;
 }): Promise<{ projects: ProjectSummary[] }> {
 	return apiGet<{ projects: ProjectSummary[] }>('/projects', {
 		include_archived: opts?.includeArchived ? 'true' : undefined,
+		member: opts?.member,
 	});
 }
 

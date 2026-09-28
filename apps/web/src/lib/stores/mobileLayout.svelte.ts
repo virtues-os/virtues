@@ -14,6 +14,8 @@
  * raises the keyboard needs to know the drawer is in the way.
  */
 
+import type { ProjectSummary } from '$lib/api/client';
+
 const MOBILE_BREAKPOINT = 768;
 
 function detectShellFlag(): boolean {
@@ -43,6 +45,10 @@ export interface ChatChrome {
 	empty: boolean;
 	ghost: boolean;
 	toggleGhost: () => void;
+	/** The project the chat is in (or will be, for an unsent one), for the bar's title slot. */
+	project?: Pick<ProjectSummary, 'id' | 'name' | 'icon' | 'accent_color' | 'archived_at'> | null;
+	/** The project's menu, anchored to whatever was tapped. */
+	showProjectMenu?: (e: MouseEvent) => void;
 }
 
 const shellMobile = detectShellFlag();

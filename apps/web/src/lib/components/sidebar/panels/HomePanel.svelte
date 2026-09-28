@@ -75,7 +75,7 @@
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
 	import { notifyArchived, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { toast } from 'svelte-sonner';
-	import { clothFor } from '$lib/sidebar/pin-colors';
+	import { accentCss, clothFor } from '$lib/sidebar/pin-colors';
 	import { isEmoji, PROJECT_ICON } from '$lib/utils/iconHelpers';
 	import {
 		droppedRefUrl,
@@ -739,12 +739,14 @@
 {#snippet chatRow(session: ChatSession)}
 	{@const url = chatRoute(session)}
 	{@const pinned = isPinned(url)}
+	{@const home = session.project_id ? projectStore.byId(session.project_id) : undefined}
+	{@const tint = accentCss(home?.accent_color)}
 	<div
 		class="panel-row panel-row-has-actions"
 		class:active={activeRoute === url}
 		role="link"
 		tabindex="0"
-		title={titleOf(session)}
+		title={home ? `${titleOf(session)} · ${home.name}` : titleOf(session)}
 		draggable="true"
 		ondragstart={(e) => startRefDrag(e, url, titleOf(session))}
 		onclick={() => openChat(session)}
@@ -756,7 +758,12 @@
 		}}
 		oncontextmenu={(e) => showMenu(e, chatMenu(session))}
 	>
-		<span class="row-glyph" aria-hidden="true"><AtlasIcon name="chats" size={15} bare /></span>
+		<!-- A chat in a project wears the project's color on its bubble, so the
+		     filed ones read at a glance in Today and Recent. The bubble stays a
+		     bubble: the row is still a chat, the color says whose. -->
+		<span class="row-glyph" aria-hidden="true" style={tint ? `color: ${tint}` : undefined}
+			><AtlasIcon name="chats" size={15} bare /></span
+		>
 		<span class="panel-row-text">{titleOf(session)}</span>
 		<span class="row-actions">
 			<button

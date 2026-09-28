@@ -62,6 +62,14 @@ export class ProjectStore {
 	private unsentByTab = $state<Record<string, string>>({});
 
 	/**
+	 * Which projects hold a url, for things that can be in several (a page, a
+	 * file, a person). A chat is in one and reads it off its own row. Asked
+	 * per url by the view showing it, and kept current by every add and
+	 * remove made here, so filing a page from any menu shows on the page.
+	 */
+	private holders = $state<Record<string, string[]>>({});
+
+	/**
 	 * The working set — what the Home panel, ⌘K and "Add to project" list.
 	 * Archived projects are kept out here rather than at each reader, so a
 	 * closed project cannot leak into a menu that forgot to filter.
@@ -175,6 +183,7 @@ export class ProjectStore {
 	async addItem(id: string, url: string): Promise<void> {
 		const item = await addProjectItem(id, url);
 		if (isChatUrl(url)) chatSessions.noteProject(url.slice('/chat/'.length), id);
+		else this.noteHolder(url, id, true);
 		const cached = this.details.get(id);
 		if (cached) {
 			const exists = cached.items.some((i) => i.url === item.url);
@@ -193,6 +202,7 @@ export class ProjectStore {
 	async removeItem(id: string, url: string): Promise<void> {
 		await removeProjectItem(id, url);
 		if (isChatUrl(url)) chatSessions.noteProject(url.slice('/chat/'.length), null);
+		else this.noteHolder(url, id, false);
 		const cached = this.details.get(id);
 		if (cached) {
 			this.setDetail({ ...cached, items: cached.items.filter((i) => i.url !== url) });
@@ -255,6 +265,32 @@ export class ProjectStore {
 		await updateChat(chatId, { projectId });
 		chatSessions.noteProject(chatId, projectId);
 		await this.afterMembershipChange(url);
+	}
+
+	/** The live projects holding `url`, once `loadHolders(url)` has asked. */
+	holding(url: string): ProjectSummary[] {
+		const ids = this.holders[url];
+		if (!ids) return [];
+		return ids
+			.map((id) => this.byId(id))
+			.filter((p): p is ProjectSummary => !!p && !p.archived_at);
+	}
+
+	async loadHolders(url: string): Promise<void> {
+		try {
+			const res = await listProjects({ member: url, includeArchived: true });
+			this.holders = { ...this.holders, [url]: res.projects.map((p) => p.id) };
+		} catch (e) {
+			// An aid, not the content: the page reads fine without it.
+			console.error('[ProjectStore] Failed to load holders:', e);
+		}
+	}
+
+	private noteHolder(url: string, id: string, holds: boolean): void {
+		const ids = this.holders[url];
+		if (!ids) return;
+		const next = holds ? [...new Set([...ids, id])] : ids.filter((x) => x !== id);
+		this.holders = { ...this.holders, [url]: next };
 	}
 
 	draftFor(chatId: string): string | null {

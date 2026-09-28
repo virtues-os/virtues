@@ -1,6 +1,8 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
 	import MenuItem from "$lib/components/MenuItem.svelte";
+	import { contextMenu } from "$lib/stores/contextMenu.svelte";
+	import { projectMenuItems } from "$lib/utils/projectActions";
 	import Button from "$lib/components/Button.svelte";
 	import IconButton from "$lib/components/IconButton.svelte";
 	import IconPicker from "$lib/components/IconPicker.svelte";
@@ -186,6 +188,21 @@
 							close();
 						}}
 					/>
+					<!-- This popover has no submenus, so the choice opens as the
+					     shared project menu where this row was. -->
+					<MenuItem
+						icon="ri:folder-add-line"
+						label="Add to project…"
+						onclick={(e: MouseEvent) => {
+							const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+							close();
+							const items = projectMenuItems({ url: `/page/${pageId}` })[0]?.submenu ?? [];
+							contextMenu.show({ x: rect.left, y: rect.top }, items, {
+								anchor: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+								placement: "bottom-end",
+							});
+						}}
+					/>
 					<div class="overflow-divider"></div>
 					{#if showDeleteConfirm}
 						<div class="delete-confirm">
@@ -280,7 +297,7 @@
 	/* The "Aa" that opens display settings. The serif is load-bearing here and
 	   stays: the glyphs ARE the control's icon, previewing letterforms the way
 	   its siblings preview their verbs. What goes is `font-weight: 600` —
-	   JJannon ships one cut, so the weight resolved back to the regular and
+	   the serif ships one cut, so the weight resolved back to the regular and
 	   returned silently, and this label had been drawn at 400 all along while
 	   the stylesheet claimed otherwise. Sized to 16px so it reads at the
 	   optical weight the 600 was asking for and matches the 15px icons beside
