@@ -423,14 +423,14 @@
 		title="Tell your story"
 		subtitle="The record holds what happened. Only you can say what it meant."
 	>
-		<p class="facts">Six short parts · Skip any question · Finish later and pick up where you left off</p>
+		<p class="facts">Six parts, about twenty minutes · Skip any question · Finish later and pick up where you left off</p>
 		{#if chapters.length > 0}
 			<p class="note centered-note">It starts from the chapters you drew:</p>
 			<ol class="chips">
 				{#each chapters as c (c.id)}
 					<li>
 						<span class="chip-title">{c.title?.trim() || "Unnamed"}</span>
-						<span class="chip-years">{c.started_at.slice(0, 4)}–{c.ended_at ? c.ended_at.slice(0, 4) : "now"}</span>
+						<span class="chip-years">{c.started_at.slice(0, 4)} to {c.ended_at ? c.ended_at.slice(0, 4) : "now"}</span>
 					</li>
 				{/each}
 			</ol>
@@ -470,8 +470,8 @@
 	<StepFrame
 		title="You've told your story"
 		subtitle={excerpt
-			? `${name} wrote it up from your answers, in your own words:`
-			: `${name} wrote it up from your answers, in your own words. It's in your wiki, and you can change it whenever you like.`}
+			? "Your answers, arranged into a page in your own words. Nothing changes it but you:"
+			: "Your answers, arranged into a page in your own words. It's in your wiki, and nothing changes it but you."}
 	>
 		{#if excerpt}
 			<blockquote class="excerpt" in:fly={IN}>
@@ -508,7 +508,7 @@
 		{/if}
 		{#snippet actions()}
 			<button type="button" class="setup-go" onclick={onnext}>
-				{excerpt ? "Read it all" : "Finish setup"}
+				{excerpt ? "Read “In your own words”" : "Finish setup"}
 				<Icon icon="ri:arrow-right-line" width="16" />
 			</button>
 		{/snippet}

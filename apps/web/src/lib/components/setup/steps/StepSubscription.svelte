@@ -70,6 +70,8 @@
 	/** Signed in already (before pairing, or earlier), with no subscription on
 	 *  the account: signing in again would change nothing. */
 	const signedIn = $derived(via === "linked");
+	/** Met on Names, the step before this one. */
+	const name = $derived(setup.assistantName);
 
 	const still =
 		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -195,12 +197,12 @@
      and the page never said so. Same reason as the Account step before
      pairing, in the same plain words. -->
 <StepFrame
-	title={done ? (via === "byo" ? "Your server is using your own AI" : "You've set up your subscription") : "Choose how your assistant thinks"}
+	title={done ? (via === "byo" ? "Your server is using your own AI" : "You've set up your subscription") : `Choose how ${name} thinks`}
 	subtitle={done
 		? undefined
 		: signedIn
-			? "You're signed in, and your account has no subscription yet. Your assistant can't answer anything until it has AI to think with."
-			: "Your assistant can't answer anything until it has AI to think with. A Virtues subscription gives it the best models there are, or you can connect your own."}
+			? `You're signed in, and your account has no subscription yet. ${name} can't answer anything until it has AI to think with.`
+			: `${name} can't answer anything until it has AI to think with. A Virtues subscription gives it the best models there are, or you can connect your own.`}
 >
 	{#if !loaded}
 		<div class="card placeholder" aria-hidden="true"></div>
@@ -213,7 +215,7 @@
 				</svg>
 			</span>
 			<p class="settled">
-				{via === "byo" ? "Every AI call goes through the address you gave." : "Your assistant can answer now."}
+				{via === "byo" ? "Every AI call goes through the address you gave." : `${name} can answer now.`}
 			</p>
 			<button class="setup-go wide" onclick={onnext}>
 				{intoLabel(setup.upNext("subscription"))}
@@ -225,7 +227,7 @@
 			<p class="kind">Virtues subscription</p>
 			<p class="price"><span class="amount">$20</span> a month</p>
 			<ul class="covers">
-				<li><Icon icon="ri:check-line" width="16" /> Your assistant, on the best models there are</li>
+				<li><Icon icon="ri:check-line" width="16" /> {name}, on the best models there are</li>
 				<li><Icon icon="ri:check-line" width="16" /> Web search</li>
 				<li><Icon icon="ri:check-line" width="16" /> Place search</li>
 				<li><Icon icon="ri:check-line" width="16" /> Bank connections</li>

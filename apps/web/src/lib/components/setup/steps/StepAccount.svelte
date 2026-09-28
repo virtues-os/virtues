@@ -80,7 +80,7 @@
 		? `Enter the six-digit code we sent to ${email.trim()}.`
 		: phase === "done"
 			? `Your server will use the account for ${prePair.account?.email}.`
-			: "Your assistant can't answer anything without AI, and a Virtues subscription gives it the best models there are. Enter your email to sign in, or to create your account."}
+			: "Enter your email to sign in, or to create your account."}
 >
 	{#if phase === "email"}
 		<form class="one" onsubmit={(e) => (e.preventDefault(), send())} in:rise>

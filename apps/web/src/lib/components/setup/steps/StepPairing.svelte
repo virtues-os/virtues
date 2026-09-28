@@ -78,22 +78,22 @@
 			: phase === "silent"
 			? "Your server isn't answering yet"
 			: phase === "grant-failed"
-			? "Your account didn't reach your server"
+			? "Your server isn't signed in yet"
 			: phase === "pair-failed"
 				? `${label} didn't finish pairing`
 				: `Pairing ${here} with ${label}`,
 	);
 	const subtitle = $derived(
 		phase === "linking"
-			? "Handing your account to your server."
+			? "Signing your server in."
 			: phase === "pairing"
-				? "Exchanging keys. This can take up to a minute."
+				? "Pairing. This can take up to a minute."
 				: phase === "opening"
 					? "Opening your server. This can take up to a minute."
 				: phase === "silent"
 					? `It's paired with ${here}, and can take a few minutes to start answering here. Make sure it's still on, then try again.`
 				: phase === "grant-failed"
-					? "You can pair now and link your account in the next step."
+					? "You can pair now and sign in on the Subscription step."
 					: gone
 						? "It stopped answering. Make sure it's still on and close by, then find it again."
 						: "Nothing on your server changed. Try again.",
@@ -116,7 +116,7 @@
 		{#if phase === "silent"}
 			<button type="button" class="setup-go" onclick={open}>Try again</button>
 		{:else if phase === "grant-failed"}
-			<button type="button" class="setup-go" onclick={pair}>Pair without it</button>
+			<button type="button" class="setup-go" onclick={pair}>Pair now, sign in later</button>
 			<button type="button" class="setup-past" onclick={linkAccount}>Try again</button>
 		{:else if phase === "pair-failed"}
 			{#if gone}

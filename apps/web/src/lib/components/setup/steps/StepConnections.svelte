@@ -248,7 +248,7 @@
 					</button>
 					<p class="hint">Optional. Turn on Virtues Collector there to add what's on your screen.</p>
 				{:else}
-					<p class="done-line"><Icon icon="ri:check-line" width="15" /> Collecting</p>
+					<p class="done-line"><Icon icon="ri:check-line" width="15" /> On</p>
 				{/if}
 			</div>
 		{:else}
@@ -295,10 +295,10 @@
 							Settings app, under Privacy & Security, then come back here.
 						</p>
 					{:else}
-						<p class="hint">Your iPhone asks about each one. Calendar, contacts and more are in This device.</p>
+						<p class="hint">Your iPhone asks about each one. Add calendar, contacts and more later, in Settings under This device.</p>
 					{/if}
 				{:else}
-					<p class="done-line"><Icon icon="ri:check-line" width="15" /> Collecting</p>
+					<p class="done-line"><Icon icon="ri:check-line" width="15" /> On</p>
 				{/if}
 			</div>
 		{:else}
@@ -320,7 +320,7 @@
 	</article>
 {/snippet}
 
-<StepFrame {eyebrow} title="Add your devices" subtitle="Each device sends its part of your day to your server.">
+<StepFrame {eyebrow} title="Add your devices" subtitle="Your iPhone knows where you went, and your computer who you wrote to. Each sends its part of your day to your server.">
 	<div class="cards">
 		{#if here === "iphone"}
 			{@render phoneCard()}

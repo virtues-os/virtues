@@ -134,6 +134,16 @@
 		return () => clearTimeout(t);
 	});
 
+	/** One true line under the name at the close: the letter promised a page
+	 *  every morning, and this says when the first one comes (the same rule
+	 *  as the server's graduated line). Without devices, what's ready now. */
+	const closeLine = $derived.by(() => {
+		if (gettingStarted.state?.first_day) return "Your first page is on Home, and there will be one every morning.";
+		if (setup.status("connections") === "done") return "Tomorrow morning there will be a page on Home for today.";
+		if (setup.status("interview") === "done") return "Your story is ready to read.";
+		return null;
+	});
+
 	// A failed close is said until they move on.
 	$effect(() => {
 		void step;
@@ -426,6 +436,9 @@
 	     been introduced, and the app opens beneath the two together. -->
 	{#if closing}
 		<p class="close-name" in:rise={{ delay: still ? 0 : 900, duration: still ? 0 : M.slow }}>{setup.assistantName}</p>
+		{#if closeLine}
+			<p class="close-line" in:rise={{ delay: still ? 0 : 1250, duration: still ? 0 : M.slow }}>{closeLine}</p>
+		{/if}
 	{/if}
 
 	<!-- Not on a finished step: there, "Finish later" means the same as the
@@ -581,6 +594,19 @@
 		flex-direction: column;
 	}
 
+	.close-line {
+		position: fixed;
+		z-index: 60;
+		left: 16px;
+		right: 16px;
+		top: calc(50% + 128px);
+		margin: 0;
+		text-align: center;
+		font-size: 15px;
+		color: var(--color-foreground-muted);
+		text-wrap: balance;
+		pointer-events: none;
+	}
 	.close-name {
 		position: fixed;
 		z-index: 60;
