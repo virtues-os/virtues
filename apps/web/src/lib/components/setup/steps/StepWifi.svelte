@@ -42,6 +42,8 @@
 	let error = $state<string | null>(null);
 	let gone = $state(false);
 	let passEl = $state<HTMLInputElement | null>(null);
+	/** A long password typed blind on a phone goes wrong; they can look. */
+	let reveal = $state(false);
 
 	const label = $derived(link.box.label);
 	const sorted = $derived([...networks].sort((a, b) => b.signal - a.signal));
@@ -53,6 +55,13 @@
 			? ssid.trim().length > 0
 			: !!net &&
 					(enterprise ? identity.trim().length > 0 && password.length > 0 : !net.secured || password.length >= 8),
+	);
+
+	/** Why Join waits, said once they've started typing. */
+	const hint = $derived(
+		!byName && !enterprise && net?.secured && password.length > 0 && password.length < 8
+			? "Wi-Fi passwords are at least 8 characters."
+			: null,
 	);
 
 	function fail(e: unknown, back: Phase) {
@@ -186,17 +195,25 @@
 			{/if}
 			<input
 				class="setup-field"
-				type="password"
+				type={reveal ? "text" : "password"}
+				autocapitalize="off"
 				autocomplete="off"
+				spellcheck="false"
 				placeholder={byName ? "Password, if it has one" : "Password"}
 				aria-label="Password"
 				bind:this={passEl}
 				bind:value={password}
 				oninput={() => (error = null)}
 			/>
+			<button
+				type="button"
+				class="setup-past reveal"
+				aria-pressed={reveal}
+				onclick={() => ((reveal = !reveal), passEl?.focus())}>{reveal ? "Hide password" : "Show password"}</button
+			>
 		</form>
 	{/if}
-	<p class="note" class:error role={error ? "alert" : undefined}>{error ?? " "}</p>
+	<p class="note" class:error role={error ? "alert" : undefined}>{error ?? hint ?? " "}</p>
 
 	{#snippet actions()}
 		{#if gone}

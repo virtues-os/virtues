@@ -200,6 +200,9 @@ class PrePair {
 	wordsKept = $state(false);
 	/** On a network: joined over Wi-Fi, or it was online already (ethernet). */
 	online = $state(false);
+	/** Paired, and Setup is moving on to the server's steps. The pairing
+	 *  screen holds until it has; the Wi-Fi receipt flashed in between. */
+	handingOver = $state(false);
 
 	get accountSettled(): boolean {
 		return !!this.account || this.withoutAccount;
@@ -343,6 +346,7 @@ class PrePair {
 		// A computer stays on this half until it hands over (`handOff`): the
 		// server's app is at another origin, and this copy can't read it.
 		if (!bakedDesktop()) {
+			this.handingOver = true;
 			this.link = null;
 			this.active = false;
 		}
