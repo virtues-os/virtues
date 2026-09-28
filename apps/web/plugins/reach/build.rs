@@ -21,6 +21,7 @@ const COMMANDS: &[&str] = &[
   "improv_pair",
   "improv_disconnect",
   "improv_owner_claim",
+  "reach_rehome",
   "outbox_stats",
   "drain_now",
   "radio_stats",

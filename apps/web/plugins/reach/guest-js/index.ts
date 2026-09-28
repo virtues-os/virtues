@@ -170,6 +170,14 @@ export async function improvOwnerClaim(
   return await invoke('plugin:reach|improv_owner_claim', { id })
 }
 
+/**
+ * After a moved server joins a network over Bluetooth: point this pairing at
+ * the address it reported and reconnect through it. Returns the live status.
+ */
+export async function reachRehome(url: string): Promise<ReachStatus> {
+  return await invoke('plugin:reach|reach_rehome', { url })
+}
+
 /** Drop the BLE connection when leaving setup. Always safe. */
 export async function improvDisconnect(): Promise<void> {
   await invoke('plugin:reach|improv_disconnect')

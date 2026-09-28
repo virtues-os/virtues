@@ -1543,6 +1543,14 @@ fn main() {
                             .parse()
                             .unwrap(),
                     ),
+                    // THE MAC RECOVERS IN ITS OWN COPY (2026-09-28): refused
+                    // or unreachable, the window opens `/reconnect` from the
+                    // copy it bakes (tauri.macos.conf.json), which diagnoses
+                    // both itself and can put a moved server back on Wi-Fi
+                    // over Bluetooth (src/lib/components/recovery/). Windows
+                    // and Linux bake nothing yet and keep the connect page.
+                    Some(false) if cfg!(target_os = "macos") => WebviewUrl::App("reconnect".into()),
+                    None if cfg!(target_os = "macos") => WebviewUrl::App("reconnect".into()),
                     Some(false) => WebviewUrl::App("connect.html#reset".into()),
                     None => WebviewUrl::App("connect.html#unreachable".into()),
                 }

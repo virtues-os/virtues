@@ -460,7 +460,12 @@ export interface FakeRadioOptions {
 	boxes?: NearbyBox[];
 	/** The phrase `openSetup` accepts. Default `mango-burly-skull-dough`. */
 	phrase?: string;
-	/** A password that fails the join, to exercise the retry. Default `wrong`. */
+	/**
+	 * A password that fails the join, to exercise the retry. Default
+	 * `wrongpassword`: 8 or more characters, because the Wi-Fi step never
+	 * sends a shorter one to a WPA network (it was `wrong`, which no screen
+	 * could send).
+	 */
 	badPassword?: string;
 	/** Scale every delay; 0 for tests. Default 1. */
 	speed?: number;
@@ -484,7 +489,7 @@ export function fakeBoxRadio(opts: FakeRadioOptions = {}): BoxRadio {
 		{ id: 'fake-1', name: 'Virtues-4812', label: 'Virtues 4812', rssi: -52, state: 'needs-wifi' as const }
 	];
 	const phrase = opts.phrase ?? 'mango-burly-skull-dough';
-	const bad = opts.badPassword ?? 'wrong';
+	const bad = opts.badPassword ?? 'wrongpassword';
 
 	const link = (box: NearbyBox, purpose: 'setup' | 'owner'): BoxWifiLink => ({
 		box,

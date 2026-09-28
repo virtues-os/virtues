@@ -62,8 +62,14 @@ class ReachPlugin: Plugin {
 
   @objc public func improv_discover(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(ImprovDiscoverArgs.self)
-    ImprovClient.shared.discover(seconds: args.seconds ?? 4.0) { boxes in
-      invoke.resolve(["boxes": boxes])
+    ImprovClient.shared.discover(seconds: args.seconds ?? 4.0) { boxes, reason in
+      // The same shape as desktop: a scan that could not run says why, so
+      // the screen can tell "nothing here" from "this phone can't look".
+      if let reason {
+        invoke.resolve(["boxes": boxes, "error": reason])
+      } else {
+        invoke.resolve(["boxes": boxes])
+      }
     }
   }
 
