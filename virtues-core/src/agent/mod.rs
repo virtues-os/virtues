@@ -44,7 +44,6 @@ pub mod protocol;
 pub mod stream;
 
 use std::pin::Pin;
-use std::sync::Arc;
 use std::time::Duration;
 
 use async_stream::stream;
@@ -115,7 +114,7 @@ pub struct TurnBudget {
 /// 3. Executing tool calls
 /// 4. Continuing until completion
 pub struct AgentLoop {
-    _pool: Arc<PgPool>,
+    pool: PgPool,
     llm_config: LlmConfig,
     tool_executor: ToolExecutor,
     config: AgentConfig,
@@ -126,27 +125,21 @@ impl AgentLoop {
     /// Create a new AgentLoop. All egress (LLM + tools) goes through
     /// `BearerClient`, which sources the virtues-api URL + bearer itself.
     pub fn new(pool: PgPool) -> Self {
-        let pool = Arc::new(pool);
-        Self {
-            tool_executor: ToolExecutor::new((*pool).clone()),
-            llm_config: LlmConfig {
-                client: crate::virtues_api::client::BearerClient::from_env((*pool).clone()),
-            },
-            _pool: pool,
-            config: AgentConfig::default(),
-            budget: TurnBudget::default(),
-        }
+        Self::with_executor(pool.clone(), ToolExecutor::new(pool))
     }
 
     /// Create a new AgentLoop with YjsState for real-time page editing
     pub fn new_with_yjs(pool: PgPool, yjs_state: YjsState) -> Self {
-        let pool = Arc::new(pool);
+        Self::with_executor(pool.clone(), ToolExecutor::new_with_yjs(pool, yjs_state))
+    }
+
+    fn with_executor(pool: PgPool, tool_executor: ToolExecutor) -> Self {
         Self {
-            tool_executor: ToolExecutor::new_with_yjs((*pool).clone(), yjs_state),
             llm_config: LlmConfig {
-                client: crate::virtues_api::client::BearerClient::from_env((*pool).clone()),
+                client: crate::virtues_api::client::BearerClient::from_env(pool.clone()),
             },
-            _pool: pool,
+            pool,
+            tool_executor,
             config: AgentConfig::default(),
             budget: TurnBudget::default(),
         }
@@ -177,7 +170,7 @@ impl AgentLoop {
         cancel_token: Option<CancellationToken>,
     ) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send + '_>> {
         let llm_config = self.llm_config.clone();
-        let pool = self._pool.clone();
+        let pool = self.pool.clone();
         let tool_executor = self.tool_executor.clone();
         let config = self.config.clone();
         let budget = self.budget;
@@ -253,12 +246,10 @@ impl AgentLoop {
                 step += 1;
 
                 // Check for cancellation at start of each step
-                if let Some(ref token) = cancel_token {
-                    if token.is_cancelled() {
-                        tracing::info!(step, "Agent loop cancelled by user");
-                        finish = protocol::FinishReason::Cancelled;
-                        break;
-                    }
+                if cancelled(&cancel_token) {
+                    tracing::info!(step, "Agent loop cancelled by user");
+                    finish = protocol::FinishReason::Cancelled;
+                    break;
                 }
 
                 // Check max steps. Unreachable once max_steps >= 1: the last
@@ -304,10 +295,9 @@ impl AgentLoop {
                         elapsed_secs = turn_started.elapsed().as_secs(),
                         "last step: asking for the answer, tools off"
                     );
-                    messages.push(serde_json::json!({
-                        "role": "user",
-                        "content": "[System: no more tool calls this turn. Answer now from what you have, and say briefly what you could not check.]"
-                    }));
+                    messages.push(system_note(
+                        "no more tool calls this turn. Answer now from what you have, and say briefly what you could not check.",
+                    ));
                 }
 
                 tracing::info!(step, "Agent loop step");
@@ -375,7 +365,7 @@ impl AgentLoop {
                 let mut cancelled_mid_stream = false;
                 while let Some(event) = ev_rx.recv().await {
                     yield event;
-                    if cancel_token.as_ref().is_some_and(|t| t.is_cancelled()) {
+                    if cancelled(&cancel_token) {
                         tracing::info!(step, "Stop pressed mid-stream — dropping the provider call");
                         stream_handle.abort();
                         cancelled_mid_stream = true;
@@ -526,12 +516,10 @@ impl AgentLoop {
                 }
 
                 // Check for cancellation after tool execution
-                if let Some(ref token) = cancel_token {
-                    if token.is_cancelled() {
-                        tracing::info!(step, "Agent loop cancelled after tool execution");
-                        finish = protocol::FinishReason::Cancelled;
-                        break;
-                    }
+                if cancelled(&cancel_token) {
+                    tracing::info!(step, "Agent loop cancelled after tool execution");
+                    finish = protocol::FinishReason::Cancelled;
+                    break;
                 }
 
                 // Build messages for next iteration
@@ -586,14 +574,11 @@ impl AgentLoop {
                                 format!("image support for {model} is unknown on this box")
                             };
                             tracing::warn!(model = %model, "Dropping tool media: {}", why);
-                            messages.push(serde_json::json!({
-                                "role": "user",
-                                "content": format!(
-                                    "[System: the tool returned {} file(s) to look at, but they were not attached because {}. Tell the user you cannot see the file rather than guessing at its contents.]",
-                                    attachments.len(),
-                                    why
-                                )
-                            }));
+                            messages.push(system_note(&format!(
+                                "the tool returned {} file(s) to look at, but they were not attached because {}. Tell the user you cannot see the file rather than guessing at its contents.",
+                                attachments.len(),
+                                why
+                            )));
                         }
                     }
                 }
@@ -604,16 +589,12 @@ impl AgentLoop {
                     // "Steps" — model calls — not "tool calls": one step can
                     // carry several calls, and a model told it had two calls
                     // left when it had two steps rationed the wrong thing.
-                    let warning = format!(
-                        "[System: {} step{} (model call{}) remaining in this turn. Finish, or say where you got to and what is left.]",
+                    messages.push(system_note(&format!(
+                        "{} step{} (model call{}) remaining in this turn. Finish, or say where you got to and what is left.",
                         steps_remaining,
                         if steps_remaining == 1 { "" } else { "s" },
                         if steps_remaining == 1 { "" } else { "s" }
-                    );
-                    messages.push(serde_json::json!({
-                        "role": "user",
-                        "content": warning
-                    }));
+                    )));
                     tracing::debug!(steps_remaining, "Injected turn limit warning");
                 }
 
@@ -628,6 +609,16 @@ impl AgentLoop {
             yield AgentEvent::done(step, finish);
         })
     }
+}
+
+/// A note from the loop to the model, sent as a user message.
+fn system_note(text: &str) -> Value {
+    serde_json::json!({ "role": "user", "content": format!("[System: {text}]") })
+}
+
+/// Whether the person has pressed Stop.
+fn cancelled(token: &Option<CancellationToken>) -> bool {
+    token.as_ref().is_some_and(|t| t.is_cancelled())
 }
 
 /// Why this step is the turn's last, if it is: a budget ran out, or it is the
