@@ -1,0 +1,97 @@
+import { describe, expect, it } from "vitest";
+import { splitTurn, stopReason, turnMovedPast } from "./transcript";
+
+const text = (t: string) => ({ type: "text", text: t });
+const tool = (name: string) => ({ type: `tool-${name}`, toolCallId: name });
+const reasoning = (t: string) => ({ type: "reasoning", text: t });
+
+describe("splitTurn", () => {
+	it("keeps a plain reply in the body with nothing to think about", () => {
+		const t = splitTurn([text("Hello")], false);
+		expect(t.bodyFromIndex).toBe(0);
+		expect(t.narration).toEqual([]);
+		expect(t.hasThinkingContent).toBe(false);
+	});
+
+	it("moves the text before a tool call to narration, and the text after it is the reply", () => {
+		const t = splitTurn([text(" Let me look. "), tool("sql_query"), text("Found it.")], false);
+		expect(t.bodyFromIndex).toBe(2);
+		expect(t.narration).toEqual(["Let me look."]);
+		expect(t.toolParts).toHaveLength(1);
+		expect(t.hasThinkingContent).toBe(true);
+	});
+
+	it("lets the last thing said stand as the reply when a finished turn ended on a tool call", () => {
+		const parts = [text("First"), tool("a"), text("Checking"), tool("b")];
+		const t = splitTurn(parts, false);
+		expect(t.bodyFromIndex).toBe(2);
+		expect(t.narration).toEqual(["First"]);
+	});
+
+	it("does not promote narration to a reply while the turn is still streaming", () => {
+		const parts = [text("First"), tool("a"), text("Checking"), tool("b")];
+		const t = splitTurn(parts, true);
+		expect(t.bodyFromIndex).toBe(4);
+		expect(t.narration).toEqual(["First", "Checking"]);
+	});
+
+	it("treats a line with no tool after it as the reply mid-stream", () => {
+		const t = splitTurn([tool("a"), text("Answer so far")], true);
+		expect(t.bodyFromIndex).toBe(1);
+		expect(t.narration).toEqual([]);
+	});
+
+	it("ignores whitespace-only text when finding the reply", () => {
+		const t = splitTurn([text("Said"), tool("a"), text("   ")], false);
+		expect(t.bodyFromIndex).toBe(0);
+		expect(t.narration).toEqual([]);
+	});
+
+	it("has no body index when a finished turn wrote no text at all", () => {
+		const t = splitTurn([tool("a")], false);
+		expect(t.bodyFromIndex).toBe(-1);
+		expect(t.hasThinkingContent).toBe(true);
+	});
+
+	it("joins non-empty reasoning with newlines", () => {
+		const t = splitTurn([reasoning("a"), reasoning(""), reasoning("b"), text("x")], false);
+		expect(t.reasoning).toBe("a\nb");
+		expect(t.hasThinkingContent).toBe(true);
+	});
+
+	it("starts an empty streaming turn at index 0 with nothing to show", () => {
+		const t = splitTurn([], true);
+		expect(t.bodyFromIndex).toBe(0);
+		expect(t.reasoning).toBe("");
+		expect(t.hasThinkingContent).toBe(false);
+	});
+});
+
+describe("turnMovedPast", () => {
+	it("is true when another tool call follows", () => {
+		expect(turnMovedPast([tool("a"), tool("b")], 0)).toBe(true);
+	});
+
+	it("is true when reply text follows", () => {
+		expect(turnMovedPast([tool("a"), text("ok")], 0)).toBe(true);
+	});
+
+	it("is false when the turn ended on the call, or only blank text followed", () => {
+		expect(turnMovedPast([text("x"), tool("a")], 1)).toBe(false);
+		expect(turnMovedPast([tool("a"), text("  "), reasoning("r")], 0)).toBe(false);
+	});
+});
+
+describe("stopReason", () => {
+	it("is null for a whole reply", () => {
+		expect(stopReason(undefined)).toBeNull();
+		expect(stopReason({ agentId: "general" })).toBeNull();
+	});
+
+	it("names the flag, the person's own stop first", () => {
+		expect(stopReason({ cutShort: true })).toBe("length");
+		expect(stopReason({ maxSteps: true })).toBe("max_steps");
+		expect(stopReason({ budget: true, stopped: true })).toBe("stopped");
+		expect(stopReason({ unattended: true, interrupted: true })).toBe("interrupted");
+	});
+});
