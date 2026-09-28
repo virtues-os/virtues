@@ -188,7 +188,15 @@
      (why there is a subscription at all) stays, as a note at the foot for
      whoever wants the reason. What the card lists is Billing's own claim,
      "one subscription covers all four" (BillingView). -->
-<StepFrame title={done ? (via === "byo" ? "Your server is using your own AI" : "You've set up your subscription") : "Choose how your assistant thinks"}>
+<!-- WHY, ON THE SCREEN (2026-09-28): this is the one step with no way past,
+     and the page never said so. Same reason as the Account step before
+     pairing, in the same plain words. -->
+<StepFrame
+	title={done ? (via === "byo" ? "Your server is using your own AI" : "You've set up your subscription") : "Choose how your assistant thinks"}
+	subtitle={done
+		? undefined
+		: "Your assistant can't answer anything until it has AI to think with. A Virtues subscription gives it the best models there are, or you can connect your own."}
+>
 	{#if !loaded}
 		<div class="card placeholder" aria-hidden="true"></div>
 	{:else if done}
