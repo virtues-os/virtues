@@ -82,8 +82,8 @@ impl ToolExecutionResult {
     /// read the reason.
     ///
     /// A failure's `data` rides along, capped. A tool that fails WITH output
-    /// — `code_interpreter` puts the traceback in stderr and says only "Code
-    /// execution failed" in `error` — was handing the model the sentence and
+    /// — `code_interpreter` puts the traceback in stderr and only its last
+    /// line in `error` — was handing the model the sentence and
     /// keeping the evidence, so it could not fix the code and the
     /// repeated-failure guard then refused the identical retry. The data is
     /// the part it needs.

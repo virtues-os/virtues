@@ -12,8 +12,9 @@
 	interface CodeOutput {
 		stdout?: string;
 		stderr?: string;
-		success?: boolean;
 		error?: string;
+		timed_out?: boolean;
+		truncated?: boolean;
 		/** Execution time in milliseconds (from backend) */
 		execution_time_ms?: number;
 	}
@@ -64,13 +65,14 @@
 		return `${mins}m ${secs}s`;
 	});
 
-	// Combined output text for display
+	// Combined output text for display. A failure shows the traceback when
+	// the run kept one, and the one-line reason when that is all there is.
 	const outputText = $derived(() => {
 		if (!output) return "";
-		if (output.error) return output.error;
 		const parts: string[] = [];
 		if (output.stdout) parts.push(output.stdout);
 		if (output.stderr) parts.push(output.stderr);
+		else if (output.error) parts.push(output.error);
 		return parts.join("\n").trim();
 	});
 

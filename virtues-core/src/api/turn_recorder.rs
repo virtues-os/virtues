@@ -195,12 +195,18 @@ impl TurnRecorder {
                 // A failed tool is a tool error on the wire, not an output
                 // with an error inside it. The model still sees the failure
                 // text (executor::to_llm_content); the row keeps it as the
-                // result so a reload shows the same.
+                // result so a reload shows the same, beside whatever evidence
+                // the tool returned with it — a code run's traceback.
                 let error_text = error
                     .or_else(|| result.get("error").and_then(|e| e.as_str()).map(str::to_string))
                     .unwrap_or_else(|| "the tool reported a failure".to_string());
                 if let Some(tc) = self.tool_call_mut(&id) {
-                    tc.result = Some(serde_json::json!({ "error": error_text }));
+                    let mut row = match result {
+                        serde_json::Value::Object(map) => map,
+                        _ => serde_json::Map::new(),
+                    };
+                    row.insert("error".into(), serde_json::Value::String(error_text.clone()));
+                    tc.result = Some(serde_json::Value::Object(row));
                 }
                 self.failed_tools.insert(id.clone());
                 out.push(StreamEvent::ToolOutputError { tool_call_id: id, error_text });
