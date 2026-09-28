@@ -217,14 +217,14 @@ class PrePair {
 	 * A device joining a server someone already set up. Setup's first half
 	 * only sets up NEW servers; joining (the QR from the other device on a
 	 * phone, a code on a computer) is still the connect page's, which the
-	 * app ships beside this copy. Its first screen asks "new or existing",
-	 * one tap from the join. Not in the dev fake, which has no connect page.
+	 * app ships beside this copy; `#existing` opens it on the join itself.
+	 * Not in the dev fake, which has no connect page.
 	 */
 	get canJoinExisting(): boolean {
 		return this.active && !isFake();
 	}
 	joinExisting(): void {
-		window.location.href = '/connect.html';
+		window.location.href = '/connect.html#existing';
 	}
 
 	goWithout(): void {

@@ -430,6 +430,11 @@
           // `#setup` pins the connect screen open on an already-paired device,
           // for setting up a SECOND box.
           if (hash === '#setup') return 'entry';
+          // `#existing`: Setup (the app's own /setup, before pairing) sends a
+          // device that is joining a server someone already set up straight
+          // to the join: the QR scan on a phone, the code on a computer.
+          // Setup's first half only sets up new servers (2026-09-28).
+          if (hash === '#existing') return 'existing';
           // The injected flag is a FAST PATH, never the truth: it is evaluated
           // once when the window is built, so after an in-session unpair it
           // still says true. Confirmed against the plugin by `pairedProbe`.
@@ -2530,6 +2535,7 @@ its devices apart — type its address.",
         case 'forgot-us':    renderBoxForgotUs(); break;
         case 'unreachable':  renderBoxUnreachable(); break;
         case 'probe-paired': bootPaired(); break;
+        case 'existing':     IS_MOBILE ? renderScan() : startExisting(); break;
         default:             renderEntry(); break;
       }
     </script>
