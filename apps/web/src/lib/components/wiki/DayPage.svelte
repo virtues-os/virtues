@@ -12,6 +12,7 @@
 <script lang="ts">
 	import { subjectHref } from "$lib/wiki/links";
 	import { browser } from "$app/environment";
+	import { tick } from "svelte";
 	import type { DayEvent } from "$lib/wiki/types";
 	import {
 		getDaySources,
@@ -20,6 +21,8 @@
 		getDayChats,
 		getDayFacts,
 		getDayByDate,
+		getSimilarDays,
+		type SimilarDayApi,
 		getArticle,
 		type DayFactsApi,
 		type DaySourceApi,
@@ -39,7 +42,9 @@
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import DayArticleBody from "./DayArticleBody.svelte";
 	import DayFactStrip from "./DayFactStrip.svelte";
-	import { parseDayArticle, abstractOf } from "$lib/wiki/dayArticle";
+	import { parseDayArticle, abstractOf, veilMarks } from "$lib/wiki/dayArticle";
+	import { veiled } from "$lib/actions/veil";
+	import { veil } from "$lib/stores/veil.svelte";
 	import { Popover } from "$lib/floating";
 
 	import Icon from "$lib/components/Icon.svelte";
@@ -510,15 +515,83 @@
 	/** The record a citation opened Record on, `table:id`. */
 	let citedRef = $state<string | null>(null);
 
+	/**
+	 * Switch views along the day's clock: the date stays where it is, the fact
+	 * strip's coverage bar grows into the dayline, and the rest crossfades.
+	 * Reduced motion, or a browser without view transitions, switches at once.
+	 */
+	type Transition = { finished: Promise<void>; skipTransition: () => void };
+	let pendingTransition: Transition | null = null;
+
+	/** Resolves once the new view is on the page. */
+	async function switchView(change: () => void): Promise<void> {
+		const doc = document as Document & {
+			startViewTransition?: (cb: () => Promise<void>) => Transition;
+		};
+		const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+		// A switch while one is still animating lands at once: the first one
+		// is skipped, never queued behind.
+		if (!doc.startViewTransition || still || pendingTransition) {
+			pendingTransition?.skipTransition();
+			pendingTransition = null;
+			change();
+			await tick();
+			return;
+		}
+		let ran = false;
+		let landed!: () => void;
+		const done = new Promise<void>((resolve) => (landed = resolve));
+		const run = async () => {
+			if (ran) return;
+			ran = true;
+			change();
+			await tick();
+			landed();
+		};
+		try {
+			const t = doc.startViewTransition(run);
+			pendingTransition = t;
+			void t.finished.finally(() => {
+				if (pendingTransition === t) pendingTransition = null;
+			});
+			// The update waits for a frame; a page that is not drawing (a
+			// hidden pane) would never get one, so the switch happens anyway.
+			setTimeout(() => void run(), 300);
+		} catch {
+			// Two day pages side by side share transition names; switch plainly.
+			await run();
+		}
+		return done;
+	}
+
 	function openCitation(ref: string) {
-		citedRef = ref;
-		view = "record";
+		void switchView(() => {
+			citedRef = ref;
+			view = "record";
+		});
 		scrollContainerEl?.scrollTo({ top: 0 });
 	}
 
+	function showRecord() {
+		void switchView(() => (view = "record"));
+	}
+
+	/** Back to the article, and to the sentence the citation came from. */
 	function backToArticle() {
-		view = "article";
-		citedRef = null;
+		const ref = citedRef;
+		void switchView(() => {
+			view = "article";
+			citedRef = null;
+		}).then(() => {
+			if (!ref) return;
+			const row = scrollContainerEl
+				?.querySelector(`[data-ref="${CSS.escape(ref)}"]`)
+				?.closest(".row");
+			if (!row) return;
+			row.scrollIntoView({ block: "center" });
+			row.classList.add("flash");
+			setTimeout(() => row.classList.remove("flash"), 1400);
+		});
 	}
 
 	/** The cited record's row in the day's sources, when the sources carry it. */
@@ -529,11 +602,12 @@
 	});
 
 	const parsed = $derived(parseDayArticle(summaryText));
+	const abstractMarked = $derived(veilMarks(parsed.abstract));
 
 	/** "With": the people the Abstract links, in its order. */
 	const abstractPeople = $derived.by(() => {
 		const out: { name: string; href: string }[] = [];
-		for (const m of parsed.abstract.matchAll(/\[([^\]]+)\]\((\/person\/[^)]+)\)/g)) {
+		for (const m of abstractMarked.markdown.matchAll(/\[([^\]]+)\]\((\/person\/[^)]+)\)/g)) {
 			if (!out.some((p) => p.href === m[2])) out.push({ name: m[1], href: m[2] });
 		}
 		return out;
@@ -578,6 +652,22 @@
 		return n.date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 	}
 
+	let similar = $state<SimilarDayApi[]>([]);
+	const loadSimilar = makeLoader((slug) => getSimilarDays(slug), (r) => (similar = r ?? []));
+	$effect(() => {
+		if (browser && page?.date) loadSimilar(currentDateSlug);
+	});
+
+	/** The chaos/order mark: each scored part of the day at its midpoint. */
+	const noveltyPoints = $derived(
+		dayEvents
+			.filter((e) => !e.isUnknown && !e.isSleep && !e.userHidden && e.noveltyZ != null)
+			.map((e) => ({
+				at: new Date((e.startTime.getTime() + e.endTime.getTime()) / 2).toISOString(),
+				z: e.noveltyZ as number,
+			})),
+	);
+
 	let notesOpen = $state(false);
 	let noteCount = $state(0);
 
@@ -601,8 +691,18 @@
 				<span class="bar-gap"></span>
 				<div class="segmented" role="group" aria-label="View">
 					<button type="button" class="seg" class:active={view === "article"} aria-pressed={view === "article"} onclick={backToArticle}>Article</button>
-					<button type="button" class="seg" class:active={view === "record"} aria-pressed={view === "record"} onclick={() => (view = "record")}>Record</button>
+					<button type="button" class="seg" class:active={view === "record"} aria-pressed={view === "record"} onclick={showRecord}>Record</button>
 				</div>
+				<button
+					type="button"
+					class="bar-action"
+					class:active={veil.on}
+					aria-pressed={veil.on}
+					title={veil.on ? "You've hidden names and hard passages. Hold V to read them." : "Hide names and hard passages on day pages"}
+					onclick={() => veil.toggle()}
+				>
+					{veil.on ? "Veiled · hold V" : "Veil"}
+				</button>
 				<Popover bind:open={notesOpen} placement="bottom-end">
 					{#snippet trigger({ toggle })}
 						<button type="button" class="bar-action" class:active={notesOpen} onclick={toggle}>
@@ -633,14 +733,14 @@
 				{#if view === "article"}
 					{#if showAutobiography}
 						{#if parsed.abstract}
-							<div class="day-abstract">
-								<Markdown content={parsed.abstract} refVariant="quiet" variant="article" />
+							<div class="day-abstract" use:veiled={{ hiding: veil.hiding, phrases: abstractMarked.phrases }}>
+								<Markdown content={abstractMarked.markdown} refVariant="quiet" variant="article" />
 							</div>
 						{/if}
-						<DayFactStrip {facts} people={abstractPeople} timezone={page.start_timezone} />
+						<DayFactStrip {facts} people={abstractPeople} timezone={page.start_timezone} novelty={noveltyPoints} />
 						<DayArticleBody blocks={parsed.blocks} oncite={openCitation} />
 					{:else}
-						<DayFactStrip {facts} people={[]} timezone={page.start_timezone} />
+						<DayFactStrip {facts} people={[]} timezone={page.start_timezone} novelty={noveltyPoints} />
 						<div class="empty-state">
 							{#if currentDateSlug > todaySlug}
 								<p class="empty-state-text">This day hasn't happened yet.</p>
@@ -657,7 +757,7 @@
 							{#if prevDay}
 								<button type="button" class="adjacent-card" onclick={() => navigateToDay(prevDay!.date)}>
 									<span class="adjacent-when">← {neighborLabel(prevDay)}</span>
-									{#if prevDay.abstract}<span class="adjacent-abstract">{prevDay.abstract}</span>{/if}
+									{#if prevDay.abstract}<span class="adjacent-abstract" use:veiled={{ hiding: veil.hiding, whole: true }}>{prevDay.abstract}</span>{/if}
 								</button>
 							{:else}
 								<span></span>
@@ -665,10 +765,22 @@
 							{#if nextDay}
 								<button type="button" class="adjacent-card adjacent-next" onclick={() => navigateToDay(nextDay!.date)}>
 									<span class="adjacent-when">{neighborLabel(nextDay)} →</span>
-									{#if nextDay.abstract}<span class="adjacent-abstract">{nextDay.abstract}</span>{/if}
+									{#if nextDay.abstract}<span class="adjacent-abstract" use:veiled={{ hiding: veil.hiding, whole: true }}>{nextDay.abstract}</span>{/if}
 								</button>
 							{/if}
 						</nav>
+					{/if}
+
+					{#if similar.length}
+						<section class="similar" aria-label="Similar days">
+							<h2 class="similar-title">Similar days</h2>
+							{#each similar as d (d.date)}
+								<button type="button" class="similar-row" onclick={() => navigateToDay(parseDateSlug(d.date))}>
+									<span class="similar-date">{parseDateSlug(d.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+									<span class="similar-abstract" use:veiled={{ hiding: veil.hiding, whole: true }}>{abstractOf(d.abstract_md)}</span>
+								</button>
+							{/each}
+						</section>
 					{/if}
 				{:else}
 					{#if citedRef}
@@ -908,6 +1020,24 @@
 		color: var(--color-foreground-subtle);
 	}
 
+	/* ── Article ↔ Record: the same day, along its clock ── */
+	.day-title {
+		view-transition-name: day-title;
+	}
+
+	.day-eyebrow {
+		view-transition-name: day-eyebrow;
+	}
+
+	#dayline {
+		view-transition-name: day-clock;
+	}
+
+	:global(::view-transition-group(*)) {
+		animation-duration: 350ms;
+		animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+	}
+
 	/* ── the page head ── */
 	.day-eyebrow {
 		margin: 0;
@@ -968,6 +1098,55 @@
 		line-clamp: 3;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
+	}
+
+	/* ── Similar days ── */
+	.similar {
+		max-width: 40rem;
+		margin-top: 2.5rem;
+	}
+
+	.similar-title {
+		margin: 0 0 0.5rem;
+		font-family: var(--font-serif);
+		font-weight: 400;
+		font-size: 1.5rem;
+	}
+
+	.similar-row {
+		display: flex;
+		gap: 1rem;
+		align-items: baseline;
+		width: 100%;
+		border: none;
+		background: none;
+		padding: 0.375rem 0;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.similar-date {
+		flex-shrink: 0;
+		width: 6.5rem;
+		font-family: var(--font-sans);
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
+	}
+
+	.similar-abstract {
+		font-family: var(--font-serif);
+		font-size: 1rem;
+		line-height: 1.4;
+		color: var(--color-foreground);
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+
+	.similar-row:hover .similar-abstract {
+		color: var(--color-primary);
 	}
 
 	/* ── Record, arrived at from a citation ── */

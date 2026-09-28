@@ -15,7 +15,9 @@
 -->
 <script lang="ts">
 	import Markdown from "$lib/components/Markdown.svelte";
-	import type { ArticleBlock, MarginNote } from "$lib/wiki/dayArticle";
+	import { veilMarks, type ArticleBlock, type MarginNote } from "$lib/wiki/dayArticle";
+	import { veiled } from "$lib/actions/veil";
+	import { veil } from "$lib/stores/veil.svelte";
 
 	interface Props {
 		blocks: ArticleBlock[];
@@ -35,7 +37,7 @@
 
 {#snippet note(n: MarginNote)}
 	{#if n.kind === "ev" && n.ref && oncite}
-		<button type="button" class="note note-evidence" onclick={() => oncite?.(n.ref as string)}>
+		<button type="button" class="note note-evidence" data-ref={n.ref} onclick={() => oncite?.(n.ref as string)}>
 			{n.label} <span aria-hidden="true">↗</span>
 		</button>
 	{:else}
@@ -47,13 +49,14 @@
 	{#each blocks as block, i (i)}
 		{@const cx = context(block)}
 		{@const ev = evidence(block)}
+		{@const marked = veilMarks(block.markdown)}
 		<div
 			class="row"
 			class:row-heading={block.kind === "heading"}
 			class:row-table={block.kind === "table"}
 		>
-			<div class="text">
-				<Markdown content={block.markdown} refVariant="quiet" variant="article" />
+			<div class="text" use:veiled={{ hiding: veil.hiding, phrases: marked.phrases }}>
+				<Markdown content={marked.markdown} refVariant="quiet" variant="article" />
 			</div>
 			<aside class="margin" aria-label="Notes on this passage">
 				{#each cx as n (n.label)}{@render note(n)}{/each}
@@ -96,6 +99,18 @@
 
 	.row-heading:first-child .margin {
 		padding-top: 0.6rem;
+	}
+
+	/* Where a citation brings you back to: the passage it came from, marked
+	   for a moment and then let go. */
+	.text {
+		border-radius: 6px;
+		transition: background-color 1s ease;
+	}
+
+	.row:global(.flash) .text {
+		background-color: var(--color-surface-elevated);
+		transition: none;
 	}
 
 	.margin {

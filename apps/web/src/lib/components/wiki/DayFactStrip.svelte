@@ -11,6 +11,8 @@
 <script lang="ts">
 	import type { DayFactsApi } from "$lib/wiki/api";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { veiled } from "$lib/actions/veil";
+	import { veil } from "$lib/stores/veil.svelte";
 
 	interface Person {
 		name: string;
@@ -22,9 +24,12 @@
 		people: Person[];
 		/** The zone the day was windowed in, so the coverage bar reads in local hours. */
 		timezone: string | null;
+		/** The day's parts, each at its midpoint, scored against your usual:
+		 *  below zero is routine, above is unlike your usual. */
+		novelty?: { at: string; z: number }[];
 	}
 
-	let { facts, people, timezone }: Props = $props();
+	let { facts, people, timezone, novelty = [] }: Props = $props();
 
 	const f = (c: number) => Math.round((c * 9) / 5 + 32);
 
@@ -50,16 +55,30 @@
 		}),
 	);
 
+	// The mark is 84 × 18: time across, novelty up, the midline is your usual.
+	const MARK_W = 84;
+	const MARK_H = 18;
+	const markPoints = $derived(
+		novelty.map((n) => ({
+			x: Math.round((localMinutes(n.at) / 1440) * MARK_W * 10) / 10,
+			y: Math.round((MARK_H / 2 - (Math.max(-3, Math.min(3, n.z)) / 3) * (MARK_H / 2 - 2)) * 10) / 10,
+			above: n.z > 0,
+		})),
+	);
+	const markPath = $derived(
+		[...markPoints].sort((a, b) => a.x - b.x).map((p, i) => `${i ? "L" : "M"}${p.x},${p.y}`).join(" "),
+	);
+
 	const hours = $derived(facts ? Math.round(facts.recorded_minutes / 60) : 0);
 	const hasWeather = $derived(facts?.temperature_high_c != null && facts?.temperature_low_c != null);
 </script>
 
-{#if people.length || hasWeather || (facts && facts.recorded_minutes > 0) || (facts && facts.chats > 0)}
+{#if people.length || hasWeather || (facts && facts.recorded_minutes > 0) || (facts && facts.chats > 0) || novelty.length > 1}
 	<div class="strip" role="group" aria-label="The day at a glance">
 		{#if people.length}
 			<span class="fact">
 				<span class="key">With</span>
-				<span>
+				<span use:veiled={{ hiding: veil.hiding, whole: true }}>
 					{#each people as p, i (p.href)}<a
 						href={p.href}
 						onclick={(e) => {
@@ -85,6 +104,18 @@
 						<span class="span" style:left="{s.left}%" style:width="{s.width}%"></span>
 					{/each}
 				</span>
+			</span>
+		{/if}
+		{#if novelty.length > 1}
+			<span class="fact" title="Each dot is a part of the day. Above the line is unlike your usual; below is routine.">
+				<span class="key">Novelty</span>
+				<svg class="mark" width={MARK_W} height={MARK_H} viewBox="0 0 {MARK_W} {MARK_H}" role="img" aria-label="How unlike your usual each part of the day was">
+					<line x1="0" x2={MARK_W} y1={MARK_H / 2} y2={MARK_H / 2} class="mark-mid" />
+					<path d={markPath} class="mark-line" />
+					{#each markPoints as p, i (i)}
+						<circle cx={p.x} cy={p.y} r="1.75" class:above={p.above} class="mark-dot" />
+					{/each}
+				</svg>
 			</span>
 		{/if}
 		{#if facts && facts.chats > 0}
@@ -127,7 +158,9 @@
 		color: var(--color-foreground-subtle);
 	}
 
+	/* The same element as Record's dayline, for the view transition between them. */
 	.bar {
+		view-transition-name: day-clock;
 		position: relative;
 		display: inline-block;
 		align-self: center;
@@ -144,6 +177,30 @@
 		height: 4px;
 		border-radius: 999px;
 		background: var(--color-primary);
+	}
+
+	.mark {
+		align-self: center;
+		overflow: visible;
+	}
+
+	.mark-mid {
+		stroke: var(--color-border);
+		stroke-width: 1;
+	}
+
+	.mark-line {
+		fill: none;
+		stroke: var(--color-foreground-subtle);
+		stroke-width: 0.75;
+	}
+
+	.mark-dot {
+		fill: var(--color-foreground-subtle);
+	}
+
+	.mark-dot.above {
+		fill: var(--color-primary);
 	}
 
 	a {

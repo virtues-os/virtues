@@ -248,6 +248,11 @@ pub fn routes() -> Router<AppState> {
             "/api/wiki/day/:date/facts",
             get(wiki_get_day_facts_handler),
         )
+        // Wiki - Days whose pages read like this one's
+        .route(
+            "/api/wiki/day/:date/similar",
+            get(wiki_get_similar_days_handler),
+        )
         // Wiki - Day Streams (dynamic ontology queries)
         .route(
             "/api/wiki/day/:date/streams",
@@ -1284,6 +1289,17 @@ pub async fn wiki_get_day_facts_handler(
 ) -> Response {
     match date.parse::<chrono::NaiveDate>() {
         Ok(parsed_date) => api_response(crate::api::day_article::day_facts(state.db.pool(), parsed_date).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
+    }
+}
+
+/// Days whose pages read like this one's, nearest first.
+pub async fn wiki_get_similar_days_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => api_response(crate::api::day_article::similar_days(state.db.pool(), parsed_date, 3).await),
         Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
     }
 }
