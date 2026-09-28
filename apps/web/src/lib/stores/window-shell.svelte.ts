@@ -26,6 +26,7 @@ import { parseRoute } from '$lib/tabs/registry';
 import { visits } from '$lib/stores/visits.svelte';
 import { pushState, replaceState } from '$app/navigation';
 import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
+import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 
 // Re-export types for convenience
 export type { Tab, TabType, PaneState };
@@ -70,7 +71,7 @@ const ENTITY_TYPE_MAP: Record<string, { type: string; icon: string; routePrefix:
 	year: { type: 'year', icon: 'ri:calendar-line', routePrefix: '/year' },
 	source: { type: 'source', icon: 'ri:database-2-line', routePrefix: '/sources' },
 	file: { type: 'drive', icon: 'ri:file-line', routePrefix: '/drive' },
-	project: { type: 'project', icon: 'ri:folder-3-line', routePrefix: '/project' }
+	project: { type: 'project', icon: PROJECT_ICON, routePrefix: '/project' }
 };
 
 /**

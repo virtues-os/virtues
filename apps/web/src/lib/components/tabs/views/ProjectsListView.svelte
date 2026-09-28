@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
 	import { accentCss } from '$lib/sidebar/pin-colors';
+	import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { Button, Page } from '$lib';
@@ -40,13 +42,13 @@
 		{
 			key: 'name',
 			label: 'Name',
-			icon: 'ri:folder-3-line',
+			icon: PROJECT_ICON,
 			width: '35%',
 			minWidth: '180px'
 		},
 		{
 			key: 'current_status',
-			label: 'Memo',
+			label: 'Note',
 			icon: 'ri:sticky-note-line',
 			width: '35%',
 			minWidth: '160px'
@@ -85,6 +87,14 @@
 		if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
 		if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`;
 		return `${Math.floor(diffDays / 365)} years ago`;
+	}
+
+	/** "3 chats · 5 items", saying only what is there. */
+	function countsLine(p: ProjectSummary): string {
+		const parts: string[] = [];
+		if (p.chat_count > 0) parts.push(p.chat_count === 1 ? '1 chat' : `${p.chat_count} chats`);
+		if (p.item_count > 0) parts.push(p.item_count === 1 ? '1 item' : `${p.item_count} items`);
+		return parts.join(' · ') || 'Empty';
 	}
 
 	function open(id: string) {
@@ -138,7 +148,7 @@
 				bind:this={inputEl}
 				bind:value={draftName}
 				class="name-input"
-				placeholder="Name your Project"
+				placeholder="Name your project"
 				disabled={creating}
 				onkeydown={onDraftKeydown}
 				onblur={commitDraft}
@@ -149,18 +159,18 @@
 				size="sm"
 				icon="ri:add-line"
 				loading={creating}
-				onclick={startDraft}>New Project</Button
+				onclick={startDraft}>New project</Button
 			>
 		{/if}
 	{/snippet}
 
 	{#if projects.length === 0 && !projectStore.loading && !projectStore.error}
 		<div class="empty">
-			<Icon icon="ri:folder-3-line" width="28" />
-			<p>No Projects yet.</p>
+			<Icon icon={PROJECT_ICON} width="28" />
+			<p>No projects yet</p>
 			{#if !drafting}
 				<Button variant="secondary" size="sm" onclick={startDraft}
-					>Create your first Project</Button
+					>Create a project</Button
 				>
 			{/if}
 		</div>
@@ -171,10 +181,10 @@
 			entityType="project"
 			loading={projectStore.loading}
 			error={projectStore.error}
-			emptyIcon="ri:folder-3-line"
-			emptyMessage="No Projects yet"
-			loadingMessage="Loading Projects..."
-			searchPlaceholder="Search Projects..."
+			emptyIcon={PROJECT_ICON}
+			emptyMessage="No projects match"
+			loadingMessage="Loading projects…"
+			searchPlaceholder="Search projects…"
 			defaultViewMode="grid"
 			gridMinWidth="200px"
 			onItemClick={(nb) => open(nb.id)}
@@ -189,7 +199,7 @@
 							class:tinted={!!nb.accent_color}
 							style={accentCss(nb.accent_color) ? `--room-accent: ${accentCss(nb.accent_color)}` : ''}
 						>
-							<Icon icon={nb.icon || 'ri:folder-3-line'} width="15" />
+							<ProjectGlyph icon={nb.icon} size={15} />
 						</span>
 						<span class="name-text">{nb.name}</span>
 					</div>
@@ -219,16 +229,12 @@
 					class:tinted={!!nb.accent_color}
 					style={accentCss(nb.accent_color) ? `--room-accent: ${accentCss(nb.accent_color)}` : ''}
 				>
-					<div class="nb-card-icon"><Icon icon={nb.icon || 'ri:folder-3-line'} width="20" /></div>
+					<div class="nb-card-icon"><ProjectGlyph icon={nb.icon} size={20} /></div>
 					<div class="nb-card-name">{nb.name}</div>
 					{#if nb.current_status}
 						<div class="nb-card-memo">{nb.current_status}</div>
 					{/if}
-					<div class="nb-card-meta">
-						<span>{nb.chat_count} {nb.chat_count === 1 ? 'chat' : 'chats'}</span>
-						<span class="dot-sep">·</span>
-						<span>{nb.item_count} pinned</span>
-					</div>
+					<div class="nb-card-meta">{countsLine(nb)}</div>
 				</div>
 			{/snippet}
 		</UniversalDataGrid>
@@ -251,7 +257,7 @@
 					{#each archived as p (p.id)}
 						<li class="archived-row">
 							<button type="button" class="archived-name" onclick={() => open(p.id)}>
-								<Icon icon={p.icon || 'ri:folder-3-line'} width="15" />
+								<ProjectGlyph icon={p.icon} color={p.accent_color} size={15} />
 								<span>{p.name}</span>
 							</button>
 							<span class="archived-when">{formatRelativeDate(p.archived_at) ?? ''}</span>
@@ -301,8 +307,7 @@
 		display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 	}
 	.nb-card-meta { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--color-foreground-subtle); margin-top: 4px; }
-	.dot-sep { opacity: 0.5; }
-
+	
 	/* Table row styles */
 	.name-cell { display: flex; align-items: center; gap: 0.5rem; }
 	.row-icon {

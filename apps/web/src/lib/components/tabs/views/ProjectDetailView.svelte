@@ -2,6 +2,8 @@
 	import type { Tab } from '$lib/tabs/types';
 	import type { ProjectDetail, ProjectGraph } from '$lib/api/client';
 	import Icon from '$lib/components/Icon.svelte';
+	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
+	import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 	import { Button, IconButton, TextAction } from '$lib';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { chatSessions } from '$lib/stores/chatSessions.svelte';
@@ -26,6 +28,7 @@
 		getProjectGraph
 	} from '$lib/api/client';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
+	import { accentCss } from '$lib/sidebar/pin-colors';
 	import { isProjectUrl } from '$lib/utils/contextMenuItems';
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
@@ -35,7 +38,14 @@
 		return m?.[1] ?? null;
 	});
 
-	let detail = $state<ProjectDetail | null>(null);
+	/**
+	 * A live view of the store's copy, not a snapshot of it. A rename, recolor
+	 * or archive from the sidebar, ⌘K or another pane lands in the store, and
+	 * this page and its tab follow without being told.
+	 */
+	const detail = $derived<ProjectDetail | null>(
+		projectId ? (projectStore.getCached(projectId) ?? null) : null
+	);
 	let loading = $state(false);
 	let error = $state<string | null>(null);
 
@@ -45,11 +55,10 @@
 		loading = true;
 		error = null;
 		try {
-			detail = await projectStore.get(id, { force });
+			await projectStore.get(id, { force });
 		} catch (e) {
 			console.error('[ProjectDetailView] Failed to load project:', e);
-			error = e instanceof Error ? e.message : 'Failed to load project';
-			detail = null;
+			error = "Your server couldn't open this project. If you deleted it, you can restore it from Recently deleted.";
 		} finally {
 			loading = false;
 		}
@@ -58,6 +67,18 @@
 	$effect(() => {
 		if (projectId) load();
 	});
+
+	// The tab wears the project's name and mark, whichever door opened it —
+	// a pin, a citation, ⌘K and a reload all arrive with only the id.
+	$effect(() => {
+		if (!detail) return;
+		const icon = detail.icon || PROJECT_ICON;
+		if (tab.label !== detail.name || tab.icon !== icon) {
+			windowShellStore.updateTab(tab.id, { label: detail.name, icon });
+		}
+	});
+
+	const archived = $derived(!!detail?.archived_at);
 
 	// ---- Entity facets over the members --------------------------------------
 	// Same endpoint as before; it is a filter source now, not a picture. A graph
@@ -336,7 +357,9 @@
 			await loadGraph();
 		} catch (e) {
 			console.error('[ProjectDetailView] bulk remove failed:', e);
-			toast.error('Could not remove every item');
+			toast.error("Your server couldn't remove every item", {
+				description: 'The ones still listed are still in the project. Try again',
+			});
 		} finally {
 			clear();
 		}
@@ -345,7 +368,15 @@
 	async function removeMember(url: string) {
 		const id = projectId;
 		if (!id) return;
-		await projectStore.removeItem(id, url);
+		try {
+			await projectStore.removeItem(id, url);
+		} catch (e) {
+			console.error('[ProjectDetailView] remove failed:', e);
+			toast.error("Your server couldn't remove that from this project", {
+				description: "It's still here. Try again",
+			});
+			return;
+		}
 		await loadGraph();
 	}
 
@@ -366,10 +397,9 @@
 		const next = edge === 'top' ? [url, ...rest] : [...rest, url];
 		try {
 			await projectStore.reorderItems(id, next);
-			await load(true);
 		} catch (e) {
 			console.error('[ProjectDetailView] reorder failed:', e);
-			toast.error('Could not move that item');
+			toast.error("Your server couldn't move that item", { description: 'Try again' });
 		}
 	}
 
@@ -438,17 +468,33 @@
 		dropActive = false;
 		const id = projectId;
 		const dropped = e.dataTransfer?.files;
-		if (!id || !dropped || dropped.length === 0) return;
-		for (const f of dropped) {
+		if (!id || archived || !dropped || dropped.length === 0) return;
+		const files = [...dropped];
+		// An upload can take a while and the row only appears at the end, so
+		// the drop says it was taken before it says it is done.
+		const pending = toast.loading(
+			files.length === 1 ? `Adding ${files[0].name}…` : `Adding ${files.length} files…`
+		);
+		let failed = 0;
+		for (const f of files) {
 			try {
 				const uploaded = await uploadDriveFile('uploads', f);
 				await addProjectItem(id, `/drive/${uploaded.id}`);
 			} catch (err) {
+				failed += 1;
 				console.error('[ProjectDetailView] drop-add failed:', err);
-				toast.error(`Could not add ${f.name}`);
 			}
 		}
-		await load(true);
+		toast.dismiss(pending);
+		if (failed > 0) {
+			toast.error(
+				failed === 1 && files.length === 1
+					? `Your server couldn't add ${files[0].name}`
+					: `Your server couldn't add ${failed} of ${files.length} files`,
+				{ description: 'Try dropping them again' }
+			);
+		}
+		await Promise.all([load(true), projectStore.load()]);
 		await loadGraph();
 	}
 
@@ -522,7 +568,6 @@
 		const id = projectId;
 		if (!id) return;
 		await projectStore.update(id, { icon });
-		await load(true);
 	}
 
 	/**
@@ -538,7 +583,6 @@
 		const id = projectId;
 		if (!id) return;
 		await projectStore.update(id, { accent_color: color });
-		await load(true);
 	}
 
 	// ---- Membership ----------------------------------------------------------
@@ -553,11 +597,15 @@
 		// you can't put a project in a project — the picker already hides them,
 		// and the server answers 400 if one gets through.
 		if (isProjectUrl(entity.url)) return;
-		await projectStore.addItem(id, entity.url);
-		// A chat is listed here from the session list by its `project_id`,
-		// which the box has just set; the sessions have to be re-read or the
-		// add looks like it did nothing (VIR-359).
-		if (entity.url.startsWith('/chat/')) await chatSessions.refresh();
+		try {
+			await projectStore.addItem(id, entity.url);
+		} catch (e) {
+			console.error('[ProjectDetailView] add failed:', e);
+			toast.error("Your server couldn't add that to this project", {
+				description: 'Nothing changed. Try again',
+			});
+			return;
+		}
 		await loadGraph();
 	}
 
@@ -573,7 +621,6 @@
 		try {
 			if (wasArchived) await projectStore.unarchive(id);
 			else await projectStore.archive(id);
-			await load(true);
 			// Only the archive direction gets a toast. Unarchiving is what the
 			// toast's own Undo does, and the project reappearing in the list is
 			// the confirmation.
@@ -628,7 +675,7 @@
 			aria-label="Project contents"
 			ondragover={(e) => {
 				e.preventDefault();
-				dropActive = true;
+				dropActive = !archived;
 			}}
 			ondragleave={(e) => {
 				// Crossing into a child fires dragleave too; only leaving the
@@ -644,8 +691,15 @@
 				<div class="head-main">
 					<Popover bind:open={iconOpen} placement="bottom-start">
 						{#snippet trigger({ toggle }: { toggle: () => void })}
-							<button class="nb-icon" title="Change icon" onclick={toggle}>
-								<Icon icon={detail?.icon || 'ri:folder-3-line'} width="22" />
+							<button
+								class="nb-icon"
+								class:tinted={!!accentCss(detail?.accent_color)}
+								style={accentCss(detail?.accent_color) ? `--room-accent: ${accentCss(detail?.accent_color)}` : ''}
+								title="Change icon and color"
+								aria-label="Change icon and color"
+								onclick={toggle}
+							>
+								<ProjectGlyph icon={detail?.icon} size={22} />
 							</button>
 						{/snippet}
 						{#snippet children({ close }: { close: () => void })}
@@ -694,12 +748,12 @@
 						></textarea>
 						{#if showMemo}
 							<label class="memo">
-								<span class="memo-label font-mono">Where I left off</span>
+								<span class="memo-label font-mono">Note</span>
 								<textarea
 									class="memo-input"
 									bind:value={memoDraft}
 									rows="1"
-									placeholder="A note to yourself about the current state."
+									placeholder="Where you left off, for when you come back"
 									onfocus={() => (memoFocused = true)}
 									onblur={commitMemo}
 									onkeydown={(e) => {
@@ -729,7 +783,7 @@
 									{#if !showMemo}
 										<MenuItem
 											icon="ri:sticky-note-line"
-											label="Add a status note"
+											label="Add a note"
 											onclick={() => {
 												close();
 												memoOpen = true;
@@ -759,15 +813,27 @@
 					</div>
 				</div>
 
-				<!-- Counts the same set the grid counts, now that chats are rows in it. -->
-				<div class="props font-mono">
-					<span>{allRows.length} {allRows.length === 1 ? 'item' : 'items'}</span>
-					{#if detail?.archived_at}
-						<span class="dot-sep">·</span>
-						<span>Archived {new Date(detail.archived_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
-					{/if}
-				</div>
-			</header>
+				<!-- Counts the same set the grid counts, now that chats are rows in it.
+				     Nothing when there is nothing: the empty add row below says it. -->
+				{#if allRows.length > 0}
+					<div class="props font-mono">
+						<span>{allRows.length} {allRows.length === 1 ? 'item' : 'items'}</span>
+					</div>
+				{/if}
+				</header>
+
+				{#if detail.archived_at}
+					<!-- Archived is a state of the whole page, so it is said once, above
+					     the content, with the way back beside it. -->
+					<div class="archived-note">
+						<Icon icon="ri:archive-line" width="15" />
+						<span>
+							You archived this project on {new Date(detail.archived_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}.
+							Its chats and items are all here. Unarchive it to add more.
+						</span>
+						<Button variant="secondary" size="sm" onclick={toggleArchive}>Unarchive</Button>
+					</div>
+				{/if}
 
 			<form class="ask" onsubmit={submitAsk}>
 				<input class="ask-input" bind:value={askDraft} placeholder="Ask this project…" />
@@ -790,7 +856,7 @@
 			</form>
 
 			<section class="grid-section">
-				{#if allRows.length === 0}
+				{#if allRows.length === 0 && !archived}
 					<button class="add-row" onclick={openPicker}>
 						<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links, or drop files here
 					</button>
@@ -827,12 +893,14 @@
 						{/snippet}
 
 						{#snippet toolbarActions()}
-							<IconButton
-								icon="ri:add-line"
-								label="Add a page, person, place, file, or link"
-								variant="secondary"
-								onclick={openPicker}
-							/>
+							{#if !archived}
+								<IconButton
+									icon="ri:add-line"
+									label="Add a page, person, place, file, or link"
+									variant="secondary"
+									onclick={openPicker}
+								/>
+							{/if}
 						{/snippet}
 
 						{#snippet tableRow(row: MemberRow)}
@@ -918,7 +986,25 @@
 		display: grid; place-items: center; width: 46px; height: 46px; flex-shrink: 0;
 		border-radius: 12px; border: 1px solid var(--color-border);
 		background: var(--color-surface-elevated); color: var(--color-foreground); cursor: pointer;
+		transition: border-color 120ms ease;
 	}
+	.nb-icon:hover { border-color: var(--color-foreground-subtle); }
+	/* The same tinted chip the projects list draws, so a project looks like
+	   itself on its own page. */
+	.nb-icon.tinted {
+		background: color-mix(in srgb, var(--room-accent) 16%, transparent);
+		border-color: color-mix(in srgb, var(--room-accent) 30%, var(--color-border));
+		color: color-mix(in srgb, var(--room-accent) 78%, var(--color-foreground));
+	}
+
+	.archived-note {
+		display: flex; align-items: center; gap: 10px;
+		padding: 10px 12px; border-radius: 10px;
+		background: var(--color-surface-elevated);
+		font-size: 0.85rem; line-height: 1.45; color: var(--color-foreground-muted);
+	}
+	.archived-note > :global(svg) { flex-shrink: 0; color: var(--color-foreground-subtle); }
+	.archived-note > span { flex: 1; min-width: 0; }
 	.head-actions { display: flex; gap: 2px; flex-shrink: 0; }
 	.title-input, .desc-input {
 		display: block; width: 100%; resize: none; overflow: hidden;
@@ -962,7 +1048,6 @@
 		color: var(--color-foreground-subtle); padding-left: 60px;
 		display: flex; gap: 6px; align-items: center;
 	}
-	.props .dot-sep { opacity: 0.5; }
 
 	/* Overflow menu */
 	.menu { display: flex; flex-direction: column; min-width: 190px; padding: 4px; }

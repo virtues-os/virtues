@@ -197,31 +197,31 @@
 	let selectedCitation = $state<Citation | null>(null);
 
 	// The Project (room) this chat lives in — at most one. Its id is sent with
-	// each message (drives the agent's active-space context + server-side
-	// binding). Read-only here now: the picker that used to set it from this
-	// view is gone, so the binding is seeded from the session row and changed
-	// where the filing happens — in the project.
-	let chatProjectId = $state<string | null>(null);
-	// Which conversation chatProjectId was seeded for. Seeding happens ONCE per
-	// conversation (when its session row is available, or once the session list
-	// has finished loading and confirms there's no row yet) so a later session
-	// refresh can never clobber a room the user just picked locally.
-	let seededProjectFor = $state<string | null>(null);
+	// each message: the agent's active-project context, and on a chat's first
+	// message the server files it there.
+	//
+	// Read from the session row, live. It used to be copied once per
+	// conversation, so filing an open chat from a menu or the project page
+	// left this view grounding answers in the project it had just left, or in
+	// none. The filing happens elsewhere (the project, "Add to project"), and
+	// the store re-reads the sessions whenever it does.
+	//
+	// `stagedProject` is the one thing the row cannot know yet: a new chat
+	// opened from a project ("Ask this project", "New chat here") before its
+	// first message has made a row. It stands in while the row has no project
+	// and is dropped once the server confirms the filing, so unfiling the chat
+	// later cannot be undone by a leftover.
+	let stagedProject = $state<{ chat: string; project: string } | null>(null);
+	const sessionProjectId = $derived(
+		chatSessions.sessions.find((s) => s.conversation_id === conversationId)?.project_id ?? null,
+	);
+	const chatProjectId = $derived(
+		sessionProjectId ??
+			(stagedProject?.chat === conversationId ? stagedProject.project : null),
+	);
 
 	$effect(() => {
-		const id = conversationId;
-		if (seededProjectFor === id) return;
-		const session = chatSessions.sessions.find((s) => s.conversation_id === id);
-		if (session) {
-			chatProjectId = session.project_id ?? null;
-			seededProjectFor = id;
-		} else if (!chatSessions.isLoading) {
-			// Sessions are loaded and this chat has no row yet (brand-new, not yet
-			// persisted) — start unfiled; the create path binds it from the first
-			// message's projectId.
-			chatProjectId = null;
-			seededProjectFor = id;
-		}
+		if (stagedProject && sessionProjectId === stagedProject.project) stagedProject = null;
 	});
 
 	// Open citation panel with selected citation
@@ -726,8 +726,7 @@
 		// first message so the create path files it + grounds retrieval there.
 		const seededProject = pendingPrompt.takeProject();
 		if (seededProject) {
-			chatProjectId = seededProject;
-			seededProjectFor = conversationId;
+			stagedProject = { chat: conversationId, project: seededProject };
 		}
 		(async () => {
 			// Stage 1: Models must load first (other code depends on model list)

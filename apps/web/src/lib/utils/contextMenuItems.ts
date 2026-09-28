@@ -7,9 +7,11 @@
 
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { projectStore } from '$lib/stores/project.svelte';
+import { chatSessions } from '$lib/stores/chatSessions.svelte';
 import { pinMenuItem } from '$lib/pins/pinAction';
 import { promptText } from '$lib/stores/dialog.svelte';
 import { toast } from 'svelte-sonner';
+import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 
 /** A project's own url, in either spelling — you can't put a project in a project. */
 export function isProjectUrl(url: string): boolean {
@@ -34,24 +36,38 @@ export function getAddToProjectMenuItems(
 	if (isProjectUrl(url)) return [];
 	const projects = projectStore.projects;
 
+	// A chat lives in one project, and the menu says which: the check is
+	// where it is, picking another moves it, and "Remove from" takes it out.
+	// For anything else, filing is additive and the check is not tracked here.
+	const chatId = url.startsWith('/chat/') ? url.slice('/chat/'.length) : null;
+	const home = chatId
+		? projects.find(
+				(p) => p.id === chatSessions.sessions.find((s) => s.conversation_id === chatId)?.project_id,
+			)
+		: undefined;
+
 	const submenu: ContextMenuItem[] = projects.map((s) => ({
 		id: `project-${s.id}`,
 		label: s.name,
-		icon: s.icon || 'ri:folder-open-line',
+		icon: s.icon || PROJECT_ICON,
+		checked: s.id === home?.id,
 		action: async () => {
+			if (s.id === home?.id) return;
 			try {
 				await projectStore.addItem(s.id, url);
-				toast(`Added to ${s.name}`);
+				toast(home ? `Moved to ${s.name}` : `Added to ${s.name}`);
 			} catch (e) {
 				console.error('[contextMenuItems] Failed to add to project:', e);
-				toast.error('Failed to add to project');
+				toast.error(`Your server couldn't add this to ${s.name}`, {
+					description: 'Nothing changed. Try again',
+				});
 			}
 		},
 	}));
 
 	submenu.push({
 		id: 'new-project-with-item',
-		label: projects.length > 0 ? 'New project…' : 'Create first project…',
+		label: 'New project…',
 		icon: 'ri:add-line',
 		dividerBefore: projects.length > 0,
 		action: async () => {
@@ -62,22 +78,43 @@ export function getAddToProjectMenuItems(
 				placeholder: 'Name your project',
 				confirmLabel: 'Create',
 			});
-			if (!projectName) return;
+			if (!projectName?.trim()) return;
 			try {
-				const project = await projectStore.create(projectName);
+				const project = await projectStore.create(projectName.trim());
 				await projectStore.addItem(project.id, url);
-				toast(`Created "${project.name}" and added item`);
+				toast(`Added to ${project.name}`);
 			} catch (e) {
 				console.error('[contextMenuItems] Failed to create project:', e);
-				toast.error('Failed to create project');
+				toast.error("Your server couldn't create that project", {
+					description: 'Nothing changed. Try again',
+				});
 			}
 		},
 	});
 
+	if (home) {
+		submenu.push({
+			id: 'remove-from-project',
+			label: `Remove from ${home.name}`,
+			icon: 'ri:close-line',
+			action: async () => {
+				try {
+					await projectStore.removeItem(home.id, url);
+					toast(`Removed from ${home.name}`);
+				} catch (e) {
+					console.error('[contextMenuItems] Failed to remove from project:', e);
+					toast.error(`Your server couldn't remove this from ${home.name}`, {
+						description: "It's still there. Try again",
+					});
+				}
+			},
+		});
+	}
+
 	return [
 		{
 			id: 'add-to-project',
-			label: 'Add to project',
+			label: home ? 'Move to project' : 'Add to project',
 			icon: 'ri:folder-add-line',
 			dividerBefore: true,
 			submenu,
