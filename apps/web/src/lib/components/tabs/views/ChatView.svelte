@@ -118,6 +118,7 @@
 	import AppletProposalCard from '$lib/components/chat/AppletProposalCard.svelte';
 	import CompactionCheckpoint from "$lib/components/chat/CompactionCheckpoint.svelte";
 	import ContextViewPanel from "$lib/components/chat/ContextViewPanel.svelte";
+	import MessageFile from "$lib/components/chat/MessageFile.svelte";
 	import { ChatError } from "$lib/components/chat";
 	import { availableModes, type AgentModeId } from "$lib/config/agentModes";
 	import LocalModelCard from "$lib/components/chat/local/LocalModelCard.svelte";
@@ -1515,27 +1516,6 @@
 			if (e.dataTransfer?.files?.length) attachments.add(Array.from(e.dataTransfer.files));
 		}}
 	>
-		{#snippet renderFilePart(part: any, compact = false)}
-			{@const mt = part.mediaType || ""}
-			{#if mt.startsWith("image/")}
-				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
-				<img
-					src={part.url}
-					alt={part.filename || "image"}
-					class="msg-image"
-					class:compact-img={compact}
-					onclick={(e) => openLightbox(e, part.url, part.filename || "image")}
-				/>
-			{:else if mt.startsWith("audio/")}
-				<audio src={part.url} controls class="msg-audio"></audio>
-			{:else}
-				<a class="msg-file" href={part.url} download={part.filename || "file"}>
-					<Icon icon={mt === "application/pdf" ? "ri:file-pdf-fill" : "ri:file-text-line"} width="16" />
-					<span>{part.filename || "Document"}</span>
-				</a>
-			{/if}
-		{/snippet}
-
 		<div class="chat-container">
 			<!-- Main chat area -->
 			<div class="chat-area" class:ghost={isGhost}>
@@ -1738,7 +1718,7 @@
 														{/if}
 													</div>
 											{:else if part.type === "file"}
-												{@render renderFilePart(part as any)}
+												<MessageFile part={part as any} onOpenImage={openLightbox} />
 											{:else if part.type.startsWith("tool-") && (part as any).state === "output-available" && (part as any).output?.permission_needed}
 												<!-- Any gated tool (run_action, delete_action, …) awaiting the user's "I allow" -->
 												{@const output = (part as any).output}
@@ -1851,12 +1831,13 @@
 												{@const gen = part as any}
 												{#if gen.state === "output-available" && gen.output?.url}
 													<figure class="generated-image">
-														<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
-														<img
-															src={gen.output.url}
-															alt={gen.output.prompt || gen.input?.prompt || "Generated image"}
-															class="msg-image"
-															onclick={(e) => openLightbox(e, gen.output.url, gen.output.prompt || gen.input?.prompt || "Generated image")}
+														<MessageFile
+															part={{
+																mediaType: "image/*",
+																url: gen.output.url,
+																filename: gen.output.prompt || gen.input?.prompt || "Generated image",
+															}}
+															onOpenImage={openLightbox}
 														/>
 													</figure>
 												{:else if gen.state === "output-error"}
@@ -1968,7 +1949,7 @@
 											{#if fileParts.length > 0}
 												<div class="msg-attachments">
 													{#each fileParts as fp, i (i)}
-														{@render renderFilePart(fp as any, true)}
+														<MessageFile part={fp as any} compact onOpenImage={openLightbox} />
 													{/each}
 												</div>
 											{/if}
@@ -2864,36 +2845,6 @@
 		margin-bottom: 0.5rem;
 	}
 
-	.msg-image {
-		max-width: min(420px, 100%);
-		max-height: 420px;
-		border-radius: 0.75rem;
-		border: 1px solid var(--color-border-subtle);
-		display: block;
-		cursor: zoom-in;
-	}
-
-	.msg-audio {
-		width: min(420px, 100%);
-	}
-
-	.msg-file {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--color-border-subtle);
-		border-radius: 0.625rem;
-		background: var(--color-surface-elevated);
-		font-size: 0.875rem;
-		color: var(--color-foreground);
-		text-decoration: none;
-	}
-
-	.msg-file:hover {
-		border-color: var(--color-border-strong);
-	}
-
 	/* Track E2 — generated image */
 	.generated-image {
 		margin: 0.5rem 0;
@@ -3085,13 +3036,6 @@
 	.message-wrapper.user-has-attachment {
 		width: fit-content;
 		max-width: 100%;
-	}
-
-	/* User-attached images render as compact thumbnails (class is on the <img>
-	   itself); assistant/generated images keep the larger size. */
-	.msg-image.compact-img {
-		max-width: min(260px, 100%);
-		max-height: 260px;
 	}
 
 	/* Assistant response text - spacing after thinking block */
