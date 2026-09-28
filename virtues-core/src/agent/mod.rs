@@ -182,17 +182,9 @@ impl AgentLoop {
 
         Box::pin(stream! {
             let mut messages = initial_messages;
-            let mut step: u32 = 0;
+            let mut turn = turn::TurnState::new(&budget);
             // How this turn ends. Assigned at each break; reported once, below.
-            let mut finish = protocol::FinishReason::EndTurn;
-            // Per turn: which tools have failed, and how — see `guard`.
-            let mut repeat_guard = guard::RepeatGuard::new();
-            // Per turn: calls spent against each capped tool — see `caps`.
-            let mut tool_caps = caps::ToolCaps::new(budget.tool_caps);
-            // Per turn: what it has cost and how long it has run, for the
-            // budget. Checked where the step ceiling is.
-            let turn_started = std::time::Instant::now();
-            let mut spent_micros: i64 = 0;
+            let finish: FinishReason;
 
             let byo = crate::api::settings_byo::byo_is_active(&pool).await;
             // The model does not change mid-turn, so neither do these.
@@ -200,138 +192,55 @@ impl AgentLoop {
             let gateway_options = turn::gateway_options(facts.as_ref(), byo);
             let (reasoning, reasoning_effort) =
                 crate::virtues_api::request::reasoning_for(config.thinking, facts.as_ref(), byo);
-            // Which conversation this call belongs to, so the provider can send
-            // it to the server that already holds its cache. The proxy hashes
-            // it before it leaves; see `BearerClient::stream_affine`.
-            let session_affinity = context.chat_id.clone();
 
-            // Emit loop started
-            yield AgentEvent::LoopStarted {
-                max_steps: config.max_steps,
-            };
+            yield AgentEvent::LoopStarted { max_steps: config.max_steps };
 
             loop {
-                step += 1;
-
-                // Check for cancellation at start of each step
+                turn.step += 1;
+                let step = turn.step;
                 if cancelled(&cancel_token) {
                     tracing::info!(step, "Agent loop cancelled by user");
-                    finish = protocol::FinishReason::Cancelled;
+                    finish = FinishReason::Cancelled;
                     break;
                 }
-
-                // Check max steps. Unreachable once max_steps >= 1: the last
-                // step ends the turn whatever it returns (see `last_step`).
-                // Kept for a config of zero.
-                //
-                // Not an `error` event: the SDK treats one as fatal — it throws
-                // out of the stream, so everything after it is discarded and a
-                // turn that simply ran long renders as a failed request with a
-                // Retry button. The ceiling is an ENDING, and it says so
-                // through the finish reason, which the row and the notice both
-                // read.
+                // Reached only with a ceiling of zero: otherwise the last
+                // step ends the turn whatever it returns. A finish reason, not
+                // an `error` event, which the SDK treats as fatal.
                 if step > config.max_steps {
                     tracing::info!(step, max_steps = config.max_steps, "agent loop hit its step ceiling");
-                    finish = protocol::FinishReason::MaxSteps;
+                    finish = FinishReason::MaxSteps;
                     break;
                 }
-                // The budgets. Same shape as the ceiling above: a finish
-                // reason, not an error — the turn ended for a reason the
-                // person can be told, and what streamed before it stands.
-                let over_cost = budget
-                    .max_cost_micros
-                    .is_some_and(|cap| spent_micros >= cap);
-                let over_clock = budget
-                    .max_wall_clock
-                    .is_some_and(|cap| turn_started.elapsed() >= cap);
-
-                // The forced final answer. On the last step the ceiling
-                // allows, or the first step over a budget, the model is told
-                // to answer and sent `tool_choice: none`, and the turn ends
-                // after this step whatever it returns. Before this the
-                // twentieth step could be a tool call, and the turn ended on
-                // its result with no reply at all; a budget ended it between
-                // steps the same way. The step can take the spend one step
-                // past a budget — a cap that ended turns with nothing said
-                // cost the whole turn instead.
-                let last_step = last_step_reason(step, config.max_steps, over_cost || over_clock);
-                if let Some(reason) = last_step {
-                    tracing::warn!(
-                        step,
-                        ?reason,
-                        spent_micros,
-                        elapsed_secs = turn_started.elapsed().as_secs(),
-                        "last step: asking for the answer, tools off"
-                    );
+                let last_step = turn.last_step(config.max_steps, &budget);
+                if last_step.is_some() {
                     messages.push(turn::system_note(
                         "no more tool calls this turn. Answer now from what you have, and say briefly what you could not check.",
                     ));
                 }
 
                 tracing::info!(step, "Agent loop step");
+                let (stream_handle, mut events) = turn::spawn_step(
+                    &llm_config,
+                    &model,
+                    &messages,
+                    &tools,
+                    gateway_options.clone(),
+                    StepOptions {
+                        reasoning: reasoning.clone(),
+                        reasoning_effort: reasoning_effort.clone(),
+                        tool_choice: last_step.map(|_| serde_json::json!("none")),
+                    },
+                    // Lets the provider route the call to the server that
+                    // already holds this conversation's cache.
+                    context.chat_id.clone(),
+                );
 
-                let provider_options = gateway_options.clone();
-                let step_options = StepOptions {
-                    reasoning: reasoning.clone(),
-                    reasoning_effort: reasoning_effort.clone(),
-                    tool_choice: last_step.map(|_| serde_json::json!("none")),
-                };
-                let affinity = session_affinity.clone();
-
-                // Stream events through a channel for incremental delivery.
-                // Previously events were collected into a Vec and yielded in a
-                // burst after the entire LLM response completed. Using a channel
-                // lets each text-delta reach the client as it arrives.
-                let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
-
-                // Clone data needed for the spawned streaming task
-                let llm_cfg = llm_config.clone();
-                let mdl = model.clone();
-                let msgs = messages.clone();
-                let tls = tools.clone();
-
-                // Spawn streaming in a separate task so events are sent
-                // through the channel immediately (not buffered until completion)
-                let stream_handle = tokio::spawn(async move {
-                    stream::stream_llm_response(
-                        &llm_cfg,
-                        &mdl,
-                        &msgs,
-                        &tls,
-                        provider_options,
-                        // The temperature chat has always run at. It lived in
-                        // the proxy as a default nobody on the box could see;
-                        // now the box says it, and the proxy default can go.
-                        Some(0.7),
-                        None, // agent loop: no fixed output cap
-                        step_options,
-                        affinity.as_deref(),
-                        |event| {
-                            let _ = ev_tx.send(event);
-                        },
-                    )
-                    .await
-                });
-
-                // Yield events incrementally as they arrive from the stream,
-                // and stop pulling the moment the person presses Stop.
-                //
-                // Cancellation used to be checked only at the START of a step
-                // and after tool execution, so Stop pressed two seconds into a
-                // three-thousand-token answer stopped nothing: the gateway call
-                // ran to completion, was billed in full, and every remaining
-                // delta was still accumulated — the row then saved as
-                // "cancelled" held the entire reply. Aborting the task drops
-                // the response body, which closes the connection to the
-                // provider and ends the generation.
-                //
                 // Checked between events rather than with a `select!`, because
-                // `yield` inside a select arm does not survive the
-                // `async_stream` macro. Deltas arrive continuously while a
-                // model is generating, so "after the next event" is as
-                // immediate as it needs to be.
+                // `yield` inside a select arm does not survive `async_stream`.
+                // Aborting drops the response body, which ends the generation
+                // and its billing; what streamed before stands.
                 let mut cancelled_mid_stream = false;
-                while let Some(event) = ev_rx.recv().await {
+                while let Some(event) = events.recv().await {
                     yield event;
                     if cancelled(&cancel_token) {
                         tracing::info!(step, "Stop pressed mid-stream — dropping the provider call");
@@ -340,153 +249,66 @@ impl AgentLoop {
                         break;
                     }
                 }
-
                 if cancelled_mid_stream {
-                    // What streamed before the abort has already reached the
-                    // caller and is what gets saved. No error event: the person
-                    // asked for this ending, and an error card would claim
-                    // something went wrong.
-                    finish = protocol::FinishReason::Cancelled;
+                    // No error event: the person asked for this ending.
+                    finish = FinishReason::Cancelled;
                     break;
                 }
 
-                // Get the streaming result after the task completes
                 let result = match stream_handle.await {
                     Ok(inner) => inner,
                     Err(e) => Err(StreamError::Connection(format!("Stream task panicked: {}", e))),
                 };
-
                 let result = match result {
                     Ok(r) => r,
                     Err(e) => {
-                        // An interrupted stream is not an LLM error: the model
-                        // was mid-sentence when the bytes stopped. The text
-                        // that streamed is already with the caller; this event
-                        // is what stops it being saved as the whole answer.
-                        let code = match e {
-                            stream::StreamError::Interrupted(_) => ErrorCode::Interrupted,
-                            _ => ErrorCode::LlmError,
-                        };
                         // The one ending that IS an error event: the reply
-                        // stopped for a reason outside the turn, and the person
-                        // needs the card and the retry.
+                        // stopped for a reason outside the turn, and the
+                        // person needs the card and the retry.
                         tracing::error!(step, error = %e, "the model stream failed");
-                        finish = protocol::FinishReason::Error;
-                        yield AgentEvent::error(e.to_string(), Some(code), false);
+                        finish = FinishReason::Error;
+                        yield AgentEvent::error(e.to_string(), Some(turn::stream_error_code(&e)), false);
                         break;
                     }
                 };
+                turn.record_usage(&result, &model, context.chat_id.as_deref());
 
-                if let Some(cost) = result.usage.as_ref().and_then(|u| u.cost_micros) {
-                    spent_micros += cost;
-                }
-
-                // One line per model call. The usage table sums a chat's calls
-                // into one row, which could show that a chat cost $2.71 but
-                // not which call did. Counts and ids only, never content.
-                if let Some(usage) = result.usage.as_ref() {
-                    tracing::info!(
-                        step,
-                        model = %model,
-                        chat_id = context.chat_id.as_deref().unwrap_or(""),
-                        prompt_tokens = usage.prompt_tokens,
-                        cache_read_tokens = usage.cache_read_tokens.unwrap_or(0),
-                        completion_tokens = usage.completion_tokens,
-                        reasoning_tokens = usage.reasoning_tokens.unwrap_or(0),
-                        cost_micros = usage.cost_micros.unwrap_or(0),
-                        tool_calls = result.tool_calls.len(),
-                        "model call usage"
-                    );
-                }
-
-                // The step's reasoning blocks, for the row and for the echo
-                // below. Before the completion check, so a final step's
-                // thinking is stored too.
+                // Before the completion check, so a final step's thinking is
+                // stored too.
                 if !result.reasoning_details.is_empty() {
                     yield AgentEvent::ReasoningDetails { details: result.reasoning_details.clone() };
                 }
 
-                // Check if we're done (no tool calls)
                 if result.tool_calls.is_empty() {
-                    if result.finish_reason == StepReason::MaxTokens {
-                        // `finish_reason: length` used to be mapped and then
-                        // ignored, so a reply the model never finished read
-                        // as one it did. It is still not an `error` event —
-                        // see the ceiling above — it is how this turn ended.
-                        finish = protocol::FinishReason::OutputLimit;
-                    } else if let Some(reason) = last_step {
-                        // The answer came, but the turn was still cut short;
-                        // the notice says so.
-                        finish = reason;
-                    }
+                    finish = turn::answered(result.finish_reason, last_step);
                     yield AgentEvent::step_complete(step, result.finish_reason);
                     break;
                 }
-
-                // We have tool calls - emit step complete
                 yield AgentEvent::step_complete(step, StepReason::ToolCalls);
 
                 // Told to answer and called a tool anyway (a provider that
-                // ignores `tool_choice: none`). Running it would only feed a
-                // step that is not coming; end the turn on why it ended.
+                // ignores `tool_choice: none`); no step is coming to read it.
                 if let Some(reason) = last_step {
                     tracing::warn!(step, "tool call on the tool-less last step; ending the turn");
                     finish = reason;
                     break;
                 }
 
-                // Execute tools
-                tracing::info!(
-                    count = result.tool_calls.len(),
-                    "Executing tool calls"
-                );
-
-                // A call identical to one that already failed this turn, or
-                // a tool that has failed several times in a row, is not run:
-                // it comes back as a failed result saying so, and the model
-                // has to change something. The step ceiling still bounds the
-                // turn; this bounds how much of it is spent asking the same
-                // question.
-                let (within_caps, over_caps) = tool_caps.admit(result.tool_calls.clone());
-                let (admitted, refused) = repeat_guard.admit(&within_caps);
-                let mut tool_results = executor::execute_tools(
-                    &tool_executor,
-                    &admitted,
-                    &context,
-                    &executor_config,
-                )
-                .await;
-                tool_results.extend(refused);
-                repeat_guard.record(&within_caps, &tool_results);
-                // After `record`: a call over its cap did not fail, and must
-                // not walk the tool toward the guard's close.
-                tool_results.extend(over_caps);
-
-                // Emit tool results, checking for awaiting_user condition
-                let mut awaiting_user = false;
+                let tool_results = turn
+                    .run_tools(&tool_executor, result.tool_calls.clone(), &context, &executor_config)
+                    .await;
+                let awaiting_user = tool_results.iter().any(turn::needs_user);
                 for tool_result in &tool_results {
-                    // Check if tool needs user action (e.g., binding a page)
-                    if let Ok(result) = &tool_result.result {
-                        if let Some(data) = result.data.as_object() {
-                            if data.get("needs_binding").and_then(|v| v.as_bool()).unwrap_or(false) {
-                                awaiting_user = true;
-                            }
-                        }
-                    }
                     yield tool_result.to_event();
                 }
-
-                // If a tool needs user action, stop the loop early
                 if awaiting_user {
                     tracing::info!(step, "Tool requires user action, pausing loop");
-                    finish = protocol::FinishReason::AwaitingUser;
+                    finish = FinishReason::AwaitingUser;
                     break;
                 }
-
-                // Check for cancellation after tool execution
                 if cancelled(&cancel_token) {
                     tracing::info!(step, "Agent loop cancelled after tool execution");
-                    finish = protocol::FinishReason::Cancelled;
+                    finish = FinishReason::Cancelled;
                     break;
                 }
 
@@ -500,12 +322,7 @@ impl AgentLoop {
                 );
             }
 
-            // How it ended, once, at the end. A trailing unconditional
-            // `done()` used to follow every break, so the loop's verdict was
-            // always `EndTurn` and every caller that matched on it — the
-            // finish reason on the wire, the row's subject — was matching on
-            // dead arms.
-            yield AgentEvent::done(step, finish);
+            yield AgentEvent::done(turn.step, finish);
         })
     }
 }
@@ -513,18 +330,6 @@ impl AgentLoop {
 /// Whether the person has pressed Stop.
 fn cancelled(token: &Option<CancellationToken>) -> bool {
     token.as_ref().is_some_and(|t| t.is_cancelled())
-}
-
-/// Why this step is the turn's last, if it is: a budget ran out, or it is the
-/// last step the ceiling allows.
-fn last_step_reason(step: u32, max_steps: u32, over_budget: bool) -> Option<FinishReason> {
-    if over_budget {
-        Some(FinishReason::BudgetExceeded)
-    } else if step >= max_steps {
-        Some(FinishReason::MaxSteps)
-    } else {
-        None
-    }
 }
 
 impl std::fmt::Debug for AgentLoop {
@@ -547,15 +352,5 @@ mod tests {
         assert!(config.parallel_tools);
         assert_eq!(config.thinking, Thinking::Default);
         assert!(TurnBudget::default().tool_caps.is_empty());
-    }
-
-    #[test]
-    fn the_last_step_is_the_ceiling_or_the_first_over_budget() {
-        assert_eq!(last_step_reason(1, 20, false), None);
-        assert_eq!(last_step_reason(19, 20, false), None);
-        assert_eq!(last_step_reason(20, 20, false), Some(FinishReason::MaxSteps));
-        // A budget names itself even on the ceiling step.
-        assert_eq!(last_step_reason(20, 20, true), Some(FinishReason::BudgetExceeded));
-        assert_eq!(last_step_reason(3, 20, true), Some(FinishReason::BudgetExceeded));
     }
 }
