@@ -150,7 +150,31 @@ impl ChatMode {
 
     /// The tool definitions the model is offered this turn.
     pub fn tools(&self) -> Vec<serde_json::Value> {
-        crate::tools::get_tools_for_agent_mode(self.wire_name())
+        use crate::tools::{get_tool_definitions_for_llm, tools_named};
+        match self {
+            // Write/act tools confirm before running.
+            Self::Chat => get_tool_definitions_for_llm(),
+            // Everything chat has, plus `shell`, and nothing asks first.
+            Self::Sudo => {
+                let mut tools = get_tool_definitions_for_llm();
+                tools.extend(tools_named(crate::tools::SUDO_ONLY_TOOLS));
+                tools
+            }
+            // No other edit/act tools — see `DEEP_RESEARCH_TOOLS`.
+            Self::DeepResearch => tools_named(crate::tools::DEEP_RESEARCH_TOOLS),
+            // A listener, not an agent. Exactly one tool — the finisher that
+            // turns the transcript into the document and chapters. No search,
+            // no data, no pages: it must not read the record mid-confession
+            // or claim capabilities.
+            Self::Interview => tools_named(&["write_it_up"]),
+            // The room is about the box, not the record. Skip a step, play
+            // introductions back. No search, no data.
+            Self::GettingStarted => tools_named(getting_started::TOOLS),
+            // The tools its file declares.
+            Self::Skill(skill) => {
+                tools_named(&skill.tools.iter().map(String::as_str).collect::<Vec<_>>())
+            }
+        }
     }
 
     /// The owner's bypass: `ToolContext.sudo`, the shell, no confirmations.

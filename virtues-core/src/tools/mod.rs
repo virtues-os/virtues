@@ -44,6 +44,28 @@ pub use sql_query::SqlQueryTool;
 pub use page_editor::PageEditorTool;
 pub use semantic_search::SemanticSearchTool;
 
+/// One registry tool as the LLM reads it (OpenAI/Anthropic function format),
+/// with the detailed `llm_description` as its description.
+fn llm_definition(tool: virtues_registry::tools::ToolConfig) -> serde_json::Value {
+    serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": tool.id,
+            "description": tool.llm_description,
+            "parameters": tool.parameters,
+        }
+    })
+}
+
+/// The named tools, in registry order. An allow-list, not a category filter.
+pub(crate) fn tools_named(ids: &[&str]) -> Vec<serde_json::Value> {
+    virtues_registry::tools::default_tools()
+        .into_iter()
+        .filter(|tool| ids.contains(&tool.id.as_str()))
+        .map(llm_definition)
+        .collect()
+}
+
 /// Get tool definitions for the LLM (OpenAI/Anthropic format)
 ///
 /// Returns tool definitions in the format expected by LLM APIs,
@@ -53,16 +75,7 @@ pub fn get_tool_definitions_for_llm() -> Vec<serde_json::Value> {
         .into_iter()
         .filter(|tool| !tool.is_system)
         .filter(|tool| !SUDO_ONLY_TOOLS.contains(&tool.id.as_str()))
-        .map(|tool| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": tool.id,
-                    "description": tool.llm_description,
-                    "parameters": tool.parameters,
-                }
-            })
-        })
+        .map(llm_definition)
         .collect()
 }
 
@@ -72,16 +85,7 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
     virtues_registry::tools::default_tools()
         .into_iter()
         .filter(|tool| !SUDO_ONLY_TOOLS.contains(&tool.id.as_str()))
-        .map(|tool| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": tool.id,
-                    "description": tool.llm_description,
-                    "parameters": tool.parameters,
-                }
-            })
-        })
+        .map(llm_definition)
         .collect()
 }
 
@@ -121,20 +125,7 @@ const APPLET_RUN_ALLOWED_TOOLS: &[&str] = &[
 
 /// Tools for an autonomous **applet** run: the explicit allowlist above.
 pub fn get_tools_for_applet() -> Vec<serde_json::Value> {
-    virtues_registry::tools::default_tools()
-        .into_iter()
-        .filter(|tool| APPLET_RUN_ALLOWED_TOOLS.contains(&tool.id.as_str()))
-        .map(|tool| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": tool.id,
-                    "description": tool.llm_description,
-                    "parameters": tool.parameters,
-                }
-            })
-        })
-        .collect()
+    tools_named(APPLET_RUN_ALLOWED_TOOLS)
 }
 
 /// The read-only research tools a Deep Research **subagent** (worker) may use. Explicit allow-list
@@ -150,20 +141,7 @@ const SUBAGENT_TOOLS: &[&str] = &[
 
 /// Get tool definitions for a Deep Research subagent (worker).
 pub fn get_tools_for_subagent() -> Vec<serde_json::Value> {
-    virtues_registry::tools::default_tools()
-        .into_iter()
-        .filter(|tool| SUBAGENT_TOOLS.contains(&tool.id.as_str()))
-        .map(|tool| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": tool.id,
-                    "description": tool.llm_description,
-                    "parameters": tool.parameters,
-                }
-            })
-        })
-        .collect()
+    tools_named(SUBAGENT_TOOLS)
 }
 
 /// A Council voice reasons from its vantage; it does not investigate or cite. `think` only.
@@ -171,27 +149,14 @@ const COUNCIL_VOICE_TOOLS: &[&str] = &["think"];
 
 /// Get tool definitions for a Council voice worker (think-only — voices reason, they don't research).
 pub fn get_tools_for_council_voice() -> Vec<serde_json::Value> {
-    virtues_registry::tools::default_tools()
-        .into_iter()
-        .filter(|tool| COUNCIL_VOICE_TOOLS.contains(&tool.id.as_str()))
-        .map(|tool| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": tool.id,
-                    "description": tool.llm_description,
-                    "parameters": tool.parameters,
-                }
-            })
-        })
-        .collect()
+    tools_named(COUNCIL_VOICE_TOOLS)
 }
 
 /// The orchestrator's tools in Deep Research mode: the read-only research set, plus the fan-out
 /// tool and `create_page` for the report artifact. Explicit allow-list (not a category filter) so
 /// genuinely read-write Data-category tools (`update_memory`, `set_user_name`, `set_assistant_name`)
 /// can't leak into a mode that's meant to be read-only.
-const DEEP_RESEARCH_TOOLS: &[&str] = &[
+pub(crate) const DEEP_RESEARCH_TOOLS: &[&str] = &[
     "think",
     "web_search",
     "semantic_search",
@@ -200,88 +165,6 @@ const DEEP_RESEARCH_TOOLS: &[&str] = &[
     "dispatch_subagents",
     "create_page",
 ];
-
-/// The Council orchestrator's tools: read-only grounding (`semantic_search`, `sql_query`) plus the
-/// fan-out tool to convene voices. No `create_page` (Council replies in chat, not a page), no
-/// `web_search`/`code_interpreter` (Council is about perspectives, not facts). Explicit allow-list,
-/// Get tool definitions filtered by agent mode
-///
-/// Agent modes:
-/// - "chat": All tools (smart default; write/act tools confirm before running)
-/// - "sudo": everything chat has, plus `shell`, and nothing asks first — the
-///   owner's bypass mode. See `tools::shell`.
-/// - "deep_research": read-only research tools + `dispatch_subagents` (fan-out) + `create_page`
-///   (the report artifact). No other edit/act tools — see `DEEP_RESEARCH_TOOLS`.
-/// - a skill's name (`council`): the tools its file declares — see `virtues_registry::skills`.
-pub fn get_tools_for_agent_mode(agent_mode: &str) -> Vec<serde_json::Value> {
-    if let Some(skill) = virtues_registry::skills::skill_named(agent_mode) {
-        return virtues_registry::tools::default_tools()
-            .into_iter()
-            .filter(|tool| skill.tools.iter().any(|t| t == &tool.id))
-            .map(|tool| {
-                serde_json::json!({
-                    "type": "function",
-                    "function": {
-                        "name": tool.id,
-                        "description": tool.llm_description,
-                        "parameters": tool.parameters,
-                    }
-                })
-            })
-            .collect();
-    }
-    let allowlist = match agent_mode {
-        "deep_research" => Some(DEEP_RESEARCH_TOOLS),
-        // The narrative interview: a listener, not an agent. Exactly one tool
-        // — the finisher that turns the transcript into the document and
-        // chapters. Still no search, no data, no pages: it must not read the
-        // record mid-confession or claim capabilities.
-        "interview" => Some(&["write_it_up"] as &[&str]),
-        // Getting started: the room is about the box, not the record. Open a
-        // card, skip a step, play introductions back. No search, no data.
-        crate::api::getting_started::AGENT_MODE => Some(crate::api::getting_started::TOOLS),
-        _ => None,
-    };
-    match allowlist {
-        Some(allowed) => virtues_registry::tools::default_tools()
-            .into_iter()
-            .filter(|tool| allowed.contains(&tool.id.as_str()))
-            .map(|tool| {
-                serde_json::json!({
-                    "type": "function",
-                    "function": {
-                        "name": tool.id,
-                        "description": tool.llm_description,
-                        "parameters": tool.parameters,
-                    }
-                })
-            })
-            .collect(),
-        None if agent_mode == "sudo" => {
-            let mut tools = get_tool_definitions_for_llm();
-            tools.extend(
-                virtues_registry::tools::default_tools()
-                    .into_iter()
-                    .filter(|tool| SUDO_ONLY_TOOLS.contains(&tool.id.as_str()))
-                    .map(|tool| {
-                        serde_json::json!({
-                            "type": "function",
-                            "function": {
-                                "name": tool.id,
-                                "description": tool.llm_description,
-                                "parameters": tool.parameters,
-                            }
-                        })
-                    }),
-            );
-            tools
-        }
-        None => {
-            // "chat" mode or default: all tools
-            get_tool_definitions_for_llm()
-        }
-    }
-}
 
 #[cfg(test)]
 mod slot_model_smoke {
@@ -493,6 +376,7 @@ mod slot_model_smoke {
 #[cfg(test)]
 mod sudo_scope {
     use super::*;
+    use crate::api::chat_mode::ChatMode;
 
     fn names(tools: &[serde_json::Value]) -> Vec<String> {
         tools
@@ -503,12 +387,15 @@ mod sudo_scope {
 
     #[test]
     fn only_sudo_mode_lists_the_shell() {
-        assert!(names(&get_tools_for_agent_mode("sudo")).contains(&"shell".to_string()));
+        let mode = |name| ChatMode::from_wire(name).tools();
+        assert!(names(&mode("sudo")).contains(&"shell".to_string()));
         for listing in [
-            get_tools_for_agent_mode("chat"),
-            get_tools_for_agent_mode("deep_research"),
-            get_tools_for_agent_mode("council"),
-            get_tools_for_agent_mode("anything-else"),
+            mode("chat"),
+            mode("deep_research"),
+            mode("council"),
+            mode("interview"),
+            mode("getting_started"),
+            mode("anything-else"),
             get_tool_definitions_for_llm(),
             get_all_tool_definitions_for_llm(),
             get_tools_for_applet(),
@@ -520,8 +407,8 @@ mod sudo_scope {
 
     #[test]
     fn sudo_mode_keeps_everything_chat_has() {
-        let chat = names(&get_tools_for_agent_mode("chat"));
-        let sudo = names(&get_tools_for_agent_mode("sudo"));
+        let chat = names(&ChatMode::Chat.tools());
+        let sudo = names(&ChatMode::Sudo.tools());
         assert!(chat.iter().all(|t| sudo.contains(t)));
     }
 }

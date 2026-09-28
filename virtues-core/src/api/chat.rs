@@ -1009,7 +1009,7 @@ async fn build_system_prompt_blocks(
                     assistant_name,
                     user_name,
                     style_notes.as_deref(),
-                    mode.wire_name(),
+                    mode,
                     &narrative_identity,
                 ))
             }),
@@ -1345,7 +1345,7 @@ async fn chat_handler_inner(
     let model = match crate::api::model_choice::resolve_turn_model(
         &pool,
         request.model.as_deref(),
-        mode.wire_name(),
+        &mode,
     )
     .await
     {
