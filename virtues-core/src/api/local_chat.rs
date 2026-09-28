@@ -18,7 +18,7 @@ use axum::{
 use crate::agent::protocol::{AgentEvent, StepReason};
 use crate::api::chat::{
     generate_id, serialize_event, spawn_turn_driver, ui_stream_response, ChatCancellationState,
-    ChatRequest, StreamEvent,
+    ChatError, ChatRequest, StreamEvent,
 };
 use crate::api::live_turn::{self, LiveTurns};
 use crate::api::turn_recorder::TurnRecorder;
@@ -28,6 +28,18 @@ use crate::middleware::auth::AuthUser;
 /// Run one local turn and return its stream.
 pub(crate) fn run(request: ChatRequest, live_turns: LiveTurns, cancel_state: ChatCancellationState) -> Response {
     let chat_id = request.chat_id.clone();
+    // Same refusal as a cloud turn: starting a second turn would take over the
+    // running one's live-turn slot and cancellation.
+    if live_turns.get(&chat_id).is_some() && !cancel_state.is_cancelled(&chat_id) {
+        return (
+            StatusCode::CONFLICT,
+            Json(ChatError {
+                error: "turn_in_progress".to_string(),
+                details: Some("The local model is still writing a reply in this chat. Stop it or wait for it to finish.".into()),
+            }),
+        )
+            .into_response();
+    }
     let msg_id = request.message_id.clone().unwrap_or_else(|| format!("msg_{}", generate_id()));
     // A local chat has no row, so the transcript is the request's, whole.
     let messages: Vec<Message> = request
