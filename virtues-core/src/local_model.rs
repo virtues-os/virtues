@@ -125,7 +125,14 @@ fn models_base() -> String {
 /// distributions restrict them) would fail every turn closed, which is safe
 /// but pointless, so the mode is not offered there.
 pub fn supported() -> bool {
-    crate::inference_report::is_dragon_profile() && sandbox_works()
+    preview() || (crate::inference_report::is_dragon_profile() && sandbox_works())
+}
+
+/// `VIRTUES_LOCAL_PREVIEW=1` offers the mode on a machine without the NPU, so
+/// the chat's card and composer can be worked on in `make dev`. The model
+/// reads as downloaded and every turn refuses; nothing is fetched or run.
+fn preview() -> bool {
+    std::env::var("VIRTUES_LOCAL_PREVIEW").is_ok_and(|v| v == "1")
 }
 
 fn sandbox_works() -> bool {
@@ -213,7 +220,7 @@ pub fn status() -> Status {
     let supported = supported();
     Status {
         supported,
-        ready: supported && is_ready(),
+        ready: supported && (preview() || is_ready()),
         total_bytes: total_bytes(),
         ..Status::default()
     }
@@ -222,7 +229,7 @@ pub fn status() -> Status {
 /// Start the one-time download in the background. A second call while one is
 /// running is a no-op; progress is read through [`status`].
 pub fn start_download() -> Result<()> {
-    if !supported() {
+    if !supported() || preview() {
         bail!("Local mode needs a Radxa Dragon Q6A's NPU.");
     }
     {
@@ -421,6 +428,8 @@ pub enum TurnEvent {
 /// Why a turn did not run, each a sentence the chat shows as it is.
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
+    #[error("This is a preview of local mode. The local model runs only on a Radxa Dragon Q6A's NPU.")]
+    Preview,
     #[error("Download the local model to use local mode.")]
     NotReady,
     #[error("The local model is answering in another window. Stop it there or wait for it to finish.")]
@@ -516,6 +525,9 @@ pub async fn run_turn(
     think: bool,
     cancel: CancellationToken,
 ) -> std::result::Result<mpsc::Receiver<Result<TurnEvent>>, Refusal> {
+    if preview() {
+        return Err(Refusal::Preview);
+    }
     // The first call hashes the 27 MB runtime; keep that off the async workers.
     if !tokio::task::spawn_blocking(is_ready).await.unwrap_or(false) {
         return Err(Refusal::NotReady);

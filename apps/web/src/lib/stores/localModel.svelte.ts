@@ -46,7 +46,7 @@ class LocalModelStore {
 		if (this.loaded && !force) return;
 		this.loaded = true;
 		try {
-			this.status = await request<LocalModelStatus>('/api/local-model');
+			this.status = await request<LocalModelStatus>('/local-model');
 		} catch {
 			// A box without the route, or any failure: no local mode here.
 			this.status = UNSUPPORTED;
@@ -56,7 +56,7 @@ class LocalModelStore {
 
 	async startDownload() {
 		try {
-			this.status = await request<LocalModelStatus>('/api/local-model', { method: 'POST' });
+			this.status = await request<LocalModelStatus>('/local-model', { method: 'POST' });
 		} catch (e) {
 			this.status = {
 				...this.status,
@@ -72,7 +72,7 @@ class LocalModelStore {
 		const tick = async () => {
 			this.polling = null;
 			try {
-				this.status = await request<LocalModelStatus>('/api/local-model');
+				this.status = await request<LocalModelStatus>('/local-model');
 			} catch {
 				return;
 			}

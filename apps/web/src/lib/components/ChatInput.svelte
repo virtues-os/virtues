@@ -195,12 +195,17 @@
 		}
 	});
 
+	// Read the prop before the `?.`: while `editor` is still null the call
+	// short-circuits, its argument is never read, and the effect would never
+	// learn that it depends on it.
 	$effect(() => {
-		editor?.setDisabled(disabled);
+		const next = disabled;
+		editor?.setDisabled(next);
 	});
 
 	$effect(() => {
-		editor?.setPlaceholder(placeholder);
+		const text = placeholder;
+		editor?.setPlaceholder(text);
 	});
 
 	function setHeight(contentPx: number) {
