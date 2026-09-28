@@ -84,6 +84,8 @@
 	import { cubicInOut } from "svelte/easing";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
+	import { projectStore } from "$lib/stores/project.svelte";
+	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import { pendingPrompt } from "$lib/stores/pendingPrompt.svelte";
 	import {
@@ -223,6 +225,20 @@
 	$effect(() => {
 		if (stagedProject && sessionProjectId === stagedProject.project) stagedProject = null;
 	});
+
+	// The project, when there is one, is said at the top of the chat: its
+	// brief and items shape every answer here, and without this the only way
+	// to know was to go looking. It is a door back to the project, not a
+	// picker; filing happens from "Move to project".
+	const chatProject = $derived(chatProjectId ? projectStore.byId(chatProjectId) : undefined);
+
+	function openChatProject() {
+		if (!chatProject) return;
+		windowShellStore.openTabFromRoute(`/project/${chatProject.id}`, {
+			label: chatProject.name,
+			focusExisting: true,
+		});
+	}
 
 	// Open citation panel with selected citation
 	function openCitationPanel(citation: Citation) {
@@ -1556,6 +1572,19 @@
 		<div class="chat-container">
 			<!-- Main chat area -->
 			<div class="chat-area" class:ghost={isGhost}>
+				{#if chatProject && !isGhost && !mobileLayout.isMobile && !isGettingStartedChat(currentChatConversationId)}
+					<div class="chat-topbar-left">
+						<button
+							type="button"
+							class="project-crumb"
+							onclick={openChatProject}
+							title={`Open ${chatProject.name}`}
+						>
+							<ProjectGlyph icon={chatProject.icon} color={chatProject.accent_color} size={14} />
+							<span class="project-crumb-name">{chatProject.name}</span>
+						</button>
+					</div>
+				{/if}
 				<!-- Top-right chrome: temporary-chat toggle + live context ring -->
 				<div class="chat-topbar-right">
 					{#if !isGhost && contextUsage && extractConversationId(tab.route) && !isGettingStartedChat(currentChatConversationId)}
@@ -2383,6 +2412,52 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
+	}
+
+	/* The project this chat lives in: a label that is also the way back.
+	   Quiet until approached, and held to the top-left corner so it never
+	   competes with the thread for the measure. */
+	.chat-topbar-left {
+		position: absolute;
+		top: 8px;
+		left: 12px;
+		z-index: 6;
+		max-width: 40%;
+	}
+
+	.project-crumb {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		max-width: 100%;
+		height: 28px;
+		padding: 0 10px 0 8px;
+		border-radius: 9px;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+		backdrop-filter: blur(8px);
+		-webkit-backdrop-filter: blur(8px);
+		transition:
+			color 0.15s ease,
+			background-color 0.15s ease;
+		cursor: pointer;
+	}
+
+	.project-crumb:hover {
+		color: var(--color-foreground);
+		background: var(--color-surface-elevated);
+	}
+
+	.project-crumb:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+
+	.project-crumb-name {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 

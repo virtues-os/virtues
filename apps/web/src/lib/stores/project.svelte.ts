@@ -42,6 +42,8 @@ export class ProjectStore {
 	private all = $state<ProjectSummary[]>([]);
 	loading = $state(false);
 	error = $state<string | null>(null);
+	/** A list has arrived at least once, so an empty one means none, not "not yet". */
+	loaded = $state(false);
 
 	private details = $state<Map<string, ProjectDetail>>(new Map());
 
@@ -66,6 +68,7 @@ export class ProjectStore {
 		try {
 			const res = await listProjects({ includeArchived: true });
 			this.all = res.projects;
+			this.loaded = true;
 		} catch (e) {
 			console.error('[ProjectStore] Failed to load projects:', e);
 			this.error = e instanceof Error ? e.message : 'Failed to load projects';
@@ -153,11 +156,10 @@ export class ProjectStore {
 	/**
 	 * POST /api/projects/:id/items — add a member URL and update the cached
 	 * detail. A chat lives in one project, so filing one also takes it out of
-	 * the project it was in; every cached detail is corrected, not only this one.
+	 * the project it was in; `afterMembershipChange` re-reads every open one.
 	 */
 	async addItem(id: string, url: string): Promise<void> {
 		const item = await addProjectItem(id, url);
-		if (isChatUrl(url)) this.dropFromOtherDetails(id, url);
 		const cached = this.details.get(id);
 		if (cached) {
 			const exists = cached.items.some((i) => i.url === item.url);
@@ -189,20 +191,16 @@ export class ProjectStore {
 	 * lists chats from and what an open chat reads its project from.
 	 */
 	private async afterMembershipChange(url: string): Promise<void> {
-		await Promise.all([this.load(), isChatUrl(url) ? chatSessions.refresh() : null]);
+		const work: Promise<unknown>[] = [this.load()];
+		if (isChatUrl(url)) {
+			// A project page lists its chats from its own detail, and a moved
+			// chat changes two of them, so every open one is re-read.
+			work.push(chatSessions.refresh());
+			for (const id of this.details.keys()) work.push(this.get(id, { force: true }));
+		}
+		await Promise.all(work);
 	}
 
-	private dropFromOtherDetails(keepId: string, url: string): void {
-		let changed = false;
-		const next = new Map(this.details);
-		for (const [pid, d] of next) {
-			if (pid !== keepId && d.items.some((i) => i.url === url)) {
-				next.set(pid, { ...d, items: d.items.filter((i) => i.url !== url) });
-				changed = true;
-			}
-		}
-		if (changed) this.details = next;
-	}
 
 	/** PUT /api/projects/:id/items/reorder — set the member order and update the cached detail. */
 	async reorderItems(id: string, urls: string[]): Promise<void> {
@@ -239,7 +237,6 @@ export class ProjectStore {
 	async setChatProject(chatId: string, projectId: string | null): Promise<void> {
 		const url = `/chat/${chatId}`;
 		await updateChat(chatId, { projectId });
-		this.dropFromOtherDetails(projectId ?? '', url);
 		await this.afterMembershipChange(url);
 	}
 

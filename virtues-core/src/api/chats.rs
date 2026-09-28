@@ -126,7 +126,13 @@ pub struct ChatListItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
     pub first_message_at: Timestamp,
+    /// When anything on the row last changed: a rename, a filing, an icon.
     pub last_updated: Timestamp,
+    /// When the conversation last moved: its newest message, or its creation
+    /// for a chat with none yet. The list is ordered by this and the Home
+    /// panel groups by it, so filing or renaming an old chat does not make it
+    /// one you talked in today.
+    pub last_message_at: Timestamp,
 }
 
 /// Response for chat list
@@ -271,10 +277,14 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
             project_id,
             message_count,
             created_at,
-            updated_at
-        FROM app_chats
+            updated_at,
+            COALESCE(
+                (SELECT MAX(m.created_at) FROM app_chat_messages m WHERE m.chat_id = c.id),
+                created_at
+            ) AS last_message_at
+        FROM app_chats c
         WHERE deleted_at IS NULL
-        ORDER BY updated_at DESC
+        ORDER BY last_message_at DESC
         LIMIT $1
         "#,
     )
@@ -294,6 +304,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
             let message_count: i64 = row.get("message_count");
             let first_message_at: Timestamp = row.get("created_at");
             let last_updated: Timestamp = row.get("updated_at");
+            let last_message_at: Timestamp = row.get("last_message_at");
             Some(ChatListItem {
                 conversation_id: id,
                 title,
@@ -303,6 +314,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
                 project_id,
                 first_message_at,
                 last_updated,
+                last_message_at,
             })
         })
         .collect();
@@ -1081,5 +1093,36 @@ mod tests {
         assert_eq!(got[1].role, "assistant");
         assert_eq!(got[1].subject.as_deref(), Some("interrupted"));
         assert_eq!(got[1].tool_calls.as_ref().map(|t| t[0].tool_name.as_str()), Some("sql_query"));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn filing_an_old_chat_does_not_make_it_recent(pool: sqlx::PgPool) {
+        for (id, at) in [("chat_old", "2026-01-01T00:00:00Z"), ("chat_new", "2026-06-01T00:00:00Z")] {
+            sqlx::query("INSERT INTO app_chats (id, title, message_count, created_at) VALUES ($1, 'Chat', 1, $2::timestamptz)")
+                .bind(id)
+                .bind(at)
+                .execute(&pool)
+                .await
+                .expect("seed chat");
+            sqlx::query(
+                "INSERT INTO app_chat_messages (id, chat_id, role, content, sequence_num, created_at) \
+                 VALUES ($1, $2, 'user', 'Hi', 0, $3::timestamptz)",
+            )
+            .bind(format!("msg_{id}"))
+            .bind(id)
+            .bind(at)
+            .execute(&pool)
+            .await
+            .expect("seed message");
+        }
+        // Any update touches updated_at through the table's trigger.
+        sqlx::query("UPDATE app_chats SET title = 'Renamed' WHERE id = 'chat_old'")
+            .execute(&pool)
+            .await
+            .expect("touch the old chat");
+
+        let listed = list_chats(&pool, 10).await.expect("list");
+        let ids: Vec<&str> = listed.conversations.iter().map(|c| c.conversation_id.as_str()).collect();
+        assert_eq!(ids, vec!["chat_new", "chat_old"]);
     }
 }

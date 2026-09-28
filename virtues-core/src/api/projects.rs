@@ -102,6 +102,20 @@ pub struct ProjectDetail {
     #[serde(flatten)]
     pub project: Project,
     pub items: Vec<ProjectItem>,
+    /// Every live chat filed here, newest conversation first. The page used to
+    /// list chats from the session list, which holds only the most recent
+    /// chats across the whole box, so a project's older chats were counted on
+    /// its card and missing from its page.
+    pub chats: Vec<ProjectChat>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ProjectChat {
+    pub id: String,
+    pub title: String,
+    pub icon: Option<String>,
+    pub message_count: i64,
+    pub last_message_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,7 +258,24 @@ pub async fn get_project(pool: &PgPool, id: &str) -> Result<ProjectDetail> {
     .await
     .map_err(|e| Error::Database(format!("Failed to get project items: {}", e)))?;
 
-    Ok(ProjectDetail { project, items })
+    let chats = sqlx::query_as::<_, ProjectChat>(
+        r#"
+        SELECT id, title, icon, message_count::bigint AS message_count,
+               COALESCE(
+                   (SELECT MAX(m.created_at) FROM app_chat_messages m WHERE m.chat_id = c.id),
+                   c.created_at
+               ) AS last_message_at
+        FROM app_chats c
+        WHERE project_id = $1 AND deleted_at IS NULL
+        ORDER BY last_message_at DESC
+        "#,
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get project chats: {}", e)))?;
+
+    Ok(ProjectDetail { project, items, chats })
 }
 
 /// Create a new Project.
@@ -879,6 +910,18 @@ mod tests {
 
         remove_project_item(&pool, &a.id, "/chat/chat_rm").await.expect("remove chat");
         assert_eq!(chat_project(&pool, "chat_rm").await, None);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_detail_lists_every_chat_filed_there(pool: PgPool) {
+        let a = create_project(&pool, named("A")).await.expect("create A");
+        for i in 0..30 {
+            let id = format!("chat_many_{i}");
+            seed_chat(&pool, &id).await;
+            set_chat_project(&pool, &id, Some(&a.id)).await.expect("file chat");
+        }
+        let detail = get_project(&pool, &a.id).await.expect("detail");
+        assert_eq!(detail.chats.len(), 30);
     }
 
     #[sqlx::test(migrations = "./migrations")]
