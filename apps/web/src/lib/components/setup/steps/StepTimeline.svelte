@@ -17,7 +17,7 @@
 	     the line draws itself, birth to now
 	  b  "Where did your life turn?"  an example's chapters settle onto it,
 	     a tick at each turn
-	  c  "Now write yours"  the example's later chapters fold into one blank
+	  c  "Now draw yours"  the example's later chapters fold into one blank
 	     stretch; what is left is exactly their starting line: Childhood, to
 	     13, then the chapter that came next, unnamed
 
@@ -345,8 +345,8 @@
 		const heir = bands[i === 0 ? 1 : i - 1];
 		const gone = bands[i];
 		const said = gone.title.trim()
-			? `Removed ${titleOf(gone)}. Its years went to ${titleOf(heir)}.`
-			: `Removed a chapter. Its years went to ${titleOf(heir)}.`;
+			? `You removed ${titleOf(gone)}. Its years went to ${titleOf(heir)}.`
+			: `You removed a chapter. Its years went to ${titleOf(heir)}.`;
 		keep(said, gone.key);
 		bands.splice(i, 1);
 		ages.splice(i === 0 ? 0 : i - 1, 1);
@@ -359,7 +359,7 @@
 	function join(k: number) {
 		const left = bands[k];
 		const right = bands[k + 1];
-		keep(`Joined ${titleOf(right)} into ${titleOf(left)}.`, right.key);
+		keep(`You joined ${titleOf(right)} into ${titleOf(left)}.`, right.key);
 		if (!left.title.trim()) left.title = right.title;
 		bands.splice(k + 1, 1);
 		ages.splice(k, 1);
@@ -764,8 +764,8 @@
 	const heads: Record<Beat, { h: string; s: string }> = {
 		a: { h: 'If your life were a book', s: 'What would its chapters be?' },
 		b: { h: 'Where did your life turn?', s: 'A move, a school, a person, a loss. Each turn begins a chapter.' },
-		c: { h: 'Now write yours', s: '' },
-		e: { h: 'Now write yours', s: '' },
+		c: { h: 'Now draw yours', s: '' },
+		e: { h: 'Now draw yours', s: '' },
 	};
 	/** Two chapters named: the instruction is followed, and the heading
 	 *  becomes the thing made rather than the ask. */
@@ -1164,7 +1164,7 @@
 	<footer class="foot">
 		{#if beat && beat !== 'e'}
 			{#if reduced}
-				<button type="button" class="primary" onclick={() => enter('e')}>Write yours</button>
+				<button type="button" class="primary" onclick={() => enter('e')}>Draw yours</button>
 			{:else}
 				<button type="button" class="quiet" onclick={() => enter('e')}>Skip intro</button>
 			{/if}

@@ -138,7 +138,7 @@
 				<p class="p3">
 					Every day, Virtues writes the wiki of your life: where you went, who you spoke
 					with, the places you keep going back to, the stories that matter most. You can
-					ask it things like:
+					ask your assistant things like:
 				</p>
 			</div>
 

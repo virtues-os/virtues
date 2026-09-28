@@ -76,8 +76,10 @@ export const ORDER: SetupStepId[] = [
 	'account',
 	'server',
 	'wifi',
-	'subscription',
+	// Names before Subscription: the person meets the assistant before being
+	// asked to pay for how it thinks, so that step can say its name.
 	'names',
+	'subscription',
 	'connections',
 	'timeline',
 	'interview',
@@ -129,13 +131,14 @@ const INTO: Record<SetupStepId, string> = {
 	wifi: 'Connect to Wi-Fi',
 	subscription: 'Choose how your assistant thinks',
 	names: 'Name your assistant',
-	connections: 'Connect your devices',
-	timeline: 'Write your chapters',
-	interview: 'Start the interview',
+	connections: 'Add your devices',
+	timeline: 'Draw your chapters',
+	interview: 'Tell your story',
 };
 
 /** The label for a button that moves on to `id`, or opens the app. */
 export function intoLabel(id: SetupStepId | null): string {
+	if (id === 'subscription') return `Choose how ${setup.assistantName} thinks`;
 	return id ? INTO[id] : 'Open Virtues';
 }
 
