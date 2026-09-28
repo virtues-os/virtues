@@ -31,13 +31,14 @@
   The letter stays readable on its own at /founders-letter.
 -->
 <script lang="ts">
-	import { goto } from "$app/navigation";
+	import { afterNavigate, goto } from "$app/navigation";
 	import { page } from "$app/state";
 	import { onMount } from "svelte";
 	import { fade } from "svelte/transition";
 	import "$lib/components/setup/setup.css";
 	import { M, rise } from "$lib/components/setup/motion";
 	import { isMacOS } from "$lib/utils/platform";
+	import { getTheme, isValidTheme, setTheme } from "$lib/utils/theme";
 	import Hello from "$lib/components/onboarding/Hello.svelte";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
 	import SetupMark from "$lib/components/setup/SetupMark.svelte";
@@ -114,6 +115,12 @@
 	}
 
 
+	// A failed close is said until they move on.
+	$effect(() => {
+		void step;
+		closeError = null;
+	});
+
 	// Welcome replays its opening whenever someone comes back to it.
 	$effect(() => {
 		if (step !== "welcome") helloSettled = false;
@@ -126,6 +133,8 @@
 	});
 	$effect(() => () => score.fade(0));
 	let closing = $state(false);
+	/** The close couldn't let the app open, said where the close was. */
+	let closeError = $state<string | null>(null);
 	let unreachable = $state(false);
 
 	const still =
@@ -154,7 +163,19 @@
 		return () => void titleBar("visible");
 	});
 
+	/** What the Mac's own copy handed over (`prePair.handOff`): taken once,
+	 *  then dropped from the address. */
+	function takeCarried() {
+		const q = page.url.searchParams;
+		const intro = Number(q.get("intro"));
+		if (intro === 1 || intro === 2) setup.passIntro(intro);
+		const theme = q.get("theme");
+		if (theme && isValidTheme(theme) && theme !== getTheme()) void setTheme(theme);
+		if (q.has("intro") || q.has("theme")) history.replaceState(history.state, "", page.url.pathname);
+	}
+
 	onMount(() => {
+		takeCarried();
 		void (async () => {
 			// No server yet: the first half runs here, and there is nothing
 			// to reach until it pairs.
@@ -238,8 +259,11 @@
 	 * then starts from wherever the server says things stand.
 	 */
 	async function paired() {
-		// A computer carries on in the server's own copy of the app.
-		if (await prePair.handOff()) return;
+		// A computer carries on in the server's own copy of the app, told how
+		// far through the reading this one got and the theme picked on Welcome.
+		const away = await prePair.handOff({ intro: String(setup.introStage), theme: getTheme() });
+		if (away === "away") return;
+		if (away === "silent") throw new Error("silent");
 		await setup.refresh();
 		if (!gettingStarted.loaded || (!gettingStarted.state && !gettingStarted.unsupported)) {
 			location.replace("/setup");
@@ -269,12 +293,17 @@
 	async function finish() {
 		if (closing) return;
 		closing = true;
+		closeError = null;
 		try {
 			const s = await getSetupState();
 			// `active` is what the gate lets through, whatever else is true.
 			if (s.onboarding_status !== "active") await skipOnboarding(true);
 		} catch {
-			// The gate asks again next launch. Annoying beats trapped.
+			// Opening the app anyway only bounced back here, onto this same
+			// page still mid-close, with nothing to press. So say it and stay.
+			closing = false;
+			closeError = "Your server couldn't finish Setup. Check your connection, then try again.";
+			return;
 		}
 		await new Promise((r) => setTimeout(r, still ? 0 : 2300));
 		// The app opens on page one of what Setup made: the story told in the
@@ -288,6 +317,16 @@
 		await titleBar("visible");
 		await openApp(dest);
 	}
+
+	// The app's gate can still send the close back here (the server changed
+	// its mind between the two reads). This page is reused, not remounted, so
+	// it has to leave the close itself.
+	afterNavigate((nav) => {
+		if (!closing || !nav.to?.url.pathname.startsWith("/setup")) return;
+		closing = false;
+		closeError = "Your server still has Setup open. Try again.";
+		void titleBar("overlay");
+	});
 </script>
 
 <svelte:head>
@@ -327,6 +366,13 @@
 
 	<!-- Not on a finished step: there, "Finish later" means the same as the
 	     step's own way on, and the last step's is "Finish setup". -->
+	{#if closeError}
+		<div class="close-error" role="alert" transition:fade={{ duration: 200 }}>
+			<p>{closeError}</p>
+			<button type="button" class="setup-past" onclick={finish}>Try again</button>
+		</div>
+	{/if}
+
 	{#if current?.optional && current.status !== "done" && !closing}
 		<button type="button" class="later" onclick={finish} transition:fade={{ duration: 200 }}>Finish later</button>
 	{/if}
@@ -387,7 +433,7 @@
 								<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 12h13M13 6.5 18.5 12 13 17.5" /></svg>
 							</button>
 						{/if}
-					{:else if step === "account"}
+					{:else if step === "account" && prePair.active}
 						<StepAccount onnext={() => advance("account")} />
 					{:else if step === "server" && prePair.active}
 						<StepServer onnext={() => advance("server")} />
@@ -399,7 +445,7 @@
 						{:else if prePair.link}
 							<StepWifi link={prePair.link} onjoined={() => (prePair.online = true)} onlost={lost} />
 						{/if}
-					{:else if step === "server" || step === "wifi"}
+					{:else if step === "account" || step === "server" || step === "wifi"}
 						<StepPaired which={step} onnext={() => advance(step)} />
 					{:else if step === "subscription"}
 						<StepSubscription onnext={() => advance("subscription")} />
@@ -485,6 +531,24 @@
 		letter-spacing: -0.01em;
 		color: var(--color-foreground);
 		pointer-events: none;
+	}
+	.close-error {
+		position: fixed;
+		z-index: 21;
+		left: 16px;
+		right: 16px;
+		bottom: max(24px, env(safe-area-inset-bottom));
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: center;
+		gap: 4px 12px;
+		text-align: center;
+		font-size: 14px;
+		color: var(--color-error);
+	}
+	.close-error p {
+		margin: 0;
 	}
 	.later {
 		position: fixed;

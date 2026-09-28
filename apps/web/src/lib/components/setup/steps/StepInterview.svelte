@@ -313,9 +313,14 @@
 		return last?.role === "assistant" ? unmarked(textOf(last as never)) : "";
 	});
 
-	async function send(text: string) {
+	/** Send a turn, then read what the server holds. `typed` is the person's
+	 *  own answer: if the server never got it, it goes back in the field with
+	 *  the reason, rather than vanishing under the same question. */
+	async function send(text: string, typed = false) {
 		const t = text.trim();
 		if (!t || phase === "waiting") return;
+		const asked = question;
+		const wasOpening = opening;
 		error = null;
 		phase = "waiting";
 		try {
@@ -324,13 +329,25 @@
 			/* read the outcome off the server below */
 		}
 		answer = "";
-		await place();
+		try {
+			await place();
+			if (!typed) return;
+			const turns = await transcript();
+			if (turns.filter((x) => x.role === "user").at(-1)?.text.trim() === t) return;
+		} catch {
+			/* the server can't be read either: same answer as a lost send */
+			if (phase === "waiting") void ask(asked, wasOpening);
+		}
+		if (typed) {
+			answer = t;
+			error = "Your server didn't get that answer. Check your connection, then send it again.";
+		}
 	}
 
 	function onKey(e: KeyboardEvent) {
 		if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
-			void send(answer);
+			void send(answer, true);
 		}
 	}
 
@@ -444,7 +461,7 @@
 				class="answer"
 				onsubmit={(e) => {
 					e.preventDefault();
-					void send(answer);
+					void send(answer, true);
 				}}
 			>
 				<textarea
