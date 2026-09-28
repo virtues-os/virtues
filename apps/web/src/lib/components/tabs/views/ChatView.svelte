@@ -29,6 +29,7 @@
 		introductionsRecorded,
 		eyebrowsFor,
 		railTurns,
+		stopReason,
 	} from "$lib/components/chat/state/transcript";
 	import {
 		AttachmentsController,
@@ -523,13 +524,15 @@
 	// Chat instance - fetched from shared store to survive remounts
 	let chat = $state<Chat>(null!);
 	let currentChatConversationId = $state<string | null>(null);
+	/** This view is showing the getting-started room. */
+	const inRoom = $derived(isGettingStartedChat(currentChatConversationId));
 	// The interview's chrome (no thinking block, the resident companion)
 	// applies in the old standalone room and in the getting-started room
 	// while the interview is underway there.
 	// Setup and the interview are both rooms where the machine's workings are
 	// not the subject: no thinking block, no tool names.
 	const inInterview = $derived(
-		currentChatConversationId === INTERVIEW_CHAT_ID || isGettingStartedChat(currentChatConversationId),
+		currentChatConversationId === INTERVIEW_CHAT_ID || inRoom,
 	);
 
 	// Get or create chat instance for the current conversationId
@@ -844,7 +847,7 @@
 	let pageWidth = $state(0);
 	const railTurnList = $derived(
 		mobileLayout.isMobile ||
-			isGettingStartedChat(currentChatConversationId) ||
+			inRoom ||
 			currentChatConversationId === INTERVIEW_CHAT_ID
 			? []
 			: railTurns(uniqueMessages),
@@ -1021,14 +1024,14 @@
 	$effect(() => {
 		const state = gettingStarted.state;
 		const convId = currentChatConversationId;
-		if (!isGettingStartedChat(convId)) return;
+		if (!inRoom) return;
 		// Never while a turn is streaming: the transcript is the SDK's to
 		// write then. Reading `status` here re-runs this once it settles.
 		if (chat.status !== "ready") return;
 		untrack(() => applyRoomInterviewOpening(chat, convId, state));
 	});
 	$effect(() => {
-		if (isGettingStartedChat(currentChatConversationId)) gettingStarted.start();
+		if (inRoom) gettingStarted.start();
 	});
 
 	/** A turn just settled in the room, so ask the box where the walk stands.
@@ -1044,7 +1047,7 @@
 		const status = chat.status;
 		const wasStreaming = lastTurnStatus === "streaming" || lastTurnStatus === "submitted";
 		lastTurnStatus = status;
-		if (!isGettingStartedChat(currentChatConversationId)) return;
+		if (!inRoom) return;
 		if (status !== "ready" || !wasStreaming) return;
 		untrack(() => void gettingStarted.refresh());
 	});
@@ -1066,7 +1069,7 @@
 	let lastWalk: string | null = null;
 	$effect(() => {
 		const st = gettingStarted.state;
-		if (!isGettingStartedChat(currentChatConversationId) || !st) return;
+		if (!inRoom || !st) return;
 		const walk =
 			st.steps.map((x) => `${x.id}:${x.status}`).join("|") + `|${st.interview_started_at ?? ""}`;
 		if (lastWalk === null) {
@@ -1134,7 +1137,7 @@
 	// A real, saved chat the user can act on (not the empty new-chat state, not a ghost).
 	// Getting started has no menu: it cannot be deleted or renamed, and its
 	// header holds one control, the door.
-	const canManageChat = $derived(!isEmpty && !isGhost && !isGettingStartedChat(currentChatConversationId));
+	const canManageChat = $derived(!isEmpty && !isGhost && !inRoom);
 
 	async function deleteThisChat() {
 		// Read before the delete: the title comes off the session row that is
@@ -1258,7 +1261,7 @@
 	 * the view down as they do anywhere else.
 	 */
 	function openAtStart(behavior: ScrollBehavior = "instant") {
-		if (isGettingStartedChat(currentChatConversationId)) {
+		if (inRoom) {
 			scrollContainer?.scrollTo({ top: 0, behavior });
 			return true;
 		}
@@ -1551,7 +1554,7 @@
 		<div class="chat-container">
 			<!-- Main chat area -->
 			<div class="chat-area" class:ghost={isGhost}>
-				{#if chatProject && !isGhost && !mobileLayout.isMobile && !isGettingStartedChat(currentChatConversationId)}
+				{#if chatProject && !isGhost && !mobileLayout.isMobile && !inRoom}
 					<div class="chat-topbar-left">
 						<button
 							type="button"
@@ -1566,7 +1569,7 @@
 				{/if}
 				<!-- Top-right chrome: temporary-chat toggle + chat menu (context usage lives in the menu) -->
 				<div class="chat-topbar-right">
-					{#if isGettingStartedChat(currentChatConversationId)}
+					{#if inRoom}
 						<!-- One door. A glyph through the walk, and a word
 						     ("Stop for now") once the interview is underway,
 						     which is the one beat with no controls of its own.
@@ -1614,10 +1617,10 @@
 							class="messages-container"
 							class:bleeds={uniqueMessages[0]?.id === INTERVIEW_OPENING_ID ||
 								roomHoldsPlate ||
-								isGettingStartedChat(currentChatConversationId)}
-							class:room={isGettingStartedChat(currentChatConversationId)}
+								inRoom}
+							class:room={inRoom}
 						>
-							{#if isGettingStartedChat(currentChatConversationId) && uniqueMessages.length > 0}
+							{#if inRoom && uniqueMessages.length > 0}
 								<!-- The frontispiece, at the measure of the words.
 								     It ran the full width of the pane as an oil
 								     painting and made the room read as two products
@@ -1840,7 +1843,7 @@
 												<!-- Nothing here: the receipt goes under the whole
 												     turn, not wherever in it the model reached for
 												     the tool. See after this loop. -->
-											{:else if part.type === "tool-write_it_up" && isGettingStartedChat(currentChatConversationId) && (part as any).state === "output-available" && (part as any).output?.document_page_id}
+											{:else if part.type === "tool-write_it_up" && inRoom && (part as any).state === "output-available" && (part as any).output?.document_page_id}
 												<!-- In the getting-started room the interview closes inline
 												     and the thread goes on: the two doors, here — and the
 												     plate with them. The close ANSWERS THE OPENING, which
@@ -1995,18 +1998,9 @@
 												     sentence, never instead of it. -->
 												<GraduatedDoors />
 											{/if}
-											{#if messageMetadata.get(message.id)?.stopped}
-												<StoppedNotice />
-											{:else if messageMetadata.get(message.id)?.cutShort}
-												<StoppedNotice reason="length" />
-											{:else if messageMetadata.get(message.id)?.interrupted}
-												<StoppedNotice reason="interrupted" />
-											{:else if messageMetadata.get(message.id)?.unattended}
-												<StoppedNotice reason="unattended" />
-											{:else if messageMetadata.get(message.id)?.maxSteps}
-												<StoppedNotice reason="max_steps" />
-											{:else if messageMetadata.get(message.id)?.budget}
-												<StoppedNotice reason="budget" />
+											{@const stop = stopReason(messageMetadata.get(message.id))}
+											{#if stop}
+												<StoppedNotice reason={stop} />
 											{/if}
 											{#if chatInstances.getLocalStats(conversationId, message.id)}
 												<LocalStatsLine stats={chatInstances.getLocalStats(conversationId, message.id)!} />
@@ -2082,7 +2076,7 @@
 							<!-- Optimistic thinking indicator: shows immediately on submit,
 							     only until the AI SDK creates the assistant message (at text-start).
 							     Once the assistant message exists, the in-message ThinkingBlock takes over. -->
-							{#if isGettingStartedChat(currentChatConversationId)}
+							{#if inRoom}
 								<!-- The step's controls, right under what the room
 								     just said: pinned above the composer they sat a
 								     screen away from it on a short thread. -->
@@ -2300,7 +2294,7 @@
 								alreadyExisted={interviewClosedPart?.document_already_existed ?? false}
 								chaptersError={interviewClosedPart?.chapters_error ?? null}
 							/>
-						{:else if isGettingStartedChat(currentChatConversationId) && !gettingStarted.aiConnected}
+						{:else if inRoom && !gettingStarted.aiConnected}
 							<!-- No model yet. The composer STAYS and says why it
 							     cannot be used: the app is no longer closed off, so
 							     the thing that genuinely does not work has to
