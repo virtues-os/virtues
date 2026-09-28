@@ -76,6 +76,9 @@ pub struct ProjectSummary {
     pub current_status_at: Option<Timestamp>,
     pub instructions: Option<String>,
     pub sort_order: i32,
+    /// Members other than chats. Chats are counted in `chat_count` from the
+    /// chat's own `project_id`, so counting their `/chat/` rows here as well
+    /// made every filed chat show up twice on a project card.
     pub item_count: i64,
     pub chat_count: i64,
     pub archived_at: Option<Timestamp>,
@@ -192,8 +195,8 @@ pub async fn list_projects(pool: &PgPool, include_archived: bool) -> Result<Proj
             s.current_status, s.current_status_at, s.instructions, s.sort_order, s.archived_at,
             COALESCE((SELECT COUNT(*) FROM app_project_items
                       WHERE project_id = s.id
-              AND NOT EXISTS (SELECT 1 FROM app_pages p WHERE url = '/page/' || p.id AND p.deleted_at IS NOT NULL)
-              AND NOT EXISTS (SELECT 1 FROM app_chats c WHERE url = '/chat/' || c.id AND c.deleted_at IS NOT NULL)), 0) AS item_count,
+              AND url NOT LIKE '/chat/%'
+              AND NOT EXISTS (SELECT 1 FROM app_pages p WHERE url = '/page/' || p.id AND p.deleted_at IS NOT NULL)), 0) AS item_count,
             COALESCE((SELECT COUNT(*) FROM app_chats
                       WHERE project_id = s.id AND deleted_at IS NULL), 0) AS chat_count,
             s.created_at, s.updated_at
@@ -469,6 +472,20 @@ pub async fn add_project_item(pool: &PgPool, project_id: &str, req: AddProjectIt
 
 /// Remove a member URL from a Project.
 pub async fn remove_project_item(pool: &PgPool, project_id: &str, url: &str) -> Result<()> {
+    // The mirror of the add: a chat leaves by its `project_id`, which is what
+    // the project view lists it by. Deleting only the row left the chat
+    // filed, so "Remove from project" on a chat did nothing you could see.
+    // Guarded on this project so a stale remove cannot unfile a chat that has
+    // since moved elsewhere.
+    if let Some(chat_id) = url.strip_prefix("/chat/") {
+        sqlx::query(r#"UPDATE app_chats SET project_id = NULL WHERE id = $1 AND project_id = $2"#)
+            .bind(chat_id)
+            .bind(project_id)
+            .execute(pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to detach chat from project: {}", e)))?;
+    }
+
     let result = sqlx::query(r#"DELETE FROM app_project_items WHERE project_id = $1 AND url = $2"#)
         .bind(project_id)
         .bind(url)
@@ -540,9 +557,10 @@ pub async fn reorder_project_items(
 // ============================================================================
 
 /// Set or clear a chat's Project. Passing `Some(project_id)` also folds the chat
-/// into that Project's membership (idempotent); passing `None` detaches it. The
-/// row update and the membership fold run in one transaction so the chat's
-/// `project_id` and its `/chat/<id>` membership row can never diverge.
+/// into that Project's membership (idempotent); passing `None` detaches it. A
+/// chat lives in one project, so its `/chat/<id>` row in any other project goes
+/// in the same transaction — the chat's `project_id` and its membership rows
+/// can never diverge.
 pub async fn set_chat_project(pool: &PgPool, chat_id: &str, project_id: Option<&str>) -> Result<()> {
     let mut tx = pool
         .begin()
@@ -555,6 +573,13 @@ pub async fn set_chat_project(pool: &PgPool, chat_id: &str, project_id: Option<&
         .execute(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("Failed to set chat project: {}", e)))?;
+
+    sqlx::query(r#"DELETE FROM app_project_items WHERE url = $1 AND project_id IS DISTINCT FROM $2"#)
+        .bind(format!("/chat/{}", chat_id))
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to clear chat's old membership: {}", e)))?;
 
     if let Some(project_id) = project_id {
         sqlx::query(
@@ -792,4 +817,81 @@ pub async fn project_graph(pool: &PgPool, project_id: &str) -> Result<ProjectGra
     edges.sort_by(|a, b| b.weight.cmp(&a.weight).then_with(|| a.source.cmp(&b.source)));
 
     Ok(ProjectGraph { nodes, edges })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn seed_chat(pool: &PgPool, id: &str) {
+        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ($1, 'Chat', 0)")
+            .bind(id)
+            .execute(pool)
+            .await
+            .expect("seed a chat");
+    }
+
+    async fn chat_rows(pool: &PgPool, chat_id: &str) -> Vec<String> {
+        sqlx::query_scalar("SELECT project_id FROM app_project_items WHERE url = $1 ORDER BY project_id")
+            .bind(format!("/chat/{chat_id}"))
+            .fetch_all(pool)
+            .await
+            .expect("read membership")
+    }
+
+    async fn chat_project(pool: &PgPool, chat_id: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT project_id FROM app_chats WHERE id = $1")
+            .bind(chat_id)
+            .fetch_one(pool)
+            .await
+            .expect("read chat")
+    }
+
+    fn named(name: &str) -> CreateProjectRequest {
+        CreateProjectRequest { name: name.into(), icon: None, accent_color: None }
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_chat_moved_between_projects_leaves_the_first(pool: PgPool) {
+        let a = create_project(&pool, named("A")).await.expect("create A");
+        let b = create_project(&pool, named("B")).await.expect("create B");
+        seed_chat(&pool, "chat_move").await;
+
+        set_chat_project(&pool, "chat_move", Some(&a.id)).await.expect("file in A");
+        set_chat_project(&pool, "chat_move", Some(&b.id)).await.expect("move to B");
+
+        assert_eq!(chat_project(&pool, "chat_move").await.as_deref(), Some(b.id.as_str()));
+        assert_eq!(chat_rows(&pool, "chat_move").await, vec![b.id.clone()]);
+
+        set_chat_project(&pool, "chat_move", None).await.expect("unfile");
+        assert_eq!(chat_project(&pool, "chat_move").await, None);
+        assert!(chat_rows(&pool, "chat_move").await.is_empty());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn removing_a_chat_from_its_project_unfiles_it(pool: PgPool) {
+        let a = create_project(&pool, named("A")).await.expect("create A");
+        seed_chat(&pool, "chat_rm").await;
+        add_project_item(&pool, &a.id, AddProjectItemRequest { url: "/chat/chat_rm".into() })
+            .await
+            .expect("add chat");
+        assert_eq!(chat_project(&pool, "chat_rm").await.as_deref(), Some(a.id.as_str()));
+
+        remove_project_item(&pool, &a.id, "/chat/chat_rm").await.expect("remove chat");
+        assert_eq!(chat_project(&pool, "chat_rm").await, None);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn item_count_does_not_count_chats_twice(pool: PgPool) {
+        let a = create_project(&pool, named("A")).await.expect("create A");
+        seed_chat(&pool, "chat_count").await;
+        set_chat_project(&pool, "chat_count", Some(&a.id)).await.expect("file chat");
+        add_project_item(&pool, &a.id, AddProjectItemRequest { url: "https://example.com".into() })
+            .await
+            .expect("add link");
+
+        let listed = list_projects(&pool, false).await.expect("list");
+        let row = listed.projects.iter().find(|p| p.id == a.id).expect("project listed");
+        assert_eq!((row.chat_count, row.item_count), (1, 1));
+    }
 }

@@ -32,6 +32,7 @@
 	import { refreshAfterRestore } from "$lib/utils/toasts";
 	import { toast } from "svelte-sonner";
 	import { onMount } from "svelte";
+	import { PROJECT_ICON } from "$lib/utils/iconHelpers";
 
 	let { tab: _tab, active: _active }: { tab: Tab; active: boolean } = $props();
 
@@ -71,7 +72,7 @@
 	const KIND_ICON: Record<RowKind, string> = {
 		chat: "ri:chat-3-line",
 		page: "ri:file-text-line",
-		project: "ri:folder-3-line",
+		project: PROJECT_ICON,
 		file: "ri:file-line",
 	};
 

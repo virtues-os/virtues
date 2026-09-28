@@ -7,6 +7,9 @@
 	import { askVirtues } from "$lib/stores/pendingPrompt.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
+	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
+	import { PROJECT_ICON } from "$lib/utils/iconHelpers";
+	import { newProject, openProjects } from "$lib/utils/projectActions";
 	import { visits } from "$lib/stores/visits.svelte";
 	import { searchLocal, type LocalSearchHit } from "$lib/api/client";
 	import {
@@ -115,6 +118,18 @@
 			icon: "ri:file-text-line",
 			shortcut: "⌘⇧N",
 			action: createNewPage,
+		},
+		{
+			id: "new-project",
+			label: "New Project",
+			icon: PROJECT_ICON,
+			action: newProject,
+		},
+		{
+			id: "projects",
+			label: "Go to Projects",
+			icon: PROJECT_ICON,
+			action: openProjects,
 		},
 		{
 			id: "wiki",
@@ -705,7 +720,7 @@
 								}}
 								onmouseenter={() => (selectedIndex = index)}
 							>
-								<Icon icon={project.icon || "ri:folder-3-line"} width="16" class="result-icon" />
+								<span class="result-icon glyph-slot"><ProjectGlyph icon={project.icon} color={project.accent_color} size={16} /></span>
 								<span class="result-label">{project.name || "Untitled"}</span>
 							</button>
 						{/each}
@@ -913,6 +928,10 @@
 	:global(.result-icon) {
 		color: var(--foreground-muted) !important;
 		flex-shrink: 0;
+	}
+
+	.glyph-slot {
+		display: inline-flex;
 	}
 
 	.result-label {

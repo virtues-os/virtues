@@ -6,6 +6,7 @@
  */
 
 import { addIcon } from '@iconify/svelte';
+import { GLYPHS as ATLAS_GLYPHS } from '$lib/components/sidebar/AtlasIcon.svelte';
 
 // Remix Icons (ri:)
 import riAddCircleLine from '@iconify-icons/ri/add-circle-line';
@@ -392,6 +393,18 @@ addIcon('virtues:logo', {
 	width: 24,
 	height: 24,
 });
+
+// Atlas — the shell's drawn set (AtlasIcon.svelte), for surfaces that take an
+// icon by name. Same 16-unit grid and round caps; the stroke is a touch heavier
+// than the sidebar's 1.1 because these sit beside Remix glyphs, which are drawn
+// heavier, in tabs, menus and ⌘K.
+for (const [name, body] of Object.entries(ATLAS_GLYPHS)) {
+	addIcon(`atlas:${name}`, {
+		body: `<g fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">${body}</g>`,
+		width: 16,
+		height: 16,
+	});
+}
 
 // Export flag to indicate icons are registered
 export const iconsRegistered = true;
