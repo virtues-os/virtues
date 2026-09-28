@@ -121,10 +121,15 @@ pub async fn build_circumstances(
     let tomorrow = today.succ_opt().unwrap_or(today);
     let (_, tomorrow_end) = crate::api::day_summary::day_boundaries_utc(tomorrow, timezone);
 
+    // The sections are independent reads, so they run together; the block
+    // costs its slowest section, not their sum. Rendered in SECTIONS order.
+    let built = futures::future::join_all(SECTIONS.iter().map(|name| {
+        build_section(pool, name, tz, now_quantized, today, &day_start, &day_end, &tomorrow_end)
+    }))
+    .await;
     let mut lines: Vec<String> = Vec::new();
-    for name in SECTIONS {
-        match build_section(pool, name, tz, now_quantized, today, &day_start, &day_end, &tomorrow_end).await
-        {
+    for (name, result) in SECTIONS.iter().zip(built) {
+        match result {
             Ok(Some(body)) => lines.push(body),
             Ok(None) => {}
             // An error is a section with data it failed to deliver — audible,
