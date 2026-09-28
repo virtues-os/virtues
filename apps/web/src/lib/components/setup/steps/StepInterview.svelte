@@ -175,6 +175,9 @@
 		rulesError = null;
 		const chosen = take ? proposed.filter((p) => keep[p.id]) : [];
 		try {
+			// The set is replaced whole, so the rules in force are read again
+			// now, not trusted from when this screen opened.
+			inForce = (await getNarrativeRules()).rules;
 			await saveNarrativeRules([...inForce, ...chosen].map((r) => ({ rule: r.rule, kind: r.kind })));
 			proposed = [];
 			rulesSaved = chosen.length;
@@ -366,6 +369,13 @@
 		const asked = question;
 		const wasOpening = opening;
 		error = null;
+		// How many answers the server held before this one: counting, not
+		// matching text, so a repeated "Yes" can't pass for this one landing.
+		const heldBefore = typed
+			? await transcript()
+					.then((ts) => ts.filter((x) => x.role === "user").length)
+					.catch(() => null)
+			: null;
 		phase = "waiting";
 		try {
 			await chat.sendMessage({ text: t });
@@ -377,7 +387,8 @@
 			await place();
 			if (!typed) return;
 			const turns = await transcript();
-			if (turns.filter((x) => x.role === "user").at(-1)?.text.trim() === t) return;
+			const held = turns.filter((x) => x.role === "user");
+			if (heldBefore !== null ? held.length > heldBefore : held.at(-1)?.text.replace(/\s+/g, " ").trim() === t.replace(/\s+/g, " ").trim()) return;
 		} catch {
 			/* the server can't be read either: same answer as a lost send */
 			if (phase === "waiting") void ask(asked, wasOpening);
@@ -469,7 +480,7 @@
 		{/if}
 		{#if proposed.length}
 			<div class="asked" in:fly={IN}>
-				<p class="asked-head">You asked {name} not to raise:</p>
+				<p class="asked-head">What you asked of {name}:</p>
 				<ul>
 					{#each proposed as r (r.id)}
 						<li>
@@ -492,7 +503,7 @@
 			</div>
 		{:else if rulesSaved}
 			<p class="asked-done" in:fade={{ duration: still ? 0 : 200 }}>
-				{name} won't raise {rulesSaved === 1 ? "it" : "them"} unless you do.
+				Kept. {name} reads {rulesSaved === 1 ? "it" : "them"} before every reply.
 			</p>
 		{/if}
 		{#snippet actions()}

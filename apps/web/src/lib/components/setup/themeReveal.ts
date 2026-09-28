@@ -61,3 +61,7 @@ export async function revealTheme(
 		for (const k of ['--rx1', '--ry1', '--rx2', '--ry2', '--rx3', '--ry3', '--r0']) root.style.removeProperty(k);
 	}
 }
+
+/** Set once someone picks light or dark on Welcome. Every theme apply also
+ *  writes `virtues-theme`, so that key can't tell a pick from a default. */
+export const THEME_CHOSEN_KEY = 'virtues-theme-chosen';

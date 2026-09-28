@@ -21,7 +21,9 @@
 	const signedIn = $derived(via === "subscription" || via === "linked");
 
 	const title = $derived(
-		which === "account"
+		which === "account" && via === "byo"
+			? "Your server uses your own AI"
+			: which === "account"
 			? signedIn
 				? "Your server is using your Virtues account"
 				: "Your server isn't signed in"
@@ -30,7 +32,9 @@
 				: "Your server is online",
 	);
 	const subtitle = $derived(
-		which === "account"
+		which === "account" && via === "byo"
+			? "It isn't signed in to a Virtues account, and your assistant doesn't need one."
+			: which === "account"
 			? via === "subscription"
 				? "Your subscription covers its AI, web search, place search, and bank connections."
 				: signedIn
@@ -43,7 +47,7 @@
 </script>
 
 <StepFrame {title} {subtitle}>
-	{#if which !== "account" || signedIn}
+	{#if which !== "account" || signedIn || via === "byo"}
 	<span class="check" aria-hidden="true">
 		<svg viewBox="0 0 48 48" width="56" height="56">
 			<circle cx="24" cy="24" r="22" />

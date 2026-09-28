@@ -30,6 +30,16 @@ use sqlx::{PgPool, Row};
 /// in a 64-character title would close the block and let what follows read as
 /// instruction. The project block a few hundred lines away already escapes for
 /// this reason; this one only clipped.
+fn clip(s: &str, max: usize) -> String {
+    let flattened = s.replace('<', "&lt;").replace('>', "&gt;");
+    if flattened.chars().count() <= max {
+        flattened
+    } else {
+        let cut: String = flattened.chars().take(max.saturating_sub(1)).collect();
+        format!("{cut}…")
+    }
+}
+
 /// The date where they are, else UTC's.
 fn local_date(now: DateTime<Utc>, tz: Option<Tz>) -> chrono::NaiveDate {
     match tz {
@@ -80,16 +90,6 @@ fn chapters_line(
     ))
 }
 
-fn clip(s: &str, max: usize) -> String {
-    let flattened = s.replace('<', "&lt;").replace('>', "&gt;");
-    if flattened.chars().count() <= max {
-        flattened
-    } else {
-        let cut: String = flattened.chars().take(max.saturating_sub(1)).collect();
-        format!("{cut}…")
-    }
-}
-
 /// Sub-section registry — one list, so assembly, the error policy, and the
 /// audit test iterate the same names.
 pub(crate) const SECTIONS: &[&str] = &[
@@ -115,10 +115,7 @@ pub async fn build_circumstances(
     now_quantized: DateTime<Utc>,
 ) -> Option<String> {
     let tz: Option<Tz> = timezone.and_then(|t| t.parse().ok());
-    let today = match tz {
-        Some(tz) => now_quantized.with_timezone(&tz).date_naive(),
-        None => now_quantized.date_naive(),
-    };
+    let today = local_date(now_quantized, tz);
     let (day_start, day_end) = crate::api::day_summary::day_boundaries_utc(today, timezone);
     let _ = &day_end; // spine/calendar bound by tomorrow_end; kept for symmetry
     let tomorrow = today.succ_opt().unwrap_or(today);
@@ -126,7 +123,7 @@ pub async fn build_circumstances(
 
     let mut lines: Vec<String> = Vec::new();
     for name in SECTIONS {
-        match build_section(pool, name, tz, now_quantized, &day_start, &day_end, &tomorrow_end).await
+        match build_section(pool, name, tz, now_quantized, today, &day_start, &day_end, &tomorrow_end).await
         {
             Ok(Some(body)) => lines.push(body),
             Ok(None) => {}
@@ -150,6 +147,7 @@ async fn build_section(
     name: &str,
     tz: Option<Tz>,
     now: DateTime<Utc>,
+    today: chrono::NaiveDate,
     day_start: &str,
     _day_end: &str,
     tomorrow_end: &str,
@@ -200,7 +198,7 @@ async fn build_section(
             let mut parts = Vec::new();
             // Their age, from the birth date Setup's Chapters asks for. Said
             // as a number so the assistant never has to do the arithmetic.
-            if let Some(age) = born.and_then(|b| age_on(b, local_date(now, tz))) {
+            if let Some(age) = born.and_then(|b| age_on(b, today)) {
                 parts.push(format!("{age} years old"));
             }
             match (occ, emp) {

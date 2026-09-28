@@ -61,7 +61,9 @@ pub struct Step {
     pub id: &'static str,
     pub title: &'static str,
     pub status: StepStatus,
-    /// How a done step got done, where it matters ("subscription" | "byo").
+    /// How a done step got done, where it matters ("subscription" | "byo"),
+    /// or, on an open `connect_ai`, "linked": signed in, with no
+    /// subscription behind the account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub via: Option<&'static str>,
     /// Server-authored copy for the step's current state — render verbatim.
@@ -89,9 +91,12 @@ pub struct Step {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GettingStartedState {
-    /// Can this box call a model: a linked subscription or an active BYO
-    /// route. The dev skip (`VIRTUES_DEV_SKIP_SETUP`) counts, or every
-    /// checkout would open locked.
+    /// Setup's answer to "can this box call a model": a link atlas says is
+    /// paid (or can't be asked about), or an active BYO route. The dev skip
+    /// (`VIRTUES_DEV_SKIP_SETUP`) counts, or every checkout would open locked.
+    /// Stricter than `ai_connected()`, the per-turn gate, which counts any
+    /// link: a free account's turns reach the gateway and are refused there
+    /// with the wallet's own reason, while Setup keeps the step open.
     pub ai_connected: bool,
 
     pub steps: Vec<Step>,
@@ -160,7 +165,11 @@ fn title(id: &str) -> &'static str {
 }
 
 /// Can the box call a model right now. The light predicate for the chat
-/// turn: the subscription key or an active BYO row, plus the dev skip.
+/// turn: the subscription key or an active BYO row, plus the dev skip. It
+/// counts a free account's link on purpose: asking atlas on every turn
+/// would slow each one, and the wallet refuses an unpaid call with a better
+/// reason than this could. Setup's stricter reading is
+/// `GettingStartedState::ai_connected`.
 pub async fn ai_connected(pool: &PgPool) -> bool {
     if dev_skip() {
         return true;
@@ -170,11 +179,6 @@ pub async fn ai_connected(pool: &PgPool) -> bool {
         .await
         .unwrap_or(false);
     linked || crate::api::settings_byo::byo_is_active(pool).await
-}
-
-/// A subscription stands behind the link, or atlas can't say either way.
-async fn pays_or_unknown(pool: &PgPool) -> bool {
-    crate::api::subscription::pays(pool).await != Some(false)
 }
 
 fn dev_skip() -> bool {
@@ -206,7 +210,14 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
     // and counting that as AI passed the person over Subscription onto an
     // empty wallet. So a link counts only when atlas says it pays, or when
     // atlas can't be asked (an outage must not reopen a paid step).
-    let account = done("account") && (dev_skip() || pays_or_unknown(pool).await);
+    let payment = if done("account") && !dev_skip() {
+        Some(crate::api::subscription::pays(pool).await)
+    } else {
+        None
+    };
+    use crate::api::subscription::Payment;
+    let account = done("account")
+        && (dev_skip() || matches!(payment, Some(Payment::Paid | Payment::Unknown)));
     let ai_connected = account || byo;
 
     type ProfileRow = (
@@ -334,9 +345,10 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
                 Some("subscription")
             } else if byo {
                 Some("byo")
-            } else if done("account") {
+            } else if payment == Some(Payment::Free) {
                 // Signed in, nothing paid: the step says so instead of
-                // offering a sign-in they already did.
+                // offering a sign-in they already did. A dead key gets no
+                // `via`, so the step offers signing in again.
                 Some("linked")
             } else {
                 None
