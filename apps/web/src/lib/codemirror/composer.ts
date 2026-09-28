@@ -118,6 +118,8 @@ export interface ComposerOptions {
 export interface ComposerEditor {
 	view: EditorView;
 	setDisabled(disabled: boolean): void;
+	/** Swap the empty-state hint: the chat's mode can change after creation. */
+	setPlaceholder(text: string): void;
 	/** Replace the whole document (external `value` set). */
 	setDoc(doc: string): void;
 	destroy(): void;
@@ -163,6 +165,7 @@ export function createComposerEditor(options: ComposerOptions): ComposerEditor {
 
 	const editable = new Compartment();
 	const contentAttrs = new Compartment();
+	const hint = new Compartment();
 
 	function submit(): boolean {
 		onSubmit();
@@ -299,7 +302,7 @@ export function createComposerEditor(options: ComposerOptions): ComposerEditor {
 				entityLinks,
 				virtuesTheme,
 				composerTheme,
-				cmPlaceholder(placeholder),
+				hint.of(cmPlaceholder(placeholder)),
 				pasteAndDrop,
 				editable.of(EditorView.editable.of(!disabled)),
 				contentAttrs.of(EditorView.contentAttributes.of(contentAttributes(isMobile()))),
@@ -326,6 +329,9 @@ export function createComposerEditor(options: ComposerOptions): ComposerEditor {
 		view,
 		setDisabled(next) {
 			view.dispatch({ effects: editable.reconfigure(EditorView.editable.of(!next)) });
+		},
+		setPlaceholder(text) {
+			view.dispatch({ effects: hint.reconfigure(cmPlaceholder(text)) });
 		},
 		setDoc(next) {
 			if (next === view.state.doc.toString()) return;
