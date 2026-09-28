@@ -79,6 +79,11 @@ test('#reset wins on an unpaired device instead of being painted over', () => {
   assert.equal(Router.bootDestination({ hash: '#reset', injectedPaired: false }), 'forgot-us');
 });
 
+test('#existing opens the join, paired or not', () => {
+  assert.equal(Router.bootDestination({ hash: '#existing', injectedPaired: false }), 'existing');
+  assert.equal(Router.bootDestination({ hash: '#existing', injectedPaired: true }), 'existing');
+});
+
 test('#setup pins the connect screen open on a paired device', () => {
   // For setting up a SECOND box, and the only way to exercise setup on a dev
   // phone without unpairing it.
