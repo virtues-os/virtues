@@ -46,6 +46,13 @@ ends with `ON CONFLICT DO NOTHING` so a re-run is a no-op.
   a renamed column is a runtime failure on a box months later rather than a
   compile error anywhere.
 
+  One day is written by hand: **the showcase day**, fifteen days before the
+  last, is the day article as it is meant to read — an Abstract, sections
+  with their time spans, a table of what came back, evidence footnotes that
+  open the recordings and messages they cite (seeded with it), and ⟦ ⟧
+  around what the veil may hide. See `SHOWCASE` in the generator and
+  `agents/plan/day-article-plan.md`.
+
   **Derived columns are deliberately left NULL** — `novelty_z`,
   `local_novelty_z`, `avg_hr`, `embedding`. `compute_novelty_for_day` only
   selects events where a novelty channel is NULL, so seeding a score makes the
