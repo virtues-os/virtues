@@ -551,28 +551,23 @@ impl ToolExecutor {
         };
 
         let response = crate::api::code::execute_code(request).await;
+        let data = serde_json::json!({
+            "stdout": response.stdout,
+            "stderr": response.stderr,
+            "exit_code": response.exit_code,
+            "timed_out": response.timed_out,
+            "truncated": response.truncated,
+            "execution_time_ms": response.execution_time_ms,
+        });
 
-        if response.success {
-            Ok(ToolResult::success(serde_json::json!({
-                "output": response.stdout,
-                "stderr": response.stderr,
-                "execution_time_ms": response.execution_time_ms,
-            })))
-        } else {
-            // Return the error but still as a "successful" tool call
-            // so the LLM can see what went wrong and potentially fix it
-            Ok(ToolResult {
-                success: false,
-                data: serde_json::json!({
-                    "output": response.stdout,
-                    "stderr": response.stderr,
-                    "error": response.error,
-                    "execution_time_ms": response.execution_time_ms,
-                }),
-                error: response.error,
-                attachments: Vec::new(),
-            })
-        }
+        // A failed run is a failed tool call carrying the whole result, so the
+        // model gets the traceback to fix its code from and the chat can show it.
+        Ok(ToolResult {
+            success: response.success,
+            data,
+            error: response.error,
+            attachments: Vec::new(),
+        })
     }
 
     /// Hand a stored file to the model to look at.

@@ -772,46 +772,37 @@ fn code_interpreter_tool() -> ToolConfig {
         id: "code_interpreter".to_string(),
         name: "Python".to_string(),
         description: "Execute Python code for calculations and data analysis".to_string(),
-        llm_description: r#"Execute Python code in a secure sandboxed environment.
+        llm_description: r#"Execute Python 3 code in an isolated sandbox.
 
-Use this tool when you need to:
-- Perform calculations, math, statistics, or numerical analysis
-- Process, transform, or analyze data (CSV, JSON, etc.)
-- Financial calculations (loans, mortgages, investments, IRR, NPV)
-- Work with dates, times, or complex logic
+Use it for anything you would otherwise do in your head past a couple of
+steps: arithmetic over more than a handful of numbers, statistics, date and
+time math, financial formulas, and working over rows a query returned. Do not
+use it for a single lookup or a fact you can state.
 
-Only stdout is returned, so print() your results. There is no way to return
-files or images — describe results in text rather than saving charts.
+Only stdout comes back, so print() your results. Long output keeps its
+beginning and its end. There is no way to return files or images — describe
+results in text.
 
-Available packages:
-- Python 3.12 standard library (math, statistics, datetime, json, csv, re, decimal, etc.)
-- numpy - numerical computing, arrays, linear algebra
-- numpy-financial - financial functions: pmt, fv, pv, irr, npv, nper, rate
-- pandas - data analysis, DataFrames, CSV/JSON loading
-- scipy - scientific computing, statistics, optimization
-- python-dateutil - date parsing
-- pytz - timezones
+Only the Python standard library is available: math, statistics, decimal,
+fractions, datetime, zoneinfo, calendar, json, csv, re, itertools, collections.
+Do not import numpy, pandas or scipy — write the formula with the standard
+library instead.
 
-The code runs in an isolated sandbox with:
-- No filesystem access (except a private /tmp for temporary files)
-- No network access
-- A memory limit and a timeout (default 60s, max 120s)
+Each call starts fresh: no variables, files or imports carry over, so every
+call must be self-contained. Paste in any data it needs.
 
-IMPORTANT: Use print() to output your results. The stdout will be returned to you.
+Limits: no network, no access to the owner's files or database, 1 GB of
+memory, and a timeout (default 60s, max 120s). A failure returns the
+traceback in stderr; fix the code and try again.
 
-Example - financial calculation (mortgage payment):
+Example - loan payment:
 {
-  "code": "import numpy_financial as npf\nloan = 400000\nrate = 0.065 / 12  # 6.5% annual -> monthly\nmonths = 30 * 12\npayment = npf.pmt(rate, months, -loan)\nprint(f'Monthly payment: ${payment:,.2f}')"
+  "code": "loan = 400000\nr = 0.065 / 12\nn = 30 * 12\npayment = loan * r / (1 - (1 + r) ** -n)\nprint(f'Monthly payment: ${payment:,.2f}')"
 }
 
-Example - data analysis with pandas:
+Example - statistics:
 {
-  "code": "import pandas as pd\ndata = {'month': ['Jan', 'Feb', 'Mar'], 'sales': [100, 150, 120]}\ndf = pd.DataFrame(data)\nprint(f'Total: ${df.sales.sum()}')\nprint(f'Average: ${df.sales.mean():.2f}')\nprint(f'Best month: {df.loc[df.sales.idxmax(), \"month\"]}')"
-}
-
-Example - statistics with numpy:
-{
-  "code": "import numpy as np\ndata = [23, 45, 67, 32, 89, 54, 38]\nprint(f'Mean: {np.mean(data):.1f}')\nprint(f'Std Dev: {np.std(data):.1f}')\nprint(f'Correlation example: {np.corrcoef([1,2,3,4], [2,4,5,8])[0,1]:.3f}')"
+  "code": "import statistics as st\ndata = [23, 45, 67, 32, 89, 54, 38]\nprint(f'Mean: {st.mean(data):.1f}')\nprint(f'Std dev: {st.stdev(data):.1f}')\nprint(f'Correlation: {st.correlation([1,2,3,4], [2,4,5,8]):.3f}')"
 }"#.to_string(),
         parameters: serde_json::json!({
             "type": "object",

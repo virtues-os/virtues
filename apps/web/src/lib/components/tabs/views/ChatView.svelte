@@ -1968,7 +1968,7 @@
 												<CodeInterpreterCard
 													status={isRunning ? 'running' : isError ? 'error' : 'success'}
 													code={toolPart.input?.code || ''}
-													output={toolPart.output}
+													output={toolPart.output ?? (isError ? { error: toolPart.errorText } : undefined)}
 												/>
 											{:else if part.type === "tool-generate_image"}
 												{@const gen = part as any}
