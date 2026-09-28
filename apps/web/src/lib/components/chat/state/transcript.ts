@@ -37,6 +37,25 @@ export interface MessageMeta {
 	budget?: boolean;
 }
 
+/** Why a reply is partial, as StoppedNotice words it. */
+export type StopReason = "stopped" | "length" | "interrupted" | "unattended" | "max_steps" | "budget";
+
+/**
+ * The one reason to show under a partial reply, or null for a whole one. A
+ * message carries at most one flag in practice; if it carried several, the
+ * person's own stop wins, then the order below.
+ */
+export function stopReason(meta: MessageMeta | undefined): StopReason | null {
+	if (!meta) return null;
+	if (meta.stopped) return "stopped";
+	if (meta.cutShort) return "length";
+	if (meta.interrupted) return "interrupted";
+	if (meta.unattended) return "unattended";
+	if (meta.maxSteps) return "max_steps";
+	if (meta.budget) return "budget";
+	return null;
+}
+
 /** Helper function to convert database messages to Chat parts */
 export function convertMessageToParts(msg: any, metadata: Map<string, MessageMeta>) {
 	// Carry agent/provider + the partial-reply flags so the notice under a
