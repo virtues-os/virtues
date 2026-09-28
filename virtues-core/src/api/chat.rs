@@ -1469,47 +1469,8 @@ async fn chat_handler_inner(
         };
     }
 
-    // No model, no turn — said in one sentence here, not as whatever the
-    // gateway call fails with. Any room: the composer is inert while locked,
-    // but no client can be trusted to be.
-    if !crate::api::getting_started::ai_connected(&pool).await {
-        return (
-            StatusCode::CONFLICT,
-            Json(ChatError {
-                error: "AI is not connected".to_string(),
-                details: Some(
-                    "Your server has nothing to answer with yet. Connect a Virtues subscription, or point it at your own models, in Settings under Billing."
-                        .to_string(),
-                ),
-            }),
-        )
-            .into_response();
-    }
-
-    // One turn per chat at a time. A turn outlives its request (live_turn.rs),
-    // so a client that lost the wire and asks again would otherwise start a
-    // SECOND turn while the first is still running: `LiveTurns::start`
-    // replaces the entry and lets the old task finish, both write an
-    // assistant row, and the transcript shows two replies to one question,
-    // both billed. The client's Try again rejoins first and only asks anew
-    // when nothing is live; this is the boundary for a client that does not,
-    // or a double tap. 409, with the name the client keys on.
-    // A turn Stop has cancelled still holds the entry until its tool returns
-    // (the loop checks the token between deltas, not inside a tool), so
-    // without the second clause a Stop during a long tool answered every send
-    // with this 409 for up to the tool's timeout.
-    if !request.temporary
-        && live_turns.get(&request.chat_id).is_some()
-        && !cancel_state.is_cancelled(&request.chat_id)
-    {
-        return (
-            StatusCode::CONFLICT,
-            Json(ChatError {
-                error: "turn_in_progress".to_string(),
-                details: Some("Your assistant is still writing a reply to this chat.".to_string()),
-            }),
-        )
-            .into_response();
+    if let Some(refusal) = reject_if_unready(&pool, &request, &live_turns, &cancel_state).await {
+        return refusal;
     }
 
     // Which model answers. One door — the box decides, from the mode and the
@@ -1524,8 +1485,8 @@ async fn chat_handler_inner(
     .await
     {
         Ok(m) => m,
-        // Name the id we rejected. The version of this that listed 244
-        // allowed ids and never the offending one cost a day of debugging.
+        // Name the id we rejected: a list of the allowed ids without the
+        // offending one is no help to whoever reads the error.
         Err(crate::error::Error::InvalidInput(detail)) => {
             tracing::warn!(
                 requested = ?request.model,
@@ -1543,24 +1504,12 @@ async fn chat_handler_inner(
         }
         Err(e) => {
             tracing::error!(error = %e, "failed to resolve the model for this turn");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ChatError {
-                    error: "Failed to resolve model".to_string(),
-                    // The error is already logged above. `sqlx::Error`'s
-                    // Display carries the Postgres message and often the
-                    // column or constraint name, and this JSON goes to a
-                    // browser.
-                    details: None,
-                }),
-            )
-                .into_response();
+            return internal("Failed to resolve model");
         }
     };
     // Deliberately NOT written back onto `request`: the resolved address has
     // one home from here down, threaded as an argument. `request.model` stays
     // what the client sent, which is the only thing it ever meant.
-
 
     // Use client-provided message ID for idempotency, or generate one
     let msg_id = request
@@ -1568,60 +1517,12 @@ async fn chat_handler_inner(
         .clone()
         .unwrap_or_else(|| format!("msg_{}", generate_id()));
 
-    // Ensure chat exists - use ON CONFLICT DO NOTHING to handle race conditions
     let chat_id_str = request.chat_id.clone();
-    let title = {
-        let raw_title = request
-            .messages
-            .iter()
-            .find(|m| m.role == "user")
-            // Not `UIMessage::text`: the title takes the FIRST text part
-            // only, and a message with no text falls through to the default
-            // rather than titling the chat with an empty string.
-            .and_then(|m| {
-                m.content.clone().or_else(|| {
-                    m.parts.as_ref().and_then(|p| {
-                        p.iter().find_map(|p| match p {
-                            UIPart::Text { text } => Some(text.clone()),
-                            _ => None,
-                        })
-                    })
-                })
-            })
-            .unwrap_or_else(|| "New conversation".to_string());
-
-        if raw_title.chars().count() > 50 {
-            let t: String = raw_title.chars().take(47).collect();
-            format!("{}...", t)
-        } else {
-            raw_title
-        }
-    };
-
     // A ghost chat has no row. Everything below that reads or writes
     // app_chats / app_chat_messages / app_chat_usage branches on this.
     let temporary = request.temporary;
 
-    // Use ON CONFLICT DO NOTHING to handle concurrent requests for same chat
-    // Returns rows_affected = 1 if inserted, 0 if already exists
-    let chat_was_created = if temporary {
-        false
-    } else {
-        match sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ($1, $2, 0) ON CONFLICT (id) DO NOTHING")
-            .bind(&chat_id_str)
-            .bind(&title)
-            .execute(&pool)
-            .await
-        {
-            Ok(result) => result.rows_affected() > 0,
-            Err(e) => {
-                tracing::error!("Failed to create chat: {}", e);
-                false
-            }
-        }
-    };
-
-    if chat_was_created {
+    if !temporary && ensure_chat_row(&pool, &request).await {
         if let Err(e) =
             crate::api::projects::set_chat_project(&pool, &chat_id_str, request.project_id.as_deref()).await
         {
@@ -1629,98 +1530,21 @@ async fn chat_handler_inner(
         }
     }
 
-    let last_user_msg = request.messages.iter().rev().find(|m| m.role == "user");
-
-    // Regenerate: the client has dropped its last assistant message and is
-    // asking for the last user turn to be answered again. Drop the box's copy
-    // too, or the model answers with its previous reply in front of it.
-    //
-    // ONLY if that user turn is on disk. The client offers Try again on every
-    // error card, and some of those errors happened before anything was
-    // written: 409 not connected, 400 invalid model, 413, a request that
-    // never arrived. The message is then still only in the client. Treating
-    // that as a regenerate deleted the previous good answer and re-answered
-    // the question before it — on a new chat, an empty transcript went to the
-    // model. So: the client sends its last user message on regenerate too,
-    // and if it is not the last user row here, this is a first send of it.
-    // Matched by id: the user row is stored under the id the client gave it
-    // (below), so a loaded transcript and a message sent this session both
-    // carry the row's id. A text match stood here first, and deleted the
-    // previous reply whenever the repeated message was a short one — "ok",
-    // "thanks", "continue" — which is exactly the case this exists to stop.
-    //
-    // The room's own lines (`gs:` subjects) are not "the previous answer" and
-    // stay: regenerate in the getting-started room used to delete the step
-    // the room had just narrated.
-    let mut regenerating = matches!(
-        request.trigger.as_deref(),
-        Some("regenerate-message") | Some("regenerate-assistant-message")
-    );
-    if regenerating && !temporary {
-        let answered_turn_on_disk = match last_user_msg {
-            // An older client sends nothing on regenerate; nothing to compare.
-            None => true,
-            Some(m) => {
-                match sqlx::query_as::<_, (String, String)>(
-                    "SELECT id, content FROM app_chat_messages \
-                     WHERE chat_id = $1 AND role = 'user' \
-                     ORDER BY sequence_num DESC LIMIT 1",
-                )
-                .bind(&chat_id_str)
-                .fetch_optional(&pool)
-                .await
-                {
-                    Ok(Some((id, content))) => match m.id.as_deref() {
-                        Some(client_id) => client_id == id,
-                        // A client that sends no id: the text is all there is.
-                        None => content == m.text(),
-                    },
-                    Ok(None) => false,
-                    Err(e) => {
-                        // Unknown. Deleting on a guess is the failure this
-                        // exists to stop; answering the message as new is
-                        // the harmless side.
-                        tracing::error!(chat_id = %chat_id_str, error = %e, "regenerate: could not read the last user turn");
-                        false
-                    }
-                }
-            }
-        };
-        if answered_turn_on_disk {
-            if let Err(e) = sqlx::query(
-                "DELETE FROM app_chat_messages \
-                 WHERE chat_id = $1 AND role = 'assistant' \
-                   AND COALESCE(subject, '') NOT LIKE 'gs:%' \
-                   AND sequence_num > COALESCE((SELECT MAX(sequence_num) FROM app_chat_messages \
-                                                WHERE chat_id = $1 AND role = 'user'), 0)",
-            )
-            .bind(&chat_id_str)
-            .execute(&pool)
-            .await
-            {
-                tracing::error!(chat_id = %chat_id_str, error = %e, "regenerate: could not drop the previous answer");
-            }
-        } else {
-            tracing::info!(chat_id = %chat_id_str, "regenerate asked for a turn that was never saved; answering it as new");
-            regenerating = false;
-        }
-    }
+    let regenerating = drop_previous_answer_if_regenerating(&pool, &request).await;
 
     // Save the last user message to the chat. Not on regenerate: there is no
     // new user turn, and a client that still sends the full history would
     // otherwise re-append the last one.
+    let last_user_msg = request.messages.iter().rev().find(|m| m.role == "user");
     if let Some(last_user_msg) = last_user_msg.filter(|_| !regenerating) {
-        // Normal flow: save the last user message from the request
-        let user_content = last_user_msg.text();
-
         let user_message = ChatMessage {
             // The client's id, so the row can be recognized again: by a
-            // regenerate (above), and by a retried POST — `append_message`
-            // does nothing on an id it has, so a send that reached the box
-            // and lost the reply does not save the question twice.
+            // regenerate, and by a retried POST — `append_message` does
+            // nothing on an id it has, so a send that reached the box and
+            // lost the reply does not save the question twice.
             id: last_user_msg.id.clone().filter(|id| !id.trim().is_empty()),
             role: "user".to_string(),
-            content: user_content,
+            content: last_user_msg.text(),
             timestamp: Timestamp::now(),
             model: None,
             provider: None,
@@ -1740,105 +1564,19 @@ async fn chat_handler_inner(
         }
     }
 
-    // Check if compaction is needed before sending to LLM. A ghost chat has
-    // no usage row to read and no summary to write, so it never compacts.
-    // Compaction runs HERE, before the context is built — not inside the
-    // stream, where it used to. The turn that triggers it is the turn whose
-    // context is too big, and a summary written after `build_context_for_llm`
-    // has already run does nothing for it: the full transcript went out
-    // anyway, after up to sixty seconds of waiting for a summary it did not
-    // use. The saving only ever landed on the NEXT turn.
-    //
-    // The checkpoint event still reaches the client first thing, so the UI
-    // paints "N messages summarized" exactly as before.
+    // A ghost chat has no usage row to read and no summary to write, so it
+    // never compacts.
     let checkpoint_event = if temporary {
         None
     } else {
-        let compaction_status =
-            crate::api::chat_usage::check_compaction_needed(&pool, request.chat_id.clone(), &model)
-                .await;
-        if matches!(compaction_status, Ok(ContextStatus::Critical)) {
-            tracing::info!(chat_id = %chat_id_str, "context critical, compacting before the turn");
-            let options = CompactionOptions {
-                model_id: Some(model.clone()),
-                ..Default::default()
-            };
-            match compact_chat(&pool, chat_id_str.clone(), options).await {
-                Ok(_) => get_latest_checkpoint(&pool, &chat_id_str).await,
-                Err(e) => {
-                    // A chat that cannot compact still gets its answer; it is
-                    // just a large one.
-                    tracing::warn!(chat_id = %chat_id_str, error = %e, "auto-compaction failed; continuing with the full context");
-                    None
-                }
-            }
-        } else {
-            None
-        }
+        compact_if_critical(&pool, &chat_id_str, &model).await
     };
 
-    // The chat row: its compaction summary, and its room. The room is read
-    // from the persisted row (single source of truth) so the active-project
-    // context always matches the binding, even if a stale client sends a
-    // different per-message projectId; the create path above already bound a
-    // new chat from request.project_id, so the row is current by now.
-    //
-    // `project_id` decodes as `Option<String>` on purpose: the column is
-    // nullable (and the FK is ON DELETE SET NULL), so an unbound chat
-    // legitimately reads NULL. A failed read is a 500, never a None: None
-    // reads as "not in a project", so a swallowed error would silently unscope
-    // a scoped chat — retrieval stops being hard-filtered and the answer
-    // contract below is dropped. A ghost chat has no row; the request is the
-    // binding.
-    let (conversation_summary, summary_up_to_index, effective_project_id): (Option<String>, i64, Option<String>) =
-        if temporary {
-            (None, 0, request.project_id.clone())
-        } else {
-            match sqlx::query_as::<_, (Option<String>, i64, Option<String>)>(
-                "SELECT conversation_summary, summary_up_to_index, project_id FROM app_chats WHERE id = $1",
-            )
-            .bind(&chat_id_str)
-            .fetch_one(&pool)
-            .await
-            {
-                Ok(row) => row,
-                Err(e) => {
-                    tracing::error!("Failed to load chat: {}", e);
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ChatError {
-                            error: "Failed to load chat".to_string(),
-                            // Logged above; the raw database error does not
-                            // travel to the browser.
-                            details: None,
-                        }),
-                    )
-                        .into_response();
-                }
-            }
+    let History { conversation_summary, summary_up_to_index, project_id: effective_project_id, messages } =
+        match load_history(&pool, &request).await {
+            Ok(history) => history,
+            Err(response) => return response,
         };
-
-    // The transcript: the box's rows, or for a ghost chat the client's copy.
-    let messages: Vec<ChatMessage> = if temporary {
-        ghost_history(&request.messages)
-    } else {
-        match crate::api::chats::load_messages(&pool, &chat_id_str).await {
-            Ok(messages) => messages,
-            Err(e) => {
-                tracing::error!("Failed to load messages for chat {}: {}", chat_id_str, e);
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ChatError {
-                        error: "Failed to load messages".to_string(),
-                        // Logged above; the raw database error does not
-                        // travel to the browser.
-                        details: None,
-                    }),
-                )
-                    .into_response();
-            }
-        }
-    };
 
     // Build system prompt with active page context, timezone, personalization, and agent mode
     // Split at the cache breakpoint: `system_prompt` is the stable prefix that
@@ -1876,13 +1614,13 @@ async fn chat_handler_inner(
         Some(&system_tail),
     );
 
-    // The turn is driven by its own task and outlives this request: a tab
-    // switched or a phone locked used to drop the response, the loop with
-    // it, and the assistant row was never written (VIR-323). This response
-    // is one watcher on the turn; `GET /api/chat/{id}/stream` is another.
+    // The turn is driven by its own task and outlives this request, so a tab
+    // switched or a phone locked does not drop the loop or the assistant row
+    // (VIR-323). This response is one watcher on the turn;
+    // `GET /api/chat/{id}/stream` is another.
     let turn = live_turns.start(&chat_id_str);
-    // Registered here, not inside the stream, so the driver below holds the
-    // same token and can tell its own turn from whichever one holds the slot.
+    // Registered here, not inside the stream, so the driver holds the same
+    // token and can tell its own turn from whichever one holds the slot.
     let turn_token = cancel_state.register(&chat_id_str);
     let agent_stream = create_agent_stream(
         pool,
@@ -1897,51 +1635,345 @@ async fn chat_handler_inner(
         turn_token.clone(),
         ghost_permissions,
     );
-    {
-        let turn = turn.clone();
-        let turn_token = turn_token.clone();
-        let live_turns = live_turns.clone();
-        let chat_id = chat_id_str.clone();
-        tokio::spawn(async move {
-            // The drive loop runs inside a catch, because `finish` is what
-            // ends the turn for every watcher and a panic used to skip it:
-            // `done` stayed false, `watch` blocked on a Notify that never
-            // fired, and the SSE keep-alive held the socket open, so the
-            // person got a thinking mark that spun until they gave up — no
-            // error, no [DONE], and every later rejoin attached to the same
-            // dead turn. A panic in here has to end the turn like any other
-            // ending, or one bad decode wedges the chat.
-            let drive = {
-                let turn = turn.clone();
-                let chat_id = chat_id.clone();
-                async move {
-                    let mut agent_stream = agent_stream;
-                    while let Some(data) = agent_stream.next().await {
-                        turn.push(data);
-                        // Nobody watching for the cap: stop spending on a reply no
-                        // one will read. The loop sees the token at its next step
-                        // and the row is saved as a stop, like the button.
-                        if turn.unattended_past(live_turn::UNATTENDED_CAP) {
-                            tracing::info!(chat_id = %chat_id, cap_secs = live_turn::UNATTENDED_CAP.as_secs(), "turn unattended past the cap; cancelling");
-                            cancel_state.cancel_unattended(&chat_id, &turn_token);
-                        }
-                    }
-                }
-            };
-            if std::panic::AssertUnwindSafe(drive).catch_unwind().await.is_err() {
-                tracing::error!(chat_id = %chat_id, "the turn's driver panicked; ending the turn");
-                turn.push(serialize_event(&StreamEvent::Error {
-                    error_text: "Your server failed while writing this reply.".to_string(),
-                }));
-                turn.push("[DONE]".to_string());
-            }
-            // After the stream's own tail (row written, usage recorded), so
-            // a watcher that sees the end can reload and find the row.
-            live_turns.finish(&chat_id, &turn);
-        });
-    }
+    spawn_turn_driver(agent_stream, turn.clone(), turn_token, live_turns, cancel_state, chat_id_str);
 
     ui_stream_response(live_turn::watch(turn))
+}
+
+/// A 500 whose cause the caller has already logged. The raw error does not
+/// travel to the browser: `sqlx::Error`'s Display carries the Postgres
+/// message and often the column or constraint name.
+fn internal(error: &str) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ChatError { error: error.to_string(), details: None }),
+    )
+        .into_response()
+}
+
+/// The refusals that come before any work: no model to answer with, or a
+/// turn already running in this chat. Both are 409s the client keys on.
+async fn reject_if_unready(
+    pool: &PgPool,
+    request: &ChatRequest,
+    live_turns: &LiveTurns,
+    cancel_state: &ChatCancellationState,
+) -> Option<Response> {
+    // No model, no turn — said in one sentence here, not as whatever the
+    // gateway call fails with. Any room: the composer is inert while locked,
+    // but no client can be trusted to be.
+    if !crate::api::getting_started::ai_connected(pool).await {
+        return Some(
+            (
+                StatusCode::CONFLICT,
+                Json(ChatError {
+                    error: "AI is not connected".to_string(),
+                    details: Some(
+                        "Your server has nothing to answer with yet. Connect a Virtues subscription, or point it at your own models, in Settings under Billing."
+                            .to_string(),
+                    ),
+                }),
+            )
+                .into_response(),
+        );
+    }
+
+    // One turn per chat at a time. A turn outlives its request (live_turn.rs),
+    // so a client that lost the wire and asks again would otherwise start a
+    // SECOND turn while the first is still running: `LiveTurns::start`
+    // replaces the entry and lets the old task finish, both write an
+    // assistant row, and the transcript shows two replies to one question,
+    // both billed. The client's Try again rejoins first and only asks anew
+    // when nothing is live; this is the boundary for a client that does not,
+    // or a double tap. 409, with the name the client keys on.
+    // A turn Stop has cancelled still holds the entry until its tool returns
+    // (the loop checks the token between deltas, not inside a tool), so
+    // without the second clause a Stop during a long tool would answer every
+    // send with this 409 for up to the tool's timeout.
+    if !request.temporary
+        && live_turns.get(&request.chat_id).is_some()
+        && !cancel_state.is_cancelled(&request.chat_id)
+    {
+        return Some(
+            (
+                StatusCode::CONFLICT,
+                Json(ChatError {
+                    error: "turn_in_progress".to_string(),
+                    details: Some("Your assistant is still writing a reply to this chat.".to_string()),
+                }),
+            )
+                .into_response(),
+        );
+    }
+
+    None
+}
+
+/// A new chat's title: the first user message's legacy `content`, else its
+/// FIRST text part — not `UIMessage::text`, which joins them all — cut to
+/// fifty characters. A message with no text titles the chat
+/// "New conversation" rather than nothing.
+fn chat_title(messages: &[UIMessage]) -> String {
+    let raw_title = messages
+        .iter()
+        .find(|m| m.role == "user")
+        .and_then(|m| {
+            m.content.clone().or_else(|| {
+                m.parts.as_ref().and_then(|p| {
+                    p.iter().find_map(|p| match p {
+                        UIPart::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                })
+            })
+        })
+        .unwrap_or_else(|| "New conversation".to_string());
+
+    if raw_title.chars().count() > 50 {
+        let t: String = raw_title.chars().take(47).collect();
+        format!("{}...", t)
+    } else {
+        raw_title
+    }
+}
+
+/// Create the chat's row if it has none. True when this call created it.
+///
+/// ON CONFLICT DO NOTHING, so two requests racing to open the same chat both
+/// succeed and exactly one of them reports the creation. A failed insert is
+/// logged and reads as "not created"; the chat row read that follows is what
+/// turns a missing row into an error.
+async fn ensure_chat_row(pool: &PgPool, request: &ChatRequest) -> bool {
+    match sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ($1, $2, 0) ON CONFLICT (id) DO NOTHING")
+        .bind(&request.chat_id)
+        .bind(chat_title(&request.messages))
+        .execute(pool)
+        .await
+    {
+        Ok(result) => result.rows_affected() > 0,
+        Err(e) => {
+            tracing::error!("Failed to create chat: {}", e);
+            false
+        }
+    }
+}
+
+/// Whether this request is a regenerate, and if it is, drop the box's copy of
+/// the answer being replaced — the client has already dropped its own, and
+/// the model must not answer with its previous reply in front of it.
+///
+/// ONLY if the user turn being answered again is on disk. The client offers
+/// Try again on every error card, and some of those errors happened before
+/// anything was written: 409 not connected, 400 invalid model, 413, a request
+/// that never arrived. The message is then still only in the client, and
+/// treating it as a regenerate would delete the previous good answer and
+/// re-answer the question before it — on a new chat, an empty transcript. So
+/// the client sends its last user message on regenerate too, and if it is not
+/// the last user row here, this is a first send of it (false).
+///
+/// Matched by id: the user row is stored under the id the client gave it, so
+/// a loaded transcript and a message sent this session both carry the row's
+/// id. Not by text: a short repeated message — "ok", "thanks", "continue" —
+/// would match the wrong turn, which is exactly the case this exists to stop.
+///
+/// The room's own lines (`gs:` subjects) are not "the previous answer" and
+/// stay, or regenerate in the getting-started room deletes the step the room
+/// has just narrated. A ghost chat has nothing on disk to drop.
+async fn drop_previous_answer_if_regenerating(pool: &PgPool, request: &ChatRequest) -> bool {
+    let regenerating = matches!(
+        request.trigger.as_deref(),
+        Some("regenerate-message") | Some("regenerate-assistant-message")
+    );
+    if !regenerating || request.temporary {
+        return regenerating;
+    }
+    let chat_id = &request.chat_id;
+    let last_user_msg = request.messages.iter().rev().find(|m| m.role == "user");
+    let answered_turn_on_disk = match last_user_msg {
+        // An older client sends nothing on regenerate; nothing to compare.
+        None => true,
+        Some(m) => {
+            match sqlx::query_as::<_, (String, String)>(
+                "SELECT id, content FROM app_chat_messages \
+                 WHERE chat_id = $1 AND role = 'user' \
+                 ORDER BY sequence_num DESC LIMIT 1",
+            )
+            .bind(chat_id)
+            .fetch_optional(pool)
+            .await
+            {
+                Ok(Some((id, content))) => match m.id.as_deref() {
+                    Some(client_id) => client_id == id,
+                    // A client that sends no id: the text is all there is.
+                    None => content == m.text(),
+                },
+                Ok(None) => false,
+                Err(e) => {
+                    // Unknown. Deleting on a guess is the failure this
+                    // exists to stop; answering the message as new is
+                    // the harmless side.
+                    tracing::error!(chat_id = %chat_id, error = %e, "regenerate: could not read the last user turn");
+                    false
+                }
+            }
+        }
+    };
+    if !answered_turn_on_disk {
+        tracing::info!(chat_id = %chat_id, "regenerate asked for a turn that was never saved; answering it as new");
+        return false;
+    }
+    if let Err(e) = sqlx::query(
+        "DELETE FROM app_chat_messages \
+         WHERE chat_id = $1 AND role = 'assistant' \
+           AND COALESCE(subject, '') NOT LIKE 'gs:%' \
+           AND sequence_num > COALESCE((SELECT MAX(sequence_num) FROM app_chat_messages \
+                                        WHERE chat_id = $1 AND role = 'user'), 0)",
+    )
+    .bind(chat_id)
+    .execute(pool)
+    .await
+    {
+        tracing::error!(chat_id = %chat_id, error = %e, "regenerate: could not drop the previous answer");
+    }
+    true
+}
+
+/// Compact the chat if its context is critical, and return the checkpoint
+/// event to announce it.
+///
+/// This runs before the context is built, not inside the stream: the turn
+/// that triggers compaction is the turn whose context is too big, and a
+/// summary written after `build_context_for_llm` has run does nothing for it.
+/// The checkpoint event still reaches the client first thing in the stream.
+async fn compact_if_critical(pool: &PgPool, chat_id: &str, model: &str) -> Option<StreamEvent> {
+    let compaction_status =
+        crate::api::chat_usage::check_compaction_needed(pool, chat_id.to_string(), model).await;
+    if !matches!(compaction_status, Ok(ContextStatus::Critical)) {
+        return None;
+    }
+    tracing::info!(chat_id = %chat_id, "context critical, compacting before the turn");
+    let options = CompactionOptions {
+        model_id: Some(model.to_string()),
+        ..Default::default()
+    };
+    match compact_chat(pool, chat_id.to_string(), options).await {
+        Ok(_) => get_latest_checkpoint(pool, chat_id).await,
+        Err(e) => {
+            // A chat that cannot compact still gets its answer; it is
+            // just a large one.
+            tracing::warn!(chat_id = %chat_id, error = %e, "auto-compaction failed; continuing with the full context");
+            None
+        }
+    }
+}
+
+/// What the turn is answering from: the chat's compaction summary, its room,
+/// and its transcript.
+struct History {
+    conversation_summary: Option<String>,
+    summary_up_to_index: i64,
+    project_id: Option<String>,
+    messages: Vec<ChatMessage>,
+}
+
+/// Read the chat's row and transcript, or for a ghost chat take both from
+/// the request. Err is the response to send.
+async fn load_history(pool: &PgPool, request: &ChatRequest) -> Result<History, Response> {
+    if request.temporary {
+        // The box holds nothing for a ghost chat: the wire is the transcript
+        // and the request is the room's binding.
+        return Ok(History {
+            conversation_summary: None,
+            summary_up_to_index: 0,
+            project_id: request.project_id.clone(),
+            messages: ghost_history(&request.messages),
+        });
+    }
+    let chat_id = &request.chat_id;
+
+    // The room is read from the persisted row (single source of truth) so the
+    // active-project context always matches the binding, even if a stale
+    // client sends a different per-message projectId; the create path has
+    // already bound a new chat from request.project_id, so the row is current.
+    //
+    // `project_id` decodes as `Option<String>` on purpose: the column is
+    // nullable (and the FK is ON DELETE SET NULL), so an unbound chat
+    // legitimately reads NULL. A failed read is a 500, never a None: None
+    // reads as "not in a project", so a swallowed error would silently unscope
+    // a scoped chat — retrieval stops being hard-filtered and the answer
+    // contract is dropped.
+    let (conversation_summary, summary_up_to_index, project_id) =
+        match sqlx::query_as::<_, (Option<String>, i64, Option<String>)>(
+            "SELECT conversation_summary, summary_up_to_index, project_id FROM app_chats WHERE id = $1",
+        )
+        .bind(chat_id)
+        .fetch_one(pool)
+        .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                tracing::error!("Failed to load chat: {}", e);
+                return Err(internal("Failed to load chat"));
+            }
+        };
+
+    let messages = match crate::api::chats::load_messages(pool, chat_id).await {
+        Ok(messages) => messages,
+        Err(e) => {
+            tracing::error!("Failed to load messages for chat {}: {}", chat_id, e);
+            return Err(internal("Failed to load messages"));
+        }
+    };
+
+    Ok(History { conversation_summary, summary_up_to_index, project_id, messages })
+}
+
+/// Drive the turn's stream in its own task, pushing each line to the live
+/// turn's watchers, and end the turn for all of them however the stream ends.
+fn spawn_turn_driver(
+    agent_stream: Pin<Box<dyn Stream<Item = String> + Send>>,
+    turn: Arc<live_turn::LiveTurn>,
+    turn_token: CancellationToken,
+    live_turns: LiveTurns,
+    cancel_state: ChatCancellationState,
+    chat_id: String,
+) {
+    tokio::spawn(async move {
+        // The drive loop runs inside a catch, because `finish` is what ends
+        // the turn for every watcher: a panic that skipped it would leave
+        // `done` false, `watch` blocked on a Notify that never fires, and the
+        // SSE keep-alive holding the socket open — a thinking mark that spins
+        // until the person gives up, and every later rejoin attached to the
+        // same dead turn. A panic in here has to end the turn like any other
+        // ending, or one bad decode wedges the chat.
+        let drive = {
+            let turn = turn.clone();
+            let chat_id = chat_id.clone();
+            async move {
+                let mut agent_stream = agent_stream;
+                while let Some(data) = agent_stream.next().await {
+                    turn.push(data);
+                    // Nobody watching for the cap: stop spending on a reply no
+                    // one will read. The loop sees the token at its next step
+                    // and the row is saved as a stop, like the button.
+                    if turn.unattended_past(live_turn::UNATTENDED_CAP) {
+                        tracing::info!(chat_id = %chat_id, cap_secs = live_turn::UNATTENDED_CAP.as_secs(), "turn unattended past the cap; cancelling");
+                        cancel_state.cancel_unattended(&chat_id, &turn_token);
+                    }
+                }
+            }
+        };
+        if std::panic::AssertUnwindSafe(drive).catch_unwind().await.is_err() {
+            tracing::error!(chat_id = %chat_id, "the turn's driver panicked; ending the turn");
+            turn.push(serialize_event(&StreamEvent::Error {
+                error_text: "Your server failed while writing this reply.".to_string(),
+            }));
+            turn.push("[DONE]".to_string());
+        }
+        // After the stream's own tail (row written, usage recorded), so
+        // a watcher that sees the end can reload and find the row.
+        live_turns.finish(&chat_id, &turn);
+    });
 }
 
 /// GET /api/chat/{id}/stream — the turn still running for this chat, from
