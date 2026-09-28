@@ -32,6 +32,7 @@ use std::sync::Arc;
 use tokio_stream::StreamExt;
 
 use crate::agent::{AgentConfig, AgentLoop};
+use crate::api::chat_mode::ChatMode;
 use crate::api::chat_usage::{record_chat_usage, UsageData};
 use crate::api::chats::{append_message, ChatMessage};
 use crate::api::turn_recorder::{TurnRecorder, TurnUsage};
@@ -760,14 +761,6 @@ fn data_event<T: Serialize>(event_type: &str, id: Option<String>, data: T, trans
     })
 }
 
-/// Per-turn tool budgets in plain chat. Four searches: Anthropic puts a
-/// simple factual question at one to three, and the chat prompt asks for one
-/// parallel batch plus at most one more — and says "four" in words, which
-/// `the_chat_search_cap_is_the_one_the_prompt_states` holds it to. Deep
-/// research, sudo and skills are uncapped here; their ceilings are steps,
-/// cost and time.
-const CHAT_TOOL_CAPS: &[(&str, u32)] = &[("web_search", 4)];
-
 /// Maximum characters for page content in system prompt
 /// ~10K chars ≈ 2.5K tokens, leaving room for rest of context
 const MAX_PAGE_CONTENT_CHARS: usize = 10_000;
@@ -915,7 +908,7 @@ async fn build_system_prompt(
     pool: &PgPool,
     active_page: Option<&ActivePageContext>,
     timezone: Option<&str>,
-    agent_mode: &str,
+    mode: &ChatMode,
     project_id: Option<&str>,
 ) -> (String, String) {
     use crate::api::assistant_profile::get_assistant_name;
@@ -928,7 +921,7 @@ async fn build_system_prompt(
     // The narrative interview is a different room entirely: no tools, no
     // persona, no data context, no narrative-identity injection (the document
     // this conversation exists to create). Its prompt stands alone.
-    if agent_mode == "interview" {
+    if matches!(mode, ChatMode::Interview) {
         // The person's reply count is the one fact about progress the box can
         // vouch for; the prompt reads it as a floor on what can be covered.
         let their_replies = crate::api::narrative_draft::their_reply_count(pool)
@@ -946,7 +939,7 @@ async fn build_system_prompt(
 
     // Getting started: its own prompt plus the derived state, regenerated per
     // turn so the model never holds a step done that the rows say is open.
-    if agent_mode == crate::api::getting_started::AGENT_MODE {
+    if matches!(mode, ChatMode::GettingStarted) {
         let block = match crate::api::getting_started::compute(pool).await {
             Ok(s) => s.render_prompt_block(),
             Err(e) => {
@@ -966,7 +959,7 @@ async fn build_system_prompt(
         pool,
         active_page,
         timezone,
-        agent_mode,
+        mode,
         project_id,
         &assistant_name,
         &user_name,
@@ -984,7 +977,7 @@ async fn build_system_prompt_blocks(
     pool: &PgPool,
     active_page: Option<&ActivePageContext>,
     timezone: Option<&str>,
-    agent_mode: &str,
+    mode: &ChatMode,
     project_id: Option<&str>,
     assistant_name: &str,
     user_name: &str,
@@ -1016,7 +1009,7 @@ async fn build_system_prompt_blocks(
                     assistant_name,
                     user_name,
                     style_notes.as_deref(),
-                    agent_mode,
+                    mode.wire_name(),
                     &narrative_identity,
                 ))
             }),
@@ -1118,8 +1111,10 @@ async fn build_system_prompt_blocks(
         Block {
             meta: BlockMeta { tag: "skill", author: Author::System, mood: Mood::Imperative, rung: 60, cadence: Cadence::PerTurn },
             body: Box::pin(async move {
-                virtues_registry::skills::skill_named(agent_mode)
-                    .map(|s| format!("\n\n<skill name=\"{}\">\n{}\n</skill>", s.name, s.body))
+                match mode {
+                    ChatMode::Skill(s) => Some(format!("\n\n<skill name=\"{}\">\n{}\n</skill>", s.name, s.body)),
+                    _ => None,
+                }
             }),
         },
         // The open page's live content (Yjs is the source of truth).
@@ -1190,7 +1185,7 @@ fn build_active_page_block(active_page: Option<&ActivePageContext>) -> Option<St
 #[cfg(test)]
 pub(crate) async fn build_system_prompt_for_audit(pool: &PgPool) -> String {
     let (stable, volatile) =
-        build_system_prompt(pool, None, Some("America/Chicago"), "default", None).await;
+        build_system_prompt(pool, None, Some("America/Chicago"), &ChatMode::Chat, None).await;
     format!("{stable}{volatile}")
 }
 
@@ -1333,26 +1328,11 @@ async fn chat_handler_inner(
     State(live_turns): State<LiveTurns>,
     State(ghost_permissions): State<crate::api::chat_permissions::GhostPermissions>,
     _user: AuthUser,
-    Json(mut request): Json<ChatRequest>,
+    Json(request): Json<ChatRequest>,
 ) -> Response {
-    // The narrative interview is a MODE OF THE CHAT, decided by the chat id —
-    // never by what the client sent. Any surface that opens this conversation
-    // gets the interviewer (its standalone prompt, zero tools); no client can
-    // opt the interview into tools by sending a different agentMode.
-    if request.chat_id == crate::api::narrative_draft::INTERVIEW_CHAT_ID {
-        request.agent_mode = "interview".to_string();
-    }
-    // Getting started is the same kind of room: its mode is the chat id's —
-    // and, once the interview has begun inside it, the interviewer's.
-    if request.chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID {
-        request.agent_mode = match crate::api::getting_started::compute(&pool).await {
-            Ok(s) => s.agent_mode().to_string(),
-            Err(e) => {
-                tracing::warn!(error = %e, "getting-started state unavailable; setup mode");
-                crate::api::getting_started::AGENT_MODE.to_string()
-            }
-        };
-    }
+    // The turn's mode, decided once. Some chats are a mode by id (the
+    // interview, the getting-started room), whatever the client sent.
+    let mode = ChatMode::resolve(&pool, &request.chat_id, &request.agent_mode).await;
 
     if let Some(refusal) = reject_if_unready(&pool, &request, &live_turns, &cancel_state).await {
         return refusal;
@@ -1365,7 +1345,7 @@ async fn chat_handler_inner(
     let model = match crate::api::model_choice::resolve_turn_model(
         &pool,
         request.model.as_deref(),
-        &request.agent_mode,
+        mode.wire_name(),
     )
     .await
     {
@@ -1375,7 +1355,7 @@ async fn chat_handler_inner(
         Err(crate::error::Error::InvalidInput(detail)) => {
             tracing::warn!(
                 requested = ?request.model,
-                agent_mode = %request.agent_mode,
+                agent_mode = %mode.wire_name(),
                 "rejected per-turn model"
             );
             return (
@@ -1468,7 +1448,7 @@ async fn chat_handler_inner(
     // gets the marker, `system_tail` is the per-turn tail (the open page's live
     // text, and the rules that deliberately sit behind it) which must stay
     // OUTSIDE the cached block or it invalidates the prefix on every keystroke.
-    let (mut system_prompt, system_tail) = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, effective_project_id.as_deref()).await;
+    let (mut system_prompt, system_tail) = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &mode, effective_project_id.as_deref()).await;
     // Scoped (grounded) chat: retrieval is hard-filtered to the project's
     // items (ScopeMode::Exclusive in ToolContext); this line sets the matching
     // answer contract. Only meaningful inside a project.
@@ -1512,6 +1492,7 @@ async fn chat_handler_inner(
         yjs_state,
         cancel_state.clone(),
         request,
+        mode,
         model,
         effective_project_id,
         api_messages,
@@ -1898,6 +1879,9 @@ fn create_agent_stream(
     yjs_state: YjsState,
     cancel_state: ChatCancellationState,
     request: ChatRequest,
+    // Resolved once by the handler (`ChatMode::resolve`); never re-read off
+    // `request.agent_mode`.
+    mode: ChatMode,
     // Already resolved by `model_choice::resolve_turn_model` — passed in
     // rather than re-read off the request so the stream cannot disagree with
     // what the handler decided, or fall back to a default of its own.
@@ -1923,66 +1907,19 @@ fn create_agent_stream(
         // driver watches.
         let cancel_token = cancel_token;
 
-        // Determine max_steps based on agent mode
-        // - deep_research: 50 (read-only, needs more exploration)
-        // - council: 40 (gate + 1-2 dispatch rounds + synthesis; bounded)
-        // - chat / default: 20 (conversational, full tool access, multi-turn)
-        // The budgets beside the step ceiling: dollars the gateway reports
-        // and wall-clock. A step ceiling alone bounds nothing a person feels
-        // — twenty steps of a large model over a long context is real money,
-        // and twenty thirty-second tools is ten minutes. First figures,
-        // 2026-09-21; the journal line "turn stopped at its budget" is how
-        // they get revised.
-        //
-        // Plain chat also thinks at low effort and has a search budget.
-        // Effort governs how many tool calls a model makes as well as how
-        // long it thinks, and chat ran at the provider default — high, on
-        // most — which is how "what's on tonight" became thirteen searches.
-        // The other modes keep the model's default and no caps.
-        use crate::agent::{Thinking, TurnBudget};
-        let spend = |micros: i64, minutes: u64| TurnBudget {
-            max_cost_micros: Some(micros),
-            max_wall_clock: Some(std::time::Duration::from_secs(minutes * 60)),
-            tool_caps: &[],
-        };
-        let (max_steps, budget, thinking) =
-            match virtues_registry::skills::skill_named(&request.agent_mode) {
-                // A skill's ceilings come from its file.
-                Some(skill) => (
-                    skill.max_steps,
-                    spend((skill.max_cost_usd * 1_000_000.0).round() as i64, skill.max_minutes),
-                    Thinking::Default,
-                ),
-                None => match request.agent_mode.as_str() {
-                    "deep_research" => (50, spend(10_000_000, 25), Thinking::Default),
-                    // The owner's bypass: ceilings high enough that no real
-                    // admin session meets them. The dollar cap stays as the
-                    // one thing between a looping model and the bill.
-                    "sudo" => (500, spend(50_000_000, 4 * 60), Thinking::Default),
-                    // "chat" or default
-                    _ => (
-                        20,
-                        TurnBudget { tool_caps: CHAT_TOOL_CAPS, ..spend(2_500_000, 8) },
-                        Thinking::Low,
-                    ),
-                },
-            };
+        // The turn's ceilings: steps, dollars, wall-clock, effort, tool
+        // timeout. See `ChatMode::limits`.
+        let limits = mode.limits();
 
         // Create AgentLoop with YjsState for real-time page editing
         let agent = AgentLoop::new_with_yjs(pool.clone(), yjs_state)
         .with_config(AgentConfig {
-            max_steps,
-            // Sudo: a long restore or migration through sql_* must not be
-            // cut off at 30s. The shell has its own ceiling in agent::executor.
-            tool_timeout: if request.agent_mode == "sudo" {
-                std::time::Duration::from_secs(crate::tools::shell::MAX_TIMEOUT_SECS)
-            } else {
-                std::time::Duration::from_secs(30)
-            },
+            max_steps: limits.max_steps,
+            tool_timeout: limits.tool_timeout,
             parallel_tools: true,
-            thinking,
+            thinking: limits.thinking,
         })
-        .with_budget(budget);
+        .with_budget(limits.budget);
 
         // Side-channel for live Deep Research subagent status. The dispatch_subagents tool sends
         // worker updates on `subagent_tx`; the select! loop below drains `subagent_rx` and streams
@@ -2011,10 +1948,10 @@ fn create_agent_stream(
             worker_budget: Some(worker_budget),
             temporary,
             ghost_permissions: Some(ghost_permissions.clone()),
-            sudo: request.agent_mode == "sudo",
+            sudo: mode.is_sudo(),
         };
 
-        let tools = crate::tools::get_tools_for_agent_mode(&request.agent_mode);
+        let tools = mode.tools();
 
         // The message opens, then its first step; the recorder opens and
         // closes the parts inside each step, and the steps after this one.
@@ -2075,7 +2012,7 @@ fn create_agent_stream(
         let usage = recorder.usage();
         let subject = recorder.subject(was_cancelled, was_unattended);
         let message = recorder.into_message(&model, agent_id, subject);
-        persist_turn(&pool, &chat_id, &model, &request.agent_mode, temporary, message, usage).await;
+        persist_turn(&pool, &chat_id, &model, mode.wire_name(), temporary, message, usage).await;
 
         // Clean up cancellation token when stream ends
         cancel_state.remove(&chat_id, &cancel_token);
@@ -2259,13 +2196,6 @@ pub async fn cancel_chat_handler(
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_chat_search_cap_is_the_one_the_prompt_states() {
-        let cap = CHAT_TOOL_CAPS.iter().find(|(t, _)| *t == "web_search").map(|(_, n)| *n);
-        assert_eq!(cap, Some(4), "change the <web> block's \"Four searches\" with it");
-        assert!(crate::agent::prompt::AGENT_MODE_PROMPT.contains("Four searches is the most a turn gets"));
-    }
-
     /// The rules block is the one place where a silent failure means the box
     /// raises a subject someone asked it never to raise. These tests exist
     /// because that failure is invisible from the outside: the prompt still
@@ -2355,7 +2285,7 @@ mod tests {
     #[sqlx::test]
     async fn a_skill_rides_in_the_tail_and_chat_carries_none(pool: PgPool) {
         let (stable, volatile, rendered) = build_system_prompt_blocks(
-            &pool, None, Some("America/Chicago"), "council", None, "Ari", "Adam",
+            &pool, None, Some("America/Chicago"), &ChatMode::from_wire("council"), None, "Ari", "Adam",
         )
         .await;
         assert!(rendered.iter().any(|r| r.tag == "skill"), "council renders its skill block");
@@ -2365,7 +2295,7 @@ mod tests {
         assert!(!stable.contains("<page_tools>"), "council has no page tools, so no page guidance");
 
         let (stable, volatile, rendered) = build_system_prompt_blocks(
-            &pool, None, Some("America/Chicago"), "chat", None, "Ari", "Adam",
+            &pool, None, Some("America/Chicago"), &ChatMode::Chat, None, "Ari", "Adam",
         )
         .await;
         assert!(!rendered.iter().any(|r| r.tag == "skill"));
@@ -2380,7 +2310,7 @@ mod tests {
             .await
             .unwrap();
         let (stable, volatile, rendered) = build_system_prompt_blocks(
-            &pool, None, Some("America/Chicago"), "default", None, "Ari",
+            &pool, None, Some("America/Chicago"), &ChatMode::Chat, None, "Ari",
             "Adam",
         )
         .await;
@@ -2537,7 +2467,7 @@ mod live_prompt_audit {
                 &pool,
                 None,
                 Some("America/Chicago"),
-                "default",
+                &super::ChatMode::Chat,
                 nb,
             )
             .await;

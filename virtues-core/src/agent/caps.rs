@@ -1,6 +1,6 @@
 //! Per-turn tool budgets: a tool may be called at most N times in one turn.
 //!
-//! Plain chat caps `web_search` (see `CHAT_TOOL_CAPS` in api/chat.rs). A call
+//! Plain chat caps `web_search` (see `CHAT_TOOL_CAPS` in api/chat_mode.rs). A call
 //! past the cap is not run; it comes back as a failed result telling the model
 //! to answer with what it has, the same shape the repeat guard uses.
 //!

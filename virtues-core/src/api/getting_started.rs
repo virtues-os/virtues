@@ -22,7 +22,7 @@ use crate::middleware::auth::AuthUser;
 use crate::server::webhook::AppState;
 
 /// The room. Seeded at boot (`prod_seed`), undeletable and un-retitled by
-/// id (`chats.rs`), forced into [`AGENT_MODE`] by id (`chat_handler`).
+/// id (`chats.rs`), forced into [`AGENT_MODE`] by id (`ChatMode::resolve`).
 pub const GETTING_STARTED_CHAT_ID: &str = "chat_getting_started";
 
 /// The chat mode the room runs in: its own prompt, three tools, no data.
@@ -114,16 +114,6 @@ impl GettingStartedState {
     pub fn interview_underway(&self) -> bool {
         self.interview_started_at.is_some()
             && self.step("interview").map(|s| s.status != StepStatus::Done).unwrap_or(false)
-    }
-
-    /// Which prompt answers the room's next turn: the interviewer's while
-    /// the interview is underway, the setup guest's otherwise.
-    pub fn agent_mode(&self) -> &'static str {
-        if self.interview_underway() {
-            "interview"
-        } else {
-            AGENT_MODE
-        }
     }
 
     /// The state as the model reads it: one short block, regenerated per
