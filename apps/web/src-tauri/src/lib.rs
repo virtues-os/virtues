@@ -51,6 +51,8 @@ pub mod web_bundle;
 /// | 4 | `check_app_update_cmd` — manual check trigger for This Mac's ledger |
 /// | 5 | `reach|improv_owner_claim` — reopen a moved, offline server over
 /// |   | Bluetooth as its owner (`$lib/tauri/boxRadio.ts` gates on this) |
+/// | 6 | `reach|reach_rehome` — point the pairing at a moved server's new
+/// |   | address after it joins over Bluetooth (the `/reconnect` screen) |
 ///
 /// Note `bundle-contract.json` stays at `minShellVersion: 1`: every addition
 /// so far is called best-effort and the UI works fine without it, so requiring
@@ -58,7 +60,7 @@ pub mod web_bundle;
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 5;
+pub const COMMAND_SURFACE_VERSION: u32 = 6;
 
 /// What the native shell knows about itself.
 ///

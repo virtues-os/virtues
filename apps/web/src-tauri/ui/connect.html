@@ -709,7 +709,22 @@
         });
       }
 
+      // ON A PHONE, RECOVERY IS THE APP'S OWN SCREEN (2026-09-28). The baked
+      // SPA's `/reconnect` tells "refused" from "unreachable" from "offline"
+      // itself, and can put a moved server back on Wi-Fi over Bluetooth
+      // (apps/web/src/lib/components/recovery/). It ships in the same build
+      // as this page, and an OTA bundle is never older than the baked one,
+      // so the route is always there. Desktop shells that bake no SPA
+      // (Windows, Linux) keep the two screens below; the Mac never opens
+      // them (main.rs sends it to its own `/reconnect`).
+      function toReconnect() {
+        if (!IS_MOBILE) return false;
+        window.location.replace('/reconnect');
+        return true;
+      }
+
       function renderBoxUnreachable() {
+        if (toReconnect()) return;
         setServer('');
         app.innerHTML = `
           <h1>Can't reach your server</h1>
@@ -737,6 +752,7 @@
       }
 
       function renderBoxForgotUs() {
+        if (toReconnect()) return;
         setServer('');
         app.innerHTML = `
           <h1>Your server doesn't recognize ${THIS_DEVICE}</h1>

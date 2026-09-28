@@ -31,7 +31,7 @@ describe('fakeBoxRadio', () => {
 		const r = radio();
 		const [box] = await r.discover();
 		const link = await r.openSetup(box, 'mango-burly-skull-dough');
-		const err = await link.join({ ssid: 'Home', password: 'wrong' }).catch((e) => e);
+		const err = await link.join({ ssid: 'Home', password: 'wrongpassword' }).catch((e) => e);
 		expect(err).toBeInstanceOf(BoxRadioError);
 		expect(err.code).toBe('join-failed');
 		const stages: string[] = [];

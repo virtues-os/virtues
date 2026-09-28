@@ -18,6 +18,14 @@ pub(crate) async fn reach_status<R: Runtime>(app: AppHandle<R>) -> Result<ReachS
   Ok(app.reach().status().await)
 }
 
+/// Point this pairing at the address a moved server reported after joining a
+/// network over Bluetooth, and reconnect through it. Returns the live status.
+/// See `Reach::rehome`.
+#[command]
+pub(crate) async fn reach_rehome<R: Runtime>(app: AppHandle<R>, url: String) -> Result<ReachStatus> {
+  app.reach().rehome(&url).await
+}
+
 #[command]
 pub(crate) async fn forget<R: Runtime>(app: AppHandle<R>) -> Result<()> {
   app.reach().forget()

@@ -968,6 +968,57 @@ impl ReachState {
     Ok(self.status().await)
   }
 
+  /// The server moved: it joined a new network over its Bluetooth owner
+  /// session and reported the address it now answers on (`reported`, the
+  /// 0x01 join result). Point this pairing at it and swap in a connection
+  /// built from the updated record, so the loopback, uploads and the next
+  /// status probe all dial the new address.
+  ///
+  /// This is what makes a server WITHOUT a relay recoverable after a move.
+  /// Its pairing only knows LAN addresses from where it was set up, and
+  /// nothing else could learn the new one: `refresh_reach` asks the server
+  /// over the very LAN address that is now wrong. With a relay it is not
+  /// needed (iroh finds the server by its EndpointId), and it does no harm:
+  /// the relay path is kept and direct addresses only add routes.
+  ///
+  /// `box_url` is a hint, not an identity — [`build_client`] re-resolves its
+  /// host to the iroh port on every build, and every dial must still reach
+  /// the server's own EndpointId. The old direct addresses are kept on
+  /// purpose: they are where the server lives when it goes home again.
+  ///
+  /// An address that is not an http(s) origin (the server sends "" when it
+  /// has none yet) changes nothing and still returns the live status.
+  pub async fn rehome(&self, reported: &str) -> Result<ReachStatus> {
+    if let Some(origin) = virtues_reach_client::lan_origin(reported) {
+      let mut rec = self
+        .store
+        .load()?
+        .ok_or_else(|| Error::Reach("not paired".into()))?;
+      if rec.box_url != origin {
+        rec.box_url = origin;
+        self.store.save(&rec)?;
+      }
+      // Build BEFORE retiring the old client, so a failed build leaves the
+      // loopback with the connection it had rather than none.
+      match virtues_reach_client::build_client(&rec).await {
+        Ok(fresh) => {
+          let old = WARM_CLIENT.lock().ok().and_then(|mut g| g.replace(fresh));
+          stats::bump(|s| s.dials += 1);
+          if let Some(c) = old {
+            // Bounded, and off the caller's path: a dead QUIC teardown must
+            // not hold up the status the screen is waiting for.
+            tauri::async_runtime::spawn(async move {
+              let _ = tokio::time::timeout(std::time::Duration::from_secs(3), c.shutdown()).await;
+            });
+          }
+          tracing::info!("reach: re-homed onto the server's new address");
+        }
+        Err(e) => tracing::warn!(error = %format!("{e:#}"), "reach: re-home build failed; keeping the old connection"),
+      }
+    }
+    Ok(self.status().await)
+  }
+
   pub fn forget(&self) -> Result<()> {
     // Full teardown so a re-pair (even to a different box) serves fresh WITHOUT an
     // app restart: abort the loopback + drain tasks (frees the loopback port),
@@ -1113,6 +1164,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::improv_pair,
       commands::improv_disconnect,
       commands::improv_owner_claim,
+      commands::reach_rehome,
       commands::outbox_stats,
       commands::drain_now,
       commands::radio_stats,

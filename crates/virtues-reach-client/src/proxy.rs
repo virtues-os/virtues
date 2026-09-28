@@ -152,6 +152,29 @@ where
     }
 }
 
+/// The origin a server reported for itself after joining a network over its
+/// Bluetooth owner session (`http://192.168.1.50:8000`), normalized for
+/// `PairedBox::box_url` — or `None` when it is not something to dial.
+///
+/// Only a plain `http`/`https` origin with a host passes; a path, query or
+/// credentials are dropped rather than stored. The value is a HINT for where
+/// to find the server on the LAN ([`resolve_box_lan`] turns its host into the
+/// iroh address), never an identity: every dial still has to reach the
+/// server's own EndpointId, so a wrong address can only fail to connect.
+pub fn lan_origin(reported: &str) -> Option<String> {
+    let u = url::Url::parse(reported.trim()).ok()?;
+    if !matches!(u.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = u.host_str().filter(|h| !h.is_empty())?;
+    // IPv6 hosts come back bracketed from `host_str`, which is the form an
+    // origin needs.
+    Some(match u.port() {
+        Some(p) => format!("{}://{host}:{p}", u.scheme()),
+        None => format!("{}://{host}", u.scheme()),
+    })
+}
+
 /// Resolve the box's LAN host (from the paired `box_url`) to `IP:iroh_port`
 /// socket addresses to dial by NodeId. Re-resolved on each build, so a DHCP
 /// lease change never strands us. Best-effort: empty when the host can't be
@@ -170,5 +193,23 @@ pub async fn resolve_box_lan(box_url: &str) -> Vec<SocketAddr> {
             tracing::debug!(host, error = %e, "could not resolve box LAN host");
             Vec::new()
         }
+    }
+}
+
+#[cfg(test)]
+mod lan_origin_tests {
+    use super::lan_origin;
+
+    #[test]
+    fn a_reported_origin_is_kept_as_an_origin_and_nothing_else() {
+        assert_eq!(lan_origin("http://192.168.1.50:8000").as_deref(), Some("http://192.168.1.50:8000"));
+        assert_eq!(lan_origin(" http://10.0.0.7:8000/ ").as_deref(), Some("http://10.0.0.7:8000"));
+        assert_eq!(lan_origin("http://u:p@10.0.0.7:8000/x?y").as_deref(), Some("http://10.0.0.7:8000"));
+        assert_eq!(lan_origin("http://[fe80::1]:8000").as_deref(), Some("http://[fe80::1]:8000"));
+        // The box sends "" when it has no address yet; that must not
+        // overwrite a working one.
+        assert_eq!(lan_origin(""), None);
+        assert_eq!(lan_origin("file:///etc/passwd"), None);
+        assert_eq!(lan_origin("not a url"), None);
     }
 }

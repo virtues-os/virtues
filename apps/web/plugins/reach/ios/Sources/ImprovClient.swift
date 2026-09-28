@@ -66,32 +66,70 @@ final class ImprovClient: NSObject {
   /// Scan for Improv boxes for `seconds`, then hand back what was heard.
   /// Filtered on the service UUID, so only Virtues boxes (and other Improv
   /// devices — fine, the name disambiguates) ever appear.
-  func discover(seconds: Double, completion: @escaping ([[String: Any]]) -> Void) {
+  ///
+  /// Completes with `(boxes, reason)`. `reason` is set only when Bluetooth
+  /// itself can't scan (off, not allowed, not on this phone), in words for the
+  /// screen. Until 2026-09-28 this reported an empty list for all of those, so
+  /// "no server here" and "this phone can't look" were the same picture on a
+  /// screen that keeps searching. It also answered the FIRST scan after launch
+  /// with nothing: the central is created on first use and reports `.unknown`
+  /// until CoreBluetooth calls back, so this now waits for it to settle.
+  func discover(seconds: Double, completion: @escaping ([[String: Any]], String?) -> Void) {
     queue.async {
       self.found.removeAll()
-      guard self.central.state == .poweredOn else {
-        // Report empty rather than error: the JS treats "nothing found" and
-        // "no bluetooth" the same way — fall back to other discovery.
-        completion([])
-        return
-      }
-      self.central.scanForPeripherals(
-        withServices: [Self.serviceUUID],
-        options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
-      self.queue.asyncAfter(deadline: .now() + seconds) {
-        self.central.stopScan()
-        let list = self.found.map { (id, entry) -> [String: Any] in
-          [
-            "id": id.uuidString,
-            "name": entry.name,
-            // Byte 0 of the service data: 0x02 ready, 0x04 already online,
-            // 0x01 a claimed server that lost its network and wants its owner.
-            "improvState": Int(entry.state),
-            "rssi": entry.rssi,
-          ]
+      self.whenSettled(timeout: 3) { state in
+        guard state == .poweredOn else {
+          completion([], Self.describe(state))
+          return
         }
-        completion(list.sorted { ($0["rssi"] as! Int) > ($1["rssi"] as! Int) })
+        self.scan(seconds: seconds) { completion($0, nil) }
       }
+    }
+  }
+
+  /// Wait (on `queue`) until the central has left `.unknown`/`.resetting`, or
+  /// `timeout` passes, then hand over its state.
+  private func whenSettled(timeout: Double, _ then: @escaping (CBManagerState) -> Void) {
+    let state = central.state
+    if state != .unknown && state != .resetting || timeout <= 0 {
+      then(state)
+      return
+    }
+    queue.asyncAfter(deadline: .now() + 0.1) {
+      self.whenSettled(timeout: timeout - 0.1, then)
+    }
+  }
+
+  /// Why this phone can't scan, for a person. `nil` when it can.
+  static func describe(_ state: CBManagerState) -> String? {
+    switch state {
+    case .poweredOn: return nil
+    case .poweredOff: return "Bluetooth is off. Turn it on in Control Center or Settings, then look again."
+    case .unauthorized:
+      return "Virtues isn't allowed to use Bluetooth. Turn it on in Settings, then Privacy & Security, then Bluetooth."
+    case .unsupported: return "This phone can't use Bluetooth."
+    default: return "Bluetooth isn't ready yet. Look again in a moment."
+    }
+  }
+
+  /// The scan itself, on `queue`, once the central is powered on.
+  private func scan(seconds: Double, completion: @escaping ([[String: Any]]) -> Void) {
+    central.scanForPeripherals(
+      withServices: [Self.serviceUUID],
+      options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+    queue.asyncAfter(deadline: .now() + seconds) {
+      self.central.stopScan()
+      let list = self.found.map { (id, entry) -> [String: Any] in
+        [
+          "id": id.uuidString,
+          "name": entry.name,
+          // Byte 0 of the service data: 0x02 ready, 0x04 already online,
+          // 0x01 a claimed server that lost its network and wants its owner.
+          "improvState": Int(entry.state),
+          "rssi": entry.rssi,
+        ]
+      }
+      completion(list.sorted { ($0["rssi"] as! Int) > ($1["rssi"] as! Int) })
     }
   }
 
