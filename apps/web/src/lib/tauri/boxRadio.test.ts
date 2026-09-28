@@ -54,7 +54,13 @@ describe('fakeBoxRadio', () => {
 });
 
 describe('boxLabel', () => {
-	it('turns the advertised codename into a name for people', () => {
+	it("keeps the brand on a number, the way the server's screen says it", () => {
+		expect(boxLabel('Virtues-4812')).toBe('Virtues 4812');
+		expect(boxLabel('[Virtues-0371]')).toBe('Virtues 0371');
+		expect(boxLabel('Virtues 4812')).toBe('Virtues 4812');
+	});
+
+	it("turns an older server's codename into a name for people", () => {
 		expect(boxLabel('Virtues-Quaint-Tern')).toBe('Quaint Tern');
 		// A leading bracket arrived from CoreBluetooth once (2026-08-13).
 		expect(boxLabel('[Virtues Honest Kestrel')).toBe('Honest Kestrel');

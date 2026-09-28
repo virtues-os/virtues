@@ -75,18 +75,17 @@ where
 }
 
 pub async fn start(db: &PgPool, http: &reqwest::Client, atlas_url: &str) -> Result<LinkStart> {
-    // Who is asking. Atlas puts this on the verification page — "Link Honest
-    // Kestrel · Dragon Q6A" — so the person signing in can check the name
+    // Who is asking. Atlas puts this on the verification page — "Link Virtues
+    // 4812 · Dragon Q6A" — so the person signing in can check the name
     // against the one on the box's own screen. That check is the mitigation
     // for code-phishing (an attacker showing THEIR code to a victim), so the
     // identity must come from the box, not be typed by the person. Every
     // field is advisory: atlas tolerates its absence (older boxes send no
     // body), and `endpoint_id` is None in the rare pre-bind race.
-    let name = crate::codename::box_codename();
     let identity = serde_json::json!({
         "box": {
-            "name": name,
-            "label": crate::codename::pretty(&name),
+            "name": format!("virtues-{}", crate::codename::box_number()),
+            "label": crate::api::identity::box_label(db).await,
             "model": crate::maintenance::setup_ap::is_appliance().then_some("Dragon Q6A"),
             "endpoint_id": crate::relay::box_endpoint_id(),
             "version": crate::VERSION,

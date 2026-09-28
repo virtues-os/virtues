@@ -47,9 +47,9 @@ export type BoxRadioState = 'needs-wifi' | 'online' | 'needs-owner' | 'unknown';
 export interface NearbyBox {
 	/** Opaque handle, valid until the next `discover`. Never parse it. */
 	id: string;
-	/** The server's codename as it advertises, e.g. `Virtues-Quaint-Tern`. */
+	/** The server's radio name, e.g. `Virtues-4812` (older ones: `Virtues-Quaint-Tern`). */
 	name: string;
-	/** The same name for people: `Quaint Tern`, or `Your server`. Show this. */
+	/** The same name for people: `Virtues 4812`, or `Your server`. Show this. */
 	label: string;
 	/** Signal strength; closest first is how a person breaks a tie. */
 	rssi: number;
@@ -169,20 +169,23 @@ export const OWNER_CLAIM_SURFACE = 5;
 // ─── shared helpers ─────────────────────────────────────────────────────────
 
 /**
- * `Virtues-Quaint-Tern` → `Quaint Tern`. Idempotent. Strips the brand prefix,
- * stray punctuation some Bluetooth stacks hand back (a leading `[` was seen
- * live, 2026-08-13), and the client's own `Virtues box` fallback, which would
- * otherwise read as "Setting up box".
+ * `Virtues-4812` → `Virtues 4812`, the way the server's own screen says it.
+ * Idempotent. A server named by its number keeps the brand, since "4812"
+ * alone reads as nothing (2026-09-28, when the number replaced the codename);
+ * an older server's codename drops it (`Virtues-Quaint-Tern` → `Quaint
+ * Tern`). Strips stray punctuation some Bluetooth stacks hand back (a leading
+ * `[` was seen live, 2026-08-13) and the client's own `Virtues box` fallback,
+ * which would otherwise read as "Setting up box".
  */
 export function boxLabel(name: string | null | undefined): string {
-	return (
-		String(name || '')
-			.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '')
-			.replace(/^Virtues[-_ ]?/i, '')
-			.replace(/[-_]+/g, ' ')
-			.replace(/^box$/i, '')
-			.trim() || 'Your server'
-	);
+	const rest = String(name || '')
+		.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '')
+		.replace(/^Virtues[-_ ]?/i, '')
+		.replace(/[-_]+/g, ' ')
+		.replace(/^box$/i, '')
+		.trim();
+	if (/^\d+$/.test(rest)) return `Virtues ${rest}`;
+	return rest || 'Your server';
 }
 
 /**
@@ -478,7 +481,7 @@ export function fakeBoxRadio(opts: FakeRadioOptions = {}): BoxRadio {
 	const speed = opts.speed ?? 1;
 	const wait = (ms: number) => new Promise((r) => setTimeout(r, ms * speed));
 	const boxes = opts.boxes ?? [
-		{ id: 'fake-1', name: 'Virtues-Quaint-Tern', label: 'Quaint Tern', rssi: -52, state: 'needs-wifi' as const }
+		{ id: 'fake-1', name: 'Virtues-4812', label: 'Virtues 4812', rssi: -52, state: 'needs-wifi' as const }
 	];
 	const phrase = opts.phrase ?? 'mango-burly-skull-dough';
 	const bad = opts.badPassword ?? 'wrong';
@@ -579,8 +582,8 @@ function pick(): BoxRadio {
 		// A server that moved, too, so the owner path can be walked in a browser.
 		return fakeBoxRadio({
 			boxes: [
-				{ id: 'fake-1', name: 'Virtues-Quaint-Tern', label: 'Quaint Tern', rssi: -52, state: 'needs-wifi' },
-				{ id: 'fake-2', name: 'Virtues-Honest-Kestrel', label: 'Honest Kestrel', rssi: -60, state: 'needs-owner' }
+				{ id: 'fake-1', name: 'Virtues-4812', label: 'Virtues 4812', rssi: -52, state: 'needs-wifi' },
+				{ id: 'fake-2', name: 'Virtues-0371', label: 'Virtues 0371', rssi: -60, state: 'needs-owner' }
 			]
 		});
 	}

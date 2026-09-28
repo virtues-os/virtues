@@ -25,13 +25,31 @@ use axum::{extract::State, response::IntoResponse, Json};
 
 use crate::server::AppState;
 
+/// What people call this box, everywhere it is named for a person: its
+/// screen, the app's list, Settings. "Virtues 4812" until it has an owner;
+/// after, its assistant's: "Ari's server" (setup-plan.md, "one name": the
+/// name belongs to the assistant, the hardware takes the possessive).
+///
+/// The radio name stays machine-shaped (`Virtues-4812`, `setup_ap::ap_ssid`):
+/// a claimed box only advertises while it is offline, and an apostrophe has
+/// no business in an SSID.
+pub async fn box_label(pool: &sqlx::PgPool) -> String {
+    if crate::api::pair::is_unclaimed(pool).await {
+        return format!("Virtues {}", crate::codename::box_number());
+    }
+    match crate::api::assistant_profile::get_assistant_name(pool).await {
+        Ok(name) if !name.trim().is_empty() => format!("{}'s server", name.trim()),
+        _ => "Your server".into(),
+    }
+}
+
 pub async fn identity_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let name = crate::codename::box_codename();
     let pool = state.db.pool();
     Json(serde_json::json!({
-        // Kebab for machines ("quaint-tern"), label for humans ("Quaint Tern").
-        "name": name,
-        "label": crate::codename::pretty(&name),
+        // Machine-shaped ("virtues-4812") and for people ("Virtues 4812",
+        // then "Ari's server"). Older apps read `label` as it is.
+        "name": format!("virtues-{}", crate::codename::box_number()),
+        "label": box_label(pool).await,
         // Fails CLOSED — a DB blip must not tell the LAN this box is unclaimed.
         "claimed": !crate::api::pair::is_unclaimed(pool).await,
         // Setup's step 2, as one bit — see the module docs.
