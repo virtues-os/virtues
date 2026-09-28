@@ -227,6 +227,10 @@ pub struct ChatRequest {
     /// token counts, no content, no chat id.
     #[serde(default)]
     pub temporary: bool,
+    /// Local mode only: whether the small model reasons before answering.
+    /// Every other mode's thinking is the mode's own (`ChatMode::limits`).
+    #[serde(default)]
+    pub think: bool,
 }
 
 /// A ghost chat's history, as the client sent it. The box stores nothing for
@@ -552,6 +556,10 @@ pub enum StreamEvent {
         tokens: u32,
     },
 
+    // A local turn's own measurements, for the line under the reply.
+    #[serde(rename = "local-stats")]
+    LocalStats(crate::local_model::Stats),
+
     // Checkpoint event emitted after auto-compaction
     #[serde(rename = "checkpoint")]
     Checkpoint {
@@ -744,6 +752,9 @@ pub(crate) fn serialize_event(event: &StreamEvent) -> String {
             },
             true,
         ),
+        // Transient: a local chat is never stored, so there is nothing to
+        // reload it into.
+        StreamEvent::LocalStats(stats) => data_event("data-local-stats", None, stats, true),
         // All other events use standard serde serialization
         _ => serde_json::to_string(event).unwrap_or_else(|e| {
             tracing::error!("Failed to serialize stream event: {}", e);
@@ -1334,6 +1345,12 @@ async fn chat_handler_inner(
     // interview, the getting-started room), whatever the client sent.
     let mode = ChatMode::resolve(&pool, &request.chat_id, &request.agent_mode).await;
 
+    // A local turn has no cloud step, so it leaves before the first one: no
+    // model choice, no readiness check for a gateway it never calls, no row.
+    if matches!(mode, ChatMode::Local) {
+        return crate::api::local_chat::run(request, live_turns, cancel_state);
+    }
+
     if let Some(refusal) = reject_if_unready(&pool, &request, &live_turns, &cancel_state).await {
         return refusal;
     }
@@ -1796,7 +1813,7 @@ async fn load_history(pool: &PgPool, request: &ChatRequest) -> Result<History, R
 
 /// Drive the turn's stream in its own task, pushing each line to the live
 /// turn's watchers, and end the turn for all of them however the stream ends.
-fn spawn_turn_driver(
+pub(crate) fn spawn_turn_driver(
     agent_stream: Pin<Box<dyn Stream<Item = String> + Send>>,
     turn: Arc<live_turn::LiveTurn>,
     turn_token: CancellationToken,
@@ -1859,7 +1876,7 @@ pub async fn live_turn_stream_handler(
 
 /// An SSE response in the AI SDK's UI Message Stream protocol (the header
 /// is what the SDK keys on).
-fn ui_stream_response<S>(stream: S) -> Response
+pub(crate) fn ui_stream_response<S>(stream: S) -> Response
 where
     S: Stream<Item = Result<SseEvent, Infallible>> + Send + 'static,
 {
@@ -2145,7 +2162,7 @@ async fn persist_turn(
 }
 
 /// Generate a random ID for messages
-fn generate_id() -> String {
+pub(crate) fn generate_id() -> String {
     use rand::Rng;
     let mut rng = rand::rng();
     let bytes: [u8; 8] = rng.random();
