@@ -8992,6 +8992,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tokio",
+ "virtues-qairt",
 ]
 
 [[package]]
@@ -9018,6 +9019,19 @@ dependencies = [
  "tokio",
  "uniffi",
  "virtues-iroh",
+]
+
+[[package]]
+name = "virtues-qairt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "hex",
+ "reqwest 0.12.28",
+ "rustls 0.23.44",
+ "sha2 0.10.9",
+ "tempfile",
 ]
 
 [[package]]
