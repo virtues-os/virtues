@@ -36,6 +36,11 @@ pub fn routes() -> Router<AppState> {
         .route("/api/chat", post(chat_handler))
         .route("/api/chat/cancel", post(cancel_chat_handler))
         .route("/api/chat/:id/stream", get(live_turn_stream_handler))
+        // Local mode: the model's status and its one-time download
+        .route(
+            "/api/local-model",
+            get(crate::api::local_chat::status_handler).post(crate::api::local_chat::download_handler),
+        )
         .route("/api/ai/complete", post(ai_complete_handler))
         // Chat Edit Permissions API
         .route(

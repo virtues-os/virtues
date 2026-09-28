@@ -8823,6 +8823,7 @@ dependencies = [
  "virtues-helpers",
  "virtues-improv",
  "virtues-iroh",
+ "virtues-qairt",
  "virtues-registry",
  "y-sync",
  "yrs 0.18.8",

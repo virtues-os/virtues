@@ -486,7 +486,9 @@ pub fn build_personalized_prompt(
         prompt.push_str(PAGE_TOOL_PROMPT);
     }
     match mode {
-        ChatMode::Skill(_) => {}
+        // A local turn's only system message is `local_model::SAFETY_PROMPT`;
+        // the handler hands it off before any prompt is built.
+        ChatMode::Skill(_) | ChatMode::Local => {}
         ChatMode::DeepResearch => prompt.push_str(DEEP_RESEARCH_MODE_PROMPT),
         ChatMode::Sudo => {
             prompt.push_str(&AGENT_MODE_PROMPT.replace("<mode>chat</mode>", "<mode>sudo</mode>"));

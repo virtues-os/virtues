@@ -42,6 +42,10 @@ pub enum ChatMode {
     GettingStarted,
     /// A skill file (`skills/*/SKILL.md`): its tools, ceilings and body.
     Skill(Skill),
+    /// A small model on the Dragon's NPU, and nowhere else. The handler hands
+    /// the whole turn to `local_model` before any cloud step: no slot, no
+    /// tools, no prompt from here, nothing stored. See `api::local_chat`.
+    Local,
 }
 
 /// A turn's ceilings. See [`ChatMode::limits`].
@@ -61,6 +65,7 @@ impl ChatMode {
             "sudo" => Self::Sudo,
             "deep_research" => Self::DeepResearch,
             "interview" => Self::Interview,
+            "local" => Self::Local,
             getting_started::AGENT_MODE => Self::GettingStarted,
             other => virtues_registry::skills::skill_named(other).map_or(Self::Chat, Self::Skill),
         }
@@ -98,6 +103,7 @@ impl ChatMode {
             Self::Interview => "interview",
             Self::GettingStarted => getting_started::AGENT_MODE,
             Self::Skill(skill) => &skill.name,
+            Self::Local => "local",
         }
     }
 
@@ -132,6 +138,9 @@ impl ChatMode {
             // session meets them. The dollar cap stays as the one thing
             // between a looping model and the bill.
             Self::Sudo => (500, spend(50_000_000, 4 * 60), Thinking::Default),
+            // One generation, no tools, no gateway, so no cost. The runner
+            // holds its own wall-clock limit (`local_model::TURN_TIME_LIMIT`).
+            Self::Local => (1, spend(0, 12), Thinking::Default),
             Self::Chat | Self::Interview | Self::GettingStarted => (
                 20,
                 TurnBudget { tool_caps: CHAT_TOOL_CAPS, ..spend(2_500_000, 8) },
@@ -174,6 +183,8 @@ impl ChatMode {
             Self::Skill(skill) => {
                 tools_named(&skill.tools.iter().map(String::as_str).collect::<Vec<_>>())
             }
+            // A 0.6B model can't use tools, and a tool would reach the record.
+            Self::Local => Vec::new(),
         }
     }
 
@@ -221,7 +232,7 @@ mod tests {
     }
 
     fn all_modes() -> Vec<ChatMode> {
-        ["chat", "sudo", "deep_research", "interview", "getting_started", "council"]
+        ["chat", "sudo", "deep_research", "interview", "getting_started", "council", "local"]
             .into_iter()
             .map(ChatMode::from_wire)
             .collect()
@@ -236,12 +247,13 @@ mod tests {
 
     #[test]
     fn every_known_wire_name_round_trips() {
-        for name in ["chat", "sudo", "deep_research", "interview", "getting_started", "council"] {
+        for name in ["chat", "sudo", "deep_research", "interview", "getting_started", "council", "local"] {
             assert_eq!(ChatMode::from_wire(name).wire_name(), name);
         }
         assert!(matches!(ChatMode::from_wire("sudo"), ChatMode::Sudo));
         assert!(matches!(ChatMode::from_wire("deep_research"), ChatMode::DeepResearch));
         assert!(matches!(ChatMode::from_wire("interview"), ChatMode::Interview));
+        assert!(matches!(ChatMode::from_wire("local"), ChatMode::Local));
         assert!(matches!(ChatMode::from_wire("getting_started"), ChatMode::GettingStarted));
         assert!(matches!(ChatMode::from_wire("council"), ChatMode::Skill(ref s) if s.name == "council"));
     }
