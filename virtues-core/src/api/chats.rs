@@ -607,6 +607,70 @@ pub async fn update_chat(
     })
 }
 
+/// A chat's whole transcript, in order, as the model and the context gauge
+/// read it: every row, checkpoints included, with the jsonb columns decoded.
+///
+/// The transcript the person sees (`get_chat`) is not this — it hides the
+/// onboarding trigger rows and answers in its own response shape.
+pub async fn load_messages(pool: &PgPool, chat_id: &str) -> Result<Vec<ChatMessage>> {
+    use sqlx::Row;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            id, role, content, created_at,
+            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details, parts
+        FROM app_chat_messages
+        WHERE chat_id = $1
+        ORDER BY sequence_num ASC
+        "#,
+    )
+    .bind(chat_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let id: String = row.get("id");
+            // Columns are jsonb; read as serde_json::Value, not String.
+            let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
+            let intent_raw: Option<serde_json::Value> = row.get("intent");
+            // `parts` carries the attachments and the turn's order; the
+            // gauge needs the first to see a PDF, the model the second.
+            let parts_raw: Option<serde_json::Value> = row.get("parts");
+
+            // A shape these no longer understand is a turn that silently
+            // loses its tool calls or its order and falls back to flat text —
+            // which reads as "this message had no tools" rather than as a
+            // bug, so it says so out loud.
+            let tool_calls = tool_calls_raw.and_then(|tc| {
+                serde_json::from_value(tc)
+                    .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
+                    .ok()
+            });
+            let intent = intent_raw.and_then(|i| serde_json::from_value(i).ok());
+            let parts = parts_raw.and_then(|p| crate::api::chat::parts_from_jsonb(p, &id));
+
+            ChatMessage {
+                id: Some(id),
+                role: row.get("role"),
+                content: row.get("content"),
+                timestamp: row.get("created_at"),
+                model: row.get("model"),
+                provider: row.get("provider"),
+                agent_id: row.get("agent_id"),
+                reasoning: row.get("reasoning"),
+                tool_calls,
+                intent,
+                subject: row.get("subject"),
+                reasoning_details: row.get("reasoning_details"),
+                parts,
+            }
+        })
+        .collect())
+}
+
 /// Append a message to a chat (atomic INSERT - no race conditions!)
 ///
 /// Returns the generated message ID for the newly inserted message.
@@ -972,5 +1036,50 @@ mod tests {
         assert!(json.contains("\"content\":\"Hello\""));
         // Optional fields should not be present when None
         assert!(!json.contains("\"model\""));
+    }
+
+    /// The model's view of a chat: every row in order, jsonb decoded.
+    #[sqlx::test]
+    async fn load_messages_reads_every_row_in_order(pool: PgPool) {
+        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ('chat_lm', 't', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut user = ChatMessage {
+            id: Some("m_user".into()),
+            role: "user".into(),
+            content: "hi".into(),
+            timestamp: Timestamp::now(),
+            model: None,
+            provider: None,
+            agent_id: None,
+            tool_calls: None,
+            reasoning: None,
+            intent: None,
+            subject: None,
+            reasoning_details: None,
+            parts: Some(vec![UIPart::Text { text: "hi".into() }]),
+        };
+        append_message(&pool, "chat_lm".into(), user.clone()).await.unwrap();
+        user.id = Some("m_reply".into());
+        user.role = "assistant".into();
+        user.content = "hello".into();
+        user.subject = Some("interrupted".into());
+        user.tool_calls = Some(vec![ToolCall {
+            tool_name: "sql_query".into(),
+            tool_call_id: Some("c1".into()),
+            arguments: serde_json::json!({"q": 1}),
+            result: None,
+            timestamp: "2026-09-28T00:00:00Z".into(),
+        }]);
+        append_message(&pool, "chat_lm".into(), user).await.unwrap();
+
+        let got = load_messages(&pool, "chat_lm").await.unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].id.as_deref(), Some("m_user"));
+        assert!(matches!(got[0].parts.as_deref(), Some([UIPart::Text { .. }])));
+        assert_eq!(got[1].role, "assistant");
+        assert_eq!(got[1].subject.as_deref(), Some("interrupted"));
+        assert_eq!(got[1].tool_calls.as_ref().map(|t| t[0].tool_name.as_str()), Some("sql_query"));
     }
 }

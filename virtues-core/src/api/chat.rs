@@ -1777,57 +1777,53 @@ async fn chat_handler_inner(
         }
     };
 
-    use sqlx::Row;
-
-    // Load chat from DB and build context with compaction summary
-    let (conversation_summary, summary_up_to_index): (Option<String>, i64) = if temporary {
-        (None, 0)
-    } else {
-        match sqlx::query(
-            r#"SELECT conversation_summary, summary_up_to_index
-               FROM app_chats WHERE id = $1"#,
-        )
-        .bind(&chat_id_str)
-        .fetch_one(&pool)
-        .await
-        {
-            Ok(row) => (row.get("conversation_summary"), row.get("summary_up_to_index")),
-            Err(e) => {
-                tracing::error!("Failed to load chat: {}", e);
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ChatError {
-                        error: "Failed to load chat".to_string(),
-                        // Logged above; the raw database error does not
-                        // travel to the browser.
-                        details: None,
-                    }),
-                )
-                    .into_response();
+    // The chat row: its compaction summary, and its room. The room is read
+    // from the persisted row (single source of truth) so the active-project
+    // context always matches the binding, even if a stale client sends a
+    // different per-message projectId; the create path above already bound a
+    // new chat from request.project_id, so the row is current by now.
+    //
+    // `project_id` decodes as `Option<String>` on purpose: the column is
+    // nullable (and the FK is ON DELETE SET NULL), so an unbound chat
+    // legitimately reads NULL. A failed read is a 500, never a None: None
+    // reads as "not in a project", so a swallowed error would silently unscope
+    // a scoped chat — retrieval stops being hard-filtered and the answer
+    // contract below is dropped. A ghost chat has no row; the request is the
+    // binding.
+    let (conversation_summary, summary_up_to_index, effective_project_id): (Option<String>, i64, Option<String>) =
+        if temporary {
+            (None, 0, request.project_id.clone())
+        } else {
+            match sqlx::query_as::<_, (Option<String>, i64, Option<String>)>(
+                "SELECT conversation_summary, summary_up_to_index, project_id FROM app_chats WHERE id = $1",
+            )
+            .bind(&chat_id_str)
+            .fetch_one(&pool)
+            .await
+            {
+                Ok(row) => row,
+                Err(e) => {
+                    tracing::error!("Failed to load chat: {}", e);
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ChatError {
+                            error: "Failed to load chat".to_string(),
+                            // Logged above; the raw database error does not
+                            // travel to the browser.
+                            details: None,
+                        }),
+                    )
+                        .into_response();
+                }
             }
-        }
-    };
+        };
 
     // The transcript: the box's rows, or for a ghost chat the client's copy.
     let messages: Vec<ChatMessage> = if temporary {
         ghost_history(&request.messages)
     } else {
-        // Load messages from normalized table
-        let message_rows = match sqlx::query(
-            r#"
-            SELECT
-                id, role, content, created_at, model, provider, agent_id,
-                reasoning, tool_calls, intent, subject, reasoning_details, parts
-            FROM app_chat_messages
-            WHERE chat_id = $1
-            ORDER BY sequence_num ASC
-            "#,
-        )
-        .bind(&chat_id_str)
-        .fetch_all(&pool)
-        .await
-        {
-            Ok(rows) => rows,
+        match crate::api::chats::load_messages(&pool, &chat_id_str).await {
+            Ok(messages) => messages,
             Err(e) => {
                 tracing::error!("Failed to load messages for chat {}: {}", chat_id_str, e);
                 return (
@@ -1841,98 +1837,6 @@ async fn chat_handler_inner(
                 )
                     .into_response();
             }
-        };
-
-        // Convert rows to ChatMessage
-        message_rows
-            .into_iter()
-            .map(|msg| {
-                let id: String = msg.get("id");
-                let role: String = msg.get("role");
-                let content: String = msg.get("content");
-                let created_at: Timestamp = msg.get("created_at");
-                let model: Option<String> = msg.get("model");
-                let provider: Option<String> = msg.get("provider");
-                let agent_id: Option<String> = msg.get("agent_id");
-                let reasoning: Option<String> = msg.get("reasoning");
-                // Columns are jsonb; read as serde_json::Value, not String
-                let tool_calls_raw: Option<serde_json::Value> = msg.get("tool_calls");
-                let intent_raw: Option<serde_json::Value> = msg.get("intent");
-                let subject: Option<String> = msg.get("subject");
-                let reasoning_details: Option<serde_json::Value> = msg.get("reasoning_details");
-                let parts_raw: Option<serde_json::Value> = msg.get("parts");
-
-                // Parse JSON fields. A shape these no longer understand is a
-                // turn that silently loses its tool calls or its order and
-                // falls back to flat text — the kind of thing that reads as
-                // "this message had no tools" rather than as a bug, so it says
-                // so out loud.
-                let tool_calls = tool_calls_raw.and_then(|t| {
-                    serde_json::from_value(t)
-                        .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
-                        .ok()
-                });
-                let intent = intent_raw.and_then(|i| serde_json::from_value(i).ok());
-                let parts = parts_raw.and_then(|p| parts_from_jsonb(p, &id));
-
-                ChatMessage {
-                    id: Some(id),
-                    role,
-                    content,
-                    timestamp: created_at,
-                    model,
-                    provider,
-                    agent_id,
-                    parts,
-                    reasoning,
-                    tool_calls,
-                    intent,
-                    subject,
-                    reasoning_details,
-                }
-            })
-            .collect()
-    };
-
-    // Resolve the chat's room from the persisted row (single source of truth) so
-    // the active-project context always matches the binding, even if a stale client
-    // sends a different per-message projectId. The create path above already bound a
-    // new chat from request.project_id, so the row is current by now.
-    // Decoded as `Option<String>` on purpose: `app_chats.project_id` is nullable
-    // (and the FK is ON DELETE SET NULL), so an unbound chat legitimately reads
-    // NULL. Scalar-typing it as `String` would make that NULL a decode *error* —
-    // which is what the old `.ok()` was really swallowing, alongside every real
-    // query failure. A swallow here is not cosmetic: None reads as "not in a
-    // project", so a broken query silently unscopes a scoped chat — retrieval
-    // stops being hard-filtered and the answer contract below is dropped.
-    // A ghost chat has no row to read it from; the request is the binding.
-    let effective_project_id: Option<String> = if temporary {
-        request.project_id.clone()
-    } else {
-        match sqlx::query_scalar::<_, Option<String>>(
-        r#"SELECT project_id FROM app_chats WHERE id = $1"#,
-    )
-    .bind(&chat_id_str)
-    .fetch_optional(&pool)
-    .await
-    {
-        // Outer None = no such row, inner None = bound to no project.
-        Ok(project_id) => project_id.flatten(),
-        Err(e) => {
-            tracing::error!("Failed to resolve project for chat {}: {}", chat_id_str, e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ChatError {
-                    error: "Failed to resolve chat project".to_string(),
-                    // The error is already logged above. `sqlx::Error`'s
-                    // Display carries the Postgres message and often the
-                    // column or constraint name, and this JSON goes to a
-                    // browser.
-                    details: None,
-                }),
-            )
-                .into_response();
-        }
         }
     };
 
