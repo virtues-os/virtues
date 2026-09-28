@@ -213,7 +213,7 @@
 					onclick={() => go(route, p.name || "Project")}
 				>
 					<span class="chat-title with-glyph">
-						<ProjectGlyph icon={p.icon} color={p.accent_color} size={16} />
+						<ProjectGlyph project={p} size={16} />
 						<span class="title-text">{p.name || "Untitled"}</span>
 					</span>
 					<span class="chat-when">{p.chat_count === 1 ? "1 chat" : `${p.chat_count} chats`}</span>
@@ -236,7 +236,7 @@
 				     tinted glyph. -->
 				<span class="chat-when" class:with-glyph={!!home}>
 					{#if home}
-						<ProjectGlyph icon={home.icon} color={home.accent_color} size={12} />
+						<ProjectGlyph project={home} size={12} />
 						<span class="title-text">{home.name} · {when(s.last_message_at || s.first_message_at)}</span>
 					{:else}
 						{when(s.last_message_at || s.first_message_at)}
@@ -378,7 +378,10 @@
 
 	/* A row that is two controls: the word and a + at its right edge. The
 	   outer keeps the row's box; the inner buttons split it. */
-	.row-split {
+	/* Qualified, not bare: `.row` below sets the row's padding and, as the
+	   later rule of equal weight, won; the inner button pads itself too, so
+	   Pages sat 10px right of every other door. */
+	.row.row-split {
 		padding: 0;
 	}
 	.row-main {

@@ -75,7 +75,7 @@
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
 	import { notifyArchived, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { toast } from 'svelte-sonner';
-	import { accentCss, clothFor } from '$lib/sidebar/pin-colors';
+	import { clothFor, projectColor } from '$lib/sidebar/pin-colors';
 	import { isEmoji, PROJECT_ICON } from '$lib/utils/iconHelpers';
 	import {
 		droppedRefUrl,
@@ -740,7 +740,7 @@
 	{@const url = chatRoute(session)}
 	{@const pinned = isPinned(url)}
 	{@const home = session.project_id ? projectStore.byId(session.project_id) : undefined}
-	{@const tint = accentCss(home?.accent_color)}
+	{@const tint = home ? projectColor(home) : null}
 	<div
 		class="panel-row panel-row-has-actions"
 		class:active={activeRoute === url}
@@ -950,7 +950,7 @@
 					oncontextmenu={(e) => showMenu(e, projectMenu(project))}
 				>
 					<span class="row-glyph" aria-hidden="true">
-						<ProjectGlyph icon={project.icon} color={project.accent_color} size={15} />
+						<ProjectGlyph {project} size={15} />
 					</span>
 					<span class="panel-row-text">{project.name}</span>
 					<span class="row-actions">
@@ -1026,7 +1026,7 @@
 	<HoverCard anchor={card.anchor} onenter={holdCard} onleave={disarmCard}>
 		<div class="card-head">
 			<span class="card-glyph" aria-hidden="true">
-				<ProjectGlyph icon={cardProject.icon} color={cardProject.accent_color} size={16} />
+				<ProjectGlyph project={cardProject} size={16} />
 			</span>
 			<span class="card-name">{cardProject.name}</span>
 			<button

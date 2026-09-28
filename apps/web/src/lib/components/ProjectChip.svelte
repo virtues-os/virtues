@@ -31,7 +31,7 @@
 	{onclick}
 	{oncontextmenu}
 >
-	<ProjectGlyph icon={project.icon} color={project.accent_color} size={bar ? 15 : 14} />
+	<ProjectGlyph {project} size={bar ? 15 : 14} />
 	<span class="name">{project.name}</span>
 	{#if project.archived_at}
 		<span class="note">Archived</span>
