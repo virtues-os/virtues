@@ -4,10 +4,13 @@
  * (agents/plan/setup-plan.md, slice 2.)
  *
  * WHERE IT RUNS. Only where the app itself carries this code and has a
- * radio: the iPhone, whose shell opens `/setup` from its own baked copy of
- * the app when it has no server. The Mac does not bake the app yet, so its
- * first half is still the compiled-in page (`src-tauri/ui/connect.html`); a
- * browser is always past it (nothing reaches a browser without a server).
+ * radio. The iPhone's shell opens `/setup` from its own baked copy of the app
+ * when it has no server, and carries on there after pairing (one origin, the
+ * loopback). The Mac's shell does the same from the copy it now bakes
+ * (`tauri.macos.conf.json`), but its server's app lives at another origin,
+ * so after pairing the window hands over to the server's copy at `/setup`
+ * (`handOff`), the same jump the connect page always made. A browser is
+ * always past this half: nothing reaches one without a server.
  * In dev, `?radio=fake` walks it in a browser against a scripted server and
  * a scripted account, and the real dev server takes over after "pairing".
  *
@@ -31,7 +34,26 @@ const FAKE_PAIRED_KEY = 'virtues-fake-paired';
  *  baked flag supersedes (`__VIRTUES_PAIRED__`). */
 const JUST_PAIRED_KEY = 'virtues-just-paired';
 
-type Shell = { __VIRTUES_MOBILE__?: boolean; __VIRTUES_PAIRED__?: boolean };
+type Shell = { __VIRTUES_MOBILE__?: boolean; __VIRTUES_PAIRED__?: boolean; __VIRTUES_BOX_URL__?: string };
+
+/**
+ * The Mac (or any desktop shell) running from its own baked copy, not the
+ * server's: its shell opens that copy only while it has no server. The shell
+ * tells every page where its server's app lives (`__VIRTUES_BOX_URL__`), so
+ * any other origin is the baked copy: `tauri://localhost` in a release,
+ * tauri's own dev server under `tauri dev`. (Keying on `tauri:` alone missed
+ * the dev server, and Setup went looking for a server that wasn't there.)
+ */
+function bakedDesktop(): boolean {
+	if (typeof window === 'undefined') return false;
+	const shell = window as unknown as Shell & { __TAURI_INTERNALS__?: unknown };
+	if (!shell.__TAURI_INTERNALS__ || shell.__VIRTUES_MOBILE__ || !shell.__VIRTUES_BOX_URL__) return false;
+	try {
+		return new URL(shell.__VIRTUES_BOX_URL__).origin !== window.location.origin;
+	} catch {
+		return false;
+	}
+}
 
 function isFake(): boolean {
 	try {
@@ -52,8 +74,7 @@ function unpaired(): boolean {
 		}
 	}
 	const shell = window as unknown as Shell;
-	// Only the phone runs this half from its own copy of the app.
-	if (!shell.__VIRTUES_MOBILE__) return false;
+	if (!shell.__VIRTUES_MOBILE__) return bakedDesktop();
 	if (shell.__VIRTUES_PAIRED__ === true) return false;
 	try {
 		return localStorage.getItem(JUST_PAIRED_KEY) !== 'true';
@@ -213,6 +234,35 @@ class PrePair {
 		await this.link.grant(g.grant);
 	}
 
+	/**
+	 * On a computer, after pairing: wait for the server to answer on this
+	 * machine's loopback, then open its own copy of the app at Setup. True
+	 * when it has navigated away. The phone never needs this (one origin).
+	 */
+	async handOff(): Promise<boolean> {
+		if (!bakedDesktop()) return false;
+		const box = (window as unknown as Shell).__VIRTUES_BOX_URL__ ?? 'http://localhost:7117';
+		try {
+			const { invoke } = await import('@tauri-apps/api/core');
+			// Pairing already starts the loopback; this makes sure of it.
+			await invoke('install_helpers', { server: '' });
+		} catch {
+			/* an older shell: pairing started it */
+		}
+		const until = Date.now() + 60000;
+		while (Date.now() < until) {
+			try {
+				const r = await fetch(`${box}/api/box/health`, { cache: 'no-store' });
+				if (r.ok) break;
+			} catch {
+				/* not answering yet */
+			}
+			await new Promise((r) => setTimeout(r, 1500));
+		}
+		window.location.href = `${box}/setup`;
+		return true;
+	}
+
 	/** Pair this device through the server's radio, then leave the first half. */
 	async pair(): Promise<void> {
 		if (!this.link) throw new BoxRadioError('not-found', 'Your server is no longer connected. Start again.');
@@ -224,8 +274,12 @@ class PrePair {
 			/* the plugin holds the pairing; this only spares a relaunch */
 		}
 		await this.link.close().catch(() => {});
-		this.link = null;
-		this.active = false;
+		// A computer stays on this half until it hands over (`handOff`): the
+		// server's app is at another origin, and this copy can't read it.
+		if (!bakedDesktop()) {
+			this.link = null;
+			this.active = false;
+		}
 	}
 }
 

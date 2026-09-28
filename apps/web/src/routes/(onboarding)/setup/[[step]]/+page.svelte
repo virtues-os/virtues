@@ -238,6 +238,8 @@
 	 * then starts from wherever the server says things stand.
 	 */
 	async function paired() {
+		// A computer carries on in the server's own copy of the app.
+		if (await prePair.handOff()) return;
 		await setup.refresh();
 		if (!gettingStarted.loaded || (!gettingStarted.state && !gettingStarted.unsupported)) {
 			location.replace("/setup");

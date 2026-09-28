@@ -16,16 +16,16 @@
 	import { rise } from "../motion";
 	import { prePair, AccountError } from "../prepair.svelte";
 	import { BoxRadioError } from "$lib/tauri/boxRadio";
-	import { isIOS } from "$lib/utils/platform";
+	import { isIOS, isMacOS } from "$lib/utils/platform";
 
 	let { onpaired, onlost }: { onpaired: () => void; onlost: () => void } = $props();
 
-	let phase = $state<"linking" | "pairing" | "grant-failed" | "pair-failed">("linking");
+	let phase = $state<"linking" | "pairing" | "opening" | "grant-failed" | "pair-failed">("linking");
 	let error = $state<string | null>(null);
 	let gone = $state(false);
 
 	const label = $derived(prePair.box?.label ?? "your server");
-	const here = isIOS ? "this iPhone" : "this device";
+	const here = isIOS ? "this iPhone" : isMacOS ? "this Mac" : "this device";
 
 	async function linkAccount() {
 		phase = "linking";
@@ -45,6 +45,7 @@
 		error = null;
 		try {
 			await prePair.pair();
+			phase = "opening";
 			onpaired();
 		} catch (e) {
 			error =
@@ -60,7 +61,9 @@
 	});
 
 	const title = $derived(
-		phase === "grant-failed"
+		phase === "opening"
+			? `${here[0].toUpperCase()}${here.slice(1)} is paired`
+			: phase === "grant-failed"
 			? "Your account didn't reach your server"
 			: phase === "pair-failed"
 				? `${label} didn't finish pairing`
@@ -71,6 +74,8 @@
 			? "Handing your account to your server."
 			: phase === "pairing"
 				? "Exchanging keys. This can take up to a minute."
+				: phase === "opening"
+					? "Opening your server."
 				: phase === "grant-failed"
 					? "You can pair now and link your account in the next step."
 					: gone
@@ -80,7 +85,7 @@
 </script>
 
 <StepFrame {title} {subtitle}>
-	{#if phase === "linking" || phase === "pairing"}
+	{#if phase === "linking" || phase === "pairing" || phase === "opening"}
 		<div class="waiting" in:rise aria-hidden="true">
 			<svg viewBox="0 0 24 24" width="40" height="40">
 				<circle cx="4.5" cy="18" r="2.85" />

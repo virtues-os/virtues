@@ -1524,7 +1524,18 @@ fn main() {
                 // the existing box, exactly as it does on the phone.
                 WebviewUrl::App("connect.html#setup".into())
             } else if !is_paired() {
-                WebviewUrl::App("connect.html".into())
+                // UNPAIRED, THE MAC OPENS SETUP (2026-09-27): sign in, find
+                // the server, its four words, Wi-Fi and pairing run from the
+                // app's own copy of the web app (tauri.macos.conf.json bakes
+                // it; apps/web/src/lib/components/setup/prepair.svelte.ts),
+                // and after pairing the window hands over to the server's
+                // copy at the same step. Windows and Linux bake nothing yet
+                // and keep the connect page.
+                if cfg!(target_os = "macos") {
+                    WebviewUrl::App("setup".into())
+                } else {
+                    WebviewUrl::App("connect.html".into())
+                }
             } else {
                 match probe_box_session_blocking(1) {
                     Some(true) => WebviewUrl::External(
