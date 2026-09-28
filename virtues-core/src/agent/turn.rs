@@ -3,10 +3,189 @@
 //! `AgentLoop::run` holds the control flow and the `yield`s; these hold the
 //! decisions, so each can be tested without a model on the other end.
 
-use serde_json::Value;
+use std::time::Instant;
 
-use super::executor::{self, ToolExecutionResult};
-use super::stream::LlmStreamResult;
+use serde_json::Value;
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::task::JoinHandle;
+
+use super::executor::{self, ExecutorConfig, ToolExecutionResult};
+use super::protocol::{AgentEvent, ErrorCode, FinishReason, StepReason};
+use super::stream::{self, LlmConfig, LlmStreamResult, StepOptions, StreamError, ToolCall};
+use super::{caps, guard, TurnBudget};
+use crate::tools::{ToolContext, ToolExecutor};
+
+/// What one turn has done so far: the step it is on, what it has spent, and
+/// what its tools have been allowed and refused.
+pub(super) struct TurnState {
+    pub step: u32,
+    started: Instant,
+    spent_micros: i64,
+    /// Which tools have failed, and how — see `guard`.
+    repeat_guard: guard::RepeatGuard,
+    /// Calls spent against each capped tool — see `caps`.
+    tool_caps: caps::ToolCaps,
+}
+
+impl TurnState {
+    pub fn new(budget: &TurnBudget) -> Self {
+        Self {
+            step: 0,
+            started: Instant::now(),
+            spent_micros: 0,
+            repeat_guard: guard::RepeatGuard::new(),
+            tool_caps: caps::ToolCaps::new(budget.tool_caps),
+        }
+    }
+
+    /// Why the current step is the turn's last, if it is.
+    ///
+    /// On the last step the ceiling allows, or the first step over a budget,
+    /// the model is told to answer and sent `tool_choice: none`, and the turn
+    /// ends after this step whatever it returns — so a turn never ends on a
+    /// tool result with no reply. The step can take the spend one step past a
+    /// budget; a cap that ended turns with nothing said cost the whole turn
+    /// instead.
+    pub fn last_step(&self, max_steps: u32, budget: &TurnBudget) -> Option<FinishReason> {
+        let over_cost = budget.max_cost_micros.is_some_and(|cap| self.spent_micros >= cap);
+        let over_clock = budget.max_wall_clock.is_some_and(|cap| self.started.elapsed() >= cap);
+        let reason = last_step_reason(self.step, max_steps, over_cost || over_clock);
+        if let Some(reason) = reason {
+            tracing::warn!(
+                step = self.step,
+                ?reason,
+                spent_micros = self.spent_micros,
+                elapsed_secs = self.started.elapsed().as_secs(),
+                "last step: asking for the answer, tools off"
+            );
+        }
+        reason
+    }
+
+    /// Count a model call against the budget, and log it: one line per call,
+    /// because the usage table sums a chat's calls into one row and cannot
+    /// say which call cost what. Counts and ids only, never content.
+    pub fn record_usage(&mut self, result: &LlmStreamResult, model: &str, chat_id: Option<&str>) {
+        let Some(usage) = result.usage.as_ref() else { return };
+        if let Some(cost) = usage.cost_micros {
+            self.spent_micros += cost;
+        }
+        tracing::info!(
+            step = self.step,
+            model = %model,
+            chat_id = chat_id.unwrap_or(""),
+            prompt_tokens = usage.prompt_tokens,
+            cache_read_tokens = usage.cache_read_tokens.unwrap_or(0),
+            completion_tokens = usage.completion_tokens,
+            reasoning_tokens = usage.reasoning_tokens.unwrap_or(0),
+            cost_micros = usage.cost_micros.unwrap_or(0),
+            tool_calls = result.tool_calls.len(),
+            "model call usage"
+        );
+    }
+
+    /// Run a step's tool calls through the caps and the guard, returning one
+    /// result per call: the ones that ran, then the guard's refusals, then
+    /// the calls over their cap.
+    ///
+    /// The guard records the calls within caps — ran and refused alike, so an
+    /// identical retry walks toward the tool's close. A call over its cap did
+    /// not fail and is not recorded.
+    pub async fn run_tools(
+        &mut self,
+        tool_executor: &ToolExecutor,
+        calls: Vec<ToolCall>,
+        context: &ToolContext,
+        executor_config: &ExecutorConfig,
+    ) -> Vec<ToolExecutionResult> {
+        tracing::info!(count = calls.len(), "Executing tool calls");
+        let (within_caps, over_caps) = self.tool_caps.admit(calls);
+        let (admitted, refused) = self.repeat_guard.admit(&within_caps);
+        let mut results =
+            executor::execute_tools(tool_executor, &admitted, context, executor_config).await;
+        results.extend(refused);
+        self.repeat_guard.record(&within_caps, &results);
+        results.extend(over_caps);
+        results
+    }
+}
+
+/// Why this step is the turn's last, if it is: a budget ran out, or it is the
+/// last step the ceiling allows.
+fn last_step_reason(step: u32, max_steps: u32, over_budget: bool) -> Option<FinishReason> {
+    if over_budget {
+        Some(FinishReason::BudgetExceeded)
+    } else if step >= max_steps {
+        Some(FinishReason::MaxSteps)
+    } else {
+        None
+    }
+}
+
+/// How a turn ends on a step that called no tools: cut off by the output
+/// limit, cut short by the step ceiling or a budget, or simply finished.
+pub(super) fn answered(step_reason: StepReason, last_step: Option<FinishReason>) -> FinishReason {
+    if step_reason == StepReason::MaxTokens {
+        FinishReason::OutputLimit
+    } else {
+        last_step.unwrap_or(FinishReason::EndTurn)
+    }
+}
+
+/// The error code for a model call that failed. An interrupted stream is not
+/// an LLM error: the model was mid-sentence when the bytes stopped.
+pub(super) fn stream_error_code(e: &StreamError) -> ErrorCode {
+    match e {
+        StreamError::Interrupted(_) => ErrorCode::Interrupted,
+        _ => ErrorCode::LlmError,
+    }
+}
+
+/// Whether a tool result asks the person to act (binding a page) before the
+/// turn can go on.
+pub(super) fn needs_user(result: &ToolExecutionResult) -> bool {
+    result.result.as_ref().is_ok_and(|r| {
+        r.data.get("needs_binding").and_then(|v| v.as_bool()).unwrap_or(false)
+    })
+}
+
+/// Start one model call on its own task, its events arriving on the returned
+/// channel as they stream, so each delta reaches the client when it arrives
+/// and aborting the handle drops the provider connection.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn spawn_step(
+    llm_config: &LlmConfig,
+    model: &str,
+    messages: &[Value],
+    tools: &[Value],
+    provider_options: Option<Value>,
+    step_options: StepOptions,
+    session_affinity: Option<String>,
+) -> (JoinHandle<Result<LlmStreamResult, StreamError>>, UnboundedReceiver<AgentEvent>) {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
+    let llm_config = llm_config.clone();
+    let model = model.to_string();
+    let messages = messages.to_vec();
+    let tools = tools.to_vec();
+    let handle = tokio::spawn(async move {
+        stream::stream_llm_response(
+            &llm_config,
+            &model,
+            &messages,
+            &tools,
+            provider_options,
+            Some(0.7), // the temperature chat has always run at
+            None,      // no fixed output cap
+            step_options,
+            session_affinity.as_deref(),
+            |event| {
+                let _ = tx.send(event);
+            },
+        )
+        .await
+    });
+    (handle, rx)
+}
 
 /// A note from the loop to the model, sent as a user message.
 pub(super) fn system_note(text: &str) -> Value {
@@ -126,10 +305,142 @@ pub(super) fn append_next_step(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::protocol::StepReason;
-    use crate::agent::stream::ToolCall;
     use crate::tools::{ToolAttachment, ToolResult};
     use serde_json::json;
+
+    #[test]
+    fn the_last_step_is_the_ceiling_or_the_first_over_budget() {
+        assert_eq!(last_step_reason(1, 20, false), None);
+        assert_eq!(last_step_reason(19, 20, false), None);
+        assert_eq!(last_step_reason(20, 20, false), Some(FinishReason::MaxSteps));
+        // A budget names itself even on the ceiling step.
+        assert_eq!(last_step_reason(20, 20, true), Some(FinishReason::BudgetExceeded));
+        assert_eq!(last_step_reason(3, 20, true), Some(FinishReason::BudgetExceeded));
+    }
+
+    fn usage(cost_micros: Option<i64>) -> LlmStreamResult {
+        LlmStreamResult {
+            content: String::new(),
+            reasoning_details: vec![],
+            tool_calls: vec![],
+            finish_reason: StepReason::EndTurn,
+            usage: Some(stream::TokenUsage { cost_micros, ..Default::default() }),
+        }
+    }
+
+    #[test]
+    fn spend_reaching_the_cost_budget_makes_the_next_step_the_last() {
+        let budget = TurnBudget { max_cost_micros: Some(1_000), ..Default::default() };
+        let mut turn = TurnState::new(&budget);
+        turn.step = 1;
+        assert_eq!(turn.last_step(20, &budget), None);
+        turn.record_usage(&usage(Some(600)), "m", None);
+        turn.record_usage(&usage(None), "m", None); // a BYO call is free here
+        assert_eq!(turn.last_step(20, &budget), None);
+        turn.record_usage(&usage(Some(400)), "m", None);
+        assert_eq!(turn.last_step(20, &budget), Some(FinishReason::BudgetExceeded));
+    }
+
+    #[test]
+    fn a_spent_clock_makes_the_step_the_last() {
+        let budget = TurnBudget {
+            max_wall_clock: Some(std::time::Duration::ZERO),
+            ..Default::default()
+        };
+        let mut turn = TurnState::new(&budget);
+        turn.step = 1;
+        assert_eq!(turn.last_step(20, &budget), Some(FinishReason::BudgetExceeded));
+        // No budget: only the ceiling.
+        let none = TurnBudget::default();
+        assert_eq!(turn.last_step(20, &none), None);
+        turn.step = 20;
+        assert_eq!(turn.last_step(20, &none), Some(FinishReason::MaxSteps));
+    }
+
+    #[test]
+    fn a_toolless_step_ends_on_the_output_limit_first() {
+        assert_eq!(answered(StepReason::EndTurn, None), FinishReason::EndTurn);
+        assert_eq!(answered(StepReason::ContentFilter, None), FinishReason::EndTurn);
+        assert_eq!(answered(StepReason::EndTurn, Some(FinishReason::MaxSteps)), FinishReason::MaxSteps);
+        assert_eq!(
+            answered(StepReason::MaxTokens, Some(FinishReason::BudgetExceeded)),
+            FinishReason::OutputLimit
+        );
+    }
+
+    #[test]
+    fn only_an_interruption_is_not_an_llm_error() {
+        assert_eq!(stream_error_code(&StreamError::Interrupted("x".into())), ErrorCode::Interrupted);
+        assert_eq!(stream_error_code(&StreamError::Connection("x".into())), ErrorCode::LlmError);
+        assert_eq!(
+            stream_error_code(&StreamError::LlmError { status: 500, message: "x".into() }),
+            ErrorCode::LlmError
+        );
+    }
+
+    #[test]
+    fn a_result_asking_for_a_binding_needs_the_user() {
+        let with = |data| ToolExecutionResult {
+            tool_call_id: "1".into(),
+            tool_name: "edit_page".into(),
+            result: Ok(ToolResult::success(data)),
+        };
+        assert!(needs_user(&with(json!({"needs_binding": true}))));
+        assert!(!needs_user(&with(json!({"needs_binding": false}))));
+        assert!(!needs_user(&with(json!(["needs_binding"]))));
+    }
+
+    /// A call whose arguments did not parse fails in the executor before
+    /// any tool runs, so these exercise `run_tools` with no database or
+    /// network behind the executor.
+    fn broken(id: &str, name: &str, raw: &str) -> ToolCall {
+        ToolCall {
+            id: id.into(),
+            name: name.into(),
+            arguments: json!({ stream::UNPARSEABLE_ARGUMENTS_KEY: { "error": "bad", "raw": raw } }),
+        }
+    }
+
+    #[tokio::test]
+    async fn run_tools_orders_ran_then_refused_then_over_cap_and_records_refusals() {
+        static CAPS: &[(&str, u32)] = &[("web_search", 1)];
+        let budget = TurnBudget { tool_caps: CAPS, ..Default::default() };
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .unwrap();
+        let exec = ToolExecutor::new(pool);
+        let ctx = ToolContext::default();
+        let cfg = ExecutorConfig::default();
+        let mut turn = TurnState::new(&budget);
+        let ids = |rs: &[ToolExecutionResult]| rs.iter().map(|r| r.tool_call_id.clone()).collect::<Vec<_>>();
+
+        // Consecutive failures of sql_query: 1.
+        let rs = turn.run_tools(&exec, vec![broken("a", "sql_query", "X")], &ctx, &cfg).await;
+        assert_eq!(ids(&rs), ["a"]);
+
+        let rs = turn
+            .run_tools(
+                &exec,
+                vec![
+                    broken("b", "sql_query", "X"),  // identical to a: refused
+                    broken("c", "sql_query", "Y"),  // runs, fails
+                    broken("d", "web_search", "P"), // within its cap
+                    broken("e", "web_search", "Q"), // over its cap
+                ],
+                &ctx,
+                &cfg,
+            )
+            .await;
+        assert_eq!(ids(&rs), ["c", "d", "b", "e"]);
+        assert!(rs[2].to_llm_content().contains("already failed this turn"), "{}", rs[2].to_llm_content());
+        assert!(rs[3].to_llm_content().contains("budget for this turn is spent"), "{}", rs[3].to_llm_content());
+
+        // The refusal counted: b and c make three, this fourth closes the tool.
+        let rs = turn.run_tools(&exec, vec![broken("f", "sql_query", "Z")], &ctx, &cfg).await;
+        assert!(rs[0].to_llm_content().contains("not valid JSON"), "{}", rs[0].to_llm_content());
+        let rs = turn.run_tools(&exec, vec![broken("g", "sql_query", "W")], &ctx, &cfg).await;
+        assert!(rs[0].to_llm_content().contains("closed for the rest of it"), "{}", rs[0].to_llm_content());
+    }
 
     fn facts(display_options: Value) -> virtues_registry::ReasoningFacts {
         virtues_registry::ReasoningFacts {
