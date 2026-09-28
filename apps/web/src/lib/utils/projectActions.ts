@@ -109,7 +109,10 @@ export async function fileIntoProject(
 ): Promise<void> {
 	const t: FileTarget = typeof target === 'string' ? { url: target } : target;
 	const home = projectOfTarget(t);
-	if (home?.id === project.id) {
+	const already =
+		home?.id === project.id ||
+		('url' in t && projectStore.holding(t.url).some((p) => p.id === project.id));
+	if (already) {
 		toast(`Already in ${project.name}`);
 		return;
 	}
@@ -167,12 +170,17 @@ export function projectMenuItems(target: FileTarget | null): ContextMenuItem[] {
 	if (!target) return [];
 	const projects = projectStore.projects;
 	const home = projectOfTarget(target);
+	// Things that can be in several projects are ticked in each that holds
+	// them, where the view showing them has asked (`loadHolders`).
+	const held = new Set(
+		'url' in target ? projectStore.holding(target.url).map((p) => p.id) : [],
+	);
 
 	const submenu: ContextMenuItem[] = projects.map((p) => ({
 		id: `project-${p.id}`,
 		label: p.name,
 		icon: p.icon || PROJECT_ICON,
-		checked: p.id === home?.id,
+		checked: p.id === home?.id || held.has(p.id),
 		action: () => fileIntoProject(p, target),
 	}));
 
@@ -245,4 +253,38 @@ export function isRefDrag(e: DragEvent): boolean {
 export function droppedRefUrl(e: DragEvent): string | null {
 	const url = e.dataTransfer?.getData(REF_DRAG_TYPE);
 	return url ? projectMemberUrl(url) : null;
+}
+
+/** Open a project in the window you are in. */
+export function openProject(project: Pick<Project, 'id' | 'name'>): void {
+	windowShellStore.openTabFromRoute(`/project/${project.id}`, {
+		label: project.name,
+		focusExisting: true,
+	});
+}
+
+/**
+ * The menu on a project chip: the thing you are looking at, seen from the
+ * project it is in. Open it, file it somewhere else too (a chat moves, a page
+ * joins), or take it out of this one.
+ */
+export function projectChipMenuItems(
+	project: Pick<Project, 'id' | 'name' | 'archived_at'>,
+	target: FileTarget,
+): ContextMenuItem[] {
+	const elsewhere = projectMenuItems(target).map((i) => ({
+		...i,
+		submenu: i.submenu?.filter((s) => s.id !== 'remove-from-project'),
+	}));
+	return [
+		{ id: 'open-project', label: `Open ${project.name}`, icon: PROJECT_ICON, action: () => openProject(project) },
+		...elsewhere,
+		{
+			id: 'remove-from-this-project',
+			label: `Remove from ${project.name}`,
+			icon: 'ri:close-line',
+			dividerBefore: true,
+			action: () => removeFromProject(project, target),
+		},
+	];
 }

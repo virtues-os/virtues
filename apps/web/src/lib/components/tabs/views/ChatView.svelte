@@ -84,8 +84,8 @@
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
-	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
-	import { projectMenuItems, targetForTab } from "$lib/utils/projectActions";
+	import ProjectChip from "$lib/components/ProjectChip.svelte";
+	import { openProject, projectChipMenuItems, projectMenuItems, targetForTab } from "$lib/utils/projectActions";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import { pendingPrompt } from "$lib/stores/pendingPrompt.svelte";
 	import {
@@ -255,10 +255,18 @@
 	const chatProject = $derived(chatProjectId ? projectStore.byId(chatProjectId) : undefined);
 
 	function openChatProject() {
-		if (!chatProject) return;
-		windowShellStore.openTabFromRoute(`/project/${chatProject.id}`, {
-			label: chatProject.name,
-			focusExisting: true,
+		if (chatProject) openProject(chatProject);
+	}
+
+	/** The project's own menu, from the chip: right-click here, a tap on the phone's bar. */
+	function showProjectChipMenu(e: MouseEvent) {
+		e.preventDefault();
+		const target = targetForTab(tab);
+		if (!chatProject || !target) return;
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		contextMenu.show({ x: rect.left, y: rect.bottom }, projectChipMenuItems(chatProject, target), {
+			anchor: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+			placement: "bottom-start",
 		});
 	}
 
@@ -1491,7 +1499,13 @@
 	// cleanup keeps a stale claim from surviving a view swap.
 	$effect(() => {
 		if (!mobileLayout.isMobile || !active) return;
-		mobileLayout.setChatChrome({ empty: isEmpty, ghost: isGhost, toggleGhost });
+		mobileLayout.setChatChrome({
+			empty: isEmpty,
+			ghost: isGhost,
+			toggleGhost,
+			project: isGhost ? null : (chatProject ?? null),
+			showProjectMenu: showProjectChipMenu,
+		});
 		return () => mobileLayout.setChatChrome(null);
 	});
 </script>
@@ -1544,18 +1558,12 @@
 			<div class="chat-area" class:ghost={isGhost}>
 				{#if chatProject && !isGhost && !mobileLayout.isMobile && !inRoom}
 					<div class="chat-topbar-left">
-						<button
-							type="button"
-							class="project-crumb"
-							onclick={openChatProject}
+						<ProjectChip
+							project={chatProject}
 							title={`Open ${chatProject.name}`}
-						>
-							<ProjectGlyph icon={chatProject.icon} color={chatProject.accent_color} size={14} />
-							<span class="project-crumb-name">{chatProject.name}</span>
-							{#if chatProject.archived_at}
-								<span class="project-crumb-note">Archived</span>
-							{/if}
-						</button>
+							onclick={openChatProject}
+							oncontextmenu={showProjectChipMenu}
+						/>
 					</div>
 				{/if}
 				<!-- Top-right chrome: temporary-chat toggle + chat menu (context usage lives in the menu) -->
@@ -2236,46 +2244,6 @@
 		left: 12px;
 		z-index: 6;
 		max-width: 40%;
-	}
-
-	.project-crumb {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		max-width: 100%;
-		height: 28px;
-		padding: 0 10px 0 8px;
-		border-radius: 9px;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
-		backdrop-filter: blur(8px);
-		-webkit-backdrop-filter: blur(8px);
-		transition:
-			color 0.15s ease,
-			background-color 0.15s ease;
-		cursor: pointer;
-	}
-
-	.project-crumb:hover {
-		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
-	}
-
-	.project-crumb:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
-
-	.project-crumb-name {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.project-crumb-note {
-		flex-shrink: 0;
-		color: var(--color-foreground-subtle);
 	}
 
 

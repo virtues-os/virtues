@@ -37,6 +37,7 @@
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
+	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
 	import { search } from "$lib/stores/search.svelte";
 	import { goto } from "$app/navigation";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
@@ -211,7 +212,10 @@
 					aria-current={activeRoute === route ? "page" : undefined}
 					onclick={() => go(route, p.name || "Project")}
 				>
-					<span class="chat-title">{p.name || "Untitled"}</span>
+					<span class="chat-title with-glyph">
+						<ProjectGlyph icon={p.icon} color={p.accent_color} size={16} />
+						<span class="title-text">{p.name || "Untitled"}</span>
+					</span>
 					<span class="chat-when">{p.chat_count === 1 ? "1 chat" : `${p.chat_count} chats`}</span>
 				</button>
 			{/each}
@@ -219,6 +223,7 @@
 		<div class="section-label">Recents</div>
 		{#each recentSessions as s (s.conversation_id)}
 			{@const route = `/chat/${s.conversation_id}`}
+			{@const home = s.project_id ? projectStore.byId(s.project_id) : undefined}
 			<button
 				class="chat-row"
 				class:active={activeRoute === route}
@@ -226,7 +231,17 @@
 				onclick={() => go(route, s.title || "Chat")}
 			>
 				<span class="chat-title">{s.title || "Untitled"}</span>
-				<span class="chat-when">{when(s.last_message_at || s.first_message_at)}</span>
+				<!-- A chat in a project says which, in the project's own mark and
+				     color, before when: the phone's form of the desktop row's
+				     tinted glyph. -->
+				<span class="chat-when" class:with-glyph={!!home}>
+					{#if home}
+						<ProjectGlyph icon={home.icon} color={home.accent_color} size={12} />
+						<span class="title-text">{home.name} · {when(s.last_message_at || s.first_message_at)}</span>
+					{:else}
+						{when(s.last_message_at || s.first_message_at)}
+					{/if}
+				</span>
 			</button>
 		{:else}
 			<div class="empty">Conversations you start will collect here.</div>
@@ -494,6 +509,25 @@
 		margin-top: 1px;
 		font-size: 13px;
 		color: var(--color-foreground-muted);
+	}
+
+	.chat-title.with-glyph,
+	.chat-when.with-glyph {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+
+	.chat-when.with-glyph {
+		gap: 5px;
+	}
+
+	.title-text {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.empty {

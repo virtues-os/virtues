@@ -201,7 +201,14 @@ pub struct ProjectGraph {
 /// `api::trash`), which is why the counts and `get_project`'s member list
 /// filter members through their own table's `deleted_at` rather than trusting
 /// the row's existence.
-pub async fn list_projects(pool: &PgPool, include_archived: bool) -> Result<ProjectListResponse> {
+///
+/// `member` narrows the list to the projects that hold that url — a page
+/// asking which projects it is in. A page can be in several, unlike a chat.
+pub async fn list_projects(
+    pool: &PgPool,
+    include_archived: bool,
+    member: Option<&str>,
+) -> Result<ProjectListResponse> {
     let projects = sqlx::query_as::<_, ProjectSummary>(
         r#"
         SELECT
@@ -216,10 +223,14 @@ pub async fn list_projects(pool: &PgPool, include_archived: bool) -> Result<Proj
             s.created_at, s.updated_at
         FROM app_projects s
         WHERE s.deleted_at IS NULL AND ($1 OR s.archived_at IS NULL)
+          AND ($2::text IS NULL OR EXISTS (
+              SELECT 1 FROM app_project_items i WHERE i.project_id = s.id AND i.url = $2
+          ))
         ORDER BY s.sort_order ASC, s.updated_at DESC
         "#,
     )
     .bind(include_archived)
+    .bind(member)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to list projects: {}", e)))?;
@@ -925,6 +936,24 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "./migrations")]
+    async fn a_page_lists_the_projects_it_is_in(pool: PgPool) {
+        let a = create_project(&pool, named("A")).await.expect("create A");
+        let b = create_project(&pool, named("B")).await.expect("create B");
+        create_project(&pool, named("C")).await.expect("create C");
+        for p in [&a, &b] {
+            add_project_item(&pool, &p.id, AddProjectItemRequest { url: "/page/page_x".into() })
+                .await
+                .expect("file page");
+        }
+        let listed = list_projects(&pool, false, Some("/page/page_x")).await.expect("list");
+        let mut ids: Vec<String> = listed.projects.into_iter().map(|p| p.id).collect();
+        ids.sort();
+        let mut want = vec![a.id, b.id];
+        want.sort();
+        assert_eq!(ids, want);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
     async fn item_count_does_not_count_chats_twice(pool: PgPool) {
         let a = create_project(&pool, named("A")).await.expect("create A");
         seed_chat(&pool, "chat_count").await;
@@ -933,7 +962,7 @@ mod tests {
             .await
             .expect("add link");
 
-        let listed = list_projects(&pool, false).await.expect("list");
+        let listed = list_projects(&pool, false, None).await.expect("list");
         let row = listed.projects.iter().find(|p| p.id == a.id).expect("project listed");
         assert_eq!((row.chat_count, row.item_count), (1, 1));
     }

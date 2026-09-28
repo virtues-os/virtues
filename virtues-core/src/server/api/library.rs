@@ -245,8 +245,12 @@ pub async fn list_projects_handler(
     axum::extract::Query(q): axum::extract::Query<ListProjectsQuery>,
 ) -> Response {
     api_response(
-        crate::api::projects::list_projects(state.db.pool(), q.include_archived.unwrap_or(false))
-            .await,
+        crate::api::projects::list_projects(
+            state.db.pool(),
+            q.include_archived.unwrap_or(false),
+            q.member.as_deref(),
+        )
+        .await,
     )
 }
 
@@ -254,6 +258,8 @@ pub async fn list_projects_handler(
 pub struct ListProjectsQuery {
     /// `?include_archived=true` — the projects page, which folds them.
     pub include_archived: Option<bool>,
+    /// `?member=/page/…` — only the projects holding that url.
+    pub member: Option<String>,
 }
 
 /// POST /api/projects/:id/archive — close a project (kept, out of the working view)

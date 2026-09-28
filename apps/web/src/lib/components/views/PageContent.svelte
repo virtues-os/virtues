@@ -14,6 +14,7 @@
 	import PageCoverImage from "$lib/components/pages/PageCoverImage.svelte";
 	import PageStatusBar from "$lib/components/pages/PageStatusBar.svelte";
 	import PageToolbar from "$lib/components/pages/PageToolbar.svelte";
+	import PageProjects from "$lib/components/pages/PageProjects.svelte";
 	import PageOutline from "$lib/components/pages/PageOutline.svelte";
 	import ReferencesPanel from "$lib/components/pages/ReferencesPanel.svelte";
 	import type { PageHeading } from "$lib/codemirror/outline";
@@ -596,6 +597,11 @@
 			<!-- Top bar: TOC (left) + page actions (right), one classic row -->
 			<div class="page-topbar">
 			<PageOutline headings={outline} view={editorView} />
+			<!-- The projects this page is in, beside the outline: the page's
+			     "where it lives", in the corner a chat says it. -->
+			{#if pageId}
+				<PageProjects url={`/page/${pageId}`} />
+			{/if}
 			<PageToolbar
 				{icon}
 				{coverUrl}
@@ -844,7 +850,7 @@
 
 	/* 400, and it must stay equal to .shared-page-title in the public /s/[token]
 	   view or the same page reads differently to its author and its reader.
-	   The 500 was never drawn either way: JJannon ships one cut and the request
+	   The 500 was never drawn either way: the serif ships one cut and the request
 	   resolves back to the regular in silence (agents/build/typography.md). At
 	   32px in full ink above the body the title already leads the document. */
 	.page-title-input {
