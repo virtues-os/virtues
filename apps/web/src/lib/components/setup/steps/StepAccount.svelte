@@ -123,6 +123,13 @@
 		{/if}
 	</p>
 
+	{#if phase === "email" && prePair.canJoinExisting}
+		<p class="join">
+			Already have a server?
+			<button type="button" class="setup-past" onclick={() => prePair.joinExisting()}>Add this device to it</button>
+		</p>
+	{/if}
+
 	{#snippet actions()}
 		{#if phase === "email"}
 			<button type="button" class="setup-go" onclick={send} disabled={!emailOk || busy}>
@@ -161,6 +168,12 @@
 	.one {
 		display: flex;
 		justify-content: center;
+	}
+	.join {
+		margin: 8px 0 0;
+		text-align: center;
+		font-size: 14px;
+		color: var(--color-foreground-muted);
 	}
 	.code {
 		letter-spacing: 0.3em;

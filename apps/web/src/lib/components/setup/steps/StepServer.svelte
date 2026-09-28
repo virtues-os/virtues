@@ -222,6 +222,14 @@
 		</div>
 	{/if}
 	<p class="note" class:error role={error ? "alert" : undefined}>{error ?? " "}</p>
+	{#if phase === "choose" && prePair.canJoinExisting}
+		<!-- A server with an owner is listed but not offered: joining one is
+		     the connect page's (prepair.joinExisting). -->
+		<p class="join">
+			Adding {here} to a server you already use?
+			<button type="button" class="setup-past" onclick={() => prePair.joinExisting()}>Join it instead</button>
+		</p>
+	{/if}
 
 	{#snippet actions()}
 		{#if phase === "choose"}
@@ -358,6 +366,12 @@
 		accent-color: var(--color-primary);
 	}
 
+	.join {
+		margin: 4px 0 0;
+		text-align: center;
+		font-size: 14px;
+		color: var(--color-foreground-muted);
+	}
 	.note {
 		margin: 12px 0 0;
 		min-height: 1.5em;
