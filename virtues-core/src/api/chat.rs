@@ -235,25 +235,10 @@ fn ghost_history(messages: &[UIMessage]) -> Vec<ChatMessage> {
         .iter()
         .filter(|m| m.role == "user" || m.role == "assistant")
         .map(|m| {
-            let content = m.content.clone().unwrap_or_else(|| {
-                m.parts
-                    .as_ref()
-                    .map(|parts| {
-                        parts
-                            .iter()
-                            .filter_map(|p| match p {
-                                UIPart::Text { text } => Some(text.clone()),
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    })
-                    .unwrap_or_default()
-            });
             ChatMessage {
                 id: m.id.clone(),
                 role: m.role.clone(),
-                content,
+                content: m.text(),
                 timestamp: Timestamp::now(),
                 model: None,
                 provider: None,
@@ -395,6 +380,28 @@ pub struct UIMessage {
     // Legacy format support
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+}
+
+impl UIMessage {
+    /// What the person said, as it is stored: the legacy `content` if the
+    /// client sent one, else the text parts joined by newlines.
+    pub fn text(&self) -> String {
+        self.content.clone().unwrap_or_else(|| {
+            self.parts
+                .as_ref()
+                .map(|parts| {
+                    parts
+                        .iter()
+                        .filter_map(|p| match p {
+                            UIPart::Text { text } => Some(text.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default()
+        })
+    }
 }
 
 /// Where one piece of a turn sat in time.
@@ -676,6 +683,19 @@ pub enum StreamEvent {
     },
 }
 
+impl From<crate::tools::SubagentUpdate> for StreamEvent {
+    fn from(update: crate::tools::SubagentUpdate) -> Self {
+        StreamEvent::SubagentStatus {
+            dispatch_id: update.dispatch_id,
+            subagent_id: update.id as u32,
+            title: update.title,
+            model: update.model,
+            status: update.status.as_str().to_string(),
+            tokens: update.tokens,
+        }
+    }
+}
+
 // ============================================================================
 // AI SDK v6 Data Event Types
 // ============================================================================
@@ -800,68 +820,59 @@ async fn get_latest_checkpoint(pool: &PgPool, chat_id: &str) -> Option<StreamEve
 // ============================================================================
 
 /// Safely serialize a stream event to JSON
-/// Custom events (checkpoint, thought-signature) are wrapped in AI SDK v6 data-* format
+/// Custom events (checkpoint, narrative document, subagent status) are wrapped
+/// in the AI SDK v6 data-* format
 fn serialize_event(event: &StreamEvent) -> String {
     match event {
-        // Wrap checkpoint events in AI SDK v6 data event format
-        StreamEvent::Checkpoint { id, version, messages_summarized, summary, timestamp } => {
-            let wrapper = DataEvent {
-                event_type: "data-checkpoint".to_string(),
-                id: Some(id.clone()),
-                data: CheckpointData {
-                    version: *version,
-                    messages_summarized: *messages_summarized,
-                    summary: summary.clone(),
-                    timestamp: timestamp.clone(),
-                },
-                transient: false, // Checkpoint should persist in message parts
-            };
-            serde_json::to_string(&wrapper).unwrap_or_else(|e| {
-                tracing::error!("Failed to serialize checkpoint event: {}", e);
-                r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
-            })
-        }
-        // Wrap the narrative-document signal in AI SDK v6 data event format
-        // (transient — a reload reconstructs the document from its page, and
-        // replaying the auto-open on old chats would be wrong).
-        StreamEvent::NarrativeDocumentReady { page_id } => {
-            let wrapper = DataEvent {
-                event_type: "data-narrative-document".to_string(),
-                id: None,
-                data: NarrativeDocumentData { page_id: page_id.clone() },
-                transient: true,
-            };
-            serde_json::to_string(&wrapper).unwrap_or_else(|e| {
-                tracing::error!("Failed to serialize narrative-document event: {}", e);
-                r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
-            })
-        }
-        // Wrap subagent status in AI SDK v6 data event format (transient — live panel only)
-        StreamEvent::SubagentStatus { dispatch_id, subagent_id, title, model, status, tokens } => {
-            let wrapper = DataEvent {
-                event_type: "data-subagent".to_string(),
-                id: None,
-                data: SubagentStatusData {
-                    dispatch_id: *dispatch_id,
-                    subagent_id: *subagent_id,
-                    title: title.clone(),
-                    model: model.clone(),
-                    status: status.clone(),
-                    tokens: *tokens,
-                },
-                transient: true,
-            };
-            serde_json::to_string(&wrapper).unwrap_or_else(|e| {
-                tracing::error!("Failed to serialize subagent event: {}", e);
-                r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
-            })
-        }
+        // Checkpoint persists in the message parts, so it is not transient.
+        StreamEvent::Checkpoint { id, version, messages_summarized, summary, timestamp } => data_event(
+            "data-checkpoint",
+            Some(id.clone()),
+            CheckpointData {
+                version: *version,
+                messages_summarized: *messages_summarized,
+                summary: summary.clone(),
+                timestamp: timestamp.clone(),
+            },
+            false,
+        ),
+        // Transient: a reload reconstructs the document from its page, and
+        // replaying the auto-open on old chats would be wrong.
+        StreamEvent::NarrativeDocumentReady { page_id } => data_event(
+            "data-narrative-document",
+            None,
+            NarrativeDocumentData { page_id: page_id.clone() },
+            true,
+        ),
+        // Transient: the live panel only.
+        StreamEvent::SubagentStatus { dispatch_id, subagent_id, title, model, status, tokens } => data_event(
+            "data-subagent",
+            None,
+            SubagentStatusData {
+                dispatch_id: *dispatch_id,
+                subagent_id: *subagent_id,
+                title: title.clone(),
+                model: model.clone(),
+                status: status.clone(),
+                tokens: *tokens,
+            },
+            true,
+        ),
         // All other events use standard serde serialization
         _ => serde_json::to_string(event).unwrap_or_else(|e| {
             tracing::error!("Failed to serialize stream event: {}", e);
             r#"{"type":"error","errorText":"Internal serialization error"}"#.to_string()
         }),
     }
+}
+
+/// One custom event in the AI SDK v6 `data-*` wrapper.
+fn data_event<T: Serialize>(event_type: &str, id: Option<String>, data: T, transient: bool) -> String {
+    let wrapper = DataEvent { event_type: event_type.to_string(), id, data, transient };
+    serde_json::to_string(&wrapper).unwrap_or_else(|e| {
+        tracing::error!("Failed to serialize {event_type} event: {e}");
+        r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
+    })
 }
 
 /// Per-turn tool budgets in plain chat. Four searches: Anthropic puts a
@@ -1564,6 +1575,9 @@ async fn chat_handler_inner(
             .messages
             .iter()
             .find(|m| m.role == "user")
+            // Not `UIMessage::text`: the title takes the FIRST text part
+            // only, and a message with no text falls through to the default
+            // rather than titling the chat with an empty string.
             .and_then(|m| {
                 m.content.clone().or_else(|| {
                     m.parts.as_ref().and_then(|p| {
@@ -1615,26 +1629,6 @@ async fn chat_handler_inner(
         }
     }
 
-    // What the person said, as it is stored: the legacy `content` if the
-    // client sent one, else the text parts joined. One derivation, used both
-    // to write the row and, on regenerate, to recognize it.
-    fn user_text(m: &UIMessage) -> String {
-        m.content.clone().unwrap_or_else(|| {
-            m.parts
-                .as_ref()
-                .map(|p| {
-                    p.iter()
-                        .filter_map(|p| match p {
-                            UIPart::Text { text } => Some(text.clone()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .unwrap_or_default()
-        })
-    }
-
     let last_user_msg = request.messages.iter().rev().find(|m| m.role == "user");
 
     // Regenerate: the client has dropped its last assistant message and is
@@ -1679,7 +1673,7 @@ async fn chat_handler_inner(
                     Ok(Some((id, content))) => match m.id.as_deref() {
                         Some(client_id) => client_id == id,
                         // A client that sends no id: the text is all there is.
-                        None => content == user_text(m),
+                        None => content == m.text(),
                     },
                     Ok(None) => false,
                     Err(e) => {
@@ -1717,7 +1711,7 @@ async fn chat_handler_inner(
     // otherwise re-append the last one.
     if let Some(last_user_msg) = last_user_msg.filter(|_| !regenerating) {
         // Normal flow: save the last user message from the request
-        let user_content = user_text(last_user_msg);
+        let user_content = last_user_msg.text();
 
         let user_message = ChatMessage {
             // The client's id, so the row can be recognized again: by a
@@ -2287,14 +2281,7 @@ fn create_agent_stream(
             biased;
             // Live subagent status — drained even while dispatch_subagents is still executing.
             Some(update) = subagent_rx.recv() => {
-                let ev = StreamEvent::SubagentStatus {
-                    dispatch_id: update.dispatch_id,
-                    subagent_id: update.id as u32,
-                    title: update.title,
-                    model: update.model,
-                    status: update.status.as_str().to_string(),
-                    tokens: update.tokens,
-                };
+                let ev = StreamEvent::from(update);
                 yield (serialize_event(&ev));
             }
             maybe_event = agent_stream.next() => {
@@ -2524,14 +2511,7 @@ fn create_agent_stream(
 
         // Drain any subagent updates buffered after the agent loop ended.
         while let Ok(update) = subagent_rx.try_recv() {
-            let ev = StreamEvent::SubagentStatus {
-                dispatch_id: update.dispatch_id,
-                subagent_id: update.id as u32,
-                title: update.title,
-                model: update.model,
-                status: update.status.as_str().to_string(),
-                tokens: update.tokens,
-            };
+            let ev = StreamEvent::from(update);
             yield (serialize_event(&ev));
         }
 
@@ -3518,5 +3498,37 @@ mod ui_stream_fixture {
     #[test]
     fn the_stopped_turn_fixture_is_current() {
         check("box-ui-stream-abort.jsonl", stopped_turn());
+    }
+
+    /// The three data-wrapped events, byte for byte: the client matches on
+    /// `data-*` types and field names, and on `transient` being absent for a
+    /// checkpoint (it persists in the message) and `true` for the others.
+    #[test]
+    fn data_events_serialize_exactly() {
+        assert_eq!(
+            serialize_event(&StreamEvent::Checkpoint {
+                id: "msg_cp".into(),
+                version: 2,
+                messages_summarized: 7,
+                summary: "<s/>".into(),
+                timestamp: "2026-09-28T00:00:00Z".into(),
+            }),
+            r#"{"type":"data-checkpoint","id":"msg_cp","data":{"version":2,"messagesSummarized":7,"summary":"<s/>","timestamp":"2026-09-28T00:00:00Z"}}"#
+        );
+        assert_eq!(
+            serialize_event(&StreamEvent::NarrativeDocumentReady { page_id: "page_1".into() }),
+            r#"{"type":"data-narrative-document","data":{"pageId":"page_1"},"transient":true}"#
+        );
+        assert_eq!(
+            serialize_event(&StreamEvent::SubagentStatus {
+                dispatch_id: 3,
+                subagent_id: 1,
+                title: "Prices".into(),
+                model: "m".into(),
+                status: "thinking".into(),
+                tokens: 42,
+            }),
+            r#"{"type":"data-subagent","data":{"dispatchId":3,"subagentId":1,"title":"Prices","model":"m","status":"thinking","tokens":42},"transient":true}"#
+        );
     }
 }
