@@ -47,6 +47,7 @@ pub mod bookmarks;
 pub mod pages;
 pub mod updates;
 pub mod live_turn;
+pub mod turn_recorder;
 pub mod pins;
 pub mod trash;
 pub mod visits;

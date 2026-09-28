@@ -822,7 +822,7 @@ async fn get_latest_checkpoint(pool: &PgPool, chat_id: &str) -> Option<StreamEve
 /// Safely serialize a stream event to JSON
 /// Custom events (checkpoint, narrative document, subagent status) are wrapped
 /// in the AI SDK v6 data-* format
-fn serialize_event(event: &StreamEvent) -> String {
+pub(crate) fn serialize_event(event: &StreamEvent) -> String {
     match event {
         // Checkpoint persists in the message parts, so it is not transient.
         StreamEvent::Checkpoint { id, version, messages_summarized, summary, timestamp } => data_event(
