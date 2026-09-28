@@ -7,16 +7,11 @@
 
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { projectStore } from '$lib/stores/project.svelte';
-import { chatSessions } from '$lib/stores/chatSessions.svelte';
+import { fileIntoProject, projectMemberUrl, projectOfChat } from '$lib/utils/projectActions';
 import { pinMenuItem } from '$lib/pins/pinAction';
 import { promptText } from '$lib/stores/dialog.svelte';
 import { toast } from 'svelte-sonner';
 import { PROJECT_ICON } from '$lib/utils/iconHelpers';
-
-/** A project's own url, in either spelling — you can't put a project in a project. */
-export function isProjectUrl(url: string): boolean {
-	return /^\/(?:project|notebook)\//.test(url);
-}
 
 /**
  * Get "Add to project" menu items — a submenu of all projects plus a "New project…"
@@ -33,36 +28,25 @@ export function getAddToProjectMenuItems(
 	url: string,
 	_name?: string | null,
 ): ContextMenuItem[] {
-	if (isProjectUrl(url)) return [];
+	// A list, a project, or a chat with no id yet has nothing to file. The
+	// tab bar passes whatever route a tab is on, and a bare `/` used to be
+	// filed as a member.
+	const member = projectMemberUrl(url);
+	if (!member) return [];
+	url = member;
 	const projects = projectStore.projects;
 
 	// A chat lives in one project, and the menu says which: the check is
 	// where it is, picking another moves it, and "Remove from" takes it out.
 	// For anything else, filing is additive and the check is not tracked here.
-	const chatId = url.startsWith('/chat/') ? url.slice('/chat/'.length) : null;
-	const home = chatId
-		? projects.find(
-				(p) => p.id === chatSessions.sessions.find((s) => s.conversation_id === chatId)?.project_id,
-			)
-		: undefined;
+	const home = projectOfChat(url);
 
 	const submenu: ContextMenuItem[] = projects.map((s) => ({
 		id: `project-${s.id}`,
 		label: s.name,
 		icon: s.icon || PROJECT_ICON,
 		checked: s.id === home?.id,
-		action: async () => {
-			if (s.id === home?.id) return;
-			try {
-				await projectStore.addItem(s.id, url);
-				toast(home ? `Moved to ${s.name}` : `Added to ${s.name}`);
-			} catch (e) {
-				console.error('[contextMenuItems] Failed to add to project:', e);
-				toast.error(`Your server couldn't add this to ${s.name}`, {
-					description: 'Nothing changed. Try again',
-				});
-			}
-		},
+		action: () => fileIntoProject(s, url),
 	}));
 
 	submenu.push({

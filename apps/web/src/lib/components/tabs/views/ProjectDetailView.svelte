@@ -29,7 +29,7 @@
 	} from '$lib/api/client';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
 	import { accentCss } from '$lib/sidebar/pin-colors';
-	import { isProjectUrl } from '$lib/utils/contextMenuItems';
+	import { droppedRefUrl, fileIntoProject, isProjectUrl } from '$lib/utils/projectActions';
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
 
@@ -480,6 +480,13 @@
 		e.preventDefault();
 		dropActive = false;
 		const id = projectId;
+		// A chat, page or pin dragged from the sidebar files itself.
+		const ref = droppedRefUrl(e);
+		if (ref) {
+			if (detail) await fileIntoProject(detail, ref);
+			await loadGraph();
+			return;
+		}
 		const dropped = e.dataTransfer?.files;
 		if (!id || archived || !dropped || dropped.length === 0) return;
 		const files = [...dropped];
@@ -871,7 +878,7 @@
 			<section class="grid-section">
 				{#if allRows.length === 0 && !archived}
 					<button class="add-row" onclick={openPicker}>
-						<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links, or drop files here
+						<Icon icon="ri:add-line" width="15" /> Add chats, pages, people, places, or links, or drop files here
 					</button>
 				{:else}
 					<UniversalDataGrid
@@ -909,7 +916,7 @@
 							{#if !archived}
 								<IconButton
 									icon="ri:add-line"
-									label="Add a page, person, place, file, or link"
+									label="Add a chat, page, person, place, file, or link"
 									variant="secondary"
 									onclick={openPicker}
 								/>
@@ -968,7 +975,7 @@
 	<RefPicker
 		mode="single"
 		position={pickerPos}
-		placeholder="Add a person, page, or link…"
+		placeholder="Add a chat, page, person, or link…"
 		excludeIds={memberItems.map((i) => i.url)}
 		filter={(e) => !isProjectUrl(e.url)}
 		onSelect={addMember}
