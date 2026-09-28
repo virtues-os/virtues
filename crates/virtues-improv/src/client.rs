@@ -61,7 +61,84 @@ pub struct Network {
 const REPLY_TIMEOUT: Duration = Duration::from_secs(25);
 /// A join is bounded by `nmcli`'s own timeout on the box; add slack.
 const JOIN_TIMEOUT: Duration = Duration::from_secs(45);
+/// Pairing (0x83) is the slowest answer the box gives, ON PURPOSE: it spends
+/// up to 45s finishing the reach ticket (grant redeem + relay bind) and then
+/// up to 15s on its loopback consume before it says anything. This was
+/// `REPLY_TIMEOUT` (25s) until 2026-09-27, so a slow relay made the app report
+/// a failed pairing that the box then completed — claiming itself and turning
+/// its Bluetooth off under an owner who had just been told to try again.
+/// Must exceed 45 + 15; the screen's own deadline sits above this one.
+const PAIR_TIMEOUT: Duration = Duration::from_secs(70);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// WHY a call failed, as a class a screen can branch on — never parsed out of
+/// words. The strings match `BoxRadioErrorCode` in the web app
+/// (`apps/web/src/lib/tauri/boxRadio.ts`) and the Swift client's codes, so one
+/// screen handles Mac and iPhone alike.
+///
+/// Until 2026-09-27 these rode as prefixes on the message (`"refused: …"`)
+/// and the plugin split them back out, which is exactly the kind of contract
+/// that breaks silently the first time someone rewords an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureKind {
+    /// Out of range, gone, or would not connect.
+    NotFound,
+    /// The server said no: wrong words, not its owner, already linked.
+    Refused,
+    /// The server is older than the command.
+    Unsupported,
+    /// The server tried the network and could not join it.
+    JoinFailed,
+    /// The server stopped answering.
+    Timeout,
+    Failed,
+}
+
+impl FailureKind {
+    pub fn code(self) -> &'static str {
+        match self {
+            FailureKind::NotFound => "not-found",
+            FailureKind::Refused => "refused",
+            FailureKind::Unsupported => "unsupported",
+            FailureKind::JoinFailed => "join-failed",
+            FailureKind::Timeout => "timeout",
+            FailureKind::Failed => "failed",
+        }
+    }
+}
+
+/// A classified failure, carried inside `anyhow::Error` so every signature
+/// stays `Result<T>`; [`classify`] reads it back out.
+#[derive(Debug)]
+pub struct Failure {
+    pub kind: FailureKind,
+    pub message: String,
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for Failure {}
+
+fn fail(kind: FailureKind, message: impl Into<String>) -> anyhow::Error {
+    Failure { kind, message: message.into() }.into()
+}
+
+/// `(code, words)` for any error this client returned. An unclassified error
+/// (a BlueZ or CoreBluetooth failure deep in btleplug) is `failed`, with its
+/// top-level message only — the full chain is for logs, not for a person.
+pub fn classify(e: &anyhow::Error) -> (&'static str, String) {
+    match e.downcast_ref::<Failure>() {
+        Some(f) => (f.kind.code(), f.message.clone()),
+        None => ("failed", e.to_string()),
+    }
+}
+
+/// The same timeout words everywhere.
+const NO_ANSWER: &str = "Your server didn't answer. Move closer to it and try again.";
 
 struct Session {
     id: String,
@@ -188,12 +265,12 @@ impl ImprovClient {
             .found
             .get(id)
             .cloned()
-            .ok_or_else(|| anyhow!("that box is no longer in range — scan again"))?;
+            .ok_or_else(|| fail(FailureKind::NotFound, "Your server went out of Bluetooth range. Move closer to it and look again."))?;
 
         tokio::time::timeout(CONNECT_TIMEOUT, peripheral.connect())
             .await
-            .map_err(|_| anyhow!("couldn't connect to the box over Bluetooth"))?
-            .context("bluetooth connect")?;
+            .map_err(|_| fail(FailureKind::NotFound, "This computer couldn't reach your server over Bluetooth. Move closer and try again."))?
+            .map_err(|e| fail(FailureKind::NotFound, format!("This computer couldn't reach your server over Bluetooth ({e}).")))?;
         peripheral.discover_services().await.context("discover GATT services")?;
 
         let chars = peripheral.characteristics();
@@ -202,9 +279,9 @@ impl ImprovClient {
             chars.iter().find(|c| c.uuid == want).cloned()
         };
         let rpc = find(protocol::CHAR_RPC_COMMAND)
-            .ok_or_else(|| anyhow!("that device doesn't offer Virtues setup"))?;
+            .ok_or_else(|| fail(FailureKind::NotFound, "That device isn't a Virtues server."))?;
         let result = find(protocol::CHAR_RPC_RESULT)
-            .ok_or_else(|| anyhow!("that device doesn't offer Virtues setup"))?;
+            .ok_or_else(|| fail(FailureKind::NotFound, "That device isn't a Virtues server."))?;
 
         // Subscribe once per session. State/error are best-effort: the box
         // always answers with a result packet too, and a device that refuses
@@ -285,8 +362,9 @@ impl ImprovClient {
                                 // wrong or the attempt budget is spent, and
                                 // neither will we — one message for both, so a
                                 // guesser learns nothing.
-                                return Err(anyhow!(
-                                    "That phrase didn't match. Check the words on your box's screen."
+                                return Err(fail(
+                                    FailureKind::Refused,
+                                    "Those words don't match. Check the words on your server's screen.",
                                 ));
                             }
                         }
@@ -295,16 +373,16 @@ impl ImprovClient {
                         return Ok(Some(true));
                     }
                 }
-                Err(anyhow!("the box stopped answering"))
+                Err(fail(FailureKind::Timeout, NO_ANSWER))
             };
             let outcome = tokio::time::timeout(REPLY_TIMEOUT, watch)
                 .await
-                .map_err(|_| anyhow!("the box didn't answer — try again"))??;
+                .map_err(|_| fail(FailureKind::Timeout, NO_ANSWER))??;
             if let Some(gated) = outcome {
                 return Ok(gated);
             }
         }
-        Err(anyhow!("the box didn't answer — try again"))
+        Err(fail(FailureKind::Timeout, NO_ANSWER))
     }
 
     // pair_code (0x85) and link_code (0x84) were deleted 2026-08-24 with their
@@ -340,21 +418,30 @@ impl ImprovClient {
                 if n.uuid == error_uuid {
                     match n.value.first().copied() {
                         None | Some(0) => continue,
-                        Some(c) => return Err(anyhow!("{}", ImprovError::describe(c))),
+                        // NotAuthorized here almost always means ALREADY LINKED
+                        // (re-running setup on a server that kept its account),
+                        // which is not the person's failure. Same words as iOS.
+                        Some(c) if c == ImprovError::NotAuthorized as u8 => {
+                            return Err(fail(
+                                FailureKind::Refused,
+                                "This server is already linked to an account.",
+                            ))
+                        }
+                        Some(c) => return Err(fail(FailureKind::Failed, ImprovError::describe(c))),
                     }
                 }
                 if let Some(strings) = protocol::parse_result(&n.value, 0x82) {
                     if strings.first().map(|s| s == "accepted").unwrap_or(false) {
                         return Ok(());
                     }
-                    return Err(anyhow!("the box refused the grant"));
+                    return Err(fail(FailureKind::Refused, "Your server didn't take the account hand-off."));
                 }
             }
-            Err(anyhow!("the box stopped answering"))
+            Err(fail(FailureKind::Timeout, NO_ANSWER))
         };
         tokio::time::timeout(REPLY_TIMEOUT, watch)
             .await
-            .map_err(|_| anyhow!("the box didn't answer — try again"))?
+            .map_err(|_| fail(FailureKind::Timeout, NO_ANSWER))?
     }
 
     /// RPC 0x04: ask the BOX what networks it can see. Streams one packet per
@@ -371,10 +458,12 @@ impl ImprovClient {
             .context("send scan request")?;
 
         let mut networks = Vec::new();
+        let mut finished = false;
         let collect = async {
             while let Some(n) = notifications.next().await {
                 let Some(strings) = protocol::parse_result(&n.value, 0x04) else { continue };
                 if strings.is_empty() {
+                    finished = true;
                     break; // terminator
                 }
                 if strings.len() >= 3 {
@@ -391,10 +480,12 @@ impl ImprovClient {
             }
         };
         // A timeout with networks already collected is a truncated list, not a
-        // failure — show what the box managed to report.
+        // failure — show what the server managed to report. And a finished
+        // scan with NOTHING in it is an answer too ("no networks here"), not a
+        // silent server: the screen says different things for the two.
         let _ = tokio::time::timeout(REPLY_TIMEOUT, collect).await;
-        if networks.is_empty() {
-            return Err(anyhow!("the box didn't answer the scan"));
+        if networks.is_empty() && !finished {
+            return Err(fail(FailureKind::Timeout, "Your server didn't answer the Wi-Fi scan. Try again."));
         }
         Ok(networks)
     }
@@ -446,7 +537,14 @@ impl ImprovClient {
                 }
                 if n.uuid == error_uuid {
                     if let Some(code) = n.value.first().copied().filter(|c| *c != 0) {
-                        return Err(anyhow!("{}", protocol::ImprovError::describe(code)));
+                        let kind = if code == ImprovError::UnableToConnect as u8 {
+                            FailureKind::JoinFailed
+                        } else if code == ImprovError::NotAuthorized as u8 {
+                            FailureKind::Refused
+                        } else {
+                            FailureKind::Failed
+                        };
+                        return Err(fail(kind, protocol::ImprovError::describe(code)));
                     }
                     continue;
                 }
@@ -454,12 +552,13 @@ impl ImprovClient {
                     return Ok(strings.into_iter().next().unwrap_or_default());
                 }
             }
-            Err(anyhow!("the box stopped answering mid-join"))
+            Err(fail(FailureKind::Timeout, "Your server stopped answering while it joined. Check whether it's online."))
         };
         match tokio::time::timeout(JOIN_TIMEOUT, watch).await {
             Ok(r) => r,
-            Err(_) => Err(anyhow!(
-                "Timed out waiting for the box — it may still be joining. Check its screen."
+            Err(_) => Err(fail(
+                FailureKind::Timeout,
+                "Your server didn't answer in time. It may still be joining.",
             )),
         }
     }
@@ -507,14 +606,99 @@ impl ImprovClient {
             }
             false
         };
-        let complete = tokio::time::timeout(REPLY_TIMEOUT, collect).await.unwrap_or(false);
+        let complete = tokio::time::timeout(PAIR_TIMEOUT, collect).await.unwrap_or(false);
         if !complete {
-            return Err(anyhow!("Timed out pairing over Bluetooth — check the box's screen."));
+            return Err(fail(FailureKind::Timeout, "Pairing over Bluetooth timed out. Try again."));
         }
         if let Some(code) = body.strip_prefix("error:") {
-            return Err(anyhow!("{}", describe_pair_error(code)));
+            return Err(fail(FailureKind::Refused, describe_pair_error(code)));
         }
         Ok(body)
+    }
+
+    /// RPC 0x88: ask a CLAIMED box for a one-time owner challenge. Returns the
+    /// raw nonce; the caller signs [`protocol::owner_proof_message`] of it with
+    /// this device's paired key and hands the result to [`Self::owner_prove`].
+    ///
+    /// Split in two rather than taking a signer so the key never has to cross
+    /// into this crate — it stays with the reach store that owns it.
+    pub async fn owner_challenge(&self, id: &str) -> Result<Vec<u8>> {
+        let mut inner = self.inner.lock().await;
+        let session = Self::ensure_connected(&mut inner, id).await?;
+        let mut notifications = session.peripheral.notifications().await.context("notifications")?;
+        session
+            .peripheral
+            .write(&session.rpc, &protocol::build_rpc(&Command::OwnerChallenge), WriteType::WithResponse)
+            .await
+            .context("ask for a challenge")?;
+
+        let error_uuid = uuid(protocol::CHAR_ERROR_STATE);
+        let watch = async {
+            while let Some(n) = notifications.next().await {
+                if n.uuid == error_uuid {
+                    match n.value.first().copied() {
+                        None | Some(0) => continue,
+                        // A box older than this command: it cannot be reopened
+                        // over Bluetooth, and saying so is the useful answer.
+                        Some(c) if c == ImprovError::UnknownCommand as u8 => {
+                            return Err(fail(
+                                FailureKind::Unsupported,
+                                "Your server needs an update before you can reconnect it over Bluetooth.",
+                            ));
+                        }
+                        Some(_) => {
+                            return Err(fail(FailureKind::Refused, "This server isn't asking for its owner."))
+                        }
+                    }
+                }
+                if let Some(strings) = protocol::parse_result(&n.value, 0x88) {
+                    let hex = strings.into_iter().next().unwrap_or_default();
+                    return decode_hex(&hex)
+                        .ok_or_else(|| fail(FailureKind::Failed, "Your server sent a challenge this app couldn't read."));
+                }
+            }
+            Err(fail(FailureKind::Timeout, NO_ANSWER))
+        };
+        tokio::time::timeout(REPLY_TIMEOUT, watch)
+            .await
+            .map_err(|_| fail(FailureKind::Timeout, NO_ANSWER))?
+    }
+
+    /// RPC 0x89: present the signed challenge. `Ok(())` opens an owner session
+    /// on this connection: wifi scan and join work from here on, nothing else.
+    pub async fn owner_prove(&self, id: &str, endpoint_id: &str, signature_hex: &str) -> Result<()> {
+        let mut inner = self.inner.lock().await;
+        let session = Self::ensure_connected(&mut inner, id).await?;
+        let mut notifications = session.peripheral.notifications().await.context("notifications")?;
+        let cmd = Command::OwnerProve { endpoint_id: endpoint_id.into(), signature: signature_hex.into() };
+        session
+            .peripheral
+            .write(&session.rpc, &protocol::build_rpc(&cmd), WriteType::WithResponse)
+            .await
+            .context("send ownership proof")?;
+
+        let error_uuid = uuid(protocol::CHAR_ERROR_STATE);
+        let watch = async {
+            while let Some(n) = notifications.next().await {
+                if n.uuid == error_uuid {
+                    match n.value.first().copied() {
+                        None | Some(0) => continue,
+                        // One answer for every refusal — not paired, revoked,
+                        // stale challenge — because the box gives only one.
+                        Some(_) => {
+                            return Err(fail(FailureKind::Refused, "This server doesn't recognize this computer."))
+                        }
+                    }
+                }
+                if protocol::parse_result(&n.value, 0x89).is_some() {
+                    return Ok(());
+                }
+            }
+            Err(fail(FailureKind::Timeout, NO_ANSWER))
+        };
+        tokio::time::timeout(REPLY_TIMEOUT, watch)
+            .await
+            .map_err(|_| fail(FailureKind::Timeout, NO_ANSWER))?
     }
 
     /// Drop the BLE connection. Safe to always call on leaving the setup flow.
@@ -526,17 +710,29 @@ impl ImprovClient {
     }
 }
 
+/// Lowercase or uppercase hex to bytes; `None` on anything else. Local because
+/// this crate's client half should not grow a dependency for eight lines.
+fn decode_hex(s: &str) -> Option<Vec<u8>> {
+    let s = s.trim();
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()
+}
+
 /// The box's consume-endpoint error codes, in words. Same strings the iOS
 /// client shows — the failure a user sees must not depend on their platform.
 fn describe_pair_error(code: &str) -> String {
     match code {
+        // No code is typed on this path any more (0x83 is codeless), so none of
+        // these may send the person to look for one. Same words as iOS.
         "invalid_or_expired_token" => {
-            "That code didn't match — check the box's screen and try again.".into()
+            "Your server's setup code expired before pairing finished. Start setup again.".into()
         }
         "too_many_attempts" => {
-            "Too many tries — wait a bit and use the code on the box's screen.".into()
+            "Too many pairing attempts on your server. Wait a few minutes and try again.".into()
         }
-        other => format!("The box couldn't complete pairing ({other})."),
+        other => format!("Your server couldn't complete pairing ({other})."),
     }
 }
 
@@ -556,9 +752,28 @@ mod tests {
     }
 
     #[test]
+    fn a_classified_failure_keeps_its_code_through_anyhow() {
+        // The whole point of FailureKind: a screen branches on the code, and
+        // `refused` is what tells the owner path to try the next server.
+        let e = fail(FailureKind::Refused, "no");
+        assert_eq!(classify(&e), ("refused", "no".to_string()));
+        let wrapped = e.context("while opening");
+        assert_eq!(classify(&wrapped).0, "refused");
+        assert_eq!(classify(&anyhow!("btleplug exploded")).0, "failed");
+    }
+
+    #[test]
+    fn decode_hex_reads_a_nonce_and_refuses_junk() {
+        assert_eq!(decode_hex("00ff10"), Some(vec![0, 255, 16]));
+        assert_eq!(decode_hex("ABcd"), Some(vec![0xab, 0xcd]));
+        assert_eq!(decode_hex("abc"), None);
+        assert_eq!(decode_hex("zz"), None);
+    }
+
+    #[test]
     fn pair_errors_read_the_same_as_the_ios_clients() {
-        assert!(describe_pair_error("invalid_or_expired_token").contains("didn't match"));
-        assert!(describe_pair_error("too_many_attempts").contains("Too many tries"));
+        assert!(describe_pair_error("invalid_or_expired_token").contains("expired"));
+        assert!(describe_pair_error("too_many_attempts").contains("Too many pairing attempts"));
         assert!(describe_pair_error("weird").contains("weird"));
     }
 }

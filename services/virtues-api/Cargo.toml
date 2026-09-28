@@ -22,7 +22,7 @@ tokio = { version = "1.40", features = ["full"] }
 # HTTP Server
 axum = { version = "0.7", features = ["macros"] }
 tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
 
 # HTTP Client (for proxying)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider", "rustls-tls-webpki-roots-no-provider", "stream"] }

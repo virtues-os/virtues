@@ -2,7 +2,7 @@
 	import { browser } from "$app/environment";
 	import { onDestroy, onMount } from "svelte";
 	import "leaflet/dist/leaflet.css";
-	import { atlasLayer } from "$lib/map/atlas";
+	import { atlasLayer, compactCredit } from "$lib/map/atlas";
 
 	export type MapPoint = {
 		lat: number;
@@ -233,12 +233,13 @@
 			touchZoom: interactive,
 			tap: interactive,
 		});
-		// Drop Leaflet's own "Leaflet" flag — the data credit stays.
+		// Drop Leaflet's own "Leaflet" flag — the data credit stays, as an ⓘ.
 		map.attributionControl.setPrefix(false);
+		compactCredit(map);
 
-		// The basemap comes from the box itself ($lib/map/atlas), never a tile
-		// provider, and there is none until the box has its own map files. The
-		// layer carries the data credit when it exists.
+		// The basemap comes from the box's own map files ($lib/map/atlas),
+		// never a tile provider; a box with none yet draws the track alone.
+		// The layer carries the data credit.
 		render();
 		const basemap = await atlasLayer("light");
 		if (basemap && map) basemap.addTo(map);

@@ -351,15 +351,21 @@
       // — macOS showed `[Virtues Honest Kestrel]` on the link screen — and the
       // wrapper defeated the prefix strip, so the name kept a `Virtues` the
       // screen had already said. Strip the edges FIRST, then the prefix.
-      const prettyBoxName = (n) =>
-        String(n || 'Your server')
+      // Since 2026-09-28 a server advertises its NUMBER (`Virtues-4812`), and
+      // keeps the brand on screen ("Virtues 4812"), because "4812" alone reads
+      // as nothing; an older server's codename still drops it. Same rule as
+      // boxLabel in apps/web/src/lib/tauri/boxRadio.ts.
+      const prettyBoxName = (n) => {
+        const rest = String(n || 'Your server')
           .replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '')
           .replace(/^Virtues[-_ ]?/i, '')
           .replace(/[-_]+/g, ' ')
           // The client's own fallback is the literal "Virtues box", which the
           // prefix strip turns into "box" — "Setting up box" reads as a bug.
           .replace(/^box$/i, '')
-          .trim() || 'Your server';
+          .trim();
+        return /^\d+$/.test(rest) ? 'Virtues ' + rest : rest || 'Your server';
+      };
       // Where step 2 actually happens. Atlas directly, NOT the memorable
       // `virtues.com/link` this once said: that redirect is still an open
       // decision in agents/plan/linking-plan.md and 404s today, which is exactly what
@@ -424,6 +430,11 @@
           // `#setup` pins the connect screen open on an already-paired device,
           // for setting up a SECOND box.
           if (hash === '#setup') return 'entry';
+          // `#existing`: Setup (the app's own /setup, before pairing) sends a
+          // device that is joining a server someone already set up straight
+          // to the join: the QR scan on a phone, the code on a computer.
+          // Setup's first half only sets up new servers (2026-09-28).
+          if (hash === '#existing') return 'existing';
           // The injected flag is a FAST PATH, never the truth: it is evaluated
           // once when the window is built, so after an in-session unpair it
           // still says true. Confirmed against the plugin by `pairedProbe`.
@@ -703,7 +714,22 @@
         });
       }
 
+      // ON A PHONE, RECOVERY IS THE APP'S OWN SCREEN (2026-09-28). The baked
+      // SPA's `/reconnect` tells "refused" from "unreachable" from "offline"
+      // itself, and can put a moved server back on Wi-Fi over Bluetooth
+      // (apps/web/src/lib/components/recovery/). It ships in the same build
+      // as this page, and an OTA bundle is never older than the baked one,
+      // so the route is always there. Desktop shells that bake no SPA
+      // (Windows, Linux) keep the two screens below; the Mac never opens
+      // them (main.rs sends it to its own `/reconnect`).
+      function toReconnect() {
+        if (!IS_MOBILE) return false;
+        window.location.replace('/reconnect');
+        return true;
+      }
+
       function renderBoxUnreachable() {
+        if (toReconnect()) return;
         setServer('');
         app.innerHTML = `
           <h1>Can't reach your server</h1>
@@ -731,6 +757,7 @@
       }
 
       function renderBoxForgotUs() {
+        if (toReconnect()) return;
         setServer('');
         app.innerHTML = `
           <h1>Your server doesn't recognize ${THIS_DEVICE}</h1>
@@ -993,7 +1020,15 @@
         } catch (e) {
           return { boxes: [], error: String(e) };
         }
-        const boxes = ((r && r.boxes) || []).map((b) => ({ ...b, name: prettyBoxName(b.name) }));
+        // State 0x01 is a CLAIMED server that lost its network and is asking
+        // its owner for help (virtues-core `ble_provision`, owner mode). This
+        // screen only sets up NEW servers — the words don't open a claimed one
+        // — so offering it here strands the person on a phrase that can never
+        // work. The owner's path lives in the app (`$lib/tauri/boxRadio`).
+        const NEEDS_OWNER = 1;
+        const boxes = ((r && r.boxes) || [])
+          .filter((b) => b.improvState !== NEEDS_OWNER)
+          .map((b) => ({ ...b, name: prettyBoxName(b.name) }));
         return { boxes, error: (r && r.error) || '' };
       }
 
@@ -2459,9 +2494,10 @@ its devices apart — type its address.",
           // pairing, bench 2026-08-24) — but GENEROUSLY: the box may spend up
           // to ~45s completing its ticket (grant redeem + relay bind) before
           // it answers, and cutting it off mid-wait would re-create the very
-          // incomplete-ticket problem the wait exists to solve.
+          // incomplete-ticket problem the wait exists to solve. Above the
+          // clients' own 70s (PAIR_TIMEOUT), so their answer wins the race.
           const res = await withDeadline(
-            invoke('plugin:reach|improv_pair', { id: server.bleId }), 70000);
+            invoke('plugin:reach|improv_pair', { id: server.bleId }), 80000);
           if (res && res.ok) {
             say('Paired - opening your server…', 'ok');
             invoke('plugin:reach|improv_disconnect').catch(() => {});
@@ -2499,6 +2535,7 @@ its devices apart — type its address.",
         case 'forgot-us':    renderBoxForgotUs(); break;
         case 'unreachable':  renderBoxUnreachable(); break;
         case 'probe-paired': bootPaired(); break;
+        case 'existing':     IS_MOBILE ? renderScan() : startExisting(); break;
         default:             renderEntry(); break;
       }
     </script>

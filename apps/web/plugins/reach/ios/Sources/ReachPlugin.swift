@@ -49,13 +49,27 @@ class ImprovPairArgs: Decodable {
   let endpointId: String?
 }
 
+class ImprovOwnerProveArgs: Decodable {
+  let id: String
+  /// This device's iroh EndpointId, hex — the id the server allowlisted at pairing.
+  let endpointId: String
+  /// ed25519 signature over the owner-proof message, hex. Made in Rust.
+  let signature: String
+}
+
 class ReachPlugin: Plugin {
   // ─── Improv BLE setup (see ImprovClient.swift) ─────────────────────────────
 
   @objc public func improv_discover(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(ImprovDiscoverArgs.self)
-    ImprovClient.shared.discover(seconds: args.seconds ?? 4.0) { boxes in
-      invoke.resolve(["boxes": boxes])
+    ImprovClient.shared.discover(seconds: args.seconds ?? 4.0) { boxes, reason in
+      // The same shape as desktop: a scan that could not run says why, so
+      // the screen can tell "nothing here" from "this phone can't look".
+      if let reason {
+        invoke.resolve(["boxes": boxes, "error": reason])
+      } else {
+        invoke.resolve(["boxes": boxes])
+      }
     }
   }
 
@@ -64,7 +78,7 @@ class ReachPlugin: Plugin {
     ImprovClient.shared.claimSetup(id: args.id, phrase: args.phrase, label: args.label ?? "") {
       gated, err in
       if let err {
-        invoke.resolve(["ok": false, "error": err])
+        invoke.resolve(["ok": false, "code": err.code, "error": err.message])
       } else {
         invoke.resolve(["ok": true, "gated": gated])
       }
@@ -80,7 +94,7 @@ class ReachPlugin: Plugin {
     let args = try invoke.parseArgs(ImprovGrantArgs.self)
     ImprovClient.shared.claimGrant(id: args.id, grant: args.grant) { err in
       if let err {
-        invoke.resolve(["ok": false, "error": err])
+        invoke.resolve(["ok": false, "code": err.code, "error": err.message])
       } else {
         invoke.resolve(["ok": true])
       }
@@ -91,7 +105,7 @@ class ReachPlugin: Plugin {
     let args = try invoke.parseArgs(ImprovTargetArgs.self)
     ImprovClient.shared.wifiScan(id: args.id) { networks, err in
       if let err {
-        invoke.resolve(["networks": [] as [[String: Any]], "error": err])
+        invoke.resolve(["networks": [] as [[String: Any]], "code": err.code, "error": err.message])
       } else {
         invoke.resolve(["networks": networks ?? []])
       }
@@ -107,7 +121,7 @@ class ReachPlugin: Plugin {
       },
       completion: { url, err in
         if let err {
-          invoke.resolve(["ok": false, "error": err])
+          invoke.resolve(["ok": false, "code": err.code, "error": err.message])
         } else {
           invoke.resolve(["ok": true, "url": url ?? ""])
         }
@@ -120,11 +134,38 @@ class ReachPlugin: Plugin {
       id: args.id, label: args.label ?? "", endpointId: args.endpointId ?? ""
     ) { json, err in
       if let err {
-        invoke.resolve(["ok": false, "error": err])
+        invoke.resolve(["ok": false, "code": err.code, "error": err.message])
       } else {
         // The consume response verbatim, as a string — the JS parses it with
         // the same code the LAN path uses.
         invoke.resolve(["ok": true, "response": json ?? ""])
+      }
+    }
+  }
+
+  /// The moved-box path, half one: fetch the server's nonce. Called only by
+  /// the Rust `improv_owner_claim`, which signs it and calls half two.
+  @objc public func improv_owner_challenge(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(ImprovTargetArgs.self)
+    ImprovClient.shared.ownerChallenge(id: args.id) { nonce, err in
+      if let err {
+        invoke.resolve(["ok": false, "code": err.code, "error": err.message])
+      } else {
+        invoke.resolve(["ok": true, "nonce": nonce ?? ""])
+      }
+    }
+  }
+
+  /// The moved-box path, half two: present the signature Rust made.
+  @objc public func improv_owner_prove(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(ImprovOwnerProveArgs.self)
+    ImprovClient.shared.ownerProve(
+      id: args.id, endpointId: args.endpointId, signature: args.signature
+    ) { err in
+      if let err {
+        invoke.resolve(["ok": false, "code": err.code, "error": err.message])
+      } else {
+        invoke.resolve(["ok": true])
       }
     }
   }

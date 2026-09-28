@@ -83,13 +83,16 @@ pub enum Error {
 }
 
 impl Error {
-    /// Get HTTP status code for this error
+    /// Get HTTP status code for this error. The one mapping every HTTP
+    /// handler answers with (via `IntoResponse` below).
     pub fn http_status(&self) -> u16 {
         match self {
             Error::Authentication(_) | Error::Unauthorized(_) => 401,
             Error::NotFound(_) => 404,
             Error::InvalidInput(_) => 400,
             Error::Configuration(_) => 503,
+            // A second start of something that allows only one at a time.
+            Error::Database(msg) if msg.contains("already has an active") => 409,
             _ => 500,
         }
     }
@@ -108,6 +111,30 @@ impl Error {
                 | Error::Anyhow(_)
                 | Error::Other(_)
         )
+    }
+}
+
+/// Every handler's error becomes `{status, {"error": "<message>"}}` — the
+/// shape the web client's `request()` reads (`error`, then `message`).
+impl axum::response::IntoResponse for Error {
+    fn into_response(self) -> axum::response::Response {
+        let status = axum::http::StatusCode::from_u16(self.http_status())
+            .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+
+        // A 500 that only the client sees is a 500 nobody finds. The bookmarks
+        // list answered `no column found for name: timestamp` for a month while
+        // a sweep of the journal for errors showed nothing, because this was the
+        // one place the error passed through and it said nothing. The request
+        // span already carries method, path and request id.
+        if status.is_server_error() {
+            tracing::error!(status = status.as_u16(), error = %self, "request failed");
+        }
+
+        (
+            status,
+            axum::Json(serde_json::json!({ "error": self.to_string() })),
+        )
+            .into_response()
     }
 }
 

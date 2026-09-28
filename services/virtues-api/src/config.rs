@@ -59,6 +59,11 @@ pub struct Config {
     /// data proxy and the OAuth link/exchange calls in `routes/oauth.rs`.
     pub plaid_base_url: String,
 
+    /// Where the monthly map cut lands: `<maps_dir>/latest.json` names the
+    /// build, `<maps_dir>/<build>/` holds its files (`VIRTUES_MAPS_DIR`,
+    /// default `/srv/maps`). See `routes/maps.rs`.
+    pub maps_dir: std::path::PathBuf,
+
     // Other OAuth provider credentials (google/notion/strava client_id/secret)
     // are read directly from the environment in `routes/oauth.rs`.
 }
@@ -100,6 +105,12 @@ impl Config {
             plaid_client_id: std::env::var("PLAID_CLIENT_ID").ok(),
             plaid_secret: std::env::var("PLAID_SECRET").ok(),
             plaid_base_url: plaid_base_url_from_env()?,
+
+            maps_dir: std::env::var("VIRTUES_MAPS_DIR")
+                .ok()
+                .filter(|d| !d.is_empty())
+                .unwrap_or_else(|| "/srv/maps".to_string())
+                .into(),
         })
     }
 

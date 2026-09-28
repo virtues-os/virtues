@@ -2,13 +2,11 @@
 //!
 //! This crate is the single source of truth for all static configuration:
 //! - Models (LLM providers and their capabilities)
-//! - Agents (assistant personas)
 //! - Tools (built-in capabilities like web_search, query_ontology)
 //! - Ontologies (normalized data schemas)
 //!
 //! Source/stream catalog data lives in `actions/` (TOML manifests reconciled
-//! into the `app_applets` table), not here — the former `sources`/`streams`
-//! modules were removed as dead code.
+//! into the `app_applets` table), not here.
 //!
 //! # Design Principles
 //!
@@ -24,7 +22,6 @@
 pub mod assistant;
 pub mod models;
 pub mod ontologies;
-pub mod personas;
 pub mod skills;
 pub mod sql_catalog;
 pub mod tools;
@@ -33,7 +30,6 @@ pub mod tools;
 pub use assistant::{assistant_profile_defaults, AssistantProfileDefaults, DEFAULT_THEME};
 pub use models::{default_model_for_slot, required_model_ids, ModelSlot, ReasoningFacts};
 pub use ontologies::{registered_ontologies, EmbeddingConfig, OntologyDescriptor};
-pub use personas::{default_personas, get_persona, PersonaConfig};
 pub use sql_catalog::{get_table_metadata, TableMetadata};
 pub use skills::{default_skills, skill_named, Skill};
 pub use tools::{default_tools, ToolConfig};

@@ -322,7 +322,7 @@ async fn run_one_worker(
                             "args": args,
                             // Bound the payload: the orchestrator only needs findings; full rows/
                             // results would bloat its context (and cost) on every subsequent step.
-                            "data": truncate_source_data(tool_name, result),
+                            "data": truncate_source_data(result),
                         }));
                     }
                 }
@@ -407,7 +407,7 @@ async fn emit(
 
 /// Bound a tool result before it's handed back to the orchestrator: keep the citation-relevant
 /// shape (the query, a preview of rows/results) but drop the long tail of data.
-fn truncate_source_data(tool_name: &str, mut data: Value) -> Value {
+fn truncate_source_data(mut data: Value) -> Value {
     if let Some(obj) = data.as_object_mut() {
         // SQL / semantic results: keep the first N rows + a total count.
         if let Some(rows) = obj.get("rows").and_then(|r| r.as_array()) {
@@ -434,7 +434,6 @@ fn truncate_source_data(tool_name: &str, mut data: Value) -> Value {
             }
         }
     }
-    let _ = tool_name; // (reserved for tool-specific shaping if needed later)
     data
 }
 

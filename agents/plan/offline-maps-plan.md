@@ -1,10 +1,13 @@
 # Offline maps: Protomaps on the box
 
-**Status: planned, spike green, decisions settled (2026-09-24).** The maps
-have no basemap today ([record](../record/map-atlas-plan.md)): CARTO went
-key-only, and the OpenFreeMap stopgap was removed because it leaked every
-viewed street. This plan gives the box its own map files. When it ships,
-delete this plan and rewrite the record.
+**Status: steps 1–4 built on `wave` (2026-09-27); what is left is running it.**
+The code is done end to end: the box serves its own map files, virtues-api
+serves the files to boxes, the monthly cut job produces them, and the box
+downloads what its owner's history calls for. No box has files yet because the
+cut has never run on the real server, which is still being provisioned
+(agents/plan/cloud-consolidation-plan.md). Released maps have no basemap until
+then ([record](../record/map-atlas-plan.md)). When it ships, delete this plan
+and rewrite the record.
 
 ## The goal
 
@@ -49,9 +52,10 @@ The unit is **days present**, not visits or summed durations:
 
 - A day counts for an area if the person spent at least an hour in it,
   measured from `data_location_point`, which every source produces.
-- **Do not sum `data_location_visit.duration_minutes`.** On the dev copy of
-  real data the visits overlap (12,397 overlapping pairs): their durations sum
-  to 3,583 hours while their union covers 529. A separate task is fixing that.
+- **Do not sum `data_location_visit.duration_minutes`.** On `virtues_boxcopy`
+  the visits overlap (12,397 overlapping pairs): their durations sum to 3,583
+  hours while their union covers 529. That database is the scrubbed demo copy,
+  so confirm on dragon before treating it as a collector bug.
 - Visit counts would reward errands: ten coffee runs are not ten times one
   week.
 
@@ -71,57 +75,57 @@ The unit is **days present**, not visits or summed durations:
 
 ## Serving and gating
 
-```
-monthly job on the file host
-build.protomaps.com/YYYYMMDD.pmtiles ──go-pmtiles extract──▶ file host (OVH or Hetzner, nginx, no access log)
-                                                               maps/<build>/world.pmtiles
-                                                               maps/<build>/home-z7-<x>-<y>.pmtiles     z15
-                                                               maps/<build>/visited-z5-<x>-<y>.pmtiles  z13
-                                                               maps/<build>/index.json  (sha256 per file)
+virtues-api serves the files itself, from the server it is moving to
+(agents/plan/cloud-consolidation-plan.md). No signed links, no second server.
 
-box ──Bearer key──▶ virtues-api /maps/sign ──▶ short-lived signed URL (≈1 hour)
-box ──signed URL──▶ file host (nginx secure_link) ──▶ whole file, resumable ──▶ /var/lib/virtues/maps/
+```
+monthly systemd timer on the virtues-api box
+build.protomaps.com/YYYYMMDD.pmtiles ──go-pmtiles extract──▶ /srv/maps/<build>/world.pmtiles
+                                                              /srv/maps/<build>/home-z7-<x>-<y>.pmtiles     z15
+                                                              /srv/maps/<build>/visited-z5-<x>-<y>.pmtiles  z13
+                                                              /srv/maps/<build>/assets.tar                  fonts + sprites
+                                                              /srv/maps/<build>/index.json                  sha256 per file
+
+box ──Bearer key──▶ virtues-api GET /v1/maps/index, GET /v1/maps/<build>/<file> (Range) ──▶ /var/lib/virtues/maps/
 browser ──▶ box /api/map/vt/{world|home|visited}/z/x/y ──▶ mmap read
 ```
 
-- **Everything is gated.** `/maps/sign` sits beside `routes/unsplash.rs` and
-  uses the same `BearerAuth`. A lapsed subscription gets a 402, so no new files
+- **Everything is gated.** The maps routes sit beside `routes/unsplash.rs` and
+  use the same `BearerAuth`. A lapsed subscription gets a 402, so no new files
   or refreshes, but what is on the box keeps working. A free self-hosted box
   points `VIRTUES_MAPS_SOURCE` at its own copy of the same layout.
-- **No AWS in the data path.** virtues-api (EC2) only signs, a few hundred
-  bytes per file. The gigabytes come from a box on OVH or Hetzner, where
-  bandwidth is included or about a dollar a TB, against AWS's ~$90 a TB. Keep
-  it separate from the relay, so map downloads never compete with relay
-  traffic.
-- **No logs, on both sides.** The file host runs nginx with `access_log off`
-  and sees only a signature and an IP. virtues-api sees which account signed
-  for which file, and its maps route records neither path nor account. Today
-  `TraceLayer::new_for_http()` (`services/virtues-api/src/main.rs`) records
-  request URIs at debug level, so the maps route has to be excluded from it.
+- **Unmetered bandwidth.** That server pays nothing per GB sent.
+- **No logs.** virtues-api sees which account took which file, and the maps
+  routes record neither path nor account. Today `TraceLayer::new_for_http()`
+  (`services/virtues-api/src/main.rs`) records request URIs at debug level, so
+  the maps routes are excluded from it. Caddy's access log stays off for them.
 - **Storage:** one build is ~175 GB (home z15 squares ≈ the planet at z15 over
   land, visited z13, world). Keep the old build a few days so in-flight
   downloads finish, then delete it.
 - **Box refresh:** every ~90 days, download into `.tmp`, verify the sha256,
   swap atomically. Readers hold an mmap, so the swap goes through an
   `ArcSwap`, never an in-place write.
-- **License:** the files are OpenStreetMap data under the ODbL. The file host
+- **License:** the files are OpenStreetMap data under the ODbL. The index
   carries a one-line license and attribution notice, and every map shows
   `© OpenStreetMap` in a compact ⓘ control, which the OSMF guidelines accept.
 
 ## On the box
 
 - **Reader registry:** world, plus the home and visited files on disk, each an
-  `AsyncPmTilesReader<MmapBackend>` (`pmtiles` crate, MIT/Apache). A tile
-  request goes to the home file covering it, then visited, then world. Tiles
-  pass through gzipped with `Content-Encoding: gzip`.
+  `AsyncPmTilesReader<MmapBackend>` (`pmtiles` crate, MIT/Apache). Each tier is
+  its own route and its own MapLibre source, because a source has one max
+  zoom: merging tiers server-side would leave visited areas blank above z13.
+  Tiles pass through gzipped with `Content-Encoding: gzip`.
 - **No table, no migration.** `maps/manifest.json` records build, tier and
   file. The data lives outside the lake because it is a regenerable cache and
   `virtues backup` archives the whole lake.
 - **Legacy caches:** delete `map_tiles/` (CARTO, including its cached
   watermarks) and `map_atlas/` (OpenFreeMap, staging boxes only) from the lake
   on first start.
-- **Fonts and icons** ship with the box as package data: 14 MB of Noto (OFL)
-  and 180 KB of sprites, from `protomaps/basemaps-assets`.
+- **Fonts and icons** (14 MB of Noto, OFL, and 180 KB of sprites, from
+  `protomaps/basemaps-assets`) come from virtues-api as one more fixed
+  download beside `world.pmtiles`, into `maps/assets/`. Same for every box,
+  and no installer change.
 
 ## In the SPA
 
@@ -154,29 +158,51 @@ All in a scratch crate, nothing on `wave`.
 
 ## Build order
 
-1. **Box serves local files.** Reader registry, tile/font/sprite routes, the
-   style in the SPA, the ⓘ credit, legacy-cache purge. Developed against
-   hand-placed files.
-2. **File host.** Adam provisions an OVH or Hetzner box (~250 GB disk,
-   included bandwidth); nginx with `secure_link` and no access log; the
-   monthly cut job with `go-pmtiles` and `index.json`.
-3. **Signing.** `/maps/sign` on virtues-api, excluded from request tracing.
-4. **Box downloads.** Importance scoring, tier selection, resumable
-   checksummed downloads, the 4 GB cap, the 90-day refresh.
-5. **Manual page:** where maps come from, and the privacy line: "Your server
+1. **Box serves local files. BUILT 2026-09-25.** `virtues-core/src/maps`
+   reads `maps_root()` (`VIRTUES_MAPS_DIR`, else `/var/lib/virtues/maps`, else
+   `data/maps` in a checkout): `world.pmtiles`, `visited-z5-<x>-<y>.pmtiles`,
+   `home-z7-<x>-<y>.pmtiles`, and `assets/fonts`, `assets/sprites`. Routes:
+   `/api/map/sources` (what the box holds, as bounds), `/api/map/vt/:tier/…`
+   (204 where nothing is held), `/api/map/fonts/…`, `/api/map/sprite/…`. The
+   CARTO and OpenFreeMap caches are deleted on first use.
+   `tools/maps-dev.sh [LON LAT]` cuts a dev set (~550 MB).
+2. **virtues-api serves the files. BUILT 2026-09-27.**
+   `services/virtues-api/src/routes/maps.rs`: `/v1/maps/index` and
+   `/v1/maps/<build>/<file>` (with `Range`), behind `BearerAuth`, merged after
+   `TraceLayer`. Verified at `RUST_LOG=debug`: no log line from either route.
+3. **The monthly cut. BUILT 2026-09-27.** `deploy/maps/cut.py` plus a systemd
+   timer. A dry run on the 20260927 build found 751 land squares at z5 and
+   9,175 at z7; `--only=LON,LAT` cuts one point's squares for dev.
+4. **Box downloads. BUILT 2026-09-27.** `virtues-core/src/maps/sync.rs`,
+   daily (off in dev unless `VIRTUES_MAPS_SYNC=1`): days-present scoring, tier
+   selection, the budgets, resumable downloads checked against the index's
+   sha256, the 90-day refresh, removal of squares no longer picked, assets
+   unpacked, readers reloaded. Verified end to end against a local
+   virtues-api: a week in one place downloads world, home, visited and
+   assets; a restart downloads nothing; with the history gone the home and
+   visited files are removed. The credit collapses to an ⓘ
+   (`compactCredit`, styles in `app.css`).
+5. **Run it.** On the new server: install the cut job, first cut, mount
+   `/srv/maps` into virtues-api, then a real box's first sync.
+6. **Manual page:** where maps come from, and the privacy line: "Your server
    downloads maps in fixed regions, the same files every server in that region
    takes, so nothing it downloads says where in the region you live or what
    you look at. The server that hands them out keeps no logs."
 
+Still open: the MapLibre worker is unverified on iOS, and the thresholds
+(one hour a day, seven days for home, two for visited) were tuned on synthetic
+tracks, not a real history.
+
 ## Decisions
 
 1. **Privacy:** fixed pre-cut files, identical for everyone in a square, plus
-   no logs on the signing route and the file host.
+   no logs on the virtues-api maps routes.
 2. **Tiers:** home z15 (~300 km squares), visited z13 (~1,000 km squares),
    world z0–7. No whole-world option.
 3. **Importance:** days present with a one-year half-life; 90+ lifetime days
    keeps a former home; 2+ days for visited.
 4. **Cap:** 4 GB for home plus visited.
-5. **Hosting:** files on our own OVH or Hetzner box, never AWS; virtues-api
-   only signs. Everything gated; a lapsed subscription keeps what it has.
+5. **Hosting:** virtues-api serves the files from its own server, with
+   unmetered bandwidth. Everything gated; a lapsed subscription keeps what it
+   has.
 6. **OpenFreeMap:** removed, not shipped.

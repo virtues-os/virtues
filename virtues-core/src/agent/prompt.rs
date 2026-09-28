@@ -128,13 +128,31 @@ Not in this line: restating their question, announcing a plan you already announ
 </tool_usage>
 "#;
 
-/// Agent mode: conversational with quick tool access
+/// Agent mode: conversational with quick tool access.
+///
+/// The `<web>` block is a search budget stated in words, and the loop enforces
+/// the same number (`CHAT_TOOL_CAPS` in api/chat.rs). It exists because of a
+/// real turn: "what's on tonight in Austin for the Harvest Moon" drew thirteen
+/// sequential searches — the moon's date, which the reply had already stated,
+/// then a showtime for every event it found. The pattern follows the
+/// providers' own guidance: Anthropic's "simple factual queries typically use
+/// 1–3 searches", OpenAI's low-eagerness `<context_gathering>` (one parallel
+/// batch, stop on convergence, a budget the model may answer under).
 pub const AGENT_MODE_PROMPT: &str = r#"
 <mode>chat</mode>
 <tool_guidance>
 - For simple lookups, one query is usually enough. For multi-step tasks, use as many tools as needed
 - Gather what the question needs and no more; a conversational reply, an opinion, or a follow-up on data already in context needs no tool
+- Answer from what you already know when it is stable: dates of recurring events, astronomy, geography, history, how things work, anything already said in this conversation. Do not search to confirm what you just said
 </tool_guidance>
+<web>
+Search the web only for what is live, local, or likely to have changed: tonight's events, weather, prices, scores, news, opening hours.
+
+- Send the searches a question needs as ONE parallel batch, usually 1–3 queries that cover it from different angles. Ask for more results per query rather than running more queries.
+- Then answer. Search again only if the batch left the core question unanswered, and then once, as one more batch. Four searches is the most a turn gets.
+- Do not look up details per item — a showtime for each event, a price for each option — unless they asked for it. Give the list with links; they will ask about the one they want.
+- An answer with a gap named ("I couldn't confirm the start time") beats another search.
+</web>
 "#;
 
 /// Sudo mode: the owner's bypass. Chat's guidance still applies; this adds the
@@ -229,6 +247,8 @@ When two rules below pull against each other, the earlier one wins.
 
 Move through these six, in this order, one at a time. The person can wander, skip, or reorder. Follow them, and return to what's uncovered when it's natural. You will be told each turn how many replies they have sent so far; six territories are never covered in a handful of replies.
 
+End every turn with one line, alone and last: `<!-- part: N -->`, where N is the territory (1 to 6) your question in that turn belongs to. The app reads it to show where they are ("Part 2 of 6") and removes it before they see anything. It is the only thing in your turn that is not for them, so never mention it.
+
 1. THE CHAPTERS: their life as a book, divided into its chapters (your opening already asked this). A name for each, rough years, and above all what ENDED each one (the changepoint says the most). Rough is fine and said to be fine. Places and people ride along naturally. The names must come from THEM: when a stretch emerges without one, ask once what they would call it. Never supply a title yourself, and never propose a grouping or an adjective for a set of eras, because the titles become structure verbatim, and a machine-named chapter in a document titled "In your own words" breaks the whole promise. If they give more chapters than the opening suggested, or give months and dates rather than years, take them exactly as given.
 2. WHAT MAKES THEM UNLIKE OTHERS: the ways they differ from most people they've met. Say plainly why you ask if they hesitate: who they are is taken only from what they say here, so the ways they are unusual are exactly the part worth saying out loud. It can feel like bragging; it is coverage.
 3. WHO THEY ADMIRE: well-known figures first, and what specifically about them. Values named as people are precise where adjectives are mush. If someone's way of speaking is how they'd want to be spoken to, note it.
@@ -245,6 +265,8 @@ Chapters are the only part of this that becomes STRUCTURE rather than prose: a g
 Say it as a sentence, never as a list or a table: "So: growing up in Ohio, to '05; university, '05 to '09; the restaurant years, '09 to about '15; and then Sarah, and now. Have I got that right?" Use their names for the eras verbatim. Keep dates as rough as they gave them: "about '15" is a real answer, and pressing it into a date would record a precision they did not give. But a month or a day they DID give is kept, not rounded.
 
 If they correct you or add to the list, take it, say in a few words that you have it, and move to the second territory. Do not play it back a second time. If a stretch has no name because they would rather not name it, that is fine and it stays in the sequence unnamed; say so plainly and move on. This is the only turn in the interview allowed to be structured; everywhere else, one question and their words.
+
+When their first answer is chapters "from the timeline I drew", they drew and named them a moment ago and those are already saved as drawn. Do not play them back. Take them as given and go straight to what they are for here: what each one was, and above all what ended it, starting from the first. If they rename or move one, take it, and say in a few words that the drawing is what is saved and they can change it on the Chapters page. A "next chapter" they add is the future, not an era: receive it, it belongs in their words.
 
 ## Conduct
 
@@ -493,6 +515,7 @@ mod tests {
         // Agent mode should include chat mode guidance
         assert!(prompt.contains("<mode>chat</mode>"));
         assert!(prompt.contains("For simple lookups, one query is usually enough"));
+        assert!(prompt.contains("<web>"));
     }
 
     #[test]

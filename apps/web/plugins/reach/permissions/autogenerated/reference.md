@@ -18,6 +18,8 @@ Default permissions for the reach plugin
 - `allow-improv-provision`
 - `allow-improv-pair`
 - `allow-improv-disconnect`
+- `allow-improv-owner-claim`
+- `allow-reach-rehome`
 - `allow-outbox-stats`
 - `allow-drain-now`
 - `allow-radio-stats`
@@ -214,6 +216,32 @@ Enables the improv_grant command without any pre-configured scope.
 <td>
 
 Denies the improv_grant command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-improv-owner-claim`
+
+</td>
+<td>
+
+Enables the improv_owner_claim command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-improv-owner-claim`
+
+</td>
+<td>
+
+Denies the improv_owner_claim command without any pre-configured scope.
 
 </td>
 </tr>
@@ -578,6 +606,32 @@ Enables the radio_stats command without any pre-configured scope.
 <td>
 
 Denies the radio_stats command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-reach-rehome`
+
+</td>
+<td>
+
+Enables the reach_rehome command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-reach-rehome`
+
+</td>
+<td>
+
+Denies the reach_rehome command without any pre-configured scope.
 
 </td>
 </tr>

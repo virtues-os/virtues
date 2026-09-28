@@ -31,9 +31,10 @@ use crate::api::live_turn::{self, LiveTurns};
 use std::sync::Arc;
 use tokio_stream::StreamExt;
 
-use crate::agent::{AgentConfig, AgentEvent, AgentLoop, FinishReason, StepReason};
+use crate::agent::{AgentConfig, AgentLoop};
 use crate::api::chat_usage::{record_chat_usage, UsageData};
-use crate::api::chats::{append_message, ChatMessage, ToolCall};
+use crate::api::chats::{append_message, ChatMessage};
+use crate::api::turn_recorder::{TurnRecorder, TurnUsage};
 use crate::api::compaction::{build_context_for_llm, compact_chat, CompactionOptions};
 use crate::api::token_estimation::ContextStatus;
 use crate::middleware::auth::AuthUser;
@@ -206,12 +207,6 @@ pub struct ChatRequest {
     /// User's timezone (IANA format, e.g., "America/Los_Angeles")
     #[serde(default)]
     pub timezone: Option<String>,
-    /// Retired (migration 0035): the prompt reads the owner's style notes from
-    /// the profile, not a per-request persona. Still accepted so a client that
-    /// sends it is not rejected.
-    #[serde(default = "default_persona")]
-    #[allow(dead_code)]
-    pub persona: String,
     /// Agent mode controlling tool availability (agent, chat, research)
     #[serde(rename = "agentMode", default = "default_agent_mode")]
     pub agent_mode: String,
@@ -241,25 +236,10 @@ fn ghost_history(messages: &[UIMessage]) -> Vec<ChatMessage> {
         .iter()
         .filter(|m| m.role == "user" || m.role == "assistant")
         .map(|m| {
-            let content = m.content.clone().unwrap_or_else(|| {
-                m.parts
-                    .as_ref()
-                    .map(|parts| {
-                        parts
-                            .iter()
-                            .filter_map(|p| match p {
-                                UIPart::Text { text } => Some(text.clone()),
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    })
-                    .unwrap_or_default()
-            });
             ChatMessage {
                 id: m.id.clone(),
                 role: m.role.clone(),
-                content,
+                content: m.text(),
                 timestamp: Timestamp::now(),
                 model: None,
                 provider: None,
@@ -276,119 +256,12 @@ fn ghost_history(messages: &[UIMessage]) -> Vec<ChatMessage> {
         .collect()
 }
 
-/// Replace embedded data URLs with a note about what was there.
-///
-/// A `data:` URL is for the browser. Kept in a tool result it is carried to the
-/// model, stored in `parts`, and replayed on every subsequent turn — none of
-/// which it survives usefully, and all of which it fills.
-fn redact_inline_data(value: &mut serde_json::Value) {
-    /// Long enough that a small inline icon survives; short enough that no
-    /// real payload does.
-    const INLINE_LIMIT: usize = 2048;
-    match value {
-        serde_json::Value::String(s) if s.starts_with("data:") && s.len() > INLINE_LIMIT => {
-            let kind = s
-                .split_once(';')
-                .map(|(head, _)| head.trim_start_matches("data:"))
-                .filter(|k| !k.is_empty())
-                .unwrap_or("file");
-            *s = format!("[{kind}, {} KB, shown in the chat]", s.len() / 1024);
-        }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(redact_inline_data),
-        serde_json::Value::Object(map) => {
-            map.values_mut().for_each(redact_inline_data)
-        }
-        _ => {}
-    }
-}
-
-/// Materialize a turn's ordered `parts` from the pieces the stream collected.
-///
-/// Text runs keep their order relative to the tool calls that ran between them,
-/// which is the whole point: the LAST text run is the reply, and everything
-/// before it is the model narrating its way there.
-///
-/// A tool id in `turn_slots` with no matching entry in `tool_calls` is skipped
-/// rather than written as an empty invocation — that only happens if the stream
-/// ended between a tool starting and being recorded, and a part with no name or
-/// input tells a reader nothing except that something is missing.
-fn build_turn_parts(
-    turn_slots: &[TurnSlot],
-    text_segments: &[String],
-    tool_calls: &[crate::api::chats::ToolCall],
-    failed_tools: &std::collections::HashSet<String>,
-    reasoning: &str,
-) -> Vec<UIPart> {
-    let mut parts = Vec::with_capacity(turn_slots.len() + 1);
-    // The thinking comes before the turn it produced. It has its own column
-    // too, but the client stopped reading that the moment `parts` existed —
-    // it returns `parts` verbatim when there are any — so a turn that thought
-    // reloaded with an empty thinking block.
-    if !reasoning.trim().is_empty() {
-        parts.push(UIPart::Reasoning { text: reasoning.to_string() });
-    }
-    for slot in turn_slots {
-        match slot {
-            TurnSlot::Text(i) => {
-                let Some(text) = text_segments.get(*i) else { continue };
-                // A run that produced nothing is not a paragraph of silence.
-                if text.trim().is_empty() {
-                    continue;
-                }
-                parts.push(UIPart::Text { text: text.clone() });
-            }
-            TurnSlot::Tool(id) => {
-                let Some(tc) = tool_calls
-                    .iter()
-                    .find(|tc| tc.tool_call_id.as_deref() == Some(id.as_str()))
-                else {
-                    continue;
-                };
-                // The turn is over by the time this runs, so anything that
-                // returned has its output and anything that did not, did not.
-                // A tool that FAILED is its own state: picking the state off
-                // `result.is_some()` alone stored a failure as
-                // `output-available` with the reason buried inside `output`,
-                // so the red block never rendered on reload and the replay
-                // handed the model an error object as though it were an answer.
-                let failed = failed_tools.contains(id);
-                let error_text = failed.then(|| {
-                    tc.result
-                        .as_ref()
-                        .and_then(|r| r.get("error"))
-                        .and_then(|e| e.as_str())
-                        .unwrap_or("the tool reported a failure")
-                        .to_string()
-                });
-                let state = match (failed, tc.result.is_some()) {
-                    (true, _) => "output-error",
-                    (false, true) => "output-available",
-                    (false, false) => "input-available",
-                };
-                parts.push(UIPart::ToolInvocation {
-                    tool_call_id: id.clone(),
-                    tool_name: tc.tool_name.clone(),
-                    input: tc.arguments.clone(),
-                    state: state.to_string(),
-                    output: tc.result.clone(),
-                    error_text,
-                });
-            }
-        }
-    }
-    parts
-}
-
 fn default_chat_mode() -> String {
     "open".to_string()
 }
 
 fn default_agent() -> String {
     "auto".to_string()
-}
-
-fn default_persona() -> String {
-    "default".to_string()
 }
 
 fn default_agent_mode() -> String {
@@ -407,17 +280,26 @@ pub struct UIMessage {
     pub content: Option<String>,
 }
 
-/// Where one piece of a turn sat in time.
-///
-/// The row already stores the turn's text (`content`) and its tool calls
-/// (`tool_calls`), but nothing recorded the ORDER they interleaved in — so a
-/// reload could show what was said and what was called, never which was said
-/// before which call. `parts` is built from this at save time.
-enum TurnSlot {
-    /// An index into the turn's text segments.
-    Text(usize),
-    /// A tool call id, resolved against `all_tool_calls` for its input/output.
-    Tool(String),
+impl UIMessage {
+    /// What the person said, as it is stored: the legacy `content` if the
+    /// client sent one, else the text parts joined by newlines.
+    pub fn text(&self) -> String {
+        self.content.clone().unwrap_or_else(|| {
+            self.parts
+                .as_ref()
+                .map(|parts| {
+                    parts
+                        .iter()
+                        .filter_map(|p| match p {
+                            UIPart::Text { text } => Some(text.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default()
+        })
+    }
 }
 
 /// UI Part types
@@ -686,6 +568,19 @@ pub enum StreamEvent {
     },
 }
 
+impl From<crate::tools::SubagentUpdate> for StreamEvent {
+    fn from(update: crate::tools::SubagentUpdate) -> Self {
+        StreamEvent::SubagentStatus {
+            dispatch_id: update.dispatch_id,
+            subagent_id: update.id as u32,
+            title: update.title,
+            model: update.model,
+            status: update.status.as_str().to_string(),
+            tokens: update.tokens,
+        }
+    }
+}
+
 // ============================================================================
 // AI SDK v6 Data Event Types
 // ============================================================================
@@ -810,62 +705,44 @@ async fn get_latest_checkpoint(pool: &PgPool, chat_id: &str) -> Option<StreamEve
 // ============================================================================
 
 /// Safely serialize a stream event to JSON
-/// Custom events (checkpoint, thought-signature) are wrapped in AI SDK v6 data-* format
-fn serialize_event(event: &StreamEvent) -> String {
+/// Custom events (checkpoint, narrative document, subagent status) are wrapped
+/// in the AI SDK v6 data-* format
+pub(crate) fn serialize_event(event: &StreamEvent) -> String {
     match event {
-        // Wrap checkpoint events in AI SDK v6 data event format
-        StreamEvent::Checkpoint { id, version, messages_summarized, summary, timestamp } => {
-            let wrapper = DataEvent {
-                event_type: "data-checkpoint".to_string(),
-                id: Some(id.clone()),
-                data: CheckpointData {
-                    version: *version,
-                    messages_summarized: *messages_summarized,
-                    summary: summary.clone(),
-                    timestamp: timestamp.clone(),
-                },
-                transient: false, // Checkpoint should persist in message parts
-            };
-            serde_json::to_string(&wrapper).unwrap_or_else(|e| {
-                tracing::error!("Failed to serialize checkpoint event: {}", e);
-                r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
-            })
-        }
-        // Wrap the narrative-document signal in AI SDK v6 data event format
-        // (transient — a reload reconstructs the document from its page, and
-        // replaying the auto-open on old chats would be wrong).
-        StreamEvent::NarrativeDocumentReady { page_id } => {
-            let wrapper = DataEvent {
-                event_type: "data-narrative-document".to_string(),
-                id: None,
-                data: NarrativeDocumentData { page_id: page_id.clone() },
-                transient: true,
-            };
-            serde_json::to_string(&wrapper).unwrap_or_else(|e| {
-                tracing::error!("Failed to serialize narrative-document event: {}", e);
-                r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
-            })
-        }
-        // Wrap subagent status in AI SDK v6 data event format (transient — live panel only)
-        StreamEvent::SubagentStatus { dispatch_id, subagent_id, title, model, status, tokens } => {
-            let wrapper = DataEvent {
-                event_type: "data-subagent".to_string(),
-                id: None,
-                data: SubagentStatusData {
-                    dispatch_id: *dispatch_id,
-                    subagent_id: *subagent_id,
-                    title: title.clone(),
-                    model: model.clone(),
-                    status: status.clone(),
-                    tokens: *tokens,
-                },
-                transient: true,
-            };
-            serde_json::to_string(&wrapper).unwrap_or_else(|e| {
-                tracing::error!("Failed to serialize subagent event: {}", e);
-                r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
-            })
-        }
+        // Checkpoint persists in the message parts, so it is not transient.
+        StreamEvent::Checkpoint { id, version, messages_summarized, summary, timestamp } => data_event(
+            "data-checkpoint",
+            Some(id.clone()),
+            CheckpointData {
+                version: *version,
+                messages_summarized: *messages_summarized,
+                summary: summary.clone(),
+                timestamp: timestamp.clone(),
+            },
+            false,
+        ),
+        // Transient: a reload reconstructs the document from its page, and
+        // replaying the auto-open on old chats would be wrong.
+        StreamEvent::NarrativeDocumentReady { page_id } => data_event(
+            "data-narrative-document",
+            None,
+            NarrativeDocumentData { page_id: page_id.clone() },
+            true,
+        ),
+        // Transient: the live panel only.
+        StreamEvent::SubagentStatus { dispatch_id, subagent_id, title, model, status, tokens } => data_event(
+            "data-subagent",
+            None,
+            SubagentStatusData {
+                dispatch_id: *dispatch_id,
+                subagent_id: *subagent_id,
+                title: title.clone(),
+                model: model.clone(),
+                status: status.clone(),
+                tokens: *tokens,
+            },
+            true,
+        ),
         // All other events use standard serde serialization
         _ => serde_json::to_string(event).unwrap_or_else(|e| {
             tracing::error!("Failed to serialize stream event: {}", e);
@@ -873,6 +750,23 @@ fn serialize_event(event: &StreamEvent) -> String {
         }),
     }
 }
+
+/// One custom event in the AI SDK v6 `data-*` wrapper.
+fn data_event<T: Serialize>(event_type: &str, id: Option<String>, data: T, transient: bool) -> String {
+    let wrapper = DataEvent { event_type: event_type.to_string(), id, data, transient };
+    serde_json::to_string(&wrapper).unwrap_or_else(|e| {
+        tracing::error!("Failed to serialize {event_type} event: {e}");
+        r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
+    })
+}
+
+/// Per-turn tool budgets in plain chat. Four searches: Anthropic puts a
+/// simple factual question at one to three, and the chat prompt asks for one
+/// parallel batch plus at most one more — and says "four" in words, which
+/// `the_chat_search_cap_is_the_one_the_prompt_states` holds it to. Deep
+/// research, sudo and skills are uncapped here; their ceilings are steps,
+/// cost and time.
+const CHAT_TOOL_CAPS: &[(&str, u32)] = &[("web_search", 4)];
 
 /// Maximum characters for page content in system prompt
 /// ~10K chars ≈ 2.5K tokens, leaving room for rest of context
@@ -1460,47 +1354,8 @@ async fn chat_handler_inner(
         };
     }
 
-    // No model, no turn — said in one sentence here, not as whatever the
-    // gateway call fails with. Any room: the composer is inert while locked,
-    // but no client can be trusted to be.
-    if !crate::api::getting_started::ai_connected(&pool).await {
-        return (
-            StatusCode::CONFLICT,
-            Json(ChatError {
-                error: "AI is not connected".to_string(),
-                details: Some(
-                    "Your server has nothing to answer with yet. Connect a Virtues subscription, or point it at your own models, in Getting started."
-                        .to_string(),
-                ),
-            }),
-        )
-            .into_response();
-    }
-
-    // One turn per chat at a time. A turn outlives its request (live_turn.rs),
-    // so a client that lost the wire and asks again would otherwise start a
-    // SECOND turn while the first is still running: `LiveTurns::start`
-    // replaces the entry and lets the old task finish, both write an
-    // assistant row, and the transcript shows two replies to one question,
-    // both billed. The client's Try again rejoins first and only asks anew
-    // when nothing is live; this is the boundary for a client that does not,
-    // or a double tap. 409, with the name the client keys on.
-    // A turn Stop has cancelled still holds the entry until its tool returns
-    // (the loop checks the token between deltas, not inside a tool), so
-    // without the second clause a Stop during a long tool answered every send
-    // with this 409 for up to the tool's timeout.
-    if !request.temporary
-        && live_turns.get(&request.chat_id).is_some()
-        && !cancel_state.is_cancelled(&request.chat_id)
-    {
-        return (
-            StatusCode::CONFLICT,
-            Json(ChatError {
-                error: "turn_in_progress".to_string(),
-                details: Some("Your assistant is still writing a reply to this chat.".to_string()),
-            }),
-        )
-            .into_response();
+    if let Some(refusal) = reject_if_unready(&pool, &request, &live_turns, &cancel_state).await {
+        return refusal;
     }
 
     // Which model answers. One door — the box decides, from the mode and the
@@ -1515,8 +1370,8 @@ async fn chat_handler_inner(
     .await
     {
         Ok(m) => m,
-        // Name the id we rejected. The version of this that listed 244
-        // allowed ids and never the offending one cost a day of debugging.
+        // Name the id we rejected: a list of the allowed ids without the
+        // offending one is no help to whoever reads the error.
         Err(crate::error::Error::InvalidInput(detail)) => {
             tracing::warn!(
                 requested = ?request.model,
@@ -1534,24 +1389,12 @@ async fn chat_handler_inner(
         }
         Err(e) => {
             tracing::error!(error = %e, "failed to resolve the model for this turn");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ChatError {
-                    error: "Failed to resolve model".to_string(),
-                    // The error is already logged above. `sqlx::Error`'s
-                    // Display carries the Postgres message and often the
-                    // column or constraint name, and this JSON goes to a
-                    // browser.
-                    details: None,
-                }),
-            )
-                .into_response();
+            return internal("Failed to resolve model");
         }
     };
     // Deliberately NOT written back onto `request`: the resolved address has
     // one home from here down, threaded as an argument. `request.model` stays
     // what the client sent, which is the only thing it ever meant.
-
 
     // Use client-provided message ID for idempotency, or generate one
     let msg_id = request
@@ -1559,62 +1402,12 @@ async fn chat_handler_inner(
         .clone()
         .unwrap_or_else(|| format!("msg_{}", generate_id()));
 
-    // The June-era chat onboarding is DELETED (2026-09-01) — onboarding is
-    // the founder's letter + Home's getting-started page, and the assistant's
-    // first conversation is an ordinary one. onboarding_status still gates
-    // those surfaces; the chat no longer reads it.
-
-    // Ensure chat exists - use ON CONFLICT DO NOTHING to handle race conditions
     let chat_id_str = request.chat_id.clone();
-    let title = {
-        let raw_title = request
-            .messages
-            .iter()
-            .find(|m| m.role == "user")
-            .and_then(|m| {
-                m.content.clone().or_else(|| {
-                    m.parts.as_ref().and_then(|p| {
-                        p.iter().find_map(|p| match p {
-                            UIPart::Text { text } => Some(text.clone()),
-                            _ => None,
-                        })
-                    })
-                })
-            })
-            .unwrap_or_else(|| "New conversation".to_string());
-
-        if raw_title.chars().count() > 50 {
-            let t: String = raw_title.chars().take(47).collect();
-            format!("{}...", t)
-        } else {
-            raw_title
-        }
-    };
-
     // A ghost chat has no row. Everything below that reads or writes
     // app_chats / app_chat_messages / app_chat_usage branches on this.
     let temporary = request.temporary;
 
-    // Use ON CONFLICT DO NOTHING to handle concurrent requests for same chat
-    // Returns rows_affected = 1 if inserted, 0 if already exists
-    let chat_was_created = if temporary {
-        false
-    } else {
-        match sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ($1, $2, 0) ON CONFLICT (id) DO NOTHING")
-            .bind(&chat_id_str)
-            .bind(&title)
-            .execute(&pool)
-            .await
-        {
-            Ok(result) => result.rows_affected() > 0,
-            Err(e) => {
-                tracing::error!("Failed to create chat: {}", e);
-                false
-            }
-        }
-    };
-
-    if chat_was_created {
+    if !temporary && ensure_chat_row(&pool, &request).await {
         if let Err(e) =
             crate::api::projects::set_chat_project(&pool, &chat_id_str, request.project_id.as_deref()).await
         {
@@ -1622,118 +1415,21 @@ async fn chat_handler_inner(
         }
     }
 
-    // What the person said, as it is stored: the legacy `content` if the
-    // client sent one, else the text parts joined. One derivation, used both
-    // to write the row and, on regenerate, to recognize it.
-    fn user_text(m: &UIMessage) -> String {
-        m.content.clone().unwrap_or_else(|| {
-            m.parts
-                .as_ref()
-                .map(|p| {
-                    p.iter()
-                        .filter_map(|p| match p {
-                            UIPart::Text { text } => Some(text.clone()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .unwrap_or_default()
-        })
-    }
-
-    let last_user_msg = request.messages.iter().rev().find(|m| m.role == "user");
-
-    // Regenerate: the client has dropped its last assistant message and is
-    // asking for the last user turn to be answered again. Drop the box's copy
-    // too, or the model answers with its previous reply in front of it.
-    //
-    // ONLY if that user turn is on disk. The client offers Try again on every
-    // error card, and some of those errors happened before anything was
-    // written: 409 not connected, 400 invalid model, 413, a request that
-    // never arrived. The message is then still only in the client. Treating
-    // that as a regenerate deleted the previous good answer and re-answered
-    // the question before it — on a new chat, an empty transcript went to the
-    // model. So: the client sends its last user message on regenerate too,
-    // and if it is not the last user row here, this is a first send of it.
-    // Matched by id: the user row is stored under the id the client gave it
-    // (below), so a loaded transcript and a message sent this session both
-    // carry the row's id. A text match stood here first, and deleted the
-    // previous reply whenever the repeated message was a short one — "ok",
-    // "thanks", "continue" — which is exactly the case this exists to stop.
-    //
-    // The room's own lines (`gs:` subjects) are not "the previous answer" and
-    // stay: regenerate in the getting-started room used to delete the step
-    // the room had just narrated.
-    let mut regenerating = matches!(
-        request.trigger.as_deref(),
-        Some("regenerate-message") | Some("regenerate-assistant-message")
-    );
-    if regenerating && !temporary {
-        let answered_turn_on_disk = match last_user_msg {
-            // An older client sends nothing on regenerate; nothing to compare.
-            None => true,
-            Some(m) => {
-                match sqlx::query_as::<_, (String, String)>(
-                    "SELECT id, content FROM app_chat_messages \
-                     WHERE chat_id = $1 AND role = 'user' \
-                     ORDER BY sequence_num DESC LIMIT 1",
-                )
-                .bind(&chat_id_str)
-                .fetch_optional(&pool)
-                .await
-                {
-                    Ok(Some((id, content))) => match m.id.as_deref() {
-                        Some(client_id) => client_id == id,
-                        // A client that sends no id: the text is all there is.
-                        None => content == user_text(m),
-                    },
-                    Ok(None) => false,
-                    Err(e) => {
-                        // Unknown. Deleting on a guess is the failure this
-                        // exists to stop; answering the message as new is
-                        // the harmless side.
-                        tracing::error!(chat_id = %chat_id_str, error = %e, "regenerate: could not read the last user turn");
-                        false
-                    }
-                }
-            }
-        };
-        if answered_turn_on_disk {
-            if let Err(e) = sqlx::query(
-                "DELETE FROM app_chat_messages \
-                 WHERE chat_id = $1 AND role = 'assistant' \
-                   AND COALESCE(subject, '') NOT LIKE 'gs:%' \
-                   AND sequence_num > COALESCE((SELECT MAX(sequence_num) FROM app_chat_messages \
-                                                WHERE chat_id = $1 AND role = 'user'), 0)",
-            )
-            .bind(&chat_id_str)
-            .execute(&pool)
-            .await
-            {
-                tracing::error!(chat_id = %chat_id_str, error = %e, "regenerate: could not drop the previous answer");
-            }
-        } else {
-            tracing::info!(chat_id = %chat_id_str, "regenerate asked for a turn that was never saved; answering it as new");
-            regenerating = false;
-        }
-    }
+    let regenerating = drop_previous_answer_if_regenerating(&pool, &request).await;
 
     // Save the last user message to the chat. Not on regenerate: there is no
     // new user turn, and a client that still sends the full history would
     // otherwise re-append the last one.
+    let last_user_msg = request.messages.iter().rev().find(|m| m.role == "user");
     if let Some(last_user_msg) = last_user_msg.filter(|_| !regenerating) {
-        // Normal flow: save the last user message from the request
-        let user_content = user_text(last_user_msg);
-
         let user_message = ChatMessage {
             // The client's id, so the row can be recognized again: by a
-            // regenerate (above), and by a retried POST — `append_message`
-            // does nothing on an id it has, so a send that reached the box
-            // and lost the reply does not save the question twice.
+            // regenerate, and by a retried POST — `append_message` does
+            // nothing on an id it has, so a send that reached the box and
+            // lost the reply does not save the question twice.
             id: last_user_msg.id.clone().filter(|id| !id.trim().is_empty()),
             role: "user".to_string(),
-            content: user_content,
+            content: last_user_msg.text(),
             timestamp: Timestamp::now(),
             model: None,
             provider: None,
@@ -1753,201 +1449,19 @@ async fn chat_handler_inner(
         }
     }
 
-    // Check if compaction is needed before sending to LLM. A ghost chat has
-    // no usage row to read and no summary to write, so it never compacts.
-    // Compaction runs HERE, before the context is built — not inside the
-    // stream, where it used to. The turn that triggers it is the turn whose
-    // context is too big, and a summary written after `build_context_for_llm`
-    // has already run does nothing for it: the full transcript went out
-    // anyway, after up to sixty seconds of waiting for a summary it did not
-    // use. The saving only ever landed on the NEXT turn.
-    //
-    // The checkpoint event still reaches the client first thing, so the UI
-    // paints "N messages summarized" exactly as before.
+    // A ghost chat has no usage row to read and no summary to write, so it
+    // never compacts.
     let checkpoint_event = if temporary {
         None
     } else {
-        let compaction_status =
-            crate::api::chat_usage::check_compaction_needed(&pool, request.chat_id.clone(), &model)
-                .await;
-        if matches!(compaction_status, Ok(ContextStatus::Critical)) {
-            tracing::info!(chat_id = %chat_id_str, "context critical, compacting before the turn");
-            let options = CompactionOptions {
-                model_id: Some(model.clone()),
-                ..Default::default()
-            };
-            match compact_chat(&pool, chat_id_str.clone(), options).await {
-                Ok(_) => get_latest_checkpoint(&pool, &chat_id_str).await,
-                Err(e) => {
-                    // A chat that cannot compact still gets its answer; it is
-                    // just a large one.
-                    tracing::warn!(chat_id = %chat_id_str, error = %e, "auto-compaction failed; continuing with the full context");
-                    None
-                }
-            }
-        } else {
-            None
-        }
+        compact_if_critical(&pool, &chat_id_str, &model).await
     };
 
-    use sqlx::Row;
-
-    // Load chat from DB and build context with compaction summary
-    let (conversation_summary, summary_up_to_index): (Option<String>, i64) = if temporary {
-        (None, 0)
-    } else {
-        match sqlx::query(
-            r#"SELECT conversation_summary, summary_up_to_index
-               FROM app_chats WHERE id = $1"#,
-        )
-        .bind(&chat_id_str)
-        .fetch_one(&pool)
-        .await
-        {
-            Ok(row) => (row.get("conversation_summary"), row.get("summary_up_to_index")),
-            Err(e) => {
-                tracing::error!("Failed to load chat: {}", e);
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ChatError {
-                        error: "Failed to load chat".to_string(),
-                        // Logged above; the raw database error does not
-                        // travel to the browser.
-                        details: None,
-                    }),
-                )
-                    .into_response();
-            }
-        }
-    };
-
-    // The transcript: the box's rows, or for a ghost chat the client's copy.
-    let messages: Vec<ChatMessage> = if temporary {
-        ghost_history(&request.messages)
-    } else {
-        // Load messages from normalized table
-        let message_rows = match sqlx::query(
-            r#"
-            SELECT
-                id, role, content, created_at, model, provider, agent_id,
-                reasoning, tool_calls, intent, subject, reasoning_details, parts
-            FROM app_chat_messages
-            WHERE chat_id = $1
-            ORDER BY sequence_num ASC
-            "#,
-        )
-        .bind(&chat_id_str)
-        .fetch_all(&pool)
-        .await
-        {
-            Ok(rows) => rows,
-            Err(e) => {
-                tracing::error!("Failed to load messages for chat {}: {}", chat_id_str, e);
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ChatError {
-                        error: "Failed to load messages".to_string(),
-                        // Logged above; the raw database error does not
-                        // travel to the browser.
-                        details: None,
-                    }),
-                )
-                    .into_response();
-            }
+    let History { conversation_summary, summary_up_to_index, project_id: effective_project_id, messages } =
+        match load_history(&pool, &request).await {
+            Ok(history) => history,
+            Err(response) => return response,
         };
-
-        // Convert rows to ChatMessage
-        message_rows
-            .into_iter()
-            .map(|msg| {
-                let id: String = msg.get("id");
-                let role: String = msg.get("role");
-                let content: String = msg.get("content");
-                let created_at: Timestamp = msg.get("created_at");
-                let model: Option<String> = msg.get("model");
-                let provider: Option<String> = msg.get("provider");
-                let agent_id: Option<String> = msg.get("agent_id");
-                let reasoning: Option<String> = msg.get("reasoning");
-                // Columns are jsonb; read as serde_json::Value, not String
-                let tool_calls_raw: Option<serde_json::Value> = msg.get("tool_calls");
-                let intent_raw: Option<serde_json::Value> = msg.get("intent");
-                let subject: Option<String> = msg.get("subject");
-                let reasoning_details: Option<serde_json::Value> = msg.get("reasoning_details");
-                let parts_raw: Option<serde_json::Value> = msg.get("parts");
-
-                // Parse JSON fields. A shape these no longer understand is a
-                // turn that silently loses its tool calls or its order and
-                // falls back to flat text — the kind of thing that reads as
-                // "this message had no tools" rather than as a bug, so it says
-                // so out loud.
-                let tool_calls = tool_calls_raw.and_then(|t| {
-                    serde_json::from_value(t)
-                        .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
-                        .ok()
-                });
-                let intent = intent_raw.and_then(|i| serde_json::from_value(i).ok());
-                let parts = parts_raw.and_then(|p| parts_from_jsonb(p, &id));
-
-                ChatMessage {
-                    id: Some(id),
-                    role,
-                    content,
-                    timestamp: created_at,
-                    model,
-                    provider,
-                    agent_id,
-                    parts,
-                    reasoning,
-                    tool_calls,
-                    intent,
-                    subject,
-                    reasoning_details,
-                }
-            })
-            .collect()
-    };
-
-    // Resolve the chat's room from the persisted row (single source of truth) so
-    // the active-project context always matches the binding, even if a stale client
-    // sends a different per-message projectId. The create path above already bound a
-    // new chat from request.project_id, so the row is current by now.
-    // Decoded as `Option<String>` on purpose: `app_chats.project_id` is nullable
-    // (and the FK is ON DELETE SET NULL), so an unbound chat legitimately reads
-    // NULL. Scalar-typing it as `String` would make that NULL a decode *error* —
-    // which is what the old `.ok()` was really swallowing, alongside every real
-    // query failure. A swallow here is not cosmetic: None reads as "not in a
-    // project", so a broken query silently unscopes a scoped chat — retrieval
-    // stops being hard-filtered and the answer contract below is dropped.
-    // A ghost chat has no row to read it from; the request is the binding.
-    let effective_project_id: Option<String> = if temporary {
-        request.project_id.clone()
-    } else {
-        match sqlx::query_scalar::<_, Option<String>>(
-        r#"SELECT project_id FROM app_chats WHERE id = $1"#,
-    )
-    .bind(&chat_id_str)
-    .fetch_optional(&pool)
-    .await
-    {
-        // Outer None = no such row, inner None = bound to no project.
-        Ok(project_id) => project_id.flatten(),
-        Err(e) => {
-            tracing::error!("Failed to resolve project for chat {}: {}", chat_id_str, e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ChatError {
-                    error: "Failed to resolve chat project".to_string(),
-                    // The error is already logged above. `sqlx::Error`'s
-                    // Display carries the Postgres message and often the
-                    // column or constraint name, and this JSON goes to a
-                    // browser.
-                    details: None,
-                }),
-            )
-                .into_response();
-        }
-        }
-    };
 
     // Build system prompt with active page context, timezone, personalization, and agent mode
     // Split at the cache breakpoint: `system_prompt` is the stable prefix that
@@ -1985,13 +1499,13 @@ async fn chat_handler_inner(
         Some(&system_tail),
     );
 
-    // The turn is driven by its own task and outlives this request: a tab
-    // switched or a phone locked used to drop the response, the loop with
-    // it, and the assistant row was never written (VIR-323). This response
-    // is one watcher on the turn; `GET /api/chat/{id}/stream` is another.
+    // The turn is driven by its own task and outlives this request, so a tab
+    // switched or a phone locked does not drop the loop or the assistant row
+    // (VIR-323). This response is one watcher on the turn;
+    // `GET /api/chat/{id}/stream` is another.
     let turn = live_turns.start(&chat_id_str);
-    // Registered here, not inside the stream, so the driver below holds the
-    // same token and can tell its own turn from whichever one holds the slot.
+    // Registered here, not inside the stream, so the driver holds the same
+    // token and can tell its own turn from whichever one holds the slot.
     let turn_token = cancel_state.register(&chat_id_str);
     let agent_stream = create_agent_stream(
         pool,
@@ -1999,57 +1513,352 @@ async fn chat_handler_inner(
         cancel_state.clone(),
         request,
         model,
+        effective_project_id,
         api_messages,
         msg_id,
         checkpoint_event,
         turn_token.clone(),
         ghost_permissions,
     );
-    {
-        let turn = turn.clone();
-        let turn_token = turn_token.clone();
-        let live_turns = live_turns.clone();
-        let chat_id = chat_id_str.clone();
-        tokio::spawn(async move {
-            // The drive loop runs inside a catch, because `finish` is what
-            // ends the turn for every watcher and a panic used to skip it:
-            // `done` stayed false, `watch` blocked on a Notify that never
-            // fired, and the SSE keep-alive held the socket open, so the
-            // person got a thinking mark that spun until they gave up — no
-            // error, no [DONE], and every later rejoin attached to the same
-            // dead turn. A panic in here has to end the turn like any other
-            // ending, or one bad decode wedges the chat.
-            let drive = {
-                let turn = turn.clone();
-                let chat_id = chat_id.clone();
-                async move {
-                    let mut agent_stream = agent_stream;
-                    while let Some(data) = agent_stream.next().await {
-                        turn.push(data);
-                        // Nobody watching for the cap: stop spending on a reply no
-                        // one will read. The loop sees the token at its next step
-                        // and the row is saved as a stop, like the button.
-                        if turn.unattended_past(live_turn::UNATTENDED_CAP) {
-                            tracing::info!(chat_id = %chat_id, cap_secs = live_turn::UNATTENDED_CAP.as_secs(), "turn unattended past the cap; cancelling");
-                            cancel_state.cancel_unattended(&chat_id, &turn_token);
-                        }
-                    }
-                }
-            };
-            if std::panic::AssertUnwindSafe(drive).catch_unwind().await.is_err() {
-                tracing::error!(chat_id = %chat_id, "the turn's driver panicked; ending the turn");
-                turn.push(serialize_event(&StreamEvent::Error {
-                    error_text: "Your server failed while writing this reply.".to_string(),
-                }));
-                turn.push("[DONE]".to_string());
-            }
-            // After the stream's own tail (row written, usage recorded), so
-            // a watcher that sees the end can reload and find the row.
-            live_turns.finish(&chat_id, &turn);
-        });
-    }
+    spawn_turn_driver(agent_stream, turn.clone(), turn_token, live_turns, cancel_state, chat_id_str);
 
     ui_stream_response(live_turn::watch(turn))
+}
+
+/// A 500 whose cause the caller has already logged. The raw error does not
+/// travel to the browser: `sqlx::Error`'s Display carries the Postgres
+/// message and often the column or constraint name.
+fn internal(error: &str) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ChatError { error: error.to_string(), details: None }),
+    )
+        .into_response()
+}
+
+/// The refusals that come before any work: no model to answer with, or a
+/// turn already running in this chat. Both are 409s the client keys on.
+async fn reject_if_unready(
+    pool: &PgPool,
+    request: &ChatRequest,
+    live_turns: &LiveTurns,
+    cancel_state: &ChatCancellationState,
+) -> Option<Response> {
+    // No model, no turn — said in one sentence here, not as whatever the
+    // gateway call fails with. Any room: the composer is inert while locked,
+    // but no client can be trusted to be.
+    if !crate::api::getting_started::ai_connected(pool).await {
+        return Some(
+            (
+                StatusCode::CONFLICT,
+                Json(ChatError {
+                    error: "AI is not connected".to_string(),
+                    details: Some(
+                        "Your server has nothing to answer with yet. Connect a Virtues subscription, or point it at your own models, in Settings under Billing."
+                            .to_string(),
+                    ),
+                }),
+            )
+                .into_response(),
+        );
+    }
+
+    // One turn per chat at a time. A turn outlives its request (live_turn.rs),
+    // so a client that lost the wire and asks again would otherwise start a
+    // SECOND turn while the first is still running: `LiveTurns::start`
+    // replaces the entry and lets the old task finish, both write an
+    // assistant row, and the transcript shows two replies to one question,
+    // both billed. The client's Try again rejoins first and only asks anew
+    // when nothing is live; this is the boundary for a client that does not,
+    // or a double tap. 409, with the name the client keys on.
+    // A turn Stop has cancelled still holds the entry until its tool returns
+    // (the loop checks the token between deltas, not inside a tool), so
+    // without the second clause a Stop during a long tool would answer every
+    // send with this 409 for up to the tool's timeout.
+    if !request.temporary
+        && live_turns.get(&request.chat_id).is_some()
+        && !cancel_state.is_cancelled(&request.chat_id)
+    {
+        return Some(
+            (
+                StatusCode::CONFLICT,
+                Json(ChatError {
+                    error: "turn_in_progress".to_string(),
+                    details: Some("Your assistant is still writing a reply to this chat.".to_string()),
+                }),
+            )
+                .into_response(),
+        );
+    }
+
+    None
+}
+
+/// A new chat's title: the first user message's legacy `content`, else its
+/// FIRST text part — not `UIMessage::text`, which joins them all — cut to
+/// fifty characters. A message with no text titles the chat
+/// "New conversation" rather than nothing.
+fn chat_title(messages: &[UIMessage]) -> String {
+    let raw_title = messages
+        .iter()
+        .find(|m| m.role == "user")
+        .and_then(|m| {
+            m.content.clone().or_else(|| {
+                m.parts.as_ref().and_then(|p| {
+                    p.iter().find_map(|p| match p {
+                        UIPart::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                })
+            })
+        })
+        .unwrap_or_else(|| "New conversation".to_string());
+
+    if raw_title.chars().count() > 50 {
+        let t: String = raw_title.chars().take(47).collect();
+        format!("{}...", t)
+    } else {
+        raw_title
+    }
+}
+
+/// Create the chat's row if it has none. True when this call created it.
+///
+/// ON CONFLICT DO NOTHING, so two requests racing to open the same chat both
+/// succeed and exactly one of them reports the creation. A failed insert is
+/// logged and reads as "not created"; the chat row read that follows is what
+/// turns a missing row into an error.
+async fn ensure_chat_row(pool: &PgPool, request: &ChatRequest) -> bool {
+    match sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ($1, $2, 0) ON CONFLICT (id) DO NOTHING")
+        .bind(&request.chat_id)
+        .bind(chat_title(&request.messages))
+        .execute(pool)
+        .await
+    {
+        Ok(result) => result.rows_affected() > 0,
+        Err(e) => {
+            tracing::error!("Failed to create chat: {}", e);
+            false
+        }
+    }
+}
+
+/// Whether this request is a regenerate, and if it is, drop the box's copy of
+/// the answer being replaced — the client has already dropped its own, and
+/// the model must not answer with its previous reply in front of it.
+///
+/// ONLY if the user turn being answered again is on disk. The client offers
+/// Try again on every error card, and some of those errors happened before
+/// anything was written: 409 not connected, 400 invalid model, 413, a request
+/// that never arrived. The message is then still only in the client, and
+/// treating it as a regenerate would delete the previous good answer and
+/// re-answer the question before it — on a new chat, an empty transcript. So
+/// the client sends its last user message on regenerate too, and if it is not
+/// the last user row here, this is a first send of it (false).
+///
+/// Matched by id: the user row is stored under the id the client gave it, so
+/// a loaded transcript and a message sent this session both carry the row's
+/// id. Not by text: a short repeated message — "ok", "thanks", "continue" —
+/// would match the wrong turn, which is exactly the case this exists to stop.
+///
+/// The room's own lines (`gs:` subjects) are not "the previous answer" and
+/// stay, or regenerate in the getting-started room deletes the step the room
+/// has just narrated. A ghost chat has nothing on disk to drop.
+async fn drop_previous_answer_if_regenerating(pool: &PgPool, request: &ChatRequest) -> bool {
+    let regenerating = matches!(
+        request.trigger.as_deref(),
+        Some("regenerate-message") | Some("regenerate-assistant-message")
+    );
+    if !regenerating || request.temporary {
+        return regenerating;
+    }
+    let chat_id = &request.chat_id;
+    let last_user_msg = request.messages.iter().rev().find(|m| m.role == "user");
+    let answered_turn_on_disk = match last_user_msg {
+        // An older client sends nothing on regenerate; nothing to compare.
+        None => true,
+        Some(m) => {
+            match sqlx::query_as::<_, (String, String)>(
+                "SELECT id, content FROM app_chat_messages \
+                 WHERE chat_id = $1 AND role = 'user' \
+                 ORDER BY sequence_num DESC LIMIT 1",
+            )
+            .bind(chat_id)
+            .fetch_optional(pool)
+            .await
+            {
+                Ok(Some((id, content))) => match m.id.as_deref() {
+                    Some(client_id) => client_id == id,
+                    // A client that sends no id: the text is all there is.
+                    None => content == m.text(),
+                },
+                Ok(None) => false,
+                Err(e) => {
+                    // Unknown. Deleting on a guess is the failure this
+                    // exists to stop; answering the message as new is
+                    // the harmless side.
+                    tracing::error!(chat_id = %chat_id, error = %e, "regenerate: could not read the last user turn");
+                    false
+                }
+            }
+        }
+    };
+    if !answered_turn_on_disk {
+        tracing::info!(chat_id = %chat_id, "regenerate asked for a turn that was never saved; answering it as new");
+        return false;
+    }
+    if let Err(e) = sqlx::query(
+        "DELETE FROM app_chat_messages \
+         WHERE chat_id = $1 AND role = 'assistant' \
+           AND COALESCE(subject, '') NOT LIKE 'gs:%' \
+           AND sequence_num > COALESCE((SELECT MAX(sequence_num) FROM app_chat_messages \
+                                        WHERE chat_id = $1 AND role = 'user'), 0)",
+    )
+    .bind(chat_id)
+    .execute(pool)
+    .await
+    {
+        tracing::error!(chat_id = %chat_id, error = %e, "regenerate: could not drop the previous answer");
+    }
+    true
+}
+
+/// Compact the chat if its context is critical, and return the checkpoint
+/// event to announce it.
+///
+/// This runs before the context is built, not inside the stream: the turn
+/// that triggers compaction is the turn whose context is too big, and a
+/// summary written after `build_context_for_llm` has run does nothing for it.
+/// The checkpoint event still reaches the client first thing in the stream.
+async fn compact_if_critical(pool: &PgPool, chat_id: &str, model: &str) -> Option<StreamEvent> {
+    let compaction_status =
+        crate::api::chat_usage::check_compaction_needed(pool, chat_id.to_string(), model).await;
+    if !matches!(compaction_status, Ok(ContextStatus::Critical)) {
+        return None;
+    }
+    tracing::info!(chat_id = %chat_id, "context critical, compacting before the turn");
+    let options = CompactionOptions {
+        model_id: Some(model.to_string()),
+        ..Default::default()
+    };
+    match compact_chat(pool, chat_id.to_string(), options).await {
+        Ok(_) => get_latest_checkpoint(pool, chat_id).await,
+        Err(e) => {
+            // A chat that cannot compact still gets its answer; it is
+            // just a large one.
+            tracing::warn!(chat_id = %chat_id, error = %e, "auto-compaction failed; continuing with the full context");
+            None
+        }
+    }
+}
+
+/// What the turn is answering from: the chat's compaction summary, its room,
+/// and its transcript.
+struct History {
+    conversation_summary: Option<String>,
+    summary_up_to_index: i64,
+    project_id: Option<String>,
+    messages: Vec<ChatMessage>,
+}
+
+/// Read the chat's row and transcript, or for a ghost chat take both from
+/// the request. Err is the response to send.
+async fn load_history(pool: &PgPool, request: &ChatRequest) -> Result<History, Response> {
+    if request.temporary {
+        // The box holds nothing for a ghost chat: the wire is the transcript
+        // and the request is the room's binding.
+        return Ok(History {
+            conversation_summary: None,
+            summary_up_to_index: 0,
+            project_id: request.project_id.clone(),
+            messages: ghost_history(&request.messages),
+        });
+    }
+    let chat_id = &request.chat_id;
+
+    // The room is read from the persisted row (single source of truth) so the
+    // active-project context always matches the binding, even if a stale
+    // client sends a different per-message projectId; the create path has
+    // already bound a new chat from request.project_id, so the row is current.
+    //
+    // `project_id` decodes as `Option<String>` on purpose: the column is
+    // nullable (and the FK is ON DELETE SET NULL), so an unbound chat
+    // legitimately reads NULL. A failed read is a 500, never a None: None
+    // reads as "not in a project", so a swallowed error would silently unscope
+    // a scoped chat — retrieval stops being hard-filtered and the answer
+    // contract is dropped.
+    let (conversation_summary, summary_up_to_index, project_id) =
+        match sqlx::query_as::<_, (Option<String>, i64, Option<String>)>(
+            "SELECT conversation_summary, summary_up_to_index, project_id FROM app_chats WHERE id = $1",
+        )
+        .bind(chat_id)
+        .fetch_one(pool)
+        .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                tracing::error!("Failed to load chat: {}", e);
+                return Err(internal("Failed to load chat"));
+            }
+        };
+
+    let messages = match crate::api::chats::load_messages(pool, chat_id).await {
+        Ok(messages) => messages,
+        Err(e) => {
+            tracing::error!("Failed to load messages for chat {}: {}", chat_id, e);
+            return Err(internal("Failed to load messages"));
+        }
+    };
+
+    Ok(History { conversation_summary, summary_up_to_index, project_id, messages })
+}
+
+/// Drive the turn's stream in its own task, pushing each line to the live
+/// turn's watchers, and end the turn for all of them however the stream ends.
+fn spawn_turn_driver(
+    agent_stream: Pin<Box<dyn Stream<Item = String> + Send>>,
+    turn: Arc<live_turn::LiveTurn>,
+    turn_token: CancellationToken,
+    live_turns: LiveTurns,
+    cancel_state: ChatCancellationState,
+    chat_id: String,
+) {
+    tokio::spawn(async move {
+        // The drive loop runs inside a catch, because `finish` is what ends
+        // the turn for every watcher: a panic that skipped it would leave
+        // `done` false, `watch` blocked on a Notify that never fires, and the
+        // SSE keep-alive holding the socket open — a thinking mark that spins
+        // until the person gives up, and every later rejoin attached to the
+        // same dead turn. A panic in here has to end the turn like any other
+        // ending, or one bad decode wedges the chat.
+        let drive = {
+            let turn = turn.clone();
+            let chat_id = chat_id.clone();
+            async move {
+                let mut agent_stream = agent_stream;
+                while let Some(data) = agent_stream.next().await {
+                    turn.push(data);
+                    // Nobody watching for the cap: stop spending on a reply no
+                    // one will read. The loop sees the token at its next step
+                    // and the row is saved as a stop, like the button.
+                    if turn.unattended_past(live_turn::UNATTENDED_CAP) {
+                        tracing::info!(chat_id = %chat_id, cap_secs = live_turn::UNATTENDED_CAP.as_secs(), "turn unattended past the cap; cancelling");
+                        cancel_state.cancel_unattended(&chat_id, &turn_token);
+                    }
+                }
+            }
+        };
+        if std::panic::AssertUnwindSafe(drive).catch_unwind().await.is_err() {
+            tracing::error!(chat_id = %chat_id, "the turn's driver panicked; ending the turn");
+            turn.push(serialize_event(&StreamEvent::Error {
+                error_text: "Your server failed while writing this reply.".to_string(),
+            }));
+            turn.push("[DONE]".to_string());
+        }
+        // After the stream's own tail (row written, usage recorded), so
+        // a watcher that sees the end can reload and find the row.
+        live_turns.finish(&chat_id, &turn);
+    });
 }
 
 /// GET /api/chat/{id}/stream — the turn still running for this chat, from
@@ -2093,6 +1902,9 @@ fn create_agent_stream(
     // rather than re-read off the request so the stream cannot disagree with
     // what the handler decided, or fall back to a default of its own.
     model: String,
+    // The chat's project as the handler resolved it — from the row, not the
+    // request — so the tools search the same project the prompt describes.
+    project_id: Option<String>,
     api_messages: Vec<serde_json::Value>,
     msg_id: String,
     // Emitted first when this turn compacted the chat before it started.
@@ -2121,21 +1933,38 @@ fn create_agent_stream(
         // and twenty thirty-second tools is ten minutes. First figures,
         // 2026-09-21; the journal line "turn stopped at its budget" is how
         // they get revised.
-        let (max_steps, max_cost_micros, max_wall_clock) =
+        //
+        // Plain chat also thinks at low effort and has a search budget.
+        // Effort governs how many tool calls a model makes as well as how
+        // long it thinks, and chat ran at the provider default — high, on
+        // most — which is how "what's on tonight" became thirteen searches.
+        // The other modes keep the model's default and no caps.
+        use crate::agent::{Thinking, TurnBudget};
+        let spend = |micros: i64, minutes: u64| TurnBudget {
+            max_cost_micros: Some(micros),
+            max_wall_clock: Some(std::time::Duration::from_secs(minutes * 60)),
+            tool_caps: &[],
+        };
+        let (max_steps, budget, thinking) =
             match virtues_registry::skills::skill_named(&request.agent_mode) {
                 // A skill's ceilings come from its file.
                 Some(skill) => (
                     skill.max_steps,
-                    (skill.max_cost_usd * 1_000_000.0).round() as i64,
-                    std::time::Duration::from_secs(skill.max_minutes * 60),
+                    spend((skill.max_cost_usd * 1_000_000.0).round() as i64, skill.max_minutes),
+                    Thinking::Default,
                 ),
                 None => match request.agent_mode.as_str() {
-                    "deep_research" => (50, 10_000_000, std::time::Duration::from_secs(25 * 60)),
+                    "deep_research" => (50, spend(10_000_000, 25), Thinking::Default),
                     // The owner's bypass: ceilings high enough that no real
                     // admin session meets them. The dollar cap stays as the
                     // one thing between a looping model and the bill.
-                    "sudo" => (500, 50_000_000, std::time::Duration::from_secs(4 * 60 * 60)),
-                    _ => (20, 2_500_000, std::time::Duration::from_secs(8 * 60)), // "chat" or default
+                    "sudo" => (500, spend(50_000_000, 4 * 60), Thinking::Default),
+                    // "chat" or default
+                    _ => (
+                        20,
+                        TurnBudget { tool_caps: CHAT_TOOL_CAPS, ..spend(2_500_000, 8) },
+                        Thinking::Low,
+                    ),
                 },
             };
 
@@ -2151,11 +1980,9 @@ fn create_agent_stream(
                 std::time::Duration::from_secs(30)
             },
             parallel_tools: true,
+            thinking,
         })
-        .with_budget(crate::agent::TurnBudget {
-            max_cost_micros: Some(max_cost_micros),
-            max_wall_clock: Some(max_wall_clock),
-        });
+        .with_budget(budget);
 
         // Side-channel for live Deep Research subagent status. The dispatch_subagents tool sends
         // worker updates on `subagent_tx`; the select! loop below drains `subagent_rx` and streams
@@ -2171,7 +1998,7 @@ fn create_agent_stream(
         let context = ToolContext {
             page_id: request.active_page.as_ref().and_then(|p| p.page_id.clone()),
             user_id: None,
-            project_id: request.project_id.clone(),
+            project_id,
             scope_mode: if request.chat_mode == "scoped" {
                 crate::search::ScopeMode::Exclusive
             } else {
@@ -2189,11 +2016,8 @@ fn create_agent_stream(
 
         let tools = crate::tools::get_tools_for_agent_mode(&request.agent_mode);
 
-        // The message opens, then its first step. Text and reasoning parts
-        // open lazily inside a step and close with it: the SDK forgets its
-        // open parts at every finish-step, so a part that spans steps is a
-        // delta with no home. (The turn used to stream as one text part
-        // for its whole length, which is why it could never emit steps.)
+        // The message opens, then its first step; the recorder opens and
+        // closes the parts inside each step, and the steps after this one.
         yield (serialize_event(&StreamEvent::Start { message_id: msg_id.clone() }));
         // Compaction already happened, in the handler, before the context was
         // built from the compacted history. All that is left is to say so —
@@ -2205,61 +2029,7 @@ fn create_agent_stream(
         }
         yield (serialize_event(&StreamEvent::StartStep));
 
-        // Track accumulated content
-        let mut full_content = String::new();
-        let mut reasoning_content = String::new();
-        let mut in_reasoning = false;
-        let mut text_open = false;
-        // The row stores the turn's text as one string, so text that resumes
-        // after a tool call gets a paragraph break IN THE ROW ("…exact
-        // text.The earlier edit…" otherwise). On the wire each step's text is
-        // its own part and needs none.
-        let mut needs_text_break = false;
-        // ONE PART PER TEXT RUN, and a distinct id for each.
-        //
-        // The comment above has always said "on the wire each step's text is
-        // its own part" — and the events were right, but every one of them
-        // carried `msg_id`. The AI SDK keys a part by its id, so a second
-        // `text-start` with the id it just closed REOPENS the first part and
-        // appends to it. Every run of text in a turn merged into one block,
-        // which is why the line the model writes before reaching for a tool
-        // ("Checking what he sent in August") is indistinguishable, on the
-        // client, from the answer it writes at the end.
-        //
-        // They are not the same thing. The first is scaffolding — it says what
-        // is about to happen and is worth reading WHILE it happens; the second
-        // is the reply. Giving each run its own id is what lets the view put
-        // the scaffolding in the thinking block and leave the answer in the
-        // transcript.
-        let mut text_seq = 0usize;
-        let mut text_part_id = msg_id.clone();
-        let mut text_segments: Vec<String> = Vec::new();
-        // The turn in order, so the stored `parts` can interleave text with the
-        // tool calls it ran between — a reload then sees what the stream saw.
-        let mut turn_slots: Vec<TurnSlot> = Vec::new();
-        // Set by any error event mid-turn: the reply on screen is partial,
-        // and the row must say so or a reload shows the stub as the answer.
-        let mut interrupted = false;
-        // How the last LLM step ended, and how the loop ended: together they
-        // are the `finish` event's reason and the row's subject.
-        let mut last_step_reason: Option<StepReason> = None;
-        let mut loop_finish: Option<FinishReason> = None;
-        // The gateway's reasoning blocks across the turn's steps, for the row.
-        let mut reasoning_details: Vec<serde_json::Value> = Vec::new();
-
-        // Token usage tracking
-        let mut total_input_tokens: u32 = 0;
-        let mut total_output_tokens: u32 = 0;
-        let mut total_reasoning_tokens: u32 = 0;
-        let mut total_cache_read_tokens: u32 = 0;
-        let mut total_cache_write_tokens: u32 = 0;
-        // Authoritative spend for this turn (sum of gateway-reported usage.cost
-        // across every step), captured into app_ai_calls for the Usage tab.
-        let mut total_cost_micros: i64 = 0;
-
-        // Tool call tracking for persistence
-        let mut all_tool_calls: Vec<ToolCall> = Vec::new();
-        let mut failed_tools: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut recorder = TurnRecorder::new(msg_id.clone());
 
         // Run the agent loop with cancellation support
         let mut agent_stream = agent.run(
@@ -2275,525 +2045,166 @@ fn create_agent_stream(
             biased;
             // Live subagent status — drained even while dispatch_subagents is still executing.
             Some(update) = subagent_rx.recv() => {
-                let ev = StreamEvent::SubagentStatus {
-                    dispatch_id: update.dispatch_id,
-                    subagent_id: update.id as u32,
-                    title: update.title,
-                    model: update.model,
-                    status: update.status.as_str().to_string(),
-                    tokens: update.tokens,
-                };
-                yield (serialize_event(&ev));
+                yield (serialize_event(&StreamEvent::from(update)));
             }
             maybe_event = agent_stream.next() => {
-              let event = match maybe_event {
-                  Some(e) => e,
-                  None => break,
-              };
-              match event {
-                AgentEvent::TextDelta { content } => {
-                    // End reasoning if we were in it
-                    if in_reasoning {
-                        in_reasoning = false;
-                        let event = StreamEvent::ReasoningEnd { id: msg_id.clone() };
-                        yield (serialize_event(&event));
-                    }
-                    if !text_open {
-                        text_open = true;
-                        text_seq += 1;
-                        text_part_id = format!("{msg_id}:t{text_seq}");
-                        turn_slots.push(TurnSlot::Text(text_segments.len()));
-                        text_segments.push(String::new());
-                        yield (serialize_event(&StreamEvent::TextStart { id: text_part_id.clone() }));
-                    }
-                    // Text resuming after a tool call: break the paragraph in
-                    // the stored string so it doesn't butt against the previous
-                    // segment's final sentence.
-                    if needs_text_break && !full_content.is_empty() && !full_content.ends_with('\n') {
-                        full_content.push_str("\n\n");
-                    }
-                    needs_text_break = false;
-                    full_content.push_str(&content);
-                    if let Some(seg) = text_segments.last_mut() {
-                        seg.push_str(&content);
-                    }
-                    let event = StreamEvent::TextDelta {
-                        id: text_part_id.clone(),
-                        delta: content,
-                    };
-                    yield (serialize_event(&event));
+                let Some(event) = maybe_event else { break };
+                for ev in recorder.on_event(event) {
+                    yield (serialize_event(&ev));
                 }
-
-                AgentEvent::ReasoningDelta { content } => {
-                    if !in_reasoning {
-                        in_reasoning = true;
-                        let event = StreamEvent::ReasoningStart { id: msg_id.clone() };
-                        yield (serialize_event(&event));
-                    }
-                    reasoning_content.push_str(&content);
-                    let event = StreamEvent::ReasoningDelta {
-                        id: msg_id.clone(),
-                        delta: content,
-                    };
-                    yield (serialize_event(&event));
-                }
-
-                AgentEvent::ToolCallStart { id, name, args } => {
-                    // Any text that resumes after this tool call starts a new
-                    // paragraph (see needs_text_break).
-                    needs_text_break = true;
-                    turn_slots.push(TurnSlot::Tool(id.clone()));
-                    // Track tool call for persistence
-                    all_tool_calls.push(ToolCall {
-                        tool_name: name.clone(),
-                        tool_call_id: Some(id.clone()),
-                        arguments: args.clone().unwrap_or(serde_json::Value::Null),
-                        result: None, // Will be populated by ToolCallResult
-                        timestamp: Utc::now().to_rfc3339(),
-                    });
-                    // AI SDK v6: tool-input-start event
-                    let event = StreamEvent::ToolInputStart {
-                        tool_call_id: id,
-                        tool_name: name,
-                    };
-                    yield (serialize_event(&event));
-                }
-
-                AgentEvent::ToolCallArgsPartial { id, args_delta } => {
-                    // AI SDK v6: tool-input-delta event
-                    let event = StreamEvent::ToolInputDelta {
-                        tool_call_id: id,
-                        input_text_delta: args_delta,
-                    };
-                    yield (serialize_event(&event));
-                }
-
-                AgentEvent::ToolCallArgsComplete { id, args } => {
-                    // AI SDK v6: tool-input-available event (args parsing complete)
-                    // This is where the arguments become known: ToolCallStart
-                    // fires as soon as the tool has a name, and the args are
-                    // still streaming in then, so the tracked call is holding
-                    // `Null`. Writing them back here is what puts them in the
-                    // persisted row — without it a reload showed a call with
-                    // no input, and the replayed turn carried none either.
-                    let tool_name = all_tool_calls.iter_mut()
-                        .find(|tc| tc.tool_call_id.as_deref() == Some(&id))
-                        .map(|tc| {
-                            tc.arguments = args.clone();
-                            tc.tool_name.clone()
-                        })
-                        .unwrap_or_default();
-                    let event = StreamEvent::ToolInputAvailable {
-                        tool_call_id: id,
-                        tool_name,
-                        input: args,
-                    };
-                    yield (serialize_event(&event));
-                }
-
-                AgentEvent::ToolCallResult { id, result, success: false, error } => {
-                    // A failed tool is a tool error on the wire, not an output
-                    // with an error inside it. The model still sees the
-                    // failure text (executor::to_llm_content); the row keeps
-                    // it as the result so a reload shows the same.
-                    let error_text = error
-                        .or_else(|| result.get("error").and_then(|e| e.as_str()).map(str::to_string))
-                        .unwrap_or_else(|| "the tool reported a failure".to_string());
-                    if let Some(tc) = all_tool_calls.iter_mut().find(|tc| tc.tool_call_id.as_deref() == Some(&id)) {
-                        tc.result = Some(serde_json::json!({ "error": error_text }));
-                    }
-                    // Which calls failed is only known here. `{"error": …}` in
-                    // the result is not the same claim — a tool may answer with
-                    // an `error` key of its own — so the ids are kept.
-                    failed_tools.insert(id.clone());
-                    let event = StreamEvent::ToolOutputError { tool_call_id: id, error_text };
-                    yield (serialize_event(&event));
-                }
-
-                AgentEvent::ToolCallResult { id, result, success: true, error: _ } => {
-                    // Update the tracked tool call with the result. The CLIENT
-                    // gets the value whole, below — it has to, that is how a
-                    // generated image reaches the chat. The ROW does not: a
-                    // data URL is a megabyte of base64 that the model cannot
-                    // read and that would be replayed into every later turn
-                    // from `parts`, which is a chat poisoned by one picture.
-                    if let Some(tc) = all_tool_calls.iter_mut().find(|tc| tc.tool_call_id.as_deref() == Some(&id)) {
-                        let mut stored = result.clone();
-                        redact_inline_data(&mut stored);
-                        tc.result = Some(stored);
-                    }
-                    // The interview's finisher names the page the client
-                    // should open beside the chat (see NarrativeDocumentReady).
-                    let narrative_page = all_tool_calls
-                        .iter()
-                        .find(|tc| tc.tool_call_id.as_deref() == Some(&id))
-                        .filter(|tc| tc.tool_name == "write_it_up")
-                        .and_then(|_| result.get("document_page_id"))
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string);
-                    // Bill nested Deep Research worker tokens to this chat's usage. The dispatch
-                    // result carries aggregate worker token counts that the orchestrator's own
-                    // Usage events don't include.
-                    if let Some(usage) = result.get("usage") {
-                        total_input_tokens += usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                        total_output_tokens += usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                        // Their cost too. Folding in the tokens and not the
-                        // price showed the orchestrator's bill against the
-                        // whole fan-out's usage.
-                        total_cost_micros += usage.get("cost_micros").and_then(|v| v.as_i64()).unwrap_or(0);
-                    }
-                    // AI SDK v6: tool-output-available event
-                    let event = StreamEvent::ToolOutputAvailable {
-                        tool_call_id: id,
-                        output: result,
-                    };
-                    yield (serialize_event(&event));
-                    if let Some(page_id) = narrative_page {
-                        let event = StreamEvent::NarrativeDocumentReady { page_id };
-                        yield (serialize_event(&event));
-                    }
-                }
-
-                AgentEvent::Usage { prompt_tokens, completion_tokens, total_tokens: _, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost_micros } => {
-                    total_input_tokens += prompt_tokens;
-                    total_output_tokens += completion_tokens;
-                    if let Some(r) = reasoning_tokens {
-                        total_reasoning_tokens += r;
-                    }
-                    if let Some(c) = cache_read_tokens {
-                        total_cache_read_tokens += c;
-                    }
-                    if let Some(c) = cache_write_tokens {
-                        total_cache_write_tokens += c;
-                    }
-                    if let Some(c) = cost_micros {
-                        total_cost_micros += c;
-                    }
-                }
-
-                AgentEvent::ReasoningDetails { details } => {
-                    reasoning_details.extend(details);
-                }
-
-                AgentEvent::Error { message, code: _, recoverable: _ } => {
-                    interrupted = true;
-                    let event = StreamEvent::Error { error_text: message };
-                    yield (serialize_event(&event));
-                }
-
-                // A step ended. Close it on the wire; when the model asked for
-                // tools, the next LLM call is a new step and opens one.
-                AgentEvent::StepComplete { reason, .. } => {
-                    last_step_reason = Some(reason);
-                    if in_reasoning {
-                        in_reasoning = false;
-                        yield (serialize_event(&StreamEvent::ReasoningEnd { id: msg_id.clone() }));
-                    }
-                    if text_open {
-                        text_open = false;
-                        yield (serialize_event(&StreamEvent::TextEnd { id: text_part_id.clone() }));
-                    }
-                    yield (serialize_event(&StreamEvent::FinishStep));
-                    if reason == StepReason::ToolCalls {
-                        yield (serialize_event(&StreamEvent::StartStep));
-                    }
-                }
-
-                AgentEvent::Done { finish_reason, .. } => {
-                    loop_finish = Some(finish_reason);
-                }
-
-                // Events we don't need to forward to client
-                AgentEvent::LoopStarted { .. } |
-                AgentEvent::MessageId { .. } => {}
-              }
             }
           }
         }
 
         // Drain any subagent updates buffered after the agent loop ended.
         while let Ok(update) = subagent_rx.try_recv() {
-            let ev = StreamEvent::SubagentStatus {
-                dispatch_id: update.dispatch_id,
-                subagent_id: update.id as u32,
-                title: update.title,
-                model: update.model,
-                status: update.status.as_str().to_string(),
-                tokens: update.tokens,
-            };
-            yield (serialize_event(&ev));
+            yield (serialize_event(&StreamEvent::from(update)));
         }
 
-        // End reasoning if we were in it
-        if in_reasoning {
-            let event = StreamEvent::ReasoningEnd { id: msg_id.clone() };
-            yield (serialize_event(&event));
-        }
-
-        // Close a text part a step left open (an error or a stop mid-step).
-        if text_open {
-            yield (serialize_event(&StreamEvent::TextEnd { id: text_part_id.clone() }));
-        }
-
-        // How it ended, in the SDK's words. A person's stop is an abort, not
-        // a finish. Otherwise the loop's verdict wins over the last step's,
-        // and the last step's over "stop".
         let was_cancelled = cancel_token.is_cancelled();
         // The cap and the Stop button are the same cancellation; only the
         // registration knows which. Read before `remove` below.
         let was_unattended = was_cancelled && cancel_state.was_unattended(&chat_id, &cancel_token);
-        let cut_short = loop_finish == Some(FinishReason::OutputLimit)
-            || last_step_reason == Some(StepReason::MaxTokens);
-        let hit_ceiling = loop_finish == Some(FinishReason::MaxSteps);
-        let hit_budget = loop_finish == Some(FinishReason::BudgetExceeded);
-        if was_cancelled || loop_finish == Some(FinishReason::Cancelled) {
-            let reason = if was_unattended { "unattended" } else { "stopped" };
-            yield (serialize_event(&StreamEvent::Abort { reason: Some(reason.to_string()) }));
-        } else {
-            let finish_reason = match (loop_finish, last_step_reason) {
-                (Some(FinishReason::Error), _) => "error",
-                (Some(FinishReason::MaxSteps), _) | (Some(FinishReason::BudgetExceeded), _) | (Some(FinishReason::AwaitingUser), _) => "other",
-                (Some(FinishReason::OutputLimit), _) | (_, Some(StepReason::MaxTokens)) => "length",
-                (_, Some(StepReason::ContentFilter)) => "content-filter",
-                (_, Some(StepReason::ToolCalls)) => "tool-calls",
-                _ if interrupted => "error",
-                _ => "stop",
-            };
-            yield (serialize_event(&StreamEvent::Finish { finish_reason: finish_reason.to_string() }));
+        for ev in recorder.close(was_cancelled, was_unattended) {
+            yield (serialize_event(&ev));
         }
 
         // Send [DONE] marker
         yield ("[DONE]".to_string());
 
-        // Save assistant message to chat.
-        //
-        // Text is not the only thing a turn produces. One that called tools and
-        // was stopped — or hit the step ceiling — before it wrote a word left
-        // NOTHING on disk, so a reload erased calls the person had watched run,
-        // and the "cancelled"/"interrupted" notice below had no row to hang on.
-        // A turn that produced neither text nor a call is still not a turn.
-        if !full_content.is_empty() || !all_tool_calls.is_empty() {
-            let provider = model.split('/').next().unwrap_or("unknown").to_string();
-            // The row says how the turn ended so a reload shows the same
-            // notice: the person's stop, the output cap, or an interruption.
-            let assistant_message = ChatMessage {
-                id: None,
-                role: "assistant".to_string(),
-                content: full_content.clone(),
-                timestamp: Timestamp::now(),
-                model: Some(model.clone()),
-                provider: Some(provider),
-                agent_id: Some(agent_id),
-                tool_calls: if all_tool_calls.is_empty() { None } else { Some(all_tool_calls.clone()) },
-                reasoning: if reasoning_content.is_empty() { None } else { Some(reasoning_content.clone()) },
-                intent: None,
-                // "interrupted": the stream or the model stopped before the
-                // reply was finished (VIR-334). The UI reads both on reload
-                // and shows a notice under the stub; a person's stop wins.
-                subject: if was_unattended {
-                    // The box stopped this, not the person. Telling someone
-                    // they stopped a reply they never touched is a lie about
-                    // who did what.
-                    Some("unattended".to_string())
-                } else if was_cancelled {
-                    Some("cancelled".to_string())
-                } else if cut_short {
-                    Some("length".to_string())
-                } else if hit_ceiling {
-                    Some("max_steps".to_string())
-                } else if hit_budget {
-                    Some("budget".to_string())
-                } else if interrupted {
-                    Some("interrupted".to_string())
-                } else {
-                    None
-                },
-                reasoning_details: if reasoning_details.is_empty() {
-                    None
-                } else {
-                    Some(serde_json::Value::Array(reasoning_details.clone()))
-                },
-                // THE TURN IN ORDER — the column was written as `None` by every
-                // caller and was null in every row on every box, while the
-                // client rebuilt an approximation from `content` + `tool_calls`
-                // that could only ever produce ONE text part. That is what made
-                // a reopened chat unable to tell the model's "checking his
-                // messages now" from its actual answer: the distinction was
-                // never on disk to begin with.
-                //
-                // `content` still holds the whole turn joined, because that is
-                // what the model is shown as its own history and what every
-                // older row has. This is additive: a row without `parts` falls
-                // back to the legacy reconstruction exactly as before.
-                parts: {
-                    let parts = build_turn_parts(
-                        &turn_slots,
-                        &text_segments,
-                        &all_tool_calls,
-                        &failed_tools,
-                        &reasoning_content,
-                    );
-                    if parts.is_empty() { None } else { Some(parts) }
-                },
-            };
-
-            // WHAT THE REPLY LINKED TO, CHECKED AFTER THE FACT.
-            //
-            // The wiki REFUSES a bad link (`wiki_editor::check_links`), because
-            // an article is a stored artifact and nothing has been shown yet.
-            // A chat reply has already streamed past the person by the time
-            // anything could object, so the same finding is reported instead —
-            // it cannot be enforced here without rewriting text somebody has
-            // read, and a link that silently vanishes on reload is its own kind
-            // of lie. The citation example in the prompt used to be a literal
-            // id (`/person/person_ab12`), which is exactly how the wiki's first
-            // invented link got written, so this is also how we find out
-            // whether removing it was enough.
-            match crate::api::wiki_editor::dead_links(&pool, &full_content).await {
-                Ok(problems) if !problems.is_empty() => {
-                    for problem in &problems {
-                        tracing::warn!(chat_id = %chat_id, model = %model, "the reply {problem}");
-                    }
-                }
-                Ok(_) => {}
-                Err(e) => tracing::warn!(chat_id = %chat_id, error = %e, "could not check the reply's links"),
-            }
-
-            if temporary {
-                // Ghost: nothing written. The client keeps the turn in its tab.
-            } else if let Err(e) = append_message(&pool, chat_id.clone(), assistant_message).await {
-                tracing::error!("Failed to save assistant message: {}", e);
-            } else if chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID {
-                /* THE ROOM SPEAKS AFTER THE TURN, NOT THIRTY SECONDS LATER.
-                 *
-                 * `narrate` used to run only from the GET and the two POST
-                 * handlers, and no TOOL called it — so a step settled by
-                 * `record_introductions` or `write_it_up` left the room
-                 * silent until the client's 30-second poll. Because narrate
-                 * only ever appends, the line then landed at the BOTTOM of
-                 * the transcript rather than where it belonged in the walk.
-                 *
-                 * Measured on the dev box: introductions were recorded at
-                 * message 4 and "Introductions are made." arrived at message
-                 * 28 — under the person's "whats next?", together with the
-                 * other three settled lines and the graduated line, as a
-                 * backlog. Worse, the MODEL had already answered the question
-                 * at 27 in its own words, so the authored ending landed
-                 * underneath a thinner version of itself.
-                 *
-                 * Here is the right instant: the assistant's turn is on disk,
-                 * so the coda appends directly beneath the sentence that
-                 * earned it. Best-effort — a room that cannot speak must
-                 * never fail a turn that already succeeded.
-                 */
-                match crate::api::getting_started::compute(&pool).await {
-                    Ok(state) => {
-                        if let Err(e) = crate::api::getting_started::narrate(&pool, &state).await {
-                            tracing::warn!(error = %e, "the room could not speak after a turn");
-                        }
-                    }
-                    Err(e) => tracing::warn!(error = %e, "getting-started state after a turn"),
-                }
-            }
-
-        }
-
-        // Record token usage — OUTSIDE the block above, which is about whether
-        // there is a message worth keeping. It is not about whether the wallet
-        // was debited. A model that spends its whole output budget thinking and
-        // returns no content is billed in full, and this used to record nothing
-        // at all for it: no usage row, no cost row, no trace of the turn. The
-        // spend happened either way.
-        {
-            // `cost_micros` is the gateway's authoritative figure — the same
-            // one recorded in app_ai_calls below, and the one the wallet was
-            // actually debited for. No estimating.
-            // These were literal zeros while the same totals were handed to
-            // `app_ai_calls` one call below — so the per-chat panel read 0
-            // reasoning tokens on every box while the number sat in the next
-            // table over.
-            let usage_data = UsageData {
-                input_tokens: total_input_tokens as i64,
-                output_tokens: total_output_tokens as i64,
-                reasoning_tokens: total_reasoning_tokens as i64,
-                cache_read_tokens: total_cache_read_tokens as i64,
-                // Was a literal 0 — the same sin the comment above describes,
-                // one field over. It is still 0 on every turn, but now because
-                // nothing reported a cache write, not because someone typed it.
-                cache_write_tokens: total_cache_write_tokens as i64,
-                cost_micros: Some(total_cost_micros),
-            };
-
-            // Read once and shared with the cost log below, so the two cannot
-            // disagree about which route paid for this turn.
-            //
-            // The CHECKED form, because this value decides whether the box
-            // prices the turn from its own catalog. A swallowed error here read
-            // as "not BYO" and wrote real dollars into estimated_cost_usd for
-            // tokens the owner had already paid their own provider for — the
-            // very failure `resolve_cost_usd`'s comment says was fixed once.
-            //
-            // Unknown is treated as BYO, i.e. do not price it ourselves. Of the
-            // two ways to be wrong, under-reporting a wallet turn is a gap in a
-            // display figure that app_ai_calls still records properly, while
-            // over-reporting invents a charge the person never incurred. A
-            // fabricated number is worse than a missing one.
-            let byo = match crate::api::settings_byo::byo_is_active_checked(&pool).await {
-                Ok(active) => active,
-                Err(e) => {
-                    tracing::warn!(
-                        chat_id = %chat_id,
-                        error = %e,
-                        "BYO status unreadable; not pricing this turn rather than guessing a cost"
-                    );
-                    true
-                }
-            };
-            if temporary {
-                // Ghost: app_chat_usage keys on a chat row that does not exist.
-                // app_ai_calls below still records cost and counts, no content.
-            } else if let Err(e) = record_chat_usage(&pool, chat_id.clone(), &model, usage_data, byo).await {
-                tracing::warn!(
-                    chat_id = %chat_id,
-                    error = %e,
-                    "Failed to record chat usage"
-                );
-            }
-
-            // Box-local per-call cost log (authoritative gateway cost) for the
-            // Usage/Telemetry tabs. Best-effort — never break the response.
-            if let Err(e) = crate::api::ai_calls::record_ai_call(
-                &pool,
-                &crate::api::ai_calls::AiCall {
-                    // Real feature bucket: chat | council | deep_research (these
-                    // modes share this handler), so spend attributes correctly.
-                    feature: request.agent_mode.clone(),
-                    model: model.clone(),
-                    prompt_tokens: total_input_tokens as i64,
-                    completion_tokens: total_output_tokens as i64,
-                    reasoning_tokens: total_reasoning_tokens as i64,
-                    cost_micros: total_cost_micros,
-                    // `stream()` diverts to the user's endpoint when BYO is
-                    // set, and no upstream but our own gateway sends a cost
-                    // trailer — so `total_cost_micros` is 0-as-unknown there,
-                    // and the Usage tab must show tokens instead of "$0.00".
-                    route: if byo {
-                        crate::api::ai_calls::Route::Byo
-                    } else {
-                        crate::api::ai_calls::Route::Wallet
-                    },
-                    applet_run_id: None,
-                },
-            )
-            .await
-            {
-                tracing::warn!(chat_id = %chat_id, error = %e, "Failed to record ai_call");
-            }
-        }
+        let usage = recorder.usage();
+        let subject = recorder.subject(was_cancelled, was_unattended);
+        let message = recorder.into_message(&model, agent_id, subject);
+        persist_turn(&pool, &chat_id, &model, &request.agent_mode, temporary, message, usage).await;
 
         // Clean up cancellation token when stream ends
         cancel_state.remove(&chat_id, &cancel_token);
     })
+}
+
+/// Keep what the turn produced: its row, if it has one, and its usage and
+/// cost, which it always has. A ghost chat writes neither the row nor the
+/// per-chat usage; its cost still goes to `app_ai_calls`, with no content
+/// and no chat id.
+async fn persist_turn(
+    pool: &PgPool,
+    chat_id: &str,
+    model: &str,
+    agent_mode: &str,
+    temporary: bool,
+    message: Option<ChatMessage>,
+    usage: TurnUsage,
+) {
+    if let Some(assistant_message) = message {
+        // WHAT THE REPLY LINKED TO, CHECKED AFTER THE FACT.
+        //
+        // The wiki REFUSES a bad link (`wiki_editor::check_links`), because
+        // an article is a stored artifact and nothing has been shown yet.
+        // A chat reply has already streamed past the person by the time
+        // anything could object, so the same finding is reported instead —
+        // it cannot be enforced here without rewriting text somebody has
+        // read, and a link that silently vanishes on reload is its own kind
+        // of lie. This is also how we find out whether the prompt's citation
+        // guidance is enough to stop invented links.
+        match crate::api::wiki_editor::dead_links(pool, &assistant_message.content).await {
+            Ok(problems) if !problems.is_empty() => {
+                for problem in &problems {
+                    tracing::warn!(chat_id = %chat_id, model = %model, "the reply {problem}");
+                }
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(chat_id = %chat_id, error = %e, "could not check the reply's links"),
+        }
+
+        if temporary {
+            // Ghost: nothing written. The client keeps the turn in its tab.
+        } else if let Err(e) = append_message(pool, chat_id.to_string(), assistant_message).await {
+            tracing::error!("Failed to save assistant message: {}", e);
+        }
+    }
+
+    // Usage is recorded whether or not there is a message worth keeping:
+    // that is not the same question as whether the wallet was debited. A
+    // model that spends its whole output budget thinking and returns no
+    // content is billed in full.
+    //
+    // `cost_micros` is the gateway's authoritative figure — the same one
+    // recorded in app_ai_calls below, and the one the wallet was actually
+    // debited for. No estimating. Cache writes are 0 on every turn today
+    // because nothing reports one, not because this assumes it.
+    let usage_data = UsageData {
+        input_tokens: usage.input_tokens as i64,
+        output_tokens: usage.output_tokens as i64,
+        reasoning_tokens: usage.reasoning_tokens as i64,
+        cache_read_tokens: usage.cache_read_tokens as i64,
+        cache_write_tokens: usage.cache_write_tokens as i64,
+        cost_micros: Some(usage.cost_micros),
+    };
+
+    // Read once and shared with the cost log below, so the two cannot
+    // disagree about which route paid for this turn.
+    //
+    // The CHECKED form, because this value decides whether the box prices
+    // the turn from its own catalog: a swallowed error would read as "not
+    // BYO" and write real dollars into estimated_cost_usd for tokens the
+    // owner had already paid their own provider for.
+    //
+    // Unknown is treated as BYO, i.e. do not price it ourselves. Of the two
+    // ways to be wrong, under-reporting a wallet turn is a gap in a display
+    // figure that app_ai_calls still records properly, while over-reporting
+    // invents a charge the person never incurred. A fabricated number is
+    // worse than a missing one.
+    let byo = match crate::api::settings_byo::byo_is_active_checked(pool).await {
+        Ok(active) => active,
+        Err(e) => {
+            tracing::warn!(
+                chat_id = %chat_id,
+                error = %e,
+                "BYO status unreadable; not pricing this turn rather than guessing a cost"
+            );
+            true
+        }
+    };
+    if temporary {
+        // Ghost: app_chat_usage keys on a chat row that does not exist.
+        // app_ai_calls below still records cost and counts, no content.
+    } else if let Err(e) = record_chat_usage(pool, chat_id.to_string(), model, usage_data, byo).await {
+        tracing::warn!(
+            chat_id = %chat_id,
+            error = %e,
+            "Failed to record chat usage"
+        );
+    }
+
+    // Box-local per-call cost log (authoritative gateway cost) for the
+    // Usage/Telemetry tabs. Best-effort — never break the response.
+    if let Err(e) = crate::api::ai_calls::record_ai_call(
+        pool,
+        &crate::api::ai_calls::AiCall {
+            // Real feature bucket: chat | council | deep_research (these
+            // modes share this handler), so spend attributes correctly.
+            feature: agent_mode.to_string(),
+            model: model.to_string(),
+            prompt_tokens: usage.input_tokens as i64,
+            completion_tokens: usage.output_tokens as i64,
+            reasoning_tokens: usage.reasoning_tokens as i64,
+            cost_micros: usage.cost_micros,
+            // `stream()` diverts to the user's endpoint when BYO is set, and
+            // no upstream but our own gateway sends a cost trailer — so the
+            // cost is 0-as-unknown there, and the Usage tab must show tokens
+            // instead of "$0.00".
+            route: if byo {
+                crate::api::ai_calls::Route::Byo
+            } else {
+                crate::api::ai_calls::Route::Wallet
+            },
+            applet_run_id: None,
+        },
+    )
+    .await
+    {
+        tracing::warn!(chat_id = %chat_id, error = %e, "Failed to record ai_call");
+    }
 }
 
 /// Generate a random ID for messages
@@ -2848,92 +2259,11 @@ pub async fn cancel_chat_handler(
 mod tests {
     use super::*;
 
-    fn tool(id: &str, name: &str, result: Option<serde_json::Value>) -> crate::api::chats::ToolCall {
-        crate::api::chats::ToolCall {
-            tool_name: name.to_string(),
-            tool_call_id: Some(id.to_string()),
-            arguments: serde_json::json!({}),
-            result,
-            timestamp: "2026-09-16T00:00:00Z".to_string(),
-        }
-    }
-
-    fn kinds(parts: &[UIPart]) -> Vec<String> {
-        parts
-            .iter()
-            .map(|p| match p {
-                UIPart::Text { text } => format!("text:{}", text.trim()),
-                UIPart::ToolInvocation { tool_name, state, .. } => {
-                    format!("tool:{tool_name}:{state}")
-                }
-                _ => "other".to_string(),
-            })
-            .collect()
-    }
-
-    /// The order is the whole point. Without it a reload can say what was said
-    /// and what was called, but never which was said BEFORE which call — and
-    /// that distinction is what separates the model narrating its way to an
-    /// answer from the answer itself.
     #[test]
-    fn a_turn_keeps_the_order_its_text_and_tools_happened_in() {
-        let slots = vec![
-            TurnSlot::Text(0),
-            TurnSlot::Tool("c1".into()),
-            TurnSlot::Text(1),
-            TurnSlot::Tool("c2".into()),
-            TurnSlot::Text(2),
-        ];
-        let segments = vec![
-            "Checking his messages.".to_string(),
-            "Nothing in August. Looking at September.".to_string(),
-            "He sent it on the 3rd.".to_string(),
-        ];
-        let calls = vec![
-            tool("c1", "sql_query", Some(serde_json::json!({"rows": []}))),
-            tool("c2", "semantic_search", Some(serde_json::json!({"rows": []}))),
-        ];
-
-        assert_eq!(
-            kinds(&build_turn_parts(&slots, &segments, &calls, &Default::default(), "")),
-            [
-                "text:Checking his messages.",
-                "tool:sql_query:output-available",
-                "text:Nothing in August. Looking at September.",
-                "tool:semantic_search:output-available",
-                "text:He sent it on the 3rd.",
-            ]
-        );
-    }
-
-    /// A turn that ends on a tool call has no reply yet. The view reads "text
-    /// with a tool after it" as narration, so an empty trailing run must not be
-    /// written — it would present itself as an answer of nothing.
-    #[test]
-    fn empty_runs_and_unrecorded_tools_are_left_out() {
-        let slots = vec![
-            TurnSlot::Text(0),
-            TurnSlot::Tool("c1".into()),
-            TurnSlot::Text(1),
-            // Started, never recorded: the stream ended in between.
-            TurnSlot::Tool("c_ghost".into()),
-        ];
-        let segments = vec!["Looking it up.".to_string(), "   \n ".to_string()];
-        let calls = vec![tool("c1", "sql_query", None)];
-
-        assert_eq!(
-            kinds(&build_turn_parts(&slots, &segments, &calls, &Default::default(), "")),
-            ["text:Looking it up.", "tool:sql_query:input-available"],
-            "a tool that never returned still shows, as awaiting output"
-        );
-    }
-
-    /// The overwhelmingly common turn: a question, an answer, no tools. It must
-    /// come out as one text part, or every plain reply would look like narration.
-    #[test]
-    fn a_turn_with_no_tools_is_all_reply() {
-        let parts = build_turn_parts(&[TurnSlot::Text(0)], &["Yes.".to_string()], &[], &Default::default(), "");
-        assert_eq!(kinds(&parts), ["text:Yes."]);
+    fn the_chat_search_cap_is_the_one_the_prompt_states() {
+        let cap = CHAT_TOOL_CAPS.iter().find(|(t, _)| *t == "web_search").map(|(_, n)| *n);
+        assert_eq!(cap, Some(4), "change the <web> block's \"Four searches\" with it");
+        assert!(crate::agent::prompt::AGENT_MODE_PROMPT.contains("Four searches is the most a turn gets"));
     }
 
     /// The rules block is the one place where a silent failure means the box
@@ -3292,49 +2622,6 @@ mod parts_column_tests {
         assert!(matches!(&back[1], UIPart::ToolInvocation { tool_name, .. } if tool_name == "web_search"));
     }
 
-    /// A failed tool is its own state, or the red block never renders and the
-    /// replay hands the model an error object as though it were an answer.
-    #[test]
-    fn a_failed_tool_keeps_its_failure() {
-        let mut failed = std::collections::HashSet::new();
-        failed.insert("call-0".to_string());
-        let calls = vec![ToolCall {
-            tool_name: "create_page".to_string(),
-            tool_call_id: Some("call-0".to_string()),
-            arguments: serde_json::json!({}),
-            result: Some(serde_json::json!({ "error": "the page already exists" })),
-            timestamp: "2024-01-01T00:00:00Z".to_string(),
-        }];
-        let parts = build_turn_parts(
-            &[TurnSlot::Tool("call-0".to_string())],
-            &[],
-            &calls,
-            &failed,
-            "",
-        );
-        match &parts[0] {
-            UIPart::ToolInvocation { state, error_text, .. } => {
-                assert_eq!(state, "output-error");
-                assert_eq!(error_text.as_deref(), Some("the page already exists"));
-            }
-            other => panic!("expected a tool part, got {other:?}"),
-        }
-    }
-
-    /// The thinking has its own column, but the client stopped reading it the
-    /// moment `parts` existed.
-    #[test]
-    fn a_turn_that_thought_keeps_its_thinking() {
-        let parts = build_turn_parts(
-            &[TurnSlot::Text(0)],
-            &["Yes.".to_string()],
-            &[],
-            &Default::default(),
-            "Weighing it up.",
-        );
-        assert!(matches!(&parts[0], UIPart::Reasoning { text } if text == "Weighing it up."));
-        assert!(matches!(&parts[1], UIPart::Text { .. }));
-    }
 }
 
 #[cfg(test)]
@@ -3527,5 +2814,37 @@ mod ui_stream_fixture {
     #[test]
     fn the_stopped_turn_fixture_is_current() {
         check("box-ui-stream-abort.jsonl", stopped_turn());
+    }
+
+    /// The three data-wrapped events, byte for byte: the client matches on
+    /// `data-*` types and field names, and on `transient` being absent for a
+    /// checkpoint (it persists in the message) and `true` for the others.
+    #[test]
+    fn data_events_serialize_exactly() {
+        assert_eq!(
+            serialize_event(&StreamEvent::Checkpoint {
+                id: "msg_cp".into(),
+                version: 2,
+                messages_summarized: 7,
+                summary: "<s/>".into(),
+                timestamp: "2026-09-28T00:00:00Z".into(),
+            }),
+            r#"{"type":"data-checkpoint","id":"msg_cp","data":{"version":2,"messagesSummarized":7,"summary":"<s/>","timestamp":"2026-09-28T00:00:00Z"}}"#
+        );
+        assert_eq!(
+            serialize_event(&StreamEvent::NarrativeDocumentReady { page_id: "page_1".into() }),
+            r#"{"type":"data-narrative-document","data":{"pageId":"page_1"},"transient":true}"#
+        );
+        assert_eq!(
+            serialize_event(&StreamEvent::SubagentStatus {
+                dispatch_id: 3,
+                subagent_id: 1,
+                title: "Prices".into(),
+                model: "m".into(),
+                status: "thinking".into(),
+                tokens: 42,
+            }),
+            r#"{"type":"data-subagent","data":{"dispatchId":3,"subagentId":1,"title":"Prices","model":"m","status":"thinking","tokens":42},"transient":true}"#
+        );
     }
 }

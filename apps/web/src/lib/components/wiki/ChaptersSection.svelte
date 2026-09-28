@@ -11,6 +11,7 @@
 
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { getChapters, updateChapter, deleteChapter, type ChapterApi } from '$lib/wiki/api';
@@ -86,8 +87,10 @@
 		missingTimer = setTimeout(() => (missingNote = null), 2600);
 	}
 
-	function openInterview() {
-		windowShellStore.openRouteBeside('/chat/chat_getting_started');
+	/** Chapters are drawn in Setup now; the old getting-started room this
+	 *  opened is retired. */
+	function drawChapters() {
+		void goto('/setup/timeline');
 	}
 
 	function yearOf(date: string): string {
@@ -103,8 +106,8 @@
 	<header class="mast">
 		<h1>Chapters</h1>
 		<p class="standfirst">
-			Your life, divided the way you divided it. You named every chapter in the
-			interview yourself. Every day the record holds falls inside exactly one of them.
+			Your life, divided the way you divided it. You named every chapter yourself,
+			and every day the record holds falls inside exactly one of them.
 		</p>
 	</header>
 
@@ -164,10 +167,11 @@
 		<div class="empty">
 			<p class="empty-lead">No chapters yet.</p>
 			<p class="empty-body">
-				You name them in the interview, in rough names and rough years of
-				your own. Each one becomes a page you can keep writing in.
+				Name the big stretches of your life, with rough years. The interview
+				then fills in what each one was, and each becomes a page you can keep
+				writing in.
 			</p>
-			<button class="btn primary" onclick={openInterview}>Open the interview</button>
+			<button class="btn primary" onclick={drawChapters}>Write your chapters</button>
 		</div>
 	{/if}
 </div>

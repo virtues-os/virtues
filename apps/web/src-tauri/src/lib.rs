@@ -49,6 +49,10 @@ pub mod web_bundle;
 /// |   | apply, for the sidebar's "Relaunch to X" chip (desktop-only commands;
 /// |   | mobile at 3 still rejects them and the UI treats that as silence) |
 /// | 4 | `check_app_update_cmd` — manual check trigger for This Mac's ledger |
+/// | 5 | `reach|improv_owner_claim` — reopen a moved, offline server over
+/// |   | Bluetooth as its owner (`$lib/tauri/boxRadio.ts` gates on this) |
+/// | 6 | `reach|reach_rehome` — point the pairing at a moved server's new
+/// |   | address after it joins over Bluetooth (the `/reconnect` screen) |
 ///
 /// Note `bundle-contract.json` stays at `minShellVersion: 1`: every addition
 /// so far is called best-effort and the UI works fine without it, so requiring
@@ -56,7 +60,7 @@ pub mod web_bundle;
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 4;
+pub const COMMAND_SURFACE_VERSION: u32 = 6;
 
 /// What the native shell knows about itself.
 ///
@@ -478,9 +482,22 @@ pub fn run() {
       // requests. The URL is otherwise identical to what `WebviewUrl::App`
       // produced, and the handler falls back to the baked asset, so with no
       // overlay present this behaves exactly as before.
-      let start = "virtues://localhost/connect.html"
-        .parse()
-        .expect("static url");
+      //
+      // UNPAIRED, THE iPHONE OPENS SETUP (2026-09-27). Setup's first half
+      // (sign in, find the server, its four words, Wi-Fi, pair) runs from
+      // this app's own baked copy, over the same reach commands the connect
+      // page used (apps/web/src/lib/components/setup/prepair.svelte.ts), so
+      // the flow runs unbroken from Welcome to the app. A route path is
+      // answered with the SPA's `200.html`. Android has no radio bridge in
+      // the SPA and keeps the connect page; so does every recovery screen
+      // (`connect.html#reset`, `#unreachable`), which the SPA links to.
+      let start = if paired || cfg!(not(target_os = "ios")) {
+        "virtues://localhost/connect.html"
+      } else {
+        "virtues://localhost/setup"
+      }
+      .parse()
+      .expect("static url");
       WebviewWindowBuilder::new(app, "main", WebviewUrl::CustomProtocol(start))
         .title("Virtues")
         .initialization_script(&init)

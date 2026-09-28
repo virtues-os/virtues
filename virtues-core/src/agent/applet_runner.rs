@@ -151,7 +151,16 @@ pub async fn run_agent_loop(
         ..Default::default()
     };
 
-    let agent_loop = crate::agent::AgentLoop::new_with_yjs(pool.clone(), yjs_state.clone());
+    // The spend ceiling is the loop's own budget: checked between steps
+    // against what the gateway charged, and enforced outside the model. When
+    // it is reached the loop takes one last step with tools off, so the run
+    // ends in an answer rather than mid-task — which can spend one step past
+    // the ceiling.
+    let agent_loop = crate::agent::AgentLoop::new_with_yjs(pool.clone(), yjs_state.clone())
+        .with_budget(crate::agent::TurnBudget {
+            max_cost_micros: limits.max_llm_cost_micros,
+            ..Default::default()
+        });
 
     tracing::info!(applet_id, model = %model, chat_id = ?chat_id, "Starting action run");
 
@@ -219,25 +228,20 @@ pub async fn run_agent_loop(
                     // failed to write must not fail the run that earned it.
                     tracing::warn!(applet_id, error = %e, "failed to record applet ai_call");
                 }
-
-                // The ceiling is checked against what the gateway actually
-                // charged, in memory, so it can stop the loop between steps
-                // rather than after the fact. Enforced outside the model: the
-                // applet is never asked whether it is over budget.
-                if let Some(cap) = limits.max_llm_cost_micros {
-                    if cost_micros >= cap {
-                        let msg = format!(
-                            "stopped at the spend ceiling — {} of {} used after {} step{}",
-                            crate::applet_runner::limits::format_usd(cost_micros),
-                            crate::applet_runner::limits::format_usd(cap),
-                            step_count.max(1),
-                            if step_count == 1 { "" } else { "s" }
-                        );
-                        tracing::info!(applet_id, cost_micros, cap, "applet hit spend ceiling");
-                        budget_stopped = Some(msg);
-                        break;
-                    }
-                }
+            }
+            crate::agent::AgentEvent::Done {
+                total_steps,
+                finish_reason: crate::agent::FinishReason::BudgetExceeded,
+            } => {
+                let cap = limits.max_llm_cost_micros.unwrap_or(cost_micros);
+                tracing::info!(applet_id, cost_micros, cap, "applet hit spend ceiling");
+                budget_stopped = Some(format!(
+                    "stopped at the spend ceiling — {} of {} used after {} step{}",
+                    crate::applet_runner::limits::format_usd(cost_micros),
+                    crate::applet_runner::limits::format_usd(cap),
+                    total_steps.max(1),
+                    if total_steps == 1 { "" } else { "s" }
+                ));
             }
             crate::agent::AgentEvent::Error { message, .. } => {
                 tracing::error!(applet_id, error = %message, "Applet run error");

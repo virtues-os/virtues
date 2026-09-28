@@ -110,10 +110,13 @@ pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
     // material), but they stay in the input because a person's answer often
     // only makes sense against the question it answered.
     let (source_chat, since) = crate::api::getting_started::interview_source(pool).await?;
+    // The retired room's scripted lines (`gs:` subjects) share this chat and
+    // are nobody's words: not the person's, not the interviewer's.
     let turns: Vec<(String, String)> = sqlx::query_as(
         "SELECT role, content FROM app_chat_messages \
          WHERE chat_id = $1 AND role IN ('user', 'assistant') \
            AND content <> '' \
+           AND COALESCE(subject, '') NOT LIKE 'gs:%' \
            AND ($2::timestamptz IS NULL OR created_at >= $2) \
          ORDER BY sequence_num ASC",
     )
@@ -133,7 +136,7 @@ pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
     let mut prompt = String::from("The transcript:\n");
     for (role, content) in &turns {
         let speaker = if role == "user" { "THEM" } else { "INTERVIEWER" };
-        prompt.push_str(&format!("\n{speaker}: {}\n", content.trim()));
+        prompt.push_str(&format!("\n{speaker}: {}\n", without_part_marker(content)));
     }
 
     let raw = call_model(pool, SYSTEM_PROMPT, &prompt, "narrative_draft").await?;
@@ -400,19 +403,39 @@ pub async fn finalize_interview(pool: &PgPool, req: &CloseRequest) -> Result<Fin
     })
 }
 
+/// True when any chapter carries more than the timeline editor writes: the
+/// person's words (`summary`, `changepoint`) or a page of its own.
+const CHAPTERS_BEYOND_A_DRAWING: &str = "SELECT EXISTS ( \
+     SELECT 1 FROM wiki_chapters c \
+      WHERE c.summary IS NOT NULL \
+         OR c.changepoint IS NOT NULL \
+         OR EXISTS (SELECT 1 FROM wiki_articles a \
+                     WHERE a.subject_type = 'chapter' AND a.subject_id = c.id))";
+
 /// Extract the chapters and write wiki_chapters — one writer, once, same as
 /// the document: rows present mean the person owns the table and the machine
-/// never writes it again.
+/// never writes its STRUCTURE again.
+///
+/// A DRAWING IS FILLED, NOT SKIPPED. Setup draws the chapters first (names
+/// and spans, nothing else) and the interview is where the person says what
+/// each one was and what ended it. This used to return early on any row, so
+/// drawing first silently emptied the two fields the interviewer asks for
+/// above all, and every chapter page was seeded blank. Now a table that is
+/// still only a drawing keeps its shape and takes the person's words onto
+/// the chapters they drew.
 async fn chapters_from_interview(pool: &PgPool) -> Result<usize> {
-    let already: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM wiki_chapters)")
-        .fetch_one(pool)
-        .await
-        .map_err(|e| Error::Database(format!("check wiki_chapters: {e}")))?;
-    if already {
-        // The partition stands (one writer, once) — but backfill any chapter
-        // whose article is missing, e.g. rows written before seeding existed.
-        ensure_chapter_articles(pool).await;
-        return Ok(0);
+    let drawn = list_chapters(pool).await?;
+    if !drawn.is_empty() {
+        let beyond: bool = sqlx::query_scalar(CHAPTERS_BEYOND_A_DRAWING)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| Error::Database(format!("check wiki_chapters: {e}")))?;
+        if beyond {
+            // The partition stands (one writer, once) — but backfill any chapter
+            // whose article is missing, e.g. rows written before seeding existed.
+            ensure_chapter_articles(pool).await;
+            return Ok(0);
+        }
     }
 
     let (source_chat, since) = crate::api::getting_started::interview_source(pool).await?;
@@ -420,6 +443,7 @@ async fn chapters_from_interview(pool: &PgPool) -> Result<usize> {
         "SELECT role, content FROM app_chat_messages \
          WHERE chat_id = $1 AND role IN ('user', 'assistant') \
            AND content <> '' \
+           AND COALESCE(subject, '') NOT LIKE 'gs:%' \
            AND ($2::timestamptz IS NULL OR created_at >= $2) \
          ORDER BY sequence_num ASC",
     )
@@ -432,12 +456,34 @@ async fn chapters_from_interview(pool: &PgPool) -> Result<usize> {
     let mut prompt = String::from("The transcript:\n");
     for (role, content) in &turns {
         let speaker = if role == "user" { "THEM" } else { "INTERVIEWER" };
-        prompt.push_str(&format!("\n{speaker}: {}\n", content.trim()));
+        prompt.push_str(&format!("\n{speaker}: {}\n", without_part_marker(content)));
     }
 
     let raw = call_model(pool, CHAPTERS_PROMPT, &prompt, "narrative_chapters").await?;
     let extracted: Vec<ExtractedChapter> = serde_json::from_str(json_array_in(&raw))
         .map_err(|e| Error::ExternalApi(format!("chapters came back unparseable: {e}")))?;
+
+    if !drawn.is_empty() {
+        let mut filled = 0;
+        for (id, changepoint, summary) in words_for_drawn(&drawn, &extracted) {
+            sqlx::query(
+                "UPDATE wiki_chapters \
+                    SET changepoint = COALESCE(changepoint, $2), \
+                        summary = COALESCE(summary, $3) \
+                  WHERE id = $1",
+            )
+            .bind(&id)
+            .bind(changepoint.as_deref())
+            .bind(summary.as_deref())
+            .execute(pool)
+            .await
+            .map_err(|e| Error::Database(format!("fill chapter {id}: {e}")))?;
+            filled += 1;
+        }
+        ensure_chapter_articles(pool).await;
+        tracing::info!(drawn = drawn.len(), filled, "drawn chapters filled from the interview");
+        return Ok(filled);
+    }
 
     let planned = plan_chapters(extracted);
     if planned.is_empty() {
@@ -480,6 +526,69 @@ async fn chapters_from_interview(pool: &PgPool) -> Result<usize> {
 
     tracing::info!(chapters = planned.len(), "wiki_chapters written from the interview");
     Ok(planned.len())
+}
+
+/// An interviewer turn with its `<!-- part: N -->` line removed: the marker
+/// is for the app's progress ("Part 2 of 6", prompt.rs), never material for
+/// the document or the chapters.
+fn without_part_marker(content: &str) -> &str {
+    let t = content.trim();
+    match t.rfind("<!--") {
+        Some(i) if t[i..].trim_end().ends_with("-->") && t[i..].contains("part:") => t[..i].trim_end(),
+        _ => t,
+    }
+}
+
+/// The person's words for each drawn chapter: (id, changepoint, summary).
+///
+/// A drawn chapter matches the extracted one with the same name (case and
+/// spacing aside; the drawing reaches the interview as the person's own
+/// first answer, so the names come back as drawn), else the one starting the
+/// same year. Each extracted chapter is used once, and a chapter nobody said
+/// anything about is left alone. The drawing's shape is never changed here:
+/// names and spans are the person's, edited on the Chapters page.
+fn words_for_drawn(
+    drawn: &[ChapterRow],
+    extracted: &[ExtractedChapter],
+) -> Vec<(String, Option<String>, Option<String>)> {
+    use chrono::Datelike;
+    let norm = |t: &str| {
+        t.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    let said = |x: &Option<String>| x.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let mut used = vec![false; extracted.len()];
+    let mut pick = |row: &ChapterRow, by_name: bool| -> Option<usize> {
+        let i = extracted.iter().enumerate().position(|(i, e)| {
+            !used[i]
+                && if by_name {
+                    matches!((&row.title, &e.title), (Some(a), Some(b)) if norm(a) == norm(b))
+                } else {
+                    e.start_year == row.started_at.year()
+                }
+        })?;
+        used[i] = true;
+        Some(i)
+    };
+    // Names first across the whole drawing, so a year match never takes an
+    // extracted chapter another drawn one names exactly.
+    let mut matched: Vec<Option<usize>> = drawn.iter().map(|r| pick(r, true)).collect();
+    for (k, row) in drawn.iter().enumerate() {
+        if matched[k].is_none() {
+            matched[k] = pick(row, false);
+        }
+    }
+    drawn
+        .iter()
+        .zip(matched)
+        .filter_map(|(row, m)| {
+            let e = &extracted[m?];
+            let (c, s) = (said(&e.changepoint), said(&e.summary));
+            (c.is_some() || s.is_some()).then(|| (row.id.clone(), c, s))
+        })
+        .collect()
 }
 
 /// Each chapter is an ENTITY: seed its wiki article with the person's own
@@ -539,13 +648,18 @@ pub struct ChapterRow {
     pub started_at: chrono::NaiveDate,
     pub ended_at: Option<chrono::NaiveDate>,
     pub is_current: bool,
+    /// How sure each edge is ('year' | 'month' | 'day'); a coarse edge is
+    /// drawn soft. The timeline editor reads these back to redraw its bands.
+    pub started_precision: String,
+    pub ended_precision: Option<String>,
     pub changepoint: Option<String>,
     pub summary: Option<String>,
 }
 
 pub async fn list_chapters(pool: &PgPool) -> Result<Vec<ChapterRow>> {
     sqlx::query_as::<_, ChapterRow>(
-        "SELECT id, kind, title, started_at, ended_at, is_current, changepoint, summary \
+        "SELECT id, kind, title, started_at, ended_at, is_current, started_precision, \
+                ended_precision, changepoint, summary \
          FROM wiki_chapters ORDER BY started_at",
     )
     .fetch_all(pool)
@@ -599,18 +713,7 @@ pub async fn update_chapter(pool: &PgPool, id: &str, e: &ChapterEdit) -> Result<
     .bind(e.summary.as_deref())
     .execute(pool)
     .await
-    .map_err(|err| {
-        let msg = err.to_string();
-        if msg.contains("wiki_chapters_no_overlap") {
-            Error::InvalidInput(
-                "those dates would put this chapter on top of another one".into(),
-            )
-        } else if msg.contains("wiki_chapters_span_check") {
-            Error::InvalidInput("a chapter has to end after it starts".into())
-        } else {
-            Error::Database(format!("update chapter: {err}"))
-        }
-    })?
+    .map_err(|err| chapter_write_error(err, "update chapter"))?
     .rows_affected();
     if n == 0 {
         return Err(Error::NotFound(format!("No chapter: {id}")));
@@ -618,9 +721,27 @@ pub async fn update_chapter(pool: &PgPool, id: &str, e: &ChapterEdit) -> Result<
     get_chapter(pool, id).await
 }
 
+/// A constraint refusal said in words rather than as a constraint name; any
+/// other failure stays a database error with `ctx` on it.
+fn chapter_write_error(err: sqlx::Error, ctx: &str) -> Error {
+    let msg = err.to_string();
+    if msg.contains("wiki_chapters_no_overlap") {
+        Error::InvalidInput("those dates would put this chapter on top of another one".into())
+    } else if msg.contains("wiki_chapters_span_check") {
+        Error::InvalidInput("a chapter has to end after it starts".into())
+    } else if msg.contains("wiki_chapters_title_check") {
+        Error::InvalidInput("every chapter needs a name".into())
+    } else if msg.contains("precision_check") {
+        Error::InvalidInput("a date's precision is year, month, or day".into())
+    } else {
+        Error::Database(format!("{ctx}: {err}"))
+    }
+}
+
 pub async fn get_chapter(pool: &PgPool, id: &str) -> Result<ChapterRow> {
     sqlx::query_as::<_, ChapterRow>(
-        "SELECT id, kind, title, started_at, ended_at, is_current, changepoint, summary \
+        "SELECT id, kind, title, started_at, ended_at, is_current, started_precision, \
+                ended_precision, changepoint, summary \
          FROM wiki_chapters WHERE id = $1",
     )
     .bind(id)
@@ -695,6 +816,175 @@ pub async fn chapters_handler(
         )
             .into_response(),
     }
+}
+
+/// One band from the timeline editor, as the person drew it.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct ChapterInput {
+    pub title: String,
+    pub started_at: chrono::NaiveDate,
+    #[serde(default = "default_precision")]
+    pub started_precision: String,
+    #[serde(default)]
+    pub ended_at: Option<chrono::NaiveDate>,
+    #[serde(default)]
+    pub ended_precision: Option<String>,
+}
+
+fn default_precision() -> String {
+    "year".to_string()
+}
+
+/// `PUT /api/wiki/chapters` body: the whole timeline, oldest first.
+#[derive(Debug, serde::Deserialize)]
+pub struct ReplaceChapters {
+    pub chapters: Vec<ChapterInput>,
+}
+
+/// Longest chapter name the editor accepts. A band label, not a paragraph.
+const MAX_CHAPTER_TITLE_CHARS: usize = 120;
+/// More bands than this is a client bug, not a life.
+const MAX_CHAPTERS: usize = 200;
+
+fn lawful_precision(p: &str) -> bool {
+    matches!(p, "year" | "month" | "day")
+}
+
+/// Check a whole timeline before anything is written: named, in order, and
+/// TILED — each band ends exactly where the next begins, so the saved rows
+/// keep the gapless partition the table promises. Contiguity is the writer's
+/// job (no constraint can say "and no gaps"); the EXCLUDE constraint stays the
+/// backstop for overlap.
+fn validate_timeline(chapters: &[ChapterInput]) -> Result<()> {
+    if chapters.is_empty() {
+        return Err(Error::InvalidInput("add at least one chapter".into()));
+    }
+    if chapters.len() > MAX_CHAPTERS {
+        return Err(Error::InvalidInput(format!(
+            "a timeline holds at most {MAX_CHAPTERS} chapters"
+        )));
+    }
+    for (i, ch) in chapters.iter().enumerate() {
+        let title = ch.title.trim();
+        if title.is_empty() {
+            return Err(Error::InvalidInput("every chapter needs a name".into()));
+        }
+        if title.chars().count() > MAX_CHAPTER_TITLE_CHARS {
+            return Err(Error::InvalidInput(format!(
+                "keep each chapter name under {MAX_CHAPTER_TITLE_CHARS} characters"
+            )));
+        }
+        if !lawful_precision(&ch.started_precision)
+            || ch.ended_precision.as_deref().is_some_and(|p| !lawful_precision(p))
+        {
+            return Err(Error::InvalidInput(
+                "a date's precision is year, month, or day".into(),
+            ));
+        }
+        if ch.ended_at.is_some_and(|e| e <= ch.started_at) {
+            return Err(Error::InvalidInput("a chapter has to end after it starts".into()));
+        }
+        match chapters.get(i + 1) {
+            Some(next) => {
+                if next.started_at <= ch.started_at {
+                    return Err(Error::InvalidInput(
+                        "chapters have to be in order, oldest first".into(),
+                    ));
+                }
+                if ch.ended_at != Some(next.started_at) {
+                    return Err(Error::InvalidInput(
+                        "each chapter has to end where the next one begins".into(),
+                    ));
+                }
+            }
+            None => {} // the last one may run to now (ended_at NULL)
+        }
+    }
+    Ok(())
+}
+
+/// Replace every chapter with the timeline the person drew, in ONE
+/// transaction: the timeline editor owns the whole partition while it is open,
+/// so a save is the whole list, not a diff.
+///
+/// REFUSED once the chapters have a life beyond the drawing. Replacing is
+/// delete-then-insert, and the rows are not only bands: the interview's
+/// drafter writes the person's own words into `summary` and `changepoint` and
+/// seeds a wiki article per chapter (`ensure_chapter_articles`), and the wiki
+/// editor can give one a page later. Deleting those rows would orphan the
+/// articles and silently drop words only the person could have given. So the
+/// replace is allowed while every row is exactly what this editor writes (a
+/// name and a span, no article), which is all of onboarding and any re-save
+/// from it, and refused afterward, pointing at the per-chapter edits
+/// (`PUT/DELETE /api/wiki/chapter/:id`) that preserve all of it.
+///
+/// Ids are `generate_id(CHAPTER_PREFIX, [title, started_at])`, the scheme the
+/// interview's writer uses, so an unchanged band keeps its id across saves.
+pub async fn replace_chapters(pool: &PgPool, chapters: &[ChapterInput]) -> Result<Vec<ChapterRow>> {
+    validate_timeline(chapters)?;
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| Error::Database(format!("begin replace chapters: {e}")))?;
+
+    // Serialize against another save (or the drafter's write) racing this one:
+    // the guard below reads the table and must still be true at the DELETE.
+    sqlx::query("LOCK TABLE wiki_chapters IN EXCLUSIVE MODE")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::Database(format!("lock wiki_chapters: {e}")))?;
+
+    let has_more_than_a_drawing: bool = sqlx::query_scalar(CHAPTERS_BEYOND_A_DRAWING)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| Error::Database(format!("check chapters before replace: {e}")))?;
+    if has_more_than_a_drawing {
+        return Err(Error::InvalidInput(
+            "your chapters already have pages of their own. Change them on the Chapters page \
+             so nothing you wrote there is lost"
+                .into(),
+        ));
+    }
+
+    sqlx::query("DELETE FROM wiki_chapters")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::Database(format!("clear chapters: {e}")))?;
+
+    for ch in chapters {
+        let title = ch.title.trim();
+        let id = crate::ids::generate_id(
+            crate::ids::CHAPTER_PREFIX,
+            &[title, &ch.started_at.to_string()],
+        );
+        // An open end has no precision; a closed end without one is a year,
+        // which is how the editor snaps.
+        let ended_precision = ch
+            .ended_at
+            .map(|_| ch.ended_precision.clone().unwrap_or_else(default_precision));
+        sqlx::query(
+            "INSERT INTO wiki_chapters \
+               (id, kind, title, started_at, ended_at, started_precision, ended_precision) \
+             VALUES ($1, 'chapter', $2, $3, $4, $5, $6)",
+        )
+        .bind(&id)
+        .bind(title)
+        .bind(ch.started_at)
+        .bind(ch.ended_at)
+        .bind(&ch.started_precision)
+        .bind(ended_precision)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| chapter_write_error(e, &format!("insert chapter {id}")))?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|e| Error::Database(format!("commit replaced chapters: {e}")))?;
+
+    tracing::info!(chapters = chapters.len(), "wiki_chapters replaced from the timeline editor");
+    list_chapters(pool).await
 }
 
 /// A chapter row ready to insert, spans already lawful.
@@ -829,30 +1119,6 @@ async fn call_model(
         0.3,
     )
     .await
-}
-
-// ─── handlers ───────────────────────────────────────────────────────────────
-
-pub async fn draft_handler(
-    axum::extract::State(state): axum::extract::State<crate::server::AppState>,
-    _user: crate::middleware::auth::AuthUser,
-) -> impl axum::response::IntoResponse {
-    use axum::Json;
-    use axum::response::IntoResponse as _;
-    // Same path as the interview's write_it_up tool — document and chapters
-    // together — so the API can never produce half a finalize. The person
-    // pressed this themselves, so the close gate has nothing to ask.
-    match finalize_interview(state.db.pool(), &CloseRequest::by_person()).await {
-        Ok(d) => (axum::http::StatusCode::OK, Json(d)).into_response(),
-        Err(e) => {
-            tracing::warn!(error = %e, "narrative draft failed");
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-                .into_response()
-        }
-    }
 }
 
 // ─── rules ──────────────────────────────────────────────────────────────────
@@ -1066,6 +1332,93 @@ mod chapter_edit_tests {
         assert!(err.contains("on top of another one"), "{err}");
     }
 
+    fn band(title: &str, start: i32, end: Option<i32>) -> ChapterInput {
+        let jan1 = |y| chrono::NaiveDate::from_ymd_opt(y, 1, 1).unwrap();
+        ChapterInput {
+            title: title.into(),
+            started_at: jan1(start),
+            started_precision: "year".into(),
+            ended_at: end.map(jan1),
+            ended_precision: end.map(|_| "year".into()),
+        }
+    }
+
+    #[sqlx::test]
+    async fn a_drawn_timeline_replaces_the_whole_list(pool: PgPool) {
+        let first = replace_chapters(
+            &pool,
+            &[band("Childhood", 1990, Some(2002)), band("School", 2002, None)],
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.len(), 2);
+        assert!(first[1].is_current && first[1].ended_precision.is_none());
+
+        // Re-saving from the editor is the whole list again, not an append.
+        let second = replace_chapters(
+            &pool,
+            &[
+                band("Childhood", 1990, Some(2002)),
+                band("School", 2002, Some(2008)),
+                band(" First job ", 2008, None),
+            ],
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.len(), 3);
+        assert_eq!(second[2].title.as_deref(), Some("First job"), "names are trimmed");
+        assert_eq!(first[0].id, second[0].id, "an unchanged band keeps its id");
+        assert_eq!(second[1].ended_precision.as_deref(), Some("year"));
+    }
+
+    #[sqlx::test]
+    async fn a_timeline_with_a_gap_or_a_blank_name_is_refused_whole(pool: PgPool) {
+        let gap = replace_chapters(
+            &pool,
+            &[band("Childhood", 1990, Some(2000)), band("School", 2002, None)],
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(gap, Error::InvalidInput(_)), "{gap}");
+
+        let blank = replace_chapters(&pool, &[band("  ", 1990, None)]).await.unwrap_err();
+        assert!(blank.to_string().contains("needs a name"), "{blank}");
+
+        let backward = replace_chapters(
+            &pool,
+            &[band("School", 2002, Some(1990)), band("Childhood", 1990, None)],
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(backward, Error::InvalidInput(_)), "{backward}");
+
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM wiki_chapters")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 0, "nothing is written when any band is wrong");
+    }
+
+    /// Once the interview has written the person's words into a chapter, the
+    /// drawing no longer owns the table: replacing would delete those words.
+    #[sqlx::test]
+    async fn chapters_with_their_words_are_not_replaced(pool: PgPool) {
+        seed(&pool).await;
+        sqlx::query("UPDATE wiki_chapters SET summary = 'We moved twice' WHERE id = 'chapter_a'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let err = replace_chapters(&pool, &[band("Childhood", 1990, None)])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)), "{err}");
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM wiki_chapters")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 2, "the interview's chapters stand");
+    }
+
     #[sqlx::test]
     async fn deleting_a_chapter_unnames_the_time_rather_than_removing_it(pool: PgPool) {
         seed(&pool).await;
@@ -1173,6 +1526,71 @@ mod tests {
         let planned = plan_chapters(vec![ch(Some("college"), 2006, Some(2009))]);
         assert_eq!(planned[0].started_precision, "year");
         assert_eq!(planned[0].ended_precision, Some("year"));
+    }
+
+    fn drawn(id: &str, title: &str, start: i32) -> ChapterRow {
+        ChapterRow {
+            id: id.into(),
+            kind: "chapter".into(),
+            title: Some(title.into()),
+            started_at: chrono::NaiveDate::from_ymd_opt(start, 1, 1).unwrap(),
+            ended_at: None,
+            is_current: false,
+            started_precision: "year".into(),
+            ended_precision: None,
+            changepoint: None,
+            summary: None,
+        }
+    }
+
+    fn said(title: Option<&str>, start: i32, changepoint: &str) -> ExtractedChapter {
+        ExtractedChapter {
+            changepoint: Some(changepoint.into()),
+            ..ch(title, start, None)
+        }
+    }
+
+    /// Drawing first used to leave every chapter without its words: the
+    /// interview's pass saw rows and returned. The words now land on the
+    /// chapters as drawn, by name, else by the year it starts.
+    #[test]
+    fn the_interview_fills_the_chapters_that_were_drawn() {
+        let rows = [
+            drawn("a", "Childhood", 1991),
+            drawn("b", "The band years", 2004),
+            drawn("c", "Chicago", 2010),
+        ];
+        let out = words_for_drawn(
+            &rows,
+            &[
+                said(Some("childhood"), 1991, "we moved"),
+                said(Some("Chicago, finally"), 2010, "the job ended"),
+                ch(Some("The  band years"), 2004, None),
+            ],
+        );
+        assert_eq!(
+            out,
+            vec![
+                ("a".into(), Some("we moved".into()), None),
+                ("c".into(), Some("the job ended".into()), None),
+            ],
+            "a name matches across case and spacing, a renamed one by its year, and a chapter with nothing said is left alone"
+        );
+    }
+
+    /// An exact name is never stolen by another drawn chapter's year match.
+    #[test]
+    fn a_name_match_wins_over_a_year_match() {
+        let rows = [drawn("a", "School", 2002), drawn("b", "Leaving", 2002)];
+        let out = words_for_drawn(&rows, &[said(Some("Leaving"), 2002, "I left")]);
+        assert_eq!(out, vec![("b".into(), Some("I left".into()), None)]);
+    }
+
+    #[test]
+    fn the_part_marker_never_reaches_the_drafter() {
+        assert_eq!(without_part_marker("What ended it?\n\n<!-- part: 1 -->"), "What ended it?");
+        assert_eq!(without_part_marker("What ended it?"), "What ended it?");
+        assert_eq!(without_part_marker("<!-- a note --> kept"), "<!-- a note --> kept");
     }
 
     #[test]
