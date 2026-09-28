@@ -2119,8 +2119,10 @@ export function deleteByoKey<T = unknown>(sudoRequestId?: string): Promise<T> {
 export function listChats<T = unknown>(): Promise<T> {
 	return apiGet<T>('/chats');
 }
-export function getChat<T = unknown>(id: string): Promise<T> {
-	return apiGet<T>(`/chats/${encodeURIComponent(id)}`);
+/** A chat and its stored transcript. `signal` lets a view abandon the load
+ *  when it navigates away mid-fetch. */
+export function getChat<T = unknown>(id: string, signal?: AbortSignal): Promise<T> {
+	return request<T>(`/chats/${encodeURIComponent(id)}`, { signal });
 }
 export function getChatUsage<T = unknown>(id: string): Promise<T> {
 	return apiGet<T>(`/chats/${encodeURIComponent(id)}/usage`);
