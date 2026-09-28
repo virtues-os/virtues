@@ -24,11 +24,10 @@
 	agents/plan/setup-plan.md). Full name lives in Settings; birth date on
 	the timeline, where it is the left edge.
 
-	THE PRESENCE. Over the question, the ∴, breathing: the assistant being
-	named is not a label but someone, and the mark is the only face it has.
-	Each keystroke runs a ripple through its three dots in the order they
-	land (premise, premise, therefore), so typing a name reads as being
-	heard.
+	THE PRESENCE is the mark at the top: each keystroke runs a ripple
+	through its three dots (`setup.hear`, SetupMark). It had its own ∴ over
+	the question until 2026-09-28, which stacked a second logo under the
+	progress mark on every screen of the step.
 
 	Both write as they commit (assistant profile, then profile), so going
 	back shows both names as they were left.
@@ -55,8 +54,6 @@
 	/** The button keeps saying what it did while the name dissolves. */
 	let frozenLabel = $state<string | null>(null);
 	let error = $state<string | null>(null);
-	/** Bumped on each keystroke; the mark ripples for each new value. */
-	let heard = $state(0);
 
 	let field = $state<HTMLInputElement | null>(null);
 	let mirror = $state<HTMLSpanElement | null>(null);
@@ -194,15 +191,6 @@
 <div class="stage">
 	{#if eyebrow}<p class="eyebrow">{eyebrow}</p>{/if}
 
-	<span class="presence" aria-hidden="true">
-		{#key heard}
-			<svg viewBox="0 0 24 24" width="30" height="30" class:heard={heard > 0}>
-				<circle cx="4.5" cy="18" r="2.85" />
-				<circle cx="19.5" cy="18" r="2.85" />
-				<circle cx="12" cy="5" r="2.85" />
-			</svg>
-		{/key}
-	</span>
 
 	{#key beat}
 		<p class="lead" in:fade={{ duration: still ? 0 : 420, delay: still ? 0 : 120 }}>
@@ -223,7 +211,7 @@
 			bind:value={text}
 			onkeydown={onKey}
 			onpointerup={onPoint}
-			oninput={() => heard++}
+			oninput={() => setup.hear()}
 			class="name"
 			class:leaving
 			style:width="{Math.max(width, 40) + 8}px"
@@ -265,9 +253,12 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		justify-content: center;
+		/* From the top, where every step starts (StepFrame's padding), not
+		   centered: Names sat mid-screen and home at the top, so the page
+		   jumped between the beats of one step. */
+		justify-content: flex-start;
 		min-height: 100%;
-		padding: 3rem 16px 4rem;
+		padding: clamp(2.5rem, 8vh, 5.5rem) 16px 4rem;
 		text-align: center;
 		position: relative;
 	}
@@ -284,40 +275,6 @@
 	}
 
 
-	.presence {
-		display: grid;
-		margin-bottom: 0.9rem;
-		color: var(--color-foreground);
-	}
-	.presence svg {
-		fill: currentColor;
-		overflow: visible;
-		animation: presence 4.8s ease-in-out infinite;
-	}
-	@keyframes presence {
-		50% {
-			opacity: 0.7;
-			transform: scale(1.04);
-		}
-	}
-	.presence circle {
-		transform-box: fill-box;
-		transform-origin: center;
-	}
-	.presence svg.heard circle {
-		animation: heard 420ms var(--m-spring) both;
-	}
-	.presence svg.heard circle:nth-child(2) {
-		animation-delay: 60ms;
-	}
-	.presence svg.heard circle:nth-child(3) {
-		animation-delay: 140ms;
-	}
-	@keyframes heard {
-		40% {
-			transform: scale(1.35);
-		}
-	}
 
 	.after {
 		display: flex;
@@ -428,13 +385,6 @@
 		flex-wrap: wrap;
 		gap: 1.25rem;
 		margin-top: 2.5rem;
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.presence svg,
-		.presence svg.heard circle {
-			animation: none;
-		}
 	}
 
 	.error {

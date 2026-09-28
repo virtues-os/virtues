@@ -88,6 +88,7 @@
 		font-size: 1rem;
 		line-height: 1.55;
 		color: var(--color-foreground-muted);
+		text-wrap: balance;
 	}
 
 	.body {

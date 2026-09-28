@@ -169,6 +169,13 @@ class SetupStore {
 	credentials = $state<Credential[]>([]);
 	loaded = $state(false);
 	introStage = $state(typeof window === 'undefined' ? 0 : readIntro());
+	/** Keystrokes in a step that is talking to the assistant (Names). The
+	 *  mark at the top ripples on each: it is the assistant listening. */
+	heard = $state(0);
+
+	hear(): void {
+		this.heard++;
+	}
 	private inflight: Promise<void> | null = null;
 
 	/** Record that Welcome (1) or the letter (2) has been passed. */

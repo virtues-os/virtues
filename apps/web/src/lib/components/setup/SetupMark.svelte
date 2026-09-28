@@ -27,7 +27,7 @@
 -->
 <script lang="ts">
 	import { tick } from "svelte";
-	import type { SetupStep, SetupStepId } from "./setup.svelte";
+	import { setup, type SetupStep, type SetupStepId } from "./setup.svelte";
 	import { reducedMotion } from "./motion";
 
 	interface Props {
@@ -88,6 +88,30 @@
 				{ duration: 900, easing: "cubic-bezier(0.6, 0, 0.2, 1)" },
 			);
 		})();
+	});
+
+	// THE PRESENCE. A keystroke in a step that talks to the assistant (Names)
+	// runs a ripple through the three dots in the order they land (premise,
+	// premise, therefore): typing a name reads as being heard. It lived in a
+	// second ∴ inside the step until 2026-09-28.
+	let seen = setup.heard;
+	$effect(() => {
+		const n = setup.heard;
+		if (n === seen) return;
+		seen = n;
+		if (!el || closing || reducedMotion()) return;
+		el.querySelectorAll<SVGCircleElement>("circle.ink, circle.well").forEach((c) => {
+			const t = Math.floor([...c.parentNode!.children].indexOf(c) / 2);
+			const base = c.classList.contains("ink") ? Math.sqrt(fill[t] ?? 0) : 1;
+			c.animate(
+				[
+					{ transform: `scale(${base})` },
+					{ transform: `scale(${base * 1.35})`, offset: 0.4 },
+					{ transform: `scale(${base})` },
+				],
+				{ duration: 420, delay: [0, 60, 140][t] ?? 0, easing: "cubic-bezier(0.22, 0.8, 0.24, 1)" },
+			);
+		});
 	});
 
 	function pick(id: SetupStepId) {
@@ -210,6 +234,10 @@
 	}
 	/* A dot fills by growing from its center: area, not radius, tracks the
 	   third's progress (hence the square root). */
+	.well {
+		transform-box: fill-box;
+		transform-origin: center;
+	}
 	.ink {
 		fill: var(--color-foreground);
 		transform-box: fill-box;
