@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { abstractOf, parseDayArticle } from "./dayArticle";
+import { abstractOf, parseDayArticle, veilMarks } from "./dayArticle";
 
 const PAGE = `The day was [Nick](/person/person_n): a walk and a long talk.
 
@@ -55,5 +55,17 @@ describe("parseDayArticle", () => {
 	it("strips links from another day's Abstract for a card", () => {
 		expect(abstractOf(PAGE)).toBe("The day was Nick: a walk and a long talk.");
 		expect(abstractOf(null)).toBe("");
+	});
+});
+
+describe("veilMarks", () => {
+	it("removes the marks and keeps what they held", () => {
+		const v = veilMarks("You met [⟦Nick⟧](/person/p) at ⟦the clinic⟧ and talked about ⟦an old injury⟧.");
+		expect(v.markdown).toBe("You met [Nick](/person/p) at the clinic and talked about an old injury.");
+		expect(v.phrases).toEqual(["Nick", "the clinic", "an old injury"]);
+	});
+
+	it("leaves an unmarked page alone", () => {
+		expect(veilMarks("A quiet day.")).toEqual({ markdown: "A quiet day.", phrases: [] });
 	});
 });

@@ -484,6 +484,9 @@ WHAT COUNTS AS EVIDENCE
 HARD CONVERSATIONS
 They belong on the page, with discretion. The owner was there; give them a door back into the moment, not its contents. Name what it turned on in a word or two ("an old injury", "family", "a job left behind") and how it moved: it got awkward, someone apologized, it was set down and the evening went on. No body parts, procedures, ages, or third parties named inside it. Feelings someone said aloud are evidence; feelings nobody expressed are not yours to assign. Never quote another person; paraphrase.
 
+WHAT THE VEIL MAY HIDE
+The owner can read this page with a veil on, when someone else might see the screen. Wrap every name of a person or a place, and every phrase that names a hard or intimate matter, in ⟦ ⟧: "you drove ⟦Nick⟧ to ⟦the clinic⟧", "a conversation about ⟦an old injury⟧". Inside a link, wrap the link text: [⟦Nick⟧](href). The marks never show when the page is read normally.
+
 VOICE
 Second person, past tense. Plain and warm, the voice of a friend who was paying attention. No verdicts on the day, no inner states nobody voiced.
 
@@ -950,6 +953,55 @@ pub async fn day_facts(pool: &PgPool, date: NaiveDate) -> Result<DayFacts> {
     .await?;
 
     Ok(DayFacts { temperature_high_c: high, temperature_low_c: low, recorded_minutes, coverage, chats })
+}
+
+// ── Similar days ───────────────────────────────────────────────────────────
+
+/// A day whose page reads like this one's.
+#[derive(Debug, serde::Serialize)]
+pub struct SimilarDay {
+    pub date: NaiveDate,
+    /// The page's first paragraph (its Abstract), markdown.
+    pub abstract_md: String,
+    pub similarity: f64,
+}
+
+/// Days whose pages sit nearest this one's, by the embedding of each page's
+/// opening chunk — the Abstract and the start of the first section, which is
+/// where a page says what its day was. The days on either side are left out:
+/// the page already links them.
+pub async fn similar_days(pool: &PgPool, date: NaiveDate, limit: i64) -> Result<Vec<SimilarDay>> {
+    let rows: Vec<(NaiveDate, String, f64)> = sqlx::query_as(
+        "WITH me AS ( \
+             SELECT v.embedding FROM wiki_days d \
+             JOIN wiki_articles a ON a.subject_type = 'day' AND a.subject_id = d.id \
+             JOIN search_embeddings e ON e.source_table = 'app_pages' AND e.record_id = a.page_id AND e.chunk_index = 0 \
+             JOIN search_vectors v ON v.embedding_id = e.id \
+             WHERE d.date = $1 LIMIT 1) \
+         SELECT d.date, pg.content, (1 - (v.embedding <=> me.embedding))::float8 \
+         FROM me, search_embeddings e \
+         JOIN search_vectors v ON v.embedding_id = e.id \
+         JOIN wiki_articles a ON a.page_id = e.record_id AND a.subject_type = 'day' \
+         JOIN wiki_days d ON d.id = a.subject_id \
+         JOIN app_pages pg ON pg.id = a.page_id \
+         WHERE e.source_table = 'app_pages' AND e.chunk_index = 0 \
+           AND d.date NOT BETWEEN $1 - 1 AND $1 + 1 \
+         ORDER BY v.embedding <=> me.embedding \
+         LIMIT $2",
+    )
+    .bind(date)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(date, content, similarity)| SimilarDay {
+            date,
+            // absent-ok: a page with no first paragraph has an empty Abstract; not a query result.
+            abstract_md: content.split("\n\n").next().unwrap_or("").trim().to_string(),
+            similarity,
+        })
+        .collect())
 }
 
 #[cfg(test)]

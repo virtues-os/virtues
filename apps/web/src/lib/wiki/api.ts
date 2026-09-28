@@ -1295,6 +1295,20 @@ export async function getDayFacts(date: string, fetchFn: FetchFn = fetch): Promi
 	return res.json();
 }
 
+/** A day whose page reads like this one's. */
+export interface SimilarDayApi {
+	date: string;
+	/** The page's first paragraph, markdown. */
+	abstract_md: string;
+	similarity: number;
+}
+
+export async function getSimilarDays(date: string, fetchFn: FetchFn = fetch): Promise<SimilarDayApi[]> {
+	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/similar`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
 export async function getDayChats(
 	date: string,
 	fetchFn: FetchFn = fetch,

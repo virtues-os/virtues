@@ -95,8 +95,21 @@ export function parseDayArticle(markdown: string): DayArticle {
 	return { abstract, blocks: first === 0 ? blocks.slice(1) : blocks };
 }
 
+/**
+ * The writer wraps what the veil may hide — names, and phrases about hard
+ * or intimate things — in ⟦ ⟧. Reading normally, the marks are simply gone.
+ */
+export function veilMarks(markdown: string): { markdown: string; phrases: string[] } {
+	const phrases: string[] = [];
+	const out = markdown.replace(/⟦([^⟧]*)⟧/g, (_, p: string) => {
+		phrases.push(p);
+		return p;
+	});
+	return { markdown: out, phrases };
+}
+
 /** The Abstract of another day's page, for a previous / next card. */
 export function abstractOf(markdown: string | null | undefined): string {
 	if (!markdown) return "";
-	return parseDayArticle(markdown).abstract.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+	return veilMarks(parseDayArticle(markdown).abstract).markdown.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
 }
