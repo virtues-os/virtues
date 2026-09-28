@@ -2,7 +2,7 @@
 	import { onMount, tick } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
-	import { accentCss } from '$lib/sidebar/pin-colors';
+	import { projectColor } from '$lib/sidebar/pin-colors';
 	import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -195,11 +195,10 @@
 				<td class="col-name">
 					<div class="name-cell">
 						<span
-							class="row-icon"
-							class:tinted={!!nb.accent_color}
-							style={accentCss(nb.accent_color) ? `--room-accent: ${accentCss(nb.accent_color)}` : ''}
+							class="row-icon tinted"
+							style={`--room-accent: ${projectColor(nb)}`}
 						>
-							<ProjectGlyph icon={nb.icon} size={15} />
+							<ProjectGlyph project={nb} size={15} inherit />
 						</span>
 						<span class="name-text">{nb.name}</span>
 					</div>
@@ -225,11 +224,10 @@
 
 			{#snippet card(nb: ProjectSummary)}
 				<div
-					class="nb-card"
-					class:tinted={!!nb.accent_color}
-					style={accentCss(nb.accent_color) ? `--room-accent: ${accentCss(nb.accent_color)}` : ''}
+					class="nb-card tinted"
+					style={`--room-accent: ${projectColor(nb)}`}
 				>
-					<div class="nb-card-icon"><ProjectGlyph icon={nb.icon} size={20} /></div>
+					<div class="nb-card-icon"><ProjectGlyph project={nb} size={20} inherit /></div>
 					<div class="nb-card-name">{nb.name}</div>
 					{#if nb.current_status}
 						<div class="nb-card-memo">{nb.current_status}</div>
@@ -257,7 +255,7 @@
 					{#each archived as p (p.id)}
 						<li class="archived-row">
 							<button type="button" class="archived-name" onclick={() => open(p.id)}>
-								<ProjectGlyph icon={p.icon} color={p.accent_color} size={15} />
+								<ProjectGlyph project={p} size={15} />
 								<span>{p.name}</span>
 							</button>
 							<span class="archived-when">{formatRelativeDate(p.archived_at) ?? ''}</span>

@@ -720,7 +720,7 @@
 								}}
 								onmouseenter={() => (selectedIndex = index)}
 							>
-								<span class="result-icon glyph-slot"><ProjectGlyph icon={project.icon} color={project.accent_color} size={16} /></span>
+								<span class="result-icon glyph-slot"><ProjectGlyph {project} size={16} /></span>
 								<span class="result-label">{project.name || "Untitled"}</span>
 							</button>
 						{/each}

@@ -28,7 +28,7 @@
 		getProjectGraph
 	} from '$lib/api/client';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
-	import { accentCss } from '$lib/sidebar/pin-colors';
+	import { projectColor } from '$lib/sidebar/pin-colors';
 	import { droppedRefUrl, fileIntoProject, isProjectUrl, removeFromProject } from '$lib/utils/projectActions';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
 
@@ -712,14 +712,13 @@
 					<Popover bind:open={iconOpen} placement="bottom-start">
 						{#snippet trigger({ toggle }: { toggle: () => void })}
 							<button
-								class="nb-icon"
-								class:tinted={!!accentCss(detail?.accent_color)}
-								style={accentCss(detail?.accent_color) ? `--room-accent: ${accentCss(detail?.accent_color)}` : ''}
+								class="nb-icon tinted"
+								style={`--room-accent: ${projectColor(detail)}`}
 								title="Change icon and color"
 								aria-label="Change icon and color"
 								onclick={toggle}
 							>
-								<ProjectGlyph icon={detail?.icon} size={22} />
+								<ProjectGlyph project={detail} size={22} inherit />
 							</button>
 						{/snippet}
 						{#snippet children({ close }: { close: () => void })}
