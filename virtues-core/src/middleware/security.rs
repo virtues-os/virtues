@@ -44,7 +44,17 @@ pub async fn headers_layer(req: Request, next: Next) -> Response {
         // Conservative CSP — same-origin only. SvelteKit inlines styles, so style-src
         // allows 'unsafe-inline'; script-src stays strict. `connect-src` is the one
         // operator-tunable axis (a BYO api/atlas on a custom domain) — see csp_header.
-        h.insert("content-security-policy", csp_header().clone());
+        //
+        // Except a handler's own `sandbox` policy, which only takes away: a
+        // file the model's code wrote (`/api/chats/:id/files/…`) is served
+        // that way so an SVG opened on its own cannot script this origin.
+        let handler_sandboxed = h
+            .get("content-security-policy")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.starts_with("sandbox"));
+        if !handler_sandboxed {
+            h.insert("content-security-policy", csp_header().clone());
+        }
     }
     resp
 }

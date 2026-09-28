@@ -710,6 +710,27 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_code_run_keeps_its_traceback_in_the_row() {
+        let mut r = TurnRecorder::new("m".into());
+        feed(
+            &mut r,
+            vec![
+                tool_start("c1", "code_interpreter"),
+                AgentEvent::ToolCallResult {
+                    id: "c1".into(),
+                    result: json!({"stderr": "Traceback …\nZeroDivisionError: division by zero", "exit_code": 1}),
+                    success: false,
+                    error: Some("Code execution failed: ZeroDivisionError: division by zero".into()),
+                },
+            ],
+        );
+        let msg = r.into_message("m1", "auto".into(), None).unwrap();
+        let row = msg.tool_calls.as_ref().unwrap()[0].result.clone().unwrap();
+        assert_eq!(row["error"], "Code execution failed: ZeroDivisionError: division by zero");
+        assert!(row["stderr"].as_str().unwrap().starts_with("Traceback"));
+    }
+
+    #[test]
     fn a_failed_tool_is_an_error_on_the_wire_and_in_the_row() {
         let mut r = TurnRecorder::new("m".into());
         let lines = feed(

@@ -314,7 +314,8 @@ async fn run_one_worker(
                     entry.1 = args;
                 }
             }
-            AgentEvent::ToolCallResult { id, result, .. } => {
+            // A failure is not a source, even when it carries data.
+            AgentEvent::ToolCallResult { id, result, success: true, .. } => {
                 if let Some((tool_name, args)) = pending.get(&id) {
                     if CITABLE_TOOLS.contains(&tool_name.as_str()) {
                         sources.push(json!({
