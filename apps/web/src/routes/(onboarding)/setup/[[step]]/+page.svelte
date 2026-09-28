@@ -36,7 +36,7 @@
 	import { onMount } from "svelte";
 	import { fade } from "svelte/transition";
 	import "$lib/components/setup/setup.css";
-	import { M } from "$lib/components/setup/motion";
+	import { M, rise } from "$lib/components/setup/motion";
 	import { isMacOS } from "$lib/utils/platform";
 	import Hello from "$lib/components/onboarding/Hello.svelte";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
@@ -317,6 +317,14 @@
 		onpick={go}
 	/>
 
+	<!-- THE CLOSE HAS A NAME (2026-09-28). The ∴ came down to the middle and
+	     held still for two seconds, saying nothing; now the assistant's name
+	     rises under it as it settles, so what the person meets in the app has
+	     been introduced, and the app opens beneath the two together. -->
+	{#if closing}
+		<p class="close-name" in:rise={{ delay: still ? 0 : 900, duration: still ? 0 : M.slow }}>{setup.assistantName}</p>
+	{/if}
+
 	<!-- Not on a finished step: there, "Finish later" means the same as the
 	     step's own way on, and the last step's is "Finish setup". -->
 	{#if current?.optional && current.status !== "done" && !closing}
@@ -463,6 +471,21 @@
 		flex-direction: column;
 	}
 
+	.close-name {
+		position: fixed;
+		z-index: 60;
+		left: 0;
+		right: 0;
+		/* Under the ∴, which closes centered at 4.5× its 26px. */
+		top: calc(50% + 76px);
+		margin: 0;
+		text-align: center;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 32px;
+		letter-spacing: -0.01em;
+		color: var(--color-foreground);
+		pointer-events: none;
+	}
 	.later {
 		position: fixed;
 		z-index: 21;
