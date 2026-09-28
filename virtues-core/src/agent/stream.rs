@@ -176,6 +176,11 @@ pub enum Flow {
 /// it emits each delta as an `AgentEvent` and, at the end, yields the step.
 pub struct SseAccumulator {
     buffer: String,
+    /// The start of a multi-byte character whose remaining bytes are in the
+    /// next chunk. Network chunks split anywhere, so decoding each one on its
+    /// own turned an emoji or an accented letter on a boundary into two
+    /// replacement characters, in the stream and in the saved reply.
+    partial_char: Vec<u8>,
     content: String,
     reasoning_details: Vec<Value>,
     /// Keyed by the provider's call index and ordered by it, so the calls
@@ -202,6 +207,7 @@ impl SseAccumulator {
     pub fn new() -> Self {
         Self {
             buffer: String::new(),
+            partial_char: Vec::new(),
             content: String::new(),
             reasoning_details: Vec::new(),
             tool_calls: BTreeMap::new(),
@@ -218,7 +224,34 @@ impl SseAccumulator {
         bytes: &[u8],
         emit: &mut impl FnMut(AgentEvent),
     ) -> Result<Flow, StreamError> {
-        self.buffer.push_str(&String::from_utf8_lossy(bytes));
+        let mut pending = std::mem::take(&mut self.partial_char);
+        pending.extend_from_slice(bytes);
+        let mut rest = pending.as_slice();
+        loop {
+            match std::str::from_utf8(rest) {
+                Ok(text) => {
+                    self.buffer.push_str(text);
+                    break;
+                }
+                Err(e) => {
+                    let (valid, after) = rest.split_at(e.valid_up_to());
+                    // Checked by from_utf8 up to valid_up_to.
+                    self.buffer.push_str(std::str::from_utf8(valid).unwrap_or_default());
+                    match e.error_len() {
+                        // Invalid bytes, not a split: replace them, as before.
+                        Some(bad) => {
+                            self.buffer.push(char::REPLACEMENT_CHARACTER);
+                            rest = &after[bad..];
+                        }
+                        // A character cut off by the chunk's end: keep it for the next.
+                        None => {
+                            self.partial_char = after.to_vec();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         self.drain_lines(emit)
     }
 
@@ -226,6 +259,11 @@ impl SseAccumulator {
     /// still a line — left in the buffer it would turn a `[DONE]` into a
     /// false interruption.
     pub fn eof(&mut self, emit: &mut impl FnMut(AgentEvent)) -> Result<Flow, StreamError> {
+        // A character the body never finished is not coming.
+        if !self.partial_char.is_empty() {
+            let cut = std::mem::take(&mut self.partial_char);
+            self.buffer.push_str(&String::from_utf8_lossy(&cut));
+        }
         if !self.buffer.trim().is_empty() && !self.buffer.ends_with('\n') {
             self.buffer.push('\n');
         }
@@ -590,6 +628,41 @@ mod sse_tests {
         assert_eq!(r.finish_reason, StepReason::EndTurn);
         let texts: Vec<_> = of_type(&events, "text_delta").iter().map(|e| e["content"].clone()).collect();
         assert_eq!(texts, [json!("Hel"), json!("lo")]);
+    }
+
+    /// Feed raw byte chunks (which may split a character), close, finish.
+    fn run_bytes(chunks: &[&[u8]]) -> Result<LlmStreamResult, StreamError> {
+        let mut emit = |_: AgentEvent| {};
+        let mut sse = SseAccumulator::new();
+        for chunk in chunks {
+            if sse.feed(chunk, &mut emit)? == Flow::Done {
+                return sse.finish(&mut emit);
+            }
+        }
+        sse.eof(&mut emit)?;
+        sse.finish(&mut emit)
+    }
+
+    #[test]
+    fn a_character_split_across_chunks_arrives_whole() {
+        let frame = delta(json!({"content": "café 👋 ok"}));
+        let bytes = frame.as_bytes();
+        let stop = stop("stop");
+        // Every split point, including inside é (2 bytes) and 👋 (4 bytes).
+        for at in 1..bytes.len() {
+            let (head, tail) = bytes.split_at(at);
+            let r = run_bytes(&[head, tail, stop.as_bytes()]).unwrap();
+            assert_eq!(r.content, "café 👋 ok", "split at byte {at}");
+        }
+    }
+
+    #[test]
+    fn invalid_bytes_are_still_replaced() {
+        let mut frame = b"data: {\"choices\":[{\"delta\":{\"content\":\"a".to_vec();
+        frame.push(0xFF);
+        frame.extend_from_slice(b"b\"}}]}\n\n");
+        let r = run_bytes(&[&frame, stop("stop").as_bytes()]).unwrap();
+        assert_eq!(r.content, "a\u{FFFD}b");
     }
 
     #[test]
