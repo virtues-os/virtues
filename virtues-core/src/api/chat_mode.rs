@@ -204,6 +204,13 @@ mod tests {
     }
 
     #[test]
+    fn the_chat_search_cap_is_the_one_the_prompt_states() {
+        let cap = CHAT_TOOL_CAPS.iter().find(|(t, _)| *t == "web_search").map(|(_, n)| *n);
+        assert_eq!(cap, Some(4), "change the <web> block's \"Four searches\" with it");
+        assert!(crate::agent::prompt::AGENT_MODE_PROMPT.contains("Four searches is the most a turn gets"));
+    }
+
+    #[test]
     fn every_known_wire_name_round_trips() {
         for name in ["chat", "sudo", "deep_research", "interview", "getting_started", "council"] {
             assert_eq!(ChatMode::from_wire(name).wire_name(), name);
