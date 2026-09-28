@@ -38,6 +38,7 @@ const ProjectsListView: ViewLoader = () => import('$lib/components/tabs/views/Pr
 const ProjectDetailView: ViewLoader = () => import('$lib/components/tabs/views/ProjectDetailView.svelte');
 const NarrativeIdentityView: ViewLoader = () => import('$lib/components/tabs/views/NarrativeIdentityView.svelte');
 const DataView: ViewLoader = () => import('$lib/components/tabs/views/DataView.svelte');
+const SetupView: ViewLoader = () => import('$lib/components/tabs/views/SetupView.svelte');
 
 export interface TabDefinition {
 	// Route matching
@@ -496,6 +497,26 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
+	// SETUP: /setup, /setup/{step}
+	//   Only once someone is in the app; before that `/setup` is the
+	//   full-screen stage, and nothing sends it here (setup/inApp.ts).
+	// ========================================================================
+	setup: {
+		match: (path) => path === '/setup' || /^\/setup\/[a-z]+$/.test(path),
+		parse: (path) => ({
+			type: 'setup',
+			label: 'Setup',
+			icon: 'ri:list-check',
+			normalizedRoute: path,
+		}),
+		serialize: (id) => (id ? `setup_${id}` : 'setup'),
+		deserialize: (serialized) => (serialized.startsWith('setup_') ? `/setup/${serialized.slice(6)}` : '/setup'),
+		icon: 'ri:list-check',
+		defaultLabel: 'Setup',
+		component: SetupView,
+	},
+
+	// ========================================================================
 	// NARRATIVE IDENTITY: /narrative-identity
 	// ========================================================================
 	'narrative-identity': {
@@ -885,6 +906,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'day',
 		'year',
 		'narrative-identity',
+		'setup',
 	];
 
 	for (const type of orderedTypes) {

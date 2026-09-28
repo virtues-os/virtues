@@ -108,14 +108,14 @@
 		if (mirror) width = mirror.getBoundingClientRect().width;
 	});
 
-	/** A long name shrinks to fit the screen instead of running off it: the
-	 *  measure stays at full size, and the field scales down from it. */
-	let room = $state(typeof window === "undefined" ? 1024 : window.innerWidth - 32);
-	onMount(() => {
-		const on = () => (room = window.innerWidth - 32);
-		window.addEventListener("resize", on);
-		return () => window.removeEventListener("resize", on);
-	});
+	/** A long name shrinks to fit the space it has instead of running off it:
+	 *  the measure stays at full size, and the field scales down from it. The
+	 *  space is the step's own width, not the window's, because in the app
+	 *  Setup runs in a pane beside the sidebar. */
+	let stageWidth = $state(0);
+	const room = $derived(
+		(stageWidth || (typeof window === "undefined" ? 1024 : window.innerWidth)) - 32,
+	);
 	const fit = $derived(Math.max(0.35, Math.min(1, room / (Math.max(width, 40) + 8))));
 
 	/**
@@ -198,7 +198,7 @@
 	}
 </script>
 
-<div class="stage">
+<div class="stage" bind:clientWidth={stageWidth}>
 	{#if eyebrow}<p class="eyebrow">{eyebrow}</p>{/if}
 
 
@@ -336,7 +336,7 @@
 	.name {
 		position: relative;
 		z-index: 1;
-		max-width: calc(100vw - 32px);
+		max-width: 100%;
 		padding: 0;
 		border: none;
 		outline: none;

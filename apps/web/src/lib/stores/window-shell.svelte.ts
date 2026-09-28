@@ -692,6 +692,20 @@ class WindowShellStore {
 		return activeTab.id;
 	}
 
+	/**
+	 * Setup's one tab. A step opens in the Setup tab already open, in
+	 * whichever pane, and joins its history; otherwise the active tab goes
+	 * there. `/setup/<step>` reads as an entity route to the generic lookup,
+	 * so `openTabFromRoute`'s focus-existing would open a second one.
+	 */
+	openSetup(route: string): string {
+		const found = this.findTab((t) => t.type === 'setup');
+		if (!found) return this.navigate(route, { label: 'Setup' });
+		this.setActiveTab(found.tab.id);
+		if (found.tab.route === route) return found.tab.id;
+		return this.navigate(route, { label: 'Setup', paneId: found.paneId as 'left' | 'right' });
+	}
+
 	/** Move the active tab of a pane back one step in its history. */
 	goBack(paneId?: string): void {
 		const targetPaneId = paneId ?? this.activePaneId;

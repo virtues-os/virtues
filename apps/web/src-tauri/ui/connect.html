@@ -55,7 +55,7 @@
         --blue: #0A84FF; --blue-subtle: #EAF3FF;
         --green: #1A7F45; --red: #C4322B;
         /* `ui-serif` is New York on Apple WebKit; Windows WebView2 falls to
-           Georgia. JJannon lives in the SPA bundle, which does not exist yet
+           Georgia. EB Garamond lives in the SPA bundle, which does not exist yet
            when this page draws. */
         --serif: ui-serif, "New York", Georgia, "Times New Roman", serif;
         --sans: -apple-system, system-ui, "Segoe UI", sans-serif;
@@ -767,6 +767,8 @@
         try { await invoke('plugin:reach|forget'); } catch { /* already gone */ }
         try {
           localStorage.removeItem('virtues-just-paired');
+          // No app to open Setup in any more (inApp.ts).
+          localStorage.removeItem('virtues-setup-in-app');
           sessionStorage.setItem('virtues-forgot-server', '1');
         } catch { /* best effort */ }
       }

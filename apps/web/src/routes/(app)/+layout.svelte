@@ -28,6 +28,8 @@
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount, onDestroy } from "svelte";
+	import { beforeNavigate } from "$app/navigation";
+	import { IN_APP_PREFIX, setupOpensInApp } from "$lib/components/setup/inApp";
 	import { createAIContext } from "@ai-sdk/svelte";
 	import { initTheme } from "$lib/utils/theme";
 	import { goto } from "$app/navigation";
@@ -109,6 +111,18 @@
 	});
 
 	// Load chat sessions, workspaces, and initialize theme on mount
+	// SETUP OPENS HERE once someone is in the app (setup/inApp.ts). A link
+	// to `/setup` from inside it (the rail's Setup panel, the wiki's "Draw
+	// your chapters") is caught before it leaves for the full-screen stage,
+	// and opens Setup's tab instead, the one already open if there is one.
+	beforeNavigate((nav) => {
+		const path = nav.to?.url.pathname ?? "";
+		if (nav.type === "leave" || !(path === "/setup" || path.startsWith("/setup/"))) return;
+		if (!setupOpensInApp(path)) return;
+		nav.cancel();
+		windowShellStore.openSetup(path);
+	});
+
 	onMount(async () => {
 		// Confirm to the shell that this build actually rendered. An OTA bundle
 		// stays pending until this lands, and a bundle still pending at the next
@@ -160,7 +174,10 @@
 
 		// Handle deep link from URL (e.g., /pages/page_abc123 or /wiki/rome)
 		// Note: searchParams.get() already decodes the value, no need for decodeURIComponent
-		const urlPath = $page.url.pathname;
+		// Setup's redirect into the app carries its address behind a prefix.
+		const urlPath = $page.url.pathname.startsWith(IN_APP_PREFIX)
+			? $page.url.pathname.slice(IN_APP_PREFIX.length)
+			: $page.url.pathname;
 		const rightParam = $page.url.searchParams.get("right");
 		// Preserve route-level params (e.g. ?page=N for the PDF viewer) —
 		// only ?right= belongs to the shell itself.

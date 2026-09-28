@@ -52,6 +52,7 @@
 	import StepWifi from "$lib/components/setup/steps/StepWifi.svelte";
 	import StepPairing from "$lib/components/setup/steps/StepPairing.svelte";
 	import { prePair } from "$lib/components/setup/prepair.svelte";
+	import { holdStage } from "$lib/components/setup/inApp";
 	import StepSubscription from "$lib/components/setup/steps/StepSubscription.svelte";
 	import StepNames from "$lib/components/setup/steps/StepNames.svelte";
 	import StepConnections from "$lib/components/setup/steps/StepConnections.svelte";
@@ -241,6 +242,13 @@
 			/* the light default stands */
 		}
 	}
+
+	// The stage is up: its own steps stay on it to the close, even for someone
+	// whose `/setup` would otherwise open in the app (a replay from Welcome).
+	onMount(() => {
+		holdStage(true);
+		return () => holdStage(false);
+	});
 
 	onMount(() => {
 		followSystemTheme();
