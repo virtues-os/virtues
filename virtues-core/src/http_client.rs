@@ -126,6 +126,18 @@ pub(crate) fn base_builder() -> reqwest::ClientBuilder {
 // every chat turn and background job: building fresh clients there opened a
 // new TCP + TLS connection to virtues-api (and re-read the OS trust store)
 // before every turn's first model call.
+//
+// A long-lived pool must not hand out a connection that died with a network
+// change (the box moved, the router restarted): idle connections are dropped
+// after 30 s, and on Linux a connection with unacknowledged data for 20 s is
+// declared dead instead of waiting out a 60-300 s request timeout.
+fn pooled(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    let builder = builder.pool_idle_timeout(Duration::from_secs(30));
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    let builder = builder.tcp_user_timeout(Duration::from_secs(20));
+    builder
+}
+
 static API_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
 static COMPLETION_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
 static STREAMING_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
@@ -136,7 +148,7 @@ static STREAMING_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceL
 pub fn virtues_api_client() -> reqwest::Client {
     API_CLIENT
         .get_or_init(|| {
-            base_builder()
+            pooled(base_builder())
                 .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
                 .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
                 .build()
@@ -152,7 +164,7 @@ pub fn virtues_api_client() -> reqwest::Client {
 pub fn virtues_api_completion_client() -> reqwest::Client {
     COMPLETION_CLIENT
         .get_or_init(|| {
-            base_builder()
+            pooled(base_builder())
                 .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
                 .timeout(Duration::from_secs(AI_COMPLETION_TIMEOUT_SECS))
                 .build()
@@ -168,7 +180,7 @@ pub fn virtues_api_completion_client() -> reqwest::Client {
 pub fn virtues_api_streaming_client() -> reqwest::Client {
     STREAMING_CLIENT
         .get_or_init(|| {
-            base_builder()
+            pooled(base_builder())
                 .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
                 .read_timeout(Duration::from_secs(STREAM_IDLE_TIMEOUT_SECS))
                 .build()
