@@ -77,7 +77,16 @@
 	import { toast } from 'svelte-sonner';
 	import { clothFor } from '$lib/sidebar/pin-colors';
 	import { isEmoji, PROJECT_ICON } from '$lib/utils/iconHelpers';
-	import { newProject, openProjects } from '$lib/utils/projectActions';
+	import {
+		droppedRefUrl,
+		fileIntoProject,
+		isRefDrag,
+		newProject,
+		openProjects,
+		projectMemberUrl,
+		startRefDrag,
+	} from '$lib/utils/projectActions';
+	import { dndManager, PROJECT_DROP_ATTR } from '$lib/stores/dndManager.svelte';
 	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import AtlasIcon from '../AtlasIcon.svelte';
@@ -581,6 +590,10 @@
 	const CLOSE_AFTER_MS = 180;
 
 	let card = $state<{ project: ProjectSummary; anchor: HTMLElement } | null>(null);
+
+	// The project row a dragged sidebar row is over. A dragged TAB is tracked
+	// by dndManager instead (it is not an HTML drag); either lights the row.
+	let rowDropTarget = $state<string | null>(null);
 	let openTimer: ReturnType<typeof setTimeout> | null = null;
 	let closeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -732,6 +745,8 @@
 		role="link"
 		tabindex="0"
 		title={titleOf(session)}
+		draggable="true"
+		ondragstart={(e) => startRefDrag(e, url, titleOf(session))}
 		onclick={() => openChat(session)}
 		onkeydown={(e) => {
 			if (e.key === 'Enter' || e.key === ' ') {
@@ -776,6 +791,8 @@
 		role="link"
 		tabindex="0"
 		title={pageTitle(page)}
+		draggable="true"
+		ondragstart={(e) => startRefDrag(e, url, pageTitle(page))}
 		onclick={() => openPage(page)}
 		onkeydown={(e) => {
 			if (e.key === 'Enter' || e.key === ' ') {
@@ -828,6 +845,8 @@
 					role="link"
 					tabindex="0"
 					title={pinLabel(pin)}
+					draggable={projectMemberUrl(pin.url) ? 'true' : 'false'}
+					ondragstart={(e) => startRefDrag(e, pin.url, pinLabel(pin))}
 					onclick={() => openPin(pin)}
 					onkeydown={(e) => {
 						if (e.key === 'Enter' || e.key === ' ') {
@@ -888,9 +907,30 @@
 					class="panel-row panel-row-has-actions spine"
 					class:active={activeRoute === url}
 					class:carded={card?.project.id === project.id}
+					class:drop-target={dndManager.projectTarget === project.id || rowDropTarget === project.id}
+					{...{ [PROJECT_DROP_ATTR]: project.id }}
 					role="link"
 					tabindex="0"
 					title={project.name}
+					ondragover={(e) => {
+						if (!isRefDrag(e)) return;
+						e.preventDefault();
+						if (e.dataTransfer) e.dataTransfer.dropEffect = 'link';
+						rowDropTarget = project.id;
+					}}
+					ondragleave={(e) => {
+						const row = e.currentTarget as HTMLElement;
+						if (!e.relatedTarget || !row.contains(e.relatedTarget as Node)) {
+							if (rowDropTarget === project.id) rowDropTarget = null;
+						}
+					}}
+					ondrop={(e) => {
+						rowDropTarget = null;
+						const dropped = droppedRefUrl(e);
+						if (!dropped) return;
+						e.preventDefault();
+						void fileIntoProject(project, dropped);
+					}}
 					onclick={() => openProject(project)}
 					onkeydown={(e) => {
 						if (e.key === 'Enter' || e.key === ' ') {
@@ -1180,6 +1220,15 @@
 
 	.panel-row.active {
 		background: var(--sidebar-active-bg);
+	}
+
+	/* A project row with something held over it: the row says it will take
+	   it, in the same ring the focus state draws, so a drop is never a
+	   guess about which row is under the pointer. */
+	.panel-row.drop-target {
+		background: var(--sidebar-active-bg);
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
 	}
 
 	.panel-row:focus-visible {
