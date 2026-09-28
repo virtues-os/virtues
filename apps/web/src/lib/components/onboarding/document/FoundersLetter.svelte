@@ -97,24 +97,11 @@
 		     column — each starting no higher than the paragraph it annotates and
 		     sliding down past the note above it, the way marginalia actually
 		     stack. (Locking each note to its paragraph's row opened a hole in the
-		     prose wherever a note outran a short paragraph, which the gloss
-		     beside a one-line ¶1 always does.) On a narrow window both containers
+		     prose wherever a note outran a short paragraph.) On a narrow window both containers
 		     dissolve (display: contents) and `order` interleaves the notes back
 		     under their paragraphs, so the reading order is the same either way. -->
 		<div class="body">
 			<div class="prose">
-				<!-- ONE SENTENCE, ONE HIGHLIGHTED WORD. The definition of
-				     subsidiarity used to ride inside this sentence as an appositive,
-				     then a question followed it. Both are gone from the column: the
-				     belief is stated once, the hard word is marked like a passage
-				     someone highlighted, and the gloss waits in the margin for
-				     whoever wants it. Hovering either end brightens the other, so
-				     the pairing is discoverable without a footnote number, which
-				     would make this an essay. -->
-				<p class="p1">
-					I'm Adam Jace, and I started Virtues because I believe in digital
-					<span class="term" id="term-subsidiarity" aria-describedby="note-subsidiarity">subsidiarity</span>.
-				</p>
 
 				<!-- THE PREMISE. Two claims: capability (you can hold this yourself)
 				     and title (it is your property — "yours by right", the
@@ -125,41 +112,37 @@
 				     rather than listed. The triple chains into vice-is-repetitive,
 				     which explains it. -->
 				<p class="p2">
-					Virtues rests on a simple premise: the data of your life is yours by right, and
-					yours to hold. It is the most intimate thing you have, and today it is turned
-					against you — into ads, algorithms, and addictions. Vice is repetitive and
-					profitable, which is why so much is arranged to produce it. Virtue asks for harder
-					things — attention, memory, honesty, intimacy.
+					The data of your life is yours by right, and yours to hold. It's the most
+					intimate thing you have, and today it's turned against you: into ads,
+					algorithms, and addictions. Vice is repetitive and profitable, which is why so
+					much is arranged to produce it. Virtue asks for harder things: attention,
+					memory, honesty, intimacy.
 				</p>
 
 				<!-- THE GIFT. What holding the record BUYS, straight after the
-				     premise that it is yours to hold. The image is the WIKIPEDIA OF
-				     YOUR LIFE — instantly graspable, browsable, always growing — and
-				     the list escalates from logged facts (went, spoke, worked)
-				     through an inferred pattern (the places you go when you're
-				     happy) to meaning (the stories that matter most), which
-				     DEMONSTRATES "a record compounds" instead of asserting it. The
+				     premise that it is yours to hold. The image is the WIKI OF YOUR
+				     LIFE (the product's own word for it, 2026-09-28; it was
+				     "wikipedia"), and the list escalates from logged facts (went,
+				     spoke) through a pattern (the places you keep going back to) to
+				     meaning (the stories that matter most). "The places you go when
+				     you're happy" went the same day: nothing in the record infers
+				     mood (day_summary says "no mood"), and the claim rules delete a
+				     line the build can't back. "Thin at first … a record compounds.
+				     Give it time, then ask:" went too, as fragments narrating a
+				     motif; the paragraph now says plainly that you can ask it. The
 				     daily-page line ("a page will be waiting for you") moved to the
 				     reveal's door, where tomorrow is real. The asks below are this
 				     paragraph's proof, and the letter ends on them — a closing
 				     essay-paragraph was a second summit, cut 2026-08-24 (its lines
 				     are banked in agents/build/voice.md). -->
 				<p class="p3">
-					Every day, Virtues writes the wikipedia of your life: where you went, who you
-					spoke with, what you were working on, the places you go when you're happy, the
-					stories that matter most. Thin at first, having only just met you. But a record
-					compounds. Give it time, then ask:
+					Every day, Virtues writes the wiki of your life: where you went, who you spoke
+					with, the places you keep going back to, the stories that matter most. You can
+					ask it things like:
 				</p>
 			</div>
 
 			<div class="margin">
-				<aside class="note gloss" id="note-subsidiarity" aria-labelledby="term-subsidiarity">
-					<p class="head">subsidiarity</p>
-					<p>
-						The old principle that a thing belongs at the most local level that can
-						hold it. Nothing is more local than your own life.
-					</p>
-				</aside>
 
 				<!-- THE LEDGER, in the margin beside the paragraph it draws from.
 				     Drawn as an account: one rule across, one rule down, a debit
@@ -203,15 +186,15 @@
 		</div>
 
 		<!-- THE ONLY PLACE THE PRODUCT SPEAKS FOR ITSELF.
-		     Four questions, four time horizons — today, yesterday, the
-		     standing ledger, years — each needing a different stream of the
-		     record (the body, the ambient moment, the transactions, the
-		     message history). Every ask must be unanswerable without the
-		     record: a question any bare model handles ("how do I become a
-		     better writer?") is a question this list cannot afford. Third is
-		     the practical one so the list still ends on the emotional deep
-		     cut, which the reveal's "oldest thing it found" line later pays
-		     off.
+		     Three questions, three time horizons — today, yesterday, years —
+		     each needing a different stream of the record (the body, the
+		     ambient moment, the message history). Every ask must be
+		     unanswerable without the record: a question any bare model handles
+		     ("how do I become a better writer?") is a question this list
+		     cannot afford. It ends on the emotional deep cut, which the
+		     reveal's "oldest thing it found" line later pays off. (The
+		     practical one, "What am I still paying for that I never use?",
+		     was cut for length 2026-09-28.)
 
 		     Set as a block rather than bullets — these are things you would say
 		     out loud, and a bulleted list turns speech into a feature grid. Full
@@ -219,21 +202,26 @@
 		<ul class="asks">
 			<li>Why do I have a migraine today?</li>
 			<li>What was the name of the woman I met at the dog park yesterday?</li>
-			<li>What am I still paying for that I never use?</li>
 			<li>Who have I lost touch with that I used to talk to every day?</li>
 		</ul>
 
 		<div class="body">
 			<!-- THE FOUNDER'S LAST LINE. After the asks the letter has finished
-			     arguing; what is left is the person who wrote it stepping out from
-			     behind the argument — modest, not grand, and the "reach out" is
-			     what makes the contact pills below earn their place. The smiley is
-			     deliberate: one goofy beat in a serif letter, so the sign-off reads
-			     as a person and not a brand. The grievance close ("Technology has
+			     arguing; what is left is why the person who wrote it started, in
+			     one sentence that glosses its own hard word. It used to open the
+			     letter ("I'm Adam Jace, and I started Virtues because I believe in
+			     digital subsidiarity") with the definition in the margin; the
+			     letter now opens on its premise and the name is on the signature
+			     (2026-09-28). "I built the thing I wished existed. If it's useful
+			     to you, reach out :)" was cut the same day; the contact pills
+			     below say it. The grievance close ("Technology has
 			     exploited you long enough…") went to the bank in
 			     agents/build/voice.md on 2026-09-08; Herbert carries the grievance
 			     now, below. -->
-			<p class="close">I built the thing I wished existed. If it's useful to you, reach out :)</p>
+			<p class="close">
+				I started Virtues because I believe in digital subsidiarity: nothing is more
+				local than your own life.
+			</p>
 		</div>
 
 		<!-- THE LAST WORD IS BORROWED. Herbert says the grievance from sixty years
@@ -363,6 +351,8 @@
 
 	.body p {
 		margin: 0;
+		/* No word left alone on a paragraph's last line ("like:"). */
+		text-wrap: pretty;
 	}
 
 	/* ── the margin ────────────────────────────────────────────────────── */
@@ -375,35 +365,10 @@
 		display: contents;
 	}
 
-	.p1 { order: 1; }
-	.gloss { order: 2; }
-	.p2 { order: 3; }
-	.ledger { order: 4; }
-	.p3 { order: 5; }
+	.p2 { order: 1; }
+	.ledger { order: 2; }
+	.p3 { order: 3; }
 
-	/* THE HIGHLIGHT. The theme's own highlight pair — the same color the
-	   page uses for selected text, so the word reads as a passage someone
-	   marked, in whatever ink this theme marks with. Not a link (no underline)
-	   and not a footnote (no superscript). Padding and margin cancel, so the
-	   wash spreads into the surrounding whitespace without pushing the period
-	   off the word; cloned across a line break so a word that wraps keeps its
-	   mark on both halves. */
-	.term {
-		padding: 0.05em 0.15em;
-		margin: 0 -0.15em;
-		border-radius: 2px;
-		background: var(--color-highlight);
-		color: var(--color-highlight-foreground);
-		box-decoration-break: clone;
-		-webkit-box-decoration-break: clone;
-		cursor: default;
-	}
-
-	/* The word is already loud; the coupling runs one way. Hovering the word
-	   steps the gloss up from the margin's ink to the prose's. */
-	.body:has(.term:hover) .gloss {
-		color: var(--color-foreground);
-	}
 
 	/* The note register: the prose's serif one step down, the margin's ink one
 	   step lighter. Headword in the same lowercase mono as the ledger heads, so
@@ -519,11 +484,6 @@
 			border-left: 0;
 		}
 
-		/* Sits the gloss's headword on the first paragraph's first line: the
-		   prose leads at 1.7 on 17px, the headword at 11.5px. */
-		.gloss {
-			padding-top: 0.2rem;
-		}
 
 		.table {
 			max-width: none;
