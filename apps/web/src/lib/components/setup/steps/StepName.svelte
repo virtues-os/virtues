@@ -129,6 +129,20 @@
 		text = e.key;
 	}
 
+	/**
+	 * THE FIRST CLICK ON AN UNTOUCHED NAME SELECTS ALL OF IT, so typing
+	 * replaces it (and vanishes it). A click on "Ari" always lands mid-word,
+	 * where `onKey` reads a collapsed caret as editing and inserts: renaming
+	 * produced "ANickri" (2026-09-28). The rename field's usual manners: one
+	 * click selects the name, and every click after places the caret.
+	 */
+	let claimed = false;
+	function onPoint() {
+		if (!field || claimed || text !== original || !text) return;
+		claimed = true;
+		requestAnimationFrame(() => field?.select());
+	}
+
 	/** The settled name dissolves; the field is empty when this resolves. */
 	async function dissolve() {
 		if (!field || !trimmed) return;
@@ -152,6 +166,7 @@
 				setup.assistantName = trimmed;
 				await dissolve();
 				beat = 2;
+				claimed = false;
 				text = original = setup.profile?.preferred_name ?? "";
 				await focusEnd();
 				busy = false;
@@ -207,6 +222,7 @@
 			bind:this={field}
 			bind:value={text}
 			onkeydown={onKey}
+			onpointerup={onPoint}
 			oninput={() => heard++}
 			class="name"
 			class:leaving
@@ -400,6 +416,7 @@
 		font-size: 1rem;
 		line-height: 1.55;
 		color: var(--color-foreground-muted);
+		text-wrap: balance;
 	}
 
 
