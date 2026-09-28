@@ -150,6 +150,19 @@ class ChatInstanceStore {
     // from transient `data-subagent` events.
     private subagents = $state(new Map<string, SubagentStatus[]>());
 
+    // Conversations that have sent a local turn. A local chat stays local: the
+    // transport below forces every later send in one to be local and
+    // temporary, whatever mode the view happens to hold (it resets its mode
+    // when it switches conversations). Without that, coming back to a local
+    // chat and sending would put its transcript in reach of the cloud
+    // (title generation sends the whole chat to a cloud model).
+    private localConversations = new Set<string>();
+
+    /** Whether this conversation is a local one. */
+    isLocal(conversationId: string): boolean {
+        return this.localConversations.has(conversationId);
+    }
+
     // What each local reply measured, keyed by conversation then message id.
     // Transient like the chat itself: a local chat is never stored.
     private localStats = $state(new Map<string, Map<string, LocalStats>>());
@@ -213,9 +226,13 @@ class ChatInstanceStore {
                     const projectId = getProjectId();
                     const activePage = getActivePageContext?.();
                     const persona = getPersona?.() || 'default';
-                    const agentMode = getAgentMode?.() || 'chat';
+                    let agentMode = getAgentMode?.() || 'chat';
+                    if (this.localConversations.has(conversationId)) agentMode = 'local';
+                    if (agentMode === 'local') this.localConversations.add(conversationId);
                     const chatMode = getChatMode?.() || 'open';
-                    const temporary = getTemporary?.() || false;
+                    // A local chat is never stored, and its whole transcript
+                    // goes to the local model each turn.
+                    const temporary = agentMode === 'local' || getTemporary?.() || false;
                     // Omitted unless the person picked one — see getModel above.
                     const model = getModel();
 

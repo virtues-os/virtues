@@ -537,6 +537,12 @@
 				getTemporary: () => isGhost,
 				getThink: () => localThink,
 			});
+			// A local chat stays local: coming back to one restores the mode the
+			// store says it has, rather than the reset above.
+			if (chatInstances.isLocal(conversationId)) {
+				selectedAgentMode = 'local';
+				isGhost = true;
+			}
 			// The draft this conversation left behind, if the composer is empty.
 			if (!isGhost && !input) {
 				const draft = readDraft(draftId);
@@ -1204,6 +1210,9 @@
 	// Generate title after first assistant response
 	async function generateTitle() {
 		if (titleGenerated || chat.messages.length < 2) return;
+		// Titles are written by a cloud model from the whole chat; a local
+		// chat's words never leave the server.
+		if (isLocal || chatInstances.isLocal(conversationId)) return;
 		// The interview keeps the name it was seeded with. Its transcript is
 		// the most private text on the box, and a generated title puts a
 		// summary of it in the sidebar — this chat had renamed itself after
@@ -1392,7 +1401,7 @@
 			handedOff = true;
 
 			// Titles come from a cloud model, so a local chat never asks for one.
-			if (chat.messages.length >= 2 && !isGhost && !isLocal && !titleGenerated) {
+			if (chat.messages.length >= 2 && !isGhost && !titleGenerated) {
 				await generateTitle();
 				// Update tab route if it's a new chat
 				if (isNewChat(tab.route)) {
