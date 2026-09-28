@@ -1076,6 +1076,28 @@ export async function replaceLifeChapters(chapters: LifeChapterInput[]): Promise
 	return body?.chapters ?? [];
 }
 
+/** A rule the assistant obeys (`<rules>` in its prompt). `avoid` keeps a
+ *  subject out unless the person raises it; `defend` holds them to one. */
+export interface NarrativeRule {
+	id: string;
+	rule: string;
+	kind: 'avoid' | 'defend';
+	active: boolean;
+}
+
+/** `GET /api/narrative/rules`: the rules in force, and the ones heard in the
+ *  interview that wait for the person to confirm them. */
+export async function getNarrativeRules(): Promise<{ rules: NarrativeRule[]; proposed: NarrativeRule[] }> {
+	const body = await apiGet<{ rules?: NarrativeRule[]; proposed?: NarrativeRule[] }>('/narrative/rules');
+	return { rules: body?.rules ?? [], proposed: body?.proposed ?? [] };
+}
+
+/** `POST /api/narrative/rules`: replace the whole set with exactly these.
+ *  Proposals not included are dropped. */
+export async function saveNarrativeRules(rules: { rule: string; kind: 'avoid' | 'defend' }[]): Promise<void> {
+	await apiSend('POST', '/narrative/rules', { rules });
+}
+
 // =============================================================================
 // Drive - Personal File Storage
 // =============================================================================

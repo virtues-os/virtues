@@ -48,7 +48,14 @@
 	import ThinkingMark from "$lib/components/ThinkingMark.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
-	import { getChat, listLifeChapters, type LifeChapter } from "$lib/api/client";
+	import {
+		getChat,
+		getNarrativeRules,
+		listLifeChapters,
+		saveNarrativeRules,
+		type LifeChapter,
+		type NarrativeRule,
+	} from "$lib/api/client";
 	import { readNextChapter } from "../nextChapter";
 	import { getMe } from "$lib/wiki/api";
 	import { GETTING_STARTED_CHAT_ID } from "$lib/components/chat/getting-started/getting-started";
@@ -140,6 +147,43 @@
 	$effect(() => {
 		if (phase === "closed" && excerpt === null) void loadExcerpt();
 	});
+
+	/** What they asked never to be raised, heard in the interview and kept
+	 *  inactive by the server until they say so here. Nothing binds the
+	 *  assistant before that. */
+	let inForce = $state<NarrativeRule[]>([]);
+	let proposed = $state<NarrativeRule[]>([]);
+	let keep = $state<Record<string, boolean>>({});
+	let rulesSaved = $state<number | null>(null);
+	let rulesError = $state<string | null>(null);
+	let rulesBusy = $state(false);
+	async function loadRules() {
+		try {
+			const r = await getNarrativeRules();
+			inForce = r.rules;
+			proposed = r.proposed;
+			keep = Object.fromEntries(r.proposed.map((p) => [p.id, true]));
+		} catch {
+			/* an older server, or unreachable: there is nothing to confirm */
+		}
+	}
+	$effect(() => {
+		if (phase === "closed") void loadRules();
+	});
+	async function settleRules(take: boolean) {
+		rulesBusy = true;
+		rulesError = null;
+		const chosen = take ? proposed.filter((p) => keep[p.id]) : [];
+		try {
+			await saveNarrativeRules([...inForce, ...chosen].map((r) => ({ rule: r.rule, kind: r.kind })));
+			proposed = [];
+			rulesSaved = chosen.length;
+		} catch {
+			rulesError = "Your server couldn't save these. Try again.";
+		} finally {
+			rulesBusy = false;
+		}
+	}
 	const still =
 		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
@@ -423,6 +467,34 @@
 				{#each excerpt as para, i (i)}<p>{para}</p>{/each}
 			</blockquote>
 		{/if}
+		{#if proposed.length}
+			<div class="asked" in:fly={IN}>
+				<p class="asked-head">You asked {name} not to raise:</p>
+				<ul>
+					{#each proposed as r (r.id)}
+						<li>
+							<label>
+								<input type="checkbox" bind:checked={keep[r.id]} disabled={rulesBusy} />
+								<span>{r.rule}</span>
+							</label>
+						</li>
+					{/each}
+				</ul>
+				<div class="asked-row">
+					<button type="button" class="setup-go small" onclick={() => settleRules(true)} disabled={rulesBusy}>
+						{proposed.length === 1 ? "Keep this" : "Keep these"}
+					</button>
+					<button type="button" class="setup-past" onclick={() => settleRules(false)} disabled={rulesBusy}>
+						{proposed.length === 1 ? "Don't keep it" : "Don't keep them"}
+					</button>
+				</div>
+				{#if rulesError}<p class="asked-err" role="alert">{rulesError}</p>{/if}
+			</div>
+		{:else if rulesSaved}
+			<p class="asked-done" in:fade={{ duration: still ? 0 : 200 }}>
+				{name} won't raise {rulesSaved === 1 ? "it" : "them"} unless you do.
+			</p>
+		{/if}
 		{#snippet actions()}
 			<button type="button" class="setup-go" onclick={onnext}>
 				{excerpt ? "Read it all" : "Finish setup"}
@@ -678,5 +750,61 @@
 	}
 	.excerpt p:last-child {
 		margin-bottom: 0;
+	}
+
+	/* What they asked not to be raised: under the excerpt, quieter than it,
+	   in the interface face, because it is a setting in their words. */
+	.asked {
+		max-width: 32rem;
+		margin: 32px auto 0;
+		padding-top: 20px;
+		border-top: 1px solid var(--color-border);
+		text-align: left;
+		font-size: 15px;
+		color: var(--color-foreground);
+	}
+	.asked-head {
+		margin: 0 0 12px;
+		color: var(--color-foreground-muted);
+	}
+	.asked ul {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.asked label {
+		display: flex;
+		align-items: baseline;
+		gap: 12px;
+		min-height: 44px;
+		cursor: pointer;
+	}
+	.asked input {
+		flex: none;
+		width: 16px;
+		height: 16px;
+		accent-color: var(--color-primary);
+		transform: translateY(2px);
+	}
+	.asked-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 12px 16px;
+		margin-top: 12px;
+	}
+	.asked-err {
+		margin: 12px 0 0;
+		font-size: 14px;
+		color: var(--color-error);
+	}
+	.asked-done {
+		max-width: 32rem;
+		margin: 32px auto 0;
+		font-size: 15px;
+		color: var(--color-foreground-muted);
 	}
 </style>

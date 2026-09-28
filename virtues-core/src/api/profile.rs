@@ -26,6 +26,8 @@ pub struct UpdateProfileRequest {
     pub employer: Option<String>,
     // Home
     pub home_place_id: Option<String>,
+    /// The city they named as home (Setup's "Where's home?").
+    pub home_city: Option<String>,
     /// "This person is me" — points at a `wiki_people` row (0080).
     pub self_person_id: Option<String>,
     // Onboarding - single status field
@@ -79,6 +81,7 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
     if request.occupation.is_some()            { push("occupation", &mut set_clauses, &mut next); }
     if request.employer.is_some()              { push("employer", &mut set_clauses, &mut next); }
     if request.home_place_id.is_some()         { push("home_place_id", &mut set_clauses, &mut next); }
+    if request.home_city.is_some()             { push("home_city", &mut set_clauses, &mut next); }
     if request.self_person_id.is_some()        { push("self_person_id", &mut set_clauses, &mut next); }
     if request.onboarding_status.is_some()     { push("onboarding_status", &mut set_clauses, &mut next); }
     if request.theme.is_some()                 { push("theme", &mut set_clauses, &mut next); }
@@ -128,6 +131,9 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
     }
     if let Some(ref v) = request.home_place_id {
         query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.home_city {
+        query_builder = query_builder.bind(v.trim());
     }
     if let Some(ref v) = request.self_person_id {
         query_builder = query_builder.bind(v);
@@ -239,5 +245,26 @@ mod tests {
 
         let fetched = get_profile(&pool).await.expect("get after set");
         assert_eq!(fetched.birth_date, Some(d));
+    }
+
+    #[sqlx::test]
+    async fn home_city_is_kept_and_tells_the_assistant_where_home_is(pool: PgPool) {
+        // Setup always sent the city; with no field for it the update
+        // dropped it silently and the assistant's home line stayed empty.
+        let updated = update_profile(
+            &pool,
+            UpdateProfileRequest {
+                home_city: Some(" Lisbon ".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("update with a home city");
+        assert_eq!(updated.home_city.as_deref(), Some("Lisbon"));
+
+        let block = crate::api::circumstances::build_circumstances(&pool, None, chrono::Utc::now())
+            .await
+            .expect("circumstances render");
+        assert!(block.contains("They are: home is Lisbon."), "{block}");
     }
 }
