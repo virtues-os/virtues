@@ -549,6 +549,14 @@ fn public_routes() -> Router<AppState> {
             "/api/setup/skip-onboarding",
             post(crate::api::box_status::skip_onboarding_handler),
         )
+        // The rules the assistant must obey (`<rules>` in the prompt). Read to
+        // review them, POST to replace the set. The only writer of wiki_rules.
+        // Authenticated by each handler's own `AuthUser`.
+        .route(
+            "/api/narrative/rules",
+            get(crate::api::narrative_draft::rules_handler)
+                .post(crate::api::narrative_draft::save_rules_handler),
+        )
         // Getting started, derived: the four steps, the lock, the first day.
         // Authenticated, unlike /api/setup/state — it reads the profile — by
         // an `AuthUser` in each handler rather than the route_layer.

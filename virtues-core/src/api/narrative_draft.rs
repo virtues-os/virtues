@@ -1110,6 +1110,158 @@ async fn call_model(
     .await
 }
 
+// ─── rules ──────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct Rule {
+    pub id: String,
+    pub rule: String,
+    pub kind: String,
+    pub active: bool,
+}
+
+/// One confirmed rule.
+///
+/// `kind` arrives from the client because only the person knows which it is:
+/// "never mention my father" and "help me hold my fast" are both rules and they
+/// are opposites. It defaults to `avoid` — the reading that cannot cause harm if
+/// a client omits it.
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+pub enum RuleInput {
+    /// The wire shape every client used before `kind` existed.
+    Bare(String),
+    Kinded {
+        rule: String,
+        #[serde(default = "default_kind")]
+        kind: String,
+    },
+}
+
+fn default_kind() -> String {
+    "avoid".to_string()
+}
+
+impl RuleInput {
+    fn parts(&self) -> (&str, &str) {
+        match self {
+            RuleInput::Bare(r) => (r.as_str(), "avoid"),
+            RuleInput::Kinded { rule, kind } => (rule.as_str(), kind.as_str()),
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SaveRules {
+    /// Exactly what the person confirmed, in the wording they left it in. The
+    /// proposals are thrown away; only this is stored.
+    pub rules: Vec<RuleInput>,
+}
+
+pub async fn list_rules(pool: &PgPool) -> Result<Vec<Rule>> {
+    sqlx::query_as::<_, Rule>(
+        "SELECT id, rule, kind, active FROM wiki_rules WHERE active ORDER BY created_at, id",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("list rules: {e}")))
+}
+
+pub async fn rules_handler(
+    axum::extract::State(state): axum::extract::State<crate::server::AppState>,
+    _user: crate::middleware::auth::AuthUser,
+) -> impl axum::response::IntoResponse {
+    use axum::{response::IntoResponse as _, Json};
+    match list_rules(state.db.pool()).await {
+        Ok(rules) => (
+            axum::http::StatusCode::OK,
+            Json(serde_json::json!({ "rules": rules })),
+        )
+            .into_response(),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Replace the rule set with exactly what was confirmed.
+///
+/// A replace rather than an append: this is the screen where someone reviews
+/// every rule their box obeys, so leaving it must mean the list now says what
+/// they saw. An append would let a rule they unticked survive invisibly, which
+/// is the one failure this table exists to prevent.
+pub async fn save_rules_handler(
+    axum::extract::State(state): axum::extract::State<crate::server::AppState>,
+    _user: crate::middleware::auth::AuthUser,
+    axum::Json(req): axum::Json<SaveRules>,
+) -> impl axum::response::IntoResponse {
+    use axum::{response::IntoResponse as _, Json};
+    let pool = state.db.pool();
+
+    let mut tx = match pool.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response()
+        }
+    };
+
+    if let Err(e) = sqlx::query("DELETE FROM wiki_rules").execute(&mut *tx).await {
+        tracing::error!(error = %e, "rules: clear failed");
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response();
+    }
+
+    for (i, input) in req.rules.iter().enumerate() {
+        let (rule, kind) = input.parts();
+        let rule = rule.trim();
+        if rule.is_empty() {
+            continue;
+        }
+        // The column has a CHECK; sending anything else would fail the whole
+        // transaction and lose the rules that were fine.
+        let kind = if kind == "defend" { "defend" } else { "avoid" };
+        if let Err(e) = sqlx::query("INSERT INTO wiki_rules (id, rule, kind) VALUES ($1, $2, $3)")
+            .bind(format!("rule_{i:03}"))
+            .bind(rule)
+            .bind(kind)
+            .execute(&mut *tx)
+            .await
+        {
+            tracing::error!(error = %e, "rules: insert failed");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    }
+
+    if let Err(e) = tx.commit().await {
+        tracing::error!(error = %e, "rules: commit failed");
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response();
+    }
+
+    tracing::info!(count = req.rules.len(), "rules saved");
+    (
+        axum::http::StatusCode::OK,
+        Json(serde_json::json!({ "saved": req.rules.len() })),
+    )
+        .into_response()
+}
+
 #[cfg(test)]
 mod chapter_edit_tests {
     use super::*;
