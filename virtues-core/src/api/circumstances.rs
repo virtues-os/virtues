@@ -121,12 +121,19 @@ pub async fn build_circumstances(
     let tomorrow = today.succ_opt().unwrap_or(today);
     let (_, tomorrow_end) = crate::api::day_summary::day_boundaries_utc(tomorrow, timezone);
 
-    // The sections are independent reads, so they run together; the block
-    // costs its slowest section, not their sum. Rendered in SECTIONS order.
-    let built = futures::future::join_all(SECTIONS.iter().map(|name| {
-        build_section(pool, name, tz, now_quantized, today, &day_start, &day_end, &tomorrow_end)
-    }))
-    .await;
+    // The sections are independent reads, so they overlap — three at a time,
+    // not all at once: the whole prompt's blocks are already running together
+    // on a pool of five connections, and a section that waits out the pool's
+    // acquire timeout is dropped from the prompt. Chunks keep SECTIONS order.
+    let mut built = Vec::with_capacity(SECTIONS.len());
+    for chunk in SECTIONS.chunks(3) {
+        built.extend(
+            futures::future::join_all(chunk.iter().map(|name| {
+                build_section(pool, name, tz, now_quantized, today, &day_start, &day_end, &tomorrow_end)
+            }))
+            .await,
+        );
+    }
     let mut lines: Vec<String> = Vec::new();
     for (name, result) in SECTIONS.iter().zip(built) {
         match result {
