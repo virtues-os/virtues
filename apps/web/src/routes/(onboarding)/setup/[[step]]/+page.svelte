@@ -317,7 +317,9 @@
 		onpick={go}
 	/>
 
-	{#if current?.optional && !closing}
+	<!-- Not on a finished step: there, "Finish later" means the same as the
+	     step's own way on, and the last step's is "Finish setup". -->
+	{#if current?.optional && current.status !== "done" && !closing}
 		<button type="button" class="later" onclick={finish} transition:fade={{ duration: 200 }}>Finish later</button>
 	{/if}
 

@@ -605,6 +605,10 @@
 		color: var(--color-error);
 	}
 
+	.check {
+		display: flex;
+		justify-content: center;
+	}
 	.check svg {
 		display: block;
 		fill: none;
