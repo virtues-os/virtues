@@ -3,7 +3,7 @@
  *
  * The modes the composer cycles through with Shift+Tab. The id goes to the
  * server as `agentMode`, which picks the turn's tools and prompt
- * (`tools::get_tools_for_agent_mode`, `agent::prompt`).
+ * (`ChatMode::tools`, `agent::prompt`).
  *
  * `sudo` is the owner's bypass: a shell on the server with passwordless sudo,
  * and nothing asks before it runs. It lasts for one chat and starts off every

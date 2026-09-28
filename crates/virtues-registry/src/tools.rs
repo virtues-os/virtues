@@ -178,7 +178,7 @@ If you are unsure whether something qualifies, it does not."#.to_string(),
 }
 
 /// The narrative interview's ONE tool: turn the transcript into the person's
-/// document and chapters. Interview-mode only (see get_tools_for_agent_mode);
+/// document and chapters. Interview-mode only (see ChatMode::tools);
 /// is_system keeps it out of every other room's tool set.
 fn revise_article_tool() -> ToolConfig {
     ToolConfig {
@@ -270,7 +270,7 @@ A refused call is not an error: it returns the sentence to act on, and the inter
     }
 }
 
-/// Getting started's tools. Mode-only (see get_tools_for_agent_mode);
+/// Getting started's tools. Mode-only (see ChatMode::tools);
 /// is_system keeps them out of every other room. None writes anything: they
 /// return markers the client renders as cards, and the cards do the work.
 
@@ -1116,7 +1116,7 @@ Add RETURNING to get rows back (capped at 500); otherwise the result is rows_aff
 }
 
 /// Shell tool — a command on the server itself, as its admin account.
-/// Sudo mode only: `get_tools_for_agent_mode` lists it for no other mode and
+/// Sudo mode only: `ChatMode::tools` lists it for no other mode and
 /// the executor refuses it outside a sudo turn.
 fn shell_tool() -> ToolConfig {
     ToolConfig {

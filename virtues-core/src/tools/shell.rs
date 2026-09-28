@@ -5,7 +5,7 @@
 //! gives a person. Nothing here narrows it. The boundaries are elsewhere and
 //! are about *who* may call it, never *what* it may run:
 //!
-//! - only a chat turn in `sudo` mode lists the tool (`get_tools_for_agent_mode`)
+//! - only a chat turn in `sudo` mode lists the tool (`ChatMode::tools`)
 //! - the executor refuses it unless the turn's context says sudo, so a model
 //!   naming it in any other mode — or an applet run, or a subagent, none of
 //!   which can carry that flag — gets a refusal, not a shell

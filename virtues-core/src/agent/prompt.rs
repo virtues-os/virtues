@@ -3,6 +3,8 @@
 //! Provides personalized system prompts based on user and assistant profiles.
 //! Tool descriptions come from their schemas in virtues-registry.
 
+use crate::api::chat_mode::ChatMode;
+
 /// Base system prompt template (without tool instructions).
 ///
 /// Placeholders:
@@ -131,7 +133,7 @@ Not in this line: restating their question, announcing a plan you already announ
 /// Agent mode: conversational with quick tool access.
 ///
 /// The `<web>` block is a search budget stated in words, and the loop enforces
-/// the same number (`CHAT_TOOL_CAPS` in api/chat.rs). It exists because of a
+/// the same number (`CHAT_TOOL_CAPS` in api/chat_mode.rs). It exists because of a
 /// real turn: "what's on tonight in Austin for the Harvest Moon" drew thirteen
 /// sequential searches — the moon's date, which the reply had already stated,
 /// then a showtime for every event it found. The pattern follows the
@@ -434,13 +436,13 @@ pub fn style_notes_block(style_notes: Option<&str>, user_name: &str) -> String {
 /// * `assistant_name` - The assistant's name (e.g., "Ari")
 /// * `user_name` - The user's preferred name
 /// * `style_notes` - The owner's notes on how to be spoken to (None if unset)
-/// * `agent_mode` - Agent mode controlling tool availability
+/// * `mode` - The turn's mode (see `api::chat_mode`)
 /// * `narrative_identity` - User's narrative identity content (empty string if none set)
 pub fn build_personalized_prompt(
     assistant_name: &str,
     user_name: &str,
     style_notes: Option<&str>,
-    agent_mode: &str,
+    mode: &ChatMode,
     narrative_identity: &str,
 ) -> String {
     let guidelines = format!(
@@ -476,21 +478,24 @@ pub fn build_personalized_prompt(
     // telling a model to reach for something it cannot call; and the skill's
     // body is NOT here — it is appended to the turn's tail by chat.rs, so the
     // cached prefix is the same whatever the chat is doing.
-    let skill = virtues_registry::skills::skill_named(agent_mode);
-    let has_page_tools = skill
-        .as_ref()
-        .map_or(true, |s| s.tools.iter().any(|t| t == "edit_page"));
+    let has_page_tools = match mode {
+        ChatMode::Skill(s) => s.tools.iter().any(|t| t == "edit_page"),
+        _ => true,
+    };
     if has_page_tools {
         prompt.push_str(PAGE_TOOL_PROMPT);
     }
-    if skill.is_none() {
-        match agent_mode {
-            "deep_research" => prompt.push_str(DEEP_RESEARCH_MODE_PROMPT),
-            "sudo" => {
-                prompt.push_str(&AGENT_MODE_PROMPT.replace("<mode>chat</mode>", "<mode>sudo</mode>"));
-                prompt.push_str(SUDO_MODE_PROMPT);
-            }
-            _ => prompt.push_str(AGENT_MODE_PROMPT), // "chat" or default
+    match mode {
+        ChatMode::Skill(_) => {}
+        ChatMode::DeepResearch => prompt.push_str(DEEP_RESEARCH_MODE_PROMPT),
+        ChatMode::Sudo => {
+            prompt.push_str(&AGENT_MODE_PROMPT.replace("<mode>chat</mode>", "<mode>sudo</mode>"));
+            prompt.push_str(SUDO_MODE_PROMPT);
+        }
+        // The interview and getting started have prompts of their own and
+        // never reach here (chat.rs `build_system_prompt`).
+        ChatMode::Chat | ChatMode::Interview | ChatMode::GettingStarted => {
+            prompt.push_str(AGENT_MODE_PROMPT)
         }
     }
 
@@ -503,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_build_personalized_prompt_agent_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", None, "agent", "");
+        let prompt = build_personalized_prompt("Ari", "Adam", None, &ChatMode::Chat, "");
 
         assert!(prompt.contains("You are Ari. You live on Adam's own server"));
         assert!(prompt.contains("refuses to flatter Adam"));
@@ -520,17 +525,17 @@ mod tests {
 
     #[test]
     fn test_build_personalized_prompt_sudo_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", None, "sudo", "");
+        let prompt = build_personalized_prompt("Ari", "Adam", None, &ChatMode::Sudo, "");
         assert!(prompt.contains("<mode>sudo</mode>"));
         assert!(!prompt.contains("<mode>chat</mode>"));
         assert!(prompt.contains("<sudo>"));
-        let chat = build_personalized_prompt("Ari", "Adam", None, "chat", "");
+        let chat = build_personalized_prompt("Ari", "Adam", None, &ChatMode::Chat, "");
         assert!(!chat.contains("<sudo>"));
     }
 
     #[test]
     fn test_build_personalized_prompt_deep_research_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", None, "deep_research", "");
+        let prompt = build_personalized_prompt("Ari", "Adam", None, &ChatMode::DeepResearch, "");
 
         assert!(prompt.contains("<tool_usage>"));
         // Deep research mode should include research guidance (thorough exploration)
@@ -540,7 +545,7 @@ mod tests {
 
     #[test]
     fn test_build_personalized_prompt_chat_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", None, "chat", "");
+        let prompt = build_personalized_prompt("Ari", "Adam", None, &ChatMode::Chat, "");
 
         assert!(prompt.contains("You are Ari. You live on Adam's own server"));
         // Chat is now the smart default with tools, so tool usage IS included
@@ -553,11 +558,11 @@ mod tests {
     /// Council has no page tools, so it must not be told to reach for them.
     #[test]
     fn page_guidance_rides_with_the_modes_that_have_page_tools() {
-        let council = build_personalized_prompt("Ari", "Adam", None, "council", "");
+        let council = build_personalized_prompt("Ari", "Adam", None, &ChatMode::from_wire("council"), "");
         assert!(!council.contains("get_page_content"));
         assert!(!council.contains("edit_page"));
 
-        let chat = build_personalized_prompt("Ari", "Adam", None, "chat", "");
+        let chat = build_personalized_prompt("Ari", "Adam", None, &ChatMode::Chat, "");
         assert!(chat.contains("get_page_content"));
     }
 
@@ -565,7 +570,7 @@ mod tests {
     /// the one a real box had picked was "no particular personality".
     #[test]
     fn the_character_is_always_present() {
-        let prompt = build_personalized_prompt("Ari", "Sarah", None, "chat", "");
+        let prompt = build_personalized_prompt("Ari", "Sarah", None, &ChatMode::Chat, "");
         assert!(prompt.contains("refuses to flatter Sarah"));
         assert!(!prompt.contains("No particular personality"));
         assert!(!prompt.contains("<style_notes>"), "no notes, no empty tag");
@@ -575,7 +580,7 @@ mod tests {
     #[test]
     fn style_notes_ride_beneath_the_character() {
         let notes = "  Talk to {user_name} like a coach. Short sentences.  ";
-        let prompt = build_personalized_prompt("Ari", "Alice", Some(notes), "chat", "");
+        let prompt = build_personalized_prompt("Ari", "Alice", Some(notes), &ChatMode::Chat, "");
         let character = prompt.find("refuses to flatter Alice").expect("character kept");
         let block = prompt.find("<style_notes>").expect("notes present");
         assert!(character < block, "notes come after the character");
@@ -585,14 +590,14 @@ mod tests {
 
     #[test]
     fn blank_style_notes_are_no_notes() {
-        let prompt = build_personalized_prompt("Ari", "Bob", Some("   \n "), "chat", "");
+        let prompt = build_personalized_prompt("Ari", "Bob", Some("   \n "), &ChatMode::Chat, "");
         assert!(!prompt.contains("<style_notes>"));
     }
 
     #[test]
     fn test_narrative_identity_section_with_data() {
         let prompt = build_personalized_prompt(
-            "Ari", "Adam", None, "agent",
+            "Ari", "Adam", None, &ChatMode::Chat,
             "I am a builder and teacher. I care about craft, clarity, and helping others grow.",
         );
 
@@ -612,12 +617,12 @@ mod tests {
     /// empty. This is the default state of every new box.
     #[test]
     fn the_identity_block_is_absent_when_nothing_is_written() {
-        let empty = build_personalized_prompt("Ari", "Adam", None, "agent", "");
+        let empty = build_personalized_prompt("Ari", "Adam", None, &ChatMode::Chat, "");
         assert!(!empty.contains("<narrative_identity>"));
         assert!(!empty.contains("Do not manufacture connections"));
 
         let written =
-            build_personalized_prompt("Ari", "Adam", None, "agent", "I am a builder.");
+            build_personalized_prompt("Ari", "Adam", None, &ChatMode::Chat, "I am a builder.");
         assert!(written.contains("<narrative_identity>"));
         assert!(written.contains("Do not manufacture connections"));
         assert!(written.contains("Never lecture, nudge, or coach unless asked"));
