@@ -665,7 +665,9 @@ fn sql_query_tool() -> ToolConfig {
         llm_description: r#"Execute read-only SQL queries against the user's personal data (PostgreSQL).
 
 Operations:
-- 'query': Execute a SELECT (read-only, max 200 rows)
+- 'query': Execute a SELECT (read-only, max 200 rows). With save_as, up to
+  10,000 rows go to a CSV in the chat's code_interpreter workspace and you see
+  the first 20 — use it when the next step is computing over the rows.
 - 'get_schema': Every column of specific table(s), with types, and how each table joins
 - 'list_tables': All tables with row counts
 
@@ -704,7 +706,7 @@ QUERY TIPS (PostgreSQL dialect)
 - Date filter: WHERE occurred_at > now() - interval '7 days'
 - Truncate to a period: date_trunc('month', now()), date_trunc('day', now())
 - Cast a timestamp to a date: timestamp::date  (today = current_date)
-- Always LIMIT results (max 200)
+- Always LIMIT results (max 200, or 10000 with save_as)
 
 ================================================================================
 EXAMPLE QUERIES
@@ -752,9 +754,11 @@ ORDER BY started_at DESC"#
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max rows to return (default 50, max 200)",
-                    "default": 50,
-                    "maximum": 200
+                    "description": "Max rows to return (default 50, max 200; with save_as, default and max 10000)"
+                },
+                "save_as": {
+                    "type": "string",
+                    "description": "File name like 'sleep.csv'. Saves the whole result there for code_interpreter to read, and shows you a preview. Saved chats only."
                 }
             }
         }),
@@ -776,33 +780,37 @@ fn code_interpreter_tool() -> ToolConfig {
 
 Use it for anything you would otherwise do in your head past a couple of
 steps: arithmetic over more than a handful of numbers, statistics, date and
-time math, financial formulas, and working over rows a query returned. Do not
-use it for a single lookup or a fact you can state.
+time math, financial formulas, and analysis of query results. Do not use it
+for a single lookup or a fact you can state.
 
-Only stdout comes back, so print() your results. Long output keeps its
-beginning and its end. There is no way to return files or images — describe
-results in text.
+print() what you want back; only stdout and stderr return. Long output keeps
+its beginning and its end.
 
-Only the Python standard library is available: math, statistics, decimal,
-fractions, datetime, zoneinfo, calendar, json, csv, re, itertools, collections.
-Do not import numpy, pandas or scipy — write the formula with the standard
-library instead.
+Packages: numpy, pandas, scipy, matplotlib, numpy-financial, python-dateutil,
+and the standard library. A result that says packages are not installed yet
+means standard library only for that call.
 
-Each call starts fresh: no variables, files or imports carry over, so every
-call must be self-contained. Paste in any data it needs.
+Files: the working directory is this chat's workspace and it persists between
+calls in the chat, so write intermediate results to files rather than
+recomputing. Variables do not persist — each call is a fresh process. A query
+run with sql_query's save_as is here as a CSV: pd.read_csv('sleep.csv').
 
-Limits: no network, no access to the owner's files or database, 1 GB of
-memory, and a timeout (default 60s, max 120s). A failure returns the
-traceback in stderr; fix the code and try again.
+Charts: save images to out/ (plt.savefig('out/sleep.png', dpi=120,
+bbox_inches='tight')). Each one saved during the call is shown to the owner
+under the call. Say what it shows; never write a link or markdown image to it.
+
+Limits: no network, no access to anything outside the workspace, 1 GB of
+memory, a timeout (default 60s, max 120s). A failure returns the traceback in
+stderr; fix the code and try again.
 
 Example - loan payment:
 {
-  "code": "loan = 400000\nr = 0.065 / 12\nn = 30 * 12\npayment = loan * r / (1 - (1 + r) ** -n)\nprint(f'Monthly payment: ${payment:,.2f}')"
+  "code": "import numpy_financial as npf\npayment = npf.pmt(0.065 / 12, 30 * 12, -400000)\nprint(f'Monthly payment: ${payment:,.2f}')"
 }
 
-Example - statistics:
+Example - a saved query, summarized and charted:
 {
-  "code": "import statistics as st\ndata = [23, 45, 67, 32, 89, 54, 38]\nprint(f'Mean: {st.mean(data):.1f}')\nprint(f'Std dev: {st.stdev(data):.1f}')\nprint(f'Correlation: {st.correlation([1,2,3,4], [2,4,5,8]):.3f}')"
+  "code": "import pandas as pd\nimport matplotlib.pyplot as plt\ndf = pd.read_csv('sleep.csv', parse_dates=['day'])\nweekly = df.set_index('day').duration_minutes.resample('W').mean() / 60\nprint(weekly.round(2).to_string())\nweekly.plot(title='Average sleep per night (hours)')\nplt.savefig('out/sleep.png', dpi=120, bbox_inches='tight')"
 }"#.to_string(),
         parameters: serde_json::json!({
             "type": "object",

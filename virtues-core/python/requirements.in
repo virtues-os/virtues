@@ -1,0 +1,10 @@
+# The code_interpreter sandbox's packages. See requirements.lock for how to
+# regenerate the lock after editing this.
+numpy
+# pandas 3 changed defaults (copy-on-write, string dtype) that model-written
+# code still assumes the other way round.
+pandas<3
+scipy
+matplotlib
+numpy-financial
+python-dateutil

@@ -22,8 +22,10 @@
 //!   runs as uid 0. `sandbox_properties_pin_the_boundary` holds it in place.
 //! - `NoNewPrivileges`, `RestrictNamespaces`, `SystemCallFilter` — seccomp.
 //!
-//! The code is fed on stdin (`python3 -`), so no file needs to be readable by
-//! the ephemeral user.
+//! The code is fed on stdin (`python3 -`). Its working directory is `/work`,
+//! the run's workspace bind-mounted in, and the pinned package environment is
+//! bind-mounted read-only at `/opt/py` (both in `api/code_env.rs`). Everything
+//! else of the box's stays hidden, other chats' workspaces included.
 //!
 //! ## Refusal vs. dev fallback
 //!
@@ -36,15 +38,18 @@
 //!
 //! - The box user needs passwordless `sudo` (the installer grants it) so that
 //!   `sudo -n systemd-run` can create a system unit without a polkit agent.
-//! - Only the standard library is guaranteed; the tool description says so.
+//! - The package environment builds itself on first use and needs the network
+//!   once; until then a run gets the standard library and is told so.
 
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Instant;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
+use crate::api::code_env::{self, Workspace};
 use crate::tools::shell::{read_capped, Captured};
 
 /// Request to execute Python code
@@ -79,9 +84,16 @@ pub struct ExecuteCodeResponse {
     pub timed_out: bool,
     /// Either stream was longer than the cap and lost its middle
     pub truncated: bool,
+    /// Images the run wrote to `out/`, as workspace-relative paths
+    pub images: Vec<String>,
+    /// The pinned packages were there; false means standard library only
+    pub packages_ready: bool,
     /// Execution time in milliseconds
     pub execution_time_ms: u64,
 }
+
+/// At most this many images come back from one run.
+const MAX_IMAGES: usize = 8;
 
 /// Per-exec memory ceiling. Enough for a large standard-library job, small
 /// enough to leave the ML sidecars their share of the box.
@@ -91,18 +103,33 @@ const MEMORY_MAX: &str = "1G";
 ///
 /// Appliance (Linux): isolated in a transient `systemd-run` unit. Dev/CI (any
 /// debug build, incl. macOS): run directly on the trusted developer machine.
-pub async fn execute_code(request: ExecuteCodeRequest) -> ExecuteCodeResponse {
+pub async fn execute_code(request: ExecuteCodeRequest, ws: &Workspace) -> ExecuteCodeResponse {
     let start = Instant::now();
     let timeout_secs = request.timeout.clamp(5, 120);
+    let env = code_env::ready_env();
+    let packages_ready = env.is_some();
 
+    let held = ws.bytes();
+    if held > code_env::WORKSPACE_MAX_BYTES {
+        return ExecuteCodeResponse {
+            error: Some(format!(
+                "The workspace holds {} MB, over its {} MB limit. Delete files you no longer need (os.remove) in a small run first.",
+                held / 1_000_000,
+                code_env::WORKSPACE_MAX_BYTES / 1_000_000
+            )),
+            ..ExecuteCodeResponse::failed(packages_ready, 0)
+        };
+    }
+
+    let out_before = snapshot_out(ws);
     let run = if cfg!(target_os = "linux") {
-        match sandboxed_command(timeout_secs) {
+        match sandboxed_command(timeout_secs, ws, env.as_deref()) {
             Some(cmd) => run(cmd, &request.code, timeout_secs).await,
             // systemd-run missing: refuse in release (appliance) so we never run
             // LLM code unsandboxed; allow a direct run only in debug (dev/CI).
             None if cfg!(debug_assertions) => {
                 tracing::warn!("systemd-run unavailable; running directly (debug build only)");
-                run(direct_command(), &request.code, timeout_secs).await
+                run(direct_command(ws, env.as_deref()), &request.code, timeout_secs).await
             }
             None => Err(
                 "code execution sandbox (systemd-run) is unavailable; refusing to run unsandboxed"
@@ -111,7 +138,7 @@ pub async fn execute_code(request: ExecuteCodeRequest) -> ExecuteCodeResponse {
         }
     } else {
         // No systemd off Linux — this is only ever a developer machine.
-        run(direct_command(), &request.code, timeout_secs).await
+        run(direct_command(ws, env.as_deref()), &request.code, timeout_secs).await
     };
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -147,27 +174,79 @@ pub async fn execute_code(request: ExecuteCodeRequest) -> ExecuteCodeResponse {
                 exit_code: r.exit_code,
                 timed_out,
                 truncated: r.stdout.dropped > 0 || r.stderr.dropped > 0,
+                images: new_images(ws, &out_before),
+                packages_ready,
                 execution_time_ms: elapsed_ms,
             }
         }
         Err(e) => ExecuteCodeResponse {
+            error: Some(e),
+            ..ExecuteCodeResponse::failed(packages_ready, elapsed_ms)
+        },
+    }
+}
+
+impl ExecuteCodeResponse {
+    fn failed(packages_ready: bool, execution_time_ms: u64) -> Self {
+        Self {
             success: false,
             stdout: String::new(),
             stderr: String::new(),
-            error: Some(e),
+            error: None,
             exit_code: None,
             timed_out: false,
             truncated: false,
-            execution_time_ms: elapsed_ms,
-        },
+            images: Vec::new(),
+            packages_ready,
+            execution_time_ms,
+        }
     }
+}
+
+/// What `out/` holds before a run: each file's modified time and size.
+type OutSnapshot = std::collections::HashMap<String, (Option<std::time::SystemTime>, u64)>;
+
+fn snapshot_out(ws: &Workspace) -> OutSnapshot {
+    let Ok(entries) = std::fs::read_dir(ws.out_dir()) else { return OutSnapshot::new() };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let m = e.metadata().ok().filter(|m| m.is_file())?;
+            Some((e.file_name().into_string().ok()?, (m.modified().ok(), m.len())))
+        })
+        .collect()
+}
+
+/// Images in `out/` this run wrote, as `out/<name>`: new, or changed since
+/// the snapshot. One left from an earlier run is not this run's result.
+fn new_images(ws: &Workspace, before: &OutSnapshot) -> Vec<String> {
+    let mut names: Vec<String> = snapshot_out(ws)
+        .into_iter()
+        .filter(|(name, state)| image_type(name).is_some() && before.get(name) != Some(state))
+        .map(|(name, _)| name)
+        .collect();
+    names.sort();
+    names.truncate(MAX_IMAGES);
+    names.into_iter().map(|n| format!("out/{n}")).collect()
+}
+
+/// The media type of an image file the chat can show, by extension.
+pub fn image_type(name: &str) -> Option<&'static str> {
+    let ext = name.rsplit_once('.')?.1.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        _ => return None,
+    })
 }
 
 /// The unit properties. A function of its own so the test can hold the
 /// boundary in place: dropping `DynamicUser` here would run model-written code
 /// as root.
-fn sandbox_properties(timeout_secs: u32) -> Vec<String> {
-    let state_root = crate::applet_templates::state_root();
+fn sandbox_properties(timeout_secs: u32, workspace: &Path, env: Option<&Path>) -> Vec<String> {
     let mut props = vec![
         "PrivateNetwork=yes".to_string(),
         "RestrictAddressFamilies=AF_UNIX".to_string(),
@@ -191,6 +270,10 @@ fn sandbox_properties(timeout_secs: u32) -> Vec<String> {
         "SystemCallArchitectures=native".to_string(),
         "SystemCallFilter=@system-service".to_string(),
         "SystemCallErrorNumber=EPERM".to_string(),
+        // The throwaway uid changes every run; files it leaves must stay
+        // usable by the next one and deletable by the server.
+        "UMask=0000".to_string(),
+        "WorkingDirectory=/work".to_string(),
     ];
     // `-` ignores a path that does not exist, so a dev machine or a box laid
     // out differently still starts the unit.
@@ -204,7 +287,19 @@ fn sandbox_properties(timeout_secs: u32) -> Vec<String> {
     ] {
         props.push(format!("InaccessiblePaths=-{path}"));
     }
-    props.push(format!("InaccessiblePaths=-{}", state_root.display()));
+    // Wherever this box keeps them, which the fixed list may not name.
+    for path in [
+        crate::applet_templates::state_root(),
+        crate::storage::lake::lake_root(),
+        code_env::code_root(),
+    ] {
+        props.push(format!("InaccessiblePaths=-{}", path.display()));
+    }
+    // Mounted from the host side, so the hidden paths above do not hide them.
+    props.push(format!("BindPaths={}:/work", workspace.display()));
+    if let Some(env) = env {
+        props.push(format!("BindReadOnlyPaths={}:/opt/py", env.display()));
+    }
     props
 }
 
@@ -215,7 +310,7 @@ fn sandbox_properties(timeout_secs: u32) -> Vec<String> {
 /// through polkit, which on a headless box denies with "Interactive
 /// authentication required". Root here does not reach the code —
 /// `DynamicUser=yes` runs it as a throwaway uid.
-fn sandboxed_command(timeout_secs: u32) -> Option<Command> {
+fn sandboxed_command(timeout_secs: u32, ws: &Workspace, env: Option<&Path>) -> Option<Command> {
     // Behind sudo, systemd-run's absence is a plain non-zero exit, so check
     // for it first to keep the release-build refusal meaningful.
     crate::applet_runner::which_systemd_run()?;
@@ -227,7 +322,7 @@ fn sandboxed_command(timeout_secs: u32) -> Option<Command> {
         "--collect", // garbage-collect the transient unit when done
         "--quiet",   // keep systemd-run's own chatter off our stderr
     ]);
-    for p in sandbox_properties(timeout_secs) {
+    for p in sandbox_properties(timeout_secs, &ws.dir, env) {
         cmd.args(["-p", &p]);
     }
     cmd.args([
@@ -236,8 +331,19 @@ fn sandboxed_command(timeout_secs: u32) -> Option<Command> {
         "HOME=/tmp",
         "-E",
         "MPLCONFIGDIR=/tmp",
+        // No display: charts render to files.
+        "-E",
+        "MPLBACKEND=Agg",
         "--",
-        "python3",
+    ]);
+    if env.is_some() {
+        // systemd-run resolves the program on the host, before the unit's
+        // mounts exist, so /opt/py is reached through env inside the unit.
+        cmd.args(["/usr/bin/env", "/opt/py/bin/python3"]);
+    } else {
+        cmd.arg("python3");
+    }
+    cmd.args([
         "-I", // isolated mode: ignore env + user site-packages
         "-",  // read the program from stdin
     ]);
@@ -245,9 +351,12 @@ fn sandboxed_command(timeout_secs: u32) -> Option<Command> {
 }
 
 /// Run code directly, unsandboxed. Developer machines only.
-fn direct_command() -> Command {
-    let mut cmd = Command::new("python3");
+fn direct_command(ws: &Workspace, env: Option<&Path>) -> Command {
+    let python = env.map_or_else(|| PathBuf::from("python3"), |e| e.join("bin").join("python3"));
+    let mut cmd = Command::new(python);
     cmd.args(["-I", "-"]);
+    cmd.current_dir(&ws.dir);
+    cmd.env("MPLBACKEND", "Agg");
     cmd
 }
 
@@ -316,9 +425,14 @@ mod tests {
         ExecuteCodeRequest { code: code.to_string(), timeout }
     }
 
+    async fn execute_code(request: ExecuteCodeRequest) -> ExecuteCodeResponse {
+        let ws = Workspace::temporary().unwrap();
+        super::execute_code(request, &ws).await
+    }
+
     #[test]
     fn sandbox_properties_pin_the_boundary() {
-        let props = sandbox_properties(30);
+        let props = sandbox_properties(30, Path::new("/ws"), Some(Path::new("/env")));
         for must in [
             "DynamicUser=yes",
             "PrivateNetwork=yes",
@@ -330,6 +444,9 @@ mod tests {
             "RuntimeMaxSec=30",
             "InaccessiblePaths=-/var/lib/virtues",
             "InaccessiblePaths=-/run/postgresql",
+            "UMask=0000",
+            "BindPaths=/ws:/work",
+            "BindReadOnlyPaths=/env:/opt/py",
         ] {
             assert!(props.iter().any(|p| p == must), "missing {must}");
         }
@@ -379,5 +496,21 @@ mod tests {
         assert!(!r.success);
         assert!(r.timed_out);
         assert_eq!(r.error.as_deref(), Some("Code execution timed out after 5s"));
+    }
+
+    #[tokio::test]
+    async fn the_workspace_carries_files_between_runs_and_images_come_back() {
+        let ws = Workspace::temporary().unwrap();
+        let first = super::execute_code(request("open('n.txt','w').write('41')", 10), &ws).await;
+        assert!(first.success, "{first:?}");
+        let second = super::execute_code(
+            request("n = int(open('n.txt').read()) + 1\nopen('out/plot.svg','w').write('<svg/>')\nprint(n)", 10),
+            &ws,
+        )
+        .await;
+        assert_eq!(second.stdout, "42\n");
+        assert_eq!(second.images, vec!["out/plot.svg".to_string()]);
+        let third = super::execute_code(request("print('again')", 10), &ws).await;
+        assert!(third.images.is_empty(), "an earlier run's image is not this run's");
     }
 }

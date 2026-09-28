@@ -8,6 +8,7 @@
 	import { slide } from "svelte/transition";
 	import Icon from "$lib/components/Icon.svelte";
 	import IconButton from "$lib/components/IconButton.svelte";
+	import { backendUrl } from "$lib/config/backend";
 
 	interface CodeOutput {
 		stdout?: string;
@@ -15,6 +16,8 @@
 		error?: string;
 		timed_out?: boolean;
 		truncated?: boolean;
+		/** Images the run saved to out/; `url` only in a saved chat */
+		images?: { path: string; url?: string }[];
 		/** Execution time in milliseconds (from backend) */
 		execution_time_ms?: number;
 	}
@@ -31,6 +34,9 @@
 	let { status, code, output }: Props = $props();
 
 	let expanded = $state(false);
+
+	// Charts are the result, so they show with the card closed.
+	const figures = $derived((output?.images ?? []).filter((i) => i.url));
 	let copySuccess = $state(false);
 
 	const statusConfig = $derived(
@@ -165,6 +171,14 @@
 			{/if}
 		</div>
 	{/if}
+
+	{#if figures.length}
+		<div class="figures">
+			{#each figures as figure (figure.path)}
+				<img src={backendUrl(figure.url!)} alt={figure.path.replace(/^out\//, "")} loading="lazy" />
+			{/each}
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -175,6 +189,21 @@
 		background: var(--color-surface);
 		overflow: hidden;
 		font-size: 0.8125rem;
+	}
+
+	.figures {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		padding: 0.5rem;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.figures img {
+		display: block;
+		max-width: 100%;
+		height: auto;
+		border-radius: 0.25rem;
 	}
 
 	.code-card.error {
