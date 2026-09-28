@@ -1,3 +1,4 @@
+import CollectorPolicy
 import Foundation
 import SQLite3
 
@@ -21,6 +22,12 @@ class Queue {
     
     deinit {
         sqlite3_close(db)
+    }
+
+    /// Run `body` on the queue's serial SQLite connection. For the extension
+    /// methods, which cannot see the private `db`/`queue`.
+    fileprivate func withDB<T>(_ body: (OpaquePointer?) throws -> T) throws -> T {
+        try queue.sync { try body(db) }
     }
     
     private func openDatabase() throws {
@@ -135,6 +142,43 @@ class Queue {
 
         if sqlite3_exec(db, createBookmarkTableSQL, nil, nil, nil) != SQLITE_OK {
             throw QueueError.cannotCreateTable
+        }
+
+        // iMessage attachments to send, one row per chat.db attachment GUID,
+        // kept for good (not cleaned up): the row is how we know what the box
+        // holds, which is what the deletion check walks.
+        //
+        //   pending        eligible, not sent yet
+        //   unavailable    file not downloaded yet (iCloud); retry at next_attempt_at
+        //   uploaded       the box has it
+        //   skipped        never sendable (video/audio, over the cap, unconvertible)
+        //   pending_delete message gone from chat.db; the box must be told
+        //   deleted        the box was told
+        //
+        // Not fatal on failure: attachments enrich messages, and must never be
+        // able to stop the collector that delivers them.
+        let createAttachmentsTableSQL = """
+            CREATE TABLE IF NOT EXISTS attachments (
+                attachment_guid TEXT PRIMARY KEY,
+                message_guid TEXT NOT NULL,
+                idx INTEGER NOT NULL,
+                path TEXT,
+                mime_type TEXT,
+                uti TEXT,
+                filename TEXT,
+                size_bytes INTEGER,
+                message_date TEXT NOT NULL,
+                state TEXT NOT NULL,
+                skip_reason TEXT,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at TEXT,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_attachments_state ON attachments(state, message_date);
+            CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(message_guid);
+        """
+        if sqlite3_exec(db, createAttachmentsTableSQL, nil, nil, nil) != SQLITE_OK {
+            print("⚠️ attachments table unavailable (messages still sync): \(String(cString: sqlite3_errmsg(db)))")
         }
     }
     
@@ -994,6 +1038,282 @@ class Queue {
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw QueueError.cannotDeleteMessages
             }
+        }
+    }
+}
+
+// MARK: - iMessage attachments
+
+/// One chat.db attachment, as queued for sending.
+struct QueuedAttachment {
+    let attachmentGuid: String
+    let messageGuid: String
+    /// Position in the message's attachments (chat.db join order) — the same
+    /// order as `metadata.attachments` on the box.
+    let index: Int
+    let path: String?
+    let mimeType: String?
+    let uti: String?
+    let filename: String?
+    let sizeBytes: Int64?
+    let messageDate: Date
+    var attempts: Int = 0
+
+    /// Build from the per-message metadata `MessageMonitor.fetchAttachments`
+    /// produces. `nil` for an entry without a GUID (nothing to key it on).
+    init?(info: [String: Any], index: Int, messageGuid: String, messageDate: Date) {
+        guard let guid = info["guid"] as? String, !guid.isEmpty else { return nil }
+        self.attachmentGuid = guid
+        self.messageGuid = messageGuid
+        self.index = index
+        self.path = info["path"] as? String
+        self.mimeType = info["mime_type"] as? String
+        self.uti = info["uti"] as? String
+        self.filename = info["filename"] as? String
+        self.sizeBytes = (info["size_bytes"] as? NSNumber)?.int64Value
+        self.messageDate = messageDate
+    }
+
+    init(attachmentGuid: String, messageGuid: String, index: Int, path: String?,
+         mimeType: String?, uti: String?, filename: String?, sizeBytes: Int64?,
+         messageDate: Date, attempts: Int) {
+        self.attachmentGuid = attachmentGuid
+        self.messageGuid = messageGuid
+        self.index = index
+        self.path = path
+        self.mimeType = mimeType
+        self.uti = uti
+        self.filename = filename
+        self.sizeBytes = sizeBytes
+        self.messageDate = messageDate
+        self.attempts = attempts
+    }
+}
+
+extension Queue {
+    /// Queue attachments, deciding eligibility once. Already-known GUIDs are
+    /// left alone, so re-reading a message never resets what was sent.
+    func enqueueAttachments(_ items: [QueuedAttachment]) throws {
+        guard !items.isEmpty else { return }
+        try withDB { db in
+            try Queue.transaction(db) {
+                let sql = """
+                    INSERT OR IGNORE INTO attachments
+                        (attachment_guid, message_guid, idx, path, mime_type, uti, filename,
+                         size_bytes, message_date, state, skip_reason)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                var stmt: OpaquePointer?
+                defer { sqlite3_finalize(stmt) }
+                guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                    throw QueueError.cannotPrepareStatement
+                }
+                let iso = ISO8601DateFormatter()
+                for a in items {
+                    let decision = AttachmentPolicy.decide(
+                        mime: a.mimeType, uti: a.uti, filename: a.filename, sizeBytes: a.sizeBytes)
+                    Queue.bind(stmt, 1, a.attachmentGuid)
+                    Queue.bind(stmt, 2, a.messageGuid)
+                    sqlite3_bind_int(stmt, 3, Int32(a.index))
+                    Queue.bind(stmt, 4, a.path)
+                    Queue.bind(stmt, 5, a.mimeType)
+                    Queue.bind(stmt, 6, a.uti)
+                    Queue.bind(stmt, 7, a.filename)
+                    if let size = a.sizeBytes { sqlite3_bind_int64(stmt, 8, size) } else { sqlite3_bind_null(stmt, 8) }
+                    Queue.bind(stmt, 9, iso.string(from: a.messageDate))
+                    switch decision {
+                    case .upload:
+                        Queue.bind(stmt, 10, "pending")
+                        Queue.bind(stmt, 11, nil)
+                    case .skip(let why):
+                        Queue.bind(stmt, 10, "skipped")
+                        Queue.bind(stmt, 11, why)
+                    }
+                    guard sqlite3_step(stmt) == SQLITE_DONE else { throw QueueError.cannotInsertEvent }
+                    sqlite3_reset(stmt)
+                }
+            }
+        }
+    }
+
+    /// Attachments due for a send attempt, newest message first (today's
+    /// photos before 2014's).
+    ///
+    /// Only for messages already delivered: a message still waiting in the
+    /// `messages` queue is not on the box yet, and the box keeps attachments
+    /// only for messages it has. A message not in the queue at all was
+    /// delivered and cleaned up (the queue's watermark only passes a message
+    /// once it is queued).
+    func getSendableAttachments(limit: Int, now: Date = Date()) throws -> [QueuedAttachment] {
+        try withDB { db in
+            let sql = """
+                SELECT a.attachment_guid, a.message_guid, a.idx, a.path, a.mime_type, a.uti,
+                       a.filename, a.size_bytes, a.message_date, a.attempts
+                FROM attachments a
+                WHERE (a.state = 'pending'
+                       OR (a.state = 'unavailable' AND (a.next_attempt_at IS NULL OR a.next_attempt_at <= ?)))
+                  AND NOT EXISTS (SELECT 1 FROM messages m
+                                   WHERE m.message_id = a.message_guid AND m.uploaded = 0)
+                ORDER BY a.message_date DESC
+                LIMIT ?
+            """
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                throw QueueError.cannotPrepareStatement
+            }
+            let iso = ISO8601DateFormatter()
+            Queue.bind(stmt, 1, iso.string(from: now))
+            sqlite3_bind_int(stmt, 2, Int32(limit))
+            var out: [QueuedAttachment] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                out.append(QueuedAttachment(
+                    attachmentGuid: Queue.text(stmt, 0) ?? "",
+                    messageGuid: Queue.text(stmt, 1) ?? "",
+                    index: Int(sqlite3_column_int(stmt, 2)),
+                    path: Queue.text(stmt, 3),
+                    mimeType: Queue.text(stmt, 4),
+                    uti: Queue.text(stmt, 5),
+                    filename: Queue.text(stmt, 6),
+                    sizeBytes: sqlite3_column_type(stmt, 7) == SQLITE_NULL ? nil : sqlite3_column_int64(stmt, 7),
+                    messageDate: Queue.text(stmt, 8).flatMap { iso.date(from: $0) } ?? Date.distantPast,
+                    attempts: Int(sqlite3_column_int(stmt, 9))
+                ))
+            }
+            return out
+        }
+    }
+
+    func markAttachmentsUploaded(_ guids: [String]) throws {
+        try setAttachmentState(guids, state: "uploaded")
+    }
+
+    func markAttachmentSkipped(_ guid: String, reason: String) throws {
+        try withDB { db in
+            try Queue.exec(db, "UPDATE attachments SET state = 'skipped', skip_reason = ?, updated_at = CURRENT_TIMESTAMP WHERE attachment_guid = ?", [reason, guid])
+        }
+    }
+
+    /// Not downloaded yet: count the attempt and schedule the next look.
+    func markAttachmentUnavailable(_ guid: String, attempts: Int, now: Date = Date()) throws {
+        let next = now.addingTimeInterval(AttachmentPolicy.retryDelay(afterAttempts: attempts))
+        try withDB { db in
+            try Queue.exec(db, """
+                UPDATE attachments SET state = 'unavailable', attempts = ?, next_attempt_at = ?,
+                       updated_at = CURRENT_TIMESTAMP
+                WHERE attachment_guid = ?
+            """, [String(attempts), ISO8601DateFormatter().string(from: next), guid])
+        }
+    }
+
+    /// Message GUIDs whose attachments the box holds — what the deletion check
+    /// must confirm still exist in chat.db.
+    func uploadedAttachmentMessageGuids() throws -> [String] {
+        try withDB { db in
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_prepare_v2(db, "SELECT DISTINCT message_guid FROM attachments WHERE state = 'uploaded'", -1, &stmt, nil) == SQLITE_OK else {
+                throw QueueError.cannotPrepareStatement
+            }
+            var out: [String] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let g = Queue.text(stmt, 0) { out.append(g) }
+            }
+            return out
+        }
+    }
+
+    /// Messages gone from chat.db. Sent attachments become `pending_delete`
+    /// (the box must drop its copy); unsent ones stop being sendable.
+    func markMessagesDeletedAtSource(_ messageGuids: [String]) throws {
+        guard !messageGuids.isEmpty else { return }
+        try withDB { db in
+            try Queue.transaction(db) {
+                for g in messageGuids {
+                    try Queue.exec(db, "UPDATE attachments SET state = 'pending_delete', updated_at = CURRENT_TIMESTAMP WHERE message_guid = ? AND state = 'uploaded'", [g])
+                    try Queue.exec(db, "UPDATE attachments SET state = 'skipped', skip_reason = 'message deleted', updated_at = CURRENT_TIMESTAMP WHERE message_guid = ? AND state IN ('pending', 'unavailable')", [g])
+                }
+            }
+        }
+    }
+
+    func pendingDeletionMessageGuids() throws -> [String] {
+        try withDB { db in
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_prepare_v2(db, "SELECT DISTINCT message_guid FROM attachments WHERE state = 'pending_delete' LIMIT 500", -1, &stmt, nil) == SQLITE_OK else {
+                throw QueueError.cannotPrepareStatement
+            }
+            var out: [String] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let g = Queue.text(stmt, 0) { out.append(g) }
+            }
+            return out
+        }
+    }
+
+    func markDeletionsSent(_ messageGuids: [String]) throws {
+        guard !messageGuids.isEmpty else { return }
+        try withDB { db in
+            try Queue.transaction(db) {
+                for g in messageGuids {
+                    try Queue.exec(db, "UPDATE attachments SET state = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE message_guid = ? AND state = 'pending_delete'", [g])
+                }
+            }
+        }
+    }
+
+    private func setAttachmentState(_ guids: [String], state: String) throws {
+        guard !guids.isEmpty else { return }
+        try withDB { db in
+            try Queue.transaction(db) {
+                for g in guids {
+                    try Queue.exec(db, "UPDATE attachments SET state = ?, updated_at = CURRENT_TIMESTAMP WHERE attachment_guid = ?", [state, g])
+                }
+            }
+        }
+    }
+
+    // Small SQLite helpers for the attachment queries.
+
+    fileprivate static func bind(_ stmt: OpaquePointer?, _ idx: Int32, _ value: String?) {
+        if let value {
+            sqlite3_bind_text(stmt, idx, (value as NSString).utf8String, -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, idx)
+        }
+    }
+
+    fileprivate static func text(_ stmt: OpaquePointer?, _ col: Int32) -> String? {
+        guard sqlite3_column_type(stmt, col) != SQLITE_NULL, let c = sqlite3_column_text(stmt, col) else {
+            return nil
+        }
+        return String(cString: c)
+    }
+
+    fileprivate static func exec(_ db: OpaquePointer?, _ sql: String, _ args: [String]) throws {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw QueueError.cannotPrepareStatement
+        }
+        for (i, a) in args.enumerated() { bind(stmt, Int32(i + 1), a) }
+        guard sqlite3_step(stmt) == SQLITE_DONE else { throw QueueError.cannotUpdateMessage }
+    }
+
+    fileprivate static func transaction(_ db: OpaquePointer?, _ body: () throws -> Void) throws {
+        guard sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil) == SQLITE_OK else {
+            throw QueueError.cannotPrepareStatement
+        }
+        do {
+            try body()
+        } catch {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            throw error
+        }
+        guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            throw QueueError.cannotPrepareStatement
         }
     }
 }

@@ -1,6 +1,7 @@
 //! Storage module — local filesystem backend.
 
 pub mod lake;
+pub mod message_media;
 pub mod volumes;
 pub mod models;
 

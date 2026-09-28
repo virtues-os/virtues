@@ -1,3 +1,4 @@
+import CollectorPolicy
 import Foundation
 import SQLite3
 
@@ -27,6 +28,12 @@ class MessageMonitor {
     private var lastPermissionCheck = Date.distantPast
     private let permissionCheckInterval: TimeInterval = 300 // Check every 5 minutes
     private var permissionCheckAttempts = 0
+
+    // Attachments (see `runAttachmentJobs`).
+    private var lastDeletionCheck = Date.distantPast
+    private let deletionCheckInterval: TimeInterval = 3600
+    /// Messages per tick the one-time attachment backfill walks.
+    private let attachmentBackfillWindow: Int64 = 5000
     
     init(queue: Queue) {
         self.queue = queue
@@ -151,6 +158,11 @@ class MessageMonitor {
         }
         
         print("✓ Opened Messages database successfully")
+
+        // Attachment housekeeping runs on every tick that can read chat.db,
+        // whatever happens to message sync below (several paths return early).
+        // Declared after the close above, so it runs before it.
+        defer { runAttachmentJobs(db: db) }
         
         // Determine sync window
         let syncFromDate: Date
@@ -320,6 +332,16 @@ class MessageMonitor {
                 return
             }
 
+            // Queue their attachments. They are sent only once the message
+            // itself has reached the box (see Queue.getSendableAttachments).
+            // A failure here is logged, not fatal: attachments enrich
+            // messages and must never hold the message watermark.
+            do {
+                try queue.enqueueAttachments(storable.flatMap(Self.queuedAttachments(of:)))
+            } catch {
+                print("⚠️ Could not queue attachments (messages unaffected): \(error)")
+            }
+
             // Update last sync date
             if let latestDate = latestMessageDate {
                 lastSyncDate = latestDate
@@ -328,6 +350,182 @@ class MessageMonitor {
         }
     }
     
+    static func queuedAttachments(of message: Message) -> [QueuedAttachment] {
+        guard let infos = message.attachmentInfo else { return [] }
+        return infos.enumerated().compactMap { i, info in
+            QueuedAttachment(info: info, index: i, messageGuid: message.messageId,
+                             messageDate: message.date)
+        }
+    }
+
+    // MARK: - Attachment jobs
+
+    private func runAttachmentJobs(db: OpaquePointer?) {
+        guard let db else { return }
+        backfillAttachments(db: db)
+        let now = Date()
+        if now.timeIntervalSince(lastDeletionCheck) >= deletionCheckInterval {
+            lastDeletionCheck = now
+            checkForDeletedMessages(db: db)
+        }
+    }
+
+    private static let backfillCursorKey = "virtues.messages.attachmentBackfill.cursor"
+    private static let backfillEndKey = "virtues.messages.attachmentBackfill.end"
+    private static let backfillDoneKey = "virtues.messages.attachmentBackfill.done"
+
+    /// Queue the attachments of messages this collector delivered BEFORE it
+    /// learned to send attachments — a one-time walk of chat.db by message
+    /// ROWID, `attachmentBackfillWindow` messages per tick, up to the highest
+    /// ROWID that existed when the walk began. Newer messages are queued as
+    /// they sync, so the walk never needs to chase the end.
+    ///
+    /// Only messages at or before the sync watermark: those are the ones
+    /// already in (or through) the message queue. A later one in the same
+    /// window is skipped here and queued when it syncs.
+    private func backfillAttachments(db: OpaquePointer) {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Self.backfillDoneKey), let watermark = lastSyncDate else { return }
+
+        var end = (defaults.object(forKey: Self.backfillEndKey) as? NSNumber)?.int64Value
+        if end == nil {
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_prepare_v2(db, "SELECT COALESCE(MAX(ROWID), 0) FROM message", -1, &stmt, nil) == SQLITE_OK,
+                sqlite3_step(stmt) == SQLITE_ROW
+            else {
+                print("⚠️ Attachment backfill: cannot read chat.db extent: \(String(cString: sqlite3_errmsg(db)))")
+                return
+            }
+            end = sqlite3_column_int64(stmt, 0)
+            defaults.set(NSNumber(value: end!), forKey: Self.backfillEndKey)
+        }
+        guard let end else { return }
+        let cursor = (defaults.object(forKey: Self.backfillCursorKey) as? NSNumber)?.int64Value ?? 0
+        if cursor >= end {
+            defaults.set(true, forKey: Self.backfillDoneKey)
+            print("✓ Attachment backfill complete")
+            return
+        }
+        let upper = min(cursor + attachmentBackfillWindow, end)
+
+        // Same column caution as fetchAttachments: a separate statement, so a
+        // column an older macOS lacks fails this walk and nothing else.
+        let sql = """
+            SELECT m.guid, m.date, a.guid, a.mime_type, a.transfer_name, a.total_bytes,
+                   a.uti, a.filename
+            FROM message m
+            JOIN message_attachment_join maj ON maj.message_id = m.ROWID
+            JOIN attachment a ON a.ROWID = maj.attachment_id
+            WHERE m.ROWID > ? AND m.ROWID <= ? AND m.date <= ?
+            ORDER BY m.ROWID, maj.ROWID
+        """
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            print("⚠️ Attachment backfill unavailable: \(String(cString: sqlite3_errmsg(db)))")
+            return
+        }
+        sqlite3_bind_int64(stmt, 1, cursor)
+        sqlite3_bind_int64(stmt, 2, upper)
+        sqlite3_bind_int64(stmt, 3, Int64(dateToCoreDateTimestamp(watermark)))
+
+        func text(_ col: Int32) -> String? {
+            guard sqlite3_column_type(stmt, col) != SQLITE_NULL, let c = sqlite3_column_text(stmt, col)
+            else { return nil }
+            return String(cString: c)
+        }
+
+        var items: [QueuedAttachment] = []
+        var lastMessage: String?
+        var index = 0
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let messageGuid = text(0) else { continue }
+            if messageGuid == lastMessage { index += 1 } else { index = 0; lastMessage = messageGuid }
+            var info: [String: Any] = [:]
+            if let v = text(2) { info["guid"] = v }
+            if let v = text(3) { info["mime_type"] = v }
+            if let v = text(4) { info["filename"] = v }
+            if sqlite3_column_type(stmt, 5) != SQLITE_NULL {
+                info["size_bytes"] = NSNumber(value: sqlite3_column_int64(stmt, 5))
+            }
+            if let v = text(6) { info["uti"] = v }
+            if let v = text(7) { info["path"] = v }
+            let date = Message.dateFromCoreDataTimestamp(Double(sqlite3_column_int64(stmt, 1)))
+            if let item = QueuedAttachment(info: info, index: index, messageGuid: messageGuid,
+                                           messageDate: date) {
+                items.append(item)
+            }
+        }
+
+        do {
+            try queue.enqueueAttachments(items)
+            defaults.set(NSNumber(value: upper), forKey: Self.backfillCursorKey)
+            if !items.isEmpty {
+                print("  Attachment backfill: queued \(items.count) (messages \(cursor + 1)–\(upper) of \(end))")
+            }
+        } catch {
+            // Cursor held: the same window is read again next tick.
+            print("⚠️ Attachment backfill could not queue: \(error)")
+        }
+    }
+
+    /// Find messages whose attachments the box holds but chat.db no longer
+    /// has — the owner deleted them — so the box can drop the pictures.
+    ///
+    /// Walks only messages with SENT attachments, so the cost is bounded by
+    /// what the box holds, not by the library. Nothing is marked when the
+    /// read fails or the answer is implausible (see
+    /// `AttachmentPolicy.deletionReportIsTrustworthy`): a deletion cannot be
+    /// taken back.
+    private func checkForDeletedMessages(db: OpaquePointer) {
+        let guids: [String]
+        do {
+            guids = try queue.uploadedAttachmentMessageGuids()
+        } catch {
+            print("⚠️ Deletion check: cannot read the attachment queue: \(error)")
+            return
+        }
+        guard !guids.isEmpty else { return }
+
+        var present = Set<String>()
+        for start in stride(from: 0, to: guids.count, by: 500) {
+            let chunk = Array(guids[start..<min(start + 500, guids.count)])
+            let placeholders = chunk.map { _ in "?" }.joined(separator: ",")
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_prepare_v2(db, "SELECT guid FROM message WHERE guid IN (\(placeholders))", -1, &stmt, nil) == SQLITE_OK else {
+                print("⚠️ Deletion check skipped: \(String(cString: sqlite3_errmsg(db)))")
+                return
+            }
+            for (i, g) in chunk.enumerated() {
+                sqlite3_bind_text(stmt, Int32(i + 1), (g as NSString).utf8String, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+            }
+            var rc = sqlite3_step(stmt)
+            while rc == SQLITE_ROW {
+                if let c = sqlite3_column_text(stmt, 0) { present.insert(String(cString: c)) }
+                rc = sqlite3_step(stmt)
+            }
+            guard rc == SQLITE_DONE else {
+                print("⚠️ Deletion check aborted mid-read: \(String(cString: sqlite3_errmsg(db)))")
+                return
+            }
+        }
+
+        let missing = guids.filter { !present.contains($0) }
+        guard !missing.isEmpty else { return }
+        guard AttachmentPolicy.deletionReportIsTrustworthy(checked: guids.count, missing: missing.count) else {
+            print("⚠️ Deletion check: \(missing.count) of \(guids.count) messages look deleted at once — not believed, nothing removed")
+            return
+        }
+        do {
+            try queue.markMessagesDeletedAtSource(missing)
+            print("  \(missing.count) messages with sent attachments were deleted in Messages; the box will drop them")
+        } catch {
+            print("⚠️ Deletion check could not record: \(error)")
+        }
+    }
+
     /// Attachment metadata for a batch of messages, keyed by message ROWID.
     ///
     /// # Why this is a separate query and not a join

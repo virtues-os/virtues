@@ -344,9 +344,10 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
         // every tapback, every read receipt, every "they sent a photo".
         let is_read = m.get("is_read").and_then(|v| v.as_bool()).unwrap_or(false);
 
-        // Metadata only, by design — no image bytes. What we keep is enough to *say*
-        // what was sent, plus the on-disk `path`, which is what makes a v2 backfill of
-        // the images themselves a backfill rather than archaeology.
+        // Metadata only here. The bytes arrive on a later post of their own
+        // (attachments.rs) and are linked under `metadata.attachment_media`, a key
+        // this transform never writes — so the shallow metadata merge on re-upsert
+        // keeps the link.
         let attachments: Vec<Value> = m
             .get("attachment_info")
             .and_then(|v| v.as_array())
@@ -424,10 +425,9 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
                 // what it reacted to, this says what it was.
                 "reaction_type": reaction_type,
                 "expressive_send_style": m.get("expressive_send_style_id"),
-                // guid / mime_type / filename / size_bytes / uti / is_sticker / path.
-                // `path` is the pointer: chat.db keeps the file under
-                // ~/Library/Messages/Attachments/ indefinitely, so v2 can fetch the
-                // bytes later without needing the message thread to still make sense.
+                // guid / mime_type / filename / size_bytes / uti / is_sticker / path,
+                // as chat.db describes them. The attachment's position in this array
+                // is the `index` in /api/messages/:id/attachments/:index.
                 "attachments": attachments,
             }),
             is_read,
