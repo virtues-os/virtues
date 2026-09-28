@@ -52,6 +52,7 @@
 	} from '$lib/api/client';
 	import { M, rise, sink } from '../motion';
 	import { readNextChapter, writeNextChapter } from '../nextChapter';
+	import { setup } from '../setup.svelte';
 
 	// `onskip` sets the step aside (Setup records it); without one, skipping
 	// just moves on.
@@ -158,8 +159,10 @@
 	const inner = $derived(Math.max(1, width - PAD_L - PAD_R));
 	/** A phone: the line is a preview, the chapters a list. */
 	const listMode = $derived(width < 520);
-	const LINE_Y = $derived(listMode ? 64 : 132);
-	const H = $derived(listMode ? 124 : 240);
+	// The line starts high enough that the intro's first beat isn't a band
+	// of empty paper; stacked names above it grow into the margin.
+	const LINE_Y = $derived(listMode ? 64 : 108);
+	const H = $derived(listMode ? 124 : 172);
 	const labelPx = $derived(listMode ? 14 : 17);
 
 	const sx = (age: number) => PAD_L + (age / SAMPLE_SPAN) * inner;
@@ -549,7 +552,7 @@
 
 	/** Which boundary years have room to be printed: one that would overprint
 	 *  its neighbor, or the end of the line, stays quiet until it is held. */
-	const YEAR_GAP = 44;
+	const YEAR_GAP = 64;
 	const yearRoom = $derived.by(() => {
 		let last = -Infinity;
 		const endX = PAD_L + inner;
@@ -590,6 +593,13 @@
 			return {
 				error: false,
 				text: `${unnamed === 1 ? 'One chapter needs' : `${unnamed} chapters need`} a name before you can save.`,
+			};
+		// Ready: say what they are for, next. The interview starts from them
+		// and asks this (prompt.rs, drawn chapters are not played back).
+		if (canSave)
+			return {
+				error: false,
+				text: `Next, ${setup.assistantName} asks what each one was, and what ended it.`,
 			};
 		return null;
 	});
@@ -709,9 +719,10 @@
 		const to = i === bands.length - 1 ? 'now' : yearOf(i);
 		return `${from} to ${to}`;
 	};
-	/** "2004 · age 13", or just the age before there is a year. */
+	/** "2004 · 13" on the line (people place chapters by age), "2004 · age
+	 *  13" when held, just the age before there is a year. */
 	const tickLabel = (k: number, full: boolean) =>
-		birthKnown ? (full ? `${yearOf(k)} · age ${shown[k]}` : String(yearOf(k))) : `age ${shown[k]}`;
+		birthKnown ? `${yearOf(k)} · ${full ? 'age ' : ''}${shown[k]}` : `age ${shown[k]}`;
 
 	function onWindowKey(e: KeyboardEvent) {
 		if (beat && beat !== 'e' && e.key === 'Escape') {
@@ -733,8 +744,11 @@
 		c: { h: 'Now write yours', s: '' },
 		e: { h: 'Now write yours', s: '' },
 	};
+	/** Two chapters named: the instruction is followed, and the heading
+	 *  becomes the thing made rather than the ask. */
+	const settled = $derived(touched && bands.filter((b) => b.title.trim()).length >= 2);
 	const head = $derived(
-		beat === 'e' && returning
+		beat === 'e' && (returning || settled)
 			? { h: 'Your chapters', s: '' }
 			: beat
 				? heads[beat]
@@ -861,41 +875,6 @@
 				</svg>
 
 				{#if !listMode}
-					<!-- Birth, at the start of the line: first in the tab order, as on the line -->
-					<fieldset class="birth" class:nudged style:left="{PAD_L - 6}px" style:top="{LINE_Y + 62}px">
-						<legend>Born</legend>
-						<span class="month"><select bind:value={birthMonth} aria-label="Birth month">
-							{#each MONTHS as m, i}
-								<option value={i + 1}>{m}</option>
-							{/each}
-						</select></span>
-						<input
-							class="birth-year"
-							type="text"
-							inputmode="numeric"
-							maxlength="4"
-							placeholder="Year"
-							aria-label="Birth year"
-							aria-invalid={birthWrong}
-							bind:this={birthYearEl}
-							bind:value={birthYearText}
-							oninput={() => {
-								saveError = null;
-								nudged = false;
-							}}
-						/>
-					</fieldset>
-
-					<button
-						type="button"
-						class="quiet add"
-						style:right="{PAD_R - 8}px"
-						style:top="{LINE_Y + 62}px"
-						onclick={() => (birthKnown ? addNext() : nudgeBirth())}
-						disabled={birthKnown && !canAdd}
-					>
-						+ Add a chapter
-					</button>
 
 					{#each bands as band, i (band.key)}
 						{@const l = layout[i]}
@@ -1013,6 +992,46 @@
 			</div>
 		{/if}
 	</div>
+
+	{#if editorShown && !listMode}
+		<!-- ONE ROW, ON THE CENTER LINE. Born sat left under the line, the add
+		     button right, and the next chapter centered: three alignments on
+		     one screen of a flow that has one (2026-09-28). -->
+		<div class="under" in:rise={{ delay: M.quick }}>
+			<fieldset class="birth inline" class:nudged>
+				<legend>Born</legend>
+				<span class="month"><select bind:value={birthMonth} aria-label="Birth month">
+					{#each MONTHS as m, i}
+						<option value={i + 1}>{m}</option>
+					{/each}
+				</select></span>
+				<input
+					class="birth-year"
+					type="text"
+					inputmode="numeric"
+					maxlength="4"
+					placeholder="Year"
+					aria-label="Birth year"
+					aria-invalid={birthWrong}
+					bind:this={birthYearEl}
+					bind:value={birthYearText}
+					oninput={() => {
+						saveError = null;
+						nudged = false;
+					}}
+				/>
+			</fieldset>
+			<span class="sep" aria-hidden="true">·</span>
+			<button
+				type="button"
+				class="quiet add-inline"
+				onclick={() => (birthKnown ? addNext() : nudgeBirth())}
+				disabled={birthKnown && !canAdd}
+			>
+				+ Add a chapter
+			</button>
+		</div>
+	{/if}
 
 	{#if editorShown && listMode}
 		<!-- The phone's editor: one row per chapter, the line above as its map -->
@@ -1651,8 +1670,7 @@
 	}
 	.birth select:focus,
 	.birth input:focus,
-	.editor.unborn .birth-year,
-	.rows .birth-year:placeholder-shown {
+	.birth-year:placeholder-shown {
 		border-bottom-color: var(--color-primary);
 	}
 	.birth-year[aria-invalid='true'] {
@@ -1846,12 +1864,24 @@
 		outline-offset: 3px;
 		border-radius: 6px;
 	}
-	.add {
-		position: absolute;
-		z-index: 2;
+	.under {
+		display: flex;
+		align-items: baseline;
+		justify-content: center;
+		flex-wrap: wrap;
+		gap: 12px;
+		margin-top: 12px;
+	}
+	.birth.inline {
+		position: static;
+	}
+	.sep {
+		color: var(--color-foreground-subtle, var(--color-foreground-muted));
+	}
+	.add-inline {
 		color: var(--color-primary);
 	}
-	.add:hover:not(:disabled) {
+	.add-inline:hover:not(:disabled) {
 		color: var(--color-primary);
 		text-decoration: underline;
 		text-underline-offset: 4px;
