@@ -31,9 +31,10 @@ use crate::api::live_turn::{self, LiveTurns};
 use std::sync::Arc;
 use tokio_stream::StreamExt;
 
-use crate::agent::{AgentConfig, AgentEvent, AgentLoop, FinishReason, StepReason};
+use crate::agent::{AgentConfig, AgentLoop};
 use crate::api::chat_usage::{record_chat_usage, UsageData};
-use crate::api::chats::{append_message, ChatMessage, ToolCall};
+use crate::api::chats::{append_message, ChatMessage};
+use crate::api::turn_recorder::{TurnRecorder, TurnUsage};
 use crate::api::compaction::{build_context_for_llm, compact_chat, CompactionOptions};
 use crate::api::token_estimation::ContextStatus;
 use crate::middleware::auth::AuthUser;
@@ -255,109 +256,6 @@ fn ghost_history(messages: &[UIMessage]) -> Vec<ChatMessage> {
         .collect()
 }
 
-/// Replace embedded data URLs with a note about what was there.
-///
-/// A `data:` URL is for the browser. Kept in a tool result it is carried to the
-/// model, stored in `parts`, and replayed on every subsequent turn — none of
-/// which it survives usefully, and all of which it fills.
-fn redact_inline_data(value: &mut serde_json::Value) {
-    /// Long enough that a small inline icon survives; short enough that no
-    /// real payload does.
-    const INLINE_LIMIT: usize = 2048;
-    match value {
-        serde_json::Value::String(s) if s.starts_with("data:") && s.len() > INLINE_LIMIT => {
-            let kind = s
-                .split_once(';')
-                .map(|(head, _)| head.trim_start_matches("data:"))
-                .filter(|k| !k.is_empty())
-                .unwrap_or("file");
-            *s = format!("[{kind}, {} KB, shown in the chat]", s.len() / 1024);
-        }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(redact_inline_data),
-        serde_json::Value::Object(map) => {
-            map.values_mut().for_each(redact_inline_data)
-        }
-        _ => {}
-    }
-}
-
-/// Materialize a turn's ordered `parts` from the pieces the stream collected.
-///
-/// Text runs keep their order relative to the tool calls that ran between them,
-/// which is the whole point: the LAST text run is the reply, and everything
-/// before it is the model narrating its way there.
-///
-/// A tool id in `turn_slots` with no matching entry in `tool_calls` is skipped
-/// rather than written as an empty invocation — that only happens if the stream
-/// ended between a tool starting and being recorded, and a part with no name or
-/// input tells a reader nothing except that something is missing.
-fn build_turn_parts(
-    turn_slots: &[TurnSlot],
-    text_segments: &[String],
-    tool_calls: &[crate::api::chats::ToolCall],
-    failed_tools: &std::collections::HashSet<String>,
-    reasoning: &str,
-) -> Vec<UIPart> {
-    let mut parts = Vec::with_capacity(turn_slots.len() + 1);
-    // The thinking comes before the turn it produced. It has its own column
-    // too, but the client stopped reading that the moment `parts` existed —
-    // it returns `parts` verbatim when there are any — so a turn that thought
-    // reloaded with an empty thinking block.
-    if !reasoning.trim().is_empty() {
-        parts.push(UIPart::Reasoning { text: reasoning.to_string() });
-    }
-    for slot in turn_slots {
-        match slot {
-            TurnSlot::Text(i) => {
-                let Some(text) = text_segments.get(*i) else { continue };
-                // A run that produced nothing is not a paragraph of silence.
-                if text.trim().is_empty() {
-                    continue;
-                }
-                parts.push(UIPart::Text { text: text.clone() });
-            }
-            TurnSlot::Tool(id) => {
-                let Some(tc) = tool_calls
-                    .iter()
-                    .find(|tc| tc.tool_call_id.as_deref() == Some(id.as_str()))
-                else {
-                    continue;
-                };
-                // The turn is over by the time this runs, so anything that
-                // returned has its output and anything that did not, did not.
-                // A tool that FAILED is its own state: picking the state off
-                // `result.is_some()` alone stored a failure as
-                // `output-available` with the reason buried inside `output`,
-                // so the red block never rendered on reload and the replay
-                // handed the model an error object as though it were an answer.
-                let failed = failed_tools.contains(id);
-                let error_text = failed.then(|| {
-                    tc.result
-                        .as_ref()
-                        .and_then(|r| r.get("error"))
-                        .and_then(|e| e.as_str())
-                        .unwrap_or("the tool reported a failure")
-                        .to_string()
-                });
-                let state = match (failed, tc.result.is_some()) {
-                    (true, _) => "output-error",
-                    (false, true) => "output-available",
-                    (false, false) => "input-available",
-                };
-                parts.push(UIPart::ToolInvocation {
-                    tool_call_id: id.clone(),
-                    tool_name: tc.tool_name.clone(),
-                    input: tc.arguments.clone(),
-                    state: state.to_string(),
-                    output: tc.result.clone(),
-                    error_text,
-                });
-            }
-        }
-    }
-    parts
-}
-
 fn default_chat_mode() -> String {
     "open".to_string()
 }
@@ -402,19 +300,6 @@ impl UIMessage {
                 .unwrap_or_default()
         })
     }
-}
-
-/// Where one piece of a turn sat in time.
-///
-/// The row already stores the turn's text (`content`) and its tool calls
-/// (`tool_calls`), but nothing recorded the ORDER they interleaved in — so a
-/// reload could show what was said and what was called, never which was said
-/// before which call. `parts` is built from this at save time.
-enum TurnSlot {
-    /// An index into the turn's text segments.
-    Text(usize),
-    /// A tool call id, resolved against `all_tool_calls` for its input/output.
-    Tool(String),
 }
 
 /// UI Part types
@@ -2131,11 +2016,8 @@ fn create_agent_stream(
 
         let tools = crate::tools::get_tools_for_agent_mode(&request.agent_mode);
 
-        // The message opens, then its first step. Text and reasoning parts
-        // open lazily inside a step and close with it: the SDK forgets its
-        // open parts at every finish-step, so a part that spans steps is a
-        // delta with no home. (The turn used to stream as one text part
-        // for its whole length, which is why it could never emit steps.)
+        // The message opens, then its first step; the recorder opens and
+        // closes the parts inside each step, and the steps after this one.
         yield (serialize_event(&StreamEvent::Start { message_id: msg_id.clone() }));
         // Compaction already happened, in the handler, before the context was
         // built from the compacted history. All that is left is to say so —
@@ -2147,61 +2029,7 @@ fn create_agent_stream(
         }
         yield (serialize_event(&StreamEvent::StartStep));
 
-        // Track accumulated content
-        let mut full_content = String::new();
-        let mut reasoning_content = String::new();
-        let mut in_reasoning = false;
-        let mut text_open = false;
-        // The row stores the turn's text as one string, so text that resumes
-        // after a tool call gets a paragraph break IN THE ROW ("…exact
-        // text.The earlier edit…" otherwise). On the wire each step's text is
-        // its own part and needs none.
-        let mut needs_text_break = false;
-        // ONE PART PER TEXT RUN, and a distinct id for each.
-        //
-        // The comment above has always said "on the wire each step's text is
-        // its own part" — and the events were right, but every one of them
-        // carried `msg_id`. The AI SDK keys a part by its id, so a second
-        // `text-start` with the id it just closed REOPENS the first part and
-        // appends to it. Every run of text in a turn merged into one block,
-        // which is why the line the model writes before reaching for a tool
-        // ("Checking what he sent in August") is indistinguishable, on the
-        // client, from the answer it writes at the end.
-        //
-        // They are not the same thing. The first is scaffolding — it says what
-        // is about to happen and is worth reading WHILE it happens; the second
-        // is the reply. Giving each run its own id is what lets the view put
-        // the scaffolding in the thinking block and leave the answer in the
-        // transcript.
-        let mut text_seq = 0usize;
-        let mut text_part_id = msg_id.clone();
-        let mut text_segments: Vec<String> = Vec::new();
-        // The turn in order, so the stored `parts` can interleave text with the
-        // tool calls it ran between — a reload then sees what the stream saw.
-        let mut turn_slots: Vec<TurnSlot> = Vec::new();
-        // Set by any error event mid-turn: the reply on screen is partial,
-        // and the row must say so or a reload shows the stub as the answer.
-        let mut interrupted = false;
-        // How the last LLM step ended, and how the loop ended: together they
-        // are the `finish` event's reason and the row's subject.
-        let mut last_step_reason: Option<StepReason> = None;
-        let mut loop_finish: Option<FinishReason> = None;
-        // The gateway's reasoning blocks across the turn's steps, for the row.
-        let mut reasoning_details: Vec<serde_json::Value> = Vec::new();
-
-        // Token usage tracking
-        let mut total_input_tokens: u32 = 0;
-        let mut total_output_tokens: u32 = 0;
-        let mut total_reasoning_tokens: u32 = 0;
-        let mut total_cache_read_tokens: u32 = 0;
-        let mut total_cache_write_tokens: u32 = 0;
-        // Authoritative spend for this turn (sum of gateway-reported usage.cost
-        // across every step), captured into app_ai_calls for the Usage tab.
-        let mut total_cost_micros: i64 = 0;
-
-        // Tool call tracking for persistence
-        let mut all_tool_calls: Vec<ToolCall> = Vec::new();
-        let mut failed_tools: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut recorder = TurnRecorder::new(msg_id.clone());
 
         // Run the agent loop with cancellation support
         let mut agent_stream = agent.run(
@@ -2217,483 +2045,166 @@ fn create_agent_stream(
             biased;
             // Live subagent status — drained even while dispatch_subagents is still executing.
             Some(update) = subagent_rx.recv() => {
-                let ev = StreamEvent::from(update);
-                yield (serialize_event(&ev));
+                yield (serialize_event(&StreamEvent::from(update)));
             }
             maybe_event = agent_stream.next() => {
-              let event = match maybe_event {
-                  Some(e) => e,
-                  None => break,
-              };
-              match event {
-                AgentEvent::TextDelta { content } => {
-                    // End reasoning if we were in it
-                    if in_reasoning {
-                        in_reasoning = false;
-                        let event = StreamEvent::ReasoningEnd { id: msg_id.clone() };
-                        yield (serialize_event(&event));
-                    }
-                    if !text_open {
-                        text_open = true;
-                        text_seq += 1;
-                        text_part_id = format!("{msg_id}:t{text_seq}");
-                        turn_slots.push(TurnSlot::Text(text_segments.len()));
-                        text_segments.push(String::new());
-                        yield (serialize_event(&StreamEvent::TextStart { id: text_part_id.clone() }));
-                    }
-                    // Text resuming after a tool call: break the paragraph in
-                    // the stored string so it doesn't butt against the previous
-                    // segment's final sentence.
-                    if needs_text_break && !full_content.is_empty() && !full_content.ends_with('\n') {
-                        full_content.push_str("\n\n");
-                    }
-                    needs_text_break = false;
-                    full_content.push_str(&content);
-                    if let Some(seg) = text_segments.last_mut() {
-                        seg.push_str(&content);
-                    }
-                    let event = StreamEvent::TextDelta {
-                        id: text_part_id.clone(),
-                        delta: content,
-                    };
-                    yield (serialize_event(&event));
+                let Some(event) = maybe_event else { break };
+                for ev in recorder.on_event(event) {
+                    yield (serialize_event(&ev));
                 }
-
-                AgentEvent::ReasoningDelta { content } => {
-                    if !in_reasoning {
-                        in_reasoning = true;
-                        let event = StreamEvent::ReasoningStart { id: msg_id.clone() };
-                        yield (serialize_event(&event));
-                    }
-                    reasoning_content.push_str(&content);
-                    let event = StreamEvent::ReasoningDelta {
-                        id: msg_id.clone(),
-                        delta: content,
-                    };
-                    yield (serialize_event(&event));
-                }
-
-                AgentEvent::ToolCallStart { id, name, args } => {
-                    // Any text that resumes after this tool call starts a new
-                    // paragraph (see needs_text_break).
-                    needs_text_break = true;
-                    turn_slots.push(TurnSlot::Tool(id.clone()));
-                    // Track tool call for persistence
-                    all_tool_calls.push(ToolCall {
-                        tool_name: name.clone(),
-                        tool_call_id: Some(id.clone()),
-                        arguments: args.clone().unwrap_or(serde_json::Value::Null),
-                        result: None, // Will be populated by ToolCallResult
-                        timestamp: Utc::now().to_rfc3339(),
-                    });
-                    // AI SDK v6: tool-input-start event
-                    let event = StreamEvent::ToolInputStart {
-                        tool_call_id: id,
-                        tool_name: name,
-                    };
-                    yield (serialize_event(&event));
-                }
-
-                AgentEvent::ToolCallArgsPartial { id, args_delta } => {
-                    // AI SDK v6: tool-input-delta event
-                    let event = StreamEvent::ToolInputDelta {
-                        tool_call_id: id,
-                        input_text_delta: args_delta,
-                    };
-                    yield (serialize_event(&event));
-                }
-
-                AgentEvent::ToolCallArgsComplete { id, args } => {
-                    // AI SDK v6: tool-input-available event (args parsing complete)
-                    // This is where the arguments become known: ToolCallStart
-                    // fires as soon as the tool has a name, and the args are
-                    // still streaming in then, so the tracked call is holding
-                    // `Null`. Writing them back here is what puts them in the
-                    // persisted row — without it a reload showed a call with
-                    // no input, and the replayed turn carried none either.
-                    let tool_name = all_tool_calls.iter_mut()
-                        .find(|tc| tc.tool_call_id.as_deref() == Some(&id))
-                        .map(|tc| {
-                            tc.arguments = args.clone();
-                            tc.tool_name.clone()
-                        })
-                        .unwrap_or_default();
-                    let event = StreamEvent::ToolInputAvailable {
-                        tool_call_id: id,
-                        tool_name,
-                        input: args,
-                    };
-                    yield (serialize_event(&event));
-                }
-
-                AgentEvent::ToolCallResult { id, result, success: false, error } => {
-                    // A failed tool is a tool error on the wire, not an output
-                    // with an error inside it. The model still sees the
-                    // failure text (executor::to_llm_content); the row keeps
-                    // it as the result so a reload shows the same.
-                    let error_text = error
-                        .or_else(|| result.get("error").and_then(|e| e.as_str()).map(str::to_string))
-                        .unwrap_or_else(|| "the tool reported a failure".to_string());
-                    if let Some(tc) = all_tool_calls.iter_mut().find(|tc| tc.tool_call_id.as_deref() == Some(&id)) {
-                        tc.result = Some(serde_json::json!({ "error": error_text }));
-                    }
-                    // Which calls failed is only known here. `{"error": …}` in
-                    // the result is not the same claim — a tool may answer with
-                    // an `error` key of its own — so the ids are kept.
-                    failed_tools.insert(id.clone());
-                    let event = StreamEvent::ToolOutputError { tool_call_id: id, error_text };
-                    yield (serialize_event(&event));
-                }
-
-                AgentEvent::ToolCallResult { id, result, success: true, error: _ } => {
-                    // Update the tracked tool call with the result. The CLIENT
-                    // gets the value whole, below — it has to, that is how a
-                    // generated image reaches the chat. The ROW does not: a
-                    // data URL is a megabyte of base64 that the model cannot
-                    // read and that would be replayed into every later turn
-                    // from `parts`, which is a chat poisoned by one picture.
-                    if let Some(tc) = all_tool_calls.iter_mut().find(|tc| tc.tool_call_id.as_deref() == Some(&id)) {
-                        let mut stored = result.clone();
-                        redact_inline_data(&mut stored);
-                        tc.result = Some(stored);
-                    }
-                    // The interview's finisher names the page the client
-                    // should open beside the chat (see NarrativeDocumentReady).
-                    let narrative_page = all_tool_calls
-                        .iter()
-                        .find(|tc| tc.tool_call_id.as_deref() == Some(&id))
-                        .filter(|tc| tc.tool_name == "write_it_up")
-                        .and_then(|_| result.get("document_page_id"))
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string);
-                    // Bill nested Deep Research worker tokens to this chat's usage. The dispatch
-                    // result carries aggregate worker token counts that the orchestrator's own
-                    // Usage events don't include.
-                    if let Some(usage) = result.get("usage") {
-                        total_input_tokens += usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                        total_output_tokens += usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                        // Their cost too. Folding in the tokens and not the
-                        // price showed the orchestrator's bill against the
-                        // whole fan-out's usage.
-                        total_cost_micros += usage.get("cost_micros").and_then(|v| v.as_i64()).unwrap_or(0);
-                    }
-                    // AI SDK v6: tool-output-available event
-                    let event = StreamEvent::ToolOutputAvailable {
-                        tool_call_id: id,
-                        output: result,
-                    };
-                    yield (serialize_event(&event));
-                    if let Some(page_id) = narrative_page {
-                        let event = StreamEvent::NarrativeDocumentReady { page_id };
-                        yield (serialize_event(&event));
-                    }
-                }
-
-                AgentEvent::Usage { prompt_tokens, completion_tokens, total_tokens: _, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost_micros } => {
-                    total_input_tokens += prompt_tokens;
-                    total_output_tokens += completion_tokens;
-                    if let Some(r) = reasoning_tokens {
-                        total_reasoning_tokens += r;
-                    }
-                    if let Some(c) = cache_read_tokens {
-                        total_cache_read_tokens += c;
-                    }
-                    if let Some(c) = cache_write_tokens {
-                        total_cache_write_tokens += c;
-                    }
-                    if let Some(c) = cost_micros {
-                        total_cost_micros += c;
-                    }
-                }
-
-                AgentEvent::ReasoningDetails { details } => {
-                    reasoning_details.extend(details);
-                }
-
-                AgentEvent::Error { message, code: _, recoverable: _ } => {
-                    interrupted = true;
-                    let event = StreamEvent::Error { error_text: message };
-                    yield (serialize_event(&event));
-                }
-
-                // A step ended. Close it on the wire; when the model asked for
-                // tools, the next LLM call is a new step and opens one.
-                AgentEvent::StepComplete { reason, .. } => {
-                    last_step_reason = Some(reason);
-                    if in_reasoning {
-                        in_reasoning = false;
-                        yield (serialize_event(&StreamEvent::ReasoningEnd { id: msg_id.clone() }));
-                    }
-                    if text_open {
-                        text_open = false;
-                        yield (serialize_event(&StreamEvent::TextEnd { id: text_part_id.clone() }));
-                    }
-                    yield (serialize_event(&StreamEvent::FinishStep));
-                    if reason == StepReason::ToolCalls {
-                        yield (serialize_event(&StreamEvent::StartStep));
-                    }
-                }
-
-                AgentEvent::Done { finish_reason, .. } => {
-                    loop_finish = Some(finish_reason);
-                }
-
-                // Events we don't need to forward to client
-                AgentEvent::LoopStarted { .. } => {}
-              }
             }
           }
         }
 
         // Drain any subagent updates buffered after the agent loop ended.
         while let Ok(update) = subagent_rx.try_recv() {
-            let ev = StreamEvent::from(update);
-            yield (serialize_event(&ev));
+            yield (serialize_event(&StreamEvent::from(update)));
         }
 
-        // End reasoning if we were in it
-        if in_reasoning {
-            let event = StreamEvent::ReasoningEnd { id: msg_id.clone() };
-            yield (serialize_event(&event));
-        }
-
-        // Close a text part a step left open (an error or a stop mid-step).
-        if text_open {
-            yield (serialize_event(&StreamEvent::TextEnd { id: text_part_id.clone() }));
-        }
-
-        // How it ended, in the SDK's words. A person's stop is an abort, not
-        // a finish. Otherwise the loop's verdict wins over the last step's,
-        // and the last step's over "stop".
         let was_cancelled = cancel_token.is_cancelled();
         // The cap and the Stop button are the same cancellation; only the
         // registration knows which. Read before `remove` below.
         let was_unattended = was_cancelled && cancel_state.was_unattended(&chat_id, &cancel_token);
-        let cut_short = loop_finish == Some(FinishReason::OutputLimit)
-            || last_step_reason == Some(StepReason::MaxTokens);
-        let hit_ceiling = loop_finish == Some(FinishReason::MaxSteps);
-        let hit_budget = loop_finish == Some(FinishReason::BudgetExceeded);
-        if was_cancelled || loop_finish == Some(FinishReason::Cancelled) {
-            let reason = if was_unattended { "unattended" } else { "stopped" };
-            yield (serialize_event(&StreamEvent::Abort { reason: Some(reason.to_string()) }));
-        } else {
-            let finish_reason = match (loop_finish, last_step_reason) {
-                (Some(FinishReason::Error), _) => "error",
-                (Some(FinishReason::MaxSteps), _) | (Some(FinishReason::BudgetExceeded), _) | (Some(FinishReason::AwaitingUser), _) => "other",
-                (Some(FinishReason::OutputLimit), _) | (_, Some(StepReason::MaxTokens)) => "length",
-                (_, Some(StepReason::ContentFilter)) => "content-filter",
-                (_, Some(StepReason::ToolCalls)) => "tool-calls",
-                _ if interrupted => "error",
-                _ => "stop",
-            };
-            yield (serialize_event(&StreamEvent::Finish { finish_reason: finish_reason.to_string() }));
+        for ev in recorder.close(was_cancelled, was_unattended) {
+            yield (serialize_event(&ev));
         }
 
         // Send [DONE] marker
         yield ("[DONE]".to_string());
 
-        // Save assistant message to chat.
-        //
-        // Text is not the only thing a turn produces. One that called tools and
-        // was stopped — or hit the step ceiling — before it wrote a word left
-        // NOTHING on disk, so a reload erased calls the person had watched run,
-        // and the "cancelled"/"interrupted" notice below had no row to hang on.
-        // A turn that produced neither text nor a call is still not a turn.
-        if !full_content.is_empty() || !all_tool_calls.is_empty() {
-            let provider = model.split('/').next().unwrap_or("unknown").to_string();
-            // The row says how the turn ended so a reload shows the same
-            // notice: the person's stop, the output cap, or an interruption.
-            let assistant_message = ChatMessage {
-                id: None,
-                role: "assistant".to_string(),
-                content: full_content.clone(),
-                timestamp: Timestamp::now(),
-                model: Some(model.clone()),
-                provider: Some(provider),
-                agent_id: Some(agent_id),
-                tool_calls: if all_tool_calls.is_empty() { None } else { Some(all_tool_calls.clone()) },
-                reasoning: if reasoning_content.is_empty() { None } else { Some(reasoning_content.clone()) },
-                intent: None,
-                // "interrupted": the stream or the model stopped before the
-                // reply was finished (VIR-334). The UI reads both on reload
-                // and shows a notice under the stub; a person's stop wins.
-                subject: if was_unattended {
-                    // The box stopped this, not the person. Telling someone
-                    // they stopped a reply they never touched is a lie about
-                    // who did what.
-                    Some("unattended".to_string())
-                } else if was_cancelled {
-                    Some("cancelled".to_string())
-                } else if cut_short {
-                    Some("length".to_string())
-                } else if hit_ceiling {
-                    Some("max_steps".to_string())
-                } else if hit_budget {
-                    Some("budget".to_string())
-                } else if interrupted {
-                    Some("interrupted".to_string())
-                } else {
-                    None
-                },
-                reasoning_details: if reasoning_details.is_empty() {
-                    None
-                } else {
-                    Some(serde_json::Value::Array(reasoning_details.clone()))
-                },
-                // THE TURN IN ORDER — the column was written as `None` by every
-                // caller and was null in every row on every box, while the
-                // client rebuilt an approximation from `content` + `tool_calls`
-                // that could only ever produce ONE text part. That is what made
-                // a reopened chat unable to tell the model's "checking his
-                // messages now" from its actual answer: the distinction was
-                // never on disk to begin with.
-                //
-                // `content` still holds the whole turn joined, because that is
-                // what the model is shown as its own history and what every
-                // older row has. This is additive: a row without `parts` falls
-                // back to the legacy reconstruction exactly as before.
-                parts: {
-                    let parts = build_turn_parts(
-                        &turn_slots,
-                        &text_segments,
-                        &all_tool_calls,
-                        &failed_tools,
-                        &reasoning_content,
-                    );
-                    if parts.is_empty() { None } else { Some(parts) }
-                },
-            };
-
-            // WHAT THE REPLY LINKED TO, CHECKED AFTER THE FACT.
-            //
-            // The wiki REFUSES a bad link (`wiki_editor::check_links`), because
-            // an article is a stored artifact and nothing has been shown yet.
-            // A chat reply has already streamed past the person by the time
-            // anything could object, so the same finding is reported instead —
-            // it cannot be enforced here without rewriting text somebody has
-            // read, and a link that silently vanishes on reload is its own kind
-            // of lie. The citation example in the prompt used to be a literal
-            // id (`/person/person_ab12`), which is exactly how the wiki's first
-            // invented link got written, so this is also how we find out
-            // whether removing it was enough.
-            match crate::api::wiki_editor::dead_links(&pool, &full_content).await {
-                Ok(problems) if !problems.is_empty() => {
-                    for problem in &problems {
-                        tracing::warn!(chat_id = %chat_id, model = %model, "the reply {problem}");
-                    }
-                }
-                Ok(_) => {}
-                Err(e) => tracing::warn!(chat_id = %chat_id, error = %e, "could not check the reply's links"),
-            }
-
-            if temporary {
-                // Ghost: nothing written. The client keeps the turn in its tab.
-            } else if let Err(e) = append_message(&pool, chat_id.clone(), assistant_message).await {
-                tracing::error!("Failed to save assistant message: {}", e);
-            }
-            // The getting-started room used to append its scripted lines here,
-            // after every turn in it. Setup replaced the room and hosts the
-            // interview in the same chat, so the script is no longer spoken
-            // (see `getting_started::narrate`).
-
-        }
-
-        // Record token usage — OUTSIDE the block above, which is about whether
-        // there is a message worth keeping. It is not about whether the wallet
-        // was debited. A model that spends its whole output budget thinking and
-        // returns no content is billed in full, and this used to record nothing
-        // at all for it: no usage row, no cost row, no trace of the turn. The
-        // spend happened either way.
-        {
-            // `cost_micros` is the gateway's authoritative figure — the same
-            // one recorded in app_ai_calls below, and the one the wallet was
-            // actually debited for. No estimating.
-            // These were literal zeros while the same totals were handed to
-            // `app_ai_calls` one call below — so the per-chat panel read 0
-            // reasoning tokens on every box while the number sat in the next
-            // table over.
-            let usage_data = UsageData {
-                input_tokens: total_input_tokens as i64,
-                output_tokens: total_output_tokens as i64,
-                reasoning_tokens: total_reasoning_tokens as i64,
-                cache_read_tokens: total_cache_read_tokens as i64,
-                // Was a literal 0 — the same sin the comment above describes,
-                // one field over. It is still 0 on every turn, but now because
-                // nothing reported a cache write, not because someone typed it.
-                cache_write_tokens: total_cache_write_tokens as i64,
-                cost_micros: Some(total_cost_micros),
-            };
-
-            // Read once and shared with the cost log below, so the two cannot
-            // disagree about which route paid for this turn.
-            //
-            // The CHECKED form, because this value decides whether the box
-            // prices the turn from its own catalog. A swallowed error here read
-            // as "not BYO" and wrote real dollars into estimated_cost_usd for
-            // tokens the owner had already paid their own provider for — the
-            // very failure `resolve_cost_usd`'s comment says was fixed once.
-            //
-            // Unknown is treated as BYO, i.e. do not price it ourselves. Of the
-            // two ways to be wrong, under-reporting a wallet turn is a gap in a
-            // display figure that app_ai_calls still records properly, while
-            // over-reporting invents a charge the person never incurred. A
-            // fabricated number is worse than a missing one.
-            let byo = match crate::api::settings_byo::byo_is_active_checked(&pool).await {
-                Ok(active) => active,
-                Err(e) => {
-                    tracing::warn!(
-                        chat_id = %chat_id,
-                        error = %e,
-                        "BYO status unreadable; not pricing this turn rather than guessing a cost"
-                    );
-                    true
-                }
-            };
-            if temporary {
-                // Ghost: app_chat_usage keys on a chat row that does not exist.
-                // app_ai_calls below still records cost and counts, no content.
-            } else if let Err(e) = record_chat_usage(&pool, chat_id.clone(), &model, usage_data, byo).await {
-                tracing::warn!(
-                    chat_id = %chat_id,
-                    error = %e,
-                    "Failed to record chat usage"
-                );
-            }
-
-            // Box-local per-call cost log (authoritative gateway cost) for the
-            // Usage/Telemetry tabs. Best-effort — never break the response.
-            if let Err(e) = crate::api::ai_calls::record_ai_call(
-                &pool,
-                &crate::api::ai_calls::AiCall {
-                    // Real feature bucket: chat | council | deep_research (these
-                    // modes share this handler), so spend attributes correctly.
-                    feature: request.agent_mode.clone(),
-                    model: model.clone(),
-                    prompt_tokens: total_input_tokens as i64,
-                    completion_tokens: total_output_tokens as i64,
-                    reasoning_tokens: total_reasoning_tokens as i64,
-                    cost_micros: total_cost_micros,
-                    // `stream()` diverts to the user's endpoint when BYO is
-                    // set, and no upstream but our own gateway sends a cost
-                    // trailer — so `total_cost_micros` is 0-as-unknown there,
-                    // and the Usage tab must show tokens instead of "$0.00".
-                    route: if byo {
-                        crate::api::ai_calls::Route::Byo
-                    } else {
-                        crate::api::ai_calls::Route::Wallet
-                    },
-                    applet_run_id: None,
-                },
-            )
-            .await
-            {
-                tracing::warn!(chat_id = %chat_id, error = %e, "Failed to record ai_call");
-            }
-        }
+        let usage = recorder.usage();
+        let subject = recorder.subject(was_cancelled, was_unattended);
+        let message = recorder.into_message(&model, agent_id, subject);
+        persist_turn(&pool, &chat_id, &model, &request.agent_mode, temporary, message, usage).await;
 
         // Clean up cancellation token when stream ends
         cancel_state.remove(&chat_id, &cancel_token);
     })
+}
+
+/// Keep what the turn produced: its row, if it has one, and its usage and
+/// cost, which it always has. A ghost chat writes neither the row nor the
+/// per-chat usage; its cost still goes to `app_ai_calls`, with no content
+/// and no chat id.
+async fn persist_turn(
+    pool: &PgPool,
+    chat_id: &str,
+    model: &str,
+    agent_mode: &str,
+    temporary: bool,
+    message: Option<ChatMessage>,
+    usage: TurnUsage,
+) {
+    if let Some(assistant_message) = message {
+        // WHAT THE REPLY LINKED TO, CHECKED AFTER THE FACT.
+        //
+        // The wiki REFUSES a bad link (`wiki_editor::check_links`), because
+        // an article is a stored artifact and nothing has been shown yet.
+        // A chat reply has already streamed past the person by the time
+        // anything could object, so the same finding is reported instead —
+        // it cannot be enforced here without rewriting text somebody has
+        // read, and a link that silently vanishes on reload is its own kind
+        // of lie. This is also how we find out whether the prompt's citation
+        // guidance is enough to stop invented links.
+        match crate::api::wiki_editor::dead_links(pool, &assistant_message.content).await {
+            Ok(problems) if !problems.is_empty() => {
+                for problem in &problems {
+                    tracing::warn!(chat_id = %chat_id, model = %model, "the reply {problem}");
+                }
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(chat_id = %chat_id, error = %e, "could not check the reply's links"),
+        }
+
+        if temporary {
+            // Ghost: nothing written. The client keeps the turn in its tab.
+        } else if let Err(e) = append_message(pool, chat_id.to_string(), assistant_message).await {
+            tracing::error!("Failed to save assistant message: {}", e);
+        }
+    }
+
+    // Usage is recorded whether or not there is a message worth keeping:
+    // that is not the same question as whether the wallet was debited. A
+    // model that spends its whole output budget thinking and returns no
+    // content is billed in full.
+    //
+    // `cost_micros` is the gateway's authoritative figure — the same one
+    // recorded in app_ai_calls below, and the one the wallet was actually
+    // debited for. No estimating. Cache writes are 0 on every turn today
+    // because nothing reports one, not because this assumes it.
+    let usage_data = UsageData {
+        input_tokens: usage.input_tokens as i64,
+        output_tokens: usage.output_tokens as i64,
+        reasoning_tokens: usage.reasoning_tokens as i64,
+        cache_read_tokens: usage.cache_read_tokens as i64,
+        cache_write_tokens: usage.cache_write_tokens as i64,
+        cost_micros: Some(usage.cost_micros),
+    };
+
+    // Read once and shared with the cost log below, so the two cannot
+    // disagree about which route paid for this turn.
+    //
+    // The CHECKED form, because this value decides whether the box prices
+    // the turn from its own catalog: a swallowed error would read as "not
+    // BYO" and write real dollars into estimated_cost_usd for tokens the
+    // owner had already paid their own provider for.
+    //
+    // Unknown is treated as BYO, i.e. do not price it ourselves. Of the two
+    // ways to be wrong, under-reporting a wallet turn is a gap in a display
+    // figure that app_ai_calls still records properly, while over-reporting
+    // invents a charge the person never incurred. A fabricated number is
+    // worse than a missing one.
+    let byo = match crate::api::settings_byo::byo_is_active_checked(pool).await {
+        Ok(active) => active,
+        Err(e) => {
+            tracing::warn!(
+                chat_id = %chat_id,
+                error = %e,
+                "BYO status unreadable; not pricing this turn rather than guessing a cost"
+            );
+            true
+        }
+    };
+    if temporary {
+        // Ghost: app_chat_usage keys on a chat row that does not exist.
+        // app_ai_calls below still records cost and counts, no content.
+    } else if let Err(e) = record_chat_usage(pool, chat_id.to_string(), model, usage_data, byo).await {
+        tracing::warn!(
+            chat_id = %chat_id,
+            error = %e,
+            "Failed to record chat usage"
+        );
+    }
+
+    // Box-local per-call cost log (authoritative gateway cost) for the
+    // Usage/Telemetry tabs. Best-effort — never break the response.
+    if let Err(e) = crate::api::ai_calls::record_ai_call(
+        pool,
+        &crate::api::ai_calls::AiCall {
+            // Real feature bucket: chat | council | deep_research (these
+            // modes share this handler), so spend attributes correctly.
+            feature: agent_mode.to_string(),
+            model: model.to_string(),
+            prompt_tokens: usage.input_tokens as i64,
+            completion_tokens: usage.output_tokens as i64,
+            reasoning_tokens: usage.reasoning_tokens as i64,
+            cost_micros: usage.cost_micros,
+            // `stream()` diverts to the user's endpoint when BYO is set, and
+            // no upstream but our own gateway sends a cost trailer — so the
+            // cost is 0-as-unknown there, and the Usage tab must show tokens
+            // instead of "$0.00".
+            route: if byo {
+                crate::api::ai_calls::Route::Byo
+            } else {
+                crate::api::ai_calls::Route::Wallet
+            },
+            applet_run_id: None,
+        },
+    )
+    .await
+    {
+        tracing::warn!(chat_id = %chat_id, error = %e, "Failed to record ai_call");
+    }
 }
 
 /// Generate a random ID for messages
@@ -2753,94 +2264,6 @@ mod tests {
         let cap = CHAT_TOOL_CAPS.iter().find(|(t, _)| *t == "web_search").map(|(_, n)| *n);
         assert_eq!(cap, Some(4), "change the <web> block's \"Four searches\" with it");
         assert!(crate::agent::prompt::AGENT_MODE_PROMPT.contains("Four searches is the most a turn gets"));
-    }
-
-    fn tool(id: &str, name: &str, result: Option<serde_json::Value>) -> crate::api::chats::ToolCall {
-        crate::api::chats::ToolCall {
-            tool_name: name.to_string(),
-            tool_call_id: Some(id.to_string()),
-            arguments: serde_json::json!({}),
-            result,
-            timestamp: "2026-09-16T00:00:00Z".to_string(),
-        }
-    }
-
-    fn kinds(parts: &[UIPart]) -> Vec<String> {
-        parts
-            .iter()
-            .map(|p| match p {
-                UIPart::Text { text } => format!("text:{}", text.trim()),
-                UIPart::ToolInvocation { tool_name, state, .. } => {
-                    format!("tool:{tool_name}:{state}")
-                }
-                _ => "other".to_string(),
-            })
-            .collect()
-    }
-
-    /// The order is the whole point. Without it a reload can say what was said
-    /// and what was called, but never which was said BEFORE which call — and
-    /// that distinction is what separates the model narrating its way to an
-    /// answer from the answer itself.
-    #[test]
-    fn a_turn_keeps_the_order_its_text_and_tools_happened_in() {
-        let slots = vec![
-            TurnSlot::Text(0),
-            TurnSlot::Tool("c1".into()),
-            TurnSlot::Text(1),
-            TurnSlot::Tool("c2".into()),
-            TurnSlot::Text(2),
-        ];
-        let segments = vec![
-            "Checking his messages.".to_string(),
-            "Nothing in August. Looking at September.".to_string(),
-            "He sent it on the 3rd.".to_string(),
-        ];
-        let calls = vec![
-            tool("c1", "sql_query", Some(serde_json::json!({"rows": []}))),
-            tool("c2", "semantic_search", Some(serde_json::json!({"rows": []}))),
-        ];
-
-        assert_eq!(
-            kinds(&build_turn_parts(&slots, &segments, &calls, &Default::default(), "")),
-            [
-                "text:Checking his messages.",
-                "tool:sql_query:output-available",
-                "text:Nothing in August. Looking at September.",
-                "tool:semantic_search:output-available",
-                "text:He sent it on the 3rd.",
-            ]
-        );
-    }
-
-    /// A turn that ends on a tool call has no reply yet. The view reads "text
-    /// with a tool after it" as narration, so an empty trailing run must not be
-    /// written — it would present itself as an answer of nothing.
-    #[test]
-    fn empty_runs_and_unrecorded_tools_are_left_out() {
-        let slots = vec![
-            TurnSlot::Text(0),
-            TurnSlot::Tool("c1".into()),
-            TurnSlot::Text(1),
-            // Started, never recorded: the stream ended in between.
-            TurnSlot::Tool("c_ghost".into()),
-        ];
-        let segments = vec!["Looking it up.".to_string(), "   \n ".to_string()];
-        let calls = vec![tool("c1", "sql_query", None)];
-
-        assert_eq!(
-            kinds(&build_turn_parts(&slots, &segments, &calls, &Default::default(), "")),
-            ["text:Looking it up.", "tool:sql_query:input-available"],
-            "a tool that never returned still shows, as awaiting output"
-        );
-    }
-
-    /// The overwhelmingly common turn: a question, an answer, no tools. It must
-    /// come out as one text part, or every plain reply would look like narration.
-    #[test]
-    fn a_turn_with_no_tools_is_all_reply() {
-        let parts = build_turn_parts(&[TurnSlot::Text(0)], &["Yes.".to_string()], &[], &Default::default(), "");
-        assert_eq!(kinds(&parts), ["text:Yes."]);
     }
 
     /// The rules block is the one place where a silent failure means the box
@@ -3199,49 +2622,6 @@ mod parts_column_tests {
         assert!(matches!(&back[1], UIPart::ToolInvocation { tool_name, .. } if tool_name == "web_search"));
     }
 
-    /// A failed tool is its own state, or the red block never renders and the
-    /// replay hands the model an error object as though it were an answer.
-    #[test]
-    fn a_failed_tool_keeps_its_failure() {
-        let mut failed = std::collections::HashSet::new();
-        failed.insert("call-0".to_string());
-        let calls = vec![ToolCall {
-            tool_name: "create_page".to_string(),
-            tool_call_id: Some("call-0".to_string()),
-            arguments: serde_json::json!({}),
-            result: Some(serde_json::json!({ "error": "the page already exists" })),
-            timestamp: "2024-01-01T00:00:00Z".to_string(),
-        }];
-        let parts = build_turn_parts(
-            &[TurnSlot::Tool("call-0".to_string())],
-            &[],
-            &calls,
-            &failed,
-            "",
-        );
-        match &parts[0] {
-            UIPart::ToolInvocation { state, error_text, .. } => {
-                assert_eq!(state, "output-error");
-                assert_eq!(error_text.as_deref(), Some("the page already exists"));
-            }
-            other => panic!("expected a tool part, got {other:?}"),
-        }
-    }
-
-    /// The thinking has its own column, but the client stopped reading it the
-    /// moment `parts` existed.
-    #[test]
-    fn a_turn_that_thought_keeps_its_thinking() {
-        let parts = build_turn_parts(
-            &[TurnSlot::Text(0)],
-            &["Yes.".to_string()],
-            &[],
-            &Default::default(),
-            "Weighing it up.",
-        );
-        assert!(matches!(&parts[0], UIPart::Reasoning { text } if text == "Weighing it up."));
-        assert!(matches!(&parts[1], UIPart::Text { .. }));
-    }
 }
 
 #[cfg(test)]

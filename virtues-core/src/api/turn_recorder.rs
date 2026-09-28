@@ -509,10 +509,10 @@ fn build_turn_parts(
     parts
 }
 
-/// What the stream sends and what the row keeps, pinned. These were written
-/// against the recorder's logic as it stood inside `create_agent_stream`, so
-/// they are the contract the extraction has to keep: the exact wire lines
-/// for each kind of turn, and the message, parts and subject it saves.
+/// What the stream sends and what the row keeps, pinned: the exact wire
+/// lines for each kind of turn, and the message, parts and subject it saves.
+/// The client parses these lines and reloads from that row, so a change here
+/// is a change to both.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -946,5 +946,143 @@ mod tests {
             serialize_event(&StreamEvent::from(update)),
             r#"{"type":"data-subagent","data":{"dispatchId":9,"subagentId":2,"title":"Prices","model":"m","status":"done","tokens":12},"transient":true}"#
         );
+    }
+}
+
+/// `parts` built from a turn's pieces, directly.
+#[cfg(test)]
+mod parts_tests {
+    use super::*;
+
+    fn tool(id: &str, name: &str, result: Option<serde_json::Value>) -> ToolCall {
+        ToolCall {
+            tool_name: name.to_string(),
+            tool_call_id: Some(id.to_string()),
+            arguments: serde_json::json!({}),
+            result,
+            timestamp: "2026-09-16T00:00:00Z".to_string(),
+        }
+    }
+
+    fn kinds(parts: &[UIPart]) -> Vec<String> {
+        parts
+            .iter()
+            .map(|p| match p {
+                UIPart::Text { text } => format!("text:{}", text.trim()),
+                UIPart::ToolInvocation { tool_name, state, .. } => {
+                    format!("tool:{tool_name}:{state}")
+                }
+                _ => "other".to_string(),
+            })
+            .collect()
+    }
+
+    /// The order is the whole point. Without it a reload can say what was said
+    /// and what was called, but never which was said BEFORE which call — and
+    /// that distinction is what separates the model narrating its way to an
+    /// answer from the answer itself.
+    #[test]
+    fn a_turn_keeps_the_order_its_text_and_tools_happened_in() {
+        let slots = vec![
+            TurnSlot::Text(0),
+            TurnSlot::Tool("c1".into()),
+            TurnSlot::Text(1),
+            TurnSlot::Tool("c2".into()),
+            TurnSlot::Text(2),
+        ];
+        let segments = vec![
+            "Checking his messages.".to_string(),
+            "Nothing in August. Looking at September.".to_string(),
+            "He sent it on the 3rd.".to_string(),
+        ];
+        let calls = vec![
+            tool("c1", "sql_query", Some(serde_json::json!({"rows": []}))),
+            tool("c2", "semantic_search", Some(serde_json::json!({"rows": []}))),
+        ];
+
+        assert_eq!(
+            kinds(&build_turn_parts(&slots, &segments, &calls, &Default::default(), "")),
+            [
+                "text:Checking his messages.",
+                "tool:sql_query:output-available",
+                "text:Nothing in August. Looking at September.",
+                "tool:semantic_search:output-available",
+                "text:He sent it on the 3rd.",
+            ]
+        );
+    }
+
+    /// A turn that ends on a tool call has no reply yet. The view reads "text
+    /// with a tool after it" as narration, so an empty trailing run must not be
+    /// written — it would present itself as an answer of nothing.
+    #[test]
+    fn empty_runs_and_unrecorded_tools_are_left_out() {
+        let slots = vec![
+            TurnSlot::Text(0),
+            TurnSlot::Tool("c1".into()),
+            TurnSlot::Text(1),
+            // Started, never recorded: the stream ended in between.
+            TurnSlot::Tool("c_ghost".into()),
+        ];
+        let segments = vec!["Looking it up.".to_string(), "   \n ".to_string()];
+        let calls = vec![tool("c1", "sql_query", None)];
+
+        assert_eq!(
+            kinds(&build_turn_parts(&slots, &segments, &calls, &Default::default(), "")),
+            ["text:Looking it up.", "tool:sql_query:input-available"],
+            "a tool that never returned still shows, as awaiting output"
+        );
+    }
+
+    /// The overwhelmingly common turn: a question, an answer, no tools. It must
+    /// come out as one text part, or every plain reply would look like narration.
+    #[test]
+    fn a_turn_with_no_tools_is_all_reply() {
+        let parts = build_turn_parts(&[TurnSlot::Text(0)], &["Yes.".to_string()], &[], &Default::default(), "");
+        assert_eq!(kinds(&parts), ["text:Yes."]);
+    }
+
+    /// A failed tool is its own state, or the red block never renders and the
+    /// replay hands the model an error object as though it were an answer.
+    #[test]
+    fn a_failed_tool_keeps_its_failure() {
+        let mut failed = HashSet::new();
+        failed.insert("call-0".to_string());
+        let calls = vec![ToolCall {
+            tool_name: "create_page".to_string(),
+            tool_call_id: Some("call-0".to_string()),
+            arguments: serde_json::json!({}),
+            result: Some(serde_json::json!({ "error": "the page already exists" })),
+            timestamp: "2024-01-01T00:00:00Z".to_string(),
+        }];
+        let parts = build_turn_parts(
+            &[TurnSlot::Tool("call-0".to_string())],
+            &[],
+            &calls,
+            &failed,
+            "",
+        );
+        match &parts[0] {
+            UIPart::ToolInvocation { state, error_text, .. } => {
+                assert_eq!(state, "output-error");
+                assert_eq!(error_text.as_deref(), Some("the page already exists"));
+            }
+            other => panic!("expected a tool part, got {other:?}"),
+        }
+    }
+
+    /// The thinking has its own column, but the client stopped reading it the
+    /// moment `parts` existed.
+    #[test]
+    fn a_turn_that_thought_keeps_its_thinking() {
+        let parts = build_turn_parts(
+            &[TurnSlot::Text(0)],
+            &["Yes.".to_string()],
+            &[],
+            &Default::default(),
+            "Weighing it up.",
+        );
+        assert!(matches!(&parts[0], UIPart::Reasoning { text } if text == "Weighing it up."));
+        assert!(matches!(&parts[1], UIPart::Text { .. }));
     }
 }
