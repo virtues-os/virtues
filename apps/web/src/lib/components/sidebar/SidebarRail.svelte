@@ -35,10 +35,12 @@
 	 * a tile at the foot of the spacer that opened a chat; now its panel lists
 	 * the steps and sends you back into the full-screen flow. It is the one
 	 * tile in primary ink while unselected — the standing call to act, and it
-	 * expires — and its label counts what is done ("5/7"). It leaves the rail
+	 * expires — and its glyph is a ring with one arc per step, inked as each
+	 * is done, so the label stays the one word. It leaves the rail
 	 * once every step is done, which only moves Home up into its place.
 	 */
 	import AtlasIcon from './AtlasIcon.svelte';
+	import SetupRing from './SetupRing.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarRoom } from '$lib/stores/sidebarRoom.svelte';
 	import { sidebarState } from '$lib/stores/sidebarState.svelte';
@@ -150,7 +152,7 @@
 		title={panelOpen ? 'Hide the sidebar (⌘S)' : 'Show the sidebar (⌘S)'}
 		onclick={toggleSidebar}
 	>
-		<!-- Drawn, not typed. The JJannon ∴ glyph is text-weight — a 21px glyph
+		<!-- Drawn, not typed. A typed ∴ glyph is text-weight — a 21px glyph
 		     put a 12px figure with 2px dots over a column of 20px line icons. The
 		     geometry is the app icon's and ThinkingMark's, exactly: equilateral,
 		     side 15, r 3, on the 24-unit box `virtues:logo` uses in icons.ts, so
@@ -178,13 +180,17 @@
 			class:setup={room.group === 'setup'}
 			aria-label={room.label}
 			aria-pressed={isSelected(room)}
-			title={`${room.label} · ${room.chord}`}
+			title={room.group === 'setup' ? `${room.label} · ${setupCount} done · ${room.chord}` : `${room.label} · ${room.chord}`}
 			onclick={() => activate(room)}
 		>
 			<span class="rail-tile">
-				<AtlasIcon name={room.icon} size={20} stroke={1.0} bare />
+				{#if room.group === 'setup'}
+					<SetupRing size={20} />
+				{:else}
+					<AtlasIcon name={room.icon} size={20} stroke={1.0} bare />
+				{/if}
 			</span>
-			<span class="rail-label">{room.group === 'setup' ? `${room.label} ${setupCount}` : room.label}</span>
+			<span class="rail-label">{room.label}</span>
 		</button>
 	{/snippet}
 

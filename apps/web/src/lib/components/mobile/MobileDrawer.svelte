@@ -32,6 +32,7 @@
 	 */
 	import Icon from "$lib/components/Icon.svelte";
 	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
+	import SetupRing from "$lib/components/sidebar/SetupRing.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
@@ -123,7 +124,7 @@
 <nav class="drawer" aria-label="Navigation">
 	<header class="mast">
 		<!-- The mark, drawn: same optical grid as the desktop mast — the
-		     JJannon ∴ glyph is text-weight, a masthead needs logo weight. -->
+		     typed ∴ glyph is text-weight, a masthead needs logo weight. -->
 		<span class="mark-glyph" aria-hidden="true">
 			<svg viewBox="0 0 12 10.5" width="12" height="10.5" fill="currentColor">
 				<circle cx="6" cy="2.4" r="1.5" />
@@ -155,7 +156,7 @@
 		     old bottom bar's, moved up. -->
 		{#if setupOpen}
 			<button class="setup-row" onclick={continueSetup}>
-				<AtlasIcon name="setup" bare />
+				<SetupRing />
 				<span class="row-text">Continue setup</span>
 				<span class="setup-count">{setup.doneCount}/{setup.steps.length}</span>
 			</button>
