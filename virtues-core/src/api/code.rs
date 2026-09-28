@@ -29,8 +29,8 @@
 //! - The appliance Python (`python3` on PATH) must carry the data-science
 //!   packages (numpy/pandas/scipy/numpy-financial) — they used to live in the
 //!   now-removed sandbox Docker image and must be baked into the appliance image.
-//! - virtues-core must run with rights to the system service manager (root or an
-//!   appropriately-privileged unit) for `systemd-run` to set these properties.
+//! - The box user needs passwordless `sudo` (the installer grants it) so that
+//!   `sudo -n systemd-run` can create a system unit without a polkit agent.
 
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
@@ -141,7 +141,18 @@ async fn execute_with_systemd_run(
     code: &str,
     timeout_secs: u32,
 ) -> Result<(String, String, bool), SandboxError> {
-    let mut cmd = Command::new("systemd-run");
+    // `sudo` sees systemd-run's absence as a plain non-zero exit, so check for
+    // it first to keep the release-build refusal above meaningful.
+    if crate::applet_runner::which_systemd_run().is_none() {
+        return Err(SandboxError::Unavailable);
+    }
+    // `sudo -n`, matching applet_runner and api/updates.rs. The box runs as
+    // `User=virtues`, and a non-root user creating a system transient unit
+    // goes through polkit, which on a headless box denies with "Interactive
+    // authentication required" — every call failed in ~70ms. Root here does
+    // not reach the code: `DynamicUser=yes` below runs it as a throwaway uid.
+    let mut cmd = Command::new("sudo");
+    cmd.args(["-n", "systemd-run"]);
     cmd.args([
         "--pipe",    // wire the unit's stdio to ours
         "--wait",    // block and propagate the exit status
@@ -191,7 +202,11 @@ async fn execute_with_systemd_run(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(SandboxError::Unavailable)
         }
-        Err(e) => return Err(SandboxError::Other(format!("failed to start systemd-run: {e}"))),
+        Err(e) => {
+            return Err(SandboxError::Other(format!(
+                "failed to start sudo systemd-run: {e}"
+            )))
+        }
     };
 
     if let Some(mut stdin) = child.stdin.take() {
