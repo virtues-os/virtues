@@ -570,11 +570,30 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
         return Ok(None);
     }
 
-    let home_tz = super::profile::get_timezone(pool)
-        .await
-        .unwrap_or(None)
-        .unwrap_or_else(|| "UTC".to_string());
-    let day_tz = crate::timezone::resolve_day_timezone(pool, date, &home_tz).await;
+    // A day keeps the zone it was first windowed in (agents/record/timezone-model.md).
+    // Resolving afresh from location falls back to the home zone, and to UTC when
+    // the profile can't be read, so a day with no location points would be
+    // re-windowed five hours off and its stored zone overwritten.
+    let stored_tz: Option<String> =
+        sqlx::query_scalar("SELECT start_timezone FROM wiki_days WHERE date = $1")
+            .bind(date)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+    let day_tz = match stored_tz {
+        Some(tz) => tz,
+        None => {
+            let home_tz = match super::profile::get_timezone(pool).await {
+                Ok(tz) => tz,
+                Err(e) => {
+                    tracing::warn!(date = %date, error = %e, "couldn't read the home timezone; windowing the day in UTC");
+                    None
+                }
+            }
+            .unwrap_or_else(|| "UTC".to_string());
+            crate::timezone::resolve_day_timezone(pool, date, &home_tz).await
+        }
+    };
     let tz: Option<Tz> = day_tz.parse().ok();
     let (start_str, end_str) = day_boundaries_utc(date, Some(&day_tz));
 
