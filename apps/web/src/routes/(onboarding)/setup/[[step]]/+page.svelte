@@ -755,6 +755,8 @@
 
 	/* ── the letter ──────────────────────────────────────────────────── */
 	.letter-stage {
+		/* The letter lays its margin out against this (FoundersLetter). */
+		container: letter / inline-size;
 		display: flex;
 		justify-content: center;
 		padding: 1.5rem 16px 7rem;
@@ -777,7 +779,7 @@
 			transform var(--m-base) var(--m-ease),
 			opacity var(--m-base) var(--m-ease);
 	}
-	@media (min-width: 76rem) {
+	@container letter (min-width: 76rem) {
 		.paper {
 			max-width: calc(38rem + 2.5rem + 15rem + 9rem);
 			padding-right: calc(4.5rem + 17.5rem);

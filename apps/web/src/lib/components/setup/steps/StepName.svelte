@@ -165,6 +165,12 @@
 		frozenLabel = null;
 	}
 
+	/**
+	 * Save, then move on. Only the save can fail the step: the dissolve and
+	 * the refresh after it are the page's own business, and when they sat in
+	 * the same `try` a hiccup in either read as "couldn't save", with the name
+	 * already saved.
+	 */
 	async function go() {
 		if (!trimmed || busy) return;
 		busy = true;
@@ -172,24 +178,40 @@
 		try {
 			if (beat === 1) {
 				if (changed) await updateAssistantProfile({ assistant_name: trimmed });
-				assistant = trimmed;
-				setup.assistantName = trimmed;
-				await dissolve();
-				beat = 2;
-				claimed = false;
-				text = original = setup.profile?.preferred_name ?? "";
-				await focusEnd();
-				busy = false;
 			} else {
 				await updateProfile({ preferred_name: trimmed });
-				await dissolve();
-				await setup.refresh();
-				onnext();
 			}
-		} catch {
+		} catch (e) {
+			console.error("[setup] saving a name failed", e);
 			error =
 				beat === 1 ? "Your server couldn't save that name. Try again." : "Your server couldn't save your name. Try again.";
 			busy = false;
+			return;
+		}
+		const settle = async (what: string, run: () => Promise<unknown>) => {
+			try {
+				await run();
+			} catch (e) {
+				console.error(`[setup] after saving a name, ${what} failed`, e);
+			}
+		};
+		if (beat === 1) {
+			assistant = trimmed;
+			setup.assistantName = trimmed;
+			await settle("the dissolve", dissolve);
+			leaving = false;
+			frozenLabel = null;
+			beat = 2;
+			claimed = false;
+			text = original = setup.profile?.preferred_name ?? "";
+			await focusEnd();
+			busy = false;
+		} else {
+			await settle("the dissolve", dissolve);
+			leaving = false;
+			frozenLabel = null;
+			await settle("the refresh", () => setup.refresh());
+			onnext();
 		}
 	}
 

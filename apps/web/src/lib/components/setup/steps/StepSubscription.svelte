@@ -367,8 +367,9 @@
 		<aside class="why">
 			<p class="why-head">Why a subscription</p>
 			<p>
-				Your server keeps the record. For now, your assistant borrows its intelligence from the best models there
-				are, under terms that keep nothing you send, and a subscription pays for that.
+				Your server keeps the record of your life. Keeping it well takes a librarian: models that read each day,
+				write it up, and find what you ask for. For now the best of them run elsewhere, under terms that keep
+				nothing you send, and a subscription pays for them.
 			</p>
 			<p>The goal is for all of it to run in your home. The hardware is close, but not yet cheap enough.</p>
 		</aside>

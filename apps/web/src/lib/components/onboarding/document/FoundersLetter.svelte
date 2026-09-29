@@ -447,15 +447,19 @@
 		color: var(--color-foreground);
 	}
 
-	/* THE MARGIN PROPER. Opens only when the window can hold the sheet, a
+	/* THE MARGIN PROPER. Opens only when the space can hold the sheet, a
 	   gutter, and a 15rem margin column with room to spare on both sides:
 	   38 + 2.5 + 15, doubled for symmetry, plus the wrap's padding. Below that
 	   the notes stay in the column — a margin that squeezes the prose is worse
 	   than no margin. The column does NOT move: it stays where the sheet
 	   centers it, and the margin hangs off its right edge into the space that
 	   was already empty. Marginalia are an addition to a page, not a change
-	   to where the page sits. */
-	@media (min-width: 76rem) {
+	   to where the page sits.
+	   THE SPACE, NOT THE WINDOW: whoever sets the letter names a `letter`
+	   container (the stage, the letter page, Setup's tab in the app). Keyed
+	   to the window, the notes opened in a pane beside the sidebar as if the
+	   pane were the window, and hung off the sheet's edge. */
+	@container letter (min-width: 76rem) {
 		.body {
 			display: grid;
 			grid-template-columns: minmax(0, 1fr) var(--m-width);
@@ -519,29 +523,20 @@
 		margin-top: 1.5rem;
 	}
 
-	/* The quotation, framed: a rounded card on the theme's elevated surface,
-	   the same radius the film block uses, so the borrowed voice sits in its
-	   own room rather than continuing the asks' hairline. Serif at the
-	   prose's size; the attribution in the sign-off's small sans. */
-	/* AN EPIGRAPH, NOT A CALLOUT (2026-09-23). The quotation sat in a grey
-	   rounded box — app furniture set down inside a letter. Now it is set the
-	   way a book sets a borrowed line: indented, a step quieter than the
-	   prose, in the same roman serif (never italic), with the attribution in
-	   small type beneath. The indent alone marks it as someone else's words. */
+	/* A QUOTATION, SET AS THE APP SETS ONE. The rule down its left edge is
+	   the same one a `>` quote gets in any page (`--md-quote-border`), so the
+	   borrowed voice reads as quoted, where an indent alone read as the
+	   letter wandering. A step quieter than the prose, in the same roman
+	   serif (never italic), the attribution in small type beneath. */
 	.quote {
-		margin: 2.5rem 0 0 2.5rem;
-		padding: 0;
+		margin: 2.5rem 0 0;
+		padding: 0 0 0 1.25rem;
+		border-left: var(--md-quote-border, 3px solid var(--color-border));
 		max-width: 30rem;
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: var(--t-body);
 		line-height: 1.7;
 		color: var(--color-foreground-muted);
-	}
-
-	@media (max-width: 640px) {
-		.quote {
-			margin-left: 1.25rem;
-		}
 	}
 
 	.quote p {

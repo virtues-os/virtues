@@ -35,6 +35,8 @@
 
 <style>
 	.letter-in {
+		/* The letter lays its margin out against this (FoundersLetter). */
+		container: letter / inline-size;
 		animation: letter-in 900ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
 	}
 	@keyframes letter-in {
