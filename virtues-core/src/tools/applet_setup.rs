@@ -738,6 +738,9 @@ mod tests {
             assert!(guide.contains(must), "guide lost {must:?}");
         }
         assert!(!guide.contains("For builtin (Rust)"));
+        // The cut point must exist verbatim: renamed, the split finds nothing
+        // and the repo section leaks into the guide.
+        assert!(AGENTS_MD.contains("\n## For builtin (Rust) applet development"));
         assert!(wants_guide(&serde_json::json!({ "guide": true })));
         assert!(!wants_guide(&serde_json::json!({ "name": "x", "description": "y" })));
     }

@@ -861,7 +861,7 @@ fn list_applets_tool() -> ToolConfig {
         id: "list_applets".to_string(),
         name: "List Applets".to_string(),
         description: "List applets".to_string(),
-        llm_description: "List applets: id, name, owner, enabled, schedule, triggers, last run.".to_string(),
+        llm_description: "List applets and their last run.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
@@ -907,7 +907,7 @@ fn edit_applet_tool() -> ToolConfig {
         id: "edit_applet".to_string(),
         name: "Edit Applet".to_string(),
         description: "Update an action's configuration".to_string(),
-        llm_description: "Change an applet: only the fields to change go in `patch`; null clears. System applets take only enabled, schedule, config, memory.".to_string(),
+        llm_description: "Change an applet: only the fields to change go in `patch`; null clears. `config` replaces the whole object. `schedule`: 6-field cron, local time. System applets take only enabled, schedule, config, memory.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["id", "patch"],
@@ -964,7 +964,7 @@ fn run_applet_tool() -> ToolConfig {
         id: "run_applet".to_string(),
         name: "Run Applet".to_string(),
         description: "Trigger an action to run now".to_string(),
-        llm_description: "Run an applet now; it needs the `tool` trigger. Returns its status and summary.".to_string(),
+        llm_description: "Run an applet now; it needs the `tool` trigger.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["id"],
