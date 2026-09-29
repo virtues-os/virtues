@@ -93,8 +93,6 @@
 		write_it_up: 4,
 		generate_image: 4,
 		update_memory: 4,
-		set_user_name: 4,
-		set_assistant_name: 4,
 		propose_narrative_identity_edit: 4,
 		get_project_item: 4,
 		record_introductions: 4,
@@ -436,9 +434,6 @@
 				const verb = tense(pending, "Running", "Ran");
 				return shown ? `${verb} ${shown}` : tense(pending, "Running a command", "Ran a command");
 			}
-			case "set_user_name":
-			case "set_assistant_name":
-				return tense(pending, "Learning a name", "Learned a name");
 			case "propose_narrative_identity_edit":
 				return tense(
 					pending,
@@ -449,7 +444,10 @@
 			case "get_applet":
 				return tense(pending, "Checking what's set up", "Checked what's set up");
 			case "setup_applet":
-				return tense(pending, "Setting up an applet", "Set up an applet");
+				// `{guide: true}` only reads the authoring guide; it sets nothing up.
+				return input.guide === true
+					? tense(pending, "Reading how applets work", "Read how applets work")
+					: tense(pending, "Setting up an applet", "Set up an applet");
 			case "edit_applet":
 				return tense(pending, "Changing an applet", "Changed an applet");
 			case "delete_applet":
@@ -506,21 +504,6 @@
 		}}
 		aria-expanded={hasContent ? expanded : undefined}
 	>
-		{#if hasContent}
-			<span class="chevron" class:rotated={expanded}>
-				<svg width="12" height="12" viewBox="0 0 12 12">
-					<path
-						d="M4 2.5L7.5 6L4 9.5"
-						stroke="currentColor"
-						stroke-width="1.25"
-						fill="none"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-					/>
-				</svg>
-			</span>
-		{/if}
-
 		<span class="header-content">
 			{#if isThinking || landing}
 				<!-- How deep, in dots. It says nothing the label does not, and
@@ -558,6 +541,23 @@
 				</span>
 			{/if}
 		</span>
+
+		<!-- The dots lead; the chevron only turns up on hover, trailing, as the
+		     affordance for opening the block rather than a permanent glyph. -->
+		{#if hasContent}
+			<span class="chevron" class:rotated={expanded}>
+				<svg width="12" height="12" viewBox="0 0 12 12">
+					<path
+						d="M4 2.5L7.5 6L4 9.5"
+						stroke="currentColor"
+						stroke-width="1.25"
+						fill="none"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					/>
+				</svg>
+			</span>
+		{/if}
 	</button>
 
 	<!-- Expandable content with slide animation -->
@@ -667,7 +667,7 @@
 		width: 12px;
 		height: 12px;
 		flex-shrink: 0;
-		opacity: 0.6;
+		opacity: 0;
 		transition:
 			transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
 			opacity 0.15s ease;
@@ -677,7 +677,8 @@
 		transform: rotate(90deg);
 	}
 
-	.block-header.has-content:hover .chevron {
+	.block-header.has-content:hover .chevron,
+	.block-header.has-content:focus-visible .chevron {
 		opacity: 1;
 	}
 
