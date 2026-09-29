@@ -8,6 +8,8 @@
     "allow-command-surface-version",
     "allow-shell-identity-cmd",
     "allow-bundle-boot-ok",
+    "allow-bundle-update-ready",
+    "allow-ota-check-now",
     "allow-update-state-cmd",
     "allow-apply-update-cmd",
     "allow-check-app-update-cmd",

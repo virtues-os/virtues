@@ -75,6 +75,17 @@ pub struct FoundServer {
 ///
 /// A bare existence check (not a full parse) — enough for the tray / launch
 /// decision; the reach plugin does the authoritative load when it serves.
+/// A page of the Mac's own copy of the UI, on the `virtues://` scheme the
+/// phone uses (see `serve_ui`). One origin for every page of the app's own
+/// copy, so its storage and its OTA bundles never split across two.
+fn own_copy(route: &str) -> WebviewUrl {
+    WebviewUrl::CustomProtocol(
+        format!("virtues://localhost/{route}")
+            .parse()
+            .expect("static url"),
+    )
+}
+
 fn is_paired() -> bool {
     // Through the plugin's path fn, so a dev profile (VIRTUES_PROFILE) checks
     // ITS store, not the machine's real one.
@@ -230,6 +241,9 @@ async fn diagnose_box() -> String {
 fn is_own_page(url: &url::Url, loopback_port: u16) -> bool {
     match url.scheme() {
         "tauri" => url.host_str() == Some("localhost"),
+        // The app's own copy of the UI (`serve_ui`, the phone's scheme), since
+        // 2026-09-29: agents/plan/local-ui-plan.md.
+        "virtues" => url.host_str() == Some("localhost"),
         "about" => matches!(url.as_str(), "about:blank" | "about:srcdoc"),
         "http" | "https" => match url.host_str() {
             Some("tauri.localhost") => true,
@@ -253,6 +267,8 @@ mod own_page_tests {
     #[test]
     fn the_app_and_the_tunnel_are_allowed() {
         assert!(own("tauri://localhost/setup"));
+        assert!(own("virtues://localhost/setup"));
+        assert!(own("virtues://localhost/reconnect"));
         assert!(own("http://tauri.localhost/connect.html#reset"));
         assert!(own("https://tauri.localhost/"));
         assert!(own("http://localhost:7117/setup?x=1"));
@@ -270,6 +286,7 @@ mod own_page_tests {
         assert!(!own("http://box.virtues:8000/"));
         assert!(!own("file:///Users/nick/Downloads/a.pdf"));
         assert!(!own("tauri://evil.example/"));
+        assert!(!own("virtues://evil.example/"));
         assert!(!own("data:text/html,hi"));
     }
 }
@@ -349,15 +366,29 @@ fn shell_identity_cmd(app: AppHandle) -> virtues_lib::ShellIdentity {
 /// abandoned, pointer reverted. Downloading proved nothing; rendering does.
 #[tauri::command]
 fn bundle_boot_ok(app: AppHandle) {
-    if let Ok(dir) = app.path().app_data_dir() {
-        // Desktop has no OTA overlay store, so `booted_bundle_id()` is always
-        // None here and this is a guaranteed no-op — kept registered so the
-        // SPA's unconditional boot-ok call has somewhere harmless to land.
-        virtues_lib::web_bundle::mark_boot_ok(
-            &dir,
-            virtues_lib::web_bundle::booted_bundle_id().as_deref(),
-        );
-    }
+    // Confirms the bundle this page load was pinned to (the Mac's own copy,
+    // since 2026-09-29). A page the box served has no overlay pin, and this is
+    // then a harmless no-op.
+    virtues_lib::confirm_page_load(&app);
+}
+
+/// Is a newer UI bundle staged since this page loaded? The SPA reloads while
+/// hidden when it is (`checkForNewUi` in `routes/(app)/+layout.svelte`). Same command on the phone.
+#[tauri::command]
+fn bundle_update_ready(app: AppHandle) -> bool {
+    virtues_lib::update_ready(&app)
+}
+
+/// Check the box for a newer UI bundle now, at the UI's request (the window
+/// coming back to the front). Returns at once; the work runs on its own
+/// thread. Same command on the phone. The Mac almost never relaunches (closing
+/// the window only hides it), so the launch check alone would go stale.
+#[tauri::command]
+fn ota_check_now(app: AppHandle) {
+    #[cfg(target_os = "macos")]
+    std::thread::spawn(move || virtues_lib::ota_check(&app));
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 }
 
 /// Returns whether the machine is currently paired to a Virtues server.
@@ -1474,6 +1505,15 @@ const ZOOM_HOTKEYS_JS: &str = r#"
 fn main() {
     let builder = tauri::Builder::default();
 
+    // The app's own copy of the UI, on the phone's scheme and through the
+    // phone's handler (`virtues_lib::serve_ui`): baked build, OTA overlay from
+    // the box, each page load pinned to one bundle. macOS only: Windows and
+    // Linux bake no UI yet. See agents/plan/local-ui-plan.md.
+    #[cfg(target_os = "macos")]
+    let builder = builder.register_uri_scheme_protocol("virtues", |ctx, request| {
+        virtues_lib::serve_ui(ctx.app_handle(), &request)
+    });
+
     // Single-instance guard — Windows/Linux only. macOS is single-instance
     // natively (LaunchServices) and uses the tray + RunEvent::Reopen model, so
     // gating it off there avoids interfering with that. Elsewhere, a second
@@ -1513,6 +1553,8 @@ fn main() {
             command_surface_version,
             shell_identity_cmd,
             bundle_boot_ok,
+            bundle_update_ready,
+            ota_check_now,
             update_state_cmd,
             apply_update_cmd,
             check_app_update_cmd,
@@ -1595,6 +1637,27 @@ fn main() {
             #[cfg(target_os = "macos")]
             app.manage(std::sync::Mutex::new(UpdateState::default()));
 
+            // The Mac's own copy of the UI (`virtues://`), kept current like
+            // the phone's: drop an overlay a newer app build has overtaken
+            // (pointers only, before any page exists), then look for a newer
+            // bundle on the box off the launch path. A staged bundle applies at
+            // the next page load. See agents/plan/local-ui-plan.md.
+            #[cfg(target_os = "macos")]
+            {
+                if let Ok(dir) = app.path().app_data_dir() {
+                    let baked = virtues_lib::baked_bundle_version(app.handle());
+                    if let Some(dropped) =
+                        virtues_lib::web_bundle::drop_stale_overlay(&dir, baked.as_deref())
+                    {
+                        eprintln!("[ota] overlay {dropped} is older than this app's own UI; back to the build it shipped with");
+                    }
+                }
+                if app.reach().is_paired() {
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || virtues_lib::ota_check(&handle));
+                }
+            }
+
             // Decide where to land. A valid pairing reconnects SILENTLY (the
             // 90% reinstall case); we only ever interrupt when something's
             // actually wrong, and the connect screen is the single recovery
@@ -1643,7 +1706,7 @@ fn main() {
                 // copy at the same step. Windows and Linux bake nothing yet
                 // and keep the connect page.
                 if cfg!(target_os = "macos") {
-                    WebviewUrl::App("setup".into())
+                    own_copy("setup")
                 } else {
                     WebviewUrl::App("connect.html".into())
                 }
@@ -1660,8 +1723,8 @@ fn main() {
                     // both itself and can put a moved server back on Wi-Fi
                     // over Bluetooth (src/lib/components/recovery/). Windows
                     // and Linux bake nothing yet and keep the connect page.
-                    Some(false) if cfg!(target_os = "macos") => WebviewUrl::App("reconnect".into()),
-                    None if cfg!(target_os = "macos") => WebviewUrl::App("reconnect".into()),
+                    Some(false) if cfg!(target_os = "macos") => own_copy("reconnect"),
+                    None if cfg!(target_os = "macos") => own_copy("reconnect"),
                     Some(false) => WebviewUrl::App("connect.html#reset".into()),
                     None => WebviewUrl::App("connect.html#unreachable".into()),
                 }

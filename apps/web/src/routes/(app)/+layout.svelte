@@ -37,7 +37,7 @@
 	import type { Snippet } from "svelte";
 
 	import { installClientHeader, setShellAppVersion } from "$lib/build";
-	import { reportBootOk, otaCheckNow, shellIdentity } from "$lib/tauri/bridge";
+	import { otaCheckNow, bundleUpdateReady, shellIdentity } from "$lib/tauri/bridge";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 
@@ -60,7 +60,19 @@
 	// Foreground OTA check — hoisted to component scope so onDestroy can remove
 	// it. `onMount` is async here, so a returned cleanup would never run.
 	function checkForNewUi() {
-		if (!document.hidden) void otaCheckNow();
+		if (!document.hidden) {
+			void otaCheckNow();
+			return;
+		}
+		// Hidden: if the shell has staged a newer UI since this page loaded,
+		// reload now, while nobody is looking, and the next time the app is
+		// shown it is the new one. One rule on the phone and the Mac (a Mac is
+		// almost never relaunched; closing its window only hides it). Only in
+		// the app itself: Setup and the recovery screens hold state a reload
+		// would lose, like an open Bluetooth link. agents/plan/local-ui-plan.md.
+		void bundleUpdateReady().then((ready) => {
+			if (ready && document.hidden) window.location.reload();
+		});
 	}
 
 	// Get session expiry from page data
@@ -136,22 +148,18 @@
 
 	// Load chat sessions, workspaces, and initialize theme on mount
 	onMount(async () => {
-		// Confirm to the shell that this build actually rendered. An OTA bundle
-		// stays pending until this lands, and a bundle still pending at the next
-		// launch is treated as one that failed to boot and is rolled back — so
-		// removing this call silently reverts every update. It lives in onMount,
-		// not at module scope, because a module that parses is not a page that
-		// renders, and rendering is the thing being proven. See
-		// src-tauri/src/web_bundle.rs.
-		void reportBootOk();
+		// Boot-ok (confirming this bundle rendered) moved to the ROOT layout on
+		// 2026-09-29, so Setup and the recovery screens confirm too: a page load
+		// that never confirms is rolled back by the next one.
 
 		// Ask the shell to look for newer UI whenever we come back to the
 		// foreground. The shell also checks at launch, but this app is not
 		// relaunched often — the mic session keeps it alive for days — so
 		// without this a phone could sit on a stale bundle indefinitely. The
 		// check is cheap when there is nothing new (one small GET) and never
-		// swaps the bundle underneath the running session; anything it applies
-		// takes effect at the next launch. Registers the COMPONENT-SCOPE
+		// swaps the bundle underneath the running page; anything it applies
+		// takes effect at the next page load, which `checkForNewUi` triggers
+		// while the app is hidden. Registers the COMPONENT-SCOPE
 		// function above — an identical inner copy used to shadow it here, so
 		// onDestroy removed a function that was never registered and the
 		// listener leaked per layout mount (audit, minor).

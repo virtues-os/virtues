@@ -58,6 +58,7 @@ const APP_COMMANDS: &[&str] = &[
     "command_surface_version",
     "shell_identity_cmd",
     "bundle_boot_ok",
+    "bundle_update_ready",
     "set_appearance",
     "ota_check_now",
     // App updater (desktop).
