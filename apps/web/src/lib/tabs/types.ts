@@ -36,6 +36,8 @@ export type TabType =
 	| 'drive' // LEGACY alias of /storage (kept so old links resolve): /drive, /drive/{path}
 	| 'asset' // Single file viewer (open density): /drive/file_{id}
 	| 'trash' // LEGACY alias of /storage/trash: /trash
+	// Timeline instrument (our contribution): map + detail view of one day
+	| 'timeline' // Timeline: /timeline
 	// System namespace
 	| 'virtues'; // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal}
 
