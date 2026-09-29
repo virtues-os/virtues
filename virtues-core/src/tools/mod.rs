@@ -154,7 +154,7 @@ pub fn get_tools_for_council_voice() -> Vec<serde_json::Value> {
 
 /// The orchestrator's tools in Deep Research mode: the read-only research set, plus the fan-out
 /// tool and `create_page` for the report artifact. Explicit allow-list (not a category filter) so
-/// genuinely read-write Data-category tools (`update_memory`, `set_user_name`, `set_assistant_name`)
+/// genuinely read-write Data-category tools (`update_memory`, `sql_write`)
 /// can't leak into a mode that's meant to be read-only.
 pub(crate) const DEEP_RESEARCH_TOOLS: &[&str] = &[
     "think",

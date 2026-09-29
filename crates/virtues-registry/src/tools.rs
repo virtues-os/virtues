@@ -65,8 +65,6 @@ pub struct ToolConfig {
 /// - get_page_content: Read current page content
 /// - edit_page: Apply edits using find/replace
 /// - update_memory: Persist notes across conversations
-/// - set_user_name: Set user's preferred name
-/// - set_assistant_name: Set AI assistant's name
 pub fn default_tools() -> Vec<ToolConfig> {
     vec![
         think_tool(),
@@ -76,8 +74,6 @@ pub fn default_tools() -> Vec<ToolConfig> {
         skip_step_tool(),
         record_introductions_tool(),
         update_memory_tool(),
-        set_user_name_tool(),
-        set_assistant_name_tool(),
         web_search_tool(),
         semantic_search_tool(),
         sql_query_tool(),
@@ -364,60 +360,6 @@ fn update_memory_tool() -> ToolConfig {
         category: ToolCategory::Data,
         icon: "ri:brain-line".to_string(),
         display_order: 1,
-        is_system: false,
-    }
-}
-
-/// Set User Name tool — update user's preferred name
-fn set_user_name_tool() -> ToolConfig {
-    ToolConfig {
-        id: "set_user_name".to_string(),
-        name: "Set User Name".to_string(),
-        description: "Set the user's preferred name".to_string(),
-        llm_description: r#"Set the user's preferred name. Use this when the user tells you their name or asks to change how you address them.
-
-This updates the user's profile so their name persists across all future conversations."#.to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "required": ["name"],
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "The user's preferred name"
-                }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Data,
-        icon: "ri:user-line".to_string(),
-        display_order: 2,
-        is_system: false,
-    }
-}
-
-/// Set Assistant Name tool — update the AI's name
-fn set_assistant_name_tool() -> ToolConfig {
-    ToolConfig {
-        id: "set_assistant_name".to_string(),
-        name: "Set Assistant Name".to_string(),
-        description: "Set the AI assistant's name".to_string(),
-        llm_description: r#"Set your own name. Use this when the user picks or types a name for you during onboarding, or asks to rename you later.
-
-This updates your name across all future conversations."#.to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "required": ["name"],
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "The new name for the AI assistant"
-                }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Data,
-        icon: "ri:robot-line".to_string(),
-        display_order: 3,
         is_system: false,
     }
 }
@@ -1095,8 +1037,6 @@ pub fn default_enabled_tools() -> serde_json::Value {
     serde_json::json!({
         "think": true,
         "update_memory": true,
-        "set_user_name": true,
-        "set_assistant_name": true,
         "web_search": true,
         "semantic_search": true,
         "sql_query": true,
@@ -1150,8 +1090,6 @@ mod tests {
         let ids: Vec<&str> = tools.iter().map(|t| t.id.as_str()).collect();
         assert!(ids.contains(&"think"));
         assert!(ids.contains(&"update_memory"));
-        assert!(ids.contains(&"set_user_name"));
-        assert!(ids.contains(&"set_assistant_name"));
         assert!(ids.contains(&"web_search"));
         assert!(ids.contains(&"semantic_search"));
         assert!(ids.contains(&"sql_query"));
@@ -1168,8 +1106,6 @@ mod tests {
         assert!(enabled.is_object());
         assert_eq!(enabled.get("think"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("update_memory"), Some(&serde_json::json!(true)));
-        assert_eq!(enabled.get("set_user_name"), Some(&serde_json::json!(true)));
-        assert_eq!(enabled.get("set_assistant_name"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("web_search"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("semantic_search"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("sql_query"), Some(&serde_json::json!(true)));

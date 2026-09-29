@@ -414,8 +414,6 @@ impl ToolExecutor {
             // the same stored list the door uses.
             "skip_step" => self.execute_skip_step(arguments).await,
             "record_introductions" => self.execute_record_introductions(arguments).await,
-            "set_user_name" => self.execute_set_user_name(arguments).await,
-            "set_assistant_name" => self.execute_set_assistant_name(arguments).await,
             "web_search" => self.web_search.execute(arguments).await,
             "semantic_search" => {
                 self.semantic_search
@@ -1169,65 +1167,6 @@ impl ToolExecutor {
         let year = chrono::Datelike::year(&parsed);
         let this_year = chrono::Datelike::year(&chrono::Utc::now().date_naive());
         (1900..=this_year).contains(&year).then_some(parsed)
-    }
-
-    /// Set the user's preferred name
-    async fn execute_set_user_name(
-        &self,
-        arguments: serde_json::Value,
-    ) -> Result<ToolResult, ToolError> {
-        let name = arguments
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidParameters("name is required".into()))?;
-
-        let name = name.trim();
-        if name.is_empty() || name.len() > 100 {
-            return Err(ToolError::InvalidParameters("name must be 1-100 characters".into()));
-        }
-
-        sqlx::query("UPDATE app_user_profile SET preferred_name = $1, updated_at = now() WHERE id = '00000000-0000-0000-0000-000000000001'")
-            .bind(name)
-            .execute(self._pool.as_ref())
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to set user name: {}", e)))?;
-
-        // End onboarding — user name is the last piece, unlock full tools
-        let _ = sqlx::query("UPDATE app_user_profile SET onboarding_status = 'active' WHERE onboarding_status = 'onboarding'")
-            .execute(self._pool.as_ref())
-            .await;
-
-        Ok(ToolResult::success(serde_json::json!({
-            "name": name,
-            "updated": true
-        })))
-    }
-
-    /// Set the AI assistant's name
-    async fn execute_set_assistant_name(
-        &self,
-        arguments: serde_json::Value,
-    ) -> Result<ToolResult, ToolError> {
-        let name = arguments
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidParameters("name is required".into()))?;
-
-        let name = name.trim();
-        if name.is_empty() || name.len() > 100 {
-            return Err(ToolError::InvalidParameters("name must be 1-100 characters".into()));
-        }
-
-        sqlx::query("UPDATE app_assistant_profile SET assistant_name = $1, updated_at = now() WHERE id = '00000000-0000-0000-0000-000000000001'")
-            .bind(name)
-            .execute(self._pool.as_ref())
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to set assistant name: {}", e)))?;
-
-        Ok(ToolResult::success(serde_json::json!({
-            "name": name,
-            "updated": true
-        })))
     }
 
     /// Fetch the full content of a project-referenced entity (page, chat, person, etc.)
