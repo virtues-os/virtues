@@ -12,9 +12,9 @@
 //! model composing an extraction record, not a person reading an article. The
 //! job is to stop nav menus and cookie banners from eating the token budget and
 //! showing up as "subjects" — not to reconstruct the author's paragraphs
-//! faithfully. Tag-level furniture removal gets most of that, and when it isn't
-//! enough the answer is the Parallel Extract tier (agents/plan/bookmarks-plan.md step
-//! 2), not a fragile dependency.
+//! faithfully. Tag-level furniture removal gets most of that. A paid extraction
+//! tier was measured and not built: the pages this path fails on are bot walls
+//! and paywalls, which defeat any extractor (agents/record/bookmarks.md).
 //!
 //! `extraction/html.rs` stays as it is: it serves .html files a user drops into
 //! Drive, and its own docs already call readability "a separate future lane".
@@ -513,9 +513,9 @@ mod tests {
 
     /// The heuristic is best-effort, and saying so in a test keeps the next
     /// person from assuming it is exhaustive. A container named only
-    /// `p-lang-btn` carries no furniture token, so it survives — the answer for
-    /// pages where this matters is the Parallel Extract tier, not an
-    /// ever-growing keyword list that eventually eats an article.
+    /// `p-lang-btn` carries no furniture token, so it survives. A little
+    /// surviving furniture is cheaper than an ever-growing keyword list that
+    /// eventually eats an article.
     #[test]
     fn furniture_heuristic_is_not_exhaustive() {
         let html = r#"<html><body>

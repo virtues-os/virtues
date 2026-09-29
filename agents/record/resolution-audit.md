@@ -193,14 +193,14 @@ Mine, and they would have shipped.
   `onboarding-paradigm.md` are 100% box setup — zero hits for
   `interview|letter|reveal`. The app's `/onboarding` is the narrative flow.
   Rename the docs to `setup-*.md`.
-- **Status headers lie in both directions:** `wiki-plan.md` says "unbuilt" (0081–0083
+- **Status headers lie in both directions:** `wiki-plan.md` (since recorded as [wiki-consolidation.md](wiki-consolidation.md)) says "unbuilt" (0081–0083
   shipped); `references.md` says "no implementation yet" (four components exist).
 - **`the-day.md`'s whole Autobiography layer** rests on `wiki_days.autobiography`,
   dropped today in 0106.
 - **`README.md` claims "every doc is listed here"**; nine are not, including the
   largest doc in the repo.
 - **`write_machine_notes` still has zero production callers** — the note covenant
-  that `wiki-plan.md` builds on has no producer, and the uniqueness constraint it
+  that `wiki-plan.md` builds on (now [wiki-notes-plan.md](../plan/wiki-notes-plan.md)) has no producer, and the uniqueness constraint it
   requires does not exist.
 - **Gap:** the six-step post-setup onboarding flow has no doc at all.
 

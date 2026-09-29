@@ -96,6 +96,7 @@ That's the whole discipline. Everything else is per-tier native mechanism.
 ## What to build, in leverage order
 
 1. **SPA delivery** — so the web layer updates freely on every client, not just
-   mobile (turns the whole model on). Spec: `spa-delivery-plan.md`.
+   mobile (turns the whole model on). Mobile half built
+   (`agents/record/spa-delivery.md`); the Mac half is `agents/plan/local-ui-plan.md`.
 2. **One `fastlane → TestFlight` lane** — the only native pipeline worth having.
 3. **Keep shrinking the collector into the box.**

@@ -15,7 +15,7 @@ Same authoring surface. Same dispatch infrastructure. Two contracts.
 > supervisor with a port allocator and a `/service/<id>` reverse proxy — was
 > built and removed. It shipped one applet (a demo), never ran successfully on
 > a box, and the supervised-work design moved to systemd units
-> (`virtues-applet-<id>`); see [`applets-overhaul-plan.md`](../plan/applets-overhaul-plan.md).
+> (`virtues-applet-<id>`); see [`applets.md`](../record/applets.md).
 > The rationale below for *why* long-running work needs a different shape than
 > fork-per-trigger still holds — only the mechanism changed.
 
@@ -74,7 +74,7 @@ Names considered and rejected, in the round that settled it:
 
 **Applet** wins on being unembarrassing in the nav while covering both runtimes. The namespace was checked and accepted as shared (IFTTT Applets, Alexa Skills, Apple Shortcuts, Home Assistant Automations). A persona panel found the deeper reason no name scored well: engineers name the mechanism, contemplatives name the meaning, and laypeople name only the instance — no single word wins all three camps, so the bar is "doesn't embarrass," not "delights."
 
-User-facing UI uses runtime-specific words where they read better ("Functions", "Dashboards"); the parent noun appears in code and admin surfaces. "Vigil" is reserved as UI copy for watcher-shaped applets. Full decision record in [`applets-overhaul-plan.md`](../plan/applets-overhaul-plan.md).
+User-facing UI uses runtime-specific words where they read better ("Functions", "Dashboards"); the parent noun appears in code and admin surfaces. "Vigil" is reserved as UI copy for watcher-shaped applets. Full decision record in [`applets.md`](../record/applets.md).
 
 ---
 

@@ -230,7 +230,7 @@ pub(crate) async fn ensure_client(rec: &PairedBox) -> Option<Arc<VirtuesIrohClie
 static RECOVERING: AtomicBool = AtomicBool::new(false);
 
 /// Recover the box connection after an iOS network change / foreground.
-/// Two layers (agents/plan/reach-reliability-plan.md):
+/// Two layers (agents/record/reach-reliability.md):
 ///   • **L1 poke** — `Endpoint::network_change()` (rebind sockets / re-STUN /
 ///     relay reconnect). Heals the common case.
 ///   • **L2 rebuild** — if a bounded probe still fails, the iOS UDP socket is
@@ -303,11 +303,10 @@ async fn recover_inner() -> i32 {
   }
 }
 
-// ─── Credential storage: a 0600 file in the app container ────────────────────
+// ─── Credential storage ──────────────────────────────────────────────────────
 //
-// The 32-byte device seed is the credential. On iOS the app sandbox + data
-// protection encrypts it at rest; keeping it a plain file (vs the Keychain)
-// keeps the BoxStore in pure Rust. Hardening to the iOS Keychain is a follow-up.
+// The 32-byte device seed is the credential. On iOS it lives in the Keychain
+// (see `keychain` below); elsewhere it is a 0600 file in the app container.
 
 /// Base dir injected from the plugin's `setup()` via Tauri's path API. Set on
 /// Android, where `dirs::data_dir()` is unreliable: with no XDG vars and no

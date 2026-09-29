@@ -4,7 +4,7 @@
 //! picture is the half a caption cannot make findable. But its URL is signed
 //! and expires within hours, so the delayed enrichment sweep would always
 //! arrive to a dead link. The fix, ratified in the plan's screenshot decision
-//! (agents/plan/bookmarks-plan.md): keep the source URL as the bookmark's
+//! (agents/record/bookmarks.md): keep the source URL as the bookmark's
 //! address *and* copy the image into Drive as an asset, named in
 //! `metadata.asset_id`. The image pass then reads it from Drive — which does
 //! not expire — long after the CDN link has died.

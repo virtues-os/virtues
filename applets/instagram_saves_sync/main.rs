@@ -5,7 +5,7 @@
 //! own saves a personal appliance can use, and this is not that API: it is the
 //! web client's own request, made from the box.
 //!
-//! A spike (agents/plan/bookmarks-plan.md §5) established that the box can
+//! A spike (agents/record/bookmarks.md) established that the box can
 //! replay `GET /api/v1/feed/saved/posts/` from its own IP and get a 200. The
 //! credential is the browser's cookie jar: the login `sessionid`, the
 //! `csrftoken` (which Instagram wants echoed in the `x-csrftoken` header), and

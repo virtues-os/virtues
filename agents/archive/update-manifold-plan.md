@@ -143,7 +143,7 @@ rollback target the cloud lacks today.
   one-line deploy script.
 - **Mac** — keep the Tauri updater; add an **edge feed** so the test channel updates;
   reconcile bundled sidecars by **version**, not byte-diff.
-- **SPA delivery** — build `spa-delivery-plan.md`: two-layer resolver,
+- **SPA delivery** — build `spa-delivery-plan.md` (now `agents/record/spa-delivery.md`): two-layer resolver,
   `minShellVersion` gate, rollback beacon, over iroh loopback. No longer mobile-only —
   the Mac drops `WebviewUrl::External` and adopts the same resolver, which is what
   unlocks the offline editing Yjs already supports. Native shells ride their stores.

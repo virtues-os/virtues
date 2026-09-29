@@ -23,7 +23,7 @@ kept the old meaning — *subscribed*:
 | `virtues_api/completion.rs` and two siblings | a free account's `wallet_empty` rendered as "Usage limit reached" |
 | `AccountGate.svelte` | "No Virtues subscription on that email — create a new account instead" |
 | `box_status.rs` doc comments | "the same key makes AI ready immediately (the wallet is funded at link)" |
-| `open-relay-plan.md` §4 | the half of the plan meant to catch this — never built |
+| `open-relay-plan.md` §4 (now `agents/record/open-relay.md`) | the half of the plan meant to catch this — never built |
 
 A beta owner signed in free, saw Active, pressed the one button that would
 have corrected the picture, and retried a permanent state in circles.

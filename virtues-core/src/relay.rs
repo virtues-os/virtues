@@ -402,7 +402,7 @@ fn set_box_endpoint_id(eid: &str) {
 /// not a fetched one, because the alternative is the bootstrap problem: a box
 /// cannot fetch the address of the thing it needs in order to be reachable,
 /// and requiring an account link to learn it is the coupling the open-relay
-/// work deleted (open-relay-plan §Work 2). This is the industry-normal shape —
+/// work deleted (agents/record/open-relay.md). This is the industry-normal shape —
 /// Tailscale bakes its DERP list, Syncthing its relay pool, iroh its n0
 /// relays. What it reveals is only "this pubkey is online at this IP": the
 /// relay is open-admission, e2e-blind, and reports to no one.

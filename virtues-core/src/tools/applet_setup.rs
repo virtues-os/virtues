@@ -1,6 +1,6 @@
 //! `setup_applet` tool — materialize a chat-authored applet as a folder.
 //!
-//! Phase-3 authoring loop (agents/plan/applet-authoring-plan.md). The model fills
+//! The chat authoring loop (agents/record/applets.md). The model fills
 //! flat params; this executor — trusted Rust — validates them (the "check"),
 //! writes the folder at `applets root/user/<slug>/`, and reconciles under the
 //! global mutex. The DB row is derived from disk like every other applet:

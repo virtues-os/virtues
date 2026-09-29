@@ -11,8 +11,8 @@
 //! Native-first by design. The box has a residential IP, which is the whole
 //! reason YouTube caption tracks and paywall-lite pages resolve from here at
 //! all, and a fetch that stays on the box tells no third party what the user
-//! saved. When this path fails — JS-rendered SPAs, bot walls — the escalation
-//! is Parallel Extract, opt-in per source (agents/plan/bookmarks-plan.md step 2).
+//! saved. JS-rendered pages still yield their og metadata; a paid extraction
+//! tier for the rest was measured and not built (agents/record/bookmarks.md).
 
 pub mod article;
 pub mod guard;

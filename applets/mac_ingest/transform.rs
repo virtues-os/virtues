@@ -682,7 +682,7 @@ fn snapshot_rows(device_id: &str, browser: &str, records: &[Value]) -> Vec<Bookm
             bookmark_type: Some(kind.to_string()),
             author: None,
             // The folder path is the user's own taxonomy — the container
-            // whisper (agents/plan/bookmarks-plan.md). Harvested as tags.
+            // note (agents/record/bookmarks.md). Harvested as tags.
             tags: (!folder_path.is_empty()).then(|| serde_json::json!(folder_path)),
             thumbnail_url: None,
             timestamp: ts,

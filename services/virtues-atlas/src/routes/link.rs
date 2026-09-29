@@ -721,7 +721,7 @@ struct ApproveBody {
 /// `link_not_found` / `link_expired` tell it to re-fetch the code and retry —
 /// the session stays good, so neither costs a second email round-trip.
 /// (`no_subscription` left the contract with 0017: linking is identity, not
-/// billing — see open-relay-plan §Work 1b.)
+/// billing — see agents/record/open-relay.md.)
 /// Approve calls per account per hour. Generous for a legitimate owner (one
 /// approve, maybe a couple of retries after a code rotation); tight enough that
 /// the endpoint cannot be ground as an enumeration oracle.

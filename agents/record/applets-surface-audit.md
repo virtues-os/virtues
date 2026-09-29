@@ -1,8 +1,9 @@
 # Applets — the surface audit
 
-> Status: **findings, 2026-08-05.** Amends [`applets-overhaul-plan.md`](../plan/applets-overhaul-plan.md)
-> (design locked 2026-07-19) and [`applet-authoring-plan.md`](../plan/applet-authoring-plan.md)
-> with what phases 1–3 actually landed as, read back against what they specified.
+> Status: **findings, 2026-08-05.** Amends `applets-overhaul-plan.md`
+> (design locked 2026-07-19) and `applet-authoring-plan.md`, both since
+> folded into [`applets.md`](applets.md), with what phases 1–3 actually
+> landed as, read back against what they specified.
 >
 > Nothing here is a new design. Every item is one of three things: a **contract
 > severed** in implementation, a **regression** from the plan's own UI spec, or
