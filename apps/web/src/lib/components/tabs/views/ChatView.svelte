@@ -586,12 +586,6 @@
 				getTemporary: () => isGhost,
 				getThink: () => localThink,
 			});
-			// A local chat stays local: coming back to one restores the mode the
-			// store says it has, rather than the reset above.
-			if (chatInstances.isLocal(conversationId)) {
-				selectedAgentMode = 'local';
-				isGhost = true;
-			}
 			// The draft this conversation left behind, if the composer is empty.
 			if (!isGhost && !input) {
 				const draft = readDraft(draftId);
@@ -988,19 +982,7 @@
 	let localThink = $state(false);
 	const isLocal = $derived(selectedAgentMode === 'local');
 
-	// A mode change. Local only on an empty chat, and a local chat stays local:
-	// its history must never ride a later cloud turn, and a stored chat must
-	// never become local. Local chats are temporary chats, so everything that
-	// skips a ghost (drafts, title generation, storage) skips them too.
 	function changeMode(mode: AgentModeId) {
-		if ((mode === 'local' || isLocal) && !isEmpty) return;
-		if (mode === 'local') {
-			isGhost = true;
-			if (conversationId) editAllowListStore.setChatId(conversationId, true);
-		} else if (isLocal) {
-			isGhost = isTemporaryRoute(tab.route);
-			if (conversationId) editAllowListStore.setChatId(conversationId, isGhost);
-		}
 		selectedAgentMode = mode;
 	}
 	let selectedPersona = $state<string>('default');
@@ -1209,9 +1191,8 @@
 			});
 		}
 		// Offered only while it can still be true: a turn that has been sent
-		// cannot be taken back out of storage. A local chat is temporary by
-		// construction, so it has nothing to choose.
-		if (isEmpty && !isLocal) {
+		// cannot be taken back out of storage.
+		if (isEmpty) {
 			items.push({
 				id: "temporary",
 				label: "Temporary chat",
@@ -1256,9 +1237,6 @@
 	// Generate title after first assistant response
 	async function generateTitle() {
 		if (titleGenerated || chat.messages.length < 2) return;
-		// Titles are written by a cloud model from the whole chat; a local
-		// chat's words never leave the server.
-		if (isLocal || chatInstances.isLocal(conversationId)) return;
 		// The interview keeps the name it was seeded with. Its transcript is
 		// the most private text on the box, and a generated title puts a
 		// summary of it in the sidebar — this chat had renamed itself after
@@ -1516,8 +1494,7 @@
 	// Flip the current (empty) chat into a temporary/ghost chat, or back. Only
 	// allowed before the first message — we can't retroactively un-persist a turn.
 	function toggleGhost() {
-		// A local chat is temporary by construction; see changeMode.
-		if (!isEmpty || isLocal) return;
+		if (!isEmpty) return;
 		isGhost = !isGhost;
 		// The allow list has to know: a ghost's grants stay in the box's memory
 		// and never become rows.
@@ -2218,7 +2195,7 @@
 							onStop={() => handleChatStop()}
 							agentMode={selectedAgentMode}
 							onModeChange={changeMode}
-							modes={availableModes(selectedAgentMode, { localSupported: localModel.status.supported, empty: isEmpty })}
+							modes={availableModes({ localSupported: localModel.status.supported })}
 						/>
 						{/if}
 

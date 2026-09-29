@@ -1351,9 +1351,9 @@ async fn chat_handler_inner(
     let mode = ChatMode::resolve(&pool, &request.chat_id, &request.agent_mode).await;
 
     // A local turn has no cloud step, so it leaves before the first one: no
-    // model choice, no readiness check for a gateway it never calls, no row.
+    // model choice and no readiness check for a gateway it never calls.
     if matches!(mode, ChatMode::Local) {
-        return crate::api::local_chat::run(request, live_turns, cancel_state);
+        return crate::api::local_chat::run(pool, request, live_turns, cancel_state).await;
     }
 
     if let Some(refusal) = reject_if_unready(&pool, &request, &live_turns, &cancel_state).await {
@@ -1410,47 +1410,7 @@ async fn chat_handler_inner(
     // app_chats / app_chat_messages / app_chat_usage branches on this.
     let temporary = request.temporary;
 
-    if !temporary && ensure_chat_row(&pool, &request).await {
-        if let Err(e) =
-            crate::api::projects::set_chat_project(&pool, &chat_id_str, request.project_id.as_deref()).await
-        {
-            tracing::warn!("Failed to set chat project: {}", e);
-        }
-    }
-
-    let regenerating = drop_previous_answer_if_regenerating(&pool, &request).await;
-
-    // Save the last user message to the chat. Not on regenerate: there is no
-    // new user turn, and a client that still sends the full history would
-    // otherwise re-append the last one.
-    let last_user_msg = request.messages.iter().rev().find(|m| m.role == "user");
-    if let Some(last_user_msg) = last_user_msg.filter(|_| !regenerating) {
-        let user_message = ChatMessage {
-            // The client's id, so the row can be recognized again: by a
-            // regenerate, and by a retried POST — `append_message` does
-            // nothing on an id it has, so a send that reached the box and
-            // lost the reply does not save the question twice.
-            id: last_user_msg.id.clone().filter(|id| !id.trim().is_empty()),
-            role: "user".to_string(),
-            content: last_user_msg.text(),
-            timestamp: Timestamp::now(),
-            model: None,
-            provider: None,
-            agent_id: None,
-            parts: last_user_msg.parts.clone(),
-            tool_calls: None,
-            reasoning: None,
-            intent: None,
-            subject: None,
-            reasoning_details: None,
-        };
-
-        if temporary {
-            // Ghost: the message lives in the client's tab and nowhere else.
-        } else if let Err(e) = append_message(&pool, request.chat_id.clone(), user_message).await {
-            tracing::error!("Failed to save user message: {}", e);
-        }
-    }
+    store_user_turn(&pool, &request).await;
 
     // A ghost chat has no usage row to read and no summary to write, so it
     // never compacts.
@@ -1651,6 +1611,53 @@ fn chat_title(messages: &[UIMessage]) -> String {
 /// succeed and exactly one of them reports the creation. A failed insert is
 /// logged and reads as "not created"; the chat row read that follows is what
 /// turns a missing row into an error.
+/// Store the turn's user side: the chat's row on its first turn (bound to its
+/// project), and the user's message. On regenerate the previous answer is
+/// dropped instead and no message is added. A ghost chat stores nothing.
+pub(crate) async fn store_user_turn(pool: &PgPool, request: &ChatRequest) {
+    if !request.temporary && ensure_chat_row(pool, request).await {
+        if let Err(e) =
+            crate::api::projects::set_chat_project(pool, &request.chat_id, request.project_id.as_deref()).await
+        {
+            tracing::warn!("Failed to set chat project: {}", e);
+        }
+    }
+
+    let regenerating = drop_previous_answer_if_regenerating(pool, request).await;
+
+    // Save the last user message to the chat. Not on regenerate: there is no
+    // new user turn, and a client that still sends the full history would
+    // otherwise re-append the last one.
+    let last_user_msg = request.messages.iter().rev().find(|m| m.role == "user");
+    if let Some(last_user_msg) = last_user_msg.filter(|_| !regenerating) {
+        let user_message = ChatMessage {
+            // The client's id, so the row can be recognized again: by a
+            // regenerate, and by a retried POST — `append_message` does
+            // nothing on an id it has, so a send that reached the box and
+            // lost the reply does not save the question twice.
+            id: last_user_msg.id.clone().filter(|id| !id.trim().is_empty()),
+            role: "user".to_string(),
+            content: last_user_msg.text(),
+            timestamp: Timestamp::now(),
+            model: None,
+            provider: None,
+            agent_id: None,
+            parts: last_user_msg.parts.clone(),
+            tool_calls: None,
+            reasoning: None,
+            intent: None,
+            subject: None,
+            reasoning_details: None,
+        };
+
+        if request.temporary {
+            // Ghost: the message lives in the client's tab and nowhere else.
+        } else if let Err(e) = append_message(pool, request.chat_id.clone(), user_message).await {
+            tracing::error!("Failed to save user message: {}", e);
+        }
+    }
+}
+
 async fn ensure_chat_row(pool: &PgPool, request: &ChatRequest) -> bool {
     match sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ($1, $2, 0) ON CONFLICT (id) DO NOTHING")
         .bind(&request.chat_id)

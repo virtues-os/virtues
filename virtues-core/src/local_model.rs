@@ -37,6 +37,9 @@ use virtues_qairt::{Dirs, GENIE};
 /// Genie's graphs attend over the whole window on every step.
 pub const CONTEXT_TOKENS: usize = 4096;
 
+/// The model a local reply is stored under. `local/` is its provider.
+pub const MODEL_ID: &str = "local/qwen3-0.6b";
+
 /// Room kept for the reply. A prompt that leaves less than this is refused
 /// before a process starts, rather than cut off mid-answer.
 const REPLY_RESERVE_TOKENS: usize = 768;
@@ -83,7 +86,7 @@ const MODEL_ASSETS: &[(&str, &str, u64)] = &[
 /// without it, the model told a person a veterinary drug was safe for people.
 /// It carries nothing about the owner: the demonstration is the model itself,
 /// and a model this small misuses what it is given.
-pub const SAFETY_PROMPT: &str = "You are a small AI model running privately on the person's own home server. Nothing they say leaves the device.
+pub const SAFETY_PROMPT: &str = "You are a small AI model running on the person's own home server.
 
 How to answer:
 - Answer the actual question first, in plain language. Keep it short: a few sentences or a short list, never a long report.
