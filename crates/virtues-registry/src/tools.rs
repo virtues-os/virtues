@@ -107,25 +107,12 @@ fn generate_image_tool() -> ToolConfig {
         id: "generate_image".to_string(),
         name: "Generate Image".to_string(),
         description: "Generate an image from a text description".to_string(),
-        llm_description: r#"Generate an image from a text description using an AI image model.
-
-Use this tool when:
-- The user asks you to create, draw, generate, or illustrate an image
-- A picture would clearly help (a scene, concept, mockup, or design)
-
-Write a vivid, specific prompt: subject, style, composition, lighting, and mood.
-The image is shown to the user automatically — after it returns, give a brief
-caption, not a long description of what you generated.
-
-Returns: the generated image (rendered inline to the user)."#.to_string(),
+        llm_description: r#"Generate an image. Write a vivid, specific prompt: subject, style, composition, lighting, mood. The user sees the image; follow it with a brief caption, not a description."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["prompt"],
             "properties": {
-                "prompt": {
-                    "type": "string",
-                    "description": "Detailed description of the image to generate (subject, style, composition, mood)"
-                }
+                "prompt": { "type": "string" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -142,31 +129,13 @@ fn propose_narrative_identity_tool() -> ToolConfig {
         id: "propose_narrative_identity_edit".to_string(),
         name: "Propose identity note".to_string(),
         description: "Suggest something for the user's narrative identity".to_string(),
-        llm_description: r#"Propose an addition to the user's narrative identity — the short document of who they are: values, aspirations, character, temperament, what they want.
-
-This document goes into EVERY conversation you have with them, so it is the most consequential text in the system and it is not yours to edit. This tool does not change it. It leaves a note the user sees, with Add and Dismiss; nothing happens unless they choose.
-
-Use it RARELY. Not for facts (those belong in the record), not for preferences about how to format an answer, and never for something they told you in passing. Use it when they say something durable about who they are or what they are for — the kind of thing that would still be true in a year and that would change how you understand a future question.
-
-Say it in their own register, one or two sentences, as an addition to the document rather than a report about the conversation. Write "I" as the user, because the document is theirs.
-
-Good: "I'd rather ship something imperfect early than polish in private."
-Bad: "The user mentioned they prefer shipping early." (a report, not the document)
-Bad: "The user's favourite editor is vim." (a fact, not an identity)
-
-If you are unsure whether something qualifies, it does not."#.to_string(),
+        llm_description: r#"Propose an addition to the user's narrative identity, the document of who they are that goes into every conversation. It is not yours to edit: this leaves a note they Add or Dismiss. Use it rarely: only something durable about who they are or what they are for; never facts, preferences or passing remarks. One or two sentences in their voice ("I'd rather ship early than polish in private."). If unsure, don't."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["text", "why"],
             "properties": {
-                "text": {
-                    "type": "string",
-                    "description": "The sentence(s) to add, written in the user's voice"
-                },
-                "why": {
-                    "type": "string",
-                    "description": "What in this conversation prompted it — shown to the user so they can judge"
-                }
+                "text": { "type": "string" },
+                "why": { "type": "string", "description": "What prompted it; the user sees this" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -327,28 +296,14 @@ fn read_asset_tool() -> ToolConfig {
         id: "read_asset".to_string(),
         name: "Read file".to_string(),
         description: "Look at an image or file the user has stored".to_string(),
-        llm_description: r#"Look at a file in the user's drive. For an image, the image itself comes back and you see it, exactly as if the user had pasted it into the conversation.
+        llm_description: r#"Look at one file in the user's drive; an image comes back for you to see. Take file_id from its ref URL: /drive/dr_abc123 is "dr_abc123".
 
-Use this when the user refers to a specific file — a screenshot, a photo, a diagram — and answering means seeing what is actually in it.
-
-Take the id from the file's ref URL: `/drive/dr_abc123` means `file_id: "dr_abc123"`. Project members list theirs.
-
-When to reach for this instead of searching:
-- A member of the active project carries `text="none"` — nothing was extracted from it, so semantic_search cannot see inside it and will return nothing. That is not evidence the file lacks what the user is asking about. Look at it.
-- The user says "this screenshot" / "that photo" / "the image in here". Look before answering.
-- A document's extracted text is not enough and the layout matters.
-
-Do NOT use it to sweep a folder hoping to find something — one file per call, when you know which file you want. Images are sent whole and cost real context.
-
-If the file cannot be shown you are told why. Say that plainly to the user; never describe a file you were not shown."#.to_string(),
+Use it when answering means seeing the file: "this screenshot", a layout that matters, or a project member marked text="none", which semantic_search cannot see inside, so an empty search is no evidence about it. One known file per call, never a sweep: images cost context. If the file cannot be shown, say so; never describe a file you were not shown."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["file_id"],
             "properties": {
-                "file_id": {
-                    "type": "string",
-                    "description": "Drive file id, e.g. `dr_abc123`. A full `/drive/dr_abc123` ref URL is also accepted."
-                }
+                "file_id": { "type": "string" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -365,31 +320,12 @@ fn think_tool() -> ToolConfig {
         id: "think".to_string(),
         name: "Think".to_string(),
         description: "Plan your approach before acting".to_string(),
-        llm_description: r#"Use this tool to think through complex problems step-by-step before taking action.
-
-When to use:
-- Before multi-step tasks: Plan which tools to call and in what order
-- When the question is ambiguous: Break down what the user is really asking
-- For data analysis: Decide which tables to query and how to join results
-- When combining sources: Plan how to merge SQL results with web search
-
-Example thought for "How did my spending compare to last month?":
-"I need to:
-1. Query data_financial_transaction for this month's total spending by category
-2. Query the same for last month
-3. Compare the two and highlight significant changes
-Let me start with this month's data."
-
-This tool has no side effects - it just helps you organize your reasoning.
-The user can see your thoughts, so be clear and concise."#.to_string(),
+        llm_description: r#"Plan before a multi-step or ambiguous task: which tools, in what order. No side effects. The user sees the thought, so keep it clear and short."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["thought"],
             "properties": {
-                "thought": {
-                    "type": "string",
-                    "description": "Your step-by-step reasoning or plan"
-                }
+                "thought": { "type": "string" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -406,42 +342,22 @@ fn update_memory_tool() -> ToolConfig {
         id: "update_memory".to_string(),
         name: "Memory".to_string(),
         description: "Keep, revise, or retire one memory that persists across conversations".to_string(),
-        llm_description: r#"Your persistent memory: per-note rows in three lanes, shown to you in <memory> with ids. The user can read and edit every note in Settings — write nothing you would not want them to read, because they will.
-
-Lanes:
-- facts — durable facts of their world (names, places, projects, the dog)
-- manner — how to speak and behave with them (concise, numbered lists, no preamble)
-- practices — what they are holding to and how you help
-
-Ops (one note per call):
-- {op:"add", lane, content} — one durable fact, at most 500 chars. Near-duplicates merge into the existing note automatically.
-- {op:"revise", note_id, content} — rewrite one of YOUR notes (ids are in <memory>).
-- {op:"retire", note_id} — remove one of your notes when it stops being true.
-
-A note marked [theirs] was edited by the user: it is in their words and you cannot revise or retire it. A full lane refuses adds until you retire something — few, true notes beat many stale ones.
-
-What does NOT belong here: who they are — values, wounds, telos, self-understanding. That is their narrative identity, which only they author. Also never store secrets (passwords, keys, IDs)."#.to_string(),
+        llm_description: r#"Keep one note in <memory>. The user reads and edits every note: write only what you want them to read. Lanes: facts (their world), manner (how to speak with them), practices (what they hold to, how you help). add: one durable fact, at most 500 chars. revise / retire: your own notes by id; [theirs] notes are the user's. Never store their narrative identity or secrets."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
                 "op": {
                     "type": "string",
                     "enum": ["add", "revise", "retire"],
-                    "description": "What to do. Defaults to add."
+                    "description": "Default add"
                 },
                 "lane": {
                     "type": "string",
                     "enum": ["facts", "manner", "practices"],
-                    "description": "Which lane (add only). Defaults to facts."
+                    "description": "Default facts"
                 },
-                "note_id": {
-                    "type": "integer",
-                    "description": "The note to revise or retire — its id is shown in <memory> as (#id)."
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The note text (add/revise). One durable fact, at most 500 characters."
-                }
+                "note_id": { "type": "integer" },
+                "content": { "type": "string" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -512,53 +428,22 @@ fn web_search_tool() -> ToolConfig {
         id: "web_search".to_string(),
         name: "Web Search".to_string(),
         description: "Search the web for current information".to_string(),
-        llm_description: r#"Search the web for current information.
-
-Use this tool when:
-- User asks about recent events, news, or current information
-- You need factual information you're uncertain about
-- User explicitly asks to search or look something up
-- Information might have changed since your training cutoff
-
-Do NOT use when:
-- User is asking about their personal data (use sql_query instead)
-- The question is purely conversational or opinion-based
-
-You synthesize the results yourself — the search returns evidence, not answers.
-
-For time-sensitive topics (news, sports scores, odds, prices, live data) set
-max_age_hours=1 so results are fresh rather than cached.
-
-Always set `objective` to what you are actually trying to learn — it
-disambiguates a short query and improves results.
-
-Several angles on one question go out as parallel calls in one step, not one
-after another. For a list (events, options, places) ask for 10 results rather
-than running a second query.
-
-Returns: Relevant web pages with titles, URLs, and the passages judged relevant."#.to_string(),
+        llm_description: r#"Search the web; you synthesize the results. Always set `objective`. Send several angles on one question as parallel calls in one step, not one after another. For a list (events, options, places), ask for 10 results instead of a second query. For news, scores, odds, prices and other live data, set max_age_hours=1."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["query"],
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query - be specific and include relevant context"
-                },
+                "query": { "type": "string" },
                 "num_results": {
                     "type": "integer",
-                    "description": "Number of results (1-10). Default 8; 10 for a list of options",
                     "default": 8,
                     "minimum": 1,
                     "maximum": 10
                 },
-                "objective": {
-                    "type": "string",
-                    "description": "What you are trying to learn, in a sentence. Optional, but it disambiguates a short or broad query."
-                },
+                "objective": { "type": "string", "description": "What you are trying to learn, in a sentence" },
                 "max_age_hours": {
                     "type": "integer",
-                    "description": "Freshness: max age (hours) of a cached result before re-crawling live. Use 1 for news/sports/odds/live data; omit for stable info.",
+                    "description": "Max age of a cached result; omit for stable info",
                     "minimum": 0
                 }
             }
@@ -577,36 +462,9 @@ fn semantic_search_tool() -> ToolConfig {
         id: "semantic_search".to_string(),
         name: "Semantic Search".to_string(),
         description: "Search personal data by meaning".to_string(),
-        llm_description: r#"Search the user's personal data using natural language meaning (vector similarity).
+        llm_description: r#"Search the user's own data by meaning: emails, messages, calendar, chats, documents, transactions, transcriptions, pages.
 
-Use this tool when:
-- Finding content by topic or meaning: "emails about the project review"
-- Searching across multiple data types at once (emails, messages, calendar, documents)
-- The user's question is vague or conceptual rather than precise
-
-Do NOT use when:
-- You need exact counts, aggregates, or analytics (use sql_query)
-- You need to filter by specific dates, amounts, or structured fields (use sql_query)
-- You're looking for external/web information (use web_search)
-
-Think of it this way:
-- semantic_search = "find things ABOUT X" (meaning-based)
-- sql_query = "count/sum/filter X" (structure-based)
-
-Searchable domains: document (uploaded PDFs/files), email, message, calendar, chat, transaction, transcription, page.
-
-IMPORTANT: `domains` is an OPTIONAL narrowing filter. OMIT it to search everything —
-including the user's uploaded documents. When the conversation is grounded in a
-project, ALWAYS omit `domains`: the project already scopes the results, and an
-extra domain filter will wrongly exclude the project's materials.
-
-Returns results in relevance order (rank 1 = best match) with title, preview, author, and timestamp. Rank is relative order within THIS result set only — it says nothing about absolute match quality, so do not describe rank-1 as a strong match unless its content shows it.
-Each result carries a `ref` (`/record/<ontology>/<id>`); cite it as returned, and read the whole row with sql_query by that id when the preview is not enough.
-
-RECALL TIP: for a broad, vague, or many-worded need, pass 2-4 phrasings in `queries`
-(e.g. ["how my relationship with Sam changed", "tension or arguments with Sam", "good
-times with Sam"]) — they run together and their results are fused, catching evidence a
-single wording would miss. Use one phrasing for a precise lookup."#.to_string(),
+Omit `domains` to search everything; in a project-grounded chat always omit it, or the project's materials drop out. For a broad or vague need, pass 2-4 phrasings in `queries`; one for a precise lookup. Rank is order within this result set, not match quality. Cite each result's `ref` as returned; read the whole row with sql_query by its id when the preview is not enough."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
@@ -614,34 +472,23 @@ single wording would miss. Use one phrasing for a precise lookup."#.to_string(),
                     "type": "array",
                     "items": { "type": "string" },
                     "minItems": 1,
-                    "maxItems": 4,
-                    "description": "One to four natural-language phrasings/facets of the SAME information need. Provide multiple to widen recall on broad or vague questions; use one for a precise lookup. Preferred over `query`."
+                    "maxItems": 4
                 },
-                "query": {
-                    "type": "string",
-                    "description": "Single natural-language query. Back-compat alias for a one-element `queries`; prefer `queries`."
-                },
+                "query": { "type": "string", "description": "Alias for one query" },
                 "domains": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "OPTIONAL narrowing filter — omit to search all sources (including uploaded documents). Valid: document, email, message, calendar, chat, transaction, transcription, page. In a project-grounded chat, OMIT this."
+                    "description": "document, email, message, calendar, chat, transaction, transcription, page"
                 },
-                "date_after": {
-                    "type": "string",
-                    "description": "Only return results after this date (ISO 8601, e.g., '2026-01-01')"
-                },
-                "date_before": {
-                    "type": "string",
-                    "description": "Only return results before this date (ISO 8601)"
-                },
+                "date_after": { "type": "string", "description": "ISO 8601" },
+                "date_before": { "type": "string", "description": "ISO 8601" },
                 "entities": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Optional filter: only return results whose source references one of these resolved entity IDs (an id of the shape person_<hash>, place_<hash> or org_<hash>, as results and <circumstances> carry them). Use when the query is about a specific known entity — it's far more reliable than matching the name semantically."
+                    "description": "Entity ids (person_, place_, org_) from results or <circumstances>; beats matching a name"
                 },
                 "num_results": {
                     "type": "integer",
-                    "description": "Number of results (1-50, default 10)",
                     "default": 10,
                     "minimum": 1,
                     "maximum": 50
@@ -776,53 +623,19 @@ fn code_interpreter_tool() -> ToolConfig {
         id: "code_interpreter".to_string(),
         name: "Python".to_string(),
         description: "Execute Python code for calculations and data analysis".to_string(),
-        llm_description: r#"Execute Python 3 code in an isolated sandbox.
+        llm_description: r#"Run Python 3 in a sandbox for anything past a couple of steps in your head: arithmetic over many numbers, statistics, date math, finance, analysis of query results. Not for a single lookup or a fact you can state.
 
-Use it for anything you would otherwise do in your head past a couple of
-steps: arithmetic over more than a handful of numbers, statistics, date and
-time math, financial formulas, and analysis of query results. Do not use it
-for a single lookup or a fact you can state.
+print() what you want back; only stdout and stderr return. Packages: numpy, pandas, scipy, matplotlib, numpy-financial, python-dateutil and the standard library; a result saying packages are not installed yet means standard library only for that call.
 
-print() what you want back; only stdout and stderr return. Long output keeps
-its beginning and its end.
-
-Packages: numpy, pandas, scipy, matplotlib, numpy-financial, python-dateutil,
-and the standard library. A result that says packages are not installed yet
-means standard library only for that call.
-
-Files: the working directory is this chat's workspace and it persists between
-calls in the chat, so write intermediate results to files rather than
-recomputing. Variables do not persist — each call is a fresh process. A query
-run with sql_query's save_as is here as a CSV: pd.read_csv('sleep.csv').
-
-Charts: save images to out/ (plt.savefig('out/sleep.png', dpi=120,
-bbox_inches='tight')). Each one saved during the call is shown to the owner
-with your reply. Say what it shows; never write a link or markdown image to it.
-
-Limits: no network, no access to anything outside the workspace, 1 GB of
-memory, a timeout (default 60s, max 120s). A failure returns the traceback in
-stderr; fix the code and try again.
-
-Example - loan payment:
-{
-  "code": "import numpy_financial as npf\npayment = npf.pmt(0.065 / 12, 30 * 12, -400000)\nprint(f'Monthly payment: ${payment:,.2f}')"
-}
-
-Example - a saved query, summarized and charted:
-{
-  "code": "import pandas as pd\nimport matplotlib.pyplot as plt\ndf = pd.read_csv('sleep.csv', parse_dates=['day'])\nweekly = df.set_index('day').duration_minutes.resample('W').mean() / 60\nprint(weekly.round(2).to_string())\nweekly.plot(title='Average sleep per night (hours)')\nplt.savefig('out/sleep.png', dpi=120, bbox_inches='tight')"
-}"#.to_string(),
+The working directory is this chat's workspace and persists between calls; variables do not. A sql_query save_as file is here as a CSV. Save charts to out/ (plt.savefig('out/x.png')): each one shows with your reply, so say what it shows and never link it. No network, 1 GB memory. On a traceback, fix the code and retry."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["code"],
             "properties": {
-                "code": {
-                    "type": "string",
-                    "description": "Python code to execute. Use print() to output results."
-                },
+                "code": { "type": "string" },
                 "timeout": {
                     "type": "integer",
-                    "description": "Execution timeout in seconds (default: 60, max: 120)",
+                    "description": "Seconds",
                     "default": 60,
                     "minimum": 5,
                     "maximum": 120
@@ -922,32 +735,13 @@ fn create_page_tool() -> ToolConfig {
         id: "create_page".to_string(),
         name: "Create Page".to_string(),
         description: "Create a new page with content".to_string(),
-        llm_description: r#"Create a new page with a title and optional initial content.
-
-Use this tool when:
-- User asks you to create a new page, document, or note
-- User wants to start a new document from scratch
-- You need to save information to a new page
-
-Content supports markdown (headers, bold, lists, code blocks, etc.) and is rendered as rich text.
-
-Example:
-{
-  "title": "Meeting Notes - January 29",
-  "content": "Meeting Notes content here..."
-}"#.to_string(),
+        llm_description: r#"Create a page with a title and optional markdown content."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["title"],
             "properties": {
-                "title": {
-                    "type": "string",
-                    "description": "Title for the new page"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Initial content for the page (markdown supported). Applied directly without review."
-                }
+                "title": { "type": "string" },
+                "content": { "type": "string", "description": "Markdown" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -964,29 +758,12 @@ fn get_page_content_tool() -> ToolConfig {
         id: "get_page_content".to_string(),
         name: "Get Page Content".to_string(),
         description: "Read the current content of a page".to_string(),
-        llm_description: r#"Read the current content of a page before editing.
-
-Use this tool when:
-- You need to see what's currently in a page before making edits
-- User asks about the contents of their document
-- You need context about the page to make good edits
-
-ALWAYS call this before using edit_page so you know what text to find.
-
-IMPORTANT - Extracting page_id:
-When the user mentions a page it arrives as a route link, [Page Name](/page/page_abc123).
-Extract the ID from the link: page_abc123 (the last path segment).
-You MUST pass this page_id parameter when the user references a specific page.
-
-Returns the page title, content, and content length."#.to_string(),
+        llm_description: r#"Read a page's title and content. Call it before edit_page. A page arrives as a link, [Name](/page/page_abc123); page_id is its last segment, page_abc123."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["page_id"],
             "properties": {
-                "page_id": {
-                    "type": "string",
-                    "description": "Page ID to read. Extract from the page link: [Name](/page/page_xxx) -> page_xxx"
-                }
+                "page_id": { "type": "string" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -1003,76 +780,17 @@ fn edit_page_tool() -> ToolConfig {
         id: "edit_page".to_string(),
         name: "Edit Page".to_string(),
         description: "Edit a page using find/replace".to_string(),
-        llm_description: r#"Edit an existing page by finding text and replacing it. Can also rename the page title.
+        llm_description: r#"Edit a page: replace the text `find` with `replace`, and rename it with `title`. Call get_page_content first. page_id is the last segment of the page's link, [Name](/page/page_abc123).
 
-Use this tool when:
-- User asks you to modify, update, or change their document
-- User says "help me with this", "can you improve", "fix this"
-- User asks to rename or change the title of a page
-- You need to make changes to existing content
-
-IMPORTANT: Call get_page_content FIRST to see the current document!
-
-IMPORTANT - Extracting page_id:
-When the user mentions a page it arrives as a route link, [Page Name](/page/page_abc123).
-Extract the ID from the link: page_abc123 (the last path segment).
-You MUST pass this page_id parameter when the user references a specific page.
-
-How it works:
-1. Provide 'page_id' - extracted from the page link
-2. Provide 'find' - the exact text to locate in the document
-3. Provide 'replace' - the new text you want instead
-4. Optionally provide 'title' - new title for the page
-
-Changes are applied immediately via real-time sync.
-The 'find' text matches against the page's plain text (formatting stripped). Use 'replace' with markdown to set formatting.
-
-Example - changing a word:
-{
-  "page_id": "page_abc123",
-  "find": "The quick brown fox",
-  "replace": "The fast brown fox"
-}
-
-Example - renaming a page (use empty find/replace if only changing title):
-{
-  "page_id": "page_abc123",
-  "title": "New Page Title",
-  "find": "",
-  "replace": ""
-}
-
-Example - full document rewrite (find empty string):
-{
-  "page_id": "page_abc123",
-  "find": "",
-  "replace": "Entirely new document content here"
-}
-
-Tips:
-- Use enough context in 'find' to uniquely identify the location
-- Keep 'find' as short as possible while still being unique
-- For large changes, prefer fewer comprehensive edits over many small ones"#.to_string(),
+`find` matches the plain text (formatting stripped): make it unique but short. `replace` is markdown. An empty `find` replaces the whole document; empty `find` and `replace` with a `title` only renames. Prefer a few large edits to many small ones. Changes apply immediately."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["page_id", "find", "replace"],
             "properties": {
-                "page_id": {
-                    "type": "string",
-                    "description": "Page ID to edit. Extract from the page link: [Name](/page/page_xxx) -> page_xxx"
-                },
-                "title": {
-                    "type": "string",
-                    "description": "New title for the page. Only provide when renaming."
-                },
-                "find": {
-                    "type": "string",
-                    "description": "Text to find in the document. Use empty string for full document replacement or title-only changes."
-                },
-                "replace": {
-                    "type": "string",
-                    "description": "Replacement text. Supports markdown (headers, bold, lists, etc.) which is rendered as rich text."
-                }
+                "page_id": { "type": "string" },
+                "title": { "type": "string" },
+                "find": { "type": "string" },
+                "replace": { "type": "string" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -1089,21 +807,12 @@ fn sql_write_tool() -> ToolConfig {
         id: "sql_write".to_string(),
         name: "SQL Write".to_string(),
         description: "Write to applet-owned tables".to_string(),
-        llm_description: r#"Write to an applet's own tables (INSERT / UPDATE / DELETE). One statement per call.
-
-Scope is enforced by the database role: only tables in applet_* schemas are writable — data_*, wiki_*, and app_* are read-only (use sql_query to read them). Create applet tables via setup_applet's schema_sql first.
-
-Use this to log entries into a tracker ("log lunch: 650 kcal" -> INSERT INTO applet_calorie_tracker.meals ...), correct or delete rows the user asks about, or maintain an applet's rollup tables during its runs.
-
-Add RETURNING to get rows back (capped at 500); otherwise the result is rows_affected."#.to_string(),
+        llm_description: r#"One INSERT, UPDATE or DELETE on an applet's own tables (applet_* schemas; everything else is read-only). Create tables with setup_applet's schema_sql first. Add RETURNING to get rows back (max 500)."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["sql"],
             "properties": {
-                "sql": {
-                    "type": "string",
-                    "description": "One INSERT/UPDATE/DELETE statement targeting an applet_* schema table"
-                }
+                "sql": { "type": "string" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -1365,26 +1074,12 @@ fn get_project_item_tool() -> ToolConfig {
         id: "get_project_item".to_string(),
         name: "Get Project Item".to_string(),
         description: "Read the full content of a referenced page, chat, space, or entity".to_string(),
-        llm_description: r#"Fetch the full content of a referenced item by its url.
-
-Use this when:
-- The user @-mentions something — a markdown link like [name](/chat/chat_xxx),
-  [name](/page/page_xxx), or [name](/project/nb_xxx) in their message — and its
-  content is RELEVANT to answering. The @-mention is a pointer; pull it in only
-  if you actually need it.
-- An attached_project lists items and you need one's full content.
-
-Supported urls: /page/, /chat/, /project/, /person/, /place/, /org/.
-Returns the item's content (page text, recent chat messages, space members,
-person/place/org details). Don't fetch a reference you don't need."#.to_string(),
+        llm_description: r#"Fetch the full content of an item by its url: /page/, /chat/, /project/, /person/, /place/ or /org/. An @-mention in the user's message is such a link, e.g. [name](/chat/chat_xxx); fetch it only when its content matters to the answer. Also for one item an attached_project lists."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["item_url"],
             "properties": {
-                "item_url": {
-                    "type": "string",
-                    "description": "URL of the item to fetch, e.g. /page/page_xxx, /chat/chat_xxx, /project/nb_xxx, /person/person_xxx"
-                }
+                "item_url": { "type": "string" }
             }
         }),
         tool_type: ToolType::Builtin,
