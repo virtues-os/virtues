@@ -32,6 +32,8 @@
 		deleteProject,
 		droppedRefUrl,
 		fileIntoProject,
+		memberIcon,
+		memberName,
 		newChatInProject,
 		openProjects,
 		projectMemberUrl,
@@ -155,22 +157,6 @@
 		return map[t] ?? t;
 	}
 
-	function iconForUrl(url: string): string {
-		if (url.startsWith('http://') || url.startsWith('https://')) return 'ri:external-link-line';
-		const prefix = url.split('/')[1] ?? '';
-		const map: Record<string, string> = {
-			person: 'ri:user-line',
-			page: 'ri:file-text-line',
-			org: 'ri:building-line',
-			place: 'ri:map-pin-line',
-			thing: 'ri:shapes-line',
-			day: 'ri:calendar-line',
-			year: 'ri:calendar-2-line',
-			source: 'ri:database-2-line',
-			drive: 'ri:file-line'
-		};
-		return map[prefix] ?? 'ri:links-line';
-	}
 
 	/**
 	 * What this member is to the project, in the user's terms rather than the
@@ -239,11 +225,11 @@
 		memberItems.map((it) => ({
 			id: it.url,
 			url: it.url,
-			name: it.title || memberType(it.url),
+			name: memberName(it),
 			kind: memberType(it.url),
 			status: statusLabel(it.url, it.role, it.status),
 			added: formatAdded(it.added_at),
-			icon: iconForUrl(it.url),
+			icon: memberIcon(it.url),
 			role: it.role
 		}))
 	);
@@ -272,7 +258,7 @@
 				options: graph.nodes.map((n) => ({
 					value: n.url,
 					label: n.name,
-					icon: iconForUrl(n.url)
+					icon: memberIcon(n.url)
 				})),
 				predicate: (row, value) => {
 					const urls = Array.isArray(value) ? value : value ? [value] : [];

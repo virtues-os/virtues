@@ -80,6 +80,8 @@
 		droppedRefUrl,
 		fileIntoProject,
 		isRefDrag,
+		memberIcon,
+		memberName,
 		newChatInProject,
 		newProject,
 		openProjects,
@@ -527,7 +529,10 @@
 	// A menu or a click closes it outright — two floating things at once is
 	// one too many.
 
-	const OPEN_AFTER_MS = 320;
+	// Quick enough to feel like the row opening, slow enough that a pointer
+	// crossing the list on its way somewhere doesn't pop a card per row. Once
+	// one is up, the next row's opens at once: you are reading cards now.
+	const OPEN_AFTER_MS = 90;
 	const CLOSE_AFTER_MS = 180;
 
 	let card = $state<{ project: ProjectSummary; anchor: HTMLElement } | null>(null);
@@ -548,6 +553,12 @@
 	function armCard(project: ProjectSummary, anchor: HTMLElement) {
 		clearTimers();
 		if (card?.project.id === project.id) return;
+		// Start reading what is inside now, so it is there when the card is.
+		void projectStore.get(project.id).catch(() => {});
+		if (card) {
+			card = { project, anchor };
+			return;
+		}
 		openTimer = setTimeout(() => {
 			card = { project, anchor };
 		}, OPEN_AFTER_MS);
@@ -573,6 +584,27 @@
 
 	function onKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape' && card) closeCard();
+	}
+
+	/**
+	 * What the card lists: the few most recent chats and the first few files
+	 * and pages, one click from anywhere. It is the reason the card exists: a
+	 * way into the thing you were after without landing on the project first.
+	 */
+	const CARD_ROWS = 3;
+	const cardDetail = $derived(card ? projectStore.getCached(card.project.id) : undefined);
+	const cardChats = $derived((cardDetail?.chats ?? []).slice(0, CARD_ROWS));
+	const cardItems = $derived(
+		(cardDetail?.items ?? []).filter((i) => !i.url.startsWith('/chat/')).slice(0, CARD_ROWS),
+	);
+
+	function openFromCard(route: string, label: string) {
+		closeCard();
+		if (isExternal(route)) {
+			window.open(route, '_blank', 'noopener,noreferrer');
+			return;
+		}
+		windowShellStore.openTabFromRoute(route, { label, focusExisting: true });
 	}
 
 	/** The live copy of the card's project, so counts move while it is up. */
@@ -982,7 +1014,32 @@
 			</button>
 		</div>
 		<div class="card-meta">{cardMeta(cardProject)}</div>
-<div class="card-rule" aria-hidden="true"></div>
+		{#if cardChats.length > 0 || cardItems.length > 0}
+			<div class="card-rule" aria-hidden="true"></div>
+			{#each cardChats as chat (chat.id)}
+				<button
+					type="button"
+					class="card-row card-item"
+					onclick={() => openFromCard(`/chat/${chat.id}`, chat.title || 'Chat')}
+				>
+					<span class="card-item-glyph" style={`color: ${projectColor(cardProject)}`}>
+						<AtlasIcon name="chats" size={14} bare />
+					</span>
+					<span class="card-item-text">{chat.title || 'Untitled chat'}</span>
+				</button>
+			{/each}
+			{#each cardItems as item (item.url)}
+				<button
+					type="button"
+					class="card-row card-item"
+					onclick={() => openFromCard(item.url, memberName(item))}
+				>
+					<span class="card-item-glyph"><Icon icon={memberIcon(item.url)} width="14" /></span>
+					<span class="card-item-text">{memberName(item)}</span>
+				</button>
+			{/each}
+		{/if}
+		<div class="card-rule" aria-hidden="true"></div>
 		<button type="button" class="card-row" onclick={() => openProject(cardProject)}>
 			<Icon icon={PROJECT_ICON} width="15" />
 			<span>Open project</span>
@@ -1359,5 +1416,27 @@
 	.card-row:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
+	}
+
+	/* The project's contents: quieter than the verbs below them, because
+	   they are places to go, not things to do. */
+	.card-item {
+		color: var(--color-foreground-muted);
+	}
+	.card-item:hover {
+		color: var(--color-foreground);
+	}
+	.card-item-glyph {
+		display: flex;
+		flex: none;
+		width: 16px;
+		justify-content: center;
+		color: var(--color-foreground-subtle);
+	}
+	.card-item-text {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 </style>
