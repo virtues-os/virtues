@@ -73,7 +73,7 @@ Schema:
 
 Rules:
 - REPORT, DON'T INFER. Write what you hear, never what it implies. A sound is not an activity: list "grinding noise" in scene.sounds, but never write "making coffee"; footsteps are not "a walk"; typing is not "working". Activities enter the record ONLY if spoken aloud.
-- text: exact words, keep fillers (um, uh). Start each change of voice with "[Speaker]:". Never number or name speakers: you cannot tell who they are, and a number would read as the same person in the next clip. Mark unclear speech "[inaudible]" — never substitute a plausible guess. Sung or hummed vocals ARE speech — transcribe the lyrics verbatim.
+- text: exact words, keep fillers (um, uh). When more than one voice speaks, start each change of voice with "[Speaker]:". Never number or name speakers: you cannot tell who they are, and a number would read as the same person in the next clip. Mark unclear speech "[inaudible]" — never substitute a plausible guess. Sung or hummed vocals ARE speech — transcribe the lyrics verbatim.
 - Never repeat a phrase more than twice, even if the audio seems to loop — that is a transcription error, not speech.
 - Background TV, radio, or podcast is NOT the wearer speaking. Note it as a "background_media" sound; never attribute its words as first-person speech.
 - entities: only names explicitly spoken and unambiguous. entities[].said quotes the clause verbatim, <=15 words. Omit anything uncertain — never guess a plausible-sounding name. For tech/AI terms prefer real names (Claude, Cursor, Codex, GPT, Gemini, repo, agent) over acoustically-similar non-words: "Claude", not "claw"/"cloud".

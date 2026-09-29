@@ -66,8 +66,8 @@ MarbleNet is a presence detector that fires on onsets; it is right for
 skipping silent chunks and wrong for boundaries. The remaining turn-level gap
 is crosstalk: 96% of false "owner" turns were another person's turn that the
 owner talked over. Marking stretches where segmentation-3.0 reports overlap as
-*unsure* kept owner labels far from any owner speech under 1.5% of owner
-frames. The owner was never labeled while silent in any turn checked by hand.
+*unsure* kept frames labeled "owner" that sit more than 0.75 s from any owner
+speech under 1.5% of all owner-labeled frames. The owner was never labeled while silent in any turn checked by hand.
 
 **Real audio, with the owner listening.** 40 random chunks from one box over
 30 days, with the owner rating clips blind:
@@ -90,8 +90,10 @@ frames. The owner was never labeled while silent in any turn checked by hand.
   - At w8a16: 2.2 ms per 1.5 s window, EER 0.7% → 1.5%. int8 loses more and
     is ruled out.
   - 3D-Speaker CAM++ crashes the converter at its pooling step. Split there,
-    it compiles, but its output matches float at only 0.66–0.77 cosine: the
-    conversion is broken.
+    it compiles, but the conversion is broken, the same at int8 and w8a16:
+    - the backbone's frame maps match float at only 0.66–0.77 cosine;
+    - the final embeddings match at 0.30;
+    - EER goes from 2.2% to 12.2%.
 - AI Hub now offers only QAIRT 2.45 and newer, and only through
   `precompiled_qnn_onnx`. That zip's `model.bin` is a raw context binary that
   `virtues-qnnd` loads unchanged.
@@ -128,6 +130,6 @@ The one known harm, numbered tags implying the same people across chunks, is
 removed by dropping the numbers. That shipped instead. The question to reopen
 it: do day articles *still* invent who-said-what once the tags carry no false
 continuity? If they do, the cheapest next step the data supports is to label
-whole chunks that are nearly one voice. About half the sampled chunks were
-over 90% or under 7% owner. That keeps the single-shot transcription and needs
+whole chunks that are nearly one voice. 22 of the 40 sampled chunks were at
+least 90% or at most 7% owner, even with the loud-only print. That keeps the single-shot transcription and needs
 no turn splitting.
