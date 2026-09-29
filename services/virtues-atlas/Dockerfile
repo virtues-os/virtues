@@ -13,9 +13,10 @@
 # ── Stage 1: build ──────────────────────────────────────────────────────────
 FROM rust:1.94-slim-bookworm AS builder
 
-# build-essential (gcc/make) + cmake + clang are required by aws-lc-sys (pulled in
-# by aws-sdk-route53's aws-lc-rs TLS backend) to build the AWS-LC C library and its
-# bindings. pkg-config/libssl-dev remain for the rest of the graph.
+# build-essential (gcc/make) compiles ring's C and assembly. cmake + clang were
+# added for aws-lc-sys when atlas wrote DNS records through aws-sdk-route53; that
+# code and the AWS SDK are gone, so they are likely unneeded now, but dropping
+# them is untested. pkg-config/libssl-dev remain for the rest of the graph.
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
