@@ -41,49 +41,7 @@
     "opener:default",
     "updater:default",
     "notification:default",
-    "shell:allow-open",
-    {
-      "identifier": "shell:allow-execute",
-      "allow": [
-        {
-          "name": "binaries/virtues-collector",
-          "sidecar": true,
-          "args": true
-        },
-        {
-          "name": "binaries/virtues-client",
-          "sidecar": true,
-          "args": true
-        },
-        {
-          "name": "osascript",
-          "args": true
-        }
-      ]
-    },
-    {
-      "identifier": "shell:allow-spawn",
-      "allow": [
-        {
-          "name": "binaries/virtues-collector",
-          "sidecar": true,
-          "args": true
-        },
-        {
-          "name": "binaries/virtues-client",
-          "sidecar": true,
-          "args": true
-        },
-        {
-          "name": "open",
-          "args": true
-        },
-        {
-          "name": "osascript",
-          "args": true
-        }
-      ]
-    }
+    "shell:allow-open"
   ],
   "remote": {
     "urls": [
