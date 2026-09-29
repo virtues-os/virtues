@@ -4,7 +4,7 @@
 //! nearly empty: an Instagram URL has no title, and a browser bookmark's title
 //! is whatever the page's `<title>` said the day it was saved. Embedded as-is,
 //! it is a document with no words in it, which is why bookmarks were storable
-//! but unfindable (agents/plan/bookmarks-plan.md).
+//! but unfindable (agents/record/bookmarks.md).
 //!
 //! This is the sweep that fixes that. Per bookmark: fetch the page, compose a
 //! structured **extraction record**, and write it back. The record then joins

@@ -35,7 +35,7 @@ is a gift.
 
 ### 2. The graph that cannot resolve itself
 
-From `wiki-plan.md`, and it is correct:
+From the note covenant ([`wiki-editor.md`](../build/wiki-editor.md)), and it is correct:
 
 > **The writer may never write `wiki_entity_refs`.** Not at confidence 0.5, not
 > flagged, not ever. Promotion is a human click or an editor pass gated on

@@ -149,9 +149,11 @@ observe *denied* while an entry exists.
 The app exposes a command-surface version. `bridge.ts` checks it at load and
 degrades a feature explicitly rather than throwing inside it.
 
-This is the same object `spa-delivery-plan.md` calls `minShellVersion`, reached
-independently from the other end. Build it once, name it once — it is
-load-bearing for the coupling above *and* for any bundle the box hands a client.
+This is the same object the mobile OTA calls `minShellVersion`
+(`agents/record/spa-delivery.md`), reached independently from the other end;
+it is built as `COMMAND_SURFACE_VERSION` in `apps/web/src-tauri/src/lib.rs`.
+Build it once, name it once — it is load-bearing
+for the coupling above *and* for any bundle the box hands a client.
 
 ---
 
@@ -186,7 +188,7 @@ six-day silent outage and a five-minute one.
 
 ---
 
-## 7. Open against `spa-delivery-plan.md`
+## 7. Open against `local-ui-plan.md`
 
 Not settled here, and this document should not be read as settling it.
 

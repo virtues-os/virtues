@@ -11,7 +11,7 @@ private func virtues_enqueue(_ stream: UnsafePointer<CChar>, _ json: UnsafePoint
 /// The extension cannot send anything itself. It is a separate process with a
 /// small memory ceiling and a short life, and the box is served inside THIS
 /// process, so the extension writes and returns and the app sends
-/// (agents/plan/bookmarks-plan.md §5). From the outbox a share rides the same
+/// (agents/record/bookmarks.md). From the outbox a share rides the same
 /// reach drain as every other stream to the box's `ios_ingest`, whose bookmark
 /// arm keeps the picture in Drive for the image pass.
 ///

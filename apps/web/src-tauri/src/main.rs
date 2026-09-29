@@ -1563,8 +1563,9 @@ fn main() {
             // none of the documents that were the entire point. Offline needs
             // ONE origin across all four states (box up, box down, baked
             // bundle, OTA bundle) — see "The origin problem" in
-            // agents/plan/spa-delivery-plan.md. Do not re-add the fallback alone;
-            // it looks like it works and does not.
+            // agents/record/spa-delivery.md and agents/plan/local-ui-plan.md.
+            // Do not re-add the fallback alone; it looks like it works and
+            // does not.
             // A SINGLE fast probe (not the multi-retry loop): reachable boxes
             // reconnect silently with no connect-screen flash (the
             // silent-reconnect doctrine), and an unreachable box bounds the

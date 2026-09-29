@@ -4,7 +4,7 @@
 //! 4096-token context, run by Qualcomm's own `genie-t2t-run`. It is a
 //! demonstration of where fully local AI is today, and the chat says so. Real
 //! owner conversations through 0.6B, 1.7B and MiniCPM5-1B showed none of them
-//! fit for advice; see agents/plan/local-model-plan.md.
+//! fit for advice; see agents/record/local-model.md.
 //!
 //! Each turn is one process: start the model, read the conversation, write the
 //! reply, exit. No daemon, no state between turns, and the 1.7 GB the model

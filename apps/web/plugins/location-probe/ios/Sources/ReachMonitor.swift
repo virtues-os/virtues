@@ -28,7 +28,7 @@ private func virtues_radio_constrained(_ constrained: Int32)
 ///
 /// Tailscale (whose netmon iroh's is derived from) proves this rebind-on-change/
 /// foreground layer is necessary even *with* a Network Extension; we run in-app,
-/// so it's mandatory. See agents/plan/reach-reliability-plan.md.
+/// so it's mandatory. See agents/record/reach-reliability.md.
 final class ReachMonitor {
   static let shared = ReachMonitor()
 

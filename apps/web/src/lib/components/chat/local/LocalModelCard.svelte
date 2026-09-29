@@ -3,7 +3,7 @@
 	 * The card at the top of every local chat: what this mode is, what it gets
 	 * wrong, and why. Local mode is a demonstration of where fully local AI is
 	 * today, and this card is where it says so. See
-	 * agents/plan/local-model-plan.md for the conversations behind the words.
+	 * agents/record/local-model.md for the conversations behind the words.
 	 *
 	 * It also holds the one-time download, before the model is on the server,
 	 * and the "Think first" switch. The switch lives here rather than in the

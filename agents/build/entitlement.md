@@ -194,7 +194,7 @@ v2 is written down rather than dropped.
 - `POST /init/*`, `GET /init/poll` — box link/login session dance
 - `POST /relay/config` — the box learns which relay to home on. Reach is NOT
   entitlement-gated: the relay admits everyone and defends itself with rate
-  limits, so any linked box may ask (open-relay-plan, 2026-08-31).
+  limits, so any linked box may ask (agents/record/open-relay.md, 2026-08-31).
   `POST /relay/authorize` and `POST /iroh/register` are deleted — the
   admission callout and the EndpointId→account registry that fed it. Design
   reasoning, superseded by the iroh pivot, in

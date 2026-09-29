@@ -1,4 +1,4 @@
-//! Bookmark enrichment cron applet (agents/plan/bookmarks-plan.md §3).
+//! Bookmark enrichment cron applet (agents/record/bookmarks.md).
 //!
 //! Drains `data_content_bookmark.enrichment_status = 'pending'`: fetch the
 //! page, compose an extraction record, write it back. The `content_bookmark`
