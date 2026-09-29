@@ -1,38 +1,10 @@
-<script lang="ts">
+<script module lang="ts">
 	/**
-	 * Atlas — the shell's own icon set.
-	 *
-	 * Drawn objects, not interface symbols: a globe for the wiki, an archive
-	 * box for the drive, a dial for settings. The library metaphor the sidebar
-	 * is built on (desk, shelf, checkout) only holds if its hardware comes from
-	 * the same world, which is why these are hand-drawn here rather than pulled
-	 * from a general-purpose set. Fourteen glyphs is an ownable number.
-	 *
-	 * One optical grid: 16px box, ~12px of ink, 1.1px stroke, round caps.
-	 * Anything that fills the box edge-to-edge reads oversized next to the
-	 * others no matter how correct its geometry is.
+	 * The glyph table, exported so `icons.ts` can register each one as
+	 * `atlas:<name>` for surfaces that take an icon by string (tabs, menus,
+	 * ⌘K). One drawing per thing, whichever way it is asked for.
 	 */
-	interface Props {
-		name: string;
-		size?: number;
-		/**
-		 * Stroke weight. The set is drawn at 1.1 for the 16px sidebar rows;
-		 * at rail scale, icon-only, a 1.1 line washes out, so the rail asks
-		 * for ~1.5. Kept a prop rather than baked so the two registers share
-		 * one glyph table.
-		 */
-		stroke?: number;
-		/**
-		 * Skip the sidebar's dress (`.sidebar-icon`: muted color, half
-		 * opacity, sidebar sizing). The glyphs also serve rooms that are not
-		 * the sidebar — the phone drawer — and there the host styles them.
-		 */
-		bare?: boolean;
-	}
-
-	let { name, size = 16, bare = false, stroke = 1.1 }: Props = $props();
-
-	const GLYPHS: Record<string, string> = {
+	export const GLYPHS: Record<string, string> = {
 		chats:
 			'<circle cx="8" cy="7.5" r="5.2"/><path d="M4.6 11.9l-1.2 2"/><circle cx="5.9" cy="7.5" r="0.55" fill="currentColor" stroke="none"/><circle cx="8" cy="7.5" r="0.55" fill="currentColor" stroke="none"/><circle cx="10.1" cy="7.5" r="0.55" fill="currentColor" stroke="none"/>',
 		pages:
@@ -198,6 +170,42 @@
 		// clock has two hands and no hub.
 		history: '<circle cx="8" cy="8" r="5.3"/><path d="M8 4.8V8l2.5 1.7"/>',
 	};
+</script>
+
+<script lang="ts">
+	/**
+	 * Atlas — the shell's own icon set.
+	 *
+	 * Drawn objects, not interface symbols: a globe for the wiki, an archive
+	 * box for the drive, a dial for settings. The library metaphor the sidebar
+	 * is built on (desk, shelf, checkout) only holds if its hardware comes from
+	 * the same world, which is why these are hand-drawn here rather than pulled
+	 * from a general-purpose set. Fourteen glyphs is an ownable number.
+	 *
+	 * One optical grid: 16px box, ~12px of ink, 1.1px stroke, round caps.
+	 * Anything that fills the box edge-to-edge reads oversized next to the
+	 * others no matter how correct its geometry is.
+	 */
+	interface Props {
+		name: string;
+		size?: number;
+		/**
+		 * Stroke weight. The set is drawn at 1.1 for the 16px sidebar rows;
+		 * at rail scale, icon-only, a 1.1 line washes out, so the rail asks
+		 * for ~1.5. Kept a prop rather than baked so the two registers share
+		 * one glyph table.
+		 */
+		stroke?: number;
+		/**
+		 * Skip the sidebar's dress (`.sidebar-icon`: muted color, half
+		 * opacity, sidebar sizing). The glyphs also serve rooms that are not
+		 * the sidebar — the phone drawer — and there the host styles them.
+		 */
+		bare?: boolean;
+	}
+
+	let { name, size = 16, bare = false, stroke = 1.1 }: Props = $props();
+
 
 	// Unknown names fall back to `pages` rather than drawing nothing, which is
 	// forgiving in production and silent in development — a typo'd name looks

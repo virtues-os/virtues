@@ -206,10 +206,21 @@ pub struct ToolExecutor {
     yjs_state: Option<YjsState>,
 }
 
+/// Start the code_interpreter packages building on a box that lacks them, so
+/// they are ready before the first chat reaches for them. Not in a debug
+/// build: a developer machine builds them on the first code run instead of
+/// fetching 400 MB whenever the server starts.
+fn warm_code_env() {
+    if !cfg!(debug_assertions) {
+        crate::api::code_env::ensure_env();
+    }
+}
+
 impl ToolExecutor {
     /// Create a new tool executor. Tools that reach virtues-api (web_search)
     /// go through `BearerClient`, which sources the URL + bearer itself.
     pub fn new(pool: PgPool) -> Self {
+        warm_code_env();
         let pool = Arc::new(pool);
         Self {
             web_search: WebSearchTool::new((*pool).clone()),
@@ -224,6 +235,7 @@ impl ToolExecutor {
     /// Create a new tool executor with YjsState for real-time page editing
     /// and action dispatch (required by the `run_applet` tool).
     pub fn new_with_yjs(pool: PgPool, yjs_state: YjsState) -> Self {
+        warm_code_env();
         let pool = Arc::new(pool);
         Self {
             web_search: WebSearchTool::new((*pool).clone()),
@@ -271,6 +283,11 @@ impl ToolExecutor {
         context: &ToolContext,
     ) -> Result<Option<ToolResult>, ToolError> {
         if !Self::PERMISSION_REQUIRED.contains(&tool_name) {
+            return Ok(None);
+        }
+        // Reading the authoring guide writes nothing; asking "I allow" for it
+        // would put a prompt in front of the step the definition requires.
+        if tool_name == "setup_applet" && super::applet_setup::wants_guide(arguments) {
             return Ok(None);
         }
         // Sudo mode is the owner saying "don't ask" for this chat.
@@ -397,8 +414,6 @@ impl ToolExecutor {
             // the same stored list the door uses.
             "skip_step" => self.execute_skip_step(arguments).await,
             "record_introductions" => self.execute_record_introductions(arguments).await,
-            "set_user_name" => self.execute_set_user_name(arguments).await,
-            "set_assistant_name" => self.execute_set_assistant_name(arguments).await,
             "web_search" => self.web_search.execute(arguments).await,
             "semantic_search" => {
                 self.semantic_search
@@ -415,7 +430,11 @@ impl ToolExecutor {
             {
                 super::sql_sudo::execute(&self._pool, arguments).await
             }
-            "sql_query" => self.sql_query.execute(arguments).await,
+            "sql_query" => {
+                // A saved chat can keep a result as a file for code_interpreter.
+                let chat_id = context.chat_id.as_deref().filter(|_| !context.temporary);
+                self.sql_query.execute(arguments, chat_id).await
+            }
             "sql_write" => super::sql_write::execute(&self._pool, arguments).await,
             // The tool lists already keep it out of every other mode; this is
             // the second lock, for a model that names a tool it was not given.
@@ -426,7 +445,7 @@ impl ToolExecutor {
                 "shell runs only in sudo mode, which the owner turns on in the chat".into(),
             )),
             "read_asset" => self.execute_read_asset(arguments).await,
-            "code_interpreter" => self.execute_code_interpreter(arguments).await,
+            "code_interpreter" => self.execute_code_interpreter(arguments, context).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
             "dispatch_subagents" => {
                 crate::agent::subagent::dispatch(self._pool.clone(), arguments, context).await
@@ -530,10 +549,12 @@ impl ToolExecutor {
         })))
     }
 
-    /// Execute Python code in sandboxed environment
+    /// Run model-written Python in the sandbox (api/code.rs), in the chat's
+    /// workspace when it has one (api/code_env.rs).
     async fn execute_code_interpreter(
         &self,
         arguments: serde_json::Value,
+        context: &ToolContext,
     ) -> Result<ToolResult, ToolError> {
         let code = arguments
             .get("code")
@@ -545,34 +566,62 @@ impl ToolExecutor {
             .and_then(|v| v.as_u64())
             .unwrap_or(60) as u32;
 
+        crate::api::code_env::ensure_env();
+        // A ghost chat writes nothing down, so it gets a throwaway workspace
+        // like a headless run.
+        let ws = match (&context.chat_id, context.temporary) {
+            (Some(id), false) => crate::api::code_env::Workspace::for_chat(id),
+            _ => crate::api::code_env::Workspace::temporary(),
+        }
+        .map_err(ToolError::ExecutionFailed)?;
+
         let request = crate::api::code::ExecuteCodeRequest {
             code: code.to_string(),
             timeout,
         };
+        let response = crate::api::code::execute_code(request, &ws).await;
 
-        let response = crate::api::code::execute_code(request).await;
-
-        if response.success {
-            Ok(ToolResult::success(serde_json::json!({
-                "output": response.stdout,
-                "stderr": response.stderr,
-                "execution_time_ms": response.execution_time_ms,
-            })))
-        } else {
-            // Return the error but still as a "successful" tool call
-            // so the LLM can see what went wrong and potentially fix it
-            Ok(ToolResult {
-                success: false,
-                data: serde_json::json!({
-                    "output": response.stdout,
-                    "stderr": response.stderr,
-                    "error": response.error,
-                    "execution_time_ms": response.execution_time_ms,
-                }),
-                error: response.error,
-                attachments: Vec::new(),
+        // The chat shows a saved chat's images from its workspace; the model
+        // gets their paths, never bytes.
+        let images: Vec<serde_json::Value> = response
+            .images
+            .iter()
+            .map(|path| match &ws.chat_id {
+                Some(id) => serde_json::json!({ "path": path, "url": format!("/api/chats/{id}/files/{path}") }),
+                None => serde_json::json!({ "path": path }),
             })
+            .collect();
+
+        let mut data = serde_json::json!({
+            "stdout": response.stdout,
+            "stderr": response.stderr,
+            "exit_code": response.exit_code,
+            "timed_out": response.timed_out,
+            "truncated": response.truncated,
+            "execution_time_ms": response.execution_time_ms,
+        });
+        if !images.is_empty() {
+            data["images"] = serde_json::Value::Array(images);
+            data["note"] = serde_json::json!(if ws.chat_id.is_some() {
+                "These images are shown to the owner with your reply. Refer to them; do not link them."
+            } else {
+                "Images are shown only in a saved chat; describe the result in text."
+            });
         }
+        if !response.packages_ready {
+            data["packages"] = serde_json::json!(
+                "not installed yet on this server: standard library only for this call"
+            );
+        }
+
+        // A failed run is a failed tool call carrying the whole result, so the
+        // model gets the traceback to fix its code from and the chat can show it.
+        Ok(ToolResult {
+            success: response.success,
+            data,
+            error: response.error,
+            attachments: Vec::new(),
+        })
     }
 
     /// Hand a stored file to the model to look at.
@@ -1118,65 +1167,6 @@ impl ToolExecutor {
         let year = chrono::Datelike::year(&parsed);
         let this_year = chrono::Datelike::year(&chrono::Utc::now().date_naive());
         (1900..=this_year).contains(&year).then_some(parsed)
-    }
-
-    /// Set the user's preferred name
-    async fn execute_set_user_name(
-        &self,
-        arguments: serde_json::Value,
-    ) -> Result<ToolResult, ToolError> {
-        let name = arguments
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidParameters("name is required".into()))?;
-
-        let name = name.trim();
-        if name.is_empty() || name.len() > 100 {
-            return Err(ToolError::InvalidParameters("name must be 1-100 characters".into()));
-        }
-
-        sqlx::query("UPDATE app_user_profile SET preferred_name = $1, updated_at = now() WHERE id = '00000000-0000-0000-0000-000000000001'")
-            .bind(name)
-            .execute(self._pool.as_ref())
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to set user name: {}", e)))?;
-
-        // End onboarding — user name is the last piece, unlock full tools
-        let _ = sqlx::query("UPDATE app_user_profile SET onboarding_status = 'active' WHERE onboarding_status = 'onboarding'")
-            .execute(self._pool.as_ref())
-            .await;
-
-        Ok(ToolResult::success(serde_json::json!({
-            "name": name,
-            "updated": true
-        })))
-    }
-
-    /// Set the AI assistant's name
-    async fn execute_set_assistant_name(
-        &self,
-        arguments: serde_json::Value,
-    ) -> Result<ToolResult, ToolError> {
-        let name = arguments
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidParameters("name is required".into()))?;
-
-        let name = name.trim();
-        if name.is_empty() || name.len() > 100 {
-            return Err(ToolError::InvalidParameters("name must be 1-100 characters".into()));
-        }
-
-        sqlx::query("UPDATE app_assistant_profile SET assistant_name = $1, updated_at = now() WHERE id = '00000000-0000-0000-0000-000000000001'")
-            .bind(name)
-            .execute(self._pool.as_ref())
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to set assistant name: {}", e)))?;
-
-        Ok(ToolResult::success(serde_json::json!({
-            "name": name,
-            "updated": true
-        })))
     }
 
     /// Fetch the full content of a project-referenced entity (page, chat, person, etc.)

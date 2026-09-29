@@ -62,6 +62,11 @@ pub struct IndexFile {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Index {
     pub build: String,
+    /// Only a full monthly cut says `true`. A box deletes nothing against an
+    /// index that does not: a partial build treated as the whole map would
+    /// delete every square it does not list (deploy/maps/cut.py).
+    #[serde(default)]
+    pub complete: bool,
     pub files: Vec<IndexFile>,
 }
 
@@ -103,8 +108,9 @@ pub async fn load_presence(pool: &PgPool) -> Result<Presence> {
                    floor(extract(epoch FROM occurred_at) / 600)::bigint AS bucket
             FROM data_location_point
             WHERE latitude BETWEEN -85 AND 85 AND longitude BETWEEN -180 AND 180
+              AND deleted_at_source IS NULL AND NOT is_archived
         )
-        SELECT x, y, (current_date - day)::int AS age
+        SELECT x, y, ((now() AT TIME ZONE 'UTC')::date - day)::int AS age
         FROM p
         GROUP BY day, x, y
         HAVING count(DISTINCT bucket) >= 6
@@ -135,7 +141,8 @@ pub fn select(index: &Index, presence: &Presence) -> Vec<IndexFile> {
     let mut picked: Vec<IndexFile> = index
         .files
         .iter()
-        .filter(|f| f.tier == "world" || f.tier == "assets")
+        // By exact name: an index entry's name becomes a path on this disk.
+        .filter(|f| (f.tier == "world" && f.name == "world.pmtiles") || (f.tier == "assets" && f.name == "assets.tar"))
         .cloned()
         .collect();
 
@@ -242,11 +249,26 @@ async fn download(http: &reqwest::Client, url: &str, bearer: Option<&str>, dir: 
     if have > 0 && have < f.bytes {
         req = req.header(reqwest::header::RANGE, format!("bytes={have}-"));
     }
-    let resp = req.send().await.context("map download request")?;
+    // No `{e}` of a reqwest error reaches a log with its URL: that URL names a square.
+    let resp = req.send().await.map_err(|e| anyhow::anyhow!("map download request: {}", e.without_url()))?;
     let status = resp.status();
-    let resuming = status == reqwest::StatusCode::PARTIAL_CONTENT;
+    let mut resuming = status == reqwest::StatusCode::PARTIAL_CONTENT;
     if !status.is_success() {
         bail!("map download answered {status}");
+    }
+    if resuming {
+        // Append only where we asked to start; anything else starts over.
+        let starts_at_have = resp
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.starts_with(&format!("bytes {have}-")));
+        if !starts_at_have {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            bail!("map download resumed at the wrong offset; starting over next pass");
+        }
+    } else {
+        resuming = false;
     }
     let mut out = tokio::fs::OpenOptions::new()
         .create(true)
@@ -255,9 +277,18 @@ async fn download(http: &reqwest::Client, url: &str, bearer: Option<&str>, dir: 
         .truncate(!resuming)
         .open(&tmp)
         .await?;
+    let mut written = if resuming { have } else { 0 };
     let mut body = resp.bytes_stream();
     while let Some(chunk) = body.next().await {
-        out.write_all(&chunk.context("map download interrupted")?).await?;
+        let chunk = chunk.map_err(|e| anyhow::anyhow!("map download interrupted: {}", e.without_url()))?;
+        written += chunk.len() as u64;
+        if written > f.bytes {
+            // The index says how big the file is; more than that is not it.
+            drop(out);
+            let _ = tokio::fs::remove_file(&tmp).await;
+            bail!("map download ran past its expected size");
+        }
+        out.write_all(&chunk).await?;
     }
     out.flush().await?;
     drop(out);
@@ -285,7 +316,17 @@ fn unpack_assets(archive: PathBuf, dir: PathBuf) -> Result<()> {
     let staging = dir.join("assets.new");
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging)?;
-    tar::Archive::new(std::fs::File::open(&archive)?).unpack(&staging)?;
+    // Entry by entry, refusing links: the glyph and sprite routes read files
+    // under assets/, and a symlink there would let them read any file.
+    let mut ar = tar::Archive::new(std::fs::File::open(&archive)?);
+    for entry in ar.entries()? {
+        let mut entry = entry?;
+        let kind = entry.header().entry_type();
+        if kind.is_symlink() || kind.is_hard_link() {
+            anyhow::bail!("the assets archive holds a link; refusing it");
+        }
+        entry.unpack_in(&staging)?;
+    }
     let live = dir.join("assets");
     let old = dir.join("assets.old");
     let _ = std::fs::remove_dir_all(&old);
@@ -311,8 +352,9 @@ pub async fn sync_once(pool: &PgPool) -> Result<SyncReport> {
     let dir = maps_root();
     tokio::fs::create_dir_all(&dir).await?;
     let base = source_base();
-    let key = bearer(pool).await?;
     let self_hosted = std::env::var("VIRTUES_MAPS_SOURCE").is_ok_and(|s| !s.is_empty());
+    // The subscription key goes to virtues-api and nowhere else.
+    let key = if self_hosted { None } else { bearer(pool).await? };
     if key.is_none() && !self_hosted {
         tracing::info!("maps: no subscription linked; keeping what is on disk");
         return Ok(SyncReport::default());
@@ -327,7 +369,10 @@ pub async fn sync_once(pool: &PgPool) -> Result<SyncReport> {
     if let Some(k) = &key {
         req = req.bearer_auth(k);
     }
-    let resp = req.send().await.context("reading the map index")?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("reading the map index: {}", e.without_url()))?;
     match resp.status().as_u16() {
         200 => {}
         401 | 402 | 403 => {
@@ -350,12 +395,23 @@ pub async fn sync_once(pool: &PgPool) -> Result<SyncReport> {
         .await
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default(); // absent or unreadable: every file is re-checked
+        .unwrap_or_default(); // absent or unreadable: files on disk are re-adopted by hash below
 
     let mut report = SyncReport::default();
     let mut changed = false;
     for f in &want {
         if is_current(&manifest, &dir, f, &index.build) {
+            continue;
+        }
+        // On disk but not in the manifest: a pass that was cut short after the
+        // rename, or a lost manifest. Keep it if its bytes are the index's.
+        if !manifest.files.contains_key(&f.name) && sha256_of(dir.join(&f.name)).await.as_deref() == Some(&f.sha256) {
+            manifest.files.insert(f.name.clone(), (index.build.clone(), f.sha256.clone()));
+            save_manifest(&dir, &manifest).await?;
+            changed = true;
+            if f.tier == "assets" && !dir.join("assets").exists() {
+                unpack_logged(&dir, f).await;
+            }
             continue;
         }
         let free = crate::storage::lake::free_bytes_at(&dir).unwrap_or(u64::MAX);
@@ -366,11 +422,15 @@ pub async fn sync_once(pool: &PgPool) -> Result<SyncReport> {
         let url = format!("{base}/{}/{}", index.build, f.name);
         match download(&http, &url, key.as_deref(), &dir, f).await {
             Ok(()) => {
-                if f.tier == "assets" {
-                    let (a, d) = (dir.join(&f.name), dir.clone());
-                    tokio::task::spawn_blocking(move || unpack_assets(a, d)).await??;
+                // A fonts bundle that will not unpack is not recorded, so the
+                // next pass tries again; it does not stop this one.
+                if f.tier == "assets" && !unpack_logged(&dir, f).await {
+                    continue;
                 }
                 manifest.files.insert(f.name.clone(), (index.build.clone(), f.sha256.clone()));
+                // Saved per file: a restart mid-pass must not cost the files
+                // already in place.
+                save_manifest(&dir, &manifest).await?;
                 report.downloaded += 1;
                 changed = true;
             }
@@ -379,17 +439,19 @@ pub async fn sync_once(pool: &PgPool) -> Result<SyncReport> {
         }
     }
 
-    // Drop what is no longer picked (a square you left long ago, or one the
-    // budget no longer fits).
-    let keep: HashSet<&str> = want.iter().map(|f| f.name.as_str()).collect();
-    let held: Vec<String> = manifest.files.keys().cloned().collect();
-    for name in held {
-        if !keep.contains(name.as_str()) {
-            let _ = tokio::fs::remove_file(dir.join(&name)).await;
-            manifest.files.remove(&name);
-            report.removed += 1;
-            changed = true;
+    for name in removals(&manifest, &want, index.complete, presence.is_empty()) {
+        match tokio::fs::remove_file(dir.join(&name)).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                // Still on disk, so still held: keep it in the manifest.
+                tracing::warn!("maps: could not remove a map file: {e}");
+                continue;
+            }
         }
+        manifest.files.remove(&name);
+        report.removed += 1;
+        changed = true;
     }
 
     report.held_bytes = want
@@ -397,13 +459,60 @@ pub async fn sync_once(pool: &PgPool) -> Result<SyncReport> {
         .filter(|f| manifest.files.contains_key(&f.name))
         .map(|f| f.bytes)
         .sum();
-    let tmp = dir.join("manifest.json.tmp");
-    tokio::fs::write(&tmp, serde_json::to_vec_pretty(&manifest)?).await?;
-    tokio::fs::rename(&tmp, &manifest_path).await?;
+    save_manifest(&dir, &manifest).await?;
     if changed {
         super::reload().await;
     }
     Ok(report)
+}
+
+/// The held files to delete this pass: those the selection no longer picks.
+/// None at all unless the index is a complete cut AND the box has location
+/// history. A partial index, or a history that is momentarily empty (a
+/// restore, a re-import), would otherwise read as "delete every square".
+fn removals(manifest: &Manifest, want: &[IndexFile], index_complete: bool, presence_empty: bool) -> Vec<String> {
+    if !index_complete || presence_empty {
+        return Vec::new();
+    }
+    let keep: HashSet<&str> = want.iter().map(|f| f.name.as_str()).collect();
+    let mut gone: Vec<String> = manifest.files.keys().filter(|n| !keep.contains(n.as_str())).cloned().collect();
+    gone.sort();
+    gone
+}
+
+async fn save_manifest(dir: &Path, manifest: &Manifest) -> Result<()> {
+    let tmp = dir.join("manifest.json.tmp");
+    tokio::fs::write(&tmp, serde_json::to_vec_pretty(manifest)?).await?;
+    tokio::fs::rename(&tmp, dir.join("manifest.json")).await?;
+    Ok(())
+}
+
+async fn sha256_of(path: PathBuf) -> Option<String> {
+    tokio::task::spawn_blocking(move || -> Option<String> {
+        let mut h = Sha256::new();
+        let mut file = std::fs::File::open(path).ok()?; // absent: nothing to adopt
+        std::io::copy(&mut file, &mut h).ok()?;
+        Some(hex::encode(h.finalize()))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Unpack the fonts bundle; false (logged) when it will not.
+async fn unpack_logged(dir: &Path, f: &IndexFile) -> bool {
+    let (a, d) = (dir.join(&f.name), dir.to_path_buf());
+    match tokio::task::spawn_blocking(move || unpack_assets(a, d)).await {
+        Ok(Ok(())) => true,
+        Ok(Err(e)) => {
+            tracing::warn!("maps: the fonts bundle did not unpack: {e:#}");
+            false
+        }
+        Err(e) => {
+            tracing::warn!("maps: the fonts unpack task failed: {e}");
+            false
+        }
+    }
 }
 
 /// Run a pass a few minutes after start, then daily. Off in a dev checkout
@@ -452,6 +561,7 @@ mod tests {
         const MB: u64 = 1024 * 1024;
         Index {
             build: "20260927".into(),
+            complete: true,
             files: vec![
                 file("world.pmtiles", "world", 0, 0, 0, 188 * MB),
                 file("assets.tar", "assets", 0, 0, 0, 14 * MB),
@@ -527,6 +637,58 @@ mod tests {
     #[test]
     fn recent_days_outweigh_old_ones() {
         assert!(days(&[0, 1, 2]).score() > days(&[400, 401, 402, 403]).score());
+    }
+
+    fn held(names: &[&str]) -> Manifest {
+        Manifest { files: names.iter().map(|n| (n.to_string(), ("20260927".into(), "s".into()))).collect() }
+    }
+
+    #[test]
+    fn nothing_is_deleted_against_a_partial_index() {
+        // A trial cut that lists only a few squares must not read as "delete the rest".
+        let m = held(&["home-z7-29-52.pmtiles", "visited-z5-7-13.pmtiles"]);
+        let want = vec![file("world.pmtiles", "world", 0, 0, 0, 1)];
+        assert!(removals(&m, &want, false, false).is_empty());
+    }
+
+    #[test]
+    fn nothing_is_deleted_while_the_history_is_empty() {
+        // A restore or re-import in progress is not "the owner has been nowhere".
+        let m = held(&["home-z7-29-52.pmtiles"]);
+        let want = vec![file("world.pmtiles", "world", 0, 0, 0, 1)];
+        assert!(removals(&m, &want, true, true).is_empty());
+    }
+
+    #[test]
+    fn a_square_no_longer_picked_is_deleted_against_a_complete_index() {
+        let m = held(&["home-z7-29-52.pmtiles", "world.pmtiles"]);
+        let want = vec![file("world.pmtiles", "world", 0, 0, 0, 1)];
+        assert_eq!(removals(&m, &want, true, false), ["home-z7-29-52.pmtiles"]);
+    }
+
+    #[test]
+    fn index_names_that_would_leave_the_maps_directory_are_ignored() {
+        let mut idx = index();
+        idx.files.push(file("../../etc/passwd", "world", 0, 0, 0, 1));
+        idx.files.push(file("/tmp/x", "assets", 0, 0, 0, 1));
+        let selected = select(&idx, &Presence::new());
+        assert_eq!(names(&selected), ["assets.tar", "world.pmtiles"]);
+    }
+
+    #[test]
+    fn a_link_in_the_fonts_bundle_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("assets.tar");
+        {
+            let mut b = tar::Builder::new(std::fs::File::create(&archive).unwrap());
+            let mut h = tar::Header::new_gnu();
+            h.set_entry_type(tar::EntryType::Symlink);
+            h.set_size(0);
+            b.append_link(&mut h, "fonts/evil", "/etc/passwd").unwrap();
+            b.finish().unwrap();
+        }
+        assert!(unpack_assets(archive, dir.path().to_path_buf()).is_err());
+        assert!(!dir.path().join("assets").exists());
     }
 
     #[test]

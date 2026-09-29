@@ -41,6 +41,7 @@ virtues-registry = { path = "../crates/virtues-registry" }
 
 # Single shared utility crate: crypto, auth, contract, db, dedup, ids, ios, ...
 virtues-helpers = { path = "../crates/virtues-helpers" }
+virtues-qairt = { path = "../crates/virtues-qairt" }
 # iroh reach layer: the box is an iroh Endpoint that serves this axum app over
 # iroh (LAN-direct → hole-punch → our relay). Replaces the hand-rolled relay.
 # Improv wire format, shared with the desktop client that drives it. Protocol

@@ -17,9 +17,17 @@ The planet is downloaded once and cut locally, rather than range-read per
 square: one sequential read of a build is the use Protomaps' docs point to.
 
     cut.py                        full monthly run (systemd timer)
-    cut.py --remote --limit 3     dry run against build.protomaps.com, a few squares
-    cut.py --remote --only=-97.74,30.27   dev: the squares holding one point (`=`: a western longitude starts with -)
+    cut.py --remote --limit 3     trial against build.protomaps.com, a few squares
+    cut.py --remote --only=-97.74,30.27   trial: the squares holding one point (`=`: a western longitude starts with -)
+
+A trial (--remote, --limit or --only) writes MAPS_DIR/<build>.trial/ and
+NEVER publishes: a box treats a published index as the whole map and deletes
+every square it holds that the index does not list, so a partial build
+published as latest would wipe street-level maps on every box. Only a full
+run publishes, and only a full run's index says `"complete": true`.
 """
+
+from __future__ import annotations
 
 import argparse
 import concurrent.futures
@@ -76,6 +84,37 @@ def bbox(z: int, x: int, y: int) -> str:
     return f"{lon(x) + e},{lat(y + 1) + e},{lon(x + 1) - e},{lat(y) - e}"
 
 
+def download(url: str, dest: Path) -> None:
+    """Download one very large file, resuming until it is whole.
+
+    A ~140 GB transfer rarely survives in one piece: the host resets long
+    streams (seen: curl 92, HTTP/2 INTERNAL_ERROR, ~37 GB in). curl's --retry
+    does not cover a reset mid-body, so resume from the partial file until its
+    size matches what the server says the file is. HTTP/1.1 because a single
+    long HTTP/2 stream is the thing that gets reset.
+    """
+    head = subprocess.run(["curl", "-fsSIL", "--http1.1", url], capture_output=True, text=True, check=True).stdout
+    sizes = [int(l.split(":", 1)[1]) for l in head.lower().splitlines() if l.startswith("content-length:")]
+    if not sizes:
+        raise RuntimeError(f"{url}: no Content-Length, cannot tell when the download is whole")
+    total = sizes[-1]
+    part = Path(f"{dest}.part")
+    log(f"downloading the planet ({total / 1e9:.0f} GB, resumable)")
+    for attempt in range(1, 61):
+        subprocess.run(["curl", "-fsSL", "--http1.1", "--retry", "10", "--retry-all-errors", "--retry-delay", "5",
+                        "-C", "-", "-o", str(part), url])
+        have = part.stat().st_size if part.exists() else 0
+        if have == total:
+            part.rename(dest)
+            log("✓ planet downloaded")
+            return
+        if have > total:
+            part.unlink()  # a different file behind the same name; start over
+        log(f"download stopped at {have / 1e9:.1f} of {total / 1e9:.1f} GB (attempt {attempt}); resuming")
+        time.sleep(10)
+    raise RuntimeError(f"{url}: gave up after 60 attempts")
+
+
 def extract(pmtiles: str, src: str, out: Path, *args: str) -> None:
     if not any(a.startswith("--bbox=") for a in args) and out.name != "world.pmtiles":
         # Never a bbox-less cut of a square: that is the whole planet (138 GB).
@@ -121,13 +160,39 @@ def assets_tar(out: Path) -> None:
             tar.add(Path(tmp) / "sprites/v4", arcname="sprites")
 
 
+def published_build(maps_dir: Path) -> str | None:
+    try:
+        return json.loads((maps_dir / "latest.json").read_text())["build"]
+    except (FileNotFoundError, KeyError, ValueError):
+        return None
+
+
+def publish(maps_dir: Path, build: str) -> None:
+    latest = maps_dir / "latest.json.tmp"
+    latest.write_text(json.dumps({"build": build}))
+    latest.rename(maps_dir / "latest.json")
+    log(f"∴ published build {build}")
+
+
+def clean_leftovers(maps_dir: Path, build: str) -> None:
+    """Remove what failed runs of OTHER builds left: a ~140 GB planet or its
+    .part, and half-cut .partial directories. This build's own are kept, so a
+    rerun resumes."""
+    for p in maps_dir.iterdir():
+        stale_planet = p.name.startswith("planet-") and not p.name.startswith(f"planet-{build}.")
+        stale_partial = p.is_dir() and p.name.endswith(".partial") and p.name != f"{build}.partial"
+        if stale_planet or stale_partial:
+            shutil.rmtree(p) if p.is_dir() else p.unlink()
+            log(f"removed leftover {p.name}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--maps-dir", default=os.environ.get("VIRTUES_MAPS_DIR", "/srv/maps"))
     ap.add_argument("--build", help="Protomaps build date YYYYMMDD (default: newest)")
-    ap.add_argument("--remote", action="store_true", help="range-read the build instead of downloading it (dry runs only)")
-    ap.add_argument("--limit", type=int, help="cut at most N squares per tier (dry runs only)")
-    ap.add_argument("--only", metavar="LON,LAT", help="cut only the squares holding this point (dev and tests)")
+    ap.add_argument("--remote", action="store_true", help="range-read the build instead of downloading it (trial: never published)")
+    ap.add_argument("--limit", type=int, help="cut at most N squares per tier (trial: never published)")
+    ap.add_argument("--only", metavar="LON,LAT", help="cut only the squares holding this point (trial: never published)")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--keep", type=int, default=2, help="builds to keep, the newest included")
     args = ap.parse_args()
@@ -137,22 +202,33 @@ def main() -> None:
         sys.exit("maps-cut: install the Protomaps CLI (go install github.com/protomaps/go-pmtiles@latest)")
 
     maps_dir = Path(args.maps_dir)
+    maps_dir.mkdir(parents=True, exist_ok=True)
     build = args.build or newest_build()
+    trial = bool(args.remote or args.limit or args.only)
     final = maps_dir / build
-    if final.exists():
-        log(f"build {build} is already cut; nothing to do")
-        return
-    work = maps_dir / f"{build}.partial"
+    current = published_build(maps_dir)
+
+    if not trial:
+        if current and build < current:
+            sys.exit(f"maps-cut: build {build} is older than the published {current}; refusing to go backwards")
+        if final.exists():
+            if current != build:
+                # Cut, but the run died between the two renames: publish it now.
+                publish(maps_dir, build)
+            else:
+                log(f"build {build} is already cut and published; nothing to do")
+            return
+        clean_leftovers(maps_dir, build)
+
+    work = maps_dir / (f"{build}.trial" if trial else f"{build}.partial")
     work.mkdir(parents=True, exist_ok=True)
-    log(f"∴ cutting build {build} into {final}")
+    log(f"∴ cutting build {build} into {work}" + (" (trial: will not be published)" if trial else ""))
 
     src = f"{BUILDS}/{build}.pmtiles"
     planet = maps_dir / f"planet-{build}.pmtiles"
     if not args.remote:
         if not planet.exists():
-            log("downloading the planet (~140 GB, resumable)")
-            subprocess.run(["curl", "-fsSL", "--retry", "5", "-C", "-", "-o", f"{planet}.part", src], check=True)
-            Path(f"{planet}.part").rename(planet)
+            download(src, planet)
         src = str(planet)
 
     files = []
@@ -197,26 +273,28 @@ def main() -> None:
         p = work / f["name"]
         f["bytes"] = p.stat().st_size
         f["sha256"] = sha256(p)
-    index = {"build": build, "license": LICENSE, "attribution": ATTRIBUTION, "files": files}
+    index = {"build": build, "complete": not trial, "license": LICENSE, "attribution": ATTRIBUTION, "files": files}
     (work / "index.json").write_text(json.dumps(index, indent=1))
     total = sum(f["bytes"] for f in files)
     log(f"✓ index.json: {len(files)} files, {total / 1e9:.1f} GB")
 
+    if trial:
+        log(f"∴ trial build left at {work}; not published")
+        return
+
     # Publish atomically: the build directory appears whole, then latest.json
     # is swapped in one rename, so virtues-api never serves half a build.
     work.rename(final)
-    latest = maps_dir / "latest.json.tmp"
-    latest.write_text(json.dumps({"build": build}))
-    latest.rename(maps_dir / "latest.json")
-    log(f"∴ published build {build}")
+    publish(maps_dir, build)
 
     if planet.exists():
         planet.unlink()
     builds = sorted(p for p in maps_dir.iterdir() if p.is_dir() and p.name.isdigit() and len(p.name) == 8)
     for old in builds[: -args.keep]:
+        if old.name == build:
+            continue  # never the build just published, whatever the dates say
         shutil.rmtree(old)
         log(f"removed old build {old.name}")
-
 
 if __name__ == "__main__":
     main()

@@ -1,7 +1,12 @@
 # Cloud consolidation: our hosted services onto one server
 
-**Status: server ordered, nothing moved yet.** When the cutover is done and the
-old hosting is shut down, delete this plan and update the deploy runbook.
+**Status: cut over 2026-09-28 (53 seconds of downtime).** atlas and
+virtues-api run on the new server against its own Postgres, with backups
+archiving off the server and a restore tested before any real data landed.
+The old hosting is stopped but kept for the rollback week. Left: the maps
+deploy (step 7), moving the review demo, deciding where the website's database
+lives, then shutting the old hosting down (step 8) and updating the deploy
+runbook. When that is done, delete this plan.
 
 ## Why
 

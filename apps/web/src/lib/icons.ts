@@ -6,6 +6,7 @@
  */
 
 import { addIcon } from '@iconify/svelte';
+import { GLYPHS as ATLAS_GLYPHS } from '$lib/components/sidebar/AtlasIcon.svelte';
 
 // Remix Icons (ri:)
 import riAddCircleLine from '@iconify-icons/ri/add-circle-line';
@@ -18,6 +19,10 @@ import riArrowDownSLine from '@iconify-icons/ri/arrow-down-s-line';
 import riArrowGoBackLine from '@iconify-icons/ri/arrow-go-back-line';
 import riArrowLeftLine from '@iconify-icons/ri/arrow-left-line';
 import riArrowRightDoubleLine from '@iconify-icons/ri/arrow-right-double-line';
+import riArchiveLine from '@iconify-icons/ri/archive-line';
+import riInboxUnarchiveLine from '@iconify-icons/ri/inbox-unarchive-line';
+import riStackLine from '@iconify-icons/ri/stack-line';
+import riStickyNoteLine from '@iconify-icons/ri/sticky-note-line';
 import riArrowLeftSLine from '@iconify-icons/ri/arrow-left-s-line';
 import riArrowRightSLine from '@iconify-icons/ri/arrow-right-s-line';
 import riArrowUpDownLine from '@iconify-icons/ri/arrow-up-down-line';
@@ -208,6 +213,10 @@ addIcon('ri:arrow-down-s-line', riArrowDownSLine);
 addIcon('ri:arrow-go-back-line', riArrowGoBackLine);
 addIcon('ri:arrow-left-line', riArrowLeftLine);
 addIcon('ri:arrow-right-double-line', riArrowRightDoubleLine);
+addIcon('ri:archive-line', riArchiveLine);
+addIcon('ri:inbox-unarchive-line', riInboxUnarchiveLine);
+addIcon('ri:stack-line', riStackLine);
+addIcon('ri:sticky-note-line', riStickyNoteLine);
 addIcon('ri:arrow-left-s-line', riArrowLeftSLine);
 addIcon('ri:arrow-right-s-line', riArrowRightSLine);
 addIcon('ri:arrow-up-down-line', riArrowUpDownLine);
@@ -392,6 +401,18 @@ addIcon('virtues:logo', {
 	width: 24,
 	height: 24,
 });
+
+// Atlas — the shell's drawn set (AtlasIcon.svelte), for surfaces that take an
+// icon by name. Same 16-unit grid and round caps; the stroke is a touch heavier
+// than the sidebar's 1.1 because these sit beside Remix glyphs, which are drawn
+// heavier, in tabs, menus and ⌘K.
+for (const [name, body] of Object.entries(ATLAS_GLYPHS)) {
+	addIcon(`atlas:${name}`, {
+		body: `<g fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">${body}</g>`,
+		width: 16,
+		height: 16,
+	});
+}
 
 // Export flag to indicate icons are registered
 export const iconsRegistered = true;

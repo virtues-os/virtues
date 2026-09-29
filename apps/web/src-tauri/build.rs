@@ -81,6 +81,7 @@ const APP_COMMANDS: &[&str] = &[
     "pause_collector",
     "resume_collector",
     "stop_collector",
+    "recheck_collector",
     "open_full_disk_access",
     "open_accessibility_settings",
     // Window chrome (desktop).

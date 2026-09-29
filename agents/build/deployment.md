@@ -9,12 +9,12 @@
 
 ## The model in one sentence
 
-**Two shipping shapes — native Linux binary for the home box, Docker images on EC2 for the cloud — and nothing else.**
+**Two shipping shapes — native Linux binary for the home box, Docker images on one server for the cloud — and nothing else.**
 
 | Tier | What it is | How it ships | Privilege |
 |---|---|---|---|
 | **Home box** (DIY + appliance) | `virtues` binary (+ `virtues-qnnd` on NPU boards) | `curl -sSL https://virtues.com/sh \| sudo sh` → systemd units | Rootless throughout — no privileged component |
-| **Cloud sidecar** (Virtues-operated) | `atlas` + `virtues-api` services | Docker images on a single EC2 + Caddy | `docker run`, no orchestrator |
+| **Cloud sidecar** (Virtues-operated) | `atlas` + `virtues-api` services | Docker images on one dedicated server + Caddy | `docker run`, no orchestrator |
 | **Clients** | Web UI (SvelteKit), iOS app, Mac collector | Static site / App Store / signed pkg | None |
 
 That's it. No Compose, no Quadlet, no Kubernetes, no Nomad anywhere in the product. The cloud sidecar is the only thing that runs in containers, and it's there because cloud → containers is the right call for stateless services behind a TLS terminator.
@@ -97,16 +97,21 @@ no router to detect.
 
 ---
 
-## Cloud sidecar: `atlas` + `virtues-api` on EC2
+## Cloud sidecar: `atlas` + `virtues-api` on one server
 
-The cloud half is the *metered* edge — Stripe billing (atlas) and the AI/web/bank passthrough (virtues-api). Single tenant from a box's perspective; multi-tenant from the cloud's perspective. Shipped as:
+The cloud half is the *metered* edge — Stripe billing (atlas) and the AI/web/bank passthrough (virtues-api), plus the map files boxes download. Single tenant from a box's perspective; multi-tenant from the cloud's perspective. Shipped as:
 
-- **Two Docker images** (`services/virtues-atlas/Dockerfile`, `services/virtues-api/Dockerfile`), built `--platform linux/amd64`, pushed to ECR via `make deploy-atlas` / `make deploy-virtues-api`.
-- **One EC2 instance** runs both as `docker run` units behind **Caddy** (which terminates TLS for `atlas.virtues.com` + `api.virtues.com` via Let's Encrypt and reverse-proxies to the containers).
-- **RDS Postgres** with TLS-to-RDS, in the same VPC. No NAT, no load balancer, no App Runner — flat and cheap.
-- **Access**: SSM Session Manager only, no public SSH.
+- **Two Docker images** (`services/virtues-atlas/Dockerfile`, `services/virtues-api/Dockerfile`), built **on the server** from a pushed commit — no registry sits in the path.
+- **One dedicated server** runs both as `docker run --network host` units behind **Caddy**, which terminates TLS for `atlas.virtues.com` + `api.virtues.com` and reverse-proxies to the containers. Env lives in root-only files, `/etc/virtues/{atlas,api}.env`.
+- **Postgres on the same server**, over the local socket. Continuous WAL archiving plus scheduled full and differential backups go to object storage off the server, encrypted; a restore was tested before any production data landed.
+- **Maps**: a monthly systemd timer cuts the Protomaps build into `/srv/maps/<build>/` (`deploy/maps/`), mounted read-only into virtues-api, which serves it outside request tracing.
+- **Access**: SSH by key only; the firewall opens 22, 80 and 443.
 
-Why one EC2 + Caddy and not ECS/App Runner/Fargate: latency, cost, and avoiding NAT gateway charges for a small workload. The whole cloud half fits on one `t4g.medium` and reboots in <30s. If load demands it, we'll split.
+Why one server and not a managed platform: cost, unmetered bandwidth for the map files, and a workload small enough that one machine with backups off it is the honest shape. The relay runs on its own server so a deploy or a map download never touches remote access.
+
+### Monitoring
+
+Both servers run `virtues-health` every ten minutes and email the operator (through Resend) when something changes and once a day while it stays wrong. It checks RAID members, SMART health and wear, disk space, failed systemd units, both containers, the public `/health` endpoints, backup age and WAL archiving, and certificate expiry. Each server also checks the other's public endpoints, because a dead server cannot report itself. A failed backup or map cut emails immediately (`OnFailure=`), as does an `mdadm` RAID event. Docker logs are capped (`local` driver, 5 × 20 MB).
 
 ---
 
@@ -119,40 +124,33 @@ Why one EC2 + Caddy and not ECS/App Runner/Fargate: latency, cost, and avoiding 
 - `tools/bootstrap.sh` discovers the latest release via the GitHub API at install time — no separate "manifest" or update server.
 
 **Cloud releases:**
-- `make deploy-atlas` / `make deploy-virtues-api` build + push `:latest` to ECR.
-- The EC2 instance then pulls and **recreates** the container. Manual today;
-  candidate for a GitHub Action later.
-
-One EC2 instance runs both containers. Access is SSM only — no public SSH — so
-step two is a `send-command`. The account ID and instance ID live in the private
-ops note, not here; export them first:
 
 ```sh
-ACCOUNT=<aws-account-id>            # private ops note
-INSTANCE=<ec2-instance-id>          # private ops note
-REGISTRY=$ACCOUNT.dkr.ecr.us-east-1.amazonaws.com
-ECR=$REGISTRY/virtues-api:latest    # or virtues-atlas
-aws ssm send-command --instance-ids $INSTANCE \
-  --document-name AWS-RunShellScript --parameters "commands=[
-    \"aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $REGISTRY\",
-    \"docker pull $ECR\",
-    \"docker rm -f virtues-api\",
-    \"docker run -d --name virtues-api --restart unless-stopped --network host --env-file /etc/virtues/api.env $ECR\",
-    \"sleep 20\",
-    \"docker inspect virtues-api --format 'image={{.Image}} health={{.State.Health.Status}}'\"]"
+make deploy-virtues-api REF=<sha|tag|branch>
+make deploy-atlas REF=<sha|tag|branch>
+make deploy-rollback SVC=virtues-api        # back to the image before the last deploy
 ```
 
-**`docker restart` is not enough, twice over:** it re-runs the *existing*
-container, so it neither picks up the newly pulled image nor re-reads
-`/etc/virtues/api.env`. It must be `rm -f` + `run`. The run flags above are not
-optional decoration — they reconstruct the live container exactly (host network,
-no port bindings, no binds, `--env-file` only, no stray `-e`).
+`tools/deploy-service.sh` builds the image on the server from exactly that
+commit (it must be pushed; a branch name means `origin/<branch>`), starts it on
+a spare port against the live config, and swaps it in only if it answers
+(`/ready` for virtues-api, `/health` for atlas). The replaced image is kept as
+`<service>:previous`, and a container that does not come up is rolled back
+automatically. One deploy per service runs at a time.
 
-**Verify the deploy actually changed something.** `:latest` deploys fail
-silently by design — the image ID before and after is the only proof:
+**The smoke test runs against the live database, and both services migrate on
+startup.** A failed smoke test leaves the running service untouched, but a
+migration the new image applied stays applied. Migrations are append-only, so
+the old image keeps working on the newer schema — keep it that way.
+
+**Env changes need a recreate.** `docker restart` re-runs the existing
+container, so it neither picks up a new image nor re-reads the env file. After
+editing `/etc/virtues/*.env`, redeploy the running ref (or `rm -f` + `run` with
+the same flags the script uses).
+
+**Check what a deploy changed.** After a model change in particular:
 
 ```sh
-docker inspect virtues-api --format '{{.Image}}'          # before and after
 docker logs virtues-api 2>&1 | grep -i "model catalog"    # want: catalog loaded count=NNN
 docker logs virtues-api 2>&1 | grep -ciE "ERROR|panic"    # want: 0
 curl -s https://api.virtues.com/health                    # want: 200
@@ -161,8 +159,7 @@ curl -s https://api.virtues.com/health                    # want: 200
 A zero error count is the check that matters most on a model change: virtues-api
 logs `SLOT DEFAULTS are NOT in the gateway catalog` at error level when a slot id
 no longer exists upstream, which is the one failure that 404s every user we route
-to it. Keep the previous image ID to hand — `docker run` against it is the
-rollback.
+to it.
 
 ---
 
@@ -172,6 +169,6 @@ rollback.
 - `deploy/quadlet/` (deleted — orphaned by native install)
 - `deploy/wireguard.Dockerfile` **and the WG daemon itself** (`crates/virtues-wg`,
   `virtues-wireguard.service`) — deleted with the move to the relay
-- Nomad job files (gone — replaced by `docker run` on EC2)
+- Nomad job files (gone — replaced by `docker run` on the cloud server)
 
 The cloud `services/{atlas,virtues-api}/Dockerfile` are the only Dockerfiles that still matter.

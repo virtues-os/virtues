@@ -121,39 +121,72 @@ pub(crate) fn base_builder() -> reqwest::ClientBuilder {
     builder
 }
 
-/// Create an HTTP client for regular virtues-api requests (non-streaming)
+// The three virtues-api clients are built once and cloned. A `reqwest::Client`
+// is a handle to one connection pool, and `BearerClient::from_env` runs for
+// every chat turn and background job: building fresh clients there opened a
+// new TCP + TLS connection to virtues-api (and re-read the OS trust store)
+// before every turn's first model call.
+//
+// A long-lived pool must not hand out a connection that died with a network
+// change (the box moved, the router restarted): idle connections are dropped
+// after 30 s, and on Linux a connection with unacknowledged data for 20 s is
+// declared dead instead of waiting out a 60-300 s request timeout.
+fn pooled(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    let builder = builder.pool_idle_timeout(Duration::from_secs(30));
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    let builder = builder.tcp_user_timeout(Duration::from_secs(20));
+    builder
+}
+
+static API_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+static COMPLETION_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+static STREAMING_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+/// The HTTP client for regular virtues-api requests (non-streaming), shared.
 ///
 /// Uses moderate timeouts suitable for synchronous LLM calls.
 pub fn virtues_api_client() -> reqwest::Client {
-    base_builder()
-        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
-        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-        .build()
-        .expect("Failed to build HTTP client")
+    API_CLIENT
+        .get_or_init(|| {
+            pooled(base_builder())
+                .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+                .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+                .build()
+                .expect("Failed to build HTTP client")
+        })
+        .clone()
 }
 
-/// Create an HTTP client for non-streaming AI completions (`/v1/ai/*`).
+/// The HTTP client for non-streaming AI completions (`/v1/ai/*`), shared.
 ///
 /// Same connect timeout as the regular client, but the request timeout covers
 /// a full unstreamed generation — see [`AI_COMPLETION_TIMEOUT_SECS`].
 pub fn virtues_api_completion_client() -> reqwest::Client {
-    base_builder()
-        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
-        .timeout(Duration::from_secs(AI_COMPLETION_TIMEOUT_SECS))
-        .build()
-        .expect("Failed to build completion HTTP client")
+    COMPLETION_CLIENT
+        .get_or_init(|| {
+            pooled(base_builder())
+                .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+                .timeout(Duration::from_secs(AI_COMPLETION_TIMEOUT_SECS))
+                .build()
+                .expect("Failed to build completion HTTP client")
+        })
+        .clone()
 }
 
-/// Create an HTTP client for streaming virtues-api requests (SSE)
+/// The HTTP client for streaming virtues-api requests (SSE), shared.
 ///
 /// A connect timeout and an idle timeout between bytes, and deliberately no
 /// total — see [`STREAM_IDLE_TIMEOUT_SECS`].
 pub fn virtues_api_streaming_client() -> reqwest::Client {
-    base_builder()
-        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
-        .read_timeout(Duration::from_secs(STREAM_IDLE_TIMEOUT_SECS))
-        .build()
-        .expect("Failed to build streaming HTTP client")
+    STREAMING_CLIENT
+        .get_or_init(|| {
+            pooled(base_builder())
+                .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+                .read_timeout(Duration::from_secs(STREAM_IDLE_TIMEOUT_SECS))
+                .build()
+                .expect("Failed to build streaming HTTP client")
+        })
+        .clone()
 }
 
 #[cfg(test)]

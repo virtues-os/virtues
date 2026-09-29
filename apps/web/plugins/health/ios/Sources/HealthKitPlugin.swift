@@ -2,36 +2,39 @@ import Tauri
 import UIKit
 
 class HealthPlugin: Plugin {
-  /// Explicit "Enable": prompt for HealthKit access, then backfill + collect.
-  @objc public func enable(_ invoke: Invoke) throws {
-    HealthCollector.shared.enable { ok in
-      invoke.resolve(["authorized": ok, "collecting": HealthCollector.shared.isCollecting])
+  /// The one status payload every command resolves. `authorized` is the
+  /// opt-in flag (see `optedIn`); `permission` is what iOS says about the sheet.
+  private static func resolveStatus(_ invoke: Invoke) {
+    let c = HealthCollector.shared
+    c.permission { permission in
+      invoke.resolve([
+        "authorized": c.optedIn(),
+        "collecting": c.isCollecting,
+        "permission": permission,
+      ])
     }
+  }
+
+  /// Explicit "Enable": show the HealthKit sheet, then backfill + collect.
+  /// Resolves once the sheet closes; whether reads were allowed stays unknown.
+  @objc public func enable(_ invoke: Invoke) throws {
+    HealthCollector.shared.enable { _ in HealthPlugin.resolveStatus(invoke) }
   }
 
   /// Launch auto-resume: collect only if already opted in; never prompts.
   @objc public func resume(_ invoke: Invoke) throws {
     HealthCollector.shared.resume()
-    invoke.resolve([
-      "authorized": HealthCollector.shared.authorized(),
-      "collecting": HealthCollector.shared.isCollecting,
-    ])
+    HealthPlugin.resolveStatus(invoke)
   }
 
   @objc public func status(_ invoke: Invoke) throws {
-    invoke.resolve([
-      "authorized": HealthCollector.shared.authorized(),
-      "collecting": HealthCollector.shared.isCollecting,
-    ])
+    HealthPlugin.resolveStatus(invoke)
   }
 
   /// Fetch new samples now (the "Sync now" button; the drain is a separate call).
   @objc public func collect(_ invoke: Invoke) throws {
     HealthCollector.shared.collectAll()
-    invoke.resolve([
-      "authorized": HealthCollector.shared.authorized(),
-      "collecting": HealthCollector.shared.isCollecting,
-    ])
+    HealthPlugin.resolveStatus(invoke)
   }
 }
 

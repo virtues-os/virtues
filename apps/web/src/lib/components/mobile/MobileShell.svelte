@@ -28,13 +28,15 @@
 	 * Chrome above the view returned, minimally, out of necessity: with no tab
 	 * bar and no back gesture, the hamburger is the only exit from any non-chat
 	 * view, so it must exist everywhere. It brings the shell's one other verb —
-	 * New chat — to the opposite corner, and nothing else.
+	 * New chat — to the opposite corner. Between them, a chat that is in a
+	 * project names it: the phone's title slot, and the way to its menu.
 	 */
 	import { onMount } from "svelte";
 	import { goto } from "$app/navigation";
 	import Icon from "$lib/components/Icon.svelte";
 	import TabContent from "$lib/components/tabs/TabContent.svelte";
 	import MobileDrawer from "$lib/components/mobile/MobileDrawer.svelte";
+	import ProjectChip from "$lib/components/ProjectChip.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { reachability } from "$lib/stores/reachability.svelte";
@@ -268,6 +270,20 @@
 			<button class="bar-btn" onclick={() => mobileLayout.openDrawer()} aria-label="Menu">
 				<Icon icon="ri:menu-line" width={22} />
 			</button>
+			{#if chrome?.project}
+				<!-- The title slot: the project this chat is in, where a phone
+				     puts "where am I". A tap is the project's menu (open it,
+				     move the chat, take it out); there is no right-click here,
+				     and opening the project is its first line. -->
+				<div class="bar-title">
+					<ProjectChip
+						bar
+						project={chrome.project}
+						title={`${chrome.project.name}: project options`}
+						onclick={(e) => chrome?.showProjectMenu?.(e)}
+					/>
+				</div>
+			{/if}
 			{#if showGhostToggle}
 				<button
 					class="bar-btn"
@@ -374,6 +390,18 @@
 		padding: 0 6px;
 	}
 
+	/* Centered on the bar, not between the buttons, so it stays put when the
+	   right-hand button changes; the width keeps it clear of both. */
+	.bar-title {
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		transform: translate(-50%, -50%);
+		display: flex;
+		justify-content: center;
+		max-width: calc(100% - 120px);
+	}
+
 	/* The scroll-edge hairline: present only while content is under the bar. */
 	.topbar::after {
 		content: "";
@@ -454,7 +482,7 @@
 		transition-duration: 0s;
 	}
 
-	/* Same voice as ChatView's desktop ghost toggle: the mode is on. */
+	/* The temporary-chat switch, lit: the mode is on. */
 	.bar-btn.ghost-active {
 		color: var(--color-primary);
 		background: color-mix(in srgb, var(--color-primary) 14%, transparent);

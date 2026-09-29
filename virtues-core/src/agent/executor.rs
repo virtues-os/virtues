@@ -45,12 +45,17 @@ impl ToolExecutionResult {
     pub fn to_event(&self) -> AgentEvent {
         match &self.result {
             // A tool that answered with a failure carries its reason in
-            // `error`, not in `data`. Passing `success: false` with the reason
-            // dropped left the UI to say only "the tool reported a failure".
-            Ok(result) if !result.success => AgentEvent::tool_error(
-                &self.tool_call_id,
-                result.error.clone().unwrap_or_else(|| "the tool reported a failure".to_string()),
-            ),
+            // `error` and its evidence in `data` — a code run's traceback. Both
+            // ride the event: the reason is what the chat says, the data is
+            // what a reload shows beside it.
+            Ok(result) if !result.success => AgentEvent::ToolCallResult {
+                id: self.tool_call_id.clone(),
+                result: result.data.clone(),
+                success: false,
+                error: Some(
+                    result.error.clone().unwrap_or_else(|| "the tool reported a failure".to_string()),
+                ),
+            },
             Ok(result) => AgentEvent::tool_result(
                 &self.tool_call_id,
                 result.data.clone(),
@@ -82,8 +87,8 @@ impl ToolExecutionResult {
     /// read the reason.
     ///
     /// A failure's `data` rides along, capped. A tool that fails WITH output
-    /// — `code_interpreter` puts the traceback in stderr and says only "Code
-    /// execution failed" in `error` — was handing the model the sentence and
+    /// — `code_interpreter` puts the traceback in stderr and only its last
+    /// line in `error` — was handing the model the sentence and
     /// keeping the evidence, so it could not fix the code and the
     /// repeated-failure guard then refused the identical retry. The data is
     /// the part it needs.
@@ -522,6 +527,15 @@ mod query_ref_tests {
         let text = r.to_llm_content();
         assert!(text.starts_with("Tool failed (code_interpreter, execution): Code execution failed: NameError: x\n"), "{text}");
         assert!(text.contains("Traceback"), "the data rides along: {text}");
+        // And to the chat: the event keeps the data beside the reason, which
+        // is what lets a reload still show the traceback.
+        match r.to_event() {
+            AgentEvent::ToolCallResult { result, success: false, error: Some(reason), .. } => {
+                assert_eq!(reason, "Code execution failed: NameError: x");
+                assert!(result["stderr"].as_str().unwrap().contains("Traceback"));
+            }
+            other => panic!("expected a failed ToolCallResult, got {other:?}"),
+        }
 
         let r = ToolExecutionResult {
             tool_call_id: "c".into(),

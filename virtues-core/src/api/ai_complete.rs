@@ -116,7 +116,7 @@ pub async fn ai_complete_handler(
     let model = match crate::api::model_choice::resolve_turn_model(
         &pool,
         request.model.as_deref(),
-        "chat",
+        &crate::api::chat_mode::ChatMode::Chat,
     )
     .await
     {

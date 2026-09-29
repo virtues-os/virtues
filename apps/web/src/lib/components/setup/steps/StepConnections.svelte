@@ -1,72 +1,100 @@
 <!--
-	Step 5 - Connections. THIS DEVICE FIRST, then the other one.
+	Connections. THIS DEVICE FIRST, then the other one.
 
-	Setup runs inside the app, on a device that is already paired: pairing is
-	how the person got here. So the step never asks the device in their hand
-	to be "added". Its card comes first, marked paired, and its one action
-	turns on what it collects:
+	The step knows which device is in hand (`here`) and does that device's
+	part right there, before offering the other:
 
-	  - the Mac: the collector (a one-time token, then the app installs it),
-	    then Full Disk Access (Messages, required) and Accessibility (what is on
-	    screen, optional). macOS has no prompt for either, so the button opens
-	    the right Settings pane and the badge lights when the daemon itself
-	    reports the grant. The logic is CollectorPermissionCard's, which was
-	    kept for exactly this step.
-	  - the iPhone: location, health and audio, one system prompt each, in
-	    order. Calendar, contacts and the rest stay in This device.
+	  - This Mac: the collector (a one-time token, then the app installs it),
+	    then Full Disk Access (Messages and Safari history, required) and
+	    Accessibility (optional). macOS has no prompt for either, so the
+	    permissions panel (MacPermissions) opens the right Settings pane and
+	    asks the collector to check again when the window comes back.
+	  - This iPhone (or iPad): location, then Health, one sheet at a time,
+	    each answered before the next; then the microphone, after the same
+	    consent Settings asks for, because it records everyone in the room.
+	    What was refused says so and opens the app's page in Settings.
+	  - A computer that isn't a Mac (the Windows or Linux app): collecting is
+	    Mac only, said plainly, and the iPhone is still offered.
+	  - A phone's browser: the phone comes first, with where to get the app.
 
-	The other device follows, as "Add your iPhone" or "Add your computer". In a
-	plain browser there is no device in hand, so both cards are adds.
+	THE OTHER DEVICE reads its state from the server's device list, the one
+	record pairing makes: "Add…" until it is paired, then what it has sent,
+	or the one thing still to do on it.
 
-	BADGES ONLY ON A PAIRED DEVICE. Before pairing they read as tags or
-	filters; after, they are a live checklist that lights as each thing
-	arrives, which is the moment worth showing.
+	Continuing is the step's acknowledgement: the server counts the step done
+	once a device or account is sending AND the person has moved past it. On
+	this Mac, moving on before Full Disk Access is a quiet link that says what
+	is left behind, not the filled way forward.
 
-	Continuing is the step's acknowledgement (the server counts the step done
-	once something is flowing AND the person has moved past it), so the way
-	forward writes that, and "Skip for now" writes the same thing with nothing
-	flowing, which the server records as set aside, not done.
-
-	ACCOUNTS ARE NOT A STEP. Google, a bank and the rest live in Sources; this
-	step names where, once.
+	ACCOUNTS ARE NOT A STEP. Google, a bank and the rest live in Sources.
 -->
 <script lang="ts">
+	import { useShowing } from "../showing";
 	import { onDestroy, onMount } from "svelte";
 	import { fade } from "svelte/transition";
-	import { invoke } from "@tauri-apps/api/core";
 	import Icon from "$lib/components/Icon.svelte";
 	import DevicePairModal from "$lib/components/sources/DevicePairModal.svelte";
+	import MacPermissions from "$lib/components/devices/MacPermissions.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
-	import { isIOS, isMacOS } from "$lib/utils/platform";
+	import { isIOS, isIPad, isMacOS, isPhoneBrowser, isTauri, thisComputerLabel } from "$lib/utils/platform";
 	import * as api from "$lib/api/client";
+	import { getCollectorStatus, installCollector, recheckCollector, type CollectorStatus } from "$lib/tauri/bridge";
+	import { macReady } from "$lib/devices/shared";
 	import {
-		getCollectorStatus,
-		installCollector,
-		openAccessibilitySettings,
-		openFullDiskAccess,
-		type CollectorStatus,
-	} from "$lib/tauri/bridge";
+		enableAudio,
+		enableHealth,
+		healthPermissionOf,
+		locationStatus,
+		micPermission,
+		audioStatus,
+		healthStatus,
+		openAppSettings,
+		requestLocation,
+		type HealthPermission,
+		type LocationAuth,
+		type MicPermission,
+	} from "$lib/tauri/devicePermissions";
 	import { setup, intoLabel, type StepPart } from "../setup.svelte";
 	import StepFrame from "../StepFrame.svelte";
 
 	let { eyebrow, onnext }: { eyebrow?: string; onnext: () => void } = $props();
 
-	/** The device in hand. iOS first: an iPad reports a Mac platform. */
-	const here: "mac" | "iphone" | null = isIOS ? "iphone" : isMacOS ? "mac" : null;
+	/**
+	 * The device in hand. iOS first: an iPad reports a Mac platform. A
+	 * computer app that isn't a Mac can't collect; a phone's browser is on the
+	 * phone it would otherwise be asked to add.
+	 */
+	const here: "mac" | "iphone" | "computer" | "phone" | null = isIOS
+		? "iphone"
+		: isMacOS
+			? "mac"
+			: isTauri
+				? "computer"
+				: isPhoneBrowser
+					? "phone"
+					: null;
+	const phoneName = isIPad ? "iPad" : "iPhone";
+	const phoneFirst = here === "iphone" || here === "phone";
 
 	let pairing = $state<{ deviceType: "ios" | "mac"; displayName: string } | null>(null);
 	let busy = $state(false);
 	let error = $state<string | null>(null);
+	const showing = useShowing();
+	let poll: ReturnType<typeof setInterval> | null = null;
+	let live: ReturnType<typeof setInterval> | null = null;
 
 	// ── this Mac ──────────────────────────────────────────────────────────
 	let mac = $state<CollectorStatus | null>(null);
 	let turningOn = $state(false);
-	let poll: ReturnType<typeof setInterval> | null = null;
-	let live: ReturnType<typeof setInterval> | null = null;
 
 	async function readMac() {
 		const s = await getCollectorStatus();
 		if (s) mac = s;
+	}
+	async function recheckMac() {
+		const s = await recheckCollector();
+		if (s) mac = s;
+		else await readMac();
 	}
 
 	async function turnOnMac() {
@@ -84,106 +112,110 @@
 				await new Promise((r) => setTimeout(r, 1000));
 			}
 			if (!mac?.running) {
-				error = "The collector installed but didn't start. Try again, and if it still won't, restart this Mac.";
+				error = "This Mac didn't start collecting. Try again, and if it still won't, restart this Mac.";
 			}
 			void setup.refresh();
 		} catch (e) {
-			error = e instanceof Error ? e.message : "Couldn't turn on this Mac. Try again.";
+			// The raw reason is for whoever debugs it, not for the page.
+			console.error("[setup] turning on this Mac failed", e);
+			error = "This Mac couldn't turn on collecting. Try again, and if it still won't, restart this Mac.";
 		} finally {
 			turningOn = false;
 		}
 	}
 
-	const macParts = $derived<StepPart[]>([
-		{ label: "Collector", done: !!mac?.running },
-		{ label: "Full Disk Access", done: !!mac?.hasFullDiskAccess },
-		{ label: "Accessibility", done: !!mac?.hasAccessibility },
-	]);
-
 	// ── this iPhone ───────────────────────────────────────────────────────
-	type Stream = { key: string; label: string; enable: string; status?: string; on: boolean };
-	let streams = $state<Stream[]>([
-		{ key: "location", label: "Location", enable: "plugin:location-probe|start_probe", on: false },
-		{ key: "health", label: "Health", enable: "plugin:health|enable", status: "plugin:health|status", on: false },
-		{ key: "audio", label: "Audio", enable: "plugin:audio|enable", status: "plugin:audio|status", on: false },
-	]);
-	let allowing = $state(false);
-	/** What stayed off after asking: said by name, with where to fix it. */
-	let denied = $state<string[]>([]);
-	/** Location has no status call and its points take a minute to arrive,
-	 *  so a granted prompt is remembered on this phone and lights the badge
-	 *  at once, rather than "not yet" until the first point lands. */
-	const LOCATION_KEY = "virtues-location-allowed";
+	let location = $state<LocationAuth>("unknown");
+	let health = $state<HealthPermission>("unknown");
+	let mic = $state<MicPermission>("unavailable");
+	let recording = $state(false);
+	/** Location and Health asked in turn, then the microphone's consent. */
+	let phase = $state<"idle" | "asking" | "consent" | "starting">("idle");
 
 	async function readPhone() {
-		for (const s of streams) {
-			if (s.status) {
-				try {
-					const st = await invoke<{ authorized?: boolean }>(s.status);
-					if (st?.authorized) s.on = true;
-				} catch {
-					/* a missing plugin reads as off */
-				}
-			}
-		}
-		// Location has no status call: a prompt this phone granted, or
-		// arriving points, are the proof.
-		const loc = setup.phone.find((p) => p.label === "Location");
-		let granted = false;
-		try {
-			granted = localStorage.getItem(LOCATION_KEY) === "1";
-		} catch {
-			/* the points will say so */
-		}
-		if (loc?.done || granted) streams[0].on = true;
+		const [loc, h, m, a] = await Promise.all([locationStatus(), healthStatus(), micPermission(), audioStatus()]);
+		location = loc;
+		health = healthPermissionOf(h);
+		mic = m;
+		recording = !!(a?.enabled ?? a?.recording);
 	}
 
-	/** One system prompt per stream, in order. */
+	const locationOn = $derived(location === "when_in_use" || location === "always");
+	const locationRefused = $derived(location === "denied" || location === "restricted");
+	const micOn = $derived(mic === "granted" && recording);
+	const micRefused = $derived(mic === "denied");
+	/** Health can't say what was refused (iOS hides it), only whether it was
+	 *  asked; its data arriving is the proof. */
+	const healthArriving = $derived(!!setup.phone.find((p) => p.label === "Health")?.done);
+
+	/** Location, then Health: each sheet answered before the next shows. */
 	async function allowPhone() {
-		allowing = true;
+		phase = "asking";
 		error = null;
-		for (const s of streams) {
-			if (s.on) continue;
-			try {
-				const res = await invoke<{ authorized?: boolean } | null>(s.enable);
-				s.on = !(res && res.authorized === false);
-			} catch {
-				s.on = false;
-			}
-			if (s.key === "location" && s.on) {
-				try {
-					localStorage.setItem(LOCATION_KEY, "1");
-				} catch {
-					/* the points will say so */
-				}
-			}
-		}
-		denied = streams.filter((s) => !s.on).map((s) => s.label);
-		allowing = false;
+		if (!locationOn && !locationRefused) location = await requestLocation();
+		if (health !== "requested") health = healthPermissionOf(await enableHealth());
+		await readPhone();
+		phase = micOn || micRefused ? "idle" : "consent";
 		void setup.refresh();
 	}
 
-	const phoneParts = $derived<StepPart[]>(streams.map((s) => ({ label: s.label, done: s.on })));
+	async function allowMic() {
+		phase = "starting";
+		await enableAudio();
+		await readPhone();
+		phase = "idle";
+		void setup.refresh();
+	}
+
+	async function openSettings() {
+		const opened = await openAppSettings();
+		if (!opened) error = `Open the Settings app, then Virtues, to turn them on.`;
+	}
+
+	const phoneParts = $derived<StepPart[]>([
+		{ label: "Location", done: locationOn },
+		{ label: "Health", done: healthArriving },
+		{ label: "Microphone", done: micOn },
+	]);
+	const refused = $derived([locationRefused && "Location", micRefused && "the microphone"].filter(Boolean) as string[]);
+	const phoneAsked = $derived((locationOn || locationRefused) && health === "requested");
+
+	// Back from Settings (or anywhere): read again, so a permission turned on
+	// there lights here without a reload.
+	function onVisible() {
+		if (document.visibilityState !== "visible" || !showing()) return;
+		if (here === "iphone") void readPhone();
+		if (here === "mac") void recheckMac();
+	}
 
 	onMount(() => {
 		// The badges light, and the counts rise, while the person watches.
-		live = setInterval(() => void setup.refresh(), 5000);
+		// Only while someone can see them (setup/showing.ts).
+		live = setInterval(() => showing() && void setup.refresh(), 5000);
 		if (here === "mac") {
 			void readMac();
-			poll = setInterval(readMac, 2000);
+			poll = setInterval(() => showing() && void readMac(), 2000);
 		} else if (here === "iphone") {
 			void readPhone();
 		}
+		document.addEventListener("visibilitychange", onVisible);
 	});
 	onDestroy(() => {
 		if (poll) clearInterval(poll);
 		if (live) clearInterval(live);
+		if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible);
 	});
 
+	// ── the other device, from the server's device list ────────────────────
+	const phoneSilent = $derived(!!setup.iphone && !setup.arrived("phone"));
+
 	// ── what counts as connected ──────────────────────────────────────────
-	const macOn = $derived(here === "mac" ? !!mac?.running : setup.computer[0].done);
-	const phoneOn = $derived(here === "iphone" ? streams.some((s) => s.on) : setup.phonePaired);
+	const macOn = $derived(here === "mac" ? macReady(mac) : !!setup.mac);
+	const phoneOn = $derived(here === "iphone" ? locationOn || micOn || healthArriving : !!setup.iphone);
 	const anything = $derived(macOn || phoneOn);
+	/** On this Mac, collecting but without Full Disk Access: going on loses
+	 *  Messages and Safari history, so the way on says so and stays quiet. */
+	const macHalfway = $derived(here === "mac" && !!mac?.running && !macReady(mac) && !phoneOn);
 
 	async function moveOn() {
 		if (busy) return;
@@ -218,52 +250,47 @@
 {/snippet}
 
 {#snippet computerCard()}
-	<article class="card" class:paired={macOn} class:here={here === "mac"}>
+	<article class="card" class:paired={macOn} class:here={here === "mac" || here === "computer"}>
 		<div class="card-head">
 			<span class="glyph" aria-hidden="true"><Icon icon="ri:macbook-line" width="22" /></span>
 			<div class="card-title">
-				<h2>{here === "mac" ? "This Mac" : "Computer"}</h2>
-				<p>Messages, the apps you use, and the pages you read.</p>
+				<h2>{here === "mac" ? "This Mac" : here === "computer" ? thisComputerLabel[0].toUpperCase() + thisComputerLabel.slice(1) : "Mac"}</h2>
+				{#if here !== "computer"}<p>Messages, the apps you use, and the pages you read.</p>{/if}
 			</div>
 		</div>
 		{#if here === "mac"}
-			{@render badges(macParts)}
+			{#if mac?.running}
+				<MacPermissions status={mac} onRecheck={recheckMac} />
+			{/if}
 			{@render payoff(setup.arrived("computer"))}
 			<div class="card-act">
 				{#if !mac?.running}
 					<button type="button" class="setup-go" disabled={turningOn} onclick={turnOnMac}>
-						{turningOn ? "Turning on…" : "Turn on this Mac"}
+						{turningOn ? "Turning on…" : "Collect from this Mac"}
 					</button>
-					<p class="hint">
-						Then two permissions: Full Disk Access, which Messages needs, and Accessibility, which is optional.
-					</p>
-				{:else if !mac.hasFullDiskAccess}
-					<button type="button" class="setup-go" onclick={() => openFullDiskAccess()}>Open Full Disk Access</button>
-					<p class="hint">
-						Required for Messages. Turn on Virtues Collector there, and your Mac keeps your messages on your server.
-					</p>
-				{:else if !mac.hasAccessibility}
-					<button type="button" class="setup-go quiet" onclick={() => openAccessibilitySettings()}>
-						Open Accessibility
-					</button>
-					<p class="hint">Optional. Turn on Virtues Collector there to add what's on your screen.</p>
-				{:else}
-					<p class="done-line"><Icon icon="ri:check-line" width="15" /> Collecting</p>
+					<p class="hint">Then Full Disk Access, which Messages and Safari history need, and Accessibility, which is optional.</p>
+				{:else if macReady(mac)}
+					<p class="done-line"><Icon icon="ri:check-line" width="15" /> On</p>
 				{/if}
 			</div>
+		{:else if here === "computer"}
+			<p class="hint">Collecting from a computer works on a Mac for now. You can still add your iPhone.</p>
 		{:else}
-			{#if macOn}{@render badges(setup.computer)}{@render payoff(setup.arrived("computer"))}{/if}
+			{#if setup.mac}
+				<MacPermissions device={setup.mac} deniedOnly canOpen={false} />
+				{@render payoff(setup.arrived("computer"))}
+			{/if}
 			<div class="card-act">
-				{#if macOn}
+				{#if setup.mac}
 					<p class="done-line"><Icon icon="ri:check-line" width="15" /> Paired</p>
 				{:else}
 					<button
 						type="button"
 						class="setup-go"
-						class:quiet={here === "iphone"}
-						onclick={() => (pairing = { deviceType: "mac", displayName: "computer" })}
+						class:quiet={phoneFirst}
+						onclick={() => (pairing = { deviceType: "mac", displayName: "Mac" })}
 					>
-						Add your computer
+						Add your Mac
 					</button>
 				{/if}
 			</div>
@@ -272,44 +299,80 @@
 {/snippet}
 
 {#snippet phoneCard()}
-	<article class="card" class:paired={phoneOn} class:here={here === "iphone"}>
+	<article class="card" class:paired={phoneOn} class:here={phoneFirst}>
 		<div class="card-head">
 			<span class="glyph" aria-hidden="true"><Icon icon="ri:smartphone-line" width="22" /></span>
 			<div class="card-title">
-				<h2>{here === "iphone" ? "This iPhone" : "iPhone"}</h2>
-				<p>Where you go, what you say out loud, and how you sleep.</p>
+				<h2>{here === "iphone" ? `This ${phoneName}` : here === "phone" ? "This phone" : "iPhone"}</h2>
+				<p>Where you go, how you sleep, and what the microphone hears.</p>
 			</div>
 		</div>
 		{#if here === "iphone"}
 			{@render badges(phoneParts)}
 			{@render payoff(setup.arrived("phone"))}
 			<div class="card-act">
-				{#if streams.some((s) => !s.on)}
-					<button type="button" class="setup-go" disabled={allowing} onclick={allowPhone}>
-						{allowing ? "Asking…" : "Turn on this iPhone"}
-					</button>
-					{#if denied.length}
-						<p class="hint">
-							{denied.join(" and ")}
-							stayed off. You can turn {denied.length === 1 ? "it" : "them"} on in the
-							Settings app, under Privacy & Security, then come back here.
+				{#if phase === "consent" || phase === "starting"}
+					<!-- The consent this one stream earns, as Settings asks it. -->
+					<div class="consent" in:fade={{ duration: 200 }}>
+						<p>
+							The microphone stays on while your phone is with you. It records the sound of your day, and everyone in
+							the room. Recordings go to your server, which sends them to an AI model to write them down.
 						</p>
-					{:else}
-						<p class="hint">Your iPhone asks about each one. Calendar, contacts and more are in This device.</p>
-					{/if}
+						<p>
+							In some places, recording a conversation needs everyone's consent. That part is yours to honor.
+						</p>
+						<div class="consent-actions">
+							<button type="button" class="setup-go" disabled={phase === "starting"} onclick={allowMic}>
+								{phase === "starting" ? "Turning on…" : "Turn the microphone on"}
+							</button>
+							<button type="button" class="setup-past" onclick={() => (phase = "idle")}>Not now</button>
+						</div>
+					</div>
+				{:else if !phoneAsked}
+					<button type="button" class="setup-go" disabled={phase === "asking"} onclick={allowPhone}>
+						{phase === "asking" ? "Asking…" : "Turn on Location and Health"}
+					</button>
+					<p class="hint">Your {phoneName} asks about each one in turn. Calendar, contacts and more can come later, in Settings.</p>
 				{:else}
-					<p class="done-line"><Icon icon="ri:check-line" width="15" /> Collecting</p>
+					{#if refused.length}
+						<button type="button" class="setup-go quiet" onclick={openSettings}>Open Settings</button>
+						<p class="hint">
+							You turned off {refused.join(" and ")}. Turn {refused.length === 1 ? "it" : "them"} on in Settings, then
+							come back here.
+						</p>
+					{/if}
+					{#if !micOn && !micRefused}
+						<button type="button" class="setup-go quiet" class:after={refused.length} onclick={() => (phase = "consent")}>
+							Turn on the microphone
+						</button>
+					{:else if !refused.length}
+						<p class="done-line"><Icon icon="ri:check-line" width="15" /> On</p>
+					{/if}
+					{#if health === "requested" && !healthArriving}
+						<p class="hint">Health readings arrive within a few minutes. If none do, allow them in the Health app, under Apps.</p>
+					{/if}
 				{/if}
 			</div>
-		{:else}
-			{#if phoneOn}{@render badges(setup.phone)}{@render payoff(setup.arrived("phone"))}{/if}
+		{:else if here === "phone"}
+			<p class="hint">Collecting from a phone needs the Virtues app for iPhone. Once it's installed, pair it with your server here.</p>
 			<div class="card-act">
-				{#if phoneOn}
+				<button type="button" class="setup-go" onclick={() => (pairing = { deviceType: "ios", displayName: "iPhone" })}>
+					Pair the app
+				</button>
+			</div>
+		{:else}
+			{#if setup.iphone}{@render badges(setup.phone)}{@render payoff(setup.arrived("phone"))}{/if}
+			<div class="card-act">
+				{#if setup.iphone}
 					<p class="done-line"><Icon icon="ri:check-line" width="15" /> Paired</p>
+					{#if phoneSilent}
+						<p class="hint">Nothing has arrived yet. Open Virtues on your iPhone and turn on Location and Health there.</p>
+					{/if}
 				{:else}
 					<button
 						type="button"
-						class="setup-go quiet"
+						class="setup-go"
+						class:quiet={here === "mac"}
 						onclick={() => (pairing = { deviceType: "ios", displayName: "iPhone" })}
 					>
 						Add your iPhone
@@ -320,9 +383,9 @@
 	</article>
 {/snippet}
 
-<StepFrame {eyebrow} title="Add your devices" subtitle="Each device sends its part of your day to your server.">
+<StepFrame {eyebrow} title="Add your devices" subtitle="Your iPhone brings where you went, and a Mac brings your messages. Each sends its part of your day to your server.">
 	<div class="cards">
-		{#if here === "iphone"}
+		{#if phoneFirst}
 			{@render phoneCard()}
 			{@render computerCard()}
 		{:else}
@@ -346,6 +409,8 @@
 				{intoLabel(setup.upNext("connections"))}
 				<Icon icon="ri:arrow-right-line" width="16" />
 			</button>
+		{:else if macHalfway}
+			<button type="button" class="setup-past" disabled={busy} onclick={moveOn}>Go on without Messages and Safari history</button>
 		{:else}
 			<button type="button" class="setup-past" disabled={busy} onclick={moveOn}>Skip for now</button>
 		{/if}
@@ -389,7 +454,6 @@
 		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
 		outline-offset: -1px;
 		background: var(--color-surface-overlay, var(--color-surface));
-		transition: box-shadow 0.4s ease;
 	}
 	.card.paired {
 		outline: 1px solid color-mix(in srgb, var(--color-success) 35%, var(--color-border));
@@ -435,7 +499,7 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		padding: 4px 8px 4px 8px;
+		padding: 4px 8px;
 		border-radius: 999px;
 		font-size: 13px;
 		color: var(--color-foreground-muted);
@@ -443,20 +507,17 @@
 		outline-offset: -1px;
 		transition:
 			color 0.5s ease,
-			background 0.5s ease,
-			box-shadow 0.5s ease;
+			background 0.5s ease;
 	}
 	.light {
 		width: 7px;
 		height: 7px;
 		border-radius: 50%;
 		background: color-mix(in srgb, var(--color-foreground) 18%, transparent);
-		transition:
-			background 0.5s ease,
-			box-shadow 0.5s ease;
+		transition: background 0.5s ease;
 	}
-	/* Lit: the stream has arrived. The light comes on the way a lamp does —
-	   a glow first, then the dot. */
+	/* Lit: the stream is on. The light comes on the way a lamp does: a glow
+	   first, then the dot. */
 	.badge.on {
 		color: var(--color-foreground);
 		background: color-mix(in srgb, var(--color-success) 8%, transparent);
@@ -484,13 +545,16 @@
 		padding: 0.6rem 1.15rem;
 	}
 	/* The second device's button is outlined, so the page keeps one filled
-	   thing that reads first: the device in hand, or in a browser the
-	   computer, which holds the most. */
+	   thing that reads first: the device in hand, or in a browser the Mac,
+	   which holds the most. */
 	.card-act :global(.setup-go.quiet) {
 		background: transparent;
 		color: var(--color-foreground);
 		outline: 1px solid var(--color-border);
 		outline-offset: -1px;
+	}
+	.card-act .after {
+		margin-top: 0.75rem;
 	}
 	.done-line {
 		display: inline-flex;
@@ -499,6 +563,19 @@
 		margin: 0;
 		font-size: 14px;
 		color: var(--color-success);
+	}
+
+	.consent p {
+		margin: 0 0 0.75rem;
+		font-size: 14px;
+		line-height: 1.5;
+		color: var(--color-foreground);
+	}
+	.consent-actions {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 12px 16px;
 	}
 
 	.payoff {

@@ -26,6 +26,7 @@
     "allow-pause-collector",
     "allow-resume-collector",
     "allow-stop-collector",
+    "allow-recheck-collector",
     "allow-open-full-disk-access",
     "allow-open-accessibility-settings",
     "allow-set-summon-shortcut",

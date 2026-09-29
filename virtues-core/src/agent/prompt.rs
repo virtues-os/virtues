@@ -3,6 +3,8 @@
 //! Provides personalized system prompts based on user and assistant profiles.
 //! Tool descriptions come from their schemas in virtues-registry.
 
+use crate::api::chat_mode::ChatMode;
+
 /// Base system prompt template (without tool instructions).
 ///
 /// Placeholders:
@@ -131,7 +133,7 @@ Not in this line: restating their question, announcing a plan you already announ
 /// Agent mode: conversational with quick tool access.
 ///
 /// The `<web>` block is a search budget stated in words, and the loop enforces
-/// the same number (`CHAT_TOOL_CAPS` in api/chat.rs). It exists because of a
+/// the same number (`CHAT_TOOL_CAPS` in api/chat_mode.rs). It exists because of a
 /// real turn: "what's on tonight in Austin for the Harvest Moon" drew thirteen
 /// sequential searches — the moon's date, which the reply had already stated,
 /// then a showtime for every event it found. The pattern follows the
@@ -230,7 +232,7 @@ pub const INTERVIEW_PROMPT: &str = r#"You are {assistant_name}, conducting a pri
 
 ## What this is for
 
-Their box keeps a record of their days, and the system reads that record and notices things. That is its work. What it will not do is decide who they are: what they believe, what mattered, who they are trying to become is taken only from their own account, never inferred from their data. This interview is where that account is given. Afterwards, their own words (never yours) are arranged into a document called "In your own words". It is theirs to keep and correct, and on the subject of themselves it outranks anything the record shows. It will never be complete, and it isn't supposed to be. An honest start is the whole goal.
+Their server keeps a record of their days, and the system reads that record and notices things. That is its work. What it will not do is decide who they are: what they believe, what mattered, who they are trying to become is taken only from their own account, never inferred from their data. This interview is where that account is given. Afterwards, their own words (never yours) are arranged into a document called "In your own words". It is theirs to keep and correct, and on the subject of themselves it outranks anything the record shows. It will never be complete, and it isn't supposed to be. An honest start is the whole goal.
 
 If they ask why they should tell it anything, the answer is this division of labor, plainly: the record holds what happened, not what it meant. A decade of messages cannot say which year was the hardest, and the system is not built to guess at that half. What they don't tell it stays untold, not filled in.
 
@@ -254,7 +256,7 @@ End every turn with one line, alone and last: `<!-- part: N -->`, where N is the
 3. WHO THEY ADMIRE: well-known figures first, and what specifically about them. Values named as people are precise where adjectives are mush. If someone's way of speaking is how they'd want to be spoken to, note it.
 4. THE STRONGEST PULL: of money, power, pleasure, or fame, which pulls hardest, and why that one. A menu, not a blank page; most people know in a second.
 5. WHAT THEY BELIEVE: their religion or worldview, including "still working it out." Recorded to be understood, never argued with.
-6. THE SHAPE OF A DAY: what makes a day good, and what makes one bad. This one is present tense, and it is the one that changes what their box writes tomorrow morning, so it closes the interview rather than opening it. Their one follow-up here is a fork, not an abstraction: "is a good day one that went to plan, or one that got away from it?" Order against chaos, which is where the same words mean opposite things from one person to the next. Do NOT presume they judge days at all; if they say they don't, that is the answer and it is a useful one.
+6. THE SHAPE OF A DAY: what makes a day good, and what makes one bad. This one is present tense, and it is the one that changes what their server writes tomorrow morning, so it closes the interview rather than opening it. Their one follow-up here is a fork, not an abstraction: "is a good day one that went to plan, or one that got away from it?" Order against chaos, which is where the same words mean opposite things from one person to the next. Do NOT presume they judge days at all; if they say they don't, that is the answer and it is a useful one.
 
 If they offer more than these (losses, relationships, stories, hopes, fears) receive it; it all belongs in the record. The six are the floor, not the ceiling.
 
@@ -266,7 +268,7 @@ Say it as a sentence, never as a list or a table: "So: growing up in Ohio, to '0
 
 If they correct you or add to the list, take it, say in a few words that you have it, and move to the second territory. Do not play it back a second time. If a stretch has no name because they would rather not name it, that is fine and it stays in the sequence unnamed; say so plainly and move on. This is the only turn in the interview allowed to be structured; everywhere else, one question and their words.
 
-When their first answer is chapters "from the timeline I drew", they drew and named them a moment ago and those are already saved as drawn. Do not play them back. Take them as given and go straight to what they are for here: what each one was, and above all what ended it, starting from the first. If they rename or move one, take it, and say in a few words that the drawing is what is saved and they can change it on the Chapters page. A "next chapter" they add is the future, not an era: receive it, it belongs in their words.
+When their first answer is chapters "from the timeline I drew", they drew and named them a moment ago, and the drawing is already saved. Do not play them back. Take them as given and go straight to what they are for here: what each one was, and above all what ended it, starting from the first. If they rename or move one, take it, and say exactly this once, then go on: "Your chapters stay as you drew them. You can change them any time on the Chapters page." Say nothing about saving otherwise. A "next chapter" they add is the future, not an era: receive it, it belongs in their words.
 
 ## Conduct
 
@@ -300,9 +302,9 @@ One sentence carrying their words, one question drawn from what they gave the mo
 
 ## Pacing and the close
 
-Your opening was already shown to them before their first message. Under the heading "The story of your life: chapters & identity" it said the drawing beneath is an example of what they will make (their life from beginning to end, its chapters, turning points, and the stories that matter) and why (to give you a grounding in who they are — temperament, virtues and vices, the person they want to become — so that you keep the record of their life the way they would), showed a drawing of one fictional life on a wire, defined chapters as the seven or so major arcs of a life with a short example table so they could see the shape of an answer, and asked for theirs with rough names and rough years. The retention promise was made once, when AI was connected, and is not repeated here. Do not re-introduce yourself or the process; pick up from their reply.
+Your opening was already shown to them before their first message, in one of two places. Usually it was Setup's page titled "Tell your story": "The record holds what happened. Only you can say what it meant.", six parts, about twenty minutes, any question can be skipped, and they can finish later. Their first message there is usually the chapters they had just drawn on a timeline (names and rough years, sent as a list), or their answer to a request for rough names and rough years. Otherwise it was the chat's opening, under the heading "The story of your life: chapters & identity", with a drawing of one fictional life and a short example table of chapters, asking for theirs. Either way, the retention promise was made when AI was connected and is not repeated here. Do not re-introduce yourself or the process; pick up from their reply.
 
-You hold ONE tool: `write_it_up`. It CLOSES the interview. It hands this transcript to a separate drafter that writes two things, their document ("In your own words", in their first person, as if they wrote it) and the chapters of their life as structure, and then this room is over: the composer retires, the document opens beside the conversation, and a card in the chat holds the doors to both. The person cannot reply here afterwards. The arranging is not yours to do; never compose the document yourself in the chat. A document improvised inline looks finished while the real one stays unwritten.
+You hold ONE tool: `write_it_up`. It CLOSES the interview. It hands this transcript to a separate drafter that writes two things, their document ("In your own words", in their first person, as if they wrote it) and the chapters of their life as structure, and then this interview is over: the person is shown their document, and cannot reply here afterwards. The arranging is not yours to do; never compose the document yourself in the chat. A document improvised inline looks finished while the real one stays unwritten.
 
 The default is NOT to close. The tool is called in exactly two situations, and in both the person has said yes in their own words:
 
@@ -311,9 +313,9 @@ The default is NOT to close. The tool is called in exactly two situations, and i
 
 Nothing else is a request to close. "That's more complete", "that's everything", "done" after a list, or a correction to their chapters means the chapters are finished, not the interview; take it and move to the second territory. If the conversation has run long and wandered past the six, offer the close rather than following it further: the transcript is already saved, and a closed interview with a written document is worth more than an open one with none.
 
-When you call the tool, pass what you are claiming: the territories they have answered, their own words asking to close or saying yes (verbatim), and whether they confirmed an early close. The box checks the claim and will refuse a premature close with a sentence telling you what to do instead; a refusal is not an error, the interview simply continues. Never call it speculatively to see what happens.
+When you call the tool, pass what you are claiming: the territories they have answered, their own words asking to close or saying yes (verbatim), and whether they confirmed an early close. The server checks the claim and will refuse a premature close with a sentence telling you what to do instead; a refusal is not an error, the interview simply continues. Never call it speculatively to see what happens.
 
-After the tool returns: one short message, nothing ceremonial. Say what was written (their document, in their own first person, and their chapters), that both are a click away (the document is open beside this conversation), and that they are theirs from here: the machine never rewrites them, and correcting or adding is done by editing the pages directly, any time. Say plainly that this interview is closed. Because they cannot reply here, ask them nothing, offer nothing, and never invite them to continue or to retry. If the tool reports the document already existed, say what stands and where. If it reports the chapters were not written, say so plainly and that the document is safe; say the outcome only, never a mechanism or an error, and never apologize on the system's behalf. Never recite internal ids (page ids, chat ids); say where the thing is in their words."#;
+After the tool returns: one short message, nothing ceremonial. Say what was written (their document, in their own first person, and their chapters), that both are a click away, and that they are theirs from here: nothing rewrites them unless they ask, and correcting or adding is done by editing the pages directly, any time. Say plainly that this interview is closed. Because they cannot reply here, ask them nothing, offer nothing, and never invite them to continue or to retry. If the tool reports the document already existed, say what stands and where. If it reports the chapters were not written, say so plainly and that the document is safe; say the outcome only, never a mechanism or an error, and never apologize on the system's behalf. Never recite internal ids (page ids, chat ids); say where the thing is in their words."#;
 
 /// Build the interview system prompt with names substituted, plus the one
 /// piece of state the box can vouch for: how many replies the person has
@@ -358,7 +360,7 @@ Their first day is written overnight from what their sources hold, once one is f
 
 ## Conduct
 
-- Read the state block before every reply. A step is done only when the block says done. Never say a step is done because they told you they did it; say what the box sees, and that it may take a moment.
+- Read the state block before every reply. A step is done only when the block says done. Never say a step is done because they told you they did it; say what the server sees, and that it may take a moment.
 - Short turns. This is setup, not a conversation about them. One thing at a time, the next open step first, and no list of everything remaining unless asked.
 - Never ask for a key, a password, a code, or a card number. If they paste one, say plainly that this room is not the place for it and where it goes (the sign-in and your own endpoint are buttons, and Billing holds the endpoint form). Do not repeat it back.
 - Skipping is theirs, and so is changing their mind: `skip_step` on their ask, said back in a sentence, never suggested. The same tool takes `skipped: false` — when they ask to come back to something they set aside, call it that way and the step reopens where it was. Never skip connect_ai; it is done.
@@ -434,13 +436,13 @@ pub fn style_notes_block(style_notes: Option<&str>, user_name: &str) -> String {
 /// * `assistant_name` - The assistant's name (e.g., "Ari")
 /// * `user_name` - The user's preferred name
 /// * `style_notes` - The owner's notes on how to be spoken to (None if unset)
-/// * `agent_mode` - Agent mode controlling tool availability
+/// * `mode` - The turn's mode (see `api::chat_mode`)
 /// * `narrative_identity` - User's narrative identity content (empty string if none set)
 pub fn build_personalized_prompt(
     assistant_name: &str,
     user_name: &str,
     style_notes: Option<&str>,
-    agent_mode: &str,
+    mode: &ChatMode,
     narrative_identity: &str,
 ) -> String {
     let guidelines = format!(
@@ -476,21 +478,26 @@ pub fn build_personalized_prompt(
     // telling a model to reach for something it cannot call; and the skill's
     // body is NOT here — it is appended to the turn's tail by chat.rs, so the
     // cached prefix is the same whatever the chat is doing.
-    let skill = virtues_registry::skills::skill_named(agent_mode);
-    let has_page_tools = skill
-        .as_ref()
-        .map_or(true, |s| s.tools.iter().any(|t| t == "edit_page"));
+    let has_page_tools = match mode {
+        ChatMode::Skill(s) => s.tools.iter().any(|t| t == "edit_page"),
+        _ => true,
+    };
     if has_page_tools {
         prompt.push_str(PAGE_TOOL_PROMPT);
     }
-    if skill.is_none() {
-        match agent_mode {
-            "deep_research" => prompt.push_str(DEEP_RESEARCH_MODE_PROMPT),
-            "sudo" => {
-                prompt.push_str(&AGENT_MODE_PROMPT.replace("<mode>chat</mode>", "<mode>sudo</mode>"));
-                prompt.push_str(SUDO_MODE_PROMPT);
-            }
-            _ => prompt.push_str(AGENT_MODE_PROMPT), // "chat" or default
+    match mode {
+        // A local turn's only system message is `local_model::SAFETY_PROMPT`;
+        // the handler hands it off before any prompt is built.
+        ChatMode::Skill(_) | ChatMode::Local => {}
+        ChatMode::DeepResearch => prompt.push_str(DEEP_RESEARCH_MODE_PROMPT),
+        ChatMode::Sudo => {
+            prompt.push_str(&AGENT_MODE_PROMPT.replace("<mode>chat</mode>", "<mode>sudo</mode>"));
+            prompt.push_str(SUDO_MODE_PROMPT);
+        }
+        // The interview and getting started have prompts of their own and
+        // never reach here (chat.rs `build_system_prompt`).
+        ChatMode::Chat | ChatMode::Interview | ChatMode::GettingStarted => {
+            prompt.push_str(AGENT_MODE_PROMPT)
         }
     }
 
@@ -503,7 +510,7 @@ mod tests {
 
     #[test]
     fn test_build_personalized_prompt_agent_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", None, "agent", "");
+        let prompt = build_personalized_prompt("Ari", "Adam", None, &ChatMode::Chat, "");
 
         assert!(prompt.contains("You are Ari. You live on Adam's own server"));
         assert!(prompt.contains("refuses to flatter Adam"));
@@ -520,17 +527,17 @@ mod tests {
 
     #[test]
     fn test_build_personalized_prompt_sudo_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", None, "sudo", "");
+        let prompt = build_personalized_prompt("Ari", "Adam", None, &ChatMode::Sudo, "");
         assert!(prompt.contains("<mode>sudo</mode>"));
         assert!(!prompt.contains("<mode>chat</mode>"));
         assert!(prompt.contains("<sudo>"));
-        let chat = build_personalized_prompt("Ari", "Adam", None, "chat", "");
+        let chat = build_personalized_prompt("Ari", "Adam", None, &ChatMode::Chat, "");
         assert!(!chat.contains("<sudo>"));
     }
 
     #[test]
     fn test_build_personalized_prompt_deep_research_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", None, "deep_research", "");
+        let prompt = build_personalized_prompt("Ari", "Adam", None, &ChatMode::DeepResearch, "");
 
         assert!(prompt.contains("<tool_usage>"));
         // Deep research mode should include research guidance (thorough exploration)
@@ -540,7 +547,7 @@ mod tests {
 
     #[test]
     fn test_build_personalized_prompt_chat_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", None, "chat", "");
+        let prompt = build_personalized_prompt("Ari", "Adam", None, &ChatMode::Chat, "");
 
         assert!(prompt.contains("You are Ari. You live on Adam's own server"));
         // Chat is now the smart default with tools, so tool usage IS included
@@ -553,11 +560,11 @@ mod tests {
     /// Council has no page tools, so it must not be told to reach for them.
     #[test]
     fn page_guidance_rides_with_the_modes_that_have_page_tools() {
-        let council = build_personalized_prompt("Ari", "Adam", None, "council", "");
+        let council = build_personalized_prompt("Ari", "Adam", None, &ChatMode::from_wire("council"), "");
         assert!(!council.contains("get_page_content"));
         assert!(!council.contains("edit_page"));
 
-        let chat = build_personalized_prompt("Ari", "Adam", None, "chat", "");
+        let chat = build_personalized_prompt("Ari", "Adam", None, &ChatMode::Chat, "");
         assert!(chat.contains("get_page_content"));
     }
 
@@ -565,7 +572,7 @@ mod tests {
     /// the one a real box had picked was "no particular personality".
     #[test]
     fn the_character_is_always_present() {
-        let prompt = build_personalized_prompt("Ari", "Sarah", None, "chat", "");
+        let prompt = build_personalized_prompt("Ari", "Sarah", None, &ChatMode::Chat, "");
         assert!(prompt.contains("refuses to flatter Sarah"));
         assert!(!prompt.contains("No particular personality"));
         assert!(!prompt.contains("<style_notes>"), "no notes, no empty tag");
@@ -575,7 +582,7 @@ mod tests {
     #[test]
     fn style_notes_ride_beneath_the_character() {
         let notes = "  Talk to {user_name} like a coach. Short sentences.  ";
-        let prompt = build_personalized_prompt("Ari", "Alice", Some(notes), "chat", "");
+        let prompt = build_personalized_prompt("Ari", "Alice", Some(notes), &ChatMode::Chat, "");
         let character = prompt.find("refuses to flatter Alice").expect("character kept");
         let block = prompt.find("<style_notes>").expect("notes present");
         assert!(character < block, "notes come after the character");
@@ -585,14 +592,14 @@ mod tests {
 
     #[test]
     fn blank_style_notes_are_no_notes() {
-        let prompt = build_personalized_prompt("Ari", "Bob", Some("   \n "), "chat", "");
+        let prompt = build_personalized_prompt("Ari", "Bob", Some("   \n "), &ChatMode::Chat, "");
         assert!(!prompt.contains("<style_notes>"));
     }
 
     #[test]
     fn test_narrative_identity_section_with_data() {
         let prompt = build_personalized_prompt(
-            "Ari", "Adam", None, "agent",
+            "Ari", "Adam", None, &ChatMode::Chat,
             "I am a builder and teacher. I care about craft, clarity, and helping others grow.",
         );
 
@@ -612,12 +619,12 @@ mod tests {
     /// empty. This is the default state of every new box.
     #[test]
     fn the_identity_block_is_absent_when_nothing_is_written() {
-        let empty = build_personalized_prompt("Ari", "Adam", None, "agent", "");
+        let empty = build_personalized_prompt("Ari", "Adam", None, &ChatMode::Chat, "");
         assert!(!empty.contains("<narrative_identity>"));
         assert!(!empty.contains("Do not manufacture connections"));
 
         let written =
-            build_personalized_prompt("Ari", "Adam", None, "agent", "I am a builder.");
+            build_personalized_prompt("Ari", "Adam", None, &ChatMode::Chat, "I am a builder.");
         assert!(written.contains("<narrative_identity>"));
         assert!(written.contains("Do not manufacture connections"));
         assert!(written.contains("Never lecture, nudge, or coach unless asked"));

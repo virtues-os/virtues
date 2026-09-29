@@ -61,9 +61,10 @@
 /**
  * `setup` holds one room, Setup, drawn ABOVE Home and only while a step of
  * Setup is not done (skipped counts as not done). It is a room like the
- * others — a tile that swaps the panel — and its panel lists the steps; the
- * steps themselves run full screen at /setup. It leaves the rail once every
- * step is done.
+ * others — a tile that swaps the panel — and its panel lists the steps. The
+ * steps open at /setup: full screen the first time through, and as a tab in
+ * the app once someone is in it (setup/inApp.ts). It leaves the rail once
+ * every step is done.
  */
 export type RoomGroup = 'setup' | 'primary' | 'library' | 'utility';
 
@@ -109,14 +110,13 @@ export interface Room {
 export const ROOMS: Room[] = [
 	{
 		// One word for the process everywhere: the flow, the tile, the panel.
-		// It owns no tab route — the steps run full screen at /setup, outside
-		// the shell, so no pane ever selects this room by its route.
+		// It owns /setup: in the app, the steps open as a tab there.
 		id: 'setup',
 		label: 'Setup',
 		icon: 'setup',
 		chord: '⌥⌘G',
 		href: '/setup',
-		owns: [],
+		owns: ['/setup'],
 		panel: { kind: 'setup' },
 		group: 'setup',
 	},

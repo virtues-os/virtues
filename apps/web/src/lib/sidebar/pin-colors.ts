@@ -194,3 +194,13 @@ export function accentCss(value: string | null | undefined): string | null {
 export function clothFor(pin: { url: string; color?: string | null }): string {
 	return accentCss(pin.color) ?? `var(--cat-${pinColor(pin.url)})`;
 }
+
+/**
+ * A project's color: the one it was given, otherwise the same hash a pin of it
+ * gets (keyed on its route), so every project has one and a pinned project
+ * wears the color its own row does. Every surface that tints a project reads
+ * this; none reads `accent_color` directly.
+ */
+export function projectColor(project: { id: string; accent_color?: string | null }): string {
+	return clothFor({ url: `/project/${project.id}`, color: project.accent_color });
+}

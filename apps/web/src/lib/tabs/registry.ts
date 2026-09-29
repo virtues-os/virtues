@@ -10,6 +10,7 @@
 import { eager, type ViewLoader } from './lazy';
 import type { TabType, ParsedRoute } from './types';
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
+import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 
 // Views are loaders (see ./lazy.ts): each chunk arrives the first time a
 // tab of that kind opens. Chat and home stay eager — a session opens on them.
@@ -37,6 +38,7 @@ const ProjectsListView: ViewLoader = () => import('$lib/components/tabs/views/Pr
 const ProjectDetailView: ViewLoader = () => import('$lib/components/tabs/views/ProjectDetailView.svelte');
 const NarrativeIdentityView: ViewLoader = () => import('$lib/components/tabs/views/NarrativeIdentityView.svelte');
 const DataView: ViewLoader = () => import('$lib/components/tabs/views/DataView.svelte');
+const SetupView: ViewLoader = () => import('$lib/components/tabs/views/SetupView.svelte');
 
 export interface TabDefinition {
 	// Route matching
@@ -390,7 +392,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				return {
 					type: 'project',
 					label: 'Projects',
-					icon: 'ri:folder-3-line',
+					icon: PROJECT_ICON,
 					normalizedRoute: '/projects',
 				};
 			}
@@ -398,7 +400,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return {
 				type: 'project',
 				label: 'Project',
-				icon: 'ri:folder-3-line',
+				icon: PROJECT_ICON,
 				entityId: match?.[2],
 				// Rewrite the legacy spelling; the canonical form is a no-op.
 				...(match?.[1] === 'notebook' && { normalizedRoute: `/project/${match[2]}` }),
@@ -410,7 +412,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		serialize: (id) => (id ? `project_${id}` : 'projects'),
 		deserialize: (serialized) =>
 			serialized.startsWith('project_') ? `/project/${serialized.slice(8)}` : '/projects',
-		icon: 'ri:folder-3-line',
+		icon: PROJECT_ICON,
 		defaultLabel: 'Projects',
 		component: ProjectsListView,
 		detailComponent: ProjectDetailView,
@@ -492,6 +494,26 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		defaultLabel: 'Year',
 		component: WikiDetailView,
 		detailComponent: WikiDetailView,
+	},
+
+	// ========================================================================
+	// SETUP: /setup, /setup/{step}
+	//   Only once someone is in the app; before that `/setup` is the
+	//   full-screen stage, and nothing sends it here (setup/inApp.ts).
+	// ========================================================================
+	setup: {
+		match: (path) => path === '/setup' || /^\/setup\/[a-z]+$/.test(path),
+		parse: (path) => ({
+			type: 'setup',
+			label: 'Setup',
+			icon: 'ri:list-check',
+			normalizedRoute: path,
+		}),
+		serialize: (id) => (id ? `setup_${id}` : 'setup'),
+		deserialize: (serialized) => (serialized.startsWith('setup_') ? `/setup/${serialized.slice(6)}` : '/setup'),
+		icon: 'ri:list-check',
+		defaultLabel: 'Setup',
+		component: SetupView,
 	},
 
 	// ========================================================================
@@ -884,6 +906,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'day',
 		'year',
 		'narrative-identity',
+		'setup',
 	];
 
 	for (const type of orderedTypes) {

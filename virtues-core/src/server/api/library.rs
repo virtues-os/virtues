@@ -34,6 +34,13 @@ pub fn routes() -> Router<AppState> {
             "/api/bookmarks/:id/note",
             patch(update_bookmark_note_handler),
         )
+        // A message's stored attachment (an iMessage photo the Mac sent),
+        // addressed by the message row's id and the attachment's position in
+        // `metadata.attachments`.
+        .route(
+            "/api/messages/:id/attachments/:index",
+            get(get_message_attachment_handler),
+        )
         // Sidebar pins API
         .route(
             "/api/pins",
@@ -111,6 +118,37 @@ pub async fn get_bookmark_handler(
     Path(id): Path<String>,
 ) -> Response {
     api_response(crate::api::bookmarks::get_bookmark(state.db.pool(), &id).await)
+}
+
+/// GET /api/messages/:id/attachments/:index — the bytes, served inline.
+///
+/// 404 covers every "not here": no such message, a deleted one, an index past
+/// the end, or an attachment the Mac has not sent yet (iCloud had not
+/// downloaded it, or it is a video and never will be sent).
+pub async fn get_message_attachment_handler(
+    State(state): State<AppState>,
+    Path((id, index)): Path<(String, usize)>,
+) -> Response {
+    match crate::storage::message_media::load_attachment(state.db.pool(), &state.storage, &id, index)
+        .await
+    {
+        Ok((bytes, mime)) => (
+            [
+                (axum::http::header::CONTENT_TYPE, mime),
+                (axum::http::header::CONTENT_DISPOSITION, "inline".to_string()),
+                (axum::http::header::CONTENT_LENGTH, bytes.len().to_string()),
+                // The bytes behind an (id, index) never change; a deletion
+                // makes the route 404 rather than serve different bytes.
+                (
+                    axum::http::header::CACHE_CONTROL,
+                    "private, max-age=86400".to_string(),
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(e) => error_response(e),
+    }
 }
 
 /// PATCH /api/bookmarks/:id/note — write the user's marginalia.
@@ -207,8 +245,12 @@ pub async fn list_projects_handler(
     axum::extract::Query(q): axum::extract::Query<ListProjectsQuery>,
 ) -> Response {
     api_response(
-        crate::api::projects::list_projects(state.db.pool(), q.include_archived.unwrap_or(false))
-            .await,
+        crate::api::projects::list_projects(
+            state.db.pool(),
+            q.include_archived.unwrap_or(false),
+            q.member.as_deref(),
+        )
+        .await,
     )
 }
 
@@ -216,6 +258,8 @@ pub async fn list_projects_handler(
 pub struct ListProjectsQuery {
     /// `?include_archived=true` — the projects page, which folds them.
     pub include_archived: Option<bool>,
+    /// `?member=/page/…` — only the projects holding that url.
+    pub member: Option<String>,
 }
 
 /// POST /api/projects/:id/archive — close a project (kept, out of the working view)

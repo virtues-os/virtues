@@ -5,7 +5,7 @@
 //! gives a person. Nothing here narrows it. The boundaries are elsewhere and
 //! are about *who* may call it, never *what* it may run:
 //!
-//! - only a chat turn in `sudo` mode lists the tool (`get_tools_for_agent_mode`)
+//! - only a chat turn in `sudo` mode lists the tool (`ChatMode::tools`)
 //! - the executor refuses it unless the turn's context says sudo, so a model
 //!   naming it in any other mode — or an applet run, or a subagent, none of
 //!   which can carry that flag — gets a refusal, not a shell
@@ -155,14 +155,14 @@ impl Drop for GroupKill {
 }
 
 #[derive(Default)]
-struct Captured {
+pub(crate) struct Captured {
     head: Vec<u8>,
     tail: VecDeque<u8>,
-    dropped: usize,
+    pub(crate) dropped: usize,
 }
 
 impl Captured {
-    fn render(&self) -> String {
+    pub(crate) fn render(&self) -> String {
         let mut s = String::from_utf8_lossy(&self.head).into_owned();
         if self.dropped > 0 {
             s.push_str(&format!("\n… {} bytes omitted …\n", self.dropped));
@@ -176,7 +176,7 @@ impl Captured {
 /// Read a stream to its end, keeping its first and last bytes. Reading to the
 /// end even past the cap matters: a full pipe blocks the writer, and a command
 /// blocked on its own output never exits.
-async fn read_capped(mut r: impl AsyncRead + Unpin) -> Captured {
+pub(crate) async fn read_capped(mut r: impl AsyncRead + Unpin) -> Captured {
     let mut c = Captured::default();
     let mut buf = [0u8; 8192];
     loop {

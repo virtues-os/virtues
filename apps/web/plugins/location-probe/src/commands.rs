@@ -35,6 +35,32 @@ pub(crate) async fn request_push<R: Runtime>(app: AppHandle<R>) -> Result<PushSt
   app.location_probe().request_push()
 }
 
+/// The current location authorization (see `LocationStatusResponse`). Never
+/// prompts.
+#[command]
+pub(crate) async fn status<R: Runtime>(app: AppHandle<R>) -> Result<LocationStatusResponse> {
+  app.location_probe().status()
+}
+
+/// The opt-in, answered: prompts if undetermined, starts collecting on a grant,
+/// and resolves with the person's answer. `start_probe` resolves before the
+/// sheet is even answered; this is the one a screen that shows the outcome
+/// calls.
+#[command]
+pub(crate) async fn request_location<R: Runtime>(
+  app: AppHandle<R>,
+) -> Result<LocationStatusResponse> {
+  app.location_probe().request_location()
+}
+
+/// Open this app's page in the Settings app, the only way back from a denied
+/// permission. Hosted here because this is the plugin that holds shell-level
+/// code; it is not about location.
+#[command]
+pub(crate) async fn open_settings<R: Runtime>(app: AppHandle<R>) -> Result<OpenSettingsResponse> {
+  app.location_probe().open_settings()
+}
+
 #[command]
 pub(crate) async fn read_rows<R: Runtime>(
   app: AppHandle<R>,

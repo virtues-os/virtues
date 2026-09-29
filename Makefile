@@ -2,14 +2,13 @@
 #
 # Mac dev uses native brew Postgres (no Docker daemon).
 # Linux home box is installed natively via tools/bootstrap.sh (no Docker).
-# Cloud services (virtues-atlas / virtues-api) deploy as Docker images to ECR.
+# Cloud services (virtues-atlas / virtues-api) are built and deployed on the cloud server (make deploy-*).
 
 .DEFAULT_GOAL := help
 .PHONY: help init hooks commit migration dev seed dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
-        dev-link dev-reset dev-wipe-mac dev-clean dev-pull dev-real db db-stop deploy-atlas deploy-virtues-api _ecr-push mac-app mac-dev web-test \
+        dev-link dev-reset dev-wipe-mac dev-clean dev-pull dev-real db db-stop deploy-atlas deploy-virtues-api deploy-rollback mac-app mac-dev web-test \
         iroh-ffi-ios iroh-ffi-mac ios-release flash
 
-AWS_REGION ?= us-east-1
 
 # Mac dev is FULLY LOCAL by default and never touches prod: `make dev` runs a
 # local virtues-api (seeded wallet → AI works with no checkout) and points atlas
@@ -520,31 +519,31 @@ mac-app: ## Build the macOS app (Virtues.app + sidecars) and open it (OPEN=0 to 
 	fi
 
 # ── Cloud-service deploy (Virtues-operated; not part of self-host) ───────────
-# Build + push services/virtues-{atlas,api} images to ECR :latest. Rolling the
-# running service is a separate step (the service pulls the new :latest).
-# Needs AWS CLI v2 (configured) + Docker. No secrets are committed — auth comes
-# from your AWS CLI config, account ID is discovered at run time.
+# atlas and virtues-api run as containers on one server (DEPLOY_HOST, an SSH
+# alias; default virtues-cloud). A deploy builds the image ON the server from
+# one pushed commit, so what runs is exactly that commit and nothing from a
+# working tree; smoke-tests it on a spare port against the live config; then
+# swaps it in (about a second of gap). The replaced image is kept as
+# <service>:previous, and a container that does not come up healthy is rolled
+# back automatically. See tools/deploy-service.sh.
+#
+#   make deploy-virtues-api REF=<sha|tag|branch>
+#   make deploy-atlas REF=<sha|tag|branch>
+#   make deploy-rollback SVC=virtues-api        # back to the image before the last deploy
+#
+# REF has no default on purpose: a deploy names what it ships.
 
-deploy-atlas: ## Build + push services/virtues-atlas image to ECR :latest
-	@$(MAKE) _ecr-push SVC=virtues-atlas DOCKERFILE=services/virtues-atlas/Dockerfile
+deploy-atlas: ## Deploy services/virtues-atlas at REF to the cloud server
+	@test -n "$(REF)" || { echo "error: name the commit: make deploy-atlas REF=<sha|tag|branch>"; exit 2; }
+	@tools/deploy-service.sh virtues-atlas "$(REF)"
 
-deploy-virtues-api: ## Build + push services/virtues-api image to ECR :latest
-	@$(MAKE) _ecr-push SVC=virtues-api DOCKERFILE=services/virtues-api/Dockerfile
+deploy-virtues-api: ## Deploy services/virtues-api at REF to the cloud server
+	@test -n "$(REF)" || { echo "error: name the commit: make deploy-virtues-api REF=<sha|tag|branch>"; exit 2; }
+	@tools/deploy-service.sh virtues-api "$(REF)"
 
-_ecr-push:
-	@command -v aws >/dev/null || { echo "error: AWS CLI not installed — https://docs.aws.amazon.com/cli/"; exit 1; }
-	@acct=$$(aws sts get-caller-identity --query Account --output text 2>/dev/null) \
-	  || { echo "error: AWS CLI not configured — run \`aws configure\`"; exit 1; }; \
-	reg="$$acct.dkr.ecr.$(AWS_REGION).amazonaws.com"; \
-	echo "→ pushing $(SVC) to $$reg"; \
-	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin "$$reg" && \
-	docker build --platform linux/amd64 -f $(DOCKERFILE) -t "$$reg/$(SVC):latest" . && \
-	docker push "$$reg/$(SVC):latest"
-# NB: `&&`, not `;`. With `;` a FAILED build still ran the push, which happily
-# re-uploaded whatever stale image was already tagged `:latest` locally and
-# printed a digest — a deploy that looks successful and changes nothing. That
-# is the worst possible failure mode for a manual deploy path, and it is how a
-# broken build sat here unnoticed.
+deploy-rollback: ## Put SVC (virtues-api | virtues-atlas) back on the image before its last deploy
+	@test -n "$(SVC)" || { echo "error: make deploy-rollback SVC=virtues-api|virtues-atlas"; exit 2; }
+	@tools/deploy-service.sh "$(SVC)" --rollback
 
 # ── Appliance masters ────────────────────────────────────────────────────────
 # The golden-image lifecycle is two machines, three commands, in this order:

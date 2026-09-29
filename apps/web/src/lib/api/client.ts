@@ -1076,6 +1076,28 @@ export async function replaceLifeChapters(chapters: LifeChapterInput[]): Promise
 	return body?.chapters ?? [];
 }
 
+/** A rule the assistant obeys (`<rules>` in its prompt). `avoid` keeps a
+ *  subject out unless the person raises it; `defend` holds them to one. */
+export interface NarrativeRule {
+	id: string;
+	rule: string;
+	kind: 'avoid' | 'defend';
+	active: boolean;
+}
+
+/** `GET /api/narrative/rules`: the rules in force, and the ones heard in the
+ *  interview that wait for the person to confirm them. */
+export async function getNarrativeRules(): Promise<{ rules: NarrativeRule[]; proposed: NarrativeRule[] }> {
+	const body = await apiGet<{ rules?: NarrativeRule[]; proposed?: NarrativeRule[] }>('/narrative/rules');
+	return { rules: body?.rules ?? [], proposed: body?.proposed ?? [] };
+}
+
+/** `POST /api/narrative/rules`: replace the whole set with exactly these.
+ *  Proposals not included are dropped. */
+export async function saveNarrativeRules(rules: { rule: string; kind: 'avoid' | 'defend' }[]): Promise<void> {
+	await apiSend('POST', '/narrative/rules', { rules });
+}
+
 // =============================================================================
 // Drive - Personal File Storage
 // =============================================================================
@@ -1299,6 +1321,17 @@ export async function uploadDriveFile(
 		xhr.onerror = () => reject(new Error('Upload failed: network error'));
 		xhr.send(formData);
 	});
+}
+
+/**
+ * Path of a message's stored attachment (an iMessage photo the Mac sent), by
+ * the message row's id and the attachment's position in
+ * `metadata.attachments`. Use as an image src via `backendUrl(...)`. 404 until
+ * the Mac has sent it — iCloud may not have downloaded it yet, and video and
+ * audio are never sent.
+ */
+export function messageAttachmentPath(messageId: string, index: number): string {
+	return `${API_BASE}/messages/${encodeURIComponent(messageId)}/attachments/${index}`;
 }
 
 /**
@@ -1598,16 +1631,30 @@ export interface ProjectGraph {
 }
 
 /** GET /api/projects/:id — a Project plus its ordered members. */
+/** A chat filed in a project, as the project's own detail lists it. */
+export interface ProjectChat {
+	id: string;
+	title: string;
+	icon: string | null;
+	message_count: number;
+	last_message_at: string;
+}
+
 export interface ProjectDetail extends Project {
 	items: ProjectItem[];
+	/** Every chat filed here. Absent from a box older than the field. */
+	chats?: ProjectChat[];
 }
 
 /** GET /api/projects — all Projects with counts. */
 export async function listProjects(opts?: {
 	includeArchived?: boolean;
+	/** Only the projects holding this member url (a page asking where it is filed). */
+	member?: string;
 }): Promise<{ projects: ProjectSummary[] }> {
 	return apiGet<{ projects: ProjectSummary[] }>('/projects', {
 		include_archived: opts?.includeArchived ? 'true' : undefined,
+		member: opts?.member,
 	});
 }
 
@@ -2086,8 +2133,10 @@ export function deleteByoKey<T = unknown>(sudoRequestId?: string): Promise<T> {
 export function listChats<T = unknown>(): Promise<T> {
 	return apiGet<T>('/chats');
 }
-export function getChat<T = unknown>(id: string): Promise<T> {
-	return apiGet<T>(`/chats/${encodeURIComponent(id)}`);
+/** A chat and its stored transcript. `signal` lets a view abandon the load
+ *  when it navigates away mid-fetch. */
+export function getChat<T = unknown>(id: string, signal?: AbortSignal): Promise<T> {
+	return request<T>(`/chats/${encodeURIComponent(id)}`, { signal });
 }
 export function getChatUsage<T = unknown>(id: string): Promise<T> {
 	return apiGet<T>(`/chats/${encodeURIComponent(id)}/usage`);

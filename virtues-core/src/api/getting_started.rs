@@ -22,7 +22,7 @@ use crate::middleware::auth::AuthUser;
 use crate::server::webhook::AppState;
 
 /// The room. Seeded at boot (`prod_seed`), undeletable and un-retitled by
-/// id (`chats.rs`), forced into [`AGENT_MODE`] by id (`chat_handler`).
+/// id (`chats.rs`), forced into [`AGENT_MODE`] by id (`ChatMode::resolve`).
 pub const GETTING_STARTED_CHAT_ID: &str = "chat_getting_started";
 
 /// The chat mode the room runs in: its own prompt, three tools, no data.
@@ -61,7 +61,9 @@ pub struct Step {
     pub id: &'static str,
     pub title: &'static str,
     pub status: StepStatus,
-    /// How a done step got done, where it matters ("subscription" | "byo").
+    /// How a done step got done, where it matters ("subscription" | "byo"),
+    /// or, on an open `connect_ai`, "linked": signed in, with no
+    /// subscription behind the account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub via: Option<&'static str>,
     /// Server-authored copy for the step's current state — render verbatim.
@@ -89,9 +91,12 @@ pub struct Step {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GettingStartedState {
-    /// Can this box call a model: a linked subscription or an active BYO
-    /// route. The dev skip (`VIRTUES_DEV_SKIP_SETUP`) counts, or every
-    /// checkout would open locked.
+    /// Setup's answer to "can this box call a model": a link atlas says is
+    /// paid (or can't be asked about), or an active BYO route. The dev skip
+    /// (`VIRTUES_DEV_SKIP_SETUP`) counts, or every checkout would open locked.
+    /// Stricter than `ai_connected()`, the per-turn gate, which counts any
+    /// link: a free account's turns reach the gateway and are refused there
+    /// with the wallet's own reason, while Setup keeps the step open.
     pub ai_connected: bool,
 
     pub steps: Vec<Step>,
@@ -114,16 +119,6 @@ impl GettingStartedState {
     pub fn interview_underway(&self) -> bool {
         self.interview_started_at.is_some()
             && self.step("interview").map(|s| s.status != StepStatus::Done).unwrap_or(false)
-    }
-
-    /// Which prompt answers the room's next turn: the interviewer's while
-    /// the interview is underway, the setup guest's otherwise.
-    pub fn agent_mode(&self) -> &'static str {
-        if self.interview_underway() {
-            "interview"
-        } else {
-            AGENT_MODE
-        }
     }
 
     /// The state as the model reads it: one short block, regenerated per
@@ -170,7 +165,11 @@ fn title(id: &str) -> &'static str {
 }
 
 /// Can the box call a model right now. The light predicate for the chat
-/// turn: the subscription key or an active BYO row, plus the dev skip.
+/// turn: the subscription key or an active BYO row, plus the dev skip. It
+/// counts a free account's link on purpose: asking atlas on every turn
+/// would slow each one, and the wallet refuses an unpaid call with a better
+/// reason than this could. Setup's stricter reading is
+/// `GettingStartedState::ai_connected`.
 pub async fn ai_connected(pool: &PgPool) -> bool {
     if dev_skip() {
         return true;
@@ -205,9 +204,20 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
     };
 
     let byo = crate::api::settings_byo::byo_is_active(pool).await;
-    // `account` is the linked subscription, or the dev skip marking every
-    // setup step done — which is exactly the dev arm this needs.
-    let account = done("account");
+    // `account` is the link, or the dev skip marking every setup step done —
+    // which is exactly the dev arm this needs. A link is identity, not
+    // billing: Setup signs in before pairing, so a free account links too,
+    // and counting that as AI passed the person over Subscription onto an
+    // empty wallet. So a link counts only when atlas says it pays, or when
+    // atlas can't be asked (an outage must not reopen a paid step).
+    let payment = if done("account") && !dev_skip() {
+        Some(crate::api::subscription::pays(pool).await)
+    } else {
+        None
+    };
+    use crate::api::subscription::Payment;
+    let account = done("account")
+        && (dev_skip() || matches!(payment, Some(Payment::Paid | Payment::Unknown)));
     let ai_connected = account || byo;
 
     type ProfileRow = (
@@ -270,26 +280,39 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
     let flowing = done("first_source") || done("device_collecting");
     // What is already in place, said in the ask when the walk reaches this
     // step with rows already there: "3 integrations connected".
-    let source_names: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT s.name FROM credentials c \
-           JOIN sources s ON s.id = c.source_id \
-          WHERE c.status = 'active' AND c.source_id NOT IN ($1, $2, '__device__') \
-          ORDER BY s.name",
+    // Names come from the source catalog: the credentials hold only ids. (A
+    // join on a `sources` table, which doesn't exist, left this empty on
+    // every box.) Devices that have sent data are named too, as the person's
+    // own ("your iPhone"), since they are most of what feeds a new record.
+    let non_sources = crate::api::box_status::non_source_ids();
+    let connected_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT source_id FROM credentials \
+          WHERE status = 'active' AND source_id <> ALL($1)",
     )
-    .bind(crate::api::settings_byo::BYO_SOURCE_ID)
-    .bind(crate::virtues_api::renew::SOURCE_ID)
+    .bind(&non_sources)
     .fetch_all(pool)
     .await
-    .unwrap_or_default(); // absent-ok: an unnamed source only costs the settled line its detail
-    let integrations: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM credentials WHERE status = 'active' \
-           AND source_id NOT IN ($1, $2, '__device__')",
+    .map_err(|e| Error::Database(format!("list connected sources: {e}")))?;
+    let sending_devices: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT d.source_id FROM app_device d \
+           JOIN app_applets a ON a.device_id = d.id \
+           JOIN app_applet_runs r ON r.applet_id = a.id \
+          WHERE d.revoked_at IS NULL AND d.source_id IS NOT NULL \
+            AND r.status = 'success' AND r.records_processed > 0",
     )
-    .bind(crate::api::settings_byo::BYO_SOURCE_ID)
-    .bind(crate::virtues_api::renew::SOURCE_ID)
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await
-    .map_err(|e| Error::Database(format!("count integrations: {e}")))?;
+    .map_err(|e| Error::Database(format!("list sending devices: {e}")))?;
+    let name_of = |id: &str| {
+        crate::applet_templates::lookup_source(id)
+            .map(|s| s.display_name)
+            // absent-ok: a source no longer in the catalog is still named, by its id
+            .unwrap_or_else(|| id.to_string())
+    };
+    let mut source_names: Vec<String> = connected_ids.iter().map(|id| name_of(id)).collect();
+    source_names.sort();
+    source_names.extend(sending_devices.iter().map(|id| format!("your {}", name_of(id))));
+    let integrations = connected_ids.len() as i64;
     // `detail` is the one thing still to see to, if any — a collector
     // running with a permission denied. The count has its own field.
     let world_detail = if setup.degraded.is_empty() {
@@ -335,6 +358,11 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
                 Some("subscription")
             } else if byo {
                 Some("byo")
+            } else if payment == Some(Payment::Free) {
+                // Signed in, nothing paid: the step says so instead of
+                // offering a sign-in they already did. A dead key gets no
+                // `via`, so the step offers signing in again.
+                Some("linked")
             } else {
                 None
             },
@@ -524,9 +552,9 @@ fn graduated_line(state: &GettingStartedState) -> String {
     };
     out.push(' ');
     out.push_str(match state.first_day {
-        Some(_) => "Your first page is on Home, and there will be one every morning.",
+        Some(_) => "Your server wrote up your first day, and Home links to it.",
         None if sources.is_some() => {
-            "Tomorrow morning there will be a page on Home for today, and one every morning after."
+            "From tomorrow morning, your server writes up each day it has enough of, mostly from your messages and recordings."
         }
         None => "Connect something in Settings whenever you like, and the pages begin the next morning.",
     });
@@ -593,10 +621,10 @@ fn ask_line(s: &Step) -> String {
 fn promise_line(first_day: Option<chrono::NaiveDate>) -> String {
     match first_day {
         Some(d) => format!(
-            "Your first page is on Home: {}, written down from what your integrations hold. There will be one every morning.",
+            "Your server wrote up your first day, {}, from what your integrations hold. Home links to it.",
             d.format("%A, %B %-d")
         ),
-        None => "Tomorrow morning there will be a page on Home for today, written from what your integrations hold. There will be one every morning after.".into(),
+        None => "From tomorrow morning, your server writes up each day it has enough of, mostly from your messages and recordings.".into(),
     }
 }
 
@@ -1086,6 +1114,47 @@ mod tests {
                 .await?;
         assert!(d.is_empty());
         assert!(set_skipped(&pool, "further", true).await.is_err(), "dead ids are refused");
+        Ok(())
+    }
+
+    /// A person who connects only their devices (a Mac, an iPhone) and
+    /// presses Continue is done, and the settled line names the devices. The
+    /// devices step used to read a `credentials.device_id` that never existed
+    /// and a `sources` table that doesn't either, so this read "skipped" and
+    /// named nothing on every box.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn devices_alone_close_the_step_and_are_named(pool: PgPool) -> sqlx::Result<()> {
+        std::env::remove_var("VIRTUES_DEV_SKIP_SETUP");
+        sqlx::query("INSERT INTO app_user_profile DEFAULT VALUES")
+            .execute(&pool)
+            .await
+            // absent-ok: the migrations may already seed the one profile row.
+            .ok();
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label, source_id) \
+             VALUES ('dev_phone', $1, 'mobile_app', 'Nick''s iPhone', 'ios')",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, agent, device_id) \
+             VALUES ('applet_phone', 'applet_phone', 'user', 'x', 'dev_phone')",
+        )
+        .execute(&pool)
+        .await?;
+        let run = crate::scheduler::applets::create_run(&pool, Some("applet_phone"), "webhook")
+            .await
+            .unwrap();
+        crate::scheduler::applets::complete_run(&pool, &run.id, "success", 12, None, None)
+            .await
+            .unwrap();
+
+        set_skipped(&pool, "connect_world", true).await.unwrap();
+        let s = compute(&pool).await.unwrap();
+        let step = s.step("connect_world").unwrap();
+        assert_eq!(step.status, StepStatus::Done, "devices sending + Continue is done");
+        assert_eq!(step.sources.as_deref(), Some(&["your iPhone".to_string()][..]));
         Ok(())
     }
 }

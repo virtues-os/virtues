@@ -311,6 +311,13 @@ export interface CollectorStatus {
 	permissionsReportedByDaemon: boolean;
 	/** When the daemon last checked, if it ever has. */
 	permissionsCheckedAt: string | null;
+	/**
+	 * Can the daemon read Safari's history and bookmarks? Granted by Full Disk
+	 * Access, but probed on its own because a daemon can read Messages and still
+	 * be refused Safari. `null` when the daemon has not said: a collector too old
+	 * to report it, or a Mac with no Safari data. Never read null as a denial.
+	 */
+	safariLibrary: boolean | null;
 }
 
 // ============================================================================
@@ -336,6 +343,62 @@ export type CollectorProbe =
 	/** The daemon was asked and could not answer. */
 	| { kind: 'error'; message: string };
 
+/** `CollectorStatus` as the Rust command serializes it. */
+interface RawCollectorStatus {
+	version?: string | null;
+	running: boolean;
+	paused: boolean;
+	pending_events: number;
+	pending_messages: number;
+	last_sync: string | null;
+	has_full_disk_access: boolean;
+	has_accessibility: boolean;
+	permissions_reported_by_daemon?: boolean;
+	permissions_checked_at?: string | null;
+	safari_library?: boolean | null;
+}
+
+function fromRawCollectorStatus(status: RawCollectorStatus): CollectorStatus {
+	return {
+		version: status.version ?? null,
+		running: status.running,
+		paused: status.paused,
+		pendingEvents: status.pending_events,
+		pendingMessages: status.pending_messages,
+		lastSync: status.last_sync,
+		hasFullDiskAccess: status.has_full_disk_access,
+		hasAccessibility: status.has_accessibility,
+		// Absent on collector builds predating the self-report — treat as
+		// "not from the daemon" rather than assuming the flags are authoritative.
+		permissionsReportedByDaemon: status.permissions_reported_by_daemon ?? false,
+		permissionsCheckedAt: status.permissions_checked_at ?? null,
+		safariLibrary: status.safari_library ?? null
+	};
+}
+
+/** The shell surface that has `recheck_collector` (src-tauri/src/lib.rs). */
+export const RECHECK_COLLECTOR_SURFACE = 7;
+
+/**
+ * Ask the collector to re-check its permissions now rather than on its next
+ * 5-minute tick, and return its status once it has. Call it after someone
+ * comes back from System Settings.
+ *
+ * `null` when there is nothing to ask (a browser, a shell predating the
+ * command) or the collector could not be reached; callers fall back to their
+ * normal status poll. Never throws.
+ */
+export async function recheckCollector(): Promise<CollectorStatus | null> {
+	const invoke = await getInvoke();
+	if (!invoke || !(await shellSupports(RECHECK_COLLECTOR_SURFACE))) return null;
+	try {
+		return fromRawCollectorStatus(await invoke<RawCollectorStatus>('recheck_collector'));
+	} catch (e) {
+		console.error('[Tauri] Failed to re-check collector permissions:', e);
+		return null;
+	}
+}
+
 /**
  * Read the collector daemon's status, keeping the failure reason.
  */
@@ -344,37 +407,8 @@ export async function probeCollectorStatus(): Promise<CollectorProbe> {
 	if (!invoke) return { kind: 'unavailable' };
 
 	try {
-		const status = await invoke<{
-			version?: string | null;
-			running: boolean;
-			paused: boolean;
-			pending_events: number;
-			pending_messages: number;
-			last_sync: string | null;
-			has_full_disk_access: boolean;
-			has_accessibility: boolean;
-			permissions_reported_by_daemon?: boolean;
-			permissions_checked_at?: string | null;
-		}>('get_collector_status');
-
-		// Convert snake_case to camelCase
-		return {
-			kind: 'ok',
-			status: {
-				version: status.version ?? null,
-				running: status.running,
-				paused: status.paused,
-				pendingEvents: status.pending_events,
-				pendingMessages: status.pending_messages,
-				lastSync: status.last_sync,
-				hasFullDiskAccess: status.has_full_disk_access,
-				hasAccessibility: status.has_accessibility,
-				// Absent on collector builds predating the self-report — treat as
-				// "not from the daemon" rather than assuming the flags are authoritative.
-				permissionsReportedByDaemon: status.permissions_reported_by_daemon ?? false,
-				permissionsCheckedAt: status.permissions_checked_at ?? null
-			}
-		};
+		const status = await invoke<RawCollectorStatus>('get_collector_status');
+		return { kind: 'ok', status: fromRawCollectorStatus(status) };
 	} catch (e) {
 		console.error('[Tauri] Failed to get collector status:', e);
 		return { kind: 'error', message: e instanceof Error ? e.message : String(e) };

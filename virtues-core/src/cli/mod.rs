@@ -225,6 +225,13 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             println!("Press Ctrl+C to stop");
 
             crate::server::run(virtues, &host, port).await?;
+            // The server has stopped and flushed its saves. Exit here instead
+            // of returning into the runtime's drop, which waits for every
+            // `spawn_blocking` task to end — and a watcher that reads a device
+            // forever (the Dragon's power key, `maintenance::reset_button`)
+            // never does. Every restart, so every self-update, sat out
+            // systemd's 90s stop timeout and ended in SIGKILL.
+            std::process::exit(0);
         }
 
         Commands::Seed => {

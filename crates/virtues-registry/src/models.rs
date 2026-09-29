@@ -213,61 +213,28 @@ pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
         // Minor, known: it wraps output in markdown fences even when told not
         // to. Callers that paste this straight into a file must strip them.
         ModelSlot::Coding => "alibaba/qwen3-coder-plus",
-        // Titles, summaries, bookmark extraction, and the query the web-search
-        // tool composes. High volume, and the only slot whose output the user
-        // reads as a bare string, so output HYGIENE matters here more than
-        // model weight.
+        // Titles, summaries, bookmark extraction, the query the web-search
+        // tool composes, entity article drafts, compaction, and the day
+        // article's per-sentence check. High volume, and some of its output
+        // lands in the UI as a bare string, so output hygiene matters as much
+        // as judgment.
         //
-        // Took the slot from `zai/glm-4.7-flash` on 2026-08-27. Retention was
-        // the reason to look — glm-4.7-flash is the weakest posture we shipped,
-        // `zdr: some` AND `no_training: some`, on the slot that reads bookmarked
-        // articles and summarizes the user's own record — but it only moved
-        // once a candidate beat it on the actual work:
+        // gpt-6-luna because the slot now carries judgment work, not only
+        // strings. As the day article's checker, on one real day's draft:
         //
-        //   llama-4-scout   0.8s  0 reasoning  5/5 extraction  6/6 clean titles
-        //   glm-4.7-flash   1.6s  0 reasoning  5/5 extraction  6/6 clean titles
+        //   glm-4.7-flash        22/38 sentences kept (deleted true ones)  14s
+        //   gpt-6-luna, none     31/38                                      4s
+        //   gpt-6-luna, low      33-36/38                                  17s
         //
-        // Costs ~60% more per call and is still $0.00007 — noise at this slot's
-        // absolute volume. 128K context (down from 200K) is comfortably above
-        // the longest thing this slot reads, one article.
+        // and it still writes a clean title with thinking off, ~1.3s against
+        // glm's 0.7s, at the same fraction of a cent. It exposes a reasoning
+        // toggle and `none`..`max` effort, so each caller's `Thinking` decides
+        // what it pays: a title asks for none, a check asks for low.
         //
-        // Hygiene is what eliminated the cheaper candidates, and it does not
-        // track price or size at all — this slot writes strings that land in
-        // the UI verbatim:
-        //   nova-lite       leaked "Title: ..." into a title, and writes
-        //                   comma-salad ("Note: landlord, boiler, issue,
-        //                   urgent.") — cheaper than the incumbent and the
-        //                   worst of the three at the visible job.
-        //   ministral-14b   wrapped 5 of 6 titles in **markdown bold**.
-        //   qwen3.8-flash   the best titles measured, but pays 126 reasoning
-        //                   tokens per call for them. The runner-up, and the
-        //                   pick if title quality ever outranks the tax.
-        //   qwen3.7-flash   1,114 reasoning tokens to write FOUR WORDS, with
-        //                   no reasoning_options to turn it off. Three times
-        //                   worse than the GLM-5.1 tax this file already
-        //                   rejects, from the cheapest model on the shelf.
-        //                   Per-token price is not per-call price.
-        // Back to glm-4.7-flash on 2026-08-27, hours after llama-4-scout took
-        // the slot from it. The swap was made to escape `zdr: some`, and that
-        // turned out to be the wrong layer to solve it at: the gateway takes
-        // `zeroDataRetention: true` per request and PINS a `some` model to its
-        // zero-retention endpoints, which virtues-api now sets on every call it
-        // can (see Catalog::enforce_zdr). glm-4.7-flash is therefore
-        // zero-retention in practice, and it was the better model for the job
-        // on the measurements that picked scout — 6/6 clean titles like scout,
-        // but visibly better ones ("Running Shoe Recommendation" against
-        // "Shoe Change for Relief"), and cheaper.
-        //
-        // Keeping the record straight about what it is: glm-4.7-flash is the
-        // weakest posture we ship, `zdr: some` AND `no_training: some`, and it
-        // is fine here ONLY because enforcement is on. If the enforcement is
-        // ever removed, this slot goes back to being the leaky one and
-        // llama-4-scout (`all`/`all`, 0.8s, 5/5 extraction) is the drop-in.
-        //
-        // Measured 0 reasoning tokens at every effort level — no thinking tax
-        // on the high-volume slot, which is what put it here originally and is
-        // still the reason it belongs here.
-        ModelSlot::Lite => "zai/glm-4.7-flash",
+        // `zdr: some` — zero-retention in practice because virtues-api sets
+        // `zeroDataRetention` per request (Catalog::enforce_zdr). If that
+        // enforcement is ever removed, re-check this slot's posture first.
+        ModelSlot::Lite => "openai/gpt-6-luna",
         // Nano Banana 2 (the 3.1 generation), replacing gemini-3-pro-image on
         // 2026-09-15. Newer, and a quarter the price on the gateway's catalog
         // ($0.0005/$0.003 per 1k against $0.002/$0.012). Compared head to head

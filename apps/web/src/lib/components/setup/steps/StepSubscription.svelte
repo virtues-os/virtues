@@ -67,6 +67,11 @@
 	const loaded = $derived(gettingStarted.loaded);
 	const done = $derived(gettingStarted.loaded && gettingStarted.aiConnected);
 	const via = $derived(gettingStarted.step("connect_ai")?.via ?? null);
+	/** Signed in already (before pairing, or earlier), with no subscription on
+	 *  the account: signing in again would change nothing. */
+	const signedIn = $derived(via === "linked");
+	/** Met on Names, the step before this one. */
+	const name = $derived(setup.assistantName);
 
 	const still =
 		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -189,13 +194,14 @@
      whoever wants the reason. What the card lists is Billing's own claim,
      "one subscription covers all four" (BillingView). -->
 <!-- WHY, ON THE SCREEN (2026-09-28): this is the one step with no way past,
-     and the page never said so. Same reason as the Account step before
-     pairing, in the same plain words. -->
+     and the page never said so. It is said here only (not on Account). -->
 <StepFrame
-	title={done ? (via === "byo" ? "Your server is using your own AI" : "You've set up your subscription") : "Choose how your assistant thinks"}
+	title={done ? (via === "byo" ? "Your server is using your own AI" : "You've set up your subscription") : `Choose how ${name} thinks`}
 	subtitle={done
 		? undefined
-		: "Your assistant can't answer anything until it has AI to think with. A Virtues subscription gives it the best models there are, or you can connect your own."}
+		: signedIn
+			? `You're signed in, and your account has no subscription yet. ${name} can't answer anything until it has AI to think with.`
+			: `${name} can't answer anything until it has AI to think with. A Virtues subscription gives it the best models there are, or you can connect your own.`}
 >
 	{#if !loaded}
 		<div class="card placeholder" aria-hidden="true"></div>
@@ -208,7 +214,7 @@
 				</svg>
 			</span>
 			<p class="settled">
-				{via === "byo" ? "Every AI call goes through the address you gave." : "Your assistant can answer now."}
+				{via === "byo" ? "Every AI call goes through the address you gave." : `${name} can answer now.`}
 			</p>
 			<button class="setup-go wide" onclick={onnext}>
 				{intoLabel(setup.upNext("subscription"))}
@@ -220,7 +226,7 @@
 			<p class="kind">Virtues subscription</p>
 			<p class="price"><span class="amount">$20</span> a month</p>
 			<ul class="covers">
-				<li><Icon icon="ri:check-line" width="16" /> Your assistant, on the best models there are</li>
+				<li><Icon icon="ri:check-line" width="16" /> {name}, on the best models there are</li>
 				<li><Icon icon="ri:check-line" width="16" /> Web search</li>
 				<li><Icon icon="ri:check-line" width="16" /> Place search</li>
 				<li><Icon icon="ri:check-line" width="16" /> Bank connections</li>
@@ -249,13 +255,15 @@
 		</div>
 
 		<div class="links">
-			<button
-				class="link"
-				class:on={mode === "signin" || mode === "sending" || mode === "mailed"}
-				aria-expanded={mode === "signin" || mode === "sending" || mode === "mailed"}
-				onclick={() => open("signin")}>I already have an account</button
-			>
-			<span class="dot" aria-hidden="true">·</span>
+			{#if !signedIn}
+				<button
+					class="link"
+					class:on={mode === "signin" || mode === "sending" || mode === "mailed"}
+					aria-expanded={mode === "signin" || mode === "sending" || mode === "mailed"}
+					onclick={() => open("signin")}>I already have an account</button
+				>
+				<span class="dot" aria-hidden="true">·</span>
+			{/if}
 			<button
 				class="link"
 				class:on={mode === "endpoint" || mode === "saving"}
@@ -359,8 +367,9 @@
 		<aside class="why">
 			<p class="why-head">Why a subscription</p>
 			<p>
-				Your server keeps the record. For now, your assistant borrows its intelligence from the best models there
-				are, under terms that keep nothing you send, and a subscription pays for that.
+				Your server keeps the record of your life. Keeping it well takes a librarian: models that read each day,
+				write it up, and find what you ask for. Every one runs under zero data retention (ZDR): nothing you send
+				is stored or trained on.
 			</p>
 			<p>The goal is for all of it to run in your home. The hardware is close, but not yet cheap enough.</p>
 		</aside>
@@ -495,6 +504,7 @@
 		margin-top: 1.25rem;
 	}
 	.link {
+		position: relative;
 		padding: 0;
 		border: none;
 		background: none;
@@ -506,6 +516,12 @@
 		text-underline-offset: 3px;
 		cursor: pointer;
 		transition: color 0.15s ease;
+	}
+	/* A 44-point hit area around a line of text. */
+	.link::after {
+		content: "";
+		position: absolute;
+		inset: -12px -4px;
 	}
 	.link:hover,
 	.link.on {

@@ -326,7 +326,7 @@
 			await setup.refresh();
 			onnext();
 		} catch {
-			error = "Your server couldn't save its location. Try again.";
+			error = "Your server couldn't save your home. Try again.";
 			saving = false;
 		}
 	}
@@ -420,7 +420,7 @@
 		</div>
 		{#if guessed}
 			<!-- Kept in the layout after a change, so the way forward does not jump. -->
-			<p class="hint" class:gone={!unchanged} aria-hidden={!unchanged}>From your computer's clock</p>
+			<p class="hint" class:gone={!unchanged} aria-hidden={!unchanged}>From this device's clock</p>
 		{/if}
 	</div>
 

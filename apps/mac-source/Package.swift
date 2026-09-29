@@ -13,6 +13,17 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.2.0")
     ],
     targets: [
+        // The collector's pure rules (no I/O), split out so `swift test` can
+        // exercise them without the daemon, the iroh framework, or chat.db.
+        .target(
+            name: "CollectorPolicy",
+            path: "Policy"
+        ),
+        .testTarget(
+            name: "CollectorPolicyTests",
+            dependencies: ["CollectorPolicy"],
+            path: "Tests/CollectorPolicyTests"
+        ),
         // The iroh client FFI (uniffi over the Rust `virtues-iroh-ffi` crate),
         // built for macOS by `crates/virtues-iroh-ffi/build-macos.sh`. Lets the
         // collector reach the box over iroh (dial-by-EndpointId), so ingest is
@@ -25,7 +36,8 @@ let package = Package(
             name: "VirtuesCollector",
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-                "VirtuesIrohMac"
+                "VirtuesIrohMac",
+                "CollectorPolicy"
             ],
             path: "Sources",
             linkerSettings: [

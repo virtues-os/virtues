@@ -296,6 +296,7 @@ RUN_STARTED = D(2024, 9, 2)           # takes up running; Tue/Thu from here on.
 # showcase events pinned at the 3.00 local clamp and the global/local
 # distinction could not be shown at all. A local outlier needs a cluster to be
 # an outlier IN.
+SHOWCASE = D(2026, 1, 28)             # the day page as it should read: see _showcase
 GHOST_EVENT = D(2025, 8, 21)          # a calendar block with no trace behind it
 MOVE_DAY = D(2023, 11, 6)
 GYM_JOINED = D(2024, 2, 1)
@@ -388,6 +389,11 @@ def build():
                                              "is_read", "is_group_message", "has_attachments",
                                              "occurred_at", "source_stream_id", "source_table",
                                              "source_provider"])
+    trans = tbl("data_communication_transcription", ["id", "text", "language", "duration_seconds",
+                                                      "started_at", "ended_at", "speaker_count",
+                                                      "title", "summary", "confidence", "tags",
+                                                      "source_stream_id", "source_table",
+                                                      "source_provider"])
     email = tbl("data_communication_email", ["id", "message_id", "thread_id", "subject", "body",
                                              "body_preview", "from_email", "from_name",
                                              "to_emails", "to_names", "cc_emails", "bcc_emails",
@@ -529,6 +535,8 @@ def build():
         _day_web(d, off, web, chi)
         n += 1
 
+    _showcase(msg, trans)
+
     facts = compute_facts(t)
     _chats(chats, cmsg, facts)
     _pages_and_articles(pages, articles, facts)
@@ -539,6 +547,122 @@ def build():
     _applets(applets, runs)
 
     return t, n
+
+
+# --------------------------------------------------------------------------
+# The showcase day
+# --------------------------------------------------------------------------
+# One day written the way the day article is meant to read
+# (agents/plan/day-article-plan.md): an Abstract, sections with their time
+# spans, a table of what came back, evidence footnotes that open the record
+# they cite, and ⟦ ⟧ around what the veil may hide. Every footnote points at a
+# row _showcase writes, so a citation lands on something in Record.
+
+SC = "p3y_tr_sc_"
+SM = "p3y_ms_sc_"
+
+SHOWCASE_ARTICLE = f"""The day was [⟦Bea⟧](/person/p3y_bea): you took her to ⟦the clinic⟧ in the morning, and the evening was a coffee house, a long quiz, and a conversation about ⟦an accident she had never talked about⟧ that turned awkward, drew an apology, and was set down so the evening could go on.
+
+## The waiting room at the clinic[^cx-1]
+
+She drove, and on the way showed you the bag she keeps in the car: hand sanitizer, lip balm, a tide chart, toothpicks.[^ev-1] At ⟦the clinic⟧ you said the name made it sound like a bank, and then that the waiting room was better than the three chairs you had pictured.[^ev-1] You talked her into a parallel park outside the house on ⟦Selden⟧ and ran up for the dog.[^ev-2] Later you sent her a photo of a cabin you would love to build.[^ev-3]
+
+Nothing was recorded between 8:41 and 5.
+
+## The coffee house[^cx-2]
+
+You sent her the quiz, and between you it came to an order not set in stone: the two of you, then trivia, then questions, then you teaching her about maps.[^ev-4] On the way you crossed ⟦South First⟧ in the rain, and lingered over a good hairbrush as a gift and a dress in a green you both liked.[^ev-5]
+
+Some of the questions, and what came back:
+
+| Question | Answer |
+|---|---|
+| What's the most romantic thing someone could do for you? | A walk to the door through the rain, no umbrella |
+| How would you style my hair? | Like Princess Leia |
+| Would you rather live without music or movies? | Movies, both of you |
+| Most overrated city in the world? | Paris |
+
+[^ev-6]
+
+Truth or dare opened a conversation about ⟦an accident she had never talked about⟧. It was new territory for you and it got awkward; she apologized for how it had landed, you told her you were not trying to make her feel bad, and after a while you set it down and went back to the list.[^ev-7] The talk cards went further on their own: ⟦the last few years, and learning to let them go⟧, and a climbing trip in the spring, shoulder permitting.[^ev-8]
+
+A storm was passing. Leaving at 6:30 sounded right, and you both said you were tired.[^ev-9]
+
+## After the rain[^cx-3]
+
+You walked back past ⟦the library⟧, got home, and took the dog out.[^ev-10] Then you wrote [⟦David Okafor⟧](/person/person_demo_david) that you were ⟦second-guessing a few things and not in the best mood⟧, and might just read, or try the bath.[^ev-11]
+
+[^cx-1]: 7:46–8:41 AM
+[^cx-2]: 4:52–7:06 PM
+[^cx-3]: 7:06 PM
+[^ev-1]: Recording · 7:46 AM · data_communication_transcription:{SC}0746
+[^ev-2]: Recording · 8:06 AM · data_communication_transcription:{SC}0806
+[^ev-3]: Message · 8:57 AM · data_communication_message:{SM}0857
+[^ev-4]: Message · 4:52 PM · data_communication_message:{SM}1652
+[^ev-5]: Recording · 5:04 PM · data_communication_transcription:{SC}1704
+[^ev-6]: Recording · 5:39 PM · data_communication_transcription:{SC}1739
+[^ev-7]: Recording · 6:04 PM · data_communication_transcription:{SC}1804
+[^ev-8]: Recording · 6:34 PM · data_communication_transcription:{SC}1834
+[^ev-9]: Recording · 6:09 PM · data_communication_transcription:{SC}1809
+[^ev-10]: Recording · 7:06 PM · data_communication_transcription:{SC}1906
+[^ev-11]: Message · 7:40 PM · data_communication_message:{SM}1940
+"""
+
+
+def _showcase(msg, trans):
+    """The rows the showcase article cites: recordings and messages, fictional."""
+    d = START + timedelta(days=SHOWCASE)
+    recordings = [
+        ("0746", 7, 46, "Driving to the clinic, the car bag",
+         "[Speaker 1]: Hand sanitizer, lip balm, a tide chart, toothpicks. It's the car bag. "
+         "[Speaker 2]: All right, we're here. [Speaker 1]: The name makes it sound like a bank. "
+         "[Speaker 2]: This is the waiting room. [Speaker 1]: That's a lot better than I "
+         "imagined. I pictured three chairs."),
+        ("0806", 8, 6, "Parking on Selden, the elevator",
+         "[Speaker 1]: You can parallel park right here, perfect. I'll run up for the dog, "
+         "seven minutes. [Speaker 1]: Sorry, the elevator took forever, and then the dog did."),
+        ("1704", 17, 4, "A shop on South First",
+         "[Speaker 1]: Crossing South First in this rain. [Speaker 2]: A really nice "
+         "hairbrush is such a good gift. [Speaker 1]: I like that green. [Speaker 2]: Me too."),
+        ("1739", 17, 39, "The quiz",
+         "[Speaker 2]: What's the most romantic thing someone could do for you? [Speaker 1]: "
+         "Walk to my door through the rain, no umbrella. [Speaker 2]: How would you style my "
+         "hair? [Speaker 1]: Like Princess Leia. [Speaker 2]: Would you rather live without "
+         "music or movies? [Speaker 1]: Movies. [Speaker 2]: Me too. Most overrated city in "
+         "the world? [Speaker 1]: Paris."),
+        ("1804", 18, 4, "Truth or dare",
+         "[Speaker 1]: Freebie truth: the accident I never talk about. [Speaker 2]: I didn't "
+         "know. This is new for me. [Speaker 1]: I'm sorry, I didn't mean to make it awkward. "
+         "[Speaker 2]: I'm not trying to make you feel bad. Can we go back to the list?"),
+        ("1809", 18, 9, "The storm passing",
+         "[Speaker 1]: The storm's passing, just drizzle in twenty minutes. [Speaker 2]: Leave "
+         "at 6:30 then. [Speaker 1]: I'm so tired. [Speaker 2]: Me too."),
+        ("1834", 18, 34, "The talk cards",
+         "[Speaker 2]: The last few years, and learning to let them go. [Speaker 1]: For me, "
+         "a climbing trip in the spring. Shoulder permitting."),
+        ("1906", 19, 6, "The walk home",
+         "[Speaker 1]: Straight past the library, that's the fastest way. [Speaker 1]: Come "
+         "on, bud. Sit. Good."),
+    ]
+    for hm, hh, mm, title, text in recordings:
+        start = ts(d, hh, mm)
+        trans.add(f"{SC}{hm}", text, "en", 300.0, start, start + timedelta(minutes=5), 2,
+                  title, title + ".", 0.9, ["showcase"], f"p3y_s_{SC}{hm}",
+                  "data_communication_transcription", "demo")
+    messages = [
+        ("0857", 8, 57, "p3y_bea", "This one is a cabin I'd love to build: [Photo]"),
+        ("1652", 16, 52, "p3y_bea", "the quiz, for tonight: https://example.com/quiz"),
+        ("1940", 19, 40, "person_demo_david",
+         "Just got home and walked the dog. Second guessing a few things and not in the best "
+         "mood, so might just read. Might even try the bath"),
+    ]
+    for hm, hh, mm, pid, body in messages:
+        name = next(p[1] for p in PEOPLE if p[0] == pid)
+        # All three are the owner's own, sent to the person named.
+        msg.add(f"{SM}{hm}", f"p3y_msgid_sc_{hm}", f"p3y_thr_{pid}", "imessage", body,
+                "+15125550100", None, [f"{name.split()[0].lower()}@example.com"],
+                True, False, "[Photo]" in body, ts(d, hh, mm), f"p3y_s_{SM}{hm}",
+                "data_communication_message", "demo")
 
 
 # --------------------------------------------------------------------------
@@ -1375,7 +1499,9 @@ def _pages_and_articles(pages, articles, f):
             continue
         did = f"day_{d.isoformat()}"
         pid = f"page_p3y_day_{d.isoformat()}"
-        if off in MIGRAINE_DAYS:
+        if off == SHOWCASE:
+            prose = SHOWCASE_ARTICLE
+        elif off in MIGRAINE_DAYS:
             prose = ("A short night and then a migraine that took the morning. Low light, "
                      "no screen, barely any movement. By evening it had lifted enough to eat.")
         elif off == FIRST_KAYAK:
@@ -1485,6 +1611,8 @@ BEGIN
                                     ended_at   = ended_at   + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
   UPDATE data_communication_message SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
   UPDATE data_communication_email   SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
+  UPDATE data_communication_transcription SET started_at = started_at + (shift_days||' days')::interval,
+                                          ended_at   = ended_at   + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
   UPDATE data_financial_transaction SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
   UPDATE data_calendar_event    SET started_at = started_at + (shift_days||' days')::interval,
                                     ended_at   = ended_at   + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
@@ -1934,6 +2062,7 @@ GROUPS = {
     "02_streams": ["data_health_heart_rate", "data_health_hrv", "data_health_steps",
                    "data_health_sleep", "data_health_workout", "data_location_point",
                    "data_location_visit", "data_communication_message",
+                   "data_communication_transcription",
                    "data_communication_email", "data_financial_transaction",
                    "data_calendar_event", "data_environment_weather"],
     "03_derived": ["wiki_days", "wiki_events"],

@@ -34,6 +34,7 @@
 -->
 <script lang="ts">
 	import { onMount, tick } from "svelte";
+	import { useShowing, mayTakeFocus } from "../showing";
 	import { fade } from "svelte/transition";
 	import Icon from "$lib/components/Icon.svelte";
 	import { updateAssistantProfile, updateProfile } from "$lib/api/client";
@@ -81,6 +82,7 @@
 	 *  a grey block, which on a word this size reads as a broken field. */
 	async function focusEnd() {
 		await tick();
+		if (!mayTakeFocus(showing, field)) return;
 		field?.focus();
 		const end = field?.value.length ?? 0;
 		field?.setSelectionRange(end, end);
@@ -97,6 +99,7 @@
 	// The field is as wide as its text, so the name stays centered as it is
 	// typed. A hidden span in the same type measures it, again once the serif
 	// has loaded: a measure taken in the fallback face is narrower and clips.
+	const showing = useShowing();
 	let fontsReady = $state(false);
 	onMount(() => {
 		void document.fonts?.ready.then(() => (fontsReady = true));
@@ -107,6 +110,16 @@
 		void fontsReady;
 		if (mirror) width = mirror.getBoundingClientRect().width;
 	});
+
+	/** A long name shrinks to fit the space it has instead of running off it:
+	 *  the measure stays at full size, and the field scales down from it. The
+	 *  space is the step's own width, not the window's, because in the app
+	 *  Setup runs in a pane beside the sidebar. */
+	let stageWidth = $state(0);
+	const room = $derived(
+		(stageWidth || (typeof window === "undefined" ? 1024 : window.innerWidth)) - 32,
+	);
+	const fit = $derived(Math.max(0.35, Math.min(1, room / (Math.max(width, 40) + 8))));
 
 	/**
 	 * Typing over the name replaces it. While the field still holds the name
@@ -152,6 +165,12 @@
 		frozenLabel = null;
 	}
 
+	/**
+	 * Save, then move on. Only the save can fail the step: the dissolve and
+	 * the refresh after it are the page's own business, and when they sat in
+	 * the same `try` a hiccup in either read as "couldn't save", with the name
+	 * already saved.
+	 */
 	async function go() {
 		if (!trimmed || busy) return;
 		busy = true;
@@ -159,24 +178,40 @@
 		try {
 			if (beat === 1) {
 				if (changed) await updateAssistantProfile({ assistant_name: trimmed });
-				assistant = trimmed;
-				setup.assistantName = trimmed;
-				await dissolve();
-				beat = 2;
-				claimed = false;
-				text = original = setup.profile?.preferred_name ?? "";
-				await focusEnd();
-				busy = false;
 			} else {
 				await updateProfile({ preferred_name: trimmed });
-				await dissolve();
-				await setup.refresh();
-				onnext();
 			}
-		} catch {
+		} catch (e) {
+			console.error("[setup] saving a name failed", e);
 			error =
 				beat === 1 ? "Your server couldn't save that name. Try again." : "Your server couldn't save your name. Try again.";
 			busy = false;
+			return;
+		}
+		const settle = async (what: string, run: () => Promise<unknown>) => {
+			try {
+				await run();
+			} catch (e) {
+				console.error(`[setup] after saving a name, ${what} failed`, e);
+			}
+		};
+		if (beat === 1) {
+			assistant = trimmed;
+			setup.assistantName = trimmed;
+			await settle("the dissolve", dissolve);
+			leaving = false;
+			frozenLabel = null;
+			beat = 2;
+			claimed = false;
+			text = original = setup.profile?.preferred_name ?? "";
+			await focusEnd();
+			busy = false;
+		} else {
+			await settle("the dissolve", dissolve);
+			leaving = false;
+			frozenLabel = null;
+			await settle("the refresh", () => setup.refresh());
+			onnext();
 		}
 	}
 
@@ -188,7 +223,7 @@
 	}
 </script>
 
-<div class="stage">
+<div class="stage" bind:clientWidth={stageWidth}>
 	{#if eyebrow}<p class="eyebrow">{eyebrow}</p>{/if}
 
 
@@ -214,7 +249,8 @@
 			oninput={() => setup.hear()}
 			class="name"
 			class:leaving
-			style:width="{Math.max(width, 40) + 8}px"
+			style:width="{Math.max(width, 40) * fit + 8}px"
+			style:font-size={fit < 1 ? `calc(clamp(4.5rem, 13vw, 10rem) * ${fit})` : undefined}
 			aria-label={beat === 1 ? "Your assistant's name" : "What your assistant should call you"}
 			autocomplete={beat === 1 ? "off" : "given-name"}
 			spellcheck="false"
@@ -325,7 +361,7 @@
 	.name {
 		position: relative;
 		z-index: 1;
-		max-width: calc(100vw - 32px);
+		max-width: 100%;
 		padding: 0;
 		border: none;
 		outline: none;

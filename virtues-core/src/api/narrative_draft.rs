@@ -63,9 +63,10 @@ Output the document, then ---RULES---, then the rules. Nothing else."#;
 #[derive(Debug, Serialize)]
 pub struct Draft {
     pub document: String,
-    /// PROPOSED, not saved. Nothing here binds the assistant until the person
-    /// confirms it — a rule the box invented and then obeyed would be worse
-    /// than no rules at all, because it would be invisible and permanent.
+    /// PROPOSED, not obeyed. Kept inactive (`propose_rules`) and bound only
+    /// once the person confirms it: a rule the box invented and then obeyed
+    /// would be worse than no rules at all, because it would be invisible and
+    /// permanent.
     pub proposed_rules: Vec<String>,
 }
 
@@ -159,9 +160,18 @@ pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
     )
     .await?;
 
+    // What they asked never to be raised is kept, but not obeyed: it waits,
+    // inactive, for the person to confirm it on the closing screen. Dropping
+    // it here (as this once did) lost every such request, because nothing
+    // else ever saw the draft's second half.
+    if let Err(e) = propose_rules(pool, &proposed_rules).await {
+        tracing::warn!(error = %e, "narrative draft: proposed rules not kept; document stands");
+    }
+
     tracing::info!(
         turns = turns.len(),
         document_chars = document.len(),
+        proposed_rules = proposed_rules.len(),
         "narrative draft written from the interview"
     );
 
@@ -1169,6 +1179,42 @@ pub struct SaveRules {
     pub rules: Vec<RuleInput>,
 }
 
+/// Rules the drafter heard the person ask for, kept inactive until they
+/// confirm them. Only the proposals are replaced; a confirmed rule is never
+/// touched here. Confirming goes through `save_rules_handler`, whose replace
+/// clears whatever proposals are left.
+async fn propose_rules(pool: &PgPool, rules: &[String]) -> Result<()> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| Error::Database(format!("propose rules: {e}")))?;
+    sqlx::query("DELETE FROM wiki_rules WHERE NOT active AND id LIKE 'proposed_%'")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::Database(format!("clear proposed rules: {e}")))?;
+    for (i, rule) in rules.iter().enumerate() {
+        sqlx::query("INSERT INTO wiki_rules (id, rule, kind, active) VALUES ($1, $2, 'avoid', false)")
+            .bind(format!("proposed_{i:03}"))
+            .bind(rule.trim())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Database(format!("propose rule: {e}")))?;
+    }
+    tx.commit()
+        .await
+        .map_err(|e| Error::Database(format!("propose rules: {e}")))
+}
+
+async fn list_proposed_rules(pool: &PgPool) -> Result<Vec<Rule>> {
+    sqlx::query_as::<_, Rule>(
+        "SELECT id, rule, kind, active FROM wiki_rules \
+          WHERE NOT active AND id LIKE 'proposed_%' ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("list proposed rules: {e}")))
+}
+
 pub async fn list_rules(pool: &PgPool) -> Result<Vec<Rule>> {
     sqlx::query_as::<_, Rule>(
         "SELECT id, rule, kind, active FROM wiki_rules WHERE active ORDER BY created_at, id",
@@ -1183,10 +1229,16 @@ pub async fn rules_handler(
     _user: crate::middleware::auth::AuthUser,
 ) -> impl axum::response::IntoResponse {
     use axum::{response::IntoResponse as _, Json};
-    match list_rules(state.db.pool()).await {
-        Ok(rules) => (
+    let pool = state.db.pool();
+    let listed = match list_rules(pool).await {
+        Ok(rules) => list_proposed_rules(pool).await.map(|p| (rules, p)),
+        Err(e) => Err(e),
+    };
+    match listed {
+        // `proposed`: heard in the interview, not obeyed until confirmed.
+        Ok((rules, proposed)) => (
             axum::http::StatusCode::OK,
-            Json(serde_json::json!({ "rules": rules })),
+            Json(serde_json::json!({ "rules": rules, "proposed": proposed })),
         )
             .into_response(),
         Err(e) => (
@@ -1271,6 +1323,30 @@ pub async fn save_rules_handler(
         Json(serde_json::json!({ "saved": req.rules.len() })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod proposed_rules_tests {
+    use super::*;
+
+    #[sqlx::test]
+    async fn proposals_wait_inactive_and_leave_confirmed_rules_alone(pool: PgPool) {
+        sqlx::query("INSERT INTO wiki_rules (id, rule, kind) VALUES ('rule_000', 'never suggest bars', 'avoid')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        propose_rules(&pool, &["do not mention my father unless I do".into()])
+            .await
+            .unwrap();
+        // A second draft replaces the proposals, never the confirmed rule.
+        propose_rules(&pool, &["never raise the move".into()]).await.unwrap();
+
+        let active: Vec<String> = list_rules(&pool).await.unwrap().into_iter().map(|r| r.rule).collect();
+        let proposed: Vec<String> =
+            list_proposed_rules(&pool).await.unwrap().into_iter().map(|r| r.rule).collect();
+        assert_eq!(active, vec!["never suggest bars"]);
+        assert_eq!(proposed, vec!["never raise the move"]);
+    }
 }
 
 #[cfg(test)]

@@ -3,6 +3,8 @@
  * Convert between entity IDs and their corresponding routes
  */
 
+import { PROJECT_ICON } from '$lib/utils/iconHelpers';
+
 // Route bases to entity types (for URLs like /person/slug)
 const ROUTE_TO_TYPE: Record<string, string> = {
 	'/person': 'person',
@@ -27,7 +29,7 @@ const TYPE_TO_ICON: Record<string, string> = {
 	org: 'ri:building-line',
 	page: 'ri:file-text-line',
 	chat: 'ri:chat-3-line',
-	project: 'ri:folder-3-line',
+	project: PROJECT_ICON,
 	file: 'ri:file-line',
 	day: 'ri:calendar-line',
 	year: 'ri:calendar-line',

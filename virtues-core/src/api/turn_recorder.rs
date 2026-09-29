@@ -195,12 +195,18 @@ impl TurnRecorder {
                 // A failed tool is a tool error on the wire, not an output
                 // with an error inside it. The model still sees the failure
                 // text (executor::to_llm_content); the row keeps it as the
-                // result so a reload shows the same.
+                // result so a reload shows the same, beside whatever evidence
+                // the tool returned with it — a code run's traceback.
                 let error_text = error
                     .or_else(|| result.get("error").and_then(|e| e.as_str()).map(str::to_string))
                     .unwrap_or_else(|| "the tool reported a failure".to_string());
                 if let Some(tc) = self.tool_call_mut(&id) {
-                    tc.result = Some(serde_json::json!({ "error": error_text }));
+                    let mut row = match result {
+                        serde_json::Value::Object(map) => map,
+                        _ => serde_json::Map::new(),
+                    };
+                    row.insert("error".into(), serde_json::Value::String(error_text.clone()));
+                    tc.result = Some(serde_json::Value::Object(row));
                 }
                 self.failed_tools.insert(id.clone());
                 out.push(StreamEvent::ToolOutputError { tool_call_id: id, error_text });
@@ -701,6 +707,27 @@ mod tests {
             !lines.iter().any(|l| l.contains(r#""id":"m:t2""#)),
             "no step ended, so the second delta is still in the first part: {lines:?}"
         );
+    }
+
+    #[test]
+    fn a_failed_code_run_keeps_its_traceback_in_the_row() {
+        let mut r = TurnRecorder::new("m".into());
+        feed(
+            &mut r,
+            vec![
+                tool_start("c1", "code_interpreter"),
+                AgentEvent::ToolCallResult {
+                    id: "c1".into(),
+                    result: json!({"stderr": "Traceback …\nZeroDivisionError: division by zero", "exit_code": 1}),
+                    success: false,
+                    error: Some("Code execution failed: ZeroDivisionError: division by zero".into()),
+                },
+            ],
+        );
+        let msg = r.into_message("m1", "auto".into(), None).unwrap();
+        let row = msg.tool_calls.as_ref().unwrap()[0].result.clone().unwrap();
+        assert_eq!(row["error"], "Code execution failed: ZeroDivisionError: division by zero");
+        assert!(row["stderr"].as_str().unwrap().starts_with("Traceback"));
     }
 
     #[test]

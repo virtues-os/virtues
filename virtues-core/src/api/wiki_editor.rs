@@ -65,6 +65,36 @@ pub fn system_prompt(subject_type: &str, rules: &[String]) -> Result<String> {
     Ok(p)
 }
 
+/// The person's standing rules, which ride in every editor prompt.
+///
+/// Returns a Result rather than swallowing: these rules are the person's own
+/// instructions to the editor, and an empty vec is indistinguishable from
+/// "they have no rules" — so a broken query would quietly write the year's
+/// article WITHOUT the standing rules and nothing would ever say so. That is
+/// the failure class `.claude/rules/query-errors.md` exists for.
+pub async fn standing_rules(pool: &sqlx::PgPool) -> Result<Vec<String>> {
+    // `kind` is half the rule. The stored text is a bare subject — the
+    // interview writes 'my brother' with kind 'avoid' — so dropping the kind
+    // and rendering the rest under "these are absolute instructions" turned
+    // every AVOID into an instruction to write about the thing. Chat renders
+    // the two apart for exactly this reason; this read did not even select it.
+    let rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT kind, rule FROM wiki_rules WHERE active ORDER BY created_at, id",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to read the standing rules: {e}")))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(kind, rule)| match kind.as_str() {
+            "avoid" => format!("Do not write about {rule}."),
+            "defend" => format!("Write about {rule} plainly; do not soften it."),
+            other => format!("{other}: {rule}"),
+        })
+        .collect())
+}
+
 /// The LEDE: an article's opening paragraph, which is the short form every
 /// rung above it reads.
 ///
@@ -1002,6 +1032,48 @@ mod tests {
         assert!(
             p.contains("They are absolute"),
             "a rule must not read as context the model may weigh"
+        );
+    }
+
+    /// All three entity kinds get the constitution and the entity brief, and
+    /// the brief carries none of the slots that measured as failures on a real
+    /// box: "how it shows up in the record" and "say so plainly" put "the
+    /// record" into 20 of the first 20 person articles, and "the owner's
+    /// life" framing put "the owner" into 10 of them.
+    #[test]
+    fn every_entity_kind_is_written_under_the_constitution_without_the_record_slots() {
+        for kind in ["person", "place", "organization"] {
+            let p = system_prompt(kind, &[]).unwrap();
+            assert!(p.contains("observe, never infer"), "{kind}: constitution");
+            assert!(p.contains("ONE ENTITY"), "{kind}: entity brief");
+        }
+        for slot in ["shows up in the record", "say so plainly", "the owner knows", "in the owner's life"] {
+            assert!(
+                !ENTITY_BRIEF.contains(slot),
+                "the entity brief asks for {slot:?} again"
+            );
+        }
+    }
+
+    #[sqlx::test]
+    async fn standing_rules_render_each_kind_as_an_instruction(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO wiki_rules (id, kind, rule, active) VALUES \
+             ('rule_1', 'avoid', 'my brother', true), \
+             ('rule_2', 'defend', 'the move', true), \
+             ('rule_3', 'avoid', 'retired', false)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let rules = standing_rules(&pool).await.unwrap();
+        assert_eq!(
+            rules,
+            vec![
+                "Do not write about my brother.".to_string(),
+                "Write about the move plainly; do not soften it.".to_string(),
+            ],
+            "an inactive rule does not ride, and an avoid is never rendered as a topic"
         );
     }
 

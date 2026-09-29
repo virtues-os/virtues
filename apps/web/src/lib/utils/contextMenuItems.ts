@@ -6,94 +6,18 @@
  */
 
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
-import { projectStore } from '$lib/stores/project.svelte';
+import { projectMemberUrl, projectMenuItems } from '$lib/utils/projectActions';
 import { pinMenuItem } from '$lib/pins/pinAction';
-import { promptText } from '$lib/stores/dialog.svelte';
-import { toast } from 'svelte-sonner';
-
-/** A project's own url, in either spelling — you can't put a project in a project. */
-export function isProjectUrl(url: string): boolean {
-	return /^\/(?:project|notebook)\//.test(url);
-}
 
 /**
- * Get "Add to project" menu items — a submenu of all projects plus a "New project…"
- * action that creates one and adds this URL to it immediately.
- *
- * Organization moved from Things (folders) to notebooks (now projects); the menu
- * binds the item as a project member. Empty when the url is itself a project:
- * the server rejects that with 400, so the menu shouldn't offer it.
- *
- * @param url - The URL of the item (e.g., '/page/page_xyz', 'https://...')
- * @param _name - Reserved for a future display label (membership is URL-native).
+ * "Add to project" for a thing with a url. Empty for anything that cannot be
+ * filed: a list route, a project (you can't put a project in a project), a
+ * new chat's bare `/`. The menu itself is `projectMenuItems`, shared with the
+ * surfaces that file unsent chats.
  */
-export function getAddToProjectMenuItems(
-	url: string,
-	_name?: string | null,
-): ContextMenuItem[] {
-	if (isProjectUrl(url)) return [];
-	const projects = projectStore.projects;
-
-	const submenu: ContextMenuItem[] = projects.map((s) => ({
-		id: `project-${s.id}`,
-		label: s.name,
-		icon: s.icon || 'ri:folder-open-line',
-		action: async () => {
-			try {
-				await projectStore.addItem(s.id, url);
-				toast(`Added to ${s.name}`);
-			} catch (e) {
-				console.error('[contextMenuItems] Failed to add to project:', e);
-				toast.error('Failed to add to project');
-			}
-		},
-	}));
-
-	submenu.push({
-		id: 'new-project-with-item',
-		label: projects.length > 0 ? 'New project…' : 'Create first project…',
-		icon: 'ri:add-line',
-		dividerBefore: projects.length > 0,
-		action: async () => {
-			// promptText, not window.prompt() — the latter is a no-op in the
-			// Tauri/WKWebView shell, so this menu item did nothing there.
-			const projectName = await promptText({
-				title: 'New project',
-				placeholder: 'Name your project',
-				confirmLabel: 'Create',
-			});
-			if (!projectName) return;
-			try {
-				const project = await projectStore.create(projectName);
-				await projectStore.addItem(project.id, url);
-				toast(`Created "${project.name}" and added item`);
-			} catch (e) {
-				console.error('[contextMenuItems] Failed to create project:', e);
-				toast.error('Failed to create project');
-			}
-		},
-	});
-
-	return [
-		{
-			id: 'add-to-project',
-			label: 'Add to project',
-			icon: 'ri:folder-add-line',
-			dividerBefore: true,
-			submenu,
-		},
-	];
-}
-
-/**
- * Get organization-related menu items (Add to project).
- * Used by tab/sidebar/page context menus.
- */
-export function getProjectMenuItems(
-	url: string,
-	name?: string | null,
-): ContextMenuItem[] {
-	return getAddToProjectMenuItems(url, name);
+export function getProjectMenuItems(url: string, _name?: string | null): ContextMenuItem[] {
+	const member = projectMemberUrl(url);
+	return projectMenuItems(member ? { url: member } : null);
 }
 
 /**

@@ -27,14 +27,47 @@ import {
 	type ProjectSummary,
 	type ProjectDetail
 } from '$lib/api/client';
+import { chatSessions } from '$lib/stores/chatSessions.svelte';
+
+/**
+ * A chat is filed by its own `project_id`, which is what the project page and
+ * the chat read, not by a membership row. Any change to a chat's membership
+ * has to re-read the session list, or the add looks like it did nothing
+ * (VIR-359) and the chat still believes it lives where it used to.
+ */
+const isChatUrl = (url: string) => url.startsWith('/chat/');
 
 export class ProjectStore {
 	/** Every project that is not in the trash, archived ones included. */
 	private all = $state<ProjectSummary[]>([]);
 	loading = $state(false);
 	error = $state<string | null>(null);
+	/** A list has arrived at least once, so an empty one means none, not "not yet". */
+	loaded = $state(false);
 
 	private details = $state<Map<string, ProjectDetail>>(new Map());
+
+	/**
+	 * Unsent chats and the project each will be filed in.
+	 *
+	 * A new chat has no row until its first message, so there is nothing on
+	 * the server to file. The draft is what it will be filed in: the chat
+	 * sends it with that first message, the server binds it, and the chat
+	 * drops the draft once the session list confirms. Keyed by conversation,
+	 * not tab, because a tab is reused: "New chat" navigates in place.
+	 */
+	private drafts = $state<Record<string, string>>({});
+
+	/** Which unsent chat each tab is showing, so a tab can be filed by drag or menu. */
+	private unsentByTab = $state<Record<string, string>>({});
+
+	/**
+	 * Which projects hold a url, for things that can be in several (a page, a
+	 * file, a person). A chat is in one and reads it off its own row. Asked
+	 * per url by the view showing it, and kept current by every add and
+	 * remove made here, so filing a page from any menu shows on the page.
+	 */
+	private holders = $state<Record<string, string[]>>({});
 
 	/**
 	 * The working set — what the Home panel, ⌘K and "Add to project" list.
@@ -57,6 +90,7 @@ export class ProjectStore {
 		try {
 			const res = await listProjects({ includeArchived: true });
 			this.all = res.projects;
+			this.loaded = true;
 		} catch (e) {
 			console.error('[ProjectStore] Failed to load projects:', e);
 			this.error = e instanceof Error ? e.message : 'Failed to load projects';
@@ -78,13 +112,10 @@ export class ProjectStore {
 		await this.afterArchiveChange(id);
 	}
 
+	/** Refetch rather than evict: an open project page reads the cached
+	 *  detail, and evicting it showed "not found" until the refetch landed. */
 	private async afterArchiveChange(id: string): Promise<void> {
-		if (this.details.has(id)) {
-			const next = new Map(this.details);
-			next.delete(id);
-			this.details = next;
-		}
-		await this.load();
+		await Promise.all([this.load(), this.details.has(id) ? this.get(id, { force: true }) : null]);
 	}
 
 	byId(id: string): ProjectSummary | undefined {
@@ -144,33 +175,58 @@ export class ProjectStore {
 		await this.load();
 	}
 
-	/** POST /api/projects/:id/items — add a member URL and update the cached detail. */
+	/**
+	 * POST /api/projects/:id/items — add a member URL and update the cached
+	 * detail. A chat lives in one project, so filing one also takes it out of
+	 * the project it was in; `afterMembershipChange` re-reads every open one.
+	 */
 	async addItem(id: string, url: string): Promise<void> {
 		const item = await addProjectItem(id, url);
+		if (isChatUrl(url)) chatSessions.noteProject(url.slice('/chat/'.length), id);
+		else this.noteHolder(url, id, true);
 		const cached = this.details.get(id);
 		if (cached) {
 			const exists = cached.items.some((i) => i.url === item.url);
 			// Membership is idempotent server-side; don't duplicate an existing member.
-			if (exists) {
-				this.setDetail({ ...cached, items: cached.items.map((i) => (i.url === item.url ? item : i)) });
-			} else {
-				this.setDetail({ ...cached, items: [...cached.items, item] });
-				this.bumpItemCount(id, 1);
-			}
-		} else {
-			await this.get(id, { force: true });
+			this.setDetail({
+				...cached,
+				items: exists
+					? cached.items.map((i) => (i.url === item.url ? item : i))
+					: [...cached.items, item]
+			});
 		}
+		await this.afterMembershipChange(url);
 	}
 
 	/** DELETE /api/projects/:id/items — remove a member URL and update the cached detail. */
 	async removeItem(id: string, url: string): Promise<void> {
 		await removeProjectItem(id, url);
+		if (isChatUrl(url)) chatSessions.noteProject(url.slice('/chat/'.length), null);
+		else this.noteHolder(url, id, false);
 		const cached = this.details.get(id);
 		if (cached) {
 			this.setDetail({ ...cached, items: cached.items.filter((i) => i.url !== url) });
 		}
-		this.bumpItemCount(id, -1);
+		await this.afterMembershipChange(url);
 	}
+
+	/**
+	 * The counts are the server's: a chat is counted by its `project_id` and
+	 * everything else by its row, and guessing either here drifted. A chat
+	 * change also re-reads the session list, which is what the project page
+	 * lists chats from and what an open chat reads its project from.
+	 */
+	private async afterMembershipChange(url: string): Promise<void> {
+		const work: Promise<unknown>[] = [this.load()];
+		if (isChatUrl(url)) {
+			// A project page lists its chats from its own detail, and a moved
+			// chat changes two of them, so every open one is re-read.
+			work.push(chatSessions.refresh());
+			for (const id of this.details.keys()) work.push(this.get(id, { force: true }));
+		}
+		await Promise.all(work);
+	}
+
 
 	/** PUT /api/projects/:id/items/reorder — set the member order and update the cached detail. */
 	async reorderItems(id: string, urls: string[]): Promise<void> {
@@ -205,22 +261,67 @@ export class ProjectStore {
 	 * Project's membership server-side, so we reload the list (chat_count changes).
 	 */
 	async setChatProject(chatId: string, projectId: string | null): Promise<void> {
+		const url = `/chat/${chatId}`;
 		await updateChat(chatId, { projectId });
-		// Reconcile chat_counts in the background — don't block the caller on a
-		// second round-trip (the breadcrumb's local state already reflects the pick).
-		this.load();
+		chatSessions.noteProject(chatId, projectId);
+		await this.afterMembershipChange(url);
+	}
+
+	/** The live projects holding `url`, once `loadHolders(url)` has asked. */
+	holding(url: string): ProjectSummary[] {
+		const ids = this.holders[url];
+		if (!ids) return [];
+		return ids
+			.map((id) => this.byId(id))
+			.filter((p): p is ProjectSummary => !!p && !p.archived_at);
+	}
+
+	async loadHolders(url: string): Promise<void> {
+		try {
+			const res = await listProjects({ member: url, includeArchived: true });
+			this.holders = { ...this.holders, [url]: res.projects.map((p) => p.id) };
+		} catch (e) {
+			// An aid, not the content: the page reads fine without it.
+			console.error('[ProjectStore] Failed to load holders:', e);
+		}
+	}
+
+	private noteHolder(url: string, id: string, holds: boolean): void {
+		const ids = this.holders[url];
+		if (!ids) return;
+		const next = holds ? [...new Set([...ids, id])] : ids.filter((x) => x !== id);
+		this.holders = { ...this.holders, [url]: next };
+	}
+
+	draftFor(chatId: string): string | null {
+		return this.drafts[chatId] ?? null;
+	}
+
+	setDraft(chatId: string, projectId: string | null): void {
+		if ((this.drafts[chatId] ?? null) === projectId) return;
+		const next = { ...this.drafts };
+		if (projectId) next[chatId] = projectId;
+		else delete next[chatId];
+		this.drafts = next;
+	}
+
+	/** ChatView says which unsent chat a tab holds, or `null` once it is sent or gone. */
+	noteUnsentChat(tabId: string, chatId: string | null): void {
+		if ((this.unsentByTab[tabId] ?? null) === chatId) return;
+		const next = { ...this.unsentByTab };
+		if (chatId) next[tabId] = chatId;
+		else delete next[tabId];
+		this.unsentByTab = next;
+	}
+
+	unsentChatOf(tabId: string): string | null {
+		return this.unsentByTab[tabId] ?? null;
 	}
 
 	private setDetail(detail: ProjectDetail): void {
 		const next = new Map(this.details);
 		next.set(detail.id, detail);
 		this.details = next;
-	}
-
-	private bumpItemCount(id: string, delta: number): void {
-		this.all = this.all.map((s) =>
-			s.id === id ? { ...s, item_count: Math.max(0, s.item_count + delta) } : s
-		);
 	}
 }
 
