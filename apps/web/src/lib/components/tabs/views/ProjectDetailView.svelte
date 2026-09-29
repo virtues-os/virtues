@@ -19,10 +19,7 @@
 	import { Popover } from '$lib/floating';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import { toast } from 'svelte-sonner';
-	import { getRefSummary } from '$lib/utils/refSummary';
 	import {
-		getPage,
-		getDriveFile,
 		uploadDriveFile,
 		addProjectItem,
 		reextractDriveFile,
@@ -136,54 +133,9 @@
 	// Members = everything except chats (chats render in their own list).
 	const memberItems = $derived((detail?.items ?? []).filter((i) => !i.url.startsWith('/chat/')));
 
-	// ---- Resolve real member names (not the type slug) -----------------------
-	let memberNames = $state<Record<string, string>>({});
-	let memberStatus = $state<Record<string, string>>({});
-	const requestedNames = new Set<string>();
-
-	async function resolveMemberName(url: string): Promise<string> {
-		if (url.startsWith('http://') || url.startsWith('https://')) {
-			try {
-				return new URL(url).hostname.replace(/^www\./, '');
-			} catch {
-				return url;
-			}
-		}
-		const parts = url.split('/');
-		const type = parts[1] ?? '';
-		const id = parts.slice(2).join('/');
-		try {
-			if (type === 'person' || type === 'place' || type === 'org') {
-				const s = await getRefSummary(type, id);
-				if (s?.name) return s.name;
-			} else if (type === 'page') {
-				const p = await getPage(id);
-				if (p) return p.title?.trim() || 'Untitled page';
-			} else if (type === 'drive') {
-				const f = await getDriveFile(parts[2] ?? id);
-				if (f) {
-					memberStatus = { ...memberStatus, [url]: f.extraction_status };
-					if (f.filename) return f.filename;
-				}
-			} else if (type === 'day' || type === 'year') {
-				return id;
-			}
-		} catch {
-			/* fall through to the type label */
-		}
-		return type ? type[0].toUpperCase() + type.slice(1) : url;
-	}
-
-	$effect(() => {
-		for (const it of memberItems) {
-			if (!requestedNames.has(it.url)) {
-				requestedNames.add(it.url);
-				resolveMemberName(it.url).then((n) => {
-					memberNames = { ...memberNames, [it.url]: n };
-				});
-			}
-		}
-	});
+	// Names and file statuses come with the project, resolved by the server in
+	// one batch. A retry sets a row's status here until the next read.
+	let statusOverride = $state<Record<string, string>>({});
 
 	// ---- Member rows ---------------------------------------------------------
 
@@ -229,11 +181,11 @@
 	 * elsewhere in the app. And not "Bible", which is author jargon that reads as
 	 * nonsense in a project about a kitchen remodel.
 	 */
-	function statusLabel(url: string, role?: string): string {
+	function statusLabel(url: string, role?: string, stored?: string): string {
 		// Your own draft says so before anything else: it is the one fact about
 		// the row that changes what the assistant does with it.
 		if (role === 'manuscript') return 'Your draft';
-		const s = memberStatus[url];
+		const s = statusOverride[url] ?? stored;
 		if (!s || s === 'skipped') return '—';
 		switch (s) {
 			case 'done':
@@ -287,9 +239,9 @@
 		memberItems.map((it) => ({
 			id: it.url,
 			url: it.url,
-			name: memberNames[it.url] || memberType(it.url),
+			name: it.title || memberType(it.url),
 			kind: memberType(it.url),
-			status: statusLabel(it.url, it.role),
+			status: statusLabel(it.url, it.role, it.status),
 			added: formatAdded(it.added_at),
 			icon: iconForUrl(it.url),
 			role: it.role
@@ -526,7 +478,7 @@
 		if (!fileId) return;
 		try {
 			await reextractDriveFile(fileId);
-			memberStatus = { ...memberStatus, [url]: 'pending' };
+			statusOverride = { ...statusOverride, [url]: 'pending' };
 		} catch {
 			/* chip stays; next open refreshes */
 		}
