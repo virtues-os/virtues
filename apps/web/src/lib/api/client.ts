@@ -1604,6 +1604,11 @@ export interface ProjectItem {
 	sort_order: number;
 	role: ProjectItemRole;
 	added_at: string;
+	/** Resolved by the server with the project. Absent from a box older than the field. */
+	title?: string;
+	kind?: string;
+	/** Drive files only: `extraction_status` as stored. */
+	status?: string;
 }
 
 /** One entity referenced across a project's members. */

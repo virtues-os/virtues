@@ -94,6 +94,19 @@ pub struct ProjectItem {
     /// retrieval so a draft is never cited back at you) | `pin` (nav-only).
     pub role: String,
     pub added_at: Timestamp,
+    /// What the member is called and what it is, resolved in one batch by
+    /// `get_project` (the same resolver the chat prompt uses). The page used
+    /// to ask for each member's name itself, one request per member.
+    #[sqlx(skip)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[sqlx(skip)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Drive files only: the extraction status, for the page's status column.
+    #[sqlx(skip)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -250,7 +263,7 @@ pub async fn get_project(pool: &PgPool, id: &str) -> Result<ProjectDetail> {
     .map_err(|e| Error::Database(format!("Failed to get project: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Project not found: {}", id)))?;
 
-    let items = sqlx::query_as::<_, ProjectItem>(
+    let mut items = sqlx::query_as::<_, ProjectItem>(
         r#"
         SELECT url, sort_order, role, added_at
         FROM app_project_items
@@ -264,6 +277,16 @@ pub async fn get_project(pool: &PgPool, id: &str) -> Result<ProjectDetail> {
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get project items: {}", e)))?;
+
+    let urls: Vec<String> = items.iter().map(|i| i.url.clone()).collect();
+    let mut resolved = crate::api::refs::resolve_refs(pool, &urls).await;
+    for item in &mut items {
+        if let Some(r) = resolved.remove(&item.url) {
+            item.title = Some(r.title);
+            item.kind = Some(r.kind);
+            item.status = r.status;
+        }
+    }
 
     let chats = sqlx::query_as::<_, ProjectChat>(
         r#"
@@ -949,6 +972,18 @@ mod tests {
             assert!(set_chat_project(&pool, id, Some(&a.id)).await.is_err());
             assert_eq!(chat_project(&pool, id).await, None);
         }
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_detail_names_its_members(pool: PgPool) {
+        let a = create_project(&pool, named("A")).await.expect("create A");
+        add_project_item(&pool, &a.id, AddProjectItemRequest { url: "https://www.example.com/quotes".into() })
+            .await
+            .expect("add link");
+        let detail = get_project(&pool, &a.id).await.expect("detail");
+        let item = &detail.items[0];
+        assert_eq!(item.title.as_deref(), Some("example.com"));
+        assert_eq!(item.kind.as_deref(), Some("web"));
     }
 
     #[sqlx::test(migrations = "./migrations")]

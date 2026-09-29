@@ -34,6 +34,11 @@ pub struct ResolvedRef {
     /// Drive files only: whether extracted text exists for retrieval.
     /// `indexed` | `pending` | `none`. See [`text_state`].
     pub text: Option<String>,
+    /// Drive files only: `app_drive_files.extraction_status` as stored. The
+    /// prompt reads `text`; a screen that offers "retry" needs to tell a
+    /// failure from a file with no text layer, which `text` folds together.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 /// Map `app_drive_files.extraction_status` onto what a reader can act on.
@@ -103,6 +108,7 @@ pub async fn resolve_refs(pool: &PgPool, urls: &[String]) -> HashMap<String, Res
                     title: web_title(url),
                     mime: None,
                     text: None,
+                    status: None,
                 },
             );
             continue;
@@ -125,6 +131,7 @@ pub async fn resolve_refs(pool: &PgPool, urls: &[String]) -> HashMap<String, Res
                     title: id.to_string(),
                     mime: None,
                     text: None,
+                    status: None,
                 },
             );
             continue;
@@ -154,6 +161,7 @@ pub async fn resolve_refs(pool: &PgPool, urls: &[String]) -> HashMap<String, Res
                         title: title.clone(),
                         mime: mime.clone(),
                         text: status.as_deref().map(|s| text_state(s).to_string()),
+                        status: status.clone(),
                     },
                 );
             }
@@ -282,6 +290,7 @@ pub async fn resolve_one(pool: &PgPool, url: &str) -> ResolvedRef {
             title: url.to_string(),
             mime: None,
             text: None,
+            status: None,
         })
 }
 
