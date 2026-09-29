@@ -149,6 +149,20 @@ function loadEngine() {
 }
 
 /**
+ * The MapLibre style for `style`, or null when the box holds no map files yet
+ * (or cannot be reached). For a MapLibre map that draws the atlas directly,
+ * rather than the Leaflet-wrapped `atlasLayer` below.
+ */
+export async function atlasStyle(style: AtlasStyle): Promise<StyleSpecification | null> {
+	try {
+		return await buildStyle(style, await loadSources());
+	} catch (e) {
+		console.warn("atlas: style unavailable", e);
+		return null;
+	}
+}
+
+/**
  * The basemap layer for `style`, or null when the box holds no map files yet
  * (or cannot be reached): the container's own background shows and every
  * overlay still draws. The caller adds and removes the layer, so a map torn
