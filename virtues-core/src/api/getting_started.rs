@@ -280,26 +280,39 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
     let flowing = done("first_source") || done("device_collecting");
     // What is already in place, said in the ask when the walk reaches this
     // step with rows already there: "3 integrations connected".
-    let source_names: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT s.name FROM credentials c \
-           JOIN sources s ON s.id = c.source_id \
-          WHERE c.status = 'active' AND c.source_id NOT IN ($1, $2, '__device__') \
-          ORDER BY s.name",
+    // Names come from the source catalog: the credentials hold only ids. (A
+    // join on a `sources` table, which doesn't exist, left this empty on
+    // every box.) Devices that have sent data are named too, as the person's
+    // own ("your iPhone"), since they are most of what feeds a new record.
+    let non_sources = crate::api::box_status::non_source_ids();
+    let connected_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT source_id FROM credentials \
+          WHERE status = 'active' AND source_id <> ALL($1)",
     )
-    .bind(crate::api::settings_byo::BYO_SOURCE_ID)
-    .bind(crate::virtues_api::renew::SOURCE_ID)
+    .bind(&non_sources)
     .fetch_all(pool)
     .await
-    .unwrap_or_default(); // absent-ok: an unnamed source only costs the settled line its detail
-    let integrations: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM credentials WHERE status = 'active' \
-           AND source_id NOT IN ($1, $2, '__device__')",
+    .map_err(|e| Error::Database(format!("list connected sources: {e}")))?;
+    let sending_devices: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT d.source_id FROM app_device d \
+           JOIN app_applets a ON a.device_id = d.id \
+           JOIN app_applet_runs r ON r.applet_id = a.id \
+          WHERE d.revoked_at IS NULL AND d.source_id IS NOT NULL \
+            AND r.status = 'success' AND r.records_processed > 0",
     )
-    .bind(crate::api::settings_byo::BYO_SOURCE_ID)
-    .bind(crate::virtues_api::renew::SOURCE_ID)
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await
-    .map_err(|e| Error::Database(format!("count integrations: {e}")))?;
+    .map_err(|e| Error::Database(format!("list sending devices: {e}")))?;
+    let name_of = |id: &str| {
+        crate::applet_templates::lookup_source(id)
+            .map(|s| s.display_name)
+            // absent-ok: a source no longer in the catalog is still named, by its id
+            .unwrap_or_else(|| id.to_string())
+    };
+    let mut source_names: Vec<String> = connected_ids.iter().map(|id| name_of(id)).collect();
+    source_names.sort();
+    source_names.extend(sending_devices.iter().map(|id| format!("your {}", name_of(id))));
+    let integrations = connected_ids.len() as i64;
     // `detail` is the one thing still to see to, if any — a collector
     // running with a permission denied. The count has its own field.
     let world_detail = if setup.degraded.is_empty() {
@@ -1101,6 +1114,47 @@ mod tests {
                 .await?;
         assert!(d.is_empty());
         assert!(set_skipped(&pool, "further", true).await.is_err(), "dead ids are refused");
+        Ok(())
+    }
+
+    /// A person who connects only their devices (a Mac, an iPhone) and
+    /// presses Continue is done, and the settled line names the devices. The
+    /// devices step used to read a `credentials.device_id` that never existed
+    /// and a `sources` table that doesn't either, so this read "skipped" and
+    /// named nothing on every box.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn devices_alone_close_the_step_and_are_named(pool: PgPool) -> sqlx::Result<()> {
+        std::env::remove_var("VIRTUES_DEV_SKIP_SETUP");
+        sqlx::query("INSERT INTO app_user_profile DEFAULT VALUES")
+            .execute(&pool)
+            .await
+            // absent-ok: the migrations may already seed the one profile row.
+            .ok();
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label, source_id) \
+             VALUES ('dev_phone', $1, 'mobile_app', 'Nick''s iPhone', 'ios')",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, agent, device_id) \
+             VALUES ('applet_phone', 'applet_phone', 'user', 'x', 'dev_phone')",
+        )
+        .execute(&pool)
+        .await?;
+        let run = crate::scheduler::applets::create_run(&pool, Some("applet_phone"), "webhook")
+            .await
+            .unwrap();
+        crate::scheduler::applets::complete_run(&pool, &run.id, "success", 12, None, None)
+            .await
+            .unwrap();
+
+        set_skipped(&pool, "connect_world", true).await.unwrap();
+        let s = compute(&pool).await.unwrap();
+        let step = s.step("connect_world").unwrap();
+        assert_eq!(step.status, StepStatus::Done, "devices sending + Continue is done");
+        assert_eq!(step.sources.as_deref(), Some(&["your iPhone".to_string()][..]));
         Ok(())
     }
 }

@@ -7,6 +7,10 @@ class MessageMonitor {
     private var lastSyncDate: Date?
     private let dbPath = NSString(string: "~/Library/Messages/chat.db").expandingTildeInPath
     private var timer: DispatchSourceTimer?
+    /// Every sync runs here, one at a time: the timer, the startup sync and a
+    /// signalled re-check (`recheckPermissions`) would otherwise overlap on a
+    /// concurrent queue and race on the cursor.
+    private let syncQueue = DispatchQueue(label: "com.virtues.collector.messages", qos: .background)
     private let syncInterval: TimeInterval = 300 // 5 minutes
     
     // Configuration
@@ -23,10 +27,9 @@ class MessageMonitor {
     private let initialSyncDays = 365 * 20
     private let batchSize = 1000
     
-    // Full Disk Access detection
+    // Full Disk Access detection. Probed on every tick while missing, so a
+    // grant is picked up by the next tick at the latest.
     private var hasFullDiskAccess = false
-    private var lastPermissionCheck = Date.distantPast
-    private let permissionCheckInterval: TimeInterval = 300 // Check every 5 minutes
     private var permissionCheckAttempts = 0
 
     // Attachments (see `runAttachmentJobs`).
@@ -56,12 +59,12 @@ class MessageMonitor {
         }
 
         // Perform initial sync asynchronously to avoid blocking caller
-        DispatchQueue.global(qos: .background).async { [weak self] in
+        syncQueue.async { [weak self] in
             self?.syncMessages()
         }
 
         // Set up periodic sync using DispatchSourceTimer (more reliable than Timer for background execution)
-        let syncTimer = DispatchSource.makeTimerSource(queue: .global(qos: .background))
+        let syncTimer = DispatchSource.makeTimerSource(queue: syncQueue)
         syncTimer.schedule(deadline: .now() + syncInterval, repeating: syncInterval)
         syncTimer.setEventHandler { [weak self] in
             self?.syncMessages()
@@ -79,6 +82,16 @@ class MessageMonitor {
         print("Message monitor stopped")
     }
     
+    /// Re-probe permissions now instead of waiting for the next tick: rewrites
+    /// the health record and, if Full Disk Access has just been granted, starts
+    /// syncing. The daemon calls this on SIGUSR1 (see StartCommand), which is
+    /// how the desktop app reflects a grant while the person is still looking.
+    func recheckPermissions() {
+        syncQueue.async { [weak self] in
+            self?.syncMessages()
+        }
+    }
+
     private func syncMessages() {
         // Republish permissions FIRST, on every tick, before any early return.
         //
@@ -101,31 +114,26 @@ class MessageMonitor {
             return
         }
 
-        // Check for Full Disk Access if we don't have it yet
+        // Check for Full Disk Access if we don't have it yet. Every tick, with
+        // no interval gate of its own: the tick IS the interval, and a second
+        // `>= 300s` clock started a moment after the tick fired skipped every
+        // other one, so a grant took up to ten minutes to register.
         if !hasFullDiskAccess {
-            let now = Date()
-            if now.timeIntervalSince(lastPermissionCheck) >= permissionCheckInterval {
-                lastPermissionCheck = now
-                permissionCheckAttempts += 1
+            permissionCheckAttempts += 1
 
-                if canAccessMessagesDB() {
-                    print("✅ Full Disk Access detected! Starting iMessage sync...")
-                    hasFullDiskAccess = true
-                    // Reset attempts counter
-                    permissionCheckAttempts = 0
-                    // Fall through to perform sync
-                } else {
-                    if permissionCheckAttempts == 1 {
-                        print("⚠️ Cannot read Messages database - Full Disk Access required")
-                        print("   To enable: System Settings → Privacy & Security → Full Disk Access → turn on virtues-collector (or click + and add ~/.virtues/bin/virtues-collector)")
-                        print("   Virtues will automatically detect when permission is granted (checking every 5 minutes)")
-                    } else if permissionCheckAttempts % 12 == 0 { // Log every hour
-                        print("⏳ Still waiting for Full Disk Access (checked \(permissionCheckAttempts) times)")
-                    }
-                    return
-                }
+            if canAccessMessagesDB() {
+                print("✅ Full Disk Access detected! Starting iMessage sync...")
+                hasFullDiskAccess = true
+                permissionCheckAttempts = 0
+                // Fall through to perform sync
             } else {
-                // Not time to check yet, skip this sync cycle
+                if permissionCheckAttempts == 1 {
+                    print("⚠️ Cannot read Messages database - Full Disk Access required")
+                    print("   To enable: System Settings → Privacy & Security → Full Disk Access → turn on virtues-collector (or click + and add ~/.virtues/bin/virtues-collector)")
+                    print("   Virtues will automatically detect when permission is granted (checking every 5 minutes, or now on SIGUSR1)")
+                } else if permissionCheckAttempts % 12 == 0 { // Log every hour
+                    print("⏳ Still waiting for Full Disk Access (checked \(permissionCheckAttempts) times)")
+                }
                 return
             }
         }

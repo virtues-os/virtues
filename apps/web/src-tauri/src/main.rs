@@ -45,6 +45,12 @@ pub struct CollectorStatus {
     /// heard rather than asserting a state it cannot observe.
     #[serde(default)]
     pub permissions_checked_at: Option<String>,
+    /// Can the daemon read `~/Library/Safari` (history and bookmarks)? Part of
+    /// Full Disk Access in System Settings, but probed separately because a
+    /// daemon can read Messages and still be refused Safari. `None` when the
+    /// daemon has not said: an older collector, or no Safari data to read.
+    #[serde(default)]
+    pub safari_library: Option<bool>,
 }
 
 /// A Virtues server discovered on the local network. Shape mirrors what the
@@ -421,6 +427,65 @@ async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String>
             String::from_utf8_lossy(&output.stderr).trim()
         ))
     }
+}
+
+/// Ask the running collector to re-check its permissions now, and return the
+/// status once it has.
+///
+/// macOS sends nothing when someone flips a Full Disk Access or Accessibility
+/// toggle, so the daemon otherwise notices on its next 5-minute tick. This
+/// sends it SIGUSR1 through launchd (no pid needed), then waits up to ~3s for
+/// the daemon to rewrite its health record, and reads status after. A
+/// collector older than the SIGUSR1 handler dies of the signal instead, and
+/// launchd restarts it (KeepAlive), which writes the record on startup: the
+/// same answer, a little slower.
+///
+/// Returns whatever status there is when the wait runs out; the caller keeps
+/// polling as before.
+#[tauri::command]
+async fn recheck_collector(app: AppHandle) -> Result<CollectorStatus, String> {
+    deny_collector_in_profile()?;
+    let health = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".virtues")
+        .join("health.json");
+    tauri::async_runtime::spawn_blocking(move || {
+        let modified = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+        let before = modified(&health);
+        let uid = current_uid().ok_or("could not read the user id")?;
+        let sent = std::process::Command::new("/bin/launchctl")
+            .args(["kill", "SIGUSR1", &format!("gui/{uid}/com.virtues.collector")])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !sent.status.success() {
+            return Err(format!(
+                "collector is not running ({})",
+                String::from_utf8_lossy(&sent.stderr).trim()
+            ));
+        }
+        for _ in 0..15 {
+            if modified(&health) != before {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    get_collector_status(app).await
+}
+
+/// This user's numeric id, for addressing launchd's `gui/<uid>` domain.
+fn current_uid() -> Option<String> {
+    std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Refuse collector mutations from a dev profile. The collector — its
@@ -1230,13 +1295,7 @@ fn reconcile_one(name: &str, agent: &str) -> Result<bool, String> {
     // Kick the LaunchAgent so launchd drops the old process and runs the new
     // binary now (rename-over-running is fine on macOS; the live process holds
     // the old inode until this restart).
-    let uid = std::process::Command::new("id")
-        .arg("-u")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
+    let uid = current_uid().unwrap_or_default();
     let kicked = !uid.is_empty()
         && std::process::Command::new("/bin/launchctl")
             .args(["kickstart", "-k", &format!("gui/{uid}/{agent}")])
@@ -1422,6 +1481,7 @@ fn main() {
             pause_collector,
             resume_collector,
             stop_collector,
+            recheck_collector,
             open_full_disk_access,
             open_accessibility_settings,
             set_summon_shortcut,

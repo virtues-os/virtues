@@ -22,6 +22,34 @@ class LocationProbePlugin: Plugin {
     invoke.resolve(["started": true])
   }
 
+  /// The opt-in, answered: prompt if undetermined, start collecting on a
+  /// grant, and resolve with the person's answer — not before it, as
+  /// `startProbe` does. See `LocationProbe.requestPermission`. Not named
+  /// `requestPermission(s)`: Tauri's `Plugin` base class owns that name.
+  @objc public func requestLocation(_ invoke: Invoke) throws {
+    LocationProbe.shared.requestPermission { invoke.resolve(["status": $0]) }
+  }
+
+  /// The current location authorization. Never prompts.
+  @objc public func status(_ invoke: Invoke) throws {
+    DispatchQueue.main.async {
+      invoke.resolve(["status": LocationProbe.shared.authorizationString()])
+    }
+  }
+
+  /// Open this app's page in the Settings app — the only way back from a
+  /// denied permission, since iOS never shows a sheet twice. Resolves whether
+  /// iOS opened it.
+  @objc public func openSettings(_ invoke: Invoke) throws {
+    DispatchQueue.main.async {
+      guard let url = URL(string: UIApplication.openSettingsURLString) else {
+        invoke.resolve(["opened": false])
+        return
+      }
+      UIApplication.shared.open(url, options: [:]) { invoke.resolve(["opened": $0]) }
+    }
+  }
+
   /// Launch auto-resume: start collecting only if already authorized; never
   /// prompts. Called on every launch (incl. cold background relaunch).
   @objc public func resumeProbe(_ invoke: Invoke) throws {
@@ -60,5 +88,8 @@ func initPlugin() -> Plugin {
   // callback on the app delegate, then reports on every foreground — never on a
   // background relaunch, and never prompts. See PushRegistrar.swift.
   PushRegistrar.shared.start()
+  // The deferred ask for Always runs on a launch or a return to the
+  // foreground, never in the burst that granted While Using.
+  LocationProbe.shared.installAlwaysEscalation()
   return LocationProbePlugin()
 }

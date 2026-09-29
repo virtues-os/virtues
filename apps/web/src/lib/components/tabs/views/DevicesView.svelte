@@ -18,6 +18,7 @@
 	import type { Tab } from "$lib/tabs/types";
 	import { Page, Button, Badge } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import MacPermissions from "$lib/components/devices/MacPermissions.svelte";
 	import UniversalDataGrid, {
 		type Column,
 	} from "$lib/components/datagrid/UniversalDataGrid.svelte";
@@ -38,7 +39,7 @@
 	import {
 		kindLabel,
 		kindIcon,
-		deniedPermissions,
+		deniedMacPermissions,
 		deviceHref,
 		revokeDeviceFlow,
 		type Device,
@@ -252,8 +253,8 @@
 	//
 	// The cost of relaxing it: someone with two Macs sees the button on the
 	// other Mac's row too, where it opens the wrong machine's settings. Rare,
-	// recoverable, and better than a control that cannot appear at all — but it
-	// is why the label names this Mac rather than the device in the row.
+	// recoverable, and better than a control that cannot appear at all — and it
+	// is why the button says "on this Mac" (MacPermissions, off a local reading).
 	const canFix = $derived(isTauri);
 
 	// Columns feed the grid's search/sort/group; the cells themselves come from
@@ -364,55 +365,10 @@
 					{row.kind}
 				</div>
 				{#if device}
-					{#each deniedPermissions(device) as perm}
-						<!-- A collector missing a permission isn't an error — nothing
-						     crashed, and the rest of its streams are fine. It's a
-						     capability the box has been quietly denied, so it reads as
-						     a standing warning with the remedy attached, not a toast
-						     that can be dismissed and forgotten. -->
-						<div
-							class="mt-2 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs"
-						>
-							<Icon icon="ri:lock-line" class="text-warning mt-0.5 flex-shrink-0" />
-							<div class="min-w-0">
-								<span class="text-foreground font-medium">{perm.label} is off</span>
-								<span class="text-foreground-muted"> — {perm.costs}.</span>
-								{#if canFix && perm.open}
-									<div class="text-foreground-muted mt-0.5">
-										<!-- No "restart the collector". It re-checks on its own every
-										     few minutes, so that instruction was jargon AND untrue —
-										     it asked for work that was never needed. -->
-										Turn on <span class="text-foreground">Virtues</span> in the list,
-										then leave it. This Mac notices within a few minutes.
-									</div>
-									<Button
-										variant="secondary"
-										size="sm"
-										class="mt-2"
-										icon="ri:external-link-line"
-										onclick={(e) => {
-											// The whole row is the drill-down now; this must not also open it.
-											e.stopPropagation();
-											perm.open?.();
-										}}>Open {perm.label} on this Mac</Button
-									>
-								{:else}
-									<!-- Was unconditional, so a browser on a phone got told to
-									     "turn on Virtues in the list" and that "this Mac notices
-									     within a few minutes" — instructions for a machine the
-									     reader is not at, and with no button beneath them,
-									     because macOS forbids granting these remotely. Same
-									     conditional the device page uses: two screens showing
-									     one fact must not disagree about whether it is
-									     actionable from here. -->
-									<div class="text-foreground-muted mt-0.5">
-										Granting this needs someone at that machine - macOS has no
-										remote path for it.
-									</div>
-								{/if}
-							</div>
-						</div>
-					{/each}
+					<!-- A collector missing a permission isn't an error: nothing crashed,
+					     and the rest of its streams are fine. It reads as a standing
+					     warning with the remedy attached, not a toast. -->
+					<MacPermissions {device} deniedOnly canOpen={canFix} />
 					{#if device.permissions?.stale}
 						<div class="text-xs text-foreground-muted mt-2 italic">
 							Permission report is stale - the collector may not be running.
@@ -499,11 +455,11 @@
 						<span class="dot"></span>Never seen
 					{/if}
 				</span>
-				{#if device && deniedPermissions(device).length > 0}
+				{#if device && deniedMacPermissions(device).length > 0}
 					<span class="text-xs text-warning flex items-center gap-1">
 						<Icon icon="ri:lock-line" width="12" />
-						{deniedPermissions(device).length}
-						{deniedPermissions(device).length === 1 ? "permission" : "permissions"} off
+						{deniedMacPermissions(device).length}
+						{deniedMacPermissions(device).length === 1 ? "permission" : "permissions"} off
 					</span>
 				{/if}
 			</div>

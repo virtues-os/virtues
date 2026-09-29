@@ -53,6 +53,11 @@ pub mod web_bundle;
 /// |   | Bluetooth as its owner (`$lib/tauri/boxRadio.ts` gates on this) |
 /// | 6 | `reach|reach_rehome` — point the pairing at a moved server's new
 /// |   | address after it joins over Bluetooth (the `/reconnect` screen) |
+/// | 7 | `recheck_collector` — make the Mac collector re-check its permissions
+/// |   | now (SIGUSR1); `get_collector_status` gains `safari_library` |
+/// |   | On iOS, same release: `location-probe|status`, `|request_location`
+/// |   | (resolves on the person's answer), `|open_settings`; audio and health
+/// |   | `status` gain `mic`/`enabled` and `permission` (Setup's Connections) |
 ///
 /// Note `bundle-contract.json` stays at `minShellVersion: 1`: every addition
 /// so far is called best-effort and the UI works fine without it, so requiring
@@ -60,7 +65,7 @@ pub mod web_bundle;
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 6;
+pub const COMMAND_SURFACE_VERSION: u32 = 7;
 
 /// What the native shell knows about itself.
 ///

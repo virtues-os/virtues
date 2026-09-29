@@ -579,6 +579,29 @@ public final class AudioRecorder: NSObject {
     }
   }
 
+  /// The microphone permission as a word for the UI: `granted`, `denied` or
+  /// `not_determined`. `authorized()` folds the last two together, and a
+  /// screen needs them apart — only `denied` sends a person to Settings.
+  public func micPermission() -> String {
+    if #available(iOS 17.0, *) {
+      switch AVAudioApplication.shared.recordPermission {
+      case .granted: return "granted"
+      case .undetermined: return "not_determined"
+      default: return "denied"
+      }
+    } else {
+      switch session.recordPermission {
+      case .granted: return "granted"
+      case .undetermined: return "not_determined"
+      default: return "denied"
+      }
+    }
+  }
+
+  /// The person left recording on. Distinct from `recording`, which drops
+  /// during a call, an interruption or a CarPlay pause while this stays true.
+  public func isEnabled() -> Bool { cachedEnabled }
+
   private func requestPermission(_ completion: @escaping (Bool) -> Void) {
     if #available(iOS 17.0, *) {
       AVAudioApplication.requestRecordPermission { granted in completion(granted) }
@@ -589,16 +612,20 @@ public final class AudioRecorder: NSObject {
 
   // MARK: - Public control (plugin commands)
 
-  /// Explicit opt-in: prompt, persist enabled, arm the engine (must be foreground).
+  /// Explicit opt-in: prompt for the microphone, persist enabled, arm the
+  /// engine (must be foreground).
+  ///
+  /// Asks for the microphone and nothing else. The notification sheet belongs
+  /// to PushRegistrar (location-probe plugin), which shows it from its own
+  /// button: iOS shows that sheet once per install, and spent here, unasked,
+  /// it is gone when the screen that explains it comes to ask. The gap nudge
+  /// posts through whatever that grant allows, and no-ops without one.
   public func enable(_ completion: @escaping (Bool) -> Void) {
     requestPermission { [weak self] granted in
       guard let self = self else { completion(false); return }
       if granted {
         self.cachedEnabled = true
         UserDefaults.standard.set(true, forKey: self.enabledKey)
-        // Ask for notification permission in context (they just opted into the
-        // feature the gap-nudge protects). Denial just no-ops the nudge.
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         self.armEngine(reason: "enable")
       }
       completion(granted)

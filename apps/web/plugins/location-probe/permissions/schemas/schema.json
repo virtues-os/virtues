@@ -295,6 +295,18 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the open_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-settings",
+          "markdownDescription": "Enables the open_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-settings",
+          "markdownDescription": "Denies the open_settings command without any pre-configured scope."
+        },
+        {
           "description": "Enables the push_status command without any pre-configured scope.",
           "type": "string",
           "const": "allow-push-status",
@@ -317,6 +329,18 @@
           "type": "string",
           "const": "deny-read-rows",
           "markdownDescription": "Denies the read_rows command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the request_location command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-request-location",
+          "markdownDescription": "Enables the request_location command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the request_location command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-request-location",
+          "markdownDescription": "Denies the request_location command without any pre-configured scope."
         },
         {
           "description": "Enables the request_push command without any pre-configured scope.",
@@ -355,10 +379,22 @@
           "markdownDescription": "Denies the start_probe command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the location-probe plugin\n#### This default permission set includes:\n\n- `allow-start-probe`\n- `allow-resume-probe`\n- `allow-read-rows`\n- `allow-push-status`\n- `allow-request-push`",
+          "description": "Enables the status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-status",
+          "markdownDescription": "Enables the status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-status",
+          "markdownDescription": "Denies the status command without any pre-configured scope."
+        },
+        {
+          "description": "Default permissions for the location-probe plugin\n#### This default permission set includes:\n\n- `allow-start-probe`\n- `allow-resume-probe`\n- `allow-read-rows`\n- `allow-push-status`\n- `allow-request-push`\n- `allow-status`\n- `allow-request-location`\n- `allow-open-settings`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the location-probe plugin\n#### This default permission set includes:\n\n- `allow-start-probe`\n- `allow-resume-probe`\n- `allow-read-rows`\n- `allow-push-status`\n- `allow-request-push`"
+          "markdownDescription": "Default permissions for the location-probe plugin\n#### This default permission set includes:\n\n- `allow-start-probe`\n- `allow-resume-probe`\n- `allow-read-rows`\n- `allow-push-status`\n- `allow-request-push`\n- `allow-status`\n- `allow-request-location`\n- `allow-open-settings`"
         }
       ]
     }

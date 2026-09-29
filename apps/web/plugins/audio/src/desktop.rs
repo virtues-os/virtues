@@ -10,32 +10,38 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
   Ok(Audio(app.clone()))
 }
 
+/// What every desktop call resolves: nothing recording, and a microphone
+/// permission that does not exist here rather than one that was refused.
+fn unavailable() -> AudioStatus {
+  AudioStatus { mic: Some("unavailable".into()), ..AudioStatus::default() }
+}
+
 /// Desktop no-op stub — the microphone collector only exists on iOS.
 pub struct Audio<R: Runtime>(AppHandle<R>);
 
 impl<R: Runtime> Audio<R> {
   pub fn enable(&self) -> crate::Result<AudioStatus> {
-    Ok(AudioStatus::default())
+    Ok(unavailable())
   }
   pub fn disable(&self) -> crate::Result<AudioStatus> {
-    Ok(AudioStatus::default())
+    Ok(unavailable())
   }
   pub fn resume(&self) -> crate::Result<AudioStatus> {
-    Ok(AudioStatus::default())
+    Ok(unavailable())
   }
   pub fn status(&self) -> crate::Result<AudioStatus> {
-    Ok(AudioStatus::default())
+    Ok(unavailable())
   }
   pub fn set_notify(&self, _enabled: bool) -> crate::Result<AudioStatus> {
-    Ok(AudioStatus::default())
+    Ok(unavailable())
   }
   pub fn set_quiet_hours(&self, _start: i32, _end: i32) -> crate::Result<AudioStatus> {
-    Ok(AudioStatus::default())
+    Ok(unavailable())
   }
   pub fn set_schedule(&self, _schedule: serde_json::Value) -> crate::Result<AudioStatus> {
-    Ok(AudioStatus::default())
+    Ok(unavailable())
   }
   pub fn set_places(&self, _places: Vec<MutedPlace>) -> crate::Result<AudioStatus> {
-    Ok(AudioStatus::default())
+    Ok(unavailable())
   }
 }
