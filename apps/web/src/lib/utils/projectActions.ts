@@ -4,7 +4,7 @@
  * for these, so a door behaves the same whichever wall it is in.
  */
 
-import type { Project, ProjectSummary } from '$lib/api/client';
+import { ApiError, type Project, type ProjectSummary } from '$lib/api/client';
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { GETTING_STARTED_CHAT_ID } from '$lib/components/chat/getting-started/getting-started';
 import { INTERVIEW_CHAT_ID } from '$lib/components/chat/interview/interview';
@@ -102,6 +102,30 @@ export function projectOfChat(url: string): ProjectSummary | undefined {
 }
 
 /**
+ * What to say when filing fails, in the order a person needs it: the server
+ * could not be reached (nothing to fix here, check the server), the server
+ * said no and why (its own sentence), or neither is known.
+ *
+ * Every failure used to read "Your server couldn't add that", which is also
+ * what a stopped server looked like, so a server that was simply off read as
+ * a bug in projects.
+ */
+function failure(e: unknown, title: string, fallback: string): [string, { description: string }] {
+	const unreachable =
+		e instanceof TypeError || (e instanceof ApiError && e.status >= 502 && e.status <= 504);
+	if (unreachable) {
+		return ["Couldn't reach your server", { description: 'Check that it is on, then try again' }];
+	}
+	if (e instanceof ApiError && e.status === 400) {
+		if (/archived/i.test(e.message)) {
+			return [title, { description: 'You archived this project. Unarchive it to add more' }];
+		}
+		if (e.message) return [title, { description: e.message }];
+	}
+	return [title, { description: fallback }];
+}
+
+/**
  * File a thing into a project and say what happened. A chat lives in one
  * project, so filing one that is elsewhere moves it; filing it where it
  * already is does nothing and says so.
@@ -131,11 +155,7 @@ export async function fileIntoProject(
 		toast(home ? `Moved to ${project.name}` : `Added to ${project.name}`);
 	} catch (e) {
 		console.error('[projectActions] Failed to add to project:', e);
-		toast.error(`Your server couldn't add this to ${project.name}`, {
-			description: project.archived_at
-				? 'You archived this project. Unarchive it to add more'
-				: 'Nothing changed. Try again',
-		});
+		toast.error(...failure(e, `Your server couldn't add this to ${project.name}`, 'Nothing changed. Try again'));
 	}
 }
 
@@ -155,9 +175,7 @@ export async function removeFromProject(
 		toast(`Removed from ${project.name}`);
 	} catch (e) {
 		console.error('[projectActions] Failed to remove from project:', e);
-		toast.error(`Your server couldn't remove this from ${project.name}`, {
-			description: "It's still there. Try again",
-		});
+		toast.error(...failure(e, `Your server couldn't remove this from ${project.name}`, "It's still there. Try again"));
 	}
 }
 
