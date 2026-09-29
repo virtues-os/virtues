@@ -2107,7 +2107,7 @@
 						     Decorative, so hidden from the tree and transparent to
 						     touches. -->
 						<div class="init-hero" aria-hidden="true" out:fade={{ duration: 200 }}>
-							<svg class="init-mark" viewBox="0 0 12 10.5" width="30" height="26.25" fill="currentColor">
+							<svg class="init-mark" viewBox="0 0 12 10.5" width="19.87" height="17.39" fill="currentColor">
 								<circle class="init-dot init-dot-1" cx="6" cy="2.4" r="1.5" />
 								<circle class="init-dot init-dot-2" cx="2.6" cy="8.1" r="1.5" />
 								<circle class="init-dot init-dot-3" cx="9.4" cy="8.1" r="1.5" />
@@ -2435,8 +2435,10 @@
 	/* ── The phone's opening image ──
 	   The ∴ mark and wordmark, seated in the upper half of the empty room —
 	   above center so the (bottom-docked) composer and rising keyboard never
-	   crowd it. The entrance is the mark ASSEMBLING: three dots settle into
-	   the trivet one by one, then the word surfaces under them. All
+	   crowd it. Mark and word sit on one line, the mark a touch under the
+	   word's size so the two read as one lockup. The entrance is the mark
+	   ASSEMBLING: three dots settle into the trivet one by one, then the
+	   word surfaces beside them. All
 	   keyframes are from-only with `backwards` fill — an explicit `to` with
 	   a fill-mode is what once pinned a disabled button solid ink (see the
 	   airlock's rise animation for the same rule). */
@@ -2447,10 +2449,9 @@
 		bottom: calc(50% + 72px);
 		z-index: 2;
 		display: flex;
-		flex-direction: column;
 		align-items: center;
-		gap: 0.875rem;
-		text-align: center;
+		justify-content: center;
+		gap: 0.5rem;
 		pointer-events: none;
 		color: var(--color-foreground);
 	}
