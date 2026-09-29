@@ -373,8 +373,7 @@
 	/* The note register: the prose's serif one step down, the margin's ink one
 	   step lighter. Headword in the same lowercase mono as the ledger heads, so
 	   the two notes read as one apparatus. In the column, an indented aside
-	   with a hairline — the same device the asks use, so the letter has one
-	   way of saying "beside the text". */
+	   with a hairline, the letter's one way of saying "beside the text". */
 	.note {
 		margin: 0;
 		padding-left: 1.3rem;
@@ -494,15 +493,13 @@
 		}
 	}
 
-	/* Questions someone would say out loud, so they are set as speech: no
-	   markers, a hairline to hold them together as one utterance, and the same
-	   serif at the same size as the prose they interrupt. Bullets would have
-	   made them a feature grid, which is the one thing they must not read as. */
+	/* Questions someone would say out loud, set as a plain list: the same
+	   bullet a `-` list gets in any page, in the same serif at the same size
+	   as the prose they sit in. */
 	.asks {
 		margin: 1.4rem 0 0;
 		padding: 0 0 0 1.3rem;
-		border-left: 1px solid var(--color-border);
-		list-style: none;
+		list-style: disc;
 		display: flex;
 		flex-direction: column;
 		gap: 0.6rem;
