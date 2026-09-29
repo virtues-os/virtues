@@ -23,8 +23,8 @@
 <Card class="local-card">
 	<h2 class="title">A small model, on your server</h2>
 	<p>
-		This is Qwen3 0.6B, running on your server's NPU, the chip in it built for running models. Nothing you
-		type here leaves your server.
+		This is Qwen3 0.6B, running on your server's NPU, the chip in it built for running models. It writes
+		its replies on your server, not in a data center. Your server keeps the chat like any other.
 	</p>
 	<p>
 		It's here to show where fully local AI is today. It's slow, it invents facts, and it gets simple things
