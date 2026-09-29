@@ -184,6 +184,10 @@
 	// not something the markup renders, so a plain variable.
 	// svelte-ignore state_referenced_locally
 	let previousTabRoute: string = tab.route;
+	// The tab's history position at that route. "New chat" on a new chat
+	// navigates to the same route; only the history moves.
+	// svelte-ignore state_referenced_locally
+	let previousHistoryIndex: number = tab.historyIndex;
 
 	// AbortController for cancelling in-flight requests on tab switch
 	let tabSwitchAbortController: AbortController | null = null;
@@ -607,15 +611,22 @@
 	});
 
 	// A route change is an event, not something derived: the handler below
-	// resets and loads, and nothing it reads should re-run it. Only the route.
+	// resets and loads, and nothing it reads should re-run it. Only the route
+	// and the tab's position in its history.
 	$effect(() => {
 		const route = tab.route;
-		untrack(() => onRouteChange(route));
+		const historyIndex = tab.historyIndex;
+		untrack(() => onRouteChange(route, historyIndex));
 	});
 
 	/** The tab navigated in place: switch this view to the route's conversation. */
-	function onRouteChange(route: string) {
-		if (route === previousTabRoute) return;
+	function onRouteChange(route: string, historyIndex: number) {
+		// Navigating to a new chat from a new chat — "New chat" while a
+		// temporary chat is open, which never leaves /chat — is a fresh
+		// conversation even though the route string did not change.
+		const renavigatedToNew = route === previousTabRoute && isNewChat(route) && historyIndex !== previousHistoryIndex;
+		previousHistoryIndex = historyIndex;
+		if (route === previousTabRoute && !renavigatedToNew) return;
 		const routeConversationId = extractConversationId(route);
 
 		// Not a switch: the first message was sent and the tab's route moved
