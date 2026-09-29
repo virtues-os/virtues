@@ -185,14 +185,20 @@ impl Runtime {
 /// gets ENOENT, and reports it as `Transport layer setup failed: 14001`, three
 /// layers away from the cause. Linked inside the runtime's own host dir (which
 /// is on the process's `LD_LIBRARY_PATH`), so no system directory is touched.
+///
+/// Where the package puts the soname depends on its version: 1.0.7 uses the
+/// multiarch dir, 1.0.4 plain `/usr/lib`. Both are on Dragons in the field.
 pub fn link_cdsprpc(host_dir: &Path) -> Result<()> {
-    let target = Path::new("/usr/lib/aarch64-linux-gnu/libcdsprpc.so.1");
-    if !target.exists() {
+    const SONAMES: [&str; 2] = [
+        "/usr/lib/aarch64-linux-gnu/libcdsprpc.so.1",
+        "/usr/lib/libcdsprpc.so.1",
+    ];
+    let Some(target) = SONAMES.iter().map(Path::new).find(|p| p.exists()) else {
         bail!(
             "libcdsprpc.so.1 not found. QNN needs the cdsp FastRPC library \
              (Radxa: apt install libcdsprpc1)"
         );
-    }
+    };
     let link = host_dir.join("libcdsprpc.so");
     let _ = fs::remove_file(&link);
     std::os::unix::fs::symlink(target, &link)
