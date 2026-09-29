@@ -1511,6 +1511,20 @@
 		// The allow list has to know: a ghost's grants stay in the box's memory
 		// and never become rows.
 		if (conversationId) editAllowListStore.setChatId(conversationId, isGhost);
+		// The tab says what the chat is, and its route is what a reload or a
+		// restored window reopens, so both follow the switch. The route moves
+		// first in `previousTabRoute` so the navigation handler reads this as
+		// the same conversation, not a switch — a switch would clear the
+		// draft being typed. A label the user renamed by hand is left alone.
+		const route = isGhost ? "/chat?temporary=1" : "/chat";
+		previousTabRoute = route;
+		windowShellStore.updateTab(tab.id, {
+			route,
+			icon: isGhost ? "ri:ghost-line" : "ri:chat-1-line",
+			...(PLACEHOLDER_LABELS.has(tab.label) && {
+				label: isGhost ? "Temporary Chat" : "New Chat",
+			}),
+		});
 	}
 
 	// Publish this chat's state to the phone shell, whose top-right button is
