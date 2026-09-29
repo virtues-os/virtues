@@ -482,7 +482,7 @@
 		transition-duration: 0s;
 	}
 
-	/* Same voice as ChatView's desktop ghost toggle: the mode is on. */
+	/* The temporary-chat switch, lit: the mode is on. */
 	.bar-btn.ghost-active {
 		color: var(--color-primary);
 		background: color-mix(in srgb, var(--color-primary) 14%, transparent);

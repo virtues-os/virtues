@@ -76,6 +76,7 @@
 	import type { Citation } from "$lib/types/Citation";
 	import UserMessage from "$lib/components/UserMessage.svelte";
 	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
+	import TurnFigures from "$lib/components/chat/TurnFigures.svelte";
 	import SubagentPanel from "$lib/components/SubagentPanel.svelte";
 	import { onMount, onDestroy, tick, untrack } from "svelte";
 	import { goto } from "$app/navigation";
@@ -1150,9 +1151,11 @@
 	// Getting started has no menu: it cannot be deleted or renamed, and its
 	// header holds one control, the door.
 	const canManageChat = $derived(!isEmpty && !isGhost && !inRoom);
-	// The menu also shows on a new, empty chat, for the one thing that makes
-	// sense before the first message: choosing its project.
-	const showChatMenu = $derived(!isGhost && !inRoom);
+	// The menu shows on every chat, a temporary one included: it is the one
+	// fixed control in the corner, and on an empty chat it holds the choices
+	// that only make sense before the first message — the project, and
+	// whether the chat is kept at all.
+	const showChatMenu = $derived(!inRoom);
 
 	async function deleteThisChat() {
 		// Read before the delete: the title comes off the session row that is
@@ -1194,8 +1197,25 @@
 				action: handleContextClick,
 			});
 		}
-		// Filed by url once saved, by draft until then; the same menu either way.
-		items.push(...projectMenuItems(targetForTab(tab)).map((i) => ({ ...i, dividerBefore: false })));
+		// Offered only while it can still be true: a turn that has been sent
+		// cannot be taken back out of storage. A local chat is temporary by
+		// construction, so it has nothing to choose.
+		if (isEmpty && !isLocal) {
+			items.push({
+				id: "temporary",
+				label: "Temporary chat",
+				description: "Not saved, not remembered",
+				icon: "ri:ghost-line",
+				checked: isGhost,
+				dividerAfter: true,
+				action: toggleGhost,
+			});
+		}
+		// Filed by url once saved, by draft until then; the same menu either
+		// way. A temporary chat has nowhere to be filed.
+		if (!isGhost) {
+			items.push(...projectMenuItems(targetForTab(tab)).map((i) => ({ ...i, dividerBefore: false })));
+		}
 		items.push({
 			id: "pin",
 			label: pinned ? "Unpin tab" : "Pin tab",
@@ -1566,7 +1586,8 @@
 						/>
 					</div>
 				{/if}
-				<!-- Top-right chrome: temporary-chat toggle + chat menu (context usage lives in the menu) -->
+				<!-- Top-right chrome: the chat menu (context usage and the temporary
+				     switch live in it) -->
 				<div class="chat-topbar-right">
 					{#if inRoom}
 						<!-- One door. A glyph through the walk, and a word
@@ -1576,21 +1597,6 @@
 						     the thread, on the axis the eye is already reading
 						     along. -->
 						<GettingStartedDoor />
-					{/if}
-					<!-- On the phone the ghost toggle lives in the shell's top bar
-					     (the modal top-right slot), not here. -->
-					{#if (isEmpty || isGhost) && !mobileLayout.isMobile}
-						<button
-							type="button"
-							class="ghost-toggle"
-							class:active={isGhost}
-							disabled={!isEmpty}
-							onclick={toggleGhost}
-							aria-pressed={isGhost}
-							title={isGhost ? "Temporary chat — won't be saved" : "Start a temporary chat"}
-						>
-							<Icon icon="ri:ghost-line" width="16" />
-						</button>
 					{/if}
 					{#if showChatMenu}
 						<button
@@ -1724,6 +1730,7 @@
 													agentMode={selectedAgentMode}
 												/>
 											{/if}
+											<TurnFigures parts={message.parts} />
 
 											{#if eyebrowFor.has(message.id)}
 												<StepEyebrow stepId={eyebrowFor.get(message.id)!} />
@@ -2117,10 +2124,9 @@
 							in:fade={{ duration: 300 }}
 							out:fly={{ y: -14, duration: 300, easing: cubicInOut }}
 						>
-							<!-- The title alone: the tiled ghost field and the inverted
-							     composer already say what this mode is — an icon and an
-							     explainer on top of them was the same fact three times. -->
+							<Icon icon="ri:ghost-line" width="22" class="ghost-hero-glyph" />
 							<h1 class="ghost-hero-title">Temporary Chat</h1>
+							<p class="ghost-hero-note">Not saved, not remembered. Closing the tab ends it.</p>
 						</div>
 					{/if}
 
@@ -2134,6 +2140,12 @@
 						class:focused={inputFocused}
 						class:drag-active={attachments.dragActive}
 					>
+						{#if isGhost && !isEmpty}
+							<div class="ghost-caption" in:fade={{ duration: 300 }}>
+								<Icon icon="ri:ghost-line" width="12" />
+								<span>Temporary chat · not saved</span>
+							</div>
+						{/if}
 						<ComposerTray
 							dragActive={attachments.dragActive}
 							attachments={attachments.items}
@@ -2248,23 +2260,6 @@
 
 
 
-	.ghost-toggle {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		border-radius: 9px;
-		color: var(--color-foreground-subtle);
-		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
-		backdrop-filter: blur(8px);
-		-webkit-backdrop-filter: blur(8px);
-		transition:
-			color 0.15s ease,
-			background-color 0.15s ease;
-		cursor: pointer;
-	}
-
 	/* 28px of visible chip, 44pt of reachable square — the chip is deliberately
 	   small and floats over the transcript, so the target grows around it
 	   rather than under it. */
@@ -2273,11 +2268,11 @@
 		   the end of these styles — it must follow the base rules to win the
 		   cascade.) */
 
-		.ghost-toggle {
+		.chat-menu-btn {
 			position: relative;
 		}
 
-		.ghost-toggle::after {
+		.chat-menu-btn::after {
 			content: "";
 			position: absolute;
 			top: 50%;
@@ -2286,20 +2281,6 @@
 			height: 44px;
 			transform: translate(-50%, -50%);
 		}
-	}
-
-	.ghost-toggle:hover:not(:disabled) {
-		color: var(--color-foreground);
-		background: var(--hover-bg);
-	}
-
-	.ghost-toggle.active {
-		color: var(--color-primary);
-		background: color-mix(in srgb, var(--color-primary) 14%, transparent);
-	}
-
-	.ghost-toggle:disabled {
-		cursor: default;
 	}
 
 	.chat-menu-btn {
@@ -2339,43 +2320,13 @@
 		}
 	}
 
-	/* Ghost/temporary chat — faint tiled ghost field, theme-aware via mask. The
-	   field reveals as a circle expanding from the composer (screen center) so the
-	   ghosts ripple outward from the middle. */
-	.chat-area.ghost::before {
-		content: "";
-		position: absolute;
-		inset: 0;
-		z-index: 0;
-		pointer-events: none;
-		background: var(--color-foreground);
-		opacity: 0.035;
-		-webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2a8 8 0 0 0-8 8v10l2.5-2 2.5 2 2.5-2 2.5 2 2.5-2 2.5 2V10a8 8 0 0 0-8-8z' fill='%23000'/%3E%3C/svg%3E");
-		mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2a8 8 0 0 0-8 8v10l2.5-2 2.5 2 2.5-2 2.5 2 2.5-2 2.5 2V10a8 8 0 0 0-8-8z' fill='%23000'/%3E%3C/svg%3E");
-		-webkit-mask-size: 46px 46px;
-		mask-size: 46px 46px;
-		-webkit-mask-repeat: repeat;
-		mask-repeat: repeat;
-		animation: ghost-wave-in 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
-	}
-
-	@keyframes ghost-wave-in {
-		from {
-			opacity: 0;
-			clip-path: circle(0% at 50% 50%);
-		}
-		to {
-			opacity: 0.035;
-			clip-path: circle(120% at 50% 50%);
-		}
-	}
-
-	/* Ghost mode inverts the composer: the pill you type into flips to the
-	   theme's ink, so the mode is a material change under your fingers, not a
-	   label you have to remember reading. Done by remapping the pill's tokens
-	   — everything inside (placeholder, buttons, the model pill) follows on
-	   its own. The originals are captured one scope up because a custom
-	   property cannot swap with itself in place. */
+	/* A temporary chat is the ordinary page with one thing changed: the
+	   composer flips to the theme's ink, so the mode is a material change
+	   under your fingers rather than a room dressed up as another place.
+	   Done by remapping the pill's tokens — everything inside (placeholder,
+	   buttons, the model pill) follows on its own. The originals are
+	   captured one scope up because a custom property cannot swap with
+	   itself in place. */
 	.chat-area.ghost {
 		--ghost-pill-bg: var(--color-foreground);
 		--ghost-pill-ink: var(--color-surface);
@@ -2404,8 +2355,20 @@
 		color: var(--ghost-pill-bg);
 	}
 
+	/* Once the title has gone, the caption over the composer is what still
+	   says the conversation is not being kept — seated on the input, where
+	   the eye already is, rather than in a corner. */
+	.ghost-caption {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 5px;
+		padding-bottom: 0.5rem;
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
+	}
+
 	@media (prefers-reduced-motion: reduce) {
-		.chat-area.ghost::before,
 		.chat-topbar-right > :global(*) {
 			animation: none;
 		}
@@ -2455,6 +2418,16 @@
 		font-size: 1.75rem;
 		font-weight: 400;
 		color: var(--color-foreground);
+	}
+
+	.ghost-hero :global(.ghost-hero-glyph) {
+		color: var(--color-foreground-subtle);
+		margin-bottom: 0.25rem;
+	}
+
+	.ghost-hero-note {
+		font-size: 0.875rem;
+		color: var(--color-foreground-subtle);
 	}
 
 	/* ── The phone's opening image ──
