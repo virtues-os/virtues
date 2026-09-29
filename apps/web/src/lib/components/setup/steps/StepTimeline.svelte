@@ -54,6 +54,8 @@
 	import { M, rise, sink } from '../motion';
 	import { readNextChapter, writeNextChapter } from '../nextChapter';
 	import { setup } from '../setup.svelte';
+	import { SAMPLE, SAMPLE_SPAN, SEED_AGE } from '../chapterExample';
+	import ChapterExample from '../ChapterExample.svelte';
 
 	// `onskip` sets the step aside (Setup records it); without one, skipping
 	// just moves on.
@@ -61,7 +63,6 @@
 
 	const MIN = 2;
 	const MAX = 10;
-	const SEED_AGE = 13;
 	const INTRO_KEY = 'virtues-timeline-intro';
 
 	type Beat = 'a' | 'b' | 'c' | 'e';
@@ -73,20 +74,7 @@
 	let reduced = $state(false);
 	const touch = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
 
-	// ------------------------------------------------------------------
-	// The example (beats a-c). Ages, 0 = birth. Fictional, and personal in
-	// the way theirs will be: a school, a place, a person, a home. The last
-	// one is named, never "Now", which is the line's end, not a chapter.
-	// ------------------------------------------------------------------
-
-	const SAMPLE_SPAN = 38;
-	const SAMPLE: { title: string; from: number; to: number }[] = [
-		{ title: 'Childhood', from: 0, to: SEED_AGE },
-		{ title: 'The band years', from: SEED_AGE, to: 19 },
-		{ title: 'Chicago', from: 19, to: 26 },
-		{ title: 'Married', from: 26, to: 33 },
-		{ title: 'The farm', from: 33, to: SAMPLE_SPAN },
-	];
+	// The example (beats a-c, and "See an example"): ./chapterExample.ts.
 
 	let beat = $state<Beat | null>(null);
 	let lineDrawn = $state(false);
@@ -152,12 +140,32 @@
 	 *  example does: on a phone the intro held the editor back about eight
 	 *  seconds with nothing for a thumb to do but find "Skip intro". */
 	function onIntroPointer(e: MouseEvent) {
+		// A click away from the example closes it.
+		if (exampleOpen && e.target instanceof Node && !exampleEl?.contains(e.target)) exampleOpen = false;
 		if (!beat || beat === 'e' || !isOurs(showing, e, rootEl)) return;
 		if (e.target instanceof Element && e.target.closest('button, input, select, textarea, a')) return;
 		advance();
 	}
 
 	$effect(() => () => clearTimers());
+
+	/** "See an example": the intro's example life, small, beside their own
+	 *  line, for whoever is stuck after the intro has played. A popover, not
+	 *  a modal: the point is to compare, so their line stays in view. */
+	let exampleOpen = $state(false);
+	let exampleEl = $state<HTMLElement | null>(null);
+	function toggleExample() {
+		exampleOpen = !exampleOpen;
+	}
+	/** The intro again, from the top; their chapters stay as they are. */
+	function replayIntro() {
+		exampleOpen = false;
+		editorShown = false;
+		folded = false;
+		shownBands = 0;
+		lineDrawn = false;
+		enter('a');
+	}
 
 	/** In the app, a hidden tab or the other pane (setup/showing.ts). */
 	const showing = useShowing();
@@ -750,6 +758,10 @@
 
 	function onWindowKey(e: KeyboardEvent) {
 		if (!isOurs(showing, e, rootEl)) return;
+		if (exampleOpen && e.key === 'Escape') {
+			exampleOpen = false;
+			return;
+		}
 		if (beat && beat !== 'e' && e.key === 'Escape') {
 			enter('e');
 			return;
@@ -795,6 +807,31 @@
 			{#key sub}
 				<p class="sub" in:rise={{ delay: M.quick + 80, y: 4 }} out:sink>{sub}</p>
 			{/key}
+		</div>
+		<div class="example-anchor" bind:this={exampleEl}>
+			{#if editorShown}
+				<button
+					type="button"
+					class="example-link"
+					aria-expanded={exampleOpen}
+					aria-controls="chapter-example"
+					onclick={toggleExample}
+					in:fade={{ duration: reduced ? 0 : M.base }}>See an example</button
+				>
+			{/if}
+			{#if exampleOpen}
+				<div
+					id="chapter-example"
+					class="example-pop"
+					role="dialog"
+					aria-label="An example"
+					in:rise={{ duration: reduced ? 0 : M.quick, y: 4 }}
+				>
+					<ChapterExample list={listMode} />
+					<p class="example-note">One life in five chapters, by age. The names are theirs, and the years are rough.</p>
+					<button type="button" class="link example-replay" onclick={replayIntro}>Play the intro again</button>
+				</div>
+			{/if}
 		</div>
 	</header>
 
@@ -1151,15 +1188,20 @@
 	{#if editorShown && birthKnown && bands.length >= MIN && bands.every((b) => b.title.trim())}
 		<!-- The one line that looks forward. Not until the drawn chapters are
 		     named: beside an empty one it read as the place to name it. -->
-		<label class="next" in:rise={{ delay: M.base }}>
-			<span>What do you hope the next chapter is?</span>
+		<!-- A CHAPTER NOT YET LIVED, drawn as one: the same tint as theirs,
+		     dashed, under the line. As a label
+		     and a field inline under the footer it read as a form question
+		     tacked on; this reads as the next page of the book. -->
+		<label class="ahead" in:rise={{ delay: M.base }}>
+			<span class="ahead-eyebrow">The next chapter</span>
 			<input
 				type="text"
 				maxlength="120"
-				placeholder="Optional"
+				placeholder="What do you hope it is?"
 				bind:value={nextChapter}
 				onkeydown={(e) => e.key === 'Enter' && canSave && save()}
 			/>
+			<span class="ahead-note">Optional</span>
 		</label>
 	{/if}
 
@@ -1498,8 +1540,7 @@
 			width var(--m-quick) ease;
 	}
 	.label input::placeholder,
-	.row-name::placeholder,
-	.next input::placeholder {
+	.row-name::placeholder {
 		color: var(--color-foreground-subtle, var(--color-foreground-muted));
 	}
 	.label input:hover {
@@ -1811,39 +1852,109 @@
 	}
 
 	/* ---------- the next chapter ---------- */
-	.next {
+	/* The next chapter: an unlived band, dashed, under the line's end. */
+	.ahead {
 		display: flex;
-		align-items: baseline;
-		justify-content: center;
-		gap: 12px;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 4px;
+		width: min(100%, 22rem);
 		margin: 24px auto 0;
-		font-family: var(--font-sans);
-		font-size: 13px;
-		color: var(--color-foreground-muted);
+		padding: 12px 16px;
+		border: 1px dashed color-mix(in srgb, var(--color-primary) 45%, transparent);
+		border-radius: 6px;
+		background: color-mix(in srgb, var(--color-primary) 4%, transparent);
+		cursor: text;
+		transition: border-color var(--m-quick) ease;
 	}
-	.next input {
-		width: min(16em, 50vw);
-		padding: 0 0 4px;
+	.ahead:focus-within {
+		border-color: var(--color-primary);
+		border-style: solid;
+	}
+	.ahead-eyebrow,
+	.ahead-note {
+		font-family: var(--font-sans);
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+	}
+	.ahead input {
+		width: 100%;
+		padding: 0;
 		border: 0;
-		border-bottom: 1px solid var(--color-border);
-		border-radius: 0;
 		background: transparent;
 		font-family: var(--font-serif-ui, var(--font-serif));
-		font-size: 17px;
+		font-size: 18px;
 		color: var(--color-foreground);
 		outline: none;
 	}
-	.next input:focus {
-		border-bottom-color: var(--color-primary);
+	.ahead input::placeholder {
+		color: var(--color-foreground-subtle, var(--color-foreground-muted));
 	}
-	.list .next {
-		flex-direction: column;
-		align-items: center;
-		gap: 4px;
-	}
-	.list .next input {
+	.list .ahead {
 		width: 100%;
-		text-align: center;
+	}
+
+	/* "See an example": a quiet link under the instruction, and the example
+	   in a card below it, over the stage rather than pushing it down. */
+	.example-anchor {
+		position: relative;
+		display: flex;
+		justify-content: center;
+		min-height: 24px;
+		margin-top: 4px;
+	}
+	.example-link {
+		position: relative;
+		padding: 0;
+		border: 0;
+		background: none;
+		font-family: var(--font-sans);
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+		text-decoration: underline;
+		text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+		text-underline-offset: 3px;
+		cursor: pointer;
+	}
+	.example-link::after {
+		content: "";
+		position: absolute;
+		inset: -12px -4px;
+	}
+	.example-link:hover,
+	.example-link[aria-expanded="true"] {
+		color: var(--color-foreground);
+	}
+	.example-link:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 3px;
+	}
+	.example-pop {
+		position: absolute;
+		z-index: 5;
+		top: calc(100% + 8px);
+		left: 50%;
+		transform: translateX(-50%);
+		width: min(22rem, calc(100vw - 32px));
+		padding: 16px 20px;
+		border-radius: 12px;
+		background: var(--color-surface-overlay, var(--color-surface));
+		outline: 1px solid color-mix(in srgb, var(--color-foreground) 12%, transparent);
+		outline-offset: -1px;
+		text-align: left;
+	}
+	.example-note {
+		margin: 12px 0 0;
+		font-family: var(--font-sans);
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+	.example-pop .example-replay {
+		margin-top: 8px;
+		font-family: var(--font-sans);
+		font-size: 13px;
+		color: var(--color-foreground-muted);
 	}
 
 	/* ---------- footer ---------- */
