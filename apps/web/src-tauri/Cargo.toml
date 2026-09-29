@@ -42,6 +42,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # part that cross-compiles worst to iOS.
 tar = "0.4"
 flate2 = "1.0"
+# Re-hash an unpacked OTA bundle against its own manifest (web_bundle.rs).
+# Already in the lock through other crates; this is one edge, not a new tree.
+sha2 = "0.10"
 # The OTA downgrade guard orders the box's bundle version against ours. Same
 # crate and same semver rules as the box's own `virtues upgrade` guard
 # (virtues-core/src/cli/upgrade.rs), so one release line is ordered one way.

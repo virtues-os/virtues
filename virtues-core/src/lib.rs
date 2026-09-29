@@ -7,6 +7,7 @@ pub mod applet_runner;
 pub mod applet_templates;
 pub mod agent;
 pub mod api;
+pub mod api_version;
 pub mod cli;
 pub mod client;
 pub mod codename;
