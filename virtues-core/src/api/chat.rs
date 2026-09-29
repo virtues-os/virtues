@@ -2820,3 +2820,116 @@ mod ui_stream_fixture {
         );
     }
 }
+
+/// `persist_turn`: what a finished turn leaves behind — its row, its per-chat
+/// usage and its ai_call — for a normal turn, a temporary one, and an empty one.
+#[cfg(test)]
+mod persist_turn_tests {
+    use super::*;
+
+    /// A turn as the stream would record it: `text` said (if any), one
+    /// step's usage reported.
+    fn recorded_turn(text: &str) -> (Option<ChatMessage>, TurnUsage) {
+        let mut r = TurnRecorder::new("msg_t".into());
+        if !text.is_empty() {
+            r.on_event(crate::agent::AgentEvent::TextDelta { content: text.into() });
+        }
+        r.on_event(crate::agent::AgentEvent::Usage {
+            prompt_tokens: 1_200,
+            completion_tokens: 80,
+            total_tokens: Some(1_280),
+            reasoning_tokens: Some(30),
+            cache_read_tokens: Some(1_000),
+            cache_write_tokens: None,
+            cost_micros: Some(4_321),
+        });
+        let usage = r.usage();
+        (r.into_message("anthropic/claude-x", "auto".into(), None), usage)
+    }
+
+    async fn count(pool: &PgPool, sql: &str, chat_id: &str) -> i64 {
+        sqlx::query_scalar(sql).bind(chat_id).fetch_one(pool).await.unwrap()
+    }
+
+    const MESSAGES: &str = "SELECT count(*) FROM app_chat_messages WHERE chat_id = $1";
+    const USAGE: &str = "SELECT count(*) FROM app_chat_usage WHERE chat_id = $1";
+    const AI_CALLS: &str = "SELECT count(*) FROM app_ai_calls WHERE feature = $1";
+
+    /// A normal turn writes its row, its per-chat usage and its ai_call, each
+    /// carrying the recorder's figures.
+    #[sqlx::test]
+    async fn persist_turn_writes_the_row_the_usage_and_the_call(pool: PgPool) {
+        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ('chat_p', 't', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (message, usage) = recorded_turn("Hello.");
+        persist_turn(&pool, "chat_p", "anthropic/claude-x", "chat", false, message, usage).await;
+
+        let (role, content, model): (String, String, Option<String>) =
+            sqlx::query_as("SELECT role, content, model FROM app_chat_messages WHERE chat_id = 'chat_p'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((role.as_str(), content.as_str(), model.as_deref()), ("assistant", "Hello.", Some("anthropic/claude-x")));
+        let n: i64 = sqlx::query_scalar("SELECT message_count::bigint FROM app_chats WHERE id = 'chat_p'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 1, "the chat's count follows the row");
+
+        let tokens: (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT input_tokens::bigint, output_tokens::bigint, reasoning_tokens::bigint, cache_read_tokens::bigint
+             FROM app_chat_usage WHERE chat_id = 'chat_p' AND model = 'anthropic/claude-x'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(tokens, (1_200, 80, 30, 1_000));
+
+        let call: (String, i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT model, prompt_tokens::bigint, completion_tokens::bigint, reasoning_tokens::bigint, cost_micros::bigint
+             FROM app_ai_calls WHERE feature = 'chat'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(call, ("anthropic/claude-x".to_string(), 1_200, 80, 30, 4_321));
+    }
+
+    /// A temporary (ghost) chat has no chat row: nothing goes to
+    /// app_chat_messages or app_chat_usage, but the spend still reaches
+    /// app_ai_calls.
+    #[sqlx::test]
+    async fn a_temporary_turn_writes_only_its_ai_call(pool: PgPool) {
+        let (message, usage) = recorded_turn("Off the record.");
+        assert!(message.is_some(), "the turn said something; only `temporary` keeps it out");
+        persist_turn(&pool, "chat_ghost", "anthropic/claude-x", "sudo", true, message, usage).await;
+
+        assert_eq!(count(&pool, MESSAGES, "chat_ghost").await, 0);
+        assert_eq!(count(&pool, USAGE, "chat_ghost").await, 0);
+        assert_eq!(count(&pool, "SELECT count(*) FROM app_chats WHERE id = $1", "chat_ghost").await, 0);
+        let cost: i64 = sqlx::query_scalar("SELECT cost_micros::bigint FROM app_ai_calls WHERE feature = 'sudo'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cost, 4_321);
+    }
+
+    /// Nothing said and no tool called: no row — but the tokens were spent,
+    /// so usage and the ai_call are still written.
+    #[sqlx::test]
+    async fn an_empty_turn_writes_no_row_but_still_its_usage(pool: PgPool) {
+        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ('chat_e', 't', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (message, usage) = recorded_turn("");
+        assert!(message.is_none(), "no text and no tools is no message");
+        persist_turn(&pool, "chat_e", "anthropic/claude-x", "council", false, message, usage).await;
+
+        assert_eq!(count(&pool, MESSAGES, "chat_e").await, 0);
+        assert_eq!(count(&pool, USAGE, "chat_e").await, 1);
+        assert_eq!(count(&pool, AI_CALLS, "council").await, 1);
+    }
+}
