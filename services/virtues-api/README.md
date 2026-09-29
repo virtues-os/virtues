@@ -180,33 +180,22 @@ cargo run
 
 ## Deployment
 
-Images are built and pushed to **ECR** by `make deploy-virtues-api` (and to GHCR by
-CI on push to `main`/`staging`). The CI `register-version` step only POSTs a version
-string to Atlas for display — **Atlas does not roll the container.** Rolling the
-running service is a manual step on the EC2 host (reached via SSM RunCommand).
-
-Environment is **not** passed inline at `docker run` time. It lives in a root-only
-env-file on the host, mirroring `atlas.env`:
-
-- prod    → `/etc/virtues/api.env`
-- staging → `/etc/virtues/api-staging.env`
-
-Both containers run with `--network host` (prod on `:9002`, staging on `:9003`), so
-the old container must be stopped before the new one can bind. Canonical roll:
+Built and deployed on the cloud server from a pushed commit:
 
 ```bash
-# on the EC2 host, as root (via: aws ssm start-session / RunShellScript)
-img=<ECR repo>/virtues-api:latest
-docker pull "$img"
-docker rm -f virtues-api
-docker run -d --name virtues-api --network host --restart unless-stopped \
-  --env-file /etc/virtues/api.env "$img"
-docker logs --tail 5 virtues-api    # expect: "External services: Exa=true" + "listening on 0.0.0.0:9002"
+make deploy-virtues-api REF=<sha|tag|branch>
+make deploy-rollback SVC=virtues-api
 ```
 
-To add or change a secret (e.g. `EXA_API_KEY`), edit the env-file and re-run the
-roll above — the file is the durable source of truth, so the value survives the next
-image roll. Keep a timestamped `.bak` as `atlas.env` does.
+See `tools/deploy-service.sh` and `agents/build/deployment.md` (smoke test on a
+spare port, automatic rollback, and the note that the smoke test migrates the
+live database).
+
+Environment is **not** passed inline at `docker run` time. It lives in a
+root-only env-file on the host, `/etc/virtues/api.env`, and the container runs
+with `--network host` on `:9002` with `/srv/maps` mounted read-only. To add or
+change a secret, edit the env-file (keep a timestamped `.bak`) and redeploy the
+running ref: `docker restart` does not re-read `--env-file`.
 
 ## License
 
