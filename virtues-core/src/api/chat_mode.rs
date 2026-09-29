@@ -341,25 +341,27 @@ mod tests {
     /// must join a group here — unbudgeted tools fail the test.
     #[test]
     fn chat_tool_definitions_stay_inside_their_budgets() {
-        // (group, tools, ceiling). `None` = not budgeted this pass (sql_query
-        // is the most-used tool and accuracy-critical), still counted in the
-        // total.
-        const GROUPS: &[(&str, &[&str], Option<usize>)] = &[
+        // (group, tools, ceiling).
+        const GROUPS: &[(&str, &[&str], usize)] = &[
             (
                 "applets",
                 &["setup_applet", "edit_applet", "list_applets", "run_applet", "get_applet", "delete_applet"],
-                Some(3_000),
+                3_000,
             ),
-            ("analysis", &["code_interpreter", "think", "read_asset", "generate_image"], Some(2_400)),
-            ("pages", &["edit_page", "get_page_content", "create_page", "get_project_item"], Some(2_400)),
-            ("search", &["semantic_search", "web_search"], Some(2_000)),
-            ("self", &["update_memory", "propose_narrative_identity_edit"], Some(1_400)),
-            ("sql_write", &["sql_write"], Some(600)),
-            ("sql_query", &["sql_query"], None),
+            ("analysis", &["code_interpreter", "think", "read_asset", "generate_image"], 2_400),
+            ("pages", &["edit_page", "get_page_content", "create_page", "get_project_item"], 2_400),
+            ("search", &["semantic_search", "web_search"], 2_000),
+            ("self", &["update_memory", "propose_narrative_identity_edit"], 1_400),
+            ("sql_write", &["sql_write"], 600),
+            // The most-used tool, and its table block is generated from the
+            // catalog (sql_catalog::prompt_block), so a new table or a longer
+            // note lands here. Trimmed from 9.6k on 2026-09-29 with no column
+            // dropped: failures were 6 unknown columns and 5 ambiguous joins
+            // in 1,422 calls, so the columns stay and the prose went.
+            ("sql_query", &["sql_query"], 6_500),
         ];
-        // The group ceilings plus sql_query as it stands (9.6k, generated
-        // from the catalog), with a little room for the catalog to grow.
-        const TOTAL: usize = 21_500;
+        // The sum of the group ceilings.
+        const TOTAL: usize = 18_300;
 
         let tools = ChatMode::Chat.tools();
         let size = |t: &serde_json::Value| serde_json::to_string(t).unwrap().chars().count();
@@ -381,8 +383,8 @@ mod tests {
             for t in tools.iter().filter(|t| names.contains(&t["function"]["name"].as_str().unwrap())) {
                 report.push_str(&format!("  {}: {}\n", t["function"]["name"].as_str().unwrap(), size(t)));
             }
-            if ceiling.is_some_and(|c| n > c) {
-                over.push(format!("{group} is {n} chars, budget {}", ceiling.unwrap()));
+            if n > *ceiling {
+                over.push(format!("{group} is {n} chars, budget {ceiling}"));
             }
         }
         report.push_str(&format!("total: {total}\n"));

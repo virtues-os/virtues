@@ -451,77 +451,23 @@ fn sql_query_tool() -> ToolConfig {
         id: "sql_query".to_string(),
         name: "Query Data".to_string(),
         description: "Query user's personal data with SQL".to_string(),
-        llm_description: r#"Execute read-only SQL queries against the user's personal data (PostgreSQL).
+        llm_description: r#"Read-only SQL (PostgreSQL) over the user's personal data. For meaning across sources use semantic_search; then read the hit whole here by id.
 
-Operations:
-- 'query': Execute a SELECT (read-only, max 200 rows). With save_as, up to
-  10,000 rows go to a CSV in the chat's code_interpreter workspace and you see
-  the first 20 — use it when the next step is computing over the rows.
-- 'get_schema': Every column of specific table(s), with types, and how each table joins
-- 'list_tables': All tables with row counts
+Operations: 'query' runs a SELECT; always LIMIT (max 200; with save_as up to 10,000 rows go to a CSV in the code_interpreter workspace and you see 20). 'get_schema' gives every column of the named tables with types and joins. 'list_tables' gives row counts.
 
-Use semantic_search instead when the question is about MEANING — "messages about the move", "anything on the dispute" — across sources; it finds, this reads. A recall question often needs both: search to find it, then a query by id to read it whole.
-
-================================================================================
-TABLES AND THEIR COLUMNS
-================================================================================
-Write against the column names listed here, not names that sound right — these
-are house conventions, and a plausible English name is usually wrong. Every
-table also has `id`, `created_at` and `updated_at`; created_at/updated_at are
-when WE wrote the row, never when the thing happened, so filter time on
-occurred_at or started_at/ended_at. data_* tables also carry `metadata` (jsonb)
-and `source_stream_id`. For any column not listed, call get_schema.
+Write against the column names listed, not names that sound right. Every table also has id, created_at, updated_at; data_* also carry metadata (jsonb) and source_stream_id. For any column not listed, call get_schema.
 
 <<TABLE_CATALOG>>
-Data tables carry raw identifiers, never an entity id. To reach the person,
-place or org behind a row, go through wiki_refs:
-  JOIN wiki_refs r ON r.source_table = 'data_communication_message' AND r.source_id = m.id
-  JOIN wiki_people p ON p.id = r.entity_id          (or wiki_places / wiki_orgs)
+Rules:
+- In a JOIN, qualify every column (m.occurred_at); bare shared names like occurred_at, date, id fail as ambiguous.
+- A table is an instant (occurred_at) or a span (started_at/ended_at), never both.
+- created_at/updated_at are when WE wrote the row; filter time on occurred_at or started_at/ended_at.
 
-================================================================================
-RULES THE COLUMN LIST CANNOT SAY
-================================================================================
-- In a JOIN, qualify EVERY column (m.occurred_at, never occurred_at): most
-  tables share occurred_at, date and id, and Postgres refuses the bare name
-  as ambiguous.
-- A table is an instant (occurred_at) or a span (started_at/ended_at), never
-  both. Sleep, visits, sessions, workouts and events are spans.
-- Plural table names except data_*, which is singular (one observation).
-
-================================================================================
-QUERY TIPS (PostgreSQL dialect)
-================================================================================
-- A column you need that is not listed above: get_schema for that table
-- Date filter: WHERE occurred_at > now() - interval '7 days'
-- Truncate to a period: date_trunc('month', now()), date_trunc('day', now())
-- Cast a timestamp to a date: timestamp::date  (today = current_date)
-- Always LIMIT results (max 200, or 10000 with save_as)
-
-================================================================================
-EXAMPLE QUERIES
-================================================================================
-
--- Spending by category this month (merchant_category is the scalar; category is an array)
-SELECT merchant_category, SUM(amount)/100.0 as dollars, COUNT(*) as txns
-FROM data_financial_transaction
-WHERE occurred_at >= date_trunc('month', now())
-  AND amount > 0
-GROUP BY merchant_category ORDER BY dollars DESC
-
--- Most contacted people this week (data row -> entity, via wiki_refs)
-SELECT p.name, COUNT(*) as messages
-FROM data_communication_message m
-JOIN wiki_refs r ON r.source_table = 'data_communication_message'
-                AND r.source_id = m.id AND r.role = 'sender'
+Data row -> person (or wiki_places / wiki_orgs):
+SELECT p.name, COUNT(*) FROM data_communication_message m
+JOIN wiki_refs r ON r.source_table = 'data_communication_message' AND r.source_id = m.id AND r.role = 'sender'
 JOIN wiki_people p ON p.id = r.entity_id
-WHERE m.occurred_at > now() - interval '7 days'
-GROUP BY p.name ORDER BY messages DESC LIMIT 10
-
--- Sleep patterns last 2 weeks (a span: started_at/ended_at, no occurred_at)
-SELECT started_at::date as day, duration_minutes, sleep_quality_score
-FROM data_health_sleep
-WHERE started_at > now() - interval '14 days'
-ORDER BY started_at DESC"#
+GROUP BY p.name ORDER BY 2 DESC LIMIT 10"#
             .replace("<<TABLE_CATALOG>>", &crate::sql_catalog::prompt_block()),
         parameters: serde_json::json!({
             "type": "object",
@@ -529,26 +475,16 @@ ORDER BY started_at DESC"#
             "properties": {
                 "operation": {
                     "type": "string",
-                    "enum": ["query", "list_tables", "get_schema"],
-                    "description": "Operation to perform"
+                    "enum": ["query", "list_tables", "get_schema"]
                 },
-                "sql": {
-                    "type": "string",
-                    "description": "SQL query (required for 'query' operation). SELECT only, read-only."
-                },
+                "sql": { "type": "string", "description": "SELECT, for query" },
                 "tables": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Table name(s) to get schema for (required for 'get_schema' operation)"
+                    "description": "For get_schema"
                 },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max rows to return (default 50, max 200; with save_as, default and max 10000)"
-                },
-                "save_as": {
-                    "type": "string",
-                    "description": "File name like 'sleep.csv'. Saves the whole result there for code_interpreter to read, and shows you a preview. Saved chats only."
-                }
+                "limit": { "type": "integer", "description": "Default 50; 10,000 with save_as" },
+                "save_as": { "type": "string", "description": "CSV name, e.g. 'sleep.csv' (saved chats only)" }
             }
         }),
         tool_type: ToolType::Builtin,

@@ -65,14 +65,14 @@ pub const CATEGORY_ORDER: &[(&str, &str)] = &[
     ("location", "LOCATION"),
     ("communication", "COMMUNICATION"),
     ("calendar", "CALENDAR"),
-    ("financial", "FINANCIAL (amounts in cents — divide by 100 for dollars)"),
+    ("financial", "FINANCIAL"),
     ("activity", "ACTIVITY"),
     ("content", "CONTENT"),
     ("environment", "ENVIRONMENT"),
-    ("wiki_entity", "WIKI ENTITIES (resolved nouns — one row per person, place, org)"),
+    ("wiki_entity", "WIKI ENTITIES"),
     ("wiki_temporal", "WIKI TEMPORAL"),
     ("wiki_reference", "WIKI REFERENCES"),
-    ("wiki", "WIKI NARRATIVE (the owner's own account of their life)"),
+    ("wiki", "WIKI NARRATIVE"),
 ];
 
 /// The block the model reads: every queryable table, its columns, and the
@@ -80,8 +80,8 @@ pub const CATEGORY_ORDER: &[(&str, &str)] = &[
 ///
 /// ```text
 /// HEALTH
-///   data_health_heart_rate(bpm, occurred_at)
-///   data_health_sleep(started_at, ended_at, duration_minutes, …)
+/// data_health_heart_rate(bpm, occurred_at)
+/// data_health_sleep(started_at, ended_at, duration_minutes, …)
 /// ```
 ///
 /// One line per table, so a model scanning for a name finds its columns on
@@ -106,7 +106,6 @@ pub fn prompt_block() -> String {
         out.push_str(heading);
         out.push('\n');
         for (name, meta) in tables {
-            out.push_str("  ");
             out.push_str(name);
             out.push('(');
             out.push_str(&meta.key_columns.join(", "));
@@ -218,7 +217,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_communication_message' AND er.source_id = data_communication_message.id AND er.entity_type = 'person' AND er.role IN ('sender','recipient') JOIN wiki_people ON er.entity_id = wiki_people.id"),
         // `is_from_me` was a guessed column on a live box. It is a metadata
         // key, and the person on the other end is only reachable via wiki_refs.
-        note: Some("the other person is via wiki_refs (role sender = they wrote it, recipient = you did); direction is metadata->>'is_from_me'"),
+        note: Some("direction is metadata->>'is_from_me'; the other person is via wiki_refs role sender/recipient"),
     });
     m.insert("data_communication_transcription", TableMetadata {
         description: "Voice/audio transcriptions",
@@ -237,7 +236,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "communication",
         key_columns: &["started_at", "ended_at", "duration_seconds", "is_silent", "average_db_level"],
         join_hint: Some("JOIN data_communication_transcription t ON t.source_stream_id = data_audio_recording.source_stream_id"),
-        note: Some("chunks without words; the text is data_communication_transcription via source_stream_id"),
+        note: Some("no words; text is in data_communication_transcription via source_stream_id"),
     });
     m.insert("data_audio_session", TableMetadata {
         description: "Conversations, derived by grouping adjacent transcription chunks into one sitting",
@@ -259,7 +258,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "calendar",
         key_columns: &["title", "description", "calendar_name", "status", "response_status", "organizer_identifier", "attendee_identifiers", "location_name", "started_at", "ended_at", "is_all_day"],
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_calendar_event' AND er.source_id = data_calendar_event.id"),
-        note: Some("attendee_identifiers = raw handles; the people are via wiki_refs role attendee"),
+        note: Some("attendee_identifiers are raw handles; people via wiki_refs role attendee"),
     });
 
     // ============================================================================
@@ -281,7 +280,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "financial",
         key_columns: &["account_id", "amount", "currency", "merchant_name", "merchant_category", "description", "category", "is_pending", "transaction_type", "payment_channel", "occurred_at"],
         join_hint: Some("JOIN data_financial_account ON account_id = data_financial_account.id"),
-        note: Some("positive = money out, negative = refund/credit; category is a jsonb array — group by merchant_category"),
+        note: Some("amounts in cents; positive = money out; group by merchant_category"),
     });
     m.insert("data_financial_asset", TableMetadata {
         description: "Investment holdings (stocks, crypto, etc.)",
@@ -350,7 +349,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "environment",
         key_columns: &["occurred_at", "is_forecast", "temperature_c", "apparent_c", "latitude", "longitude"],
         join_hint: None,
-        note: Some("observations AND forecasts; is_forecast = false for what happened"),
+        note: Some("is_forecast = false for what happened"),
     });
 
     // ============================================================================
@@ -361,7 +360,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "wiki",
         key_columns: &["subject_type", "subject_id", "page_id"],
         join_hint: Some("JOIN app_pages p ON p.id = wiki_articles.page_id"),
-        note: Some("link row; the text is the page at page_id"),
+        note: Some("the text is app_pages at page_id"),
     });
     // The one non-`data_`/`wiki_` relation the model is sent to: the join
     // hint above points here, the reader role is granted it at boot, and
@@ -373,7 +372,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "wiki",
         key_columns: &["title", "content", "kind", "icon", "tags"],
         join_hint: Some("JOIN wiki_articles a ON a.page_id = app_pages.id"),
-        note: Some("content is markdown; kind tells an article from an owner-written page; a row with deleted_at set is in the trash — filter deleted_at IS NULL"),
+        note: Some("filter deleted_at IS NULL"),
     });
     m.insert("wiki_notes", TableMetadata {
         description: "Notes and open questions attached to a wiki subject, written by the owner or by the assistant",
@@ -387,7 +386,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "wiki",
         key_columns: &["title", "kind", "started_at", "ended_at", "is_current", "changepoint", "summary"],
         join_hint: None,
-        note: Some("the owner's own eras, never inferred; a day's chapter is the row spanning it"),
+        note: Some("owner-authored eras; a day's chapter is the row spanning it"),
     });
     m.insert("wiki_rules", TableMetadata {
         description: "Standing instructions the owner has given about how their record is written — 'avoid' subjects to leave alone, 'defend' ones to state carefully",
@@ -412,7 +411,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "wiki",
         key_columns: &["title", "summary", "started_at", "ended_at"],
         join_hint: Some("dates are optional and often absent; a story is not a time range"),
-        note: Some("dates optional, often absent"),
+        note: Some("dates often absent"),
     });
 
     // ============================================================================
@@ -473,7 +472,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "wiki_temporal",
         key_columns: &["day_id", "date", "prose"],
         join_hint: Some("JOIN wiki_days ON wiki_days.id = wiki_day_prose.day_id"),
-        note: Some("a VIEW; the column is date, not day; if joined to wiki_days, qualify date"),
+        note: Some("a VIEW; the column is date, not day"),
     });
     m.insert("wiki_events", TableMetadata {
         description: "Timeline events within a day",
@@ -491,7 +490,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "wiki_reference",
         key_columns: &["entity_type", "entity_id", "source_table", "source_id", "role", "occurred_at"],
         join_hint: None,
-        note: Some("the ONLY path from a data_* row to a person/place/org; role is one of sender, recipient, attendee, location, merchant"),
+        note: Some("the ONLY path from a data_* row to a person/place/org; role: sender, recipient, attendee, location, merchant"),
     });
 
     m
@@ -554,7 +553,7 @@ mod tests {
     fn prompt_block_stays_within_budget() {
         let block = prompt_block();
         assert!(
-            block.len() < 6_000,
+            block.len() < 5_000,
             "prompt block is {} bytes; descriptions or join hints leaking in?",
             block.len()
         );
