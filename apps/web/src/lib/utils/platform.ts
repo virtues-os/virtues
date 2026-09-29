@@ -46,6 +46,21 @@ export const isIOS =
 			typeof navigator !== 'undefined' &&
 			navigator.maxTouchPoints > 1));
 
+/** The iOS app on an iPad rather than an iPhone (same shell, other name). */
+export const isIPad =
+	isIOS &&
+	(platformStr.includes('ipad') || (platformStr.includes('macintel') && navigator.maxTouchPoints > 1));
+
+/**
+ * A phone's own browser (Safari on an iPhone, Chrome on Android), not the
+ * app. A page reached this way is on the phone it would otherwise ask to
+ * "add".
+ */
+export const isPhoneBrowser =
+	!isTauri &&
+	typeof navigator !== 'undefined' &&
+	/iphone|android.+mobile/i.test(navigator.userAgent);
+
 /** Running on Windows (only meaningful in Tauri). */
 export const isWindows = isTauri && platformStr.includes('win');
 

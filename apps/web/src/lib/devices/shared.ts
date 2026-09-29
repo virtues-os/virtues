@@ -4,7 +4,11 @@
  * copy of `kindLabel` is the kind of thing that stays correct for a month and
  * then quietly disagrees about what a "sensor" is called.
  */
-import { openFullDiskAccess, openAccessibilitySettings } from '$lib/tauri/bridge';
+import {
+	openFullDiskAccess,
+	openAccessibilitySettings,
+	type CollectorStatus
+} from '$lib/tauri/bridge';
 import { confirmAction } from '$lib/stores/dialog.svelte';
 import { isTauri } from '$lib/utils/platform';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -14,6 +18,7 @@ export type DeviceKind = 'mobile_app' | 'desktop_app' | 'sensor' | 'cli';
 
 export type DevicePermissions = {
 	full_disk_access?: boolean;
+	safari_library?: boolean;
 	accessibility?: boolean;
 	denied?: string[];
 	checked_at?: string;
@@ -106,18 +111,50 @@ export function kindIcon(k: DeviceKind): string {
  * the collector", which names a background daemon they have never heard of and
  * cannot see (2026-08-13).
  */
-export const PERMISSION_COPY: Record<
-	string,
-	{ label: string; costs: string; open?: () => Promise<boolean> }
-> = {
+export type PermissionCopy = {
+	label: string;
+	costs: string;
+	/** What to do once the pane is open, in System Settings' own words. */
+	fix?: string;
+	/** Which pane `open` goes to, for its button: "Open Full Disk Access". */
+	pane?: string;
+	open?: () => Promise<boolean>;
+};
+
+/**
+ * The name System Settings lists the collector under. Its grants are keyed to
+ * the binary's path, so the row says `virtues-collector`, not "Virtues" (that
+ * row is the app, and turning it on grants the collector nothing).
+ */
+export const COLLECTOR_LIST_NAME = 'virtues-collector';
+/** Where the binary lives, for adding it with "+" when it isn't listed. */
+export const COLLECTOR_BINARY_PATH = '~/.virtues/bin/virtues-collector';
+
+const FULL_DISK_ACCESS_FIX = `Turn on ${COLLECTOR_LIST_NAME} in the list. Not listed? Click + and add ${COLLECTOR_BINARY_PATH}.`;
+
+export const PERMISSION_COPY: Record<string, PermissionCopy> = {
 	full_disk_access: {
 		label: 'Full Disk Access',
-		costs: "your Mac can't read iMessages or Safari history",
+		costs: "your Mac can't read Messages or Safari history",
+		fix: FULL_DISK_ACCESS_FIX,
+		pane: 'Full Disk Access',
+		open: openFullDiskAccess
+	},
+	// Granted by the same Full Disk Access toggle, but reported on its own: a
+	// collector can read Messages and still be refused Safari, and one flag
+	// for both only ever hid the Safari half.
+	safari_library: {
+		label: 'Safari history',
+		costs: "your Mac can't read Safari history or bookmarks",
+		fix: FULL_DISK_ACCESS_FIX,
+		pane: 'Full Disk Access',
 		open: openFullDiskAccess
 	},
 	accessibility: {
 		label: 'Accessibility',
 		costs: 'your Mac records app events without window titles',
+		fix: `Turn on ${COLLECTOR_LIST_NAME} in the list.`,
+		pane: 'Accessibility',
 		open: openAccessibilitySettings
 	}
 };
@@ -161,6 +198,94 @@ export function grantedPermissions(device: Pick<Device, 'permissions'>) {
 	return Object.entries(PERMISSION_COPY)
 		.filter(([key]) => (p as Record<string, unknown>)[key] === true && !denied.has(key))
 		.map(([, copy]) => copy);
+}
+
+/** One macOS permission, as a Mac permissions panel shows it. */
+export type MacPermission = PermissionCopy & {
+	key: 'full_disk_access' | 'safari_library' | 'accessibility';
+	/** Setup waits on it. Accessibility is optional. */
+	required: boolean;
+	/** true granted, false denied, null not reported (never draw null as either). */
+	granted: boolean | null;
+};
+
+const MAC_PERMISSION_ORDER = [
+	{ key: 'full_disk_access', required: true },
+	{ key: 'safari_library', required: true },
+	{ key: 'accessibility', required: false }
+] as const;
+
+function macPermissionList(
+	read: (key: MacPermission['key']) => boolean | null
+): MacPermission[] {
+	const list: MacPermission[] = MAC_PERMISSION_ORDER.map(({ key, required }) => ({
+		...PERMISSION_COPY[key],
+		key,
+		required,
+		granted: read(key)
+	}));
+	// Safari gets its own row only when it has something to add: the collector
+	// reports it, and Full Disk Access is on. Until then the Full Disk Access
+	// row speaks for both, because one toggle grants both and two rows sending
+	// the reader to the same switch read as two chores.
+	const fullDisk = list[0].granted;
+	return list.filter((p) => p.key !== 'safari_library' || (p.granted !== null && fullDisk === true));
+}
+
+/**
+ * The Mac's permissions from the collector running here (`get_collector_status`).
+ * Only the daemon's own report counts: `permissionsReportedByDaemon` false
+ * means the flags describe some other process, so every row reads unknown.
+ */
+export function macPermissionsFromStatus(status: CollectorStatus | null): MacPermission[] {
+	const trusted = !!status?.permissionsReportedByDaemon;
+	return macPermissionList((key) => {
+		if (!status || !trusted) return null;
+		if (key === 'full_disk_access') return status.hasFullDiskAccess;
+		if (key === 'accessibility') return status.hasAccessibility;
+		return status.safariLibrary;
+	});
+}
+
+/**
+ * The Mac's permissions as its collector last reported them to the server.
+ * Pass the COLLECTOR's row: the app's row never carries permissions.
+ */
+export function macPermissionsFromDevice(device: Pick<Device, 'permissions'> | null): MacPermission[] {
+	const p = device?.permissions;
+	const denied = new Set(p?.denied ?? []);
+	return macPermissionList((key) => {
+		if (!p) return null;
+		if (denied.has(key)) return false;
+		const v = (p as Record<string, unknown>)[key];
+		return typeof v === 'boolean' ? v : null;
+	});
+}
+
+/** The Mac permissions a device reports as off, one per row a panel draws. */
+export function deniedMacPermissions(device: Pick<Device, 'permissions'> | null): MacPermission[] {
+	return macPermissionsFromDevice(device).filter((p) => p.granted === false);
+}
+
+/**
+ * Is this Mac collecting what Setup asks of it? The collector is running AND
+ * the daemon itself reports Full Disk Access (Messages). Accessibility is
+ * optional and never blocks.
+ */
+export function macReady(status: CollectorStatus | null): boolean {
+	return !!status?.running && !!status.permissionsReportedByDaemon && status.hasFullDiskAccess;
+}
+
+/**
+ * The collector row a desktop app installed, which is the row that carries
+ * the Mac's permissions. `null` when there is none.
+ */
+export function collectorOf<D extends Pick<Device, 'id' | 'installed_by'>>(
+	app: Pick<Device, 'id'> | null,
+	devices: D[]
+): D | null {
+	if (!app) return null;
+	return devices.find((d) => d.installed_by === app.id) ?? null;
 }
 
 /**

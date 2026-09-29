@@ -23,6 +23,12 @@ struct CollectorStatus: Codable {
     let lastSync: String?
     let hasFullDiskAccess: Bool
     let hasAccessibility: Bool
+    /// Can the daemon read `~/Library/Safari` (history, bookmarks)? A separate
+    /// grant in practice from the Messages read above; see
+    /// `CollectorHealth.safariLibrary`. `nil` when the daemon has not reported
+    /// it (no record, an older daemon, or no Safari data on this Mac), which
+    /// is neither a grant nor a denial.
+    let safariLibrary: Bool?
 }
 
 struct StatusCommand: ParsableCommand {
@@ -97,7 +103,9 @@ struct StatusCommand: ParsableCommand {
             pendingMessages: pendingMessages,
             lastSync: lastSync,
             hasFullDiskAccess: hasFullDiskAccess,
-            hasAccessibility: hasAccessibility
+            hasAccessibility: hasAccessibility,
+            // Daemon-only: no self-probe fallback, for the reason above.
+            safariLibrary: daemonHealth?.safariLibrary
         )
     }
 
@@ -147,12 +155,19 @@ struct StatusCommand: ParsableCommand {
         }
         print("  Accessibility: \(status.hasAccessibility ? "\u{2713}" : "\u{2717}")")
         print("  Full Disk Access: \(status.hasFullDiskAccess ? "\u{2713}" : "\u{2717}")")
+        if let safari = status.safariLibrary {
+            print("  Safari history:   \(safari ? "\u{2713}" : "\u{2717}")")
+        }
         if status.permissionsReportedByDaemon, let checkedAt = status.permissionsCheckedAt {
             print("    (as seen by the daemon at \(checkedAt))")
         }
         if !status.hasFullDiskAccess {
             print("    \u{2192} System Settings \u{2192} Privacy & Security \u{2192} Full Disk Access \u{2192} turn on virtues-collector")
             print("      (not listed? click + and add ~/.virtues/bin/virtues-collector)")
+        }
+        if !status.hasFullDiskAccess || status.safariLibrary == false || !status.hasAccessibility {
+            print("    After granting, re-check now instead of in 5 minutes:")
+            print("      launchctl kill SIGUSR1 gui/$(id -u)/com.virtues.collector")
         }
 
         print("")

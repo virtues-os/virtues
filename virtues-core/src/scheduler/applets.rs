@@ -711,19 +711,25 @@ pub async fn create_run(
     .fetch_one(db)
     .await?;
 
-    // Onboarding (Tier 0/1): stamp the first init-sync start on the device this
-    // action collects for. No-op for cloud sources / transforms (the action has
-    // no credential, or the credential has no device_id → subquery is NULL).
+    // Onboarding: stamp the first init-sync start on the device this applet
+    // collects for. A device's applets carry it as `app_applets.device_id`
+    // (the pairing fan-out); cloud sources and transforms have none, so the
+    // subquery is NULL and nothing changes. Logged, not raised: the run itself
+    // stands either way, but a failure here must not be silent. (It once read
+    // `credentials.device_id`, a column that never existed, and every device's
+    // first sync went unrecorded.)
     if let Some(aid) = applet_id {
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             "UPDATE app_device SET init_sync_started_at = now() \
-             WHERE id = (SELECT c.device_id FROM app_applets a \
-                         JOIN credentials c ON c.id = a.credential_id WHERE a.id = $1) \
+             WHERE id = (SELECT a.device_id FROM app_applets a WHERE a.id = $1) \
                AND init_sync_started_at IS NULL",
         )
         .bind(aid)
         .execute(db)
-        .await;
+        .await
+        {
+            tracing::warn!(error = %e, applet_id = %aid, "applets: stamping a device's first sync start failed");
+        }
     }
 
     run_from_row(&row)
@@ -755,19 +761,22 @@ pub async fn complete_run(
     .execute(db)
     .await?;
 
-    // Onboarding (Tier 0/1): a device's first successful run completes its
-    // init backfill. No-op for cloud/transform runs (device_id resolves NULL).
-    if status == "success" {
-        let _ = sqlx::query(
+    // Onboarding: a device's first successful run that brought records
+    // completes its init backfill (an empty flush proves nothing arrived).
+    // Same anchor and same logging as `create_run` above.
+    if status == "success" && records_processed > 0 {
+        if let Err(e) = sqlx::query(
             "UPDATE app_device SET init_sync_completed_at = now() \
-             WHERE id = (SELECT c.device_id FROM app_applet_runs r \
-                         JOIN app_applets a ON a.id = r.applet_id \
-                         JOIN credentials c ON c.id = a.credential_id WHERE r.id = $1) \
+             WHERE id = (SELECT a.device_id FROM app_applet_runs r \
+                         JOIN app_applets a ON a.id = r.applet_id WHERE r.id = $1) \
                AND init_sync_completed_at IS NULL",
         )
         .bind(run_id)
         .execute(db)
-        .await;
+        .await
+        {
+            tracing::warn!(error = %e, run_id = %run_id, "applets: stamping a device's first sync failed");
+        }
     }
 
     Ok(())
@@ -1269,5 +1278,44 @@ mod tests {
         assert_eq!(applet_schema_name("applet_user__has-a-dash"), None);
         assert_eq!(applet_schema_name("applet_user__Caps"), None);
         assert_eq!(applet_schema_name("applet_user__drop\"table"), None);
+    }
+
+    /// A device's first sync is stamped on the device its applet collects
+    /// for, and only once a run brings records. It read the device through
+    /// `credentials.device_id`, which never existed, so nothing was stamped.
+    #[sqlx::test]
+    async fn a_devices_first_sync_is_stamped_when_records_arrive(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label) \
+             VALUES ('dev_mac', $1, 'desktop_app', 'Mac')",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, agent, device_id) \
+             VALUES ('applet_mac', 'applet_mac', 'user', 'x', 'dev_mac')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let stamps = || async {
+            sqlx::query_as::<_, (Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)>(
+                "SELECT init_sync_started_at, init_sync_completed_at FROM app_device WHERE id = 'dev_mac'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+
+        let empty = create_run(&pool, Some("applet_mac"), "webhook").await.unwrap();
+        assert!(stamps().await.0.is_some(), "the start is stamped on the device");
+        complete_run(&pool, &empty.id, "success", 0, None, None).await.unwrap();
+        assert!(stamps().await.1.is_none(), "an empty flush proves nothing arrived");
+
+        let full = create_run(&pool, Some("applet_mac"), "webhook").await.unwrap();
+        complete_run(&pool, &full.id, "success", 40, None, None).await.unwrap();
+        assert!(stamps().await.1.is_some());
     }
 }

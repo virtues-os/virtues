@@ -27,12 +27,12 @@ import {
 	getProfile,
 	getAssistantProfile,
 	getStreamHealth,
-	listCredentials,
+	listDevices,
 	type Profile,
 	type StreamHealth,
-	type Credential,
 	type GettingStartedStepId,
 } from '$lib/api/client';
+import type { Device, DevicesResponse } from '$lib/devices/shared';
 import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
 import { prePair } from './prepair.svelte';
 
@@ -153,8 +153,22 @@ function arriving(streams: StreamHealth[], name: string): boolean {
 	return !!s && (s.status === 'live' || s.status === 'stalled' || s.count_7d > 0);
 }
 
-function paired(creds: Credential[], provider: string): boolean {
-	return creds.some((c) => c.provider === provider && c.is_active);
+/**
+ * The paired device that collects for a source, from the server's device
+ * list. Pairing records a device and no credential, so asking the
+ * credentials (as this once did) never found one. For the computer it is
+ * the collector's record, the one that carries `installed_by` or reported
+ * permissions: the desktop app's own pairing also names `mac` and collects
+ * nothing.
+ */
+function collectorFor(devices: Device[], source: 'mac' | 'ios'): Device | null {
+	return (
+		devices.find((d) =>
+			source === 'ios'
+				? d.kind === 'mobile_app'
+				: d.source_id === 'mac' && (d.installed_by !== null || d.permissions !== null),
+		) ?? null
+	);
 }
 
 /** How far through the reading someone is on this device: 0 nothing, 1 past
@@ -174,7 +188,7 @@ class SetupStore {
 	profile = $state<Profile | null>(null);
 	assistantName = $state('Ari');
 	streams = $state<StreamHealth[]>([]);
-	credentials = $state<Credential[]>([]);
+	devices = $state<Device[]>([]);
 	loaded = $state(false);
 	introStage = $state(typeof window === 'undefined' ? 0 : readIntro());
 	/** Keystrokes in a step that is talking to the assistant (Names). The
@@ -208,17 +222,17 @@ class SetupStore {
 		this.inflight = (async () => {
 			// Each read stands alone: a failed stream read must not hide the
 			// profile, and none of them may hold the flow shut.
-			const [profile, assistant, streams, creds] = await Promise.allSettled([
+			const [profile, assistant, streams, devices] = await Promise.allSettled([
 				getProfile(),
 				getAssistantProfile<{ assistant_name?: string | null }>(),
 				getStreamHealth(),
-				listCredentials(),
+				listDevices<DevicesResponse>(),
 				gettingStarted.refresh(),
 			]);
 			if (profile.status === 'fulfilled') this.profile = profile.value;
 			if (assistant.status === 'fulfilled') this.assistantName = assistant.value.assistant_name || 'Ari';
 			if (streams.status === 'fulfilled') this.streams = streams.value;
-			if (creds.status === 'fulfilled') this.credentials = creds.value;
+			if (devices.status === 'fulfilled') this.devices = devices.value.devices ?? [];
 			this.loaded = true;
 			this.inflight = null;
 		})();
@@ -228,7 +242,7 @@ class SetupStore {
 	/** The computer: the app, then the permissions that make it useful. */
 	get computer(): StepPart[] {
 		return [
-			{ label: 'App', done: paired(this.credentials, 'mac') },
+			{ label: 'Paired', done: !!this.mac },
 			{
 				label: 'Permissions',
 				done:
@@ -243,7 +257,7 @@ class SetupStore {
 	get phone(): StepPart[] {
 		return [
 			{ label: 'Location', done: arriving(this.streams, 'location_point') },
-			{ label: 'Audio', done: arriving(this.streams, 'communication_transcription') },
+			{ label: 'Microphone', done: arriving(this.streams, 'communication_transcription') },
 			{
 				label: 'Health',
 				done:
@@ -280,8 +294,15 @@ class SetupStore {
 		return said.length ? `Arrived this week: ${said.join(', ')}.` : null;
 	}
 
+	/** The computer's collector and the phone, once paired. */
+	get mac(): Device | null {
+		return collectorFor(this.devices, 'mac');
+	}
+	get iphone(): Device | null {
+		return collectorFor(this.devices, 'ios');
+	}
 	get phonePaired(): boolean {
-		return paired(this.credentials, 'ios');
+		return !!this.iphone;
 	}
 
 	status(id: SetupStepId): StepStatus {

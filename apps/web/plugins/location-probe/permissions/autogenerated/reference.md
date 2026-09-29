@@ -9,6 +9,9 @@ Default permissions for the location-probe plugin
 - `allow-read-rows`
 - `allow-push-status`
 - `allow-request-push`
+- `allow-status`
+- `allow-request-location`
+- `allow-open-settings`
 
 ## Permission Table
 
@@ -18,6 +21,32 @@ Default permissions for the location-probe plugin
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`location-probe:allow-open-settings`
+
+</td>
+<td>
+
+Enables the open_settings command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`location-probe:deny-open-settings`
+
+</td>
+<td>
+
+Denies the open_settings command without any pre-configured scope.
+
+</td>
+</tr>
 
 <tr>
 <td>
@@ -67,6 +96,32 @@ Enables the read_rows command without any pre-configured scope.
 <td>
 
 Denies the read_rows command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`location-probe:allow-request-location`
+
+</td>
+<td>
+
+Enables the request_location command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`location-probe:deny-request-location`
+
+</td>
+<td>
+
+Denies the request_location command without any pre-configured scope.
 
 </td>
 </tr>
@@ -145,6 +200,32 @@ Enables the start_probe command without any pre-configured scope.
 <td>
 
 Denies the start_probe command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`location-probe:allow-status`
+
+</td>
+<td>
+
+Enables the status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`location-probe:deny-status`
+
+</td>
+<td>
+
+Denies the status command without any pre-configured scope.
 
 </td>
 </tr>

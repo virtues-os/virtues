@@ -26,6 +26,7 @@
 	import type { Tab } from "$lib/tabs/types";
 	import { Page, Button, Card, Section, Field, LoadingState, ErrorState } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import MacPermissions from "$lib/components/devices/MacPermissions.svelte";
 	import { onDestroy, onMount } from "svelte";
 	import { createResource } from "$lib/utils/resource.svelte";
 	import { formatTimeAgo } from "$lib/utils/dateUtils";
@@ -35,8 +36,7 @@
 	import {
 		kindLabel,
 		kindIcon,
-		deniedPermissions,
-		grantedPermissions,
+		collectorOf,
 		revokeDeviceFlow,
 		backToDevices,
 		type Device,
@@ -44,6 +44,7 @@
 	} from "$lib/devices/shared";
 	import {
 		getCollectorStatus,
+		recheckCollector,
 		pauseCollector,
 		resumeCollector,
 		shellIdentity,
@@ -73,9 +74,7 @@
 	// `installed_by` is stamped at pairing for exactly this — without it one Mac
 	// reads as two unrelated devices, which is how a stale collector version sat
 	// next to a current app version with nothing connecting them.
-	const collector = $derived<Device | null>(
-		device ? (devices.find((d) => d.installed_by === device.id) ?? null) : null,
-	);
+	const collector = $derived<Device | null>(collectorOf(device, devices));
 
 	/**
 	 * Are we standing on the device we are describing?
@@ -87,8 +86,10 @@
 	const local = $derived(!!device?.is_current && isTauri);
 	const localMac = $derived(local && isMacOS);
 
-	const denied = $derived(device ? deniedPermissions(device) : []);
-	const granted = $derived(device ? grantedPermissions(device) : []);
+	// Permissions come from the collector, never the app: the app's row carries
+	// none, so reading it left this section empty on every Mac. Looking at a
+	// collector's own row, that row is the reporter.
+	const reporter = $derived<Device | null>(collector ?? (device?.permissions ? device : null));
 
 	// ── Local instrument readings (localMac only) ────────────────────────────
 	let status = $state<CollectorStatus | null>(null);
@@ -111,6 +112,11 @@
 	onDestroy(() => {
 		if (poll) clearInterval(poll);
 	});
+
+	async function recheck() {
+		const s = await recheckCollector();
+		if (s) status = s;
+	}
 
 	async function togglePause() {
 		if (!status) return;
@@ -341,29 +347,14 @@
 		     otherwise. Never silently merged — a granted permission the box was
 		     told about months ago is not the same claim as one read a second
 		     ago, and the label is what keeps them apart. -->
-		{#if denied.length || granted.length}
-			<Section title="Permissions" note={local ? "measured here" : "as this device last reported"}>
+		{#if localMac || reporter?.permissions}
+			<Section title="Permissions" note={localMac ? "measured here" : "as this device last reported"}>
 			<Card list>
-			<ul>
-				{#each denied as perm (perm.label)}
-					<li class="p-4 flex items-center gap-3">
-						<Icon icon="ri:error-warning-line" class="text-warning flex-none" />
-						<div class="flex-1 min-w-0">
-							<div class="text-sm text-foreground">{perm.label}</div>
-							<div class="text-xs text-foreground-muted mt-0.5">{perm.costs}</div>
-						</div>
-						{#if local && perm.open}
-							<Button variant="secondary" onclick={() => void perm.open?.()}>Open Settings</Button>
-						{/if}
-					</li>
-				{/each}
-				{#each granted as perm (perm.label)}
-					<li class="p-4 flex items-center gap-3">
-						<Icon icon="ri:checkbox-circle-line" class="text-success flex-none" />
-						<div class="flex-1 min-w-0 text-sm text-foreground">{perm.label}</div>
-					</li>
-				{/each}
-			</ul>
+				{#if localMac}
+					<MacPermissions {status} onRecheck={recheck} />
+				{:else}
+					<MacPermissions device={reporter} />
+				{/if}
 			</Card>
 			</Section>
 		{/if}

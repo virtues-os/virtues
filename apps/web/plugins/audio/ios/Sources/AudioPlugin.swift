@@ -13,6 +13,8 @@ class AudioPlugin: Plugin {
     let quiet = r.quietHours()
     var status: [String: Any] = [
       "authorized": r.authorized(),
+      "mic": r.micPermission(),
+      "enabled": r.isEnabled(),
       "recording": r.recording,
       "notify": r.notifyEnabled(),
       "silentDropped": r.silentDroppedCount(),

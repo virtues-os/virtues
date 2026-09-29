@@ -54,6 +54,17 @@ pub struct AudioStatus {
   /// default: a Swift resolve missing it must fail loudly, not read back as a
   /// de-authorized mic. Every command resolves the full shape.
   pub authorized: bool,
+  /// The microphone permission: `granted`, `denied` or `not_determined` —
+  /// `authorized` with its two false cases told apart, since only `denied`
+  /// needs Settings. `unavailable` on desktop. Absent on a native build that
+  /// predates it.
+  #[serde(default)]
+  pub mic: Option<String>,
+  /// The person left recording on. Stays true through a call, an
+  /// interruption or a CarPlay pause, when `recording` is false. Same
+  /// absence rule as `mic`.
+  #[serde(default)]
+  pub enabled: Option<bool>,
   /// The recorder is running (a chunk is actively being captured). Required
   /// for the same reason as `authorized`.
   pub recording: bool,

@@ -73,7 +73,35 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   private var manager: CLLocationManager!
   private var configured = false
   private var updating = false
+  /// An explicit opt-in asked for permission in this process. Only then does a
+  /// While Using grant schedule the later ask for Always.
   private var wantPrompt = false
+
+  /// `requestPermission` callers waiting for the person's answer. Main thread
+  /// only, like every other touch of `manager`.
+  private var authWaiters: [(String) -> Void] = []
+  /// Long enough for a person to read the sheet; short enough that a sheet iOS
+  /// never showed (a missing usage string) cannot hang the caller for good.
+  private let authWaitTimeout: TimeInterval = 120
+
+  // MARK: - The ask for Always
+  //
+  // Background relaunch (significant-location change on a terminated app)
+  // needs Always, and iOS grants it only as an upgrade from While Using. That
+  // upgrade is never asked inside the callback that reports the While Using
+  // grant: there it appears the instant the first sheet closes, stacked on
+  // whatever the screen asks next (Setup asks for several permissions in a
+  // row), and a sheet the person did not see coming is the one they refuse.
+  //
+  // Instead the grant records a due time, and the ask happens on the first
+  // real foreground after it: a launch, or a return from the background —
+  // never `didBecomeActive` alone, which also fires when any system sheet
+  // closes. Until then While Using still collects while the app is alive
+  // (`allowsBackgroundLocationUpdates`, blue pill); only relaunch waits.
+  private static let alwaysDueKey = "virtues.location.always_due_at"
+  private let alwaysDelay: TimeInterval = 600
+  private var launchActivationSeen = false
+  private var enteredForeground = false
 
   /// Throttle: keep at most one fix per ~15s (matches the native app's sampling
   /// cadence — avoids flooding the log + outbox with near-identical points).
@@ -185,9 +213,90 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     case .authorizedAlways, .authorizedWhenInUse:
       beginUpdates()
     case .notDetermined:
-      if prompt { manager.requestWhenInUseAuthorization() }  // two-step continues in didChange
+      if prompt { manager.requestWhenInUseAuthorization() }  // the answer lands in didChange
     default:
       break  // denied / restricted — nothing to do
+    }
+  }
+
+  /// The explicit opt-in, answered: prompts if undetermined, starts collecting
+  /// on a grant, and calls `done` with the person's answer (see
+  /// `authorizationString`). The callback iOS makes as the manager is created
+  /// still reads `not_determined` and is not an answer, so only a determined
+  /// status settles it. The While Using answer settles it; Always comes later.
+  public func requestPermission(_ done: @escaping (String) -> Void) {
+    if !Thread.isMainThread {
+      DispatchQueue.main.async { [weak self] in self?.requestPermission(done) }
+      return
+    }
+    configure()
+    guard currentStatus() == .notDetermined else {
+      start(prompt: true)
+      done(authorizationString())
+      return
+    }
+    var fired = false
+    let settle: (String) -> Void = { status in
+      if fired { return }
+      fired = true
+      done(status)
+    }
+    authWaiters.append(settle)
+    // A settled waiter left in the list is inert; the next answer clears it.
+    DispatchQueue.main.asyncAfter(deadline: .now() + authWaitTimeout) { [weak self] in
+      guard let self = self else { return }
+      settle(self.authorizationString())
+    }
+    start(prompt: true)
+  }
+
+  /// The authorization as a plain word for the UI: `not_determined`,
+  /// `when_in_use`, `always`, `denied` or `restricted`. Main thread.
+  public func authorizationString() -> String {
+    configure()
+    switch currentStatus() {
+    case .notDetermined: return "not_determined"
+    case .authorizedWhenInUse: return "when_in_use"
+    case .authorizedAlways: return "always"
+    case .restricted: return "restricted"
+    case .denied: return "denied"
+    @unknown default: return "denied"
+    }
+  }
+
+  /// Called from plugin init (didFinishLaunching, main thread). Watches for the
+  /// foregrounds on which a due ask for Always may run; see `alwaysDueKey`.
+  public func installAlwaysEscalation() {
+    let nc = NotificationCenter.default
+    nc.addObserver(self, selector: #selector(onWillEnterForeground),
+      name: UIApplication.willEnterForegroundNotification, object: nil)
+    nc.addObserver(self, selector: #selector(onDidBecomeActive),
+      name: UIApplication.didBecomeActiveNotification, object: nil)
+  }
+
+  @objc private func onWillEnterForeground() { enteredForeground = true }
+
+  @objc private func onDidBecomeActive() {
+    // The process's first activation is a launch; later ones count only after a
+    // real return from the background.
+    let isLaunch = !launchActivationSeen
+    launchActivationSeen = true
+    guard isLaunch || enteredForeground else { return }
+    enteredForeground = false
+    escalateIfDue()
+  }
+
+  private func escalateIfDue() {
+    let d = UserDefaults.standard
+    guard d.object(forKey: Self.alwaysDueKey) != nil else { return }
+    guard Date().timeIntervalSince1970 >= d.double(forKey: Self.alwaysDueKey) else { return }
+    d.removeObject(forKey: Self.alwaysDueKey)
+    configure()
+    // iOS shows the upgrade sheet once per install; a person who has since
+    // chosen Always, Never or Ask Next Time in Settings is not asked again.
+    if currentStatus() == .authorizedWhenInUse {
+      writeMarker(source: "ask=always")
+      manager.requestAlwaysAuthorization()
     }
   }
 
@@ -574,11 +683,21 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   public func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
     let status = currentStatus()
     writeMarker(source: "auth=\(status.rawValue)")
+    if status != .notDetermined, !authWaiters.isEmpty {
+      let answer = authorizationString()
+      let waiting = authWaiters
+      authWaiters.removeAll()
+      waiting.forEach { $0(answer) }
+    }
     switch status {
     case .authorizedWhenInUse:
-      // Escalate to Always for background delivery (only after an explicit
-      // opt-in that requested When-In-Use), then start.
-      if wantPrompt { manager.requestAlwaysAuthorization() }
+      // Background relaunch needs Always, asked on a later foreground rather
+      // than here (see `alwaysDueKey`). Only after an explicit opt-in: a
+      // person who chose While Using in Settings is not nagged.
+      let d = UserDefaults.standard
+      if wantPrompt, d.object(forKey: Self.alwaysDueKey) == nil {
+        d.set(Date().timeIntervalSince1970 + alwaysDelay, forKey: Self.alwaysDueKey)
+      }
       beginUpdates()
     case .authorizedAlways:
       beginUpdates()
