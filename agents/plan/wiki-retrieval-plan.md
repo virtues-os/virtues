@@ -5,70 +5,70 @@ is the index.** Chat retrieves through it.
 
 ## The problem
 
-Chat can reach a day by its date, but it can find a person, place or
-organization only by a name it matches exactly. "Dave", a misspelling, or "my
-old landlord" finds nothing. Nobody has measured whether the agent uses the wiki
-at all.
+Search never returns the wiki. Chat can open a day by its date through
+`sql_query`, but it can find a person, place or organization only by a name it
+matches exactly.
 
-## Two doors
+## Step 0: measured on the box (2026-09-29)
 
-| The question | The door | Built? |
-|---|---|---|
-| Names a thing: "March 3", "2025", "David" | **Lookup**: `sql_query` on `wiki_day_prose`, subject tables, `wiki_articles` → `app_pages` | Yes. Days work; subjects only by exact name |
-| Describes a thing: "when I felt stuck at work" | **Search**: `semantic_search`, with `entities` and date filters | Yes, but the wiki is 0.8% of the pool and 894 of 914 subjects have no embedding |
+Every chat turn since 2026-09-01 that used retrieval: 108 turns, 200
+`semantic_search` calls.
 
-No new lookup tool. It would duplicate `sql_query` for days, and matching names
-as text misses the same cases wherever it runs.
+- **Search returned a wiki chunk once**: one event, and never an article.
+- **The agent already uses the wiki directly.** Since 09-22 it read wiki tables
+  with `sql_query` in 14 of 27 turns, passed `entities` in 15 and a date filter
+  in 13. Its instructions are not the problem.
+- **Both filters remove the whole wiki.** Every wiki chunk has a null
+  `occurred_at`, so a date filter drops all of them. No article is in
+  `wiki_refs`, so `entities` drops all of them. The agent is penalised exactly
+  when it filters correctly: 64 of the 200 calls filtered.
+- **Unfiltered, articles rank out.** Across twelve real queries, the best
+  article's dense rank was in the tens of thousands out of 239k chunks, even
+  when the subject named in the query has an article. Short messages outscore
+  long articles on gte-small.
+- **A wiki-only pool isn't enough on its own.** Dense similarity alone puts
+  generic events such as "Short trip" above the named person's article.
+- **Cost:** a question that names a subject takes a median of 14 tool calls and
+  68 KB of results.
 
-## Step 0: measure (gates the rest)
+Not measured: whether the answers were right (the owner has to judge), and how
+BM25 and the reranker rank a wiki-only pool (this needs the engine; run it on
+the spare box).
 
-Ten real questions from chat history on the box, chosen by the owner. For each,
-record the tokens, the tool calls, whether a wiki chunk came back, whether the
-agent used `entities`, a date filter, or a wiki table, and whether the answer
-was right. Run them again after each step.
+## Step 1: stop filters dropping the wiki
 
-## Step 1: subject stubs
-
-Three registry `OntologyDescriptor`s (person, place, organization), embedding
-only, with no LLM call. The text: name, nickname, aliases, handles, relationship
-category, and anything the owner has written on the subject. The timestamp is
-when the subject was last seen in `wiki_refs`.
-
-Leave out co-occurring subjects. Subjects share a record 87 times in 136k refs;
-sharing a day is common but it is noise, and it would make a search for one
-person land on everyone who texted that day.
+- Give wiki chunks their time. A day article gets its date; an event gets its
+  start time.
+- `entities` also matches the subject's own article, joined through
+  `wiki_articles.subject_id`. This does not write `wiki_refs`.
 
 ## Step 2: search the wiki inside every search (option B)
 
-`semantic_search` runs a second, small pass over articles, day articles, events
-and stubs, reusing the same query embeddings and date filters.
+`semantic_search` runs a second pass over articles, events and stubs, using the
+full hybrid search and reranker and the same filters.
 
-- Up to 3 hits, shown first under **From your wiki**, then **From your
-  records**.
-- A subject hit carries its id, so the next call can filter by it with
+- **Named subjects first, by match rather than similarity.** When the question
+  contains a subject's name, nickname or alias, that subject's article (or stub)
+  leads. 33 of the 108 questions named a subject.
+- Up to 3 more wiki hits, above a relevance floor, shown under **From your
+  wiki** and then **From your records**. Each subject hit carries its id for
   `entities`.
-- An article replaces its subject's stub, and no hit appears twice.
-- Skipped when the agent asks for a specific domain ("search email").
-- One line in the tool description replaces the parked "wiki-first" wording.
+- Skipped when the agent asks for a specific domain.
 
-This keeps the wiki's score apart from everything else's. Adding one weight
-across different score scales is fragile, which is the reranker problem again.
+## Step 3: subject stubs
+
+The 894 subjects without an article get an embedding-only stub, with no LLM
+call: name, nickname, aliases, handles, relationship, and anything the owner has
+written on the subject. Leave out co-occurring subjects: they share a record 87
+times in 136k refs, and sharing a day is noise.
 
 ## Open
 
-- **The relevance cutoff.** A small pool always returns its top k, however weak.
-  Set the cutoff from the reranker scores on the step 0 questions.
-- The ten questions.
-
-## Boundary
-
-Read-only. Nothing here writes `wiki_refs` or decides that two records are the
-same thing.
+- The relevance floor, set from reranker scores on real queries.
+- Re-run step 0 after each step.
 
 ## Also found
 
-`entity_article_gen::build_dossier` builds its link allowlist from subjects that
-share a record (87 pairs), so the model is offered almost nothing to link.
-Subjects that share a day (about 80k pairs) are the right source for that list:
-too noisy to embed, but fine for an allowlist, because the model only links what
-it chose to mention.
+`entity_article_gen::build_dossier` offers links only to subjects that share a
+record (87 pairs). Subjects that share a day (about 80k pairs) are the right
+source for that allowlist.
