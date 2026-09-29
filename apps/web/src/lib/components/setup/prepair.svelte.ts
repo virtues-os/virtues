@@ -89,7 +89,12 @@ function unpaired(): boolean {
 		}
 	}
 	const shell = window as unknown as Shell;
-	if (!shell.__VIRTUES_MOBILE__) return bakedDesktop();
+	// A desktop shell that still points pages at the box's copy (Windows and
+	// Linux; they inject `__VIRTUES_BOX_URL__`) is unpaired only while it runs
+	// its own copy. The Mac stopped injecting that on 2026-09-29: it always
+	// runs its own copy, like the phone, and answers from the paired flag
+	// below, like the phone. See agents/plan/local-ui-plan.md.
+	if (!shell.__VIRTUES_MOBILE__ && shell.__VIRTUES_BOX_URL__) return bakedDesktop();
 	if (shell.__VIRTUES_PAIRED__ === true) {
 		// The baked flag has caught up with the pairing the marker bridged.
 		// Dropping it here means a later unpair, from anywhere, can't be

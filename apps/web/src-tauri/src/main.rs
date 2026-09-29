@@ -1697,19 +1697,25 @@ fn main() {
                 // steps are safe here; completing a PAIR would still replace
                 // the existing box, exactly as it does on the phone.
                 WebviewUrl::App("connect.html#setup".into())
-            } else if !is_paired() {
-                // UNPAIRED, THE MAC OPENS SETUP (2026-09-27): sign in, find
-                // the server, its four words, Wi-Fi and pairing run from the
-                // app's own copy of the web app (tauri.macos.conf.json bakes
-                // it; apps/web/src/lib/components/setup/prepair.svelte.ts),
-                // and after pairing the window hands over to the server's
-                // copy at the same step. Windows and Linux bake nothing yet
-                // and keep the connect page.
-                if cfg!(target_os = "macos") {
-                    own_copy("setup")
+            } else if cfg!(target_os = "macos") {
+                // THE MAC IS ITS OWN COPY (2026-09-29, agents/plan/local-ui-plan.md).
+                // It shows the app it carries (`virtues://`, served by
+                // `serve_ui` from the baked build or an OTA overlay) and uses
+                // the box for data only, exactly as the phone does. Unpaired, it
+                // opens Setup; paired, the app, whatever the box is doing: an
+                // unreachable box is the app's own "Can't reach your server"
+                // banner, and a box that refuses this Mac sends `/pair` on to
+                // `/reconnect`. No probe before the window, so a launch never
+                // waits on the network.
+                if is_paired() {
+                    own_copy("")
                 } else {
-                    WebviewUrl::App("connect.html".into())
+                    own_copy("setup")
                 }
+            } else if !is_paired() {
+                // Windows and Linux bake no UI yet: the connect page, then the
+                // box's own copy of the app through the loopback.
+                WebviewUrl::App("connect.html".into())
             } else {
                 match probe_box_session_blocking(1) {
                     Some(true) => WebviewUrl::External(
@@ -1717,26 +1723,34 @@ fn main() {
                             .parse()
                             .unwrap(),
                     ),
-                    // THE MAC RECOVERS IN ITS OWN COPY (2026-09-28): refused
-                    // or unreachable, the window opens `/reconnect` from the
-                    // copy it bakes (tauri.macos.conf.json), which diagnoses
-                    // both itself and can put a moved server back on Wi-Fi
-                    // over Bluetooth (src/lib/components/recovery/). Windows
-                    // and Linux bake nothing yet and keep the connect page.
-                    Some(false) if cfg!(target_os = "macos") => own_copy("reconnect"),
-                    None if cfg!(target_os = "macos") => own_copy("reconnect"),
                     Some(false) => WebviewUrl::App("connect.html#reset".into()),
                     None => WebviewUrl::App("connect.html#unreachable".into()),
                 }
             };
 
-            // Tell the airlock (connect.html) which loopback this instance
-            // serves. Its fallback is the default :7117, so this only matters
-            // for dev profiles — but injecting unconditionally keeps one path.
-            let box_url_js = format!(
-                "window.__VIRTUES_BOX_URL__ = 'http://localhost:{}';",
-                tauri_plugin_reach::loopback_port()
-            );
+            // What the page needs to know about its shell.
+            //
+            // The Mac gets what the phone gets (lib.rs): the loopback as the
+            // BACKEND origin, so `/api`, `/auth`, `/ws` go to the box while the
+            // page itself stays the app's own copy (src/lib/config/backend.ts),
+            // and whether it is paired (Setup's `prePair`). It no longer gets
+            // `__VIRTUES_BOX_URL__`: that told a baked page where the box's copy
+            // lived so it could hand over to it, and there is no handing over.
+            //
+            // Windows and Linux keep `__VIRTUES_BOX_URL__` for the connect page,
+            // whose fallback is the default :7117 (this matters for profiles).
+            let box_url_js = if cfg!(target_os = "macos") {
+                format!(
+                    "window.__VIRTUES_BACKEND_ORIGIN__ = 'http://127.0.0.1:{}'; window.__VIRTUES_PAIRED__ = {};",
+                    tauri_plugin_reach::loopback_port(),
+                    is_paired()
+                )
+            } else {
+                format!(
+                    "window.__VIRTUES_BOX_URL__ = 'http://localhost:{}';",
+                    tauri_plugin_reach::loopback_port()
+                )
+            };
 
             let window = WebviewWindowBuilder::new(app, "main", url)
                 .title("Virtues")

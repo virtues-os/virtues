@@ -2,12 +2,14 @@
  * Backend origin for API + WebSocket calls.
  *
  * Two deployment shapes share this frontend:
- *  - **Desktop (box-served):** the box serves the app, so `/api` and `/ws` are
- *    same-origin and `backendOrigin` stays empty — nothing changes.
- *  - **Mobile (bundled SPA):** the app is bundled inside the Tauri binary at its
- *    own `tauri://` origin and reaches the box over the in-process iroh loopback.
- *    The mobile shell injects `window.__VIRTUES_BACKEND_ORIGIN__ =
- *    'http://127.0.0.1:7117'`, and we route `/api` + `/ws` there.
+ *  - **Box-served** (a browser on the LAN, the box's panel, and the Windows and
+ *    Linux apps): the box serves the app, so `/api` and `/ws` are same-origin
+ *    and `backendOrigin` stays empty — nothing changes.
+ *  - **The app's own copy** (the phone, and the Mac since 2026-09-29): the app
+ *    carries the SPA at its own `virtues://` origin and reaches the box over
+ *    the in-process iroh loopback. The shell injects
+ *    `window.__VIRTUES_BACKEND_ORIGIN__ = 'http://127.0.0.1:7117'`, and we
+ *    route `/api` + `/ws` there.
  *
  * A single global fetch interceptor (installFetchProxy) rewrites the app's
  * `/api` calls, so the ~110 existing `fetch('/api/...')` sites need no edits.
@@ -68,7 +70,10 @@ export function installFetchProxy(): void {
   // for any extension-less path — so the box-upgrade watcher never saw the box
   // go down and reported every successful phone-initiated upgrade as a
   // ten-minute failure, and the Software page's Box row rendered "—" on iOS.
-  const BACKEND_PREFIXES = ['/api', '/auth', '/webhook', '/health'];
+  // `/face` since 2026-09-29: an applet face's own files and query bridge are
+  // the box's, and a Mac or phone running its own copy would otherwise answer
+  // them from its own origin.
+  const BACKEND_PREFIXES = ['/api', '/auth', '/webhook', '/health', '/face'];
   const route = (p: string) => BACKEND_PREFIXES.some((pre) => p === pre || p.startsWith(pre + '/'));
 
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {

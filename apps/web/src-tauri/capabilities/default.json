@@ -1,8 +1,8 @@
 {
   "$schema": "https://schemas.tauri.app/capability/schema.json",
   "identifier": "default",
-  "description": "Default capabilities for the main window. The allow-* entries below are the app's OWN commands: the paired window loads the box-served SPA over loopback HTTP, which Tauri classifies as a REMOTE origin, and a remote origin is granted no app command unless its permission resolves. Without them Settings > This Mac died with 'Command get_collector_status not allowed by ACL' while the collector ran fine. build.rs APP_COMMANDS is the source of truth and fails the build if this list drifts.",
-  "platforms": ["macOS", "windows", "linux"],
+  "description": "Windows and Linux main window (the Mac has its own, capabilities/mac.json, with no remote grant, since 2026-09-29). The allow-* entries below are the app's OWN commands: the paired window loads the box-served SPA over loopback HTTP, which Tauri classifies as a REMOTE origin, and a remote origin is granted no app command unless its permission resolves. Without them Settings > This Mac died with 'Command get_collector_status not allowed by ACL' while the collector ran fine. build.rs APP_COMMANDS is the source of truth and fails the build if this list drifts.",
+  "platforms": ["windows", "linux"],
   "windows": ["*"],
   "permissions": [
     "allow-command-surface-version",
