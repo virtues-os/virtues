@@ -332,6 +332,66 @@ mod tests {
         );
     }
 
+    /// Every model step re-sends chat's tool definitions ahead of the person's
+    /// message. At ~41k characters they were most of the prompt and the model
+    /// visibly deliberated over them, so each group has a ceiling, in
+    /// characters of the JSON exactly as `ChatMode::Chat.tools()` serializes
+    /// it. Long how-to belongs behind a call (`setup_applet {"guide": true}`
+    /// returns applets/AGENTS.md), not in the definition. A new chat tool
+    /// must join a group here — unbudgeted tools fail the test.
+    #[test]
+    fn chat_tool_definitions_stay_inside_their_budgets() {
+        // (group, tools, ceiling). `None` = not budgeted this pass (sql_query
+        // is the most-used tool and accuracy-critical), still counted in the
+        // total.
+        const GROUPS: &[(&str, &[&str], Option<usize>)] = &[
+            (
+                "applets",
+                &["setup_applet", "edit_applet", "list_applets", "run_applet", "get_applet", "delete_applet"],
+                Some(3_000),
+            ),
+            ("analysis", &["code_interpreter", "think", "read_asset", "generate_image"], Some(2_400)),
+            ("pages", &["edit_page", "get_page_content", "create_page", "get_project_item"], Some(2_400)),
+            ("search", &["semantic_search", "web_search"], Some(2_000)),
+            ("self", &["update_memory", "propose_narrative_identity_edit"], Some(1_400)),
+            ("sql_write", &["sql_write"], Some(600)),
+            ("sql_query", &["sql_query"], None),
+        ];
+        // The group ceilings plus sql_query as it stands (9.6k, generated
+        // from the catalog), with a little room for the catalog to grow.
+        const TOTAL: usize = 21_500;
+
+        let tools = ChatMode::Chat.tools();
+        let size = |t: &serde_json::Value| serde_json::to_string(t).unwrap().chars().count();
+        let total: usize = tools.iter().map(size).sum();
+        let unbudgeted: Vec<&str> = tools
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str())
+            .filter(|name| !GROUPS.iter().any(|(_, names, _)| names.contains(name)))
+            .collect();
+        let mut report = String::new();
+        let mut over = Vec::new();
+        for (group, names, ceiling) in GROUPS {
+            let n: usize = tools
+                .iter()
+                .filter(|t| names.contains(&t["function"]["name"].as_str().unwrap()))
+                .map(size)
+                .sum();
+            report.push_str(&format!("{group}: {n}\n"));
+            for t in tools.iter().filter(|t| names.contains(&t["function"]["name"].as_str().unwrap())) {
+                report.push_str(&format!("  {}: {}\n", t["function"]["name"].as_str().unwrap(), size(t)));
+            }
+            if ceiling.is_some_and(|c| n > c) {
+                over.push(format!("{group} is {n} chars, budget {}", ceiling.unwrap()));
+            }
+        }
+        report.push_str(&format!("total: {total}\n"));
+        eprintln!("{report}");
+        assert!(unbudgeted.is_empty(), "chat tools with no budget group: {unbudgeted:?}");
+        assert!(over.is_empty(), "{over:?}\n{report}");
+        assert!(total <= TOTAL, "chat tools are {total} chars, budget {TOTAL}\n{report}");
+    }
+
     #[test]
     fn only_the_interview_refuses_a_pin_and_only_sudo_is_sudo() {
         for mode in all_modes() {
