@@ -34,6 +34,7 @@
 -->
 <script lang="ts">
 	import { onMount, tick } from "svelte";
+	import { useShowing, mayTakeFocus } from "../showing";
 	import { fade } from "svelte/transition";
 	import Icon from "$lib/components/Icon.svelte";
 	import { updateAssistantProfile, updateProfile } from "$lib/api/client";
@@ -81,6 +82,7 @@
 	 *  a grey block, which on a word this size reads as a broken field. */
 	async function focusEnd() {
 		await tick();
+		if (!mayTakeFocus(showing, field)) return;
 		field?.focus();
 		const end = field?.value.length ?? 0;
 		field?.setSelectionRange(end, end);
@@ -97,6 +99,7 @@
 	// The field is as wide as its text, so the name stays centered as it is
 	// typed. A hidden span in the same type measures it, again once the serif
 	// has loaded: a measure taken in the fallback face is narrower and clips.
+	const showing = useShowing();
 	let fontsReady = $state(false);
 	onMount(() => {
 		void document.fonts?.ready.then(() => (fontsReady = true));

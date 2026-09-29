@@ -2,8 +2,7 @@
 	Setup, in the app. The same steps as the full-screen stage, in a pane
 	beside the sidebar, for someone who is already in the app and comes back
 	to a step they skipped or want to change. Where `/setup` opens is decided
-	before any page loads (setup/inApp.ts, src/hooks.ts): the stage the first
-	time through, this tab after.
+	in setup/inApp.ts: the stage the first time through, this tab after.
 
 	WHAT IS HERE. The steps a person can do from inside the app: the letter
 	(to read again), Names, Subscription, Devices, Chapters and the interview.
@@ -28,8 +27,10 @@
 		intoLabel,
 		labelOf,
 		SERVER,
+		IN_APP,
 		type SetupStepId,
 	} from "$lib/components/setup/setup.svelte";
+	import { provideShowing } from "$lib/components/setup/showing";
 	import StepFrame from "$lib/components/setup/StepFrame.svelte";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
 	import StepNames from "$lib/components/setup/steps/StepNames.svelte";
@@ -38,10 +39,12 @@
 	import StepTimeline from "$lib/components/setup/steps/StepTimeline.svelte";
 	import StepInterview from "$lib/components/setup/steps/StepInterview.svelte";
 
-	let { tab }: { tab: Tab; active?: boolean } = $props();
+	let { tab, active = true }: { tab: Tab; active?: boolean } = $props();
 
-	/** The steps this tab offers, in Setup's order. */
-	const HERE: SetupStepId[] = ["letter", "names", "subscription", "connections", "timeline", "interview"];
+	const HERE = IN_APP;
+	// The steps ask this before taking focus, answering window keys, or
+	// polling: a tab that isn't showing is still mounted (setup/showing.ts).
+	provideShowing(() => active);
 
 	const param = $derived(tab.route.split("/")[2] ?? null);
 	const step = $derived<SetupStepId | null>(
@@ -54,27 +57,23 @@
 	});
 
 	const steps = $derived(setup.steps.filter((s) => HERE.includes(s.id)));
-	/** Coming back is not the first time through: any step opens once the
-	 *  required ones before it are done. (The stage is strict, because each
-	 *  step there assumes the last; here the person is choosing one.) */
-	function open(id: SetupStepId): boolean {
-		const all = setup.steps;
-		const at = all.findIndex((s) => s.id === id);
-		return all.slice(0, at).every((s) => s.optional || s.status === "done");
-	}
+	const open = (id: SetupStepId) => setup.opensInApp(id);
 	/** The first step here still to do. */
-	const next = $derived(steps.find((s) => s.status !== "done" && s.id !== "letter")?.id ?? null);
+	const next = $derived(setup.resumeInApp);
 
 	function go(id: SetupStepId | null) {
 		windowShellStore.openSetup(id ? `/setup/${id}` : "/setup");
 	}
 
-	/** On to the next step here still to do, or back to the list. */
+	/** On to the next step here still to do, or back to the list. A save
+	 *  that lands after the person has gone to another tab moves this tab
+	 *  along without pulling them back to it. */
 	async function advance(from: SetupStepId) {
 		await setup.refresh();
 		const i = HERE.indexOf(from);
-		const after = steps.find((s) => HERE.indexOf(s.id) > i && s.status !== "done");
-		go(after?.id ?? null);
+		const after = steps.find((s) => HERE.indexOf(s.id) > i && s.status !== "done")?.id ?? null;
+		if (active) go(after);
+		else windowShellStore.updateTab(tab.id, { route: after ? `/setup/${after}` : "/setup" });
 	}
 
 	async function skip(id: SetupStepId) {
@@ -120,7 +119,10 @@
 	{:else if step === "letter"}
 		<div class="letter">
 			<article class="paper">
-				<FoundersLetter beginLabel={next ? intoLabel(next) : "Back to Setup"} onbegin={() => go(next)} />
+				<FoundersLetter
+					beginLabel={next ? intoLabel(next) : "Back to Setup"}
+					onbegin={() => (setup.passIntro(2), go(next))}
+				/>
 			</article>
 		</div>
 	{:else if step === "names"}
@@ -155,7 +157,7 @@
 				{#if next}
 					<button type="button" class="setup-go" onclick={() => go(next)}>{intoLabel(next)}</button>
 				{/if}
-				<button type="button" class="setup-past" onclick={() => goto("/setup/welcome")}>Play the opening again</button>
+				<button type="button" class="setup-past" onclick={() => goto("/setup/welcome")}>Play the opening</button>
 			{/snippet}
 		</StepFrame>
 	{/if}
