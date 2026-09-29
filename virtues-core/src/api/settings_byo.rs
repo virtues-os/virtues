@@ -225,7 +225,7 @@ pub async fn save_handler(
      * alone made getting-started's `connect_ai` read done, the room said
      * "your assistant can answer now", the composer unlocked, and every turn
      * after that failed with nothing on the surface able to say why. The
-     * room's own conduct rule is "say what the box sees"; what the box saw
+     * room's own conduct rule is "say what the server sees"; what the server saw
      * was wrong.
      *
      * `validate_endpoint` reasons that a wrong path "fails loudly on first

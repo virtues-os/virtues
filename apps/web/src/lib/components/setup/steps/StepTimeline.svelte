@@ -17,7 +17,7 @@
 	     the line draws itself, birth to now
 	  b  "Where did your life turn?"  an example's chapters settle onto it,
 	     a tick at each turn
-	  c  "Now write yours"  the example's later chapters fold into one blank
+	  c  "Now draw yours"  the example's later chapters fold into one blank
 	     stretch; what is left is exactly their starting line: Childhood, to
 	     13, then the chapter that came next, unnamed
 
@@ -39,6 +39,7 @@
 	replace once the chapters have pages of their own, and says so.
 -->
 <script lang="ts">
+	import { useShowing, mayTakeFocus, isOurs } from '../showing';
 	import { onMount, tick } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import {
@@ -53,6 +54,8 @@
 	import { M, rise, sink } from '../motion';
 	import { readNextChapter, writeNextChapter } from '../nextChapter';
 	import { setup } from '../setup.svelte';
+	import { SAMPLE, SAMPLE_SPAN, SEED_AGE } from '../chapterExample';
+	import ChapterExample from '../ChapterExample.svelte';
 
 	// `onskip` sets the step aside (Setup records it); without one, skipping
 	// just moves on.
@@ -60,7 +63,6 @@
 
 	const MIN = 2;
 	const MAX = 10;
-	const SEED_AGE = 13;
 	const INTRO_KEY = 'virtues-timeline-intro';
 
 	type Beat = 'a' | 'b' | 'c' | 'e';
@@ -72,20 +74,7 @@
 	let reduced = $state(false);
 	const touch = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
 
-	// ------------------------------------------------------------------
-	// The example (beats a-c). Ages, 0 = birth. Fictional, and personal in
-	// the way theirs will be: a school, a place, a person, a home. The last
-	// one is named, never "Now", which is the line's end, not a chapter.
-	// ------------------------------------------------------------------
-
-	const SAMPLE_SPAN = 38;
-	const SAMPLE: { title: string; from: number; to: number }[] = [
-		{ title: 'Childhood', from: 0, to: SEED_AGE },
-		{ title: 'The band years', from: SEED_AGE, to: 19 },
-		{ title: 'Chicago', from: 19, to: 26 },
-		{ title: 'Married', from: 26, to: 33 },
-		{ title: 'The farm', from: 33, to: SAMPLE_SPAN },
-	];
+	// The example (beats a-c, and "See an example"): ./chapterExample.ts.
 
 	let beat = $state<Beat | null>(null);
 	let lineDrawn = $state(false);
@@ -146,7 +135,41 @@
 		else if (beat === 'c') enter('e');
 	}
 
+	/** A tap anywhere during the intro moves it along (a click, so a scroll
+	 *  that starts on the page doesn't), as a click on the
+	 *  example does: on a phone the intro held the editor back about eight
+	 *  seconds with nothing for a thumb to do but find "Skip intro". */
+	function onIntroPointer(e: MouseEvent) {
+		// A click away from the example closes it.
+		if (exampleOpen && e.target instanceof Node && !exampleEl?.contains(e.target)) exampleOpen = false;
+		if (!beat || beat === 'e' || !isOurs(showing, e, rootEl)) return;
+		if (e.target instanceof Element && e.target.closest('button, input, select, textarea, a')) return;
+		advance();
+	}
+
 	$effect(() => () => clearTimers());
+
+	/** "See an example": the intro's example life, small, beside their own
+	 *  line, for whoever is stuck after the intro has played. A popover, not
+	 *  a modal: the point is to compare, so their line stays in view. */
+	let exampleOpen = $state(false);
+	let exampleEl = $state<HTMLElement | null>(null);
+	function toggleExample() {
+		exampleOpen = !exampleOpen;
+	}
+	/** The intro again, from the top; their chapters stay as they are. */
+	function replayIntro() {
+		exampleOpen = false;
+		editorShown = false;
+		folded = false;
+		shownBands = 0;
+		lineDrawn = false;
+		enter('a');
+	}
+
+	/** In the app, a hidden tab or the other pane (setup/showing.ts). */
+	const showing = useShowing();
+	let rootEl = $state<HTMLElement | null>(null);
 
 	// ------------------------------------------------------------------
 	// Geometry
@@ -335,8 +358,8 @@
 		const heir = bands[i === 0 ? 1 : i - 1];
 		const gone = bands[i];
 		const said = gone.title.trim()
-			? `Removed ${titleOf(gone)}. Its years went to ${titleOf(heir)}.`
-			: `Removed a chapter. Its years went to ${titleOf(heir)}.`;
+			? `You removed ${titleOf(gone)}. Its years went to ${titleOf(heir)}.`
+			: `You removed a chapter. Its years went to ${titleOf(heir)}.`;
 		keep(said, gone.key);
 		bands.splice(i, 1);
 		ages.splice(i === 0 ? 0 : i - 1, 1);
@@ -349,7 +372,7 @@
 	function join(k: number) {
 		const left = bands[k];
 		const right = bands[k + 1];
-		keep(`Joined ${titleOf(right)} into ${titleOf(left)}.`, right.key);
+		keep(`You joined ${titleOf(right)} into ${titleOf(left)}.`, right.key);
 		if (!left.title.trim()) left.title = right.title;
 		bands.splice(k + 1, 1);
 		ages.splice(k, 1);
@@ -506,12 +529,8 @@
 	}
 	let birthYearEl = $state<HTMLInputElement | null>(null);
 	function focusFirst() {
-		if (birthYear === null) {
-			birthYearEl?.focus({ preventScroll: true });
-			return;
-		}
-		const empty = bands.find((b) => !b.title.trim());
-		if (empty) nameEls.get(empty.key)?.focus({ preventScroll: true });
+		const target = birthYear === null ? birthYearEl : nameEls.get(bands.find((b) => !b.title.trim())?.key ?? -1);
+		if (mayTakeFocus(showing, target)) target?.focus({ preventScroll: true });
 	}
 
 	/** Anything that needs the year, pressed before there is one, points at
@@ -564,7 +583,16 @@
 		});
 	});
 
-	const unnamed = $derived(bands.filter((b) => !b.title.trim()).length);
+	/** The last chapter, empty, after every other is named: what Enter on the
+	 *  last name adds, so a person who pressed Enter to finish left one
+	 *  behind. It doesn't hold up saving, and saving drops it (its years go
+	 *  back to the chapter before). */
+	const dangling = $derived(
+		bands.length > MIN &&
+			!bands[bands.length - 1].title.trim() &&
+			bands.slice(0, -1).every((b) => b.title.trim()),
+	);
+	const unnamed = $derived(bands.filter((b) => !b.title.trim()).length - (dangling ? 1 : 0));
 	const canSave = $derived(birthKnown && unnamed === 0 && bands.length >= MIN && fits);
 
 	/** A passing word from the editor: a refused split, a limit. */
@@ -685,6 +713,10 @@
 				await updateProfile({ birth_date: birthDate });
 				storedBirth = birthDate;
 			}
+			if (dangling) {
+				bands.pop();
+				ages.pop();
+			}
 			const last = bands.length - 1;
 			const payload: LifeChapterInput[] = bands.map((b, i) => ({
 				title: b.title.trim(),
@@ -725,6 +757,11 @@
 		birthKnown ? `${yearOf(k)} · ${full ? 'age ' : ''}${shown[k]}` : `age ${shown[k]}`;
 
 	function onWindowKey(e: KeyboardEvent) {
+		if (!isOurs(showing, e, rootEl)) return;
+		if (exampleOpen && e.key === 'Escape') {
+			exampleOpen = false;
+			return;
+		}
 		if (beat && beat !== 'e' && e.key === 'Escape') {
 			enter('e');
 			return;
@@ -741,8 +778,8 @@
 	const heads: Record<Beat, { h: string; s: string }> = {
 		a: { h: 'If your life were a book', s: 'What would its chapters be?' },
 		b: { h: 'Where did your life turn?', s: 'A move, a school, a person, a loss. Each turn begins a chapter.' },
-		c: { h: 'Now write yours', s: '' },
-		e: { h: 'Now write yours', s: '' },
+		c: { h: 'Now draw yours', s: '' },
+		e: { h: 'Now draw yours', s: '' },
 	};
 	/** Two chapters named: the instruction is followed, and the heading
 	 *  becomes the thing made rather than the ask. */
@@ -757,9 +794,9 @@
 	const sub = $derived(beat === 'e' ? instruction : head.s);
 </script>
 
-<svelte:window onkeydown={onWindowKey} />
+<svelte:window onkeydown={onWindowKey} onclick={onIntroPointer} />
 
-<section class="timeline-step" class:editing={beat === 'e'} class:list={listMode}>
+<section class="timeline-step" bind:this={rootEl} class:editing={beat === 'e'} class:list={listMode}>
 	<header class="head">
 		<div class="slot headline-slot" aria-live="polite">
 			{#key head.h}
@@ -770,6 +807,31 @@
 			{#key sub}
 				<p class="sub" in:rise={{ delay: M.quick + 80, y: 4 }} out:sink>{sub}</p>
 			{/key}
+		</div>
+		<div class="example-anchor" bind:this={exampleEl}>
+			{#if editorShown}
+				<button
+					type="button"
+					class="example-link"
+					aria-expanded={exampleOpen}
+					aria-controls="chapter-example"
+					onclick={toggleExample}
+					in:fade={{ duration: reduced ? 0 : M.base }}>See an example</button
+				>
+			{/if}
+			{#if exampleOpen}
+				<div
+					id="chapter-example"
+					class="example-pop"
+					role="dialog"
+					aria-label="An example"
+					in:rise={{ duration: reduced ? 0 : M.quick, y: 4 }}
+				>
+					<ChapterExample list={listMode} />
+					<p class="example-note">One life in five chapters, by age. The names are theirs, and the years are rough.</p>
+					<button type="button" class="link example-replay" onclick={replayIntro}>Play the intro again</button>
+				</div>
+			{/if}
 		</div>
 	</header>
 
@@ -1123,24 +1185,30 @@
 		</div>
 	{/if}
 
-	{#if editorShown && birthKnown}
-		<!-- The one line that looks forward -->
-		<label class="next" in:rise={{ delay: M.base }}>
-			<span>And the next chapter?</span>
+	{#if editorShown && birthKnown && bands.length >= MIN && bands.every((b) => b.title.trim())}
+		<!-- The one line that looks forward. Not until the drawn chapters are
+		     named: beside an empty one it read as the place to name it. -->
+		<!-- A CHAPTER NOT YET LIVED, drawn as one: the same tint as theirs,
+		     dashed, under the line. As a label
+		     and a field inline under the footer it read as a form question
+		     tacked on; this reads as the next page of the book. -->
+		<label class="ahead" in:rise={{ delay: M.base }}>
+			<span class="ahead-eyebrow">The next chapter</span>
 			<input
 				type="text"
 				maxlength="120"
-				placeholder="Optional"
+				placeholder="What do you hope it is?"
 				bind:value={nextChapter}
 				onkeydown={(e) => e.key === 'Enter' && canSave && save()}
 			/>
+			<span class="ahead-note">Optional</span>
 		</label>
 	{/if}
 
 	<footer class="foot">
 		{#if beat && beat !== 'e'}
 			{#if reduced}
-				<button type="button" class="primary" onclick={() => enter('e')}>Write yours</button>
+				<button type="button" class="primary" onclick={() => enter('e')}>Draw yours</button>
 			{:else}
 				<button type="button" class="quiet" onclick={() => enter('e')}>Skip intro</button>
 			{/if}
@@ -1472,8 +1540,7 @@
 			width var(--m-quick) ease;
 	}
 	.label input::placeholder,
-	.row-name::placeholder,
-	.next input::placeholder {
+	.row-name::placeholder {
 		color: var(--color-foreground-subtle, var(--color-foreground-muted));
 	}
 	.label input:hover {
@@ -1785,39 +1852,109 @@
 	}
 
 	/* ---------- the next chapter ---------- */
-	.next {
+	/* The next chapter: an unlived band, dashed, under the line's end. */
+	.ahead {
 		display: flex;
-		align-items: baseline;
-		justify-content: center;
-		gap: 12px;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 4px;
+		width: min(100%, 22rem);
 		margin: 24px auto 0;
-		font-family: var(--font-sans);
-		font-size: 13px;
-		color: var(--color-foreground-muted);
+		padding: 12px 16px;
+		border: 1px dashed color-mix(in srgb, var(--color-primary) 45%, transparent);
+		border-radius: 6px;
+		background: color-mix(in srgb, var(--color-primary) 4%, transparent);
+		cursor: text;
+		transition: border-color var(--m-quick) ease;
 	}
-	.next input {
-		width: min(16em, 50vw);
-		padding: 0 0 4px;
+	.ahead:focus-within {
+		border-color: var(--color-primary);
+		border-style: solid;
+	}
+	.ahead-eyebrow,
+	.ahead-note {
+		font-family: var(--font-sans);
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+	}
+	.ahead input {
+		width: 100%;
+		padding: 0;
 		border: 0;
-		border-bottom: 1px solid var(--color-border);
-		border-radius: 0;
 		background: transparent;
 		font-family: var(--font-serif-ui, var(--font-serif));
-		font-size: 17px;
+		font-size: 18px;
 		color: var(--color-foreground);
 		outline: none;
 	}
-	.next input:focus {
-		border-bottom-color: var(--color-primary);
+	.ahead input::placeholder {
+		color: var(--color-foreground-subtle, var(--color-foreground-muted));
 	}
-	.list .next {
-		flex-direction: column;
-		align-items: center;
-		gap: 4px;
-	}
-	.list .next input {
+	.list .ahead {
 		width: 100%;
-		text-align: center;
+	}
+
+	/* "See an example": a quiet link under the instruction, and the example
+	   in a card below it, over the stage rather than pushing it down. */
+	.example-anchor {
+		position: relative;
+		display: flex;
+		justify-content: center;
+		min-height: 24px;
+		margin-top: 4px;
+	}
+	.example-link {
+		position: relative;
+		padding: 0;
+		border: 0;
+		background: none;
+		font-family: var(--font-sans);
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+		text-decoration: underline;
+		text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+		text-underline-offset: 3px;
+		cursor: pointer;
+	}
+	.example-link::after {
+		content: "";
+		position: absolute;
+		inset: -12px -4px;
+	}
+	.example-link:hover,
+	.example-link[aria-expanded="true"] {
+		color: var(--color-foreground);
+	}
+	.example-link:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 3px;
+	}
+	.example-pop {
+		position: absolute;
+		z-index: 5;
+		top: calc(100% + 8px);
+		left: 50%;
+		transform: translateX(-50%);
+		width: min(22rem, calc(100vw - 32px));
+		padding: 16px 20px;
+		border-radius: 12px;
+		background: var(--color-surface-overlay, var(--color-surface));
+		outline: 1px solid color-mix(in srgb, var(--color-foreground) 12%, transparent);
+		outline-offset: -1px;
+		text-align: left;
+	}
+	.example-note {
+		margin: 12px 0 0;
+		font-family: var(--font-sans);
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+	.example-pop .example-replay {
+		margin-top: 8px;
+		font-family: var(--font-sans);
+		font-size: 13px;
+		color: var(--color-foreground-muted);
 	}
 
 	/* ---------- footer ---------- */
@@ -1836,6 +1973,17 @@
 		gap: 16px;
 		flex-wrap: wrap;
 		width: 100%;
+	}
+	/* Quiet controls keep a 44-point hit area without taking the room. */
+	.quiet,
+	.link {
+		position: relative;
+	}
+	.quiet:not(.add-row)::after,
+	.link::after {
+		content: "";
+		position: absolute;
+		inset: -8px -4px;
 	}
 	.quiet {
 		padding: 6px 0;

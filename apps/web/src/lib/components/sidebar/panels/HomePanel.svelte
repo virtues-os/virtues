@@ -58,7 +58,6 @@
 	import { pagesStore } from '$lib/stores/pages.svelte';
 	import { pinsStore } from '$lib/stores/pins.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { pendingPrompt } from '$lib/stores/pendingPrompt.svelte';
 	import { sidebarZones } from '$lib/stores/sidebarZones.svelte';
 	import { search } from '$lib/stores/search.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
@@ -73,10 +72,23 @@
 	} from '$lib/api/client';
 	import { pinMenuItem, pinIconMenuItem, isPinned, togglePin } from '$lib/pins/pinAction';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
-	import { notifyArchived, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
+	import { notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { toast } from 'svelte-sonner';
-	import { accentCss, clothFor } from '$lib/sidebar/pin-colors';
-	import { isEmoji } from '$lib/utils/iconHelpers';
+	import { clothFor, projectColor } from '$lib/sidebar/pin-colors';
+	import { isEmoji, PROJECT_ICON } from '$lib/utils/iconHelpers';
+	import {
+		droppedRefUrl,
+		fileIntoProject,
+		isRefDrag,
+		newChatInProject,
+		newProject,
+		openProjects,
+		projectRowMenuItems,
+		projectMemberUrl,
+		startRefDrag,
+	} from '$lib/utils/projectActions';
+	import { dndManager, PROJECT_DROP_ATTR } from '$lib/stores/dndManager.svelte';
+	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import AtlasIcon from '../AtlasIcon.svelte';
 	import HoverCard from '../HoverCard.svelte';
@@ -114,7 +126,9 @@
 		const chats: RecentRow[] = chatSessions.sessions.map((session) => ({
 			kind: 'chat',
 			key: `chat:${session.conversation_id}`,
-			ts: stamp(session.last_updated),
+			// The last message, not the row's last touch: filing or renaming
+			// an old chat must not move it into Today.
+			ts: stamp(session.last_message_at || session.last_updated),
 			session,
 		}));
 		const pages: RecentRow[] = pagesStore.pages.map((page) => ({
@@ -148,6 +162,50 @@
 	/** Fold state, keyed so a future group costs one string. */
 	const zoneId = (id: string) => `chats.${id}`;
 	const folded = (id: string) => sidebarZones.isCollapsed(zoneId(id));
+
+	/* The fold's duration scales with the group's height, clamped. At one
+	   fixed duration a 20-row group moved four times as fast as a 5-row one
+	   and its first frames jumped 100px+, which reads as strobing, not motion.
+	   Head and body take the same value so chevron and fold start and stop
+	   together. */
+	const foldStyle = (rows: number) =>
+		`--fold-ms: ${Math.min(280, Math.max(180, 140 + rows * 8))}ms`;
+
+	/* Folding near the foot of a scrolled column shortens the content under the
+	   scroll position, and the browser clamps scrollTop down every frame to
+	   match. Everything above — including the head just clicked — slid down
+	   under the pointer while the group folded. The spacer takes up the lost
+	   height so the head stays where the click was, and gives it back as the
+	   user scrolls up, where giving it back cannot move anything on screen. */
+	let foldSpacer = $state(0);
+	let spacerEl: HTMLDivElement | undefined = $state();
+	const scroller = () => spacerEl?.closest<HTMLElement>('.panel-body') ?? null;
+
+	function toggleGroup(id: string, head: HTMLElement) {
+		const el = scroller();
+		const body = head.nextElementSibling as HTMLElement | null;
+		if (el && body && !folded(id)) {
+			const lost = body.offsetHeight;
+			const needed = el.scrollTop + el.clientHeight - (el.scrollHeight - foldSpacer - lost);
+			foldSpacer = Math.max(foldSpacer, needed);
+		}
+		sidebarZones.toggle(zoneId(id));
+	}
+
+	/** Shrink the spacer to what the current scroll position still stands on. */
+	function releaseSpacer() {
+		const el = scroller();
+		if (!el || foldSpacer === 0) return;
+		const needed = el.scrollTop + el.clientHeight - (el.scrollHeight - foldSpacer);
+		foldSpacer = Math.max(0, Math.min(foldSpacer, needed));
+	}
+
+	$effect(() => {
+		const el = scroller();
+		if (!el) return;
+		el.addEventListener('scroll', releaseSpacer, { passive: true });
+		return () => el.removeEventListener('scroll', releaseSpacer);
+	});
 
 	const activeRoute = $derived.by(() => {
 		const pane = windowShellStore.activePane;
@@ -211,11 +269,7 @@
 		windowShellStore.openTabFromRoute('/applets', { label: 'Applets', focusExisting: true });
 	}
 
-	function openProjects() {
-		windowShellStore.openTabFromRoute('/projects', { label: 'Projects', focusExisting: true });
-	}
-
-	// ── opening rows ───────────────────────────────────────────────────────
+// ── opening rows ───────────────────────────────────────────────────────
 
 	function openChat(s: ChatSession) {
 		windowShellStore.openTabFromRoute(chatRoute(s), { label: titleOf(s), focusExisting: true });
@@ -246,28 +300,10 @@
 	 */
 	function newChatIn(p: ProjectSummary) {
 		closeCard();
-		pendingPrompt.setProject(p.id);
-		windowShellStore.openTabFromRoute('/', { label: 'New chat' });
+		newChatInProject(p);
 	}
 
-	async function newProject() {
-		const name = await promptText({
-			title: 'New project',
-			placeholder: 'Name your project',
-			confirmLabel: 'Create',
-		});
-		if (!name?.trim()) return;
-		try {
-			const project = await projectStore.create(name.trim());
-			windowShellStore.openTabFromRoute(`/project/${project.id}`, {
-				label: project.name,
-			});
-		} catch (e) {
-			console.error('[HomePanel] Failed to create project:', e);
-		}
-	}
-
-	// ── the verbs, per kind ────────────────────────────────────────────────
+// ── the verbs, per kind ────────────────────────────────────────────────
 
 	/** Every open tab on the route takes the new name, in both panes. */
 	function relabelTabs(route: string, label: string) {
@@ -352,49 +388,6 @@
 		}
 	}
 
-	async function renameProject(p: ProjectSummary) {
-		const next = await promptText({
-			title: 'Rename project',
-			initialValue: p.name,
-			confirmLabel: 'Rename',
-		});
-		const name = next?.trim();
-		if (!name || name === p.name) return;
-		try {
-			await projectStore.update(p.id, { name });
-			relabelTabs(projectRoute(p), name);
-		} catch (e) {
-			console.error('[HomePanel] rename failed:', e);
-		}
-	}
-
-	async function archiveProject(p: ProjectSummary) {
-		closeCard();
-		try {
-			await projectStore.archive(p.id);
-			notifyArchived(p.id, p.name);
-		} catch (e) {
-			console.error('[HomePanel] Failed to archive project:', e);
-			toast.error(`Your server couldn't archive "${p.name}"`, {
-				description: 'Nothing changed. Try again',
-			});
-		}
-	}
-
-	// Its chats and pages stay where they are; only the project is filed away.
-	async function removeProject(p: ProjectSummary) {
-		const reopen = routeIfOpen(projectRoute(p));
-		try {
-			windowShellStore.closeTabsByRoute(projectRoute(p));
-			await projectStore.remove(p.id);
-			notifyTrashed({ kind: 'project', id: p.id, name: p.name, reopen });
-		} catch (e) {
-			console.error('[HomePanel] Failed to delete project:', e);
-			toast.error(`Your server couldn't delete "${p.name}"`, {
-				description: "It's still here. Try again",
-			});
-		}
-	}
 
 	function chatMenu(s: ChatSession): ContextMenuItem[] {
 		const url = chatRoute(s);
@@ -451,38 +444,22 @@
 	/** The head's ⋯: the list's own doors, off the label so the label can fold. */
 	function projectsHeadMenu(): ContextMenuItem[] {
 		return [
-			{ id: 'all', label: 'All projects', icon: 'ri:folder-3-line', action: openProjects },
+			{ id: 'all', label: 'All projects', icon: PROJECT_ICON, action: openProjects },
 			{ id: 'new', label: 'New project', icon: 'ri:add-line', action: newProject },
 		];
 	}
 
+	/** The shared project menu; the hover card closes first, one floating thing at a time. */
 	function projectMenu(p: ProjectSummary): ContextMenuItem[] {
-		const url = projectRoute(p);
-		return [
-			{
-				id: 'open-beside',
-				label: 'Open beside',
-				icon: 'ri:layout-column-line',
-				action: () => {
-					windowShellStore.openRouteBeside(url, p.name);
-				},
-			},
-			{ id: 'new-chat', label: 'New chat here', icon: 'ri:chat-new-line', action: () => newChatIn(p) },
-			{ id: 'rename', label: 'Rename', icon: 'ri:edit-line', action: () => renameProject(p) },
-			// No "Add to project" here: you can't put a project in a project.
-			pinMenuItem({ url, label: p.name, icon: p.icon }),
-			// Closing a project is reversible (the Archived fold on Projects), so
-			// no confirm: the row leaving is the feedback.
-			{ id: 'archive', label: 'Archive', icon: 'ri:archive-line', action: () => archiveProject(p) },
-			{
-				id: 'delete',
-				label: 'Delete',
-				icon: 'ri:delete-bin-line',
-				variant: 'destructive',
-				dividerBefore: true,
-				action: () => removeProject(p),
-			},
-		];
+		return projectRowMenuItems(p).map((item) => ({
+			...item,
+			action: item.action
+				? () => {
+						closeCard();
+						return item.action?.();
+					}
+				: undefined,
+		}));
 	}
 
 	function pinMenu(pin: Pin, at: { x: number; y: number }): ContextMenuItem[] {
@@ -554,6 +531,10 @@
 	const CLOSE_AFTER_MS = 180;
 
 	let card = $state<{ project: ProjectSummary; anchor: HTMLElement } | null>(null);
+
+	// The project row a dragged sidebar row is over. A dragged TAB is tracked
+	// by dndManager instead (it is not an HTML drag); either lights the row.
+	let rowDropTarget = $state<string | null>(null);
 	let openTimer: ReturnType<typeof setTimeout> | null = null;
 	let closeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -601,9 +582,9 @@
 
 	function cardMeta(p: ProjectSummary): string {
 		const parts: string[] = [];
-		parts.push(p.chat_count === 1 ? '1 chat' : `${p.chat_count} chats`);
-		parts.push(p.item_count === 1 ? '1 item' : `${p.item_count} items`);
-		return parts.join(' · ');
+		if (p.chat_count > 0) parts.push(p.chat_count === 1 ? '1 chat' : `${p.chat_count} chats`);
+		if (p.item_count > 0) parts.push(p.item_count === 1 ? '1 item' : `${p.item_count} items`);
+		return parts.join(' · ') || 'Empty';
 	}
 </script>
 
@@ -659,14 +640,14 @@
      with the fold moved onto its chevron, which made it the one head that
      went somewhere when the others folded; the doors now sit behind the
      head's ⋯, and one click means one thing across the column. -->
-{#snippet groupHead(id: string, label: string, action?: import('svelte').Snippet)}
-	<div class="group-head" class:folded={folded(id)}>
+{#snippet groupHead(id: string, label: string, rows: number, action?: import('svelte').Snippet)}
+	<div class="group-head" class:folded={folded(id)} style={foldStyle(rows)}>
 		<button
 			type="button"
 			class="group-label group-toggle"
 			aria-expanded={!folded(id)}
 			title={folded(id) ? `Show ${label}` : `Hide ${label}`}
-			onclick={() => sidebarZones.toggle(zoneId(id))}
+			onclick={(e) => toggleGroup(id, e.currentTarget.parentElement as HTMLElement)}
 		>
 			<span>{label}</span>
 			<svg class="chev" width="9" height="6" viewBox="0 0 10 6" fill="none" aria-hidden="true">
@@ -699,12 +680,16 @@
 {#snippet chatRow(session: ChatSession)}
 	{@const url = chatRoute(session)}
 	{@const pinned = isPinned(url)}
+	{@const home = session.project_id ? projectStore.byId(session.project_id) : undefined}
+	{@const tint = home ? projectColor(home) : null}
 	<div
 		class="panel-row panel-row-has-actions"
 		class:active={activeRoute === url}
 		role="link"
 		tabindex="0"
-		title={titleOf(session)}
+		title={home ? `${titleOf(session)} · ${home.name}` : titleOf(session)}
+		draggable="true"
+		ondragstart={(e) => startRefDrag(e, url, titleOf(session))}
 		onclick={() => openChat(session)}
 		onkeydown={(e) => {
 			if (e.key === 'Enter' || e.key === ' ') {
@@ -714,7 +699,12 @@
 		}}
 		oncontextmenu={(e) => showMenu(e, chatMenu(session))}
 	>
-		<span class="row-glyph" aria-hidden="true"><AtlasIcon name="chats" size={15} bare /></span>
+		<!-- A chat in a project wears the project's color on its bubble, so the
+		     filed ones read at a glance in Today and Recent. The bubble stays a
+		     bubble: the row is still a chat, the color says whose. -->
+		<span class="row-glyph" aria-hidden="true" style={tint ? `color: ${tint}` : undefined}
+			><AtlasIcon name="chats" size={15} bare /></span
+		>
 		<span class="panel-row-text">{titleOf(session)}</span>
 		<span class="row-actions">
 			<button
@@ -749,6 +739,8 @@
 		role="link"
 		tabindex="0"
 		title={pageTitle(page)}
+		draggable="true"
+		ondragstart={(e) => startRefDrag(e, url, pageTitle(page))}
 		onclick={() => openPage(page)}
 		onkeydown={(e) => {
 			if (e.key === 'Enter' || e.key === ' ') {
@@ -791,8 +783,8 @@
 {/snippet}
 
 {#if pins.length > 0}
-	{@render groupHead('pinned', 'Pinned')}
-	<div class="sidebar-expandable" class:expanded={!folded('pinned')}>
+	{@render groupHead('pinned', 'Pinned', pins.length)}
+	<div class="sidebar-expandable fold" class:expanded={!folded('pinned')} style={foldStyle(pins.length)}>
 		<div class="sidebar-expandable-inner">
 			{#each pins as pin (pin.id)}
 				<div
@@ -801,6 +793,8 @@
 					role="link"
 					tabindex="0"
 					title={pinLabel(pin)}
+					draggable={projectMemberUrl(pin.url) ? 'true' : 'false'}
+					ondragstart={(e) => startRefDrag(e, pin.url, pinLabel(pin))}
 					onclick={() => openPin(pin)}
 					onkeydown={(e) => {
 						if (e.key === 'Enter' || e.key === ' ') {
@@ -850,8 +844,9 @@
 {/if}
 
 {#if projects.length > 0}
-	{@render groupHead('projects', 'Projects', projectsHeadActions)}
-	<div class="sidebar-expandable" class:expanded={!folded('projects')}>
+	{@const projectRows = visibleProjects.length + (projects.length > PROJECTS_SHOWN ? 1 : 0)}
+	{@render groupHead('projects', 'Projects', projectRows, projectsHeadActions)}
+	<div class="sidebar-expandable fold" class:expanded={!folded('projects')} style={foldStyle(projectRows)}>
 		<div class="sidebar-expandable-inner">
 			{#each visibleProjects as project (project.id)}
 				{@const url = projectRoute(project)}
@@ -860,9 +855,30 @@
 					class="panel-row panel-row-has-actions spine"
 					class:active={activeRoute === url}
 					class:carded={card?.project.id === project.id}
+					class:drop-target={dndManager.projectTarget === project.id || rowDropTarget === project.id}
+					{...{ [PROJECT_DROP_ATTR]: project.id }}
 					role="link"
 					tabindex="0"
 					title={project.name}
+					ondragover={(e) => {
+						if (!isRefDrag(e)) return;
+						e.preventDefault();
+						if (e.dataTransfer) e.dataTransfer.dropEffect = 'link';
+						rowDropTarget = project.id;
+					}}
+					ondragleave={(e) => {
+						const row = e.currentTarget as HTMLElement;
+						if (!e.relatedTarget || !row.contains(e.relatedTarget as Node)) {
+							if (rowDropTarget === project.id) rowDropTarget = null;
+						}
+					}}
+					ondrop={(e) => {
+						rowDropTarget = null;
+						const dropped = droppedRefUrl(e);
+						if (!dropped) return;
+						e.preventDefault();
+						void fileIntoProject(project, dropped);
+					}}
 					onclick={() => openProject(project)}
 					onkeydown={(e) => {
 						if (e.key === 'Enter' || e.key === ' ') {
@@ -875,15 +891,7 @@
 					oncontextmenu={(e) => showMenu(e, projectMenu(project))}
 				>
 					<span class="row-glyph" aria-hidden="true">
-						{#if project.icon && isEmoji(project.icon)}
-							<span class="row-emoji">{project.icon}</span>
-						{:else}
-							<Icon
-								icon={project.icon || 'ri:folder-3-line'}
-								width="15"
-								style={accentCss(project.accent_color) ? `color: ${accentCss(project.accent_color)}` : ''}
-							/>
-						{/if}
+						<ProjectGlyph {project} size={15} />
 					</span>
 					<span class="panel-row-text">{project.name}</span>
 					<span class="row-actions">
@@ -916,11 +924,29 @@
 			{/if}
 		</div>
 	</div>
+{:else if projectStore.loaded}
+	<!-- No projects: the head alone, with its + in view. No "No projects
+	     yet" line under it, and nothing to fold, so the label is the door
+	     to the projects page, the house shape for a door (the word is the
+	     list, the + is the new one). Without it nothing in the sidebar led
+	     to a first project. Once one exists this is the group above. -->
+	<div class="group-head">
+		<button type="button" class="group-label" title="All projects" onclick={openProjects}>
+			<span>Projects</span>
+		</button>
+		<span class="group-actions shown">
+			<button type="button" class="row-action" aria-label="New project" title="New project" onclick={newProject}>
+				<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+					<path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+				</svg>
+			</button>
+		</span>
+	</div>
 {/if}
 
 {#each recentGroups as group (group.id)}
-	{@render groupHead(group.id, group.label)}
-	<div class="sidebar-expandable" class:expanded={!folded(group.id)}>
+	{@render groupHead(group.id, group.label, group.items.length)}
+	<div class="sidebar-expandable fold" class:expanded={!folded(group.id)} style={foldStyle(group.items.length)}>
 		<div class="sidebar-expandable-inner">
 			{#each group.items as row (row.key)}
 				{#if row.kind === 'chat'}
@@ -933,21 +959,15 @@
 	</div>
 {/each}
 
+<div bind:this={spacerEl} class="fold-spacer" style="height: {foldSpacer}px" aria-hidden="true"></div>
+
 {#if card && cardProject}
 	{@const url = projectRoute(cardProject)}
 	{@const pinned = isPinned(url)}
 	<HoverCard anchor={card.anchor} onenter={holdCard} onleave={disarmCard}>
 		<div class="card-head">
 			<span class="card-glyph" aria-hidden="true">
-				{#if cardProject.icon && isEmoji(cardProject.icon)}
-					<span class="row-emoji">{cardProject.icon}</span>
-				{:else}
-					<Icon
-						icon={cardProject.icon || 'ri:folder-3-line'}
-						width="16"
-						style={accentCss(cardProject.accent_color) ? `color: ${accentCss(cardProject.accent_color)}` : ''}
-					/>
-				{/if}
+				<ProjectGlyph project={cardProject} size={16} />
 			</span>
 			<span class="card-name">{cardProject.name}</span>
 			<button
@@ -968,7 +988,7 @@
 		{/if}
 		<div class="card-rule" aria-hidden="true"></div>
 		<button type="button" class="card-row" onclick={() => openProject(cardProject)}>
-			<Icon icon="ri:folder-open-line" width="15" />
+			<Icon icon={PROJECT_ICON} width="15" />
 			<span>Open project</span>
 		</button>
 		<button type="button" class="card-row" onclick={() => newChatIn(cardProject)}>
@@ -1016,12 +1036,31 @@
 		outline-offset: -2px;
 	}
 
+	/* ONE MOTION for the fold: chevron and body share a duration (--fold-ms,
+	   set per group) and a curve, so they start and stop on the same frame.
+	   Closing runs at 0.85x — what leaves should get out of the way.
+	   The curve eases in slightly and decelerates without a long tail. The
+	   old --ease-premium over 150ms put 88% of the travel in the first 75ms,
+	   so the move strobed in a few big jumps and then crept for another 75ms. */
+	.group-head,
+	.fold {
+		--fold-open: var(--fold-ms, 200ms);
+		--fold-close: calc(var(--fold-ms, 200ms) * 0.85);
+		--fold-ease: cubic-bezier(0.3, 0.1, 0.2, 1);
+	}
+
 	.chev {
 		opacity: 0;
 		transform: rotate(0deg);
 		transition:
 			opacity 150ms ease,
-			transform 220ms var(--ease-premium);
+			transform var(--fold-open) var(--fold-ease);
+	}
+
+	.group-head.folded .chev {
+		transition:
+			opacity 150ms ease,
+			transform var(--fold-close) var(--fold-ease);
 	}
 
 	.group-head:hover .chev,
@@ -1044,12 +1083,51 @@
 	}
 
 	.group-head:hover .group-actions,
-	.group-actions:focus-within {
+	.group-actions:focus-within,
+	.group-actions.shown {
 		opacity: 1;
 	}
 
+	/* A fold, not a blind. The shared .sidebar-expandable wipes a clipping edge
+	   over rows that stand still, slicing text mid-glyph every frame. Here the
+	   rows are pinned to the bottom of the clip (flex-end overflows upward), so
+	   they travel with the edge and tuck away under their head while fading.
+	   A transition takes the rule of the state it is heading to: .expanded
+	   carries the opening timings, the base rule the closing ones. */
+	.fold {
+		transition: grid-template-rows var(--fold-close) var(--fold-ease);
+	}
+
+	.fold.expanded {
+		transition-duration: var(--fold-open);
+	}
+
+	.fold > :global(.sidebar-expandable-inner) {
+		justify-content: flex-end;
+		opacity: 0;
+		/* Out over the first 40%, so nothing is legible by the time it is cut. */
+		transition: opacity calc(var(--fold-close) * 0.4) ease-out;
+	}
+
+	.fold.expanded > :global(.sidebar-expandable-inner) {
+		opacity: 1;
+		/* In a beat late, once there is room for the rows to be read. */
+		transition: opacity calc(var(--fold-open) * 0.6) ease-in calc(var(--fold-open) * 0.15);
+	}
+
+	/* Rows are flex items in a box the fold squeezes: without this they shrank
+	   toward their text height mid-fold, so each row visibly compressed on top
+	   of the move. A fold should move rows, never resize them. */
+	.fold > :global(.sidebar-expandable-inner) > :global(*) {
+		flex-shrink: 0;
+	}
+
 	@media (prefers-reduced-motion: reduce) {
-		.chev {
+		.chev,
+		.group-head.folded .chev,
+		.fold,
+		.fold > :global(.sidebar-expandable-inner),
+		.fold.expanded > :global(.sidebar-expandable-inner) {
 			transition: none;
 		}
 	}
@@ -1090,6 +1168,15 @@
 
 	.panel-row.active {
 		background: var(--sidebar-active-bg);
+	}
+
+	/* A project row with something held over it: the row says it will take
+	   it, in the same ring the focus state draws, so a drop is never a
+	   guess about which row is under the pointer. */
+	.panel-row.drop-target {
+		background: var(--sidebar-active-bg);
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
 	}
 
 	.panel-row:focus-visible {

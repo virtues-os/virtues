@@ -8,10 +8,9 @@
 	here: the Subscription step, after pairing, passes itself over when the
 	account already pays.
 
-	WHY IT IS HERE, SAID ON THE SCREEN: the assistant can't answer anything
-	without AI, and the subscription is how it gets it. Leaving that out
-	("sign in, and your server links itself…") explained the plumbing and
-	not the point (2026-09-28).
+	WHY IT IS HERE is said once, on the Subscription step: the assistant
+	can't answer anything without AI. Saying it here too repeated it word
+	for word two steps apart, so this step only asks for the email.
 
 	"Use my own AI instead" is a real path: the server links nothing, and
 	the Subscription step takes their own model's address after pairing.
@@ -80,7 +79,7 @@
 		? `Enter the six-digit code we sent to ${email.trim()}.`
 		: phase === "done"
 			? `Your server will use the account for ${prePair.account?.email}.`
-			: "Your assistant can't answer anything without AI, and a Virtues subscription gives it the best models there are. Enter your email to sign in, or to create your account."}
+			: "Enter your email to sign in, or to create your account."}
 >
 	{#if phase === "email"}
 		<form class="one" onsubmit={(e) => (e.preventDefault(), send())} in:rise>

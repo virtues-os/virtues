@@ -4,6 +4,7 @@
 //! containing app events, browser history, and iMessages. This binary
 //! dispatches each kind to the appropriate transform.
 
+mod attachments;
 mod sessionize;
 mod transform;
 
@@ -13,7 +14,14 @@ use virtues::storage::lake::{self, Envelope};
 use virtues_helpers::{connect_from_env, output, read_input};
 
 const PROVIDER: &str = "mac";
-const STREAM_KEYS: [&str; 4] = ["app_events", "browser_history", "imessages", "bookmarks"];
+const STREAM_KEYS: [&str; 6] = [
+    "app_events",
+    "browser_history",
+    "imessages",
+    "bookmarks",
+    "imessage_attachments",
+    "imessage_deletions",
+];
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -58,13 +66,33 @@ async fn main() -> Result<()> {
     // One object per stream, not one per envelope: each key is independently
     // optional above, so `{"imessages": [...]}` on its own is a complete, valid,
     // replayable payload.
+    // Attachment bytes and source deletions ride their own posts, after the
+    // messages they refer to (see attachments.rs).
+    let attachment_recs: Vec<Value> = payload
+        .get("imessage_attachments")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let deletions: Vec<Value> = payload
+        .get("imessage_deletions")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
     let storage = lake::storage_from_env()?;
+    // Bytes FIRST, the microphone arm's order: the base64 leaves each record
+    // for a media object before the record is archived, so the lake never
+    // holds a second copy of the picture.
+    let (attachment_recs, attachments_dropped) =
+        attachments::externalize(&pool, &storage, &attachment_recs).await?;
     let residual = residual_envelope(payload);
     for (key, records) in [
         ("app_events", &app_events),
         ("browser_history", &browser),
         ("imessages", &imessages),
         ("bookmarks", &bookmarks),
+        ("imessage_attachments", &attachment_recs),
+        ("imessage_deletions", &deletions),
     ] {
         lake::archive(
             &pool,
@@ -90,6 +118,13 @@ async fn main() -> Result<()> {
     let imessage_written = transform::write_imessages(&pool, &imessages).await?;
     let (bm_written, bm_tombstoned) =
         transform::write_bookmarks(&pool, device_id, &bookmarks).await?;
+    let attachments_linked = attachments::link(&pool, &attachment_recs).await?;
+    let (messages_deleted, blobs_removed) = virtues::storage::message_media::purge_deleted_messages(
+        &pool,
+        &storage,
+        &attachments::deleted_guids(&deletions),
+    )
+    .await?;
 
     // A batch with zero messages because the Mac has none, and one with zero
     // because macOS is denying the collector `chat.db`, are identical on the
@@ -116,6 +151,16 @@ async fn main() -> Result<()> {
     if !bookmarks.is_empty() {
         summary.push_str(&format!(
             ", bookmarks: {bm_written} upserted / {bm_tombstoned} tombstoned"
+        ));
+    }
+    if !attachment_recs.is_empty() {
+        summary.push_str(&format!(
+            ", attachments: {attachments_linked} stored / {attachments_dropped} not kept"
+        ));
+    }
+    if !deletions.is_empty() {
+        summary.push_str(&format!(
+            ", deleted at source: {messages_deleted} messages / {blobs_removed} attachments removed"
         ));
     }
     let summary = if denied.is_empty() {

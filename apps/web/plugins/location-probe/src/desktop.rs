@@ -36,6 +36,19 @@ impl<R: Runtime> LocationProbe<R> {
     Ok(PushStatusResponse { status: "unavailable".into() })
   }
 
+  pub fn status(&self) -> crate::Result<LocationStatusResponse> {
+    Ok(LocationStatusResponse { status: "unavailable".into() })
+  }
+
+  pub fn request_location(&self) -> crate::Result<LocationStatusResponse> {
+    Ok(LocationStatusResponse { status: "unavailable".into() })
+  }
+
+  /// There is no per-app settings page to open on desktop.
+  pub fn open_settings(&self) -> crate::Result<OpenSettingsResponse> {
+    Ok(OpenSettingsResponse { opened: false })
+  }
+
   pub fn read_rows(&self, _payload: RowsRequest) -> crate::Result<RowsResponse> {
     Ok(RowsResponse { rows: vec![] })
   }

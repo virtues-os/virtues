@@ -68,13 +68,9 @@ Two surfaces. **Atlas is not involved** — it is a separate container built by
    `OAUTH_PROXY_EXCHANGE_SECRET` 48 chars; `VIRTUES_API_DATABASE_URL` present so
    migration 0007 runs at boot. **If you ever do edit that file, the container
    needs a recreate — `docker restart` will not re-read `--env-file`.**
-3. **Registry: ECR, not GHCR.** The container runs
-   `<account>.dkr.ecr.us-east-1.amazonaws.com/virtues-api:latest`.
-   `docker-build.yml` pushes to GHCR, which **nothing on that host pulls** —
-   merging to staging deploys nothing. The real path is
-   `make deploy-virtues-api` (builds linux/amd64, pushes ECR `:latest`) followed
-   by a container recreate so the new `:latest` is actually pulled.
-   *(Worth cleaning up later: CI builds an image no one consumes.)*
+3. **Deploy path.** virtues-api is built on the cloud server from a pushed
+   commit by `make deploy-virtues-api REF=...` (`tools/deploy-service.sh`);
+   merging to staging deploys nothing by itself.
 4. **virtues-api first, then Dragon.** New box + old proxy is still fully
    broken (Hosted Link lives in the proxy). New proxy + old box works on
    success and only 422s on cancel. Box ships by tag: force-push `edge`, then

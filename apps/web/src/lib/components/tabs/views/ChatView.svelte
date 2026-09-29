@@ -9,7 +9,6 @@
 	import Markdown from "$lib/components/Markdown.svelte";
 	import StoppedNotice from "$lib/components/StoppedNotice.svelte";
 	import Icon from "$lib/components/Icon.svelte";
-	import ContextIndicator from "$lib/components/ContextIndicator.svelte";
 
 	// ── the controller ─────────────────────────────────────────────────────
 	// This view is markup plus thin bindings; the state it renders lives in
@@ -30,11 +29,11 @@
 		introductionsRecorded,
 		eyebrowsFor,
 		railTurns,
+		splitTurn,
+		stopReason,
+		turnMovedPast,
 	} from "$lib/components/chat/state/transcript";
-	import {
-		AttachmentsController,
-		formatFileSize,
-	} from "$lib/components/chat/state/attachments.svelte";
+	import { AttachmentsController } from "$lib/components/chat/state/attachments.svelte";
 	import { ModelChoiceController } from "$lib/components/chat/state/modelChoice.svelte";
 	import { OpeningRevealController } from "$lib/components/chat/state/openingReveal.svelte";
 	import { ToolSideEffects } from "$lib/components/chat/state/toolSideEffects";
@@ -77,6 +76,7 @@
 	import type { Citation } from "$lib/types/Citation";
 	import UserMessage from "$lib/components/UserMessage.svelte";
 	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
+	import TurnFigures from "$lib/components/chat/TurnFigures.svelte";
 	import SubagentPanel from "$lib/components/SubagentPanel.svelte";
 	import { onMount, onDestroy, tick, untrack } from "svelte";
 	import { goto } from "$app/navigation";
@@ -84,6 +84,9 @@
 	import { cubicInOut } from "svelte/easing";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
+	import { projectStore } from "$lib/stores/project.svelte";
+	import ProjectChip from "$lib/components/ProjectChip.svelte";
+	import { openProject, projectChipMenuItems, projectMenuItems, targetForTab } from "$lib/utils/projectActions";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import { pendingPrompt } from "$lib/stores/pendingPrompt.svelte";
 	import {
@@ -114,8 +117,13 @@
 	import AppletProposalCard from '$lib/components/chat/AppletProposalCard.svelte';
 	import CompactionCheckpoint from "$lib/components/chat/CompactionCheckpoint.svelte";
 	import ContextViewPanel from "$lib/components/chat/ContextViewPanel.svelte";
+	import MessageFile from "$lib/components/chat/MessageFile.svelte";
+	import ComposerTray from "$lib/components/chat/ComposerTray.svelte";
 	import { ChatError } from "$lib/components/chat";
-	import type { AgentModeId } from "$lib/config/agentModes";
+	import { availableModes, type AgentModeId } from "$lib/config/agentModes";
+	import LocalModelCard from "$lib/components/chat/local/LocalModelCard.svelte";
+	import LocalStatsLine from "$lib/components/chat/local/LocalStatsLine.svelte";
+	import { localModel } from "$lib/stores/localModel.svelte";
 
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -172,11 +180,14 @@
 		lightbox = { src, alt, rect: el.getBoundingClientRect() };
 	}
 
-	let loadedMessages = $state<any[]>([]);
-
-	// Track tab route to reset state when switching conversations
+	// The route the tab-change effect last handled — a transition detector,
+	// not something the markup renders, so a plain variable.
 	// svelte-ignore state_referenced_locally
-	let previousTabRoute = $state<string>(tab.route);
+	let previousTabRoute: string = tab.route;
+	// The tab's history position at that route. "New chat" on a new chat
+	// navigates to the same route; only the history moves.
+	// svelte-ignore state_referenced_locally
+	let previousHistoryIndex: number = tab.historyIndex;
 
 	// AbortController for cancelling in-flight requests on tab switch
 	let tabSwitchAbortController: AbortController | null = null;
@@ -194,32 +205,75 @@
 	let selectedCitation = $state<Citation | null>(null);
 
 	// The Project (room) this chat lives in — at most one. Its id is sent with
-	// each message (drives the agent's active-space context + server-side
-	// binding). Read-only here now: the picker that used to set it from this
-	// view is gone, so the binding is seeded from the session row and changed
-	// where the filing happens — in the project.
-	let chatProjectId = $state<string | null>(null);
-	// Which conversation chatProjectId was seeded for. Seeding happens ONCE per
-	// conversation (when its session row is available, or once the session list
-	// has finished loading and confirms there's no row yet) so a later session
-	// refresh can never clobber a room the user just picked locally.
-	let seededProjectFor = $state<string | null>(null);
+	// each message: the agent's active-project context, and on a chat's first
+	// message the server files it there.
+	//
+	// Read live through `chatSessions.projectOf`. It used to be copied once
+	// per conversation, so filing an open chat from a menu or the project
+	// page left this view grounding answers in the project it had just left,
+	// or in none.
+	//
+	// An unsent chat has no row and nothing on the server to file, so it
+	// carries a draft instead (`projectStore.draftFor`): set by "Ask this
+	// project", "New chat here", dropping its tab on a project, or its own
+	// menu. The draft goes out with the first message, the server files the
+	// chat, and the draft is dropped once the filing comes back, so unfiling
+	// the chat later cannot be undone by a leftover.
+	const savedProjectId = $derived(chatSessions.projectOf(conversationId));
+	// A draft whose project was deleted before the first message is dropped,
+	// not sent: the server would file the chat into a project in the trash.
+	const draftProjectId = $derived.by(() => {
+		const id = projectStore.draftFor(conversationId);
+		return id && (!projectStore.loaded || projectStore.byId(id)) ? id : null;
+	});
+	const chatProjectId = $derived(savedProjectId ?? draftProjectId);
 
 	$effect(() => {
-		const id = conversationId;
-		if (seededProjectFor === id) return;
-		const session = chatSessions.sessions.find((s) => s.conversation_id === id);
-		if (session) {
-			chatProjectId = session.project_id ?? null;
-			seededProjectFor = id;
-		} else if (!chatSessions.isLoading) {
-			// Sessions are loaded and this chat has no row yet (brand-new, not yet
-			// persisted) — start unfiled; the create path binds it from the first
-			// message's projectId.
-			chatProjectId = null;
-			seededProjectFor = id;
+		if (draftProjectId && savedProjectId === draftProjectId) {
+			projectStore.setDraft(conversationId, null);
 		}
 	});
+
+	// A tab showing an unsent chat is fileable by its draft; the store needs to
+	// know which chat that is. "Unsent" is the route, not the session list: a
+	// new chat sits at `/` until its first message, while an old chat can be
+	// missing from the list and still be saved.
+	const unsent = $derived(!extractConversationId(tab.route) && !isGhost && !isGettingStartedChat(conversationId));
+	$effect(() => {
+		projectStore.noteUnsentChat(tab.id, unsent ? conversationId : null);
+	});
+	$effect(() => {
+		const tabId = tab.id;
+		return () => projectStore.noteUnsentChat(tabId, null);
+	});
+
+	// A temporary chat is never written to the box, so it cannot be filed;
+	// turning one on drops the draft rather than grounding a chat nobody keeps.
+	$effect(() => {
+		if (isGhost && draftProjectId) projectStore.setDraft(conversationId, null);
+	});
+
+	// The project, when there is one, is said at the top of the chat: its
+	// brief and items shape every answer here, and without this the only way
+	// to know was to go looking. It is a door back to the project, not a
+	// picker; filing happens from "Move to project".
+	const chatProject = $derived(chatProjectId ? projectStore.byId(chatProjectId) : undefined);
+
+	function openChatProject() {
+		if (chatProject) openProject(chatProject);
+	}
+
+	/** The project's own menu, from the chip: right-click here, a tap on the phone's bar. */
+	function showProjectChipMenu(e: MouseEvent) {
+		e.preventDefault();
+		const target = targetForTab(tab);
+		if (!chatProject || !target) return;
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		contextMenu.show({ x: rect.left, y: rect.bottom }, projectChipMenuItems(chatProject, target), {
+			anchor: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+			placement: "bottom-start",
+		});
+	}
 
 	// Open citation panel with selected citation
 	function openCitationPanel(citation: Citation) {
@@ -257,45 +311,21 @@
 	// state/toolSideEffects for why both seed before they act).
 	const tools = new ToolSideEffects();
 
-	/**
-	 * Did the turn go on after the tool call at `index` — another call, or
-	 * reply text? A failed call the model then recovered from is working-out
-	 * and belongs in the thinking block with the other calls; one the turn
-	 * ended on is what the person got instead of an answer, and stays in the
-	 * body. Measured on a live box: nine of nine sql_query failures in two
-	 * weeks were a guessed column followed by the right one, and every one
-	 * sat in the transcript in red, in full, beside a correct answer.
-	 */
-	function turnMovedPast(parts: any[], index: number): boolean {
-		return parts.some(
-			(p: any, i: number) =>
-				i > index &&
-				(p.type.startsWith("tool-") || (p.type === "text" && p.text?.trim())),
-		);
-	}
-
-	// Effect to handle create_page side effects (auto-open new pages)
-	// Only triggers for pages created during this session, not when reopening old chats
+	// The tool results that act outside the transcript: auto-open a page
+	// create_page made, and run the presence animation for an edit_page. Only
+	// for calls made during this session, not when reopening old chats — so
+	// nothing runs during the initial load (see state/toolSideEffects).
 	$effect(() => {
-		if (!chat?.messages) return;
-
-		// Don't auto-open during initial load - wait until loading is complete
-		if (isLoading) return;
-
+		if (!chat?.messages || isLoading) return;
 		for (const page of tools.collectNewPages(chat.messages)) {
 			openCreatedPage(page.pageId, page.title);
 		}
+		tools.animateNewEdits(chat.messages);
 	});
 
 	// (The interview's write_it_up auto-open lives in chatInstances.onData —
 	// the backend sends a transient data-narrative-document part, because tool
 	// parts land in the messages array mutably where no effect observes them.)
-
-	// Effect to drive the AI presence animation when a chat `edit_page` lands.
-	$effect(() => {
-		if (!chat?.messages || isLoading) return;
-		tools.animateNewEdits(chat.messages);
-	});
 
 	// Context usage state
 	interface ContextUsageState {
@@ -342,17 +372,37 @@
 		windowShellStore.openChatContext(conversationId, currentPane);
 	}
 
+	/**
+	 * Fetch a conversation's stored transcript and put it on screen. Every load
+	 * path goes through here — mount, a route change, and the re-reads below —
+	 * so they agree about the shape of a turn (see state/transcript). Returns
+	 * false when `signal` aborted it before anything was written. Throws on a
+	 * failed fetch: what a failure means is each caller's call.
+	 */
+	async function loadTranscript(id: string, signal?: AbortSignal): Promise<boolean> {
+		const data = await getChat<{
+			messages?: any[];
+			conversation?: { project_id?: string | null };
+		}>(id, signal);
+		if (signal?.aborted) return false;
+		// An older chat is not in the session list; its own detail says where
+		// it is filed. A box older than the field leaves it undefined.
+		if (data.conversation && data.conversation.project_id !== undefined) {
+			chatSessions.noteProject(id, data.conversation.project_id ?? null);
+		}
+		chat.messages = deduplicateMessages(data.messages || []).map(
+			toUiMessage,
+		) as unknown as typeof chat.messages;
+		return true;
+	}
+
 	/** Re-read the stored transcript. Used after a compaction, and after the
 	 *  getting-started room speaks (its lines are appended server-side, so
 	 *  the thread has to be re-read to show them). */
 	async function reloadMessages() {
 		if (!conversationId) return;
 		try {
-			const data = await getChat<{ messages?: any[] }>(conversationId);
-			loadedMessages = data.messages || [];
-			chat.messages = deduplicateMessages(loadedMessages).map(
-				toUiMessage,
-			) as unknown as typeof chat.messages;
+			await loadTranscript(conversationId);
 			// Re-reading drops the interview's opening, which is shown rather
 			// than stored; put it back where it belongs.
 			applyRoomInterviewOpening(chat, conversationId, gettingStarted.state);
@@ -501,13 +551,15 @@
 	// Chat instance - fetched from shared store to survive remounts
 	let chat = $state<Chat>(null!);
 	let currentChatConversationId = $state<string | null>(null);
+	/** This view is showing the getting-started room. */
+	const inRoom = $derived(isGettingStartedChat(currentChatConversationId));
 	// The interview's chrome (no thinking block, the resident companion)
 	// applies in the old standalone room and in the getting-started room
 	// while the interview is underway there.
 	// Setup and the interview are both rooms where the machine's workings are
 	// not the subject: no thinking block, no tool names.
 	const inInterview = $derived(
-		currentChatConversationId === INTERVIEW_CHAT_ID || isGettingStartedChat(currentChatConversationId),
+		currentChatConversationId === INTERVIEW_CHAT_ID || inRoom,
 	);
 
 	// Get or create chat instance for the current conversationId
@@ -532,7 +584,14 @@
 				getAgentMode: () => selectedAgentMode,
 				getChatMode: () => chatMode,
 				getTemporary: () => isGhost,
+				getThink: () => localThink,
 			});
+			// A local chat stays local: coming back to one restores the mode the
+			// store says it has, rather than the reset above.
+			if (chatInstances.isLocal(conversationId)) {
+				selectedAgentMode = 'local';
+				isGhost = true;
+			}
 			// The draft this conversation left behind, if the composer is empty.
 			if (!isGhost && !input) {
 				const draft = readDraft(draftId);
@@ -551,141 +610,121 @@
 		untrack(ensureChatInstance);
 	});
 
-	// Watch for tab.route changes to reset state when switching conversations
+	// A route change is an event, not something derived: the handler below
+	// resets and loads, and nothing it reads should re-run it. Only the route
+	// and the tab's position in its history.
 	$effect(() => {
-		const currentTabRoute = tab.route;
-		const currentTabConversationId = extractConversationId(currentTabRoute);
+		const route = tab.route;
+		const historyIndex = tab.historyIndex;
+		untrack(() => onRouteChange(route, historyIndex));
+	});
 
-		// If the tab's route changed, reset the chat state
-		if (currentTabRoute !== previousTabRoute) {
-			// IMPORTANT: Skip reset if we're just transitioning from 'new' to a real chat ID
-			// This happens after the first message is sent - we're not switching conversations,
-			// just updating the tab's route to reflect the persisted chat
-			const isSameConversation =
-				isNewChat(previousTabRoute) &&
-				currentTabConversationId === conversationId;
+	/** The tab navigated in place: switch this view to the route's conversation. */
+	function onRouteChange(route: string, historyIndex: number) {
+		// Navigating to a new chat from a new chat — "New chat" while a
+		// temporary chat is open, which never leaves /chat — is a fresh
+		// conversation even though the route string did not change.
+		const renavigatedToNew = route === previousTabRoute && isNewChat(route) && historyIndex !== previousHistoryIndex;
+		previousHistoryIndex = historyIndex;
+		if (route === previousTabRoute && !renavigatedToNew) return;
+		const routeConversationId = extractConversationId(route);
 
-			if (isSameConversation) {
-				// Just update the tracking variable, don't reset state
-				previousTabRoute = currentTabRoute;
-				return;
-			}
+		// Not a switch: the first message was sent and the tab's route moved
+		// from "new" to the persisted id of the same conversation. Keep it all.
+		if (isNewChat(previousTabRoute) && routeConversationId === conversationId) {
+			previousTabRoute = route;
+			return;
+		}
 
-			// Cancel any in-flight requests from previous tab
-			tabSwitchAbortController?.abort();
-			tabSwitchAbortController = new AbortController();
-			const signal = tabSwitchAbortController.signal;
+		// Cancel any in-flight load from the previous conversation.
+		tabSwitchAbortController?.abort();
+		tabSwitchAbortController = new AbortController();
+		const signal = tabSwitchAbortController.signal;
 
-			previousTabRoute = currentTabRoute;
+		previousTabRoute = route;
 
-			// Generate new conversationId for new chats, or use the extracted conversationId
-			const newConversationId =
-				currentTabConversationId || `chat_${generateHex16()}`;
-			conversationId = newConversationId;
+		// A new chat gets a fresh id; an existing one keeps the route's.
+		const newConversationId = routeConversationId || `chat_${generateHex16()}`;
+		conversationId = newConversationId;
 
-			// Reset chat state.
-			//
-			// EVERYTHING that belongs to ONE conversation resets here. The list
-			// was incomplete and each omission was its own bug, because
-			// navigation is in-place — `TabContent` keys on `tab.id`, so this
-			// component is NOT remounted and anything left behind silently
-			// becomes the next conversation's state:
-			//
-			//  - `isGhost` leaking meant a saved chat inherited "temporary" and
-			//    every turn in it went out with `temporary: true`, was never
-			//    stored, and was gone on reload — while the toggle that would
-			//    undo it is disabled on a non-empty chat. Silent data loss.
-			//  - `queuedMessages` leaking sent chat A's follow-up into chat B.
-			//  - `input` leaking overwrote B's saved draft with A's text, since
-			//    `draftId` is derived from the route and the debounced writer
-			//    fires after the switch.
-			//  - staged refs pointed into torn-down DOM; staged attachments
-			//    rode along on the first send in the new chat.
-			//
-			// Before adding state to this component, ask whether it belongs to
-			// the conversation or to the view. If the conversation: reset here.
-			chat.messages = [];
-			loadedMessages = [];
-			messageMetadata = new Map();
-			contextUsage = undefined;
-			titleGenerated = false;
-			isAwaitingResponse = false;
-			isGhost = isTemporaryRoute(currentTabRoute);
-			danglingTurn = false;
-			queuedMessages = [];
-			input = "";
-			attachments.items = [];
-			attachments.dragActive = false;
-			// Reset page create tracking (for auto-open)
-			tools.reset();
-			// NOTE: We no longer unbind the active page when switching chats.
-			// Binding is now additive/persistent to the chat session context.
-			// clearBoundPages();
+		// Reset chat state.
+		//
+		// Order matters: this runs before the instance effect swaps `chat`, so
+		// `chat.messages = []` below lands on the instance being left, and the
+		// load further down, which awaits first, writes into the new one.
+		//
+		// EVERYTHING that belongs to ONE conversation resets here. The list
+		// was incomplete and each omission was its own bug, because
+		// navigation is in-place — `TabContent` keys on `tab.id`, so this
+		// component is NOT remounted and anything left behind silently
+		// becomes the next conversation's state:
+		//
+		//  - `isGhost` leaking meant a saved chat inherited "temporary" and
+		//    every turn in it went out with `temporary: true`, was never
+		//    stored, and was gone on reload — while the toggle that would
+		//    undo it is disabled on a non-empty chat. Silent data loss.
+		//  - `queuedMessages` leaking sent chat A's follow-up into chat B.
+		//  - `input` leaking overwrote B's saved draft with A's text, since
+		//    `draftId` is derived from the route and the debounced writer
+		//    fires after the switch.
+		//  - staged refs pointed into torn-down DOM; staged attachments
+		//    rode along on the first send in the new chat.
+		//
+		// Before adding state to this component, ask whether it belongs to
+		// the conversation or to the view. If the conversation: reset here.
+		// (Bound pages are not reset: binding belongs to the chat session.)
+		chat.messages = [];
+		messageMetadata = new Map();
+		contextUsage = undefined;
+		titleGenerated = false;
+		isAwaitingResponse = false;
+		isGhost = isTemporaryRoute(route);
+		danglingTurn = false;
+		queuedMessages = [];
+		input = "";
+		attachments.items = [];
+		attachments.dragActive = false;
+		// Reset page create tracking (for auto-open)
+		tools.reset();
 
-			// Load conversation if switching to an existing one
-			if (currentTabConversationId && !isNewChat(currentTabRoute)) {
-				isLoading = true;
-				(async () => {
-					try {
-						// Raw fetch (not getChat): this load carries an AbortSignal so
-						// switching tabs mid-load cancels it. The client wrapper has no
-						// signal channel, so this site stays on fetch by design.
-						const response = await fetch(
-							`/api/chats/${currentTabConversationId}`,
-							{ signal },
-						);
-						if (signal.aborted) return; // Check if we were aborted
-						if (response.ok) {
-							const data = await response.json();
-							if (signal.aborted) return; // Check again after parsing
-							loadedMessages = data.messages || [];
-							chat.messages = deduplicateMessages(
-								loadedMessages,
-							).map(toUiMessage) as unknown as typeof chat.messages;
-							resumeIfDangling();
-							applyInterviewOpening(chat, currentTabConversationId);
-							applyRoomInterviewOpening(chat, currentTabConversationId, gettingStarted.state);
-							// The picker is deliberately left alone on a tab
-							// switch. It used to be re-seeded from the model
-							// that last answered THIS conversation, which is
-							// neither the person's choice nor what the next
-							// turn will use — a chat is not pinned to a model.
-							// Leaving it holds their pick across chats, and an
-							// unpicked picker keeps showing the slot default.
-							await Promise.all([
-								refreshContextUsage(),
-								editAllowListStore.init(currentTabConversationId),
-							]);
-						}
-					} catch (error) {
-						// Ignore abort errors - they're expected when switching tabs
-						if (
-							error instanceof Error &&
-							error.name === "AbortError"
-						)
-							return;
-						console.error(
-							"[ChatView] Error loading conversation on tab change:",
-							error,
-						);
-					} finally {
-						if (!signal.aborted) {
-							isLoading = false;
-							// Scroll to bottom after loading existing chat — but
-							// the getting-started room opens on its cover.
-							setTimeout(() => {
-								if (!openAtStart()) scrollToBottom("instant");
-							}, 10);
-						}
-					}
-				})();
-			} else {
-				// New chat - set chatId so permissions can sync when granted
-				editAllowListStore.setChatId(newConversationId, isGhost);
+		if (!routeConversationId || isNewChat(route)) {
+			// New chat - set chatId so permissions can sync when granted
+			editAllowListStore.setChatId(newConversationId, isGhost);
+			isLoading = false;
+			return;
+		}
+
+		isLoading = true;
+		void loadRouteConversation(routeConversationId, signal);
+	}
+
+	/** Load the conversation a route change switched to, unless another switch overtakes it. */
+	async function loadRouteConversation(id: string, signal: AbortSignal) {
+		try {
+			if (!(await loadTranscript(id, signal))) return;
+			resumeIfDangling();
+			applyInterviewOpening(chat, id);
+			applyRoomInterviewOpening(chat, id, gettingStarted.state);
+			// The picker is deliberately left alone on a tab switch: a chat is
+			// not pinned to the model that last answered it, so it holds the
+			// person's pick across chats, and an unpicked picker keeps showing
+			// the slot default.
+			await Promise.all([refreshContextUsage(), editAllowListStore.init(id)]);
+		} catch (error) {
+			// Aborts are expected: the tab switched again mid-load.
+			if (error instanceof Error && error.name === "AbortError") return;
+			console.error("[ChatView] Error loading conversation on tab change:", error);
+		} finally {
+			if (!signal.aborted) {
 				isLoading = false;
+				// Scroll to bottom after loading existing chat — but the
+				// getting-started room opens on its cover.
+				setTimeout(() => {
+					if (!openAtStart()) scrollToBottom("instant");
+				}, 10);
 			}
 		}
-	});
+	}
 
 	// Rejoin a running turn when the connection or the screen comes back.
 	//
@@ -709,6 +748,8 @@
 
 	// Load conversation data on mount
 	onMount(() => {
+		// Whether this box offers local mode, asked once per session.
+		void localModel.load();
 		// (The project list used to be fetched here for the breadcrumb's name
 		// and accent. The app layout already loads it, and nothing in this view
 		// renders a project's name any more.)
@@ -720,8 +761,7 @@
 		// first message so the create path files it + grounds retrieval there.
 		const seededProject = pendingPrompt.takeProject();
 		if (seededProject) {
-			chatProjectId = seededProject;
-			seededProjectFor = conversationId;
+			projectStore.setDraft(conversationId, seededProject);
 		}
 		(async () => {
 			// Stage 1: Models must load first (other code depends on model list)
@@ -748,14 +788,7 @@
 
 			const conversationPromise = tabConversationId ? (async () => {
 				try {
-					const data = await getChat<{
-						messages?: any[];
-						conversation?: { model?: string };
-					}>(tabConversationId);
-					loadedMessages = data.messages || [];
-					chat.messages = deduplicateMessages(loadedMessages).map(
-						toUiMessage,
-					) as unknown as typeof chat.messages;
+					await loadTranscript(tabConversationId);
 					resumeIfDangling();
 				} catch (error) {
 					console.error("[ChatView] Error loading conversation:", error);
@@ -838,7 +871,7 @@
 	let pageWidth = $state(0);
 	const railTurnList = $derived(
 		mobileLayout.isMobile ||
-			isGettingStartedChat(currentChatConversationId) ||
+			inRoom ||
 			currentChatConversationId === INTERVIEW_CHAT_ID
 			? []
 			: railTurns(uniqueMessages),
@@ -897,7 +930,7 @@
 	});
 
 	// Track thinking duration
-	let thinkingStartTime = $state<number | null>(null);
+	let thinkingStartTime: number | null = null;
 	let thinkingDuration = $state(0);
 
 	$effect(() => {
@@ -937,12 +970,12 @@
 
 	// Auto-focus chat input when new chat tab becomes active
 	$effect(() => {
-		if (active && isEmpty && !isLoading) {
-			// Small delay to ensure DOM is ready
-			setTimeout(() => {
-				inputFocused = true;
-			}, 50);
-		}
+		if (!active || !isEmpty || isLoading) return;
+		// Small delay to ensure DOM is ready
+		const t = setTimeout(() => {
+			inputFocused = true;
+		}, 50);
+		return () => clearTimeout(t);
 	});
 
 	// Title generation state
@@ -951,6 +984,25 @@
 
 	// Agent mode and persona selection state - used for tool filtering on backend
 	let selectedAgentMode = $state<AgentModeId>('chat');
+	// Local mode's "Think first" switch, sent with each local turn.
+	let localThink = $state(false);
+	const isLocal = $derived(selectedAgentMode === 'local');
+
+	// A mode change. Local only on an empty chat, and a local chat stays local:
+	// its history must never ride a later cloud turn, and a stored chat must
+	// never become local. Local chats are temporary chats, so everything that
+	// skips a ghost (drafts, title generation, storage) skips them too.
+	function changeMode(mode: AgentModeId) {
+		if ((mode === 'local' || isLocal) && !isEmpty) return;
+		if (mode === 'local') {
+			isGhost = true;
+			if (conversationId) editAllowListStore.setChatId(conversationId, true);
+		} else if (isLocal) {
+			isGhost = isTemporaryRoute(tab.route);
+			if (conversationId) editAllowListStore.setChatId(conversationId, isGhost);
+		}
+		selectedAgentMode = mode;
+	}
 	let selectedPersona = $state<string>('default');
 
 	// Retrieval scope. 'scoped' (grounded in a project's items only) still
@@ -967,33 +1019,15 @@
 		models.adoptStoreSelection();
 	});
 
-	// Safety timeout
-	let thinkingTimeout: ReturnType<typeof setTimeout> | null = null;
+	// Safety timeout: a turn still thinking after 5 minutes is let go. The
+	// box's stream has no total timeout, only a 300s idle one.
 	$effect(() => {
-		if (isThinking) {
-			thinkingTimeout = setTimeout(() => {
-				if (chat.status === "error") {
-					chat.clearError();
-				} else if (
-					chat.status === "streaming" ||
-					chat.status === "submitted"
-				) {
-					if (chat.clearError) {
-						chat.clearError();
-					}
-				}
-			}, 300000); // 5 minutes: the box's stream has no total timeout any more, only a 300s idle one
-
-			return () => {
-				if (thinkingTimeout) {
-					clearTimeout(thinkingTimeout);
-					thinkingTimeout = null;
-				}
-			};
-		} else if (thinkingTimeout) {
-			clearTimeout(thinkingTimeout);
-			thinkingTimeout = null;
-		}
+		if (!isThinking) return;
+		const t = setTimeout(() => {
+			const s = chat.status;
+			if (s === "error" || s === "streaming" || s === "submitted") chat.clearError();
+		}, 300000);
+		return () => clearTimeout(t);
 	});
 
 	// Derived state for layout mode
@@ -1014,14 +1048,14 @@
 	$effect(() => {
 		const state = gettingStarted.state;
 		const convId = currentChatConversationId;
-		if (!isGettingStartedChat(convId)) return;
+		if (!inRoom) return;
 		// Never while a turn is streaming: the transcript is the SDK's to
 		// write then. Reading `status` here re-runs this once it settles.
 		if (chat.status !== "ready") return;
 		untrack(() => applyRoomInterviewOpening(chat, convId, state));
 	});
 	$effect(() => {
-		if (isGettingStartedChat(currentChatConversationId)) gettingStarted.start();
+		if (inRoom) gettingStarted.start();
 	});
 
 	/** A turn just settled in the room, so ask the box where the walk stands.
@@ -1032,12 +1066,12 @@
 	 *  typed their next message over the top of it. Asking on `ready` closes
 	 *  that window: the answer moves the walk signature, and the effect below
 	 *  re-reads the thread with the new lines in it. */
-	let lastTurnStatus = $state<string | null>(null);
+	let lastTurnStatus: string | null = null;
 	$effect(() => {
 		const status = chat.status;
 		const wasStreaming = lastTurnStatus === "streaming" || lastTurnStatus === "submitted";
 		lastTurnStatus = status;
-		if (!isGettingStartedChat(currentChatConversationId)) return;
+		if (!inRoom) return;
 		if (status !== "ready" || !wasStreaming) return;
 		untrack(() => void gettingStarted.refresh());
 	});
@@ -1056,10 +1090,10 @@
 	/** The room speaks server-side, so when its state moves the thread has
 	 *  new lines in it. Re-read on any change of the walk — the step
 	 *  statuses and the interview's start are the whole of it. */
-	let lastWalk = $state<string | null>(null);
+	let lastWalk: string | null = null;
 	$effect(() => {
 		const st = gettingStarted.state;
-		if (!isGettingStartedChat(currentChatConversationId) || !st) return;
+		if (!inRoom || !st) return;
 		const walk =
 			st.steps.map((x) => `${x.id}:${x.status}`).join("|") + `|${st.interview_started_at ?? ""}`;
 		if (lastWalk === null) {
@@ -1127,7 +1161,12 @@
 	// A real, saved chat the user can act on (not the empty new-chat state, not a ghost).
 	// Getting started has no menu: it cannot be deleted or renamed, and its
 	// header holds one control, the door.
-	const canManageChat = $derived(!isEmpty && !isGhost && !isGettingStartedChat(currentChatConversationId));
+	const canManageChat = $derived(!isEmpty && !isGhost && !inRoom);
+	// The menu shows on every chat, a temporary one included: it is the one
+	// fixed control in the corner, and on an empty chat it holds the choices
+	// that only make sense before the first message — the project, and
+	// whether the chat is kept at all.
+	const showChatMenu = $derived(!inRoom);
 
 	async function deleteThisChat() {
 		// Read before the delete: the title comes off the session row that is
@@ -1151,22 +1190,59 @@
 	function openChatMenu(e: MouseEvent) {
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		const pinned = !!windowShellStore.findTab((t) => t.id === tab.id)?.tab.pinned;
-		const items: ContextMenuItem[] = [
-			{
-				id: "pin",
-				label: pinned ? "Unpin tab" : "Pin tab",
-				icon: pinned ? "ri:unpin-line" : "ri:pushpin-line",
-				action: () => windowShellStore.togglePin(tab.id),
-			},
-			{
+		const items: ContextMenuItem[] = [];
+		if (contextUsage && extractConversationId(tab.route)) {
+			const n = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+			items.push({
+				id: "context",
+				label: `Context ${Math.round(contextUsage.percentage)}%`,
+				description: `${n.format(contextUsage.tokens)} of ${n.format(contextUsage.window)} tokens`,
+				icon: "ri:donut-chart-line",
+				iconColor:
+					contextUsage.status === "critical"
+						? "var(--color-error)"
+						: contextUsage.status === "warning"
+							? "var(--color-warning)"
+							: undefined,
+				dividerAfter: true,
+				action: handleContextClick,
+			});
+		}
+		// Offered only while it can still be true: a turn that has been sent
+		// cannot be taken back out of storage. A local chat is temporary by
+		// construction, so it has nothing to choose.
+		if (isEmpty && !isLocal) {
+			items.push({
+				id: "temporary",
+				label: "Temporary chat",
+				description: "Not saved, not remembered",
+				icon: "ri:ghost-line",
+				checked: isGhost,
+				dividerAfter: true,
+				action: toggleGhost,
+			});
+		}
+		// Filed by url once saved, by draft until then; the same menu either
+		// way. A temporary chat has nowhere to be filed.
+		if (!isGhost) {
+			items.push(...projectMenuItems(targetForTab(tab)).map((i) => ({ ...i, dividerBefore: false })));
+		}
+		items.push({
+			id: "pin",
+			label: pinned ? "Unpin tab" : "Pin tab",
+			icon: pinned ? "ri:unpin-line" : "ri:pushpin-line",
+			action: () => windowShellStore.togglePin(tab.id),
+		});
+		if (canManageChat) {
+			items.push({
 				id: "delete",
 				label: "Delete chat",
 				icon: "ri:delete-bin-line",
 				variant: "destructive",
 				dividerBefore: true,
 				action: deleteThisChat,
-			},
-		];
+			});
+		}
 		contextMenu.show(
 			{ x: rect.right, y: rect.bottom },
 			items,
@@ -1180,6 +1256,9 @@
 	// Generate title after first assistant response
 	async function generateTitle() {
 		if (titleGenerated || chat.messages.length < 2) return;
+		// Titles are written by a cloud model from the whole chat; a local
+		// chat's words never leave the server.
+		if (isLocal || chatInstances.isLocal(conversationId)) return;
 		// The interview keeps the name it was seeded with. Its transcript is
 		// the most private text on the box, and a generated title puts a
 		// summary of it in the sidebar — this chat had renamed itself after
@@ -1230,7 +1309,7 @@
 	 * the view down as they do anywhere else.
 	 */
 	function openAtStart(behavior: ScrollBehavior = "instant") {
-		if (isGettingStartedChat(currentChatConversationId)) {
+		if (inRoom) {
 			scrollContainer?.scrollTo({ top: 0, behavior });
 			return true;
 		}
@@ -1367,6 +1446,7 @@
 
 			handedOff = true;
 
+			// Titles come from a cloud model, so a local chat never asks for one.
 			if (chat.messages.length >= 2 && !isGhost && !titleGenerated) {
 				await generateTitle();
 				// Update tab route if it's a new chat
@@ -1436,11 +1516,26 @@
 	// Flip the current (empty) chat into a temporary/ghost chat, or back. Only
 	// allowed before the first message — we can't retroactively un-persist a turn.
 	function toggleGhost() {
-		if (!isEmpty) return;
+		// A local chat is temporary by construction; see changeMode.
+		if (!isEmpty || isLocal) return;
 		isGhost = !isGhost;
 		// The allow list has to know: a ghost's grants stay in the box's memory
 		// and never become rows.
 		if (conversationId) editAllowListStore.setChatId(conversationId, isGhost);
+		// The tab says what the chat is, and its route is what a reload or a
+		// restored window reopens, so both follow the switch. The route moves
+		// first in `previousTabRoute` so the navigation handler reads this as
+		// the same conversation, not a switch — a switch would clear the
+		// draft being typed. A label the user renamed by hand is left alone.
+		const route = isGhost ? "/chat?temporary=1" : "/chat";
+		previousTabRoute = route;
+		windowShellStore.updateTab(tab.id, {
+			route,
+			icon: isGhost ? "ri:ghost-line" : "ri:chat-1-line",
+			...(PLACEHOLDER_LABELS.has(tab.label) && {
+				label: isGhost ? "Temporary Chat" : "New Chat",
+			}),
+		});
 	}
 
 	// Publish this chat's state to the phone shell, whose top-right button is
@@ -1449,7 +1544,13 @@
 	// cleanup keeps a stale claim from surviving a view swap.
 	$effect(() => {
 		if (!mobileLayout.isMobile || !active) return;
-		mobileLayout.setChatChrome({ empty: isEmpty, ghost: isGhost, toggleGhost });
+		mobileLayout.setChatChrome({
+			empty: isEmpty,
+			ghost: isGhost,
+			toggleGhost,
+			project: isGhost ? null : (chatProject ?? null),
+			showProjectMenu: showProjectChipMenu,
+		});
 		return () => mobileLayout.setChatChrome(null);
 	});
 </script>
@@ -1497,43 +1598,23 @@
 			if (e.dataTransfer?.files?.length) attachments.add(Array.from(e.dataTransfer.files));
 		}}
 	>
-		{#snippet renderFilePart(part: any, compact = false)}
-			{@const mt = part.mediaType || ""}
-			{#if mt.startsWith("image/")}
-				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
-				<img
-					src={part.url}
-					alt={part.filename || "image"}
-					class="msg-image"
-					class:compact-img={compact}
-					onclick={(e) => openLightbox(e, part.url, part.filename || "image")}
-				/>
-			{:else if mt.startsWith("audio/")}
-				<audio src={part.url} controls class="msg-audio"></audio>
-			{:else}
-				<a class="msg-file" href={part.url} download={part.filename || "file"}>
-					<Icon icon={mt === "application/pdf" ? "ri:file-pdf-fill" : "ri:file-text-line"} width="16" />
-					<span>{part.filename || "Document"}</span>
-				</a>
-			{/if}
-		{/snippet}
-
 		<div class="chat-container">
 			<!-- Main chat area -->
 			<div class="chat-area" class:ghost={isGhost}>
-				<!-- Top-right chrome: temporary-chat toggle + live context ring -->
-				<div class="chat-topbar-right">
-					{#if !isGhost && contextUsage && extractConversationId(tab.route) && !isGettingStartedChat(currentChatConversationId)}
-						<ContextIndicator
-							conversationId={extractConversationId(tab.route)!}
-							usagePercentage={contextUsage.percentage}
-							totalTokens={contextUsage.tokens}
-							contextWindow={contextUsage.window}
-							status={contextUsage.status}
-							onclick={handleContextClick}
+				{#if chatProject && !isGhost && !mobileLayout.isMobile && !inRoom}
+					<div class="chat-topbar-left">
+						<ProjectChip
+							project={chatProject}
+							title={`Open ${chatProject.name}`}
+							onclick={openChatProject}
+							oncontextmenu={showProjectChipMenu}
 						/>
-					{/if}
-					{#if isGettingStartedChat(currentChatConversationId)}
+					</div>
+				{/if}
+				<!-- Top-right chrome: the chat menu (context usage and the temporary
+				     switch live in it) -->
+				<div class="chat-topbar-right">
+					{#if inRoom}
 						<!-- One door. A glyph through the walk, and a word
 						     ("Stop for now") once the interview is underway,
 						     which is the one beat with no controls of its own.
@@ -1542,22 +1623,7 @@
 						     along. -->
 						<GettingStartedDoor />
 					{/if}
-					<!-- On the phone the ghost toggle lives in the shell's top bar
-					     (the modal top-right slot), not here. -->
-					{#if (isEmpty || isGhost) && !mobileLayout.isMobile}
-						<button
-							type="button"
-							class="ghost-toggle"
-							class:active={isGhost}
-							disabled={!isEmpty}
-							onclick={toggleGhost}
-							aria-pressed={isGhost}
-							title={isGhost ? "Temporary chat — won't be saved" : "Start a temporary chat"}
-						>
-							<Icon icon="ri:ghost-line" width="16" />
-						</button>
-					{/if}
-					{#if canManageChat}
+					{#if showChatMenu}
 						<button
 							type="button"
 							class="chat-menu-btn"
@@ -1581,15 +1647,18 @@
 							class="messages-container"
 							class:bleeds={uniqueMessages[0]?.id === INTERVIEW_OPENING_ID ||
 								roomHoldsPlate ||
-								isGettingStartedChat(currentChatConversationId)}
-							class:room={isGettingStartedChat(currentChatConversationId)}
+								inRoom}
+							class:room={inRoom}
 						>
-							{#if isGettingStartedChat(currentChatConversationId) && uniqueMessages.length > 0}
+							{#if inRoom && uniqueMessages.length > 0}
 								<!-- The frontispiece, at the measure of the words.
 								     It ran the full width of the pane as an oil
 								     painting and made the room read as two products
 								     stacked. -->
 								<RoomCover />
+							{/if}
+							{#if isLocal && uniqueMessages.length > 0}
+								<LocalModelCard bind:think={localThink} />
 							{/if}
 							{#each uniqueMessages as message, messageIndex (message.id)}
 								{@const isUserMessage = message.role === "user"}
@@ -1650,82 +1719,9 @@
 											{@const isStreaming =
 												(chat.status === "streaming" || chat.status === "submitted") &&
 												isLastMessage}
-											{@const messageReasoningParts =
-												message.parts.filter(
-													(p: any) =>
-														p.type === "reasoning",
-												)}
-											{@const messageToolParts =
-												message.parts.filter((p: any) =>
-													p.type.startsWith("tool-"),
-												)}
-											<!-- A turn is several runs of text with tool calls
-											     between them. A run with a tool call AFTER it was
-											     the model saying what it was about to do; the run
-											     with nothing after it is the reply. Only the reply
-											     belongs in the transcript — the rest is working-out
-											     and goes to the thinking block, which is where the
-											     status label comes from.
-											     "Has a tool after it" rather than "is not the last
-											     one" because it has to hold mid-turn too: the line
-											     the model just wrote is its answer until a tool
-											     starts, and at that moment it becomes narration and
-											     moves. A message stored before `parts` carried this
-											     order has one text run and no tool before it, so it
-											     is all reply and nothing moves. -->
-											{@const lastToolPartIndex =
-												message.parts.reduce(
-													(last: number, p: any, i: number) =>
-														p.type.startsWith("tool-") ? i : last,
-													-1,
-												)}
-											{@const lastTextPartIndex =
-												message.parts.reduce(
-													(last: number, p: any, i: number) =>
-														p.type === "text" && p.text?.trim() ? i : last,
-													-1,
-												)}
-											<!-- Where the reply starts. Normally just past the last
-											     tool call. But a turn that ENDED on a tool call — an
-											     error, a stop, the model quitting — never wrote one,
-											     and treating all of its text as narration would
-											     leave a blank message on screen with the words
-											     hidden in a collapsed block. So once the turn is
-											     over, the last thing it said stands as the reply.
-											     While it is still streaming we do NOT do that: there
-											     genuinely is no reply yet, and the line the model
-											     wrote is already showing as the status label. -->
-											{@const bodyFromIndex =
-												isStreaming ||
-												message.parts.some(
-													(p: any, i: number) =>
-														p.type === "text" &&
-														p.text?.trim() &&
-														i > lastToolPartIndex,
-												)
-													? lastToolPartIndex + 1
-													: lastTextPartIndex}
-											{@const messageNarration =
-												message.parts
-													.filter(
-														(p: any, i: number) =>
-															p.type === "text" &&
-															p.text?.trim() &&
-															i < bodyFromIndex,
-													)
-													.map((p: any) => p.text.trim())}
-											{@const messageReasoning =
-												messageReasoningParts
-													.map(
-														(p: any) =>
-															p.text || "",
-													)
-													.filter(Boolean)
-													.join("\n")}
-											{@const hasThinkingContent =
-												messageReasoning ||
-												messageToolParts.length > 0 ||
-												messageNarration.length > 0}
+											<!-- Narration, tool calls and reasoning go to the thinking
+											     block; the reply starts at bodyFromIndex (see splitTurn). -->
+											{@const turn = splitTurn(message.parts, isStreaming)}
 
 											{@const subagents =
 												isLastMessage
@@ -1740,7 +1736,7 @@
 												/>
 											{/if}
 
-											{#if !inInterview && (hasThinkingContent || (isStreaming && isLastMessage))}
+											{#if !inInterview && (turn.hasThinkingContent || (isStreaming && isLastMessage))}
 												<!-- Interview room excluded: the companion below is
 												     its one indicator, and the model's reasoning
 												     about the person must never surface as chrome
@@ -1750,21 +1746,22 @@
 														isLastMessage &&
 														chat.status ===
 															"streaming"}
-													toolCalls={messageToolParts}
-													reasoningContent={messageReasoning}
-													narration={messageNarration}
+													toolCalls={turn.toolParts}
+													reasoningContent={turn.reasoning}
+													narration={turn.narration}
 													duration={isLastMessage
 														? thinkingDuration
 														: 0}
 													agentMode={selectedAgentMode}
 												/>
 											{/if}
+											<TurnFigures parts={message.parts} />
 
 											{#if eyebrowFor.has(message.id)}
 												<StepEyebrow stepId={eyebrowFor.get(message.id)!} />
 											{/if}
 											{#each message.parts as part, partIndex (part.type === "text" ? `text-${partIndex}` : (part as any).toolCallId || `part-${partIndex}`)}
-												{#if part.type === "text" && part.text.trim() && partIndex >= bodyFromIndex}
+												{#if part.type === "text" && part.text.trim() && partIndex >= turn.bodyFromIndex}
 													{@const shown = reveal.revealed(message.id, part.text)}
 													<!-- No `text-base`. Size and leading are `--md-body-*`,
 													     which resolve to the same 1rem/1.5 Tailwind was
@@ -1787,7 +1784,7 @@
 														{/if}
 													</div>
 											{:else if part.type === "file"}
-												{@render renderFilePart(part as any)}
+												<MessageFile part={part as any} onOpenImage={openLightbox} />
 											{:else if part.type.startsWith("tool-") && (part as any).state === "output-available" && (part as any).output?.permission_needed}
 												<!-- Any gated tool (run_action, delete_action, …) awaiting the user's "I allow" -->
 												{@const output = (part as any).output}
@@ -1804,7 +1801,7 @@
 												<!-- Nothing here: the receipt goes under the whole
 												     turn, not wherever in it the model reached for
 												     the tool. See after this loop. -->
-											{:else if part.type === "tool-write_it_up" && isGettingStartedChat(currentChatConversationId) && (part as any).state === "output-available" && (part as any).output?.document_page_id}
+											{:else if part.type === "tool-write_it_up" && inRoom && (part as any).state === "output-available" && (part as any).output?.document_page_id}
 												<!-- In the getting-started room the interview closes inline
 												     and the thread goes on: the two doors, here — and the
 												     plate with them. The close ANSWERS THE OPENING, which
@@ -1894,18 +1891,19 @@
 												<CodeInterpreterCard
 													status={isRunning ? 'running' : isError ? 'error' : 'success'}
 													code={toolPart.input?.code || ''}
-													output={toolPart.output}
+													output={toolPart.output ?? (isError ? { error: toolPart.errorText } : undefined)}
 												/>
 											{:else if part.type === "tool-generate_image"}
 												{@const gen = part as any}
 												{#if gen.state === "output-available" && gen.output?.url}
 													<figure class="generated-image">
-														<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
-														<img
-															src={gen.output.url}
-															alt={gen.output.prompt || gen.input?.prompt || "Generated image"}
-															class="msg-image"
-															onclick={(e) => openLightbox(e, gen.output.url, gen.output.prompt || gen.input?.prompt || "Generated image")}
+														<MessageFile
+															part={{
+																mediaType: "image/*",
+																url: gen.output.url,
+																filename: gen.output.prompt || gen.input?.prompt || "Generated image",
+															}}
+															onOpenImage={openLightbox}
 														/>
 													</figure>
 												{:else if gen.state === "output-error"}
@@ -1959,18 +1957,12 @@
 												     sentence, never instead of it. -->
 												<GraduatedDoors />
 											{/if}
-											{#if messageMetadata.get(message.id)?.stopped}
-												<StoppedNotice />
-											{:else if messageMetadata.get(message.id)?.cutShort}
-												<StoppedNotice reason="length" />
-											{:else if messageMetadata.get(message.id)?.interrupted}
-												<StoppedNotice reason="interrupted" />
-											{:else if messageMetadata.get(message.id)?.unattended}
-												<StoppedNotice reason="unattended" />
-											{:else if messageMetadata.get(message.id)?.maxSteps}
-												<StoppedNotice reason="max_steps" />
-											{:else if messageMetadata.get(message.id)?.budget}
-												<StoppedNotice reason="budget" />
+											{@const stop = stopReason(messageMetadata.get(message.id))}
+											{#if stop}
+												<StoppedNotice reason={stop} />
+											{/if}
+											{#if chatInstances.getLocalStats(conversationId, message.id)}
+												<LocalStatsLine stats={chatInstances.getLocalStats(conversationId, message.id)!} />
 											{/if}
 
 											<!-- What to do with an answer once it exists.
@@ -2023,7 +2015,7 @@
 											{#if fileParts.length > 0}
 												<div class="msg-attachments">
 													{#each fileParts as fp, i (i)}
-														{@render renderFilePart(fp as any, true)}
+														<MessageFile part={fp as any} compact onOpenImage={openLightbox} />
 													{/each}
 												</div>
 											{/if}
@@ -2043,7 +2035,7 @@
 							<!-- Optimistic thinking indicator: shows immediately on submit,
 							     only until the AI SDK creates the assistant message (at text-start).
 							     Once the assistant message exists, the in-message ThinkingBlock takes over. -->
-							{#if isGettingStartedChat(currentChatConversationId)}
+							{#if inRoom}
 								<!-- The step's controls, right under what the room
 								     just said: pinned above the composer they sat a
 								     screen away from it on a short thread. -->
@@ -2147,16 +2139,19 @@
 						</div>
 					{/if}
 
-					{#if isEmpty && isGhost}
+					{#if isEmpty && isLocal}
+						<div class="local-hero" in:fade={{ duration: 300 }}>
+							<LocalModelCard bind:think={localThink} />
+						</div>
+					{:else if isEmpty && isGhost}
 						<div
 							class="ghost-hero"
 							in:fade={{ duration: 300 }}
 							out:fly={{ y: -14, duration: 300, easing: cubicInOut }}
 						>
-							<!-- The title alone: the tiled ghost field and the inverted
-							     composer already say what this mode is — an icon and an
-							     explainer on top of them was the same fact three times. -->
+							<Icon icon="ri:ghost-line" width="22" class="ghost-hero-glyph" />
 							<h1 class="ghost-hero-title">Temporary Chat</h1>
+							<p class="ghost-hero-note">Not saved, not remembered. Closing the tab ends it.</p>
 						</div>
 					{/if}
 
@@ -2170,84 +2165,21 @@
 						class:focused={inputFocused}
 						class:drag-active={attachments.dragActive}
 					>
-						{#if attachments.dragActive}
-							<div class="drop-hint">
-								<Icon icon="ri:download-2-line" width="15" />
-								<span>Drop to attach &middot; images, PDFs, audio, or text</span>
+						{#if isGhost && !isEmpty}
+							<div class="ghost-caption" in:fade={{ duration: 300 }}>
+								<Icon icon="ri:ghost-line" width="12" />
+								<span>Temporary chat · not saved</span>
 							</div>
 						{/if}
-						{#if attachments.count > 0}
-							<div class="attachments">
-								{#each attachments.items as a (a.id)}
-									<div class="attachment">
-										{#if a.kind === "image"}
-											<img src={a.url} alt={a.filename} class="attachment-thumb" />
-										{:else}
-											<span class="attachment-icon">
-												<Icon
-													icon={a.kind === "pdf"
-														? "ri:file-pdf-fill"
-														: a.kind === "audio"
-															? "ri:music-2-line"
-															: "ri:file-text-line"}
-													width="18"
-												/>
-											</span>
-										{/if}
-										<div class="attachment-meta">
-											<!-- An image carries only its size (VIR-237): a screenshot's
-											     generated filename says nothing the thumbnail has not
-											     already shown. Every other kind keeps its name, because a
-											     type icon and a byte count cannot tell two PDFs apart. The
-											     name still reaches assistive tech through the img alt. -->
-											{#if a.kind !== "image"}
-												<span class="attachment-name">{a.filename}</span>
-											{/if}
-											<span class="attachment-size">{formatFileSize(a.size)}</span>
-										</div>
-										<button
-											type="button"
-											class="attachment-remove"
-											aria-label="Remove attachment"
-											onclick={() => attachments.remove(a.id)}
-										>
-											<Icon icon="ri:close-line" width="13" />
-										</button>
-									</div>
-								{/each}
-							</div>
-						{/if}
-						{#if models.capabilityIssue}
-							<div class="capability-banner">
-								<span>
-									{models.capabilityIssue.modelName} can't read {models.capabilityIssue.lacks.join(" or ")}.
-								</span>
-								{#if models.capabilityIssue.candidate}
-									<button type="button" class="capability-switch" onclick={() => models.switchToCapable()}>
-										Switch to {models.capabilityIssue.candidate.displayName}
-									</button>
-								{:else}
-									<span class="capability-none">No available model can read {models.capabilityIssue.lacks.join(" or ")} yet.</span>
-								{/if}
-							</div>
-						{/if}
-						{#if queuedMessages.length > 0}
-							<div class="queued-messages">
-								{#each queuedMessages as q, i (i)}
-									<div class="queued-chip">
-										<span class="queued-text">{q}</span>
-										<button
-											type="button"
-											class="queued-remove"
-											aria-label="Remove queued message"
-											onclick={() => removeQueued(i)}
-										>
-											<Icon icon="ri:close-line" width="13" />
-										</button>
-									</div>
-								{/each}
-							</div>
-						{/if}
+						<ComposerTray
+							dragActive={attachments.dragActive}
+							attachments={attachments.items}
+							onRemoveAttachment={(id) => attachments.remove(id)}
+							capabilityIssue={models.capabilityIssue}
+							onSwitchModel={() => models.switchToCapable()}
+							queued={queuedMessages}
+							onRemoveQueued={removeQueued}
+						/>
 						{#if interviewClosed}
 							<!-- The interview is over: no composer, the two doors instead. -->
 							<InterviewClosedCard
@@ -2257,7 +2189,7 @@
 								alreadyExisted={interviewClosedPart?.document_already_existed ?? false}
 								chaptersError={interviewClosedPart?.chapters_error ?? null}
 							/>
-						{:else if isGettingStartedChat(currentChatConversationId) && !gettingStarted.aiConnected}
+						{:else if inRoom && !gettingStarted.aiConnected}
 							<!-- No model yet. The composer STAYS and says why it
 							     cannot be used: the app is no longer closed off, so
 							     the thing that genuinely does not work has to
@@ -2278,14 +2210,15 @@
 							bind:value={input}
 							bind:focused={inputFocused}
 							disabled={false}
-							sendDisabled={chat.status === "submitted" || chat.status === "streaming"}
+							sendDisabled={chat.status === "submitted" || chat.status === "streaming" || (isLocal && !localModel.status.ready)}
 							isStreaming={chat.status === "streaming"}
 							maxWidth="max-w-3xl"
-							placeholder={isGhost ? "Ask Virtues (temporary)" : "Ask Virtues"}
+							placeholder={isLocal ? "Ask the local model" : isGhost ? "Ask Virtues (temporary)" : "Ask Virtues"}
 							onSubmit={(text) => handleChatSubmit(text)}
 							onStop={() => handleChatStop()}
 							agentMode={selectedAgentMode}
-							onModeChange={(mode) => (selectedAgentMode = mode)}
+							onModeChange={changeMode}
+							modes={availableModes(selectedAgentMode, { localSupported: localModel.status.supported, empty: isEmpty })}
 						/>
 						{/if}
 
@@ -2339,24 +2272,18 @@
 		gap: 6px;
 	}
 
-
-
-	.ghost-toggle {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		border-radius: 9px;
-		color: var(--color-foreground-subtle);
-		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
-		backdrop-filter: blur(8px);
-		-webkit-backdrop-filter: blur(8px);
-		transition:
-			color 0.15s ease,
-			background-color 0.15s ease;
-		cursor: pointer;
+	/* The project this chat lives in: a label that is also the way back.
+	   Quiet until approached, and held to the top-left corner so it never
+	   competes with the thread for the measure. */
+	.chat-topbar-left {
+		position: absolute;
+		top: 8px;
+		left: 12px;
+		z-index: 6;
+		max-width: 40%;
 	}
+
+
 
 	/* 28px of visible chip, 44pt of reachable square — the chip is deliberately
 	   small and floats over the transcript, so the target grows around it
@@ -2366,11 +2293,11 @@
 		   the end of these styles — it must follow the base rules to win the
 		   cascade.) */
 
-		.ghost-toggle {
+		.chat-menu-btn {
 			position: relative;
 		}
 
-		.ghost-toggle::after {
+		.chat-menu-btn::after {
 			content: "";
 			position: absolute;
 			top: 50%;
@@ -2379,20 +2306,6 @@
 			height: 44px;
 			transform: translate(-50%, -50%);
 		}
-	}
-
-	.ghost-toggle:hover:not(:disabled) {
-		color: var(--color-foreground);
-		background: var(--hover-bg);
-	}
-
-	.ghost-toggle.active {
-		color: var(--color-primary);
-		background: color-mix(in srgb, var(--color-primary) 14%, transparent);
-	}
-
-	.ghost-toggle:disabled {
-		cursor: default;
 	}
 
 	.chat-menu-btn {
@@ -2432,43 +2345,13 @@
 		}
 	}
 
-	/* Ghost/temporary chat — faint tiled ghost field, theme-aware via mask. The
-	   field reveals as a circle expanding from the composer (screen center) so the
-	   ghosts ripple outward from the middle. */
-	.chat-area.ghost::before {
-		content: "";
-		position: absolute;
-		inset: 0;
-		z-index: 0;
-		pointer-events: none;
-		background: var(--color-foreground);
-		opacity: 0.035;
-		-webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2a8 8 0 0 0-8 8v10l2.5-2 2.5 2 2.5-2 2.5 2 2.5-2 2.5 2V10a8 8 0 0 0-8-8z' fill='%23000'/%3E%3C/svg%3E");
-		mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2a8 8 0 0 0-8 8v10l2.5-2 2.5 2 2.5-2 2.5 2 2.5-2 2.5 2V10a8 8 0 0 0-8-8z' fill='%23000'/%3E%3C/svg%3E");
-		-webkit-mask-size: 46px 46px;
-		mask-size: 46px 46px;
-		-webkit-mask-repeat: repeat;
-		mask-repeat: repeat;
-		animation: ghost-wave-in 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
-	}
-
-	@keyframes ghost-wave-in {
-		from {
-			opacity: 0;
-			clip-path: circle(0% at 50% 50%);
-		}
-		to {
-			opacity: 0.035;
-			clip-path: circle(120% at 50% 50%);
-		}
-	}
-
-	/* Ghost mode inverts the composer: the pill you type into flips to the
-	   theme's ink, so the mode is a material change under your fingers, not a
-	   label you have to remember reading. Done by remapping the pill's tokens
-	   — everything inside (placeholder, buttons, the model pill) follows on
-	   its own. The originals are captured one scope up because a custom
-	   property cannot swap with itself in place. */
+	/* A temporary chat is the ordinary page with one thing changed: the
+	   composer flips to the theme's ink, so the mode is a material change
+	   under your fingers rather than a room dressed up as another place.
+	   Done by remapping the pill's tokens — everything inside (placeholder,
+	   buttons, the model pill) follows on its own. The originals are
+	   captured one scope up because a custom property cannot swap with
+	   itself in place. */
 	.chat-area.ghost {
 		--ghost-pill-bg: var(--color-foreground);
 		--ghost-pill-ink: var(--color-surface);
@@ -2497,8 +2380,20 @@
 		color: var(--ghost-pill-bg);
 	}
 
+	/* Once the title has gone, the caption over the composer is what still
+	   says the conversation is not being kept — seated on the input, where
+	   the eye already is, rather than in a corner. */
+	.ghost-caption {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 5px;
+		padding-bottom: 0.5rem;
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
+	}
+
 	@media (prefers-reduced-motion: reduce) {
-		.chat-area.ghost::before,
 		.chat-topbar-right > :global(*) {
 			animation: none;
 		}
@@ -2523,11 +2418,41 @@
 		pointer-events: none;
 	}
 
+	/* The local card sits where the ghost title does, above the centered
+	   composer, at the measure of the words. It holds a button and a switch,
+	   so it takes clicks, and it scrolls within itself on a short pane. */
+	.local-hero {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: calc(50% + 52px);
+		z-index: 2;
+		display: flex;
+		justify-content: center;
+		padding: 0 16px;
+		max-height: calc(50% - 64px);
+		overflow-y: auto;
+	}
+	.local-hero > :global(*) {
+		width: 100%;
+		max-width: 40em;
+	}
+
 	.ghost-hero-title {
 		font-family: var(--font-serif);
 		font-size: 1.75rem;
 		font-weight: 400;
 		color: var(--color-foreground);
+	}
+
+	.ghost-hero :global(.ghost-hero-glyph) {
+		color: var(--color-foreground-subtle);
+		margin-bottom: 0.25rem;
+	}
+
+	.ghost-hero-note {
+		font-size: 0.875rem;
+		color: var(--color-foreground-subtle);
 	}
 
 	/* ── The phone's opening image ──
@@ -2691,191 +2616,12 @@
 		will-change: bottom, transform;
 	}
 
-	.queued-messages {
-		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
-		margin-bottom: 0.5rem;
-	}
-
-	.queued-chip {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.375rem 0.625rem;
-		border: 1px solid var(--color-border);
-		border-radius: 0.625rem;
-		background: var(--color-surface-elevated);
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-	}
-
-	.queued-text {
-		flex: 1;
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.queued-remove {
-		flex-shrink: 0;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0.125rem;
-		border-radius: 0.375rem;
-		color: var(--color-foreground-muted);
-		transition: background-color 0.15s ease;
-	}
-
-	.queued-remove:hover {
-		background: var(--color-border);
-	}
-
-	/* Track E1 — composer attachment previews */
-	.attachments {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin-bottom: 0.5rem;
-	}
-
-	.attachment {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.375rem 0.5rem 0.375rem 0.375rem;
-		border: 1px solid var(--color-border-subtle);
-		border-radius: 0.625rem;
-		background: var(--color-surface-elevated);
-		max-width: 15rem;
-	}
-
-	/* Four times the area of the old 2.25rem chip (VIR-238), which was too
-	   small to tell one screenshot from another. Linear 4x (9rem) was the
-	   other reading of the ticket and is far too tall — it would own the
-	   composer. The icon below stays at 2.25rem: a file chip is identified by
-	   its name, which it keeps, so it has nothing to gain from the height. */
-	.attachment-thumb {
-		width: 4.5rem;
-		height: 4.5rem;
-		border-radius: 0.4rem;
-		object-fit: cover;
-		flex-shrink: 0;
-		display: block;
-	}
-
-	.attachment-icon {
-		width: 2.25rem;
-		height: 2.25rem;
-		border-radius: 0.4rem;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: var(--color-surface);
-		color: var(--color-foreground-muted);
-		flex-shrink: 0;
-	}
-
-	.attachment-meta {
-		display: flex;
-		flex-direction: column;
-		gap: 0.0625rem;
-		min-width: 0;
-	}
-
-	.attachment-name {
-		font-size: 0.8125rem;
-		color: var(--color-foreground);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.attachment-size {
-		font-size: 0.6875rem;
-		color: var(--color-foreground-subtle);
-	}
-
-	.attachment-remove {
-		flex-shrink: 0;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0.125rem;
-		border-radius: 0.375rem;
-		color: var(--color-foreground-muted);
-		transition: background-color 0.15s ease;
-	}
-
-	.attachment-remove:hover {
-		background: var(--color-border);
-	}
-
-	.capability-banner {
-		display: flex;
-		align-items: center;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin-bottom: 0.5rem;
-		padding: 0.375rem 0.625rem;
-		border: 1px solid var(--color-warning, var(--color-border));
-		border-radius: 0.625rem;
-		background: var(--color-warning-subtle, var(--color-surface-elevated));
-		font-size: 0.8125rem;
-		color: var(--color-foreground);
-	}
-
-	.capability-switch {
-		color: var(--color-primary);
-		font-weight: 500;
-	}
-
-	.capability-switch:hover {
-		text-decoration: underline;
-	}
-
-	.capability-none {
-		color: var(--color-foreground-muted);
-	}
-
 	/* Track E1 — in-message media */
 	.msg-attachments {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.5rem;
 		margin-bottom: 0.5rem;
-	}
-
-	.msg-image {
-		max-width: min(420px, 100%);
-		max-height: 420px;
-		border-radius: 0.75rem;
-		border: 1px solid var(--color-border-subtle);
-		display: block;
-		cursor: zoom-in;
-	}
-
-	.msg-audio {
-		width: min(420px, 100%);
-	}
-
-	.msg-file {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--color-border-subtle);
-		border-radius: 0.625rem;
-		background: var(--color-surface-elevated);
-		font-size: 0.875rem;
-		color: var(--color-foreground);
-		text-decoration: none;
-	}
-
-	.msg-file:hover {
-		border-color: var(--color-border-strong);
 	}
 
 	/* Track E2 — generated image */
@@ -2894,41 +2640,6 @@
 		background: var(--color-surface-elevated);
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
-	}
-
-	/* Track E1 — in-place drag affordance: the composer becomes the dropzone
-	   (no full-screen scrim — context stays visible, the cue points at the
-	   exact landing spot). Drop still works anywhere over the chat root. */
-	.drop-hint {
-		position: absolute;
-		left: 50%;
-		bottom: calc(100% - 0.5rem);
-		transform: translateX(-50%);
-		display: inline-flex;
-		align-items: center;
-		gap: 0.4rem;
-		padding: 0.3rem 0.7rem;
-		border-radius: var(--radius-full);
-		background: var(--color-primary);
-		color: var(--color-on-primary, #fff);
-		font-size: 0.75rem;
-		font-weight: 500;
-		white-space: nowrap;
-		box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--color-primary) 60%, transparent);
-		pointer-events: none;
-		z-index: 11;
-		animation: drop-hint-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
-	}
-
-	@keyframes drop-hint-in {
-		from {
-			opacity: 0;
-			transform: translateX(-50%) translateY(0.35rem);
-		}
-		to {
-			opacity: 1;
-			transform: translateX(-50%) translateY(0);
-		}
 	}
 
 	/* Accent ring + gentle lift on the actual composer box while dragging. */
@@ -3069,13 +2780,6 @@
 	.message-wrapper.user-has-attachment {
 		width: fit-content;
 		max-width: 100%;
-	}
-
-	/* User-attached images render as compact thumbnails (class is on the <img>
-	   itself); assistant/generated images keep the larger size. */
-	.msg-image.compact-img {
-		max-width: min(260px, 100%);
-		max-height: 260px;
 	}
 
 	/* Assistant response text - spacing after thinking block */

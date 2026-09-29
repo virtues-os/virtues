@@ -125,6 +125,78 @@ pub async fn get_subscription_status(pool: &PgPool, fresh: bool) -> Result<serde
     })
 }
 
+/// What stands behind this box's link, for Setup's Subscription step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Payment {
+    Paid,
+    /// Signed in, no subscription (free, or lapsed).
+    Free,
+    /// atlas refuses the key: signing in again is the fix, not paying.
+    DeadKey,
+    /// atlas can't be asked and nothing is cached. Never read as "unpaid".
+    Unknown,
+}
+
+/// When `pays` last went to atlas, answered or not. It throttles on the
+/// attempt, not the answer: throttling on a cached answer's age meant an
+/// outage (no fresh answer, so always stale) went to the network on every
+/// call, and the getting-started state is read by every open tab's poll and
+/// two or three times per chat turn.
+static LAST_ASKED: Mutex<Option<Instant>> = Mutex::new(None);
+/// Short, because a person is waiting on a page or a chat turn.
+const PAYS_TIMEOUT: Duration = Duration::from_secs(3);
+/// A cached "free" is rechecked this often: the person on the step is about
+/// to pay, and the step should see it within a refresh or two, not the full
+/// `TTL` later.
+const RECHECK_FREE: Duration = Duration::from_secs(10);
+
+pub async fn pays(pool: &PgPool) -> Payment {
+    if crate::middleware::auth::is_dev()
+        && std::env::var("VIRTUES_API_KEY").is_ok_and(|b| !b.is_empty())
+    {
+        return Payment::Paid;
+    }
+    let api_key = match crate::virtues_api::renew::read_api_key(pool).await {
+        Ok(Some(k)) => k,
+        // No key: nothing is linked, and the step says so on its own.
+        Ok(None) => return Payment::Unknown,
+        Err(e) => {
+            tracing::warn!("subscription: vault read failed, entitlement unknown: {e}");
+            return Payment::Unknown;
+        }
+    };
+    let from = |e: Option<Entitlement>| match e {
+        Some(Entitlement::Subscribed) => Payment::Paid,
+        Some(Entitlement::Free) => Payment::Free,
+        Some(Entitlement::KeyUnknown) => Payment::DeadKey,
+        None => Payment::Unknown,
+    };
+    let cached = last_known_entitlement();
+    let fresh_enough = cache().lock().ok().and_then(|c| *c).is_some_and(|(at, e)| {
+        at.elapsed() < if e == Entitlement::Subscribed { TTL } else { RECHECK_FREE }
+    });
+    let may_ask = LAST_ASKED
+        .lock()
+        .map(|mut last| {
+            let ok = last.is_none_or(|t| t.elapsed() >= RECHECK_FREE);
+            if ok {
+                *last = Some(Instant::now());
+            }
+            ok
+        })
+        .unwrap_or(false);
+    if fresh_enough || !may_ask {
+        return from(cached);
+    }
+    match tokio::time::timeout(PAYS_TIMEOUT, entitlement(&api_key, true)).await {
+        Ok(e) => from(e),
+        Err(_) => {
+            tracing::warn!("subscription: atlas slower than {PAYS_TIMEOUT:?}, using last known");
+            from(cached)
+        }
+    }
+}
+
 fn payload(status: &str, linked: bool, subscribed: bool, known: bool) -> serde_json::Value {
     serde_json::json!({
         "status": status,

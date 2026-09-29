@@ -9,6 +9,7 @@ private var globalMessageMonitor: MessageMonitor?
 private var globalBrowserMonitor: BrowserMonitor?
 private var globalBookmarkMonitor: BookmarkMonitor?
 private var globalPresenceMonitor: PresenceMonitor?
+private var recheckSignalSource: DispatchSourceSignal?
 
 struct StartCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
@@ -130,6 +131,24 @@ struct StartCommand: ParsableCommand {
             Foundation.exit(0)
         }
         
+        // SIGUSR1: re-check permissions now. macOS has no notification for a
+        // Full Disk Access or Accessibility grant, so without this the daemon
+        // notices on its next 5-minute tick. The desktop app sends it while
+        // someone is looking at a permission (`launchctl kill SIGUSR1
+        // gui/$(id -u)/com.virtues.collector`); anyone can send it by hand.
+        //
+        // A dispatch source rather than `signal(_:_:)`: the re-check writes a
+        // file and opens a database, none of which is async-signal-safe. The
+        // default action has to be ignored first or the signal still kills us.
+        signal(SIGUSR1, SIG_IGN)
+        let recheck = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .global(qos: .utility))
+        recheck.setEventHandler {
+            print("↻ Permission re-check requested")
+            globalMessageMonitor?.recheckPermissions()
+        }
+        recheck.resume()
+        recheckSignalSource = recheck
+
         // Run forever
         RunLoop.main.run()
     }

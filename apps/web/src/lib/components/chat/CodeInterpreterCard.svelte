@@ -8,12 +8,16 @@
 	import { slide } from "svelte/transition";
 	import Icon from "$lib/components/Icon.svelte";
 	import IconButton from "$lib/components/IconButton.svelte";
+	import { backendUrl } from "$lib/config/backend";
 
 	interface CodeOutput {
 		stdout?: string;
 		stderr?: string;
-		success?: boolean;
 		error?: string;
+		timed_out?: boolean;
+		truncated?: boolean;
+		/** Images the run saved to out/; `url` only in a saved chat */
+		images?: { path: string; url?: string }[];
 		/** Execution time in milliseconds (from backend) */
 		execution_time_ms?: number;
 	}
@@ -30,6 +34,9 @@
 	let { status, code, output }: Props = $props();
 
 	let expanded = $state(false);
+
+	// Charts are the result, so they show with the card closed.
+	const figures = $derived((output?.images ?? []).filter((i) => i.url));
 	let copySuccess = $state(false);
 
 	const statusConfig = $derived(
@@ -64,13 +71,14 @@
 		return `${mins}m ${secs}s`;
 	});
 
-	// Combined output text for display
+	// Combined output text for display. A failure shows the traceback when
+	// the run kept one, and the one-line reason when that is all there is.
 	const outputText = $derived(() => {
 		if (!output) return "";
-		if (output.error) return output.error;
 		const parts: string[] = [];
 		if (output.stdout) parts.push(output.stdout);
 		if (output.stderr) parts.push(output.stderr);
+		else if (output.error) parts.push(output.error);
 		return parts.join("\n").trim();
 	});
 
@@ -163,6 +171,14 @@
 			{/if}
 		</div>
 	{/if}
+
+	{#if figures.length}
+		<div class="figures">
+			{#each figures as figure (figure.path)}
+				<img src={backendUrl(figure.url!)} alt={figure.path.replace(/^out\//, "")} loading="lazy" />
+			{/each}
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -173,6 +189,21 @@
 		background: var(--color-surface);
 		overflow: hidden;
 		font-size: 0.8125rem;
+	}
+
+	.figures {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		padding: 0.5rem;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.figures img {
+		display: block;
+		max-width: 100%;
+		height: auto;
+		border-radius: 0.25rem;
 	}
 
 	.code-card.error {

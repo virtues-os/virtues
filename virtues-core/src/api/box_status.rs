@@ -391,14 +391,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     // `.unwrap_or(0)`, so `first_source` read 0 forever and
     // `onboarding_complete` could never be true. Hence `?` now: a broken
     // query must be a loud error, not a plausible zero.
-    let mut non_source_ids: Vec<String> = crate::applet_templates::list_sources_sorted()
-        .into_iter()
-        .filter(|s| s.auth == crate::applet_templates::SourceAuth::SelfIssuedBearer)
-        .map(|s| s.id)
-        .collect();
-    non_source_ids.push("__device__".to_string());
-    non_source_ids.push(crate::api::settings_byo::BYO_SOURCE_ID.to_string());
-    non_source_ids.push(crate::virtues_api::renew::SOURCE_ID.to_string());
+    let non_source_ids = non_source_ids();
 
     let first_source: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM credentials \
@@ -481,13 +474,19 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     .fetch_one(pool)
     .await?;
 
-    // Tier 0/1: a paired device finished its initial backfill. The FDA gate for
-    // the Mac (daemon running + Full Disk Access) is enforced client-side in the
-    // CollectorPermissionCard, which polls getCollectorStatus() directly; this
-    // derived step reflects that data has actually flowed for the device.
+    // A paired device has sent data: its first sync is stamped, or (read
+    // here too, so a box whose stamps were never written counts at once) one
+    // of its applets has a successful run that brought records. The run is
+    // the only proof that ties data to a device: data rows carry a provider,
+    // not a device, and `last_seen_at` is liveness, not data.
     let device_collecting: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM app_device \
-         WHERE init_sync_completed_at IS NOT NULL AND revoked_at IS NULL)",
+        "SELECT EXISTS(SELECT 1 FROM app_device d \
+         WHERE d.revoked_at IS NULL AND ( \
+           d.init_sync_completed_at IS NOT NULL \
+           OR EXISTS(SELECT 1 FROM app_applets a \
+                     JOIN app_applet_runs r ON r.applet_id = a.id \
+                     WHERE a.device_id = d.id AND r.status = 'success' \
+                       AND r.records_processed > 0)))",
     )
     .fetch_one(pool)
     .await?;
@@ -633,15 +632,13 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
         },
     ];
 
-    // Only the steps that mean the box has SOMETHING. `first_source` covers the
-    // Mac collector (the common path — iMessage is local, needs no OAuth, and
-    // the owner is already sitting at the machine that has it) as well as any
-    // connected account.
-    let onboarding_required: &[&str] = &["first_source"];
+    // The box has SOMETHING: a connected account (`first_source`), or a paired
+    // device that has sent data (`device_collecting`: the Mac collector, the
+    // iPhone). Either one; `first_source` excludes every device source, so it
+    // alone never counted the common path of a computer or a phone.
     let onboarding_complete = onboarding
         .iter()
-        .filter(|s| onboarding_required.contains(&s.id))
-        .all(|s| s.done);
+        .any(|s| (s.id == "first_source" || s.id == "device_collecting") && s.done);
 
     let onboarding_status = onboarding_status(pool).await;
 
@@ -693,6 +690,22 @@ pub async fn set_onboarding_done(pool: &PgPool, done: bool) -> Result<()> {
         .await
         .map_err(|e| crate::Error::Database(format!("set onboarding_status: {e}")))?;
     Ok(())
+}
+
+/// Source ids whose credentials are not a connected data source: every
+/// device source (self-issued bearer: iPhone, Mac, sensor), the pre-iroh
+/// `'__device__'` sentinel, the BYO-AI pseudo-source and the billing
+/// credential. One list, so "connected" means the same thing everywhere.
+pub fn non_source_ids() -> Vec<String> {
+    let mut ids: Vec<String> = crate::applet_templates::list_sources_sorted()
+        .into_iter()
+        .filter(|s| s.auth == crate::applet_templates::SourceAuth::SelfIssuedBearer)
+        .map(|s| s.id)
+        .collect();
+    ids.push("__device__".to_string());
+    ids.push(crate::api::settings_byo::BYO_SOURCE_ID.to_string());
+    ids.push(crate::virtues_api::renew::SOURCE_ID.to_string());
+    ids
 }
 
 /// Three-state qualifier for the `device_collecting` step (behavior keys off

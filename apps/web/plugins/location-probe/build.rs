@@ -2,7 +2,16 @@
 // against it and generates default.toml from it (see plugins/lockstep).
 // `resume_probe` sat here without a default-set grant until 2026-08-26;
 // generation from this list is what closes that gap for good.
-const COMMANDS: &[&str] = &["start_probe", "resume_probe", "read_rows", "push_status", "request_push"];
+const COMMANDS: &[&str] = &[
+  "start_probe",
+  "resume_probe",
+  "read_rows",
+  "push_status",
+  "request_push",
+  "status",
+  "request_location",
+  "open_settings",
+];
 
 fn main() {
   virtues_plugin_lockstep::enforce(COMMANDS);

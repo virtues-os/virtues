@@ -7,16 +7,15 @@ name: Build cloud sidecar images
 # process (it lives on as the llama-server sidecars, also shipped by
 # release-linux.yml).
 #
-# The atlas image is built + pushed via `make deploy-atlas` from the
-# operator's laptop (Stripe webhook secrets aren't appropriate for CI).
-# If we ever move atlas to CI, add a build-atlas job here mirroring
-# build-virtues-api.
-
-# NOT built on `staging` pushes. Nothing consumes the GHCR image: prod pulls
-# from ECR, and the only thing that puts an image there is `make
-# deploy-virtues-api` from the operator's laptop. Building on every staging
-# merge was pushing a tag no host ever pulled — 8 paid runner minutes on a
-# normal day, for nothing. `main` is kept so a release tag still produces an
+# Production does not pull this image. atlas and virtues-api are built ON the
+# cloud server from a pushed commit by `make deploy-* REF=...`
+# (tools/deploy-service.sh), so nothing reads GHCR at runtime. What this
+# workflow still gives is a clean-room build of virtues-api on `main`: a
+# release tag that no longer builds as a container is caught here.
+#
+# NOT built on `staging` pushes: nothing consumes the image, and building on
+# every staging merge was 8 paid runner minutes on a normal day, for nothing.
+# `main` is kept so a release tag still produces an
 # image, and `workflow_dispatch` covers the one-off.
 on:
   push:
@@ -73,30 +72,3 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
-  # Notify Atlas of new image version so it can roll the deployment.
-  register-version:
-    needs: [build-virtues-api]
-    runs-on: blacksmith-4vcpu-ubuntu-2204
-    if: github.event_name == 'push'
-    steps:
-      - name: Notify Atlas of new version
-        continue-on-error: true
-        run: |
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            ENVIRONMENT="production"
-          elif [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
-            ENVIRONMENT="staging"
-          else
-            echo "::warning::Unknown branch ${{ github.ref }}, skipping version registration"
-            exit 0
-          fi
-
-          curl -sf -X POST "${{ secrets.VIRTUES_ATLAS_URL }}/api/internal/set-version" \
-            -H "X-Atlas-Secret: ${{ secrets.VIRTUES_ATLAS_SECRET }}" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"version\": \"${{ github.sha }}\",
-              \"image_tag\": \"${{ github.sha }}\",
-              \"environment\": \"${ENVIRONMENT}\"
-            }"

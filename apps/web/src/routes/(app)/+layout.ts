@@ -1,5 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutLoad } from './$types';
+import { markInApp } from '$lib/components/setup/inApp';
 
 /** Degraded shell data for a transient box blip — keeps the app mounted. */
 const OFFLINE_DATA = {
@@ -31,6 +32,7 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		// must never trap the user out of their app).
 		if (!sessionResponse.ok) {
 			if (sessionResponse.status === 401 || sessionResponse.status === 403) {
+				markInApp(false);
 				throw redirect(303, '/pair');
 			}
 			return OFFLINE_DATA;
@@ -40,6 +42,7 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 
 		// Redirect to login if not authenticated
 		if (!sessionData.user) {
+			markInApp(false);
 			throw redirect(303, '/pair');
 		}
 
@@ -111,6 +114,8 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 					setup.onboarding_status === 'onboarding' ||
 					(setup.onboarding_complete === false && setup.onboarding_status !== 'active')
 				) {
+					// Setup is the stage again, not a tab: `/setup` must reach it.
+					markInApp(false);
 					throw redirect(303, '/setup');
 				}
 			}
@@ -119,6 +124,9 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 			// transient box blip never traps the user out of their app.
 			if (e && typeof e === 'object' && 'status' in e) throw e;
 		}
+
+		// Let in: from here `/setup` opens as a tab in the app, not the stage.
+		markInApp(true);
 
 		// Fetch profile for user preferences and server status
 		const profileResponse = await fetch('/api/profile');

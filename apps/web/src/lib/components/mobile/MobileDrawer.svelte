@@ -32,10 +32,12 @@
 	 */
 	import Icon from "$lib/components/Icon.svelte";
 	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
+	import SetupRing from "$lib/components/sidebar/SetupRing.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
+	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
 	import { search } from "$lib/stores/search.svelte";
 	import { goto } from "$app/navigation";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
@@ -123,7 +125,7 @@
 <nav class="drawer" aria-label="Navigation">
 	<header class="mast">
 		<!-- The mark, drawn: same optical grid as the desktop mast — the
-		     JJannon ∴ glyph is text-weight, a masthead needs logo weight. -->
+		     typed ∴ glyph is text-weight, a masthead needs logo weight. -->
 		<span class="mark-glyph" aria-hidden="true">
 			<svg viewBox="0 0 12 10.5" width="12" height="10.5" fill="currentColor">
 				<circle cx="6" cy="2.4" r="1.5" />
@@ -155,7 +157,7 @@
 		     old bottom bar's, moved up. -->
 		{#if setupOpen}
 			<button class="setup-row" onclick={continueSetup}>
-				<AtlasIcon name="setup" bare />
+				<SetupRing />
 				<span class="row-text">Continue setup</span>
 				<span class="setup-count">{setup.doneCount}/{setup.steps.length}</span>
 			</button>
@@ -210,7 +212,10 @@
 					aria-current={activeRoute === route ? "page" : undefined}
 					onclick={() => go(route, p.name || "Project")}
 				>
-					<span class="chat-title">{p.name || "Untitled"}</span>
+					<span class="chat-title with-glyph">
+						<ProjectGlyph project={p} size={16} />
+						<span class="title-text">{p.name || "Untitled"}</span>
+					</span>
 					<span class="chat-when">{p.chat_count === 1 ? "1 chat" : `${p.chat_count} chats`}</span>
 				</button>
 			{/each}
@@ -218,6 +223,7 @@
 		<div class="section-label">Recents</div>
 		{#each recentSessions as s (s.conversation_id)}
 			{@const route = `/chat/${s.conversation_id}`}
+			{@const home = s.project_id ? projectStore.byId(s.project_id) : undefined}
 			<button
 				class="chat-row"
 				class:active={activeRoute === route}
@@ -225,7 +231,17 @@
 				onclick={() => go(route, s.title || "Chat")}
 			>
 				<span class="chat-title">{s.title || "Untitled"}</span>
-				<span class="chat-when">{when(s.last_message_at || s.first_message_at)}</span>
+				<!-- A chat in a project says which, in the project's own mark and
+				     color, before when: the phone's form of the desktop row's
+				     tinted glyph. -->
+				<span class="chat-when" class:with-glyph={!!home}>
+					{#if home}
+						<ProjectGlyph project={home} size={12} />
+						<span class="title-text">{home.name} · {when(s.last_message_at || s.first_message_at)}</span>
+					{:else}
+						{when(s.last_message_at || s.first_message_at)}
+					{/if}
+				</span>
 			</button>
 		{:else}
 			<div class="empty">Conversations you start will collect here.</div>
@@ -362,7 +378,10 @@
 
 	/* A row that is two controls: the word and a + at its right edge. The
 	   outer keeps the row's box; the inner buttons split it. */
-	.row-split {
+	/* Qualified, not bare: `.row` below sets the row's padding and, as the
+	   later rule of equal weight, won; the inner button pads itself too, so
+	   Pages sat 10px right of every other door. */
+	.row.row-split {
 		padding: 0;
 	}
 	.row-main {
@@ -493,6 +512,25 @@
 		margin-top: 1px;
 		font-size: 13px;
 		color: var(--color-foreground-muted);
+	}
+
+	.chat-title.with-glyph,
+	.chat-when.with-glyph {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+
+	.chat-when.with-glyph {
+		gap: 5px;
+	}
+
+	.title-text {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.empty {

@@ -125,10 +125,20 @@ pub extern "C" fn virtues_drain_blocking(timeout_secs: i32) -> i32 {
   let Some(rec) = store.load().ok().flatten() else {
     return -1;
   };
+  // Nothing due → no endpoint. The location drain timer calls this every
+  // 5 min whatever the queue holds, and building the client is the costly
+  // part (address lookup, socket bind, relay TLS, net probes, teardown), so
+  // the check comes first — the same fast path the upload loop takes. An
+  // outbox error also lands here, as it does there. Nothing is parked: the
+  // upload loop owns that, and parking here could cut off its in-flight drain.
+  if outbox::due_streams().map(|s| s.is_empty()).unwrap_or(true) {
+    return 0;
+  }
   // Constrained-radio holdoff, shared clock with the upload loop: a location
   // wake / fallback timer inside the holdoff window leaves rows queued for the
   // batched dial. First call after launch always runs (a cold sig-loc relaunch
-  // may not live long enough to wait out a window).
+  // may not live long enough to wait out a window). After the due check, so an
+  // empty call never stamps the clock and holds back the next real upload.
   if !crate::bg_drain_due() {
     return 0;
   }

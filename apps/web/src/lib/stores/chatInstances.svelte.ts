@@ -12,6 +12,7 @@ import { subscriptionStore } from '$lib/stores/subscription.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import type { CheckpointMessage } from '$lib/types/chat';
 import { placeCheckpoint } from '$lib/components/chat/state/checkpoint';
+import type { LocalStats } from '$lib/stores/localModel.svelte';
 
 // --- Streaming reactivity helpers (see replaceMessage override below) ---------
 //
@@ -132,6 +133,8 @@ interface CreateChatConfig {
     getAgentMode?: () => string; // Getter for agent mode (agent, chat, research)
     getChatMode?: () => string; // Getter for retrieval scope: 'open' | 'scoped' (project chats)
     getTemporary?: () => boolean; // Getter for temporary/ghost mode (don't persist server-side)
+    /** Local mode only: whether the small model reasons before answering. */
+    getThink?: () => boolean;
 }
 
 class ChatInstanceStore {
@@ -146,6 +149,28 @@ class ChatInstanceStore {
     // Live Deep Research subagent state, keyed by conversationId. Ephemeral — rebuilt each turn
     // from transient `data-subagent` events.
     private subagents = $state(new Map<string, SubagentStatus[]>());
+
+    // Conversations that have sent a local turn. A local chat stays local: the
+    // transport below forces every later send in one to be local and
+    // temporary, whatever mode the view happens to hold (it resets its mode
+    // when it switches conversations). Without that, coming back to a local
+    // chat and sending would put its transcript in reach of the cloud
+    // (title generation sends the whole chat to a cloud model).
+    private localConversations = new Set<string>();
+
+    /** Whether this conversation is a local one. */
+    isLocal(conversationId: string): boolean {
+        return this.localConversations.has(conversationId);
+    }
+
+    // What each local reply measured, keyed by conversation then message id.
+    // Transient like the chat itself: a local chat is never stored.
+    private localStats = $state(new Map<string, Map<string, LocalStats>>());
+
+    /** The measurements for one local reply, once its turn has finished. */
+    getLocalStats(conversationId: string, messageId: string): LocalStats | undefined {
+        return this.localStats.get(conversationId)?.get(messageId);
+    }
 
     /** Current Deep Research subagents for a conversation (empty if none active). */
     getSubagents(conversationId: string): SubagentStatus[] {
@@ -179,7 +204,7 @@ class ChatInstanceStore {
      * @param config - Configuration including conversationId and getModel getter
      */
     getOrCreate(config: CreateChatConfig): Chat {
-        const { conversationId, getModel, getProjectId, getActivePageContext, getPersona, getAgentMode, getChatMode, getTemporary } = config;
+        const { conversationId, getModel, getProjectId, getActivePageContext, getPersona, getAgentMode, getChatMode, getTemporary, getThink } = config;
         const existing = this.instances.get(conversationId);
 
         if (existing) {
@@ -201,9 +226,13 @@ class ChatInstanceStore {
                     const projectId = getProjectId();
                     const activePage = getActivePageContext?.();
                     const persona = getPersona?.() || 'default';
-                    const agentMode = getAgentMode?.() || 'chat';
+                    let agentMode = getAgentMode?.() || 'chat';
+                    if (this.localConversations.has(conversationId)) agentMode = 'local';
+                    if (agentMode === 'local') this.localConversations.add(conversationId);
                     const chatMode = getChatMode?.() || 'open';
-                    const temporary = getTemporary?.() || false;
+                    // A local chat is never stored, and its whole transcript
+                    // goes to the local model each turn.
+                    const temporary = agentMode === 'local' || getTemporary?.() || false;
                     // Omitted unless the person picked one — see getModel above.
                     const model = getModel();
 
@@ -233,6 +262,7 @@ class ChatInstanceStore {
                             chatMode,
                             // Ghost/temporary chat — backend should skip persistence when true.
                             ...(temporary && { temporary: true }),
+                            ...(agentMode === 'local' && { think: getThink?.() ?? false }),
                             // User's timezone for temporal awareness (IANA format, e.g., "America/Los_Angeles")
                             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                             // The Space (room) this chat lives in — drives the agent's
@@ -250,6 +280,17 @@ class ChatInstanceStore {
                 // Handle Deep Research subagent events (transient - drives the live panel)
                 if (dataPart.type === 'data-subagent') {
                     this.applySubagent(conversationId, dataPart.data as SubagentStatus);
+                }
+                // A local turn's measurements arrive as its last part, so they
+                // belong to the reply being written now.
+                else if (dataPart.type === 'data-local-stats') {
+                    const messages = this.instances.get(conversationId)?.chat.messages ?? [];
+                    const reply = [...messages].reverse().find((m) => m.role === 'assistant');
+                    if (reply) {
+                        const perChat = new Map(this.localStats.get(conversationId) ?? []);
+                        perChat.set(reply.id, dataPart.data as LocalStats);
+                        this.localStats.set(conversationId, perChat);
+                    }
                 }
                 // The interview's write_it_up finished: open the "In your own
                 // words" document beside the chat. Sent as a transient data

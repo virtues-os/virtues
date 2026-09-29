@@ -48,7 +48,14 @@
 	import ThinkingMark from "$lib/components/ThinkingMark.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
-	import { getChat, listLifeChapters, type LifeChapter } from "$lib/api/client";
+	import {
+		getChat,
+		getNarrativeRules,
+		listLifeChapters,
+		saveNarrativeRules,
+		type LifeChapter,
+		type NarrativeRule,
+	} from "$lib/api/client";
 	import { readNextChapter } from "../nextChapter";
 	import { getMe } from "$lib/wiki/api";
 	import { GETTING_STARTED_CHAT_ID } from "$lib/components/chat/getting-started/getting-started";
@@ -56,6 +63,7 @@
 	import { toUiMessage } from "$lib/components/chat/state/transcript";
 	import { isAppleKeyboard } from "$lib/utils/platform";
 	import { setup } from "../setup.svelte";
+	import { useShowing, mayTakeFocus } from "../showing";
 	import StepFrame from "../StepFrame.svelte";
 
 	let {
@@ -109,6 +117,7 @@
 	const touch = typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
 
 	const name = $derived(setup.assistantName);
+	const showing = useShowing();
 
 	/** The opening of "In your own words": its first paragraphs, plain, up to
 	 *  about three hundred characters, cut at a sentence. */
@@ -140,6 +149,46 @@
 	$effect(() => {
 		if (phase === "closed" && excerpt === null) void loadExcerpt();
 	});
+
+	/** What they asked never to be raised, heard in the interview and kept
+	 *  inactive by the server until they say so here. Nothing binds the
+	 *  assistant before that. */
+	let inForce = $state<NarrativeRule[]>([]);
+	let proposed = $state<NarrativeRule[]>([]);
+	let keep = $state<Record<string, boolean>>({});
+	let rulesSaved = $state<number | null>(null);
+	let rulesError = $state<string | null>(null);
+	let rulesBusy = $state(false);
+	async function loadRules() {
+		try {
+			const r = await getNarrativeRules();
+			inForce = r.rules;
+			proposed = r.proposed;
+			keep = Object.fromEntries(r.proposed.map((p) => [p.id, true]));
+		} catch {
+			/* an older server, or unreachable: there is nothing to confirm */
+		}
+	}
+	$effect(() => {
+		if (phase === "closed") void loadRules();
+	});
+	async function settleRules(take: boolean) {
+		rulesBusy = true;
+		rulesError = null;
+		const chosen = take ? proposed.filter((p) => keep[p.id]) : [];
+		try {
+			// The set is replaced whole, so the rules in force are read again
+			// now, not trusted from when this screen opened.
+			inForce = (await getNarrativeRules()).rules;
+			await saveNarrativeRules([...inForce, ...chosen].map((r) => ({ rule: r.rule, kind: r.kind })));
+			proposed = [];
+			rulesSaved = chosen.length;
+		} catch {
+			rulesError = "Your server couldn't save these. Try again.";
+		} finally {
+			rulesBusy = false;
+		}
+	}
 	const still =
 		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
@@ -259,7 +308,8 @@
 		opening = isOpening;
 		phase = "asking";
 		await tick();
-		field?.focus();
+		// Not from a hidden tab, or out of the other pane mid-sentence.
+		if (mayTakeFocus(showing, field)) field?.focus();
 	}
 
 	onMount(() => {
@@ -313,10 +363,22 @@
 		return last?.role === "assistant" ? unmarked(textOf(last as never)) : "";
 	});
 
-	async function send(text: string) {
+	/** Send a turn, then read what the server holds. `typed` is the person's
+	 *  own answer: if the server never got it, it goes back in the field with
+	 *  the reason, rather than vanishing under the same question. */
+	async function send(text: string, typed = false) {
 		const t = text.trim();
 		if (!t || phase === "waiting") return;
+		const asked = question;
+		const wasOpening = opening;
 		error = null;
+		// How many answers the server held before this one: counting, not
+		// matching text, so a repeated "Yes" can't pass for this one landing.
+		const heldBefore = typed
+			? await transcript()
+					.then((ts) => ts.filter((x) => x.role === "user").length)
+					.catch(() => null)
+			: null;
 		phase = "waiting";
 		try {
 			await chat.sendMessage({ text: t });
@@ -324,13 +386,26 @@
 			/* read the outcome off the server below */
 		}
 		answer = "";
-		await place();
+		try {
+			await place();
+			if (!typed) return;
+			const turns = await transcript();
+			const held = turns.filter((x) => x.role === "user");
+			if (heldBefore !== null ? held.length > heldBefore : held.at(-1)?.text.replace(/\s+/g, " ").trim() === t.replace(/\s+/g, " ").trim()) return;
+		} catch {
+			/* the server can't be read either: same answer as a lost send */
+			if (phase === "waiting") void ask(asked, wasOpening);
+		}
+		if (typed) {
+			answer = t;
+			error = "Your server didn't get that answer. Check your connection, then send it again.";
+		}
 	}
 
 	function onKey(e: KeyboardEvent) {
 		if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
-			void send(answer);
+			void send(answer, true);
 		}
 	}
 
@@ -351,14 +426,14 @@
 		title="Tell your story"
 		subtitle="The record holds what happened. Only you can say what it meant."
 	>
-		<p class="facts">Six short parts · Skip any question · Finish later and pick up where you left off</p>
+		<p class="facts">Six parts, about twenty minutes · Skip any question · Finish later and pick up where you left off</p>
 		{#if chapters.length > 0}
 			<p class="note centered-note">It starts from the chapters you drew:</p>
 			<ol class="chips">
 				{#each chapters as c (c.id)}
 					<li>
 						<span class="chip-title">{c.title?.trim() || "Unnamed"}</span>
-						<span class="chip-years">{c.started_at.slice(0, 4)}–{c.ended_at ? c.ended_at.slice(0, 4) : "now"}</span>
+						<span class="chip-years">{c.started_at.slice(0, 4)} to {c.ended_at ? c.ended_at.slice(0, 4) : "now"}</span>
 					</li>
 				{/each}
 			</ol>
@@ -398,17 +473,45 @@
 	<StepFrame
 		title="You've told your story"
 		subtitle={excerpt
-			? `${name} wrote it up from your answers, in your own words:`
-			: `${name} wrote it up from your answers, in your own words. It's in your wiki, and you can change it whenever you like.`}
+			? "Your server arranged your answers into a page, in your own words. It begins:"
+			: "Your server arranged your answers into a page, in your own words. It's in your wiki, and nothing rewrites it unless you ask."}
 	>
 		{#if excerpt}
 			<blockquote class="excerpt" in:fly={IN}>
 				{#each excerpt as para, i (i)}<p>{para}</p>{/each}
 			</blockquote>
 		{/if}
+		{#if proposed.length}
+			<div class="asked" in:fly={IN}>
+				<p class="asked-head">What you asked of {name}:</p>
+				<ul>
+					{#each proposed as r (r.id)}
+						<li>
+							<label>
+								<input type="checkbox" bind:checked={keep[r.id]} disabled={rulesBusy} />
+								<span>{r.rule}</span>
+							</label>
+						</li>
+					{/each}
+				</ul>
+				<div class="asked-row">
+					<button type="button" class="setup-go small" onclick={() => settleRules(true)} disabled={rulesBusy}>
+						{proposed.length === 1 ? "Keep this" : "Keep these"}
+					</button>
+					<button type="button" class="setup-past" onclick={() => settleRules(false)} disabled={rulesBusy}>
+						{proposed.length === 1 ? "Don't keep it" : "Don't keep them"}
+					</button>
+				</div>
+				{#if rulesError}<p class="asked-err" role="alert">{rulesError}</p>{/if}
+			</div>
+		{:else if rulesSaved}
+			<p class="asked-done" in:fade={{ duration: still ? 0 : 200 }}>
+				Kept. {name} reads {rulesSaved === 1 ? "it" : "them"} before every reply.
+			</p>
+		{/if}
 		{#snippet actions()}
 			<button type="button" class="setup-go" onclick={onnext}>
-				{excerpt ? "Read it all" : "Finish setup"}
+				{excerpt ? "Read “In your own words”" : "Finish setup"}
 				<Icon icon="ri:arrow-right-line" width="16" />
 			</button>
 		{/snippet}
@@ -444,7 +547,7 @@
 				class="answer"
 				onsubmit={(e) => {
 					e.preventDefault();
-					void send(answer);
+					void send(answer, true);
 				}}
 			>
 				<textarea
@@ -661,5 +764,61 @@
 	}
 	.excerpt p:last-child {
 		margin-bottom: 0;
+	}
+
+	/* What they asked not to be raised: under the excerpt, quieter than it,
+	   in the interface face, because it is a setting in their words. */
+	.asked {
+		max-width: 32rem;
+		margin: 32px auto 0;
+		padding-top: 20px;
+		border-top: 1px solid var(--color-border);
+		text-align: left;
+		font-size: 15px;
+		color: var(--color-foreground);
+	}
+	.asked-head {
+		margin: 0 0 12px;
+		color: var(--color-foreground-muted);
+	}
+	.asked ul {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.asked label {
+		display: flex;
+		align-items: baseline;
+		gap: 12px;
+		min-height: 44px;
+		cursor: pointer;
+	}
+	.asked input {
+		flex: none;
+		width: 16px;
+		height: 16px;
+		accent-color: var(--color-primary);
+		transform: translateY(2px);
+	}
+	.asked-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 12px 16px;
+		margin-top: 12px;
+	}
+	.asked-err {
+		margin: 12px 0 0;
+		font-size: 14px;
+		color: var(--color-error);
+	}
+	.asked-done {
+		max-width: 32rem;
+		margin: 32px auto 0;
+		font-size: 15px;
+		color: var(--color-foreground-muted);
 	}
 </style>

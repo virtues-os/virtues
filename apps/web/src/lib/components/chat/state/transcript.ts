@@ -37,6 +37,102 @@ export interface MessageMeta {
 	budget?: boolean;
 }
 
+/** Why a reply is partial, as StoppedNotice words it. */
+export type StopReason = "stopped" | "length" | "interrupted" | "unattended" | "max_steps" | "budget";
+
+/**
+ * The one reason to show under a partial reply, or null for a whole one. A
+ * message carries at most one flag in practice; if it carried several, the
+ * person's own stop wins, then the order below.
+ */
+export function stopReason(meta: MessageMeta | undefined): StopReason | null {
+	if (!meta) return null;
+	if (meta.stopped) return "stopped";
+	if (meta.cutShort) return "length";
+	if (meta.interrupted) return "interrupted";
+	if (meta.unattended) return "unattended";
+	if (meta.maxSteps) return "max_steps";
+	if (meta.budget) return "budget";
+	return null;
+}
+
+/** An assistant turn split into what the thinking block shows and where the reply starts. */
+export interface SplitTurn {
+	/** Tool calls, for the thinking block. */
+	toolParts: any[];
+	/** Reasoning text, non-empty parts joined by newlines. */
+	reasoning: string;
+	/** Text runs that came before the reply: the model saying what it was about to do. */
+	narration: string[];
+	/** Index of the first part that belongs in the body; text before it is narration. */
+	bodyFromIndex: number;
+	/** Whether the thinking block has anything to show. */
+	hasThinkingContent: boolean;
+}
+
+/**
+ * Split an assistant turn's parts.
+ *
+ * A turn is several runs of text with tool calls between them. A run with a
+ * tool call AFTER it was the model saying what it was about to do; the run
+ * with nothing after it is the reply. Only the reply belongs in the
+ * transcript — the rest is working-out and goes to the thinking block,
+ * which is where its status label comes from. "Has a tool after it" rather
+ * than "is not the last one" because it has to hold mid-turn too: the line
+ * the model just wrote is its answer until a tool starts, and at that moment
+ * it becomes narration and moves. A message stored before `parts` carried
+ * this order has one text run and no tool before it, so it is all reply.
+ *
+ * Where the reply starts is normally just past the last tool call. But a
+ * turn that ENDED on a tool call — an error, a stop, the model quitting —
+ * never wrote one, and treating all of its text as narration would leave a
+ * blank message with the words hidden in a collapsed block. So once the turn
+ * is over, the last thing it said stands as the reply. While it is still
+ * streaming it does not: there is no reply yet, and the line the model wrote
+ * is already showing as the status label.
+ */
+export function splitTurn(parts: any[], isStreaming: boolean): SplitTurn {
+	const isText = (p: any) => p.type === "text" && !!p.text?.trim();
+	let lastTool = -1;
+	let lastText = -1;
+	parts.forEach((p, i) => {
+		if (p.type.startsWith("tool-")) lastTool = i;
+		if (isText(p)) lastText = i;
+	});
+	const bodyFromIndex = isStreaming || lastText > lastTool ? lastTool + 1 : lastText;
+	const toolParts = parts.filter((p) => p.type.startsWith("tool-"));
+	const reasoning = parts
+		.filter((p) => p.type === "reasoning")
+		.map((p) => p.text || "")
+		.filter(Boolean)
+		.join("\n");
+	const narration = parts
+		.filter((p, i) => isText(p) && i < bodyFromIndex)
+		.map((p) => p.text.trim());
+	return {
+		toolParts,
+		reasoning,
+		narration,
+		bodyFromIndex,
+		hasThinkingContent: !!reasoning || toolParts.length > 0 || narration.length > 0,
+	};
+}
+
+/**
+ * Did the turn go on after the tool call at `index` — another call, or
+ * reply text? A failed call the model then recovered from is working-out
+ * and belongs in the thinking block with the other calls; one the turn
+ * ended on is what the person got instead of an answer, and stays in the
+ * body. Measured on a live box: nine of nine sql_query failures in two
+ * weeks were a guessed column followed by the right one.
+ */
+export function turnMovedPast(parts: any[], index: number): boolean {
+	return parts.some(
+		(p: any, i: number) =>
+			i > index && (p.type.startsWith("tool-") || (p.type === "text" && p.text?.trim())),
+	);
+}
+
 /** Helper function to convert database messages to Chat parts */
 export function convertMessageToParts(msg: any, metadata: Map<string, MessageMeta>) {
 	// Carry agent/provider + the partial-reply flags so the notice under a

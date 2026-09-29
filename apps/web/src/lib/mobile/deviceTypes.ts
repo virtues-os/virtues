@@ -18,6 +18,20 @@ export interface StreamStatus {
 	collecting: boolean;
 }
 
+/** Whether the Health sheet has been shown — the most HealthKit will say.
+ * `requested` says nothing about what the person allowed. */
+export type HealthPermission = "requested" | "not_requested" | "unknown" | "unavailable";
+
+/** Health's status. `authorized` there is the opt-in, not a grant: HealthKit
+ * never reports whether reads were allowed. */
+export interface HealthStatus extends StreamStatus {
+	/** Absent on a native build that predates it. */
+	permission?: HealthPermission;
+}
+
+/** The microphone permission, with its two "no"s told apart. */
+export type MicPermission = "granted" | "denied" | "not_determined" | "unavailable";
+
 /** One default, and windows that invert it. Minutes since local midnight;
  * start > end wraps past midnight. See agents/plan/audio-schedule-places-plan.md. */
 export interface MuteSchedule {
@@ -27,7 +41,15 @@ export interface MuteSchedule {
 }
 
 export interface AudioStatus {
+	/** Microphone permission granted. */
 	authorized: boolean;
+	/** `authorized` as a word, so `denied` (needs Settings) is not confused
+	 * with `not_determined` (the sheet will show). Absent on older native builds. */
+	mic?: MicPermission;
+	/** The person left recording on; true through a call or a CarPlay pause.
+	 * Absent on older native builds. */
+	enabled?: boolean;
+	/** The recorder is capturing right now. */
 	recording: boolean;
 	notify: boolean;
 	/** Chunks shipped metadata-only because they measured silent. */

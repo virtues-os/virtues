@@ -25,6 +25,7 @@ pub mod http_client;
 pub mod ids;
 pub mod inference_report;
 pub mod install_manifest;
+pub mod local_model;
 pub mod magnet;
 pub mod maps;
 pub mod maintenance;

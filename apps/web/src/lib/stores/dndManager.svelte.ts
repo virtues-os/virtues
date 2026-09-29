@@ -9,11 +9,24 @@
  * - Tab → Split Overlay = MOVE (tab moves to that pane)
  * - Tab cross-pane = MOVE (tab moves to other pane)
  * - Sidebar reorder = REORDER (handled locally, not here)
+ * - Tab → a project row in the sidebar = FILE (the tab's chat or page joins
+ *   the project, an unsent chat takes it as its draft; the tab stays put)
  */
 
 import { TRIGGERS } from 'svelte-dnd-action';
 import type { DndEvent } from 'svelte-dnd-action';
 import { windowShellStore, type Tab } from '$lib/stores/window-shell.svelte';
+import { projectStore } from '$lib/stores/project.svelte';
+import { fileIntoProject, targetForTab, type FileTarget } from '$lib/utils/projectActions';
+
+/**
+ * A project row takes a tab by carrying this attribute with the project's id.
+ * svelte-dnd-action knows only its own zones, and a sidebar row is not one:
+ * a tab let go over it was a drop "outside of any" and simply went home.
+ * So while a tab is in the air the pointer is hit-tested against these rows,
+ * and a let-go over one files the tab's thing instead.
+ */
+export const PROJECT_DROP_ATTR = 'data-project-drop';
 
 // ============================================================================
 // Zone Types
@@ -91,8 +104,43 @@ class DndManager {
 	// Session tracking - public for reactive access (needed for split overlay visibility)
 	session = $state<DragSession | null>(null);
 
+	/** The project row under a dragged tab, for the row to light up. */
+	projectTarget = $state<string | null>(null);
+
 	get isDragging(): boolean {
 		return this.session !== null;
+	}
+
+	/** What the dragged tab would file, or null if it has nothing to file. */
+	get draggedTarget(): FileTarget | null {
+		const tab = this.session?.item.tab;
+		return tab ? targetForTab(tab) : null;
+	}
+
+	private trackPointer = (e: MouseEvent | TouchEvent) => {
+		if (!this.draggedTarget) return;
+		const pt = 'touches' in e ? e.touches[0] : e;
+		if (!pt) return;
+		let id: string | null = null;
+		for (const el of document.elementsFromPoint(pt.clientX, pt.clientY)) {
+			const row = el.closest(`[${PROJECT_DROP_ATTR}]`);
+			if (row) {
+				id = row.getAttribute(PROJECT_DROP_ATTR);
+				break;
+			}
+		}
+		if (id !== this.projectTarget) this.projectTarget = id;
+	};
+
+	private startTracking(): void {
+		window.addEventListener('mousemove', this.trackPointer, { capture: true, passive: true });
+		window.addEventListener('touchmove', this.trackPointer, { capture: true, passive: true });
+	}
+
+	private stopTracking(): void {
+		window.removeEventListener('mousemove', this.trackPointer, { capture: true });
+		window.removeEventListener('touchmove', this.trackPointer, { capture: true });
+		this.projectTarget = null;
 	}
 
 	// ============================================================================
@@ -122,6 +170,7 @@ class DndManager {
 					sourceZone: zoneId,
 					startedAt: Date.now()
 				};
+				this.startTracking();
 			}
 		}
 	}
@@ -136,11 +185,23 @@ class DndManager {
 	): Promise<void> {
 		const { items, info } = e.detail;
 		const currentSession = this.session;
+		const fileTarget = this.draggedTarget;
+		const target = this.projectTarget ? projectStore.byId(this.projectTarget) : undefined;
 
 		// Always end session
 		this.session = null;
+		this.stopTracking();
 
 		if (!currentSession) {
+			return;
+		}
+
+		// Let go over a project row: file the tab's thing there. The tab itself
+		// goes back where it was, which is what the library does for a drop
+		// outside its zones.
+		if (fileTarget && target) {
+			setItems(items as T[]);
+			void fileIntoProject(target, fileTarget);
 			return;
 		}
 

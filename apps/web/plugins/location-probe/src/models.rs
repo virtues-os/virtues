@@ -38,6 +38,23 @@ pub struct RowsResponse {
   pub rows: Vec<ProbeRow>,
 }
 
+/// The location authorization as iOS reports it: `not_determined`,
+/// `when_in_use`, `always`, `denied`, `restricted`, or `unavailable` (desktop).
+/// `request_location` resolves the answer the person gave, which is While
+/// Using at most — Always is asked later, on its own (LocationProbe.swift).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocationStatusResponse {
+  pub status: String,
+}
+
+/// Whether iOS opened the Settings app.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenSettingsResponse {
+  pub opened: bool,
+}
+
 /// Whether this phone lets the server reach it, as the OS reports it.
 ///
 /// `status` is one of `authorized`, `denied`, `not_determined`, or

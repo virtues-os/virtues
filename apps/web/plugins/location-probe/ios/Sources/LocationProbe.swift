@@ -73,7 +73,35 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   private var manager: CLLocationManager!
   private var configured = false
   private var updating = false
+  /// An explicit opt-in asked for permission in this process. Only then does a
+  /// While Using grant schedule the later ask for Always.
   private var wantPrompt = false
+
+  /// `requestPermission` callers waiting for the person's answer. Main thread
+  /// only, like every other touch of `manager`.
+  private var authWaiters: [(String) -> Void] = []
+  /// Long enough for a person to read the sheet; short enough that a sheet iOS
+  /// never showed (a missing usage string) cannot hang the caller for good.
+  private let authWaitTimeout: TimeInterval = 120
+
+  // MARK: - The ask for Always
+  //
+  // Background relaunch (significant-location change on a terminated app)
+  // needs Always, and iOS grants it only as an upgrade from While Using. That
+  // upgrade is never asked inside the callback that reports the While Using
+  // grant: there it appears the instant the first sheet closes, stacked on
+  // whatever the screen asks next (Setup asks for several permissions in a
+  // row), and a sheet the person did not see coming is the one they refuse.
+  //
+  // Instead the grant records a due time, and the ask happens on the first
+  // real foreground after it: a launch, or a return from the background —
+  // never `didBecomeActive` alone, which also fires when any system sheet
+  // closes. Until then While Using still collects while the app is alive
+  // (`allowsBackgroundLocationUpdates`, blue pill); only relaunch waits.
+  private static let alwaysDueKey = "virtues.location.always_due_at"
+  private let alwaysDelay: TimeInterval = 600
+  private var launchActivationSeen = false
+  private var enteredForeground = false
 
   /// Throttle: keep at most one fix per ~15s (matches the native app's sampling
   /// cadence — avoids flooding the log + outbox with near-identical points).
@@ -123,17 +151,19 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   // Coarse mode's 100 m filter means a phone that sits still records nothing
   // for hours, and "sitting still" then looks exactly like "collector dead" —
   // which is how a dead manager went unnoticed for ten days. So the 5-minute
-  // drain timer also asks: no fix logged for `stillCheckAfter`? Then take one
-  // reading at 100 m accuracy (Wi-Fi indoors; its own MetricKit bucket, so
-  // its cost is measured apart from movement GPS) with the filter off, keep
-  // the best fresh fix for up to `stillCheckWindow`, log it flagged `still`,
-  // and restore the mode. Motion logic is skipped for the window: a 100 m fix
-  // against a coarse anchor would read as movement and buy 5 min of GNSS.
+  // drain timer also asks: no fix logged for `stillCheckAfter`? Then ask for
+  // one reading at 100 m accuracy with the filter off, log the first fresh fix
+  // flagged `still`, and restore the mode. iOS answers a 100 m ask with GNSS
+  // (single-digit-meter fixes), so the check is spaced to every third tick,
+  // ~15 min; a 1 km ask does not reliably produce a fresh fix at all (about
+  // a third of checks got one). Motion logic is skipped for the window: a
+  // still fix against a coarse anchor could read as movement and buy 5 min
+  // of GNSS.
   private var stillCheckStartedAt: Date?
-  private var stillCheckBest: CLLocation?
-  private let stillCheckAfter: TimeInterval = 240
+  /// Longer than two 300 s timer periods even with their leeway (~720 s) and
+  /// shorter than three (>= 900 s), so a still phone checks every third tick.
+  private let stillCheckAfter: TimeInterval = 780
   private let stillCheckWindow: TimeInterval = 20
-  private let stillCheckGoodEnough: CLLocationAccuracy = 100
 
   /// Guards against overlapping background drains.
   private var isDraining = false
@@ -183,9 +213,90 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     case .authorizedAlways, .authorizedWhenInUse:
       beginUpdates()
     case .notDetermined:
-      if prompt { manager.requestWhenInUseAuthorization() }  // two-step continues in didChange
+      if prompt { manager.requestWhenInUseAuthorization() }  // the answer lands in didChange
     default:
       break  // denied / restricted — nothing to do
+    }
+  }
+
+  /// The explicit opt-in, answered: prompts if undetermined, starts collecting
+  /// on a grant, and calls `done` with the person's answer (see
+  /// `authorizationString`). The callback iOS makes as the manager is created
+  /// still reads `not_determined` and is not an answer, so only a determined
+  /// status settles it. The While Using answer settles it; Always comes later.
+  public func requestPermission(_ done: @escaping (String) -> Void) {
+    if !Thread.isMainThread {
+      DispatchQueue.main.async { [weak self] in self?.requestPermission(done) }
+      return
+    }
+    configure()
+    guard currentStatus() == .notDetermined else {
+      start(prompt: true)
+      done(authorizationString())
+      return
+    }
+    var fired = false
+    let settle: (String) -> Void = { status in
+      if fired { return }
+      fired = true
+      done(status)
+    }
+    authWaiters.append(settle)
+    // A settled waiter left in the list is inert; the next answer clears it.
+    DispatchQueue.main.asyncAfter(deadline: .now() + authWaitTimeout) { [weak self] in
+      guard let self = self else { return }
+      settle(self.authorizationString())
+    }
+    start(prompt: true)
+  }
+
+  /// The authorization as a plain word for the UI: `not_determined`,
+  /// `when_in_use`, `always`, `denied` or `restricted`. Main thread.
+  public func authorizationString() -> String {
+    configure()
+    switch currentStatus() {
+    case .notDetermined: return "not_determined"
+    case .authorizedWhenInUse: return "when_in_use"
+    case .authorizedAlways: return "always"
+    case .restricted: return "restricted"
+    case .denied: return "denied"
+    @unknown default: return "denied"
+    }
+  }
+
+  /// Called from plugin init (didFinishLaunching, main thread). Watches for the
+  /// foregrounds on which a due ask for Always may run; see `alwaysDueKey`.
+  public func installAlwaysEscalation() {
+    let nc = NotificationCenter.default
+    nc.addObserver(self, selector: #selector(onWillEnterForeground),
+      name: UIApplication.willEnterForegroundNotification, object: nil)
+    nc.addObserver(self, selector: #selector(onDidBecomeActive),
+      name: UIApplication.didBecomeActiveNotification, object: nil)
+  }
+
+  @objc private func onWillEnterForeground() { enteredForeground = true }
+
+  @objc private func onDidBecomeActive() {
+    // The process's first activation is a launch; later ones count only after a
+    // real return from the background.
+    let isLaunch = !launchActivationSeen
+    launchActivationSeen = true
+    guard isLaunch || enteredForeground else { return }
+    enteredForeground = false
+    escalateIfDue()
+  }
+
+  private func escalateIfDue() {
+    let d = UserDefaults.standard
+    guard d.object(forKey: Self.alwaysDueKey) != nil else { return }
+    guard Date().timeIntervalSince1970 >= d.double(forKey: Self.alwaysDueKey) else { return }
+    d.removeObject(forKey: Self.alwaysDueKey)
+    configure()
+    // iOS shows the upgrade sheet once per install; a person who has since
+    // chosen Always, Never or Ask Next Time in Settings is not asked again.
+    if currentStatus() == .authorizedWhenInUse {
+      writeMarker(source: "ask=always")
+      manager.requestAlwaysAuthorization()
     }
   }
 
@@ -360,6 +471,8 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
 
   /// Log one fix locally, enqueue it for the box, and ride its wake.
   private func record(_ l: CLLocation, still: Bool) {
+    // A still fix is proof of presence, not news: it rides the next upload
+    // (the audio chunk's nudge, or the drain timer) instead of calling one.
     lastFixAt = Date()
     // Local rolling log (device-screen "recent activity" + background badge).
     write(lat: l.coordinate.latitude, lon: l.coordinate.longitude, source: still ? "still" : "update")
@@ -371,7 +484,7 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     virtues_ensure_recording()
     // If this fix arrived while backgrounded (incl. a cold sig-loc relaunch),
     // drain to the box now — the foreground loop won't run until next launch.
-    maybeDrainInBackground()
+    if !still { maybeDrainInBackground() }
   }
 
   /// Drain-timer tick: start a still check if no fix has been logged lately.
@@ -384,38 +497,34 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     if let last = lastFixAt, Date().timeIntervalSince(last) < stillCheckAfter { return }
     let started = Date()
     stillCheckStartedAt = started
-    stillCheckBest = nil
-    // Precise mode already asks for better than 100 m; only loosen the filter.
+    // Precise mode already asks for better; only loosen the filter there.
     if mode == .coarse { manager.desiredAccuracy = kCLLocationAccuracyHundredMeters }
     manager.distanceFilter = kCLDistanceFilterNone
     DispatchQueue.main.asyncAfter(deadline: .now() + stillCheckWindow) { [weak self] in
       guard let self = self, self.stillCheckStartedAt == started else { return }
-      self.finishStillCheck()
+      self.finishStillCheck(with: nil)
     }
   }
 
   private func stillCheckSaw(_ l: CLLocation) {
-    // A cached fix from before the check proves nothing about now.
+    // A cached fix from before the check proves nothing about now. The first
+    // fresh one ends it: waiting for a better one is what wakes GNSS.
     guard let started = stillCheckStartedAt, l.horizontalAccuracy >= 0,
       l.timestamp >= started.addingTimeInterval(-1) else { return }
-    if stillCheckBest.map({ l.horizontalAccuracy < $0.horizontalAccuracy }) ?? true {
-      stillCheckBest = l
-    }
-    if l.horizontalAccuracy <= stillCheckGoodEnough { finishStillCheck() }
+    finishStillCheck(with: l)
   }
 
-  private func finishStillCheck() {
+  private func finishStillCheck(with fix: CLLocation?) {
     guard stillCheckStartedAt != nil else { return }
     stillCheckStartedAt = nil
     applySettings(mode)
-    guard let best = stillCheckBest else {
+    guard let fix = fix else {
       // Console only: a marker per miss would, every 5 min, push real fixes
       // out of the 300-row window the device screen reads.
       NSLog("[LocationProbe] still check: no fresh fix in %.0fs", stillCheckWindow)
       return
     }
-    stillCheckBest = nil
-    record(best, still: true)
+    record(fix, still: true)
   }
 
   /// On a background/sig-loc wake, hold an OS background-task assertion and run
@@ -461,6 +570,14 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     // `still` marks a still-check reading: proof of presence, not movement.
     var raw: [String: Any] = ["app_state": appStateString()]
     if still { raw["still"] = true }
+    // Battery beside every fix, so the box can measure drain per hour by build
+    // and by mic state; nothing on the phone records it otherwise. Monitoring
+    // is enabled at launch by ReachMonitor; -1 means unknown and is left out.
+    let level = UIDevice.current.batteryLevel
+    if level >= 0 {
+      raw["battery_level"] = (Double(level) * 100).rounded() / 100
+      raw["battery_state"] = batteryStateString()
+    }
     var rec: [String: Any] = [
       "timestamp": isoMillis.string(from: l.timestamp),
       "latitude": l.coordinate.latitude,
@@ -566,11 +683,21 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   public func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
     let status = currentStatus()
     writeMarker(source: "auth=\(status.rawValue)")
+    if status != .notDetermined, !authWaiters.isEmpty {
+      let answer = authorizationString()
+      let waiting = authWaiters
+      authWaiters.removeAll()
+      waiting.forEach { $0(answer) }
+    }
     switch status {
     case .authorizedWhenInUse:
-      // Escalate to Always for background delivery (only after an explicit
-      // opt-in that requested When-In-Use), then start.
-      if wantPrompt { manager.requestAlwaysAuthorization() }
+      // Background relaunch needs Always, asked on a later foreground rather
+      // than here (see `alwaysDueKey`). Only after an explicit opt-in: a
+      // person who chose While Using in Settings is not nagged.
+      let d = UserDefaults.standard
+      if wantPrompt, d.object(forKey: Self.alwaysDueKey) == nil {
+        d.set(Date().timeIntervalSince1970 + alwaysDelay, forKey: Self.alwaysDueKey)
+      }
       beginUpdates()
     case .authorizedAlways:
       beginUpdates()
@@ -687,6 +814,16 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   private func text(_ stmt: OpaquePointer?, _ col: Int32) -> String {
     guard let c = sqlite3_column_text(stmt, col) else { return "" }
     return String(cString: c)
+  }
+
+  private func batteryStateString() -> String {
+    switch UIDevice.current.batteryState {
+    case .unplugged: return "unplugged"
+    case .charging: return "charging"
+    case .full: return "full"
+    case .unknown: return "unknown"
+    @unknown default: return "unknown"
+    }
   }
 
   fileprivate func appStateString() -> String {

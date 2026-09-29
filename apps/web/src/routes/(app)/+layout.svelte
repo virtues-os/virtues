@@ -28,6 +28,8 @@
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount, onDestroy } from "svelte";
+	import { afterNavigate, beforeNavigate } from "$app/navigation";
+	import { IN_APP_PREFIX, setupOpensInApp } from "$lib/components/setup/inApp";
 	import { createAIContext } from "@ai-sdk/svelte";
 	import { initTheme } from "$lib/utils/theme";
 	import { goto } from "$app/navigation";
@@ -108,6 +110,30 @@
 		return () => document.body.classList.remove("focus-mode");
 	});
 
+	// SETUP OPENS HERE once someone is in the app (setup/inApp.ts). A link
+	// to `/setup` from inside it (the rail's Setup panel, the wiki's "Draw
+	// your chapters") is caught before it leaves for the full-screen stage,
+	// and opens Setup's tab instead, the one already open if there is one.
+	beforeNavigate((nav) => {
+		const to = nav.to?.url;
+		const path = to?.pathname ?? "";
+		// Back and Forward are let through: cancelling one moves the browser
+		// back where it was, and opening the tab on top of that pushed a copy
+		// of the entry Back had just left, so Back could never get past it.
+		// They reach the tab by way of the stage's redirect, below.
+		if (nav.type === "leave" || nav.type === "popstate" || !to) return;
+		if (!(path === "/setup" || path.startsWith("/setup/")) || !setupOpensInApp(to)) return;
+		nav.cancel();
+		windowShellStore.openSetup(path);
+	});
+	// Arriving by the stage's redirect (IN_APP_PREFIX + the address) once the
+	// shell is up: the tab takes over that history entry, not a new one.
+	afterNavigate((nav) => {
+		const path = nav.to?.url.pathname ?? "";
+		if (!initialized || nav.type === "enter" || !path.startsWith(IN_APP_PREFIX)) return;
+		windowShellStore.openSetup(path.slice(IN_APP_PREFIX.length), { replace: true });
+	});
+
 	// Load chat sessions, workspaces, and initialize theme on mount
 	onMount(async () => {
 		// Confirm to the shell that this build actually rendered. An OTA bundle
@@ -160,7 +186,10 @@
 
 		// Handle deep link from URL (e.g., /pages/page_abc123 or /wiki/rome)
 		// Note: searchParams.get() already decodes the value, no need for decodeURIComponent
-		const urlPath = $page.url.pathname;
+		// Setup's redirect into the app carries its address behind a prefix.
+		const urlPath = $page.url.pathname.startsWith(IN_APP_PREFIX)
+			? $page.url.pathname.slice(IN_APP_PREFIX.length)
+			: $page.url.pathname;
 		const rightParam = $page.url.searchParams.get("right");
 		// Preserve route-level params (e.g. ?page=N for the PDF viewer) —
 		// only ?right= belongs to the shell itself.

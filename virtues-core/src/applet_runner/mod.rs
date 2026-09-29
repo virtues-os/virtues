@@ -943,7 +943,7 @@ fn box_uid() -> u32 {
     std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(0)
 }
 
-fn which_systemd_run() -> Option<std::path::PathBuf> {
+pub(crate) fn which_systemd_run() -> Option<std::path::PathBuf> {
     std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths)
             .map(|p| p.join("systemd-run"))

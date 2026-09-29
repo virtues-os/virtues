@@ -3,14 +3,19 @@
  *
  * The modes the composer cycles through with Shift+Tab. The id goes to the
  * server as `agentMode`, which picks the turn's tools and prompt
- * (`tools::get_tools_for_agent_mode`, `agent::prompt`).
+ * (`ChatMode::tools`, `agent::prompt`).
  *
  * `sudo` is the owner's bypass: a shell on the server with passwordless sudo,
  * and nothing asks before it runs. It lasts for one chat and starts off every
  * time a chat opens.
+ *
+ * `local` runs a small model on the server's NPU and nowhere else. It is
+ * offered only when the box says it supports it (`localModel` store), and only
+ * on an empty chat: a local chat stays local, so its turns never reach a
+ * cloud model, and a stored chat never becomes local.
  */
 
-export type AgentModeId = 'chat' | 'deep_research' | 'sudo';
+export type AgentModeId = 'chat' | 'deep_research' | 'sudo' | 'local';
 
 export interface AgentMode {
 	id: AgentModeId;
@@ -42,6 +47,13 @@ export const AGENT_MODES: AgentMode[] = [
 		description: 'Full access to the server, nothing asks first',
 		icon: 'ri:terminal-box-line',
 		color: 'var(--color-error)'
+	},
+	{
+		id: 'local',
+		name: 'Local',
+		description: "A small model on your server's NPU",
+		icon: 'ri:cpu-line',
+		color: null
 	}
 ];
 
@@ -49,8 +61,17 @@ export function getModeById(id: AgentModeId): AgentMode | undefined {
 	return AGENT_MODES.find((m) => m.id === id);
 }
 
-/** The mode after `id`, wrapping — what Shift+Tab moves to. */
-export function nextMode(id: AgentModeId): AgentModeId {
-	const i = AGENT_MODES.findIndex((m) => m.id === id);
-	return AGENT_MODES[(i + 1) % AGENT_MODES.length].id;
+/**
+ * The modes this chat may switch between. Local needs the box's support and
+ * an empty chat; once a local chat has a turn, it is the only mode left.
+ */
+export function availableModes(current: AgentModeId, opts: { localSupported: boolean; empty: boolean }): AgentMode[] {
+	if (current === 'local' && !opts.empty) return AGENT_MODES.filter((m) => m.id === 'local');
+	return AGENT_MODES.filter((m) => m.id !== 'local' || (opts.localSupported && opts.empty));
+}
+
+/** The mode after `id` among `modes`, wrapping — what Shift+Tab moves to. */
+export function nextMode(id: AgentModeId, modes: AgentMode[] = AGENT_MODES): AgentModeId {
+	const i = modes.findIndex((m) => m.id === id);
+	return modes[(i + 1) % modes.length].id;
 }

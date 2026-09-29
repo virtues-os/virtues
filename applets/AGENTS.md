@@ -9,7 +9,8 @@ Chat-authored applets are created with the `setup_applet` tool (never by
 writing SQL rows). It validates first, materializes `applets/user/<slug>/`,
 and reconciles — a `check_failed` result lists findings; fix them and call
 again, nothing was created. Re-calling with the same name **updates** that
-applet: that is the edit path.
+applet: that is the edit path. So check `list_applets` before creating one —
+a name already in use overwrites that applet instead of adding a new one.
 
 ## The fields
 

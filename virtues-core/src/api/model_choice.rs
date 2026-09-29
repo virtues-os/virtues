@@ -30,37 +30,8 @@
 use sqlx::PgPool;
 use virtues_registry::models::ModelSlot;
 
+use crate::api::chat_mode::ChatMode;
 use crate::error::{Error, Result};
-
-/// Which slot a turn belongs to, from the mode the client is in.
-///
-/// This does not branch yet, and the honest thing is to say so rather than
-/// write a match whose arms all agree. Every mode the box knows — `chat`,
-/// `deep_research`, `council`, `interview` — answers the same kind of hard
-/// turn and differs only in tools and prompt (`tools::get_tools_for_agent_mode`),
-/// so they are all the Chat slot; an unknown mode is a client ahead of this
-/// box, and Chat is the safe read for it too.
-///
-/// It is a function anyway because it is the seam the mode/slot question
-/// belongs at. The Coding slot is pinnable in Settings while NOTHING in the
-/// box asks for it (`get_coding_model` has no callers), so the day applet
-/// authoring becomes a mode, this is the one line that wires it up. What the
-/// modes DO differ on today is whether they may honor a pin: see
-/// [`honors_pin`].
-pub fn slot_for_agent_mode(_agent_mode: &str) -> ModelSlot {
-    ModelSlot::Chat
-}
-
-/// Whether a mode may honor the person's pin, or must ride the slot default.
-///
-/// The interview may not. Its prompt promises "a no-retention agreement" in as
-/// many words, and the Virtues-curated slot map is what keeps that true: a
-/// pinned grok (`zdr: none`) or a BYO endpoint would silently void it. Same
-/// doctrine as the drafter in `narrative_draft.rs` — a pin governs the chats a
-/// person watches, not a room built on a retention promise.
-fn honors_pin(agent_mode: &str) -> bool {
-    agent_mode != "interview"
-}
 
 /// The id the person actually chose for this turn, if any.
 ///
@@ -69,11 +40,11 @@ fn honors_pin(agent_mode: &str) -> bool {
 /// the one that matters — it is what a shipped client sends when its catalog
 /// fetch failed, and reading it as a choice is what turned a flaky fetch on a
 /// phone into a hard 400 on every message it sent.
-fn wanted_pin<'a>(requested: Option<&'a str>, agent_mode: &str) -> Option<&'a str> {
+fn wanted_pin<'a>(requested: Option<&'a str>, mode: &ChatMode) -> Option<&'a str> {
     requested
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .filter(|_| honors_pin(agent_mode))
+        .filter(|_| mode.honors_pin())
 }
 
 /// Does this box's catalog positively contradict the pin?
@@ -94,13 +65,13 @@ fn pin_is_unknown(id: &str, catalog: Option<&[String]>) -> bool {
 pub async fn resolve_turn_model(
     pool: &PgPool,
     requested: Option<&str>,
-    agent_mode: &str,
+    mode: &ChatMode,
 ) -> Result<String> {
     // The catalog is only consulted to contradict a pin, so the ordinary
     // unpinned turn never pays for it. It used to be built eagerly here:
     // 244 models cloned out of the cache and mapped to 244 Strings, on every
     // message, to answer a question that was not being asked.
-    if let Some(id) = wanted_pin(requested, agent_mode) {
+    if let Some(id) = wanted_pin(requested, mode) {
         let catalog: Option<Vec<String>> = (!crate::api::model_catalog::is_cold()).then(|| {
             crate::api::model_catalog::models()
                 .into_iter()
@@ -119,8 +90,8 @@ pub async fn resolve_turn_model(
     // preference for it. A mode that refuses pins refuses the standing one too
     // — the interview's promise is about the curated slot map, not about who
     // typed the id.
-    let slot = slot_for_agent_mode(agent_mode);
-    if !honors_pin(agent_mode) {
+    let slot = mode.slot();
+    if !mode.honors_pin() {
         return Ok(crate::api::model_catalog::model_for_slot(slot));
     }
     let standing = match slot {
@@ -149,14 +120,6 @@ fn non_empty(s: String) -> Option<String> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_interview_never_honors_a_pin() {
-        assert!(!honors_pin("interview"));
-        assert!(honors_pin("chat"));
-        assert!(honors_pin("deep_research"));
-        assert!(honors_pin("council"));
-    }
-
     /// THE regression. A client whose catalog fetch failed sends `""`, and for
     /// one day that was a hard 400 on every message a phone sent, while the
     /// same box answered the desktop fine. Empty is not a choice.
@@ -164,7 +127,7 @@ mod tests {
     fn an_empty_model_is_not_a_choice() {
         for sent in [None, Some(""), Some("   "), Some("\t\n")] {
             assert_eq!(
-                wanted_pin(sent, "chat"),
+                wanted_pin(sent, &ChatMode::Chat),
                 None,
                 "sent {sent:?} should fall through to the slot"
             );
@@ -174,7 +137,7 @@ mod tests {
     #[test]
     fn a_real_pick_is_honored_and_trimmed() {
         assert_eq!(
-            wanted_pin(Some("  anthropic/claude-sonnet-5  "), "chat"),
+            wanted_pin(Some("  anthropic/claude-sonnet-5  "), &ChatMode::Chat),
             Some("anthropic/claude-sonnet-5")
         );
     }
@@ -182,7 +145,7 @@ mod tests {
     #[test]
     fn the_interview_falls_through_even_with_a_valid_pick() {
         assert_eq!(
-            wanted_pin(Some("anthropic/claude-sonnet-5"), "interview"),
+            wanted_pin(Some("anthropic/claude-sonnet-5"), &ChatMode::Interview),
             None,
             "the retention promise is about the curated slot, not the id"
         );
@@ -212,7 +175,7 @@ mod tests {
         let want = crate::api::model_catalog::model_for_slot(ModelSlot::Chat);
         for sent in [None, Some(""), Some("  ")] {
             assert_eq!(
-                resolve_turn_model(&pool, sent, "chat").await.unwrap(),
+                resolve_turn_model(&pool, sent, &ChatMode::Chat).await.unwrap(),
                 want,
                 "sent {sent:?}"
             );
@@ -228,12 +191,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            resolve_turn_model(&pool, None, "chat").await.unwrap(),
+            resolve_turn_model(&pool, None, &ChatMode::Chat).await.unwrap(),
             "example/pinned-model"
         );
         // And the interview still will not touch it.
         assert_eq!(
-            resolve_turn_model(&pool, None, "interview").await.unwrap(),
+            resolve_turn_model(&pool, None, &ChatMode::Interview).await.unwrap(),
             crate::api::model_catalog::model_for_slot(ModelSlot::Chat)
         );
     }
@@ -247,7 +210,7 @@ mod tests {
             .await
             .unwrap();
 
-        let got = resolve_turn_model(&pool, None, "chat").await.unwrap();
+        let got = resolve_turn_model(&pool, None, &ChatMode::Chat).await.unwrap();
         assert!(!got.trim().is_empty(), "resolved an empty model id");
         assert_eq!(got, crate::api::model_catalog::model_for_slot(ModelSlot::Chat));
     }
@@ -272,7 +235,7 @@ mod tests {
             let req: ChatRequest =
                 serde_json::from_str(body).unwrap_or_else(|e| panic!("{body} → {e}"));
             assert_eq!(
-                wanted_pin(req.model.as_deref(), &req.agent_mode),
+                wanted_pin(req.model.as_deref(), &ChatMode::from_wire(&req.agent_mode)),
                 want,
                 "body {body}"
             );

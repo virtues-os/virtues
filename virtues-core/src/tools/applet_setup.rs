@@ -22,6 +22,26 @@ const FACE_HTML_MAX: usize = 48 * 1024;
 const SCHEMA_SQL_MAX: usize = 16 * 1024;
 const AGENT_MAX: usize = 24 * 1024;
 
+/// The authoring contract, one source: applets/AGENTS.md is what an agent in
+/// the repo reads and what `setup_applet {"guide": true}` hands the in-box
+/// assistant. The tool definition stays short because every chat step
+/// re-sends it; the guide is fetched once, by the chat that is authoring.
+const AGENTS_MD: &str = include_str!("../../../applets/AGENTS.md");
+
+/// The guide as the chat reads it: AGENTS.md up to its pointer for builtin
+/// (Rust) applet development, which is about this repo, not about authoring.
+pub(crate) fn authoring_guide() -> &'static str {
+    AGENTS_MD
+        .split_once("\n## For builtin (Rust) applet development")
+        .map_or(AGENTS_MD, |(guide, _)| guide)
+        .trim_end()
+}
+
+/// `{"guide": true}` asks for the guide and creates nothing.
+pub(crate) fn wants_guide(arguments: &serde_json::Value) -> bool {
+    arguments.get("guide").and_then(|v| v.as_bool()) == Some(true)
+}
+
 /// Manifest shape we serialize. Field names match the template loader.
 #[derive(Serialize)]
 struct ManifestOut {
@@ -51,6 +71,10 @@ pub async fn execute(
     // Owned copy up front — borrowing `context` across the awaits below
     // trips rustc's higher-ranked Send inference inside the agent stream.
     let chat_id: Option<String> = context.chat_id.clone();
+
+    if wants_guide(&arguments) {
+        return Ok(ToolResult::success(serde_json::json!({ "guide": authoring_guide() })));
+    }
 
     // ---- 1. Parse params -------------------------------------------------
     let name = req_str(&arguments, "name")?;
@@ -695,6 +719,31 @@ fn toml_from_json(v: &serde_json::Value) -> Result<toml::Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The definition sends the model here before it authors, so the guide
+    /// must carry what the definition used to: the fields, the migration
+    /// rule, the runtime verbs, the gate and the limits.
+    #[test]
+    fn the_guide_is_agents_md_without_the_repo_section() {
+        let guide = authoring_guide();
+        for must in [
+            "## The fields",
+            "is a migration, not a schema",
+            "## What the applet can do at runtime",
+            "created **disabled**",
+            "## Limits",
+            "6-field cron",
+            "virtues.query",
+        ] {
+            assert!(guide.contains(must), "guide lost {must:?}");
+        }
+        assert!(!guide.contains("For builtin (Rust)"));
+        // The cut point must exist verbatim: renamed, the split finds nothing
+        // and the repo section leaks into the guide.
+        assert!(AGENTS_MD.contains("\n## For builtin (Rust) applet development"));
+        assert!(wants_guide(&serde_json::json!({ "guide": true })));
+        assert!(!wants_guide(&serde_json::json!({ "name": "x", "description": "y" })));
+    }
 
     /// A typo in a table name is the failure the authoring contract calls out
     /// as unmachine-checkable, and it is a token, so it is checkable after

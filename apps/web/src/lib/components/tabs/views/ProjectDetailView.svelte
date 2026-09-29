@@ -1,7 +1,11 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import type { ProjectDetail, ProjectGraph } from '$lib/api/client';
+	import type { ProjectChat, ProjectDetail, ProjectGraph, ProjectItemRole } from '$lib/api/client';
 	import Icon from '$lib/components/Icon.svelte';
+	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
+	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
+	import { formatRelativeTimestamp } from '$lib/utils/dateUtils';
+	import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 	import { Button, IconButton, TextAction } from '$lib';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { chatSessions } from '$lib/stores/chatSessions.svelte';
@@ -15,7 +19,6 @@
 	import { Popover } from '$lib/floating';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import { toast } from 'svelte-sonner';
-	import { notifyArchived, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { getRefSummary } from '$lib/utils/refSummary';
 	import {
 		getPage,
@@ -26,7 +29,19 @@
 		getProjectGraph
 	} from '$lib/api/client';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
-	import { isProjectUrl } from '$lib/utils/contextMenuItems';
+	import { projectColor } from '$lib/sidebar/pin-colors';
+	import {
+		archiveProject,
+		deleteProject,
+		droppedRefUrl,
+		fileIntoProject,
+		isProjectUrl,
+		newChatInProject,
+		openProjects,
+		removeFromProject,
+		unarchiveProject,
+	} from '$lib/utils/projectActions';
+	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
 
@@ -35,7 +50,14 @@
 		return m?.[1] ?? null;
 	});
 
-	let detail = $state<ProjectDetail | null>(null);
+	/**
+	 * A live view of the store's copy, not a snapshot of it. A rename, recolor
+	 * or archive from the sidebar, ⌘K or another pane lands in the store, and
+	 * this page and its tab follow without being told.
+	 */
+	const detail = $derived<ProjectDetail | null>(
+		projectId ? (projectStore.getCached(projectId) ?? null) : null
+	);
 	let loading = $state(false);
 	let error = $state<string | null>(null);
 
@@ -45,11 +67,10 @@
 		loading = true;
 		error = null;
 		try {
-			detail = await projectStore.get(id, { force });
+			await projectStore.get(id, { force });
 		} catch (e) {
 			console.error('[ProjectDetailView] Failed to load project:', e);
-			error = e instanceof Error ? e.message : 'Failed to load project';
-			detail = null;
+			error = "Your server couldn't open this project. If you deleted it, you can restore it from Recently deleted.";
 		} finally {
 			loading = false;
 		}
@@ -58,6 +79,18 @@
 	$effect(() => {
 		if (projectId) load();
 	});
+
+	// The tab wears the project's name and mark, whichever door opened it —
+	// a pin, a citation, ⌘K and a reload all arrive with only the id.
+	$effect(() => {
+		if (!detail) return;
+		const icon = detail.icon || PROJECT_ICON;
+		if (tab.label !== detail.name || tab.icon !== icon) {
+			windowShellStore.updateTab(tab.id, { label: detail.name, icon });
+		}
+	});
+
+	const archived = $derived(!!detail?.archived_at);
 
 	// ---- Entity facets over the members --------------------------------------
 	// Same endpoint as before; it is a filter source now, not a picture. A graph
@@ -83,9 +116,22 @@
 		if (projectId) loadGraph();
 	});
 
-	// Chats filed into this room — sourced from the authoritative session list,
-	// not from membership rows, so removing a member can't desync a chat.
-	const roomChats = $derived(chatSessions.sessions.filter((s) => s.project_id === projectId));
+	// Chats filed into this room, from the project's own detail: every chat
+	// whose `project_id` is this one. The session list holds only the box's
+	// most recent chats, so reading it here dropped a project's older ones. It
+	// stays as the fallback for a box older than `detail.chats`.
+	const roomChats = $derived.by<ProjectChat[]>(() => {
+		if (detail?.chats) return detail.chats;
+		return chatSessions.sessions
+			.filter((s) => s.project_id === projectId)
+			.map((s) => ({
+				id: s.conversation_id,
+				title: s.title ?? '',
+				icon: s.icon,
+				message_count: s.message_count,
+				last_message_at: s.last_message_at || s.first_message_at
+			}));
+	});
 
 	// Members = everything except chats (chats render in their own list).
 	const memberItems = $derived((detail?.items ?? []).filter((i) => !i.url.startsWith('/chat/')));
@@ -183,7 +229,10 @@
 	 * elsewhere in the app. And not "Bible", which is author jargon that reads as
 	 * nonsense in a project about a kitchen remodel.
 	 */
-	function statusLabel(url: string): string {
+	function statusLabel(url: string, role?: string): string {
+		// Your own draft says so before anything else: it is the one fact about
+		// the row that changes what the assistant does with it.
+		if (role === 'manuscript') return 'Your draft';
 		const s = memberStatus[url];
 		if (!s || s === 'skipped') return '—';
 		switch (s) {
@@ -221,40 +270,36 @@
 		status: string;
 		added: string;
 		icon: string;
+		role: string;
 	}
 
 	/**
-	 * Everything the project holds, in one table. Chats used to live in their
-	 * own list below; they are members like any other and splitting them made
-	 * the page two near-identical lists.
+	 * The page is two things, in two shapes. Chats are conversations you go
+	 * back into: a short list at the top, newest first, with "New chat" at its
+	 * head. Files, pages, people and links are the material: the grid, with its
+	 * filters, statuses and manual order. They were one table for a while, and
+	 * before that two near-identical tables; neither said which was which.
 	 *
-	 * Chats are still sourced from the authoritative session list rather than
-	 * from membership rows, so a stale `/chat/` member row can't resurrect a
-	 * deleted conversation.
+	 * Chats come from the project's own detail (`detail.chats`), not from
+	 * membership rows, so a stale `/chat/` row can't resurrect a deleted chat.
 	 */
-	const allRows = $derived.by<MemberRow[]>(() => {
-		const members: MemberRow[] = memberItems.map((it) => ({
+	const memberRows = $derived.by<MemberRow[]>(() =>
+		memberItems.map((it) => ({
 			id: it.url,
 			url: it.url,
 			name: memberNames[it.url] || memberType(it.url),
 			kind: memberType(it.url),
-			status: statusLabel(it.url),
+			status: statusLabel(it.url, it.role),
 			added: formatAdded(it.added_at),
-			icon: iconForUrl(it.url)
-		}));
+			icon: iconForUrl(it.url),
+			role: it.role
+		}))
+	);
 
-		const chats: MemberRow[] = roomChats.map((c) => ({
-			id: `/chat/${c.conversation_id}`,
-			url: `/chat/${c.conversation_id}`,
-			name: c.title ?? 'Untitled chat',
-			kind: 'Chat',
-			status: `${c.message_count} ${c.message_count === 1 ? 'message' : 'messages'}`,
-			added: formatAdded(c.last_message_at ?? c.first_message_at),
-			icon: c.icon || 'ri:chat-3-line'
-		}));
-
-		return [...members, ...chats];
-	});
+	// A few recent chats up front; the rest one click away.
+	const CHATS_SHOWN = 5;
+	let chatsExpanded = $state(false);
+	const shownChats = $derived(chatsExpanded ? roomChats : roomChats.slice(0, CHATS_SHOWN));
 
 	/**
 	 * The entity facets, expressed as one of the grid's own filters instead of a
@@ -292,7 +337,7 @@
 	 * Status only earns its column when something in the set actually has one —
 	 * otherwise it's a column of em-dashes.
 	 */
-	const anyStatus = $derived(allRows.some((r) => r.status !== '—'));
+	const anyStatus = $derived(memberRows.some((r) => r.status !== '—'));
 
 	const columns = $derived.by<Column<MemberRow>[]>(() => {
 		const cols: Column<MemberRow>[] = [
@@ -336,16 +381,17 @@
 			await loadGraph();
 		} catch (e) {
 			console.error('[ProjectDetailView] bulk remove failed:', e);
-			toast.error('Could not remove every item');
+			toast.error("Your server couldn't remove every item", {
+				description: 'The ones still listed are still in the project. Try again',
+			});
 		} finally {
 			clear();
 		}
 	}
 
 	async function removeMember(url: string) {
-		const id = projectId;
-		if (!id) return;
-		await projectStore.removeItem(id, url);
+		if (!detail) return;
+		await removeFromProject(detail, url);
 		await loadGraph();
 	}
 
@@ -366,10 +412,9 @@
 		const next = edge === 'top' ? [url, ...rest] : [...rest, url];
 		try {
 			await projectStore.reorderItems(id, next);
-			await load(true);
 		} catch (e) {
 			console.error('[ProjectDetailView] reorder failed:', e);
-			toast.error('Could not move that item');
+			toast.error("Your server couldn't move that item", { description: 'Try again' });
 		}
 	}
 
@@ -378,10 +423,22 @@
 		const items = [
 			{ id: 'open', label: 'Open', icon: 'ri:external-link-line', action: () => openUrl(row.url) }
 		];
-		// Chats are sourced from the session list, not from membership rows, so
-		// there is no sort_order of theirs to set.
-		const isMember = memberItems.some((i) => i.url === row.url);
-		if (isMember && memberItems.length > 1) {
+		// Your own writing is kept out of retrieval, so the assistant never
+		// cites your draft back to you as if it were a source.
+		if (row.url.startsWith('/page/') && !archived) {
+			const draft = row.role === 'manuscript';
+			items.push({
+				id: 'draft',
+				label: draft ? 'Use as a source' : 'Mark as your draft',
+				description: draft
+					? 'The assistant can draw on it again'
+					: "The assistant won't cite it back to you",
+				icon: draft ? 'ri:book-open-line' : 'ri:quill-pen-line',
+				dividerBefore: true,
+				action: () => setRole(row.url, draft ? 'library' : 'manuscript')
+			} as (typeof items)[number]);
+		}
+		if (memberItems.length > 1) {
 			items.push(
 				{
 					id: 'top',
@@ -398,6 +455,14 @@
 				} as (typeof items)[number]
 			);
 		}
+		// Somewhere else too: a chat moves (it lives in one project), anything
+		// else is filed there as well. The shared menu's own "Remove from" is
+		// left out; this page says it below, as its own verb.
+		const elsewhere = getProjectMenuItems(row.url).map((i) => ({
+			...i,
+			submenu: i.submenu?.filter((s) => s.id !== 'remove-from-project')
+		}));
+		items.push(...(elsewhere as (typeof items)[number][]));
 		items.push({
 			id: 'remove',
 			label: 'Remove from project',
@@ -407,6 +472,53 @@
 			action: () => removeMember(row.url)
 		} as (typeof items)[number]);
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
+	}
+
+	async function setRole(url: string, role: ProjectItemRole) {
+		const id = projectId;
+		if (!id) return;
+		try {
+			await projectStore.setItemRole(id, url, role);
+		} catch (e) {
+			console.error('[ProjectDetailView] role change failed:', e);
+			toast.error("Your server couldn't change that", { description: 'Nothing changed. Try again' });
+		}
+	}
+
+	/** A chat's menu here: open it, move it to another project, take it out. */
+	function chatMenu(chat: ProjectChat, e: MouseEvent) {
+		e.preventDefault();
+		const url = `/chat/${chat.id}`;
+		const elsewhere = getProjectMenuItems(url).map((i) => ({
+			...i,
+			submenu: i.submenu?.filter((s) => s.id !== 'remove-from-project')
+		}));
+		contextMenu.show({ x: e.clientX, y: e.clientY }, [
+			{ id: 'open', label: 'Open', icon: 'ri:chat-3-line', action: () => openChat(chat) },
+			{
+				id: 'open-beside',
+				label: 'Open beside',
+				icon: 'ri:layout-column-line',
+				action: () => void windowShellStore.openRouteBeside(url, chat.title)
+			},
+			...elsewhere,
+			{
+				id: 'remove',
+				label: 'Remove from project',
+				icon: 'ri:close-line',
+				dividerBefore: true,
+				variant: 'destructive',
+				action: () => removeMember(url)
+			}
+		]);
+	}
+
+	/** A chat opens in the window you are in: it is where you go, not a reference beside. */
+	function openChat(chat: ProjectChat) {
+		windowShellStore.openTabFromRoute(`/chat/${chat.id}`, {
+			label: chat.title || 'Chat',
+			focusExisting: true
+		});
 	}
 
 	async function retryExtraction(url: string) {
@@ -437,18 +549,41 @@
 		e.preventDefault();
 		dropActive = false;
 		const id = projectId;
+		// A chat, page or pin dragged from the sidebar files itself.
+		const ref = droppedRefUrl(e);
+		if (ref) {
+			if (detail) await fileIntoProject(detail, ref);
+			await loadGraph();
+			return;
+		}
 		const dropped = e.dataTransfer?.files;
-		if (!id || !dropped || dropped.length === 0) return;
-		for (const f of dropped) {
+		if (!id || archived || !dropped || dropped.length === 0) return;
+		const files = [...dropped];
+		// An upload can take a while and the row only appears at the end, so
+		// the drop says it was taken before it says it is done.
+		const pending = toast.loading(
+			files.length === 1 ? `Adding ${files[0].name}…` : `Adding ${files.length} files…`
+		);
+		let failed = 0;
+		for (const f of files) {
 			try {
 				const uploaded = await uploadDriveFile('uploads', f);
 				await addProjectItem(id, `/drive/${uploaded.id}`);
 			} catch (err) {
+				failed += 1;
 				console.error('[ProjectDetailView] drop-add failed:', err);
-				toast.error(`Could not add ${f.name}`);
 			}
 		}
-		await load(true);
+		toast.dismiss(pending);
+		if (failed > 0) {
+			toast.error(
+				failed === 1 && files.length === 1
+					? `Your server couldn't add ${files[0].name}`
+					: `Your server couldn't add ${failed} of ${files.length} files`,
+				{ description: 'Try dropping them again' }
+			);
+		}
+		await Promise.all([load(true), projectStore.load()]);
 		await loadGraph();
 	}
 
@@ -522,7 +657,6 @@
 		const id = projectId;
 		if (!id) return;
 		await projectStore.update(id, { icon });
-		await load(true);
 	}
 
 	/**
@@ -538,7 +672,6 @@
 		const id = projectId;
 		if (!id) return;
 		await projectStore.update(id, { accent_color: color });
-		await load(true);
 	}
 
 	// ---- Membership ----------------------------------------------------------
@@ -553,64 +686,33 @@
 		// you can't put a project in a project — the picker already hides them,
 		// and the server answers 400 if one gets through.
 		if (isProjectUrl(entity.url)) return;
-		await projectStore.addItem(id, entity.url);
-		// A chat is listed here from the session list by its `project_id`,
-		// which the box has just set; the sessions have to be re-read or the
-		// add looks like it did nothing (VIR-359).
-		if (entity.url.startsWith('/chat/')) await chatSessions.refresh();
+		try {
+			await projectStore.addItem(id, entity.url);
+		} catch (e) {
+			console.error('[ProjectDetailView] add failed:', e);
+			toast.error("Your server couldn't add that to this project", {
+				description: 'Nothing changed. Try again',
+			});
+			return;
+		}
 		await loadGraph();
 	}
 
 	// ---- Archive -------------------------------------------------------------
 	// Reversible, so no confirm. The project stays open in this tab, marked.
 	async function toggleArchive() {
-		const id = projectId;
-		if (!id || !detail) return;
-		// Read both off the detail we have now: `load()` below replaces it, and
-		// the toast is about the project as it was when you clicked.
-		const wasArchived = !!detail.archived_at;
-		const name = detail.name;
-		try {
-			if (wasArchived) await projectStore.unarchive(id);
-			else await projectStore.archive(id);
-			await load(true);
-			// Only the archive direction gets a toast. Unarchiving is what the
-			// toast's own Undo does, and the project reappearing in the list is
-			// the confirmation.
-			if (!wasArchived) notifyArchived(id, name);
-		} catch (e) {
-			console.error('[ProjectDetailView] archive failed:', e);
-			toast.error(
-				wasArchived
-					? `Your server couldn't reopen "${name}"`
-					: `Your server couldn't archive "${name}"`,
-				{ description: 'Nothing changed. Try again' },
-			);
-		}
+		if (!detail) return;
+		if (detail.archived_at) await unarchiveProject(detail);
+		else await archiveProject(detail);
 	}
 
 	// ---- Delete --------------------------------------------------------------
-	// No confirm. The delete is a trip to Recently deleted and the toast hands
-	// back the Undo, so a dialog asking whether you meant it only stands between
-	// you and a reversible act. Its chats, pages and files stay where they are.
+	// No confirm: a trip to Recently deleted, with the Undo in the toast. Its
+	// chats, pages and files stay where they are. The page it was on goes, so
+	// the window lands on the list.
 	async function doDelete() {
-		const id = projectId;
-		if (!id || !detail) return;
-		// Captured before the delete closes it: Undo should put back the tab you
-		// were looking at, and only if you were looking at one.
-		const reopen = routeIfOpen(`/project/${id}`);
-		const name = detail.name;
-		try {
-			await projectStore.remove(id);
-			windowShellStore.closeTabsByRoute(`/project/${id}`);
-			windowShellStore.openTabFromRoute('/projects', { focusExisting: true });
-			notifyTrashed({ kind: 'project', id, name, reopen });
-		} catch (e) {
-			console.error('[ProjectDetailView] delete failed:', e);
-			toast.error(`Your server couldn't delete "${name}"`, {
-				description: 'It\'s still here. Try again',
-			});
-		}
+		if (!detail) return;
+		if (await deleteProject(detail)) openProjects();
 	}
 
 </script>
@@ -628,7 +730,7 @@
 			aria-label="Project contents"
 			ondragover={(e) => {
 				e.preventDefault();
-				dropActive = true;
+				dropActive = !archived;
 			}}
 			ondragleave={(e) => {
 				// Crossing into a child fires dragleave too; only leaving the
@@ -644,8 +746,14 @@
 				<div class="head-main">
 					<Popover bind:open={iconOpen} placement="bottom-start">
 						{#snippet trigger({ toggle }: { toggle: () => void })}
-							<button class="nb-icon" title="Change icon" onclick={toggle}>
-								<Icon icon={detail?.icon || 'ri:folder-3-line'} width="22" />
+							<button
+								class="nb-icon tinted"
+								style={`--room-accent: ${projectColor(detail)}`}
+								title="Change icon and color"
+								aria-label="Change icon and color"
+								onclick={toggle}
+							>
+								<ProjectGlyph project={detail} size={22} inherit />
 							</button>
 						{/snippet}
 						{#snippet children({ close }: { close: () => void })}
@@ -694,12 +802,18 @@
 						></textarea>
 						{#if showMemo}
 							<label class="memo">
-								<span class="memo-label font-mono">Where I left off</span>
+								<!-- Dated, because a note about where things stand is only as
+								     good as how recently it was true. -->
+								<span class="memo-label"
+									>Note{#if detail.current_status_at && detail.current_status}<span class="memo-when"
+											>{` · ${formatRelativeTimestamp(detail.current_status_at)}`}</span
+										>{/if}</span
+								>
 								<textarea
 									class="memo-input"
 									bind:value={memoDraft}
 									rows="1"
-									placeholder="A note to yourself about the current state."
+									placeholder="Where you left off, for when you come back"
 									onfocus={() => (memoFocused = true)}
 									onblur={commitMemo}
 									onkeydown={(e) => {
@@ -714,6 +828,12 @@
 					</div>
 
 					<div class="head-actions">
+						<Button
+							variant="secondary"
+							size="sm"
+							icon="ri:chat-new-line"
+							onclick={() => detail && newChatInProject(detail)}>New chat</Button
+						>
 						<Popover bind:open={overflowOpen} placement="bottom-end">
 							{#snippet trigger({ toggle }: { toggle: () => void })}
 								<IconButton
@@ -729,7 +849,7 @@
 									{#if !showMemo}
 										<MenuItem
 											icon="ri:sticky-note-line"
-											label="Add a status note"
+											label="Add a note"
 											onclick={() => {
 												close();
 												memoOpen = true;
@@ -758,30 +878,38 @@
 						</Popover>
 					</div>
 				</div>
-
-				<!-- Counts the same set the grid counts, now that chats are rows in it. -->
-				<div class="props font-mono">
-					<span>{allRows.length} {allRows.length === 1 ? 'item' : 'items'}</span>
-					{#if detail?.archived_at}
-						<span class="dot-sep">·</span>
-						<span>Archived {new Date(detail.archived_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
-					{/if}
-				</div>
 			</header>
 
+			{#if detail.archived_at}
+				<!-- Archived is a state of the whole page, so it is said once, above
+				     the content, with the way back beside it. -->
+				<div class="archived-note">
+					<Icon icon="ri:archive-line" width="15" />
+					<span>
+						You archived this project on {new Date(detail.archived_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}.
+						Its chats and items are all here. Unarchive it to add more.
+					</span>
+					<Button variant="secondary" size="sm" onclick={toggleArchive}>Unarchive</Button>
+				</div>
+			{/if}
+
+			<!-- The way into a new chat about this project, shaped like the
+			     composer it leads to so it reads as a place to type, not a
+			     caption. Enter starts the chat with the question already asked. -->
 			<form class="ask" onsubmit={submitAsk}>
-				<input class="ask-input" bind:value={askDraft} placeholder="Ask this project…" />
-				<!-- The send stays INVISIBLE until there is something to send, which
-				     is what the rule this replaced said with `opacity: 0`. A
-				     primitive cannot carry that, and neither alternative was
-				     acceptable: `{#if}` shrinks the flex:1 input by ~30px on the
-				     first keystroke, and reaching into `.v-iconbtn` with :global
-				     sets a precedent. So the slot holds the box and does the
-				     hiding, and the button inside it is an ordinary disabled one. -->
+				<input
+					class="ask-input"
+					bind:value={askDraft}
+					placeholder={`Ask about ${detail.name}…`}
+					aria-label={`Ask about ${detail.name}`}
+				/>
+				<!-- The send stays INVISIBLE until there is something to send.
+				     The slot holds the box and does the hiding, so the input
+				     never reflows on the first keystroke. -->
 				<span class="ask-send" class:idle={!askDraft.trim()}>
 					<IconButton
-						icon="ri:arrow-right-line"
-						label="Ask - grounded in this project"
+						icon="ri:arrow-up-line"
+						label="Ask, grounded in this project"
 						size="sm"
 						type="submit"
 						disabled={!askDraft.trim()}
@@ -789,19 +917,73 @@
 				</span>
 			</form>
 
-			<section class="grid-section">
-				{#if allRows.length === 0}
-					<button class="add-row" onclick={openPicker}>
-						<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links, or drop files here
-					</button>
+			<!-- Chats: conversations you go back into, newest first. -->
+			<section class="section" aria-labelledby="project-chats-head">
+				<div class="section-head">
+					<h2 id="project-chats-head">Chats</h2>
+					{#if roomChats.length > 0}<span class="section-count">{roomChats.length}</span>{/if}
+				</div>
+				{#if roomChats.length === 0}
+					<p class="section-empty">
+						No chats yet. Ask something above, or start a new chat, and it's filed here.
+					</p>
+				{:else}
+					<ul class="chat-list">
+						{#each shownChats as chat (chat.id)}
+							<li class="chat-item" oncontextmenu={(e) => chatMenu(chat, e)}>
+								<button type="button" class="chat-open" onclick={() => openChat(chat)}>
+									<span class="chat-glyph" style={`color: ${projectColor(detail)}`}>
+										<AtlasIcon name="chats" size={15} bare />
+									</span>
+									<span class="chat-title">{chat.title || 'Untitled chat'}</span>
+									<span class="chat-meta">
+										{chat.message_count === 1 ? '1 message' : `${chat.message_count} messages`}
+										· {formatRelativeTimestamp(chat.last_message_at)}
+									</span>
+								</button>
+								<span class="chat-actions">
+									<IconButton
+										icon="ri:more-line"
+										label={`Actions for ${chat.title || 'this chat'}`}
+										size="sm"
+										haspopup="menu"
+										onclick={(e) => chatMenu(chat, e)}
+									/>
+								</span>
+							</li>
+						{/each}
+					</ul>
+					{#if roomChats.length > CHATS_SHOWN}
+						<button type="button" class="section-more" onclick={() => (chatsExpanded = !chatsExpanded)}>
+							{chatsExpanded ? 'Show fewer' : `Show all ${roomChats.length} chats`}
+						</button>
+					{/if}
+				{/if}
+			</section>
+
+			<!-- Files and pages: the material. The grid, with its filters,
+			     statuses and your order. -->
+			<section class="section" aria-labelledby="project-items-head">
+				<div class="section-head">
+					<h2 id="project-items-head">Files and pages</h2>
+					{#if memberRows.length > 0}<span class="section-count">{memberRows.length}</span>{/if}
+				</div>
+				{#if memberRows.length === 0}
+					{#if archived}
+						<p class="section-empty">Nothing was filed here.</p>
+					{:else}
+						<button class="add-row" onclick={openPicker}>
+							<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links, or drop files here
+						</button>
+					{/if}
 				{:else}
 					<UniversalDataGrid
-						items={allRows}
+						items={memberRows}
 						{columns}
 						entityType="project-item"
 						emptyIcon="ri:filter-line"
-						emptyMessage="No members match that filter"
-						searchPlaceholder="Search this project…"
+						emptyMessage="Nothing here matches that filter"
+						searchPlaceholder="Search files and pages…"
 						selectable
 						filters={entityFilters}
 						rowIcon={(row) => row.icon}
@@ -827,16 +1009,18 @@
 						{/snippet}
 
 						{#snippet toolbarActions()}
-							<IconButton
-								icon="ri:add-line"
-								label="Add a page, person, place, file, or link"
-								variant="secondary"
-								onclick={openPicker}
-							/>
+							{#if !archived}
+								<IconButton
+									icon="ri:add-line"
+									label="Add a page, person, place, file, or link"
+									variant="secondary"
+									onclick={openPicker}
+								/>
+							{/if}
 						{/snippet}
 
 						{#snippet tableRow(row: MemberRow)}
-							<!-- No icon here: it moved into the grid's leading column, where it
+							<!-- No icon here: it is in the grid's leading column, where it
 							     shares a slot with the select box. -->
 							<td class="c-name">
 								<span class="name-text">{row.name}</span>
@@ -851,8 +1035,10 @@
 												retryExtraction(row.url);
 											}}
 										>
-											Failed — retry
+											Failed, retry
 										</TextAction>
+									{:else if row.role === 'manuscript'}
+										<span class="draft-tag">{row.status}</span>
 									{:else}
 										{row.status}
 									{/if}
@@ -867,10 +1053,8 @@
 									<Icon icon={row.icon} width="15" />
 								</span>
 								<span class="nb-card-name">{row.name}</span>
-								<!-- Not the kind: the glyph above says it, and when the cards are
-								     grouped by Kind the column header says it a third time. -->
 								{#if row.status !== '—'}
-									<span class="nb-card-meta font-mono">{row.status}</span>
+									<span class="nb-card-meta">{row.status}</span>
 								{/if}
 							</div>
 						{/snippet}
@@ -887,7 +1071,7 @@
 	<RefPicker
 		mode="single"
 		position={pickerPos}
-		placeholder="Add a person, page, or link…"
+		placeholder="Add a chat, page, person, or link…"
 		excludeIds={memberItems.map((i) => i.url)}
 		filter={(e) => !isProjectUrl(e.url)}
 		onSelect={addMember}
@@ -918,7 +1102,25 @@
 		display: grid; place-items: center; width: 46px; height: 46px; flex-shrink: 0;
 		border-radius: 12px; border: 1px solid var(--color-border);
 		background: var(--color-surface-elevated); color: var(--color-foreground); cursor: pointer;
+		transition: border-color 120ms ease;
 	}
+	.nb-icon:hover { border-color: var(--color-foreground-subtle); }
+	/* The same tinted chip the projects list draws, so a project looks like
+	   itself on its own page. */
+	.nb-icon.tinted {
+		background: color-mix(in srgb, var(--room-accent) 16%, transparent);
+		border-color: color-mix(in srgb, var(--room-accent) 30%, var(--color-border));
+		color: color-mix(in srgb, var(--room-accent) 78%, var(--color-foreground));
+	}
+
+	.archived-note {
+		display: flex; align-items: center; gap: 10px;
+		padding: 10px 12px; border-radius: 10px;
+		background: var(--color-surface-elevated);
+		font-size: 0.85rem; line-height: 1.45; color: var(--color-foreground-muted);
+	}
+	.archived-note > :global(svg) { flex-shrink: 0; color: var(--color-foreground-subtle); }
+	.archived-note > span { flex: 1; min-width: 0; }
 	.head-actions { display: flex; gap: 2px; flex-shrink: 0; }
 	.title-input, .desc-input {
 		display: block; width: 100%; resize: none; overflow: hidden;
@@ -945,8 +1147,13 @@
 	   mistaken for the brief above it, and quieter than both. */
 	.memo { display: flex; align-items: baseline; gap: 8px; margin-top: 0.45rem; }
 	.memo-label {
-		flex-shrink: 0; font-size: 10px; letter-spacing: 0.06em;
- color: var(--color-foreground-subtle);
+		flex-shrink: 0;
+		font-size: 0.75rem;
+		font-weight: 500;
+		color: var(--color-foreground-muted);
+	}
+	.memo-when {
+		color: var(--color-foreground-subtle);
 	}
 	.memo-input {
 		flex: 1; min-width: 0; display: block; resize: none; overflow: hidden;
@@ -957,43 +1164,181 @@
 	}
 	.memo-input::placeholder { color: var(--color-foreground-subtle); }
 
-	.props {
-		font-size: 11px;
-		color: var(--color-foreground-subtle); padding-left: 60px;
-		display: flex; gap: 6px; align-items: center;
-	}
-	.props .dot-sep { opacity: 0.5; }
 
 	/* Overflow menu */
 	.menu { display: flex; flex-direction: column; min-width: 190px; padding: 4px; }
 
-	/* Ask bar — a line, not a slab.
-	   It was the largest, highest-contrast object on the page and the least
-	   important one: a filled 46px card with its own radius and shadow, sitting
-	   above the content it asks about. It's an entry point, so it gets one rule
-	   and the weight of a caption until you're actually in it. */
+	/* The ask: shaped like the composer it opens, so it reads as a place to
+	   type. Quiet at rest (a hairline and the page's own surface), fully
+	   there when focused. */
 	.ask {
-		display: flex; align-items: center; gap: 8px; height: 34px;
-		padding: 0;
-		border-bottom: 1px solid var(--color-border);
-		transition: border-color 120ms;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-height: 44px;
+		padding: 4px 6px 4px 16px;
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
+		background: var(--color-surface);
+		transition: border-color 120ms ease;
 	}
-	.ask:focus-within { border-bottom-color: var(--color-foreground-subtle); }
-	.ask > :global(svg) { color: var(--color-foreground-subtle); flex-shrink: 0; }
+	.ask:focus-within {
+		border-color: var(--color-foreground-subtle);
+	}
 	.ask-input {
-		flex: 1; min-width: 0; border: none; background: transparent; outline: none;
-		font: inherit; font-size: 0.875rem; color: var(--color-foreground);
+		flex: 1;
+		min-width: 0;
+		border: none;
+		background: transparent;
+		outline: none;
+		font: inherit;
+		font-size: 0.9375rem;
+		color: var(--color-foreground);
 	}
-	.ask-input::placeholder { color: var(--color-foreground-subtle); }
+	.ask-input::placeholder {
+		color: var(--color-foreground-subtle);
+	}
 
 	/* Holds its box so the input never reflows; `visibility` rather than
 	   `display` for the same reason, and it also takes the control out of the
 	   tab order while there is nothing to send. */
-	.ask-send { display: inline-flex; transition: opacity 120ms ease; }
-	.ask-send.idle { opacity: 0; visibility: hidden; }
+	.ask-send {
+		display: inline-flex;
+		transition: opacity 120ms ease;
+	}
+	.ask-send.idle {
+		opacity: 0;
+		visibility: hidden;
+	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.ask-send { transition: none; }
+		.ask-send {
+			transition: none;
+		}
+	}
+
+	/* Sections: told apart by a small quiet head and the air above it, the
+	   sidebar's grammar for a group. No rules. */
+	.section {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.section-head {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+	}
+	/* The sidebar group head's voice, not a heading's: the global h2 is the
+	   serif, and these are labels. */
+	.section-head h2 {
+		margin: 0;
+		font-family: inherit;
+		letter-spacing: normal;
+		font-size: 0.8125rem;
+		font-weight: 500;
+		color: var(--color-foreground-muted);
+	}
+	.section-count {
+		font-size: 0.75rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground-subtle);
+	}
+	.section-empty {
+		margin: 0;
+		font-size: 0.875rem;
+		color: var(--color-foreground-subtle);
+	}
+	.section-more {
+		align-self: flex-start;
+		padding: 4px 8px;
+		border: none;
+		border-radius: 6px;
+		background: none;
+		cursor: pointer;
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
+	}
+	.section-more:hover {
+		color: var(--color-foreground);
+		background: var(--color-background-hover);
+	}
+
+	/* Chats: a list of conversations, one line each. */
+	.chat-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+	}
+	.chat-item {
+		position: relative;
+		display: flex;
+		align-items: center;
+		border-radius: 8px;
+	}
+	.chat-item:hover {
+		background: var(--color-background-hover);
+	}
+	.chat-open {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 8px 12px;
+		border: none;
+		background: none;
+		cursor: pointer;
+		text-align: left;
+		font: inherit;
+		color: var(--color-foreground);
+	}
+	.chat-open:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
+		border-radius: 8px;
+	}
+	.chat-glyph {
+		display: flex;
+		flex-shrink: 0;
+	}
+	.chat-title {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 0.9375rem;
+	}
+	.chat-meta {
+		flex-shrink: 0;
+		font-size: 0.8125rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground-subtle);
+	}
+	.chat-actions {
+		display: inline-flex;
+		padding-right: 4px;
+		opacity: 0;
+		transition: opacity 120ms ease;
+	}
+	.chat-item:hover .chat-actions,
+	.chat-actions:focus-within {
+		opacity: 1;
+	}
+	@media (max-width: 768px) {
+		.chat-actions {
+			opacity: 1;
+		}
+		.chat-meta {
+			display: none;
+		}
+	}
+
+	.draft-tag {
+		color: var(--color-foreground);
 	}
 
 	.add-row {
@@ -1017,6 +1362,41 @@
 
 	@media (max-width: 768px) {
 		.hide-mobile { display: none; }
+	}
+
+	/* A phone's width can't hold the icon, the text and the actions in one
+	   row: the text column collapsed to a letter wide. The actions take their
+	   own line under the text, and the note stacks under its label. */
+	@media (max-width: 768px) {
+		.inner {
+			padding: 1.25rem 1rem 4rem;
+			gap: 1.25rem;
+		}
+		.head-main {
+			flex-wrap: wrap;
+			gap: 12px;
+		}
+		/* 44 + 12: the actions line up under the text, not the icon. */
+		.nb-icon {
+			width: 44px;
+			height: 44px;
+		}
+		.head-text {
+			flex-basis: calc(100% - 56px);
+		}
+		.head-actions {
+			width: 100%;
+			padding-left: 56px;
+			gap: 6px;
+		}
+		.title-input {
+			font-size: 1.6rem;
+		}
+		.memo {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 2px;
+		}
 	}
 
 	/* Card view */

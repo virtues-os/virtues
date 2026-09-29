@@ -26,6 +26,7 @@
  * the session is a bearer token.
  */
 import { boxRadio, BoxRadioError, type NearbyBox, type SetupLink } from '$lib/tauri/boxRadio';
+import { markInApp } from './inApp';
 
 const ATLAS = 'https://atlas.virtues.com';
 const SESSION_KEY = 'virtues-setup-account';
@@ -89,7 +90,17 @@ function unpaired(): boolean {
 	}
 	const shell = window as unknown as Shell;
 	if (!shell.__VIRTUES_MOBILE__) return bakedDesktop();
-	if (shell.__VIRTUES_PAIRED__ === true) return false;
+	if (shell.__VIRTUES_PAIRED__ === true) {
+		// The baked flag has caught up with the pairing the marker bridged.
+		// Dropping it here means a later unpair, from anywhere, can't be
+		// outvoted by a marker from a launch long gone.
+		try {
+			localStorage.removeItem(JUST_PAIRED_KEY);
+		} catch {
+			/* nothing to drop */
+		}
+		return false;
+	}
 	try {
 		return localStorage.getItem(JUST_PAIRED_KEY) !== 'true';
 	} catch {
@@ -190,6 +201,9 @@ class PrePair {
 	wordsKept = $state(false);
 	/** On a network: joined over Wi-Fi, or it was online already (ethernet). */
 	online = $state(false);
+	/** Paired, and Setup is moving on to the server's steps. The pairing
+	 *  screen holds until it has; the Wi-Fi receipt flashed in between. */
+	handingOver = $state(false);
 
 	get accountSettled(): boolean {
 		return !!this.account || this.withoutAccount;
@@ -237,6 +251,7 @@ class PrePair {
 	 * launch, whatever the shell baked when it started.
 	 */
 	startOver(): void {
+		markInApp(false);
 		try {
 			sessionStorage.setItem(FORGOT_KEY, '1');
 			localStorage.removeItem(JUST_PAIRED_KEY);
@@ -284,11 +299,16 @@ class PrePair {
 
 	/**
 	 * On a computer, after pairing: wait for the server to answer on this
-	 * machine's loopback, then open its own copy of the app at Setup. True
-	 * when it has navigated away. The phone never needs this (one origin).
+	 * machine's loopback, then open its own copy of the app at Setup.
+	 * `carry` rides along in the address, for what this copy knows and the
+	 * server's copy can't read (another origin, its own storage): how far
+	 * through Welcome and the letter they are, and the theme they chose.
+	 * 'away' once it has navigated, 'silent' when the server never answered
+	 * (opening it anyway only showed the webview's own error page), and
+	 * 'here' where there is nothing to hand to (the phone: one origin).
 	 */
-	async handOff(): Promise<boolean> {
-		if (!bakedDesktop()) return false;
+	async handOff(carry: Record<string, string> = {}): Promise<'away' | 'silent' | 'here'> {
+		if (!bakedDesktop()) return 'here';
 		const box = (window as unknown as Shell).__VIRTUES_BOX_URL__ ?? 'http://localhost:7117';
 		try {
 			const { invoke } = await import('@tauri-apps/api/core');
@@ -298,17 +318,19 @@ class PrePair {
 			/* an older shell: pairing started it */
 		}
 		const until = Date.now() + 60000;
-		while (Date.now() < until) {
+		let answered = false;
+		while (!answered && Date.now() < until) {
 			try {
-				const r = await fetch(`${box}/api/box/health`, { cache: 'no-store' });
-				if (r.ok) break;
+				answered = (await fetch(`${box}/api/box/health`, { cache: 'no-store' })).ok;
 			} catch {
 				/* not answering yet */
 			}
-			await new Promise((r) => setTimeout(r, 1500));
+			if (!answered) await new Promise((r) => setTimeout(r, 1500));
 		}
-		window.location.href = `${box}/setup`;
-		return true;
+		if (!answered) return 'silent';
+		const q = new URLSearchParams(carry).toString();
+		window.location.href = `${box}/setup${q ? `?${q}` : ''}`;
+		return 'away';
 	}
 
 	/** Pair this device through the server's radio, then leave the first half. */
@@ -326,6 +348,7 @@ class PrePair {
 		// A computer stays on this half until it hands over (`handOff`): the
 		// server's app is at another origin, and this copy can't read it.
 		if (!bakedDesktop()) {
+			this.handingOver = true;
 			this.link = null;
 			this.active = false;
 		}

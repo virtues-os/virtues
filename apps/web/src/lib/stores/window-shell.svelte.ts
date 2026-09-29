@@ -26,6 +26,7 @@ import { parseRoute } from '$lib/tabs/registry';
 import { visits } from '$lib/stores/visits.svelte';
 import { pushState, replaceState } from '$app/navigation';
 import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
+import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 
 // Re-export types for convenience
 export type { Tab, TabType, PaneState };
@@ -70,7 +71,7 @@ const ENTITY_TYPE_MAP: Record<string, { type: string; icon: string; routePrefix:
 	year: { type: 'year', icon: 'ri:calendar-line', routePrefix: '/year' },
 	source: { type: 'source', icon: 'ri:database-2-line', routePrefix: '/sources' },
 	file: { type: 'drive', icon: 'ri:file-line', routePrefix: '/drive' },
-	project: { type: 'project', icon: 'ri:folder-3-line', routePrefix: '/project' }
+	project: { type: 'project', icon: PROJECT_ICON, routePrefix: '/project' }
 };
 
 /**
@@ -611,6 +612,8 @@ class WindowShellStore {
 
 		if (options?.focusExisting) {
 			const parsed = parseRoute(route);
+			// One Setup tab: its step routes read as entity routes below.
+			if (parsed.type === 'setup') return this.openSetup(route, { paneId: options.paneId, replace: this._skipUrlSync });
 			const effectiveRoute = parsed.normalizedRoute || route;
 
 			let result: { tab: Tab; paneId: string } | undefined;
@@ -689,6 +692,43 @@ class WindowShellStore {
 		this.persistTabState();
 		this.syncActiveToUrl(true);
 		return activeTab.id;
+	}
+
+	/**
+	 * Setup's one tab. A step opens in the Setup tab already open, in
+	 * whichever pane, and joins its history; otherwise the active tab goes
+	 * there. `/setup/<step>` reads as an entity route to the generic lookup,
+	 * so `openTabFromRoute`'s focus-existing would open a second one.
+	 */
+	openSetup(route: string, options?: { paneId?: 'left' | 'right'; replace?: boolean }): string {
+		// `replace`: the address is already this route's own history entry (a
+		// deep link, or the browser's Back landing on one), so the tab takes
+		// it over rather than pushing a copy that Back would land on again.
+		const skip = this._skipUrlSync;
+		if (options?.replace) this._skipUrlSync = true;
+		let id: string;
+		try {
+			let found = this.findTab((t) => t.type === 'setup');
+			// Asked for in a particular pane (a `?right=` link): the one tab
+			// moves there rather than lighting up in the other pane.
+			if (found && options?.paneId && found.paneId !== options.paneId) {
+				this.closeTab(found.tab.id);
+				found = undefined;
+			}
+			if (!found) {
+				id = this.navigate(route, { label: 'Setup', paneId: options?.paneId });
+			} else {
+				this.setActiveTab(found.tab.id);
+				id =
+					found.tab.route === route
+						? found.tab.id
+						: this.navigate(route, { label: 'Setup', paneId: found.paneId as 'left' | 'right' });
+			}
+		} finally {
+			this._skipUrlSync = skip;
+		}
+		if (options?.replace) this.syncActiveToUrl(false);
+		return id;
 	}
 
 	/** Move the active tab of a pane back one step in its history. */

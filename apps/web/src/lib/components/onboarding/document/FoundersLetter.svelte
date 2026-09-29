@@ -138,7 +138,7 @@
 				<p class="p3">
 					Every day, Virtues writes the wiki of your life: where you went, who you spoke
 					with, the places you keep going back to, the stories that matter most. You can
-					ask it things like:
+					ask your assistant things like:
 				</p>
 			</div>
 
@@ -196,9 +196,9 @@
 		     practical one, "What am I still paying for that I never use?",
 		     was cut for length 2026-09-28.)
 
-		     Set as a block rather than bullets — these are things you would say
-		     out loud, and a bulleted list turns speech into a feature grid. Full
-		     ink, because they are the payoff of the page rather than an aside. -->
+		     Set as a plain bulleted list, the way a `-` list reads anywhere in
+		     the app. Full ink, because they are the payoff of the page rather
+		     than an aside. -->
 		<ul class="asks">
 			<li>Why do I have a migraine today?</li>
 			<li>What was the name of the woman I met at the dog park yesterday?</li>
@@ -207,8 +207,10 @@
 
 		<div class="body">
 			<!-- THE FOUNDER'S LAST LINE. After the asks the letter has finished
-			     arguing; what is left is why the person who wrote it started, in
-			     one sentence that glosses its own hard word. It used to open the
+			     arguing; what is left is why the person who wrote it started: the
+			     hard word, what it means, then what follows from it, as two
+			     sentences. As one ("subsidiarity: nothing is more local than your
+			     own life") the colon promised a definition and gave a conclusion. It used to open the
 			     letter ("I'm Adam Jace, and I started Virtues because I believe in
 			     digital subsidiarity") with the definition in the margin; the
 			     letter now opens on its premise and the name is on the signature
@@ -219,8 +221,9 @@
 			     agents/build/voice.md on 2026-09-08; Herbert carries the grievance
 			     now, below. -->
 			<p class="close">
-				I started Virtues because I believe in digital subsidiarity: nothing is more
-				local than your own life.
+				I started Virtues because I believe in digital subsidiarity: what's yours
+				belongs at the most local level that can hold it. Nothing is more local than
+				your own life.
 			</p>
 		</div>
 
@@ -373,8 +376,7 @@
 	/* The note register: the prose's serif one step down, the margin's ink one
 	   step lighter. Headword in the same lowercase mono as the ledger heads, so
 	   the two notes read as one apparatus. In the column, an indented aside
-	   with a hairline — the same device the asks use, so the letter has one
-	   way of saying "beside the text". */
+	   with a hairline, the letter's one way of saying "beside the text". */
 	.note {
 		margin: 0;
 		padding-left: 1.3rem;
@@ -447,15 +449,19 @@
 		color: var(--color-foreground);
 	}
 
-	/* THE MARGIN PROPER. Opens only when the window can hold the sheet, a
+	/* THE MARGIN PROPER. Opens only when the space can hold the sheet, a
 	   gutter, and a 15rem margin column with room to spare on both sides:
 	   38 + 2.5 + 15, doubled for symmetry, plus the wrap's padding. Below that
 	   the notes stay in the column — a margin that squeezes the prose is worse
 	   than no margin. The column does NOT move: it stays where the sheet
 	   centers it, and the margin hangs off its right edge into the space that
 	   was already empty. Marginalia are an addition to a page, not a change
-	   to where the page sits. */
-	@media (min-width: 76rem) {
+	   to where the page sits.
+	   THE SPACE, NOT THE WINDOW: whoever sets the letter names a `letter`
+	   container (the stage, the letter page, Setup's tab in the app). Keyed
+	   to the window, the notes opened in a pane beside the sidebar as if the
+	   pane were the window, and hung off the sheet's edge. */
+	@container letter (min-width: 76rem) {
 		.body {
 			display: grid;
 			grid-template-columns: minmax(0, 1fr) var(--m-width);
@@ -490,15 +496,13 @@
 		}
 	}
 
-	/* Questions someone would say out loud, so they are set as speech: no
-	   markers, a hairline to hold them together as one utterance, and the same
-	   serif at the same size as the prose they interrupt. Bullets would have
-	   made them a feature grid, which is the one thing they must not read as. */
+	/* Questions someone would say out loud, set as a plain list: the same
+	   bullet a `-` list gets in any page, in the same serif at the same size
+	   as the prose they sit in. */
 	.asks {
 		margin: 1.4rem 0 0;
 		padding: 0 0 0 1.3rem;
-		border-left: 1px solid var(--color-border);
-		list-style: none;
+		list-style: disc;
 		display: flex;
 		flex-direction: column;
 		gap: 0.6rem;
@@ -519,29 +523,20 @@
 		margin-top: 1.5rem;
 	}
 
-	/* The quotation, framed: a rounded card on the theme's elevated surface,
-	   the same radius the film block uses, so the borrowed voice sits in its
-	   own room rather than continuing the asks' hairline. Serif at the
-	   prose's size; the attribution in the sign-off's small sans. */
-	/* AN EPIGRAPH, NOT A CALLOUT (2026-09-23). The quotation sat in a grey
-	   rounded box — app furniture set down inside a letter. Now it is set the
-	   way a book sets a borrowed line: indented, a step quieter than the
-	   prose, in the same roman serif (never italic), with the attribution in
-	   small type beneath. The indent alone marks it as someone else's words. */
+	/* A QUOTATION, SET AS THE APP SETS ONE. The rule down its left edge is
+	   the same one a `>` quote gets in any page (`--md-quote-border`), so the
+	   borrowed voice reads as quoted, where an indent alone read as the
+	   letter wandering. A step quieter than the prose, in the same roman
+	   serif (never italic), the attribution in small type beneath. */
 	.quote {
-		margin: 2.5rem 0 0 2.5rem;
-		padding: 0;
+		margin: 2.5rem 0 0;
+		padding: 0 0 0 1.25rem;
+		border-left: var(--md-quote-border, 3px solid var(--color-border));
 		max-width: 30rem;
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: var(--t-body);
 		line-height: 1.7;
 		color: var(--color-foreground-muted);
-	}
-
-	@media (max-width: 640px) {
-		.quote {
-			margin-left: 1.25rem;
-		}
 	}
 
 	.quote p {

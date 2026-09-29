@@ -44,9 +44,25 @@ public final class HealthCollector {
 
   public func isAvailable() -> Bool { HKHealthStore.isHealthDataAvailable() }
 
-  /// HealthKit doesn't expose read-authorization status, so we track an
-  /// explicit opt-in flag (set once the user grants via `enable`).
-  public func authorized() -> Bool { UserDefaults.standard.bool(forKey: enabledKey) }
+  /// The person went through `enable`. Not a grant: HealthKit never tells an
+  /// app whether read access was allowed (a refusal reads back as an empty
+  /// store), so this flag is all there is to gate collection on.
+  public func optedIn() -> Bool { UserDefaults.standard.bool(forKey: enabledKey) }
+
+  /// Whether the Health sheet has been shown for every type we read, which is
+  /// the most iOS will say: `requested`, `not_requested`, `unavailable` (no
+  /// HealthKit on this device) or `unknown` (iOS could not tell). `requested`
+  /// says nothing about what the person allowed.
+  public func permission(_ done: @escaping (String) -> Void) {
+    guard isAvailable() else { done("unavailable"); return }
+    store.getRequestStatusForAuthorization(toShare: [], read: readTypes()) { status, _ in
+      switch status {
+      case .unnecessary: done("requested")
+      case .shouldRequest: done("not_requested")
+      default: done("unknown")
+      }
+    }
+  }
 
   private let quantityTypes: [QType] = [
     QType(id: .heartRate, metric: "heart_rate",
@@ -85,7 +101,7 @@ public final class HealthCollector {
 
   /// Launch auto-resume: start collecting only if already opted in; no prompt.
   public func resume() {
-    guard isAvailable(), authorized() else { return }
+    guard isAvailable(), optedIn() else { return }
     start()
   }
 
@@ -120,7 +136,7 @@ public final class HealthCollector {
   /// Fetch new samples for every type (safe to call from any wake). No-op if
   /// not authorized.
   public func collectAll() {
-    guard authorized() else { return }
+    guard optedIn() else { return }
     for qt in quantityTypes { collectQuantity(qt) }
     collectSleep()
   }

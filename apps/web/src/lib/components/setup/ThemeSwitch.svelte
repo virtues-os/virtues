@@ -16,7 +16,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import { DEFAULT_THEMES, getTheme, isThemeDark } from "$lib/utils/theme";
-	import { revealTheme } from "./themeReveal";
+	import { revealTheme, THEME_CHOSEN_KEY } from "./themeReveal";
 
 	/** The ∴ the new theme is pushed out of, and the box it is drawn on. */
 	let { mark }: { mark: () => { el: Element; origin: number; span: number } | null } = $props();
@@ -36,6 +36,13 @@
 		busy = true;
 		const toDark = !dark;
 		dark = toDark;
+		// A pick, as against the system's mode followed: only a pick rides
+		// the hand-off to the server and is saved there.
+		try {
+			localStorage.setItem(THEME_CHOSEN_KEY, "1");
+		} catch {
+			/* followed again next launch */
+		}
 		try {
 			await revealTheme(DEFAULT_THEMES[toDark ? "dark" : "light"], mark());
 		} finally {
@@ -64,11 +71,12 @@
 </button>
 
 <style>
+	/* 44 points: a thumb's size, though the glyph is 16. */
 	.flip {
 		display: grid;
 		place-content: center;
-		width: 34px;
-		height: 34px;
+		width: 44px;
+		height: 44px;
 		border: none;
 		border-radius: 50%;
 		background: transparent;

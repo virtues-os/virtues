@@ -32,6 +32,7 @@ use std::sync::Arc;
 use tokio_stream::StreamExt;
 
 use crate::agent::{AgentConfig, AgentLoop};
+use crate::api::chat_mode::ChatMode;
 use crate::api::chat_usage::{record_chat_usage, UsageData};
 use crate::api::chats::{append_message, ChatMessage};
 use crate::api::turn_recorder::{TurnRecorder, TurnUsage};
@@ -226,6 +227,10 @@ pub struct ChatRequest {
     /// token counts, no content, no chat id.
     #[serde(default)]
     pub temporary: bool,
+    /// Local mode only: whether the small model reasons before answering.
+    /// Every other mode's thinking is the mode's own (`ChatMode::limits`).
+    #[serde(default)]
+    pub think: bool,
 }
 
 /// A ghost chat's history, as the client sent it. The box stores nothing for
@@ -551,6 +556,10 @@ pub enum StreamEvent {
         tokens: u32,
     },
 
+    // A local turn's own measurements, for the line under the reply.
+    #[serde(rename = "local-stats")]
+    LocalStats(crate::local_model::Stats),
+
     // Checkpoint event emitted after auto-compaction
     #[serde(rename = "checkpoint")]
     Checkpoint {
@@ -743,6 +752,9 @@ pub(crate) fn serialize_event(event: &StreamEvent) -> String {
             },
             true,
         ),
+        // Transient: a local chat is never stored, so there is nothing to
+        // reload it into.
+        StreamEvent::LocalStats(stats) => data_event("data-local-stats", None, stats, true),
         // All other events use standard serde serialization
         _ => serde_json::to_string(event).unwrap_or_else(|e| {
             tracing::error!("Failed to serialize stream event: {}", e);
@@ -759,14 +771,6 @@ fn data_event<T: Serialize>(event_type: &str, id: Option<String>, data: T, trans
         r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
     })
 }
-
-/// Per-turn tool budgets in plain chat. Four searches: Anthropic puts a
-/// simple factual question at one to three, and the chat prompt asks for one
-/// parallel batch plus at most one more — and says "four" in words, which
-/// `the_chat_search_cap_is_the_one_the_prompt_states` holds it to. Deep
-/// research, sudo and skills are uncapped here; their ceilings are steps,
-/// cost and time.
-const CHAT_TOOL_CAPS: &[(&str, u32)] = &[("web_search", 4)];
 
 /// Maximum characters for page content in system prompt
 /// ~10K chars ≈ 2.5K tokens, leaving room for rest of context
@@ -915,7 +919,7 @@ async fn build_system_prompt(
     pool: &PgPool,
     active_page: Option<&ActivePageContext>,
     timezone: Option<&str>,
-    agent_mode: &str,
+    mode: &ChatMode,
     project_id: Option<&str>,
 ) -> (String, String) {
     use crate::api::assistant_profile::get_assistant_name;
@@ -928,7 +932,7 @@ async fn build_system_prompt(
     // The narrative interview is a different room entirely: no tools, no
     // persona, no data context, no narrative-identity injection (the document
     // this conversation exists to create). Its prompt stands alone.
-    if agent_mode == "interview" {
+    if matches!(mode, ChatMode::Interview) {
         // The person's reply count is the one fact about progress the box can
         // vouch for; the prompt reads it as a floor on what can be covered.
         let their_replies = crate::api::narrative_draft::their_reply_count(pool)
@@ -946,7 +950,7 @@ async fn build_system_prompt(
 
     // Getting started: its own prompt plus the derived state, regenerated per
     // turn so the model never holds a step done that the rows say is open.
-    if agent_mode == crate::api::getting_started::AGENT_MODE {
+    if matches!(mode, ChatMode::GettingStarted) {
         let block = match crate::api::getting_started::compute(pool).await {
             Ok(s) => s.render_prompt_block(),
             Err(e) => {
@@ -966,7 +970,7 @@ async fn build_system_prompt(
         pool,
         active_page,
         timezone,
-        agent_mode,
+        mode,
         project_id,
         &assistant_name,
         &user_name,
@@ -984,7 +988,7 @@ async fn build_system_prompt_blocks(
     pool: &PgPool,
     active_page: Option<&ActivePageContext>,
     timezone: Option<&str>,
-    agent_mode: &str,
+    mode: &ChatMode,
     project_id: Option<&str>,
     assistant_name: &str,
     user_name: &str,
@@ -1016,7 +1020,7 @@ async fn build_system_prompt_blocks(
                     assistant_name,
                     user_name,
                     style_notes.as_deref(),
-                    agent_mode,
+                    mode,
                     &narrative_identity,
                 ))
             }),
@@ -1118,8 +1122,10 @@ async fn build_system_prompt_blocks(
         Block {
             meta: BlockMeta { tag: "skill", author: Author::System, mood: Mood::Imperative, rung: 60, cadence: Cadence::PerTurn },
             body: Box::pin(async move {
-                virtues_registry::skills::skill_named(agent_mode)
-                    .map(|s| format!("\n\n<skill name=\"{}\">\n{}\n</skill>", s.name, s.body))
+                match mode {
+                    ChatMode::Skill(s) => Some(format!("\n\n<skill name=\"{}\">\n{}\n</skill>", s.name, s.body)),
+                    _ => None,
+                }
             }),
         },
         // The open page's live content (Yjs is the source of truth).
@@ -1190,7 +1196,7 @@ fn build_active_page_block(active_page: Option<&ActivePageContext>) -> Option<St
 #[cfg(test)]
 pub(crate) async fn build_system_prompt_for_audit(pool: &PgPool) -> String {
     let (stable, volatile) =
-        build_system_prompt(pool, None, Some("America/Chicago"), "default", None).await;
+        build_system_prompt(pool, None, Some("America/Chicago"), &ChatMode::Chat, None).await;
     format!("{stable}{volatile}")
 }
 
@@ -1333,30 +1339,27 @@ async fn chat_handler_inner(
     State(live_turns): State<LiveTurns>,
     State(ghost_permissions): State<crate::api::chat_permissions::GhostPermissions>,
     _user: AuthUser,
-    Json(mut request): Json<ChatRequest>,
+    Json(request): Json<ChatRequest>,
 ) -> Response {
-    // The narrative interview is a MODE OF THE CHAT, decided by the chat id —
-    // never by what the client sent. Any surface that opens this conversation
-    // gets the interviewer (its standalone prompt, zero tools); no client can
-    // opt the interview into tools by sending a different agentMode.
-    if request.chat_id == crate::api::narrative_draft::INTERVIEW_CHAT_ID {
-        request.agent_mode = "interview".to_string();
-    }
-    // Getting started is the same kind of room: its mode is the chat id's —
-    // and, once the interview has begun inside it, the interviewer's.
-    if request.chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID {
-        request.agent_mode = match crate::api::getting_started::compute(&pool).await {
-            Ok(s) => s.agent_mode().to_string(),
-            Err(e) => {
-                tracing::warn!(error = %e, "getting-started state unavailable; setup mode");
-                crate::api::getting_started::AGENT_MODE.to_string()
-            }
-        };
+    // Where the time before the first model call goes, one log line per turn
+    // ("turn prepared"). Everything here is paid before the first token.
+    let started = std::time::Instant::now();
+    let ms = |since: std::time::Instant| since.elapsed().as_millis() as u64;
+
+    // The turn's mode, decided once. Some chats are a mode by id (the
+    // interview, the getting-started room), whatever the client sent.
+    let mode = ChatMode::resolve(&pool, &request.chat_id, &request.agent_mode).await;
+
+    // A local turn has no cloud step, so it leaves before the first one: no
+    // model choice, no readiness check for a gateway it never calls, no row.
+    if matches!(mode, ChatMode::Local) {
+        return crate::api::local_chat::run(request, live_turns, cancel_state);
     }
 
     if let Some(refusal) = reject_if_unready(&pool, &request, &live_turns, &cancel_state).await {
         return refusal;
     }
+    let t_ready = ms(started);
 
     // Which model answers. One door — the box decides, from the mode and the
     // owner's pin; the request's `model` is a per-turn override and nothing
@@ -1365,7 +1368,7 @@ async fn chat_handler_inner(
     let model = match crate::api::model_choice::resolve_turn_model(
         &pool,
         request.model.as_deref(),
-        &request.agent_mode,
+        &mode,
     )
     .await
     {
@@ -1375,7 +1378,7 @@ async fn chat_handler_inner(
         Err(crate::error::Error::InvalidInput(detail)) => {
             tracing::warn!(
                 requested = ?request.model,
-                agent_mode = %request.agent_mode,
+                agent_mode = %mode.wire_name(),
                 "rejected per-turn model"
             );
             return (
@@ -1451,11 +1454,13 @@ async fn chat_handler_inner(
 
     // A ghost chat has no usage row to read and no summary to write, so it
     // never compacts.
+    let t_stored = ms(started);
     let checkpoint_event = if temporary {
         None
     } else {
         compact_if_critical(&pool, &chat_id_str, &model).await
     };
+    let t_compacted = ms(started);
 
     let History { conversation_summary, summary_up_to_index, project_id: effective_project_id, messages } =
         match load_history(&pool, &request).await {
@@ -1468,7 +1473,10 @@ async fn chat_handler_inner(
     // gets the marker, `system_tail` is the per-turn tail (the open page's live
     // text, and the rules that deliberately sit behind it) which must stay
     // OUTSIDE the cached block or it invalidates the prefix on every keystroke.
-    let (mut system_prompt, system_tail) = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, effective_project_id.as_deref()).await;
+    let t_history = ms(started);
+    let prompt_started = std::time::Instant::now();
+    let (mut system_prompt, system_tail) = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &mode, effective_project_id.as_deref()).await;
+    let prompt_ms = ms(prompt_started);
     // Scoped (grounded) chat: retrieval is hard-filtered to the project's
     // items (ScopeMode::Exclusive in ToolContext); this line sets the matching
     // answer contract. Only meaningful inside a project.
@@ -1503,6 +1511,20 @@ async fn chat_handler_inner(
     // switched or a phone locked does not drop the loop or the assistant row
     // (VIR-323). This response is one watcher on the turn;
     // `GET /api/chat/{id}/stream` is another.
+    tracing::info!(
+        chat_id = %chat_id_str,
+        mode = mode.wire_name(),
+        ready_ms = t_ready,
+        stored_ms = t_stored - t_ready,
+        compaction_ms = t_compacted - t_stored,
+        history_ms = t_history - t_compacted,
+        prompt_ms,
+        prompt_tokens = crate::api::token_estimation::estimate_tokens(&system_prompt)
+            + crate::api::token_estimation::estimate_tokens(&system_tail),
+        total_ms = ms(started),
+        "turn prepared"
+    );
+
     let turn = live_turns.start(&chat_id_str);
     // Registered here, not inside the stream, so the driver holds the same
     // token and can tell its own turn from whichever one holds the slot.
@@ -1512,6 +1534,7 @@ async fn chat_handler_inner(
         yjs_state,
         cancel_state.clone(),
         request,
+        mode,
         model,
         effective_project_id,
         api_messages,
@@ -1815,7 +1838,7 @@ async fn load_history(pool: &PgPool, request: &ChatRequest) -> Result<History, R
 
 /// Drive the turn's stream in its own task, pushing each line to the live
 /// turn's watchers, and end the turn for all of them however the stream ends.
-fn spawn_turn_driver(
+pub(crate) fn spawn_turn_driver(
     agent_stream: Pin<Box<dyn Stream<Item = String> + Send>>,
     turn: Arc<live_turn::LiveTurn>,
     turn_token: CancellationToken,
@@ -1878,7 +1901,7 @@ pub async fn live_turn_stream_handler(
 
 /// An SSE response in the AI SDK's UI Message Stream protocol (the header
 /// is what the SDK keys on).
-fn ui_stream_response<S>(stream: S) -> Response
+pub(crate) fn ui_stream_response<S>(stream: S) -> Response
 where
     S: Stream<Item = Result<SseEvent, Infallible>> + Send + 'static,
 {
@@ -1898,6 +1921,9 @@ fn create_agent_stream(
     yjs_state: YjsState,
     cancel_state: ChatCancellationState,
     request: ChatRequest,
+    // Resolved once by the handler (`ChatMode::resolve`); never re-read off
+    // `request.agent_mode`.
+    mode: ChatMode,
     // Already resolved by `model_choice::resolve_turn_model` — passed in
     // rather than re-read off the request so the stream cannot disagree with
     // what the handler decided, or fall back to a default of its own.
@@ -1923,66 +1949,19 @@ fn create_agent_stream(
         // driver watches.
         let cancel_token = cancel_token;
 
-        // Determine max_steps based on agent mode
-        // - deep_research: 50 (read-only, needs more exploration)
-        // - council: 40 (gate + 1-2 dispatch rounds + synthesis; bounded)
-        // - chat / default: 20 (conversational, full tool access, multi-turn)
-        // The budgets beside the step ceiling: dollars the gateway reports
-        // and wall-clock. A step ceiling alone bounds nothing a person feels
-        // — twenty steps of a large model over a long context is real money,
-        // and twenty thirty-second tools is ten minutes. First figures,
-        // 2026-09-21; the journal line "turn stopped at its budget" is how
-        // they get revised.
-        //
-        // Plain chat also thinks at low effort and has a search budget.
-        // Effort governs how many tool calls a model makes as well as how
-        // long it thinks, and chat ran at the provider default — high, on
-        // most — which is how "what's on tonight" became thirteen searches.
-        // The other modes keep the model's default and no caps.
-        use crate::agent::{Thinking, TurnBudget};
-        let spend = |micros: i64, minutes: u64| TurnBudget {
-            max_cost_micros: Some(micros),
-            max_wall_clock: Some(std::time::Duration::from_secs(minutes * 60)),
-            tool_caps: &[],
-        };
-        let (max_steps, budget, thinking) =
-            match virtues_registry::skills::skill_named(&request.agent_mode) {
-                // A skill's ceilings come from its file.
-                Some(skill) => (
-                    skill.max_steps,
-                    spend((skill.max_cost_usd * 1_000_000.0).round() as i64, skill.max_minutes),
-                    Thinking::Default,
-                ),
-                None => match request.agent_mode.as_str() {
-                    "deep_research" => (50, spend(10_000_000, 25), Thinking::Default),
-                    // The owner's bypass: ceilings high enough that no real
-                    // admin session meets them. The dollar cap stays as the
-                    // one thing between a looping model and the bill.
-                    "sudo" => (500, spend(50_000_000, 4 * 60), Thinking::Default),
-                    // "chat" or default
-                    _ => (
-                        20,
-                        TurnBudget { tool_caps: CHAT_TOOL_CAPS, ..spend(2_500_000, 8) },
-                        Thinking::Low,
-                    ),
-                },
-            };
+        // The turn's ceilings: steps, dollars, wall-clock, effort, tool
+        // timeout. See `ChatMode::limits`.
+        let limits = mode.limits();
 
         // Create AgentLoop with YjsState for real-time page editing
         let agent = AgentLoop::new_with_yjs(pool.clone(), yjs_state)
         .with_config(AgentConfig {
-            max_steps,
-            // Sudo: a long restore or migration through sql_* must not be
-            // cut off at 30s. The shell has its own ceiling in agent::executor.
-            tool_timeout: if request.agent_mode == "sudo" {
-                std::time::Duration::from_secs(crate::tools::shell::MAX_TIMEOUT_SECS)
-            } else {
-                std::time::Duration::from_secs(30)
-            },
+            max_steps: limits.max_steps,
+            tool_timeout: limits.tool_timeout,
             parallel_tools: true,
-            thinking,
+            thinking: limits.thinking,
         })
-        .with_budget(budget);
+        .with_budget(limits.budget);
 
         // Side-channel for live Deep Research subagent status. The dispatch_subagents tool sends
         // worker updates on `subagent_tx`; the select! loop below drains `subagent_rx` and streams
@@ -2011,10 +1990,10 @@ fn create_agent_stream(
             worker_budget: Some(worker_budget),
             temporary,
             ghost_permissions: Some(ghost_permissions.clone()),
-            sudo: request.agent_mode == "sudo",
+            sudo: mode.is_sudo(),
         };
 
-        let tools = crate::tools::get_tools_for_agent_mode(&request.agent_mode);
+        let tools = mode.tools();
 
         // The message opens, then its first step; the recorder opens and
         // closes the parts inside each step, and the steps after this one.
@@ -2075,7 +2054,7 @@ fn create_agent_stream(
         let usage = recorder.usage();
         let subject = recorder.subject(was_cancelled, was_unattended);
         let message = recorder.into_message(&model, agent_id, subject);
-        persist_turn(&pool, &chat_id, &model, &request.agent_mode, temporary, message, usage).await;
+        persist_turn(&pool, &chat_id, &model, mode.wire_name(), temporary, message, usage).await;
 
         // Clean up cancellation token when stream ends
         cancel_state.remove(&chat_id, &cancel_token);
@@ -2208,7 +2187,7 @@ async fn persist_turn(
 }
 
 /// Generate a random ID for messages
-fn generate_id() -> String {
+pub(crate) fn generate_id() -> String {
     use rand::Rng;
     let mut rng = rand::rng();
     let bytes: [u8; 8] = rng.random();
@@ -2258,13 +2237,6 @@ pub async fn cancel_chat_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_chat_search_cap_is_the_one_the_prompt_states() {
-        let cap = CHAT_TOOL_CAPS.iter().find(|(t, _)| *t == "web_search").map(|(_, n)| *n);
-        assert_eq!(cap, Some(4), "change the <web> block's \"Four searches\" with it");
-        assert!(crate::agent::prompt::AGENT_MODE_PROMPT.contains("Four searches is the most a turn gets"));
-    }
 
     /// The rules block is the one place where a silent failure means the box
     /// raises a subject someone asked it never to raise. These tests exist
@@ -2355,7 +2327,7 @@ mod tests {
     #[sqlx::test]
     async fn a_skill_rides_in_the_tail_and_chat_carries_none(pool: PgPool) {
         let (stable, volatile, rendered) = build_system_prompt_blocks(
-            &pool, None, Some("America/Chicago"), "council", None, "Ari", "Adam",
+            &pool, None, Some("America/Chicago"), &ChatMode::from_wire("council"), None, "Ari", "Adam",
         )
         .await;
         assert!(rendered.iter().any(|r| r.tag == "skill"), "council renders its skill block");
@@ -2365,7 +2337,7 @@ mod tests {
         assert!(!stable.contains("<page_tools>"), "council has no page tools, so no page guidance");
 
         let (stable, volatile, rendered) = build_system_prompt_blocks(
-            &pool, None, Some("America/Chicago"), "chat", None, "Ari", "Adam",
+            &pool, None, Some("America/Chicago"), &ChatMode::Chat, None, "Ari", "Adam",
         )
         .await;
         assert!(!rendered.iter().any(|r| r.tag == "skill"));
@@ -2380,7 +2352,7 @@ mod tests {
             .await
             .unwrap();
         let (stable, volatile, rendered) = build_system_prompt_blocks(
-            &pool, None, Some("America/Chicago"), "default", None, "Ari",
+            &pool, None, Some("America/Chicago"), &ChatMode::Chat, None, "Ari",
             "Adam",
         )
         .await;
@@ -2537,7 +2509,7 @@ mod live_prompt_audit {
                 &pool,
                 None,
                 Some("America/Chicago"),
-                "default",
+                &super::ChatMode::Chat,
                 nb,
             )
             .await;
@@ -2846,5 +2818,118 @@ mod ui_stream_fixture {
             }),
             r#"{"type":"data-subagent","data":{"dispatchId":3,"subagentId":1,"title":"Prices","model":"m","status":"thinking","tokens":42},"transient":true}"#
         );
+    }
+}
+
+/// `persist_turn`: what a finished turn leaves behind — its row, its per-chat
+/// usage and its ai_call — for a normal turn, a temporary one, and an empty one.
+#[cfg(test)]
+mod persist_turn_tests {
+    use super::*;
+
+    /// A turn as the stream would record it: `text` said (if any), one
+    /// step's usage reported.
+    fn recorded_turn(text: &str) -> (Option<ChatMessage>, TurnUsage) {
+        let mut r = TurnRecorder::new("msg_t".into());
+        if !text.is_empty() {
+            r.on_event(crate::agent::AgentEvent::TextDelta { content: text.into() });
+        }
+        r.on_event(crate::agent::AgentEvent::Usage {
+            prompt_tokens: 1_200,
+            completion_tokens: 80,
+            total_tokens: Some(1_280),
+            reasoning_tokens: Some(30),
+            cache_read_tokens: Some(1_000),
+            cache_write_tokens: None,
+            cost_micros: Some(4_321),
+        });
+        let usage = r.usage();
+        (r.into_message("anthropic/claude-x", "auto".into(), None), usage)
+    }
+
+    async fn count(pool: &PgPool, sql: &str, chat_id: &str) -> i64 {
+        sqlx::query_scalar(sql).bind(chat_id).fetch_one(pool).await.unwrap()
+    }
+
+    const MESSAGES: &str = "SELECT count(*) FROM app_chat_messages WHERE chat_id = $1";
+    const USAGE: &str = "SELECT count(*) FROM app_chat_usage WHERE chat_id = $1";
+    const AI_CALLS: &str = "SELECT count(*) FROM app_ai_calls WHERE feature = $1";
+
+    /// A normal turn writes its row, its per-chat usage and its ai_call, each
+    /// carrying the recorder's figures.
+    #[sqlx::test]
+    async fn persist_turn_writes_the_row_the_usage_and_the_call(pool: PgPool) {
+        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ('chat_p', 't', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (message, usage) = recorded_turn("Hello.");
+        persist_turn(&pool, "chat_p", "anthropic/claude-x", "chat", false, message, usage).await;
+
+        let (role, content, model): (String, String, Option<String>) =
+            sqlx::query_as("SELECT role, content, model FROM app_chat_messages WHERE chat_id = 'chat_p'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((role.as_str(), content.as_str(), model.as_deref()), ("assistant", "Hello.", Some("anthropic/claude-x")));
+        let n: i64 = sqlx::query_scalar("SELECT message_count::bigint FROM app_chats WHERE id = 'chat_p'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 1, "the chat's count follows the row");
+
+        let tokens: (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT input_tokens::bigint, output_tokens::bigint, reasoning_tokens::bigint, cache_read_tokens::bigint
+             FROM app_chat_usage WHERE chat_id = 'chat_p' AND model = 'anthropic/claude-x'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(tokens, (1_200, 80, 30, 1_000));
+
+        let call: (String, i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT model, prompt_tokens::bigint, completion_tokens::bigint, reasoning_tokens::bigint, cost_micros::bigint
+             FROM app_ai_calls WHERE feature = 'chat'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(call, ("anthropic/claude-x".to_string(), 1_200, 80, 30, 4_321));
+    }
+
+    /// A temporary (ghost) chat has no chat row: nothing goes to
+    /// app_chat_messages or app_chat_usage, but the spend still reaches
+    /// app_ai_calls.
+    #[sqlx::test]
+    async fn a_temporary_turn_writes_only_its_ai_call(pool: PgPool) {
+        let (message, usage) = recorded_turn("Off the record.");
+        assert!(message.is_some(), "the turn said something; only `temporary` keeps it out");
+        persist_turn(&pool, "chat_ghost", "anthropic/claude-x", "sudo", true, message, usage).await;
+
+        assert_eq!(count(&pool, MESSAGES, "chat_ghost").await, 0);
+        assert_eq!(count(&pool, USAGE, "chat_ghost").await, 0);
+        assert_eq!(count(&pool, "SELECT count(*) FROM app_chats WHERE id = $1", "chat_ghost").await, 0);
+        let cost: i64 = sqlx::query_scalar("SELECT cost_micros::bigint FROM app_ai_calls WHERE feature = 'sudo'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cost, 4_321);
+    }
+
+    /// Nothing said and no tool called: no row — but the tokens were spent,
+    /// so usage and the ai_call are still written.
+    #[sqlx::test]
+    async fn an_empty_turn_writes_no_row_but_still_its_usage(pool: PgPool) {
+        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ('chat_e', 't', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (message, usage) = recorded_turn("");
+        assert!(message.is_none(), "no text and no tools is no message");
+        persist_turn(&pool, "chat_e", "anthropic/claude-x", "council", false, message, usage).await;
+
+        assert_eq!(count(&pool, MESSAGES, "chat_e").await, 0);
+        assert_eq!(count(&pool, USAGE, "chat_e").await, 1);
+        assert_eq!(count(&pool, AI_CALLS, "council").await, 1);
     }
 }
