@@ -59,6 +59,13 @@
 			]
 		},
 		{
+			"title": "What's new",
+			"pages": [
+				{ "slug": "whats-new/v0-1-9", "title": "v0.1.9" },
+				{ "slug": "whats-new/v0-1-8", "title": "v0.1.8" }
+			]
+		},
+		{
 			"title": "Understand",
 			"pages": [
 				{ "slug": "understand/privacy", "title": "What leaves the box", "planned": true },

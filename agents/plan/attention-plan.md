@@ -223,7 +223,7 @@ Current state: `write_machine_notes` has **zero production callers**, and the
 the correction channel disappears on exactly the thin days most likely to be
 wrong.
 
-**What may NOT be a note.** `wiki-plan.md` already legislates it: *"A machine
+**What may NOT be a note.** [`wiki-editor.md`](../build/wiki-editor.md) already legislates it: *"A machine
 note may only be written by a pass that held a complete session in context …
 Never a sweep over isolated rows,"* and *"Silence is the default."* So:
 
@@ -424,8 +424,8 @@ Open, and genuinely undecided:
 
 ## Related
 
-- [`the-day.md`](the-day.md) — the day page and its data model
-- [`event-timeline.md`](event-timeline.md) — segmentation as evidence fusion
-- [`wiki-plan.md`](wiki-plan.md) — the note covenant, in full
-- [`privacy-model.md`](privacy-model.md) — egress; message bodies now reach the
+- [`the-day.md`](../build/the-day.md) — the day page and its data model
+- [`event-timeline.md`](../build/event-timeline.md) — segmentation as evidence fusion
+- [`wiki-editor.md`](../build/wiki-editor.md) — the note covenant; [`wiki-notes-plan.md`](wiki-notes-plan.md) — the unbuilt note writer
+- [`privacy-model.md`](../record/privacy-model.md) — egress; message bodies now reach the
   Chat slot, which under BYO AI is whatever endpoint the user configured

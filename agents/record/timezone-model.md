@@ -20,7 +20,7 @@
 ## The bug
 
 The "Today" page fetches records by a UTC window from
-[`day_boundaries_utc`](../virtues-core/src/api/day_summary.rs#L123-L153). With a
+[`day_boundaries_utc`](../../virtues-core/src/api/day_summary.rs#L123-L153). With a
 valid timezone it builds a correct 24h local-day window; otherwise it falls back
 to a **36-hour** window (`00:00 today → 12:00 next day`) anchored at UTC midnight,
 which reaches back into yesterday evening for any negative-UTC-offset user. That's
@@ -28,7 +28,7 @@ the leak (8:51 PM / 9:13 PM chat rows on today's page, all-day `12:00 AM Ashura`
 sorting below them).
 
 The fallback fires because the timezone is **NULL** — nothing populates it
-([profile.rs:182](../virtues-core/src/api/profile.rs#L182) only reads). The fix
+([profile.rs:182](../../virtues-core/src/api/profile.rs#L182) only reads). The fix
 is to populate *both* timezones below and to make the fallback window a correct
 24h as defense-in-depth.
 
@@ -110,9 +110,9 @@ wiki_days.start_timezone        ← WHERE THE OWNER WOKE UP that day
 ### 1. Rename `profile.timezone → home_timezone`
 
 Migration `ALTER TABLE app_user_profile RENAME COLUMN timezone TO home_timezone;`
-([0003_app_shell.sql:36](../virtues-core/migrations/0003_app_shell.sql#L36)), plus
-[profile.rs](../virtues-core/src/api/profile.rs) L31/L82/L139-141/L182 and
-[+layout.ts:61](../apps/web/src/routes/(app)/+layout.ts#L61). Keep the
+(`0003_app_shell.sql:36`, pre-squash), plus
+[profile.rs](../../virtues-core/src/api/profile.rs) L31/L82/L139-141/L182 and
+[+layout.ts:61](<../../apps/web/src/routes/(app)/+layout.ts#L61>). Keep the
 `get_timezone()` helper name. (`wiki_days.start_timezone` is a different name,
 untouched; `end_timezone` is dropped separately — see migration `0015`.)
 
@@ -121,9 +121,9 @@ untouched; `end_timezone` is dropped separately — see migration `0015`.)
 Add `iana-time-zone`. At onboarding (or lazily when `home_timezone IS NULL`), call
 `iana_time_zone::get_timezone()` → persist via `profile::update_profile`. Cloud
 fallback: explicit set / pairing-device cross-check in `consume_handler`
-([pair.rs:613](../virtues-core/src/api/pair.rs#L613); thread `timezone` through
-[iOS `PairingDeviceInfo`](../apps/ios/Virtues/Managers/Data/NetworkManager.swift#L387-L393)
-and [web `DeviceInfo`](../apps/web/src/lib/types/device-pairing.ts#L8-L14)).
+([pair.rs:613](../../virtues-core/src/api/pair.rs#L613); thread `timezone` through
+iOS `PairingDeviceInfo` (the native app, since deleted)
+and [web `DeviceInfo`](../../apps/web/src/lib/types/device-pairing.ts#L8-L14)).
 
 ### 3. Add `tzf-rs` + derive per-day `start_timezone` from location
 
@@ -160,7 +160,7 @@ Landed (Rust `cargo check --workspace` + web `svelte-check` clean):
   `first_point_timezone()` (first located point of the day → `Option`), and
   `resolve_day_timezone()` (= first point → home fallback; used at the EOD lock).
 - **`profile::get_timezone()`** is a **pure read**; seeding moved to
-  `ensure_home_timezone()`, called once at server startup ([server/mod.rs](../virtues-core/src/server/mod.rs))
+  `ensure_home_timezone()`, called once at server startup ([server/mod.rs](../../virtues-core/src/server/mod.rs))
   before the scheduler resolves cron zones, and in the pairing cross-check.
 - **`day_summary`** computes boundaries + writes `start_timezone` from the per-day
   location tz; **fallback window fixed** 36h → 24h.

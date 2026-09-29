@@ -76,6 +76,42 @@ level up.
 4. Prompts are not migrations, but they are close: every box gets the new text
    on upgrade and applies it to pages that already exist.
 
+## Notes, and what may not be one
+
+A `wiki_notes` row is the machine's only channel into the record: a cited
+proposal about a subject, which a person accepts or dismisses. The writer that
+leaves them nightly is not built yet ([wiki-notes-plan.md](../plan/wiki-notes-plan.md));
+these rules hold for it and for anything else that writes a note.
+
+- **Cite or reject.** A machine note without `source_refs` cannot exist —
+  `wiki_notes_machine_must_cite` is a CHECK, and `write_machine_notes` refuses
+  it by name first. The asymmetry is the design: a cited note is useful even
+  when wrong, because it is checkable in seconds; a bare claim with a
+  confidence is worthless when wrong. A citation is a record route, not the
+  model's own reasoning restated.
+- **Only a pass that held a whole session writes one** — a finished day, a
+  chat thread. Never a sweep over isolated rows: a fragment cannot tell sarcasm
+  from statement, or when a thing was said from when it happened. That is what
+  killed semantic entity resolution.
+- **If it's about today, it isn't a note.** *"You had coffee with Maya"* is the
+  day. *"Maya mentioned she's leaving in March"* is a note, because March isn't
+  today.
+- **If the article wouldn't change, it isn't a note.** So the writer is handed
+  the current article of each subject in play. Silence is the default.
+- **The writer never writes `wiki_refs`.** Not at low confidence, not flagged.
+  The graph stays deterministic and user-authored.
+- **Notes never age out.** They leave by `accepted`, `dismissed` or `absorbed`
+  — events, never timers.
+- **Volume is capped in code** (`MAX_NOTES_PER_RUN`), and the cap logs when it
+  binds. Raising it is the wrong fix for a bar that is too low.
+
+## Events are evidence, not article subjects
+
+`wiki_events` carries its own summary and may be a note's subject. It never
+gets an article, a revision history or a maintenance setting. Articles are for
+things a person would name; that is what keeps their number bounded. Do not
+add `event` to `wiki_articles.subject_type` or give it a brief.
+
 ## The trap that produced this doc
 
 `refresh_due_entity_articles` documents, in its own comment, that maintenance

@@ -218,9 +218,10 @@ pub async fn poll(
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| anyhow!("link ready but no api_key"))?;
             super::renew::store_api_key(db, api_key).await?;
-            // Provision relay reachability (best-effort): atlas mints this box's
-            // per-SNI token; the box stores it for the relay subsystem. A failure
-            // (e.g. relay disabled → 503) just leaves the box reachable on LAN.
+            // Provision relay reachability (best-effort): atlas returns the relay
+            // URL; the box stores it for the relay subsystem. A failure (e.g.
+            // relay disabled → 503) leaves `crate::relay::resolve_relay_url` on
+            // its later steps: the env override, then the baked default.
             match super::relay::fetch_and_store(db, http, atlas_url, api_key).await {
                 // The running endpoint keeps whatever relay it bound with (none,
                 // pre-link), so ask the reach loop to rebind with the new config

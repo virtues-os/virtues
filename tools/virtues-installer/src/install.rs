@@ -1753,7 +1753,7 @@ const LOGIND_POWER_KEY: &str = r#"# Installed by virtues-installer (appliance pr
 # The button behind the case forgets this box's paired devices when it is held
 # for three seconds. It does NOT power the box off, and it does not erase
 # anything: the record, the network, the account and the four-word phrase all
-# survive. See maintenance::reset_button and agents/record/onboarding-paradigm.md.
+# survive. See maintenance::reset_button and agents/build/onboarding-paradigm.md.
 #
 # HandlePowerKeyLongPress is set too, or logind claims the long press even
 # while ignoring the short one - which is exactly the gesture we need.

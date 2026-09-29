@@ -5,7 +5,7 @@
 > 2026-08-11, the day linking's absence was discovered as a wall: a box
 > onboarded and paired at an office was unreachable by the app in the same
 > minute, because reach rides the relay and the relay rides the account.
-> Companion to [onboarding.md](onboarding.md).
+> Companion to [onboarding.md](../build/onboarding.md).
 
 ## Where it sits
 
@@ -87,7 +87,7 @@ display S2: QR + code ──scan──▶ atlas /init?code=…
    account's boxes.** Usage caps already meter the real marginal cost (AI
    spend); boxes are endpoints; per-box pricing punishes the best customers.
 4. **BYO-AI members.** BYO is a setting inside the one subscription, not a
-   cheaper tier ([pricing doctrine](../docs)); BYO users still link — the key
+   cheaper tier ([pricing doctrine](../../docs)); BYO users still link — the key
    still buys relay reach and integrations. Nothing branches here.
 5. **DIY free.** Never sees this step. No display, no forced sub; LAN + BYO
    transport (the doctrine's auto-noticed overlays) are their reach story.

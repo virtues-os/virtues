@@ -198,7 +198,8 @@ async fn do_topup(
 }
 
 /// Resolve an api_key → (active customer id, account id). Errors on unknown
-/// key or inactive subscription. Shared with `routes::relay` (token minting).
+/// key or inactive subscription. Shared with `routes::billing_portal`; the relay
+/// door deliberately does not use it (see `routes::relay::resolve_account`).
 pub(crate) async fn resolve_active_customer(
     state: &AppState,
     api_key: &str,

@@ -5,7 +5,7 @@
 > commands and one atlas table that do not exist, and a config path no box has.
 >
 > **This is the workshop copy.** The user-facing runbook now lives at
-> [`docs/operate/recovery.md`](../docs/operate/recovery.md) and ships to
+> [`docs/operate/recovery.md`](../../docs/operate/recovery.md) and ships to
 > `virtues.com/docs/operate/recovery`. Anything an owner reads belongs there;
 > **this file is for the people and agents working on the box** — it carries the
 > operator-only material (atlas-side actions, the diagnostic surface, the honest
@@ -78,7 +78,7 @@ migrates wins. That fallback is why backups work; it is not a claim that
 ## Reaching the box
 
 The box serves plain HTTP on **port 8000**. There is no TLS on the box — see
-[networking-relay-tee.md](networking-relay-tee.md) for why.
+[networking-relay-tee.md](../archive/networking-relay-tee.md) for why.
 
 Transport is **iroh**, not WireGuard. WireGuard was removed; `deploy.rs` keeps
 the field name `paired_wg` only for API stability, and any doc sentence about a
@@ -99,7 +99,7 @@ What actually reaches the box:
   a browser pointed at `http://<box-ip>:8000` from another machine is refused
   like any stranger.
 
-Full model: [`docs/operate/reach.md`](../docs/operate/reach.md).
+Full model: [`docs/operate/reach.md`](../../docs/operate/reach.md).
 
 ---
 
@@ -331,7 +331,7 @@ It then drops and recreates the database, replaces the lake and applet state,
 and writes the env file **to whichever candidate path already exists on this
 box**, falling back to `ENV_CANDIDATES[0]` (`cli/restore.rs:29`).
 
-Owner-facing version: [`docs/operate/backup-and-restore.md`](../docs/operate/backup-and-restore.md).
+Owner-facing version: [`docs/operate/backup-and-restore.md`](../../docs/operate/backup-and-restore.md).
 
 ---
 
@@ -390,8 +390,8 @@ migrated schema, restore from backup instead.
 release with no binary swap, no migration, and no restart — the fast path for UI
 iteration.
 
-Full model: [update-paradigm.md](update-paradigm.md),
-[`docs/operate/upgrading.md`](../docs/operate/upgrading.md).
+Full model: [update-paradigm.md](../record/update-paradigm.md),
+[`docs/operate/upgrading.md`](../../docs/operate/upgrading.md).
 
 ---
 

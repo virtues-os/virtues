@@ -13,7 +13,7 @@
 # repo has a habit of being lifted verbatim into user-facing copy; the wording
 # that is true is in docs/operate/reach.md.
 #
-# ADMISSION IS OPEN (open-relay-plan, applied to the host 2026-08-31). There
+# ADMISSION IS OPEN (agents/record/open-relay.md, applied to the host 2026-08-31). There
 # used to be an [access.http] block here pointing at atlas /relay/authorize —
 # a per-connection callout that both paywalled the connectivity substrate and
 # reported every connection to atlas. Both endpoint and block are deleted;

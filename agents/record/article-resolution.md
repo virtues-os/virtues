@@ -6,8 +6,8 @@ all of them, and the person can always overrule it without ever being made
 responsible for it.
 
 Supersedes `agents/plan/article-resolution-plan.md` (deleted). It overrules
-[wiki-plan](../plan/wiki-plan.md) §10, the one-pen rule, which is the main
-thing to know if you read that document first.
+the wiki plan's one-pen rule ([wiki-consolidation.md](wiki-consolidation.md)),
+which is the main thing to know if you read that record first.
 
 ---
 

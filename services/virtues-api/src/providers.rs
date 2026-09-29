@@ -51,11 +51,11 @@ pub fn get_provider_config(model: &str, config: &Config) -> ProviderConfig {
 /// - `model`: the upstream id.
 /// - `stream` + `stream_options.include_usage`: so the final chunk carries
 ///   the usage the charge is settled on.
-/// - `temperature`: 0.7 when absent. The box sends none on chat turns and has
-///   run at 0.7 since the proxy existed; dropping the default would move
-///   every chat to the provider's 1.0 in a cloud deploy nobody can see from
-///   the box. The box starts sending its own in plan phase 2d; the default
-///   goes in the deploy after that.
+/// - `temperature`: 0.7 when absent. Boxes from v0.1.7 on send their own
+///   0.7 on chat turns; older ones send none and have always run at 0.7, so
+///   dropping the default would move their chats to the provider's 1.0 in a
+///   cloud deploy nobody can see from the box. It goes once no box that old
+///   is served. See agents/record/ai-door.md.
 /// - `provider_options` (the box's spelling) becomes `providerOptions` (the
 ///   gateway's), with zero-retention merged over it where the catalog says
 ///   the model must be pinned. See [`merge_provider_options`].
@@ -63,7 +63,8 @@ pub fn get_provider_config(model: &str, config: &Config) -> ProviderConfig {
 ///   array.
 /// - `thought_signature`: stripped. It landed 2026-06-08 for Gemini 3's
 ///   function-calling continuity and has never reached a model; the gateway
-///   has no such field. Released boxes still send it. Plan 2d replaces it.
+///   has no such field. Boxes before v0.1.7 still send it; newer ones echo
+///   the gateway's `reasoning_details` instead.
 ///
 /// What it never does: invent `max_tokens`. For three months this filled in
 /// 4096 when the caller sent none, which put a hard ceiling on every live

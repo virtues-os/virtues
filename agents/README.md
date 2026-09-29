@@ -23,12 +23,15 @@ scheme:
 The empty cell is empty for a reason: a description of something temporary is
 just a record of it. Three genres, not four.
 
-| Directory | What it holds | Edited? | Publishes? |
-|---|---|---|---|
-| [`build/`](build/) | Contracts, vocabularies, style, runbooks. How it must be done. | Yes — maintained to stay true | No |
-| [`record/`](record/) | Audits, measured findings, design records of shipped work. | No — editing falsifies it | **Yes** |
-| [`plan/`](plan/) | Designs for things being built. | Yes, until it ships | No |
-| [`archive/`](archive/) | Superseded. Kept for the reasoning. | No | No |
+| Directory | What it holds | Edited? |
+|---|---|---|
+| [`build/`](build/) | Contracts, vocabularies, style, runbooks. How it must be done. | Yes — maintained to stay true |
+| [`record/`](record/) | Audits, measured findings, design records of shipped work. | No — editing falsifies it |
+| [`plan/`](plan/) | Designs for things being built. | Yes, until it ships |
+| [`archive/`](archive/) | Superseded. Kept for the reasoning. | No |
+
+None of it publishes: the website stopped syncing `agents/` on 2026-08-28. The
+repo is public, so all of it is readable on GitHub.
 
 [`archive/`](archive/) is not a fourth genre — it is where any of the three go
 when they stop being true.
@@ -38,9 +41,9 @@ when they stop being true.
 - **A plan is deleted when the thing ships.** What survives is a record plus a
   manual page. `docs/` grew to 63 files because nothing ever left it; a plan
   with no death condition eventually gets read as a description of the system.
-- **Every doc is listed** in its directory's README. An unlisted doc is one
-  nobody finds — and for `record/`, one that does not publish at all.
-  `tools/check-manual.py` enforces this.
+- **Every doc is listed** in its directory's README, and every relative link
+  resolves. An unlisted doc is one nobody finds; a doc moved without a link
+  sweep strands every citation of it. `tools/check-manual.py` enforces both.
 - **Write against the code, never against another doc.** Three separate audits
   on 2026-08-28 found the docs here wrong in ways that had already reached a
   user-facing page: a config path that does not exist on a real box, SQL

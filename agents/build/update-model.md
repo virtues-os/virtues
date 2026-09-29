@@ -2,8 +2,8 @@
 
 How a solo dev keeps a growing pile of apps versioned and in-control without
 drowning. One mental model; every new app slots into it. The detailed specs
-([update-manifold-plan.md](update-manifold-plan.md),
-[update-identity-spine.md](update-identity-spine.md)) *implement* this — read
+([update-manifold-plan.md](../archive/update-manifold-plan.md),
+[update-identity-spine.md](../archive/update-identity-spine.md)) *implement* this — read
 this first.
 
 ## The one idea
@@ -96,6 +96,7 @@ That's the whole discipline. Everything else is per-tier native mechanism.
 ## What to build, in leverage order
 
 1. **SPA delivery** — so the web layer updates freely on every client, not just
-   mobile (turns the whole model on). Spec: `spa-delivery-plan.md`.
+   mobile (turns the whole model on). Mobile half built
+   (`agents/record/spa-delivery.md`); the Mac half is `agents/plan/local-ui-plan.md`.
 2. **One `fastlane → TestFlight` lane** — the only native pipeline worth having.
 3. **Keep shrinking the collector into the box.**

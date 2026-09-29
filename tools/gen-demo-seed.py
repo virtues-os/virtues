@@ -614,34 +614,34 @@ def _showcase(msg, trans):
     d = START + timedelta(days=SHOWCASE)
     recordings = [
         ("0746", 7, 46, "Driving to the clinic, the car bag",
-         "[Speaker 1]: Hand sanitizer, lip balm, a tide chart, toothpicks. It's the car bag. "
-         "[Speaker 2]: All right, we're here. [Speaker 1]: The name makes it sound like a bank. "
-         "[Speaker 2]: This is the waiting room. [Speaker 1]: That's a lot better than I "
+         "[Speaker]: Hand sanitizer, lip balm, a tide chart, toothpicks. It's the car bag. "
+         "[Speaker]: All right, we're here. [Speaker]: The name makes it sound like a bank. "
+         "[Speaker]: This is the waiting room. [Speaker]: That's a lot better than I "
          "imagined. I pictured three chairs."),
         ("0806", 8, 6, "Parking on Selden, the elevator",
-         "[Speaker 1]: You can parallel park right here, perfect. I'll run up for the dog, "
-         "seven minutes. [Speaker 1]: Sorry, the elevator took forever, and then the dog did."),
+         "[Speaker]: You can parallel park right here, perfect. I'll run up for the dog, "
+         "seven minutes. [Speaker]: Sorry, the elevator took forever, and then the dog did."),
         ("1704", 17, 4, "A shop on South First",
-         "[Speaker 1]: Crossing South First in this rain. [Speaker 2]: A really nice "
-         "hairbrush is such a good gift. [Speaker 1]: I like that green. [Speaker 2]: Me too."),
+         "[Speaker]: Crossing South First in this rain. [Speaker]: A really nice "
+         "hairbrush is such a good gift. [Speaker]: I like that green. [Speaker]: Me too."),
         ("1739", 17, 39, "The quiz",
-         "[Speaker 2]: What's the most romantic thing someone could do for you? [Speaker 1]: "
-         "Walk to my door through the rain, no umbrella. [Speaker 2]: How would you style my "
-         "hair? [Speaker 1]: Like Princess Leia. [Speaker 2]: Would you rather live without "
-         "music or movies? [Speaker 1]: Movies. [Speaker 2]: Me too. Most overrated city in "
-         "the world? [Speaker 1]: Paris."),
+         "[Speaker]: What's the most romantic thing someone could do for you? [Speaker]: "
+         "Walk to my door through the rain, no umbrella. [Speaker]: How would you style my "
+         "hair? [Speaker]: Like Princess Leia. [Speaker]: Would you rather live without "
+         "music or movies? [Speaker]: Movies. [Speaker]: Me too. Most overrated city in "
+         "the world? [Speaker]: Paris."),
         ("1804", 18, 4, "Truth or dare",
-         "[Speaker 1]: Freebie truth: the accident I never talk about. [Speaker 2]: I didn't "
-         "know. This is new for me. [Speaker 1]: I'm sorry, I didn't mean to make it awkward. "
-         "[Speaker 2]: I'm not trying to make you feel bad. Can we go back to the list?"),
+         "[Speaker]: Freebie truth: the accident I never talk about. [Speaker]: I didn't "
+         "know. This is new for me. [Speaker]: I'm sorry, I didn't mean to make it awkward. "
+         "[Speaker]: I'm not trying to make you feel bad. Can we go back to the list?"),
         ("1809", 18, 9, "The storm passing",
-         "[Speaker 1]: The storm's passing, just drizzle in twenty minutes. [Speaker 2]: Leave "
-         "at 6:30 then. [Speaker 1]: I'm so tired. [Speaker 2]: Me too."),
+         "[Speaker]: The storm's passing, just drizzle in twenty minutes. [Speaker]: Leave "
+         "at 6:30 then. [Speaker]: I'm so tired. [Speaker]: Me too."),
         ("1834", 18, 34, "The talk cards",
-         "[Speaker 2]: The last few years, and learning to let them go. [Speaker 1]: For me, "
+         "[Speaker]: The last few years, and learning to let them go. [Speaker]: For me, "
          "a climbing trip in the spring. Shoulder permitting."),
         ("1906", 19, 6, "The walk home",
-         "[Speaker 1]: Straight past the library, that's the fastest way. [Speaker 1]: Come "
+         "[Speaker]: Straight past the library, that's the fastest way. [Speaker]: Come "
          "on, bud. Sit. Good."),
     ]
     for hm, hh, mm, title, text in recordings:

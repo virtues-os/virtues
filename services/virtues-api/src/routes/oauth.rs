@@ -448,14 +448,18 @@ fn plaid_link_token_body(cfg: &ProviderCfg, completion_redirect_uri: &str) -> Va
         "client_id": cfg.client_id,
         "secret": cfg.client_secret,
         "client_name": "Virtues",
+        // TODO(2026-09-29): give each box its own `client_user_id`. One
+        // constant for the fleet makes every box one user in Plaid's
+        // dashboard; `/plaid/start` is an unauthenticated browser GET, so this
+        // needs start to carry a bearer identity first.
         "user": { "client_user_id": "virtues-user" },
         "products": ["transactions"],
-        // NOTE: `optional_products: ["investments", "liabilities"]` was removed
-        // because the Plaid account isn't enabled for those products — Plaid
-        // rejects the whole `link/token/create` with INVALID_PRODUCT, breaking
-        // every connect. Re-add once the account is enabled for them (and then
-        // the plaid_investments_sync / plaid_liabilities_sync actions light up;
-        // both no-op cleanly on PRODUCTS_NOT_SUPPORTED until they do).
+        // TODO(2026-09-29): add `optional_products: ["investments",
+        // "liabilities"]` once the Plaid account is enabled for them. Until
+        // then Plaid rejects the whole `link/token/create` with
+        // INVALID_PRODUCT, breaking every connect. The plaid_investments_sync
+        // and plaid_liabilities_sync actions no-op on PRODUCTS_NOT_SUPPORTED
+        // until it is added. See agents/record/plaid.md.
         "country_codes": ["US"],
         "language": "en",
         // No top-level `redirect_uri`: that is the *self-hosted* Link OAuth

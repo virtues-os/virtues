@@ -1,6 +1,6 @@
 # Architecture
 
-This document is the **implementation contract** for Virtues' applet system. It captures *what's true* and *why*. For the practical authoring guide, see [`applets/AUTHORING.md`](../applets/AUTHORING.md).
+This document is the **implementation contract** for Virtues' applet system. It captures *what's true* and *why*. For the practical authoring guide, see [`applets/AUTHORING.md`](../../applets/AUTHORING.md).
 
 ## TL;DR
 
@@ -15,7 +15,7 @@ Same authoring surface. Same dispatch infrastructure. Two contracts.
 > supervisor with a port allocator and a `/service/<id>` reverse proxy — was
 > built and removed. It shipped one applet (a demo), never ran successfully on
 > a box, and the supervised-work design moved to systemd units
-> (`virtues-applet-<id>`); see [`applets-overhaul-plan.md`](./applets-overhaul-plan.md).
+> (`virtues-applet-<id>`); see [`applets.md`](../record/applets.md).
 > The rationale below for *why* long-running work needs a different shape than
 > fork-per-trigger still holds — only the mechanism changed.
 
@@ -74,7 +74,7 @@ Names considered and rejected, in the round that settled it:
 
 **Applet** wins on being unembarrassing in the nav while covering both runtimes. The namespace was checked and accepted as shared (IFTTT Applets, Alexa Skills, Apple Shortcuts, Home Assistant Automations). A persona panel found the deeper reason no name scored well: engineers name the mechanism, contemplatives name the meaning, and laypeople name only the instance — no single word wins all three camps, so the bar is "doesn't embarrass," not "delights."
 
-User-facing UI uses runtime-specific words where they read better ("Functions", "Dashboards"); the parent noun appears in code and admin surfaces. "Vigil" is reserved as UI copy for watcher-shaped applets. Full decision record in [`applets-overhaul-plan.md`](./applets-overhaul-plan.md).
+User-facing UI uses runtime-specific words where they read better ("Functions", "Dashboards"); the parent noun appears in code and admin surfaces. "Vigil" is reserved as UI copy for watcher-shaped applets. Full decision record in [`applets.md`](../record/applets.md).
 
 ---
 
@@ -213,7 +213,7 @@ Vite-glob registry at `apps/web/src/lib/applet-views/index.ts` discovers `applet
   ```
 - **Stderr**: free-form. Captured into `app_applet_runs.error` on non-zero exit.
 - **Exit code**: 0 = success. Non-zero = failure; stderr becomes the error message.
-- **Env**: master key (`VIRTUES_ENCRYPTION_KEY`) + `VIRTUES_DB_URL` typically. See [`crates/virtues-helpers/src/lib.rs`](../crates/virtues-helpers/src/lib.rs) for available helpers.
+- **Env**: master key (`VIRTUES_ENCRYPTION_KEY`) + `VIRTUES_DB_URL` typically. See [`crates/virtues-helpers/src/lib.rs`](../../crates/virtues-helpers/src/lib.rs) for available helpers.
 
 ### `view` contract
 
@@ -234,7 +234,7 @@ Vite-glob registry at `apps/web/src/lib/applet-views/index.ts` discovers `applet
 - On `POST /api/admin/reconcile` (LLM authoring on-ramp)
 - After credential mint/revoke (so per-credential fan-out updates)
 
-Idempotency is required: back-to-back reconciles produce zero diffs. Verified by [`reconcile_is_idempotent`](../virtues-core/src/applet_templates/mod.rs) test.
+Idempotency is required: back-to-back reconciles produce zero diffs. Verified by [`reconcile_is_idempotent`](../../virtues-core/src/applet_templates/mod.rs) test.
 
 The catalog (sources + per-applet manifests) is cached in an `OnceLock<RwLock<ParsedTemplates>>`. `reload_catalog()` re-globs from disk and replaces the inner state, so reconcile-on-demand picks up new manifests without restart.
 
@@ -272,10 +272,10 @@ Applet detail tab shows: header (name, description, status, controls) + body (co
 
 | What | Where |
 |---|---|
-| Manifest schema | [`applets/MANIFEST_SCHEMA.json`](../applets/MANIFEST_SCHEMA.json) |
-| Authoring guide | [`applets/AUTHORING.md`](../applets/AUTHORING.md) |
-| Applet manifest parser + reconcile | [`virtues-core/src/applet_templates/mod.rs`](../virtues-core/src/applet_templates/mod.rs) |
-| Applet runner + dispatch | [`virtues-core/src/applet_runner/mod.rs`](../virtues-core/src/applet_runner/mod.rs) |
-| Frontend view loader | [`apps/web/src/lib/applet-views/index.ts`](../apps/web/src/lib/applet-views/index.ts) |
-| Applets page | [`apps/web/src/lib/components/applets/AppletsPanel.svelte`](../apps/web/src/lib/components/applets/AppletsPanel.svelte) |
+| Manifest schema | [`applets/MANIFEST_SCHEMA.json`](../../applets/MANIFEST_SCHEMA.json) |
+| Authoring guide | [`applets/AUTHORING.md`](../../applets/AUTHORING.md) |
+| Applet manifest parser + reconcile | [`virtues-core/src/applet_templates/mod.rs`](../../virtues-core/src/applet_templates/mod.rs) |
+| Applet runner + dispatch | [`virtues-core/src/applet_runner/mod.rs`](../../virtues-core/src/applet_runner/mod.rs) |
+| Frontend view loader | `apps/web/src/lib/applet-views/index.ts` |
+| Applets page | [`apps/web/src/lib/components/applets/AppletsPanel.svelte`](../../apps/web/src/lib/components/applets/AppletsPanel.svelte) |
 | Admin reconcile endpoint | `POST /api/admin/reconcile` |

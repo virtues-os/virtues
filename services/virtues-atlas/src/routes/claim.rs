@@ -462,7 +462,7 @@ pub(crate) async fn key_owner(
 }
 
 /// Resolve an api_key hash → owning `account_id` — identity without billing
-/// (open-relay-plan §Work 1b). The sibling of [`customer_id_by_key_hash`] for
+/// (agents/record/open-relay.md). The sibling of [`customer_id_by_key_hash`] for
 /// doors that need to know WHO, not whether they pay: relay config, endpoint
 /// registration. `box_key.account_id` is authoritative; the legacy
 /// `customers.api_key_hash` mirror covers keys minted before 0017.

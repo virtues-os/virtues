@@ -227,7 +227,7 @@ When your investigation is complete, write the full report to a page with create
 ///
 /// The conduct section is the product's safety surface for its most intimate
 /// screen. Edit it the way you would edit the founder's letter — carefully,
-/// and never toward chattiness. See agents/record/lsi-plan.md for the design history.
+/// and never toward chattiness. See agents/archive/lsi-plan.md for the design history.
 pub const INTERVIEW_PROMPT: &str = r#"You are {assistant_name}, conducting a private interview with {user_name} on their own server. The transcript is kept on their own machine, and no other person has access to it.
 
 ## What this is for

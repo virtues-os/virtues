@@ -24,6 +24,7 @@ The rule for versions: PROSE DESCRIBES SHAPE, FENCES SHOW EXAMPLES. Write
 `sudo virtues upgrade --version v0.1.4` in a code block, where a reader
 understands they are seeing one example rather than a claim about what is
 current. Fenced blocks are therefore exempt and sentences are not.
+Pages under `whats-new/` are exempt too: each is pinned to its release tag.
 
 Deliberately NOT checked: whether every `virtues …` invocation parses against
 the clap definitions. That is a parser's worth of work for a fraction of the
@@ -73,38 +74,59 @@ def frontmatter(text: str) -> dict[str, str]:
     return fields
 
 
-def check_notes(notes_root: Path) -> None:
-    """Records obey the same law, enforced from their own README.
+AGENT_DIRS = ("build", "plan", "record", "archive")
+ROW_RE = re.compile(r"^\|\s*\[[^\]]+\]\(([^)\s]+?)/?\)", re.M)
+MD_LINK_RE = re.compile(r"\]\((?:<([^>#]+)[^>]*>|([^)#\s]+))")
+INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
 
-    Records no longer publish — the site serves the manual only — but the index
-    rule still holds internally: an unlisted record is one nobody finds.
 
-    `agents/record/README.md` lists every record, and since
-    2026-08-28 that rule has a visible consequence: virtues.com/docs/notes
-    builds its index by parsing that table, so a doc missing from it does not
-    publish at all. The previous cost of forgetting a row was that the doc went
-    unread internally; the cost now is a page nobody outside can reach either.
+def check_agents(agents_root: Path) -> None:
+    """The rules in agents/README.md that a machine can hold.
+
+    1. Every doc in build/, plan/, record/ and archive/ has a row in its
+       directory's README. An unlisted doc is one nobody finds.
+    2. Every relative link in agents/ resolves. Docs move between genres as
+       they ship; a move without a link sweep strands every citation of the
+       doc, and the reader who follows one concludes the doc was deleted.
+    3. Only plan/ carries a Status column. A build doc is maintained or
+       deleted, a record is dated, so "Current" there is a claim nobody
+       re-checks.
+
+    None of this publishes (the site stopped syncing agents/ on 2026-08-28),
+    so these are internal rules, but the repo is public.
     """
-    readme = notes_root / "README.md"
-    if not readme.exists():
+    if not agents_root.exists():
         return
-
-    listed = set(re.findall(r"^\|\s*\[[^\]]+\]\(([a-z0-9-]+)\.md\)", readme.read_text(), re.M))
-
-    for path in sorted(notes_root.glob("*.md")):
-        if path.name == "README.md" or path.stem in listed:
+    for d in AGENT_DIRS:
+        readme = agents_root / d / "README.md"
+        if not readme.exists():
+            error(f"agents/{d}", "has no README.md index")
             continue
-        error(
-            f"agents/record/{path.name}",
-            "not listed in agents/record/README.md — nobody will find it. Add a row.",
-        )
+        text = readme.read_text()
+        listed = {m.split("/")[0] for m in ROW_RE.findall(text)}
+        for path in sorted((agents_root / d).iterdir()):
+            if path.name == "README.md" or path.name.startswith("."):
+                continue
+            if path.name not in listed:
+                error(f"agents/{d}/{path.name}", f"not listed in agents/{d}/README.md — add a row")
+        if d != "plan" and re.search(r"^\|\s*Doc\s*\|\s*Status\s*\|", text, re.M):
+            error(f"agents/{d}/README.md", "has a Status column — status belongs to plan/ only")
+
+    for path in sorted(agents_root.rglob("*.md")):
+        prose = INLINE_CODE_RE.sub("", strip_fences(path.read_text()))
+        for i, line in enumerate(prose.split("\n"), 1):
+            for angled, bare in MD_LINK_RE.findall(line):
+                target = angled or bare
+                if re.match(r"^[a-z]+:", target) or target.startswith("/"):
+                    continue
+                dest = re.sub(r":\d+(-\d+)?$", "", target)
+                if not (path.parent / dest).exists():
+                    error(f"{path.relative_to(agents_root.parent)}:{i}", f"link '{target}' does not resolve")
 
 
 def main() -> int:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else "docs")
-    # The engineering notes that publish are the records — agents/record/ —
-    # which are the site's /docs/notes. build/ and plan/ never publish.
-    notes_root = root.parent / "agents" / "record"
+    agents_root = root.parent / "agents"
     manifest_path = root / "manifest.json"
     if not manifest_path.exists():
         print(f"check-manual: no manifest at {manifest_path}", file=sys.stderr)
@@ -165,7 +187,9 @@ def main() -> int:
             if not meta.get(field):
                 error(where, f"frontmatter is missing '{field}'")
 
-        prose = strip_fences(text)
+        # A release note is pinned to its tag, so its version is a fact about
+        # that release, not a claim about what is current.
+        prose = "" if slug.startswith("whats-new/") else strip_fences(text)
         for i, line in enumerate(prose.split("\n"), 1):
             for match in VERSION_RE.finditer(line):
                 error(
@@ -180,7 +204,7 @@ def main() -> int:
             if dest_slug not in published:
                 error(where, f"link to '{target}' does not resolve to a published page")
 
-    check_notes(notes_root)
+    check_agents(agents_root)
 
     if errors:
         print(f"check-manual: {len(errors)} problem(s)\n", file=sys.stderr)
@@ -190,14 +214,8 @@ def main() -> int:
 
     written = len(published)
     planned = len(listed) - written
-    notes = 0
-    if (notes_root / "README.md").exists():
-        notes = len(
-            re.findall(
-                r"^\|\s*\[[^\]]+\]\(([a-z0-9-]+)\.md\)", (notes_root / "README.md").read_text(), re.M
-            )
-        )
-    print(f"check-manual: ok — {written} published, {planned} planned, {notes} notes")
+    agent_docs = sum(1 for p in agents_root.rglob("*.md") if p.name != "README.md") if agents_root.exists() else 0
+    print(f"check-manual: ok — {written} published, {planned} planned, {agent_docs} agent docs")
     return 0
 
 

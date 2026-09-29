@@ -26,8 +26,8 @@ async function getInvoke() {
 // gate: check it and degrade the feature deliberately, rather than letting an
 // unknown command reject somewhere the user cannot interpret.
 //
-// The Rust side is `COMMAND_SURFACE_VERSION` in src-tauri/src/main.rs; the two
-// must move together. See agents/plan/spa-delivery-plan.md.
+// The Rust side is `COMMAND_SURFACE_VERSION` in src-tauri/src/lib.rs; the two
+// must move together. See agents/record/spa-delivery.md.
 
 /** Surface version of a shell too old to answer the question at all. */
 const SURFACE_UNKNOWN = 0;

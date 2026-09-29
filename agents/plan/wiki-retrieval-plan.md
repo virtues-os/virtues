@@ -1,112 +1,74 @@
-# Wiki retrieval: find the subject, then its records
+# Wiki retrieval
 
-**Status: planned.** Nothing here is built. Delete this file when it is.
+**Status: planned.** Delete when built. **Settled (owner, 2026-09-23): the wiki
+is the index.** Chat retrieves through it.
 
-**Settled (owner, 2026-09-23): the wiki is the index.** Chat retrieves through
-it. This plan is about how, not whether.
+## The problem
 
-## Two axes
+Chat can reach a day by its date, but it can find a person, place or
+organization only by a name it matches exactly. "Dave", a misspelling, or "my
+old landlord" finds nothing. Nobody has measured whether the agent uses the wiki
+at all.
 
-**Time is the deterministic one.** A question with a date in it — "what did I
-do in March", "the week of the move" — should land on day articles and
-`wiki_event` rows by date, not by similarity.
+## Two doors
 
-**Context is everything else, and the subject is where it resolves.** A person,
-a place, an organization: many records, one thing you can point at.
+| The question | The door | Built? |
+|---|---|---|
+| Names a thing: "March 3", "2025", "David" | **Lookup**: `sql_query` on `wiki_day_prose`, subject tables, `wiki_articles` → `app_pages` | Yes. Days work; subjects only by exact name |
+| Describes a thing: "when I felt stuck at work" | **Search**: `semantic_search`, with `entities` and date filters | Yes, but the wiki is 0.8% of the pool and 894 of 914 subjects have no embedding |
 
-## What already exists
+No new lookup tool. It would duplicate `sql_query` for days, and matching names
+as text misses the same cases wherever it runs.
 
-The two-stage path is built. It is agent-mediated rather than automatic:
+## Step 0: measure (gates the rest)
 
-- `semantic_search` accepts `entities` (filters through `wiki_refs`) and
-  `date_after` / `date_before`.
-- The agent can find a subject's id with `sql_query` and pass it in.
+Ten real questions from chat history on the box, chosen by the owner. For each,
+record the tokens, the tool calls, whether a wiki chunk came back, whether the
+agent used `entities`, a date filter, or a wiki table, and whether the answer
+was right. Run them again after each step.
 
-**What is missing is narrower than the path.** `sql_query` finds a subject only
-by a name it can match. Nothing finds one by nickname, alias, handle, a
-misspelling, or "my old landlord". And nobody has measured whether the agent
-uses the filters at all.
+## Step 1: subject stubs
 
-## The corpus, measured on a real box (2026-09-22)
+Three registry `OntologyDescriptor`s (person, place, organization), embedding
+only, with no LLM call. The text: name, nickname, aliases, handles, relationship
+category, and anything the owner has written on the subject. The timestamp is
+when the subject was last seen in `wiki_refs`.
 
-```
-communication_message       176,779
-communication_transcription  29,643
-financial_transaction         9,545
-calendar_event                7,400
-communication_email           4,267
-app_chat                      4,024
-wiki_event                    1,505
-uploaded_document               511
-app_page                        422
-wiki_article                    372
-```
+Leave out co-occurring subjects. Subjects share a record 87 times in 136k refs;
+sharing a day is common but it is noise, and it would make a search for one
+person land on everyone who texted that day.
 
-Chunks, not documents. The wiki (`wiki_article` + `wiki_event`) is about 0.8%
-of the pool. Of 914 resolved subjects, 20 are reachable by meaning, through
-their articles; 894 are reachable only by exact name.
+## Step 2: search the wiki inside every search (option B)
 
-## Step 0 — measure (gates every step that costs anything)
+`semantic_search` runs a second, small pass over articles, day articles, events
+and stubs, reusing the same query embeddings and date filters.
 
-Ten real questions from chat history on the box. For each, record three things:
+- Up to 3 hits, shown first under **From your wiki**, then **From your
+  records**.
+- A subject hit carries its id, so the next call can filter by it with
+  `entities`.
+- An article replaces its subject's stub, and no hit appears twice.
+- Skipped when the agent asks for a specific domain ("search email").
+- One line in the tool description replaces the parked "wiki-first" wording.
 
-1. Did a wiki chunk appear in what `semantic_search` returned?
-2. Did the agent pass `entities` or a date filter?
-3. Was the answer right?
+This keeps the wiki's score apart from everything else's. Adding one weight
+across different score scales is fragile, which is the reranker problem again.
 
-The pattern decides what is wrong. Wiki chunks relevant but ranked out → the
-ranking (step 3). Filters never used → the agent's instructions (step 2). The
-agent could not find the subject → the lookup (step 1).
+## Open
 
-## Step 1 — subject stubs, for fuzzy lookup
-
-Three `OntologyDescriptor`s in the registry — person, place, organization —
-with `embedding: Some(…)`, `extraction: None`, `day_source: None`. The indexer
-is registry-driven and `EmbeddingConfig` is SQL templates, so this is the
-mechanism `wiki_article` already uses. Embedding only, on the box; no LLM call.
-
-`embed_text_sql` carries what a person would reach for: name, nickname,
-aliases, handles, relationship category, and any content the owner authored on
-the subject.
-
-**Not co-occurring subjects.** The first draft of this plan proposed them;
-measured, subjects share a record 82 times person-with-person, 5 times
-place-with-place, and never person-with-place, across 136,219 refs. There is
-nothing to carry. A question like "the woman from the dog park" resolves
-through the day or the record that mentions both, not through a stub.
-
-`timestamp_sql` is the subject's last-seen, from `wiki_refs`. A subject is a
-span rather than a moment, and the time axis belongs to days; last-seen is only
-there so recency ranking has something honest to read.
-
-## Step 2 — the agent's instructions, if step 0 says so
-
-If the agent does not pass `entities` or dates when a question calls for them,
-say so in the tool description: find the subject, then filter by it; a dated
-question takes a date filter. Cheaper than any ranking change.
-
-## Step 3 — weight the wiki, if step 0 says so
-
-`query.rs` already has an additive ≈1σ z-boost for project members. The same
-lever, pointed at `wiki_article`, `wiki_event` and the stubs. Only if relevant
-wiki chunks are measurably losing on rank.
+- **The relevance cutoff.** A small pool always returns its top k, however weak.
+  Set the cutoff from the reranker scores on the step 0 questions.
+- The ten questions.
 
 ## Boundary
 
-Stubs are a read-only lookup. Nothing here writes `wiki_refs` or decides two
-records are the same thing; the graph stays deterministic and owner-authored.
+Read-only. Nothing here writes `wiki_refs` or decides that two records are the
+same thing.
 
-## Found along the way
+## Also found
 
-`entity_article_gen::build_dossier` builds its link allowlist from the same
-same-record join, so it offers the model almost no subjects to link — which is
-why the first articles invented links. The sanitizer now strips those, but the
-allowlist it checks against is nearly empty. The subjects that appear on the
-same DAYS are the join that has rows: 74,470 person-with-person pairs, 3,135
-organization-with-person, 1,603 person-with-place, against 87 pairs total on
-the same record. Too noisy to embed into a stub, which would make every search
-for one person land on everyone who texted that day; right for an allowlist,
-because the model only links what it chose to mention.
-
-The article gains a second job as well: it is read, and it is found. Concrete
-detail — a street, an hour, a phrase — serves both.
+`entity_article_gen::build_dossier` builds its link allowlist from subjects that
+share a record (87 pairs), so the model is offered almost nothing to link.
+Subjects that share a day (about 80k pairs) are the right source for that list:
+too noisy to embed, but fine for an allowlist, because the model only links what
+it chose to mention.
