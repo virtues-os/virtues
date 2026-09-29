@@ -332,16 +332,20 @@ mod tests {
         );
     }
 
-    /// Every model step re-sends chat's tool definitions ahead of the person's
-    /// message. At ~41k characters they were most of the prompt and the model
-    /// visibly deliberated over them, so each group has a ceiling, in
-    /// characters of the JSON exactly as `ChatMode::Chat.tools()` serializes
-    /// it. Long how-to belongs behind a call (`setup_applet {"guide": true}`
-    /// returns applets/AGENTS.md), not in the definition. A new chat tool
-    /// must join a group here — unbudgeted tools fail the test.
+    /// Every model step re-sends the mode's tool definitions ahead of the
+    /// person's message. At ~41k characters chat's were most of the prompt
+    /// and the model visibly deliberated over them, so every tool belongs to
+    /// a group with a ceiling, and every mode has a total, in characters of
+    /// the JSON exactly as `ChatMode::tools()` serializes it. Long how-to
+    /// belongs behind a call (`setup_applet {"guide": true}` returns
+    /// applets/AGENTS.md), not in the definition. A tool in any mode — chat,
+    /// sudo, deep research, interview, getting started, local or a skill —
+    /// must join a group here, and a new mode or skill must join `MODES`:
+    /// unbudgeted tools and modes fail the test.
     #[test]
-    fn chat_tool_definitions_stay_inside_their_budgets() {
-        // (group, tools, ceiling).
+    fn tool_definitions_stay_inside_their_budgets() {
+        // (group, tools, ceiling). A group's size is measured per mode: the
+        // tools of it that mode offers.
         const GROUPS: &[(&str, &[&str], usize)] = &[
             (
                 "applets",
@@ -359,39 +363,72 @@ mod tests {
             // dropped: failures were 6 unknown columns and 5 ambiguous joins
             // in 1,422 calls, so the columns stay and the prose went.
             ("sql_query", &["sql_query"], 6_500),
+            // Mode-only tools, each set just above its 2026-09-29 size.
+            ("shell", &["shell"], 1_500),
+            ("dispatch", &["dispatch_subagents"], 3_300),
+            ("interview", &["write_it_up"], 1_500),
+            ("getting_started", &["skip_step", "record_introductions"], 2_200),
         ];
-        // The sum of the group ceilings.
-        const TOTAL: usize = 18_300;
+        // (mode's wire name, total ceiling). Chat's is the sum of its group
+        // ceilings; the rest sit just above their 2026-09-29 size.
+        const MODES: &[(&str, usize)] = &[
+            ("chat", 18_300),
+            ("sudo", 18_500),
+            ("deep_research", 13_100),
+            ("interview", 1_500),
+            ("getting_started", 2_200),
+            ("local", 0),
+            ("council", 11_000),
+        ];
 
-        let tools = ChatMode::Chat.tools();
         let size = |t: &serde_json::Value| serde_json::to_string(t).unwrap().chars().count();
-        let total: usize = tools.iter().map(size).sum();
-        let unbudgeted: Vec<&str> = tools
-            .iter()
-            .filter_map(|t| t["function"]["name"].as_str())
-            .filter(|name| !GROUPS.iter().any(|(_, names, _)| names.contains(name)))
-            .collect();
+        let name = |t: &serde_json::Value| t["function"]["name"].as_str().unwrap_or("").to_string();
+        let mut modes = vec![
+            ChatMode::Chat,
+            ChatMode::Sudo,
+            ChatMode::DeepResearch,
+            ChatMode::Interview,
+            ChatMode::GettingStarted,
+            ChatMode::Local,
+        ];
+        modes.extend(virtues_registry::skills::default_skills().into_iter().map(ChatMode::Skill));
+
         let mut report = String::new();
-        let mut over = Vec::new();
-        for (group, names, ceiling) in GROUPS {
-            let n: usize = tools
-                .iter()
-                .filter(|t| names.contains(&t["function"]["name"].as_str().unwrap()))
-                .map(size)
-                .sum();
-            report.push_str(&format!("{group}: {n}\n"));
-            for t in tools.iter().filter(|t| names.contains(&t["function"]["name"].as_str().unwrap())) {
-                report.push_str(&format!("  {}: {}\n", t["function"]["name"].as_str().unwrap(), size(t)));
+        let mut failures = Vec::new();
+        for mode in &modes {
+            let mode_name = mode.wire_name();
+            let tools = mode.tools();
+            let total: usize = tools.iter().map(size).sum();
+            report.push_str(&format!("{mode_name}: {total}\n"));
+            for t in &tools {
+                if !GROUPS.iter().any(|(_, names, _)| names.contains(&name(t).as_str())) {
+                    failures.push(format!("{mode_name}: tool {} ({} chars) has no budget group", name(t), size(t)));
+                }
             }
-            if n > *ceiling {
-                over.push(format!("{group} is {n} chars, budget {ceiling}"));
+            for (group, names, ceiling) in GROUPS {
+                let members: Vec<_> = tools.iter().filter(|t| names.contains(&name(t).as_str())).collect();
+                if members.is_empty() {
+                    continue;
+                }
+                let n: usize = members.iter().map(|t| size(t)).sum();
+                report.push_str(&format!("  {group}: {n}\n"));
+                for t in &members {
+                    report.push_str(&format!("    {}: {}\n", name(t), size(t)));
+                }
+                if n > *ceiling {
+                    failures.push(format!("{mode_name}: group {group} is {n} chars, budget {ceiling}"));
+                }
+            }
+            match MODES.iter().find(|(m, _)| *m == mode_name) {
+                None => failures.push(format!("{mode_name}: no total budget in MODES ({total} chars today)")),
+                Some((_, ceiling)) if total > *ceiling => {
+                    failures.push(format!("{mode_name}: tools are {total} chars, budget {ceiling}"))
+                }
+                Some(_) => {}
             }
         }
-        report.push_str(&format!("total: {total}\n"));
         eprintln!("{report}");
-        assert!(unbudgeted.is_empty(), "chat tools with no budget group: {unbudgeted:?}");
-        assert!(over.is_empty(), "{over:?}\n{report}");
-        assert!(total <= TOTAL, "chat tools are {total} chars, budget {TOTAL}\n{report}");
+        assert!(failures.is_empty(), "{}\n{report}", failures.join("\n"));
     }
 
     #[test]
