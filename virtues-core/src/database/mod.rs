@@ -213,18 +213,6 @@ impl Database {
                 "ALTER TABLE search_topic_cache ALTER COLUMN embedding \
                  TYPE halfvec({target}) USING embedding::halfvec({target})"
             ),
-            // The project magnet's centroid rides the same geometry as
-            // `search_vectors` — a width mismatch fails every centroid write and
-            // read (migration 0060 pins a default width, but the live dimension
-            // is set here). Migrations run before this, so the column exists.
-            // Unlike the derived vectors above it is NOT wiped by reindex, so NULL
-            // it first: the centroid is re-derivable (the mean of a project's
-            // members) and the next magnet run rebuilds it.
-            "UPDATE app_projects SET centroid = NULL WHERE centroid IS NOT NULL".to_string(),
-            format!(
-                "ALTER TABLE app_projects ALTER COLUMN centroid \
-                 TYPE halfvec({target}) USING centroid::halfvec({target})"
-            ),
             // Build parameters stated, not inherited. Omitting `WITH` gets
             // pgvector's defaults (m=16, ef_construction=64) by accident rather
             // than by decision. ef_construction=128 roughly doubles build time

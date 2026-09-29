@@ -521,11 +521,6 @@ pub enum Commands {
     /// same `inference_report::resolution_report`).
     Doctor,
 
-    /// Run the magnet: recompute centroids and attach matching material to
-    /// every project and story with `auto_add_materials` switched on.
-    #[command(hide = true)]
-    Magnet,
-
     /// Compute novelty scores for all days with events
     #[command(hide = true)]
     ComputeNovelty,
