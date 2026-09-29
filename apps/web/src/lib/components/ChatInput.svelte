@@ -463,7 +463,7 @@
 		border-radius: 1.75rem;
 		/* design-ok: the composer floats over the page (§6 elevation), so it
 		   takes the faintest lift — a whisper, not a card shadow. */
-		box-shadow: 0 2px 5px color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		box-shadow: 0 2px 4px color-mix(in srgb, var(--color-foreground) 5%, transparent);
 		transition:
 			border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
 			box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
