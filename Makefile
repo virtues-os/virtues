@@ -2,7 +2,7 @@
 #
 # Mac dev uses native brew Postgres (no Docker daemon).
 # Linux home box is installed natively via tools/bootstrap.sh (no Docker).
-# Cloud services (virtues-atlas / virtues-api) deploy as Docker images to ECR.
+# Cloud services (virtues-atlas / virtues-api) are built and deployed on the cloud server (make deploy-*).
 
 .DEFAULT_GOAL := help
 .PHONY: help init hooks commit migration dev seed dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
