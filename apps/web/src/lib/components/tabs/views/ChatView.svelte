@@ -939,6 +939,9 @@
 	// Local input state
 	let input = $state("");
 	let inputFocused = $state(false);
+	// The hidden figure: "∴" or "therefore" sent into an empty chat opens the
+	// three-body orbit instead of sending. Loaded only when asked for.
+	let threeBodyOpen = $state(false);
 
 	// Draft persistence — see state/drafts for why an unsent chat shares one key.
 	const draftId = $derived(extractConversationId(tab.route) ?? NEW_CHAT_DRAFT_ID);
@@ -1352,6 +1355,12 @@
 		if (messageToSend === SKIP_COMMAND) {
 			input = "";
 			void goto("/home");
+			return;
+		}
+
+		if (isEmpty && /^(∴|therefore)$/i.test(messageToSend)) {
+			input = "";
+			threeBodyOpen = true;
 			return;
 		}
 
@@ -2094,7 +2103,11 @@
 						<ConversationRail turns={railTurnList} {scrollContainer} />
 					{/if}
 
-					{#if isEmpty && !isGhost && attachments.count === 0}
+					{#if isEmpty && threeBodyOpen}
+						{#await import("$lib/components/chat/ThreeBody.svelte") then { default: ThreeBody }}
+							<ThreeBody onClose={() => (threeBodyOpen = false)} />
+						{/await}
+					{:else if isEmpty && !isGhost && attachments.count === 0}
 						<!-- The opening image: the mark assembling itself in the space
 						     a conversation will fill. Both layouts left this expanse
 						     blank — the phone docks the composer to the bottom, the
