@@ -20,6 +20,10 @@ Virtues. Pages here are written for the people *running* it.
   as `<slug>.md` for agents and curl).
 - **Slugs are paths.** `operate/upgrading.md` publishes at
   `/docs/operate/upgrading`. `index.md` is the `/docs` landing page.
+- **Release notes live in `whats-new/`**, one page per stable tag, listed
+  newest first in the manifest. virtues.com/changelog redirects to the first
+  one, so a new note goes at the top of its section. Write each from the
+  commits between tags, and leave out fixes to bugs no stable release had.
 - **Write in the practical register** (the claim rules and the copy register in
   `../agents/build/voice.md`, and the website's `DESIGN.md`): tight, specific,
   technical. The manual has no voice of its own to perform; it has claims to
