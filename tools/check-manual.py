@@ -24,6 +24,7 @@ The rule for versions: PROSE DESCRIBES SHAPE, FENCES SHOW EXAMPLES. Write
 `sudo virtues upgrade --version v0.1.4` in a code block, where a reader
 understands they are seeing one example rather than a claim about what is
 current. Fenced blocks are therefore exempt and sentences are not.
+Pages under `whats-new/` are exempt too: each is pinned to its release tag.
 
 Deliberately NOT checked: whether every `virtues …` invocation parses against
 the clap definitions. That is a parser's worth of work for a fraction of the
@@ -186,7 +187,9 @@ def main() -> int:
             if not meta.get(field):
                 error(where, f"frontmatter is missing '{field}'")
 
-        prose = strip_fences(text)
+        # A release note is pinned to its tag, so its version is a fact about
+        # that release, not a claim about what is current.
+        prose = "" if slug.startswith("whats-new/") else strip_fences(text)
         for i, line in enumerate(prose.split("\n"), 1):
             for match in VERSION_RE.finditer(line):
                 error(
