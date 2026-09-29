@@ -16,9 +16,15 @@
 
 	let { parts }: Props = $props();
 
+	// A streamed part is typed `tool-code_interpreter`; a stored one, as a
+	// reload reads it back, is `tool-invocation` with the name in toolName.
+	const isCodeRun = (p: any) =>
+		p.type === "tool-code_interpreter" ||
+		(p.type === "tool-invocation" && p.toolName === "code_interpreter");
+
 	const figures = $derived(
 		parts
-			.filter((p) => p.type === "tool-code_interpreter" && p.state === "output-available")
+			.filter((p) => isCodeRun(p) && p.state === "output-available")
 			.flatMap((p) => (p.output?.images ?? []) as { path: string; url?: string }[])
 			.filter((i) => i.url),
 	);
