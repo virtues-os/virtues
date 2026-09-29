@@ -42,7 +42,12 @@ export interface ReachPort {
 	online(): boolean;
 }
 
-type Shell = { __VIRTUES_MOBILE__?: boolean; __VIRTUES_BOX_URL__?: string; __TAURI_INTERNALS__?: unknown };
+type Shell = {
+	__VIRTUES_MOBILE__?: boolean;
+	__VIRTUES_BOX_URL__?: string;
+	__VIRTUES_BACKEND_ORIGIN__?: string;
+	__TAURI_INTERNALS__?: unknown;
+};
 
 export function shell(): Shell {
 	return (typeof window === 'undefined' ? {} : window) as Shell;

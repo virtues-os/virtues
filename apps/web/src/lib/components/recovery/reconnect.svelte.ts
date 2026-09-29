@@ -209,20 +209,19 @@ export class Reconnect {
 		if (p.kind === 'wifi') await p.link.close().catch(() => {});
 	}
 
-	/** Into the app: the phone's own copy at `/`, or the Mac's server copy on its loopback. */
+	/** Into the app, which is this same copy at `/` on the phone and the Mac. */
 	openApp(): void {
 		this.gen++;
-		const s = shell();
-		if (!s.__VIRTUES_MOBILE__ && s.__VIRTUES_BOX_URL__) {
-			window.location.href = s.__VIRTUES_BOX_URL__;
-		} else {
-			window.location.replace('/');
-		}
+		window.location.replace('/');
 	}
 
-	/** Can the app open without its server? The phone's copy can; the Mac's server copy can't. */
+	/**
+	 * Can the app open without its server? Its own copy can (the phone, and the
+	 * Mac since 2026-09-29): it shows the "Can't reach your server" banner.
+	 */
 	get canOpenAnyway(): boolean {
-		return !!shell().__VIRTUES_MOBILE__;
+		const s = shell();
+		return !!(s.__VIRTUES_BACKEND_ORIGIN__ || s.__VIRTUES_MOBILE__);
 	}
 
 	/**
