@@ -761,10 +761,13 @@ pub async fn complete_run(
     .execute(db)
     .await?;
 
-    // Onboarding: a device's first successful run that brought records
-    // completes its init backfill (an empty flush proves nothing arrived).
-    // Same anchor and same logging as `create_run` above.
-    if status == "success" && records_processed > 0 {
+    // Onboarding: a device's first successful run completes its init
+    // backfill. A device's applet runs only when the device pushes, so a
+    // successful run is data arriving; `records_processed` can't be the test,
+    // because the ingest path completes with 0 even when it wrote rows (it
+    // says so in the summary instead). Same anchor and logging as
+    // `create_run` above.
+    if status == "success" {
         if let Err(e) = sqlx::query(
             "UPDATE app_device SET init_sync_completed_at = now() \
              WHERE id = (SELECT a.device_id FROM app_applet_runs r \
@@ -1281,7 +1284,7 @@ mod tests {
     }
 
     /// A device's first sync is stamped on the device its applet collects
-    /// for, and only once a run brings records. It read the device through
+    /// for, once a run succeeds. It read the device through
     /// `credentials.device_id`, which never existed, so nothing was stamped.
     #[sqlx::test]
     async fn a_devices_first_sync_is_stamped_when_records_arrive(pool: PgPool) {
@@ -1309,13 +1312,15 @@ mod tests {
             .unwrap()
         };
 
-        let empty = create_run(&pool, Some("applet_mac"), "webhook").await.unwrap();
+        let failed = create_run(&pool, Some("applet_mac"), "webhook").await.unwrap();
         assert!(stamps().await.0.is_some(), "the start is stamped on the device");
-        complete_run(&pool, &empty.id, "success", 0, None, None).await.unwrap();
-        assert!(stamps().await.1.is_none(), "an empty flush proves nothing arrived");
+        complete_run(&pool, &failed.id, "error", 0, Some("x"), None).await.unwrap();
+        assert!(stamps().await.1.is_none(), "a failed run proves nothing arrived");
 
-        let full = create_run(&pool, Some("applet_mac"), "webhook").await.unwrap();
-        complete_run(&pool, &full.id, "success", 40, None, None).await.unwrap();
+        // As the ingest path completes: success, with 0 in records_processed
+        // and the count only in the summary.
+        let ok = create_run(&pool, Some("applet_mac"), "webhook").await.unwrap();
+        complete_run(&pool, &ok.id, "success", 0, None, Some("messages: 12 written")).await.unwrap();
         assert!(stamps().await.1.is_some());
     }
 }
