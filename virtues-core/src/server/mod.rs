@@ -66,36 +66,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // + authentication), and the box's own browser hits localhost (Secure
     // Context per W3C, no cert required). See [[localhost-daemon-trust]] in
     // MEMORY.md for the architectural commitment.
-    //
-    // A graceful shutdown waits for every connection to close, and some
-    // never do: the box's own screen holds a stream open for as long as it is
-    // on. Waiting on it made every restart — so every self-update — sit out
-    // systemd's 90s stop timeout and end in SIGKILL, skipping the flush below.
-    // So open connections get SHUTDOWN_DRAIN after the signal, then are cut.
-    let (draining_tx, draining_rx) = tokio::sync::oneshot::channel::<()>();
-    let serve = axum::serve(
+    axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(async move {
-        shutdown_signal().await;
-        let _ = draining_tx.send(());
-    });
-    tokio::select! {
-        result = std::future::IntoFuture::into_future(serve) => result?,
-        _ = async {
-            match draining_rx.await {
-                Ok(()) => tokio::time::sleep(SHUTDOWN_DRAIN).await,
-                // The server ended without a signal; let its own result win.
-                Err(_) => std::future::pending::<()>().await,
-            }
-        } => {
-            tracing::info!(
-                "connections still open {}s after shutdown began; closing them",
-                SHUTDOWN_DRAIN.as_secs()
-            );
-        }
-    }
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     // The Yjs save queue holds the owner's most recent typing for up to
     // ~2.5s; flush it so a restart or self-update doesn't drop it.
@@ -508,10 +484,6 @@ fn cors_layer() -> tower_http::cors::CorsLayer {
             "x-virtues-box-build",
         )])
 }
-
-/// How long open connections get to finish after a shutdown signal. Well
-/// inside systemd's 90s stop timeout, long enough for a request in flight.
-const SHUTDOWN_DRAIN: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Ctrl+C / SIGTERM. SIGTERM is the one that matters: systemd sends it on
 /// every `systemctl restart virtues` (so every self-update), and its default
