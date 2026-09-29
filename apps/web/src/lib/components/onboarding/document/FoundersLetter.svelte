@@ -196,9 +196,9 @@
 		     practical one, "What am I still paying for that I never use?",
 		     was cut for length 2026-09-28.)
 
-		     Set as a block rather than bullets — these are things you would say
-		     out loud, and a bulleted list turns speech into a feature grid. Full
-		     ink, because they are the payoff of the page rather than an aside. -->
+		     Set as a plain bulleted list, the way a `-` list reads anywhere in
+		     the app. Full ink, because they are the payoff of the page rather
+		     than an aside. -->
 		<ul class="asks">
 			<li>Why do I have a migraine today?</li>
 			<li>What was the name of the woman I met at the dog park yesterday?</li>
@@ -207,8 +207,10 @@
 
 		<div class="body">
 			<!-- THE FOUNDER'S LAST LINE. After the asks the letter has finished
-			     arguing; what is left is why the person who wrote it started, in
-			     one sentence that glosses its own hard word. It used to open the
+			     arguing; what is left is why the person who wrote it started: the
+			     hard word, what it means, then what follows from it, as two
+			     sentences. As one ("subsidiarity: nothing is more local than your
+			     own life") the colon promised a definition and gave a conclusion. It used to open the
 			     letter ("I'm Adam Jace, and I started Virtues because I believe in
 			     digital subsidiarity") with the definition in the margin; the
 			     letter now opens on its premise and the name is on the signature
@@ -219,8 +221,9 @@
 			     agents/build/voice.md on 2026-09-08; Herbert carries the grievance
 			     now, below. -->
 			<p class="close">
-				I started Virtues because I believe in digital subsidiarity: nothing is more
-				local than your own life.
+				I started Virtues because I believe in digital subsidiarity: what's yours
+				belongs at the most local level that can hold it. Nothing is more local than
+				your own life.
 			</p>
 		</div>
 
