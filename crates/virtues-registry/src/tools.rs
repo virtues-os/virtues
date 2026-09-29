@@ -1163,63 +1163,29 @@ fn setup_applet_tool() -> ToolConfig {
         id: "setup_applet".to_string(),
         name: "Setup Applet".to_string(),
         description: "Create or update an applet".to_string(),
-        llm_description: r#"Turn the user's intent into an applet — a small thing that runs for them: a scheduled task, a one-off reminder, a self-ending monitor, a tracker with its own tables, or a dashboard face.
-
-Use when the user asks for anything recurring, deferred, monitored, tracked, or dashboarded. Re-calling with the same name UPDATES that applet (this is also how you edit one). Before writing SQL, check the real schema first with sql_query over information_schema (tables data_* / wiki_*) — never reference tables you haven't confirmed exist.
-
-An applet needs EITHER an `agent` prompt OR a `face_html` (or both). Pick by what the user wants:
-- A DASHBOARD / chart / "explorer" that just shows data = `face_html` ONLY. The face reads data itself with virtues.query — do NOT add an agent; it has no server-side run and needs no prompt.
-- A REMINDER / digest / examen / monitor that DOES something each run (writes a page, posts a message, computes) = `agent` (+ schedule/condition). No face unless they also want a view.
-- A TRACKER the user feeds = `schema_sql` + `face_html`; add an `agent` only if it should also summarize on a schedule.
-
-WHAT THE APPLET CAN DO AT RUNTIME (its prompt may only rely on these):
-- read data: sql_query (read-only) · semantic_search · web_search (queries only — it CANNOT fetch URLs/feeds)
-- deliver to the user: its run result posts back into this chat
-- keep notes: update_applet_memory · write pages: create_page / edit_page
-- own tables: anything you create via schema_sql (schema applet_<slug>), written at runtime with sql_write
-- its face reads data via virtues.query(sql) (read-only)
-If the ask needs a verb not listed (send email, fetch a URL, react to incoming messages): decompose it, or decline honestly and offer the nearest real alternative. Never write a prompt that pretends a tool exists.
-
-GATE: applets with a schedule/api/webhook trigger are created DISABLED — tell the user to review and enable on the applet page. You cannot enable them.
-
-Parameters:
-- name (required): short name. slug = lowercased name with _ (e.g. "Calorie Tracker" -> calorie_tracker); its tables live in schema applet_<slug>.
-- description (required): ONE sentence of the user's intent — shown as the applet's headline.
-- agent (required): the runtime prompt. It runs with a kickoff message "Run your action instruction now." and NO chat history — write it self-contained.
-- schedule: 6-field cron (sec min hour day month dow), box-LOCAL timezone. "0 0 9 25 7 *" = July 25, 9am. Date-anchored one-offs: nearest future occurrence + until="once".
-- triggers: subset of cron/manual/tool/api/webhook/message. Defaults: with schedule ["cron","manual","tool"], else ["manual","tool"]. Add "message" when the user should be able to TALK to the applet — their text becomes the run's opening turn and the reply is the run result. This is the front door for trackers ("I had eggs" → sql_write a row) and anything the user feeds rather than schedules; check it before declining an ask for lack of input.
-- condition: SQL boolean gating each run (skipped when false). Local data only.
-- until: omit = forever · "once" = archive after first success · SQL boolean = archive when true after a success.
-- schema_sql: ONE MIGRATION, not the whole schema. MUST target only schema applet_<slug>. First call: CREATE SCHEMA IF NOT EXISTS applet_<slug>; then your CREATE TABLEs. Later calls: submit ONLY what changed (ALTER TABLE applet_<slug>.t ADD COLUMN ...) — re-sending a CREATE TABLE IF NOT EXISTS with an extra column silently adds nothing, and the check will refuse it with the ALTER to write. Resubmitting identical DDL is recognized as already applied.
-- face_html: a complete index.html for the applet's face (sandboxed iframe; include <link rel="stylesheet" href="virtues.css"> and <script src="virtues.js"></script>; read data with await virtues.query(sql); max 48KB).
-- limits: protective ceilings, user-editable. Only these keys are enforced; any other key is a check failure, because a stored-but-ignored limit reads as protection and is not:
-    max_llm_cost         — DOLLARS, ceiling on model spend within one run (0.25 = 25 cents). The run stops mid-loop and records `budget_exceeded`.
-    max_llm_cost_per_day — DOLLARS, ceiling across a rolling 24h; checked before the run starts.
-    max_runs_per_day     — whole runs in a rolling 24h (`max_runs` means this). Manual "Run now" is exempt.
-    max_runs_per_hour    — whole runs in a rolling hour. Manual "Run now" is exempt.
-    timeout_s            — SECONDS of wall clock for the subprocess phase.
-  Set a spend ceiling on anything scheduled that calls a model: it is the difference between a cap and a hope.
-
-If the result status is "check_failed", fix the findings and call again — nothing was created."#.to_string(),
+        // The authoring contract is applets/AGENTS.md, returned by
+        // `{"guide": true}`. It is one source for the in-box assistant and
+        // for agents working in the repo, and it stays out of the definition
+        // every chat step re-sends.
+        llm_description: r#"Create or update an applet: a scheduled task, reminder, monitor, tracker or dashboard. First call with {"guide": true} and follow the guide it returns. The same name updates that applet. name and description are required except for the guide. On check_failed, fix the findings and retry; nothing was created."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
-            "required": ["name", "description"],
             "properties": {
+                "guide": { "type": "boolean" },
                 "name": { "type": "string" },
-                "description": { "type": "string", "description": "One-sentence intent — the applet's headline" },
-                "agent": { "type": "string", "description": "OPTIONAL. Self-contained runtime prompt — only for applets that DO something each run. Omit for pure dashboards/views (face-only)." },
-                "schedule": { "type": "string", "description": "6-field cron, box-local tz" },
+                "description": { "type": "string" },
+                "agent": { "type": "string", "description": "Run prompt; omit for a face-only dashboard" },
+                "schedule": { "type": "string" },
                 "triggers": {
                     "type": "array",
                     "items": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook", "message"] }
                 },
-                "condition": { "type": "string", "description": "SQL boolean run gate" },
-                "until": { "type": "string", "description": "forever (omit) | 'once' | SQL boolean" },
-                "schema_sql": { "type": "string", "description": "ONE migration in schema applet_<slug> only. First call CREATEs; later calls submit only the change (ALTER TABLE ...)." },
-                "face_html": { "type": "string", "description": "Complete face index.html (48KB max)" },
+                "condition": { "type": "string" },
+                "until": { "type": "string" },
+                "schema_sql": { "type": "string" },
+                "face_html": { "type": "string" },
                 "limits": {
                     "type": "object",
-                    "description": "Enforced ceilings only. max_llm_cost / max_llm_cost_per_day in DOLLARS; max_runs_per_day (alias max_runs) / max_runs_per_hour as whole runs; timeout_s in seconds. Unknown keys fail the check.",
                     "properties": {
                         "max_llm_cost":         { "type": "number"  },
                         "max_llm_cost_per_day": { "type": "number"  },
@@ -1244,25 +1210,14 @@ fn list_applets_tool() -> ToolConfig {
         id: "list_applets".to_string(),
         name: "List Applets".to_string(),
         description: "List applets".to_string(),
-        llm_description: r#"List the user's applets (both system and user-owned). Returns id, name, owner, enabled, schedule, triggers, and last_run for each.
-
-Use this when:
-- User asks "what automations do I have?"
-- You need to find an applet by name before editing/running it
-- Before suggesting a new applet, to check whether something similar already exists
-
-Optional filters:
-- owner: "system" or "user" (system = built-in, user = user-created)
-- enabled: true/false
-- trigger: "cron" | "manual" | "tool" | "api" | "webhook" | "message"
-"#.to_string(),
+        llm_description: "List applets: id, name, owner, enabled, schedule, triggers, last run.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
-                "owner": { "type": "string", "enum": ["system", "user", "ai"], "description": "`ai` is anything created from a chat, including by this assistant" },
+                "owner": { "type": "string", "enum": ["system", "user", "ai"], "description": "ai = made in a chat" },
                 "enabled": { "type": "boolean" },
                 "trigger": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook", "message"] },
-                "include_archived": { "type": "boolean", "description": "Include applets that have been archived" }
+                "include_archived": { "type": "boolean" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -1279,18 +1234,12 @@ fn get_applet_tool() -> ToolConfig {
         id: "get_applet".to_string(),
         name: "Get Applet".to_string(),
         description: "Fetch a single applet".to_string(),
-        llm_description: r#"Fetch a single applet by id, including its full configuration (agent, schedule, triggers, condition, memory, config) and its last 10 runs with status + summary.
-
-Use this when:
-- User asks "what does this action do?"
-- You need to read the current agent prompt before suggesting an edit
-- You're debugging why an action is failing and need recent run errors
-"#.to_string(),
+        llm_description: "An applet's full config and last 10 runs. Read it before editing or debugging one.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["id"],
             "properties": {
-                "id": { "type": "string", "description": "The action id (e.g. 'applet_user__weekly_planner')" }
+                "id": { "type": "string" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -1307,25 +1256,7 @@ fn edit_applet_tool() -> ToolConfig {
         id: "edit_applet".to_string(),
         name: "Edit Applet".to_string(),
         description: "Update an action's configuration".to_string(),
-        llm_description: r#"Update one or more fields on an existing action. Send only the fields you want to change as a `patch` object.
-
-Editable fields:
-- name (user rows only)
-- agent (user rows only; the LLM prompt)
-- schedule (nullable — set to null to remove)
-- enabled (bool)
-- config (object — full replace)
-- condition (nullable SQL expression; user rows only)
-- triggers (array of cron|manual|tool|api|webhook|message; user rows only)
-- memory (nullable markdown scratchpad)
-
-System-owned rows (built-in pipelines like day_summary_eod) only accept: enabled, schedule, config, memory. Attempting to edit other fields on a system row will error with a clear message.
-
-Use this when the user asks to:
-- Change an applet's prompt
-- Reschedule it
-- Disable/enable it
-- Update its memory"#.to_string(),
+        llm_description: "Change an applet: only the fields to change go in `patch`; null clears. System applets take only enabled, schedule, config, memory.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["id", "patch"],
@@ -1333,7 +1264,6 @@ Use this when the user asks to:
                 "id": { "type": "string" },
                 "patch": {
                     "type": "object",
-                    "description": "Fields to update. Unknown fields are rejected.",
                     "properties": {
                         "name": { "type": "string" },
                         "agent": { "type": ["string", "null"] },
@@ -1361,9 +1291,7 @@ fn delete_applet_tool() -> ToolConfig {
         id: "delete_applet".to_string(),
         name: "Delete Applet".to_string(),
         description: "Delete a user-owned action".to_string(),
-        llm_description: r#"Delete an applet by id. Only user-owned applets can be deleted — system rows (built-in pipelines like day_summary_eod, embedding_index, trash_purge) are protected and will return an error. Tell the user to disable them instead.
-
-This is destructive. Confirm with the user before calling unless the request is explicit ("delete the weekly planner action")."#.to_string(),
+        llm_description: "Delete a user-owned applet; system ones refuse, so offer to disable. Confirm unless the ask was explicit.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["id"],
@@ -1385,22 +1313,14 @@ fn run_applet_tool() -> ToolConfig {
         id: "run_applet".to_string(),
         name: "Run Applet".to_string(),
         description: "Trigger an action to run now".to_string(),
-        llm_description: r#"Manually dispatch an applet to run immediately. The applet must have `tool` in its triggers list.
-
-Returns a run_id and final status (success / skipped / error / forbidden / not_found). For agent applets, `summary` contains the LLM's final message; for subprocess applets, it's the binary's result string.
-
-Optional parameters:
-- payload: arbitrary JSON forwarded to the action as context
-- date: YYYY-MM-DD override for date-scoped applets (e.g. day_summary_eod). Merged into the applet's config.date.
-
-Use when the user asks to "run it now" or "re-run yesterday's summary"."#.to_string(),
+        llm_description: "Run an applet now; it needs the `tool` trigger. Returns its status and summary.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["id"],
             "properties": {
                 "id": { "type": "string" },
-                "payload": { "description": "Arbitrary JSON forwarded to the action as context" },
-                "date": { "type": "string", "description": "YYYY-MM-DD override for date-scoped applets" }
+                "payload": { "description": "Context for the run" },
+                "date": { "type": "string", "description": "YYYY-MM-DD for date-scoped applets" }
             }
         }),
         tool_type: ToolType::Builtin,

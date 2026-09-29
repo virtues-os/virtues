@@ -285,6 +285,11 @@ impl ToolExecutor {
         if !Self::PERMISSION_REQUIRED.contains(&tool_name) {
             return Ok(None);
         }
+        // Reading the authoring guide writes nothing; asking "I allow" for it
+        // would put a prompt in front of the step the definition requires.
+        if tool_name == "setup_applet" && super::applet_setup::wants_guide(arguments) {
+            return Ok(None);
+        }
         // Sudo mode is the owner saying "don't ask" for this chat.
         if context.sudo && context.applet_id.is_none() {
             return Ok(None);
