@@ -159,96 +159,9 @@ transactions is merchant-token matching at best — noise that dilutes the index
 
 ## 3. Ideas, ranked by leverage
 
-Each has a one-line what/why and a spike to prove it.
-
-### ① Calibrate reranker scores centrally (dissolves §2.1)
-
-Give the reranker client a per-backend calibration so every consumer sees one
-comparable scale regardless of ColBERT-vs-cross-encoder. **Correction on
-method:** the anchor-baseline trick used in the magnet fix (inject known-irrelevant
-"anchor" docs, admit only candidates beating their score by `DELTA`) is a
-**pragmatic hack, not best practice** — it was a fast way to prove the gate in the
-spike. Prefer, in order:
-
-1. **Cross-encoder for the admit decision** (logit → sigmoid → probability) — the
-   textbook way to get an absolute threshold.
-2. **Length-normalize ColBERT** — MaxSim ≈ (query token count × avg max-sim), so
-   the ~28.6 baseline is mostly a token-count offset; divide it out.
-3. **Pool-tail baseline** — use the bottom of the *actual* candidate pool as the
-   negatives instead of injected anchors. Same idea, no fake docs.
-4. Score-distribution modeling (Manmatha) — most rigorous, heaviest.
-
-*Spike:* implement (2) or (3) in `LocalReranker`; re-run the magnet gate + the
-search rerank-gap on Dragon **and** a sidecar box; confirm one threshold works on
-both. (Harness from the magnet spike is reusable.)
-
-> **Status 2026-08-01:** ② and ③ are LANDED — `recall_and_fuse` /
-> `rerank_and_finalize` exist with three callers (magnet, ⌘K `search_local`,
-> multi-query RRF), and the magnet keeps no private ANN. Also landed since this
-> doc was written: the conditional-rerank gap is now a *relative* margin
-> (`(s1−s2)/(s1−s_last)`, default 0.4 via `VIRTUES_RERANK_GAP` — fraction, not
-> z-units; the old absolute 1.5 was unreachable in RRF-weight space, so every
-> multi-phrasing search reranked unconditionally), and §2.1's "sigmoid in
-> query.rs" never existed — scores are used as order only, then min-max
-> normalized, which is why the ColBERT/cross-encoder scale schism is benign.
-
-### ② Split `search()` into vector-capable stages (the keystone refactor)
-
-Factor `search()` into `recall_and_fuse(query_vec, terms, filters)` (recall +
-z-fusion, no rerank) and `rerank_and_finalize(query, pool, limit)`. Because Stage A
-takes a **vector**, a centroid or an event embedding is a first-class query. This
-one refactor unlocks ③, ④, and ⑦ as thin callers, deletes the magnet's bespoke
-ANN, and fixes the 20-row starvation.
-
-*Spike:* extract the two stages; make current `search()` a wrapper; verify
-identical single-query results.
-
-### ③ Collapse the magnet onto `search()`
-
-Once ② lands, the magnet = `recall_and_fuse(centroid) ∪ recall_and_fuse(seed_text)`
-→ RRF → `rerank_and_finalize`. Removes the duplicate pgvector path and the
-starvation bug; not primarily LOC — correctness + one shared vector primitive.
-
-*Spike:* port the magnet to Stage A; diff gathered members vs today.
-
-### ④ "Days/events like this one" — the day↔semantic bridge (the creative one)
-
-Events are already embedded. Add one ANN (`recall_and_fuse(event_vec)`) to surface
-resonant past events for a given day. Near-zero new infra; it's the cut discovery
-machinery pointed at the **time** axis, and it's where "the box understands my
-life" would actually show up. Closes §2.3 deterministically.
-
-*Spike:* ANN over `wiki_event` embeddings for a day; render "resonant" past events
-in the day view.
-
-### ⑤ Drop transactions from the semantic index (cheap cleanup)
-
-Set `financial_transaction` to `embedding: None`; reindex; measure message-recall
-cleanliness + index-size/compute drop. Transactions stay fully answerable via
-`sql_query` (the day layer proves this pattern). (If category enrichment ever
-lands from Plaid, revisit as a *synthesized sentence*, not a bare token.)
-
-*Spike:* flip the flag, reindex, A/B a few real queries for pool cleanliness.
-
-### ⑥ Calibrate the magic constants (turn guesses into measurements)
-
-The 0.4 lexical cap likely under-serves proper-noun-heavy personal search; the
-1.5 rerank-gap is an admitted placeholder. Build a small labeled query set over
-the real box, sweep both, pick corpus-fitted values.
-
-*Spike:* extend the reranker harness into a labeled query set; sweep `alpha`-cap
-and `VIRTUES_RERANK_GAP`.
-
-### ⑦ Multi-query fan-out (detailed in §4)
-
-Have the agent emit 2–4 query facets in one tool call; run recall in parallel;
-RRF-fuse; rerank once. Cheap on-box; real recall win on vague/arc questions.
-
-### ⑧ State the two-engine doctrine (the cheapest fix)
-
-Write down: *prose/aboutness → `search()`; structured/time → SQL; no third path.*
-The magnet's bespoke ANN is the one violation; ② + ③ retire it. This is the
-antidote to "our methods get complex" — it's two shared engines plus thin recipes.
+Moved to [`../plan/retrieval-plan.md`](../plan/retrieval-plan.md) on
+2026-09-29, less what had shipped (the `search()` split, the magnet collapse,
+multi-query fan-out).
 
 ---
 
@@ -347,31 +260,6 @@ accepting a bare `query` string, mapped to `queries:[query]`, for back-compat.
 
 ---
 
-## 5. Build order
+## 5. Build order, and open calibration questions
 
-The refactor is the spine; most features hang off it:
-
-```
-② split search() into recall_and_fuse (vector-capable) + rerank_and_finalize
-   ├─ ③ collapse magnet onto Stage A (delete bespoke ANN, fix starvation)
-   ├─ ④ "days like this" = recall_and_fuse(event_vec)
-   └─ ⑦ multi-query = batch-embed → parallel Stage A → RRF → one Stage B
-① calibrate reranker scores (lives in Stage B — every path inherits it)
-⑤ drop transaction embeddings   (independent, cheap)
-⑥ calibrate alpha-cap + rerank-gap  (independent, needs a labeled set)
-⑧ write the two-engine doctrine  (free; ②+③ enforce it)
-```
-
-None of this rebuilds stories or notebooks — it improves the retrieval substrate
-under *both*, which is the honest place to invest.
-
----
-
-## Appendix: open calibration questions
-
-1. Does personal (proper-noun-heavy) search want `alpha` above 0.4? (⑥)
-2. What rerank-gap actually fits the corpus, in normalized units after ①? (⑥)
-3. Best ColBERT calibration: length-normalization vs pool-tail baseline? (①)
-4. Multi-query: does RRF over 2–3 variants beat single-query recall enough to
-   justify it, measured on real questions? (⑦)
-5. Does "days like this" surface resonance users find meaningful, or noise? (④)
+Moved to [`../plan/retrieval-plan.md`](../plan/retrieval-plan.md).

@@ -97,6 +97,13 @@ are deliberately not in this repo.** They live in the private ops note alongside
 the App Review submission record. This file describes the *shape* of the box, not
 its coordinates.
 
+These are **AWS** facts. The demo box is still its own EC2 instance: the
+cloud consolidation of 2026-09-28 moved atlas and virtues-api to the
+dedicated server, and moving the demo there is listed as not yet done in
+[cloud-consolidation-plan.md](../plan/cloud-consolidation-plan.md). When it
+moves, this table, Provisioning steps 1–4 and the stop/EIP advice under
+[Between review rounds](#between-review-rounds) change with it.
+
 | | |
 |---|---|
 | Instance | t4g.medium (4 GB, arm64), 30 GB gp3 |
@@ -193,7 +200,7 @@ row must produce a 429.
    unreachable from a phone, so the app is simply dead at that point.
 
    `ensure_bearer` checks `VIRTUES_API_KEY` from the environment before it
-   reads the credential vault, so the whole claim/link flow can be skipped:
+   reads the credential vault, so the whole link flow can be skipped:
    generate a 64-hex-char key, insert `(sha256(key), <account_id>, box_id)`
    into **virtues-api**'s `device_keys` — that is the table `bearer_auth`
    actually resolves against; atlas's `box_key` is a mirror and plays no part —
@@ -202,15 +209,10 @@ row must produce a 429.
    on that account. Revoking is a `DELETE` of that one row, and the prepaid
    balance is the damage ceiling.
 
-   ~~The old step:~~ atlas used to issue a `relay_url` only to a subscribed
-   account, so without it the reviewer paired and then lost the server the
-   moment they left the network they paired from. The open-relay work deleted that coupling on both sides:
-   `relay::DEFAULT_RELAY_URL` is compiled into the box ("so a box that never
-   signs in is still reachable from its first boot", gated only on the
-   box-install marker), and `services/virtues-atlas/src/routes/relay.rs`
-   resolves the config "with no subscription requirement — reachability is part
-   of ownership, not the subscription". A review box needs no atlas account, no
-   claim, and no card.
+   Reachability needs no subscription: `relay::DEFAULT_RELAY_URL` is compiled
+   into the box, and atlas's relay config (`routes/relay.rs`) carries no
+   subscription requirement. A review box needs no atlas account, no link, and no
+   card.
 9. Confirm `REVIEW PAIR CODE ACTIVE` in the boot log — that is the proof the
    row installed. A missing env var fails silently and looks like success.
 10. Test-pair a real phone **over cellular**, not Wi-Fi. Wi-Fi would pass via
@@ -219,57 +221,16 @@ row must produce a 429.
 Models: chat routes to `virtues-api`, so no local LLM is needed. Embeddings and
 the reranker do run locally, CPU-only, and slowness is acceptable.
 
-## What the first real run found (2026-09-03)
+## Before every submission
 
-The box described above was launched 2026-07-21 and **never actually brought
-up** — Caddy and the binary were installed, then it was stopped the same day.
-`/etc/virtues/` was empty, there was no systemd unit, and the `virtues`
-database had no tables at all, not even `_sqlx_migrations`. So no review round
-has ever exercised this path, and every iOS submission since July went out with
-review notes pointing at a box that was switched off. Assume nothing here has
-been tested until you have tested it.
-
-Four things broke on the way to a working box, all of them fixed in the same
-change as this note. The first is the one that mattered:
-
-- **The pair-code rate limit was not running.** The doc above justified a
-  6-digit code on a public origin with "10 attempts per IP per 30 minutes", and
-  behind Caddy that limiter never executed — every request looked like loopback,
-  and loopback is exempt. Twelve bad codes, twelve 401s. Fixed by
-  `VIRTUES_TRUSTED_PROXY=1` (now step 6a) plus a boot-time error when a review
-  code is active without it. **This is the failure class to watch for here: a
-  security control that is real in the code, correct on a stock box, and inert
-  on the one deployment shape this document prescribes.**
-
-- **`virtues seed` was dead.** `demo_narrative.sql` still inserted
-  `wiki_days.morning_baseline`, a column migration 0011 dropped. `raw_sql` runs
-  a file as one unit, so the whole 12-week narrative and the bookmarks silently
-  failed and only `demo_day.sql` landed. Every developer who seeded since that
-  migration got a third of the data.
-- **The bundled inference sidecars could not start.** `llama-server` links
-  `libgomp`, which a minimal Ubuntu does not carry; the installer never
-  installed it, and the install still reported success.
-- **The seed was frozen in February** — see `seeds/demo_reanchor.sql`, which now
-  moves the instrumented day onto today at seed time.
-
-None of these are visible from a green CI run, and three of them present as
-success. Budget for a full bring-up, not a checklist tick — and check the
-claims in this file against the running server rather than reading them.
-
-**And the one that no amount of server-side care would have caught: the app and
-the server can be too far apart to talk.** `POST /api/chat` required `model`
-through v0.1.5 and validated it against the allowed list; the change that made
-it optional (the server resolves the turn's model from its slot) shipped in
-v0.1.6. An app built after that omits the field, so it fails to deserialize on
-EVERY message against any older server — including the demo server, which was
-on v0.1.5 at the time. Verified by sending the app's exact wire shape: 422
-before, a real answer after upgrading.
-
-The demo server must therefore run a release at least as new as the app being
-submitted. More generally: servers upgrade only when someone runs
-`sudo virtues upgrade`, while phones update themselves, so the app is
-structurally the side that runs ahead. Check this pairing explicitly before
-every submission — it is invisible until a reviewer types the first message.
+- **The demo server must run a release at least as new as the app being
+  submitted.** Phones update themselves and servers only upgrade when someone
+  runs `sudo virtues upgrade`, so the app is the side that runs ahead, and a
+  request field it stopped sending can fail every message against an older
+  server. Send the app's exact wire shape to the demo box before submitting.
+- **Check the claims in this file against the running server.** The first
+  bring-up found four of them false, three of which presented as success:
+  [review-access-first-run.md](../record/review-access-first-run.md).
 
 ## Between review rounds
 

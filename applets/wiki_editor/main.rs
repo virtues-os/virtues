@@ -8,8 +8,7 @@
 //! AGENT phase, which holds the live document layer and does the writing. The
 //! split is not stylistic: an applet subprocess has a bare pool and no
 //! `YjsState`, so an article edit made here would be silently discarded by the
-//! next CRDT save. That is why `refresh_due_entity_articles` could never be
-//! implemented where it lived, and it is the reason this binary stops short.
+//! next CRDT save. That is the reason this binary stops short.
 //!
 //! The gate it owns is DRIFT. `due_articles` answers "has this rested long
 //! enough", which is cheap; whether the article's inputs actually moved needs

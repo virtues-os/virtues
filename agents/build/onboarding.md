@@ -1,16 +1,5 @@
 # Onboarding & Setup
 
-> **Status: Current.** Rewritten 2026-08-28 against the code; onboarding
-> half updated 2026-09-03 (the four-screen /onboarding flow was demolished
-> 2026-08-31 — onboarding is the founder's letter plus Home's getting-started
-> page, and the abridged narrative-identity capsule was deleted 2026-09-01). The previous
-> version had three generations of doctrine stacked in it plus a preamble
-> listing what the body got wrong — a structure that only works if every reader
-> reads the correction first, and they did not. The corrections have been folded
-> in; what the superseded generations *taught* is kept in
-> [What this used to say](#what-this-used-to-say), which asserts nothing about
-> the present.
->
 > **Order of authority:**
 >
 > 1. [onboarding-paradigm.md](onboarding-paradigm.md) — the settled model
@@ -18,10 +7,11 @@
 >    tiers of device trust, recovery as an ordinary join). That is the *intent*.
 > 2. The code: `crates/virtues-improv/src/protocol.rs`,
 >    `maintenance/ble_provision.rs`, `api/setup_phrase.rs`, `api/pair.rs`,
->    `api/box_status.rs`, `apps/web/src-tauri/ui/connect.html`,
->    `apps/web/src/routes/(public)/display`,
->    `apps/web/src/routes/(onboarding)/founders-letter/`,
->    `apps/web/src/lib/components/chat/getting-started/`.
+>    `api/box_status.rs`, `api/getting_started.rs`, `api/identity.rs`,
+>    `apps/web/src/routes/(onboarding)/setup/`,
+>    `apps/web/src/lib/components/setup/`,
+>    `apps/web/src-tauri/ui/connect.html`,
+>    `apps/web/src/routes/(public)/display`.
 > 3. This file — what is *built*.
 
 Imaging and manufacturing live in [appliance-image.md](appliance-image.md),
@@ -31,7 +21,7 @@ written against the boot chain as measured on hardware.
 
 ## Doctrine
 
-Four rules everything else follows from. These survived every generation below.
+Four rules everything else follows from.
 
 1. **The channel picks the path — no one is ever asked.**
    Flashed Virtues hardware ⇒ kiosk enabled in the image. `curl
@@ -68,8 +58,7 @@ Four rules everything else follows from. These survived every generation below.
 
 Everything the setup device says to an unclaimed box rides **one Bluetooth
 conversation** (Improv, extended). This is the single most important thing to
-get right, and the previous version of this doc had it wrong in both places it
-appeared.
+get right.
 
 `crates/virtues-improv/src/protocol.rs` holds the wire format once; the box
 re-exports it and a round-trip test builds every command as a client and parses
@@ -90,21 +79,14 @@ State bytes: `0x01` AuthorizationRequired · `0x02` Authorized · `0x03`
 Provisioning · `0x04` Provisioned. Errors: `0x01` InvalidPacket · `0x02`
 UnknownCommand · `0x03` UnableToConnect · `0x04` NotAuthorized.
 
-> **`0x84` (LinkCode) and `0x85` (PairCode) were deleted 2026-08-24**
-> (one-wire-plan Phase 3), and the opcodes are deliberately not reused — a
-> stale client sending one gets `UnknownCommand`, which is the honest answer,
-> and a test asserts it.
->
-> `0x84` handed the app the box's account-link user_code so the app could carry
-> it to atlas; the grant (`0x82`) inverts that whole round-trip, so **nothing
-> reads a code off the box any more**. `0x85` handed the app the standing pair
-> code just so the app could hand it straight back in `0x83`; the codeless
-> `0x83` does that hand-off box-internally.
->
-> The old `0x83` carried a 6-digit code as its first field. It existed to prove
-> the person can read the box's screen — but on this wire that proof has already
-> been made, because `0x83` sits behind `needs_session` and a session is only
-> opened by the phrase printed on that same screen.
+> **`0x84` and `0x85` are retired and never reused** — a stale client sending
+> one gets `UnknownCommand`, which is the honest answer, and a test asserts it.
+> Both read a code *off* the box for the app to carry back: the grant (`0x82`)
+> inverts the account-link round-trip, and the codeless `0x83` does the pair
+> hand-off box-internally, so **nothing reads a code off the box**. `0x83`
+> needs no code field either: it sits behind `needs_session`, and a session is
+> only opened by the phrase printed on the box's own screen — the proof of
+> line of sight is already made.
 
 `0x83` exists at all because pairing's LAN leg dies on hostile networks: client
 isolation at an office blocked `POST /api/pair/consume` between phone and box on
@@ -119,18 +101,21 @@ the same wifi (live, 2026-08-11) while BLE sat there working.
 ```
 power on
   → boot ~10s (no desktop session, no wait-online)
-  → display: box codename · "Get Virtues for your computer" · the FOUR-WORD PHRASE
+  → display: the box's number ("Virtues 4812") · "Get Virtues for your
+    computer" · the FOUR-WORD PHRASE
     (rotates 15 min + 5 min grace while unclaimed; freezes forever at first claim)
-  → owner opens the app → "Set up a new box" → box appears over BLE
-  → types the phrase (0x86 — the session gate; line of sight = authority)
-  → SAVE CEREMONY: copy/print the phrase — the only way back in if every
-    paired device is lost
-  → app shows the BOX's own wifi scan (0x04, 802.1X via 0x81); owner picks and
-    types the password; the join is WATCHED over BLE (0x01)
-  → account link: the app carries a grant to the box (0x82); the box polls
-    atlas. Skippable.
+  → owner opens the app → Setup: Welcome · Letter · Account (sign in first —
+    the grant must cross BLE before pairing)
+  → Server: nearby boxes listed by that number; types the phrase (0x86 — the
+    session gate; line of sight = authority)
+  → KEEP: the phrase is shown back and must be copied or written down — the
+    only way back in if every paired device is lost
+  → Wi-Fi: the BOX's own scan (0x04, 802.1X via 0x81); owner picks and types
+    the password; the join is WATCHED over BLE (0x01)
+  → account grant (0x82); the box polls atlas. A failed grant does not block:
+    the Subscription step links through the box afterwards.
   → pair: codeless 0x83. Nothing is typed and nothing is read off the glass.
-  → display flips to the ambient screen
+  → display flips to the ambient screen; Setup continues in the app
 ```
 
 Ethernet removes the wifi step — the box is online from boot; phrase, account
@@ -142,8 +127,8 @@ work through the cover glass, so nothing is ever typed on it.
 **Breakglass, unadvertised:** a box whose Bluetooth is dead in the field can
 revive the setup AP by touching `/var/lib/virtues/enable-setup-ap`
 (`maintenance::setup_ap::AP_BREAKGLASS`). Its client is `/api/provision/*` plus
-the airlock's LAN path — **not** a browser page. `/portal`, `/provision`, and
-the connectivity-probe interceptor were deleted 2026-08-17.
+the airlock's LAN path — **not** a browser page (see
+[Paths ruled out](#paths-ruled-out)).
 
 ### DIY / headless (`curl virtues.com/sh | sudo sh`)
 
@@ -161,14 +146,12 @@ installer: deps → db → user → env → binary → systemd → health check
   → user enters the code in the desktop or mobile app
 ```
 
-**The handoff does not print a pairing URL, and that is the correction.** It
-used to print `http://…/pair#t=<token>` under "No app yet? Open in a browser on
-your network:". A browser cannot pair — an allowlisted iroh key is the
-credential and a tab holds none, so `/api/pair/consume` rejects `kind:
-"browser"` and the `/pair` page exists only to say so. The one line offered to
-someone who does *not* have the app sent them to a dead end, and it was the last
-thing the installer printed. A test (`handoff_block_offers_no_browser_pair_link`)
-now holds that shut.
+**The handoff never prints a pairing URL.** A browser cannot pair — an
+allowlisted iroh key is the credential and a tab holds none, so
+`/api/pair/consume` rejects `kind: "browser"` and the `/pair` page exists only
+to say so. A pairing link would send the one reader without the app to a dead
+end, as the last thing the installer prints. A test
+(`handoff_block_offers_no_browser_pair_link`) holds that shut.
 
 What the addresses are *for* is the app's "enter its address" field, when mDNS
 does not carry.
@@ -252,6 +235,11 @@ by router placement, because it carries the live phrase. Proximity is the
 authority: a stranger on the wifi who cannot see the screen must not be able to
 claim the box.
 
+The top line is the box's name from `api/identity.rs::face_label`: "Virtues
+4812" (a number from its machine-id, `codename::box_number`) until it has an
+owner, then the person and the assistant side by side, "Nick · Ari". The radio
+name stays machine-shaped (`Virtues-4812`).
+
 **Never trust this panel's EDID.** It claims 53 × 30 cm (~24"), so WebKit
 computes ~92 DPI against a real 315 and renders the UI 3.28× too small — body
 text at 1.4 mm. The kiosk therefore sets **zoom = `mode_width / 585`, derived
@@ -285,43 +273,43 @@ interface until `systemctl restart virtues-display`.
 
 ## The airlock
 
-**One file: `apps/web/src-tauri/ui/connect.html`**, serving both platforms. The
-only branch is what "open the app" means at the end (`finishPairing`). There
-were once three connect screens (`pair.html`, `mobile-pair.html`, and a copy
-inside the SPA); they drifted, every fix landed twice, and a phone that slipped
-past the airlock on a dead session landed on the SPA's copy — which is what a
-user saw and reasonably called "the old path".
+**`apps/web/src-tauri/ui/connect.html`**, compiled into the app binary. It is
+the first-device path only where the app does not bake the SPA — Windows,
+Linux, Android — and the recovery page everywhere it is still linked
+(`connect.html#reset`, `#unreachable`). An unpaired **iPhone** opens `/setup`
+from its own baked copy (`src-tauri/src/lib.rs`), and an unpaired **Mac** does
+the same (`main.rs`, `tauri.macos.conf.json`), handing over to the server's
+copy at the same step after pairing; a paired Mac that cannot reach its server
+opens `/reconnect` from its baked copy.
 
 **It is served from the BINARY**, before the OTA overlay and before the baked
-assets. `tauri.ios.conf.json` sets `frontendDist` to `../build` and only
-refreshed the shell in `beforeBuildCommand`, which `tauri ios dev` never runs —
-so for one full day every dev build on the phone served a four-day-old connect
-screen. An airlock must not depend on packaging, and must not be *overridable*
-by it either.
+assets. An airlock must not depend on packaging, and must not be *overridable*
+by it either: `tauri ios dev` never runs `beforeBuildCommand`, so a
+packaging-served connect screen went stale on every dev build.
 
-**Desktop and Windows are first-class FIRST devices.** A Mac does the Bluetooth
-wifi step itself, which is the right default anyway: 802.1X credentials and a
-checkout page both want a keyboard. `tauri.windows.conf.json` overlays the
-macOS-shaped base config (RFC 7396 — arrays replace) with `nsis` targets, an
-`.ico`, no collector sidecar, and `createUpdaterArtifacts: false`. Windows has
-no collector and no tray — it is a viewer that can also be the setup instrument.
+**Desktop and Windows are first-class FIRST devices.** A computer does the
+Bluetooth wifi step itself, which is the right default anyway: 802.1X
+credentials and a checkout page both want a keyboard. `tauri.windows.conf.json`
+overlays the macOS-shaped base config (RFC 7396 — arrays replace) with `nsis`
+targets, an `.ico`, no collector sidecar, and `createUpdaterArtifacts: false`.
+Windows has no collector and no tray — it is a viewer that can also be the
+setup instrument.
 
 **macOS will not do Bluetooth from `tauri dev`.** TCC attributes permission to
 an app *bundle*, so a bare dev binary aborts with SIGABRT, no dialog, nothing on
 stdout. Embedding an `Info.plist` in the executable does not satisfy it (tried).
 BLE work needs `pnpm tauri build --debug` then `open` on the bundle — launching
 the inner binary directly fails the same way, because LaunchServices is what
-confers bundle identity.
+confers bundle identity. In a browser, `/setup?radio=fake` walks the first half
+against a scripted server (`setup/prepair.svelte.ts`).
 
-**The Pemberley register (2026-08-24).** Light, serif, ink — transcribed by hand
-from `themes.css` `:root`, because the SPA's theme system does not exist when
-this page draws. `∴ Virtues` top-left on every screen; `Server ID · <codename>`
-top-right once a specific machine is in play (`setServer`), matching the panel
-exactly for the two-servers-in-one-house case. **"Server", not "box"**, in every
-user-facing string; code identifiers and comments still say box. With a BLE
-session in hand there is no decision on the pairing screen, so `goToPairing`
-goes straight to `renderCodeEntry`, which runs the automatic pair and falls back
-to the code form only when Bluetooth fails.
+**Register.** Light, serif, ink — transcribed by hand from `themes.css`
+`:root`, because the SPA's theme system does not exist when this page draws.
+`∴ Virtues` top-left; `Server ID · <label>` top-right once a specific machine is
+in play (`setServer`), where the label is what the box advertises ("Virtues
+4812"), matching the panel for the two-servers-in-one-house case. **"Server",
+not "box"**, in every user-facing string; code identifiers and comments still
+say box.
 
 `offerUpgrade` runs at the end: a box is flashed at manufacture and then sits in
 a warehouse, so an owner's first minute is often spent on code older than
@@ -329,16 +317,47 @@ everything they just read about.
 
 ---
 
-## Setup vs onboarding (they are different things)
+## Setup
 
-- **Setup = the box coming up. It ends early.** Three steps: **claimed** (a
-  device paired) → **account** → **on your network**. There is no naming step:
-  reach is by EndpointId, so the box keeps its `.local` name.
-- **Onboarding = the founder's letter, then Home.** One screen
-  (`/founders-letter`), then the app opens on Home's getting-started page — a
-  numbered list the person returns to, because the payoff of connecting a
-  life is asynchronous. The old four-screen `/onboarding` flow is demolished
-  (2026-08-31).
+**Setup is one linear flow**, at `/setup/[[step]]`, from the box on the desk to
+the app. The order is `ORDER` in `apps/web/src/lib/components/setup/setup.svelte.ts`:
+
+```
+Welcome → Letter → Account → Server → Wi-Fi → Names → Subscription → Connections → Timeline → Interview → ∴ → app
+```
+
+- **Everything through Subscription is required**; Connections, Timeline and
+  Interview each carry *Skip* (next step) and *Finish later* (open the app now).
+  Subscription has no skip — a subscription, an existing account, or the
+  person's own AI each settle it.
+- **The first half** (Account, Server, Wi-Fi, pairing) runs only on a device
+  that has no server yet and carries the SPA itself: the iPhone and the Mac
+  (`setup/prepair.svelte.ts`). Anywhere else — a browser, a paired device —
+  those steps are done by construction.
+- **Resume is derived, never stored.** Each in-app step reads its status from
+  `GET /api/getting-started`, whose steps are `STEP_IDS` in
+  `virtues-core/src/api/getting_started.rs`: `connect_ai` (Subscription),
+  `introductions` (Names), `connect_world` (Connections), `timeline`,
+  `interview`. `/setup` alone lands on the first step still to do.
+- **After the app opens**, any step not done keeps a **Setup** tile on the rail
+  whose panel lists the same steps; it is the same process continued.
+- **Names** names the assistant; after an owner exists the box goes by that
+  household's names (`identity::box_label` in lists — "Nick's server";
+  `face_label` on the glass). There is no codename step and no box-naming step.
+- **Interview** is one question per screen over the same interviewer chat and
+  close (`write_it_up`, which writes the "In your own words" article); drawn
+  chapters from Timeline are sent as the first answer.
+
+The app gate (`routes/(app)/+layout.ts`) redirects to `/setup` on
+`onboarding_status` only — `onboarding`, or not `active` with
+`onboarding_complete` false — never on `setup_complete`, which on an appliance
+also requires the account and would loop an account-less box. Setup's close
+sets `active`.
+
+`/onboarding/[[view]]` is a **308 redirect to `/setup`**, kept rather than
+deleted: old step URLs are in browser histories, and SPA delivery is OTA — a
+bundle baked before the rename can meet a box after it. `/founders-letter`
+stays as a read-only re-read of the letter.
 
 ### `/api/setup/state` (`api/box_status.rs::compute_setup_state`, public)
 
@@ -349,8 +368,8 @@ setup_complete:  appliance → claimed + account
 onboarding: device_named · device_collecting · first_source · living_source ·
             first_device · first_phone · chat_imported · remote_access ·
             first_sync · narrative_identity_ready
-onboarding_complete: first_source ALONE
-onboarding_status:   new | onboarding | active
+onboarding_complete: first_source OR device_collecting
+onboarding_status:   new | onboarding | active   (app_user_profile)
 ```
 
 `setup_complete` uses a positive **allow-list**, so a newly-added step is
@@ -369,11 +388,9 @@ unrevoked device rows · account = API key in the box vault · network = a prima
 IP · first_source = an active non-device credential · remote_access = **iroh
 relay registered** · first_sync = a successful applet run ·
 narrative_identity_ready = the narrative-identity ARTICLE exists
-(`wiki_articles`, subject_type `narrative_identity`) — the abridged
-`wiki_narrative_identity` capsule this used to check had its COLUMN dropped
-2026-09-01 (0006 — the table is still there, orphaned);
-the document is the one artifact. Derivation
-means the state survives re-installs, restores, and out-of-band changes.
+(`wiki_articles`, subject_type `narrative_identity`) — the document is the one
+artifact. Derivation means the state survives re-installs, restores, and
+out-of-band changes.
 
 Note the deliberate split on `claimed`: `compute_setup_state` **counts** the
 `local-console` device row, while `pair::paired_device_count` **excludes** it.
@@ -385,31 +402,31 @@ onboarding path.
 `make dev` sets `VIRTUES_DEV_SKIP_SETUP=1` to pre-satisfy the wizard. Never set
 in prod.
 
-### The walk (letter, then Home)
+**Entitlement is one step with three exits** (`StepSubscription.svelte`):
+subscribe, sign in to an account that already pays, or bring your own AI. The
+first BYO key saved during setup from the pairing device needs no command-line
+approval (`settings_byo.rs`, `first_key_during_setup`) — an appliance owner has
+no command line.
 
-| Where | What |
-|---|---|
-| `/founders-letter` | the one onboarding screen — the letter, then "Enter Virtues" |
-| The getting-started room | one seeded chat, four steps numbered on the reading axis: Connect AI · Introductions · Integrations · Your story (the interview). Steps are DERIVED from the record, never stored, so a step already satisfied arrives settled. It stopped being a page on Home on 2026-09-13; `STEP_IDS` in `virtues-core/src/api/getting_started.rs` is the list. |
+### The four laws
 
-The shell redirects to the letter only on `onboarding_status` — never on
-`setup_complete`, which on an appliance also requires the account and once
-looped an account-less box at the letter forever (fixed 2026-09-03; the
-account is Home's business, via AccountGate on the sign-in step).
+Written after a page-by-page review against Arc's and Dia's onboarding: each
+page was well made alone, and together they read as four web pages with a
+progress bar over them. A new step obeys them before it ships.
 
-**There is no interview step in any flow** (2026-08-27). The narrative
-interview is the product's first *conversation* — one chat in the real app
-(`chat_narrative_interview`) — and the getting-started row that points at it
-says "underway" between a first answer and the close ("write it up", the
-interview's one tool, after which the composer retires). Three form factors
-died teaching us this; see [lsi-plan.md](../archive/lsi-plan.md).
-
-`/setup` is a **308 redirect** to `/onboarding`, kept rather than deleted
-because the box's own copy points there and SPA delivery is OTA — a bundle baked
-before the rename can meet a box after it.
-
-**Entitlement is a pluggable step.** Today it is Stripe/$20-mo. The $0/BYO-key
-DIY branch is one new variant of that step — designed-for now, built later.
+1. **One stage.** Paper and grain are painted once by the route
+   (`.setup-stage`, `lib/components/setup/setup.css`); steps crossfade on it
+   and never fade through a blank page.
+2. **One mark.** The ∴ is the progress (`SetupMark`): three dots for the three
+   thirds of Setup, filling as each third is done, the current one breathing.
+   Welcome's big ∴ flies up to become it; the close brings it down whole and
+   the app opens beneath it. No dots row, no "next" label.
+3. **One motion.** Three durations, one ease, one spring for presses, one text
+   entrance, one exit (`setup.css` tokens, `motion.ts` for Svelte). Every
+   button gives under the finger.
+4. **One voice and one alignment.** Titles, sentences and the way forward on
+   the center line (`StepFrame` centers by default); copy through
+   [voice.md](voice.md).
 
 ---
 
@@ -421,7 +438,7 @@ DIY branch is one new variant of that step — designed-for now, built later.
 | **Wifi-only first boot** (appliance, no ethernet) | Shipped, over Bluetooth: the app reads the box's own scan (`0x04`), sends credentials (`0x01`), and watches the join. No AP, no join-QR, no captive page. |
 | **Bluetooth dead in the field** | Breakglass only: touch `/var/lib/virtues/enable-setup-ap` to revive the setup AP. Client is `/api/provision/*` + the airlock's LAN path. Unadvertised by design. |
 | **Onboarding venue ≠ deployment venue** | Fine by design: reachability is re-assessed wherever the box is plugged in. Setup never depends on inbound reachability. |
-| **Two boxes on one LAN** | mDNS auto-suffixes; panel and CLI print the box's *actual* name, never hardcoded copy. The airlock's `Server ID · <codename>` chrome must match the glass exactly. |
+| **Two boxes on one LAN** | mDNS auto-suffixes; panel and CLI print the box's *actual* name, never hardcoded copy. Before an owner, each box shows its own number ("Virtues 4812") on its glass, in its radio name, and in the app's list, so matching four digits tells them apart. |
 | **mDNS-hostile clients** | Every printed handoff includes the raw-IP fallback line. |
 
 ---
@@ -451,51 +468,35 @@ hour-long restore. Permanent Postgres auth errors fail fast with the
 
 ---
 
-## What this used to say
+## Paths ruled out
 
-Kept because the *failures* are the valuable part; none of it describes the
-present.
+Each of these was built, failed on hardware or with people, and is gone. Do not
+rebuild one without answering the failure.
 
-**The captive portal (deleted 2026-08-17).** `api/portal.rs`, `api/captive.rs`,
-the SPA `/provision` route, the `/portal*` routes, the probe-interception
-middleware, and the installer's wildcard-DNS drop-in and `:80` redirect unit are
-all gone. The browser flow they served could provision wifi and then strand the
-owner one step from the end, because pairing needs a held iroh key that a
-browser tab does not have — **it served a user who cannot exist.** The captive
-sheet was suppressed rather than exploited, and even that was for a condition
-that only arises on the setup AP's own subnet: iOS rendered our SPA as a blank
-sheet, force-reopened it, refused to let the owner leave, and cached a stale
-portal page per-SSID across a box upgrade. Every failure was on an OS surface we
-cannot patch.
-
-**The setup AP as the main path.** The box hosted `Virtues-XXXX` and the phone
-carried the credentials over. AP+STA concurrency does **not** work on the Q6A
-despite what `iw list` advertises, so the switchover was sequential — and the
-rule "AP up until a device pairs" could not work on that radio. Pairing happens
-*after* provisioning, so the moment after a successful join the box is online
-and unclaimed; the reconciler saw "unclaimed, no AP" and raised one onto the
-single radio holding the association it had just formed, dropping the box off
-the owner's wifi ~20s after joining it. The AP now rises only while unclaimed
-**and** offline, which is breakglass-only in practice.
-
-**The app joining the setup AP itself.** The `NEHotspotConfiguration` screens
-were unreachable for days before being removed.
-
-**Both QRs on the panel.** The wifi join-QR's camera-banner presentation failed
-twice on hardware. The app QR pointed a phone at the download page, which is the
-wrong device for a desktop-driven setup.
-
-**Two secrets in one slot.** The setup screens were one screen carrying the pair
-code and the wifi password at once, and the first person shown it read the pair
-code and typed it as the wifi password. Labelling helped and did not fix it: the
-fault was presenting a *sequence* as a *set*. Splitting them helped; deleting
-them helped more. A six-digit-code state was then re-added to the panel and
-removed the same day (2026-08-13) — the app asked for four words while the glass
-showed six digits, which stopped a live run dead.
-
-**A link that could not be followed.** The panel offered `virtues.com/downloads`
-to a phone it had just told to join a network with no uplink — the one moment
-that link cannot be followed.
+- **A captive portal / browser setup flow.** It could provision wifi and then
+  strand the owner one step from the end, because pairing needs a held iroh key
+  that a browser tab does not have — it served a user who cannot exist. Its
+  failures (iOS rendering the SPA as a blank captive sheet, force-reopening it,
+  caching a stale portal page per-SSID across upgrades) were all on OS surfaces
+  we cannot patch.
+- **The setup AP as the main path.** AP+STA concurrency does **not** work on
+  the Q6A despite what `iw list` advertises, so the switchover is sequential;
+  an AP raised while "unclaimed" lands on the one radio holding the owner's
+  wifi and drops the box off it. The AP rises only while unclaimed **and**
+  offline, which is breakglass-only in practice.
+- **The app joining the setup AP itself** (`NEHotspotConfiguration`). The
+  screens were unreachable in practice.
+- **QRs on the panel.** A wifi join-QR's camera-banner presentation failed on
+  hardware; an app QR hands the download page to a phone when setup is a
+  desktop-or-app job. A QR never carries a secret.
+- **Two secrets on screen at once.** The first person shown the pair code and
+  the wifi password together typed the code as the password — a *sequence*
+  presented as a *set*. The panel shows the phrase and never the pair code.
+- **A download link on a box with no uplink.** Never offer a link at the one
+  moment the device reading it cannot follow it.
+- **A codename for the box.** A two-word name ("Quaint Tern") read as a mystery
+  to testers; nobody knew it was the server. Before an owner the box goes by a
+  number; after, by the household's names.
 
 ---
 
@@ -514,7 +515,6 @@ that link cannot be followed.
    onboarding loses people. Decide deliberately: nothing, or an explicit opt-in
    at the end.
 
-Settled since these were written: screen hardware (the 7" panel on the Q6A —
-[npu-hardware-findings.md](../record/npu-hardware-findings.md)), the naming step (cut —
-reach is by EndpointId), and pre-auth exposure on `/setup` (it is a 308
-redirect; there is no token).
+Settled: screen hardware (the 7" panel on the Q6A —
+[npu-hardware-findings.md](../record/npu-hardware-findings.md)) and the naming
+step (the assistant's name, not the box's — reach is by EndpointId).

@@ -1,4 +1,4 @@
-//! Map files for the boxes (agents/plan/offline-maps-plan.md).
+//! Map files for the boxes (agents/record/map-tiles.md).
 //!
 //! A monthly job cuts Protomaps extracts into `<maps_dir>/<build>/` and
 //! writes `index.json` there, then names the build in `<maps_dir>/latest.json`.

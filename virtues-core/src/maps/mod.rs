@@ -1,4 +1,4 @@
-//! The box's own maps. See agents/plan/offline-maps-plan.md.
+//! The box's own maps. See agents/record/map-tiles.md.
 //!
 //! Map data lives on the box as Protomaps `.pmtiles` archives, and every tile
 //! a browser draws is read out of them here. Nothing about which streets a

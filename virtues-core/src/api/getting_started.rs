@@ -29,7 +29,7 @@ pub const GETTING_STARTED_CHAT_ID: &str = "chat_getting_started";
 pub const AGENT_MODE: &str = "getting_started";
 
 /// The steps, in walking order. `timeline` was split out of `interview` on
-/// 2026-09-24 for Setup (agents/plan/setup-plan.md), where drawing the
+/// 2026-09-24 for Setup (agents/build/onboarding.md), where drawing the
 /// chapters and the interview are separate, separately skippable steps. The
 /// retiring chat room never asks it (see [`script`]).
 pub const STEP_IDS: [&str; 5] = [

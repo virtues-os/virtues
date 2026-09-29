@@ -1,11 +1,11 @@
 <!--
-  /setup — Setup, the one flow (agents/plan/setup-plan.md).
+  /setup — Setup, the one flow (agents/build/onboarding.md, "Setup").
 
   THE STAGE (2026-09-25). Paper and grain are painted once, here
   (`.setup-stage`, setup.css), and every step changes on top of them: steps
   crossfade over each other rather than fading through a blank page. The
   progress is the mark itself (SetupMark), which Welcome's big ∴ flies up
-  to become. The four laws are in agents/plan/setup-plan.md.
+  to become. The four laws are in agents/build/onboarding.md.
 
   Ten steps: Welcome (the cold open, with light or dark), the founder's
   letter, Account, Server, Wi-Fi, Names, Subscription, Connections, Timeline,

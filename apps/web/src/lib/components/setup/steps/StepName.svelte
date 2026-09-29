@@ -21,7 +21,7 @@
 
 	Your name is asked in the assistant's name because the assistant's name
 	is the one the whole product answers to (Setup's "one name",
-	agents/plan/setup-plan.md). Full name lives in Settings; birth date on
+	agents/build/onboarding.md). Full name lives in Settings; birth date on
 	the timeline, where it is the left edge.
 
 	THE PRESENCE is the mark at the top: each keystroke runs a ripple
