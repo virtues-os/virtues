@@ -476,17 +476,18 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
 
     // A paired device has sent data: its first sync is stamped, or (read
     // here too, so a box whose stamps were never written counts at once) one
-    // of its applets has a successful run that brought records. The run is
-    // the only proof that ties data to a device: data rows carry a provider,
-    // not a device, and `last_seen_at` is liveness, not data.
+    // of its applets has a successful run. A device's applet runs only when
+    // the device pushes, so the run is the proof that ties data to a device:
+    // data rows carry a provider, not a device, and `last_seen_at` is
+    // liveness, not data. Not `records_processed`: the ingest path completes
+    // with 0 even when it wrote rows.
     let device_collecting: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM app_device d \
          WHERE d.revoked_at IS NULL AND ( \
            d.init_sync_completed_at IS NOT NULL \
            OR EXISTS(SELECT 1 FROM app_applets a \
                      JOIN app_applet_runs r ON r.applet_id = a.id \
-                     WHERE a.device_id = d.id AND r.status = 'success' \
-                       AND r.records_processed > 0)))",
+                     WHERE a.device_id = d.id AND r.status = 'success')))",
     )
     .fetch_one(pool)
     .await?;

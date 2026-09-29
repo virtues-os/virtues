@@ -4,10 +4,12 @@
 //! step. The turn runs through the same live-turn registry and cancellation as
 //! every other turn, so Stop and rejoin work, and emits the same UI message
 //! stream through the same `TurnRecorder`, so the reply and its reasoning
-//! render as they do in chat. What it never does is the rest: no model choice,
-//! no gateway, no tools, and no row. A local chat is not stored, so nothing
-//! downstream (titles, day summaries, the wiki, embeddings, backups) can read
-//! it and send it anywhere.
+//! render as they do in chat. It is stored like any chat: the user's message
+//! through the same `store_user_turn`, the reply as an assistant row, and the
+//! model reads the history back from the box. What it skips is the cloud
+//! side: no model choice, no gateway, no tools, and no usage or cost.
+
+use sqlx::PgPool;
 
 use axum::{
     http::StatusCode,
@@ -17,16 +19,22 @@ use axum::{
 
 use crate::agent::protocol::{AgentEvent, StepReason};
 use crate::api::chat::{
-    generate_id, serialize_event, spawn_turn_driver, ui_stream_response, ChatCancellationState,
-    ChatError, ChatRequest, StreamEvent,
+    generate_id, serialize_event, spawn_turn_driver, store_user_turn, ui_stream_response,
+    ChatCancellationState, ChatError, ChatRequest, StreamEvent,
 };
+use crate::api::chats::{append_message, load_messages};
 use crate::api::live_turn::{self, LiveTurns};
 use crate::api::turn_recorder::TurnRecorder;
 use crate::local_model::{self, Message, Piece, TurnEvent};
 use crate::middleware::auth::AuthUser;
 
 /// Run one local turn and return its stream.
-pub(crate) fn run(request: ChatRequest, live_turns: LiveTurns, cancel_state: ChatCancellationState) -> Response {
+pub(crate) async fn run(
+    pool: PgPool,
+    request: ChatRequest,
+    live_turns: LiveTurns,
+    cancel_state: ChatCancellationState,
+) -> Response {
     let chat_id = request.chat_id.clone();
     // Same refusal as a cloud turn: starting a second turn would take over the
     // running one's live-turn slot and cancellation.
@@ -41,15 +49,31 @@ pub(crate) fn run(request: ChatRequest, live_turns: LiveTurns, cancel_state: Cha
             .into_response();
     }
     let msg_id = request.message_id.clone().unwrap_or_else(|| format!("msg_{}", generate_id()));
-    // A local chat has no row, so the transcript is the request's, whole.
-    let messages: Vec<Message> = request
-        .messages
-        .iter()
-        .filter(|m| m.role == "user" || m.role == "assistant")
-        .map(|m| Message { role: m.role.clone(), text: m.text() })
-        .filter(|m| !m.text.trim().is_empty())
+    // The transcript is the box's, like any chat's; a ghost chat's is the
+    // request's, whole, because the box holds nothing for it.
+    store_user_turn(&pool, &request).await;
+    let transcript: Vec<(String, String)> = if request.temporary {
+        request.messages.iter().map(|m| (m.role.clone(), m.text())).collect()
+    } else {
+        match load_messages(&pool, &chat_id).await {
+            Ok(rows) => rows.into_iter().map(|m| (m.role, m.content)).collect(),
+            Err(e) => {
+                tracing::error!(chat_id = %chat_id, error = %e, "loading a local chat's messages");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ChatError { error: "internal".to_string(), details: Some("Failed to load messages".into()) }),
+                )
+                    .into_response();
+            }
+        }
+    };
+    let messages: Vec<Message> = transcript
+        .into_iter()
+        .filter(|(role, text)| (role == "user" || role == "assistant") && !text.trim().is_empty())
+        .map(|(role, text)| Message { role, text })
         .collect();
     let think = request.think;
+    let temporary = request.temporary;
 
     let turn = live_turns.start(&chat_id);
     let token = cancel_state.register(&chat_id);
@@ -101,6 +125,15 @@ pub(crate) fn run(request: ChatRequest, live_turns: LiveTurns, cancel_state: Cha
                 yield serialize_event(&StreamEvent::LocalStats(s));
             }
             yield "[DONE]".to_string();
+
+            let subject = recorder.subject(cancelled, false);
+            if let Some(reply) = recorder.into_message(local_model::MODEL_ID, "local".to_string(), subject) {
+                if !temporary {
+                    if let Err(e) = append_message(&pool, chat_id.clone(), reply).await {
+                        tracing::error!(chat_id = %chat_id, error = %e, "saving a local reply");
+                    }
+                }
+            }
             cancel_state.remove(&chat_id, &token);
         })
     };

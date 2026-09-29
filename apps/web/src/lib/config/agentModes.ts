@@ -61,13 +61,9 @@ export function getModeById(id: AgentModeId): AgentMode | undefined {
 	return AGENT_MODES.find((m) => m.id === id);
 }
 
-/**
- * The modes this chat may switch between. Local needs the box's support and
- * an empty chat; once a local chat has a turn, it is the only mode left.
- */
-export function availableModes(current: AgentModeId, opts: { localSupported: boolean; empty: boolean }): AgentMode[] {
-	if (current === 'local' && !opts.empty) return AGENT_MODES.filter((m) => m.id === 'local');
-	return AGENT_MODES.filter((m) => m.id !== 'local' || (opts.localSupported && opts.empty));
+/** The modes this chat may switch between. Local needs the box's support. */
+export function availableModes(opts: { localSupported: boolean }): AgentMode[] {
+	return AGENT_MODES.filter((m) => m.id !== 'local' || opts.localSupported);
 }
 
 /** The mode after `id` among `modes`, wrapping — what Shift+Tab moves to. */

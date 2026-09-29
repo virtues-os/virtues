@@ -298,7 +298,7 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
            JOIN app_applets a ON a.device_id = d.id \
            JOIN app_applet_runs r ON r.applet_id = a.id \
           WHERE d.revoked_at IS NULL AND d.source_id IS NOT NULL \
-            AND r.status = 'success' AND r.records_processed > 0",
+            AND r.status = 'success'",
     )
     .fetch_all(pool)
     .await
@@ -1146,7 +1146,8 @@ mod tests {
         let run = crate::scheduler::applets::create_run(&pool, Some("applet_phone"), "webhook")
             .await
             .unwrap();
-        crate::scheduler::applets::complete_run(&pool, &run.id, "success", 12, None, None)
+        // As ingest completes: success, the count only in the summary.
+        crate::scheduler::applets::complete_run(&pool, &run.id, "success", 0, None, Some("locations: 12/12"))
             .await
             .unwrap();
 
