@@ -58,6 +58,9 @@ pub mod web_bundle;
 /// |   | On iOS, same release: `location-probe|status`, `|request_location`
 /// |   | (resolves on the person's answer), `|open_settings`; audio and health
 /// |   | `status` gain `mic`/`enabled` and `permission` (Setup's Connections) |
+/// | 8 | `bundle_update_ready` on both shells, and `ota_check_now` on the Mac:
+/// |   | a staged UI bundle applies by reloading while hidden, each page load
+/// |   | pinned to one bundle (`checkForNewUi` in `routes/(app)/+layout.svelte`, local-ui-plan.md) |
 ///
 /// Note `bundle-contract.json` stays at `minShellVersion: 1`: every addition
 /// so far is called best-effort and the UI works fine without it, so requiring
@@ -65,7 +68,7 @@ pub mod web_bundle;
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 7;
+pub const COMMAND_SURFACE_VERSION: u32 = 8;
 
 /// What the native shell knows about itself.
 ///
@@ -164,13 +167,37 @@ fn shell_identity_cmd(app: tauri::AppHandle) -> ShellIdentity {
 #[cfg(mobile)]
 #[tauri::command]
 fn bundle_boot_ok(app: tauri::AppHandle) {
+  confirm_page_load(&app);
+}
+
+/// See `bundle_update_ready` in main.rs.
+#[cfg(mobile)]
+#[tauri::command]
+fn bundle_update_ready(app: tauri::AppHandle) -> bool {
+  update_ready(&app)
+}
+
+/// The page rendered: confirm the bundle it was pinned to at load. The shell's
+/// own record (`web_bundle::serving_bundle_id`), never the page's claim, and
+/// never the active pointer, which a background check may already have moved to
+/// a bundle this page never ran. Shared by both shells' `bundle_boot_ok`.
+pub fn confirm_page_load<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
   use tauri::Manager;
   if let Ok(dir) = app.path().app_data_dir() {
-    // The shell's own record of what this process booted — never the page's
-    // claim, and never the (mutable) active pointer, which the background
-    // check may already have moved to a bundle this session never ran.
-    web_bundle::mark_boot_ok(&dir, web_bundle::booted_bundle_id().as_deref());
+    web_bundle::confirm_page_load(&dir);
   }
+}
+
+/// Is a newer UI bundle staged since this page loaded? The SPA asks when it is
+/// hidden, and reloads if so (`checkForNewUi` in `routes/(app)/+layout.svelte`). Shared by both shells'
+/// `bundle_update_ready`.
+pub fn update_ready<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+  use tauri::Manager;
+  app
+    .path()
+    .app_data_dir()
+    .map(|d| web_bundle::update_ready(&d))
+    .unwrap_or(false)
 }
 
 /// Check for a new bundle now, at the UI's request.
@@ -191,16 +218,17 @@ fn ota_check_now(app: tauri::AppHandle) {
 
 /// Ask the box for a newer bundle and apply it if this shell can run it.
 ///
-/// Runs off the launch path and never swaps the bundle the current session is
-/// already serving — an applied bundle takes effect at the NEXT launch, where
-/// `resolve_pending_at_startup` is watching it.
+/// Runs off the launch path and never swaps the bundle the open page is
+/// serving: each page load is pinned to its bundle (web_bundle.rs, "The bundle
+/// a page load serves from"), so an applied bundle takes effect at the NEXT
+/// page load, where `resolve_pending` is watching it. The SPA reloads while
+/// hidden to get there (`checkForNewUi` in `routes/(app)/+layout.svelte`). Shared by both shells.
 ///
 /// Every outcome is recorded (`record_outcome`) because this runs on a
 /// background thread: by the time anyone looks at a screen the result is
 /// otherwise gone, and a shell silently refusing every bundle looks exactly
 /// like OTA never being configured.
-#[cfg(mobile)]
-fn ota_check(app: &tauri::AppHandle) {
+pub fn ota_check<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
   use tauri::Manager;
   let Ok(dir) = app.path().app_data_dir() else { return };
   let baked = baked_bundle_version(app);
@@ -208,7 +236,7 @@ fn ota_check(app: &tauri::AppHandle) {
     Ok(outcome) => {
       match &outcome {
         web_bundle::Outcome::Applied { content_hash } => {
-          eprintln!("[ota] staged bundle {content_hash}; active next launch")
+          eprintln!("[ota] staged bundle {content_hash}; active at the next page load")
         }
         web_bundle::Outcome::ShellTooOld { needs, have } => eprintln!(
           "[ota] box bundle needs shell surface {needs}, this app has {have} — \
@@ -247,10 +275,116 @@ fn ota_check(app: &tauri::AppHandle) {
 ///
 /// `None` when the manifest is missing — a build whose SPA was never stamped.
 /// The gate treats that as ambiguous and refuses, which is the safe direction.
-#[cfg(mobile)]
-fn baked_bundle_version(app: &tauri::AppHandle) -> Option<String> {
+pub fn baked_bundle_version<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<String> {
   let asset = app.asset_resolver().get(".virtues-bundle.json".into())?;
   web_bundle::Manifest::parse(&String::from_utf8_lossy(&asset.bytes)).map(|m| m.version)
+}
+
+/// Answer one request on the `virtues://` scheme: the app's own copy of the UI.
+///
+/// Shared by both shells (the phone since it was built; the Mac since
+/// 2026-09-29, agents/plan/local-ui-plan.md), so the two can never serve the
+/// app two different ways. Airlock pages from the binary; then the page's
+/// pinned overlay bundle; then the build baked into the binary.
+///
+/// A custom scheme rather than Tauri's own `tauri://` because Tauri owns that
+/// one and gives no hook to intercept it. On the phone the cost was a one-time
+/// origin change (`tauri://localhost` → `virtues://localhost`), which emptied
+/// its IndexedDB once. That is a cache, not data: pages persist server-side in
+/// `app_pages.yjs_state` and re-sync on connect. From here the origin never
+/// moves again, so applying a bundle can never cost a user their local state.
+///
+/// Fail-safe: every path out of the handler that is not a confirmed overlay hit
+/// falls through to the baked asset. A corrupt or half-written bundle costs
+/// freshness, never the UI.
+pub fn serve_ui<R: tauri::Runtime>(
+  app: &tauri::AppHandle<R>,
+  request: &tauri::http::Request<Vec<u8>>,
+) -> tauri::http::Response<Vec<u8>> {
+  use tauri::Manager;
+
+  let path = request.uri().path().to_string();
+  let baked = |p: &str| app.asset_resolver().get(p.to_string());
+
+  let Some(resolved) = web_bundle::resolve_request_path(&path) else {
+    return tauri::http::Response::builder()
+      .status(400)
+      .body(Vec::new())
+      .unwrap();
+  };
+
+  // The AIRLOCK pages are served from the binary, unconditionally, and
+  // checked BEFORE the overlay/baked chain — not just as its fallback.
+  // These pages gate pairing and setup; they must version with the binary
+  // that runs them, never with a web bundle. Lived the alternative on
+  // 2026-08-11: a stale mobile-pair.html inside the SPA build output (an
+  // Aug 7 fossil in apps/web/build/) shadowed the compiled-in copy, and
+  // every connect-screen fix that day silently never reached the phone —
+  // five rebuilds of whack-a-mole against a file nobody was serving on
+  // purpose. Same doctrine as the include_bytes fallback below ("an
+  // airlock must not depend on packaging"), completed: it must not be
+  // OVERRIDABLE by packaging either.
+  let airlock: Option<(&'static [u8], &'static str)> = match resolved.as_str() {
+    "connect.html" => Some((include_bytes!("../ui/connect.html"), "text/html")),
+    "probe.html" => Some((include_bytes!("../ui/probe.html"), "text/html")),
+    // jsQR (Apache-2.0), vendored because the airlock has no bundler and
+    // must not depend on packaging. WebKit has NEVER shipped
+    // `BarcodeDetector` — it is a Chrome API, and building the scanner on
+    // it meant every iPhone reported itself "too old" while the camera
+    // never even started. A real decoder is the only portable answer.
+    "jsqr.js" => Some((include_bytes!("../ui/jsqr.js"), "text/javascript")),
+    _ => None,
+  };
+  if let Some((bytes, mime)) = airlock {
+    return tauri::http::Response::builder()
+      .status(200)
+      .header("Content-Type", mime)
+      .body(bytes.to_vec())
+      .unwrap();
+  }
+
+  // A page document starts a page load: settle rollback and pin this load to
+  // one bundle, so every asset it requests afterwards comes from the same
+  // place (web_bundle.rs, "The bundle a page load serves from").
+  if web_bundle::is_page_document(&resolved) {
+    if let Ok(dir) = app.path().app_data_dir() {
+      if web_bundle::begin_page_load(&dir) {
+        eprintln!("[ota] a staged bundle failed to confirm; rolled back");
+      }
+    }
+  }
+
+  // Overlay first, baked second. `mime_guess` is not a dependency here, so
+  // the baked asset's own mime type is reused when the overlay serves the
+  // same path — which it does for every file, both being the same build
+  // shape.
+  let overlay = app
+    .path()
+    .app_data_dir()
+    .ok()
+    .and_then(|d| web_bundle::read_from_overlay(&d, &resolved));
+
+  match (overlay, baked(&resolved)) {
+    (Some(bytes), asset) => tauri::http::Response::builder()
+      .status(200)
+      .header(
+        "Content-Type",
+        asset.map(|a| a.mime_type).unwrap_or_else(|| "text/html".into()),
+      )
+      .body(bytes)
+      .unwrap(),
+    (None, Some(asset)) => tauri::http::Response::builder()
+      .status(200)
+      .header("Content-Type", asset.mime_type)
+      .body(asset.bytes)
+      .unwrap(),
+    // The airlock pages are answered before this match ever runs (see
+    // above), so a miss here is a genuine 404.
+    (None, None) => tauri::http::Response::builder()
+      .status(404)
+      .body(Vec::new())
+      .unwrap(),
+  }
 }
 
 #[cfg(mobile)]
@@ -260,99 +394,10 @@ pub fn run() {
   use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
   use tauri_plugin_reach::ReachExt;
 
-  // OTA asset protocol. Every request for the UI comes through here, and the
-  // handler decides per-file: the overlay bundle the box handed us, else the
-  // build baked into this binary.
-  //
-  // A custom scheme rather than Tauri's own `tauri://` because Tauri owns that
-  // one and gives no hook to intercept it. The cost is a one-time origin change
-  // (`tauri://localhost` → `virtues://localhost`), which empties this app's
-  // IndexedDB once. That is a cache, not data: pages persist server-side in
-  // `app_pages.yjs_state` and re-sync on connect. Doing it now, before OTA
-  // ships, is deliberate — from here the origin never moves again, so applying
-  // a bundle can never cost a user their local state.
-  //
-  // Fail-safe: every path out of the handler that is not a confirmed overlay
-  // hit falls through to the baked asset. A corrupt or half-written bundle
-  // costs freshness, never the UI.
+  // OTA asset protocol: every request for the UI comes through `serve_ui`.
   let builder = tauri::Builder::default()
     .plugin(tauri_plugin_reach::init())
-    .register_uri_scheme_protocol("virtues", |ctx, request| {
-      use tauri::Manager;
-
-      let path = request.uri().path().to_string();
-      let baked = |p: &str| ctx.app_handle().asset_resolver().get(p.to_string());
-
-      let Some(resolved) = web_bundle::resolve_request_path(&path) else {
-        return tauri::http::Response::builder()
-          .status(400)
-          .body(Vec::new())
-          .unwrap();
-      };
-
-      // The AIRLOCK pages are served from the binary, unconditionally, and
-      // checked BEFORE the overlay/baked chain — not just as its fallback.
-      // These pages gate pairing and setup; they must version with the binary
-      // that runs them, never with a web bundle. Lived the alternative on
-      // 2026-08-11: a stale mobile-pair.html inside the SPA build output (an
-      // Aug 7 fossil in apps/web/build/) shadowed the compiled-in copy, and
-      // every connect-screen fix that day silently never reached the phone —
-      // five rebuilds of whack-a-mole against a file nobody was serving on
-      // purpose. Same doctrine as the include_bytes fallback below ("an
-      // airlock must not depend on packaging"), completed: it must not be
-      // OVERRIDABLE by packaging either.
-      let airlock: Option<(&'static [u8], &'static str)> = match resolved.as_str() {
-        "connect.html" => Some((include_bytes!("../ui/connect.html"), "text/html")),
-        "probe.html" => Some((include_bytes!("../ui/probe.html"), "text/html")),
-        // jsQR (Apache-2.0), vendored because the airlock has no bundler and
-        // must not depend on packaging. WebKit has NEVER shipped
-        // `BarcodeDetector` — it is a Chrome API, and building the scanner on
-        // it meant every iPhone reported itself "too old" while the camera
-        // never even started. A real decoder is the only portable answer.
-        "jsqr.js" => Some((include_bytes!("../ui/jsqr.js"), "text/javascript")),
-        _ => None,
-      };
-      if let Some((bytes, mime)) = airlock {
-        return tauri::http::Response::builder()
-          .status(200)
-          .header("Content-Type", mime)
-          .body(bytes.to_vec())
-          .unwrap();
-      }
-
-      // Overlay first, baked second. `mime_guess` is not a dependency here, so
-      // the baked asset's own mime type is reused when the overlay serves the
-      // same path — which it does for every file, both being the same build
-      // shape.
-      let overlay = ctx
-        .app_handle()
-        .path()
-        .app_data_dir()
-        .ok()
-        .and_then(|d| web_bundle::read_from_overlay(&d, &resolved));
-
-      match (overlay, baked(&resolved)) {
-        (Some(bytes), asset) => tauri::http::Response::builder()
-          .status(200)
-          .header(
-            "Content-Type",
-            asset.map(|a| a.mime_type).unwrap_or_else(|| "text/html".into()),
-          )
-          .body(bytes)
-          .unwrap(),
-        (None, Some(asset)) => tauri::http::Response::builder()
-          .status(200)
-          .header("Content-Type", asset.mime_type)
-          .body(asset.bytes)
-          .unwrap(),
-        // The airlock pages are answered before this match ever runs (see
-        // above), so a miss here is a genuine 404.
-        (None, None) => tauri::http::Response::builder()
-          .status(404)
-          .body(Vec::new())
-          .unwrap(),
-      }
-    });
+    .register_uri_scheme_protocol("virtues", |ctx, request| serve_ui(ctx.app_handle(), &request));
 
   // The six collectors are iOS-only: Rust shims over Swift halves, with no
   // Android counterpart yet (see Cargo.toml). Android boots reach + the webview
@@ -372,6 +417,7 @@ pub fn run() {
       set_appearance,
       command_surface_version,
       bundle_boot_ok,
+      bundle_update_ready,
       shell_identity_cmd,
       ota_check_now
     ])
@@ -418,16 +464,10 @@ pub fn run() {
         }
       }
 
-      // OTA rollback, FIRST — before anything can load a bundle. A pointer left
-      // pending means the previous launch flipped to a bundle that never came
-      // back to confirm it rendered, so that bundle does not boot: abandon it
-      // and revert. Doing this before the window exists is the whole point;
-      // afterwards we would be deciding while already showing the bad bundle.
+      // OTA rollback is settled per page load now, in `serve_ui` (web_bundle.rs,
+      // "The bundle a page load serves from"), not once here.
       if let Ok(dir) = app.path().app_data_dir() {
-        if web_bundle::resolve_pending_at_startup(&dir) {
-          eprintln!("[ota] a staged bundle failed to confirm; rolled back");
-        }
-        // Then drop an overlay the App Store has overtaken. An app update keeps
+        // Drop an overlay the App Store has overtaken. An app update keeps
         // the container, so a bundle applied weeks ago outlives the binary that
         // fetched it and goes on shadowing the newer build THIS binary ships
         // with. After the rollback above, so a revert to `previous` is judged
@@ -440,11 +480,6 @@ pub fn run() {
              back to the build it shipped with"
           );
         }
-        // Freeze this process's boot identity NOW, while the active pointer
-        // still names what this launch will serve — the check thread below
-        // can move the pointer mid-session, and boot-ok is judged against
-        // what actually booted, not against wherever the pointer points.
-        web_bundle::capture_booted(&dir);
       }
 
       // Bundled-SPA architecture (Option A): the app IS the bundled SvelteKit
@@ -464,9 +499,9 @@ pub fn run() {
       //
       // Deliberately AFTER the window is decided and on its own thread: an
       // update must never delay a launch, and must never change the bundle the
-      // current session is already running. A bundle applied now takes effect
-      // on the NEXT launch, where `resolve_pending_at_startup` above is
-      // watching it. That ordering is what makes a bad bundle survivable.
+      // open page is already running. A bundle applied now takes effect at the
+      // NEXT page load, where `resolve_pending` (in `serve_ui`) is watching
+      // it. That ordering is what makes a bad bundle survivable.
       if paired {
         let handle = app.handle().clone();
         std::thread::spawn(move || ota_check(&handle));

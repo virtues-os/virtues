@@ -219,22 +219,91 @@ pub fn active_bundle(app_data: &Path) -> Option<PathBuf> {
     is_usable(&dir).then_some(dir)
 }
 
-/// The overlay bundle this PROCESS booted from — captured once, right after
-/// startup resolution and before any window loads. Distinct from
-/// `active_bundle_id`, which re-reads the pointer and therefore changes when
-/// the background check applies a new bundle mid-session; boot identity is a
-/// process-lifetime fact, and boot-ok must be judged against it.
-static BOOTED: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+// ─── The bundle a page load serves from ─────────────────────────────────────
+//
+// **A page load is pinned to one bundle for its whole life.** A loaded
+// `index.html` goes on requesting its own content-hashed chunks, which exist
+// only in the bundle it came from. So which bundle serves is decided once,
+// when the page document is requested, and every later request of that page
+// is answered from the same place.
+//
+// Until 2026-09-29 the pin was per PROCESS for boot-ok (`capture_booted`) but
+// per REQUEST for serving (`active_bundle`, re-read every time), and an apply
+// moves `active` mid-session. So after a second update, a running page asked
+// for its own chunks and got the new bundle, which does not have them: a
+// lazily loaded view 404'd into a blank pane until the app was relaunched.
+// Pinning per page load fixes that, and is what lets a staged bundle apply
+// with a plain page reload (on both platforms: a Mac is almost never
+// relaunched, since closing its window only hides it) instead of waiting for
+// the next launch. See agents/plan/local-ui-plan.md.
 
-/// Call after `resolve_pending_at_startup`, before building the webview.
-pub fn capture_booted(app_data: &Path) {
-    let _ = BOOTED.set(active_bundle_id(app_data));
+/// The current page load's bundle, per bundle store (one per app; keyed so the
+/// tests, which each use their own store, cannot see each other's pins). No
+/// entry: no page has loaded yet. `None`: pinned to the baked build.
+fn serving() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, Option<String>>> {
+    static SERVING: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, Option<String>>>,
+    > = std::sync::OnceLock::new();
+    SERVING.get_or_init(Default::default)
 }
 
-/// `None` = booted from the baked bundle (or a shell that never captured —
-/// the desktop, which has no overlay store).
-pub fn booted_bundle_id() -> Option<String> {
-    BOOTED.get().cloned().flatten()
+/// The pin for `app_data`: outer `None` when no page has loaded.
+fn pinned(app_data: &Path) -> Option<Option<String>> {
+    serving().lock().ok()?.get(&bundles_root(app_data)).cloned()
+}
+
+/// Is `resolved` (from [`resolve_request_path`]) the document a page load
+/// starts with, rather than one of its assets?
+pub fn is_page_document(resolved: &str) -> bool {
+    resolved == "index.html" || resolved == "200.html"
+}
+
+/// A page is loading. Settle rollback ([`resolve_pending`]), then pin this load
+/// to whatever is active now. Call for the page document, before reading it.
+/// Returns true when a rollback happened (worth a log line).
+pub fn begin_page_load(app_data: &Path) -> bool {
+    let rolled_back = resolve_pending(app_data);
+    let id = active_bundle_id(app_data);
+    if let Ok(mut g) = serving().lock() {
+        g.insert(bundles_root(app_data), id);
+    }
+    rolled_back
+}
+
+/// The bundle the current page load serves from; `None` for the baked build
+/// or before any page has loaded.
+pub fn serving_bundle_id(app_data: &Path) -> Option<String> {
+    pinned(app_data).flatten()
+}
+
+/// Where the current page's assets come from: its pinned bundle, or `None`
+/// for the baked build. A pinned bundle that has become unusable degrades to
+/// the baked build rather than serving half a page. Before any page has loaded
+/// this reads `active`, which is what the first load would pin anyway.
+fn serving_dir(app_data: &Path) -> Option<PathBuf> {
+    match pinned(app_data) {
+        Some(Some(hash)) => {
+            let dir = bundles_root(app_data).join(hash);
+            is_usable(&dir).then_some(dir)
+        }
+        Some(None) => None,
+        None => active_bundle(app_data),
+    }
+}
+
+/// Has a newer bundle been applied since this page loaded? Then the next page
+/// load picks it up, and the UI can reload at a quiet moment (while hidden).
+/// False before any page has loaded.
+pub fn update_ready(app_data: &Path) -> bool {
+    let Some(pin) = pinned(app_data) else {
+        return false;
+    };
+    active_bundle_id(app_data) != pin
+}
+
+/// The page rendered: confirm the bundle it loaded from (see [`mark_boot_ok`]).
+pub fn confirm_page_load(app_data: &Path) {
+    mark_boot_ok(app_data, serving_bundle_id(app_data).as_deref());
 }
 
 /// Identity of the active overlay bundle — its content hash — or `None` when
@@ -250,16 +319,19 @@ pub fn active_bundle_id(app_data: &Path) -> Option<String> {
     is_usable(&root.join(&hash)).then_some(hash)
 }
 
-/// Resolve rollback state at startup, before any window loads.
+/// Resolve rollback state as a page loads, before it is served.
 ///
-/// A pending pointer means a bundle was applied and no session booted from it
-/// has confirmed yet. That is TWO cases, and they used to be conflated:
+/// A pending pointer means a bundle was applied and no page load from it has
+/// confirmed yet. That is TWO cases, and they used to be conflated:
 ///
-///   • No boot has been attempted (apply runs mid-session; the old bundle kept
-///     running). This launch IS the attempt — mark it and serve the bundle.
-///   • The previous launch attempted it (booting == pending) and never
+///   • No load has been attempted (apply runs mid-session; the old bundle kept
+///     serving). This load IS the attempt — mark it and serve the bundle.
+///   • The previous load attempted it (booting == pending) and never
 ///     confirmed — so it does not boot. Abandon it, remember it as poisoned,
 ///     and fall back to whatever it replaced.
+///
+/// Per page load, not per launch, since 2026-09-29: a staged bundle now takes
+/// effect at the next reload (see "The bundle a page load serves from").
 ///
 /// Rolling back on sight of a bare pending pointer — the old behavior — meant
 /// a boot-ok landing before the mid-session apply left a good bundle to be
@@ -267,7 +339,7 @@ pub fn active_bundle_id(app_data: &Path) -> Option<String> {
 ///
 /// Returns true when a rollback happened (worth logging; the user sees only
 /// that the app works).
-pub fn resolve_pending_at_startup(app_data: &Path) -> bool {
+pub fn resolve_pending(app_data: &Path) -> bool {
     let root = bundles_root(app_data);
     let Some(pending) = read_pointer(&root, PTR_PENDING) else {
         // No pending bundle — a leftover attempt marker refers to nothing.
@@ -389,10 +461,14 @@ pub fn mark_boot_ok(app_data: &Path, booted: Option<&str>) {
 /// bundle the app is about to boot from.
 pub fn prune(app_data: &Path) -> usize {
     let root = bundles_root(app_data);
-    let keep: Vec<String> = [PTR_ACTIVE, PTR_PREVIOUS, PTR_PENDING]
+    let mut keep: Vec<String> = [PTR_ACTIVE, PTR_PREVIOUS, PTR_PENDING]
         .iter()
         .filter_map(|p| read_pointer(&root, p))
         .collect();
+    // And the bundle the open page is still serving from: two applies without
+    // a reload in between move it out of every pointer, and deleting it would
+    // pull the files out from under a live page.
+    keep.extend(serving_bundle_id(app_data));
 
     let Ok(entries) = fs::read_dir(&root) else {
         return 0;
@@ -736,7 +812,7 @@ fn apply_tarball(
     // leaves a bundle being served with no pending marker — which is precisely
     // the state rollback keys on, so a bundle that does not boot would have no
     // way back and the app would be stuck on it. PENDING-first leaves a marker
-    // naming a bundle that was never activated, which `resolve_pending_at_startup`
+    // naming a bundle that was never activated, which `resolve_pending`
     // now recognizes and clears.
     write_pointer(&root, PTR_PENDING, &remote.content_hash)?;
     write_pointer(&root, PTR_ACTIVE, &remote.content_hash)?;
@@ -904,14 +980,15 @@ pub fn resolve_request_path(uri_path: &str) -> Option<String> {
     }
 }
 
-/// Read `path` out of the active overlay bundle, if one is active and has it.
+/// Read `path` out of the current page's overlay bundle, if it has one and the
+/// file is there.
 ///
 /// `None` means "fall through to the baked bundle" for every reason: no
 /// overlay, missing file, unreadable file. The caller must always have that
 /// fallback — this function never being able to fail is the property that keeps
 /// a bad bundle from costing the app its UI.
 pub fn read_from_overlay(app_data: &Path, path: &str) -> Option<Vec<u8>> {
-    let dir = active_bundle(app_data)?;
+    let dir = serving_dir(app_data)?;
     let file = dir.join(path);
     // Re-check after joining: `path` is already normalized, but the cost of
     // being wrong here is serving arbitrary files off the device.
@@ -1185,7 +1262,7 @@ mod tests {
         // And so do pending/booting, which named a bundle we no longer serve —
         // left behind, the next launch would "roll back" what is not active.
         assert_eq!(read_pointer(&root, PTR_PENDING), None);
-        assert!(!resolve_pending_at_startup(&d), "nothing left to resolve");
+        assert!(!resolve_pending(&d), "nothing left to resolve");
     }
 
     #[test]
@@ -1299,10 +1376,10 @@ mod tests {
 
         // First launch after the apply: this IS the attempt, so it is marked
         // and served, not rolled back.
-        assert!(!resolve_pending_at_startup(&d), "first launch attempts it");
+        assert!(!resolve_pending(&d), "first launch attempts it");
         assert_eq!(read_pointer(&root, PTR_ACTIVE).as_deref(), Some("new2"));
         // Second launch with the attempt still unconfirmed: it does not boot.
-        assert!(resolve_pending_at_startup(&d));
+        assert!(resolve_pending(&d));
         assert_eq!(read_pointer(&root, PTR_ACTIVE).as_deref(), Some("old1"));
         assert!(!root.join("new2").exists(), "bad bundle is removed");
     }
@@ -1316,8 +1393,8 @@ mod tests {
         write_pointer(&root, PTR_PENDING, "new2").unwrap();
         // No previous: this overlaid the baked bundle.
 
-        assert!(!resolve_pending_at_startup(&d), "first launch attempts it");
-        assert!(resolve_pending_at_startup(&d));
+        assert!(!resolve_pending(&d), "first launch attempts it");
+        assert!(resolve_pending(&d));
         assert_eq!(read_pointer(&root, PTR_ACTIVE), None);
         assert_eq!(active_bundle(&d), None, "serves the baked bundle again");
     }
@@ -1331,7 +1408,7 @@ mod tests {
         write_pointer(&root, PTR_PENDING, "good3").unwrap();
 
         mark_boot_ok(&d, Some("good3")); // the SPA rendered, from that bundle
-        assert!(!resolve_pending_at_startup(&d), "nothing pending to resolve");
+        assert!(!resolve_pending(&d), "nothing pending to resolve");
         assert_eq!(read_pointer(&root, PTR_ACTIVE).as_deref(), Some("good3"));
     }
 
@@ -1418,6 +1495,55 @@ mod tests {
         assert!(read_from_overlay(&d, "index.html").is_some(), "serves from overlay");
         // Present overlay, absent file → fall through, not an error.
         assert_eq!(read_from_overlay(&d, "_app/missing.js"), None);
+    }
+
+    #[test]
+    fn a_page_keeps_its_own_bundle_until_the_next_load() {
+        // The bug this pin exists for: an apply mid-session moved `active`, and
+        // the open page's next chunk request was answered from the new bundle,
+        // which does not have it.
+        let app = tmp();
+        let root = bundles_root(&app);
+        plant(&root, "pinA");
+        fs::write(root.join("pinA").join("chunk-a.js"), "A").unwrap();
+        write_pointer(&root, PTR_ACTIVE, "pinA").unwrap();
+        assert!(!begin_page_load(&app));
+        assert!(!update_ready(&app));
+
+        // A background check applies B while the page is open.
+        plant(&root, "pinB");
+        write_pointer(&root, PTR_PREVIOUS, "pinA").unwrap();
+        write_pointer(&root, PTR_PENDING, "pinB").unwrap();
+        write_pointer(&root, PTR_ACTIVE, "pinB").unwrap();
+        assert_eq!(read_from_overlay(&app, "chunk-a.js").as_deref(), Some(&b"A"[..]), "still served from A");
+        assert!(update_ready(&app), "B waits for the next load");
+        prune(&app);
+        assert!(root.join("pinA").exists(), "the open page's bundle is never pruned");
+
+        // The next load takes B, and marks it as the attempt.
+        assert!(!begin_page_load(&app));
+        assert_eq!(serving_bundle_id(&app).as_deref(), Some("pinB"));
+        assert_eq!(read_from_overlay(&app, "chunk-a.js"), None, "A's chunk is not in B");
+        assert!(!update_ready(&app));
+        confirm_page_load(&app);
+        assert_eq!(read_pointer(&root, PTR_PENDING), None, "confirmed");
+    }
+
+    #[test]
+    fn a_load_that_never_confirms_is_rolled_back_by_the_next() {
+        let app = tmp();
+        let root = bundles_root(&app);
+        plant(&root, "goodA");
+        plant(&root, "badB");
+        write_pointer(&root, PTR_PREVIOUS, "goodA").unwrap();
+        write_pointer(&root, PTR_PENDING, "badB").unwrap();
+        write_pointer(&root, PTR_ACTIVE, "badB").unwrap();
+        assert!(!begin_page_load(&app), "the first load is the attempt");
+        assert_eq!(serving_bundle_id(&app).as_deref(), Some("badB"));
+        // No confirm: the page never rendered. The next load rolls back.
+        assert!(begin_page_load(&app));
+        assert_eq!(serving_bundle_id(&app).as_deref(), Some("goodA"));
+        assert_eq!(fs::read_to_string(root.join(POISON_FILE)).unwrap(), "badB");
     }
 
     #[test]
@@ -1631,7 +1757,7 @@ mod tests {
         // was never served, so there is no evidence it fails to boot.
         write_pointer(&root, PTR_PENDING, "new1").unwrap();
 
-        assert!(!resolve_pending_at_startup(&d), "not a rollback");
+        assert!(!resolve_pending(&d), "not a rollback");
         assert_eq!(read_pointer(&root, PTR_PENDING), None, "marker cleared");
         assert!(
             !root.join(POISON_FILE).exists(),
