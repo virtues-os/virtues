@@ -718,7 +718,7 @@
 					<Popover bind:open={iconOpen} placement="bottom-start">
 						{#snippet trigger({ toggle }: { toggle: () => void })}
 							<button
-								class="nb-icon tinted"
+								class="project-icon tinted"
 								style={`--room-accent: ${projectColor(detail)}`}
 								title="Change icon and color"
 								aria-label="Change icon and color"
@@ -984,13 +984,13 @@
 						{/snippet}
 
 						{#snippet card(row: MemberRow)}
-							<div class="nb-card">
-								<span class="nb-card-top">
+							<div class="project-card">
+								<span class="project-card-top">
 									<Icon icon={row.icon} width="15" />
 								</span>
-								<span class="nb-card-name">{row.name}</span>
+								<span class="project-card-name">{row.name}</span>
 								{#if row.status !== '—'}
-									<span class="nb-card-meta">{row.status}</span>
+									<span class="project-card-meta">{row.status}</span>
 								{/if}
 							</div>
 						{/snippet}
@@ -1034,16 +1034,16 @@
 	.head { display: flex; flex-direction: column; gap: 0.7rem; }
 	.head-main { display: flex; align-items: flex-start; gap: 14px; }
 	.head-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-	.nb-icon {
+	.project-icon {
 		display: grid; place-items: center; width: 46px; height: 46px; flex-shrink: 0;
 		border-radius: 12px; border: 1px solid var(--color-border);
 		background: var(--color-surface-elevated); color: var(--color-foreground); cursor: pointer;
 		transition: border-color 120ms ease;
 	}
-	.nb-icon:hover { border-color: var(--color-foreground-subtle); }
+	.project-icon:hover { border-color: var(--color-foreground-subtle); }
 	/* The same tinted chip the projects list draws, so a project looks like
 	   itself on its own page. */
-	.nb-icon.tinted {
+	.project-icon.tinted {
 		background: color-mix(in srgb, var(--room-accent) 16%, transparent);
 		border-color: color-mix(in srgb, var(--room-accent) 30%, var(--color-border));
 		color: color-mix(in srgb, var(--room-accent) 78%, var(--color-foreground));
@@ -1293,7 +1293,7 @@
 			gap: 12px;
 		}
 		/* 44 + 12: the actions line up under the text, not the icon. */
-		.nb-icon {
+		.project-icon {
 			width: 44px;
 			height: 44px;
 		}
@@ -1311,25 +1311,25 @@
 	}
 
 	/* Card view */
-	.nb-card {
+	.project-card {
 		display: flex; flex-direction: column; gap: 0.4rem;
 		width: 100%; height: 100%; padding: 0.85rem 0.9rem;
 		border: 1px solid var(--color-border); border-radius: 10px;
 		background: var(--color-surface);
 		transition: background-color 0.12s ease, border-color 0.12s ease;
 	}
-	:global(.card:hover) .nb-card {
+	:global(.card:hover) .project-card {
 		background: var(--color-background-hover);
 		border-color: color-mix(in srgb, var(--color-primary) 32%, var(--color-border));
 	}
-	.nb-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-	.nb-card-top :global(svg) { color: var(--color-foreground-subtle); flex-shrink: 0; }
-	.nb-card-name {
+	.project-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+	.project-card-top :global(svg) { color: var(--color-foreground-subtle); flex-shrink: 0; }
+	.project-card-name {
 		font-size: 0.875rem; font-weight: 550; line-height: 1.35; color: var(--color-foreground);
 		display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2;
 		-webkit-box-orient: vertical; overflow: hidden;
 	}
-	.nb-card-meta { font-size: 10px; letter-spacing: 0.03em; color: var(--color-foreground-subtle); }
+	.project-card-meta { font-size: 10px; letter-spacing: 0.03em; color: var(--color-foreground-subtle); }
 
 	:global(.spin) { animation: spin 0.8s linear infinite; }
 	@keyframes spin { to { transform: rotate(360deg); } }

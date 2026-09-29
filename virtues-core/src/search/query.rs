@@ -119,12 +119,6 @@ pub struct SearchFilters {
     pub nb_records: Vec<String>,
     pub nb_entities: Vec<String>,
     pub scope_mode: ScopeMode,
-    /// Record routes (`/record/{ontology}/{record_id}`) to exclude from recall
-    /// BEFORE the fused LIMIT. The magnet passes a container's existing members
-    /// and own-chat here: they are the nearest neighbours of the container's own
-    /// centroid, so filtering them *after* recall would let them consume the
-    /// whole budget and starve fresh candidates. Empty means no exclusion.
-    pub exclude_urls: Vec<String>,
 }
 
 /// A search request as callers state it, before scope resolution. What
@@ -396,7 +390,6 @@ impl SemanticSearchEngine {
             nb_records,
             nb_entities,
             scope_mode: opts.scope_mode,
-            exclude_urls: Vec::new(),
         }))
     }
 
@@ -471,9 +464,8 @@ impl SemanticSearchEngine {
     /// candidates ordered by the fused z-score, WITHOUT reranking or [0,1]
     /// normalization (that is Stage B, `rerank_and_finalize`).
     ///
-    /// Takes a vector, not text, so a centroid or an event embedding is a
-    /// first-class query — the magnet's centroid ANN and multi-query fan-out are
-    /// both callers. `terms` are the BM25 tokens of the source query (empty for a
+    /// Takes a vector, not text, so an event embedding is a first-class query
+    /// — multi-query fan-out is a caller. `terms` are the BM25 tokens of the source query (empty for a
     /// pure-vector query, which degenerates cleanly to dense-only: the lexical
     /// arm matches nothing and `bz` normalizes to 0). Scope resolution is the
     /// caller's job (see `SearchFilters`); this method does no project I/O and
@@ -525,15 +517,6 @@ impl SemanticSearchEngine {
                 " AND EXISTS (SELECT 1 FROM wiki_refs er \
                   WHERE er.source_table = se.source_table AND er.source_id = se.record_id \
                   AND er.entity_id = ANY(${next}))",
-            ));
-            next += 1;
-        }
-        // Exclude specific record routes BEFORE the fused LIMIT, so filtered rows
-        // don't consume the recall budget (see `SearchFilters::exclude_urls`).
-        let exclude_filter = !filters.exclude_urls.is_empty();
-        if exclude_filter {
-            filter_sql.push_str(&format!(
-                " AND ('/record/' || se.ontology || '/' || se.record_id) <> ALL(${next})"
             ));
             next += 1;
         }
@@ -667,9 +650,6 @@ impl SemanticSearchEngine {
         }
         if entity_filter {
             db_query = db_query.bind(filters.entities.clone());
-        }
-        if exclude_filter {
-            db_query = db_query.bind(filters.exclude_urls.clone());
         }
         if project_boost {
             db_query = db_query.bind(filters.nb_records.clone());
@@ -1092,13 +1072,12 @@ mod live_filter_matrix {
         let engine = SemanticSearchEngine::new(pool);
         let terms = vec!["test".to_string(), "query".to_string()];
 
-        // One axis per filter; the matrix is their cross product (2·2·2·2·3 =
-        // 48 executions) — cheap, and exactly the space the counter must
+        // One axis per filter; the matrix is their cross product (2·2·2·3 =
+        // 24 executions) — cheap, and exactly the space the counter must
         // survive.
         let onts = [vec![], vec!["app_page".to_string(), "communication_transcription".to_string()]];
         let dates = [None, Some("2026-01-01T00:00:00Z".to_string())];
         let ents = [vec![], vec!["person_demo_jess".to_string()]];
-        let excl = [vec![], vec!["/record/app_page/x".to_string()]];
         let scopes = [
             (vec![], vec![], ScopeMode::Weighted),
             (vec!["page_x".to_string()], vec!["person_demo_jess".to_string()], ScopeMode::Weighted),
@@ -1109,26 +1088,23 @@ mod live_filter_matrix {
         for ont in &onts {
             for date in &dates {
                 for ent in &ents {
-                    for ex in &excl {
-                        for (nb_r, nb_e, mode) in &scopes {
-                            let filters = SearchFilters {
-                                ontologies: ont.clone(),
-                                date_after: date.clone(),
-                                date_before: date.clone(),
-                                entities: ent.clone(),
-                                nb_records: nb_r.clone(),
-                                nb_entities: nb_e.clone(),
-                                scope_mode: *mode,
-                                exclude_urls: ex.clone(),
-                            };
-                            engine
-                                .recall_and_fuse(&qv, &terms, &filters, 5)
-                                .await
-                                .unwrap_or_else(|e| {
-                                    panic!("filter combination failed: {filters:?}\n{e}")
-                                });
-                            ran += 1;
-                        }
+                    for (nb_r, nb_e, mode) in &scopes {
+                        let filters = SearchFilters {
+                            ontologies: ont.clone(),
+                            date_after: date.clone(),
+                            date_before: date.clone(),
+                            entities: ent.clone(),
+                            nb_records: nb_r.clone(),
+                            nb_entities: nb_e.clone(),
+                            scope_mode: *mode,
+                        };
+                        engine
+                            .recall_and_fuse(&qv, &terms, &filters, 5)
+                            .await
+                            .unwrap_or_else(|e| {
+                                panic!("filter combination failed: {filters:?}\n{e}")
+                            });
+                        ran += 1;
                     }
                 }
             }
