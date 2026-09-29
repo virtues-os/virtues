@@ -15,7 +15,7 @@ unrelated widgets:
 | `@virtues.com` | `EntityChip`, no pill background applies | icon + text |
 | `Server.jpg` | bare `<a target="_blank">` (`:else` branch) | plain blue link |
 
-Dispatch lives in [`CitedMarkdown.svelte`](../apps/web/src/lib/components/CitedMarkdown.svelte)
+Dispatch lives in `CitedMarkdown.svelte`
 (`link` snippet: entity → `EntityChip`, else → `<a>`). Citations use a *fourth*
 renderer (`InlineCitation.svelte`); Drive files a *fifth*. Five components each
 decide independently what a reference looks like. There is no reference
@@ -74,7 +74,7 @@ pill/preview, no for open. Stop forcing one component across the preview→open 
 ## Open: the universal asset route
 
 "Open" for a file target is a new tab type — call it **AssetView** — registered
-in [`registry.ts`](../apps/web/src/lib/tabs/registry.ts) exactly like
+in [`registry.ts`](../../apps/web/src/lib/tabs/registry.ts) exactly like
 `person_ → WikiDetailView`. It dispatches by MIME to a per-kind surface:
 
 - **image** — lightbox (reuse `MediaLightbox`), zoom, metadata.

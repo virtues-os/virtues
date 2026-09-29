@@ -4,7 +4,7 @@ The first 0.3 feature. How the whole Virtues fleet — not just the box — move
 between builds coherently, and how components that **never update atomically**
 stay compatible across the gaps.
 
-This generalizes [the box update paradigm](update-paradigm.md) (5 pillars for
+This generalizes [the box update paradigm](../record/update-paradigm.md) (5 pillars for
 `virtues upgrade`) from one node to the whole system, and adds the piece the box
 doc never needed: cross-component version negotiation.
 

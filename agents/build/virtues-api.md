@@ -7,7 +7,7 @@
 > **Everything on this page is true of what ships today.** It was rewritten
 > 2026-07-30, because it previously described the double-blind voucher model —
 > which was collapsed to a linked prepaid ledger in
-> [`0005_accounts_ledger.sql`](../services/virtues-api/migrations/0005_accounts_ledger.sql)
+> [`0005_accounts_ledger.sql`](../../services/virtues-api/migrations/0005_accounts_ledger.sql)
 > and is no longer what runs. The old claims are preserved, clearly fenced, in
 > [Where we're going](#where-were-going-the-claim-we-gave-up) at the bottom.
 > **Do not lift copy from that section.**
@@ -44,7 +44,7 @@ Here is ours, split honestly.
   bytes pass through our relay — which holds **no TLS key** for that connection.
   Your box terminates the encryption with its own key. The relay physically
   cannot decrypt what it forwards. See
-  [`privacy-model.md`](privacy-model.md).
+  [`privacy-model.md`](../record/privacy-model.md).
 - **We keep no record of what you did.** The API stores a ledger of amounts —
   `-4200 micros, kind=charge` — and nothing about the request that caused it.
   There is no prompt log, no completion log, no history table.

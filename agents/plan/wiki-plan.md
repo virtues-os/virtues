@@ -2,7 +2,7 @@
 
 Status: DESIGNED 2026-07-30, **audited 2026-07-31** (conversation-complete,
 unbuilt). Supersedes the article-column approach shipped in 0072 and the
-marginalia section of [archive/stories-plan.md](./archive/stories-plan.md) §3.6.
+marginalia section of [archive/stories-plan.md](../archive/stories-plan.md) §3.6.
 
 Every claim below was checked against the codebase and against real box data.
 The audit pass verified each file:line citation and corrected six claims that
@@ -59,7 +59,7 @@ editor. `app_pages` has all three — Yjs editing, `app_page_versions` with a
 
 (An earlier draft claimed that path carries a permission gate. It does not:
 `edit_page` runs freely because a page edit is reversible
-([page_editor.rs:240](../virtues-core/src/tools/page_editor.rs:240)); gating
+([page_editor.rs:240](../../virtues-core/src/tools/page_editor.rs:240)); gating
 applies only to `run_applet`/`delete_applet`. The `permission_needed` line in
 `prompt.rs:59` is a stale prompt string with no code path behind it. §2's
 consent model therefore rests on the sweep's own gate, not on an inherited one.)
@@ -95,9 +95,9 @@ effectively empty, so renaming them is free; and the corpus is small enough that
 
 The deciding fact: **the AI already writes pages through the CRDT.**
 `page_editor.rs` reads via `get_page_content()`
-([:189](../virtues-core/src/tools/page_editor.rs:189)), snapshots a version
-([:255](../virtues-core/src/tools/page_editor.rs:255)), then edits via
-`apply_text_edit()` ([:265](../virtues-core/src/tools/page_editor.rs:265)). A
+([:189](../../virtues-core/src/tools/page_editor.rs:189)), snapshots a version
+([:255](../../virtues-core/src/tools/page_editor.rs:255)), then edits via
+`apply_text_edit()` ([:265](../../virtues-core/src/tools/page_editor.rs:265)). A
 separate `wiki_articles.content` column would mean a second AI-write path with
 no CRDT reconciliation and no pre-edit snapshot — strictly worse than the one
 that works.
@@ -176,12 +176,12 @@ an article page any other way.
 
 **Both halves of the write path already exist.** First write:
 `create_page(title, content)`
-([page_editor.rs:124](../virtues-core/src/tools/page_editor.rs:124)) stores
+([page_editor.rs:124](../../virtues-core/src/tools/page_editor.rs:124)) stores
 markdown with no `yjs_state`, and the Yjs layer seeds `Y.Text` from that column
-on first open ([yjs.rs:105](../virtues-core/src/server/yjs.rs:105)) — the CRDT
+on first open ([yjs.rs:105](../../virtues-core/src/server/yjs.rs:105)) — the CRDT
 is created lazily, correctly, with nothing server-side constructing one.
 Appending (what NI's *Add* does) has a primitive too: `YjsState::append_markdown`
-([yjs.rs:543](../virtues-core/src/server/yjs.rs:543)).
+([yjs.rs:543](../../virtues-core/src/server/yjs.rs:543)).
 
 **Visibility is asymmetric.** Articles are excluded from the Pages list and tree
 — an article is not a document you made — and included in search, because it is
@@ -189,7 +189,7 @@ prose about your life. Later, `kind` allows a filter chip rather than permanent
 hiding.
 
 **The ontology must split on `kind` in the same phase.** `app_pages` has an
-`OntologyDescriptor` ([ontologies.rs:875](../crates/virtues-registry/src/ontologies.rs:875))
+`OntologyDescriptor` ([ontologies.rs:875](../../crates/virtues-registry/src/ontologies.rs:875))
 that indexes it as `content_type: "page"` with a `day_source` of
 `source_type: "page"`. Untouched, that produces three bugs on day one:
 
@@ -201,7 +201,7 @@ that indexes it as `content_type: "page"` with a `day_source` of
    RSVPs were read as attendance.
 2. The record reads as the user's own writing — the descriptor's own comment
    calls `app_pages` *"your own writing"*
-   ([ontologies.rs:885](../crates/virtues-registry/src/ontologies.rs:885)); the
+   ([ontologies.rs:885](../../crates/virtues-registry/src/ontologies.rs:885)); the
    user-facing label is "Page Edits", from a hand-written map in
    `apps/web/src/lib/wiki/ontology.ts`.
 3. Articles become retrievable as evidence for the next article. Not true
@@ -210,17 +210,17 @@ that indexes it as `content_type: "page"` with a `day_source` of
    is true of chat retrieval now, and of any retrieval-based writer later.
 
 **The fix needs a registry change, not a config edit.** `EmbeddingConfig`
-([ontologies.rs:46](../crates/virtues-registry/src/ontologies.rs:46)) has **no
+([ontologies.rs:46](../../crates/virtues-registry/src/ontologies.rs:46)) has **no
 filter field**; only `DaySourceConfig` has `extra_where`. The indexer builds
 `FROM {table} t` with no user predicate
-([indexer.rs:191](../virtues-core/src/search/indexer.rs:191)). So two
+([indexer.rs:191](../../virtues-core/src/search/indexer.rs:191)). So two
 descriptors over `app_pages` do not split — they **double-index**: rows key on
 `(ontology, record_id, chunk_index)`, so every page gets embedded twice under
 two ontology names. Two further breakages, both silent:
 
 - `api/records.rs:49` resolves an ontology by `table_name` with `.find()` —
   first match wins, so `/record/app_pages/<id>` becomes arbitrary.
-- `attach_record_refs` ([sql_query.rs:588](../virtues-core/src/tools/sql_query.rs:588))
+- `attach_record_refs` ([sql_query.rs:588](../../virtues-core/src/tools/sql_query.rs:588))
   **bails when more than one ontology matches a table name**, so every SQL-tool
   result touching `app_pages` quietly loses its citation ref. No error.
 
@@ -240,9 +240,9 @@ user-facing search.**
 
 **Indexing is free and stays fresh** — confirmed, not assumed. The indexer's
 backlog query is `WHERE se.id IS NULL OR se.doc_hash IS DISTINCT FROM
-md5(embed_text)` ([indexer.rs:196](../virtues-core/src/search/indexer.rs:196)),
+md5(embed_text)` ([indexer.rs:196](../../virtues-core/src/search/indexer.rs:196)),
 so an edited article re-embeds. (`on_content_updated`
-([yjs.rs:414](../virtues-core/src/server/yjs.rs:414)) is a stub, but it is a
+([yjs.rs:414](../../virtues-core/src/server/yjs.rs:414)) is a stub, but it is a
 latency optimization — push instead of the 15-minute cron — not a correctness
 hole.)
 
@@ -275,7 +275,7 @@ editor, different wrapper.
 ### 2. Articles are opt-in. Nothing is written until asked.
 
 Today `entity_article_gen` sweeps **every** entity past a hardcoded bar
-([entity_article_gen.rs:30](../virtues-core/src/api/entity_article_gen.rs:30)):
+([entity_article_gen.rs:30](../../virtues-core/src/api/entity_article_gen.rs:30)):
 `MIN_REFS_TO_WRITE = 15`, `MIN_NEW_REFS = 10`, `MAX_ENTITIES_PER_RUN = 2`. On
 the measured box that is **226 entities** eligible for prose nobody requested —
 an invisible recurring cost on five months of data, and thousands on a box with
@@ -417,7 +417,7 @@ metadata). It gets an article like any other person.
 **There are four "who am I" constructs, not two, and only one owns each fact.**
 `app_user_profile` (0003) already holds `full_name`, `preferred_name`,
 `birth_date`, `occupation`, `employer`, `home_place_id` — and `build_user_context`
-([chat.rs:558](../virtues-core/src/api/chat.rs:558)) already injects it into
+([chat.rs:558](../../virtues-core/src/api/chat.rs:558)) already injects it into
 every prompt. The self row must not duplicate it.
 
 | Construct | Owns | Consumer |
@@ -442,7 +442,7 @@ article↔article, which cannot work: §2 makes articles opt-in, so most subject
 have no prose — and there is no article route and no article id in any link
 anyway. Production ref-routes name subjects: `/person/person_ab12`,
 `/day/day_2026-03-03` (`get_entity_url`,
-[pages.rs:540](../virtues-core/src/api/pages.rs:540)). A backlink whose target
+[pages.rs:540](../../virtues-core/src/api/pages.rs:540)). A backlink whose target
 has no prose is still meaningful, because it renders on the **subject view**,
 which always exists.
 
@@ -456,7 +456,7 @@ are two different mechanisms and an earlier draft conflated them:
 - **What ships today:** the writer is handed an explicit *"Entities you may
   link"* list and copies the exact markdown — `[Maya](/person/person_ab12)`, one
   per entity on first mention, never invented
-  ([day_summary.rs:103](../virtues-core/src/api/day_summary.rs:103),
+  ([day_summary.rs:103](../../virtues-core/src/api/day_summary.rs:103),
   `entity_article_gen.rs:53`). Recall is bounded by the dossier, and the writer
   already knows which entity it meant.
 - **What we are NOT building:** a post-hoc surface matcher that rewrites prose.
@@ -469,12 +469,12 @@ Auto-linking bare surfaces is a separate, later feature, and it must never
 rewrite user-typed text.
 
 **Backlinks already have a precedent — check it before building a table.**
-`get_page_backlinks` ([pages.rs:262](../virtues-core/src/api/pages.rs:262))
+`get_page_backlinks` ([pages.rs:262](../../virtues-core/src/api/pages.rs:262))
 derives page→page backlinks at read time with `LIKE '%/page/{id})%'` over
 `app_pages.content`. At this corpus size that may simply be enough; an on-save
 edge table is an optimization that should be justified by a measurement, not
 assumed. If one is built, the only correct hook is `save_and_materialize`
-([yjs.rs:387](../virtues-core/src/server/yjs.rs:387)) — the sole place `content`
+([yjs.rs:387](../../virtues-core/src/server/yjs.rs:387)) — the sole place `content`
 is materialized, and the same site where `on_content_updated` is already a stub.
 
 **Coverage caveat for §15's "13 articles on day one":** `NARRATE_PROMPT`'s
@@ -486,7 +486,7 @@ day articles yield day→person and day→place edges and nothing else.
 A wikipedia has two search motions, and we have most of both.
 
 **"Go to"** — type *Sarah*, land on Sarah's article. `search_refs`
-([pages.rs:567](../virtues-core/src/api/pages.rs:567)) already does this: a
+([pages.rs:567](../../virtues-core/src/api/pages.rs:567)) already does this: a
 prefix/contains `ILIKE` UNION over people, places, orgs, files and pages,
 ranked prefix-before-contains. It powers @-mentions, the RefPicker and Desk
 pins. Two real gaps:
@@ -509,7 +509,7 @@ stack (dense + BM25, z-fusion, rerank). Nothing to build.
 **What is missing is smaller than it looks, because the doctrine already
 exists.** `search_local.rs` states it outright: objects and content are
 **grouped, never interleaved by score**, precisely because merging them is the
-score-scale schism from [ir-notes.md](./ir-notes.md) — and `SearchModal.svelte`
+score-scale schism from [ir-notes.md](../record/ir-notes.md) — and `SearchModal.svelte`
 already renders "In your records" as its own group. §6's "names before passages"
 **is** that grouping, so it is nearly free, and the reranker problem touches the
 passage leg only.
@@ -768,7 +768,7 @@ An earlier draft made the day-summary narration the note writer, on the grounds
 that it already held the day's context. Measurement killed that: the day dossier
 carries **message counts, not message text** —
 `SELECT canonical_name AS who, COUNT(DISTINCT m.id) ... GROUP BY who`
-([day_summary.rs:1208](../virtues-core/src/api/day_summary.rs:1208)). The pass
+([day_summary.rs:1208](../../virtues-core/src/api/day_summary.rs:1208)). The pass
 sees *"Sarah: 14 messages"* and never a word of what was said. A note is made
 entirely of what was said.
 
@@ -897,7 +897,7 @@ trigger is two-sourced — **novelty** from day notes, **accumulation** from
 > phase is still where a Yjs-aware writer must run).
 
 **Where the writer lives.** An applet run has two phases
-([applet_runner/mod.rs:364](../virtues-core/src/applet_runner/mod.rs:364)): the
+([applet_runner/mod.rs:364](../../virtues-core/src/applet_runner/mod.rs:364)): the
 subprocess, and then — if the applet declares an `agent` prompt — an agent loop
 that runs **in-process with `deps.yjs`**, handed the subprocess summary as
 context. All 22 applets are `runtime = "function"` today and none use the second
@@ -954,8 +954,8 @@ salient pieces, in any order. Sections would mean four editors and a schema
 argument the first time a fifth thing matters.
 
 NI is already injected into every chat prompt
-([prompt.rs:34](../virtues-core/src/agent/prompt.rs:34)) via
-`build_narrative_identity()` ([chat.rs:539](../virtues-core/src/api/chat.rs:539)).
+([prompt.rs:34](../../virtues-core/src/agent/prompt.rs:34)) via
+`build_narrative_identity()` ([chat.rs:539](../../virtues-core/src/api/chat.rs:539)).
 
 **Live bug, and it has never fired.** That function does
 `content.chars().take(800)` — but `wiki_narrative_identity` has **zero rows**, so
@@ -1079,7 +1079,7 @@ lazy about its brevity — it is arguing:
 > sentences, so only the parts that actually distinguished this day from every
 > other one survive — the routine falls away, the distinctive thing remains.
 > That is correct, not a loss.
-> — `NARRATE_PROMPT`, [day_summary.rs:89](../virtues-core/src/api/day_summary.rs:89)
+> — `NARRATE_PROMPT`, [day_summary.rs:89](../../virtues-core/src/api/day_summary.rs:89)
 
 That discipline is load-bearing. This pass has a history of manufacturing
 sensory detail it did not observe, and *"write more"* is the single instruction
@@ -1112,7 +1112,7 @@ most likely to bring it back.
 **Reflections fold into the day article.** `app_pages.date` is a second,
 undocumented discriminator today: `list_pages` filters `WHERE date IS NULL` to
 hide "reflections", and `create_reflection` mints day-linked pages
-([pages.rs:494](../virtues-core/src/api/pages.rs:494)). Left alone, a day would
+([pages.rs:494](../../virtues-core/src/api/pages.rs:494)). Left alone, a day would
 carry both a reflection page and a `subject_type='day'` article, and the Pages
 exclusion would need `kind='page' AND date IS NULL`.
 
@@ -1155,7 +1155,7 @@ should try to be the other.
 
 ### 16. The room, and the empty box.
 
-`WIKI_MODE` ([modes.ts:89](../apps/web/src/lib/sidebar/modes.ts:89)) becomes:
+`WIKI_MODE` ([modes.ts:89](../../apps/web/src/lib/sidebar/modes.ts:89)) becomes:
 
 ```
 Overview · Lifeline · Narrative Identity · People · Places · Orgs · Days · History
@@ -1167,7 +1167,7 @@ AI rewrote *Sarah* at 03:12, diff, revert."
 It is **not** free from the wrapper, and the naive reading is off by one. Version
 rows are written as a **pre-edit snapshot** with `created_by: "ai"` and a preview
 of "Auto-saved before AI edit"
-([page_editor.rs:255](../virtues-core/src/tools/page_editor.rs:255)). So
+([page_editor.rs:255](../../virtues-core/src/tools/page_editor.rs:255)). So
 `created_by` names the editor **about to write**, not the author of that
 version's content — and because no row is written *after* an edit, the current
 article text is never in the versions table at all. Either state that semantics
@@ -1237,7 +1237,7 @@ is the only prose in the wiki that has to be *moved* rather than simply dropped.
 dropping the only prose store for a subject nobody is working on buys nothing.
 
 **`wiki_narrative_identity` has zero rows.** `build_narrative_identity()`
-([chat.rs:539](../virtues-core/src/api/chat.rs:539)) `fetch_one`s an empty
+([chat.rs:539](../../virtues-core/src/api/chat.rs:539)) `fetch_one`s an empty
 table, so NI resolves to `""` in every prompt today. The 800-character
 truncation has never truncated anything — the feature is unbuilt in practice,
 not merely under-budgeted, which makes §11 a build rather than a repair.

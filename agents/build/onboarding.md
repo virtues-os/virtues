@@ -47,7 +47,7 @@ Four rules everything else follows from. These survived every generation below.
 3. **Setup transport ≠ long-term reachability.**
    Setup needs exactly two things: the setup device and the box sharing a local
    link, and the box having *outbound* internet. Remote reachability (iroh over
-   the relay — [relay-control-plane.md](relay-control-plane.md)) is assessed
+   the relay — [relay-control-plane.md](../archive/relay-control-plane.md)) is assessed
    *after* setup, on the network where the box actually lives. Overlays/VPNs are
    never mentioned during setup.
 
@@ -402,7 +402,7 @@ interview is the product's first *conversation* — one chat in the real app
 (`chat_narrative_interview`) — and the getting-started row that points at it
 says "underway" between a first answer and the close ("write it up", the
 interview's one tool, after which the composer retires). Three form factors
-died teaching us this; see [lsi-plan.md](../record/lsi-plan.md).
+died teaching us this; see [lsi-plan.md](../archive/lsi-plan.md).
 
 `/setup` is a **308 redirect** to `/onboarding`, kept rather than deleted
 because the box's own copy points there and SPA delivery is OTA — a bundle baked
@@ -515,6 +515,6 @@ that link cannot be followed.
    at the end.
 
 Settled since these were written: screen hardware (the 7" panel on the Q6A —
-[npu-hardware-findings.md](npu-hardware-findings.md)), the naming step (cut —
+[npu-hardware-findings.md](../record/npu-hardware-findings.md)), the naming step (cut —
 reach is by EndpointId), and pre-auth exposure on `/setup` (it is a 308
 redirect; there is no token).

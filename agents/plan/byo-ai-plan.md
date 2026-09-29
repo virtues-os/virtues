@@ -28,7 +28,7 @@
 > 2026-08-27 over `zdr: none` retention; the `byo_slot_routes` migration was
 > never claimed.
 
-[`composable-inference.md`](composable-inference.md), which already ships the
+[`composable-inference.md`](../build/composable-inference.md), which already ships the
 same idea for embeddings and reranking: the user owns the endpoint, and we
 validate it at the door. Nothing here is built yet; §"What is already true"
 separates the two.*

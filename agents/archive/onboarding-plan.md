@@ -1,6 +1,6 @@
 # Onboarding — the build plan
 
-> How we get from what exists today to [the paradigm](../record/onboarding-paradigm.md).
+> How we get from what exists today to [the paradigm](../build/onboarding-paradigm.md).
 > The paradigm says *what and why*, and is meant to be stable. This says *in what
 > order*, and is meant to be crossed off.
 > [linking-plan.md](linking-plan.md) is the deep dive on step 2.
@@ -117,7 +117,7 @@ never anything from inside a box.**
 ## Phase 3 — the phrase · **ship gate**
 
 Not a recovery system. One secret, generated at first boot, that gates every
-claim after the first ([paradigm §1–3](onboarding-paradigm.md)).
+claim after the first ([paradigm §1–3](../build/onboarding-paradigm.md)).
 
 **3.1 The phrase.** Four words from a wordlist, stored **hashed** on the box
 (verified, never recovered). Shown on the panel *only while the box is unclaimed*
@@ -141,7 +141,7 @@ a resetter gets a box they cannot claim, and the owner gets their box back by
 typing what they saved.
 
 Narrowed while building it: it forgets **paired devices only**, not the account
-and not the network — see [onboarding-paradigm.md](onboarding-paradigm.md) §3
+and not the network — see [onboarding-paradigm.md](../build/onboarding-paradigm.md) §3
 for why those two made recovery harder while adding no security.
 
 **3.4 Erase, not on the button.** Wiping the record for resale is an

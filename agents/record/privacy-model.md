@@ -5,8 +5,8 @@
 > design: an SNI-routed TCP relay, per-box ACME, a box-held TLS key, a device
 > bearer token, and browser-anywhere access. None of that is how reach works
 > now. The current, accurate account for users is
-> **[the reach manual page](../docs/operate/reach.md)**; the design notes are
-> in [relay-control-plane.md](relay-control-plane.md).
+> **[the reach manual page](../../docs/operate/reach.md)**; the design notes are
+> in [relay-control-plane.md](../archive/relay-control-plane.md).
 >
 > Four claims below are wrong on the merits, not merely dated, and they are the
 > ones most likely to be lifted into copy:
@@ -37,8 +37,7 @@ without opening a port at your house.
 > the connection open; a browser anywhere hit the relay, which forwarded
 > *sealed* bytes to the box over that already-open pipe.
 
-See the [visual walkthrough](relay-walkthrough.html) for the lifecycle diagrams
-of that design.
+That design is written up in [networking-relay-tee.md](../archive/networking-relay-tee.md).
 
 ## Who holds which secret — and who deliberately doesn't
 
@@ -97,7 +96,7 @@ What goes out, concretely:
 
 It travels box → `api.virtues.com` → an AI gateway → the model provider
 (Anthropic, Alibaba, Z.AI, Google, depending on the slot). So two parties beyond
-the provider handle it in the clear. [virtues-api.md](virtues-api.md) states
+the provider handle it in the clear. [virtues-api.md](../build/virtues-api.md) states
 this plainly and is the detailed account.
 
 **What we do about it: every one of those requests demands zero data

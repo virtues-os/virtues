@@ -897,7 +897,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
         // from the 5-minute chunks by `sessionize::audio`. This is the "visit" of
         // audio: raw recording → chunk transcript → session, mirroring
         // point → visit. No embedding/extraction here yet — those stay on the chunk
-        // ontology until search is repurposed (agents/record/event-timeline.md).
+        // ontology until search is repurposed (agents/build/event-timeline.md).
         OntologyDescriptor {
             name: "audio_session",
             display_name: "Audio Sessions",

@@ -142,7 +142,7 @@ pub enum Command {
     /// A successful claim opens a session bound to THIS connection; only that
     /// session may then join wifi, take an account grant, or pair. Drop the
     /// link and the session dies with it. See
-    /// `agents/record/onboarding-paradigm.md` §1 and §5.
+    /// `agents/build/onboarding-paradigm.md` §1 and §5.
     ///
     /// `label` is the claiming device's own name ("Adam's Mac"), and it is not
     /// security — it is what the box's panel says while setup is running. The

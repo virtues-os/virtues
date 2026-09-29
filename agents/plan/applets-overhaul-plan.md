@@ -1,6 +1,6 @@
 # Applets — the overhaul plan
 
-> Status: **design locked 2026-07-19, not built.** Supersedes the "actions" framing in [`architecture.md`](./architecture.md) at the concept/UX layer; the execution engine (manifest + reconcile + runner) stays. Decision history and research notes are in the appendices.
+> Status: **design locked 2026-07-19, not built.** Supersedes the "actions" framing in [`architecture.md`](../build/architecture.md) at the concept/UX layer; the execution engine (manifest + reconcile + runner) stays. Decision history and research notes are in the appendices.
 
 ## What we are building
 

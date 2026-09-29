@@ -1,10 +1,10 @@
 # Setup — one flow, from the box on the desk to the app
 
 > Written 2026-09-24. Supersedes the *order and surfaces* in
-> [onboarding-plan.md](onboarding-plan.md) and the Getting started room built
+> [onboarding-plan.md](../archive/onboarding-plan.md) and the Getting started room built
 > 2026-09-23 (`apps/web/src/lib/components/start/`). The paradigm's reasons —
 > Bluetooth first, four words as line of sight, pairing is LAN-only — stand;
-> see [the paradigm](../record/onboarding-paradigm.md).
+> see [the paradigm](../build/onboarding-paradigm.md).
 > Delete this file when slice 4 lands; what survives is a record and a manual page.
 
 ## The shape

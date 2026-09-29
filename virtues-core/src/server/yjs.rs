@@ -492,20 +492,8 @@ async fn save_and_materialize(
     .execute(pool)
     .await?;
 
-    // Future: trigger embedding update
-    // This is a placeholder - embeddings not implemented yet
-    on_content_updated(page_id, &content);
-
     tracing::debug!("Saved page {} ({} chars)", page_id, content.len());
     Ok(())
-}
-
-/// Placeholder for future embedding integration
-fn on_content_updated(page_id: &str, content: &str) {
-    // TODO: When embeddings are ready:
-    // - Queue embedding job with longer debounce (30-60s)
-    // - embedding_queue.send(EmbeddingJob { page_id, content, delay: 30s });
-    let _ = (page_id, content); // Silence unused warnings
 }
 
 /// Shared state for Yjs WebSocket connections
