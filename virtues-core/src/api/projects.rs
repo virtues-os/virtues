@@ -478,6 +478,7 @@ pub async fn add_project_item(pool: &PgPool, project_id: &str, req: AddProjectIt
     // member rows, so a bare row here was an add that did nothing (VIR-359).
     // Bind the chat; the insert below then keeps the membership row in step.
     if let Some(chat_id) = url.strip_prefix("/chat/") {
+        refuse_reserved_chat(chat_id)?;
         set_chat_project(pool, chat_id, Some(project_id)).await?;
     }
 
@@ -510,6 +511,20 @@ pub async fn add_project_item(pool: &PgPool, project_id: &str, req: AddProjectIt
 
     touch_project(pool, project_id).await.ok();
     Ok(item)
+}
+
+/// Setup and the interview are rooms of their own, and the interview is the
+/// most private text on the box: neither is ever filed, so a project's brief
+/// and members can't reach them and their words can't reach a project.
+fn refuse_reserved_chat(chat_id: &str) -> Result<()> {
+    if chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID
+        || chat_id == crate::api::narrative_draft::INTERVIEW_CHAT_ID
+    {
+        return Err(Error::InvalidInput(
+            "You can't file Setup or the interview in a project.".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Remove a member URL from a Project.
@@ -604,6 +619,9 @@ pub async fn reorder_project_items(
 /// in the same transaction — the chat's `project_id` and its membership rows
 /// can never diverge.
 pub async fn set_chat_project(pool: &PgPool, chat_id: &str, project_id: Option<&str>) -> Result<()> {
+    if project_id.is_some() {
+        refuse_reserved_chat(chat_id)?;
+    }
     let mut tx = pool
         .begin()
         .await
@@ -933,6 +951,21 @@ mod tests {
         }
         let detail = get_project(&pool, &a.id).await.expect("detail");
         assert_eq!(detail.chats.len(), 30);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn setup_and_the_interview_are_never_filed(pool: PgPool) {
+        let a = create_project(&pool, named("A")).await.expect("create A");
+        for id in [
+            crate::api::getting_started::GETTING_STARTED_CHAT_ID,
+            crate::api::narrative_draft::INTERVIEW_CHAT_ID,
+        ] {
+            seed_chat(&pool, id).await;
+            let url = format!("/chat/{id}");
+            assert!(add_project_item(&pool, &a.id, AddProjectItemRequest { url }).await.is_err());
+            assert!(set_chat_project(&pool, id, Some(&a.id)).await.is_err());
+            assert_eq!(chat_project(&pool, id).await, None);
+        }
     }
 
     #[sqlx::test(migrations = "./migrations")]
