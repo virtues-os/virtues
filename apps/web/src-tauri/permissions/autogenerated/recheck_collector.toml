@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recheck-collector"
+description = "Enables the recheck_collector command without any pre-configured scope."
+commands.allow = ["recheck_collector"]
+
+[[permission]]
+identifier = "deny-recheck-collector"
+description = "Denies the recheck_collector command without any pre-configured scope."
+commands.deny = ["recheck_collector"]
