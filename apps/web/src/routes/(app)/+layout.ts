@@ -1,6 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutLoad } from './$types';
 import { markInApp } from '$lib/components/setup/inApp';
+import { boxBelowFloor } from '$lib/boxApi';
 
 /** Degraded shell data for a transient box blip — keeps the app mounted. */
 const OFFLINE_DATA = {
@@ -124,6 +125,11 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 			// transient box blip never traps the user out of their app.
 			if (e && typeof e === 'object' && 'status' in e) throw e;
 		}
+
+		// The server is too old for this copy of the app: one clear screen
+		// rather than a half-working app. Asks nothing while the floor is 0.
+		// See $lib/boxApi.ts.
+		if (await boxBelowFloor(fetch)) throw redirect(303, '/server-update');
 
 		// Let in: from here `/setup` opens as a tab in the app, not the stage.
 		markInApp(true);

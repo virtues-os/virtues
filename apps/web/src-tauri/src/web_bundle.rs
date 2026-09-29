@@ -152,6 +152,14 @@ pub enum Outcome {
         box_version: String,
         have: Option<String>,
     },
+    /// The downloaded bundle is not what it says it is: its files do not hash
+    /// to the `contentHash` in its own manifest, or it carries no readable
+    /// manifest. Nothing is applied. Not poisoned either: a box mid-upgrade can
+    /// serve a torn tarball once, and the next check simply tries again.
+    Corrupt {
+        expected: Option<String>,
+        got: String,
+    },
 }
 
 /// `<app-data>/web-bundles`.
@@ -442,6 +450,9 @@ pub fn record_outcome(app_data: &Path, outcome: &Outcome) {
         Outcome::VersionUnreadable { box_version, have } => serde_json::json!({
             "state": "version_unreadable", "boxVersion": box_version, "have": have,
         }),
+        Outcome::Corrupt { expected, got } => serde_json::json!({
+            "state": "corrupt", "expected": expected, "got": got,
+        }),
     };
     let root = bundles_root(app_data);
     if fs::create_dir_all(&root).is_ok() {
@@ -644,16 +655,70 @@ pub fn check_and_apply(
         return Ok(Outcome::NoBundleOnBox);
     };
 
+    apply_tarball(app_data, &tar_gz, &remote.content_hash, shell_surface, baked_version)
+}
+
+/// Unpack a downloaded bundle, prove it is what it says, and make it active.
+///
+/// **The bundle is judged by the manifest INSIDE it, never by the offer.** The
+/// offer (`/api/web-bundle/version`) and the tarball are two requests, so a
+/// box upgraded between them hands over a different build than the one decided
+/// on, and filing it under the offer's hash would put one build in another's
+/// directory. So: read the manifest the tarball carries, recompute the hash of
+/// what was unpacked ([`content_hash`]), refuse on any mismatch, and when the
+/// tarball turns out to be a different build than offered, run the same
+/// pre-download checks on it before it goes anywhere near a pointer.
+///
+/// Until 2026-09-29 nothing re-hashed an unpacked bundle; the directory was
+/// simply named after the hash the offer claimed.
+///
+/// Split from [`check_and_apply`] so everything after the download is testable
+/// with a real archive and no box.
+fn apply_tarball(
+    app_data: &Path,
+    tar_gz: &[u8],
+    offered_hash: &str,
+    shell_surface: u32,
+    baked_version: Option<&str>,
+) -> std::io::Result<Outcome> {
+    let root = bundles_root(app_data);
+
     // Unpack beside the target, then rename into place: a half-written
     // directory must never be reachable through the pointer.
-    let staging = root.join(format!(".staging-{}", remote.content_hash));
+    let staging = root.join(format!(".staging-{offered_hash}"));
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging)?;
-    unpack(&tar_gz, &staging)?;
+    let discard = |outcome: Outcome| -> std::io::Result<Outcome> {
+        let _ = fs::remove_dir_all(&staging);
+        Ok(outcome)
+    };
+    if let Err(e) = unpack(tar_gz, &staging) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(e);
+    }
 
     if !is_usable(&staging) {
-        let _ = fs::remove_dir_all(&staging);
-        return Ok(Outcome::NoBundleOnBox);
+        return discard(Outcome::NoBundleOnBox);
+    }
+    let packed = fs::read_to_string(staging.join(MANIFEST_NAME))
+        .ok()
+        .and_then(|m| Manifest::parse(&m));
+    let actual = content_hash(&staging)?;
+    let remote = match packed {
+        Some(m) if m.content_hash == actual => m,
+        Some(m) => {
+            return discard(Outcome::Corrupt {
+                expected: Some(m.content_hash),
+                got: actual,
+            })
+        }
+        None => return discard(Outcome::Corrupt { expected: None, got: actual }),
+    };
+    if remote.content_hash != offered_hash {
+        // A different build than the one decided on: decide again, on it.
+        if let Some(stop) = decide(&root, &remote, shell_surface, baked_version) {
+            return discard(stop);
+        }
     }
 
     let target = root.join(&remote.content_hash);
@@ -867,6 +932,51 @@ pub fn read_from_overlay(app_data: &Path, path: &str) -> Option<Vec<u8>> {
 fn escapes_dest(path: &Path) -> bool {
     path.components()
         .any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::RootDir))
+}
+
+/// A bundle's content hash, exactly as `apps/web/scripts/write-bundle-manifest.mjs`
+/// computes it: SHA-256 over each file's path relative to the bundle root
+/// (`/`-separated) followed by its bytes, in sorted path order, skipping the
+/// `.gz` siblings; the first 16 hex characters. The manifest itself is skipped
+/// too: the build stamps it AFTER hashing, so it was never part of the hash.
+///
+/// Checked against a real box's shipped build (2026-09-29, 597 files): this
+/// recomputation equals the `contentHash` its manifest carries.
+fn content_hash(dir: &Path) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) -> std::io::Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if entry.file_type()?.is_dir() {
+                walk(root, &path, out)?;
+            } else if path.extension().map_or(true, |e| e != "gz") {
+                let rel = path
+                    .strip_prefix(root)
+                    .unwrap_or(&path)
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                if rel != MANIFEST_NAME {
+                    out.push(rel);
+                }
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    walk(dir, dir, &mut files)?;
+    files.sort();
+    let mut hash = Sha256::new();
+    for rel in &files {
+        hash.update(rel.as_bytes());
+        hash.update(fs::read(dir.join(rel))?);
+    }
+    let digest = hash.finalize();
+    let mut hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    hex.truncate(16);
+    Ok(hex)
 }
 
 /// Unpack a gzipped tar into `dest`, skipping any entry that would escape it.
@@ -1390,6 +1500,107 @@ mod tests {
         unpack(&buf, &dest).unwrap();
         assert_eq!(fs::read_to_string(dest.join("index.html")).unwrap(), "<html>hi</html>");
         assert_eq!(fs::read_to_string(dest.join("_app/chunk.js")).unwrap(), "console.log(1)");
+    }
+
+    /// A gzipped tar of `files`, as the box's `/api/web-bundle/tarball` builds it.
+    fn tarball(files: &[(String, String)]) -> Vec<u8> {
+        let src = tmp();
+        for (path, body) in files {
+            let p = src.join(path);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, body).unwrap();
+        }
+        let mut buf = Vec::new();
+        {
+            let enc = flate2::write::GzEncoder::new(&mut buf, flate2::Compression::fast());
+            let mut b = tar::Builder::new(enc);
+            b.append_dir_all(".", &src).unwrap();
+            b.into_inner().unwrap().finish().unwrap();
+        }
+        buf
+    }
+
+    /// A small bundle whose manifest claims `hash`. The `.gz` file is an
+    /// encoding of a real one, not content, so it never enters the hash.
+    fn bundle(version: &str, hash: &str) -> Vec<(String, String)> {
+        vec![
+            ("index.html".into(), "<html>i</html>".into()),
+            ("200.html".into(), "<html>f</html>".into()),
+            ("_app/immutable/a.js".into(), "console.log(1)".into()),
+            ("_app/immutable/a.js.gz".into(), "gzipped".into()),
+            (
+                MANIFEST_NAME.into(),
+                format!(r#"{{"version":"{version}","contentHash":"{hash}","minShellVersion":1}}"#),
+            ),
+        ]
+    }
+
+    /// What `bundle`'s files really hash to, computed with write-bundle-manifest.mjs's
+    /// own algorithm in Node. Pinned here so this test proves the two
+    /// implementations AGREE rather than that Rust agrees with itself: if it
+    /// breaks, every OTA would be refused as corrupt. Fix the drift, never the
+    /// constant.
+    const BUNDLE_HASH: &str = "6519392619004f08";
+
+    #[test]
+    fn the_hash_matches_the_build_script() {
+        let d = tmp();
+        for (path, body) in bundle("0", "anything") {
+            let p = d.join(path);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, body).unwrap();
+        }
+        assert_eq!(content_hash(&d).unwrap(), BUNDLE_HASH);
+    }
+
+    #[test]
+    fn a_bundle_that_hashes_to_its_manifest_is_applied() {
+        let app = tmp();
+        let tar = tarball(&bundle("0.2.0", BUNDLE_HASH));
+        let out = apply_tarball(&app, &tar, BUNDLE_HASH, 1, Some("0.1.0")).unwrap();
+        assert_eq!(out, Outcome::Applied { content_hash: BUNDLE_HASH.into() });
+        assert_eq!(read_pointer(&bundles_root(&app), PTR_ACTIVE).as_deref(), Some(BUNDLE_HASH));
+    }
+
+    #[test]
+    fn files_that_do_not_match_their_manifest_are_refused() {
+        let app = tmp();
+        let fake = "0000000000000000";
+        let tar = tarball(&bundle("0.2.0", fake));
+        let out = apply_tarball(&app, &tar, fake, 1, Some("0.1.0")).unwrap();
+        assert_eq!(
+            out,
+            Outcome::Corrupt { expected: Some(fake.into()), got: BUNDLE_HASH.into() }
+        );
+        let root = bundles_root(&app);
+        assert_eq!(read_pointer(&root, PTR_ACTIVE), None, "nothing may become active");
+        assert!(!root.join(fake).exists());
+        assert!(!root.join(format!(".staging-{fake}")).exists(), "staging is cleaned up");
+    }
+
+    #[test]
+    fn a_different_build_than_offered_goes_under_its_own_hash() {
+        // The box was upgraded between the offer and the download. The
+        // tarball is a sound bundle, just not the one decided on: it is filed
+        // under the hash it actually has, after passing the same checks.
+        let app = tmp();
+        let tar = tarball(&bundle("0.3.0", BUNDLE_HASH));
+        let out = apply_tarball(&app, &tar, "offered0000000000", 1, Some("0.1.0")).unwrap();
+        assert_eq!(out, Outcome::Applied { content_hash: BUNDLE_HASH.into() });
+        let root = bundles_root(&app);
+        assert!(root.join(BUNDLE_HASH).exists());
+        assert!(!root.join("offered0000000000").exists());
+    }
+
+    #[test]
+    fn a_different_build_that_moved_backward_is_refused() {
+        // Same race, but the box went BACK between the two requests: the
+        // forward-only gate judges what arrived, not what was offered.
+        let app = tmp();
+        let tar = tarball(&bundle("0.0.9", BUNDLE_HASH));
+        let out = apply_tarball(&app, &tar, "offered0000000000", 1, Some("0.1.0")).unwrap();
+        assert!(matches!(out, Outcome::BoxBehind { .. }), "{out:?}");
+        assert_eq!(read_pointer(&bundles_root(&app), PTR_ACTIVE), None);
     }
 
     #[test]
