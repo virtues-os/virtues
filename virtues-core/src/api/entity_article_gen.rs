@@ -26,12 +26,10 @@
 //! spending on them.
 //!
 //! Asking for the article DOES enroll it in maintenance: the column defaults
-//! to `auto` and nothing here overrides it. This paragraph used to claim the
-//! opposite — "none is maintained until they set `maintenance` on it …
-//! different decisions and get different switches" — which no schema, API or
-//! UI has ever supported. There is one switch, and an article worth writing is
-//! worth keeping true; a stale article about someone you now see weekly is a
-//! WRONG article, which is the failure this design fears most.
+//! to `auto` and nothing here overrides it. There is one switch, because an
+//! article worth writing is worth keeping true; a stale article about someone
+//! you now see weekly is a WRONG article, which is the failure this design
+//! fears most.
 //!
 //! What makes that safe is not a second consent but four small gates, all in
 //! `wiki_editor`: `maintenance <> 'never'`, no human edit inside six hours,
@@ -50,48 +48,6 @@ const DOSSIER_RECORDS: usize = 40;
 
 /// Hard cap on dossier characters.
 const MAX_TOTAL_CHARS: usize = 14000;
-
-/// Two measured failures shaped this prompt, and both were the prompt's own
-/// doing rather than the model's — see the note above `call_virtues_api`.
-///
-/// **"the owner" appeared in half the articles** (10 of the first 20 written on
-/// a real box). The old first paragraph said `"You"/"your" in the article
-/// always refers to the wiki's owner`, and the word leaked straight through:
-/// "Maya is a recurring presence in the owner's digital life". An instruction
-/// about a word teaches the word. The rule is now stated without ever naming
-/// the reader as a role, and carries the wrong/right pair instead.
-///
-/// **"the record" appeared in 20 of 20**, and in 8 of 8 from every model
-/// benched against it — so it was never a model tic. Two lines asked for it:
-/// "then how it shows up in the record", and "if the record is one-sided …
-/// say so plainly". A slot gets filled; that is what a slot is for. Both are
-/// gone, replaced by slots that are about the subject, and the reason the
-/// article must not describe its own evidence is now stated, because a rule
-/// with a reason survives paraphrase and a bare prohibition gets routed
-/// around.
-const SYSTEM_PROMPT: &str = r#"You are the editor of a private wiki about one person's life — their own personal wikipedia, readable only by them. You are writing the article for ONE subject in that wiki: a person they know, a place they go, or an organization in their life.
-
-WHO IS SPEAKING, AND TO WHOM:
-- The article is written TO the person whose wiki this is. In every sentence they are "you" and "your". They are never described in the third person and never named as a role.
-- The subject is written about in the third person: she, he, they, it.
-- Not "Maya is a recurring presence in the owner's digital life." Instead: "Maya writes to you most mornings, usually before you are up."
-
-You are given the subject's structured facts, the raw records that reference it (messages, emails, calendar events, visits, transactions), and narrated days it appears in.
-
-WRITE:
-- Plain paragraphs in the register of a well-edited encyclopedia that happens to be about a private life: precise, warm, unhurried. Markdown is allowed but no headings and no lists.
-- LENGTH FOLLOWS THE EVIDENCE. A subject with years of material behind it earns three or four paragraphs; one with a handful of traces earns a few sentences and stops. Never pad a thin subject — and never compress a rich one, because the person most present in a life must not come out with the shortest article.
-- Open with who or what the subject is to you. Then what recurs: when, where, and what about. Then what has changed, where the material shows a change.
-- Write about the SUBJECT, never about the evidence. The records are printed on the page directly beneath this article, so a sentence describing them is a sentence the reader is about to read twice. Nothing about data, sources, volumes, messages-as-a-category, or what is and is not documented.
-- Concrete over general, every time: a thing she actually said, the street you actually walk, the hour you are usually there. A sentence that could be true of a hundred people is a wasted sentence.
-- Claim only what the material carries. Never invent feelings, motives, or events. No flattery, no horoscope lines.
-- The messages, the exchanges, the texts, the log: these are not objects the article may talk about. Write what was said and what was done.
-- Patterns, never essence: "your lunches with her tend to…", never "she is the kind of person who…".
-- LINK entities: when you mention an entity listed under "Entities you may link", link it by copying its exact markdown link, e.g. [Maya](/person/person_ab12) or [March 3, 2026](/day/day_2026-03-03) for a listed day. Link each once, on first mention. Never invent a link or link anything not listed.
-- This is the article's FIRST edition. Write it whole. It is maintained afterwards by editing, not by rewriting, so do not write anything that would have to be replaced wholesale to stay true.
-
-Output only the article."#;
-
 /// One due entity: id + which table it lives in.
 #[derive(Debug, Clone)]
 struct DueEntity {
@@ -140,7 +96,14 @@ pub async fn write_entity_article_now(
         "writing first entity article (user-requested)"
     );
 
-    let raw = call_virtues_api(pool, &prompt).await?;
+    // The constitution and the entity brief, plus the owner's standing rules:
+    // the same law the editor revises under, so a draft and its later
+    // revisions cannot be written to different rules.
+    let system = crate::api::wiki_editor::system_prompt(
+        subject_type,
+        &crate::api::wiki_editor::standing_rules(pool).await?,
+    )?;
+    let raw = call_virtues_api(pool, &system, &prompt).await?;
     let article = parse_article(&raw);
     // The allowlist is enforced here, not requested in the prompt. See
     // `sanitize_links`: asked nicely, the model got 0 of 3 entity links right.
@@ -428,12 +391,12 @@ fn cap(s: &str, n: usize) -> String {
 ///
 /// The shared completion helper resolves the Lite slot through the owner's
 /// background pin — that pin exists exactly for jobs like this one.
-async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
+async fn call_virtues_api(pool: &PgPool, system_prompt: &str, user_prompt: &str) -> Result<String> {
     crate::virtues_api::completion::system_completion(
         pool,
         virtues_registry::models::ModelSlot::Lite,
         "entity_article",
-        SYSTEM_PROMPT,
+        system_prompt,
         user_prompt,
         // Arrangement of the person's own words: thinking off, no cap. The
         // 900-token literal that sat here was a guess that stopped being
