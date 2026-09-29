@@ -47,6 +47,7 @@ pub mod storage;
 pub mod timezone;
 pub mod virtues_api;
 pub mod tools;
+pub mod transcript;
 pub mod types;
 
 // Re-export main types

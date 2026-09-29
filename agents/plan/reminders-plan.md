@@ -10,7 +10,7 @@ unreachable, and both screens say so — which is true, so phase 1 is safe to
 ship ahead of it. Nothing sends yet.
 
 An applet can be woken, can check a condition, and can write to the record.
-It cannot *reach the owner*. `applets-overhaul-plan.md` names this precisely
+It cannot *reach the owner*. `applets-next-plan.md` (Persona) names this precisely
 when it marks Persona "v2 — not yet authorable": *no inbound wake, no channel,
 no send capability — a model following the recipe today authors dead
 manifests.* This plan builds the channel.
@@ -37,7 +37,7 @@ that the owner wrote it.
 
 ## What is already decided, and not restated here
 
-- **Wake and condition** — `applets-overhaul-plan.md` §Vocabulary. *Trigger =
+- **Wake and condition** — `agents/record/applets.md` (wake/gate/life). *Trigger =
   who wakes you; condition = what you check once awake.* Data triggers
   (`trigger=data:data_location` + `condition="speed < 5"`) are phase 4 there.
   This plan **depends on** that phase and adds nothing to it.
@@ -46,8 +46,8 @@ that the owner wrote it.
   the authoring model must simply fill it, and the UI must show what it chose.
 - **Rate limiting** — `max_runs` per hour/day, already marked mandatory before
   data triggers light up composition loops.
-- **Chat authoring** — `applet-authoring-plan.md`.
-- **The iroh socket wedge** — `reach-reliability-plan.md` and iroh#4289, still
+- **Chat authoring** — `agents/record/applets.md`.
+- **The iroh socket wedge** — `agents/record/reach-reliability.md` and iroh#4289, still
   open upstream as of 2026-09-22.
 
 ## Delivery
@@ -237,8 +237,8 @@ name is how `credentials` ended up holding two opposite trust directions.
    local-p8 path, full response classification. **Plaintext payload** — the
    push carries the text and iOS displays it, no extension involved.
 3. **Reminders.** The applet archetype, the evaluator invariants, the authoring
-   loop, the Devices/applet surfaces. **Gated on data triggers** (phase 4 of
-   `applets-overhaul-plan.md`) for anything ingest-shaped; cron + condition
+   loop, the Devices/applet surfaces. **Gated on data triggers** (see
+   `applets-next-plan.md`) for anything ingest-shaped; cron + condition
    covers the rest at a latency cost, exactly as that plan says.
 
 **v2, deferred on purpose: the encrypted payload + notification-service

@@ -28,7 +28,7 @@
 > atlas ↔ app ↔ box coordination. The verdict that produced this plan: the
 > individual setup steps are justified and documented; the overengineering is
 > the **wire interleave** — BLE → atlas → BLE → LAN → BLE → iroh — which
-> exists only because the keystone [linking-plan.md](linking-plan.md) already
+> exists only because the keystone [linking-plan.md](../archive/linking-plan.md) already
 > prescribes (RPC 0x82 ClaimGrant) was built box-side on 2026-08-11 and never
 > finished app/atlas-side. Every bench failure that day was a symptom: a BLE
 > session dying under a minutes-long OTP, a pair write hanging on the dead

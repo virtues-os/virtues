@@ -72,7 +72,7 @@ auth = { kind = "api_key", fields = ["token"] }
 # client makes. The two values are the session: `auth_token` (the login) and
 # `ct0` (the CSRF token, sent back as `x-csrf-token`). A spike proved the box
 # can replay this from its own IP with nothing else — no `x-client-transaction-id`,
-# no `cf_clearance` (agents/plan/bookmarks-plan.md §6). Pasted for now; a
+# no `cf_clearance` (agents/record/bookmarks.md). Pasted for now; a
 # collector that harvests both from the browser cookie store is the same secret
 # by another door.
 [[source]]
@@ -92,7 +92,7 @@ auth = { kind = "api_key", fields = ["auth_token", "ct0"] }
 # painful to find by hand. If it proves necessary, the collector harvest (which
 # sees the live request) supplies it as an optional `www_claim` secret the
 # applet already reads. Each saved post's image is copied into Drive (its CDN
-# URL expires), so the image pass can read it (agents/plan/bookmarks-plan.md §5).
+# URL expires), so the image pass can read it (agents/record/bookmarks.md).
 [[source]]
 id = "instagram"
 display_name = "Instagram"

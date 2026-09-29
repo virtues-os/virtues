@@ -6,7 +6,7 @@
 //! 800 and its pagination dies after a few pages), and this is not that API: it
 //! is the client's own request, made from the box.
 //!
-//! A spike (agents/plan/bookmarks-plan.md §6) established the two things that
+//! A spike (agents/record/bookmarks.md) established the two things that
 //! make this cheap and durable:
 //!
 //!   - The box can replay it from its own IP with a plain HTTP client. No

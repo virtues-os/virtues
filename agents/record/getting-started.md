@@ -6,7 +6,7 @@ started is a single chat rather than a page of steps. Supersedes
 before it ([archived](../archive/getting-started-page-plan.md)).
 
 Setup — pairing, the airlock, claiming the box — is a different subject and
-stays with [onboarding-paradigm](onboarding-paradigm.md). This begins where
+stays with [onboarding-paradigm](../build/onboarding-paradigm.md). This begins where
 the app opens.
 
 ---

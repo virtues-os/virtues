@@ -110,7 +110,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/network/status", get(crate::api::network::status_handler))
         .route("/api/network/scan",   get(crate::api::network::scan_handler))
         .route("/api/network/join",   post(crate::api::network::join_handler))
-        // The rendezvous, named and switchable (open-relay-plan §Work 2).
+        // The rendezvous, named and switchable (agents/record/open-relay.md).
         .route(
             "/api/network/relay",
             get(crate::api::network::relay_status_handler)

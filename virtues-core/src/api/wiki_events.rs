@@ -3,7 +3,7 @@
 //!
 //! Event resolution builds this nightly out of incomplete, out-of-order and
 //! sometimes contradictory evidence; the design record is
-//! `agents/record/event-timeline.md`. What lives here is the CRUD around it:
+//! `agents/build/event-timeline.md`. What lives here is the CRUD around it:
 //! reading a day's events, and the person's own corrections, which are the
 //! rows that must never be overwritten by the next nightly pass.
 

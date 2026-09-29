@@ -13,7 +13,7 @@
 -- newest day that has data" -- so a box seeded any later than about February
 -- opens onto nothing at all, with the newest data months stale. That is what an
 -- App Store reviewer would have met through the demo box, and what a developer
--- has been meeting since February (agents/build/review-access-plan.md).
+-- has been meeting since February (agents/build/review-access.md).
 --
 -- ANCHOR ON THE RICHEST DAY, NOT THE LAST ONE. The 12-week narrative is almost
 -- entirely `wiki_events` -- 741 rows of five-to-eleven a day, and essentially no

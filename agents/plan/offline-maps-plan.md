@@ -6,7 +6,7 @@ serves the files to boxes, the monthly cut job produces them, and the box
 downloads what its owner's history calls for. No box has files yet because the
 cut has never run on the real server, which is still being provisioned
 (agents/plan/cloud-consolidation-plan.md). Released maps have no basemap until
-then ([record](../record/map-atlas-plan.md)). When it ships, delete this plan
+then ([record](../record/map-tiles.md)). When it ships, delete this plan
 and rewrite the record.
 
 ## The goal

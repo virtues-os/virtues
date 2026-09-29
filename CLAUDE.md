@@ -217,15 +217,16 @@ while `make dev` holds it. That is contention, not a hang; wait it out.
 ## Where writing goes
 
 Two roots, split by who reads them. Put a document in the wrong one and it
-either rots unread or gets published to strangers.
+either rots unread or gets published to strangers. Only `docs/` publishes; the
+repo is public, so `agents/` is readable on GitHub all the same.
 
-| Path | For | Publishes |
-|---|---|---|
-| `docs/` | people **running** a box — the manual | yes, `virtues.com/docs` |
-| `agents/build/` | whoever is **building** — contracts, vocabularies, style, our runbooks | no |
-| `agents/record/` | what happened: audits, measured findings, design records of shipped work | yes, `virtues.com/docs/notes` |
-| `agents/plan/` | designs for things being built | no |
-| `agents/archive/` | superseded, kept for the reasoning | no |
+| Path | For |
+|---|---|
+| `docs/` | people **running** a box — the manual, published at `virtues.com/docs` |
+| `agents/build/` | whoever is **building** — contracts, vocabularies, style, our runbooks |
+| `agents/record/` | what happened: audits, measured findings, design records of shipped work |
+| `agents/plan/` | designs for things being built |
+| `agents/archive/` | superseded, kept for the reasoning |
 
 Two questions place anything: **am I describing or prescribing?** and **will
 this stop being true when we ship?** Describing + permanent is a record;
@@ -237,8 +238,10 @@ The rules that keep it from rotting back into the 63-file pile this replaced:
 - **Delete a plan when the thing ships.** What survives is a record and a
   manual page, never a plan describing an intention that is now a fact. Nothing
   ever left the old `docs/`, which is exactly why it grew unreadable.
-- **Every doc is listed** in its directory's README; `tools/check-manual.py`
-  enforces it, and for `agents/record/` an unlisted doc does not publish at all.
+- **Every doc is listed** in its directory's README and every relative link
+  resolves; `tools/check-manual.py` enforces both. Moving a doc between
+  directories means sweeping its citations, including code comments
+  (`git grep <name>`).
 - **Write against the code, never against another doc.** On 2026-08-28 three
   audits found docs here wrong in ways that had already reached a user-facing
   page — a config path that does not exist on a real box, SQL against a dropped
@@ -300,7 +303,7 @@ de-identification unchanged.
 
 ### Rules that load when they apply
 
-Three bodies of law used to live here and now load only when you open a file
+Four bodies of law used to live here and now load only when you open a file
 they govern (`.claude/rules/`, `paths:` frontmatter). They are not optional and
 not lesser — they are conditional, and an always-on file is where a conditional
 rule goes to be ignored:
@@ -310,6 +313,7 @@ rule goes to be ignored:
 | `columns.md` | `*.sql`, Rust under `virtues-core/` | the seven-names-for-one-thing law, and the sweep a rename needs because `sqlx::query` is untyped |
 | `query-errors.md` | any `*.rs` | why `.ok()` on a `fetch_*` turns a broken query into a plausible number |
 | `migrations.md` | `virtues-core/migrations/**` | claiming a number, the pre-squash citations, and the `.sql.pending` rename that has to happen |
+| `copy.md` | Svelte/TS under `apps/web/src`, the airlock HTML, API/server Rust, `docs/` | the claim rules and register for any prose a person reads on screen, from `agents/build/voice.md` |
 
 If you are editing one of those files, assume the rule is already in front of
 you. If you are reasoning about them from elsewhere, go read it.

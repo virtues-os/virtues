@@ -4,7 +4,7 @@ Replaces the hand-rolled frp relay with **iroh-relay 1.0** on the existing
 your relay host (`ssh virtues-relay`, `203.0.113.10`). The relay moves QUIC
 ciphertext it cannot read; it does see which EndpointIds are talking, from which
 addresses, and how much traffic passes (see the comment in `config.toml` before
-writing any copy about it). **Admission is open** (open-relay-plan, 2026-08-31):
+writing any copy about it). **Admission is open** (agents/record/open-relay.md, 2026-08-31):
 the atlas active-subscription callout is deleted; per-client rate limits in
 `config.toml` bound abuse.
 Boxes home on it and are reached by EndpointId — LAN-direct → hole-punched →

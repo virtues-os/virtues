@@ -2,12 +2,12 @@
 //!
 //! - `POST /relay/config { api_key } -> { relay_url }` — the box learns which
 //!   relay to home on. Any linked box; identity, not billing (0017 /
-//!   open-relay-plan §Work 1b).
+//!   agents/record/open-relay.md).
 //!
 //! **Two endpoints were deleted here and neither should come back casually.**
 //!
 //! `POST /relay/authorize` — the per-connection admission callout iroh-relay
-//! used to make (open-relay-plan, 2026-08-31). It was both a paywall on the
+//! used to make (agents/record/open-relay.md, 2026-08-31). It was both a paywall on the
 //! connectivity substrate and a live linkage between account state and
 //! connection metadata. The relay now admits everyone and defends itself with
 //! rate limits; the real security boundary always was the box's own EndpointId
