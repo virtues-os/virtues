@@ -45,11 +45,7 @@
   ],
   "remote": {
     "urls": [
-      "https://virtues.com/*",
-      "https://*.virtues.com/*",
-      "https://localhost:*/*",
-      "http://localhost:*/*",
-      "http://*.virtues:*/*"
+      "http://localhost:*/*"
     ]
   }
 }

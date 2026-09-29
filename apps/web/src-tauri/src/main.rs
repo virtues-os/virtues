@@ -224,6 +224,56 @@ async fn diagnose_box() -> String {
     .unwrap_or_else(|_| "box_unreachable".to_string())
 }
 
+/// Whether `url` is one of the pages this window exists to show: the baked
+/// app (`tauri://localhost` on macOS and Linux, `http(s)://tauri.localhost` on
+/// Windows) or the box through the reach loopback on `loopback_port`.
+fn is_own_page(url: &url::Url, loopback_port: u16) -> bool {
+    match url.scheme() {
+        "tauri" => url.host_str() == Some("localhost"),
+        "about" => matches!(url.as_str(), "about:blank" | "about:srcdoc"),
+        "http" | "https" => match url.host_str() {
+            Some("tauri.localhost") => true,
+            Some("localhost") | Some("127.0.0.1") => {
+                url.scheme() == "http" && url.port() == Some(loopback_port)
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod own_page_tests {
+    use super::is_own_page;
+
+    fn own(u: &str) -> bool {
+        is_own_page(&url::Url::parse(u).unwrap(), 7117)
+    }
+
+    #[test]
+    fn the_app_and_the_tunnel_are_allowed() {
+        assert!(own("tauri://localhost/setup"));
+        assert!(own("http://tauri.localhost/connect.html#reset"));
+        assert!(own("https://tauri.localhost/"));
+        assert!(own("http://localhost:7117/setup?x=1"));
+        assert!(own("http://127.0.0.1:7117/"));
+        assert!(own("about:blank"));
+        assert!(own("about:srcdoc"));
+    }
+
+    #[test]
+    fn everything_else_is_refused() {
+        assert!(!own("https://virtues.com/docs"));
+        assert!(!own("https://atlas.virtues.com/"));
+        assert!(!own("http://localhost:5173/")); // another local server
+        assert!(!own("https://localhost:7117/"));
+        assert!(!own("http://box.virtues:8000/"));
+        assert!(!own("file:///Users/nick/Downloads/a.pdf"));
+        assert!(!own("tauri://evil.example/"));
+        assert!(!own("data:text/html,hi"));
+    }
+}
+
 #[cfg(test)]
 mod session_probe_tests {
     use super::classify_session_response;
@@ -1648,28 +1698,32 @@ fn main() {
                 // HTML5 ondrop/dataTransfer.files never fires. Disable it to let
                 // drops fall through to the web layer (works in-browser already).
                 .disable_drag_drop_handler()
-                // The last line of defence for a misaimed file drop. With the OS
-                // handler disabled (above), a file dropped anywhere the web layer
-                // does not claim reaches the webview as a plain navigation, and
-                // the webview happily REPLACES the app with WebKit's own
-                // PDF/image viewer. This window has no back button, no menu bar
-                // and no address bar, so that is a one-way trip: the app is gone
-                // until relaunch (2026-08-17). `(app)/+layout.svelte` swallows
-                // stray drops in the web layer, but that only covers pages the
-                // SPA has booted — connect.html and the pre-mount window are
-                // not, and a guard against losing the entire app belongs below
-                // the web layer anyway.
+                // The window may only ever show our own pages: the baked app
+                // and the box through the loopback tunnel. Everything else is
+                // refused, silently. Two reasons, both below the web layer:
                 //
-                // Denying the `file:` scheme specifically, not allow-listing our
-                // own origins: the app's own URL differs per platform (`tauri://
-                // localhost` on macOS/Linux, `http://tauri.localhost` on
-                // Windows) plus `http://localhost:7117` for the box, so an
-                // allow-list is the fragile spelling. Tauri never serves the
-                // frontend over `file:` on any platform, so nothing legitimate
-                // is caught. A denied navigation is simply inert — the drop
-                // does nothing, which is what dropping a PDF on the sidebar
-                // should do.
-                .on_navigation(|url| url.scheme() != "file")
+                // - The remote origins in capabilities/default.json get the
+                //   app's commands (pairing, installing the collector). A page
+                //   from anywhere else that reached this window by a redirect
+                //   or a link without target=_blank would be one step from
+                //   them if the ACL list were ever widened again.
+                // - A file dropped where the web layer does not claim it
+                //   arrives as a `file:` navigation, and WebKit would REPLACE
+                //   the app with its PDF/image viewer. This window has no back
+                //   button or address bar, so that was a one-way trip until
+                //   relaunch (2026-08-17). A denied navigation is inert.
+                //
+                // On macOS wry asks this for EVERY frame, iframes included, so
+                // a refusal must not open anything elsewhere: a sandboxed face
+                // navigating its own frame would otherwise pop browser tabs.
+                // Links meant for the browser go through `openExternal`.
+                .on_navigation(|url| {
+                    let own = is_own_page(url, tauri_plugin_reach::loopback_port());
+                    if !own {
+                        eprintln!("[nav] refused {}", url.scheme());
+                    }
+                    own
+                })
                 .build()?;
 
             // Only used in debug; silence the release-build unused warning.
