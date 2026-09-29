@@ -2,9 +2,9 @@
 	import type { Tab } from '$lib/tabs/types';
 	import type { ProjectChat, ProjectDetail, ProjectGraph, ProjectItemRole } from '$lib/api/client';
 	import Icon from '$lib/components/Icon.svelte';
-	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
-	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
-	import { formatRelativeTimestamp } from '$lib/utils/dateUtils';
+	import ProjectHeader from '$lib/components/projects/ProjectHeader.svelte';
+	import ProjectChats from '$lib/components/projects/ProjectChats.svelte';
+	import ProjectSection from '$lib/components/projects/ProjectSection.svelte';
 	import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 	import { Button, IconButton, TextAction } from '$lib';
 	import { projectStore } from '$lib/stores/project.svelte';
@@ -12,11 +12,8 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import RefPicker from '$lib/components/RefPicker.svelte';
-	import IconPicker from '$lib/components/IconPicker.svelte';
-	import MenuItem from '$lib/components/MenuItem.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import type { FilterDef } from '$lib/components/datagrid/types';
-	import { Popover } from '$lib/floating';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import { toast } from 'svelte-sonner';
 	import {
@@ -26,19 +23,13 @@
 		getProjectGraph
 	} from '$lib/api/client';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
-	import { projectColor } from '$lib/sidebar/pin-colors';
 	import {
-		archiveProject,
-		deleteProject,
 		droppedRefUrl,
 		fileIntoProject,
 		memberIcon,
 		memberName,
-		newChatInProject,
-		openProjects,
 		projectMemberUrl,
 		removeFromProject,
-		unarchiveProject,
 	} from '$lib/utils/projectActions';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
 
@@ -234,10 +225,6 @@
 		}))
 	);
 
-	// A few recent chats up front; the rest one click away.
-	const CHATS_SHOWN = 5;
-	let chatsExpanded = $state(false);
-	const shownChats = $derived(chatsExpanded ? roomChats : roomChats.slice(0, CHATS_SHOWN));
 
 	/**
 	 * The entity facets, expressed as one of the grid's own filters instead of a
@@ -423,42 +410,6 @@
 		}
 	}
 
-	/** A chat's menu here: open it, move it to another project, take it out. */
-	function chatMenu(chat: ProjectChat, e: MouseEvent) {
-		e.preventDefault();
-		const url = `/chat/${chat.id}`;
-		const elsewhere = getProjectMenuItems(url).map((i) => ({
-			...i,
-			submenu: i.submenu?.filter((s) => s.id !== 'remove-from-project')
-		}));
-		contextMenu.show({ x: e.clientX, y: e.clientY }, [
-			{ id: 'open', label: 'Open', icon: 'ri:chat-3-line', action: () => openChat(chat) },
-			{
-				id: 'open-beside',
-				label: 'Open beside',
-				icon: 'ri:layout-column-line',
-				action: () => void windowShellStore.openRouteBeside(url, chat.title)
-			},
-			...elsewhere,
-			{
-				id: 'remove',
-				label: 'Remove from project',
-				icon: 'ri:close-line',
-				dividerBefore: true,
-				variant: 'destructive',
-				action: () => removeMember(url)
-			}
-		]);
-	}
-
-	/** A chat opens in the window you are in: it is where you go, not a reference beside. */
-	function openChat(chat: ProjectChat) {
-		windowShellStore.openTabFromRoute(`/chat/${chat.id}`, {
-			label: chat.title || 'Chat',
-			focusExisting: true
-		});
-	}
-
 	async function retryExtraction(url: string) {
 		const fileId = url.split('/')[2];
 		if (!fileId) return;
@@ -525,72 +476,6 @@
 		await loadGraph();
 	}
 
-	// ---- Title + brief: always live, no edit mode ----------------------------
-	/**
-	 * The subtitle is the project's *brief* (`instructions`): a standing
-	 * direction the assistant follows in every chat in this project.
-	 *
-	 * No auto-generated summary: the chats and material are directly below
-	 * and fully legible, so a generated description would only restate what's
-	 * visible. What can't be derived is what the project is *for*.
-	 */
-	let nameDraft = $state('');
-	let briefDraft = $state('');
-	let nameFocused = $state(false);
-	let briefFocused = $state(false);
-	$effect(() => {
-		if (!detail) return;
-		if (!nameFocused) nameDraft = detail.name;
-		if (!briefFocused) briefDraft = detail.instructions ?? '';
-	});
-
-	async function commitName() {
-		nameFocused = false;
-		const id = projectId;
-		if (!id || !detail) return;
-		const name = nameDraft.trim();
-		if (!name) {
-			nameDraft = detail.name;
-			return;
-		}
-		if (name === detail.name) return;
-		await projectStore.update(id, { name });
-	}
-
-	async function commitBrief() {
-		briefFocused = false;
-		const id = projectId;
-		if (!id || !detail) return;
-		const brief = briefDraft.trim() || null;
-		if (brief === (detail.instructions ?? null)) return;
-		await projectStore.update(id, { instructions: brief });
-	}
-
-
-	// ---- Icon ----------------------------------------------------------------
-	let iconOpen = $state(false);
-	let overflowOpen = $state(false);
-	async function setIcon(icon: string | null) {
-		const id = projectId;
-		if (!id) return;
-		await projectStore.update(id, { icon });
-	}
-
-	/**
-	 * The project's color, in the same swatch row as its icon.
-	 *
-	 * Stored in `accent_color`, which predates the token rule and still holds
-	 * raw hex for projects colored before it — `accentCss` resolves either, so
-	 * old values keep working and new ones are theme-correct. Writing a token
-	 * key here converts a project the first time it's recolored, which is the
-	 * only migration that doesn't guess on the user's behalf.
-	 */
-	async function setAccent(color: string | null) {
-		const id = projectId;
-		if (!id) return;
-		await projectStore.update(id, { accent_color: color });
-	}
-
 	// ---- Membership ----------------------------------------------------------
 	let pickerPos = $state<{ x: number; y: number } | null>(null);
 	function openPicker(e: MouseEvent) {
@@ -605,23 +490,6 @@
 		// The shared verb: it says what happened, and why when it fails.
 		await fileIntoProject(detail, url);
 		await loadGraph();
-	}
-
-	// ---- Archive -------------------------------------------------------------
-	// Reversible, so no confirm. The project stays open in this tab, marked.
-	async function toggleArchive() {
-		if (!detail) return;
-		if (detail.archived_at) await unarchiveProject(detail);
-		else await archiveProject(detail);
-	}
-
-	// ---- Delete --------------------------------------------------------------
-	// No confirm: a trip to Recently deleted, with the Undo in the toast. Its
-	// chats, pages and files stay where they are. The page it was on goes, so
-	// the window lands on the list.
-	async function doDelete() {
-		if (!detail) return;
-		if (await deleteProject(detail)) openProjects();
 	}
 
 </script>
@@ -651,121 +519,7 @@
 			}}
 			ondrop={handleDrop}
 		>
-			<header class="head">
-				<div class="head-main">
-					<Popover bind:open={iconOpen} placement="bottom-start">
-						{#snippet trigger({ toggle }: { toggle: () => void })}
-							<button
-								class="project-icon tinted"
-								style={`--room-accent: ${projectColor(detail)}`}
-								title="Change icon and color"
-								aria-label="Change icon and color"
-								onclick={toggle}
-							>
-								<ProjectGlyph project={detail} size={22} inherit />
-							</button>
-						{/snippet}
-						{#snippet children({ close }: { close: () => void })}
-							<IconPicker
-							value={detail?.icon ?? null}
-							onSelect={setIcon}
-							{close}
-							color={detail?.accent_color ?? null}
-							onColorSelect={setAccent}
-						/>
-						{/snippet}
-					</Popover>
-
-					<div class="head-text">
-						<textarea
-							class="title-input font-serif"
-							bind:value={nameDraft}
-							rows="1"
-							placeholder="Untitled project"
-							onfocus={() => (nameFocused = true)}
-							onblur={commitName}
-							onkeydown={(e) => {
-								if (e.key === 'Enter') {
-									e.preventDefault();
-									e.currentTarget.blur();
-								}
-								if (e.key === 'Escape') {
-									nameDraft = detail?.name ?? '';
-									e.currentTarget.blur();
-								}
-							}}
-						></textarea>
-						<textarea
-							class="desc-input"
-							bind:value={briefDraft}
-							rows="1"
-							placeholder="What this project is for. The assistant follows this in every chat here."
-							onfocus={() => (briefFocused = true)}
-							onblur={commitBrief}
-							onkeydown={(e) => {
-								if (e.key === 'Escape') {
-									briefDraft = detail?.instructions ?? '';
-									e.currentTarget.blur();
-								}
-							}}
-						></textarea>
-</div>
-
-					<div class="head-actions">
-						<Button
-							variant="secondary"
-							size="sm"
-							icon="ri:chat-new-line"
-							onclick={() => detail && newChatInProject(detail)}>New chat</Button
-						>
-						<Popover bind:open={overflowOpen} placement="bottom-end">
-							{#snippet trigger({ toggle }: { toggle: () => void })}
-								<IconButton
-									icon="ri:more-line"
-									label="More project actions"
-									expanded={overflowOpen}
-									haspopup="menu"
-									onclick={toggle}
-								/>
-							{/snippet}
-							{#snippet children({ close }: { close: () => void })}
-								<div class="menu">
-<MenuItem
-										icon={detail?.archived_at ? 'ri:inbox-unarchive-line' : 'ri:archive-line'}
-										label={detail?.archived_at ? 'Unarchive project' : 'Archive project'}
-										onclick={() => {
-											close();
-											toggleArchive();
-										}}
-									/>
-									<MenuItem
-										icon="ri:delete-bin-line"
-										label="Delete project"
-										destructive
-										onclick={() => {
-											close();
-											doDelete();
-										}}
-									/>
-								</div>
-							{/snippet}
-						</Popover>
-					</div>
-				</div>
-			</header>
-
-			{#if detail.archived_at}
-				<!-- Archived is a state of the whole page, so it is said once, above
-				     the content, with the way back beside it. -->
-				<div class="archived-note">
-					<Icon icon="ri:archive-line" width="15" />
-					<span>
-						You archived this project on {new Date(detail.archived_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}.
-						Its chats and items are all here. Unarchive it to add more.
-					</span>
-					<Button variant="secondary" size="sm" onclick={toggleArchive}>Unarchive</Button>
-				</div>
-			{/if}
+			<ProjectHeader project={detail} />
 
 			<!-- The way into a new chat about this project, shaped like the
 			     composer it leads to so it reads as a place to type, not a
@@ -791,61 +545,17 @@
 				</span>
 			</form>
 
-			<!-- Chats: conversations you go back into, newest first. -->
-			<section class="section" aria-labelledby="project-chats-head">
-				<div class="section-head">
-					<h2 id="project-chats-head">Chats</h2>
-					{#if roomChats.length > 0}<span class="section-count">{roomChats.length}</span>{/if}
-				</div>
-				{#if roomChats.length === 0}
-					<p class="section-empty">
-						No chats yet. Ask something above, or start a new chat, and it's filed here.
-					</p>
-				{:else}
-					<ul class="chat-list">
-						{#each shownChats as chat (chat.id)}
-							<li class="chat-item" oncontextmenu={(e) => chatMenu(chat, e)}>
-								<button type="button" class="chat-open" onclick={() => openChat(chat)}>
-									<span class="chat-glyph" style={`color: ${projectColor(detail)}`}>
-										<AtlasIcon name="chats" size={15} bare />
-									</span>
-									<span class="chat-title">{chat.title || 'Untitled chat'}</span>
-									<span class="chat-meta">
-										{chat.message_count === 1 ? '1 message' : `${chat.message_count} messages`}
-										· {formatRelativeTimestamp(chat.last_message_at)}
-									</span>
-								</button>
-								<span class="chat-actions">
-									<IconButton
-										icon="ri:more-line"
-										label={`Actions for ${chat.title || 'this chat'}`}
-										size="sm"
-										haspopup="menu"
-										onclick={(e) => chatMenu(chat, e)}
-									/>
-								</span>
-							</li>
-						{/each}
-					</ul>
-					{#if roomChats.length > CHATS_SHOWN}
-						<button type="button" class="section-more" onclick={() => (chatsExpanded = !chatsExpanded)}>
-							{chatsExpanded ? 'Show fewer' : `Show all ${roomChats.length} chats`}
-						</button>
-					{/if}
-				{/if}
-			</section>
+			<ProjectChats project={detail} chats={roomChats} onremove={removeMember} />
 
 			<!-- Files and pages: the material. The grid, with its filters,
 			     statuses and your order. -->
-			<section class="section" aria-labelledby="project-items-head">
-				<div class="section-head">
-					<h2 id="project-items-head">Files and pages</h2>
-					{#if memberRows.length > 0}<span class="section-count">{memberRows.length}</span>{/if}
-				</div>
+			<ProjectSection
+				title="Files and pages"
+				count={memberRows.length}
+				empty={memberRows.length === 0 && archived ? 'Nothing was filed here.' : null}
+			>
 				{#if memberRows.length === 0}
-					{#if archived}
-						<p class="section-empty">Nothing was filed here.</p>
-					{:else}
+					{#if !archived}
 						<button class="add-row" onclick={openPicker}>
 							<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links, or drop files here
 						</button>
@@ -934,7 +644,7 @@
 						{/snippet}
 					</UniversalDataGrid>
 				{/if}
-			</section>
+			</ProjectSection>
 		</div>
 	{:else}
 		<div class="state">Project not found.</div>
@@ -967,60 +677,6 @@
 	.inner.drop-active { outline: 1.5px dashed var(--color-primary); outline-offset: 10px; border-radius: 10px; }
 	.state { display: flex; align-items: center; gap: 8px; padding: 3rem 2rem; color: var(--color-foreground-muted); }
 	.state.error { color: var(--color-error, #dc2626); }
-
-	/* Header */
-	.head { display: flex; flex-direction: column; gap: 0.7rem; }
-	.head-main { display: flex; align-items: flex-start; gap: 14px; }
-	.head-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-	.project-icon {
-		display: grid; place-items: center; width: 46px; height: 46px; flex-shrink: 0;
-		border-radius: 12px; border: 1px solid var(--color-border);
-		background: var(--color-surface-elevated); color: var(--color-foreground); cursor: pointer;
-		transition: border-color 120ms ease;
-	}
-	.project-icon:hover { border-color: var(--color-foreground-subtle); }
-	/* The same tinted chip the projects list draws, so a project looks like
-	   itself on its own page. */
-	.project-icon.tinted {
-		background: color-mix(in srgb, var(--room-accent) 16%, transparent);
-		border-color: color-mix(in srgb, var(--room-accent) 30%, var(--color-border));
-		color: color-mix(in srgb, var(--room-accent) 78%, var(--color-foreground));
-	}
-
-	.archived-note {
-		display: flex; align-items: center; gap: 10px;
-		padding: 10px 12px; border-radius: 10px;
-		background: var(--color-surface-elevated);
-		font-size: 0.85rem; line-height: 1.45; color: var(--color-foreground-muted);
-	}
-	.archived-note > :global(svg) { flex-shrink: 0; color: var(--color-foreground-subtle); }
-	.archived-note > span { flex: 1; min-width: 0; }
-	.head-actions { display: flex; gap: 2px; flex-shrink: 0; }
-	.title-input, .desc-input {
-		display: block; width: 100%; resize: none; overflow: hidden;
-		border: none; background: transparent; outline: none;
-		field-sizing: content;
-	}
-	.title-input {
-		font-size: 2rem; font-weight: 500; line-height: 1.12;
-		color: var(--color-foreground); padding: 0 0 2px;
-		border-bottom: 1.5px solid transparent;
-	}
-	.title-input:focus {
-		border-bottom-color: color-mix(in srgb, var(--color-foreground) 45%, var(--color-border));
-	}
-	.desc-input {
-		margin-top: 0.4rem; min-height: 1.5rem; padding: 0;
-		font: inherit; font-size: 0.95rem; line-height: 1.55;
-		color: var(--color-foreground-muted);
-	}
-	.desc-input:focus { color: var(--color-foreground); }
-	.title-input::placeholder, .desc-input::placeholder { color: var(--color-foreground-subtle); }
-
-
-
-	/* Overflow menu */
-	.menu { display: flex; flex-direction: column; min-width: 190px; padding: 4px; }
 
 	/* The ask: shaped like the composer it opens, so it reads as a place to
 	   type. Quiet at rest (a hairline and the page's own surface), fully
@@ -1071,126 +727,6 @@
 		}
 	}
 
-	/* Sections: told apart by a small quiet head and the air above it, the
-	   sidebar's grammar for a group. No rules. */
-	.section {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-	}
-	.section-head {
-		display: flex;
-		align-items: baseline;
-		gap: 8px;
-	}
-	/* The sidebar group head's voice, not a heading's: the global h2 is the
-	   serif, and these are labels. */
-	.section-head h2 {
-		margin: 0;
-		font-family: inherit;
-		letter-spacing: normal;
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--color-foreground-muted);
-	}
-	.section-count {
-		font-size: 0.75rem;
-		font-variant-numeric: tabular-nums;
-		color: var(--color-foreground-subtle);
-	}
-	.section-empty {
-		margin: 0;
-		font-size: 0.875rem;
-		color: var(--color-foreground-subtle);
-	}
-	.section-more {
-		align-self: flex-start;
-		padding: 4px 8px;
-		border: none;
-		border-radius: 6px;
-		background: none;
-		cursor: pointer;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-	}
-	.section-more:hover {
-		color: var(--color-foreground);
-		background: var(--color-background-hover);
-	}
-
-	/* Chats: a list of conversations, one line each. */
-	.chat-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-	}
-	.chat-item {
-		position: relative;
-		display: flex;
-		align-items: center;
-		border-radius: 8px;
-	}
-	.chat-item:hover {
-		background: var(--color-background-hover);
-	}
-	.chat-open {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 8px 12px;
-		border: none;
-		background: none;
-		cursor: pointer;
-		text-align: left;
-		font: inherit;
-		color: var(--color-foreground);
-	}
-	.chat-open:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-		border-radius: 8px;
-	}
-	.chat-glyph {
-		display: flex;
-		flex-shrink: 0;
-	}
-	.chat-title {
-		flex: 1;
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		font-size: 0.9375rem;
-	}
-	.chat-meta {
-		flex-shrink: 0;
-		font-size: 0.8125rem;
-		font-variant-numeric: tabular-nums;
-		color: var(--color-foreground-subtle);
-	}
-	.chat-actions {
-		display: inline-flex;
-		padding-right: 4px;
-		opacity: 0;
-		transition: opacity 120ms ease;
-	}
-	.chat-item:hover .chat-actions,
-	.chat-actions:focus-within {
-		opacity: 1;
-	}
-	@media (max-width: 768px) {
-		.chat-actions {
-			opacity: 1;
-		}
-		.chat-meta {
-			display: none;
-		}
-	}
-
 	.draft-tag {
 		color: var(--color-foreground);
 	}
@@ -1218,33 +754,11 @@
 		.hide-mobile { display: none; }
 	}
 
-	/* A phone's width can't hold the icon, the text and the actions in one
-	   row: the text column collapsed to a letter wide. The actions take their
-	   own line under the text. */
+	/* The phone's margins: the header wraps itself (ProjectHeader). */
 	@media (max-width: 768px) {
 		.inner {
 			padding: 1.25rem 1rem 4rem;
 			gap: 1.25rem;
-		}
-		.head-main {
-			flex-wrap: wrap;
-			gap: 12px;
-		}
-		/* 44 + 12: the actions line up under the text, not the icon. */
-		.project-icon {
-			width: 44px;
-			height: 44px;
-		}
-		.head-text {
-			flex-basis: calc(100% - 56px);
-		}
-		.head-actions {
-			width: 100%;
-			padding-left: 56px;
-			gap: 6px;
-		}
-		.title-input {
-			font-size: 1.6rem;
 		}
 	}
 
