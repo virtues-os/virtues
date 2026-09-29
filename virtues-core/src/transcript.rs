@@ -1,7 +1,7 @@
 //! Transcript text as the narrators read it.
 //!
-//! Transcription writes `[Speaker]:` at every change of voice. Rows written
-//! before 2026-09-29 carry `[Speaker 1]:` / `[Speaker 2]:` instead, and those
+//! Transcription writes `[Speaker]:` at every change of voice. Rows written by
+//! earlier versions carry `[Speaker 1]:` / `[Speaker 2]:` instead, and those
 //! numbers are local to one 5-minute chunk: `Speaker 1` is whoever the model
 //! heard first, so it can be a different person in the next chunk. A narrator
 //! reading numbered tags across chunks takes them as the same people and builds

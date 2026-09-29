@@ -172,7 +172,9 @@ impl SemanticSearchTool {
                     // cited. Rank claims only what is true: relative order.
                     "rank": i + 1,
                     "title": r.title,
-                    "preview": r.preview,
+                    // Transcript previews carry per-chunk speaker numbers on old
+                    // rows; flatten them as every other narrator read does.
+                    "preview": r.preview.as_deref().map(crate::transcript::flatten_speaker_tags),
                     "author": r.author,
                     "timestamp": r.timestamp,
                     // Viewable route for this exact source — document chunks
