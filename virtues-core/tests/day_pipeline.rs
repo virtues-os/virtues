@@ -337,21 +337,41 @@ fn whatever_nulls_the_scores_must_rescore() {
 ///
 /// Both are now the best model (Chat) — the detective is fusion/adjudication, not
 /// grunt extraction. What must NOT regress is the SEPARATION: two distinct
-/// functions, two distinct prompts, and the day summary must read a score column
-/// (proof the scores computed between them actually reach the narrative).
+/// functions, two distinct prompts, neither calling the other.
+///
+/// Since 2549d156 the article is written from the day's own record (transcripts,
+/// messages, the owner's words) in `day_article::write_day`, not from the
+/// detective's events or the scores: each summarizing hop had stripped what made
+/// the day matter. So narration no longer reads `novelty_z`; the ordering
+/// (segment, score, then narrate) is still pinned by the two tests around this one.
 #[test]
 fn segmenting_is_not_narrating() {
-    let src = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/api/day_summary.rs"),
-    )
-    .expect("read day_summary.rs");
-
-    let after = |anchor: &str, needle: &str| -> bool {
-        let Some(i) = src.find(anchor) else { return false };
-        let tail = &src[i..];
-        let end = tail[1..].find("\npub async fn ").map(|e| e + 1).unwrap_or(tail.len());
-        tail[..end].contains(needle)
+    let read = |rel: &str| {
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(rel))
+            .unwrap_or_else(|e| panic!("read {rel}: {e}"))
     };
+    let src = read("src/api/day_summary.rs");
+    let article = read("src/api/day_article.rs");
+
+    // The body of the function that starts at `anchor`, up to the next top-level fn.
+    let body = |src: &str, anchor: &str| -> Option<String> {
+        let i = src.find(anchor)?;
+        let tail = &src[i..];
+        let end = tail[1..]
+            .find("\npub async fn ")
+            .into_iter()
+            .chain(tail[1..].find("\npub(crate) async fn "))
+            .chain(tail[1..].find("\nasync fn "))
+            .chain(tail[1..].find("\nfn "))
+            .min()
+            .map(|e| e + 1)
+            .unwrap_or(tail.len());
+        Some(tail[..end].to_string())
+    };
+    let after = |anchor: &str, needle: &str| -> bool {
+        body(&src, anchor).is_some_and(|b| b.contains(needle))
+    };
+    let writer = body(&article, "pub(crate) async fn write_day").expect("day_article::write_day exists");
 
     // Both are best-model: the detective fuses noisy witnesses (adjudication), the
     // day summary writes prose. Neither is a Lite job. The Chat SLOT DEFAULT,
@@ -362,38 +382,34 @@ fn segmenting_is_not_narrating() {
         "the detective fuses noisy witnesses into a gapless timeline — a best-model job"
     );
     assert!(
-        after("pub async fn narrate_day", "ModelSlot::Chat"),
+        after("pub async fn narrate_day", "day_article::write_day"),
+        "narrate_day writes the article through day_article::write_day"
+    );
+    assert!(
+        writer.contains("ModelSlot::Chat"),
         "narration is the narrative call; it earns the Chat slot"
     );
     assert!(
         !after("pub async fn segment_day_events", "get_chat_model")
-            && !after("pub async fn narrate_day", "get_chat_model"),
+            && !after("pub async fn narrate_day", "get_chat_model")
+            && !article.contains("get_chat_model"),
         "background writes must not read the user's chat pin — a ZDR-incapable \
          pin (grok) makes virtues-api refuse with no_zdr_providers_available"
     );
 
-    // They stay SEPARATE — two prompts, and neither function calls the other. A
-    // fused call would blind the narrative to the scores computed between them.
+    // They stay SEPARATE — two prompts, and neither function calls the other.
     assert!(
         after("pub async fn segment_day_events", "SEGMENT_PROMPT"),
         "the detective must use its own detective prompt"
     );
     assert!(
-        after("pub async fn narrate_day", "NARRATE_PROMPT"),
-        "narration must use its own narrative prompt"
+        writer.contains("WRITER_PROMPT") && !writer.contains("SEGMENT_PROMPT"),
+        "the article must use its own writer prompt, not the detective's"
     );
     assert!(
-        !after("pub async fn segment_day_events", "narrate_day("),
+        !after("pub async fn segment_day_events", "narrate_day(")
+            && !after("pub async fn segment_day_events", "write_day("),
         "segmentation must not narrate — they are two calls, with scoring between"
-    );
-
-    // The payoff of the split: the day summary reads a SCORE the detective could
-    // not have known, because scoring runs between them.
-    assert!(
-        after("pub async fn narrate_day", "novelty_z"),
-        "the day summary must read novelty_z — the whole point of scoring sitting \
-         between the detective and the narrative is that the prose can name the \
-         day's standout"
     );
 }
 
