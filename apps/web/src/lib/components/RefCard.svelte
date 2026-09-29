@@ -1,11 +1,10 @@
 <script lang="ts">
-	// Shared reference body — per-type content, no shell. Used by both RefPreview
-	// (floating, on hover) and RefEmbed (block, in the document) so the two
-	// densities never diverge. Fetches a normalized summary for entity targets;
-	// files/links render from what the ref already carries.
+	// Reference body — per-type content, no shell; RefPreview (the floating
+	// hover card) supplies the shell. Fetches a normalized summary for entity
+	// targets; files/links render from what the ref already carries.
 	//
-	// A `!` embed transcludes the RICH information of the thing, so this is
-	// image-forward and shows the full fact set (never capped). Three layouts,
+	// It carries the RICH information of the thing, so it is image-forward and
+	// shows the full fact set (never capped). Three layouts,
 	// chosen by what the thing actually has:
 	//   • figure   — scene/content media as a full-width hero + caption below:
 	//                a place's map, a file image, a place/thing cover photo.

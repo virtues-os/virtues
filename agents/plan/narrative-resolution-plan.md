@@ -1,11 +1,10 @@
 # Narrative Resolution
 
-**Status:** Not built — 2026-08-17. No queue, no generators, no page. But more of
-the substrate exists than this plan first assumed: see **Inventory**, which was
-taken from the schema and is the part to trust. Two findings there — rules are
-never read, and entity resolution already computes and discards exactly the
-questions this queue wants — change the build order and are cheap to fix.
-Everything named here lives on `wave` and has never run on a box.
+**Status:** Open. Build step 1 is done: active `wiki_rules` are read into the
+chat system prompt (`build_rules` in `api/chat.rs`, 8a54e7a6). No queue, no
+generators, no page yet. Entity resolution already computes and discards
+exactly the questions this queue wants (see **Inventory**), which makes step 2
+cheap.
 
 How the box comes to know a life: by keeping a standing list of what it does not
 know, ordered by what knowing would be worth, and asking one question at a time
@@ -35,14 +34,13 @@ is a gift.
 
 ### 2. The graph that cannot resolve itself
 
-From the note covenant ([`wiki-editor.md`](../build/wiki-editor.md)), and it is correct:
-
-> **The writer may never write `wiki_entity_refs`.** Not at confidence 0.5, not
-> flagged, not ever. Promotion is a human click or an editor pass gated on
-> `auto_update`. The graph stays deterministic and user-authored.
+From the note covenant ([`wiki-editor.md`](../build/wiki-editor.md)), and it is
+correct: **the writer may never write `wiki_refs`** — not at any confidence, not
+flagged, not ever. Promotion is a human click or an editor pass. The graph stays
+deterministic and user-authored.
 
 That doctrine is right and was bought with two failed attempts at semantic ER
-(migrations 0061, 0062). But it has a hole nobody has filled: **if only a human
+(see `entity_resolution/mod.rs`). But it has a hole nobody has filled: **if only a human
 may resolve an ambiguity, there must be a mechanism by which humans are asked
 to.** Today that mechanism is a click on a page you have to think to visit. So
 the ambiguous cases are never resolved — not because the design is wrong, but
@@ -99,8 +97,8 @@ Used sparingly, and never on a schedule that costs money by the hour:
 > **A model may propose a question. A model may never supply the answer.**
 
 The model is allowed to say *"this person should probably be asked about."* It
-is never allowed to write the edge, pick the merge, or decide the label. That is
-`auto_update` gating restated: propose, never dispose. Every model-generated
+is never allowed to write the edge, pick the merge, or decide the label:
+propose, never dispose. Every model-generated
 question lands in the same queue as a deterministic one and is settled the same
 way — by a person.
 
@@ -113,8 +111,8 @@ Value of an answer ≈ **how much of the record the unknown touches × how much 
 blocks.**
 
 The first term is measured, not guessed: it is a `COUNT` over `wiki_refs`. This
-is exactly what migration 0099 was written for — the attention plan's stated
-purpose is to make "what the record returned to" countable rather than inferred,
+is what widening `wiki_refs` to `event`/`day`/`thread` subjects was for — the
+[attention plan](attention-plan.md)'s stated purpose is to make "what the record returned to" countable rather than inferred,
 *including for subjects not yet in the graph*, which is precisely the population
 this queue asks about. A correspondent you write to daily who is unresolved
 outranks a single message from 2014 by orders of magnitude, and the system can
@@ -221,30 +219,22 @@ which is the one failure that would make people turn this off.
 
 ## Inventory — what is already here
 
-Taken from the schema and the code on 2026-08-17, not from memory. Several
-pieces of this design turned out to be half-built, and two findings below change
-the build order.
+Taken from the schema and the code, not from memory.
 
 | | where | state |
 |---|---|---|
 | interview answers | `wiki_narrative_interview` | built |
-| the long document | `wiki_narrative_identity.document` | built (0102) |
+| the long document | `wiki_narrative_identity.document` | built |
 | the injected core | `wiki_narrative_identity.content` | built, and genuinely injected — `{narrative_identity}` in `agent/prompt.rs` |
-| rules | `wiki_rules` (0101, renamed 0103) | table and capture UI built; **never read by anything** |
-| attention substrate | `wiki_refs` (0099) | built, subject types widened |
+| rules | `wiki_rules` | capture UI built; active rules injected into chat by `build_rules` |
+| attention substrate | `wiki_refs` | built; `event`/`day`/`thread` subjects allowed, none written |
 | entity resolution | `entity_resolution/{people,places}` | built, deterministic, discards ambiguity |
-
-All of it is on `wave`. None of it has run on a box.
 
 ### There is no "portrait"
 
-An earlier draft of this plan used that word for a thing that does not exist.
-What exists is a two-artifact split, already made and better reasoned, in 0102:
-
-> `content` is the DISTILLED core: 60-110 words, and it is injected into every
-> chat prompt. That is why it is short, and why the document a person actually
-> reads cannot live there — a few thousand words in that column would ride along
-> on every message they ever send.
+What exists is a two-artifact split: `content` is the distilled core, 60–110
+words, injected into every chat prompt — which is why it is short, and why the
+document a person actually reads cannot live there.
 
 **`document` is read by the human. `content` is read by the model.** One set of
 answers, two artifacts, different lifetimes.
@@ -252,24 +242,19 @@ answers, two artifacts, different lifetimes.
 So the regeneration question is not "when do we redraw the portrait" but two
 narrower ones: when is `document` redrafted from new answers, and when is
 `content` redistilled from `document`? `drafted_at` exists precisely for the
-first — 0102 added it so that regeneration is offered "when there are NEW
-answers since the last draft, not whenever the row was touched."
+first — regeneration is offered when there are new answers since the last
+draft, not whenever the row was touched.
 
-### Finding 1: rules do not do anything
+### Rules are enforced in chat only
 
-`wiki_rules` is touched only by `narrative_draft.rs` — read to list them, delete
-and re-insert to save them. **No prompt reads them.** The box does not obey a
-single rule anyone has written.
+The interview tells people *"What you write here stops being context and
+becomes a rule."* `build_rules` makes that true for chat. It is the
+precondition for ever asking about grief, addiction, or a marriage that ended,
+so any new surface that asks or writes (the daily-page slot, model generators)
+must read the same rules before it ships. A failed read degrades to "no rules
+this turn" and is logged.
 
-The interview tells people, in as many words, *"What you write here stops being
-context and becomes a rule."* That is currently false. It is not a missing
-feature; it is a broken promise on the most sensitive input in the product, and
-it is the precondition for ever asking about grief, addiction, or a marriage
-that ended.
-
-**Nothing in this plan should be built before this is fixed.**
-
-### Finding 2: the generators already run, and discard their findings
+### The generators already run, and discard their findings
 
 From `entity_resolution/people.rs`:
 
@@ -311,24 +296,22 @@ that matters most.
 2. **What you have answered**, revisable. This is also where the nine held-back
    interview questions live for someone who *wants* to sit and answer twenty in
    a row; the drip is right by default and wrong for that person.
-3. **Every rule, in full.** 0103 insists on this and it is currently homeless:
-   *"A rule scattered across four hundred wiki entities is a rule nobody can
-   audit... you have to be able to read every rule your box obeys."*
+3. **Every rule, in full.** A rule scattered across four hundred wiki entities
+   is a rule nobody can audit; you have to be able to read every rule your box
+   obeys, and today there is no page for that.
 4. **The `never` list** — what it has stopped asking, and why.
 
 ## Build order
 
-1. **Make rules work.** Read `wiki_rules` into the system prompt. Small, and it
-   closes a live false promise.
-2. **ER emits instead of discarding** → `wiki_open_question` rows. The queries
+1. **ER emits instead of discarding** → `wiki_open_question` rows. The queries
    already exist; this is plumbing.
-3. **`/wiki/resolution`** — the page, answering, the rules audit.
-4. **Scoring from `wiki_refs`**, then the mix rule.
-5. **The daily-page slot** — the drip.
-6. **Redraft cadence** on `drafted_at`.
+2. **`/wiki/resolution`** — the page, answering, the rules audit.
+3. **Scoring from `wiki_refs`**, then the mix rule.
+4. **The daily-page slot** — the drip.
+5. **Redraft cadence** on `drafted_at`.
 
-Steps 1 and 2 are small and both make existing things honest. They are worth
-doing whatever happens to the rest.
+Step 1 is small and makes existing detection honest. It is worth doing whatever
+happens to the rest.
 
 ## Risks
 

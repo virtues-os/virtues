@@ -3,7 +3,7 @@
 //! Once a day: read the index of the current map build, score every square
 //! the location history touches, pick what fits the budget, download what is
 //! missing, delete what is no longer picked, reload the readers. See
-//! agents/plan/offline-maps-plan.md for why each rule is what it is.
+//! agents/record/map-tiles.md for why each rule is what it is.
 //!
 //! **Privacy.** Only fixed, pre-cut files are ever requested, identical for
 //! every box that takes them: a download names a ~300 km or ~1,000 km square,

@@ -77,8 +77,5 @@ Two accelerants, both already banned in CLAUDE.md and both present:
 
 ## Still open
 
-- Bind an OAuth session to the box that started it (needs the box to
-  register the session server-to-server before sending the browser).
-- Flip the OAuth proxy's `X-Virtues-Api-Key` from logged to required once the
-  fleet has upgraded; `/refresh` first.
-- How many accounts are linked-free — one query on atlas, not yet run.
+Moved to [`../plan/account-plan.md`](../plan/account-plan.md) (OAuth proxy and
+entitlement) on 2026-09-29.

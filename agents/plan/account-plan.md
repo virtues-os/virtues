@@ -91,3 +91,18 @@ hosted AI stops.
   cost forecast in one). The rules: aggregates only, unique endpoints counted
   with a sketch such as HLL rather than stored IDs, nothing about who talked to
   whom.
+
+## OAuth proxy and entitlement
+
+Carried from [`../record/entitlement-split.md`](../record/entitlement-split.md);
+each checked against `services/virtues-api/src/routes/oauth.rs` on 2026-09-29.
+
+- **Bind an OAuth session to the box that started it.** `/start` is a browser
+  navigation, so the box cannot put its api_key on it; the session is guarded
+  only by the *shape* of its `return_url`. The box should register the session
+  server-to-server first, then send the browser. Needs a box release.
+- **Require `X-Virtues-Api-Key` on the proxy.** `caller_api_key` reads it and
+  enforces nothing, because boxes that have not upgraded do not send it. Flip it
+  to required once the logs show the fleet has moved — `/refresh` first (worst
+  exposure, one known caller), then the rest.
+- **Count linked-free accounts.** One query on atlas, not yet run.

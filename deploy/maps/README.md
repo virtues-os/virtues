@@ -1,7 +1,7 @@
 # Map cut
 
 The monthly job that produces the map files boxes download
-(agents/plan/offline-maps-plan.md). It runs on the virtues-api server:
+(agents/record/map-tiles.md). It runs on the virtues-api server:
 `cut.py` writes `/srv/maps/<build>/` and `/srv/maps/latest.json`, and
 virtues-api serves them from `/v1/maps/*` (`services/virtues-api/src/routes/maps.rs`),
 behind the box's bearer key and without logging.

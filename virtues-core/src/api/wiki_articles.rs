@@ -42,13 +42,15 @@ pub struct Article {
     pub subject_type: String,
     pub subject_id: String,
     pub page_id: String,
-    /// always | auto | never. Replaced `auto_update`, whose second, hidden
-    /// meaning was "the person edited this once".
+    /// `auto` | `never` (the schema's constraint; see `set_maintenance`).
     pub maintenance: String,
 }
 
-/// Look up a subject's article. `None` is the ordinary case, not an error:
-/// articles are opt-in, so most subjects will never have one.
+/// Look up a subject's article. `None` is an ordinary answer, not an error:
+/// days, years, chapters and the narrative identity get articles from their
+/// own pipelines, but a person, place or org gets one only when someone asks
+/// (`entity_article_gen::write_entity_article_now`), so most entities never
+/// have one.
 pub async fn get_article(
     pool: &PgPool,
     subject_type: &str,
@@ -280,7 +282,7 @@ pub async fn set_maintenance(
 /// "Mentioned in N articles" — every page whose prose links to this subject.
 ///
 /// **The edge points at a SUBJECT, not at an article**, and that is the whole
-/// correction. Articles are opt-in, so most subjects will never have prose; an
+/// correction. Entity articles are opt-in, so most subjects will never have prose; an
 /// article↔article graph would be empty on day one and near-empty forever.
 /// Production ref-routes name subjects (`/person/person_ab12`,
 /// `/day/day_2026-03-03`), there is no article route and no article id in any

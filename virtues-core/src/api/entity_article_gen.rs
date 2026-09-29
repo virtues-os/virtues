@@ -62,7 +62,9 @@ struct DueEntity {
 /// This is the create path, and it is the one an applet subprocess can safely
 /// take: a page with `content` and no `yjs_state` seeds its CRDT correctly on
 /// first open. Re-writing an existing article is refused rather than silently
-/// dropped — see `refresh_due_entity_articles`.
+/// dropped: a subprocess has no `YjsState`, so its rewrite of a page with live
+/// CRDT state would be discarded by the next save. Revisions go through the
+/// wiki_editor applet's AGENT phase.
 pub async fn write_entity_article_now(
     pool: &PgPool,
     subject_type: &str,

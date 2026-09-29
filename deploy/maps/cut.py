@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cut one month's map files for the boxes (agents/plan/offline-maps-plan.md).
+"""Cut one month's map files for the boxes (agents/record/map-tiles.md).
 
 Reads one Protomaps daily planet build and writes, under MAPS_DIR/<build>/:
 

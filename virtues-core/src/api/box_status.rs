@@ -364,7 +364,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
 
     // Claimed = at least one device has paired (the pair token was consumed
     // by an owner's browser or phone). Ownership-by-proximity, see
-    // agents/build/onboarding.md "trust on first boot".
+    // agents/build/onboarding.md, "The phrase and the pair code".
     //
     // Every gate below is `?`, not `.unwrap_or(0|false)`. These are counts and
     // EXISTS checks: an empty table already answers 0 / false, so the only way

@@ -1,7 +1,7 @@
 /**
  * Setup's first half, before this device has a server: the account, finding
  * the server and opening it with its four words, its Wi-Fi, and pairing.
- * (agents/plan/setup-plan.md, slice 2.)
+ * (agents/build/onboarding.md, "Setup".)
  *
  * WHERE IT RUNS. Only where the app itself carries this code and has a
  * radio. The iPhone's shell opens `/setup` from its own baked copy of the app

@@ -266,7 +266,7 @@ to us unless someone says so. Its "pre-set `VIRTUES_DIAG=off` before installing"
 workaround was guarding against a request that is never made.
 
 Also note that installer bugs hide in both directions — dev and CI each mask a
-different class of them (see [`installer-env-divergence`](deployment.md)); green
+different class of them (see [installer env divergence](deployment.md#installer-env-divergence)); green
 CI is not evidence the installer works.
 
 ---

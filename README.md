@@ -139,7 +139,7 @@ your record to a model provider — voice as audio, not as transcript. Point it
 at a local model and that stops too. The relay cannot read your traffic; that
 is physics. The inference boundary is a contract with a provider, which is a
 different kind of promise.
-[The privacy model](agents/record/privacy-model.md#the-inference-boundary-where-your-data-does-leave)
+[The privacy boundary](agents/build/privacy-boundary.md)
 says exactly what crosses and what never does.
 
 <a id="why-its-shaped-this-way"></a>
@@ -478,9 +478,9 @@ virtues/
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-security-dark.svg"><img alt="Security" src=".github/images/headings/h2-security-light.svg" height="28"></picture>
 
 Please report vulnerabilities privately — GitHub → **Security** → *Report a
-vulnerability* — rather than in a public issue. The threat model, and who holds
-which secret (and who deliberately doesn't), is in
-[the privacy model](agents/record/privacy-model.md).
+vulnerability* — rather than in a public issue. What the relay can and cannot
+see is on [the reach page](docs/operate/reach.md); where data leaves the box is
+[the privacy boundary](agents/build/privacy-boundary.md).
 
 <a id="license"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-license-dark.svg"><img alt="License" src=".github/images/headings/h2-license-light.svg" height="28"></picture>

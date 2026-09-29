@@ -41,10 +41,10 @@ Here is ours, split honestly.
   have no copy and no way to fetch one. This is not a retention policy; there is
   nothing to retain.
 - **The relay cannot read your traffic.** When you reach your box from away, the
-  bytes pass through our relay — which holds **no TLS key** for that connection.
-  Your box terminates the encryption with its own key. The relay physically
-  cannot decrypt what it forwards. See
-  [`privacy-model.md`](../record/privacy-model.md).
+  bytes pass through our relay as end-to-end encrypted QUIC between your device
+  and your box. The keys are theirs; the relay holds none and cannot decrypt
+  what it forwards. See [`open-relay.md`](../record/open-relay.md) and
+  [`privacy-boundary.md`](privacy-boundary.md).
 - **We keep no record of what you did.** The API stores a ledger of amounts —
   `-4200 micros, kind=charge` — and nothing about the request that caused it.
   There is no prompt log, no completion log, no history table.
@@ -80,12 +80,13 @@ than hiding behind "we don't store it."
 history, the health records, the files, the day pages — is collected, indexed,
 and queried entirely on your box. It never transits our infrastructure at all.
 
-**If that trade doesn't suit you, remove it — for chat.** Bring your own
-provider key and the conversation goes box → provider directly, with the
-gateway out of that path. **It does not yet cover everything.** Conversation
-compaction, day summaries, image generation, and transcription still run
-through the gateway and bill the wallet, because only `stream()` consults the
-key. Say "your chat" rather than "your AI" until those four close.
+**If that trade doesn't suit you, remove it.** Bring your own provider key and
+every AI call goes box → provider directly: `BearerClient`
+(`virtues_api/client.rs`) diverts every `/v1/ai/*` request, streaming and
+buffered, before any bearer is read, so chat, compaction, day summaries, image
+generation and transcription all leave by your endpoint. What stays with us is
+not inference: Places, Unsplash and map downloads still go through
+virtues-api. Say "your AI", with the transcription caveat below.
 
 ---
 
@@ -181,11 +182,9 @@ The recurring images. Reach for them in copy, docs, support replies, talks:
   there. It does see which two keys are talking, from where, and how much passes,
   so "blind", "no logs" and "RAM-only" are claims we have not earned. The
   user-facing wording that is true is in `docs/operate/reach.md`.
-- **"Bring your own key and we're out of the path."** The narrow wording
-  ("out of your chat") was correct until 2026-08-05 and is now an
-  understatement: the fork moved to `BearerClient`, so **every** `/v1/ai/*`
-  call diverts — compaction, day summaries, image generation and transcription
-  included. Verified against code 2026-08-28.
+- **"Bring your own key and we're out of the path."** True for every AI call:
+  the fork is in `BearerClient`, keyed on the `/v1/ai/` prefix, so a new AI
+  caller cannot miss it. "Out of your chat" understates it.
   - The honest caveat: BYO is all-or-nothing. There is no per-slot route, so a
     user cannot send chat to their key and leave audio with us.
   - And **audio does not work on a BYO endpoint** — the transcription path
@@ -214,10 +213,8 @@ unlinkability for a month after the structure changed.
 > them. All that lands in our database is an amount and a timestamp — the charge
 > row doesn't even record which model served the request. Your prompts do pass
 > through our gateway on the way to the model provider; if you'd rather they
-> didn't, bring your own provider key and your chat goes straight from your box
-> to the provider. Some background work — summarizing your day, compacting long
-> conversations, generating images, transcription — still runs through us even
-> then.
+> didn't, bring your own provider key and every AI request goes straight from
+> your box to your provider, background work included.
 
 **Q: Can you see my notes, location, or health data?**
 > No, and not as a matter of policy — that data never leaves your box. We have

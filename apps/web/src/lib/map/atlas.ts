@@ -2,7 +2,7 @@
  * The basemap for a Leaflet map, drawn from the box's own map files.
  *
  * The box holds Protomaps archives in three tiers (virtues-core/src/maps,
- * agents/plan/offline-maps-plan.md): a world overview, the regions you have
+ * agents/record/map-tiles.md): a world overview, the regions you have
  * visited at street level, and home at full detail. Every tile, font and icon
  * comes from the box, so no tile provider ever learns which streets anyone
  * looks at, and the maps work offline.

@@ -790,11 +790,8 @@ const MAX_PAGE_CONTENT_CHARS: usize = 10_000;
 /// connection to a routine question. A longer NI does not make the assistant
 /// understand you better; it makes it perform understanding more often.
 ///
-/// Truncation happens at a PARAGRAPH boundary. The previous version cut at 800
-/// characters mid-word, which would have fed the model a sentence that stops
-/// in the middle and invited it to complete the thought itself. (It never fired
-/// in practice: the table has no rows on a real box, so NI has been the empty
-/// string in every prompt since it shipped. Fixing it is a build, not a repair.)
+/// Truncation happens at a PARAGRAPH boundary: a cut mid-word feeds the model a
+/// sentence that stops in the middle and invites it to complete the thought.
 async fn build_narrative_identity(pool: &PgPool) -> String {
     // The DOCUMENT itself — "In your own words", the page the person edits.
     // There is deliberately no abridged copy between them and the assistant:
@@ -1037,7 +1034,7 @@ async fn build_system_prompt_blocks(
         },
         // The machine's memory: per-note rows the person can read and edit
         // (Settings), rendered with ids so the update_memory ops can name
-        // them. Three lanes per docs/narrative-identity.md: facts of their
+        // them. Three lanes per agents/build/narrative-identity.md: facts of their
         // world, their preferred manner, their practices.
         Block {
             meta: BlockMeta { tag: "memory", author: Author::Machine, mood: Mood::Declarative, rung: 50, cadence: Cadence::Session },
