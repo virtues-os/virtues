@@ -169,7 +169,7 @@ pub(crate) async fn assemble(
         let e: DateTime<Utc> = r.try_get("ended_at")?;
         recorded.push((s, e));
         let text: String = r.try_get("text")?;
-        let text = text.trim().to_string();
+        let text = crate::transcript::flatten_speaker_tags(text.trim()).into_owned();
         if text.chars().count() < MIN_CHUNK_CHARS {
             continue; // silence: counted as coverage above, carries no words
         }
@@ -475,7 +475,7 @@ End every sentence with the time of the evidence it rests on, in square brackets
 WHAT COUNTS AS EVIDENCE
 - Only what is in the transcripts, messages and chats. A detail is written only if it is there; a descriptive word ("well-worn", "lopsided") only if the record uses it.
 - Who someone is to them (partner, friend, roommate, mother) comes only from <people>. Never infer a relationship from context.
-- Speaker labels in transcripts are unlabeled and unstable: "Speaker 1" can be a different person in the next chunk. Decide who said something only when a name, a reply, or the content makes it certain. When it could be either of them, write it as shared ("between you, it came to...").
+- `[Speaker]:` marks a change of voice and says nothing about who is speaking, not even whether it is the owner. Decide who said something only when a name, a reply, or the content makes it certain. When it could be either of them, write it as shared ("between you, it came to...").
 - Transcription mishears names. A name that sounds like someone in <people> and fits is them; always call people by their <people> name, without emoji.
 - Plans are not events. A plan for later is not evidence it happened.
 - Keep the order the record shows. Never join two things as cause and effect unless the record shows the link.
