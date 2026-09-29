@@ -427,3 +427,54 @@ export function projectRowMenuItems(
 		},
 	];
 }
+
+/**
+ * The glyph for a project member by its url, from the shell's drawn set so a
+ * project's contents wear the same marks as the sidebar that lists them. A
+ * link out keeps an interface symbol: there is no drawn object for "a page
+ * somewhere else".
+ */
+export function memberIcon(url: string): string {
+	if (/^https?:\/\//.test(url)) return 'ri:external-link-line';
+	const kind = url.split('/')[1] ?? '';
+	const map: Record<string, string> = {
+		page: 'atlas:pages',
+		person: 'atlas:people',
+		place: 'atlas:places',
+		org: 'atlas:organizations',
+		drive: 'atlas:files',
+		day: 'atlas:day',
+		year: 'atlas:years',
+		chat: 'atlas:chats',
+		source: 'atlas:sources'
+	};
+	return map[kind] ?? 'ri:links-line';
+}
+
+/**
+ * What to call a member: the name the server resolved, else a link's host,
+ * else what kind of thing it is. Never the raw url, which is what a box
+ * older than the resolved names would otherwise show.
+ */
+export function memberName(item: { url: string; title?: string }): string {
+	if (item.title) return item.title;
+	if (/^https?:\/\//.test(item.url)) {
+		try {
+			return new URL(item.url).hostname.replace(/^www\./, '');
+		} catch {
+			return item.url;
+		}
+	}
+	const kind = item.url.split('/')[1] ?? '';
+	const names: Record<string, string> = {
+		page: 'Page',
+		person: 'Person',
+		place: 'Place',
+		org: 'Organization',
+		drive: 'File',
+		day: 'Day',
+		year: 'Year',
+		source: 'Source'
+	};
+	return names[kind] ?? 'Item';
+}
