@@ -600,7 +600,7 @@ impl ToolExecutor {
         if !images.is_empty() {
             data["images"] = serde_json::Value::Array(images);
             data["note"] = serde_json::json!(if ws.chat_id.is_some() {
-                "These images are shown to the owner under this call. Refer to them; do not link them."
+                "These images are shown to the owner with your reply. Refer to them; do not link them."
             } else {
                 "Images are shown only in a saved chat; describe the result in text."
             });

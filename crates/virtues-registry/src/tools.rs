@@ -797,7 +797,7 @@ run with sql_query's save_as is here as a CSV: pd.read_csv('sleep.csv').
 
 Charts: save images to out/ (plt.savefig('out/sleep.png', dpi=120,
 bbox_inches='tight')). Each one saved during the call is shown to the owner
-under the call. Say what it shows; never write a link or markdown image to it.
+with your reply. Say what it shows; never write a link or markdown image to it.
 
 Limits: no network, no access to anything outside the workspace, 1 GB of
 memory, a timeout (default 60s, max 120s). A failure returns the traceback in
