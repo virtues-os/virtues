@@ -2,8 +2,12 @@
 //!
 //! A Project is a manual collection the user returns to: an undertaking, a pet,
 //! a hobby, a goal, or a topic. It gathers entities, chats, and pages as
-//! URL-native members (`app_project_items`) and carries a single accent tint
-//! plus a catch-up memo (`current_status`) shown when you re-enter the room.
+//! URL-native members (`app_project_items`) and carries an icon, a color and
+//! a brief (`instructions`).
+//!
+//! No note or memo: `app_projects.current_status(_at)` stay in the table,
+//! unread, so notes written while projects had one are kept rather than
+//! dropped by a migration.
 //!
 //! A chat lives in at most one Project (`app_chats.project_id`). Entering a Project
 //! weights its members in retrieval; conversely the chat is folded into the
@@ -48,11 +52,8 @@ pub struct Project {
     pub name: String,
     pub icon: Option<String>,
     pub accent_color: Option<String>,
-    /// Transient "state of the room" catch-up memo (what you read on re-entry).
-    pub current_status: Option<String>,
-    pub current_status_at: Option<Timestamp>,
-    /// Persistent behavior for the assistant in this project (Claude-Projects-
-    /// style custom instructions) — distinct from the transient memo above.
+    /// The brief: standing directions the assistant follows in every chat in
+    /// this project. Written by the owner, never by the model.
     pub instructions: Option<String>,
     pub sort_order: i32,
     /// Finished, kept, out of the working view. Distinct from `deleted_at`
@@ -72,8 +73,6 @@ pub struct ProjectSummary {
     pub name: String,
     pub icon: Option<String>,
     pub accent_color: Option<String>,
-    pub current_status: Option<String>,
-    pub current_status_at: Option<Timestamp>,
     pub instructions: Option<String>,
     pub sort_order: i32,
     /// Members other than chats. Chats are counted in `chat_count` from the
@@ -139,8 +138,6 @@ pub struct UpdateProjectRequest {
     pub icon: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub accent_color: Option<Option<String>>,
-    #[serde(default, deserialize_with = "deserialize_double_option")]
-    pub current_status: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub instructions: Option<Option<String>>,
     pub sort_order: Option<i32>,
@@ -213,7 +210,7 @@ pub async fn list_projects(
         r#"
         SELECT
             s.id, s.name, s.icon, s.accent_color,
-            s.current_status, s.current_status_at, s.instructions, s.sort_order, s.archived_at,
+            s.instructions, s.sort_order, s.archived_at,
             COALESCE((SELECT COUNT(*) FROM app_project_items
                       WHERE project_id = s.id
               AND url NOT LIKE '/chat/%'
@@ -242,8 +239,7 @@ pub async fn list_projects(
 pub async fn get_project(pool: &PgPool, id: &str) -> Result<ProjectDetail> {
     let project = sqlx::query_as::<_, Project>(
         r#"
-        SELECT id, name, icon, accent_color, current_status, current_status_at,
-               instructions, sort_order, archived_at, created_at, updated_at
+        SELECT id, name, icon, accent_color, instructions, sort_order, archived_at, created_at, updated_at
         FROM app_projects
         WHERE id = $1 AND deleted_at IS NULL
         "#,
@@ -303,8 +299,7 @@ pub async fn create_project(pool: &PgPool, req: CreateProjectRequest) -> Result<
         r#"
         INSERT INTO app_projects (id, name, icon, accent_color)
         VALUES ($1, $2, $3, $4)
-        RETURNING id, name, icon, accent_color, current_status, current_status_at,
-                  instructions, sort_order, archived_at, created_at, updated_at
+        RETURNING id, name, icon, accent_color, instructions, sort_order, archived_at, created_at, updated_at
         "#,
     )
     .bind(&id)
@@ -318,13 +313,11 @@ pub async fn create_project(pool: &PgPool, req: CreateProjectRequest) -> Result<
     Ok(project)
 }
 
-/// Update a Project. Only provided fields change. Touching `current_status`
-/// stamps `current_status_at`.
+/// Update a Project. Only provided fields change.
 pub async fn update_project(pool: &PgPool, id: &str, req: UpdateProjectRequest) -> Result<Project> {
     let existing = sqlx::query_as::<_, Project>(
         r#"
-        SELECT id, name, icon, accent_color, current_status, current_status_at,
-               instructions, sort_order, archived_at, created_at, updated_at
+        SELECT id, name, icon, accent_color, instructions, sort_order, archived_at, created_at, updated_at
         FROM app_projects WHERE id = $1
         "#,
     )
@@ -347,11 +340,6 @@ pub async fn update_project(pool: &PgPool, id: &str, req: UpdateProjectRequest) 
         Some(val) => val,
         None => existing.accent_color,
     };
-    let status_changed = req.current_status.is_some();
-    let current_status = match req.current_status {
-        Some(val) => val,
-        None => existing.current_status,
-    };
     let sort_order = req.sort_order.unwrap_or(existing.sort_order);
     let instructions = match req.instructions {
         Some(val) => val,
@@ -364,21 +352,16 @@ pub async fn update_project(pool: &PgPool, id: &str, req: UpdateProjectRequest) 
         SET name = $2,
             icon = $3,
             accent_color = $4,
-            current_status = $5,
-            current_status_at = CASE WHEN $6 THEN now() ELSE current_status_at END,
-            sort_order = $7,
-            instructions = $8
+            sort_order = $5,
+            instructions = $6
         WHERE id = $1
-        RETURNING id, name, icon, accent_color, current_status, current_status_at,
-                  instructions, sort_order, archived_at, created_at, updated_at
+        RETURNING id, name, icon, accent_color, instructions, sort_order, archived_at, created_at, updated_at
         "#,
     )
     .bind(id)
     .bind(&name)
     .bind(&icon)
     .bind(&accent_color)
-    .bind(&current_status)
-    .bind(status_changed)
     .bind(sort_order)
     .bind(&instructions)
     .fetch_one(pool)

@@ -12,13 +12,15 @@ already own rather than an upload bin.
 
 - **A Project is a lens, not a container.** Its members are rows in
   `app_project_items`, each a ref URL: a page, a day, a person, a chat, a
-  drive file, another project. Anything retrievable can be a member, not only
-  files. That is the federation claim: the PDF, the advisor's email thread, the
+  drive file, a link. Anything retrievable can be a member, not only files,
+  except another project: the server refuses one. That is the federation claim: the PDF, the advisor's email thread, the
   person and last Tuesday sit in one retrieval scope as peers.
-- **A project has instructions and a memo.** `instructions` are standing
-  directions for how the model behaves in the room; `current_status` is a
-  transient catch-up note. Both are inlined into every chat the project holds,
-  as distinct elements, with the member list and each member's role.
+- **A project has a brief, and no memo.** `instructions` are standing
+  directions for how the model behaves in the room, written by the owner and
+  inlined into every chat the project holds, with the member list and each
+  member's role. A catch-up memo (`current_status`) was dropped on 2026-09-29
+  to keep the project to what it is for and what is in it; its column stays
+  in the table, unread, so memos already written are kept.
 - **Chat is many threads**, Claude-Projects style: characters in one chat,
   drafting in another, research in a third, all grounded in the same members.
   Not NotebookLM's single continuous thread.

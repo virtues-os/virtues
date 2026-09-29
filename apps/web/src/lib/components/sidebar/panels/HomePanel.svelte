@@ -982,11 +982,7 @@
 			</button>
 		</div>
 		<div class="card-meta">{cardMeta(cardProject)}</div>
-		{#if cardProject.current_status}
-			<!-- The catch-up memo: what the room says when you re-enter it. -->
-			<div class="card-memo">{cardProject.current_status}</div>
-		{/if}
-		<div class="card-rule" aria-hidden="true"></div>
+<div class="card-rule" aria-hidden="true"></div>
 		<button type="button" class="card-row" onclick={() => openProject(cardProject)}>
 			<Icon icon={PROJECT_ICON} width="15" />
 			<span>Open project</span>
@@ -1328,19 +1324,7 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	.card-memo {
-		padding: 0 8px 8px 32px;
-		font-size: 12px;
-		line-height: 1.4;
-		color: var(--color-foreground-muted);
-		display: -webkit-box;
-		-webkit-line-clamp: 3;
-		line-clamp: 3;
-		-webkit-box-orient: vertical;
-		overflow: hidden;
-	}
-
-	/* The one rule the card allows: it divides what the project IS from what
+/* The one rule the card allows: it divides what the project IS from what
 	   you can DO, which is the same seam a menu draws with a divider. */
 	.card-rule {
 		height: 1px;

@@ -1256,7 +1256,7 @@ impl ToolExecutor {
                         "type": "project",
                         "id": detail.project.id,
                         "name": detail.project.name,
-                        "status": detail.project.current_status,
+                        "brief": detail.project.instructions,
                         "members": members,
                     })))
                 }
