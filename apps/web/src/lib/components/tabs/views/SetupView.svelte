@@ -299,6 +299,8 @@
 	/* The letter as a sheet in the pane, as on the stage but without its
 	   entrance: here it is being reread, not arriving. */
 	.letter {
+		/* The letter lays its margin out against the pane, not the window. */
+		container: letter / inline-size;
 		display: flex;
 		justify-content: center;
 		padding: 32px 16px 48px;
@@ -311,6 +313,14 @@
 		background: var(--color-surface-overlay, var(--color-surface));
 		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
 		outline-offset: -1px;
+	}
+	/* Wide enough for the margin: the sheet makes room for it, as on the
+	   stage. */
+	@container letter (min-width: 76rem) {
+		.paper {
+			max-width: calc(38rem + 2.5rem + 15rem + 9rem);
+			padding-right: calc(4rem + 17.5rem);
+		}
 	}
 
 	@media (prefers-reduced-motion: reduce) {
