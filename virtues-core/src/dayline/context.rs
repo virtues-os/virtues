@@ -173,7 +173,7 @@ pub async fn build_hourly_context(
             let text = text?;
             if text.is_empty() { return None; }
             let dur: Option<f64> = r.try_get("duration_seconds").ok().flatten();
-            let mut s = format!("- {}", truncate(&text, 100));
+            let mut s = format!("- {}", truncate(&crate::transcript::flatten_speaker_tags(&text), 100));
             if let Some(d) = dur { s.push_str(&format!(" ({:.0}s)", d)); }
             Some(s)
         }).collect();
