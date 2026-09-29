@@ -1565,7 +1565,7 @@ export function deleteChat(chatId: string): Promise<{ deleted: boolean }> {
 //
 // A Project is a manual collection the user returns to: a project, pet, hobby,
 // goal, or topic. It gathers entities, chats, and pages as URL-native members
-// and carries a single accent tint plus a catch-up memo (`current_status`).
+// and carries an icon, a color and a brief (`instructions`).
 // A chat lives in at most one Project (see `updateChat`'s `projectId`).
 // =============================================================================
 
@@ -1575,8 +1575,6 @@ export interface Project {
 	name: string;
 	icon: string | null;
 	accent_color: string | null;
-	current_status: string | null;
-	current_status_at: string | null;
 	instructions: string | null;
 	sort_order: number;
 	/** Set when the project is closed: kept, out of the working view. Not the trash. */
@@ -1684,7 +1682,7 @@ export function createProject(body: {
 
 /**
  * PUT /api/projects/:id — update a Project. For the nullable fields
- * (`icon`/`accent_color`/`current_status`): omit the key to leave unchanged,
+ * (`icon`/`accent_color`/`instructions`): omit the key to leave unchanged,
  * send `null` to clear, send a value to set.
  */
 export function updateProject(
@@ -1693,7 +1691,6 @@ export function updateProject(
 		name?: string;
 		icon?: string | null;
 		accent_color?: string | null;
-		current_status?: string | null;
 		instructions?: string | null;
 		sort_order?: number;
 	}

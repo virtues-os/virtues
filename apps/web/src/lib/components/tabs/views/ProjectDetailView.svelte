@@ -589,29 +589,21 @@
 
 	// ---- Title + brief: always live, no edit mode ----------------------------
 	/**
-	 * The subtitle is the project's *brief* (`instructions`), not its memo.
+	 * The subtitle is the project's *brief* (`instructions`): a standing
+	 * direction the assistant follows in every chat in this project.
 	 *
-	 * There are two text fields on a project and the wrong one was on screen.
-	 * `instructions` is a standing direction the assistant is told to follow in
-	 * every chat in this project — a real input — and it had no UI at all.
-	 * `current_status` is a transient catch-up note, and it was occupying the
-	 * header labelled "description".
-	 *
-	 * No auto-generated summary: the member list is directly below and fully
-	 * legible, so a generated description would only restate what's visible.
-	 * What can't be derived is what the project is *for*.
+	 * No auto-generated summary: the chats and material are directly below
+	 * and fully legible, so a generated description would only restate what's
+	 * visible. What can't be derived is what the project is *for*.
 	 */
 	let nameDraft = $state('');
 	let briefDraft = $state('');
-	let memoDraft = $state('');
 	let nameFocused = $state(false);
 	let briefFocused = $state(false);
-	let memoFocused = $state(false);
 	$effect(() => {
 		if (!detail) return;
 		if (!nameFocused) nameDraft = detail.name;
 		if (!briefFocused) briefDraft = detail.instructions ?? '';
-		if (!memoFocused) memoDraft = detail.current_status ?? '';
 	});
 
 	async function commitName() {
@@ -636,19 +628,6 @@
 		await projectStore.update(id, { instructions: brief });
 	}
 
-	async function commitMemo() {
-		memoFocused = false;
-		const id = projectId;
-		if (!id || !detail) return;
-		const memo = memoDraft.trim() || null;
-		if (memo === (detail.current_status ?? null)) return;
-		await projectStore.update(id, { current_status: memo });
-	}
-
-	/** The memo is only on screen when it has something to say — otherwise it's
-	 *  a second empty field competing with the brief. Adding one is a menu item. */
-	let memoOpen = $state(false);
-	const showMemo = $derived(memoOpen || !!detail?.current_status);
 
 	// ---- Icon ----------------------------------------------------------------
 	let iconOpen = $state(false);
@@ -792,32 +771,7 @@
 								}
 							}}
 						></textarea>
-						{#if showMemo}
-							<label class="memo">
-								<!-- Dated, because a note about where things stand is only as
-								     good as how recently it was true. -->
-								<span class="memo-label"
-									>Note{#if detail.current_status_at && detail.current_status}<span class="memo-when"
-											>{` · ${formatRelativeTimestamp(detail.current_status_at)}`}</span
-										>{/if}</span
-								>
-								<textarea
-									class="memo-input"
-									bind:value={memoDraft}
-									rows="1"
-									placeholder="Where you left off, for when you come back"
-									onfocus={() => (memoFocused = true)}
-									onblur={commitMemo}
-									onkeydown={(e) => {
-										if (e.key === 'Escape') {
-											memoDraft = detail?.current_status ?? '';
-											e.currentTarget.blur();
-										}
-									}}
-								></textarea>
-							</label>
-						{/if}
-					</div>
+</div>
 
 					<div class="head-actions">
 						<Button
@@ -838,17 +792,7 @@
 							{/snippet}
 							{#snippet children({ close }: { close: () => void })}
 								<div class="menu">
-									{#if !showMemo}
-										<MenuItem
-											icon="ri:sticky-note-line"
-											label="Add a note"
-											onclick={() => {
-												close();
-												memoOpen = true;
-											}}
-										/>
-									{/if}
-									<MenuItem
+<MenuItem
 										icon={detail?.archived_at ? 'ri:inbox-unarchive-line' : 'ri:archive-line'}
 										label={detail?.archived_at ? 'Unarchive project' : 'Archive project'}
 										onclick={() => {
@@ -1135,26 +1079,6 @@
 	.desc-input:focus { color: var(--color-foreground); }
 	.title-input::placeholder, .desc-input::placeholder { color: var(--color-foreground-subtle); }
 
-	/* The memo is a note to self, not identity — labelled so it can't be
-	   mistaken for the brief above it, and quieter than both. */
-	.memo { display: flex; align-items: baseline; gap: 8px; margin-top: 0.45rem; }
-	.memo-label {
-		flex-shrink: 0;
-		font-size: 0.75rem;
-		font-weight: 500;
-		color: var(--color-foreground-muted);
-	}
-	.memo-when {
-		color: var(--color-foreground-subtle);
-	}
-	.memo-input {
-		flex: 1; min-width: 0; display: block; resize: none; overflow: hidden;
-		border: none; background: transparent; outline: none; padding: 0;
-		field-sizing: content;
-		font: inherit; font-size: 0.85rem; line-height: 1.5;
-		color: var(--color-foreground-muted);
-	}
-	.memo-input::placeholder { color: var(--color-foreground-subtle); }
 
 
 	/* Overflow menu */
@@ -1358,7 +1282,7 @@
 
 	/* A phone's width can't hold the icon, the text and the actions in one
 	   row: the text column collapsed to a letter wide. The actions take their
-	   own line under the text, and the note stacks under its label. */
+	   own line under the text. */
 	@media (max-width: 768px) {
 		.inner {
 			padding: 1.25rem 1rem 4rem;
@@ -1383,11 +1307,6 @@
 		}
 		.title-input {
 			font-size: 1.6rem;
-		}
-		.memo {
-			flex-direction: column;
-			align-items: stretch;
-			gap: 2px;
 		}
 	}
 

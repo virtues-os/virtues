@@ -215,14 +215,13 @@
 	// ---- recents: projects, pages and chats blended by recency ----
 	// Not "pinned" — the sidebar's Pinned section is the shelf the user keeps
 	// by hand, and two different meanings for one word is one too many.
-	type RecentItem = { route: string; title: string; kind: string; ts: number; note?: string };
+	type RecentItem = { route: string; title: string; kind: string; ts: number };
 	const recentItems = $derived.by<RecentItem[]>(() => {
 		const nb: RecentItem[] = projectStore.projects.map((n: any) => ({
 			route: `/project/${n.id}`,
 			title: n.name || "Untitled",
 			kind: "project",
 			ts: n.updated_at ? Date.parse(n.updated_at) : 0,
-			note: n.current_status ? "live" : undefined,
 		}));
 		const pg: RecentItem[] = pagesStore.pages.map((p) => ({
 			route: `/page/${p.id}`,
@@ -391,7 +390,7 @@
 						<button class="t" type="button" onclick={() => open(it.route, it.title)}>
 							{it.title}{#if it.kind !== "project"}<span class="s">— {it.kind}</span>{/if}
 						</button>
-						<span class="d">{it.note ?? ago(new Date(it.ts).toISOString())}</span>
+						<span class="d">{ago(new Date(it.ts).toISOString())}</span>
 					</div>
 				{/each}
 			</section>
