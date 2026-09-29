@@ -1,7 +1,7 @@
 # Applets — the surface audit
 
-> Status: **findings, 2026-08-05.** Amends [`applets-overhaul-plan.md`](./applets-overhaul-plan.md)
-> (design locked 2026-07-19) and [`applet-authoring-plan.md`](./applet-authoring-plan.md)
+> Status: **findings, 2026-08-05.** Amends [`applets-overhaul-plan.md`](../plan/applets-overhaul-plan.md)
+> (design locked 2026-07-19) and [`applet-authoring-plan.md`](../plan/applet-authoring-plan.md)
 > with what phases 1–3 actually landed as, read back against what they specified.
 >
 > Nothing here is a new design. Every item is one of three things: a **contract
@@ -99,7 +99,7 @@ implementation inverted them: the list leads with Origin and Lifecycle badges,
 and the detail page leads with a form.
 
 The second reading: **`owner` keeps leaking into places that want `origin`.** The
-list page learned this and documents it well ([`AppletsPanel.svelte:36–42`](../apps/web/src/lib/components/applets/AppletsPanel.svelte));
+list page learned this and documents it well ([`AppletsPanel.svelte:36–42`](../../apps/web/src/lib/components/applets/AppletsPanel.svelte));
 the detail page (T3) and `is_system` in the API response never got the memo.
 `origin` should be the only provenance field any UI touches.
 

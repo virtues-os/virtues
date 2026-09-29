@@ -9,7 +9,7 @@
 > voucher passed between them through the user's own box so that neither side
 > could join identity to usage. **That model is not what ships.** It was
 > collapsed to a **linked prepaid ledger** in
-> [`0005_accounts_ledger.sql`](../services/virtues-api/migrations/0005_accounts_ledger.sql),
+> [`0005_accounts_ledger.sql`](../../services/virtues-api/migrations/0005_accounts_ledger.sql),
 > which drops the `vouchers` and `entitlements` tables outright. Section 1
 > states plainly what was traded away. The voucher design is preserved as
 > history in [§12](#12-the-voucher-model-superseded) because it is still the
@@ -298,7 +298,7 @@ latency" was a consequence of the wall and went away with it.
 
 ## 11. Behavioral blocklist
 
-Implemented in [`blocklist.rs`](../services/virtues-api/src/blocklist.rs). Keyed
+Implemented in [`blocklist.rs`](../../services/virtues-api/src/blocklist.rs). Keyed
 on `key_hash` — the SHA-256 of the api_key, i.e. the credential being rate-limited,
 never a customer record. (The column was `bearer_hash` until migration 0005
 renamed it.) The in-memory `DashMap` is
@@ -361,5 +361,5 @@ which is why the client had a renew-and-retry path and why `renew.rs` still
 carries that name.
 
 Dropped in
-[`0005_accounts_ledger.sql`](../services/virtues-api/migrations/0005_accounts_ledger.sql).
+[`0005_accounts_ledger.sql`](../../services/virtues-api/migrations/0005_accounts_ledger.sql).
 The reasoning is in [§6](#6-what-the-linked-model-gave-up-and-got-back).

@@ -424,8 +424,8 @@ Open, and genuinely undecided:
 
 ## Related
 
-- [`the-day.md`](the-day.md) — the day page and its data model
-- [`event-timeline.md`](event-timeline.md) — segmentation as evidence fusion
+- [`the-day.md`](../build/the-day.md) — the day page and its data model
+- [`event-timeline.md`](../build/event-timeline.md) — segmentation as evidence fusion
 - [`wiki-plan.md`](wiki-plan.md) — the note covenant, in full
-- [`privacy-model.md`](privacy-model.md) — egress; message bodies now reach the
+- [`privacy-model.md`](../record/privacy-model.md) — egress; message bodies now reach the
   Chat slot, which under BYO AI is whatever endpoint the user configured

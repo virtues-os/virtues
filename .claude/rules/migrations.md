@@ -1,7 +1,6 @@
 ---
 paths:
   - "virtues-core/migrations/**"
-  - "**/migrations/**"
 ---
 
 # Claiming a migration number
@@ -18,8 +17,8 @@ make migration NAME=add_foo
 
 It takes the next number, writes a placeholder, and commits it under the lock
 — so the number is yours before anyone else looks. (The chain was squashed to
-a single `0001_initial.sql` on 2026-08-18, so the next number is 0002; the
-counter reads the directory, so this keeps working.) Two agents reaching for the
+a single `0001_initial.sql` on 2026-08-18 and has grown since; the counter
+reads the directory, so never pick a number by hand.) Two agents reaching for the
 same number is the *default* outcome otherwise, and git will not warn you:
 `sqlx::migrate!` keys on the version, and renumbering after a box has applied
 it breaks that box's upgrades. Migration 52 once killed a box for 3¼ hours.

@@ -4,8 +4,8 @@
 > may read it. Written 2026-08-12 after two days of building the pieces on
 > hardware and discovering the shape by hitting its walls. This document is the
 > reason the flow looks the way it does; [onboarding.md](onboarding.md) is what
-> is built, [linking-plan.md](linking-plan.md) is the account step in detail,
-> and [onboarding-plan.md](onboarding-plan.md) is the build order.
+> is built, [linking-plan.md](../archive/linking-plan.md) is the account step in detail,
+> and [onboarding-plan.md](../archive/onboarding-plan.md) is the build order.
 >
 > Intended to be stable. If a change contradicts something here, the change is
 > probably wrong — or this document needs a deliberate revision, not a quiet

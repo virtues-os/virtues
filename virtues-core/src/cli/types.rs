@@ -468,7 +468,7 @@ pub enum Commands {
     /// Hidden power-user command, and the distinction it turns on is worth
     /// keeping straight: `virtues pair` attaches a DEVICE to this box, this
     /// attaches this box to an ACCOUNT. In the normal flow the app carries the
-    /// account grant over Bluetooth (agents/record/onboarding-paradigm.md §7) and
+    /// account grant over Bluetooth (agents/build/onboarding-paradigm.md §7) and
     /// neither is typed.
     ///
     /// (It used to describe itself as pairing with `virtues init`'s "[1] Log

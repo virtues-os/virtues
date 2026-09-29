@@ -128,7 +128,7 @@ pub fn mdns_host() -> String {
 /// holds none, so `/api/pair/consume` rejects `kind: "browser"` and the `/pair`
 /// page exists only to say so. The DIY installer's final screen therefore
 /// offered a dead end as its fallback for the user least able to recover from
-/// one. See `agents/record/onboarding-paradigm.md` §4 and `(auth)/pair/+page.svelte`.
+/// one. See `agents/build/onboarding-paradigm.md` §4 and `(auth)/pair/+page.svelte`.
 ///
 /// The app finds the box by itself on a normal network; this list is for when
 /// it cannot — an office LAN that isolates clients, or a box on another

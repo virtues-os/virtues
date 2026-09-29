@@ -117,7 +117,7 @@ endpoints — [the full install](#the-full-install) has the commands and models.
 timeline, then writes the diary. Plans are not evidence: a calendar entry with
 no physical trace behind it becomes an honest *Unknown*, not a confident
 memory. Each event is scored for novelty against your own history, never a
-population norm. [Design notes](agents/record/the-day.md).
+population norm. [Design notes](agents/build/the-day.md).
 
 **It keeps a wiki of the people and places in them.** The Sarah in your
 calendar, contacts and messages resolves to one person with a page of her own.
@@ -398,7 +398,7 @@ inbound is ever opened at home, and it works behind CGNAT, café wifi, and
 IPv6-only ISPs — anywhere outbound 443 reaches. The relay moves sealed bytes it
 has no key to read; it does see which two keys are talking and how much passes
 between them, which is why we call it encrypted end-to-end rather than blind
-([walkthrough](agents/archive/relay-walkthrough.html)).
+([design notes](agents/archive/networking-relay-tee.md)).
 
 Pairing is **local-first** — no passwords, no email, no magic links: you walk to
 the machine, run `virtues pair`, and the code puts the new device's key on the

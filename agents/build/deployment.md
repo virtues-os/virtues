@@ -1,7 +1,7 @@
 # Deployment & Runtime Architecture
 
 > How Virtues ships and runs. Companion to
-> [`relay-control-plane.md`](relay-control-plane.md) (how a paired device reaches
+> [`relay-control-plane.md`](../archive/relay-control-plane.md) (how a paired device reaches
 > the box; `networking-relay-tee.md` is the superseded pre-iroh ADR)
 > and [`entitlement.md`](entitlement.md) (the cloud wall).
 
@@ -71,7 +71,7 @@ it, also unprivileged. There is no `NET_ADMIN` component and nothing that needs
 > DB rather than IPC. **All of it is gone.** Reach is iroh over a relay — the box
 > dials *outbound* and needs no kernel networking privileges at all, which is
 > what let the privileged component be deleted rather than merely shrunk. See
-> [`relay-control-plane.md`](relay-control-plane.md).
+> [`relay-control-plane.md`](../archive/relay-control-plane.md).
 >
 > The only trace left in the codebase is retirement code: `cli/upgrade.rs`
 > disables and removes a leftover `virtues-wireguard.service` on boxes upgrading
