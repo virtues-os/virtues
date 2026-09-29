@@ -4,7 +4,7 @@
  * ONE PROCESS, ONE WORD (2026-09-24, agents/plan/setup-plan.md). Setup runs
  * full screen at `/setup`: nine steps with a dot each — Welcome (the cold
  * open, and light or dark), the founder's letter, then the seven that do
- * something — then the ∴ and the app. Everything up to Names is required;
+ * something — then the ∴ and the app. Everything through Subscription is required;
  * the last three can each be skipped, and "Finish later" opens the app with
  * the rest waiting on the rail's Setup tile. It replaced the Getting started room
  * (a stepper in the app's pane, 2026-09-23), which replaced a seeded chat.
@@ -121,6 +121,11 @@ export function isSetupStep(s: string | null | undefined): s is SetupStepId {
 export function labelOf(id: SetupStepId): string {
 	return LABELS[id];
 }
+
+/** The steps Setup offers inside the app (SetupView, the rail's panel), in
+ *  order. The first half is finished for anyone in the app, and Welcome's
+ *  opening only plays on the stage. The letter is here to read again. */
+export const IN_APP: SetupStepId[] = ['letter', 'names', 'subscription', 'connections', 'timeline', 'interview'];
 
 /** A button that leads INTO a step says what the person does there. */
 const INTO: Record<SetupStepId, string> = {
@@ -328,6 +333,25 @@ class SetupStore {
 		return (
 			steps.find((s) => s.status === 'open')?.id ?? steps.find((s) => s.status === 'skipped')?.id ?? null
 		);
+	}
+
+	/** In the app: the first step there still open, else the first set
+	 *  aside, else nothing. The letter is only ever reread, never owed. */
+	get resumeInApp(): SetupStepId | null {
+		const steps = this.steps.filter((s) => IN_APP.includes(s.id) && s.id !== 'letter');
+		return (
+			steps.find((s) => s.status === 'open')?.id ?? steps.find((s) => s.status === 'skipped')?.id ?? null
+		);
+	}
+
+	/** In the app, a step opens once the required steps before it there are
+	 *  done. Not the stage's strict order: coming back, the person is
+	 *  choosing a step, not walking them; and the letter and Welcome, which
+	 *  count as read only on the device that read them, never lock anything. */
+	opensInApp(id: SetupStepId): boolean {
+		const steps = this.steps.filter((s) => IN_APP.includes(s.id) && s.id !== 'letter');
+		const at = steps.findIndex((s) => s.id === id);
+		return at < 0 || steps.slice(0, at).every((s) => s.optional || s.status === 'done');
 	}
 
 	/** Nothing the person does in Setup has happened yet: the flow opens

@@ -539,9 +539,9 @@ fn graduated_line(state: &GettingStartedState) -> String {
     };
     out.push(' ');
     out.push_str(match state.first_day {
-        Some(_) => "Your first page is on Home, and there will be one every morning.",
+        Some(_) => "Your server wrote up your first day, and Home links to it.",
         None if sources.is_some() => {
-            "Tomorrow morning there will be a page on Home for today, and one every morning after."
+            "From tomorrow morning, your server writes up each day it has enough of, mostly from your messages and recordings."
         }
         None => "Connect something in Settings whenever you like, and the pages begin the next morning.",
     });
@@ -608,10 +608,10 @@ fn ask_line(s: &Step) -> String {
 fn promise_line(first_day: Option<chrono::NaiveDate>) -> String {
     match first_day {
         Some(d) => format!(
-            "Your first page is on Home: {}, written down from what your integrations hold. There will be one every morning.",
+            "Your server wrote up your first day, {}, from what your integrations hold. Home links to it.",
             d.format("%A, %B %-d")
         ),
-        None => "Tomorrow morning there will be a page on Home for today, written from what your integrations hold. There will be one every morning after.".into(),
+        None => "From tomorrow morning, your server writes up each day it has enough of, mostly from your messages and recordings.".into(),
     }
 }
 

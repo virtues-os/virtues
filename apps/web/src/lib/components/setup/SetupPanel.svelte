@@ -6,10 +6,10 @@
 	done, a dash once set aside, the step's number while open. Parts hang
 	under Connections ("Computer · App ✓ · Permissions").
 
-	The steps do not run here. Setup is one full-screen flow (/setup), so a
-	row, or "Continue setup", goes back into it at that step; the flow ends
-	with the app opening again. Forward is strict, backward is free: a step
-	past the first one still open is drawn but cannot be entered yet.
+	The steps do not run here: a row, or "Continue setup", opens that step in
+	Setup's tab in the app (setup/inApp.ts). So the panel lists what the tab
+	offers (`IN_APP`) and locks what it locks (`opensInApp`): a step opens
+	once the required ones before it are done.
 
 	The founder's letter is a step like the others, so reading it again is
 	its row.
@@ -18,14 +18,14 @@
 	import { onMount } from "svelte";
 	import { goto } from "$app/navigation";
 	import Icon from "$lib/components/Icon.svelte";
-	import { setup, type SetupStepId } from "./setup.svelte";
+	import { setup, IN_APP, type SetupStepId } from "./setup.svelte";
 
 	onMount(() => {
 		void setup.refresh();
 	});
 
-	const steps = $derived(setup.steps);
-	const next = $derived(setup.resumeAt);
+	const steps = $derived(setup.steps.filter((s) => IN_APP.includes(s.id)));
+	const next = $derived(setup.resumeInApp);
 
 	function open(id: SetupStepId) {
 		void goto(`/setup/${id}`);
@@ -33,7 +33,7 @@
 </script>
 
 <div class="stepper">
-	<p class="count" aria-live="polite">{setup.doneCount} of {steps.length} done</p>
+	<p class="count" aria-live="polite">{steps.filter((s) => s.status === "done").length} of {steps.length} done</p>
 
 	{#if next}
 		<button type="button" class="continue" onclick={() => open(next)}>
@@ -46,13 +46,14 @@
 		{#each steps as step, i (step.id)}
 			{@const settled = step.status !== "open"}
 			{@const selected = next === step.id}
-			<li class="step" class:settled class:selected class:locked={!step.reachable}>
+			{@const opens = setup.opensInApp(step.id)}
+			<li class="step" class:settled class:selected class:locked={!opens}>
 				<button
 					type="button"
 					class="row"
-					disabled={!step.reachable}
+					disabled={!opens}
 					aria-current={selected ? "step" : undefined}
-					title={step.reachable ? undefined : "Finish the step above first"}
+					title={opens ? undefined : "Finish the step above first"}
 					onclick={() => open(step.id)}
 				>
 					<span class="mark" aria-hidden="true">

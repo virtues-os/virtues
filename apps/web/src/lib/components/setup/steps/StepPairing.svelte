@@ -85,9 +85,9 @@
 	);
 	const subtitle = $derived(
 		phase === "linking"
-			? "Signing your server in."
+			? "Your server is signing in."
 			: phase === "pairing"
-				? "Pairing. This can take up to a minute."
+				? "Pairing takes up to a minute."
 				: phase === "opening"
 					? "Opening your server. This can take up to a minute."
 				: phase === "silent"

@@ -19,7 +19,7 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 	if (prePair.active) return { session: null };
 	// Someone already in the app: `/setup` opens as a tab there, not here
 	// (setup/inApp.ts). A reload or a fresh window lands here first.
-	if (setupOpensInApp(url.pathname)) throw redirect(307, `${IN_APP_PREFIX}${url.pathname}`);
+	if (setupOpensInApp(url)) throw redirect(307, `${IN_APP_PREFIX}${url.pathname}${url.search}`);
 	try {
 		// One retry after a beat: on the phone this rides the iroh loopback,
 		// which can still be rebuilding right after the app resumes.

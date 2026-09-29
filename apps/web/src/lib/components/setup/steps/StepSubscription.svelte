@@ -194,8 +194,7 @@
      whoever wants the reason. What the card lists is Billing's own claim,
      "one subscription covers all four" (BillingView). -->
 <!-- WHY, ON THE SCREEN (2026-09-28): this is the one step with no way past,
-     and the page never said so. Same reason as the Account step before
-     pairing, in the same plain words. -->
+     and the page never said so. It is said here only (not on Account). -->
 <StepFrame
 	title={done ? (via === "byo" ? "Your server is using your own AI" : "You've set up your subscription") : `Choose how ${name} thinks`}
 	subtitle={done

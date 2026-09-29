@@ -63,6 +63,7 @@
 	import { toUiMessage } from "$lib/components/chat/state/transcript";
 	import { isAppleKeyboard } from "$lib/utils/platform";
 	import { setup } from "../setup.svelte";
+	import { useShowing, mayTakeFocus } from "../showing";
 	import StepFrame from "../StepFrame.svelte";
 
 	let {
@@ -116,6 +117,7 @@
 	const touch = typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
 
 	const name = $derived(setup.assistantName);
+	const showing = useShowing();
 
 	/** The opening of "In your own words": its first paragraphs, plain, up to
 	 *  about three hundred characters, cut at a sentence. */
@@ -306,7 +308,8 @@
 		opening = isOpening;
 		phase = "asking";
 		await tick();
-		field?.focus();
+		// Not from a hidden tab, or out of the other pane mid-sentence.
+		if (mayTakeFocus(showing, field)) field?.focus();
 	}
 
 	onMount(() => {
@@ -470,8 +473,8 @@
 	<StepFrame
 		title="You've told your story"
 		subtitle={excerpt
-			? "Your answers, arranged into a page in your own words. Nothing changes it but you:"
-			: "Your answers, arranged into a page in your own words. It's in your wiki, and nothing changes it but you."}
+			? "Your server arranged your answers into a page, in your own words. It begins:"
+			: "Your server arranged your answers into a page, in your own words. It's in your wiki, and nothing rewrites it unless you ask."}
 	>
 		{#if excerpt}
 			<blockquote class="excerpt" in:fly={IN}>

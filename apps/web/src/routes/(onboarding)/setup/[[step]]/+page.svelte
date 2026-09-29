@@ -8,8 +8,8 @@
   to become. The four laws are in agents/plan/setup-plan.md.
 
   Ten steps: Welcome (the cold open, with light or dark), the founder's
-  letter, Account, Server, Wi-Fi, Subscription, Names, Connections, Timeline,
-  Interview. Everything through Names is required.
+  letter, Account, Server, Wi-Fi, Names, Subscription, Connections, Timeline,
+  Interview. Everything through Subscription is required.
 
   THE FIRST HALF (Account, Server, Wi-Fi, and pairing at Wi-Fi's end) runs
   here only before this device has a server: on the iPhone, whose shell
@@ -135,12 +135,15 @@
 		return () => clearTimeout(t);
 	});
 
-	/** One true line under the name at the close: the letter promised a page
-	 *  every morning, and this says when the first one comes (the same rule
-	 *  as the server's graduated line). Without devices, what's ready now. */
+	/** One true line under the name at the close. The letter promised the
+	 *  days written up; a day is only written when it has enough in it (a
+	 *  recording, or messages: `day_article::has_substance`), so the line
+	 *  promises it only once those are arriving. Otherwise, what's ready. */
 	const closeLine = $derived.by(() => {
-		if (gettingStarted.state?.first_day) return "Your first page is on Home, and there will be one every morning.";
-		if (setup.status("connections") === "done") return "Tomorrow morning there will be a page on Home for today.";
+		if (gettingStarted.state?.first_day) return "Your server wrote up your first day, and Home links to it.";
+		const arriving = (name: string) => (setup.streams.find((s) => s.name === name)?.count_7d ?? 0) > 0;
+		if (arriving("communication_message") || arriving("communication_transcription"))
+			return "From tomorrow morning, your server writes up each day it has enough of.";
 		if (setup.status("interview") === "done") return "Your story is ready to read.";
 		return null;
 	});
@@ -384,7 +387,10 @@
 			closeError = "Your server couldn't finish Setup. Check your connection, then try again.";
 			return;
 		}
-		await new Promise((r) => setTimeout(r, still ? 0 : 2300));
+		// Long enough to read what rises under the ∴: the name, and the line
+		// when there is one. Reduced motion takes the movement away, not the
+		// time to read.
+		await new Promise((r) => setTimeout(r, closeLine ? (still ? 2000 : 3800) : still ? 800 : 2300));
 		// The app opens on page one of what Setup made: the story told in the
 		// interview ("You"), else the chapters drawn, else home.
 		const dest =
@@ -614,6 +620,13 @@
 		color: var(--color-foreground-muted);
 		text-wrap: balance;
 		pointer-events: none;
+	}
+	/* A short window (a phone on its side): the line sits at the foot. */
+	@media (max-height: 480px) {
+		.close-line {
+			top: auto;
+			bottom: max(16px, env(safe-area-inset-bottom));
+		}
 	}
 	.close-name {
 		position: fixed;

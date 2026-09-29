@@ -39,6 +39,7 @@
 	replace once the chapters have pages of their own, and says so.
 -->
 <script lang="ts">
+	import { useShowing, mayTakeFocus, isOurs } from '../showing';
 	import { onMount, tick } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import {
@@ -151,12 +152,16 @@
 	 *  example does: on a phone the intro held the editor back about eight
 	 *  seconds with nothing for a thumb to do but find "Skip intro". */
 	function onIntroPointer(e: MouseEvent) {
-		if (!beat || beat === 'e') return;
+		if (!beat || beat === 'e' || !isOurs(showing, e, rootEl)) return;
 		if (e.target instanceof Element && e.target.closest('button, input, select, textarea, a')) return;
 		advance();
 	}
 
 	$effect(() => () => clearTimers());
+
+	/** In the app, a hidden tab or the other pane (setup/showing.ts). */
+	const showing = useShowing();
+	let rootEl = $state<HTMLElement | null>(null);
 
 	// ------------------------------------------------------------------
 	// Geometry
@@ -516,12 +521,8 @@
 	}
 	let birthYearEl = $state<HTMLInputElement | null>(null);
 	function focusFirst() {
-		if (birthYear === null) {
-			birthYearEl?.focus({ preventScroll: true });
-			return;
-		}
-		const empty = bands.find((b) => !b.title.trim());
-		if (empty) nameEls.get(empty.key)?.focus({ preventScroll: true });
+		const target = birthYear === null ? birthYearEl : nameEls.get(bands.find((b) => !b.title.trim())?.key ?? -1);
+		if (mayTakeFocus(showing, target)) target?.focus({ preventScroll: true });
 	}
 
 	/** Anything that needs the year, pressed before there is one, points at
@@ -748,6 +749,7 @@
 		birthKnown ? `${yearOf(k)} · ${full ? 'age ' : ''}${shown[k]}` : `age ${shown[k]}`;
 
 	function onWindowKey(e: KeyboardEvent) {
+		if (!isOurs(showing, e, rootEl)) return;
 		if (beat && beat !== 'e' && e.key === 'Escape') {
 			enter('e');
 			return;
@@ -782,7 +784,7 @@
 
 <svelte:window onkeydown={onWindowKey} onclick={onIntroPointer} />
 
-<section class="timeline-step" class:editing={beat === 'e'} class:list={listMode}>
+<section class="timeline-step" bind:this={rootEl} class:editing={beat === 'e'} class:list={listMode}>
 	<header class="head">
 		<div class="slot headline-slot" aria-live="polite">
 			{#key head.h}
