@@ -35,9 +35,9 @@
 		deleteProject,
 		droppedRefUrl,
 		fileIntoProject,
-		isProjectUrl,
 		newChatInProject,
 		openProjects,
+		projectMemberUrl,
 		removeFromProject,
 		unarchiveProject,
 	} from '$lib/utils/projectActions';
@@ -681,20 +681,12 @@
 	}
 	async function addMember(entity: { url: string }) {
 		pickerPos = null;
-		const id = projectId;
-		if (!id || !entity.url) return;
-		// you can't put a project in a project — the picker already hides them,
-		// and the server answers 400 if one gets through.
-		if (isProjectUrl(entity.url)) return;
-		try {
-			await projectStore.addItem(id, entity.url);
-		} catch (e) {
-			console.error('[ProjectDetailView] add failed:', e);
-			toast.error("Your server couldn't add that to this project", {
-				description: 'Nothing changed. Try again',
-			});
-			return;
-		}
+		// Only what can be filed: not a project, not Setup or the interview.
+		// The picker hides them, and the server refuses any that get through.
+		const url = projectMemberUrl(entity.url);
+		if (!url || !detail) return;
+		// The shared verb: it says what happened, and why when it fails.
+		await fileIntoProject(detail, url);
 		await loadGraph();
 	}
 
@@ -1073,7 +1065,7 @@
 		position={pickerPos}
 		placeholder="Add a chat, page, person, or link…"
 		excludeIds={memberItems.map((i) => i.url)}
-		filter={(e) => !isProjectUrl(e.url)}
+		filter={(e) => !!projectMemberUrl(e.url)}
 		onSelect={addMember}
 		onClose={() => (pickerPos = null)}
 	/>
