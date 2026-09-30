@@ -10,7 +10,7 @@
 	logic is MapLibre-native, and this is where it gets ported.
 -->
 <script lang="ts">
-	import { onMount, onDestroy, tick } from 'svelte';
+	import { onMount, onDestroy, tick, untrack } from 'svelte';
 	import { browser } from '$app/environment';
 	import { atlasStyle } from '$lib/map/atlas';
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
@@ -212,14 +212,24 @@
 		};
 	});
 
+	// The day loads on its own, and the map draws it once the map is up: the
+	// bar, the rail and a day's note never wait on the tiles (the prototype
+	// draws its rail with no map at all).
 	$effect(() => {
-		if (ready) void showDay(date);
+		void loadDay(date);
+	});
+	$effect(() => {
+		if (!ready) return;
+		void drawn; // a new day to draw
+		untrack(() => void drawDay());
 	});
 
-	async function showDay(slug: string) {
-		const m = map;
-		const ml = maplibre;
-		if (!m || !ml) return;
+	/** The last fix before a day with none of its own: where it was last seen. */
+	let lastFix: Fix | null = null;
+	/** Bumped when a day's data is in, so the map draws it. */
+	let drawn = $state(0);
+
+	async function loadDay(slug: string) {
 		const mine = ++asked;
 		status = 'loading';
 		note = null;
@@ -251,34 +261,18 @@
 		const fixes = all.filter((f) => f.t >= startMs && f.t < endMs);
 		dayFixes = fixes;
 		dayTrack = cleanTrack(fixes);
-		const { runs, bridges } = splitTrack(dayTrack);
-		(m.getSource('track-run') as GeoJSONSource).setData(lines(runs));
-		(m.getSource('track-bridge') as GeoJSONSource).setData(lines(bridges));
 		dayStart = startMs;
 		dayEnd = endMs;
 		playT = startMs;
 		railFocus = 'row';
 		litKey = '';
-		// The rail draws first, so the framing can leave room for it.
-		await tick();
-		if (mine !== asked) return;
-		if (fixes.length) {
-			status = 'shown';
-			frameDay(m, 0);
-			bubbles?.build(mapMoments());
-			syncPlayhead();
-			return;
-		}
-		bubbles?.clear();
-		syncPlayhead();
+		lastFix = all.filter((f) => f.t < startMs).at(-1) ?? toFixes(window.before ? [window.before] : [])[0] ?? null;
+		status = fixes.length ? 'shown' : 'empty';
+		drawn++;
+		if (fixes.length) return;
 		// No fix all day. The prototype's rule (`honestWhere` + `gapWhy`): hold the
 		// last position, say when it was measured and what the phone did meanwhile.
-		status = 'empty';
-		const last = all.filter((f) => f.t < startMs).at(-1) ?? toFixes(window.before ? [window.before] : [])[0] ?? null;
-		// The prototype's follow zoom is 14 (dayback/src/main.js:938).
-		if (last) m.jumpTo({ center: [last.lng, last.lat], zoom: 14 });
-		else m.jumpTo({ center: [0, 20], zoom: 1.5 });
-		const measured = last ? lastMeasured(last.t, false, zone) : null;
+		const measured = lastFix ? lastMeasured(lastFix.t, false, zone) : null;
 		note = { title: 'No location fix', lines: measured ? [sentence(measured)] : [] };
 		let verdict: string | null = null;
 		try {
@@ -288,6 +282,31 @@
 		}
 		if (mine !== asked || !verdict || !note) return;
 		note = { ...note, lines: [...note.lines, verdict] };
+	}
+
+	/** The loaded day on the map: its track, then the frame, the bubbles and
+	 *  the playhead; a day with no fix holds the last position. */
+	async function drawDay() {
+		const m = map;
+		if (!m) return;
+		const mine = asked;
+		const { runs, bridges } = splitTrack(dayTrack);
+		(m.getSource('track-run') as GeoJSONSource).setData(lines(runs));
+		(m.getSource('track-bridge') as GeoJSONSource).setData(lines(bridges));
+		// The rail draws first, so the framing can leave room for it.
+		await tick();
+		if (mine !== asked) return;
+		if (dayFixes.length) {
+			frameDay(m, 0);
+			bubbles?.build(mapMoments());
+			syncPlayhead();
+			return;
+		}
+		bubbles?.clear();
+		syncPlayhead();
+		// The prototype's follow zoom is 14 (dayback/src/main.js:938).
+		if (lastFix) m.jumpTo({ center: [lastFix.lng, lastFix.lat], zoom: 14 });
+		else m.jumpTo({ center: [0, 20], zoom: 1.5 });
 	}
 
 	const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
