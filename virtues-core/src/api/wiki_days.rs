@@ -568,6 +568,11 @@ pub struct TimelinePoint {
     pub latitude: f64,
     pub longitude: f64,
     pub timestamp: String,
+    /// The phone's own error radius, metres. Past ~100 m it is a cell tower's
+    /// guess, not a GPS fix, and a reader drawing a path needs to know.
+    pub horizontal_accuracy: Option<f64>,
+    /// The phone's reported speed, m/s; null when it reported none.
+    pub speed: Option<f64>,
 }
 
 /// Timeline day view response
@@ -578,6 +583,9 @@ pub struct TimelineDayView {
     pub chunks: Vec<TimelineChunk>,
     /// Raw GPS points — used by the map polyline (the actual path you walked)
     pub points: Vec<TimelinePoint>,
+    /// The last raw GPS point before the day starts, so a day with no fixes can
+    /// still say where the phone was last measured, and when.
+    pub last_point_before: Option<TimelinePoint>,
 }
 
 /// Get location visits for a day, returned as timeline chunks with their
@@ -669,7 +677,7 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
     // not just lines connecting visit centroids.
     let point_rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
         r#"
-        SELECT latitude, longitude, occurred_at
+        SELECT latitude, longitude, occurred_at, horizontal_accuracy, speed
         FROM data_location_point
         WHERE occurred_at >= $1 AND occurred_at < $2
         ORDER BY occurred_at ASC
@@ -681,35 +689,58 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
     .await
     .map_err(|e| Error::Database(format!("Failed to get location points: {}", e)))?;
 
-    let points: Vec<TimelinePoint> = point_rows
-        .iter()
-        // These read COLUMNS off rows already in hand — the query's own error
-        // was handled above — and a point missing a coordinate or a timestamp
-        // is one this timeline cannot place, so `filter_map` drops it rather
-        // than inventing one.
-        .filter_map(|row| {
-            let lat: Option<f64> = row.try_get("latitude").ok();
-            let lng: Option<f64> = row.try_get("longitude").ok();
-            let ts: Option<String> = row
-                // absent-ok: a row without a timestamp cannot be placed in time.
-                .try_get::<Option<DateTime<Utc>>, _>("occurred_at")
-                .ok()
-                .flatten()
-                .map(|t| t.to_rfc3339());
-            match (lat, lng, ts) {
-                (Some(lat), Some(lng), Some(ts)) => Some(TimelinePoint {
-                    latitude: lat,
-                    longitude: lng,
-                    timestamp: ts,
-                }),
-                _ => None,
-            }
-        })
-        .collect();
+    let points: Vec<TimelinePoint> = point_rows.iter().filter_map(timeline_point).collect();
+
+    // The last fix before the day: a day with no location of its own can still
+    // say where the phone was last measured, and when.
+    let last_point_before = sqlx::query(
+        r#"
+        SELECT latitude, longitude, occurred_at, horizontal_accuracy, speed
+        FROM data_location_point
+        WHERE occurred_at < $1
+        ORDER BY occurred_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(start_of_day)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get the last location point: {}", e)))?
+    .and_then(|row| timeline_point(&row));
 
     Ok(TimelineDayView {
         date: date.to_string(),
         chunks,
         points,
+        last_point_before,
     })
+}
+
+/// A `data_location_point` row as a timeline point. This reads COLUMNS off a
+/// row already in hand — the query's own error is handled by the caller — and
+/// a point missing a coordinate or a timestamp is one this timeline cannot
+/// place, so it is dropped rather than invented.
+fn timeline_point(row: &sqlx::postgres::PgRow) -> Option<TimelinePoint> {
+    use sqlx::Row;
+    let lat: Option<f64> = row.try_get("latitude").ok();
+    let lng: Option<f64> = row.try_get("longitude").ok();
+    let ts: Option<String> = row
+        // absent-ok: a row without a timestamp cannot be placed in time.
+        .try_get::<Option<DateTime<Utc>>, _>("occurred_at")
+        .ok()
+        .flatten()
+        .map(|t| t.to_rfc3339());
+    // absent-ok: older rows and some sources carry no accuracy or speed.
+    let horizontal_accuracy: Option<f64> = row.try_get("horizontal_accuracy").ok().flatten();
+    let speed: Option<f64> = row.try_get("speed").ok().flatten();
+    match (lat, lng, ts) {
+        (Some(lat), Some(lng), Some(ts)) => Some(TimelinePoint {
+            latitude: lat,
+            longitude: lng,
+            timestamp: ts,
+            horizontal_accuracy,
+            speed,
+        }),
+        _ => None,
+    }
 }
