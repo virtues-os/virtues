@@ -44,6 +44,7 @@ pub mod sessionize;
 pub mod server;
 pub mod setup;
 pub mod storage;
+pub mod timeline;
 pub mod timezone;
 pub mod virtues_api;
 pub mod tools;
