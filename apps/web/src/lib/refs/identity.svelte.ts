@@ -49,46 +49,53 @@ export function untitled(kind: string): string {
 	return 'Untitled';
 }
 
-/** What a pin shows: the live store row when this client holds one, else the server's resolution. */
-export function pinIdentity(pin: Pin): Identity {
-	const owned = ownedRef(pin.url);
+/** A chat, page or project as this client's stores hold it right now. */
+function storeIdentity(url: string): Identity | null {
+	const owned = ownedRef(url);
 	if (owned?.kind === 'chat') {
 		const s = chatSessions.sessions.find((c) => c.conversation_id === owned.id);
-		if (s) {
-			return {
-				kind: 'chat',
-				title: s.title?.trim() || untitled('chat'),
-				icon: s.icon ?? pin.icon,
-				color: s.icon_color ?? pin.color,
-			};
-		}
+		if (s) return { kind: 'chat', title: s.title?.trim() || untitled('chat'), icon: s.icon, color: s.icon_color ?? null };
 	} else if (owned?.kind === 'page') {
 		const p = pagesStore.pages.find((x) => x.id === owned.id);
-		if (p) {
-			return {
-				kind: 'page',
-				title: p.title?.trim() || untitled('page'),
-				icon: p.icon ?? pin.icon,
-				color: p.icon_color ?? pin.color,
-			};
-		}
+		if (p) return { kind: 'page', title: p.title?.trim() || untitled('page'), icon: p.icon, color: p.icon_color };
 	} else if (owned?.kind === 'project') {
 		const p = projectStore.projects.find((x) => x.id === owned.id);
-		if (p) {
-			return {
-				kind: 'project',
-				title: p.name?.trim() || untitled('project'),
-				icon: p.icon ?? pin.icon,
-				color: p.accent_color ?? pin.color,
-			};
-		}
+		if (p) return { kind: 'project', title: p.name?.trim() || untitled('project'), icon: p.icon, color: p.accent_color ?? null };
 	}
+	return null;
+}
+
+/**
+ * What `url` is called and wears now. The live store row when this client
+ * holds one; otherwise `known`, the best the caller has — a pin's server
+ * resolution, a tab's last-known label. Icon and color fall back to `known`
+ * when the thing has none of its own.
+ */
+export function identityOf(
+	url: string,
+	known: { kind?: string | null; title?: string | null; icon?: string | null; color?: string | null } = {},
+): Identity {
+	const live = storeIdentity(url);
+	if (live) {
+		return { ...live, icon: live.icon ?? known.icon ?? null, color: live.color ?? known.color ?? null };
+	}
+	const kind = known.kind ?? parseRef(url)?.kind ?? 'route';
 	return {
-		kind: pin.kind ?? parseRef(pin.url)?.kind ?? 'route',
+		kind,
+		title: known.title?.trim() || (ownedRef(url) ? untitled(kind) : url),
+		icon: known.icon ?? null,
+		color: known.color ?? null,
+	};
+}
+
+/** What a pin shows: the thing, else the box's resolution of it. */
+export function pinIdentity(pin: Pin): Identity {
+	return identityOf(pin.url, {
+		kind: pin.kind,
 		title: pin.title?.trim() || pin.label?.trim() || pin.url,
 		icon: pin.icon,
 		color: pin.color,
-	};
+	});
 }
 
 /** Every open tab on the route takes the new name, in every pane. */

@@ -23,6 +23,7 @@
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import { isTemporaryRoute } from "$lib/components/chat/state/chatRoute";
 	import { pinsStore } from "$lib/stores/pins.svelte";
+	import { identityOf } from "$lib/refs/identity.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
@@ -376,7 +377,20 @@
 	// made where it is honest: the metered 402 itself names the door
 	// (virtues_api::client::payment_required_message), and Settings → Billing
 	// carries the standing.
+
+	// The window's title is the active tab's thing, by its name now
+	// (refs/identity): the browser tab, the history menu and the OS window
+	// switcher all read it, and it said nothing at all before.
+	const windowTitle = $derived.by(() => {
+		const tab = windowShellStore.activeTab;
+		if (!tab) return "Virtues";
+		return `${identityOf(tab.route, { title: tab.label }).title} · Virtues`;
+	});
 </script>
+
+<svelte:head>
+	<title>{windowTitle}</title>
+</svelte:head>
 
 <!-- Top-center everywhere, as onboarding and auth already are. On desktop the
      offset drops the toast just below the chrome row (tab bar + pane toolbar),

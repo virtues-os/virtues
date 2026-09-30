@@ -11,7 +11,7 @@
  */
 
 import { createPage, updatePage, deletePage, listPages, type PageSummary, type Page } from '$lib/api/client';
-import { windowShellStore, type EntityMetadata } from './window-shell.svelte';
+import { windowShellStore } from './window-shell.svelte';
 
 const PINNED_STORAGE_KEY = 'virtues-pinned-pages';
 const RECENT_STORAGE_KEY = 'virtues-recent-pages';
@@ -155,14 +155,6 @@ class PagesStore {
 	}): Promise<void> {
 		await updatePage(pageId, updates);
 
-		// Optimistic local update for title/icon
-		if (updates.title || 'icon' in updates) {
-			const metadataUpdates: Partial<EntityMetadata> = {};
-			if (updates.title) metadataUpdates.name = updates.title;
-			if ('icon' in updates) metadataUpdates.icon = updates.icon || 'ri:file-text-line';
-			windowShellStore.updateEntityMetadata(pageId, metadataUpdates);
-		}
-
 		// Sidebar refresh (only if visible fields changed). `icon_color` counts:
 		// the tab and the sidebar row both draw the icon in it.
 		if (updates.title || 'icon' in updates || 'icon_color' in updates) {
@@ -177,16 +169,6 @@ class PagesStore {
 	updatePageLocally(pageId: string, updates: Partial<PageSummary & { icon?: string | null }>): void {
 		if (this.pages.some((p) => p.id === pageId)) {
 			this.pages = this.pages.map((p) => (p.id === pageId ? { ...p, ...updates } : p));
-		}
-		const metadataUpdates: Partial<EntityMetadata> = {};
-		if (updates.title) {
-			metadataUpdates.name = updates.title;
-		}
-		if ('icon' in updates) {
-			metadataUpdates.icon = updates.icon || 'ri:file-text-line';
-		}
-		if (Object.keys(metadataUpdates).length > 0) {
-			windowShellStore.updateEntityMetadata(pageId, metadataUpdates);
 		}
 	}
 

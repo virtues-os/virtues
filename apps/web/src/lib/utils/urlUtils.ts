@@ -76,24 +76,6 @@ export function getNamespace(url: string): string | null {
 }
 
 /**
- * Get entity type from a URL for context menus.
- * Returns the namespace if it's an entity namespace, null otherwise.
- * e.g., '/page/page_xyz' → 'page'
- * e.g., '/virtues/account' → null (not an entity)
- */
-export function getTypeFromUrl(url: string): EntityNamespace | null {
-	const namespace = getNamespace(url);
-	if (!namespace) return null;
-
-	// Check if it's an entity namespace
-	if (ENTITY_NAMESPACES.includes(namespace as EntityNamespace)) {
-		return namespace as EntityNamespace;
-	}
-
-	return null;
-}
-
-/**
  * Check if a URL is an entity detail page.
  * e.g., '/person/person_abc' → true
  * e.g., '/person' → false (list page)
@@ -148,23 +130,3 @@ export function buildEntityUrl(namespace: string, entityId: string): string {
 	return `/${namespace}/${entityId}`;
 }
 
-/**
- * Get the display name for a namespace.
- * e.g., 'person' → 'Person'
- * e.g., 'org' → 'Organization'
- */
-export function getNamespaceDisplayName(namespace: string): string {
-	const displayNames: Record<string, string> = {
-		chat: 'Chat',
-		page: 'Page',
-		person: 'Person',
-		place: 'Place',
-		org: 'Organization',
-		day: 'Day',
-		year: 'Year',
-		source: 'Source',
-		drive: 'Drive',
-		virtues: 'System'
-	};
-	return displayNames[namespace] ?? namespace;
-}

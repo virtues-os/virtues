@@ -4,6 +4,7 @@
 	 * up front and the rest one click away. Each opens in the window you are
 	 * in; right-click or ⋯ to open beside, move it, or take it out.
 	 */
+	import { untitled } from '$lib/refs/identity.svelte';
 	import type { ProjectChat, ProjectDetail } from '$lib/api/client';
 	import { IconButton } from '$lib';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
@@ -76,7 +77,7 @@
 					<span class="chat-glyph" style={`color: ${projectColor(project)}`}>
 						<AtlasIcon name="chats" size={15} bare />
 					</span>
-					<span class="chat-title">{chat.title || 'Untitled chat'}</span>
+					<span class="chat-title">{chat.title || untitled('chat')}</span>
 					<span class="chat-meta">
 						{chat.message_count === 1 ? '1 message' : `${chat.message_count} messages`}
 						· {formatRelativeTimestamp(chat.last_message_at)}
