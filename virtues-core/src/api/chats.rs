@@ -263,7 +263,14 @@ pub struct TitleMessage {
 pub struct GenerateTitleResponse {
     pub chat_id: String,
     pub title: String,
+    /// No automatic title will ever be written to this chat again: the person
+    /// named it, or the one re-title has happened. The client stops asking.
+    pub done: bool,
 }
+
+/// User turns a chat needs before its generated title is replaced, once, by
+/// one that has seen the conversation rather than its opening.
+const SETTLE_AFTER_USER_TURNS: i64 = 6;
 
 // ============================================================================
 // Functions
@@ -577,9 +584,12 @@ pub async fn update_chat(
     let mut set_clauses = vec!["updated_at = now()".to_string()];
     let mut binds: Vec<Option<String>> = Vec::new();
 
+    // A title through this door is a person naming the chat, so the
+    // generator never writes over it (see `generate_title`).
     if let Some(ref title) = request.title {
         binds.push(Some(title.clone()));
         set_clauses.push(format!("title = ${}", binds.len()));
+        set_clauses.push("title_source = 'user'".to_string());
     }
 
     if let Some(ref icon) = request.icon {
@@ -931,11 +941,42 @@ pub async fn generate_title(
                     "In your own words".to_string()
                 }
             });
-        return Ok(GenerateTitleResponse { chat_id, title });
+        return Ok(GenerateTitleResponse { chat_id, title, done: true });
     }
-    // Build conversation summary (first few messages)
-    let messages_to_include: Vec<&TitleMessage> =
-        messages.iter().take(6.min(messages.len())).collect();
+
+    // Who wrote the current title decides whether to write another. The
+    // client asks after every send and cannot know; the row can. A chat is
+    // titled at most twice: once after the first exchange, and once more
+    // when it has run long enough that the opening no longer describes it.
+    // A hand rename ends it.
+    let Some((current, source, user_turns)) = sqlx::query_as::<_, (String, String, i64)>(
+        "SELECT c.title, c.title_source, \
+                (SELECT count(*) FROM app_chat_messages m \
+                  WHERE m.chat_id = c.id AND m.role = 'user') \
+           FROM app_chats c WHERE c.id = $1",
+    )
+    .bind(&chat_id)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Err(Error::NotFound("Chat not found".into()));
+    };
+    let next_source = match source.as_str() {
+        "seed" => "generated",
+        "generated" if user_turns >= SETTLE_AFTER_USER_TURNS => "settled",
+        "generated" => {
+            return Ok(GenerateTitleResponse { chat_id, title: current, done: false });
+        }
+        _ => return Ok(GenerateTitleResponse { chat_id, title: current, done: true }),
+    };
+
+    // The first title reads the opening. The re-title reads the opening and
+    // where the chat is now, since that drift is why it re-titles at all.
+    let messages_to_include: Vec<&TitleMessage> = if next_source == "settled" && messages.len() > 8 {
+        messages.iter().take(2).chain(messages.iter().skip(messages.len() - 6)).collect()
+    } else {
+        messages.iter().take(6).collect()
+    };
     let conversation_summary: String = messages_to_include
         .iter()
         // Chars, not bytes — `&content[..200]` panics if byte 200 lands mid
@@ -984,9 +1025,6 @@ Conversation:
     })?
     .trim()
     .to_string();
-    if title.is_empty() {
-        title = "New Chat".to_string();
-    }
 
     // Strip the costume the model put on the title: markdown emphasis, a
     // leading heading marker, quotes. Trimmed as a set and repeatedly, because
@@ -1014,20 +1052,37 @@ Conversation:
         title = format!("{}...", head);
     }
 
-    // Update chat title in database
-    sqlx::query(
-        r#"
-        UPDATE app_chats
-        SET title = $1, updated_at = now()
-        WHERE id = $2
-        "#,
+    // An empty answer keeps the title there is and retries next turn.
+    // Writing a placeholder over it would replace the first message's words
+    // with "New Chat".
+    if title.is_empty() {
+        return Ok(GenerateTitleResponse { chat_id, title: current, done: false });
+    }
+
+    // Only if the title is still the one this call read: a rename that
+    // landed while the model was answering is the person's, and wins.
+    let written: Option<String> = sqlx::query_scalar(
+        "UPDATE app_chats SET title = $1, title_source = $2 \
+          WHERE id = $3 AND title_source = $4 RETURNING title",
     )
     .bind(&title)
+    .bind(next_source)
     .bind(&chat_id)
-    .execute(pool)
+    .bind(&source)
+    .fetch_optional(pool)
     .await?;
-
-    Ok(GenerateTitleResponse { chat_id, title })
+    match written {
+        Some(title) => Ok(GenerateTitleResponse { chat_id, title, done: next_source == "settled" }),
+        None => {
+            let (title, source): (String, String) =
+                sqlx::query_as("SELECT title, title_source FROM app_chats WHERE id = $1")
+                    .bind(&chat_id)
+                    .fetch_one(pool)
+                    .await?;
+            let done = matches!(source.as_str(), "user" | "settled");
+            Ok(GenerateTitleResponse { chat_id, title, done })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1102,6 +1157,44 @@ mod tests {
         assert_eq!(got[1].role, "assistant");
         assert_eq!(got[1].subject.as_deref(), Some("interrupted"));
         assert_eq!(got[1].tool_calls.as_ref().map(|t| t[0].tool_name.as_str()), Some("sql_query"));
+    }
+
+    /// A chat whose title the generator must leave alone never reaches the
+    /// model: these return before `system_completion`, so they run offline.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn generate_title_leaves_named_and_young_chats_alone(pool: PgPool) {
+        for (id, source) in [("chat_named", "user"), ("chat_settled", "settled"), ("chat_young", "generated")] {
+            sqlx::query("INSERT INTO app_chats (id, title, message_count, title_source) VALUES ($1, 'Kept', 0, $2)")
+                .bind(id)
+                .bind(source)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let msgs = [TitleMessage { role: "user".into(), content: "hi".into() }];
+
+        for id in ["chat_named", "chat_settled"] {
+            let r = generate_title(&pool, id.into(), &msgs).await.unwrap();
+            assert_eq!((r.title.as_str(), r.done), ("Kept", true), "{id}");
+        }
+        // Under the settle threshold: kept, and the client should keep asking.
+        let r = generate_title(&pool, "chat_young".into(), &msgs).await.unwrap();
+        assert_eq!((r.title.as_str(), r.done), ("Kept", false));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn renaming_a_chat_marks_the_title_as_the_persons(pool: PgPool) {
+        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ('chat_r', 'Seeded', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let req = UpdateChatRequest { title: Some("Mine".into()), icon: None, icon_color: None, project_id: None };
+        update_chat(&pool, "chat_r".into(), &req).await.unwrap();
+        let source: String = sqlx::query_scalar("SELECT title_source FROM app_chats WHERE id = 'chat_r'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(source, "user");
     }
 
     #[sqlx::test(migrations = "./migrations")]
