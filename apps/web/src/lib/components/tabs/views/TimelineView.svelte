@@ -14,7 +14,7 @@
 	import { browser } from '$app/environment';
 	import { atlasStyle } from '$lib/map/atlas';
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
-	import type { GeoJSONSource, Map as MlMap, Marker, StyleSpecification } from 'maplibre-gl';
+	import type { GeoJSONSource, LngLat, Map as MlMap, Marker, StyleSpecification } from 'maplibre-gl';
 	import { fetchDayBounds, fetchDayWindow, fetchDerived, lastMeasured, localDay, quietDayVerdict, stepDay } from '$lib/timeline/day';
 	import { cleanTrack, dropSpikes, flagHoles, splitTrack, toFixes, type Fix, type Line } from '$lib/timeline/track';
 	import { buildRail, type RailPick, type RailSection } from '$lib/timeline/rail';
@@ -140,6 +140,17 @@
 				attributionControl: {},
 			});
 			map = m;
+			// The prototype's gestures (dayback/src/main.js:988-993, 1870-1875): a
+			// pinch is the only zoom, two fingers pan, nothing rotates, and no
+			// double-click, drag-box or keyboard zoom (the keys belong to the
+			// playhead).
+			m.doubleClickZoom.disable();
+			m.boxZoom.disable();
+			m.keyboard.disable();
+			m.dragRotate.disable();
+			m.touchZoomRotate.disableRotation();
+			container.addEventListener('wheel', onWheel, { passive: false, capture: true });
+			m.on('move', syncAway);
 			maplibre = ml;
 			// MapLibre only follows the window's size. A hidden tab stays mounted
 			// and split view narrows it, so follow the container instead.
@@ -307,6 +318,8 @@
 		// The prototype's follow zoom is 14 (dayback/src/main.js:938).
 		if (lastFix) m.jumpTo({ center: [lastFix.lng, lastFix.lat], zoom: 14 });
 		else m.jumpTo({ center: [0, 20], zoom: 1.5 });
+		// A day with no fix opens on the held position; that is its home.
+		recordHome();
 	}
 
 	const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -338,6 +351,53 @@
 		const b = new ml.LngLatBounds();
 		for (const f of dayFixes) b.extend([f.lng, f.lat]);
 		m.fitBounds(b, { padding: fitPad(m), maxZoom: 15, duration });
+		// This camera is home: Reset view appears once you leave it.
+		if (duration) m.once('moveend', recordHome);
+		else recordHome();
+	}
+
+	/** Two fingers pan the map the way they move; a pinch (the browser sends
+	 *  it as a wheel with ctrl) is left to MapLibre, which zooms about the
+	 *  cursor; over a place card the card's list scrolls (main.js:988-992). */
+	function onWheel(e: WheelEvent) {
+		if (e.ctrlKey || e.metaKey) return;
+		if ((e.target as HTMLElement | null)?.closest?.('.tl-card')) return;
+		e.preventDefault();
+		e.stopPropagation();
+		const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1;
+		map?.panBy([e.deltaX * k, e.deltaY * k], { duration: 0 });
+	}
+
+	/** The day's opening camera, and whether you have left it (main.js:1196-1205):
+	 *  zoomed by more than 0.12 or moved more than 40 px. */
+	let home: { c: LngLat; z: number } | null = null;
+	let away = $state(false);
+	function recordHome() {
+		if (!map) return;
+		home = { c: map.getCenter(), z: map.getZoom() };
+		syncAway();
+	}
+	function syncAway() {
+		const m = map;
+		if (!m || !home) {
+			away = false;
+			return;
+		}
+		const a = m.project(home.c);
+		const b = m.project(m.getCenter());
+		away = Math.abs(m.getZoom() - home.z) > 0.12 || Math.hypot(a.x - b.x, a.y - b.y) > 40;
+	}
+	/** Glide back to the day's frame; an opened knot folds into its chip. */
+	function resetView() {
+		const m = map;
+		if (!m) return;
+		bubbles?.fold();
+		if (dayFixes.length) frameDay(m, 650);
+		else if (home) m.easeTo({ center: home.c, zoom: home.z, duration: 650 });
+	}
+	/** Esc is the keyboard's Reset view (main.js:1205). */
+	function onKey(e: KeyboardEvent) {
+		if (e.key === 'Escape' && away && !e.defaultPrevented) resetView();
 	}
 
 	/** The day's conversations and walks at their anchors, each moving when it
@@ -453,6 +513,7 @@
 	}
 
 	onDestroy(() => {
+		container?.removeEventListener('wheel', onWheel, { capture: true });
 		bubbles?.destroy();
 		bubbles = null;
 		pin?.remove();
@@ -463,6 +524,8 @@
 		map = null;
 	});
 </script>
+
+<svelte:window onkeydown={onKey} />
 
 <div class="timeline" style="{colourVars}; --bar-h: {barH}px">
 	<div class="timeline-map" bind:this={container}></div>
@@ -526,14 +589,21 @@
 	{/if}
 
 	{#if status === 'empty' && note}
-		<div class="note tile">
+		<div class="note tile" class:below={away}>
 			<p class="note-title">{note.title}</p>
 			{#each note.lines as line (line)}
 				<p class="note-line">{line}</p>
 			{/each}
 		</div>
 	{:else if status === 'error'}
-		<div class="note tile"><p class="note-title">Your server couldn't load {label}. Reload the page to try again.</p></div>
+		<div class="note tile" class:below={away}><p class="note-title">Your server couldn't load {label}. Reload the page to try again.</p></div>
+	{/if}
+	{#if away}
+		<!-- Apple's re-centre pattern: it exists only once the camera has left the
+		     day's frame (dayback/index.html:822-826, 1180). -->
+		<button class="reset" type="button" title="Back to the whole day (Esc)" onclick={resetView}>
+			<i aria-hidden="true">⤢</i>Reset view
+		</button>
 	{/if}
 	{#if !basemap}
 		<p class="no-basemap">Your server has no map tiles yet</p>
@@ -707,6 +777,41 @@
 		opacity: 0;
 		pointer-events: none;
 	}
+	/* The Reset view pill: solid ink, paper text, so it reads as a control and
+	   not a tile (index.html:822-826). The prototype set it at the top centre;
+	   here the top is the bar, so it sits just under it. */
+	.reset {
+		position: absolute;
+		top: calc(var(--bar-h) + 12px);
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 4;
+		display: inline-flex;
+		align-items: center;
+		/* design-ok: the Dayback prototype's pill (owner's call, 2026-09-30) */
+		gap: 7px;
+		/* design-ok: the Dayback prototype's pill (owner's call, 2026-09-30) */
+		padding: 7px 14px 7px 12px;
+		border: 0;
+		border-radius: 999px;
+		background: var(--color-foreground);
+		color: var(--color-background);
+		font-family: var(--font-sans);
+		/* design-ok: the Dayback prototype's pill (owner's call, 2026-09-30) */
+		font-size: 12.5px;
+		font-weight: 600;
+		cursor: pointer;
+		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
+		box-shadow: var(--tile-shadow);
+	}
+	.reset:hover {
+		background: color-mix(in srgb, var(--color-foreground) 88%, var(--color-background));
+	}
+	.reset i {
+		font-style: normal;
+		font-size: 14px;
+		line-height: 1;
+	}
 	/* Under the day bar, not over the middle: the map holds the last known
 	   position at its centre, and the note must not hide it. */
 	.note {
@@ -717,6 +822,9 @@
 		padding: 8px 14px;
 		border-radius: 12px;
 		text-align: center;
+	}
+	.note.below {
+		top: calc(var(--bar-h) + 64px);
 	}
 	.note p {
 		margin: 0;
