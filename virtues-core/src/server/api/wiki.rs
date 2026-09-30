@@ -21,6 +21,8 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         // Timeline day (location chunks for movement map)
         .route("/api/timeline/day/:date", get(timeline_get_day_handler))
+        // The Timeline's derived stays, drives, nights and moments over a window
+        .route("/api/timeline/derived", get(timeline_derived_handler))
         // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
         .route("/api/today/:date/streams", get(today_streams_handler))
         // Home-page loops — weather · upcoming calendar · unnamed-place backlog
@@ -1161,6 +1163,24 @@ pub async fn wiki_delete_auto_events_handler(
             .into_response(),
         Err(e) => error_response(e),
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TimelineWindowQuery {
+    pub start: chrono::DateTime<chrono::Utc>,
+    pub end: chrono::DateTime<chrono::Utc>,
+}
+
+/// The Timeline's derived stretches and moments overlapping `start`..`end`
+/// (RFC 3339), with their places. The view asks for one local day at a time.
+pub async fn timeline_derived_handler(
+    State(state): State<AppState>,
+    Query(q): Query<TimelineWindowQuery>,
+) -> Response {
+    if q.end <= q.start {
+        return error_response(Error::InvalidInput("end must be after start".into()));
+    }
+    api_response(crate::timeline::window(state.db.pool(), q.start, q.end).await)
 }
 
 /// Get timeline location chunks for a day (movement map)

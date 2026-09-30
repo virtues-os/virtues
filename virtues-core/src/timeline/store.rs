@@ -1,0 +1,412 @@
+//! Reading the raw record, writing the `wiki_timeline_*` tables, and serving a
+//! window of them to the view.
+//!
+//! The tables are created by `migrations/0000_timeline_derived.sql.pending`,
+//! applied by hand while the Timeline is a local build. Where they don't exist
+//! the rebuild does nothing and a window comes back empty with `is_built:
+//! false`, so a database without them is never an error.
+
+use chrono::{DateTime, Utc};
+use serde::Serialize;
+use sqlx::{PgPool, Postgres, Row, Transaction};
+
+use super::moments::Window;
+use super::spine::Span;
+use super::{derive, Fix, Ms, Record, Visit};
+use crate::error::Result;
+use crate::ids;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RebuildStats {
+    pub places: usize,
+    pub spans: usize,
+    pub moments: usize,
+    pub duration_ms: u128,
+}
+
+/// Rebuild the Timeline's tables from the whole raw record, in one
+/// transaction, so a reader never sees half a rebuild. `None` when the tables
+/// aren't in this database.
+pub async fn rebuild(pool: &PgPool) -> Result<Option<RebuildStats>> {
+    if !tables_exist(pool).await? {
+        return Ok(None);
+    }
+    let started = std::time::Instant::now();
+    let record = load(pool).await?;
+    let derived = derive(&record);
+
+    let wiki_places = load_wiki_places(pool).await?;
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM wiki_timeline_moments").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM wiki_timeline_spans").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM wiki_timeline_places").execute(&mut *tx).await?;
+
+    let mut place_ids = Vec::with_capacity(derived.places.len());
+    for p in &derived.places {
+        let mut id = ids::generate_id("tlp", &[&format!("{:.4},{:.4}", p.lat, p.lon)]);
+        if place_ids.contains(&id) {
+            id = ids::generate_id("tlp", &[&format!("{:.4},{:.4}", p.lat, p.lon), &place_ids.len().to_string()]);
+        }
+        let wiki_place = wiki_place_at(&wiki_places, p.lat, p.lon);
+        sqlx::query(
+            "INSERT INTO wiki_timeline_places \
+             (id, latitude, longitude, visit_count, dwell_minutes, overnight_minutes, is_home, is_work, place_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        )
+        .bind(&id)
+        .bind(p.lat)
+        .bind(p.lon)
+        .bind(p.visit_count)
+        .bind(minutes(p.dwell))
+        .bind(minutes(p.overnight))
+        .bind(p.is_home)
+        .bind(p.is_work)
+        .bind(wiki_place)
+        .execute(&mut *tx)
+        .await?;
+        place_ids.push(id);
+    }
+
+    for s in &derived.stretches {
+        let id = ids::generate_id("tls", &[s.kind, &s.s.to_string(), &s.e.to_string()]);
+        let place = s.place.map(|i| place_ids[i].clone());
+        insert_span(&mut tx, &id, s.kind, s.s, s.e, place, &s.metadata).await?;
+    }
+    for m in &derived.moments {
+        let id = ids::generate_id("tlm", &[m.kind, &m.s.to_string(), &m.e.to_string()]);
+        sqlx::query(
+            "INSERT INTO wiki_timeline_moments (id, kind, started_at, ended_at, title, metadata) \
+             VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(&id)
+        .bind(m.kind)
+        .bind(instant(m.s))
+        .bind(instant(m.e))
+        .bind(&m.title)
+        .bind(&m.metadata)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+
+    Ok(Some(RebuildStats {
+        places: derived.places.len(),
+        spans: derived.stretches.len(),
+        moments: derived.moments.len(),
+        duration_ms: started.elapsed().as_millis(),
+    }))
+}
+
+async fn insert_span(
+    tx: &mut Transaction<'_, Postgres>,
+    id: &str,
+    kind: &str,
+    s: Ms,
+    e: Ms,
+    place: Option<String>,
+    metadata: &serde_json::Value,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO wiki_timeline_spans (id, kind, started_at, ended_at, timeline_place_id, metadata) \
+         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(id)
+    .bind(kind)
+    .bind(instant(s))
+    .bind(instant(e))
+    .bind(place)
+    .bind(metadata)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn tables_exist(pool: &PgPool) -> Result<bool> {
+    let exists: bool = sqlx::query_scalar(
+        "SELECT to_regclass('public.wiki_timeline_places') IS NOT NULL \
+            AND to_regclass('public.wiki_timeline_spans') IS NOT NULL \
+            AND to_regclass('public.wiki_timeline_moments') IS NOT NULL",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(exists)
+}
+
+/// The raw record: every fix, visit, transcription window, HealthKit sleep row
+/// and step reading still live at its source.
+async fn load(pool: &PgPool) -> Result<Record> {
+    let fixes = sqlx::query(
+        "SELECT occurred_at, latitude, longitude, horizontal_accuracy, speed FROM data_location_point \
+         WHERE deleted_at_source IS NULL AND NOT is_archived ORDER BY occurred_at",
+    )
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| {
+        Ok(Fix {
+            t: ms(r.try_get("occurred_at")?),
+            lat: r.try_get("latitude")?,
+            lon: r.try_get("longitude")?,
+            accuracy_m: r.try_get("horizontal_accuracy")?,
+            speed_mps: r.try_get("speed")?,
+        })
+    })
+    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
+
+    let visits = sqlx::query(
+        "SELECT started_at, ended_at, duration_minutes, latitude, longitude FROM data_location_visit \
+         WHERE deleted_at_source IS NULL AND NOT is_archived ORDER BY started_at",
+    )
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| {
+        let s = ms(r.try_get("started_at")?);
+        // An open visit has no end yet: its duration so far stands in (`build.py:168`).
+        let ended: Option<DateTime<Utc>> = r.try_get("ended_at")?;
+        let duration: Option<i32> = r.try_get("duration_minutes")?;
+        let e = ended.map_or(s + i64::from(duration.unwrap_or(0)) * super::MIN, ms);
+        Ok(Visit { s, e, lat: r.try_get("latitude")?, lon: r.try_get("longitude")? })
+    })
+    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
+
+    let windows = sqlx::query(
+        "SELECT id, started_at, ended_at, speaker_count, confidence, title FROM data_communication_transcription \
+         WHERE deleted_at_source IS NULL AND NOT is_archived ORDER BY started_at",
+    )
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| {
+        let s = ms(r.try_get("started_at")?);
+        let ended: Option<DateTime<Utc>> = r.try_get("ended_at")?;
+        // No end recorded: the recorder's window is five minutes (`build.py:398`).
+        let e = ended.map_or(s + 5 * super::MIN, ms);
+        let speakers: Option<i32> = r.try_get("speaker_count")?;
+        let confidence: Option<f64> = r.try_get("confidence")?;
+        let title: Option<String> = r.try_get("title")?;
+        Ok(Window {
+            id: r.try_get("id")?,
+            s,
+            e,
+            // A window with no count heard no one; one with no confidence ranks last.
+            speakers: speakers.unwrap_or(0),
+            confidence: confidence.unwrap_or(0.0),
+            title: title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| "Conversation".into()),
+        })
+    })
+    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
+
+    let sleep_rows = sqlx::query(
+        "SELECT started_at, ended_at FROM data_health_sleep \
+         WHERE deleted_at_source IS NULL AND NOT is_archived ORDER BY started_at",
+    )
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| Ok(Span { s: ms(r.try_get("started_at")?), e: ms(r.try_get("ended_at")?) }))
+    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
+
+    let step_times = sqlx::query(
+        "SELECT occurred_at FROM data_health_steps \
+         WHERE deleted_at_source IS NULL AND NOT is_archived AND step_count > 0 ORDER BY occurred_at",
+    )
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| Ok(ms(r.try_get("occurred_at")?)))
+    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
+
+    let stored_home: Option<Option<String>> =
+        sqlx::query_scalar("SELECT home_timezone FROM app_user_profile LIMIT 1").fetch_optional(pool).await?;
+    // No profile zone yet: the server's own clock is the home zone.
+    let home = match stored_home.flatten().or_else(crate::timezone::system_timezone) {
+        Some(name) => match name.parse::<chrono_tz::Tz>() {
+            Ok(tz) => tz,
+            Err(_) => {
+                tracing::warn!(zone = %name, "home time zone not in the zone database; days without a fix read in UTC");
+                chrono_tz::UTC
+            }
+        },
+        // No profile zone and no system zone: a day without a fix reads in UTC.
+        None => chrono_tz::UTC,
+    };
+
+    Ok(Record { fixes, visits, windows, sleep_rows, step_times, home })
+}
+
+struct WikiPlace {
+    id: String,
+    lat: f64,
+    lon: f64,
+    radius_m: f64,
+}
+
+async fn load_wiki_places(pool: &PgPool) -> Result<Vec<WikiPlace>> {
+    sqlx::query(
+        "SELECT id, latitude, longitude, radius_m FROM wiki_places \
+         WHERE latitude IS NOT NULL AND longitude IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| {
+        Ok(WikiPlace {
+            id: r.try_get("id")?,
+            lat: r.try_get("latitude")?,
+            lon: r.try_get("longitude")?,
+            radius_m: r.try_get("radius_m")?,
+        })
+    })
+    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()
+    .map_err(Into::into)
+}
+
+/// The wiki place a centre sits in: the nearest whose own radius holds it, as
+/// the wiki's resolver matches a visit.
+fn wiki_place_at(places: &[WikiPlace], lat: f64, lon: f64) -> Option<String> {
+    places
+        .iter()
+        .map(|p| (p, crate::geo::haversine_distance(lat, lon, p.lat, p.lon)))
+        .filter(|(p, d)| *d <= p.radius_m)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(p, _)| p.id.clone())
+}
+
+fn ms(t: DateTime<Utc>) -> Ms {
+    t.timestamp_millis()
+}
+
+fn instant(t: Ms) -> DateTime<Utc> {
+    DateTime::from_timestamp_millis(t).expect("a derived instant is within range")
+}
+
+fn minutes(t: Ms) -> i32 {
+    i32::try_from(t / super::MIN).unwrap_or(i32::MAX)
+}
+
+// ---------------------------------------------------------------------------
+// The view's window
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TimelinePlace {
+    pub id: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub visit_count: i32,
+    pub dwell_minutes: i32,
+    pub overnight_minutes: i32,
+    pub is_home: bool,
+    pub is_work: bool,
+    pub place_id: Option<String>,
+    /// The wiki place's name, when the centre sits in one.
+    pub place_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TimelineSpan {
+    pub id: String,
+    pub kind: String,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
+    pub timeline_place_id: Option<String>,
+    pub metadata: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TimelineMoment {
+    pub id: String,
+    pub kind: String,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
+    pub title: Option<String>,
+    pub metadata: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TimelineWindow {
+    /// False when this database has no Timeline tables yet.
+    pub is_built: bool,
+    pub spans: Vec<TimelineSpan>,
+    pub moments: Vec<TimelineMoment>,
+    /// Every place a span in the window stays at.
+    pub places: Vec<TimelinePlace>,
+}
+
+/// Every stretch and moment overlapping `start`..`end`, and their places.
+pub async fn window(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<TimelineWindow> {
+    if !tables_exist(pool).await? {
+        return Ok(TimelineWindow { is_built: false, spans: vec![], moments: vec![], places: vec![] });
+    }
+    let spans = sqlx::query(
+        "SELECT id, kind, started_at, ended_at, timeline_place_id, metadata FROM wiki_timeline_spans \
+         WHERE started_at < $2 AND ended_at > $1 ORDER BY started_at, ended_at",
+    )
+    .bind(start)
+    .bind(end)
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| {
+        Ok(TimelineSpan {
+            id: r.try_get("id")?,
+            kind: r.try_get("kind")?,
+            started_at: r.try_get("started_at")?,
+            ended_at: r.try_get("ended_at")?,
+            timeline_place_id: r.try_get("timeline_place_id")?,
+            metadata: r.try_get("metadata")?,
+        })
+    })
+    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
+
+    let moments = sqlx::query(
+        "SELECT id, kind, started_at, ended_at, title, metadata FROM wiki_timeline_moments \
+         WHERE started_at < $2 AND ended_at > $1 ORDER BY started_at, ended_at",
+    )
+    .bind(start)
+    .bind(end)
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| {
+        Ok(TimelineMoment {
+            id: r.try_get("id")?,
+            kind: r.try_get("kind")?,
+            started_at: r.try_get("started_at")?,
+            ended_at: r.try_get("ended_at")?,
+            title: r.try_get("title")?,
+            metadata: r.try_get("metadata")?,
+        })
+    })
+    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
+
+    let place_ids: Vec<String> = spans.iter().filter_map(|s| s.timeline_place_id.clone()).collect();
+    let places = sqlx::query(
+        "SELECT t.id, t.latitude, t.longitude, t.visit_count, t.dwell_minutes, t.overnight_minutes, \
+                t.is_home, t.is_work, t.place_id, w.name AS place_name \
+         FROM wiki_timeline_places t LEFT JOIN wiki_places w ON w.id = t.place_id \
+         WHERE t.id = ANY($1)",
+    )
+    .bind(&place_ids)
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| {
+        Ok(TimelinePlace {
+            id: r.try_get("id")?,
+            latitude: r.try_get("latitude")?,
+            longitude: r.try_get("longitude")?,
+            visit_count: r.try_get("visit_count")?,
+            dwell_minutes: r.try_get("dwell_minutes")?,
+            overnight_minutes: r.try_get("overnight_minutes")?,
+            is_home: r.try_get("is_home")?,
+            is_work: r.try_get("is_work")?,
+            place_id: r.try_get("place_id")?,
+            place_name: r.try_get("place_name")?,
+        })
+    })
+    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
+
+    Ok(TimelineWindow { is_built: true, spans, moments, places })
+}
