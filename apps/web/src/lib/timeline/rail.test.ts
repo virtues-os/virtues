@@ -35,8 +35,8 @@ describe("the rail", () => {
 	it("titles sections the prototype's way", () => {
 		const rail = buildRail(window, day.start, day.end);
 		expect(rail.map((s) => [s.kind, s.title, s.dur])).toEqual([
+			["sleep", "In Bed", "7h"], // a night keeps its full length, and leads a stay opening at midnight too
 			["place", "Home", "8h"], // clipped to the day
-			["sleep", "In Bed", "7h"], // a night keeps its full length
 			["transit", "Driving", "20m"],
 			["place", "Corner Cafe", "3h 40m"],
 			["gap", "Signal gap", "3h"],

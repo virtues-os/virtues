@@ -10,13 +10,16 @@
 	logic is MapLibre-native, and this is where it gets ported.
 -->
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { browser } from '$app/environment';
 	import { atlasStyle } from '$lib/map/atlas';
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
 	import type { GeoJSONSource, Map as MlMap, StyleSpecification } from 'maplibre-gl';
-	import { fetchDayBounds, fetchDayWindow, lastMeasured, localDay, quietDayVerdict, stepDay } from '$lib/timeline/day';
-	import { cleanTrack, dropSpikes, flagHoles, splitTrack, toFixes, type Line } from '$lib/timeline/track';
+	import { fetchDayBounds, fetchDayWindow, fetchDerived, lastMeasured, localDay, quietDayVerdict, stepDay } from '$lib/timeline/day';
+	import { cleanTrack, dropSpikes, flagHoles, splitTrack, toFixes, type Fix, type Line } from '$lib/timeline/track';
+	import { buildRail, type RailPick, type RailSection } from '$lib/timeline/rail';
+	import { anchorAt } from '$lib/timeline/anchor';
+	import TimelineRail from '$lib/components/timeline/TimelineRail.svelte';
 	import { APPLE_LIGHT, hsl, recolour } from '$lib/timeline/palette';
 	import { COLOURS, colourVars } from '$lib/timeline/colours';
 
@@ -38,6 +41,13 @@
 	let map: MlMap | null = null;
 	let maplibre: typeof import('maplibre-gl') | null = null;
 	let resizer: ResizeObserver | null = null;
+	let rail = $state<ReturnType<typeof TimelineRail> | null>(null);
+	let sections = $state<RailSection[]>([]);
+	let zone = $state('UTC');
+	let picked = $state<RailPick | null>(null);
+	let railError = $state(false);
+	/** The day's cleaned track: where a picked moment is found on the map. */
+	let dayTrack: Fix[] = [];
 
 	const today = getLocalDateSlug();
 	let date = $state(today);
@@ -132,25 +142,40 @@
 		const mine = ++asked;
 		status = 'loading';
 		note = null;
-		let bounds, window;
+		picked = null;
+		let bounds, window, derived;
 		try {
-			// The day in the zone it woke up in, then every fix around it.
+			// The day in the zone it woke up in, then every fix around it and the
+			// server's stays, drives and moments over it.
 			bounds = await fetchDayBounds(slug);
-			window = await fetchDayWindow(bounds.startMs, bounds.endMs);
+			[window, derived] = await Promise.all([
+				fetchDayWindow(bounds.startMs, bounds.endMs),
+				fetchDerived(bounds).catch((e) => {
+					console.warn('[Timeline] derived fetch failed', e);
+					return null;
+				}),
+			]);
 		} catch (e) {
 			console.warn('[Timeline] day fetch failed', e);
 			if (mine === asked) status = 'error';
 			return;
 		}
 		if (mine !== asked) return;
-		const { startMs, endMs, zone } = bounds;
+		const { startMs, endMs } = bounds;
+		zone = bounds.zone;
+		railError = derived === null;
+		sections = derived?.is_built ? buildRail(derived, startMs, endMs) : [];
 		// Spikes go first, then holes are judged across the whole window, then the
 		// day is cut out of it.
 		const all = flagHoles(dropSpikes(toFixes(window.points)));
 		const fixes = all.filter((f) => f.t >= startMs && f.t < endMs);
-		const { runs, bridges } = splitTrack(cleanTrack(fixes));
+		dayTrack = cleanTrack(fixes);
+		const { runs, bridges } = splitTrack(dayTrack);
 		(m.getSource('track-run') as GeoJSONSource).setData(lines(runs));
 		(m.getSource('track-bridge') as GeoJSONSource).setData(lines(bridges));
+		// The rail draws first, so the framing can leave room for it.
+		await tick();
+		if (mine !== asked) return;
 		if (fixes.length) {
 			status = 'shown';
 			const bounds = new ml.LngLatBounds();
@@ -180,9 +205,9 @@
 	const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 	/** The prototype's framing padding (`v4FitPad`, dayback/src/main.js:1190):
-	 *  the measured top bar plus a buffer of max(34 px, 6 % of the smaller side)
-	 *  on every edge, each capped so fitBounds can still move. The scrubber and
-	 *  the rail, once built, reserve their space here too. */
+	 *  the measured top bar and rail plus a buffer of max(34 px, 6 % of the
+	 *  smaller side) on every edge, each capped so fitBounds can still move.
+	 *  The scrubber, once built, reserves its space here too. */
 	function fitPad(m: MlMap) {
 		const c = m.getContainer();
 		const cw = c.clientWidth || 900;
@@ -190,12 +215,47 @@
 		const buf = Math.max(34, Math.round(Math.min(cw, ch) * 0.06));
 		const bar = dayBar?.getBoundingClientRect();
 		const top = bar ? bar.bottom - c.getBoundingClientRect().top : 58;
+		const railW = rail?.width() ?? 0;
 		return {
 			top: Math.min(top + buf, ch * 0.34),
 			bottom: Math.min(buf, ch * 0.45),
 			left: Math.min(buf, cw * 0.4),
-			right: Math.min(buf, cw * 0.5),
+			right: Math.min((railW ? railW + 16 : 0) + buf, cw * 0.5),
 		};
+	}
+
+	/** A rail pick takes the map there (`v4RevealSection`, main.js:1095-1101):
+	 *  a drive is framed whole; anything else pans to where the track says you
+	 *  were at its midpoint, and only if that spot is off the clear map. */
+	function reveal(p: RailPick) {
+		picked = p;
+		const m = map;
+		const ml = maplibre;
+		if (!m || !ml) return;
+		if (p.kind === 'transit') {
+			const path = dayTrack.filter((f) => f.t >= p.s && f.t < p.e);
+			if (path.length >= 2) {
+				const b = new ml.LngLatBounds();
+				for (const f of path) b.extend([f.lng, f.lat]);
+				m.fitBounds(b, { padding: fitPad(m), maxZoom: 15, duration: 650 });
+				return;
+			}
+		}
+		const at = anchorAt(dayTrack, p.s, p.e);
+		if (at) showPoint(m, [at.lng, at.lat]);
+	}
+
+	/** Bring one spot onto the clear map (`v4ShowPoint`, main.js:1092-1094):
+	 *  nothing if it is already there, else ease it to the centre of the clear
+	 *  area at the same zoom - a pan, never a re-frame. */
+	function showPoint(m: MlMap, ll: [number, number]) {
+		const pad = fitPad(m);
+		const c = m.getContainer();
+		const lim = { l: pad.left, t: pad.top, r: c.clientWidth - pad.right, b: c.clientHeight - pad.bottom };
+		const p = m.project(ll);
+		if (p.x > lim.l + 40 && p.x < lim.r - 40 && p.y > lim.t + 40 && p.y < lim.b - 40) return;
+		const offset: [number, number] = [(lim.l + lim.r) / 2 - c.clientWidth / 2, (lim.t + lim.b) / 2 - c.clientHeight / 2];
+		m.easeTo({ center: ll, offset, duration: 650 });
 	}
 
 	onDestroy(() => {
@@ -229,6 +289,11 @@
 			}}
 		/>
 	</div>
+
+	<TimelineRail bind:this={rail} {sections} {zone} {picked} onpick={reveal} />
+	{#if railError && status !== 'error' && status !== 'loading'}
+		<p class="rail-error tile">Your server couldn't load the day's stays. Reload the page to try again.</p>
+	{/if}
 
 	{#if status === 'empty' && note}
 		<div class="note tile">
@@ -333,6 +398,17 @@
 	.note-line {
 		color: var(--color-foreground-muted);
 		font-size: 12px;
+	}
+	.rail-error {
+		position: absolute;
+		top: 16px;
+		right: 16px;
+		max-width: min(384px, 42%);
+		margin: 0;
+		padding: 12px 16px;
+		border-radius: 12px;
+		font-size: 13px;
+		color: var(--color-foreground);
 	}
 	.no-basemap {
 		position: absolute;
