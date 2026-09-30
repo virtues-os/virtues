@@ -25,6 +25,9 @@ export const HOLE_MIN_M = 300;
 export const SPOT_R_M = 30;
 /** A spot held longer than this keeps its leave time as a second point. */
 const SPOT_LEAVE_MS = 60_000;
+/** A fix the phone itself rates at or worse than this is a cell tower's
+ *  guess, not GPS (dayback/build.py:290). */
+export const GPS_ACCURACY_MAX_M = 100;
 
 /** One fix. `bridge`: it arrived across a hole. */
 export type Fix = { t: number; lat: number; lng: number; bridge: boolean };
@@ -40,9 +43,17 @@ export function metres(a: { lat: number; lng: number }, b: { lat: number; lng: n
 	return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-/** The endpoint's points as fixes, in time order. */
+/**
+ * The endpoint's GPS fixes, in time order. A fix the phone rates worse than
+ * 100 m is dropped: the prototype's rule for movement (dayback/build.py:290),
+ * here for the drawn line too. A still phone indoors reports such guesses
+ * hundreds of metres to kilometres off and snaps back within a minute, and
+ * each drew a straight line out and back (Sep 22: 51 of 665 fixes). The
+ * prototype's July track rarely had them, so its line never needed the rule.
+ */
 export function toFixes(points: TimelineDayPoint[]): Fix[] {
 	return points
+		.filter((p) => p.horizontal_accuracy === null || p.horizontal_accuracy < GPS_ACCURACY_MAX_M)
 		.map((p) => ({ t: Date.parse(p.timestamp), lat: p.latitude, lng: p.longitude, bridge: false }))
 		.filter((f) => Number.isFinite(f.t))
 		.sort((a, b) => a.t - b.t);

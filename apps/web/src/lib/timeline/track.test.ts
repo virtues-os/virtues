@@ -28,6 +28,12 @@ describe("toFixes", () => {
 	it("puts fixes in time order", () => {
 		expect(toFixes([at(10), at(0)]).map((f) => f.t)).toEqual([T0, T0 + 10 * 60_000]);
 	});
+	it("drops a fix the phone rates at 100 m or worse, a cell tower's guess", () => {
+		const guess = { ...at(1, 1400), horizontal_accuracy: 1414 };
+		const edge = { ...at(2, 300), horizontal_accuracy: 100 };
+		const unrated = { ...at(3), horizontal_accuracy: null };
+		expect(toFixes([at(0), guess, edge, unrated, at(4)]).map((f) => f.t)).toEqual([T0, T0 + 3 * 60_000, T0 + 4 * 60_000]);
+	});
 });
 
 describe("dropSpikes", () => {
