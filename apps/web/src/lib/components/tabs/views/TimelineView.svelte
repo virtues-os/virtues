@@ -25,7 +25,7 @@
 	import TimelineMonth from '$lib/components/timeline/TimelineMonth.svelte';
 	import { laneData, NO_LANES, type Lanes } from '$lib/timeline/lanes';
 	import { buildFolds, clampView, DAY, HOUR, MIN, midnightIn, tierOf, tierView, unwarp, warp, zoneOffset, type Tier } from '$lib/timeline/scale';
-	import { APPLE_LIGHT, hsl, recolour } from '$lib/timeline/palette';
+	import { APPLE_DARK, APPLE_LIGHT, hsl, recolour, type Palette } from '$lib/timeline/palette';
 	import { COLOURS, colourVars } from '$lib/timeline/colours';
 
 	// The path and the pin are location, so they wear the place colour.
@@ -33,11 +33,55 @@
 	// Without the box's map archives there is no basemap: a plain surface in the
 	// palette's land colour, so the path still draws and the page doesn't read
 	// as broken.
-	const BARE: StyleSpecification = {
+	const bare = (palette: Palette): StyleSpecification => ({
 		version: 8,
 		sources: {},
-		layers: [{ id: 'bare', type: 'background', paint: { 'background-color': hsl(APPLE_LIGHT.land) } }],
-	};
+		layers: [{ id: 'bare', type: 'background', paint: { 'background-color': hsl(palette.land) } }],
+	});
+
+	/** Virtues' own scheme: its dark themes set `--identity-dark: 1` (themes.css),
+	 *  and a theme switch fires `themechange` (utils/theme.ts), as the Home day
+	 *  page reads it. The map follows with the prototype's night palette
+	 *  (dayback/src/main.js:928-935). */
+	const isDark = () => getComputedStyle(document.documentElement).getPropertyValue('--identity-dark').trim() === '1';
+	let dark = $state(browser ? isDark() : false);
+	/** The basemap for a side: the atlas's own flavour, recoloured, or a plain
+	 *  ground in the palette's land colour when the box has no map files. */
+	async function baseStyle(night: boolean): Promise<StyleSpecification> {
+		const palette = night ? APPLE_DARK : APPLE_LIGHT;
+		const style = await atlasStyle(night ? 'dark' : 'light');
+		basemap = style !== null;
+		return style ? recolour(style, palette) : bare(palette);
+	}
+	/** The day's own sources and layers, drawn over the basemap. */
+	const OWN = ['track-run', 'track-bridge', 'lit-run', 'lit-bridge'];
+	/** A theme switch swaps the basemap and carries the day's track across, so
+	 *  nothing reloads. */
+	async function restyle() {
+		const m = map;
+		if (!m) return;
+		const night = dark;
+		const next = await baseStyle(night);
+		if (map !== m || dark !== night) return;
+		m.setStyle(next, {
+			transformStyle: (prev, fresh) => {
+				if (!prev) return fresh;
+				const sources = { ...fresh.sources };
+				for (const id of OWN) if (prev.sources[id]) sources[id] = prev.sources[id];
+				return { ...fresh, sources, layers: [...fresh.layers, ...prev.layers.filter((l) => OWN.includes(l.id))] };
+			},
+		});
+	}
+	function onThemeChange() {
+		const d = isDark();
+		if (d === dark) return;
+		dark = d;
+		void restyle();
+	}
+	$effect(() => {
+		window.addEventListener('themechange', onThemeChange);
+		return () => window.removeEventListener('themechange', onThemeChange);
+	});
 
 	let container: HTMLDivElement;
 	let root = $state<HTMLElement | null>(null);
@@ -210,12 +254,11 @@
 			]);
 			ml.setWorkerUrl(workerUrl as string);
 			if (cancelled || !container) return;
-			const style = await atlasStyle('light');
+			const style = await baseStyle(dark);
 			if (cancelled || !container) return;
-			basemap = style !== null;
 			const m = new ml.Map({
 				container,
-				style: style ? recolour(style, APPLE_LIGHT) : BARE,
+				style,
 				center: [0, 20],
 				zoom: 1.5,
 				// v6: attributionControl takes options (or false), not a bare boolean.
@@ -845,7 +888,7 @@
 	data-material={material}
 	bind:this={root}
 	bind:clientWidth={paneW}
-	style="{colourVars}; --nav-top: {navTop}px; --nav-bottom: {navBottom}px; --bar-overhang: {overhang}px; --scrub-h: {scrubH}px; --rail-top: {railLow ? topChrome + 12 : 16}px"
+	style="{colourVars(dark)}; --nav-top: {navTop}px; --nav-bottom: {navBottom}px; --bar-overhang: {overhang}px; --scrub-h: {scrubH}px; --rail-top: {railLow ? topChrome + 12 : 16}px"
 >
 	<div class="timeline-map" bind:this={container}></div>
 
