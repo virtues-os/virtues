@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { getChatUsage, getChat, compactChat } from '$lib/api/client';
+	import { chatUsage } from '$lib/stores/chatUsage.svelte';
 	import { formatDateTime } from '$lib/utils/dateUtils';
 
 	interface SessionUsage {
@@ -175,8 +176,10 @@
 
 	const breakdown = $derived(sessionDetail ? calculateBreakdown(sessionDetail.messages) : null);
 
+	// Read again whenever the chat saves a turn, not only on opening.
 	$effect(() => {
 		if (active && conversationId) {
+			chatUsage.version(conversationId);
 			fetchContextViewData();
 		}
 	});

@@ -709,13 +709,13 @@ fn shell_tool() -> ToolConfig {
         id: "shell".to_string(),
         name: "Shell".to_string(),
         description: "Run a command on the server, with sudo".to_string(),
-        llm_description: r#"Run a shell command on the server this assistant runs on, as its admin account, which has passwordless sudo. Anything a person could do over ssh is possible: read and change files anywhere, query or change any database, read logs, manage services, install packages.
+        llm_description: r#"Run a shell command on the server this assistant runs on, as its admin account, which has passwordless sudo. Anything a person could do over ssh is possible: read and change files anywhere, query or change any database, read logs, manage services, install packages. Reads run at once; changes wait for the owner to allow them.
 
 The command runs through bash -c with no terminal and no stdin, so anything that prompts reads nothing: pass -y / --yes / --no-pager, and never open an editor or a pager. Returns exit_code, stdout and stderr; long output keeps its beginning and its end.
 
-- Database: psql "$DATABASE_URL" -c '…' as the app's role, or sudo -u postgres psql virtues -c '…' as the superuser.
+- Database: psql "$DATABASE_URL" -c '…', as the app's role.
 - Logs: journalctl -u virtues --no-pager -n 200 (add -p warning, --since "1 hour ago").
-- Long jobs: raise timeout_seconds (default 120, max 3600), or run them in the background with output to a file (nohup … >/tmp/job.log 2>&1 &) and check the file later.
+- Long jobs: raise timeout_seconds (default 120, max 600), or run them in the background with output to a file (nohup … >/tmp/job.log 2>&1 &) and check the file later.
 
 This server is running this conversation: restarting the virtues service, rebooting, or killing its process ends the turn mid-reply, so do that last."#.to_string(),
         parameters: serde_json::json!({
@@ -728,7 +728,7 @@ This server is running this conversation: restarting the virtues service, reboot
                 },
                 "timeout_seconds": {
                     "type": "integer",
-                    "description": "Kill the command after this many seconds (default 120, max 3600)"
+                    "description": "Kill the command after this many seconds (default 120, max 600)"
                 },
                 "cwd": {
                     "type": "string",

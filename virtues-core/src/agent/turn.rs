@@ -9,7 +9,7 @@ use serde_json::Value;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::JoinHandle;
 
-use super::executor::{self, ExecutorConfig, ToolExecutionResult};
+use super::executor::{self, ExecutorConfig, ToolExecutionError, ToolExecutionResult};
 use super::protocol::{AgentEvent, ErrorCode, FinishReason, StepReason};
 use super::stream::{self, LlmConfig, LlmStreamResult, StepOptions, StreamError, ToolCall};
 use super::{caps, guard, TurnBudget};
@@ -141,11 +141,23 @@ pub(super) fn stream_error_code(e: &StreamError) -> ErrorCode {
     }
 }
 
-/// Whether a tool result asks the person to act (binding a page) before the
-/// turn can go on.
+/// A call that was running when Stop was pressed, recorded as stopped so the
+/// transcript and the next turn show it ended rather than hung.
+pub(super) fn stopped(call: &ToolCall) -> ToolExecutionResult {
+    ToolExecutionResult {
+        tool_call_id: call.id.clone(),
+        tool_name: call.name.clone(),
+        result: Err(ToolExecutionError::ExecutionFailed("stopped by the owner before it finished".into())),
+    }
+}
+
+/// Whether a tool result asks the person to act (binding a page, allowing a
+/// sudo write) before the turn can go on.
 pub(super) fn needs_user(result: &ToolExecutionResult) -> bool {
     result.result.as_ref().is_ok_and(|r| {
-        r.data.get("needs_binding").and_then(|v| v.as_bool()).unwrap_or(false)
+        let flag = |k: &str| r.data.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+        // `awaiting_owner`: a sudo write waiting for Allow (`tools::sudo_gate`).
+        flag("needs_binding") || flag("awaiting_owner")
     })
 }
 
