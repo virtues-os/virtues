@@ -228,8 +228,10 @@
 <style>
 	.rail {
 		position: absolute;
-		/* Below the top bar, never under it (the prototype's own planned fix). */
+		/* Below the top bar, never under it (the prototype's own planned fix),
+		   and above the map's markers. */
 		top: calc(var(--bar-h, 0px) + 16px);
+		z-index: 10;
 		right: 16px;
 		width: min(384px, 42%);
 		max-height: calc(100% - var(--bar-h, 0px) - 32px);

@@ -39,6 +39,8 @@
 	let dayBar = $state<HTMLElement | null>(null);
 	/** The top bar's height: the rail and the notes start below it. */
 	let barH = $state(0);
+	/** The pane's width: under 900 px the bar stacks (split view, a small window). */
+	let paneW = $state(0);
 	let picker = $state<HTMLInputElement | null>(null);
 	let note = $state<{ title: string; lines: string[] } | null>(null);
 	let map: MlMap | null = null;
@@ -536,7 +538,7 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="timeline" style="{colourVars}; --bar-h: {barH}px">
+<div class="timeline" class:narrow={paneW > 0 && paneW < 900} bind:clientWidth={paneW} style="{colourVars}; --bar-h: {barH}px">
 	<div class="timeline-map" bind:this={container}></div>
 
 	<!-- The top navigation bar (dayback/index.html:1026-1042, main.js:1531-1544):
@@ -640,16 +642,13 @@
 	.timeline {
 		position: absolute;
 		inset: 0;
-		/* The layout answers to the pane, not the window: in split view the
-		   pane is nothing like the window (design-grammar.md, the measure). */
-		container-type: inline-size;
 	}
-	/* Its own stacking layer, so the map's markers (bubbles, chips, the place
-	   card) stay under the bar and the rail however they are stacked inside it. */
+	/* The map's markers stack at z 1 to 7 (bubbles, chips, the place card);
+	   everything over the map sits at 10 and up, as the prototype's tiles sit
+	   above its markers. */
 	.timeline-map {
 		position: absolute;
 		inset: 0;
-		z-index: 0;
 	}
 	/* A tile over the map, in the prototype's look: a solid ground, a faint
 	   ink border and one soft shadow (dayback/index.html:599-601). The
@@ -666,7 +665,7 @@
 		top: 0;
 		left: 0;
 		right: 0;
-		z-index: 3;
+		z-index: 10;
 		text-align: center;
 		/* design-ok: the Dayback prototype's bar padding (owner's call, 2026-09-30) */
 		padding: 9px 0 12px;
@@ -770,24 +769,24 @@
 	/* A narrow pane (split view, a small window): the leading toggles would sit
 	   on the title, so they take their own line at the top of the bar and the
 	   title and week follow under them, as Apple's large-title bars do; the
-	   week's days share the width instead of running off it. */
-	@container (max-width: 899px) {
-		.scale-nav {
-			position: static;
-			flex-direction: row;
-			flex-wrap: wrap;
-			align-items: center;
-			padding: 0 16px 12px;
-		}
-		.week-row {
-			padding: 0 8px;
-		}
-		.week {
-			flex: 1 1 auto;
-			min-width: 0;
-			max-width: 540px;
-			grid-template-columns: repeat(7, minmax(0, 1fr));
-		}
+	   week's days share the width instead of running off it. The pane's own
+	   width decides, not the window's: in split view the pane is nothing like
+	   the window (design-grammar.md, the measure). */
+	.narrow .scale-nav {
+		position: static;
+		flex-direction: row;
+		flex-wrap: wrap;
+		align-items: center;
+		padding: 0 16px 12px;
+	}
+	.narrow .week-row {
+		padding: 0 8px;
+	}
+	.narrow .week {
+		flex: 1 1 auto;
+		min-width: 0;
+		max-width: 540px;
+		grid-template-columns: repeat(7, minmax(0, 1fr));
 	}
 	/* The serif page title, as Virtues' Home dateline: regular, never bold. */
 	.day-title {
@@ -900,7 +899,7 @@
 		top: calc(var(--bar-h) + 12px);
 		left: 50%;
 		transform: translateX(-50%);
-		z-index: 4;
+		z-index: 11;
 		display: inline-flex;
 		align-items: center;
 		/* design-ok: the Dayback prototype's pill (owner's call, 2026-09-30) */
@@ -931,6 +930,7 @@
 	   position at its centre, and the note must not hide it. */
 	.note {
 		position: absolute;
+		z-index: 10;
 		top: calc(var(--bar-h) + 16px);
 		left: 50%;
 		transform: translateX(-50%);
@@ -954,6 +954,7 @@
 	}
 	.rail-error {
 		position: absolute;
+		z-index: 10;
 		top: calc(var(--bar-h) + 16px);
 		right: 16px;
 		max-width: min(384px, 42%);
