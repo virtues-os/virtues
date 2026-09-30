@@ -221,6 +221,64 @@ async fn home_zone(pool: &PgPool) -> Result<chrono_tz::Tz> {
     })
 }
 
+/// One transcription window, as the rail reads it.
+#[derive(Debug, Clone, Serialize)]
+pub struct VoiceWindow {
+    pub id: String,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
+    /// Voices the recorder heard: two or more is a conversation, none is
+    /// silence the mic still recorded.
+    pub speaker_count: i32,
+    pub title: Option<String>,
+    /// One utterance per line, "[Speaker 1]: ...".
+    pub text: Option<String>,
+    /// Names spoken in it: mentioned, never known to be present.
+    pub people: Vec<String>,
+}
+
+/// Every transcription window overlapping `start`..`end`, in time order: the
+/// mic's coverage (a window at all means it was recording) and, with two or
+/// more speakers, the conversations a rail row opens (`dayback/build.py:
+/// 387-402, 501-511`).
+pub async fn voice(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<Vec<VoiceWindow>> {
+    sqlx::query(
+        "SELECT id, started_at, ended_at, speaker_count, title, text, entities->'people' AS people \
+         FROM data_communication_transcription \
+         WHERE deleted_at_source IS NULL AND NOT is_archived \
+           AND started_at < $2 AND coalesce(ended_at, started_at + interval '5 minutes') > $1 \
+         ORDER BY started_at",
+    )
+    .bind(start)
+    .bind(end)
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| {
+        let started_at: DateTime<Utc> = r.try_get("started_at")?;
+        let ended_at: Option<DateTime<Utc>> = r.try_get("ended_at")?;
+        let speakers: Option<i32> = r.try_get("speaker_count")?;
+        let people: Option<serde_json::Value> = r.try_get("people")?;
+        Ok(VoiceWindow {
+            id: r.try_get("id")?,
+            started_at,
+            // No end recorded: the recorder's window is five minutes (`build.py:398`).
+            ended_at: ended_at.unwrap_or(started_at + chrono::Duration::minutes(5)),
+            // A window with no count heard no one.
+            speaker_count: speakers.unwrap_or(0),
+            title: r.try_get("title")?,
+            text: r.try_get("text")?,
+            people: people
+                .as_ref()
+                .and_then(|p| p.as_array())
+                .map(|a| a.iter().filter_map(|p| p.get("name")?.as_str()).filter(|n| !n.is_empty()).map(String::from).collect())
+                .unwrap_or_default(),
+        })
+    })
+    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()
+    .map_err(Into::into)
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DayWindow {
     /// The zone the day woke up in (IANA).

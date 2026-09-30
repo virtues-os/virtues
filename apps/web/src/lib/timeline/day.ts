@@ -13,7 +13,7 @@
  */
 import { apiGet } from "$lib/api/client";
 import { getDayFacts, getDaySources, type TimelineDayLocationChunk, type TimelineDayPoint, type TimelineDayView } from "$lib/wiki/api";
-import type { DerivedWindow } from "./rail";
+import type { DerivedWindow, VoiceWindow } from "./rail";
 
 const DAY_MS = 86_400_000;
 
@@ -35,6 +35,13 @@ export async function fetchDayBounds(slug: string): Promise<DayBounds> {
 export async function fetchDerived(b: DayBounds): Promise<DerivedWindow> {
 	const q = new URLSearchParams({ start: new Date(b.startMs).toISOString(), end: new Date(b.endMs).toISOString() });
 	return apiGet<DerivedWindow>(`/timeline/derived?${q}`);
+}
+
+/** Every transcription window over a day (`/timeline/voice`): the rail's
+ *  conversations and transcripts, and whether the mic was on. */
+export async function fetchVoice(b: DayBounds): Promise<VoiceWindow[]> {
+	const q = new URLSearchParams({ start: new Date(b.startMs).toISOString(), end: new Date(b.endMs).toISOString() });
+	return apiGet<VoiceWindow[]>(`/timeline/voice?${q}`);
 }
 
 /** The day a YYYY-MM-DD slug names in the browser's zone, as [startMs, endMs):

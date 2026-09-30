@@ -15,7 +15,7 @@
 	import { atlasStyle } from '$lib/map/atlas';
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
 	import type { GeoJSONSource, LngLat, Map as MlMap, Marker, StyleSpecification } from 'maplibre-gl';
-	import { fetchDayBounds, fetchDayWindow, fetchDerived, lastMeasured, localDay, quietDayVerdict, stepDay } from '$lib/timeline/day';
+	import { fetchDayBounds, fetchDayWindow, fetchDerived, fetchVoice, lastMeasured, localDay, quietDayVerdict, stepDay } from '$lib/timeline/day';
 	import { cleanTrack, dropSpikes, flagHoles, splitTrack, toFixes, type Fix, type Line } from '$lib/timeline/track';
 	import { buildRail, type RailPick, type RailSection } from '$lib/timeline/rail';
 	import { anchorAt, positionAt, trackMetres } from '$lib/timeline/anchor';
@@ -56,6 +56,9 @@
 	 *  pick (main.js:1162, 1387). Everything follows it: the pin, the lit
 	 *  bubble, the lit rail section and row, the lit stretch of path. */
 	let playT = $state(0);
+	/** The user has moved the playhead in this day; until then the rail opens
+	 *  nothing by itself (main.js:1559). */
+	let armed = $state(false);
 	let dayStart = 0;
 	let dayEnd = 0;
 	let pin: Marker | null = null;
@@ -244,16 +247,20 @@
 		const mine = ++asked;
 		status = 'loading';
 		note = null;
-		let bounds, window, derived;
+		let bounds, window, derived, voice;
 		try {
-			// The day in the zone it woke up in, then every fix around it and the
-			// server's stays, drives and moments over it.
+			// The day in the zone it woke up in, then every fix around it, the
+			// server's stays, drives and moments over it, and what the mic heard.
 			bounds = await fetchDayBounds(slug);
-			[window, derived] = await Promise.all([
+			[window, derived, voice] = await Promise.all([
 				fetchDayWindow(bounds.startMs, bounds.endMs),
 				fetchDerived(bounds).catch((e) => {
 					console.warn('[Timeline] derived fetch failed', e);
 					return null;
+				}),
+				fetchVoice(bounds).catch((e) => {
+					console.warn('[Timeline] voice fetch failed', e);
+					return [];
 				}),
 			]);
 		} catch (e) {
@@ -265,7 +272,7 @@
 		const { startMs, endMs } = bounds;
 		zone = bounds.zone;
 		railError = derived === null;
-		sections = derived?.is_built ? buildRail(derived, startMs, endMs) : [];
+		sections = derived?.is_built ? buildRail(derived, startMs, endMs, voice) : [];
 		// Spikes go first, then holes are judged across the whole window, then the
 		// day is cut out of it.
 		const all = flagHoles(dropSpikes(toFixes(window.points)));
@@ -275,6 +282,7 @@
 		dayStart = startMs;
 		dayEnd = endMs;
 		playT = startMs;
+		armed = false;
 		railFocus = 'row';
 		litKey = '';
 		lastFix = all.filter((f) => f.t < startMs).at(-1) ?? toFixes(window.before ? [window.before] : [])[0] ?? null;
@@ -425,6 +433,7 @@
 	/** Move the playhead: a pick lands exactly there, inside the day, a hair
 	 *  before midnight at most (`v4Seek`, main.js:491). */
 	function park(t: number) {
+		armed = true;
 		playT = Math.max(dayStart, Math.min(dayEnd - 1000, t));
 		syncPlayhead();
 	}
@@ -590,7 +599,17 @@
 		/>
 	</header>
 
-	<TimelineRail bind:this={rail} {sections} {zone} {playT} focus={railFocus} onpick={reveal} />
+	<TimelineRail bind:this={rail} {sections}
+		{zone}
+		{playT}
+		{armed}
+		focus={railFocus}
+		onpick={reveal}
+		onseek={(t) => {
+			railFocus = 'row';
+			park(t);
+		}}
+	/>
 	{#if railError && status !== 'error' && status !== 'loading'}
 		<p class="rail-error tile">Your server couldn't load the day's stays. Reload the page to try again.</p>
 	{/if}
@@ -621,6 +640,9 @@
 	.timeline {
 		position: absolute;
 		inset: 0;
+		/* The layout answers to the pane, not the window: in split view the
+		   pane is nothing like the window (design-grammar.md, the measure). */
+		container-type: inline-size;
 	}
 	/* Its own stacking layer, so the map's markers (bubbles, chips, the place
 	   card) stay under the bar and the rail however they are stacked inside it. */
@@ -734,6 +756,28 @@
 	@media (prefers-reduced-motion: reduce) {
 		.seg[data-tip]::after {
 			transition: none;
+		}
+	}
+	/* A narrow pane (split view, a small window): the leading toggles would sit
+	   on the title, so they take their own line at the top of the bar and the
+	   title and week follow under them, as Apple's large-title bars do; the
+	   week's days share the width instead of running off it. */
+	@container (max-width: 899px) {
+		.scale-nav {
+			position: static;
+			flex-direction: row;
+			flex-wrap: wrap;
+			align-items: center;
+			padding: 0 16px 12px;
+		}
+		.week-row {
+			padding: 0 8px;
+		}
+		.week {
+			flex: 1 1 auto;
+			min-width: 0;
+			max-width: 540px;
+			grid-template-columns: repeat(7, minmax(0, 1fr));
 		}
 	}
 	/* The serif page title, as Virtues' Home dateline: regular, never bold. */

@@ -25,6 +25,8 @@ pub fn routes() -> Router<AppState> {
         .route("/api/timeline/derived", get(timeline_derived_handler))
         // One local day's bounds, in the zone the day woke up in
         .route("/api/timeline/day-window/:date", get(timeline_day_window_handler))
+        // The transcription windows over a window: the rail's conversations and the mic's coverage
+        .route("/api/timeline/voice", get(timeline_voice_handler))
         // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
         .route("/api/today/:date/streams", get(today_streams_handler))
         // Home-page loops — weather · upcoming calendar · unnamed-place backlog
@@ -1183,6 +1185,15 @@ pub async fn timeline_derived_handler(
         return error_response(Error::InvalidInput("end must be after start".into()));
     }
     api_response(crate::timeline::window(state.db.pool(), q.start, q.end).await)
+}
+
+/// The transcription windows overlapping `start`..`end` (RFC 3339): the
+/// rail's conversations and transcripts, and whether the mic was on.
+pub async fn timeline_voice_handler(State(state): State<AppState>, Query(q): Query<TimelineWindowQuery>) -> Response {
+    if q.end <= q.start {
+        return error_response(Error::InvalidInput("end must be after start".into()));
+    }
+    api_response(crate::timeline::voice(state.db.pool(), q.start, q.end).await)
 }
 
 /// A local day's bounds, in the zone the day woke up in (`YYYY-MM-DD`).
