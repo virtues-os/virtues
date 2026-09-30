@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untitled } from "$lib/refs/identity.svelte";
 	import type { Tab } from "$lib/tabs/types";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { Button, Page } from "$lib";
@@ -69,7 +70,7 @@
 		sessions
 			.map((s) => ({
 				id: s.conversation_id,
-				title: s.title || "Untitled",
+				title: s.title || untitled("chat"),
 				updated_at: s.last_message_at || s.first_message_at,
 			}))
 			.sort((a, b) => b.updated_at.localeCompare(a.updated_at)),

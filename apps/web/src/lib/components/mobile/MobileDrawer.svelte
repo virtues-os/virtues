@@ -30,6 +30,7 @@
 	 * Position, the slide and the gesture all belong to MobileShell; this
 	 * component only renders content (the shell moves it for parallax).
 	 */
+	import { untitled } from "$lib/refs/identity.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
 	import SetupRing from "$lib/components/sidebar/SetupRing.svelte";
@@ -215,7 +216,7 @@
 				>
 					<span class="chat-title with-glyph">
 						<ProjectGlyph project={p} size={16} />
-						<span class="title-text">{p.name || "Untitled"}</span>
+						<span class="title-text">{p.name || untitled("project")}</span>
 					</span>
 					<span class="chat-when">{p.chat_count === 1 ? "1 chat" : `${p.chat_count} chats`}</span>
 				</button>
@@ -234,7 +235,7 @@
 				<!-- Working, or a reply not yet read: the same two states the
 				     desktop row shows, after the title. -->
 				<span class="chat-title with-glyph">
-					<span class="title-text">{s.title || "Untitled"}</span>
+					<span class="title-text">{s.title || untitled("chat")}</span>
 					{#if chatActivity.running(s.conversation_id)}
 						<Icon icon="ri:loader-4-line" width="14" class="spin state-mark" />
 					{:else if chatActivity.unread(s.conversation_id)}

@@ -14,11 +14,10 @@
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { projectMenuItems, targetForTab } from "$lib/utils/projectActions";
-	import { updatePage, updateChat } from "$lib/api/client";
-	import { pagesStore } from "$lib/stores/pages.svelte";
+	import { identityOf, ownedRef, renameRef, setRefLook } from "$lib/refs/identity.svelte";
+	import { accentCss } from "$lib/sidebar/pin-colors";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
-	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { isEmoji } from "$lib/utils/iconHelpers";
 	import { isAppleKeyboard } from "$lib/utils/platform";
 	import { pinMenuItem, pinIconMenuItem } from "$lib/pins/pinAction";
@@ -27,37 +26,13 @@
 	const FLIP_DURATION_MS = 150;
 
 	/**
-	 * What a page or chat actually chose for itself — icon and color — read
-	 * from the entity stores rather than from `tab.icon`.
-	 *
-	 * `tab.icon` is stamped when the tab OPENS, from the route registry, so it
-	 * is the species icon: every page a document, every chat a speech bubble.
-	 * A tab that has been open since before you picked an icon would keep
-	 * showing the type one until you closed and reopened it. The stores are
-	 * live and already loaded, so reading them is both cheaper and correct.
+	 * A tab shows its thing as it is now (refs/identity): a chat, page or
+	 * project's own name, icon and color from the stores, with the tab's
+	 * stamped label and icon only as what was last known — the first frame
+	 * after a restore, or a route with no record behind it.
 	 */
-	function entityIdentity(route: string | undefined): {
-		icon: string | null;
-		color: string | null;
-	} {
-		if (!route) return { icon: null, color: null };
-		const [, type, id] = route.split("/");
-		if (!id) return { icon: null, color: null };
-		if (type === "page") {
-			const page = pagesStore.pages.find((p) => p.id === id);
-			return { icon: page?.icon ?? null, color: page?.icon_color ?? null };
-		}
-		if (type === "chat") {
-			const chat = chatSessions.sessions.find((c) => c.conversation_id === id);
-			return { icon: chat?.icon ?? null, color: chat?.icon_color ?? null };
-		}
-		return { icon: null, color: null };
-	}
-
-	/** The `--cat-*` key currently stored, for seeding the picker. */
-	function iconColorFor(type: string | undefined, id: string | undefined): string | null {
-		if (!type || !id) return null;
-		return entityIdentity(`/${type}/${id}`).color;
+	function tabLook(tab: Tab) {
+		return identityOf(tab.route, { title: tab.label, icon: null, color: null });
 	}
 
 	interface Props {
@@ -167,7 +142,7 @@
 		return tabs.map((tab) => ({
 			id: tab.id,
 			url: tab.route,
-			label: tab.label,
+			label: tabLook(tab).title,
 			icon: tab.icon,
 			source: zoneId,
 			tab,
@@ -225,11 +200,12 @@
 		const tabIndex = tabs.findIndex((t) => t.id === tabId);
 		const hasTabsToRight = tabIndex !== -1 && tabIndex < tabs.length - 1;
 
-		// Parse route to determine entity type for icon changes
-		const routeParts = tab.route?.split('/').filter(Boolean) ?? [];
-		const tabEntityType = routeParts[0]; // 'page', 'chat', etc.
-		const tabEntityId = routeParts[1];
-		const canChangeIcon = tabEntityType && tabEntityId && (tabEntityType === 'page' || tabEntityType === 'chat');
+		// A chat, page or project is renamed and re-iconed as itself. Any
+		// other tab has no name of its own to change: a rename here used to
+		// set the tab's label and nothing else, and the view put its real
+		// name back on the next load.
+		const owned = ownedRef(tab.route ?? "");
+		const look = tabLook(tab);
 
 		// Build context menu items
 		const items: ContextMenuItem[] = [
@@ -242,23 +218,24 @@
 					: "ri:contract-left-right-line",
 				action: () => windowShellStore.togglePin(tabId),
 			},
-			// Rename
-			{
+		];
+		if (owned) {
+			items.push({
 				id: "rename",
 				label: "Rename",
 				icon: "ri:edit-line",
 				action: () => {
 					renamingTabId = tabId;
-					renameValue = tab.label;
+					renameValue = look.title;
 				},
-			},
-		];
+			});
+		}
 
 		// One entry, not two. Icon and color are the same decision and the
 		// picker holds both — a menu offering "Change icon" AND "Color" made
 		// them look like separate features and sent you back through the menu
 		// to finish one thought.
-		if (!canChangeIcon) {
+		if (!owned) {
 			// Not a page or chat, so there's no entity icon to set — but if the
 			// route is on the Desk, the PIN has an icon, and that's what the
 			// tab and the sidebar row both draw.
@@ -271,48 +248,30 @@
 			if (pinIcon) items.push(pinIcon);
 		}
 
-		// Change Icon (for page/chat tabs)
-		if (canChangeIcon) {
+		// Change icon: the thing's own icon and color, set everywhere it shows.
+		if (owned) {
 			items.push({
 				id: "change-icon",
 				label: "Change icon",
 				icon: "ri:emotion-line",
 				action: () => {
 					iconPickerStore.show(
-						tab.icon ?? null,
-						async (icon) => {
-							try {
-								if (tabEntityType === 'page') {
-									await updatePage(tabEntityId, { icon });
-									await pagesStore.refresh();
-								} else if (tabEntityType === 'chat') {
-									await updateChat(tabEntityId, { icon });
-									chatSessions.updateSessionIcon(tabEntityId, icon);
-								}
-								windowShellStore.invalidateViewCache();
-							} catch (err) {
-								console.error("[WindowTabBar] Failed to change icon:", err);
-							}
+						look.icon,
+						(icon) => {
+							setRefLook(tab.route, { icon }).catch((err) =>
+								console.error("[WindowTabBar] Failed to change icon:", err),
+							);
 						},
 						{
 							anchor: { x: e.clientX, y: e.clientY, width: 0, height: 0 },
-							color: iconColorFor(tabEntityType, tabEntityId),
+							color: look.color,
 							// Persisted on click, without closing — so you can
 							// try a color against the grid before choosing the
 							// glyph, which is the point of one panel.
-							onColorSelect: async (icon_color) => {
-								try {
-									if (tabEntityType === 'page') {
-										await updatePage(tabEntityId, { icon_color });
-										await pagesStore.refresh();
-									} else if (tabEntityType === 'chat') {
-										await updateChat(tabEntityId, { icon_color });
-										chatSessions.updateSessionIconColor(tabEntityId, icon_color);
-									}
-									windowShellStore.invalidateViewCache();
-								} catch (err) {
-									console.error("[WindowTabBar] Failed to change icon color:", err);
-								}
+							onColorSelect: (color) => {
+								setRefLook(tab.route, { color }).catch((err) =>
+									console.error("[WindowTabBar] Failed to change icon color:", err),
+								);
 							},
 						},
 					);
@@ -361,7 +320,7 @@
 			// makes the Desk reachable from everywhere by construction rather
 			// than by remembering to add a menu item per view.
 			items.push(
-				pinMenuItem({ url: tab.route, label: tab.label, icon: tab.icon }),
+				pinMenuItem({ url: tab.route, label: look.title, icon: tab.icon }),
 			);
 		}
 
@@ -369,16 +328,9 @@
 	}
 
 	/**
-	 * Commit a tab rename — to the ENTITY, not just to the tab.
-	 *
-	 * This used to set the local label and stop, so renaming from the tab bar
-	 * was cosmetic: the sidebar kept the old name and a reload threw the new
-	 * one away. That was survivable while the chat pane carried its own
-	 * renameable title; now that the tab is the only place a chat or page is
-	 * named, a rename here has to be the real one.
-	 *
-	 * Optimistic — the label updates immediately, and the store is corrected
-	 * from the server only if the write fails.
+	 * Commit a tab rename — to the thing, through the one rename path
+	 * (refs/identity), so the sidebar, pins and every other tab on it move
+	 * together. The tab shows the new name at once because the stores do.
 	 */
 	function handleRenameSubmit() {
 		if (!renamingTabId || !renameValue.trim()) {
@@ -387,23 +339,10 @@
 		}
 		const newLabel = renameValue.trim();
 		const tab = tabs.find((t) => t.id === renamingTabId);
-		windowShellStore.updateTab(renamingTabId, { label: newLabel });
 		renamingTabId = null;
 		renameValue = "";
-
-		const [, type, id] = tab?.route?.split("/") ?? [];
-		if (!id) return;
-		if (type === "chat") {
-			chatSessions.applyTitle(id, newLabel);
-			updateChat(id, { title: newLabel }).catch(async (e) => {
-				console.error("[WindowTabBar] rename failed:", e);
-				await chatSessions.refresh();
-			});
-		} else if (type === "page") {
-			updatePage(id, { title: newLabel })
-				.then(() => pagesStore.refresh())
-				.catch((e) => console.error("[WindowTabBar] rename failed:", e));
-		}
+		if (!tab?.route || !ownedRef(tab.route)) return;
+		renameRef(tab.route, newLabel).catch((e) => console.error("[WindowTabBar] rename failed:", e));
 	}
 
 	function handleRenameCancel() {
@@ -424,9 +363,9 @@
 	function handleDoubleClick(e: MouseEvent, tabId: string) {
 		e.preventDefault();
 		const tab = tabs.find((t) => t.id === tabId);
-		if (!tab || tab.pinned) return;
+		if (!tab || tab.pinned || !ownedRef(tab.route ?? "")) return;
 		renamingTabId = tabId;
-		renameValue = tab.label;
+		renameValue = tabLook(tab).title;
 	}
 
 	// svelte-dnd-action handlers - delegate to centralized dndManager
@@ -530,7 +469,7 @@
 		{#each dndItems as item, tabIndex (item.id)}
 			{@const tab = item.tab}
 			{@const tabOrdinal = ordinalOffset + tabIndex + 1}
-			{@const identity = entityIdentity(tab.route)}
+			{@const identity = tabLook(tab)}
 			{@const glyph = identity.icon || item.icon || getDefaultIcon(tab.type)}
 			<div
 				class="tab"
@@ -549,7 +488,7 @@
 					e.key === "Enter" &&
 					tab.id !== renamingTabId &&
 					handleTabClick(tab.id)}
-				title={tab.id !== renamingTabId ? tab.label : ""}
+				title={tab.id !== renamingTabId ? identity.title : ""}
 				role="button"
 				tabindex="0"
 			>
@@ -565,7 +504,7 @@
 					<Icon
 						icon={glyph}
 						class="tab-icon"
-						style={identity.color ? `color: var(--cat-${identity.color})` : undefined}
+						style={identity.color ? `color: ${accentCss(identity.color)}` : undefined}
 					/>
 				{/if}
 				{#if !tab.pinned}
@@ -591,7 +530,7 @@
 						     because every tab has its own number, browser-style:
 						     leftmost is ⌘1, counting across both panes. -->
 						<span class="tab-label" class:flipping={showPaneHint && tabOrdinal <= 9}>
-							<span class="tab-label-text">{tab.label}</span>
+							<span class="tab-label-text">{identity.title}</span>
 							<span class="tab-label-hint" aria-hidden="true">{modKeyWord} + {tabOrdinal}</span>
 						</span>
 					{/if}

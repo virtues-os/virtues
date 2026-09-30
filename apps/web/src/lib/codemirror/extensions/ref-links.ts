@@ -23,7 +23,7 @@ import { collectCodeRanges, inCode } from './code-context';
 import { selectionTouches } from './inline-marks';
 import { onContextGesture } from './long-press';
 import { dragJustEnded, isMouseSelecting } from './mouse-freeze';
-import { getEntityTypeFromRoute } from '$lib/utils/refRoutes';
+import { getEntityTypeFromRoute, parseRef } from '$lib/utils/refRoutes';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import RefPreview from '$lib/components/RefPreview.svelte';
 import './ref-links.css';
@@ -32,13 +32,9 @@ import './ref-links.css';
 // URL Classification
 // =============================================================================
 
-const ENTITY_PREFIXES = [
-	'/person/', '/page/', '/org/', '/place/',
-	'/day/', '/year/', '/source/', '/chat/', '/drive/', '/space/',
-] as const;
-
+/** A link to a record (refRoutes' grammar), which renders as a ref pill. */
 function isEntityUrl(url: string): boolean {
-	return ENTITY_PREFIXES.some(p => url.startsWith(p));
+	return parseRef(url) !== null;
 }
 
 function isExternalUrl(url: string): boolean {

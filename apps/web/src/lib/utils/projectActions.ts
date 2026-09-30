@@ -9,6 +9,8 @@ import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { GETTING_STARTED_CHAT_ID } from '$lib/components/chat/getting-started/getting-started';
 import { INTERVIEW_CHAT_ID } from '$lib/components/chat/interview/interview';
 import { PROJECT_ICON } from '$lib/utils/iconHelpers';
+import { parseRef } from '$lib/utils/refRoutes';
+import { untitled } from '$lib/refs/identity.svelte';
 import { chatSessions } from '$lib/stores/chatSessions.svelte';
 import { projectStore } from '$lib/stores/project.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -436,19 +438,18 @@ export function projectRowMenuItems(
  */
 export function memberIcon(url: string): string {
 	if (/^https?:\/\//.test(url)) return 'ri:external-link-line';
-	const kind = url.split('/')[1] ?? '';
 	const map: Record<string, string> = {
 		page: 'atlas:pages',
 		person: 'atlas:people',
 		place: 'atlas:places',
 		org: 'atlas:organizations',
-		drive: 'atlas:files',
+		file: 'atlas:files',
 		day: 'atlas:day',
 		year: 'atlas:years',
 		chat: 'atlas:chats',
 		source: 'atlas:sources'
 	};
-	return map[kind] ?? 'ri:links-line';
+	return map[parseRef(url)?.kind ?? ''] ?? 'ri:links-line';
 }
 
 /**
@@ -465,16 +466,16 @@ export function memberName(item: { url: string; title?: string }): string {
 			return item.url;
 		}
 	}
-	const kind = item.url.split('/')[1] ?? '';
+	const kind = parseRef(item.url)?.kind;
+	if (kind === 'chat' || kind === 'page' || kind === 'project') return untitled(kind);
 	const names: Record<string, string> = {
-		page: 'Page',
 		person: 'Person',
 		place: 'Place',
 		org: 'Organization',
-		drive: 'File',
+		file: 'File',
 		day: 'Day',
 		year: 'Year',
 		source: 'Source'
 	};
-	return names[kind] ?? 'Item';
+	return names[kind ?? ''] ?? 'Item';
 }

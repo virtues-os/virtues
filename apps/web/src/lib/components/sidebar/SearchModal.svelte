@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untitled } from "$lib/refs/identity.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { fade, fly } from "svelte/transition";
 	import { cubicOut } from "svelte/easing";
@@ -399,19 +400,19 @@
 				break;
 			case "chat":
 				windowShellStore.openTabFromRoute(`/chat/${row.item.conversation_id}`, {
-					label: row.item.title || "Chat",
+					label: row.item.title || untitled("chat"),
 				});
 				onClose();
 				break;
 			case "page":
 				windowShellStore.openTabFromRoute(`/page/${row.item.id}`, {
-					label: row.item.title || "Untitled",
+					label: row.item.title || untitled("page"),
 				});
 				onClose();
 				break;
 			case "project":
 				windowShellStore.openTabFromRoute(`/project/${row.item.id}`, {
-					label: row.item.name || "Untitled",
+					label: row.item.name || untitled("project"),
 				});
 				onClose();
 				break;
@@ -661,7 +662,7 @@
 									class="result-icon"
 								/>
 								<span class="result-label"
-									>{chat.title || "Untitled"}</span
+									>{chat.title || untitled("chat")}</span
 								>
 							</button>
 						{/each}
@@ -679,7 +680,7 @@
 								data-result-index={index}
 								onclick={() => {
 									windowShellStore.openTabFromRoute(`/page/${page.id}`, {
-										label: page.title || "Untitled",
+										label: page.title || untitled("page"),
 									});
 									onClose();
 								}}
@@ -691,7 +692,7 @@
 									class="result-icon"
 								/>
 								<span class="result-label"
-									>{page.title || "Untitled"}</span
+									>{page.title || untitled("page")}</span
 								>
 							</button>
 						{/each}
@@ -714,14 +715,14 @@
 								data-result-index={index}
 								onclick={() => {
 									windowShellStore.openTabFromRoute(`/project/${project.id}`, {
-										label: project.name || "Untitled",
+										label: project.name || untitled("project"),
 									});
 									onClose();
 								}}
 								onmouseenter={() => (selectedIndex = index)}
 							>
 								<span class="result-icon glyph-slot"><ProjectGlyph {project} size={16} /></span>
-								<span class="result-label">{project.name || "Untitled"}</span>
+								<span class="result-label">{project.name || untitled("project")}</span>
 							</button>
 						{/each}
 					</div>

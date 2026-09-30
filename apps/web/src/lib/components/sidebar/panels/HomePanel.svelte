@@ -64,7 +64,7 @@
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { promptText } from '$lib/stores/dialog.svelte';
 	import { deleteChat, type PageSummary, type Pin, type ProjectSummary } from '$lib/api/client';
-	import { pinIdentity, renameRef, ownedRef } from '$lib/refs/identity.svelte';
+	import { pinIdentity, renameRef, ownedRef, untitled } from '$lib/refs/identity.svelte';
 	import { pinMenuItem, pinIconMenuItem, isPinned, togglePin } from '$lib/pins/pinAction';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
 	import { notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
@@ -90,7 +90,6 @@
 	import AtlasIcon from '../AtlasIcon.svelte';
 	import HoverCard from '../HoverCard.svelte';
 
-	const UNTITLED = 'New chat';
 	const PROJECTS_SHOWN = 5;
 	const RECENTS_CAP = 20;
 
@@ -211,7 +210,7 @@
 	});
 
 	function titleOf(s: ChatSession): string {
-		return s.title?.trim() || UNTITLED;
+		return s.title?.trim() || untitled('chat');
 	}
 
 	function chatRoute(s: ChatSession): string {
@@ -223,7 +222,7 @@
 	}
 
 	function pageTitle(p: PageSummary): string {
-		return p.title?.trim() || 'Untitled';
+		return p.title?.trim() || untitled('page');
 	}
 
 	function pageRoute(p: PageSummary): string {
@@ -1084,7 +1083,7 @@
 					<span class="card-item-glyph" style={`color: ${projectColor(cardProject)}`}>
 						<AtlasIcon name="chats" size={14} bare />
 					</span>
-					<span class="card-item-text">{chat.title || 'Untitled chat'}</span>
+					<span class="card-item-text">{chat.title || untitled('chat')}</span>
 				</button>
 			{/each}
 			{#each cardItems as item (item.url)}

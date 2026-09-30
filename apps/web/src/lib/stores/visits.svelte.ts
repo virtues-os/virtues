@@ -18,6 +18,7 @@
  * orders. "Viewed 14 times" is the register this app refuses.
  */
 import { getFrecency, recordVisit, type VisitKind } from '$lib/api/client';
+import { parseRef } from '$lib/utils/refRoutes';
 
 /** How long a route has to stay active before it is a visit. */
 const DWELL_MS = 3000;
@@ -26,16 +27,11 @@ const DEDUPE_MS = 60_000;
 /** The frecency read is cached this long; ⌘K opens refresh it past this. */
 const FRECENCY_TTL_MS = 60_000;
 
-const ROUTE_KIND: [RegExp, VisitKind][] = [
-	[/^\/chat\/([^/?#]+)/, 'chat'],
-	[/^\/page\/([^/?#]+)/, 'page'],
-	[/^\/project\/([^/?#]+)/, 'project'],
-];
-
+/** Visits are kept for the three things ⌘K ranks: chats, pages, projects. */
 function parseVisit(route: string): { kind: VisitKind; id: string } | null {
-	for (const [re, kind] of ROUTE_KIND) {
-		const m = route.match(re);
-		if (m) return { kind, id: decodeURIComponent(m[1]) };
+	const ref = parseRef(route);
+	if (ref && (ref.kind === 'chat' || ref.kind === 'page' || ref.kind === 'project')) {
+		return { kind: ref.kind, id: ref.id };
 	}
 	return null;
 }

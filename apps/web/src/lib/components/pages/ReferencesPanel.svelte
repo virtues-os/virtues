@@ -7,6 +7,7 @@
 	 * Kept deliberately quiet: it protects the writing canvas by living off to
 	 * the side, only present when summoned.
 	 */
+	import { untitled } from "$lib/refs/identity.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import IconButton from "$lib/components/IconButton.svelte";
 	import { type Backlink } from "$lib/api/client";
@@ -53,7 +54,7 @@
 					<li>
 						<button
 							class="reference-item"
-							onclick={() => onOpen(ref.id, ref.title || "Untitled")}
+							onclick={() => onOpen(ref.id, ref.title || untitled("page"))}
 						>
 							<span class="reference-item-head">
 								<Icon
@@ -62,7 +63,7 @@
 									class="reference-icon"
 								/>
 								<span class="reference-item-title"
-									>{ref.title || "Untitled"}</span
+									>{ref.title || untitled("page")}</span
 								>
 							</span>
 							<span class="reference-snippet">{ref.snippet}</span>
