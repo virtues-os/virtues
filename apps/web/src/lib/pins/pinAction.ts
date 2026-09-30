@@ -27,13 +27,18 @@
 import { pinsStore } from '$lib/stores/pins.svelte';
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { iconPickerStore } from '$lib/stores/iconPicker.svelte';
+import { ownedRef, pinIdentity, setRefLook } from '$lib/refs/identity.svelte';
 
 export interface PinTarget {
 	/** Route or absolute URL. External `http(s)` urls are allowed and open out. */
 	url: string;
-	/** What to call it in the sidebar. Falls back to the url when absent. */
+	/**
+	 * What to call it, kept only for a pin with no record behind it (an
+	 * external URL, an app screen). A chat, page or project is named by
+	 * itself, whatever was passed here.
+	 */
 	label?: string | null;
-	/** Iconify id, e.g. `ri:file-text-line`. */
+	/** Iconify id, e.g. `ri:file-text-line`. Same rule as `label`. */
 	icon?: string | null;
 }
 
@@ -56,18 +61,19 @@ export async function togglePin(target: PinTarget): Promise<boolean> {
 		await pinsStore.remove(existing.id);
 		return false;
 	}
-	await pinsStore.add(target.url, target.label ?? null, target.icon ?? null);
+	const owned = ownedRef(target.url);
+	await pinsStore.add(target.url, owned ? null : (target.label ?? null), owned ? null : (target.icon ?? null));
 	return true;
 }
 
 /**
  * "Change icon" for a pinned url — opens the shared picker, which carries the
- * color swatches with it, so a pin's glyph and its color are chosen in one
- * place like every other icon in the app.
+ * color swatches with it, so a glyph and its color are chosen in one place
+ * like every other icon in the app.
  *
- * A pin's rows were dots on purpose ("a pinned thing has no natural glyph").
- * That holds right up until the user wants to pick one; the dot stays as the
- * default for pins that never do.
+ * The icon and color are the thing's: picking one here changes the chat,
+ * page or project itself, everywhere it shows. Only a pin with no record
+ * behind it keeps them on the pin. A thing with no icon shows the dot.
  */
 export function pinIconMenuItem(
 	url: string,
@@ -81,15 +87,16 @@ export function pinIconMenuItem(
 		label: 'Change icon',
 		icon: 'ri:emotion-line',
 		action: () => {
+			const look = pinIdentity(pin);
 			iconPickerStore.show(
-				pin.icon ?? null,
+				look.icon,
 				(icon) => {
-					void pinsStore.setIcon(pin.id, icon);
+					void setRefLook(url, { icon });
 				},
 				{
-					color: pin.color ?? null,
+					color: look.color,
 					onColorSelect: (color) => {
-						void pinsStore.setColor(pin.id, color);
+						void setRefLook(url, { color });
 					},
 					anchor,
 				},

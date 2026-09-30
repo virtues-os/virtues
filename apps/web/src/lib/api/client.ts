@@ -450,14 +450,23 @@ export function setDisplayHours(hours: {
 // Sidebar pins
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * A pin as the box resolves it (`api/pins.rs` PinView): the URL, plus what it
+ * points at now. `title`, `icon` and `color` are the thing's; `label` is the
+ * pin's own and names only a pin with no record behind it.
+ */
 export interface Pin {
 	id: string;
 	url: string;
+	/** `chat`, `page`, `project`, a wiki kind, `web`, or `route`. Absent from an older box. */
+	kind?: string;
+	/** The thing's name now. Absent from an older box, which sends `label` only. */
+	title?: string;
 	label: string | null;
 	icon: string | null;
 	sort_order: number;
 	pinned_at: string;
-	/** A `--cat-*` token key ('orange', 'emerald'…), never a hex. See CAT_COLORS. */
+	/** A `--cat-*` token key, or a custom hex (see pin-colors.ts). */
 	color: string | null;
 }
 

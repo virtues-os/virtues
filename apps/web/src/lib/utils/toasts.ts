@@ -24,6 +24,7 @@ import {
 import { chatSessions } from '$lib/stores/chatSessions.svelte';
 import { pagesStore } from '$lib/stores/pages.svelte';
 import { projectStore } from '$lib/stores/project.svelte';
+import { pinsStore } from '$lib/stores/pins.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
 /** Everything Recently deleted holds: the three record kinds, plus Drive files. */
@@ -63,6 +64,9 @@ export function routeIfOpen(route: string): string | undefined {
  * poke, not two that have to agree.
  */
 export async function refreshAfterRestore(kind: TrashedKind): Promise<void> {
+	// A restored thing's pin comes back with it: the box hides a pin while
+	// its target is in the trash, and never forgets it.
+	void pinsStore.load();
 	if (kind === 'chat') await chatSessions.refresh();
 	else if (kind === 'page') await pagesStore.loadPages();
 	else if (kind === 'project') await projectStore.load();
@@ -114,6 +118,8 @@ async function undoTrash(opts: TrashedOptions): Promise<void> {
  * the box agrees is a lie you have to take back.
  */
 export function notifyTrashed(opts: TrashedOptions): void {
+	// A pin never shows something in the trash; the box now leaves it out.
+	void pinsStore.load();
 	toast(`Deleted ${quoted(opts.name)}`, {
 		description: 'In Recently deleted for 30 days',
 		duration: UNDO_DURATION,
