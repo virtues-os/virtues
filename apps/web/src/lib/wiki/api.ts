@@ -1251,12 +1251,18 @@ export interface TimelineDayPoint {
 	latitude: number;
 	longitude: number;
 	timestamp: string;
+	/** The phone's error radius, metres. Past ~100 m it is a cell tower's guess, not GPS. */
+	horizontal_accuracy: number | null;
+	/** The phone's reported speed, m/s; null when it reported none. */
+	speed: number | null;
 }
 
 export interface TimelineDayView {
 	date: string;
 	chunks: TimelineDayChunk[];
 	points: TimelineDayPoint[];
+	/** The last raw GPS point before the day starts; null when there is none. */
+	last_point_before: TimelineDayPoint | null;
 }
 
 // ============================================================================
