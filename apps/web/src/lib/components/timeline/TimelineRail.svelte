@@ -16,10 +16,20 @@
 		sections,
 		zone,
 		playT,
+		focus = 'row',
 		onpick,
-	}: { sections: RailSection[]; zone: string; playT: number; onpick: (p: Pick) => void } = $props();
+	}: {
+		sections: RailSection[];
+		zone: string;
+		playT: number;
+		/** What the user last pointed at: 'sec' after a section click keeps the
+		 *  rail on that section; anything else hands focus back to the moment. */
+		focus?: 'row' | 'sec';
+		onpick: (p: Pick) => void;
+	} = $props();
 
 	let rail = $state<HTMLElement | null>(null);
+	let scroller = $state<HTMLElement | null>(null);
 	export function width(): number {
 		return rail?.offsetWidth ?? 0;
 	}
@@ -46,11 +56,48 @@
 			.sort((a, b) => a.s - b.s)
 			.findLast(holds) ?? null,
 	);
+
+	// One scroll surface, kept on the live thing (main.js:1627-1633): the
+	// pointed-at section, else the live row, else the live section. It glides
+	// only when that thing is out of view, and once per target.
+	let glide = -1;
+	$effect(() => {
+		const box = scroller;
+		const sec = curSection;
+		const row = curRow;
+		if (!box) return;
+		const top = box.getBoundingClientRect().top;
+		const at = (n: HTMLElement) => n.getBoundingClientRect().top - top + box.scrollTop;
+		const sT = box.scrollTop;
+		const h = box.clientHeight;
+		const group = sec >= 0 ? box.querySelectorAll<HTMLElement>('.group')[sec] : undefined;
+		const rowEl = row ? box.querySelector<HTMLElement>('.row.cur') : null;
+		const sectionView = (g: HTMLElement) => {
+			const t = at(g);
+			// A section counts as seen while any of it is in the box: its pinned header shows.
+			return { seen: t <= sT + h - 40 && t + g.offsetHeight >= sT + 40, want: t - h * 0.28 };
+		};
+		let view: { seen: boolean; want: number } | null = null;
+		if (focus === 'sec' && group) view = sectionView(group);
+		else if (rowEl) {
+			const t = at(rowEl);
+			view = { seen: t >= sT && t <= sT + h - 40, want: t - h * 0.28 };
+		} else if (group) view = sectionView(group);
+		if (!view || view.seen) {
+			glide = -1;
+			return;
+		}
+		const want = Math.max(0, Math.round(view.want));
+		if (want !== glide) {
+			glide = want;
+			box.scrollTo({ top: want, behavior: 'smooth' });
+		}
+	});
 </script>
 
 {#if sections.length}
 	<section class="rail" bind:this={rail} aria-label="The day, stay by stay">
-		<div class="scroll">
+		<div class="scroll" bind:this={scroller}>
 			{#each sections as sec, i (sec.kind + sec.s)}
 				<div class="group" class:bare={!sec.rows.length} class:cur={i === curSection}>
 					<button class="sec" onclick={() => onpick({ kind: sec.kind, s: sec.s, e: sec.e })}>

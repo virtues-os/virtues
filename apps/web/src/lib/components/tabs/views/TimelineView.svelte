@@ -60,6 +60,8 @@
 	let bubbles: Bubbles | null = null;
 	/** Which stretch of path is lit, so it is written only when it changes. */
 	let litKey = '';
+	/** What the user last pointed at, for the rail's scroll (main.js:1559). */
+	let railFocus = $state<'row' | 'sec'>('row');
 
 	const today = getLocalDateSlug();
 	let date = $state(today);
@@ -167,7 +169,10 @@
 					pad: () => fitPad(m),
 					time: clock,
 					place: placeAt,
-					onpick: (s) => park(s),
+					onpick: (s) => {
+						railFocus = 'row';
+						park(s);
+					},
 					fitDay: () => frameDay(m, 650),
 					showPoint: (ll) => showPoint(m, [ll.lng, ll.lat]),
 				});
@@ -224,6 +229,7 @@
 		dayStart = startMs;
 		dayEnd = endMs;
 		playT = startMs;
+		railFocus = 'row';
 		litKey = '';
 		// The rail draws first, so the framing can leave room for it.
 		await tick();
@@ -351,12 +357,14 @@
 		const ml = maplibre;
 		if (!m || !ml) return;
 		if (p.kind === 'conversation' || p.kind === 'walk') {
+			railFocus = 'row';
 			park(p.s);
 			bubbles?.reveal(p.s);
 			return;
 		}
 		const i = sections.findIndex((s) => s.kind === p.kind && s.s === p.s);
 		const live = sections.findLastIndex((s) => s.s <= playT && playT < s.e);
+		railFocus = 'sec';
 		if (i !== live) park(p.s);
 		if (p.kind === 'transit') {
 			bubbles?.fold();
@@ -433,7 +441,7 @@
 		/>
 	</div>
 
-	<TimelineRail bind:this={rail} {sections} {zone} {playT} onpick={reveal} />
+	<TimelineRail bind:this={rail} {sections} {zone} {playT} focus={railFocus} onpick={reveal} />
 	{#if railError && status !== 'error' && status !== 'loading'}
 		<p class="rail-error tile">Your server couldn't load the day's stays. Reload the page to try again.</p>
 	{/if}
