@@ -221,6 +221,116 @@ async fn home_zone(pool: &PgPool) -> Result<chrono_tz::Tz> {
     })
 }
 
+/// Steps counted in one 10-minute bin, stamped at the bin's middle.
+#[derive(Debug, Clone, Serialize)]
+pub struct StepBin {
+    pub occurred_at: DateTime<Utc>,
+    pub step_count: i64,
+}
+
+/// A timed calendar event.
+#[derive(Debug, Clone, Serialize)]
+pub struct CalendarEvent {
+    pub id: String,
+    pub title: Option<String>,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
+    pub calendar_name: Option<String>,
+    pub location_name: Option<String>,
+}
+
+/// What the scrubber's Body, Calendar and Finance lanes draw over a window.
+#[derive(Debug, Clone, Serialize)]
+pub struct LaneWindow {
+    /// Steps in 10-minute bins over the window, bins with steps only.
+    pub steps: Vec<StepBin>,
+    /// The 92nd-percentile bin across the whole record: the bars' scale, so
+    /// ordinary movement fills the lane rather than the one peak's floor
+    /// (`dayback/src/main.js:1361`).
+    pub step_scale: f64,
+    /// Whether any calendar has ever synced: without one, the lane asks to
+    /// connect one instead of drawing an empty row.
+    pub has_calendar: bool,
+    /// Timed events over the window; an all-day event has no place on a
+    /// timeline of hours and is left out.
+    pub calendar: Vec<CalendarEvent>,
+    /// Whether any financial account has synced.
+    pub has_finance: bool,
+}
+
+const STEP_BIN: &str = "10 minutes";
+
+/// The lanes over `start`..`end`: step bins aligned to `start`, their
+/// record-wide scale, the calendar's timed events, and which sources exist.
+pub async fn lanes(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<LaneWindow> {
+    let steps = sqlx::query(&format!(
+        "SELECT date_bin('{STEP_BIN}', occurred_at, $1) + interval '5 minutes' AS at, sum(step_count)::bigint AS n \
+         FROM data_health_steps \
+         WHERE deleted_at_source IS NULL AND NOT is_archived AND occurred_at >= $1 AND occurred_at < $2 \
+         GROUP BY 1 HAVING sum(step_count) > 0 ORDER BY 1"
+    ))
+    .bind(start)
+    .bind(end)
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| Ok(StepBin { occurred_at: r.try_get("at")?, step_count: r.try_get("n")? }))
+    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
+
+    let scale: Option<f64> = sqlx::query_scalar(&format!(
+        "SELECT percentile_disc(0.92) WITHIN GROUP (ORDER BY n)::float8 FROM ( \
+           SELECT sum(step_count) AS n FROM data_health_steps \
+           WHERE deleted_at_source IS NULL AND NOT is_archived \
+           GROUP BY date_bin('{STEP_BIN}', occurred_at, TIMESTAMPTZ 'epoch') HAVING sum(step_count) > 0) bins"
+    ))
+    .fetch_one(pool)
+    .await?;
+
+    let has_calendar: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM data_calendar_event WHERE deleted_at_source IS NULL AND NOT is_archived)",
+    )
+    .fetch_one(pool)
+    .await?;
+    let calendar = sqlx::query(
+        "SELECT id, title, started_at, ended_at, calendar_name, location_name FROM data_calendar_event \
+         WHERE deleted_at_source IS NULL AND NOT is_archived AND NOT is_all_day \
+           AND status IS DISTINCT FROM 'cancelled' AND started_at < $2 AND ended_at > $1 \
+         ORDER BY started_at",
+    )
+    .bind(start)
+    .bind(end)
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| {
+        Ok(CalendarEvent {
+            id: r.try_get("id")?,
+            title: r.try_get("title")?,
+            started_at: r.try_get("started_at")?,
+            ended_at: r.try_get("ended_at")?,
+            calendar_name: r.try_get("calendar_name")?,
+            location_name: r.try_get("location_name")?,
+        })
+    })
+    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
+
+    let has_finance: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM data_financial_account WHERE deleted_at_source IS NULL AND NOT is_archived) \
+             OR EXISTS (SELECT 1 FROM data_financial_transaction WHERE deleted_at_source IS NULL AND NOT is_archived)",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(LaneWindow {
+        steps,
+        // absent-ok: no step was ever recorded, so any scale draws nothing; 1 keeps the division sound.
+        step_scale: scale.unwrap_or(1.0).max(1.0),
+        has_calendar,
+        calendar,
+        has_finance,
+    })
+}
+
 /// One transcription window, as the rail reads it.
 #[derive(Debug, Clone, Serialize)]
 pub struct VoiceWindow {

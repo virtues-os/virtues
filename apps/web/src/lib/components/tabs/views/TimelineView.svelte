@@ -15,12 +15,15 @@
 	import { atlasStyle } from '$lib/map/atlas';
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
 	import type { GeoJSONSource, LngLat, Map as MlMap, Marker, StyleSpecification } from 'maplibre-gl';
-	import { fetchDayBounds, fetchDayWindow, fetchDerived, fetchVoice, lastMeasured, localDay, quietDayVerdict, stepDay } from '$lib/timeline/day';
+	import { fetchDayBounds, fetchDayWindow, fetchDerived, fetchLanes, fetchVoice, lastMeasured, localDay, quietDayVerdict, stepDay } from '$lib/timeline/day';
 	import { cleanTrack, dropSpikes, flagHoles, splitTrack, toFixes, type Fix, type Line } from '$lib/timeline/track';
 	import { buildRail, type RailPick, type RailSection } from '$lib/timeline/rail';
 	import { anchorAt, positionAt, trackMetres } from '$lib/timeline/anchor';
 	import { Bubbles, type Area, type MapMoment } from '$lib/timeline/bubbles';
 	import TimelineRail from '$lib/components/timeline/TimelineRail.svelte';
+	import TimelineScrubber from '$lib/components/timeline/TimelineScrubber.svelte';
+	import { laneData, NO_LANES, type Lanes } from '$lib/timeline/lanes';
+	import { buildFolds, clampView, DAY, HOUR, MIN, midnightIn, tierOf, tierView, unwarp, warp, zoneOffset, type Tier } from '$lib/timeline/scale';
 	import { APPLE_LIGHT, hsl, recolour } from '$lib/timeline/palette';
 	import { COLOURS, colourVars } from '$lib/timeline/colours';
 
@@ -36,6 +39,7 @@
 	};
 
 	let container: HTMLDivElement;
+	let root = $state<HTMLElement | null>(null);
 	let dayBar = $state<HTMLElement | null>(null);
 	/** The top bar's height: the rail and the notes start below it. */
 	let barH = $state(0);
@@ -61,14 +65,33 @@
 	/** The user has moved the playhead in this day; until then the rail opens
 	 *  nothing by itself (main.js:1559). */
 	let armed = $state(false);
-	let dayStart = 0;
-	let dayEnd = 0;
+	let dayStart = $state(0);
+	let dayEnd = $state(0);
 	let pin: Marker | null = null;
 	let bubbles: Bubbles | null = null;
 	/** Which stretch of path is lit, so it is written only when it changes. */
 	let litKey = '';
 	/** What the user last pointed at, for the rail's scroll (main.js:1559). */
 	let railFocus = $state<'row' | 'sec'>('row');
+
+	let scrubber = $state<ReturnType<typeof TimelineScrubber> | null>(null);
+	/** The scrubber's view, the span on screen (main.js:10). It stays put while
+	 *  the playhead moves, and scrolls only to keep the playhead in it. */
+	let viewStart = $state(0);
+	let viewEnd = $state(0);
+	let playing = $state(false);
+	/** What the lanes draw: the day, then the week around it once the view
+	 *  leaves the day. */
+	let lanes = $state<Lanes>(NO_LANES);
+	/** The local midnights around the day: a date no night touches folds
+	 *  01:00-06:00 instead (main.js:103-104). */
+	let midnights = $state<number[]>([]);
+	const folds = $derived(buildFolds(lanes.nights, midnights));
+	/** The tier is what the span reads as, however it got there (main.js:81). */
+	const tier = $derived(tierOf(viewEnd - viewStart));
+	/** A day or week nudge crosses to another day, keeping the time of day and
+	 *  the tier; it lands once that day has loaded (main.js:1385-1386). */
+	let pendingNudge: { tier: Tier; tod: number } | null = null;
 
 	const today = getLocalDateSlug();
 	let date = $state(today);
@@ -249,12 +272,13 @@
 		const mine = ++asked;
 		status = 'loading';
 		note = null;
-		let bounds, window, derived, voice;
+		let bounds, window, derived, voice, lw;
 		try {
 			// The day in the zone it woke up in, then every fix around it, the
-			// server's stays, drives and moments over it, and what the mic heard.
+			// server's stays, drives and moments over it, what the mic heard, and
+			// the scrubber's steps and calendar.
 			bounds = await fetchDayBounds(slug);
-			[window, derived, voice] = await Promise.all([
+			[window, derived, voice, lw] = await Promise.all([
 				fetchDayWindow(bounds.startMs, bounds.endMs),
 				fetchDerived(bounds).catch((e) => {
 					console.warn('[Timeline] derived fetch failed', e);
@@ -263,6 +287,10 @@
 				fetchVoice(bounds).catch((e) => {
 					console.warn('[Timeline] voice fetch failed', e);
 					return [];
+				}),
+				fetchLanes(bounds).catch((e) => {
+					console.warn('[Timeline] lanes fetch failed', e);
+					return null;
 				}),
 			]);
 		} catch (e) {
@@ -283,8 +311,20 @@
 		dayTrack = cleanTrack(fixes);
 		dayStart = startMs;
 		dayEnd = endMs;
+		lanes = laneData(derived, voice, lw, startMs, endMs);
+		midnights = Array.from({ length: 9 }, (_, i) => midnightIn(stepDay(slug, i - 4), bounds.zone));
+		// A stepped-to day opens whole, at midnight, untouched (main.js:1387);
+		// a nudge lands at its time of day, in its tier.
+		cancelAnim();
 		playT = startMs;
 		armed = false;
+		setView(startMs, endMs);
+		const nudged = pendingNudge;
+		pendingNudge = null;
+		if (nudged) {
+			setTier(nudged.tier, true);
+			park(startMs + nudged.tod);
+		}
 		railFocus = 'row';
 		litKey = '';
 		lastFix = all.filter((f) => f.t < startMs).at(-1) ?? toFixes(window.before ? [window.before] : [])[0] ?? null;
@@ -335,9 +375,9 @@
 	const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 	/** The prototype's framing padding (`v4FitPad`, dayback/src/main.js:1190):
-	 *  the measured top bar and rail plus a buffer of max(34 px, 6 % of the
-	 *  smaller side) on every edge, each capped so fitBounds can still move.
-	 *  The scrubber, once built, reserves its space here too. */
+	 *  the measured top bar, rail and scrubber plus a buffer of max(34 px, 6 %
+	 *  of the smaller side) on every edge, each capped so fitBounds can still
+	 *  move. */
 	function fitPad(m: MlMap) {
 		const c = m.getContainer();
 		const cw = c.clientWidth || 900;
@@ -348,7 +388,7 @@
 		const railW = rail?.width() ?? 0;
 		return {
 			top: Math.min(top + buf, ch * 0.34),
-			bottom: Math.min(buf, ch * 0.45),
+			bottom: Math.min(scrubBottom() + buf, ch * 0.45),
 			left: Math.min(buf, cw * 0.4),
 			right: Math.min((railW ? railW + 16 : 0) + buf, cw * 0.5),
 		};
@@ -405,9 +445,27 @@
 		if (dayFixes.length) frameDay(m, 650);
 		else if (home) m.easeTo({ center: home.c, zoom: home.z, duration: 650 });
 	}
-	/** Esc is the keyboard's Reset view (main.js:1205). */
+	/** The keys (main.js:792-802, 1205): Esc is Reset view; ← → nudge the
+	 *  playhead, with Shift they jump between conversations; Space plays.
+	 *  Only while the Timeline is on screen, and never while typing. */
 	function onKey(e: KeyboardEvent) {
-		if (e.key === 'Escape' && away && !e.defaultPrevented) resetView();
+		if (e.key === 'Escape') {
+			if (away && !e.defaultPrevented) resetView();
+			return;
+		}
+		if (!root?.getClientRects().length || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+		const el = e.target as HTMLElement | null;
+		const tag = el?.tagName;
+		if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
+		if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+			e.preventDefault();
+			const dir = e.key === 'ArrowRight' ? 1 : -1;
+			if (e.shiftKey) jumpConvo(dir);
+			else nudge(dir);
+		} else if (e.code === 'Space' && tag !== 'BUTTON') {
+			e.preventDefault();
+			togglePlay();
+		}
 	}
 
 	/** The day's conversations and walks at their anchors, each moving when it
@@ -437,7 +495,180 @@
 	function park(t: number) {
 		armed = true;
 		playT = Math.max(dayStart, Math.min(dayEnd - 1000, t));
+		ensureVisible();
 		syncPlayhead();
+	}
+
+	/** The latest the view may reach, two days past the record (main.js:95). */
+	const viewHi = () => localDay(today).endMs + 2 * DAY;
+	function setView(a: number, b: number) {
+		[viewStart, viewEnd] = clampView(a, b, Number.NEGATIVE_INFINITY, viewHi());
+	}
+	/** The view scrolls only when the playhead would leave it, landing it a
+	 *  tenth in from the edge it crossed (main.js:492-495). */
+	function ensureVisible() {
+		if (playT >= viewStart && playT <= viewEnd) return;
+		const span = viewEnd - viewStart;
+		const a = playT < viewStart ? playT - span * 0.1 : playT + span * 0.1 - span;
+		setView(a, a + span);
+	}
+
+	// An indirect move travels (main.js:503-513): a tier, a jump. It glides in
+	// warped time, so it reads linear on screen, fast out of the gate with a
+	// long tail. A direct one (a drag, a pinch) is instant and cancels it.
+	let anim = 0;
+	function cancelAnim() {
+		if (anim) cancelAnimationFrame(anim);
+		anim = 0;
+	}
+	function glideView(a: number, b: number, ms = 520) {
+		cancelAnim();
+		const wa0 = warp(folds, viewStart);
+		const wb0 = warp(folds, viewEnd);
+		const wa1 = warp(folds, a);
+		const wb1 = warp(folds, b);
+		const t0 = performance.now();
+		const step = (now: number) => {
+			const p = Math.min(1, (now - t0) / ms);
+			const e = 1 - Math.pow(1 - p, 4);
+			setView(unwarp(folds, wa0 + (wa1 - wa0) * e), unwarp(folds, wb0 + (wb1 - wb0) * e));
+			anim = p < 1 ? requestAnimationFrame(step) : 0;
+		};
+		anim = requestAnimationFrame(step);
+	}
+	/** Week, Day, Hour, Minute (main.js:82-88): the week around the day, the
+	 *  day, three hours or fourteen minutes around the playhead. */
+	function setTier(t: Tier, instant = false) {
+		const [a, b] = tierView(t, { s: dayStart, e: dayEnd }, playT);
+		if (instant) setView(a, b);
+		else glideView(a, b, 560);
+	}
+	/** A pinch zooms the scale around the playhead, keeping it on the same
+	 *  spot, no wider than 40 hours; the Week tier goes wider (main.js:496-500). */
+	function zoom(factor: number) {
+		cancelAnim();
+		const f = Math.min(Math.max(factor, 0.5), 2);
+		const wvs = warp(folds, viewStart);
+		const span = warp(folds, viewEnd) - wvs;
+		const wp = warp(folds, playT);
+		const frac = span ? (wp - wvs) / span : 0.5;
+		const ns = span * f;
+		let vs = unwarp(folds, wp - frac * ns);
+		let ve = unwarp(folds, wp + (1 - frac) * ns);
+		if (ve - vs > 40 * HOUR) {
+			const c = (vs + ve) / 2;
+			vs = c - 20 * HOUR;
+			ve = c + 20 * HOUR;
+		}
+		setView(vs, ve);
+	}
+	/** A click, a drag or a sideways swipe on the scrubber: the playhead goes
+	 *  exactly there (main.js:501, 1409-1420). */
+	function scrubSeek(t: number) {
+		cancelAnim();
+		railFocus = 'row';
+		park(t);
+	}
+
+	// Play runs the day at 300x, five minutes a second, in real time whatever
+	// the zoom; it stops at the day's end, and play at the end starts over
+	// (main.js:580-597).
+	const PLAY_RATE = 300;
+	let loopRaf = 0;
+	let loopTs: number | null = null;
+	function togglePlay() {
+		playing = !playing;
+		if (!playing) {
+			cancelAnimationFrame(loopRaf);
+			loopRaf = 0;
+			loopTs = null;
+			return;
+		}
+		// Play is a touch too.
+		armed = true;
+		railFocus = 'row';
+		if (playT >= dayEnd - 2 * MIN) playT = dayStart;
+		loopRaf = requestAnimationFrame(loop);
+	}
+	function loop(now: number) {
+		if (!playing) {
+			loopRaf = 0;
+			loopTs = null;
+			return;
+		}
+		if (loopTs === null) {
+			loopTs = now;
+			loopRaf = requestAnimationFrame(loop);
+			return;
+		}
+		const dt = Math.min(100, now - loopTs);
+		loopTs = now;
+		const next = playT + dt * PLAY_RATE;
+		if (next >= dayEnd) {
+			playing = false;
+			loopRaf = 0;
+			loopTs = null;
+			return;
+		}
+		playT = next;
+		ensureVisible();
+		syncPlayhead();
+		loopRaf = requestAnimationFrame(loop);
+	}
+
+	/** ← → move the playhead one unit of the lit tier (main.js:1383-1386): a
+	 *  minute or an hour inside the day; a day or a week crosses to that day,
+	 *  keeping the time of day and the tier, never past today. */
+	function nudge(dir: 1 | -1) {
+		const t = tier;
+		if (t === 'min' || t === 'hour') {
+			railFocus = 'row';
+			park(playT + dir * (t === 'min' ? MIN : HOUR));
+			return;
+		}
+		let next = stepDay(date, dir * (t === 'week' ? 7 : 1));
+		if (next > today) next = today;
+		if (next === date) return;
+		pendingNudge = { tier: t, tod: playT - dayStart };
+		date = next;
+	}
+	/** Shift+← → glide the view to the middle of the next or previous
+	 *  conversation (`jumpConvo`, main.js:791-794). */
+	function jumpConvo(dir: 1 | -1) {
+		const target = dir > 0 ? lanes.talk.find((m) => m > playT + 1000) : lanes.talk.findLast((m) => m < playT - 1000);
+		if (target === undefined) return;
+		const span = viewEnd - viewStart;
+		glideView(target - span / 2, target + span / 2);
+	}
+
+	// The week's lanes load the first time the view leaves the day: the Week
+	// tier, or a pinch out past midnight.
+	let wideAsked = 0;
+	$effect(() => {
+		if (!lanes.b || (viewStart >= lanes.a && viewEnd <= lanes.b)) return;
+		untrack(() => void loadWide());
+	});
+	async function loadWide() {
+		const mine = asked;
+		if (wideAsked === mine) return;
+		wideAsked = mine;
+		const b = { startMs: dayStart - 3 * DAY, endMs: dayStart + 4 * DAY, zone };
+		const [derived, voice, lw] = await Promise.all([
+			fetchDerived(b).catch((e) => {
+				console.warn('[Timeline] week derived fetch failed', e);
+				return null;
+			}),
+			fetchVoice(b).catch((e) => {
+				console.warn('[Timeline] week voice fetch failed', e);
+				return [];
+			}),
+			fetchLanes(b).catch((e) => {
+				console.warn('[Timeline] week lanes fetch failed', e);
+				return null;
+			}),
+		]);
+		if (mine !== asked) return;
+		lanes = laneData(derived, voice, lw, b.startMs, b.endMs);
 	}
 
 	/** Everything that follows the playhead on the map (main.js:1004-1016,
@@ -507,8 +738,15 @@
 		const bar = dayBar?.getBoundingClientRect();
 		const top = bar ? bar.bottom - c.getBoundingClientRect().top : 58;
 		const railW = rail?.width() ?? 0;
-		return { l: 8, t: top + 8, r: c.clientWidth - (railW ? railW + 20 : 0) - 8, b: c.clientHeight - 8 };
+		return { l: 8, t: top + 8, r: c.clientWidth - (railW ? railW + 20 : 0) - 8, b: c.clientHeight - scrubBottom() - 8 };
 	}
+
+	/** What the scrubber takes from the bottom: its card and 26 px under it,
+	 *  220 before it has drawn (main.js:1044, 1192). */
+	const scrubBottom = () => {
+		const h = scrubber?.height() ?? 0;
+		return h ? h + 26 : 220;
+	};
 
 	/** Bring one spot onto the clear map (`v4ShowPoint`, main.js:1092-1094):
 	 *  nothing if it is already there, else ease it to the centre of the clear
@@ -524,6 +762,8 @@
 	}
 
 	onDestroy(() => {
+		cancelAnim();
+		cancelAnimationFrame(loopRaf);
 		container?.removeEventListener('wheel', onWheel, { capture: true });
 		bubbles?.destroy();
 		bubbles = null;
@@ -538,7 +778,14 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="timeline" class:narrow={paneW > 0 && paneW < 900} bind:clientWidth={paneW} style="{colourVars}; --bar-h: {barH}px">
+<div
+	class="timeline"
+	class:narrow={paneW > 0 && paneW < 900}
+	class:with-rail={sections.length > 0}
+	bind:this={root}
+	bind:clientWidth={paneW}
+	style="{colourVars}; --bar-h: {barH}px"
+>
 	<div class="timeline-map" bind:this={container}></div>
 
 	<!-- The top navigation bar (dayback/index.html:1026-1042, main.js:1531-1544):
@@ -612,6 +859,33 @@
 			park(t);
 		}}
 	/>
+	{#if dayStart}
+		<TimelineScrubber
+			bind:this={scrubber}
+			{viewStart}
+			{viewEnd}
+			{folds}
+			{playT}
+			{armed}
+			{playing}
+			{tier}
+			{zone}
+			offset={zoneOffset(dayStart, zone)}
+			ribbon={lanes.ribbon}
+			voice={lanes.voice}
+			conversations={lanes.conversations}
+			nights={lanes.nights}
+			steps={lanes.steps}
+			stepScale={lanes.stepScale}
+			hasCalendar={lanes.hasCalendar}
+			calendar={lanes.calendar}
+			hasFinance={lanes.hasFinance}
+			onseek={scrubSeek}
+			onzoom={zoom}
+			ontier={(t) => setTier(t)}
+			onplay={togglePlay}
+		/>
+	{/if}
 	{#if railError && status !== 'error' && status !== 'loading'}
 		<p class="rail-error tile">Your server couldn't load the day's stays. Reload the page to try again.</p>
 	{/if}
