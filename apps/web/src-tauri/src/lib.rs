@@ -229,7 +229,23 @@ fn ota_check_now(app: tauri::AppHandle) {
 /// otherwise gone, and a shell silently refusing every bundle looks exactly
 /// like OTA never being configured.
 pub fn ota_check<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+  use std::sync::atomic::{AtomicBool, Ordering};
   use tauri::Manager;
+  // One check at a time. The launch check and a foreground `ota_check_now`
+  // can overlap (a download takes up to 30s), and two would unpack into the
+  // same staging directory and tear each other's files. The second one is
+  // simply skipped: the first is already asking the same question.
+  static CHECKING: AtomicBool = AtomicBool::new(false);
+  if CHECKING.swap(true, Ordering::SeqCst) {
+    return;
+  }
+  struct Done;
+  impl Drop for Done {
+    fn drop(&mut self) {
+      CHECKING.store(false, Ordering::SeqCst);
+    }
+  }
+  let _done = Done;
   let Ok(dir) = app.path().app_data_dir() else { return };
   let baked = baked_bundle_version(app);
   match web_bundle::check_and_apply(&dir, COMMAND_SURFACE_VERSION, baked.as_deref()) {
@@ -312,6 +328,15 @@ pub fn serve_ui<R: tauri::Runtime>(
       .body(Vec::new())
       .unwrap();
   };
+
+  // The box's paths are never the app's: 404, and never a page load. See
+  // `web_bundle::is_backend_path`.
+  if web_bundle::is_backend_path(&path) {
+    return tauri::http::Response::builder()
+      .status(404)
+      .body(Vec::new())
+      .unwrap();
+  }
 
   // The AIRLOCK pages are served from the binary, unconditionally, and
   // checked BEFORE the overlay/baked chain — not just as its fallback.

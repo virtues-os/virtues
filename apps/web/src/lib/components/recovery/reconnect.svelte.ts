@@ -125,23 +125,32 @@ export class Reconnect {
 		this.phase = { kind: 'opening' };
 		// A scan still running would pull the server out from under the connect.
 		await this.looking?.catch(() => {});
-		this.gen++;
+		const my = ++this.gen;
 		let last: BoxRadioError | null = null;
-		for (const box of this.asking) {
-			try {
-				const link = await boxRadio.openOwner(box);
-				this.phase = { kind: 'wifi', link };
-				return;
-			} catch (e) {
-				last = e instanceof BoxRadioError ? e : new BoxRadioError('failed', "Couldn't open your server over Bluetooth. Try again.");
-				if (last.code === 'refused') {
-					this.notMine.add(box.id);
-					continue;
+		outer: for (const box of this.asking) {
+			// Two tries per server. A refusal is usually "not yours", but the
+			// server answers a stale or evicted challenge the same way, so one
+			// fresh challenge comes before calling a server someone else's.
+			for (let attempt = 0; attempt < 2; attempt++) {
+				try {
+					const link = await boxRadio.openOwner(box);
+					if (my !== this.gen) {
+						// The screen moved on (left, or a new attempt) while
+						// this one was connecting: close what it opened.
+						await link.close().catch(() => {});
+						return;
+					}
+					this.phase = { kind: 'wifi', link };
+					return;
+				} catch (e) {
+					last = e instanceof BoxRadioError ? e : new BoxRadioError('failed', "Couldn't open your server over Bluetooth. Try again.");
+					if (my !== this.gen) return;
+					// Make sure the connection is gone before the next connect.
+					await boxRadio.disconnect();
+					if (last.code !== 'refused') break outer; // out of range, silent, an old app: another try won't help
 				}
-				// Out of range or silent: another server won't fix that. An
-				// old app or an old server won't either.
-				break;
 			}
+			this.notMine.add(box.id);
 		}
 		this.phase = { kind: 'diagnosis' };
 		this.asking = this.asking.filter((b) => !this.notMine.has(b.id));
@@ -155,8 +164,10 @@ export class Reconnect {
 	}
 
 	/** The Wi-Fi step lost its link (out of range, or the server went quiet). */
-	lost(): void {
-		void this.closeLink();
+	async lost(): Promise<void> {
+		// Closed before the next scan starts: Bluetooth is never scanned while
+		// a link is open or closing.
+		await this.closeLink();
 		this.phase = { kind: 'diagnosis' };
 		this.error = 'Lost the Bluetooth connection to your server. Move closer to it and try again.';
 		void this.check();

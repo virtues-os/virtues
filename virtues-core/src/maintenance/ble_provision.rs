@@ -62,6 +62,17 @@
 /// finds it asking by the time they have the app open.
 pub const OFFLINE_GRACE_SECS: u64 = 90;
 
+/// Should a CLAIMED box with this NetworkManager connectivity verdict ask for
+/// its owner? Only when it has no network it can use: `none` (nothing
+/// joined, the moved box) or `portal` (joined, but held at a sign-in page it
+/// cannot complete). Not `limited`: a box on a LAN without internet, set up
+/// that way on purpose, is working, and asking would keep its radio on
+/// forever and invite a device elsewhere to move it off the LAN it serves.
+/// Not `unknown`: nmcli absent or failing says nothing about the network.
+fn stranded(verdict: &str) -> bool {
+    matches!(verdict, "none" | "portal")
+}
+
 /// How long an owner challenge (`0x88`) stays redeemable. One round trip plus
 /// a signature — seconds, not minutes.
 const CHALLENGE_TTL_SECS: u64 = 60;
@@ -307,8 +318,13 @@ mod server {
                 // blip on a claimed, offline box lands on the owner-gated
                 // service, which admits no one the database cannot vouch for.
                 let claimed = !crate::api::pair::is_unclaimed(&pool).await;
-                let online = crate::cli::link::has_internet();
-                offline_since = match (claimed && !online, offline_since) {
+                // `nmcli networking connectivity check` blocks while it probes,
+                // longest exactly when the box is offline: off the async thread.
+                let verdict = tokio::task::spawn_blocking(crate::cli::link::connectivity)
+                    .await
+                    .unwrap_or_else(|_| "unknown".into());
+                let online = crate::cli::link::verdict_means_online(&verdict);
+                offline_since = match (claimed && stranded(&verdict), offline_since) {
                     (true, None) => Some(std::time::Instant::now()),
                     (true, since) => since,
                     (false, _) => None,
@@ -333,7 +349,7 @@ mod server {
                         tracing::info!("ble_provision: box is claimed and online, stopping Improv service");
                         serving = None; // handles drop → unregister + stop advertising
                     }
-                    (true, false) => match serve(pool.clone(), claimed).await {
+                    (true, false) => match serve(pool.clone(), claimed, online).await {
                         Ok(h) => {
                             if claimed {
                                 tracing::warn!("ble_provision: claimed box offline, advertising for its owner");
@@ -372,7 +388,7 @@ mod server {
         claimed_at_serve: bool,
     }
 
-    async fn serve(pool: PgPool, claimed: bool) -> bluer::Result<ServeHandles> {
+    async fn serve(pool: PgPool, claimed: bool, online: bool) -> bluer::Result<ServeHandles> {
         use bluer::gatt::local::{
             Application, Characteristic, CharacteristicNotify, CharacteristicNotifyMethod,
             CharacteristicRead, CharacteristicWrite, CharacteristicWriteMethod, Service,
@@ -390,7 +406,6 @@ mod server {
         //
         // A claimed box only serves while offline and says so with the one
         // state the spec reserves for "prove yourself first".
-        let online = crate::cli::link::has_internet();
         let initial = if claimed {
             State::AuthorizationRequired
         } else if online {
@@ -1138,6 +1153,15 @@ mod tests {
 
     fn sign(key: &SecretKey, nonce: &[u8]) -> String {
         hex::encode(key.sign(&owner_proof_message(nonce)).to_bytes())
+    }
+
+    #[test]
+    fn only_a_box_with_no_usable_network_asks_for_its_owner() {
+        assert!(stranded("none"), "the moved box");
+        assert!(stranded("portal"), "held at a sign-in page");
+        assert!(!stranded("limited"), "a LAN-only box is working");
+        assert!(!stranded("full"));
+        assert!(!stranded("unknown"), "no verdict is not a verdict of offline");
     }
 
     #[test]

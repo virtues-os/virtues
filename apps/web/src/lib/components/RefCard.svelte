@@ -15,6 +15,7 @@
 	// captions are quiet natural case. Full facts shown; deeper transclusion
 	// (a page's text, an org's people) is a later step needing new data.
 	import Icon from "$lib/components/Icon.svelte";
+	import { backendUrl } from "$lib/config/backend";
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
 	import { refIcon } from "$lib/utils/refRoutes";
 	import { getRefSummary, type RefSummary } from "$lib/utils/refSummary";
@@ -45,7 +46,7 @@
 	const IMAGE_EXT = /\.(jpe?g|png|gif|webp|svg|bmp|ico|heic)$/i;
 	const isImage = $derived((mimeType?.startsWith("image/") ?? false) || IMAGE_EXT.test(label));
 	const fileImageUrl = $derived(
-		type === "file" && isImage && id ? `/api/drive/files/${id}/download` : "",
+		type === "file" && isImage && id ? backendUrl(`/api/drive/files/${id}/download`) : "",
 	);
 
 	function domainOf(u?: string): string {

@@ -8,6 +8,7 @@
 import { sanitizeUrl } from '$lib/utils/urlUtils';
 
 import { noteRequestId } from '$lib/log';
+import { backendUrl } from '$lib/config/backend';
 
 const API_BASE = '/api';
 
@@ -1297,7 +1298,8 @@ export async function uploadDriveFile(
 	// Use XMLHttpRequest for progress tracking
 	return new Promise((resolve, reject) => {
 		const xhr = new XMLHttpRequest();
-		xhr.open('POST', `${API_BASE}/drive/upload`);
+		// XHR bypasses the fetch rewrite, so the box's origin is spelled out.
+		xhr.open('POST', backendUrl(`${API_BASE}/drive/upload`));
 
 		xhr.upload.onprogress = (e) => {
 			if (e.lengthComputable && onProgress) {
@@ -1496,7 +1498,8 @@ export async function uploadMedia(
 	// Use XMLHttpRequest for progress tracking
 	return new Promise((resolve, reject) => {
 		const xhr = new XMLHttpRequest();
-		xhr.open('POST', `${API_BASE}/media/upload`);
+		// XHR bypasses the fetch rewrite, so the box's origin is spelled out.
+		xhr.open('POST', backendUrl(`${API_BASE}/media/upload`));
 
 		xhr.upload.onprogress = (e) => {
 			if (e.lengthComputable && onProgress) {

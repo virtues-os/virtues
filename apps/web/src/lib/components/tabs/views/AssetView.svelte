@@ -4,6 +4,7 @@
 	// Entities keep their own WikiDetailView — "open" is the one density allowed
 	// to differ by target type.
 	import Icon from "$lib/components/Icon.svelte";
+	import { backendUrl } from "$lib/config/backend";
 	import { Button } from "$lib";
 	import CsvPane from "$lib/components/asset/CsvPane.svelte";
 	import PdfPane from "$lib/components/asset/PdfPane.svelte";
@@ -26,7 +27,9 @@
 	// ?hl=<annotation_id> flashes the highlight.
 	const quoteParam = $derived(routeParams.get("q") ?? undefined);
 	const hlParam = $derived(routeParams.get("hl") ?? undefined);
-	const downloadUrl = $derived(`/api/drive/files/${fileId}/download`);
+	// backendUrl: an <img>/<audio>/<video> src and a download link resolve
+	// against the page, which in the app's own copy is not the box.
+	const downloadUrl = $derived(backendUrl(`/api/drive/files/${fileId}/download`));
 	// Viewer surfaces render in place; the Download button keeps attachment.
 	const viewUrl = $derived(`${downloadUrl}?disposition=inline`);
 
