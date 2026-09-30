@@ -35,6 +35,11 @@
 		/** Duration in seconds spent thinking */
 		duration?: number;
 		/**
+		 * The whole turn, question to stored reply, in seconds — what a
+		 * reopened chat can still measure after the thinking time is gone.
+		 */
+		turnSeconds?: number;
+		/**
 		 * Which mode the turn is running in. Deep Research and Council are, by
 		 * construction, turns that go out to the record — so the mark starts a
 		 * dimension up rather than waiting for the first tool to prove it.
@@ -48,6 +53,7 @@
 		reasoningContent = "",
 		narration = [],
 		duration = 0,
+		turnSeconds = 0,
 		agentMode = "chat",
 	}: Props = $props();
 
@@ -524,11 +530,16 @@
 				<span class="duration-text">
 					Thought for {formatDuration(knownDuration)}
 				</span>
+			{:else if turnSeconds > 0}
+				<!-- A turn we did not watch: its thinking time was never kept,
+				     but the stored question and reply still say how long the
+				     whole turn took. "Worked", not "Thought": the span covers
+				     the tools and the writing too, and claiming it all as
+				     thought would overstate the one thing we cannot see. -->
+				<span class="duration-text">
+					Worked for {formatDuration(turnSeconds)}
+				</span>
 			{:else}
-				<!-- A turn we did not watch: nothing records how long the box
-				     thought, so a reopened chat reported "Thought for <1s" on every
-				     block — a measurement of our own absence, stated as a fact
-				     about the box. Say what we know instead. -->
 				<span class="duration-text">Worked on this</span>
 			{/if}
 

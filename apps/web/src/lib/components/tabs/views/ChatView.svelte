@@ -908,6 +908,21 @@
 
 	// Deduplicated messages for rendering
 	const uniqueMessages = $derived(chat?.messages ? deduplicateMessages(chat.messages) : []);
+
+	/** Seconds from each reply's question to the stored reply, for the
+	 *  thinking line of a turn this view did not watch (ThinkingBlock). */
+	const turnSeconds = $derived.by(() => {
+		const out = new Map<string, number>();
+		let askedAt: number | null = null;
+		for (const m of uniqueMessages as { id: string; role: string; createdAt?: Date }[]) {
+			const at = m.createdAt ? new Date(m.createdAt).getTime() : NaN;
+			if (m.role === "user") askedAt = Number.isNaN(at) ? null : at;
+			else if (m.role === "assistant" && askedAt !== null && !Number.isNaN(at) && at > askedAt) {
+				out.set(m.id, (at - askedAt) / 1000);
+			}
+		}
+		return out;
+	});
 	/** The interview's opening plate is in this thread — mid-thread here,
 	 *  not first as in the old standalone room — so the container must not
 	 *  clip paint at its edge. Without this the plate lost both ends. */
@@ -1805,6 +1820,7 @@
 													duration={isLastMessage
 														? thinkingDuration
 														: 0}
+													turnSeconds={turnSeconds.get(message.id) ?? 0}
 													agentMode={selectedAgentMode}
 												/>
 											{/if}
