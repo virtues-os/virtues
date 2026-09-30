@@ -645,7 +645,15 @@
 		font-size: 13px;
 		line-height: 1.5;
 		text-align: left;
+		/* At rest the words sit flush with the reply's own left edge: the
+		   pill's padding hangs outside the column, where there is nothing to
+		   see. On hover the pill slides in by its padding as its ground fades
+		   up, so the badge forms around the words instead of the words
+		   jumping inside a badge. A transform, so the reply below never
+		   reflows. */
+		transform: translateX(-12px);
 		transition:
+			transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
 			background-color 0.15s ease,
 			color 0.15s ease;
 	}
@@ -654,9 +662,19 @@
 		cursor: pointer;
 	}
 
-	.block-header.has-content:hover {
+	.block-header.has-content:hover,
+	.block-header.has-content:focus-visible {
+		transform: translateX(0);
 		background-color: var(--hover-bg);
 		color: var(--color-foreground);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.block-header {
+			transition:
+				background-color 0.15s ease,
+				color 0.15s ease;
+		}
 	}
 
 	/* Chevron with rotation animation */
