@@ -52,6 +52,13 @@ export async function fetchLanes(b: DayBounds): Promise<LaneWindow> {
 	return apiGet<LaneWindow>(`/timeline/lanes?${q}`);
 }
 
+/** The days in `from`..`to` (YYYY-MM-DD, both included) that hold any
+ *  record - a location fix, a transcription window or a step reading - each
+ *  read over its own local day (`/timeline/recorded`). */
+export async function fetchRecorded(from: string, to: string): Promise<string[]> {
+	return apiGet<string[]>(`/timeline/recorded?${new URLSearchParams({ from, to })}`);
+}
+
 /** The day a YYYY-MM-DD slug names in the browser's zone, as [startMs, endMs):
  *  for naming and stepping dates, never for cutting the record. */
 export function localDay(slug: string): { startMs: number; endMs: number } {

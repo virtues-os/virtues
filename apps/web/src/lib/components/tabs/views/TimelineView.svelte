@@ -22,6 +22,7 @@
 	import { Bubbles, type Area, type MapMoment } from '$lib/timeline/bubbles';
 	import TimelineRail from '$lib/components/timeline/TimelineRail.svelte';
 	import TimelineScrubber from '$lib/components/timeline/TimelineScrubber.svelte';
+	import TimelineMonth from '$lib/components/timeline/TimelineMonth.svelte';
 	import { laneData, NO_LANES, type Lanes } from '$lib/timeline/lanes';
 	import { buildFolds, clampView, DAY, HOUR, MIN, midnightIn, tierOf, tierView, unwarp, warp, zoneOffset, type Tier } from '$lib/timeline/scale';
 	import { APPLE_LIGHT, hsl, recolour } from '$lib/timeline/palette';
@@ -40,12 +41,53 @@
 
 	let container: HTMLDivElement;
 	let root = $state<HTMLElement | null>(null);
-	let dayBar = $state<HTMLElement | null>(null);
-	/** The top bar's height: the rail and the notes start below it. */
-	let barH = $state(0);
-	/** The pane's width: under 900 px the bar stacks (split view, a small window). */
+	/** The pane's own width (split view, a small window), which decides where
+	 *  the top cards go. */
 	let paneW = $state(0);
-	let picker = $state<HTMLInputElement | null>(null);
+	/** The date card, its month and the scope switcher float on the map as
+	 *  separate cards; their measures place everything else. */
+	let dateWrap = $state<HTMLElement | null>(null);
+	let cardW = $state(0);
+	let cardH = $state(0);
+	let segW = $state(0);
+	let segH = $state(0);
+	let dayW = $state(0);
+	let barHt = $state(0);
+	let scrubH = $state(0);
+	let monthOpen = $state(false);
+	/** The scope. Life isn't built yet, so Day is the only one to pick; the
+	 *  scope bar's grow and shrink run once a second scope is live. */
+	let scope = $state<'day' | 'life'>('day');
+	/** The one material every card reads: solid, or the frosted variant, kept
+	 *  switchable (dev builds only) until the owner picks. */
+	const dev = import.meta.env.DEV;
+	let material = $state<'solid' | 'frosted'>(readMaterial());
+	function readMaterial(): 'solid' | 'frosted' {
+		try {
+			return localStorage.getItem('timeline.material') === 'frosted' ? 'frosted' : 'solid';
+		} catch {
+			// No storage (a private window): the default material.
+			return 'solid';
+		}
+	}
+	function setMaterial(m: 'solid' | 'frosted') {
+		material = m;
+		try {
+			localStorage.setItem('timeline.material', m);
+		} catch {
+			// No storage: the choice lasts until the page reloads.
+		}
+	}
+	/** The scope switcher sits at the top centre unless it would meet the
+	 *  date card; then it goes under the card. */
+	const stacked = $derived(paneW > 0 && paneW / 2 - segW / 2 < 16 + cardW + 16);
+	const navTop = $derived(stacked ? 16 + cardH + 8 : 16);
+	/** Where the scope bar ends: the Reset pill and a quiet day's note go under it. */
+	const navBottom = $derived(navTop + segH + 6 + barHt);
+	/** The bottom of the top cards, for the map's framing and clear area. */
+	const topChrome = $derived(Math.max(16 + cardH, navBottom));
+	/** The rail runs full height, unless the date card would run into it. */
+	const railLow = $derived(paneW > 0 && 16 + cardW + 16 > paneW - Math.min(384, paneW * 0.42) - 16);
 	let note = $state<{ title: string; lines: string[] } | null>(null);
 	let map: MlMap | null = null;
 	let maplibre: typeof import('maplibre-gl') | null = null;
@@ -74,7 +116,6 @@
 	/** What the user last pointed at, for the rail's scroll (main.js:1559). */
 	let railFocus = $state<'row' | 'sec'>('row');
 
-	let scrubber = $state<ReturnType<typeof TimelineScrubber> | null>(null);
 	/** The scrubber's view, the span on screen (main.js:10). It stays put while
 	 *  the playhead moves, and scrolls only to keep the playhead in it. */
 	let viewStart = $state(0);
@@ -100,8 +141,8 @@
 	let status = $state<'loading' | 'shown' | 'empty' | 'error'>('loading');
 	let asked = 0; // the latest day asked for, so a slow answer can't overwrite a newer one
 
-	/** The bar's title (dayback/src/main.js:1531-1534): "Tuesday, July 28",
-	 *  with the year when it isn't this one. */
+	/** The date card's date (dayback/src/main.js:1531-1534): "Tuesday, July
+	 *  28", with the year when it isn't this one. */
 	const title = $derived.by(() => {
 		const d = new Date(localDay(date).startMs);
 		const thisYear = d.getFullYear() === new Date().getFullYear();
@@ -110,19 +151,6 @@
 			month: 'long',
 			day: 'numeric',
 			...(thisYear ? {} : { year: 'numeric' }),
-		});
-	});
-
-	/** The week strip (main.js:1535-1538): Sunday to Saturday around the day;
-	 *  a day of another month in the faint ink; a day after today can't be
-	 *  opened, as the prototype's days outside its record couldn't. */
-	const week = $derived.by(() => {
-		const dow = new Date(localDay(date).startMs).getDay();
-		const month = new Date(localDay(date).startMs).getMonth();
-		return Array.from({ length: 7 }, (_, i) => {
-			const slug = stepDay(date, i - dow);
-			const d = new Date(localDay(slug).startMs);
-			return { slug, letter: 'SMTWTFS'[i], day: d.getDate(), other: d.getMonth() !== month, off: slug > today };
 		});
 	});
 
@@ -375,19 +403,17 @@
 	const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 	/** The prototype's framing padding (`v4FitPad`, dayback/src/main.js:1190):
-	 *  the measured top bar, rail and scrubber plus a buffer of max(34 px, 6 %
-	 *  of the smaller side) on every edge, each capped so fitBounds can still
-	 *  move. */
+	 *  the measured top cards, rail and scrubber plus a buffer of max(34 px,
+	 *  6 % of the smaller side) on every edge, each capped so fitBounds can
+	 *  still move. */
 	function fitPad(m: MlMap) {
 		const c = m.getContainer();
 		const cw = c.clientWidth || 900;
 		const ch = c.clientHeight || 600;
 		const buf = Math.max(34, Math.round(Math.min(cw, ch) * 0.06));
-		const bar = dayBar?.getBoundingClientRect();
-		const top = bar ? bar.bottom - c.getBoundingClientRect().top : 58;
 		const railW = rail?.width() ?? 0;
 		return {
-			top: Math.min(top + buf, ch * 0.34),
+			top: Math.min(topChrome + buf, ch * 0.34),
 			bottom: Math.min(scrubBottom() + buf, ch * 0.45),
 			left: Math.min(buf, cw * 0.4),
 			right: Math.min((railW ? railW + 16 : 0) + buf, cw * 0.5),
@@ -450,7 +476,10 @@
 	 *  Only while the Timeline is on screen, and never while typing. */
 	function onKey(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
-			if (away && !e.defaultPrevented) resetView();
+			if (monthOpen) {
+				e.preventDefault();
+				monthOpen = false;
+			} else if (away && !e.defaultPrevented) resetView();
 			return;
 		}
 		if (!root?.getClientRects().length || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -731,22 +760,17 @@
 		if (at) showPoint(m, [at.lng, at.lat]);
 	}
 
-	/** The clear map (`v4ClearArea`, main.js:1042-1044): not under the day bar
-	 *  or the rail, 8 px in from every edge. */
+	/** The clear map (`v4ClearArea`, main.js:1042-1044): not under the top
+	 *  cards, the rail or the scrubber, 8 px in from every edge. */
 	function clearArea(m: MlMap): Area {
 		const c = m.getContainer();
-		const bar = dayBar?.getBoundingClientRect();
-		const top = bar ? bar.bottom - c.getBoundingClientRect().top : 58;
 		const railW = rail?.width() ?? 0;
-		return { l: 8, t: top + 8, r: c.clientWidth - (railW ? railW + 20 : 0) - 8, b: c.clientHeight - scrubBottom() - 8 };
+		return { l: 8, t: topChrome + 8, r: c.clientWidth - (railW ? railW + 20 : 0) - 8, b: c.clientHeight - scrubBottom() - 8 };
 	}
 
 	/** What the scrubber takes from the bottom: its card and 26 px under it,
 	 *  220 before it has drawn (main.js:1044, 1192). */
-	const scrubBottom = () => {
-		const h = scrubber?.height() ?? 0;
-		return h ? h + 26 : 220;
-	};
+	const scrubBottom = () => (scrubH ? scrubH + 26 : 220);
 
 	/** Bring one spot onto the clear map (`v4ShowPoint`, main.js:1092-1094):
 	 *  nothing if it is already there, else ease it to the centre of the clear
@@ -760,6 +784,16 @@
 		m.easeTo({ center: ll, offset, duration: 650 });
 		return true;
 	}
+
+	// A click anywhere but the date card and its month closes the month.
+	$effect(() => {
+		if (!monthOpen) return;
+		const close = (e: PointerEvent) => {
+			if (!dateWrap?.contains(e.target as Node)) monthOpen = false;
+		};
+		document.addEventListener('pointerdown', close, true);
+		return () => document.removeEventListener('pointerdown', close, true);
+	});
 
 	onDestroy(() => {
 		cancelAnim();
@@ -780,73 +814,59 @@
 
 <div
 	class="timeline"
-	class:narrow={paneW > 0 && paneW < 900}
+	class:stacked
 	class:with-rail={sections.length > 0}
+	data-material={material}
 	bind:this={root}
 	bind:clientWidth={paneW}
-	style="{colourVars}; --bar-h: {barH}px"
+	style="{colourVars}; --nav-top: {navTop}px; --nav-bottom: {navBottom}px; --scrub-h: {scrubH}px; --rail-top: {railLow ? topChrome + 12 : 16}px"
 >
 	<div class="timeline-map" bind:this={container}></div>
 
-	<!-- The top navigation bar (dayback/index.html:1026-1042, main.js:1531-1544):
-	     the day's title and its week, edge to edge; the chevrons step a week,
-	     never past today. -->
-	<header class="day-head" bind:this={dayBar} bind:clientHeight={barH}>
-		<!-- The time scale, and under it the day's lens (dayback/index.html:
-		     1168-1170): Dayline and Map are the ones built; the rest show greyed
-		     and can't be opened yet. -->
-		<div class="scale-nav">
-			<div class="scale tile" role="tablist" aria-label="Time scale">
-				<button class="seg on" role="tab" aria-selected="true" title="Dayline - a single day">Dayline</button>
-				<button class="seg" role="tab" aria-selected="false" aria-disabled="true" data-tip="Coming soon">Yearline</button>
-				<button class="seg" role="tab" aria-selected="false" aria-disabled="true" data-tip="Coming soon">Lifeline</button>
+	<!-- No header band: the map runs edge to edge and every control floats on
+	     it as its own card. The date card, top left: the date, left-aligned
+	     like Calendar's month title, with ‹ Today › and the month beside it. -->
+	<div class="date" bind:this={dateWrap}>
+		<div class="date-card tile" bind:offsetWidth={cardW} bind:offsetHeight={cardH}>
+			<!-- The day's standout line goes at the start of this row, in small
+			     caps, once our significance exists (TFP 2.3.5.14); until then the
+			     row holds only the day's controls, never a guessed line. -->
+			<div class="date-row">
+				<button class="date-btn" aria-label="Previous day" title="Previous day" onclick={() => (date = stepDay(date, -1))}>‹</button>
+				<button class="date-btn" disabled={date === today} onclick={() => (date = today)}>Today</button>
+				<button class="date-btn" aria-label="Next day" title="Next day" disabled={date >= today} onclick={() => (date = stepDay(date, 1))}>›</button>
+				<button class="date-btn" aria-label="Show the month" title="Show the month" aria-expanded={monthOpen} onclick={() => (monthOpen = !monthOpen)}>
+					<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="3" /><path d="M3.5 10h17M8 3v4M16 3v4" /></svg>
+				</button>
 			</div>
-			<div class="scale lens tile" role="tablist" aria-label="Day lens">
-				<button class="seg on" role="tab" aria-selected="true" title="Map - the day on a map"><i aria-hidden="true">🌐</i>Map</button>
-				<button class="seg" role="tab" aria-selected="false" aria-disabled="true" data-tip="Coming soon"><i aria-hidden="true">🔍</i>Detail</button>
-			</div>
+			<p class="date-title">{title}</p>
 		</div>
-		<button class="day-title" onclick={() => picker?.showPicker?.()}>{title}</button>
-		<div class="week-row">
-			<button class="week-step" aria-label="Previous week" onclick={() => (date = stepDay(date, -7))}>‹</button>
-			<div class="week">
-				{#each week as d (d.slug)}
-					<button
-						class="cell"
-						class:cur={d.slug === date}
-						class:other={d.other}
-						class:off={d.off}
-						disabled={d.off}
-						onclick={() => (date = d.slug)}
-					>
-						<span class="dow">{d.letter}</span>
-						<span class="num">{d.day}</span>
-					</button>
-				{/each}
-			</div>
-			<button
-				class="week-step"
-				aria-label="Next week"
-				disabled={date >= today}
-				onclick={() => {
-					const next = stepDay(date, 7);
-					date = next > today ? today : next;
-				}}>›</button
-			>
+		{#if monthOpen}
+			<TimelineMonth
+				{date}
+				{today}
+				onpick={(slug) => {
+					monthOpen = false;
+					date = slug;
+				}}
+			/>
+		{/if}
+	</div>
+
+	<!-- The scope switcher, top centre, where Calendar keeps Day Week Month
+	     Year: its labels are scopes, and "Dayline" stays the feature's name.
+	     Only built scopes are live; Year is left out and Life shows greyed.
+	     Map | Detail is Day's own scope bar, hanging off the Day segment. -->
+	<nav class="scope" aria-label="Scope" data-scope={scope}>
+		<div class="scope-seg tile" role="tablist" bind:offsetWidth={segW} bind:offsetHeight={segH}>
+			<button class="seg on" role="tab" aria-selected="true" title="Dayline - a single day" bind:offsetWidth={dayW}>Day</button>
+			<button class="seg" role="tab" aria-selected="false" aria-disabled="true" data-tip="Coming soon">Life</button>
 		</div>
-		<input
-			bind:this={picker}
-			class="picker"
-			type="date"
-			max={today}
-			value={date}
-			tabindex="-1"
-			aria-hidden="true"
-			onchange={(e) => {
-				if (e.currentTarget.value) date = e.currentTarget.value;
-			}}
-		/>
-	</header>
+		<div class="scope-bar tile" role="tablist" aria-label="Day view" bind:offsetHeight={barHt} style="transform-origin: {4 + dayW / 2}px 0">
+			<button class="seg on" role="tab" aria-selected="true" title="Map - the day on a map"><i aria-hidden="true">🌐</i>Map</button>
+			<button class="seg" role="tab" aria-selected="false" aria-disabled="true" data-tip="Coming soon"><i aria-hidden="true">🔍</i>Detail</button>
+		</div>
+	</nav>
 
 	<TimelineRail bind:this={rail} {sections}
 		{zone}
@@ -861,7 +881,7 @@
 	/>
 	{#if dayStart}
 		<TimelineScrubber
-			bind:this={scrubber}
+			bind:cardHeight={scrubH}
 			{viewStart}
 			{viewEnd}
 			{folds}
@@ -910,12 +930,32 @@
 	{#if !basemap}
 		<p class="no-basemap">Your server has no map tiles yet</p>
 	{/if}
+	{#if dev}
+		<!-- Dev builds only, until the material is picked: solid or frosted. -->
+		<div class="material tile" role="group" aria-label="Material (dev only)">
+			<span>Material</span>
+			<button class:on={material === 'solid'} onclick={() => setMaterial('solid')}>Solid</button>
+			<button class:on={material === 'frosted'} onclick={() => setMaterial('frosted')}>Frosted</button>
+		</div>
+	{/if}
 </div>
 
 <style>
+	/* One material for every card - the date card, the scope switcher and
+	   its scope bar, the rail and the scrubber - so they always match. Solid
+	   is the default; frosted is the variant, kept switchable until picked. */
 	.timeline {
 		position: absolute;
 		inset: 0;
+		--tile-bg: var(--c-tile);
+		--tile-border: 1px solid color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		--tile-radius: 12px;
+		--tile-blur: none;
+	}
+	.timeline[data-material='frosted'] {
+		--tile-bg: color-mix(in srgb, var(--c-tile) 66%, transparent);
+		--tile-border: 1px solid color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		--tile-blur: blur(30px) saturate(180%);
 	}
 	/* The map's markers stack at z 1 to 7 (bubbles, chips, the place card);
 	   everything over the map sits at 10 and up, as the prototype's tiles sit
@@ -924,53 +964,135 @@
 		position: absolute;
 		inset: 0;
 	}
-	/* A tile over the map, in the prototype's look: a solid ground, a faint
-	   ink border and one soft shadow (dayback/index.html:599-601). The
-	   toggles' pill, a quiet day's note, the rail's error. */
+	/* A card over the map, in the prototype's look: a ground, a faint ink
+	   border and one soft shadow (dayback/index.html:599-601), all from the
+	   material above. */
 	.tile {
-		background: var(--c-tile);
-		border: 1px solid color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		background: var(--tile-bg);
+		border: var(--tile-border);
 		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
 		box-shadow: var(--tile-shadow);
+		-webkit-backdrop-filter: var(--tile-blur);
+		backdrop-filter: var(--tile-blur);
 	}
-	/* The bar: frosted over the map, one hairline under it (index.html:1027-1028). */
-	.day-head {
+	/* The date card, top left. */
+	.date {
 		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		z-index: 10;
-		text-align: center;
-		/* design-ok: the Dayback prototype's bar padding (owner's call, 2026-09-30) */
-		padding: 9px 0 12px;
-		background: color-mix(in srgb, var(--color-background) 84%, transparent);
-		backdrop-filter: blur(18px) saturate(1.6);
-		-webkit-backdrop-filter: blur(18px) saturate(1.6);
-		border-bottom: 1px solid color-mix(in srgb, var(--color-foreground) 8%, transparent);
-	}
-	/* The scale toggle and the lens under it, the bar's leading item
-	   (index.html:963-977). */
-	.scale-nav {
-		position: absolute;
-		top: 14px;
+		top: 16px;
 		left: 16px;
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 8px;
+		z-index: 12;
 	}
-	.scale {
+	.date-card {
+		/* design-ok: the mockup's date card inset (owner's call, 2026-09-30) */
+		padding: 11px 12px 14px 18px;
+		border-radius: var(--tile-radius);
+	}
+	.date-row {
+		display: flex;
+		justify-content: flex-end;
+		/* design-ok: the mockup's control spacing (owner's call, 2026-09-30) */
+		gap: 4px;
+	}
+	.date-btn {
+		height: 26px;
+		min-width: 26px;
+		/* design-ok: the mockup's small round control (owner's call, 2026-09-30) */
+		padding: 0 9px;
+		border: 0;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		color: var(--color-foreground);
+		font-family: var(--font-sans);
+		font-size: 12px;
+		font-weight: 600;
+		line-height: 1;
+		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+	}
+	.date-btn:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
+	}
+	.date-btn:disabled {
+		opacity: 0.35;
+		cursor: default;
+	}
+	.date-btn[aria-expanded='true'] {
+		background: var(--color-foreground);
+		color: var(--color-background);
+	}
+	.date-btn svg {
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2;
+		stroke-linecap: round;
+	}
+	/* The serif page title, as Virtues' Home dateline: regular, never bold. */
+	.date-title {
+		/* design-ok: the date sits under its controls, as in the mockup (owner's call, 2026-09-30) */
+		margin: 9px 0 0;
+		font-family: var(--font-serif);
+		font-weight: 400;
+		font-size: 36px;
+		letter-spacing: -0.02em;
+		line-height: 1;
+		white-space: nowrap;
+		color: var(--color-foreground);
+	}
+	/* The scope switcher, top centre; it never moves. Its scope bar hangs
+	   off the Day segment and grows out of it, or shrinks back into it when
+	   another scope is picked. */
+	.scope {
+		position: absolute;
+		top: var(--nav-top);
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 11;
+	}
+	.stacked .scope {
+		left: 16px;
+		transform: none;
+	}
+	.scope-seg,
+	.scope-bar {
 		display: inline-flex;
 		padding: 4px;
-		border-radius: 12px;
+		border-radius: var(--tile-radius);
 	}
-	/* The lens is the scale's child: smaller type, a tighter pill. */
-	.lens .seg {
+	.scope-bar {
+		position: absolute;
+		top: calc(100% + 6px);
+		left: 0;
+		white-space: nowrap;
+		/* A generous clip leaves the shadow whole at rest. */
+		clip-path: inset(-40px round var(--tile-radius));
+		transition:
+			transform 0.38s cubic-bezier(0.2, 0.9, 0.25, 1.08),
+			clip-path 0.38s cubic-bezier(0.2, 0.9, 0.25, 1.08),
+			opacity 0.2s ease;
+	}
+	.scope:not([data-scope='day']) .scope-bar {
+		opacity: 0;
+		pointer-events: none;
+		transform: translateY(-12px) scale(0.6, 0.5);
+		clip-path: inset(0 55% 0 0 round var(--tile-radius));
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.scope-bar {
+			transition: opacity 0.2s ease;
+		}
+		.scope:not([data-scope='day']) .scope-bar {
+			transform: none;
+		}
+	}
+	/* The scope bar is Day's child: smaller type, a tighter segment. */
+	.scope-bar .seg {
 		font-size: 12px;
 		/* design-ok: the Dayback prototype's lens segment (owner's call, 2026-09-30) */
 		padding: 7px 12px;
 	}
-	.lens .seg i {
+	.scope-bar .seg i {
 		font-style: normal;
 		font-size: 11px;
 		line-height: 1;
@@ -982,8 +1104,8 @@
 		background: none;
 		/* design-ok: the Dayback prototype's toggle segment (owner's call, 2026-09-30) */
 		padding: 10px 15px;
-		/* design-ok: concentric with the pill's 12 px at a 4 px inset */
-		border-radius: 8px;
+		/* Concentric with the card's corner at a 4 px inset. */
+		border-radius: calc(var(--tile-radius) - 4px);
 		font-family: var(--font-sans);
 		font-weight: 600;
 		font-size: 14px;
@@ -1040,137 +1162,13 @@
 			transition: none;
 		}
 	}
-	/* A narrow pane (split view, a small window): the leading toggles would sit
-	   on the title, so they take their own line at the top of the bar and the
-	   title and week follow under them, as Apple's large-title bars do; the
-	   week's days share the width instead of running off it. The pane's own
-	   width decides, not the window's: in split view the pane is nothing like
-	   the window (design-grammar.md, the measure). */
-	.narrow .scale-nav {
-		position: static;
-		flex-direction: row;
-		flex-wrap: wrap;
-		align-items: center;
-		padding: 0 16px 12px;
-	}
-	.narrow .week-row {
-		padding: 0 8px;
-	}
-	.narrow .week {
-		flex: 1 1 auto;
-		min-width: 0;
-		max-width: 540px;
-		grid-template-columns: repeat(7, minmax(0, 1fr));
-	}
-	/* The serif page title, as Virtues' Home dateline: regular, never bold. */
-	.day-title {
-		border: 0;
-		background: none;
-		padding: 0;
-		cursor: pointer;
-		font-family: var(--font-serif);
-		font-weight: 400;
-		font-size: 36px;
-		letter-spacing: -0.02em;
-		line-height: 1;
-		color: var(--color-foreground);
-	}
-	.week-row {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 12px;
-		/* design-ok: the Dayback prototype's week spacing (owner's call, 2026-09-30) */
-		margin-top: 14px;
-	}
-	.week-step {
-		border: 0;
-		background: none;
-		color: var(--color-foreground-subtle);
-		/* design-ok: the Dayback prototype's week chevron (owner's call, 2026-09-30) */
-		font-size: 22px;
-		line-height: 1;
-		cursor: pointer;
-		/* design-ok: the Dayback prototype's week chevron (owner's call, 2026-09-30) */
-		padding: 2px 6px;
-		border-radius: 6px;
-	}
-	.week-step:hover:not(:disabled) {
-		color: var(--color-foreground);
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
-	}
-	.week-step:disabled {
-		opacity: 0.3;
-		cursor: default;
-	}
-	.week {
-		display: grid;
-		grid-template-columns: repeat(7, 72px);
-		/* design-ok: the Dayback prototype's week grid (owner's call, 2026-09-30) */
-		gap: 6px;
-	}
-	.cell {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		/* design-ok: the Dayback prototype's week cell (owner's call, 2026-09-30) */
-		gap: 7px;
-		/* design-ok: the Dayback prototype's week cell (owner's call, 2026-09-30) */
-		padding: 5px 0 3px;
-		border: 0;
-		background: none;
-		border-radius: 12px;
-		cursor: pointer;
-	}
-	.cell.off {
-		cursor: default;
-		opacity: 0.4;
-	}
-	.dow {
-		font-family: var(--font-sans);
-		font-weight: 600;
-		font-size: 11px;
-		letter-spacing: 0.06em;
-		color: var(--color-foreground-muted);
-	}
-	.num {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		border-radius: 50%;
-		font-family: var(--font-sans);
-		font-weight: 600;
-		font-size: 15px;
-		font-variant-numeric: tabular-nums;
-		color: var(--color-foreground);
-	}
-	.cell.other .num {
-		color: var(--color-foreground-subtle);
-	}
-	.cell.cur .num {
-		background: var(--color-foreground);
-		color: var(--color-background);
-	}
-	.cell:not(.cur):not(.off):hover .num {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
-	}
-	.picker {
-		position: absolute;
-		left: 50%;
-		bottom: 0;
-		width: 0;
-		height: 0;
-		opacity: 0;
-		pointer-events: none;
-	}
 	/* The Reset view pill: solid ink, paper text, so it reads as a control and
 	   not a tile (index.html:822-826). The prototype set it at the top centre;
-	   here the top is the bar, so it sits just under it. */
+	   here the top centre is the scope switcher, so it sits under its scope
+	   bar. */
 	.reset {
 		position: absolute;
-		top: calc(var(--bar-h) + 12px);
+		top: calc(var(--nav-bottom) + 12px);
 		left: 50%;
 		transform: translateX(-50%);
 		z-index: 11;
@@ -1200,20 +1198,20 @@
 		font-size: 14px;
 		line-height: 1;
 	}
-	/* Under the day bar, not over the middle: the map holds the last known
+	/* Under the scope bar, not over the middle: the map holds the last known
 	   position at its centre, and the note must not hide it. */
 	.note {
 		position: absolute;
 		z-index: 10;
-		top: calc(var(--bar-h) + 16px);
+		top: calc(var(--nav-bottom) + 12px);
 		left: 50%;
 		transform: translateX(-50%);
 		padding: 8px 14px;
-		border-radius: 12px;
+		border-radius: var(--tile-radius);
 		text-align: center;
 	}
 	.note.below {
-		top: calc(var(--bar-h) + 64px);
+		top: calc(var(--nav-bottom) + 60px);
 	}
 	.note p {
 		margin: 0;
@@ -1229,14 +1227,45 @@
 	.rail-error {
 		position: absolute;
 		z-index: 10;
-		top: calc(var(--bar-h) + 16px);
+		top: 16px;
 		right: 16px;
 		max-width: min(384px, 42%);
 		margin: 0;
 		padding: 12px 16px;
-		border-radius: 12px;
+		border-radius: var(--tile-radius);
 		font-size: 13px;
 		color: var(--color-foreground);
+	}
+	/* Dev builds only: the material switch, just above the scrubber. */
+	.material {
+		position: absolute;
+		left: 16px;
+		bottom: calc(var(--scrub-h) + 26px);
+		z-index: 10;
+		display: inline-flex;
+		align-items: center;
+		/* design-ok: a dev-only switch, removed before the pull request */
+		gap: 4px;
+		/* design-ok: a dev-only switch, removed before the pull request */
+		padding: 4px 4px 4px 10px;
+		border-radius: var(--tile-radius);
+		font-family: var(--font-sans);
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+	}
+	.material button {
+		border: 0;
+		background: none;
+		/* design-ok: a dev-only switch, removed before the pull request */
+		padding: 5px 9px;
+		border-radius: calc(var(--tile-radius) - 4px);
+		font: inherit;
+		color: inherit;
+		cursor: pointer;
+	}
+	.material button.on {
+		background: var(--color-foreground);
+		color: var(--color-background);
 	}
 	.no-basemap {
 		position: absolute;

@@ -432,6 +432,41 @@ pub async fn day_window(pool: &PgPool, date: chrono::NaiveDate) -> Result<DayWin
     })
 }
 
+/// The days in `from..=to` that hold any record of you - a location fix, a
+/// transcription window or a step reading - each read over its own local
+/// day, the same bounds the day view uses. The month's dots: a day with none
+/// has nothing to open.
+pub async fn recorded_days(pool: &PgPool, from: chrono::NaiveDate, to: chrono::NaiveDate) -> Result<Vec<chrono::NaiveDate>> {
+    let mut dates = Vec::new();
+    let mut d = from;
+    while d <= to {
+        dates.push(d);
+        d = d.succ_opt().expect("a date within range");
+    }
+    let mut starts = Vec::with_capacity(dates.len());
+    let mut ends = Vec::with_capacity(dates.len());
+    for &date in &dates {
+        let w = day_window(pool, date).await?;
+        starts.push(w.started_at);
+        ends.push(w.ended_at);
+    }
+    let hits: Vec<i64> = sqlx::query_scalar(
+        "SELECT w.i FROM unnest($1::timestamptz[], $2::timestamptz[]) WITH ORDINALITY AS w(s, e, i) \
+         WHERE EXISTS (SELECT 1 FROM data_location_point p \
+                       WHERE p.deleted_at_source IS NULL AND NOT p.is_archived AND p.occurred_at >= w.s AND p.occurred_at < w.e) \
+            OR EXISTS (SELECT 1 FROM data_communication_transcription t \
+                       WHERE t.deleted_at_source IS NULL AND NOT t.is_archived AND t.started_at >= w.s AND t.started_at < w.e) \
+            OR EXISTS (SELECT 1 FROM data_health_steps h \
+                       WHERE h.deleted_at_source IS NULL AND NOT h.is_archived AND h.occurred_at >= w.s AND h.occurred_at < w.e) \
+         ORDER BY w.i",
+    )
+    .bind(&starts)
+    .bind(&ends)
+    .fetch_all(pool)
+    .await?;
+    Ok(hits.into_iter().map(|i| dates[(i - 1) as usize]).collect())
+}
+
 struct WikiPlace {
     id: String,
     lat: f64,
