@@ -452,6 +452,13 @@
 	     the day's title and its week, edge to edge; the chevrons step a week,
 	     never past today. -->
 	<header class="day-head" bind:this={dayBar} bind:clientHeight={barH}>
+		<!-- The time scale (dayback/index.html:1168-1169): Dayline is the one
+		     built; Yearline and Lifeline show greyed and can't be opened yet. -->
+		<div class="scale tile" role="tablist" aria-label="Time scale">
+			<button class="seg on" role="tab" aria-selected="true" title="Dayline - a single day">Dayline</button>
+			<button class="seg" role="tab" aria-selected="false" disabled title="Yearline - not built yet">Yearline</button>
+			<button class="seg" role="tab" aria-selected="false" disabled title="Lifeline - not built yet">Lifeline</button>
+		</div>
 		<button class="day-title" onclick={() => picker?.showPicker?.()}>{title}</button>
 		<div class="week-row">
 			<button class="week-step" aria-label="Previous week" onclick={() => (date = stepDay(date, -7))}>‹</button>
@@ -519,9 +526,12 @@
 		position: absolute;
 		inset: 0;
 	}
+	/* Its own stacking layer, so the map's markers (bubbles, chips, the place
+	   card) stay under the bar and the rail however they are stacked inside it. */
 	.timeline-map {
 		position: absolute;
 		inset: 0;
+		z-index: 0;
 	}
 	/* The bar: frosted over the map, one hairline under it (index.html:1027-1028). */
 	.day-head {
@@ -537,6 +547,43 @@
 		backdrop-filter: blur(18px) saturate(1.6);
 		-webkit-backdrop-filter: blur(18px) saturate(1.6);
 		border-bottom: 1px solid color-mix(in srgb, var(--color-foreground) 8%, transparent);
+	}
+	/* The scale toggle, the bar's leading item (index.html:965-975). */
+	.scale {
+		position: absolute;
+		top: 14px;
+		left: 16px;
+		display: inline-flex;
+		padding: 4px;
+		border-radius: 12px;
+	}
+	.seg {
+		border: 0;
+		background: none;
+		/* design-ok: the Dayback prototype's toggle segment (owner's call, 2026-09-30) */
+		padding: 10px 15px;
+		/* design-ok: concentric with the pill's 12 px at a 4 px inset */
+		border-radius: 8px;
+		font-family: var(--font-sans);
+		font-weight: 600;
+		font-size: 14px;
+		line-height: 1;
+		letter-spacing: -0.005em;
+		white-space: nowrap;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+	}
+	.seg.on {
+		color: var(--color-foreground);
+		background: var(--color-background);
+		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
+		box-shadow: var(--toggle-shadow);
+	}
+	/* A scale not built yet (index.html:974). */
+	.seg:disabled {
+		color: var(--color-foreground-subtle);
+		opacity: 0.55;
+		cursor: default;
 	}
 	/* The serif page title, as Virtues' Home dateline: regular, never bold. */
 	.day-title {
