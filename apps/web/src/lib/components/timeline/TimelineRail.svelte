@@ -129,10 +129,11 @@
 <style>
 	.rail {
 		position: absolute;
-		top: 16px;
+		/* Below the top bar, never under it (the prototype's own planned fix). */
+		top: calc(var(--bar-h, 0px) + 16px);
 		right: 16px;
 		width: min(384px, 42%);
-		max-height: calc(100% - 32px);
+		max-height: calc(100% - var(--bar-h, 0px) - 32px);
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
