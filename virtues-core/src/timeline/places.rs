@@ -1,11 +1,11 @@
 //! The Timeline's places: where you stopped, found in the raw GPS rather than
 //! taken from the visit clusterer, which mis-centres and mis-merges
-//! (`dayback/resolve.py`, `dayback/build.py:165-216`). Visits then supply
-//! each stay's timing, and Home and Work fall out of where the time went.
+//! (`dayback/resolve.py`, `dayback/build.py:165-216`). Each stop also times
+//! its stay (see `Stop`), and Home and Work fall out of where the time went.
 
 use chrono_tz::Tz;
 
-use super::{meters, Fix, Ms, Visit, MIN};
+use super::{meters, Fix, Ms, Stop, MIN};
 
 /// A fix the phone rates worse than this is not used to find a stop.
 const STOP_ACCURACY_MAX_M: f64 = 50.0;
@@ -19,14 +19,12 @@ const STOP_MIN: Ms = 20 * MIN;
 const STOP_MIN_FIXES: usize = 8;
 /// Stops closer than this are the same place.
 const SAME_PLACE_M: f64 = 80.0;
-/// A visit belongs to the nearest place within this; past it, it is a place of its own.
-const VISIT_MATCH_M: f64 = 150.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Place {
     pub lat: f64,
     pub lon: f64,
-    pub visit_count: i32,
+    pub stop_count: i32,
     pub dwell: Ms,
     /// Time spent here across local 01:00-05:00: "you slept here".
     pub overnight: Ms,
@@ -55,9 +53,10 @@ pub(crate) fn stop_fixes(fixes: &[Fix]) -> Vec<Fix> {
         .collect()
 }
 
-/// The centre of every stop: runs of fixes within 100 m of the run's first
-/// fix, at least 20 minutes and 8 fixes long; the centre is the median.
-pub(crate) fn stops(fixes: &[Fix]) -> Vec<(f64, f64)> {
+/// Every stop: a run of fixes within 100 m of the run's first fix, at least
+/// 20 minutes and 8 fixes long, from its first fix to its last; the centre is
+/// the median.
+pub(crate) fn stops(fixes: &[Fix]) -> Vec<Stop> {
     let mut out = Vec::new();
     let n = fixes.len();
     let mut i = 0;
@@ -68,7 +67,12 @@ pub(crate) fn stops(fixes: &[Fix]) -> Vec<(f64, f64)> {
         }
         let run = &fixes[i..j];
         if run[run.len() - 1].t - run[0].t >= STOP_MIN && run.len() >= STOP_MIN_FIXES {
-            out.push((median(run.iter().map(|f| f.lat)), median(run.iter().map(|f| f.lon))));
+            out.push(Stop {
+                s: run[0].t,
+                e: run[run.len() - 1].t,
+                lat: median(run.iter().map(|f| f.lat)),
+                lon: median(run.iter().map(|f| f.lon)),
+            });
             i = j;
         } else {
             i += 1;
@@ -77,82 +81,57 @@ pub(crate) fn stops(fixes: &[Fix]) -> Vec<(f64, f64)> {
     out
 }
 
-/// Stops within 80 m of a place's first stop are that place, re-centred on the
-/// mean of its stops.
-pub(crate) fn merge_stops(stops: &[(f64, f64)]) -> Vec<(f64, f64)> {
-    let mut groups: Vec<((f64, f64), Vec<(f64, f64)>)> = Vec::new();
-    for &s in stops {
-        match groups.iter_mut().find(|(first, _)| meters_ll(s, *first) < SAME_PLACE_M) {
-            Some((_, members)) => members.push(s),
-            None => groups.push((s, vec![s])),
-        }
-    }
-    groups
-        .into_iter()
-        .map(|(_, m)| {
-            let n = m.len() as f64;
-            (m.iter().map(|p| p.0).sum::<f64>() / n, m.iter().map(|p| p.1).sum::<f64>() / n)
+/// Stops within 80 m of a place's first stop are that place. Returns each
+/// stop's place, the places numbered in the order they were first stopped at.
+pub(crate) fn merge_stops(stops: &[Stop]) -> Vec<usize> {
+    let mut firsts: Vec<(f64, f64)> = Vec::new();
+    stops
+        .iter()
+        .map(|s| match firsts.iter().position(|f| meters_ll((s.lat, s.lon), *f) < SAME_PLACE_M) {
+            Some(i) => i,
+            None => {
+                firsts.push((s.lat, s.lon));
+                firsts.len() - 1
+            }
         })
         .collect()
 }
 
-/// Every visit (in time order) given to the nearest place within 150 m, or to
-/// a place of its own; places no visit reached are dropped. Returns the
-/// places and each visit's place index. `zone_at` is the local time at a
-/// coordinate, for the overnight test.
-pub(crate) fn assign(
-    visits: &[Visit],
-    centres: Vec<(f64, f64)>,
-    zone_at: &dyn Fn(f64, f64) -> Tz,
-) -> (Vec<Place>, Vec<usize>) {
-    let mut places: Vec<Place> = centres
-        .into_iter()
-        .map(|(lat, lon)| Place { lat, lon, visit_count: 0, dwell: 0, overnight: 0, is_home: false, is_work: false })
-        .collect();
-    let mut of_visit = Vec::with_capacity(visits.len());
-    for v in visits {
-        let nearest = places
-            .iter()
-            .enumerate()
-            .map(|(i, p)| (i, meters_ll((v.lat, v.lon), (p.lat, p.lon))))
-            .min_by(|a, b| a.1.total_cmp(&b.1));
-        let i = match nearest {
-            Some((i, d)) if d <= VISIT_MATCH_M => i,
-            _ => {
-                places.push(Place { lat: v.lat, lon: v.lon, visit_count: 0, dwell: 0, overnight: 0, is_home: false, is_work: false });
-                places.len() - 1
-            }
-        };
+/// The places the stops make: each centred on the mean of its stops, with
+/// how often and how long you were there and how much of that covered the
+/// local small hours (`build.py:194-206`, with stops in place of visits).
+/// `zone_at` is the local time at a coordinate, for that test.
+pub(crate) fn places(stops: &[Stop], place_of: &[usize], zone_at: &dyn Fn(f64, f64) -> Tz) -> Vec<Place> {
+    let count = place_of.iter().max().map_or(0, |m| m + 1);
+    let empty = Place { lat: 0.0, lon: 0.0, stop_count: 0, dwell: 0, overnight: 0, is_home: false, is_work: false };
+    let mut places = vec![empty; count];
+    for (s, &i) in stops.iter().zip(place_of) {
         let p = &mut places[i];
-        p.visit_count += 1;
-        p.dwell += v.e - v.s;
-        if super::zone::covers_small_hours(v.s, v.e, zone_at(v.lat, v.lon)) {
-            p.overnight += v.e - v.s;
-        }
-        of_visit.push(i);
-    }
-
-    // Keep only places a visit reached, and renumber.
-    let mut renumber = vec![usize::MAX; places.len()];
-    let mut kept = Vec::new();
-    for (i, p) in places.into_iter().enumerate() {
-        if p.visit_count > 0 {
-            renumber[i] = kept.len();
-            kept.push(p);
+        // Summed here, averaged below.
+        p.lat += s.lat;
+        p.lon += s.lon;
+        p.stop_count += 1;
+        p.dwell += s.e - s.s;
+        if super::zone::covers_small_hours(s.s, s.e, zone_at(s.lat, s.lon)) {
+            p.overnight += s.e - s.s;
         }
     }
-    let of_visit = of_visit.into_iter().map(|i| renumber[i]).collect();
+    for p in &mut places {
+        let n = f64::from(p.stop_count);
+        p.lat /= n;
+        p.lon /= n;
+    }
 
     // Home: the most time over the local small hours. Work: the most time
-    // among the other places visited at least twice. Ties go to the first.
-    if let Some(home) = first_max(kept.iter().enumerate().map(|(i, p)| (i, p.overnight))) {
-        kept[home].is_home = true;
-        let others = kept.iter().enumerate().filter(|(i, p)| *i != home && p.visit_count >= 2).map(|(i, p)| (i, p.dwell));
+    // among the other places stopped at at least twice. Ties go to the first.
+    if let Some(home) = first_max(places.iter().enumerate().map(|(i, p)| (i, p.overnight))) {
+        places[home].is_home = true;
+        let others = places.iter().enumerate().filter(|(i, p)| *i != home && p.stop_count >= 2).map(|(i, p)| (i, p.dwell));
         if let Some(work) = first_max(others) {
-            kept[work].is_work = true;
+            places[work].is_work = true;
         }
     }
-    (kept, of_visit)
+    places
 }
 
 /// The index of the first largest value.
@@ -208,39 +187,46 @@ mod tests {
     }
 
     #[test]
-    fn a_stop_needs_twenty_minutes_and_eight_fixes() {
+    fn a_stop_needs_twenty_minutes_and_eight_fixes_and_runs_first_fix_to_last() {
         let long: Vec<Fix> = (0..10).map(|m| fix(m * 3, 30.0, -97.0, 5.0)).collect(); // 27 min, 10 fixes
-        assert_eq!(stops(&long).len(), 1);
+        let found = stops(&long);
+        assert_eq!(found.len(), 1);
+        assert_eq!((found[0].s, found[0].e), (0, 27 * MIN));
         let short: Vec<Fix> = (0..10).map(|m| fix(m, 30.0, -97.0, 5.0)).collect(); // 9 min
         assert!(stops(&short).is_empty());
         let sparse: Vec<Fix> = (0..5).map(|m| fix(m * 10, 30.0, -97.0, 5.0)).collect(); // 40 min, 5 fixes
         assert!(stops(&sparse).is_empty());
     }
 
-    #[test]
-    fn stops_within_eighty_meters_are_one_place_centred_on_them() {
-        let merged = merge_stops(&[(30.0, -97.0), (30.0005, -97.0), (30.01, -97.0)]);
-        assert_eq!(merged.len(), 2);
-        assert!((merged[0].0 - 30.00025).abs() < 1e-9);
+    fn stop(s: Ms, e: Ms, lat: f64) -> Stop {
+        Stop { s, e, lat, lon: -97.0 }
     }
 
     #[test]
-    fn a_visit_far_from_every_stop_is_its_own_place_and_home_is_where_you_slept() {
-        let visits = vec![
-            // An evening-to-morning stay at the first stop (local 19:00 -> 08:00).
-            Visit { s: 0, e: 13 * 60 * MIN, lat: 30.0, lon: -97.0 },
-            // Two daytime visits 2 km away, with no stop there.
-            Visit { s: 14 * 60 * MIN, e: 20 * 60 * MIN, lat: 30.02, lon: -97.0 },
-            Visit { s: 38 * 60 * MIN, e: 44 * 60 * MIN, lat: 30.02, lon: -97.0 },
-        ];
-        // Visit times are minutes after 2026-07-28 00:00Z = 19:00 CDT.
+    fn stops_within_eighty_meters_are_one_place_centred_on_them() {
+        let all = [stop(0, MIN, 30.0), stop(2 * MIN, 3 * MIN, 30.0005), stop(4 * MIN, 5 * MIN, 30.01)];
+        let place_of = merge_stops(&all);
+        assert_eq!(place_of, vec![0, 0, 1]);
+        let found = places(&all, &place_of, &chicago);
+        assert_eq!(found.len(), 2);
+        assert!((found[0].lat - 30.00025).abs() < 1e-9);
+        assert_eq!(found[0].stop_count, 2);
+    }
+
+    #[test]
+    fn home_is_where_you_slept_and_work_where_the_day_went() {
+        // Minutes after 2026-07-28 00:00Z = 19:00 CDT.
         let base = chrono::DateTime::parse_from_rfc3339("2026-07-28T00:00:00Z").unwrap().timestamp_millis();
-        let visits: Vec<Visit> = visits.into_iter().map(|v| Visit { s: v.s + base, e: v.e + base, ..v }).collect();
-        let (places, of_visit) = assign(&visits, vec![(30.0, -97.0), (40.0, -90.0)], &chicago);
-        assert_eq!(places.len(), 2, "the unvisited stop is dropped, the far visits make one place");
-        assert_eq!(of_visit, vec![0, 1, 1]);
-        assert!(places[0].is_home);
-        assert!(places[1].is_work);
-        assert_eq!(places[1].visit_count, 2);
+        let all = [
+            // An evening-to-morning stay (local 19:00 -> 08:00).
+            stop(base, base + 13 * 60 * MIN, 30.0),
+            // Two daytime stays 2 km away.
+            stop(base + 14 * 60 * MIN, base + 20 * 60 * MIN, 30.02),
+            stop(base + 38 * 60 * MIN, base + 44 * 60 * MIN, 30.02),
+        ];
+        let found = places(&all, &merge_stops(&all), &chicago);
+        assert!(found[0].is_home);
+        assert!(found[1].is_work);
+        assert_eq!(found[1].stop_count, 2);
     }
 }

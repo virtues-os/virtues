@@ -40,9 +40,14 @@ pub(crate) struct Fix {
     pub speed_mps: Option<f64>,
 }
 
-/// One stored visit: the clusterer's timing for a stay.
+/// A stop found in the raw GPS (`dayback/resolve.py` `detect_dwells`): where
+/// you stayed, from its first fix to its last. The prototype took a stay's
+/// times from the visits table and only its place from the stop; here both
+/// come from the stop (Lemur, 2026-09-30), since Virtues' visit finder ends a
+/// visit whenever a still phone goes 5 minutes without reporting, and on a
+/// sparse day finds no stay at all where the stop finder does.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Visit {
+pub(crate) struct Stop {
     pub s: Ms,
     pub e: Ms,
     pub lat: f64,
@@ -56,7 +61,6 @@ pub(crate) fn meters(a: &Fix, b: &Fix) -> f64 {
 /// The raw record the rules read, each list in time order.
 pub(crate) struct Record {
     pub fixes: Vec<Fix>,
-    pub visits: Vec<Visit>,
     pub windows: Vec<moments::Window>,
     /// HealthKit's sleep rows.
     pub sleep_rows: Vec<spine::Span>,
@@ -96,8 +100,9 @@ pub(crate) struct Derived {
 pub(crate) fn derive(r: &Record) -> Derived {
     let zone_at = |lat: f64, lon: f64| zone::at(lat, lon).unwrap_or(r.home);
 
-    let centres = places::merge_stops(&places::stops(&places::stop_fixes(&r.fixes)));
-    let (places, place_of) = places::assign(&r.visits, centres, &zone_at);
+    let stops = places::stops(&places::stop_fixes(&r.fixes));
+    let place_of = places::merge_stops(&stops);
+    let places = places::places(&stops, &place_of, &zone_at);
 
     let clean = spine::clean_track(&r.fixes);
     let gps = spine::gps(&r.fixes);
@@ -105,7 +110,7 @@ pub(crate) fn derive(r: &Record) -> Derived {
     let gps_times: Vec<Ms> = gps.iter().map(|f| f.t).collect();
     let healthkit = nights::healthkit_nights(&r.sleep_rows);
     let coverage = spine::Coverage { fix_times: &gps_times, nights: &healthkit };
-    let segs = spine::spine(&r.visits, &place_of, &clean, &moves, &coverage);
+    let segs = spine::spine(&stops, &place_of, &clean, &moves, &coverage);
 
     let talk: Vec<spine::Span> =
         r.windows.iter().filter(|w| w.speakers >= 2).map(|w| spine::Span { s: w.s, e: w.e }).collect();
@@ -204,7 +209,6 @@ fn record_days(r: &Record) -> Option<Vec<NaiveDate>> {
         .fixes
         .iter()
         .map(|f| f.t)
-        .chain(r.visits.iter().map(|v| v.s))
         .chain(r.windows.iter().map(|w| w.s))
         .chain(r.sleep_rows.iter().map(|s| s.s))
         .chain(r.step_times.iter().copied());

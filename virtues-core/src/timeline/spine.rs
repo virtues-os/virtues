@@ -4,14 +4,14 @@
 //! nothing that moved, stored as `unknown` (the viewer's "Signal gap",
 //! `dayback/src/main.js:2530-2535`).
 
-use super::{meters, Fix, Ms, Visit, HOUR, MIN};
+use super::{meters, Fix, Ms, Stop, HOUR, MIN};
 
 /// Fixes within this of a spot's first fix are one spot (`clean_track`).
 const CLEAN_RADIUS_M: f64 = 30.0;
 /// The track leaving a place by more than this is a drive, however short.
 const AWAY_M: f64 = 300.0;
-/// Two visits closer than this are the same place.
-const SAME_VISIT_M: f64 = 300.0;
+/// Two stops closer than this are the same place.
+const SAME_STOP_M: f64 = 300.0;
 /// Movement: faster than this...
 const MOVING_MPS: f64 = 1.0;
 /// ...with pauses up to this merged...
@@ -228,21 +228,22 @@ pub(crate) struct Seg {
     pub kind: Kind,
 }
 
-/// The spine, from the visits (in time order, with their place index) and
-/// the track: a stay continues across a blink of the visit detector only
-/// where the fixes cover it; a drive is the MOVEMENT inside a gap, not the
-/// whole gap; a silence becomes a trackless transit (a signal gap to be).
-pub(crate) fn spine(visits: &[Visit], place_of: &[usize], clean: &[Point], moves: &[Move], cov: &Coverage) -> Vec<Seg> {
+/// The spine, from the stops (in time order, with their place index) and the
+/// track (`build.py:335-363`, stops in place of visits): a stay continues
+/// across a break between two stops at one place only where the fixes cover
+/// it; a drive is the MOVEMENT inside a gap, not the whole gap; a silence
+/// becomes a trackless transit (a signal gap to be).
+pub(crate) fn spine(stops: &[Stop], place_of: &[usize], clean: &[Point], moves: &[Move], cov: &Coverage) -> Vec<Seg> {
     let mut segs: Vec<Seg> = Vec::new();
     let mut cur: Option<Ms> = None;
-    let mut prev: Option<&Visit> = None;
+    let mut prev: Option<&Stop> = None;
     let transit = |s, e| Seg { s, e, kind: Kind::Transit };
 
-    for (vi, v) in visits.iter().enumerate() {
+    for (vi, v) in stops.iter().enumerate() {
         let (mut vs, ve) = (v.s, v.e);
         if let (Some(c), Some(pv)) = (cur, prev) {
             if vs > c {
-                let same = crate::geo::haversine_distance(pv.lat, pv.lon, v.lat, v.lon) <= SAME_VISIT_M;
+                let same = crate::geo::haversine_distance(pv.lat, pv.lon, v.lat, v.lon) <= SAME_STOP_M;
                 let inside: Vec<&Move> = moves.iter().filter(|m| m.e > c && m.s < vs).collect();
                 let last_is_stay_ending_here =
                     |segs: &Vec<Seg>| segs.last().is_some_and(|l| l.kind != Kind::Transit && l.e == c);
@@ -296,8 +297,28 @@ pub(crate) fn spine(visits: &[Visit], place_of: &[usize], clean: &[Point], moves
         if let Some(c) = cur {
             vs = vs.max(c);
         }
-        if ve > vs {
-            segs.push(Seg { s: vs, e: ve, kind: Kind::Stay(place_of[vi]) });
+        // A stop's fixes need only stay within 100 m of its first, so a stop
+        // can run on across hours the phone recorded nothing - which a visit,
+        // ended by any 5-minute silence, never did. The same coverage rule
+        // as between stops holds inside one: an awake silence over 2 h is a
+        // stretch of its own (a signal gap), a HealthKit night is not.
+        // Two silences with no stay between them (a lone fix apart) are one
+        // gap, as the prototype makes one between two visits.
+        let mut from = vs;
+        let first_new = segs.len();
+        for (hs, he) in cov.holes(vs, ve) {
+            if hs > from {
+                segs.push(Seg { s: from, e: hs, kind: Kind::Stay(place_of[vi]) });
+            }
+            let fresh = segs.len() > first_new;
+            match segs.last_mut() {
+                Some(last) if fresh && last.kind == Kind::Transit && last.e >= hs.max(from) => last.e = he,
+                _ => segs.push(transit(hs.max(from), he)),
+            }
+            from = he;
+        }
+        if ve > from {
+            segs.push(Seg { s: from, e: ve, kind: Kind::Stay(place_of[vi]) });
         }
         cur = Some(cur.map_or(ve, |c| c.max(ve)));
         prev = Some(v);
@@ -403,8 +424,8 @@ mod tests {
     #[test]
     fn a_drive_is_the_movement_inside_the_gap() {
         // Stay at A 0-60 min, drive 70-80 min to B 3 km north, stay at B from 100 min.
-        let a = Visit { s: 0, e: 60 * MIN, lat: 30.0, lon: -97.0 };
-        let b = Visit { s: 100 * MIN, e: 160 * MIN, lat: 30.027, lon: -97.0 };
+        let a = Stop { s: 0, e: 60 * MIN, lat: 30.0, lon: -97.0 };
+        let b = Stop { s: 100 * MIN, e: 160 * MIN, lat: 30.027, lon: -97.0 };
         let mut fixes: Vec<Fix> = (0..=69).map(|m| fix(m, 30.0)).collect();
         fixes.extend((70..=80).map(|m| fix(m, 30.0 + (m - 70) as f64 * 0.0027)));
         fixes.extend((81..=160).map(|m| fix(m, 30.027)));
@@ -419,8 +440,8 @@ mod tests {
 
     #[test]
     fn a_blink_at_the_same_place_is_one_stay_only_where_the_track_covers_it() {
-        let a1 = Visit { s: 0, e: 60 * MIN, lat: 30.0, lon: -97.0 };
-        let a2 = Visit { s: 5 * HOUR, e: 6 * HOUR, lat: 30.0, lon: -97.0 };
+        let a1 = Stop { s: 0, e: 60 * MIN, lat: 30.0, lon: -97.0 };
+        let a2 = Stop { s: 5 * HOUR, e: 6 * HOUR, lat: 30.0, lon: -97.0 };
         let still: Vec<Fix> = (0..=360).step_by(5).map(|m| fix(m, 30.0)).collect();
         let clean = clean_track(&still);
         let times: Vec<Ms> = still.iter().map(|f| f.t).collect();
@@ -444,5 +465,45 @@ mod tests {
         );
         let track = transit_track(&clean, HOUR, 5 * HOUR);
         assert!(is_signal_gap(HOUR, 5 * HOUR, &track));
+    }
+
+    #[test]
+    fn a_stop_across_an_awake_silence_is_two_stays_and_a_gap_unless_it_was_a_night() {
+        // One stop from 0 to 6 h with no fix between 1 h and 5 h.
+        let one = Stop { s: 0, e: 6 * HOUR, lat: 30.0, lon: -97.0 };
+        let fixes: Vec<Fix> = (0..=360).step_by(5).filter(|m| *m <= 60 || *m >= 300).map(|m| fix(m, 30.0)).collect();
+        let clean = clean_track(&fixes);
+        let times: Vec<Ms> = fixes.iter().map(|f| f.t).collect();
+        let awake = Coverage { fix_times: &times, nights: &[] };
+        assert_eq!(
+            spine(&[one], &[0], &clean, &[], &awake),
+            vec![
+                Seg { s: 0, e: HOUR, kind: Kind::Stay(0) },
+                Seg { s: HOUR, e: 5 * HOUR, kind: Kind::Transit },
+                Seg { s: 5 * HOUR, e: 6 * HOUR, kind: Kind::Stay(0) },
+            ]
+        );
+        let night = [Span { s: HOUR, e: 5 * HOUR }];
+        let slept = Coverage { fix_times: &times, nights: &night };
+        assert_eq!(spine(&[one], &[0], &clean, &[], &slept), vec![Seg { s: 0, e: 6 * HOUR, kind: Kind::Stay(0) }]);
+    }
+
+    #[test]
+    fn two_silences_a_lone_fix_apart_are_one_gap() {
+        // One stop from 0 to 9 h: fixes to 1 h, a lone fix at 4 h, fixes from 7 h.
+        let one = Stop { s: 0, e: 9 * HOUR, lat: 30.0, lon: -97.0 };
+        let fixes: Vec<Fix> =
+            (0..=540).step_by(5).filter(|m| *m <= 60 || *m == 240 || *m >= 420).map(|m| fix(m, 30.0)).collect();
+        let clean = clean_track(&fixes);
+        let times: Vec<Ms> = fixes.iter().map(|f| f.t).collect();
+        let cov = Coverage { fix_times: &times, nights: &[] };
+        assert_eq!(
+            spine(&[one], &[0], &clean, &[], &cov),
+            vec![
+                Seg { s: 0, e: HOUR, kind: Kind::Stay(0) },
+                Seg { s: HOUR, e: 7 * HOUR, kind: Kind::Transit },
+                Seg { s: 7 * HOUR, e: 9 * HOUR, kind: Kind::Stay(0) },
+            ]
+        );
     }
 }

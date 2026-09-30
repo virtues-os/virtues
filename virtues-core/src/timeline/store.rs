@@ -12,7 +12,7 @@ use sqlx::{PgPool, Postgres, Row, Transaction};
 
 use super::moments::Window;
 use super::spine::Span;
-use super::{derive, Fix, Ms, Record, Visit};
+use super::{derive, Fix, Ms, Record};
 use crate::error::Result;
 use crate::ids;
 
@@ -50,13 +50,13 @@ pub async fn rebuild(pool: &PgPool) -> Result<Option<RebuildStats>> {
         let wiki_place = wiki_place_at(&wiki_places, p.lat, p.lon);
         sqlx::query(
             "INSERT INTO wiki_timeline_places \
-             (id, latitude, longitude, visit_count, dwell_minutes, overnight_minutes, is_home, is_work, place_id) \
+             (id, latitude, longitude, stop_count, dwell_minutes, overnight_minutes, is_home, is_work, place_id) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
         )
         .bind(&id)
         .bind(p.lat)
         .bind(p.lon)
-        .bind(p.visit_count)
+        .bind(p.stop_count)
         .bind(minutes(p.dwell))
         .bind(minutes(p.overnight))
         .bind(p.is_home)
@@ -132,8 +132,8 @@ async fn tables_exist(pool: &PgPool) -> Result<bool> {
     Ok(exists)
 }
 
-/// The raw record: every fix, visit, transcription window, HealthKit sleep row
-/// and step reading still live at its source.
+/// The raw record: every fix, transcription window, HealthKit sleep row and
+/// step reading still live at its source.
 async fn load(pool: &PgPool) -> Result<Record> {
     let fixes = sqlx::query(
         "SELECT occurred_at, latitude, longitude, horizontal_accuracy, speed FROM data_location_point \
@@ -150,23 +150,6 @@ async fn load(pool: &PgPool) -> Result<Record> {
             accuracy_m: r.try_get("horizontal_accuracy")?,
             speed_mps: r.try_get("speed")?,
         })
-    })
-    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
-
-    let visits = sqlx::query(
-        "SELECT started_at, ended_at, duration_minutes, latitude, longitude FROM data_location_visit \
-         WHERE deleted_at_source IS NULL AND NOT is_archived ORDER BY started_at",
-    )
-    .fetch_all(pool)
-    .await?
-    .iter()
-    .map(|r| {
-        let s = ms(r.try_get("started_at")?);
-        // An open visit has no end yet: its duration so far stands in (`build.py:168`).
-        let ended: Option<DateTime<Utc>> = r.try_get("ended_at")?;
-        let duration: Option<i32> = r.try_get("duration_minutes")?;
-        let e = ended.map_or(s + i64::from(duration.unwrap_or(0)) * super::MIN, ms);
-        Ok(Visit { s, e, lat: r.try_get("latitude")?, lon: r.try_get("longitude")? })
     })
     .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
 
@@ -218,7 +201,7 @@ async fn load(pool: &PgPool) -> Result<Record> {
     .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
 
     let home = home_zone(pool).await?;
-    Ok(Record { fixes, visits, windows, sleep_rows, step_times, home })
+    Ok(Record { fixes, windows, sleep_rows, step_times, home })
 }
 
 /// The home zone: the profile's, else the server's own clock's.
@@ -340,7 +323,7 @@ pub struct TimelinePlace {
     pub id: String,
     pub latitude: f64,
     pub longitude: f64,
-    pub visit_count: i32,
+    pub stop_count: i32,
     pub dwell_minutes: i32,
     pub overnight_minutes: i32,
     pub is_home: bool,
@@ -429,7 +412,7 @@ pub async fn window(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> 
 
     let place_ids: Vec<String> = spans.iter().filter_map(|s| s.timeline_place_id.clone()).collect();
     let places = sqlx::query(
-        "SELECT t.id, t.latitude, t.longitude, t.visit_count, t.dwell_minutes, t.overnight_minutes, \
+        "SELECT t.id, t.latitude, t.longitude, t.stop_count, t.dwell_minutes, t.overnight_minutes, \
                 t.is_home, t.is_work, t.place_id, w.name AS place_name \
          FROM wiki_timeline_places t LEFT JOIN wiki_places w ON w.id = t.place_id \
          WHERE t.id = ANY($1)",
@@ -443,7 +426,7 @@ pub async fn window(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> 
             id: r.try_get("id")?,
             latitude: r.try_get("latitude")?,
             longitude: r.try_get("longitude")?,
-            visit_count: r.try_get("visit_count")?,
+            stop_count: r.try_get("stop_count")?,
             dwell_minutes: r.try_get("dwell_minutes")?,
             overnight_minutes: r.try_get("overnight_minutes")?,
             is_home: r.try_get("is_home")?,
