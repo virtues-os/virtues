@@ -55,6 +55,11 @@ describe("the rail", () => {
 		expect(placeTitle({ id: "x", is_home: false, is_work: false, place_name: "Location 1.0, 2.0" })).toBe("Unnamed place");
 	});
 
+	it("calls the most-dwelt place Work / frequent until it has a real name", () => {
+		expect(placeTitle({ id: "w", is_home: false, is_work: true, place_name: "Location 1.0, 2.0" })).toBe("Work / frequent");
+		expect(placeTitle({ id: "w", is_home: false, is_work: true, place_name: "The Studio" })).toBe("The Studio");
+	});
+
 	it("names a long ground drive for what it is", () => {
 		expect(transitTitle(90, 3 * 3_600_000)).toBe("Out · no stay recorded");
 		expect(transitTitle(800, 3 * 3_600_000)).toBe("Flying");
