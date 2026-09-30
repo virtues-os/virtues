@@ -1251,8 +1251,9 @@
 	--border-strong: #3a3a3a;
 	--border-focus: #88C0D0;
 
-	/* Selection/Highlight - Blue tinted */
-	--highlight: #1e2d30;
+	/* Selection/Highlight - the Nordic blue as a tint, strong enough to read
+	 * against the near-black ground. */
+	--highlight: rgba(136, 192, 208, 0.28);
 	--highlight-foreground: #D4D4D4;
 
 	/* Background Inverse */
