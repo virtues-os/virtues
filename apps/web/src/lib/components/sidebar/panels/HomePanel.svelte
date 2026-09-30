@@ -57,6 +57,7 @@
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { pagesStore } from '$lib/stores/pages.svelte';
 	import { pinsStore } from '$lib/stores/pins.svelte';
+	import { chatActivity } from '$lib/stores/chatActivity.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarZones } from '$lib/stores/sidebarZones.svelte';
 	import { search } from '$lib/stores/search.svelte';
@@ -734,10 +735,15 @@
 		<!-- A chat in a project wears the project's color on its bubble, so the
 		     filed ones read at a glance in Today and Recent. The bubble stays a
 		     bubble: the row is still a chat, the color says whose. -->
-		<span class="row-glyph" aria-hidden="true" style={tint ? `color: ${tint}` : undefined}
-			><AtlasIcon name="chats" size={15} bare /></span
-		>
+		<span class="row-glyph" aria-hidden="true" style={tint ? `color: ${tint}` : undefined}>
+			{#if chatActivity.running(session.conversation_id)}
+				<Icon icon="ri:loader-4-line" width="14" class="spin" />
+			{:else}
+				<AtlasIcon name="chats" size={15} bare />
+			{/if}
+		</span>
 		<span class="panel-row-text">{titleOf(session)}</span>
+		{@render unreadDot(session.conversation_id)}
 		<span class="row-actions">
 			<button
 				type="button"
@@ -760,6 +766,14 @@
 			</button>
 		</span>
 	</div>
+{/snippet}
+
+<!-- A reply landed while the chat was off screen. It sits where the row's
+     controls appear, and gives way to them on hover. -->
+{#snippet unreadDot(chatId: string | null)}
+	{#if chatId && chatActivity.unread(chatId)}
+		<span class="row-unread" role="img" aria-label="New reply"></span>
+	{/if}
 {/snippet}
 
 {#snippet pageRow(page: PageSummary)}
@@ -819,6 +833,7 @@
 	<div class="sidebar-expandable fold" class:expanded={!folded('pinned')} style={foldStyle(pins.length)}>
 		<div class="sidebar-expandable-inner">
 			{#each pins as pin (pin.id)}
+				{@const pinChat = pin.url.startsWith('/chat/') ? pin.url.slice('/chat/'.length) : null}
 				<div
 					class="panel-row panel-row-has-actions spine"
 					class:active={activeRoute === pin.url}
@@ -839,7 +854,9 @@
 					<!-- The glyph if the user picked one, the cloth dot if not: most
 					     pins have no natural icon, which is what the dot is for. -->
 					<span class="row-glyph" aria-hidden="true">
-						{#if pin.icon && isEmoji(pin.icon)}
+						{#if pinChat && chatActivity.running(pinChat)}
+							<Icon icon="ri:loader-4-line" width="14" class="spin" />
+						{:else if pin.icon && isEmoji(pin.icon)}
 							<span class="row-emoji">{pin.icon}</span>
 						{:else if pin.icon}
 							<Icon icon={pin.icon} width="14" style="color: {clothFor(pin)}" />
@@ -848,6 +865,7 @@
 						{/if}
 					</span>
 					<span class="panel-row-text">{pinLabel(pin)}</span>
+					{@render unreadDot(pinChat)}
 					<span class="row-actions">
 						<button
 							type="button"
@@ -1288,6 +1306,21 @@
 		   was invisible against the ground it was meant to separate from. */
 		border: 1px solid color-mix(in srgb, var(--color-foreground) 12%, transparent);
 		box-sizing: border-box;
+	}
+
+	.row-unread {
+		width: 7px;
+		height: 7px;
+		margin-right: 2px;
+		flex: none;
+		border-radius: 999px;
+		background: var(--color-success);
+	}
+
+	.panel-row-has-actions:hover .row-unread,
+	.panel-row-has-actions:focus-within .row-unread,
+	.panel-row-has-actions.carded .row-unread {
+		display: none;
 	}
 
 	/* The controls appear where the pointer is and nowhere else. Kept in the

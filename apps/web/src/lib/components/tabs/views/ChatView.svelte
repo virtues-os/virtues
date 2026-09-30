@@ -83,6 +83,7 @@
 	import { fade, fly } from "svelte/transition";
 	import { cubicInOut } from "svelte/easing";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
+	import { chatActivity } from "$lib/stores/chatActivity.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
 	import ProjectChip from "$lib/components/ProjectChip.svelte";
@@ -760,6 +761,40 @@
 			window.removeEventListener("online", onBack);
 			document.removeEventListener("visibilitychange", onBack);
 		};
+	});
+
+	// The sidebar's spinner and dot (chatActivity). This view reports its own
+	// turn the moment it starts, ahead of the box's list; when the view lets
+	// go (another chat, unmount) the box's list takes over, since the turn
+	// keeps running there.
+	let reportedRunning: string | null = null;
+	function reportRunning(id: string | null) {
+		if (reportedRunning && reportedRunning !== id) chatActivity.setLocalRunning(reportedRunning, false);
+		if (id && reportedRunning !== id) chatActivity.setLocalRunning(id, true);
+		reportedRunning = id;
+	}
+	$effect(() => {
+		const status = chat.status;
+		const running = !isGhost && (status === "submitted" || status === "streaming");
+		const id = conversationId;
+		untrack(() => reportRunning(running ? id : null));
+	});
+	onDestroy(() => reportRunning(null));
+
+	// Seen: this chat is on screen, loaded, and not mid-reply. Re-runs when a
+	// reply finishes, so an answer watched as it arrived is never unread.
+	let pageVisible = $state(typeof document === "undefined" || !document.hidden);
+	$effect(() => {
+		const onVis = () => (pageVisible = !document.hidden);
+		document.addEventListener("visibilitychange", onVis);
+		return () => document.removeEventListener("visibilitychange", onVis);
+	});
+	$effect(() => {
+		if (!active || !pageVisible || isGhost || isLoading || isNewChat(tab.route)) return;
+		const status = chat.status;
+		if (status === "submitted" || status === "streaming") return;
+		const id = conversationId;
+		untrack(() => chatActivity.markSeen(id));
 	});
 
 	// Load conversation data on mount
