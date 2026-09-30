@@ -540,12 +540,12 @@
 		<div class="scale-nav">
 			<div class="scale tile" role="tablist" aria-label="Time scale">
 				<button class="seg on" role="tab" aria-selected="true" title="Dayline - a single day">Dayline</button>
-				<button class="seg" role="tab" aria-selected="false" disabled title="Yearline - not built yet">Yearline</button>
-				<button class="seg" role="tab" aria-selected="false" disabled title="Lifeline - not built yet">Lifeline</button>
+				<button class="seg" role="tab" aria-selected="false" aria-disabled="true" data-tip="Coming soon">Yearline</button>
+				<button class="seg" role="tab" aria-selected="false" aria-disabled="true" data-tip="Coming soon">Lifeline</button>
 			</div>
 			<div class="scale lens tile" role="tablist" aria-label="Day lens">
 				<button class="seg on" role="tab" aria-selected="true" title="Map - the day on a map"><i aria-hidden="true">🌐</i>Map</button>
-				<button class="seg" role="tab" aria-selected="false" disabled title="Detail - not built yet"><i aria-hidden="true">🔍</i>Detail</button>
+				<button class="seg" role="tab" aria-selected="false" aria-disabled="true" data-tip="Coming soon"><i aria-hidden="true">🔍</i>Detail</button>
 			</div>
 		</div>
 		<button class="day-title" onclick={() => picker?.showPicker?.()}>{title}</button>
@@ -695,11 +695,46 @@
 		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
 		box-shadow: var(--toggle-shadow);
 	}
-	/* A scale not built yet (index.html:974). */
-	.seg:disabled {
-		color: var(--color-foreground-subtle);
-		opacity: 0.55;
+	/* A scale not built yet (index.html:974). It stays hoverable (so no
+	   `disabled`, which would swallow the hover) and does nothing on click. */
+	.seg[aria-disabled='true'] {
+		position: relative;
+		color: color-mix(in srgb, var(--color-foreground-subtle) 55%, transparent);
 		cursor: default;
+	}
+	.seg[aria-disabled='true'] i {
+		opacity: 0.55;
+	}
+	/* "Coming soon", a tenth of a second after the pointer arrives - the
+	   browser's own title tooltip waits about a second. */
+	.seg[data-tip]::after {
+		content: attr(data-tip);
+		position: absolute;
+		top: calc(100% + 8px);
+		left: 50%;
+		transform: translateX(-50%);
+		padding: 4px 8px;
+		border-radius: 6px;
+		background: var(--color-foreground);
+		color: var(--color-background);
+		font-family: var(--font-sans);
+		font-size: 12px;
+		font-weight: 500;
+		white-space: nowrap;
+		pointer-events: none;
+		opacity: 0;
+		transition: opacity 120ms ease;
+		z-index: 5;
+	}
+	.seg[data-tip]:hover::after,
+	.seg[data-tip]:focus-visible::after {
+		opacity: 1;
+		transition-delay: 100ms;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.seg[data-tip]::after {
+			transition: none;
+		}
 	}
 	/* The serif page title, as Virtues' Home dateline: regular, never bold. */
 	.day-title {
