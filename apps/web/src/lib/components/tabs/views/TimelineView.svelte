@@ -651,6 +651,15 @@
 		inset: 0;
 		z-index: 0;
 	}
+	/* A tile over the map, in the prototype's look: a solid ground, a faint
+	   ink border and one soft shadow (dayback/index.html:599-601). The
+	   toggles' pill, a quiet day's note, the rail's error. */
+	.tile {
+		background: var(--c-tile);
+		border: 1px solid color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
+		box-shadow: var(--tile-shadow);
+	}
 	/* The bar: frosted over the map, one hairline under it (index.html:1027-1028). */
 	.day-head {
 		position: absolute;
