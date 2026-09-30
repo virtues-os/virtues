@@ -14,6 +14,7 @@
 import { apiGet } from "$lib/api/client";
 import { getDayFacts, getDaySources, type TimelineDayLocationChunk, type TimelineDayPoint, type TimelineDayView } from "$lib/wiki/api";
 import type { DerivedWindow, VoiceWindow } from "./rail";
+import type { LaneWindow } from "./lanes";
 
 const DAY_MS = 86_400_000;
 
@@ -42,6 +43,13 @@ export async function fetchDerived(b: DayBounds): Promise<DerivedWindow> {
 export async function fetchVoice(b: DayBounds): Promise<VoiceWindow[]> {
 	const q = new URLSearchParams({ start: new Date(b.startMs).toISOString(), end: new Date(b.endMs).toISOString() });
 	return apiGet<VoiceWindow[]>(`/timeline/voice?${q}`);
+}
+
+/** The scrubber's Body, Calendar and Finance lanes over a window
+ *  (`/timeline/lanes`). */
+export async function fetchLanes(b: DayBounds): Promise<LaneWindow> {
+	const q = new URLSearchParams({ start: new Date(b.startMs).toISOString(), end: new Date(b.endMs).toISOString() });
+	return apiGet<LaneWindow>(`/timeline/lanes?${q}`);
 }
 
 /** The day a YYYY-MM-DD slug names in the browser's zone, as [startMs, endMs):

@@ -40,6 +40,8 @@ export const COLOURS = {
 	spk1: "#9c5f86",
 	spk2: "#7d7a3f",
 	spk3: "#a56a4a",
+	/** The selection blue: an active step bar leans toward it (index.html:1363). */
+	sel: "#0A84FF",
 } as const;
 
 /** The prototype's shadows (dayback/index.html:104-129, 599-601): the tiles'
@@ -54,6 +56,8 @@ const SHADOWS = {
 	knot: "0 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.32)",
 	card: "0 10px 30px -8px rgba(0, 0, 0, 0.38), 0 0 0 1px rgba(0, 0, 0, 0.05)",
 	cardTail: "3px 3px 6px -3px rgba(0, 0, 0, 0.25)",
+	/** The scrubber's hover peek (index.html:908). */
+	peek: "0 10px 30px rgba(0, 0, 0, 0.16)",
 	/** The raised tab of a segmented toggle (index.html:968). */
 	toggle: "0 1px 2.5px rgba(0, 0, 0, 0.12)",
 };

@@ -27,6 +27,8 @@ pub fn routes() -> Router<AppState> {
         .route("/api/timeline/day-window/:date", get(timeline_day_window_handler))
         // The transcription windows over a window: the rail's conversations and the mic's coverage
         .route("/api/timeline/voice", get(timeline_voice_handler))
+        // The scrubber's Body, Calendar and Finance lanes over a window
+        .route("/api/timeline/lanes", get(timeline_lanes_handler))
         // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
         .route("/api/today/:date/streams", get(today_streams_handler))
         // Home-page loops — weather · upcoming calendar · unnamed-place backlog
@@ -1194,6 +1196,16 @@ pub async fn timeline_voice_handler(State(state): State<AppState>, Query(q): Que
         return error_response(Error::InvalidInput("end must be after start".into()));
     }
     api_response(crate::timeline::voice(state.db.pool(), q.start, q.end).await)
+}
+
+/// The scrubber's Body, Calendar and Finance lanes over `start`..`end`
+/// (RFC 3339): step bins and their scale, timed calendar events, and which
+/// of those sources are connected.
+pub async fn timeline_lanes_handler(State(state): State<AppState>, Query(q): Query<TimelineWindowQuery>) -> Response {
+    if q.end <= q.start {
+        return error_response(Error::InvalidInput("end must be after start".into()));
+    }
+    api_response(crate::timeline::lanes(state.db.pool(), q.start, q.end).await)
 }
 
 /// A local day's bounds, in the zone the day woke up in (`YYYY-MM-DD`).
