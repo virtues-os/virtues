@@ -8,18 +8,14 @@ Delete an item when it ships and move its reasoning into a record.
 
 ## Billing defects
 
-**Refunds are scoped to the customer, not the charge.** In
-`services/virtues-atlas/src/routes/webhooks.rs`, `handle_webhook` sends both
-`charge.refunded` and `charge.dispute.created` to
-`set_status(pool, object, "refunded")`, which runs
-`UPDATE subscriptions SET status = $1 WHERE stripe_customer_id = $2`. Top-ups
-are charges against the same customer, so refunding a $10 goodwill top-up (or
-losing a dispute on one) marks the $20/mo subscription `refunded`, and every
-path that requires an active subscription then refuses: the billing portal,
-manual and auto top-up. Refunds and disputes are not something we choose to
-have. The fix separates the objects: a refund against a top-up debits the
-wallet, and only a refund or dispute against a subscription invoice changes
-subscription status.
+**A refunded top-up leaves its credit in the wallet.** Charge refunds and
+disputes no longer touch subscription status (`webhooks.rs`, 2026-09-30:
+subscription status follows only `customer.subscription.*` and `invoice.*`).
+What is left: a refund or lost dispute on a top-up PaymentIntent should debit
+the wallet by that amount through virtues-api's internal credit endpoint, and
+nothing marks a top-up PaymentIntent as one today (no metadata), so tagging it
+at creation comes first. Also check production once for subscriptions already
+set to `refunded` by the old handler.
 
 **The way to fix a lapsed payment sits behind the payment.**
 `billing_portal.rs::resolve_active_customer` refuses unless the latest
