@@ -27,13 +27,34 @@ export const COLOURS = {
 	gap: "#9aa1ad",
 	/** The ground of every tile over the map. */
 	tile: "#fefefe",
+	/** The white ring around the pin, a count chip and the live bubble. */
+	ring: "#ffffff",
+	/** A bubble's ring (index.html:105). */
+	mark: "#8a94a6",
+	/** A count chip's ground (index.html:110). */
+	knot: "#5b6472",
+	/** A bubble's leader line (index.html:108). */
+	leader: "#9aa1ad",
 } as const;
 
-/** The tiles' one soft shadow (dayback/index.html:599-601). */
-const TILE_SHADOW = "0 10px 34px -10px rgba(0, 0, 0, 0.2), 0 2px 8px -3px rgba(0, 0, 0, 0.1)";
+/** The prototype's shadows (dayback/index.html:104-129, 599-601): the tiles'
+ *  one soft shadow, and the marks' own on the map. */
+const SHADOWS = {
+	tile: "0 10px 34px -10px rgba(0, 0, 0, 0.2), 0 2px 8px -3px rgba(0, 0, 0, 0.1)",
+	pin: "0 0 0 1px rgba(0, 0, 0, 0.06), 0 1px 6px rgba(0, 0, 0, 0.4)",
+	mark: "0 1px 3px rgba(0, 0, 0, 0.28)",
+	markCur: "0 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 7px rgba(35, 131, 243, 0.5)",
+	label: "0 5px 18px -6px rgba(0, 0, 0, 0.3)",
+	labelCur: "0 6px 22px -6px rgba(0, 0, 0, 0.34)",
+	knot: "0 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.32)",
+	card: "0 10px 30px -8px rgba(0, 0, 0, 0.38), 0 0 0 1px rgba(0, 0, 0, 0.05)",
+	cardTail: "3px 3px 6px -3px rgba(0, 0, 0, 0.25)",
+};
 
-/** The colours as CSS variables for the Timeline's root element. */
+const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+
+/** The colours and shadows as CSS variables for the Timeline's root element. */
 export const colourVars = [
-	...Object.entries(COLOURS).map(([k, v]) => `--c-${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}: ${v}`),
-	`--tile-shadow: ${TILE_SHADOW}`,
+	...Object.entries(COLOURS).map(([k, v]) => `--c-${kebab(k)}: ${v}`),
+	...Object.entries(SHADOWS).map(([k, v]) => `--${kebab(k)}-shadow: ${v}`),
 ].join("; ");

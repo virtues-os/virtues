@@ -36,6 +36,22 @@ export function anchorAt(fixes: Fix[], s: number, e: number): { lat: number; lng
 	return only ? { lat: only.lat, lng: only.lng } : null;
 }
 
+/** Where the pin sits at `t` (main.js:940-944 `locAt`): on the line between
+ *  the two fixes around it, or the first or last fix outside the track's
+ *  span; null with no track. */
+export function positionAt(fixes: Fix[], t: number): { lat: number; lng: number } | null {
+	if (!fixes.length) return null;
+	const first = fixes[0];
+	const last = fixes[fixes.length - 1];
+	if (t <= first.t) return { lat: first.lat, lng: first.lng };
+	if (t >= last.t) return { lat: last.lat, lng: last.lng };
+	const i = fixes.findIndex((f) => f.t >= t);
+	const a = fixes[i - 1];
+	const b = fixes[i];
+	const u = (t - a.t) / (b.t - a.t || 1);
+	return { lat: a.lat + (b.lat - a.lat) * u, lng: a.lng + (b.lng - a.lng) * u };
+}
+
 /** The track length over [s, e], in metres (main.js:2529 `trackDist`). */
 export function trackMetres(fixes: Fix[], s: number, e: number): number {
 	const inside = fixes.filter((f) => f.t >= s && f.t <= e);

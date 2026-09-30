@@ -5,8 +5,9 @@
 	duration only, and under it the moments that happened there, each with its
 	time in the gutter. A section header pins while its rows scroll past.
 
-	A click takes the map there (`onpick`). Until the Timeline has a playhead,
-	the last thing picked wears the prototype's "live" look.
+	A click parks the playhead and takes the map there (`onpick`). The rail
+	follows the playhead (main.js:1607-1615): the latest-begun section holding
+	it is where you are, the latest-begun row holding it is what's happening.
 -->
 <script lang="ts">
 	import type { RailPick as Pick, RailRow, RailSection, SectionKind } from '$lib/timeline/rail';
@@ -14,9 +15,9 @@
 	let {
 		sections,
 		zone,
-		picked = null,
+		playT,
 		onpick,
-	}: { sections: RailSection[]; zone: string; picked?: Pick | null; onpick: (p: Pick) => void } = $props();
+	}: { sections: RailSection[]; zone: string; playT: number; onpick: (p: Pick) => void } = $props();
 
 	let rail = $state<HTMLElement | null>(null);
 	export function width(): number {
@@ -35,19 +36,24 @@
 
 	const time = (ms: number) =>
 		new Date(ms).toLocaleTimeString('en-US', { timeZone: zone, hour: 'numeric', minute: '2-digit' });
-	const isPicked = (x: { s: number; e: number }, kind: Pick['kind']) =>
-		picked !== null && picked.kind === kind && picked.s === x.s && picked.e === x.e;
-	// A section is live while the pick falls inside it: a row picked inside a
-	// stay lights the stay too, and the highlight never climbs back up the list.
-	const holds = (sec: RailSection) => picked !== null && sec.s <= picked.s && picked.s < sec.e;
+	const holds = (x: { s: number; e: number }) => x.s <= playT && playT < x.e;
+	// Sections and rows are in start order, so the last one holding the
+	// playhead is the latest begun; the highlight never climbs back up.
+	const curSection = $derived(sections.findLastIndex(holds));
+	const curRow = $derived(
+		sections
+			.flatMap((s) => s.rows)
+			.sort((a, b) => a.s - b.s)
+			.findLast(holds) ?? null,
+	);
 </script>
 
 {#if sections.length}
 	<section class="rail" bind:this={rail} aria-label="The day, stay by stay">
 		<div class="scroll">
-			{#each sections as sec (sec.kind + sec.s)}
-				<div class="group" class:bare={!sec.rows.length} class:cur={holds(sec)}>
-					<button class="sec" class:cur={isPicked(sec, sec.kind)} onclick={() => onpick({ kind: sec.kind, s: sec.s, e: sec.e })}>
+			{#each sections as sec, i (sec.kind + sec.s)}
+				<div class="group" class:bare={!sec.rows.length} class:cur={i === curSection}>
+					<button class="sec" onclick={() => onpick({ kind: sec.kind, s: sec.s, e: sec.e })}>
 						<span class="hd">
 							<i class="dot" style="background: {DOT[sec.kind]}"></i>
 							<b>{sec.title}</b>
@@ -58,7 +64,7 @@
 						{/each}
 					</button>
 					{#each sec.rows as row (row.kind + row.s)}
-						<button class="row" class:cur={isPicked(row, row.kind)} onclick={() => onpick({ kind: row.kind, s: row.s, e: row.e })}>
+						<button class="row" class:cur={row === curRow} onclick={() => onpick({ kind: row.kind, s: row.s, e: row.e })}>
 							<span class="t">{time(row.s)}</span>
 							<span class="hd">
 								<i class="dot" style="background: {DOT[row.kind]}"></i>
