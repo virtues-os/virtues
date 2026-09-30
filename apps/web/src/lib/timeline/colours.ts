@@ -62,10 +62,26 @@ const SHADOWS = {
 	toggle: "0 1px 2.5px rgba(0, 0, 0, 0.12)",
 };
 
+/** The dark side, for Virtues' dark themes. The prototype keeps its stream
+ *  colours on both sides (dayback/src/main.js:1664) and lightens the speaker
+ *  tints for dark tiles (dayback/index.html:603). Its only dark tile ground is
+ *  its frosted mode's, Apple's dark system grey (main.js:1759); its solid tile
+ *  stays white in the dark, under light text, so the Timeline takes the grey. */
+const DARK: Partial<Record<keyof typeof COLOURS, string>> = {
+	tile: "#1c1c1e",
+	spk0: "#6bc0b0",
+	spk1: "#d79fc0",
+	spk2: "#c7c37a",
+	spk3: "#dba07e",
+};
+
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 
-/** The colours and shadows as CSS variables for the Timeline's root element. */
-export const colourVars = [
-	...Object.entries(COLOURS).map(([k, v]) => `--c-${kebab(k)}: ${v}`),
-	...Object.entries(SHADOWS).map(([k, v]) => `--${kebab(k)}-shadow: ${v}`),
-].join("; ");
+/** The colours and shadows as CSS variables for the Timeline's root element,
+ *  on the light or the dark side. */
+export function colourVars(dark: boolean): string {
+	return [
+		...Object.entries(COLOURS).map(([k, v]) => `--c-${kebab(k)}: ${(dark && DARK[k as keyof typeof COLOURS]) || v}`),
+		...Object.entries(SHADOWS).map(([k, v]) => `--${kebab(k)}-shadow: ${v}`),
+	].join("; ");
+}
