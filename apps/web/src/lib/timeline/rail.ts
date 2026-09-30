@@ -82,12 +82,15 @@ export function fmtDur(ms: number): string {
 	return r ? `${h}h ${r}m` : `${h}h`;
 }
 
-/** A place's title: Home, or the wiki's name for it. The wiki names a place
- *  it cannot name "Location <lat>, <lon>"; that is no title to show. */
+/** A place's title: Home; else the wiki's name for it (the user's own, as the
+ *  prototype's corrections win over its guesses); else "Work / frequent" for
+ *  the most-dwelt place (dayback/build.py:209-210). The wiki names a place it
+ *  cannot name "Location <lat>, <lon>"; that is no title to show. */
 export function placeTitle(p: DerivedPlace | undefined): string {
 	if (!p) return "Unnamed place";
 	if (p.is_home) return "Home";
 	if (p.place_name && !p.place_name.startsWith("Location ")) return p.place_name;
+	if (p.is_work) return "Work / frequent";
 	return "Unnamed place";
 }
 
