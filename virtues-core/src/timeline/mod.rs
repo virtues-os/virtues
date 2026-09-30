@@ -21,7 +21,7 @@ use chrono_tz::Tz;
 use serde_json::json;
 
 pub use store::{
-    day_window, lanes, rebuild, voice, window, CalendarEvent, DayWindow, LaneWindow, RebuildStats, StepBin,
+    day_window, recorded_days, lanes, rebuild, voice, window, CalendarEvent, DayWindow, LaneWindow, RebuildStats, StepBin,
     TimelineMoment, TimelinePlace, TimelineSpan, TimelineWindow, VoiceWindow,
 };
 

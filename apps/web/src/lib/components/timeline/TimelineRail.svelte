@@ -228,22 +228,36 @@
 <style>
 	.rail {
 		position: absolute;
-		/* Below the top bar, never under it (the prototype's own planned fix),
-		   and above the map's markers. */
-		top: calc(var(--bar-h, 0px) + 16px);
+		/* Full height on the right, above the map's markers; a pane too
+		   narrow for the date card beside it starts the rail under the top
+		   cards instead (TimelineView sets --rail-top). */
+		top: var(--rail-top, 16px);
+		bottom: 16px;
 		z-index: 10;
 		right: 16px;
 		width: min(384px, 42%);
-		max-height: calc(100% - var(--bar-h, 0px) - 32px);
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
-		border-radius: 12px;
-		/* The prototype's tile, as the view's other tiles (dayback/index.html:599-601). */
-		background: var(--c-tile);
-		border: 1px solid color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		/* The Timeline's one material (TimelineView's tile variables). */
+		border-radius: var(--tile-radius);
+		background: var(--tile-bg);
+		border: var(--tile-border);
 		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
 		box-shadow: var(--tile-shadow);
+		-webkit-backdrop-filter: var(--tile-blur);
+		backdrop-filter: var(--tile-blur);
+	}
+	/* Frosted, the rows and headers let the frost through, and the headers
+	   don't pin: a pinned header on a see-through card would sit over the
+	   rows beneath it (dayback/index.html:605-606). */
+	:global(.timeline[data-material='frosted']) .scroll,
+	:global(.timeline[data-material='frosted']) .group,
+	:global(.timeline[data-material='frosted']) .sec {
+		background: transparent;
+	}
+	:global(.timeline[data-material='frosted']) .sec {
+		position: static;
 	}
 	.scroll {
 		overflow-y: auto;

@@ -37,6 +37,7 @@
 		onzoom,
 		ontier,
 		onplay,
+		cardHeight = $bindable(0),
 	}: {
 		viewStart: number;
 		viewEnd: number;
@@ -63,6 +64,8 @@
 		onzoom: (factor: number) => void;
 		ontier: (t: Tier) => void;
 		onplay: () => void;
+		/** The card's height, for what sits above it and the map's framing. */
+		cardHeight?: number;
 	} = $props();
 
 	/** Label gutter, right pad, the ruler's strip (main.js:1238). */
@@ -92,10 +95,6 @@
 	let hover = $state<{ cx: number; cy: number; title: string; meta: string; who: string } | null>(null);
 	let peek = $state<HTMLElement | null>(null);
 	let peekAt = $state({ left: 0, top: 0 });
-
-	export function height(): number {
-		return card?.offsetHeight ?? 0;
-	}
 
 	const rowH = $derived(expanded ? 46 : 24);
 	const gap = $derived(expanded ? 9 : 6);
@@ -351,7 +350,7 @@
 	});
 </script>
 
-<section class="scrub tile" class:exp={expanded} bind:this={card} aria-label="The day's streams">
+<section class="scrub" class:exp={expanded} bind:this={card} bind:offsetHeight={cardHeight} aria-label="The day's streams">
 	<div class="top">
 		<button class="grab" aria-label={expanded ? 'Collapse the streams' : 'Expand the streams'} onclick={() => (expanded = !expanded)}>
 			<svg viewBox="0 0 14 14" width="15" height="15" aria-hidden="true"><path d="M4 5.5 L7 8.5 L10 5.5" /></svg>
@@ -501,11 +500,14 @@
 		flex-direction: column;
 		/* design-ok: the Dayback prototype's scrubber padding (owner's call, 2026-09-30) */
 		padding: 5px 15px 12px;
-		border-radius: 12px;
-		background: var(--c-tile);
-		border: 1px solid color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		/* The Timeline's one material (TimelineView's tile variables). */
+		border-radius: var(--tile-radius);
+		background: var(--tile-bg);
+		border: var(--tile-border);
 		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
 		box-shadow: var(--tile-shadow);
+		-webkit-backdrop-filter: var(--tile-blur);
+		backdrop-filter: var(--tile-blur);
 		font-family: var(--font-sans);
 		color: var(--color-foreground);
 	}
