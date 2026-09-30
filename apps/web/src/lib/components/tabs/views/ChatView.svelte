@@ -124,6 +124,7 @@
 	import LocalModelCard from "$lib/components/chat/local/LocalModelCard.svelte";
 	import LocalStatsLine from "$lib/components/chat/local/LocalStatsLine.svelte";
 	import { localModel } from "$lib/stores/localModel.svelte";
+	import { chatUsage } from "$lib/stores/chatUsage.svelte";
 
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -296,6 +297,20 @@
 		// Await ensures the backend has the permission before the retry.
 		await grantEditPermission(entityId, entityType, title);
 
+		// A sudo command: the turn paused on it, and everything before it in
+		// the turn stands. Regenerating would throw that away and ask the model
+		// to find the command again; instead it is told to run the one allowed.
+		// Sent straight to the SDK, not through the composer, whose draft and
+		// staged files are the person's and stay where they are.
+		if (entityType === "command") {
+			if (chat.status === "ready") {
+				danglingTurn = false;
+				await chat.sendMessage({ text: "Allowed. Run exactly that command." });
+				setTimeout(turnWritten, 2000);
+			}
+			return;
+		}
+
 		// Regenerate = remove last assistant message + re-request
 		if (chat.status === 'ready') {
 			try {
@@ -335,6 +350,13 @@
 		status: "healthy" | "warning" | "critical";
 	}
 	let contextUsage = $state<ContextUsageState | undefined>(undefined);
+
+	// A turn in this chat has been saved: read its usage here, and tell the
+	// context view (another tab) to read it too.
+	function turnWritten() {
+		refreshContextUsage();
+		if (conversationId) chatUsage.turnWritten(conversationId);
+	}
 
 	// Fetch context usage from API
 	async function refreshContextUsage() {
@@ -1342,6 +1364,10 @@
 		} catch (e) {
 			console.error('[ChatView] Failed to cancel chat:', e);
 		}
+		// The box saves the stopped turn once its loop has wound down, after
+		// this returns. Read usage once it has, and once more for a slow one.
+		setTimeout(turnWritten, 1500);
+		setTimeout(turnWritten, 5000);
 	}
 
 	async function handleChatSubmit(value: string) {
@@ -1457,7 +1483,7 @@
 				clearTimeout(refreshDataTimeout as any);
 			}
 			refreshDataTimeout = setTimeout(() => {
-				refreshContextUsage();
+				turnWritten();
 				refreshDataTimeout = null;
 			}, 2000);
 		} catch (error) {
