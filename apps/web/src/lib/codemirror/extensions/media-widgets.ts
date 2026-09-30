@@ -28,6 +28,7 @@ import { createWidgetIcon, disconnectRemeasure, remeasureOnResize } from '../wid
 
 import { collectCodeRanges, inCode } from './code-context';
 import { onContextGesture } from './long-press';
+import { backendUrl } from '../../config/backend';
 
 const MEDIA_REGEX = /!\[([^\]]*)\]\(([^)]+)\)/g;
 
@@ -86,7 +87,7 @@ function getFileExtension(name: string): string {
 function buildFileCardDOM(src: string, name: string): HTMLAnchorElement {
 	const card = document.createElement('a');
 	card.className = 'cm-file-card';
-	card.href = src;
+	card.href = backendUrl(src);
 	card.target = '_blank';
 	card.rel = 'noopener';
 	card.addEventListener('click', (e) => {
@@ -350,7 +351,7 @@ class ImageWidget extends WidgetType {
 
 		const img = document.createElement('img');
 		img.className = 'cm-image';
-		img.src = this.src;
+		img.src = backendUrl(this.src);
 		img.alt = this.displayAlt;
 		img.loading = 'lazy';
 		// Reserve the box before decode (see `imageDimensions`). The
@@ -424,7 +425,7 @@ class AudioWidget extends WidgetType {
 
 		const audio = document.createElement('audio');
 		audio.className = 'cm-audio-player';
-		audio.src = this.src;
+		audio.src = backendUrl(this.src);
 		audio.controls = true;
 		audio.preload = 'metadata';
 
@@ -456,7 +457,7 @@ class VideoWidget extends WidgetType {
 
 		const video = document.createElement('video');
 		video.className = 'cm-video-player';
-		video.src = this.src;
+		video.src = backendUrl(this.src);
 		video.controls = true;
 		video.preload = 'metadata';
 

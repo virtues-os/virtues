@@ -7,6 +7,7 @@
 	import MarkdownCodeBlock from './MarkdownCodeBlock.svelte';
 	import { parseEntityRoute } from '$lib/utils/refRoutes';
 	import { preprocessMarkdown } from '$lib/utils/markdownPreprocess';
+	import { backendUrl } from '$lib/config/backend';
 	import type { BundledTheme } from 'shiki';
 
 	interface Props {
@@ -216,7 +217,7 @@
 					     we render the inline ref instead. -->
 					<Ref displayName={label} {url} variant={refVariant} />
 				{:else}
-					<img src={url} alt={token?.text ?? ''} loading="lazy" style="max-width: 100%; height: auto;" />
+					<img src={url ? backendUrl(url) : url} alt={token?.text ?? ''} loading="lazy" style="max-width: 100%; height: auto;" />
 				{/if}
 			{/snippet}
 	</Streamdown>

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import { backendUrl } from "$lib/config/backend";
 
 	type WidthMode = "small" | "medium" | "full";
 
@@ -26,7 +27,7 @@
 >
 	<div
 		class="cover-image"
-		style="background-image: url({coverUrl})"
+		style="background-image: url({backendUrl(coverUrl)})"
 	></div>
 	{#if coverHover}
 		<div class="cover-overlay">
