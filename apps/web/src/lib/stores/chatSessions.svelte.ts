@@ -19,6 +19,8 @@ export interface ChatSession {
 	message_count: number;
 	model_used: string | null;
 	provider: string;
+	/** A reply landed after this chat was last on screen, on any device. */
+	unread?: boolean;
 }
 
 class ChatSessionStore {
@@ -151,6 +153,14 @@ class ChatSessionStore {
 				...this.sessions,
 			];
 		}
+	}
+
+	/** Clear a chat's unread flag locally, ahead of the server's seen mark. */
+	markRead(chatId: string) {
+		if (!this.sessions.some((s) => s.conversation_id === chatId && s.unread)) return;
+		this.sessions = this.sessions.map((s) =>
+			s.conversation_id === chatId ? { ...s, unread: false } : s,
+		);
 	}
 
 	/**

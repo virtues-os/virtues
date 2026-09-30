@@ -72,6 +72,12 @@ impl LiveTurns {
         turn
     }
 
+    /// Every chat with a turn still running, for the sidebar's spinner.
+    pub fn running(&self) -> Vec<String> {
+        let guard = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        guard.iter().filter(|(_, t)| !t.is_done()).map(|(id, _)| id.clone()).collect()
+    }
+
     /// The running turn for `chat_id`, if there is one that has not ended.
     pub fn get(&self, chat_id: &str) -> Option<Arc<LiveTurn>> {
         let guard = self.inner.read().unwrap_or_else(|e| e.into_inner());
@@ -103,6 +109,22 @@ impl LiveTurn {
 
     pub fn is_done(&self) -> bool {
         self.done.load(Ordering::SeqCst)
+    }
+
+    /// Resolves once the driver has finished the turn, or after `limit`.
+    pub async fn ended(&self, limit: Duration) {
+        let _ = tokio::time::timeout(limit, async {
+            loop {
+                // Registered before the check, so a `finish` between the two
+                // still wakes this waiter.
+                let notified = self.notify.notified();
+                if self.is_done() {
+                    return;
+                }
+                notified.await;
+            }
+        })
+        .await;
     }
 
     pub fn watchers(&self) -> usize {
@@ -224,5 +246,21 @@ mod tests {
         let new = turns.start("c3");
         turns.finish("c3", &old);
         assert!(turns.get("c3").is_some_and(|t| Arc::ptr_eq(&t, &new)));
+    }
+
+    #[tokio::test]
+    async fn running_lists_live_turns_and_ended_waits_for_finish() {
+        let turns = LiveTurns::new();
+        let turn = turns.start("c4");
+        assert_eq!(turns.running(), ["c4".to_string()]);
+
+        let waiter = {
+            let turn = turn.clone();
+            tokio::spawn(async move { turn.ended(Duration::from_secs(5)).await })
+        };
+        tokio::task::yield_now().await;
+        turns.finish("c4", &turn);
+        tokio::time::timeout(Duration::from_secs(1), waiter).await.expect("ended wakes on finish").unwrap();
+        assert!(turns.running().is_empty());
     }
 }

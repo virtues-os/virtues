@@ -133,6 +133,9 @@ pub struct ChatListItem {
     /// panel groups by it, so filing or renaming an old chat does not make it
     /// one you talked in today.
     pub last_message_at: Timestamp,
+    /// A reply landed after the person last had this chat on screen
+    /// (`app_chat_seen`). The sidebar's dot.
+    pub unread: bool,
 }
 
 /// Response for chat list
@@ -292,8 +295,14 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
             COALESCE(
                 (SELECT MAX(m.created_at) FROM app_chat_messages m WHERE m.chat_id = c.id),
                 created_at
-            ) AS last_message_at
+            ) AS last_message_at,
+            EXISTS (
+                SELECT 1 FROM app_chat_messages m
+                 WHERE m.chat_id = c.id AND m.role = 'assistant'
+                   AND m.created_at > COALESCE(s.seen_at, '-infinity'::timestamptz)
+            ) AS unread
         FROM app_chats c
+        LEFT JOIN app_chat_seen s ON s.chat_id = c.id
         WHERE deleted_at IS NULL
         ORDER BY last_message_at DESC
         LIMIT $1
@@ -316,6 +325,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
             let first_message_at: Timestamp = row.get("created_at");
             let last_updated: Timestamp = row.get("updated_at");
             let last_message_at: Timestamp = row.get("last_message_at");
+            let unread: bool = row.get("unread");
             Some(ChatListItem {
                 conversation_id: id,
                 title,
@@ -326,6 +336,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
                 first_message_at,
                 last_updated,
                 last_message_at,
+                unread,
             })
         })
         .collect();
@@ -334,6 +345,20 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
         conversations,
         source: "app_schema".to_string(),
     })
+}
+
+/// The person has this chat on screen as of now: every reply in it so far is
+/// read. Upserted, so the first open of a chat an applet started makes its row;
+/// an id with no chat behind it (a new chat not yet sent) is a no-op.
+pub async fn mark_seen(pool: &PgPool, chat_id: &str) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO app_chat_seen (chat_id, seen_at) SELECT id, now() FROM app_chats WHERE id = $1 \
+         ON CONFLICT (chat_id) DO UPDATE SET seen_at = GREATEST(app_chat_seen.seen_at, now())",
+    )
+    .bind(chat_id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// Get a single chat with all messages
@@ -1180,6 +1205,48 @@ mod tests {
         // Under the settle threshold: kept, and the client should keep asking.
         let r = generate_title(&pool, "chat_young".into(), &msgs).await.unwrap();
         assert_eq!((r.title.as_str(), r.done), ("Kept", false));
+    }
+
+    /// A reply after the last look is unread; looking clears it; a chat never
+    /// opened counts every reply; an unknown id is a no-op.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn unread_follows_replies_after_the_last_look(pool: PgPool) {
+        for id in ["chat_seen", "chat_never"] {
+            sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ($1, 't', 0)")
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        mark_seen(&pool, "chat_seen").await.unwrap();
+        mark_seen(&pool, "chat_nowhere").await.unwrap();
+        let unread = |pool: PgPool| async move {
+            let list = list_chats(&pool, 10).await.unwrap();
+            let mut v: Vec<(String, bool)> =
+                list.conversations.into_iter().map(|c| (c.conversation_id, c.unread)).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(unread(pool.clone()).await, [("chat_never".into(), false), ("chat_seen".into(), false)]);
+
+        for (i, id) in ["chat_seen", "chat_never"].into_iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO app_chat_messages (id, chat_id, role, content, sequence_num, created_at) \
+                 VALUES ($1, $2, 'assistant', 'hi', 0, now() + interval '1 second')",
+            )
+            .bind(format!("m{i}"))
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        assert_eq!(unread(pool.clone()).await, [("chat_never".into(), true), ("chat_seen".into(), true)]);
+
+        sqlx::query("UPDATE app_chat_seen SET seen_at = now() + interval '2 seconds'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(unread(pool.clone()).await, [("chat_never".into(), true), ("chat_seen".into(), false)]);
     }
 
     #[sqlx::test(migrations = "./migrations")]

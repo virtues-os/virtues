@@ -2146,6 +2146,14 @@ export function getChat<T = unknown>(id: string, signal?: AbortSignal): Promise<
 export function getChatUsage<T = unknown>(id: string): Promise<T> {
 	return apiGet<T>(`/chats/${encodeURIComponent(id)}/usage`);
 }
+/** The chats with a turn running on the box right now, from any device. */
+export function listLiveChats(): Promise<{ running: string[] }> {
+	return apiGet('/chats/live');
+}
+/** The person has this chat on screen: every reply in it so far is read. */
+export function markChatSeen(id: string): Promise<unknown> {
+	return apiSend('POST', `/chats/${encodeURIComponent(id)}/seen`, {});
+}
 export function setChatTitle<T = unknown>(body: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/chats/title', body);
 }
