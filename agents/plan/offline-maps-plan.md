@@ -4,14 +4,18 @@ The box's own Protomaps maps are built end to end: the box serves its files,
 virtues-api serves them to boxes, the monthly cut produces them, and the box
 downloads what its owner's history calls for (2d6f3950, 1ee9fa7f, 5cb80a62,
 e2733059). The design and why each rule is what it is:
-[map-tiles.md](../record/map-tiles.md). No real box has files yet. Delete this
-plan when the list below is empty.
+[map-tiles.md](../record/map-tiles.md). The first build was cut on
+2026-09-28 and a dev box synced from it on 2026-09-29; no released box has
+files yet. Delete this plan when the list below is empty.
 
 ## Open
 
-- **Run it.** The first cut on the cloud server and a real box's first sync.
-  Owned by [cloud-consolidation-plan.md](cloud-consolidation-plan.md), which
-  has the steps.
+- **Fonts on a box.** The first build's `assets.tar` held symlinks, which
+  the box refuses, so the synced box has tiles but no fonts or sprites.
+  Fixed in `cut.py`; the next build has to land and a box unpack it. Owned
+  by [cloud-consolidation-plan.md](cloud-consolidation-plan.md). The box
+  leaves a half-unpacked `assets.new/` behind when it refuses an archive;
+  harmless (nothing reads it), but it could clean up after itself.
 - **Manual page:** where maps come from, and the privacy line: "Your server
   downloads maps in fixed regions, the same files every server in that region
   takes, so nothing it downloads says where in the region you live or what

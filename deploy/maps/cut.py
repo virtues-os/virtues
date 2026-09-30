@@ -155,7 +155,9 @@ def assets_tar(out: Path) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(["git", "clone", "-q", "--depth", "1", "--filter=blob:none", "--sparse", ASSETS_REPO, tmp], check=True)
         subprocess.run(["git", "-C", tmp, "sparse-checkout", "set", "fonts", "sprites/v4"], check=True)
-        with tarfile.open(out, "w") as tar:
+        # dereference: the assets repo aliases some fonts with symlinks, and the
+        # box refuses any link in the archive (virtues-core/src/maps/sync.rs).
+        with tarfile.open(out, "w", dereference=True) as tar:
             tar.add(Path(tmp) / "fonts", arcname="fonts")
             tar.add(Path(tmp) / "sprites/v4", arcname="sprites")
 
