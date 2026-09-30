@@ -42,6 +42,13 @@ export interface DerivedWindow {
 
 export type SectionKind = "place" | "transit" | "gap" | "sleep";
 
+/** What a click on the rail picked: a section or a row, by kind and span. */
+export interface RailPick {
+	kind: SectionKind | "conversation" | "walk";
+	s: number;
+	e: number;
+}
+
 export interface RailRow {
 	kind: "conversation" | "walk";
 	s: number;
@@ -103,7 +110,7 @@ export function buildRail(w: DerivedWindow, start: number, end: number): RailSec
 	// The located stretches in order, for "likely still at" beside a gap.
 	const located = inDay.filter((s) => s.kind !== "sleep");
 
-	const sections: RailSection[] = inDay.map((s) => {
+	const built: RailSection[] = inDay.map((s) => {
 		const cs = Math.max(s.s, start);
 		const ce = Math.min(s.e, end);
 		const base = { s: cs, e: ce, placeId: s.timeline_place_id, rows: [] as RailRow[], notes: [] as string[] };
@@ -128,6 +135,10 @@ export function buildRail(w: DerivedWindow, start: number, end: number): RailSec
 			}
 		}
 	});
+	// In the order the day shows them: by where each starts inside the day,
+	// a night before the stay it began in when both open at midnight (the
+	// prototype lists the nights first, main.js:1566-1572).
+	const sections = built.sort((a, b) => a.s - b.s || (a.kind === "sleep" ? 0 : 1) - (b.kind === "sleep" ? 0 : 1));
 
 	const rows: RailRow[] = w.moments
 		.map((m) => ({ ...m, s: t(m.started_at), e: t(m.ended_at) }))
