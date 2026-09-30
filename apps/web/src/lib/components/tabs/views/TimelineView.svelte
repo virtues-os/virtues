@@ -15,13 +15,13 @@
 	import { atlasStyle } from '$lib/map/atlas';
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
 	import type { GeoJSONSource, Map as MlMap, StyleSpecification } from 'maplibre-gl';
-	import { fetchDayWindow, lastMeasured, localDay, quietDayVerdict, stepDay } from '$lib/timeline/day';
+	import { fetchDayBounds, fetchDayWindow, lastMeasured, localDay, quietDayVerdict, stepDay } from '$lib/timeline/day';
 	import { cleanTrack, dropSpikes, flagHoles, splitTrack, toFixes, type Line } from '$lib/timeline/track';
 	import { APPLE_LIGHT, hsl, recolour } from '$lib/timeline/palette';
+	import { COLOURS, colourVars } from '$lib/timeline/colours';
 
-	// The prototype's place colour, `--c-place` (dayback/index.html:17): path and pin
-	// are location, so they wear it (dayback/src/main.js:1755).
-	const TRACK = '#4C86D6';
+	// The path and the pin are location, so they wear the place colour.
+	const TRACK = COLOURS.place;
 	// Without the box's map archives there is no basemap: a plain surface in the
 	// palette's land colour, so the path still draws and the page doesn't read
 	// as broken.
@@ -132,16 +132,18 @@
 		const mine = ++asked;
 		status = 'loading';
 		note = null;
-		const { startMs, endMs } = localDay(slug);
-		let window;
+		let bounds, window;
 		try {
-			window = await fetchDayWindow(startMs, endMs);
+			// The day in the zone it woke up in, then every fix around it.
+			bounds = await fetchDayBounds(slug);
+			window = await fetchDayWindow(bounds.startMs, bounds.endMs);
 		} catch (e) {
 			console.warn('[Timeline] day fetch failed', e);
 			if (mine === asked) status = 'error';
 			return;
 		}
 		if (mine !== asked) return;
+		const { startMs, endMs, zone } = bounds;
 		// Spikes go first, then holes are judged across the whole window, then the
 		// day is cut out of it.
 		const all = flagHoles(dropSpikes(toFixes(window.points)));
@@ -163,7 +165,7 @@
 		// The prototype's follow zoom is 14 (dayback/src/main.js:938).
 		if (last) m.jumpTo({ center: [last.lng, last.lat], zoom: 14 });
 		else m.jumpTo({ center: [0, 20], zoom: 1.5 });
-		const measured = last ? lastMeasured(last.t, false) : null;
+		const measured = last ? lastMeasured(last.t, false, zone) : null;
 		note = { title: 'No location fix', lines: measured ? [sentence(measured)] : [] };
 		let verdict: string | null = null;
 		try {
@@ -204,10 +206,10 @@
 	});
 </script>
 
-<div class="timeline">
+<div class="timeline" style={colourVars}>
 	<div class="timeline-map" bind:this={container}></div>
 
-	<div class="day-bar" bind:this={dayBar}>
+	<div class="day-bar tile" bind:this={dayBar}>
 		<button class="step" aria-label="Previous day" onclick={() => (date = stepDay(date, -1))}>‹</button>
 		<button class="date" onclick={() => picker?.showPicker?.()}>{label}</button>
 		<button class="step" aria-label="Next day" disabled={date >= today} onclick={() => (date = stepDay(date, 1))}>›</button>
@@ -229,14 +231,14 @@
 	</div>
 
 	{#if status === 'empty' && note}
-		<div class="note">
+		<div class="note tile">
 			<p class="note-title">{note.title}</p>
 			{#each note.lines as line (line)}
 				<p class="note-line">{line}</p>
 			{/each}
 		</div>
 	{:else if status === 'error'}
-		<div class="note"><p class="note-title">Your server couldn't load {label}. Reload the page to try again.</p></div>
+		<div class="note tile"><p class="note-title">Your server couldn't load {label}. Reload the page to try again.</p></div>
 	{/if}
 	{#if !basemap}
 		<p class="no-basemap">Your server has no map tiles yet</p>
@@ -262,8 +264,14 @@
 		gap: 2px;
 		padding: 4px;
 		border-radius: 999px;
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border);
+	}
+	/* A tile over the map, in the prototype's look: a solid ground, a faint
+	   ink border and one soft shadow (dayback/index.html:599-601). */
+	.tile {
+		background: var(--c-tile);
+		border: 1px solid color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
+		box-shadow: var(--tile-shadow);
 	}
 	.day-bar button {
 		border: 0;
@@ -313,9 +321,6 @@
 		transform: translateX(-50%);
 		padding: 8px 14px;
 		border-radius: 12px;
-		/* Floats over the map, so it takes the elevated surface; it holds no
-		   control, so no border (agents/build/design-grammar.md). */
-		background: var(--color-surface-elevated);
 		text-align: center;
 	}
 	.note p {

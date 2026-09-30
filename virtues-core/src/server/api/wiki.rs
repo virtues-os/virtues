@@ -23,6 +23,8 @@ pub fn routes() -> Router<AppState> {
         .route("/api/timeline/day/:date", get(timeline_get_day_handler))
         // The Timeline's derived stays, drives, nights and moments over a window
         .route("/api/timeline/derived", get(timeline_derived_handler))
+        // One local day's bounds, in the zone the day woke up in
+        .route("/api/timeline/day-window/:date", get(timeline_day_window_handler))
         // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
         .route("/api/today/:date/streams", get(today_streams_handler))
         // Home-page loops — weather · upcoming calendar · unnamed-place backlog
@@ -1181,6 +1183,14 @@ pub async fn timeline_derived_handler(
         return error_response(Error::InvalidInput("end must be after start".into()));
     }
     api_response(crate::timeline::window(state.db.pool(), q.start, q.end).await)
+}
+
+/// A local day's bounds, in the zone the day woke up in (`YYYY-MM-DD`).
+pub async fn timeline_day_window_handler(State(state): State<AppState>, Path(date): Path<String>) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(d) => api_response(crate::timeline::day_window(state.db.pool(), d).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
+    }
 }
 
 /// Get timeline location chunks for a day (movement map)
