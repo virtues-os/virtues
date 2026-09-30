@@ -7,15 +7,38 @@
  * hole across midnight is still a hole). Visits come back under the UTC day
  * they started in, so neighbouring days never repeat one.
  *
- * The day is the viewer's local day for now. A day recorded while travelling
- * belongs to that day's own zone (Virtues' timezone model); that comes later.
+ * A day's bounds come from the server (`/timeline/day-window`): local midnight
+ * in the zone the day woke up in, to where the next day begins - so a day
+ * recorded while travelling keeps its own clock.
  */
 import { apiGet } from "$lib/api/client";
 import { getDayFacts, getDaySources, type TimelineDayLocationChunk, type TimelineDayPoint, type TimelineDayView } from "$lib/wiki/api";
+import type { DerivedWindow } from "./rail";
 
 const DAY_MS = 86_400_000;
 
-/** The local day a YYYY-MM-DD slug names, as [startMs, endMs). */
+/** A local day's bounds and the zone it is read in. */
+export interface DayBounds {
+	startMs: number;
+	endMs: number;
+	zone: string;
+}
+
+/** The day a YYYY-MM-DD slug names, in the zone it woke up in. */
+export async function fetchDayBounds(slug: string): Promise<DayBounds> {
+	const w = await apiGet<{ zone: string; started_at: string; ended_at: string }>(`/timeline/day-window/${slug}`);
+	return { startMs: Date.parse(w.started_at), endMs: Date.parse(w.ended_at), zone: w.zone };
+}
+
+/** The server's derived stays, drives, gaps, nights and moments over a day
+ *  (`/timeline/derived`, rebuilt from the raw record every 15 minutes). */
+export async function fetchDerived(b: DayBounds): Promise<DerivedWindow> {
+	const q = new URLSearchParams({ start: new Date(b.startMs).toISOString(), end: new Date(b.endMs).toISOString() });
+	return apiGet<DerivedWindow>(`/timeline/derived?${q}`);
+}
+
+/** The day a YYYY-MM-DD slug names in the browser's zone, as [startMs, endMs):
+ *  for naming and stepping dates, never for cutting the record. */
 export function localDay(slug: string): { startMs: number; endMs: number } {
 	const [y, m, d] = slug.split("-").map(Number);
 	return { startMs: new Date(y, m - 1, d).getTime(), endMs: new Date(y, m - 1, d + 1).getTime() };
@@ -48,15 +71,14 @@ export async function fetchDayWindow(
 	};
 }
 
-const MOS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const fmtT = (d: Date) => `${d.getHours() % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")} ${d.getHours() < 12 ? "AM" : "PM"}`;
-
 /** When location was last measured, in the prototype's words (`honestWhere`,
- *  dayback/src/main.js:958): "last measured at 6:00 PM" on the same day,
- *  "last measured Sep 23 · 6:00 PM" on an earlier one. */
-export function lastMeasured(ms: number, sameDay: boolean): string {
+ *  dayback/src/main.js:958), on the day's own clock: "last measured at
+ *  6:00 PM" on the same day, "last measured Sep 23 · 6:00 PM" on an earlier one. */
+export function lastMeasured(ms: number, sameDay: boolean, zone: string): string {
 	const d = new Date(ms);
-	return `last measured ${sameDay ? "at " + fmtT(d) : `${MOS[d.getMonth()]} ${d.getDate()} · ${fmtT(d)}`}`;
+	const time = d.toLocaleTimeString("en-US", { timeZone: zone, hour: "numeric", minute: "2-digit" });
+	const date = d.toLocaleDateString("en-US", { timeZone: zone, month: "short", day: "numeric" });
+	return `last measured ${sameDay ? `at ${time}` : `${date} · ${time}`}`;
 }
 
 /** What the record did while location was quiet - the prototype's verdict

@@ -20,7 +20,9 @@ use chrono::{DateTime, NaiveDate};
 use chrono_tz::Tz;
 use serde_json::json;
 
-pub use store::{rebuild, window, RebuildStats, TimelineMoment, TimelinePlace, TimelineSpan, TimelineWindow};
+pub use store::{
+    day_window, rebuild, window, DayWindow, RebuildStats, TimelineMoment, TimelinePlace, TimelineSpan, TimelineWindow,
+};
 
 pub(crate) type Ms = i64;
 pub(crate) const MIN: Ms = 60_000;

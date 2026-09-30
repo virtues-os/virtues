@@ -217,10 +217,15 @@ async fn load(pool: &PgPool) -> Result<Record> {
     .map(|r| Ok(ms(r.try_get("occurred_at")?)))
     .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
 
-    let stored_home: Option<Option<String>> =
+    let home = home_zone(pool).await?;
+    Ok(Record { fixes, visits, windows, sleep_rows, step_times, home })
+}
+
+/// The home zone: the profile's, else the server's own clock's.
+async fn home_zone(pool: &PgPool) -> Result<chrono_tz::Tz> {
+    let stored: Option<Option<String>> =
         sqlx::query_scalar("SELECT home_timezone FROM app_user_profile LIMIT 1").fetch_optional(pool).await?;
-    // No profile zone yet: the server's own clock is the home zone.
-    let home = match stored_home.flatten().or_else(crate::timezone::system_timezone) {
+    Ok(match stored.flatten().or_else(crate::timezone::system_timezone) {
         Some(name) => match name.parse::<chrono_tz::Tz>() {
             Ok(tz) => tz,
             Err(_) => {
@@ -230,9 +235,50 @@ async fn load(pool: &PgPool) -> Result<Record> {
         },
         // No profile zone and no system zone: a day without a fix reads in UTC.
         None => chrono_tz::UTC,
-    };
+    })
+}
 
-    Ok(Record { fixes, visits, windows, sleep_rows, step_times, home })
+#[derive(Debug, Clone, Serialize)]
+pub struct DayWindow {
+    /// The zone the day woke up in (IANA).
+    pub zone: String,
+    pub started_at: DateTime<Utc>,
+    /// Where the next day begins, in the next day's zone: days tile across a
+    /// zone change, so a flight day runs 22 or 26 hours.
+    pub ended_at: DateTime<Utc>,
+}
+
+/// One local day's bounds (`dayback/build.py:252-267`): it starts at local
+/// midnight in the zone of its first fix (the day taken in the home zone to
+/// find that fix) and ends where the next day starts.
+pub async fn day_window(pool: &PgPool, date: chrono::NaiveDate) -> Result<DayWindow> {
+    let home = home_zone(pool).await?;
+    let zone_of = |date: chrono::NaiveDate| async move {
+        let from = super::zone::midnight(date, home);
+        let first = sqlx::query(
+            "SELECT latitude, longitude FROM data_location_point \
+             WHERE occurred_at >= $1 AND occurred_at < $2 AND deleted_at_source IS NULL AND NOT is_archived \
+             ORDER BY occurred_at LIMIT 1",
+        )
+        .bind(instant(from))
+        .bind(instant(from + 24 * super::HOUR))
+        .fetch_optional(pool)
+        .await?;
+        let zone = match first {
+            Some(r) => super::zone::at(r.try_get("latitude")?, r.try_get("longitude")?).unwrap_or(home),
+            // No fix that day: it is read in the home zone.
+            None => home,
+        };
+        Ok::<_, crate::error::Error>(zone)
+    };
+    let zone = zone_of(date).await?;
+    let next = date.succ_opt().expect("a date within range");
+    let next_zone = zone_of(next).await?;
+    Ok(DayWindow {
+        zone: zone.name().to_string(),
+        started_at: instant(super::zone::midnight(date, zone)),
+        ended_at: instant(super::zone::midnight(next, next_zone)),
+    })
 }
 
 struct WikiPlace {
