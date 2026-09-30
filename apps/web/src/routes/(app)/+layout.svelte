@@ -20,6 +20,8 @@
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { chatInstances } from "$lib/stores/chatInstances.svelte";
+	import { isTemporaryRoute } from "$lib/components/chat/state/chatRoute";
 	import { pinsStore } from "$lib/stores/pins.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
@@ -73,8 +75,23 @@
 		// the app itself: Setup and the recovery screens hold state a reload
 		// would lose, like an open Bluetooth link. agents/plan/local-ui-plan.md.
 		void bundleUpdateReady().then((ready) => {
-			if (ready && document.hidden) window.location.reload();
+			if (ready && document.hidden && nothingToLose()) window.location.reload();
 		});
+	}
+
+	/**
+	 * Would a reload now cost anything that isn't saved? The staged UI waits
+	 * for the next time the app is hidden with nothing at stake: a temporary
+	 * chat (its transcript lives only in this page), a reply still streaming,
+	 * or text in the focused field (a half-entered key or rename). Composer
+	 * drafts are saved as they are typed, so they don't count.
+	 */
+	function nothingToLose(): boolean {
+		const tabs = windowShellStore.panes.flatMap((p) => p.tabs);
+		if (tabs.some((t) => isTemporaryRoute(t.route))) return false;
+		if (chatInstances.debug().some((c) => c.status === "streaming" || c.status === "submitted")) return false;
+		const focused = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+		return !(focused && typeof focused.value === "string" && focused.value.length > 0);
 	}
 
 	// Get session expiry from page data

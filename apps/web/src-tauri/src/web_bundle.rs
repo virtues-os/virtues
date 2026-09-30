@@ -237,6 +237,14 @@ pub fn active_bundle(app_data: &Path) -> Option<PathBuf> {
 // relaunched, since closing its window only hides it) instead of waiting for
 // the next launch. See agents/plan/local-ui-plan.md.
 
+/// Held while pointers move, by an apply and by a page load settling
+/// rollback, so neither sees the other half-done. Held for file writes only,
+/// never across a download, so a page load never waits on the network.
+fn pointer_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// The current page load's bundle, per bundle store (one per app; keyed so the
 /// tests, which each use their own store, cannot see each other's pins). No
 /// entry: no page has loaded yet. `None`: pinned to the baked build.
@@ -252,6 +260,20 @@ fn pinned(app_data: &Path) -> Option<Option<String>> {
     serving().lock().ok()?.get(&bundles_root(app_data)).cloned()
 }
 
+/// The box's own paths. They are data, never part of the app, so the app's
+/// scheme answers them with a 404 rather than the SPA fallback. The page is
+/// meant to reach them on the box (`backendUrl()` / the fetch rewrite in
+/// `apps/web/src/lib/config/backend.ts`); a request that lands here instead
+/// is a call site that forgot to, and serving it `200.html` both hid that
+/// (an image that renders nothing, an upload that "succeeds") and started a
+/// new page load in the middle of the page, moving its bundle pin.
+pub fn is_backend_path(uri_path: &str) -> bool {
+    const PREFIXES: [&str; 7] = ["/api", "/auth", "/webhook", "/health", "/face", "/ws", "/oauth"];
+    PREFIXES
+        .iter()
+        .any(|p| uri_path == *p || uri_path.starts_with(&format!("{p}/")))
+}
+
 /// Is `resolved` (from [`resolve_request_path`]) the document a page load
 /// starts with, rather than one of its assets?
 pub fn is_page_document(resolved: &str) -> bool {
@@ -262,6 +284,7 @@ pub fn is_page_document(resolved: &str) -> bool {
 /// to whatever is active now. Call for the page document, before reading it.
 /// Returns true when a rollback happened (worth a log line).
 pub fn begin_page_load(app_data: &Path) -> bool {
+    let _pointers = pointer_lock();
     let rolled_back = resolve_pending(app_data);
     let id = active_bundle_id(app_data);
     if let Ok(mut g) = serving().lock() {
@@ -798,14 +821,33 @@ fn apply_tarball(
     }
 
     let target = root.join(&remote.content_hash);
-    let _ = fs::remove_dir_all(&target);
-    fs::rename(&staging, &target)?;
-
-    // Remember what we are replacing before we replace it.
-    if let Some(prev) = read_pointer(&root, PTR_ACTIVE) {
-        let _ = write_pointer(&root, PTR_PREVIOUS, &prev);
+    if is_usable(&target) {
+        // Already here under this hash, so the same files: keep the directory
+        // (a page may be serving from it) and drop the download.
+        let _ = fs::remove_dir_all(&staging);
     } else {
-        clear_pointer(&root, PTR_PREVIOUS); // replacing the baked bundle
+        let _ = fs::remove_dir_all(&target);
+        fs::rename(&staging, &target)?;
+    }
+
+    // The pointer writes below and a page load's rollback settling
+    // (`begin_page_load`) must not interleave: a load landing between PENDING
+    // and ACTIVE would read "pending names a bundle that is not active", clear
+    // it as a torn apply, and leave the new bundle active with no rollback.
+    let _pointers = pointer_lock();
+
+    // Remember what we are replacing, as the rollback target, only if it is
+    // known to boot. An active bundle still pending never confirmed a page
+    // load (two applies without a reload in between), so it stays out and the
+    // last confirmed `previous` stands: rolling back must land on something
+    // that has rendered.
+    let pending_now = read_pointer(&root, PTR_PENDING);
+    match read_pointer(&root, PTR_ACTIVE) {
+        Some(prev) if pending_now.as_deref() != Some(prev.as_str()) => {
+            let _ = write_pointer(&root, PTR_PREVIOUS, &prev);
+        }
+        Some(_) => {}
+        None => clear_pointer(&root, PTR_PREVIOUS), // replacing the baked bundle
     }
     // PENDING first, then ACTIVE. These are two files, so a crash lands
     // between them, and the order decides which way that cuts. ACTIVE-first
@@ -1498,6 +1540,18 @@ mod tests {
     }
 
     #[test]
+    fn box_paths_are_never_the_app() {
+        assert!(is_backend_path("/api/drive/files/f1/download"));
+        assert!(is_backend_path("/api"));
+        assert!(is_backend_path("/ws/yjs/p1"));
+        assert!(is_backend_path("/health"));
+        assert!(!is_backend_path("/apiary"), "a route that merely starts with the letters");
+        assert!(!is_backend_path("/"));
+        assert!(!is_backend_path("/setup"));
+        assert!(!is_backend_path("/_app/immutable/a.js"));
+    }
+
+    #[test]
     fn a_page_keeps_its_own_bundle_until_the_next_load() {
         // The bug this pin exists for: an apply mid-session moved `active`, and
         // the open page's next chunk request was answered from the new bundle,
@@ -1527,6 +1581,37 @@ mod tests {
         assert!(!update_ready(&app));
         confirm_page_load(&app);
         assert_eq!(read_pointer(&root, PTR_PENDING), None, "confirmed");
+    }
+
+    #[test]
+    fn two_applies_without_a_reload_keep_the_confirmed_rollback_target() {
+        // A confirmed; B applied but never loaded; then C applied. If C fails
+        // to boot, rollback must land on A, which rendered, not on B.
+        let app = tmp();
+        let root = bundles_root(&app);
+        plant(&root, "prevA");
+        write_pointer(&root, PTR_ACTIVE, "prevA").unwrap();
+
+        let tar_b = tarball(&bundle("0.2.0", BUNDLE_HASH));
+        assert!(matches!(apply_tarball(&app, &tar_b, BUNDLE_HASH, 1, Some("0.1.0")).unwrap(), Outcome::Applied { .. }));
+        assert_eq!(read_pointer(&root, PTR_PREVIOUS).as_deref(), Some("prevA"));
+
+        // C: a different bundle, hashed for real, applied while B is pending.
+        let c_dir = tmp();
+        fs::write(c_dir.join("index.html"), "<html>c</html>").unwrap();
+        fs::write(c_dir.join("200.html"), "<html>c</html>").unwrap();
+        let c_hash = content_hash(&c_dir).unwrap();
+        let tar_c = tarball(&[
+            ("index.html".into(), "<html>c</html>".into()),
+            ("200.html".into(), "<html>c</html>".into()),
+            (
+                MANIFEST_NAME.into(),
+                format!(r#"{{"version":"0.3.0","contentHash":"{c_hash}","minShellVersion":1}}"#),
+            ),
+        ]);
+        assert!(matches!(apply_tarball(&app, &tar_c, &c_hash, 1, Some("0.1.0")).unwrap(), Outcome::Applied { .. }));
+        assert_eq!(read_pointer(&root, PTR_PREVIOUS).as_deref(), Some("prevA"), "the unconfirmed B never becomes previous");
+        assert_eq!(read_pointer(&root, PTR_ACTIVE).as_deref(), Some(c_hash.as_str()));
     }
 
     #[test]

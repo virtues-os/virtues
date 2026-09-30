@@ -49,6 +49,10 @@
 		}
 		phase = "updating";
 		const until = Date.now() + UPDATE_WAIT_MS;
+		// The server goes away while it restarts. Once it has gone and come
+		// back, its answer is final: new enough opens the app, and still too
+		// old stops waiting instead of spinning out the full 20 minutes.
+		let wentAway = false;
 		while (Date.now() < until) {
 			await new Promise((r) => setTimeout(r, 5000));
 			const v = await boxApiVersion(fetch, true);
@@ -56,10 +60,12 @@
 				window.location.replace("/");
 				return;
 			}
+			if (v === null) wentAway = true;
+			else if (wentAway) break;
 		}
-		// The box came back (or never went) without reaching the floor.
-		error = "Your server finished, but it's still not new enough for this app. Check for another update.";
 		await check();
+		// After `check`, which clears the note, so this one is seen.
+		error = "Your server finished updating, but it's still not new enough for this app. Check for another update.";
 	}
 
 	onMount(() => void check());

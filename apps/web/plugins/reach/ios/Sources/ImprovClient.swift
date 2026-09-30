@@ -526,8 +526,11 @@ final class ImprovClient: NSObject {
         self.onImprovError = { code in
           if code == 0x02 {
             finish(nil, ("unsupported", "Your server needs an update before you can reconnect it over Bluetooth."))
-          } else {
+          } else if code == 0x04 {
             finish(nil, ("refused", "This server isn't asking for its owner."))
+          } else {
+            // A garbled packet is a failure to talk, not an answer about ownership.
+            finish(nil, ("failed", "Your server couldn't read that request. Try again."))
           }
         }
         self.onResult = { data in
@@ -561,10 +564,16 @@ final class ImprovClient: NSObject {
           self.onImprovError = nil
           completion(e)
         }
-        // One answer for every refusal (not paired, revoked, stale challenge):
-        // the server gives only one, deliberately.
-        self.onImprovError = { _ in
-          finish(("refused", "This server doesn't recognize this phone."))
+        // Only 0x04 NotAuthorized means "not yours" (or a stale challenge,
+        // which the caller retries once): the server gives one answer for
+        // both, deliberately. A garbled packet is a failure to talk, and
+        // calling it a refusal made /reconnect hide the owner's own server.
+        self.onImprovError = { code in
+          if code == 0x04 {
+            finish(("refused", "This server doesn't recognize this phone."))
+          } else {
+            finish(("failed", "Your server couldn't read that request. Try again."))
+          }
         }
         self.onResult = { data in
           if Self.parseResult(data, command: 0x89) != nil { finish(nil) }

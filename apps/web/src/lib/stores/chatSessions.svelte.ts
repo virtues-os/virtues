@@ -73,10 +73,13 @@ class ChatSessionStore {
 	 */
 	async load() {
 		this.isLoading = true;
-		this.error = null;
+		// The error is cleared on success, not here: `reachability` reads it,
+		// and clearing it at the start of every retry made the "Can't reach your
+		// server" bar vanish and come back each time the app looked again.
 
 		try {
 			const data = await listChats<{ conversations?: ChatSession[] }>();
+			this.error = null;
 			// The getting-started chat is not a conversation anyone started:
 			// the server seeds it, and since 2026-09-24 it only carries the
 			// interview behind Setup's one-question pages. Listed, it showed
