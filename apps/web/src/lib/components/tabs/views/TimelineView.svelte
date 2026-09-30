@@ -36,7 +36,9 @@
 	};
 
 	let container: HTMLDivElement;
-	let dayBar = $state<HTMLDivElement | null>(null);
+	let dayBar = $state<HTMLElement | null>(null);
+	/** The top bar's height: the rail and the notes start below it. */
+	let barH = $state(0);
 	let picker = $state<HTMLInputElement | null>(null);
 	let note = $state<{ title: string; lines: string[] } | null>(null);
 	let map: MlMap | null = null;
@@ -69,6 +71,32 @@
 	let basemap = $state(true);
 	let status = $state<'loading' | 'shown' | 'empty' | 'error'>('loading');
 	let asked = 0; // the latest day asked for, so a slow answer can't overwrite a newer one
+
+	/** The bar's title (dayback/src/main.js:1531-1534): "Tuesday, July 28",
+	 *  with the year when it isn't this one. */
+	const title = $derived.by(() => {
+		const d = new Date(localDay(date).startMs);
+		const thisYear = d.getFullYear() === new Date().getFullYear();
+		return d.toLocaleDateString('en-US', {
+			weekday: 'long',
+			month: 'long',
+			day: 'numeric',
+			...(thisYear ? {} : { year: 'numeric' }),
+		});
+	});
+
+	/** The week strip (main.js:1535-1538): Sunday to Saturday around the day;
+	 *  a day of another month in the faint ink; a day after today can't be
+	 *  opened, as the prototype's days outside its record couldn't. */
+	const week = $derived.by(() => {
+		const dow = new Date(localDay(date).startMs).getDay();
+		const month = new Date(localDay(date).startMs).getMonth();
+		return Array.from({ length: 7 }, (_, i) => {
+			const slug = stepDay(date, i - dow);
+			const d = new Date(localDay(slug).startMs);
+			return { slug, letter: 'SMTWTFS'[i], day: d.getDate(), other: d.getMonth() !== month, off: slug > today };
+		});
+	});
 
 	const label = $derived.by(() => {
 		const d = new Date(localDay(date).startMs);
@@ -417,16 +445,41 @@
 	});
 </script>
 
-<div class="timeline" style={colourVars}>
+<div class="timeline" style="{colourVars}; --bar-h: {barH}px">
 	<div class="timeline-map" bind:this={container}></div>
 
-	<div class="day-bar tile" bind:this={dayBar}>
-		<button class="step" aria-label="Previous day" onclick={() => (date = stepDay(date, -1))}>‹</button>
-		<button class="date" onclick={() => picker?.showPicker?.()}>{label}</button>
-		<button class="step" aria-label="Next day" disabled={date >= today} onclick={() => (date = stepDay(date, 1))}>›</button>
-		{#if date !== today}
-			<button class="today" onclick={() => (date = today)}>Today</button>
-		{/if}
+	<!-- The top navigation bar (dayback/index.html:1026-1042, main.js:1531-1544):
+	     the day's title and its week, edge to edge; the chevrons step a week,
+	     never past today. -->
+	<header class="day-head" bind:this={dayBar} bind:clientHeight={barH}>
+		<button class="day-title" onclick={() => picker?.showPicker?.()}>{title}</button>
+		<div class="week-row">
+			<button class="week-step" aria-label="Previous week" onclick={() => (date = stepDay(date, -7))}>‹</button>
+			<div class="week">
+				{#each week as d (d.slug)}
+					<button
+						class="cell"
+						class:cur={d.slug === date}
+						class:other={d.other}
+						class:off={d.off}
+						disabled={d.off}
+						onclick={() => (date = d.slug)}
+					>
+						<span class="dow">{d.letter}</span>
+						<span class="num">{d.day}</span>
+					</button>
+				{/each}
+			</div>
+			<button
+				class="week-step"
+				aria-label="Next week"
+				disabled={date >= today}
+				onclick={() => {
+					const next = stepDay(date, 7);
+					date = next > today ? today : next;
+				}}>›</button
+			>
+		</div>
 		<input
 			bind:this={picker}
 			class="picker"
@@ -439,7 +492,7 @@
 				if (e.currentTarget.value) date = e.currentTarget.value;
 			}}
 		/>
-	</div>
+	</header>
 
 	<TimelineRail bind:this={rail} {sections} {zone} {playT} focus={railFocus} onpick={reveal} />
 	{#if railError && status !== 'error' && status !== 'loading'}
@@ -470,54 +523,114 @@
 		position: absolute;
 		inset: 0;
 	}
-	.day-bar {
+	/* The bar: frosted over the map, one hairline under it (index.html:1027-1028). */
+	.day-head {
 		position: absolute;
-		top: 16px;
-		left: 50%;
-		transform: translateX(-50%);
+		top: 0;
+		left: 0;
+		right: 0;
+		z-index: 3;
+		text-align: center;
+		/* design-ok: the Dayback prototype's bar padding (owner's call, 2026-09-30) */
+		padding: 9px 0 12px;
+		background: color-mix(in srgb, var(--color-background) 84%, transparent);
+		backdrop-filter: blur(18px) saturate(1.6);
+		-webkit-backdrop-filter: blur(18px) saturate(1.6);
+		border-bottom: 1px solid color-mix(in srgb, var(--color-foreground) 8%, transparent);
+	}
+	/* The serif page title, as Virtues' Home dateline: regular, never bold. */
+	.day-title {
+		border: 0;
+		background: none;
+		padding: 0;
+		cursor: pointer;
+		font-family: var(--font-serif);
+		font-weight: 400;
+		font-size: 36px;
+		letter-spacing: -0.02em;
+		line-height: 1;
+		color: var(--color-foreground);
+	}
+	.week-row {
 		display: flex;
 		align-items: center;
-		gap: 2px;
-		padding: 4px;
-		border-radius: 999px;
+		justify-content: center;
+		gap: 12px;
+		/* design-ok: the Dayback prototype's week spacing (owner's call, 2026-09-30) */
+		margin-top: 14px;
 	}
-	/* A tile over the map, in the prototype's look: a solid ground, a faint
-	   ink border and one soft shadow (dayback/index.html:599-601). */
-	.tile {
-		background: var(--c-tile);
-		border: 1px solid color-mix(in srgb, var(--color-foreground) 7%, transparent);
-		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
-		box-shadow: var(--tile-shadow);
-	}
-	.day-bar button {
+	.week-step {
 		border: 0;
-		background: transparent;
-		color: var(--color-foreground);
-		font: inherit;
-		font-size: 14px;
-		border-radius: 999px;
-		cursor: pointer;
-	}
-	.day-bar button:hover:not(:disabled) {
-		background: var(--color-surface);
-	}
-	.day-bar button:disabled {
+		background: none;
 		color: var(--color-foreground-subtle);
+		/* design-ok: the Dayback prototype's week chevron (owner's call, 2026-09-30) */
+		font-size: 22px;
+		line-height: 1;
+		cursor: pointer;
+		/* design-ok: the Dayback prototype's week chevron (owner's call, 2026-09-30) */
+		padding: 2px 6px;
+		border-radius: 6px;
+	}
+	.week-step:hover:not(:disabled) {
+		color: var(--color-foreground);
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+	}
+	.week-step:disabled {
+		opacity: 0.3;
 		cursor: default;
 	}
-	.step {
-		width: 30px;
-		height: 30px;
-		font-size: 18px !important;
-		line-height: 1;
+	.week {
+		display: grid;
+		grid-template-columns: repeat(7, 72px);
+		/* design-ok: the Dayback prototype's week grid (owner's call, 2026-09-30) */
+		gap: 6px;
 	}
-	.date {
-		padding: 6px 12px;
-		min-width: 120px;
+	.cell {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		/* design-ok: the Dayback prototype's week cell (owner's call, 2026-09-30) */
+		gap: 7px;
+		/* design-ok: the Dayback prototype's week cell (owner's call, 2026-09-30) */
+		padding: 5px 0 3px;
+		border: 0;
+		background: none;
+		border-radius: 12px;
+		cursor: pointer;
 	}
-	.today {
-		padding: 6px 12px;
-		color: var(--color-primary) !important;
+	.cell.off {
+		cursor: default;
+		opacity: 0.4;
+	}
+	.dow {
+		font-family: var(--font-sans);
+		font-weight: 600;
+		font-size: 11px;
+		letter-spacing: 0.06em;
+		color: var(--color-foreground-muted);
+	}
+	.num {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		border-radius: 50%;
+		font-family: var(--font-sans);
+		font-weight: 600;
+		font-size: 15px;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground);
+	}
+	.cell.other .num {
+		color: var(--color-foreground-subtle);
+	}
+	.cell.cur .num {
+		background: var(--color-foreground);
+		color: var(--color-background);
+	}
+	.cell:not(.cur):not(.off):hover .num {
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
 	}
 	.picker {
 		position: absolute;
@@ -532,7 +645,7 @@
 	   position at its centre, and the note must not hide it. */
 	.note {
 		position: absolute;
-		top: 72px;
+		top: calc(var(--bar-h) + 16px);
 		left: 50%;
 		transform: translateX(-50%);
 		padding: 8px 14px;
@@ -552,7 +665,7 @@
 	}
 	.rail-error {
 		position: absolute;
-		top: 16px;
+		top: calc(var(--bar-h) + 16px);
 		right: 16px;
 		max-width: min(384px, 42%);
 		margin: 0;
