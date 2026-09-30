@@ -51,7 +51,28 @@
 	let cardH = $state(0);
 	let segW = $state(0);
 	let segH = $state(0);
+	/** Day's and Map's exact widths: whole pixels leave the line between Map
+	 *  and Detail a pixel off Day's centre. Read on any size change (the web
+	 *  font arriving is a fraction of a pixel) and once the fonts are in; the
+	 *  computed width ignores the scope bar's grow transform. */
+	let dayEl = $state<HTMLElement | null>(null);
+	let mapEl = $state<HTMLElement | null>(null);
 	let dayW = $state(0);
+	let mapW = $state(0);
+	$effect(() => {
+		const day = dayEl;
+		const mapSeg = mapEl;
+		if (!day || !mapSeg) return;
+		const measure = () => {
+			dayW = parseFloat(getComputedStyle(day).width);
+			mapW = parseFloat(getComputedStyle(mapSeg).width);
+		};
+		const watch = new ResizeObserver(measure);
+		watch.observe(day);
+		watch.observe(mapSeg);
+		void document.fonts?.ready.then(measure);
+		return () => watch.disconnect();
+	});
 	let barHt = $state(0);
 	let scrubH = $state(0);
 	let monthOpen = $state(false);
@@ -78,9 +99,14 @@
 			// No storage: the choice lasts until the page reloads.
 		}
 	}
-	/** The scope switcher sits at the top centre unless it would meet the
-	 *  date card; then it goes under the card. */
-	const stacked = $derived(paneW > 0 && paneW / 2 - segW / 2 < 16 + cardW + 16);
+	/** Map | Detail hangs centred under Day: the line between Map and Detail
+	 *  sits on Day's centre (both cards have a 4 px inset). Where the bar
+	 *  starts, from the switcher's left edge, and how far it reaches past it. */
+	const barLeft = $derived(dayW / 2 - mapW);
+	const overhang = $derived(Math.max(0, -barLeft));
+	/** The scope switcher sits at the top centre unless it (or the scope bar
+	 *  under it) would meet the date card; then it goes under the card. */
+	const stacked = $derived(paneW > 0 && paneW / 2 - segW / 2 - overhang < 16 + cardW + 16);
 	const navTop = $derived(stacked ? 16 + cardH + 8 : 16);
 	/** Where the scope bar ends: the Reset pill and a quiet day's note go under it. */
 	const navBottom = $derived(navTop + segH + 6 + barHt);
@@ -819,7 +845,7 @@
 	data-material={material}
 	bind:this={root}
 	bind:clientWidth={paneW}
-	style="{colourVars}; --nav-top: {navTop}px; --nav-bottom: {navBottom}px; --scrub-h: {scrubH}px; --rail-top: {railLow ? topChrome + 12 : 16}px"
+	style="{colourVars}; --nav-top: {navTop}px; --nav-bottom: {navBottom}px; --bar-overhang: {overhang}px; --scrub-h: {scrubH}px; --rail-top: {railLow ? topChrome + 12 : 16}px"
 >
 	<div class="timeline-map" bind:this={container}></div>
 
@@ -828,9 +854,9 @@
 	     like Calendar's month title, with ‹ Today › and the month beside it. -->
 	<div class="date" bind:this={dateWrap}>
 		<div class="date-card tile" bind:offsetWidth={cardW} bind:offsetHeight={cardH}>
-			<!-- The day's standout line goes at the start of this row, in small
-			     caps, once our significance exists (TFP 2.3.5.14); until then the
-			     row holds only the day's controls, never a guessed line. -->
+			<!-- The day's standout line joins this row, in small caps, once our
+			     significance exists; until then the row holds only the day's
+			     controls, never a guessed line. -->
 			<div class="date-row">
 				<button class="date-btn" aria-label="Previous day" title="Previous day" onclick={() => (date = stepDay(date, -1))}>‹</button>
 				<button class="date-btn" disabled={date === today} onclick={() => (date = today)}>Today</button>
@@ -859,11 +885,11 @@
 	     Map | Detail is Day's own scope bar, hanging off the Day segment. -->
 	<nav class="scope" aria-label="Scope" data-scope={scope}>
 		<div class="scope-seg tile" role="tablist" bind:offsetWidth={segW} bind:offsetHeight={segH}>
-			<button class="seg on" role="tab" aria-selected="true" title="Dayline - a single day" bind:offsetWidth={dayW}>Day</button>
+			<button class="seg on" role="tab" aria-selected="true" title="Dayline - a single day" bind:this={dayEl}>Day</button>
 			<button class="seg" role="tab" aria-selected="false" aria-disabled="true" data-tip="Coming soon">Life</button>
 		</div>
-		<div class="scope-bar tile" role="tablist" aria-label="Day view" bind:offsetHeight={barHt} style="transform-origin: {4 + dayW / 2}px 0">
-			<button class="seg on" role="tab" aria-selected="true" title="Map - the day on a map"><i aria-hidden="true">🌐</i>Map</button>
+		<div class="scope-bar tile" role="tablist" aria-label="Day view" bind:offsetHeight={barHt} style="left: {barLeft}px; transform-origin: {4 + mapW}px 0">
+			<button class="seg on" role="tab" aria-selected="true" title="Map - the day on a map" bind:this={mapEl}><i aria-hidden="true">🌐</i>Map</button>
 			<button class="seg" role="tab" aria-selected="false" aria-disabled="true" data-tip="Coming soon"><i aria-hidden="true">🔍</i>Detail</button>
 		</div>
 	</nav>
@@ -987,9 +1013,11 @@
 		padding: 11px 12px 14px 18px;
 		border-radius: var(--tile-radius);
 	}
+	/* The day's controls sit at the card's left edge, so they stay put
+	   whatever the length of the date under them. */
 	.date-row {
 		display: flex;
-		justify-content: flex-end;
+		justify-content: flex-start;
 		/* design-ok: the mockup's control spacing (owner's call, 2026-09-30) */
 		gap: 4px;
 	}
@@ -1050,8 +1078,9 @@
 		transform: translateX(-50%);
 		z-index: 11;
 	}
+	/* Under the date card, far enough in that the scope bar stays on screen. */
 	.stacked .scope {
-		left: 16px;
+		left: calc(16px + var(--bar-overhang));
 		transform: none;
 	}
 	.scope-seg,
@@ -1063,7 +1092,6 @@
 	.scope-bar {
 		position: absolute;
 		top: calc(100% + 6px);
-		left: 0;
 		white-space: nowrap;
 		/* A generous clip leaves the shadow whole at rest. */
 		clip-path: inset(-40px round var(--tile-radius));
