@@ -858,6 +858,10 @@ fn apply_tarball(
     // now recognizes and clears.
     write_pointer(&root, PTR_PENDING, &remote.content_hash)?;
     write_pointer(&root, PTR_ACTIVE, &remote.content_hash)?;
+    // Released before the sweep, so a page load never waits on deleting old
+    // bundles. The sweep reads the pointers fresh, and anything a load
+    // settles in the meantime lands on a bundle a pointer still names.
+    drop(_pointers);
 
     // Sweep anything the three pointers no longer name. Done here rather than
     // at startup so it never delays a launch, and after the pointers move so a

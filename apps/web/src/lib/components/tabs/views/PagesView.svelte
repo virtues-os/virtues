@@ -10,6 +10,7 @@
 	import { Button, Page } from "$lib";
 	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
+	import { backendUrl } from "$lib/config/backend";
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -192,7 +193,7 @@
 				{#if page.cover_url}
 					<div
 						class="card-cover"
-						style={`background-image: url(${page.cover_url})`}
+						style={`background-image: url(${backendUrl(page.cover_url)})`}
 					></div>
 				{/if}
 				<div class="card-body">

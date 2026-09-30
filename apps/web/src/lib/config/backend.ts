@@ -31,15 +31,19 @@ export function getBackendOrigin(): string {
  * Absolute URL for a backend path that the browser resolves from MARKUP rather
  * than through `window.fetch` — `<iframe src>`, `<img src>`, `<video src>`,
  * CSS `url()`. The fetch shim below cannot see these: it wraps `window.fetch`,
- * and an attribute-driven load never goes through it. On mobile they would
- * otherwise resolve against the bundled `tauri://` origin, which serves no
- * backend routes, and fail silently (an empty iframe, a broken image).
+ * and an attribute-driven load never goes through it. In the app's own copy
+ * they would otherwise resolve against the `virtues://` origin, which serves
+ * no backend routes, and fail silently (an empty iframe, a broken image).
  *
- * No-op on desktop, where `backendOrigin` is empty and the path is already
- * same-origin.
+ * No-op where the box serves the app: `backendOrigin` is empty and the path
+ * is already same-origin.
  */
 export function backendUrl(path: string): string {
-  return backendOrigin ? backendOrigin + path : path;
+  // Only a root-relative path is the box's. A stored URL can also be a
+  // full `https://` address (an Unsplash cover, an external image) or a
+  // `data:`/`blob:` one, and those load as written.
+  if (!backendOrigin || !path.startsWith('/') || path.startsWith('//')) return path;
+  return backendOrigin + path;
 }
 
 /** Base WebSocket URL (y-websocket appends room/pageId). */

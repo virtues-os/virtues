@@ -62,17 +62,6 @@
 /// finds it asking by the time they have the app open.
 pub const OFFLINE_GRACE_SECS: u64 = 90;
 
-/// Should a CLAIMED box with this NetworkManager connectivity verdict ask for
-/// its owner? Only when it has no network it can use: `none` (nothing
-/// joined, the moved box) or `portal` (joined, but held at a sign-in page it
-/// cannot complete). Not `limited`: a box on a LAN without internet, set up
-/// that way on purpose, is working, and asking would keep its radio on
-/// forever and invite a device elsewhere to move it off the LAN it serves.
-/// Not `unknown`: nmcli absent or failing says nothing about the network.
-fn stranded(verdict: &str) -> bool {
-    matches!(verdict, "none" | "portal")
-}
-
 /// How long an owner challenge (`0x88`) stays redeemable. One round trip plus
 /// a signature — seconds, not minutes.
 const CHALLENGE_TTL_SECS: u64 = 60;
@@ -323,8 +312,12 @@ mod server {
                 let verdict = tokio::task::spawn_blocking(crate::cli::link::connectivity)
                     .await
                     .unwrap_or_else(|_| "unknown".into());
+                // Anything short of `full` counts, `limited` included: a moved
+                // box on a network that blocks the connectivity check (and
+                // with it, often, the relay) is unreachable, and the owner
+                // service admits only a paired device within Bluetooth range.
                 let online = crate::cli::link::verdict_means_online(&verdict);
-                offline_since = match (claimed && stranded(&verdict), offline_since) {
+                offline_since = match (claimed && !online, offline_since) {
                     (true, None) => Some(std::time::Instant::now()),
                     (true, since) => since,
                     (false, _) => None,
@@ -1153,15 +1146,6 @@ mod tests {
 
     fn sign(key: &SecretKey, nonce: &[u8]) -> String {
         hex::encode(key.sign(&owner_proof_message(nonce)).to_bytes())
-    }
-
-    #[test]
-    fn only_a_box_with_no_usable_network_asks_for_its_owner() {
-        assert!(stranded("none"), "the moved box");
-        assert!(stranded("portal"), "held at a sign-in page");
-        assert!(!stranded("limited"), "a LAN-only box is working");
-        assert!(!stranded("full"));
-        assert!(!stranded("unknown"), "no verdict is not a verdict of offline");
     }
 
     #[test]
