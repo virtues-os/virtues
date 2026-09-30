@@ -33,6 +33,19 @@ export interface DerivedPlace {
 	place_name: string | null;
 }
 
+/** One transcription window, as `/api/timeline/voice` serves it. */
+export interface VoiceWindow {
+	id: string;
+	started_at: string;
+	ended_at: string;
+	/** Two or more is a conversation; none is silence the mic still recorded. */
+	speaker_count: number;
+	title: string | null;
+	text: string | null;
+	/** Names spoken in it: mentioned, never known to be present. */
+	people: string[];
+}
+
 export interface DerivedWindow {
 	is_built: boolean;
 	spans: DerivedSpan[];
@@ -57,6 +70,9 @@ export interface RailRow {
 	dur: string;
 	/** Conversation only: the transcription windows it joined. */
 	windowIds: string[];
+	/** Conversation only: the two-or-more-speaker windows over it, in order -
+	 *  what its transcript reads (main.js:1575). */
+	convs: VoiceWindow[];
 }
 
 export interface RailSection {
@@ -69,6 +85,10 @@ export interface RailSection {
 	notes: string[];
 	placeId: string | null;
 	rows: RailRow[];
+	/** A stay's audio note: "no audio" or "silent", only when clear-cut. */
+	atag: "no audio" | "silent" | null;
+	/** In Bed only: where the night came from. */
+	src: "healthkit" | "quiet_hours" | null;
 }
 
 const HOUR = 3_600_000;
@@ -102,8 +122,24 @@ export function transitTitle(peakKmh: number, ms: number): string {
 	return mode !== "Flying" && ms > 2 * HOUR ? "Out · no stay recorded" : mode;
 }
 
-/** The day's sections and rows, clipped to [start, end). */
-export function buildRail(w: DerivedWindow, start: number, end: number): RailSection[] {
+/** A stay of 25 minutes or more with no conversation filed under it gets an
+ *  audio note, only when clear-cut (main.js:1577-1579): the mic on under 10 %
+ *  of it is "no audio"; over 60 % is "silent"; anything between says
+ *  nothing, never over-claiming. A window at all means the mic was on. */
+export function audioTag(s: number, e: number, windows: { s: number; e: number }[]): "no audio" | "silent" | null {
+	let on = 0;
+	for (const v of windows) {
+		const lo = Math.max(s, v.s);
+		const hi = Math.min(e, v.e);
+		if (hi > lo) on += hi - lo;
+	}
+	const cov = on / (e - s || 1);
+	return cov < 0.1 ? "no audio" : cov > 0.6 ? "silent" : null;
+}
+
+/** The day's sections and rows, clipped to [start, end); `voice` is every
+ *  transcription window over the day. */
+export function buildRail(w: DerivedWindow, start: number, end: number, voice: VoiceWindow[] = []): RailSection[] {
 	const places = new Map(w.places.map((p) => [p.id, p]));
 	const t = (iso: string) => Date.parse(iso);
 	const inDay = w.spans
@@ -116,15 +152,17 @@ export function buildRail(w: DerivedWindow, start: number, end: number): RailSec
 	const built: RailSection[] = inDay.map((s) => {
 		const cs = Math.max(s.s, start);
 		const ce = Math.min(s.e, end);
-		const base = { s: cs, e: ce, placeId: s.timeline_place_id, rows: [] as RailRow[], notes: [] as string[] };
+		const base = { s: cs, e: ce, placeId: s.timeline_place_id, rows: [] as RailRow[], notes: [] as string[], atag: null, src: null };
 		switch (s.kind) {
 			case "stay":
 				return { ...base, kind: "place", title: placeTitle(places.get(s.timeline_place_id ?? "")), dur: fmtDur(ce - cs) };
 			case "transit":
 				return { ...base, kind: "transit", title: transitTitle(Number(s.metadata.peak_kmh ?? 0), ce - cs), dur: fmtDur(ce - cs) };
-			case "sleep":
+			case "sleep": {
 				// A night keeps its full length, though the day only shows its part.
-				return { ...base, kind: "sleep", title: "In Bed", dur: fmtDur(s.e - s.s) };
+				const src = s.metadata.source === "healthkit" ? "healthkit" : "quiet_hours";
+				return { ...base, kind: "sleep", title: "In Bed", dur: fmtDur(s.e - s.s), src };
+			}
 			case "unknown": {
 				const i = located.indexOf(s);
 				const beside = [located[i - 1], located[i + 1]].find((n) => n?.kind === "stay");
@@ -143,6 +181,8 @@ export function buildRail(w: DerivedWindow, start: number, end: number): RailSec
 	// prototype lists the nights first, main.js:1566-1572).
 	const sections = built.sort((a, b) => a.s - b.s || (a.kind === "sleep" ? 0 : 1) - (b.kind === "sleep" ? 0 : 1));
 
+	const windows = voice.map((v) => ({ w: v, s: t(v.started_at), e: t(v.ended_at) }));
+	const talk = windows.filter((v) => v.w.speaker_count >= 2);
 	const rows: RailRow[] = w.moments
 		.map((m) => ({ ...m, s: t(m.started_at), e: t(m.ended_at) }))
 		.filter((m) => m.e > start && m.s < end)
@@ -154,6 +194,7 @@ export function buildRail(w: DerivedWindow, start: number, end: number): RailSec
 			title: m.kind === "walk" ? walkTitle(m.metadata) : (m.title ?? "Conversation"),
 			dur: fmtDur(m.e - m.s),
 			windowIds: (m.metadata.window_ids as string[] | undefined) ?? [],
+			convs: m.kind === "conversation" ? talk.filter((c) => c.s < m.e && c.e > m.s).map((c) => c.w) : [],
 		}));
 	// Filed under the section that had begun most recently at the row's middle:
 	// a conversation can start seconds before the stay's arrival stamp.
@@ -162,6 +203,9 @@ export function buildRail(w: DerivedWindow, start: number, end: number): RailSec
 		let home: RailSection | undefined;
 		for (const sec of sections) if (sec.s <= mid) home = sec;
 		(home ?? sections[0])?.rows.push(r);
+	}
+	for (const sec of sections) {
+		if (sec.kind === "place" && !sec.rows.length && sec.e - sec.s >= 25 * 60_000) sec.atag = audioTag(sec.s, sec.e, windows);
 	}
 	return sections;
 }

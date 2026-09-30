@@ -35,6 +35,11 @@ export const COLOURS = {
 	knot: "#5b6472",
 	/** A bubble's leader line (index.html:108). */
 	leader: "#9aa1ad",
+	/** Speaker tints in a transcript: teal, plum, olive, terracotta (index.html:18). */
+	spk0: "#2f7d70",
+	spk1: "#9c5f86",
+	spk2: "#7d7a3f",
+	spk3: "#a56a4a",
 } as const;
 
 /** The prototype's shadows (dayback/index.html:104-129, 599-601): the tiles'

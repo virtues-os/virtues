@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRail, fmtDur, placeTitle, transitTitle, type DerivedWindow } from "./rail";
+import { audioTag, buildRail, fmtDur, placeTitle, transitTitle, type DerivedWindow } from "./rail";
 
 const at = (hhmm: string) => `2026-09-22T${hhmm}:00Z`;
 const day = { start: Date.parse(at("00:00")), end: Date.parse("2026-09-23T00:00:00Z") };
@@ -58,6 +58,37 @@ describe("the rail", () => {
 	it("calls the most-dwelt place Work / frequent until it has a real name", () => {
 		expect(placeTitle({ id: "w", is_home: false, is_work: true, place_name: "Location 1.0, 2.0" })).toBe("Work / frequent");
 		expect(placeTitle({ id: "w", is_home: false, is_work: true, place_name: "The Studio" })).toBe("The Studio");
+	});
+
+	it("gives a conversation its windows, a night its source, a quiet stay its audio note", () => {
+		const win = (id: string, from: string, to: string, speakers: number) => ({
+			id,
+			started_at: at(from),
+			ended_at: at(to),
+			speaker_count: speakers,
+			title: null,
+			text: null,
+			people: [],
+		});
+		const voice = [
+			win("w1", "08:19", "08:24", 2),
+			win("w2", "08:24", "08:29", 3),
+			win("w3", "08:30", "08:35", 1), // one voice: not a conversation's window
+		];
+		const rail = buildRail(window, day.start, day.end, voice);
+		expect(rail[3].rows[0].convs.map((c) => c.id)).toEqual(["w1", "w2"]);
+		expect(rail[0].src).toBe("healthkit");
+		// Home, 8 h with no conversation filed and the mic barely on: "no audio".
+		expect(rail[1].atag).toBe("no audio");
+		// The cafe has rows, so no note.
+		expect(rail[3].atag).toBeNull();
+	});
+
+	it("tags a stay only when its audio is clear-cut", () => {
+		const h = 3_600_000;
+		expect(audioTag(0, h, [{ s: 0, e: 0.05 * h }])).toBe("no audio");
+		expect(audioTag(0, h, [{ s: 0, e: 0.7 * h }])).toBe("silent");
+		expect(audioTag(0, h, [{ s: 0, e: 0.3 * h }])).toBeNull();
 	});
 
 	it("names a long ground drive for what it is", () => {

@@ -10,14 +10,18 @@
 	it is where you are, the latest-begun row holding it is what's happening.
 -->
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import type { RailPick as Pick, RailRow, RailSection, SectionKind } from '$lib/timeline/rail';
+	import { lineAt, lineTime, rowLines, spkIdx } from '$lib/timeline/transcript';
 
 	let {
 		sections,
 		zone,
 		playT,
 		focus = 'row',
+		armed = false,
 		onpick,
+		onseek,
 	}: {
 		sections: RailSection[];
 		zone: string;
@@ -25,7 +29,11 @@
 		/** What the user last pointed at: 'sec' after a section click keeps the
 		 *  rail on that section; anything else hands focus back to the moment. */
 		focus?: 'row' | 'sec';
+		/** The user has moved the playhead in this day: until then nothing opens itself. */
+		armed?: boolean;
 		onpick: (p: Pick) => void;
+		/** A transcript line was picked: park the playhead at its moment. */
+		onseek: (t: number) => void;
 	} = $props();
 
 	let rail = $state<HTMLElement | null>(null);
@@ -57,20 +65,68 @@
 			.findLast(holds) ?? null,
 	);
 
-	// One scroll surface, kept on the live thing (main.js:1627-1633): the
-	// pointed-at section, else the live row, else the live section. It glides
-	// only when that thing is out of view, and once per target.
+	/** The one conversation row whose transcript is open, by its start
+	 *  (main.js:1548, 1634-1636); a fresh day starts with none open. */
+	let open = $state<number | null>(null);
+	/** The live section's detail (In Bed's source). A new live section opens
+	 *  itself once the day has been touched; a second click folds it
+	 *  (main.js:1610, 1637). */
+	let secOpen = $state(false);
+	let lastSec = -2;
+	$effect(() => {
+		void sections;
+		untrack(() => {
+			open = null;
+			secOpen = false;
+			lastSec = -2;
+		});
+	});
+	$effect(() => {
+		const c = curSection;
+		untrack(() => {
+			if (c !== lastSec) {
+				lastSec = c;
+				secOpen = armed;
+			}
+		});
+	});
+
+	function pickSection(i: number, sec: RailSection) {
+		if (i === curSection) secOpen = !secOpen;
+		open = null;
+		onpick({ kind: sec.kind, s: sec.s, e: sec.e });
+	}
+	function pickRow(row: RailRow) {
+		if (row.convs.length) open = open === row.s ? null : row.s;
+		onpick({ kind: row.kind, s: row.s, e: row.e });
+	}
+
+	// The open conversation (main.js:1616-1622): how many voices, the names
+	// mentioned (never "present"), and its lines as turns, the one spoken at
+	// the playhead lit - an estimate, as the recorder keeps no per-line times.
+	const openRow = $derived(sections.flatMap((s) => s.rows).find((r) => r.s === open) ?? null);
+	const openLines = $derived(openRow ? rowLines(openRow.convs) : []);
+	const openSpeakers = $derived(openRow ? Math.max(0, ...openRow.convs.map((c) => c.speaker_count)) : 0);
+	const openPeople = $derived(openRow ? [...new Set(openRow.convs.flatMap((c) => c.people))] : []);
+	const liveLine = $derived(openRow && openLines.length ? lineAt(openRow.s, openRow.e, openLines.length, playT) : -1);
+
+	// One scroll surface, kept on the finest live thing (main.js:1627-1633):
+	// the pointed-at section, else the spoken line, else the live row, else
+	// the live section. It glides only when that thing is out of view, and
+	// once per target.
 	let glide = -1;
 	$effect(() => {
 		const box = scroller;
 		const sec = curSection;
 		const row = curRow;
+		void liveLine;
 		if (!box) return;
 		const top = box.getBoundingClientRect().top;
 		const at = (n: HTMLElement) => n.getBoundingClientRect().top - top + box.scrollTop;
 		const sT = box.scrollTop;
 		const h = box.clientHeight;
 		const group = sec >= 0 ? box.querySelectorAll<HTMLElement>('.group')[sec] : undefined;
+		const lineEl = box.querySelector<HTMLElement>('.line.cur');
 		const rowEl = row ? box.querySelector<HTMLElement>('.row.cur') : null;
 		const sectionView = (g: HTMLElement) => {
 			const t = at(g);
@@ -79,7 +135,10 @@
 		};
 		let view: { seen: boolean; want: number } | null = null;
 		if (focus === 'sec' && group) view = sectionView(group);
-		else if (rowEl) {
+		else if (lineEl) {
+			const t = at(lineEl);
+			view = { seen: t >= sT + 24 && t <= sT + h - 48, want: t - h * 0.45 };
+		} else if (rowEl) {
 			const t = at(rowEl);
 			view = { seen: t >= sT && t <= sT + h - 40, want: t - h * 0.28 };
 		} else if (group) view = sectionView(group);
@@ -93,6 +152,25 @@
 			box.scrollTo({ top: want, behavior: 'smooth' });
 		}
 	});
+
+	// A pinned header is one pressed against the top of the box, poking 1 px
+	// out of it: only then does it take a hairline (main.js:1605).
+	$effect(() => {
+		const box = scroller;
+		void sections;
+		if (!box || typeof IntersectionObserver === 'undefined') return;
+		const io = new IntersectionObserver(
+			(es) => {
+				for (const e of es) {
+					const pinned = e.intersectionRatio < 1 && e.boundingClientRect.top <= (e.rootBounds?.top ?? 0) + 1;
+					(e.target as HTMLElement).classList.toggle('stuck', pinned);
+				}
+			},
+			{ root: box, threshold: [1] },
+		);
+		box.querySelectorAll('.sec').forEach((n) => io.observe(n));
+		return () => io.disconnect();
+	});
 </script>
 
 {#if sections.length}
@@ -100,25 +178,46 @@
 		<div class="scroll" bind:this={scroller}>
 			{#each sections as sec, i (sec.kind + sec.s)}
 				<div class="group" class:bare={!sec.rows.length} class:cur={i === curSection}>
-					<button class="sec" onclick={() => onpick({ kind: sec.kind, s: sec.s, e: sec.e })}>
+					<button class="sec" onclick={() => pickSection(i, sec)}>
 						<span class="hd">
 							<i class="dot" style="background: {DOT[sec.kind]}"></i>
 							<b>{sec.title}</b>
 							<span class="dur">{sec.dur}</span>
+							{#if sec.atag}<em class="tag">· {sec.atag}</em>{/if}
 						</span>
 						{#each sec.notes as line (line)}
 							<span class="note">{line}</span>
 						{/each}
+						{#if secOpen && i === curSection && curRow === null && sec.kind === 'sleep'}
+							<span class="note">Source · {sec.src === 'healthkit' ? 'iPhone (Health, In Bed)' : 'quiet hours, no conversation'}</span>
+						{/if}
 					</button>
 					{#each sec.rows as row (row.kind + row.s)}
-						<button class="row" class:cur={row === curRow} onclick={() => onpick({ kind: row.kind, s: row.s, e: row.e })}>
-							<span class="t">{time(row.s)}</span>
-							<span class="hd">
-								<i class="dot" style="background: {DOT[row.kind]}"></i>
-								<b>{row.title}</b>
-								<span class="dur">{row.dur}</span>
-							</span>
-						</button>
+						<div class="row" class:cur={row === curRow}>
+							<button class="row-hd" onclick={() => pickRow(row)}>
+								<span class="t">{time(row.s)}</span>
+								<span class="hd">
+									<i class="dot" style="background: {DOT[row.kind]}"></i>
+									<b>{row.title}</b>
+									<span class="dur">{row.dur}</span>
+								</span>
+							</button>
+							{#if row.s === open && openRow}
+								<div class="open">
+									<span class="sub">{openSpeakers} speaker{openSpeakers !== 1 ? 's' : ''}</span>
+									{#if openPeople.length}<span class="people">Mentioned {openPeople.join(', ')}</span>{/if}
+									{#if openLines.length}
+										<div class="lines">
+											{#each openLines as q, li (li)}
+												<button class="line" class:cur={li === liveLine} onclick={() => onseek(lineTime(row.s, row.e, li, openLines.length))}>
+													{#if q.spk}<span class="spk" style="color: var(--c-spk{spkIdx(q.spk)})">{q.spk}</span>{' '}{/if}{q.txt}
+												</button>
+											{/each}
+										</div>
+									{/if}
+								</div>
+							{/if}
+						</div>
 					{/each}
 				</div>
 			{/each}
@@ -181,10 +280,17 @@
 	/* The section header pins while its rows scroll past, like Contacts. */
 	.sec {
 		position: sticky;
-		top: 0;
+		/* Pinned, it pokes 1 px out of the box: that is how the observer tells
+		   pinned from at rest (index.html:916). */
+		top: -1px;
 		z-index: 2;
 		background: var(--c-tile);
 		padding: 16px 16px 8px;
+	}
+	/* A hairline only while rows are passing beneath it (index.html:917). */
+	.sec:global(.stuck) {
+		/* design-ok: the Dayback prototype's pinned-header hairline (owner's call, 2026-09-30) */
+		box-shadow: 0 1px 0 color-mix(in srgb, var(--color-foreground) 8%, transparent);
 	}
 	.bare .sec {
 		padding-bottom: 12px;
@@ -194,10 +300,12 @@
 	}
 	.row {
 		position: relative;
+		padding: 8px 16px 8px 32px;
+	}
+	.row-hd {
 		display: grid;
 		grid-template-columns: 56px 1fr;
 		gap: 8px;
-		padding: 8px 16px 8px 32px;
 	}
 	.row:hover {
 		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
@@ -276,5 +384,56 @@
 		font-size: 12px;
 		line-height: 1.3;
 		color: var(--color-foreground-muted);
+	}
+	/* A quiet stay's audio note, after its duration (index.html:936). */
+	.tag {
+		flex: 0 0 auto;
+		font-style: normal;
+		font-family: var(--font-sans);
+		font-size: 11px;
+		font-weight: 500;
+		color: var(--color-foreground-subtle);
+		white-space: nowrap;
+	}
+	/* The open conversation, under its row and out of the time gutter
+	   (index.html:944-953): the voices, the names mentioned, then the lines. */
+	.open {
+		display: block;
+		/* design-ok: the Dayback prototype's 2 px mark (owner's call, 2026-09-30) */
+		margin-top: 2px;
+	}
+	.sub,
+	.people {
+		display: block;
+		font-family: var(--font-sans);
+		font-size: 11px;
+		color: var(--color-foreground-muted);
+	}
+	.people {
+		/* design-ok: the Dayback prototype's line spacing (owner's call, 2026-09-30) */
+		margin-top: 4px;
+	}
+	.lines {
+		/* design-ok: the Dayback prototype's transcript spacing (owner's call, 2026-09-30) */
+		margin-top: 9px;
+		/* design-ok: the Dayback prototype's transcript spacing (owner's call, 2026-09-30) */
+		padding-top: 7px;
+		border-top: 1px solid color-mix(in srgb, var(--color-foreground) 8%, transparent);
+	}
+	.line {
+		/* design-ok: the Dayback prototype's transcript line (owner's call, 2026-09-30) */
+		padding: 2.5px 0;
+		font-family: var(--font-sans);
+		font-size: 12px;
+		line-height: 1.42;
+		color: var(--color-foreground-muted);
+	}
+	.line:hover {
+		color: var(--color-foreground);
+	}
+	/* The line being spoken at the playhead. */
+	.line.cur {
+		color: var(--color-foreground);
+		font-weight: 600;
 	}
 </style>

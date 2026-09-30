@@ -21,7 +21,8 @@ use chrono_tz::Tz;
 use serde_json::json;
 
 pub use store::{
-    day_window, rebuild, window, DayWindow, RebuildStats, TimelineMoment, TimelinePlace, TimelineSpan, TimelineWindow,
+    day_window, rebuild, voice, window, DayWindow, RebuildStats, TimelineMoment, TimelinePlace, TimelineSpan,
+    TimelineWindow, VoiceWindow,
 };
 
 pub(crate) type Ms = i64;
