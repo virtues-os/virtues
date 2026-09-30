@@ -175,6 +175,9 @@ class PagesStore {
 	 * Used for immediate UI feedback before debounced save
 	 */
 	updatePageLocally(pageId: string, updates: Partial<PageSummary & { icon?: string | null }>): void {
+		if (this.pages.some((p) => p.id === pageId)) {
+			this.pages = this.pages.map((p) => (p.id === pageId ? { ...p, ...updates } : p));
+		}
 		const metadataUpdates: Partial<EntityMetadata> = {};
 		if (updates.title) {
 			metadataUpdates.name = updates.title;

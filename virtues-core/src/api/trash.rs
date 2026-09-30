@@ -226,6 +226,17 @@ pub async fn purge(pool: &PgPool, kind: TrashKind, id: &str) -> Result<()> {
             tracing::warn!(kind = ?kind, id, "purge: project membership sweep failed: {e}");
         }
     }
+    // Pins are by URL for every kind, projects included. A trashed thing's
+    // pin is only hidden (restore brings it back); a purged one's has
+    // nothing left to point at.
+    let pin_url = format!("/{}/{id}", match kind {
+        TrashKind::Chat => "chat",
+        TrashKind::Page => "page",
+        TrashKind::Project => "project",
+    });
+    if let Err(e) = sqlx::query("DELETE FROM app_pins WHERE url = $1").bind(&pin_url).execute(pool).await {
+        tracing::warn!(kind = ?kind, id, "purge: pin sweep failed: {e}");
+    }
     // The files a chat's code runs left, kept until now so a restored chat
     // still has them.
     if matches!(kind, TrashKind::Chat) {
