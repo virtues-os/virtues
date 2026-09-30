@@ -692,7 +692,7 @@
 		chat.messages = [];
 		messageMetadata = new Map();
 		contextUsage = undefined;
-		titleGenerated = false;
+		titleDone = false;
 		isAwaitingResponse = false;
 		isGhost = isTemporaryRoute(route);
 		danglingTurn = false;
@@ -997,8 +997,10 @@
 		return () => clearTimeout(t);
 	});
 
-	// Title generation state
-	let titleGenerated = $state(false);
+	// Whether the server has said no automatic title will be written to this
+	// chat again. Reset per chat; the server decides from who wrote the
+	// title, so asking once after opening an old chat costs a no-op call.
+	let titleDone = $state(false);
 	let refreshDataTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// Agent mode and persona selection state - used for tool filtering on backend
@@ -1147,10 +1149,13 @@
 	//
 	// Placeholders only — a label the user has renamed by hand must not be
 	// overwritten by the server's copy.
-	const PLACEHOLDER_LABELS = new Set(["Chat", "New Chat", "Temporary Chat"]);
+	// Compared lowercased: openers spell it "New chat" and the registry
+	// "New Chat", and an exact match left every tab opened the first way
+	// wearing the placeholder for good.
+	const PLACEHOLDER_LABELS = new Set(["chat", "new chat", "temporary chat"]);
 	$effect(() => {
 		if (!chatTitle || !tab) return;
-		if (!PLACEHOLDER_LABELS.has(tab.label)) return;
+		if (!PLACEHOLDER_LABELS.has(tab.label.toLowerCase())) return;
 		// Never write a label that is already there. This effect READS
 		// `tab.label` and WRITES it, so it is only safe while every write
 		// changes the value — and the guard above assumed a saved title is
@@ -1261,19 +1266,19 @@
 
 	// Generate title after first assistant response
 	async function generateTitle() {
-		if (titleGenerated || chat.messages.length < 2) return;
+		if (titleDone || chat.messages.length < 2) return;
 		// The interview keeps the name it was seeded with. Its transcript is
 		// the most private text on the box, and a generated title puts a
 		// summary of it in the sidebar — this chat had renamed itself after
 		// the person's own childhood. The server refuses this too (the id
 		// decides, never the client); this only saves the round trip.
 		if (conversationId === INTERVIEW_CHAT_ID || isGettingStartedChat(conversationId)) {
-			titleGenerated = true;
+			titleDone = true;
 			return;
 		}
 
 		try {
-			const data = await setChatTitle<{ title?: string }>({
+			const data = await setChatTitle<{ title?: string; done?: boolean }>({
 				chatId: conversationId,
 				messages: chat.messages.map((m) => ({
 					role: m.role,
@@ -1281,10 +1286,11 @@
 				})),
 			});
 
-			// Only mark done once we actually have a title, so an ok-but-empty
-			// response retries on the next turn instead of giving up silently.
+			// The server answers every ask with the title it has, generated or
+			// kept, and `done` once it will never write another. A server that
+			// predates `done` generated on every ask, so its answer stops us.
+			titleDone = data.done ?? true;
 			if (data.title) {
-				titleGenerated = true;
 				windowShellStore.updateTab(tab.id, { label: data.title });
 				// Optimistically seed the shared session store so the header
 				// breadcrumb (and any store-bound surface) updates immediately,
@@ -1460,7 +1466,7 @@
 			handedOff = true;
 
 			// Titles come from a cloud model, so a local chat never asks for one.
-			if (chat.messages.length >= 2 && !isGhost && !titleGenerated) {
+			if (chat.messages.length >= 2 && !isGhost && !titleDone) {
 				await generateTitle();
 				// Update tab route if it's a new chat
 				if (isNewChat(tab.route)) {
