@@ -534,12 +534,19 @@
 	     the day's title and its week, edge to edge; the chevrons step a week,
 	     never past today. -->
 	<header class="day-head" bind:this={dayBar} bind:clientHeight={barH}>
-		<!-- The time scale (dayback/index.html:1168-1169): Dayline is the one
-		     built; Yearline and Lifeline show greyed and can't be opened yet. -->
-		<div class="scale tile" role="tablist" aria-label="Time scale">
-			<button class="seg on" role="tab" aria-selected="true" title="Dayline - a single day">Dayline</button>
-			<button class="seg" role="tab" aria-selected="false" disabled title="Yearline - not built yet">Yearline</button>
-			<button class="seg" role="tab" aria-selected="false" disabled title="Lifeline - not built yet">Lifeline</button>
+		<!-- The time scale, and under it the day's lens (dayback/index.html:
+		     1168-1170): Dayline and Map are the ones built; the rest show greyed
+		     and can't be opened yet. -->
+		<div class="scale-nav">
+			<div class="scale tile" role="tablist" aria-label="Time scale">
+				<button class="seg on" role="tab" aria-selected="true" title="Dayline - a single day">Dayline</button>
+				<button class="seg" role="tab" aria-selected="false" disabled title="Yearline - not built yet">Yearline</button>
+				<button class="seg" role="tab" aria-selected="false" disabled title="Lifeline - not built yet">Lifeline</button>
+			</div>
+			<div class="scale lens tile" role="tablist" aria-label="Day lens">
+				<button class="seg on" role="tab" aria-selected="true" title="Map - the day on a map"><i aria-hidden="true">🌐</i>Map</button>
+				<button class="seg" role="tab" aria-selected="false" disabled title="Detail - not built yet"><i aria-hidden="true">🔍</i>Detail</button>
+			</div>
 		</div>
 		<button class="day-title" onclick={() => picker?.showPicker?.()}>{title}</button>
 		<div class="week-row">
@@ -637,14 +644,34 @@
 		-webkit-backdrop-filter: blur(18px) saturate(1.6);
 		border-bottom: 1px solid color-mix(in srgb, var(--color-foreground) 8%, transparent);
 	}
-	/* The scale toggle, the bar's leading item (index.html:965-975). */
-	.scale {
+	/* The scale toggle and the lens under it, the bar's leading item
+	   (index.html:963-977). */
+	.scale-nav {
 		position: absolute;
 		top: 14px;
 		left: 16px;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
+	}
+	.scale {
 		display: inline-flex;
 		padding: 4px;
 		border-radius: 12px;
+	}
+	/* The lens is the scale's child: smaller type, a tighter pill. */
+	.lens .seg {
+		font-size: 12px;
+		/* design-ok: the Dayback prototype's lens segment (owner's call, 2026-09-30) */
+		padding: 7px 12px;
+	}
+	.lens .seg i {
+		font-style: normal;
+		font-size: 11px;
+		line-height: 1;
+		/* design-ok: the Dayback prototype's lens icon gap (owner's call, 2026-09-30) */
+		margin-right: 5px;
 	}
 	.seg {
 		border: 0;
