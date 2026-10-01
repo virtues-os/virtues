@@ -683,10 +683,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ─── `virtues activate` ─────────────────────────────────────────────────
-    // Install what `prepare` staged. Like Upgrade, deliberately does NOT touch
-    // the DB here; the new binary's `migrate` does that after the flip.
+    // Install what `prepare` staged, and record how it went where Settings
+    // reads it. Like Upgrade, deliberately does NOT touch the DB here; the new
+    // binary's `migrate` does that after the flip.
     if let Some(Commands::Activate) = &cli.command {
-        match virtues::cli::upgrade::activate_prepared().await {
+        match virtues::cli::auto_update::activate_recorded().await {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: activate failed: {e}");

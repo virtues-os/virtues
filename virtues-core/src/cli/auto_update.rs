@@ -130,13 +130,40 @@ pub async fn run() -> Result<(), crate::Error> {
 
     let from = crate::codename::version().to_string();
     let result = upgrade::activate_prepared().await;
-    record.install = Some(Install {
-        at: Utc::now(),
-        from,
-        to: slot_id,
-        ok: result.is_ok(),
-        error: result.as_ref().err().map(|e| e.to_string()),
-    });
+    record.install = Some(install_of(from, slot_id, &result));
     save(&record);
     result
+}
+
+/// `virtues activate`: install what is staged, and record the outcome in the
+/// same place the nightly pass does.
+///
+/// Settings' Install button runs this. Without the record, an install that
+/// failed and flipped back looked, from the page, like one that worked: the
+/// box went away and came back. With it, Settings can say what happened, and
+/// a release that failed by hand is not retried by the night either.
+///
+/// A refusal for a held lock is not recorded: nothing was attempted, and
+/// recording it would keep the night from ever trying that release.
+pub async fn activate_recorded() -> Result<(), crate::Error> {
+    let to = upgrade::prepared_slot_id();
+    let from = crate::codename::version().to_string();
+    let result = upgrade::activate_prepared().await;
+    let held = matches!(&result, Err(e) if upgrade::is_lock_held(e));
+    if let (Some(to), false) = (to, held) {
+        let mut record = last();
+        record.install = Some(install_of(from, to, &result));
+        save(&record);
+    }
+    result
+}
+
+fn install_of(from: String, to: String, result: &Result<(), crate::Error>) -> Install {
+    Install {
+        at: Utc::now(),
+        from,
+        to,
+        ok: result.is_ok(),
+        error: result.as_ref().err().map(|e| e.to_string()),
+    }
 }
