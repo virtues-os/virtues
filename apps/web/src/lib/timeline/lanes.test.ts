@@ -85,14 +85,20 @@ describe("the lane data", () => {
 			{ s: 0, e: 60 * M },
 			{ s: 90 * M, e: 150 * M },
 		]);
-		expect(u.map((x) => [x.ds / M, x.de / M])).toEqual([
-			[0, 60],
-			[60, 105],
-			[105, 150],
-		]);
+		expect(u.map((x) => x.pieces.map(([a, b]) => [a / M, b / M]))).toEqual([[[0, 60]], [[60, 105]], [[105, 150]]]);
 		// Real spans stay for the peek.
 		expect(u[1].e).toBe(120 * M);
 	});
+
+	it("lets a long event resume after a shorter one inside it", () => {
+		const u = untangle([
+			{ s: 9 * 60 * M, e: 17 * 60 * M },
+			{ s: 15 * 60 * M, e: 16 * 60 * M },
+		]);
+		const h = (x: number) => x / (60 * M);
+		expect(u.map((x) => x.pieces.map(([a, b]) => [h(a), h(b)]))).toEqual([[[9, 15.5], [16, 17]], [[15.5, 16]]]);
+	});
+
 
 	it("knows nothing of a source whose lanes didn't load", () => {
 		const l = laneData(null, [], null, 0, M);

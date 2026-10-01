@@ -227,18 +227,21 @@
 	};
 
 	// Calendar: each timed event a chip with a left cap, the prototype's form
-	// for an event (main.js:1225), drawn over its own side of any overlap; an
-	// invitation you haven't answered is faded.
+	// for an event (main.js:1225), drawn over its own share of any overlap (a
+	// long event resumes after a shorter one inside it); an invitation you
+	// haven't answered is faded.
 	const eventChips = $derived(
-		calendar
-			.map((ev, k) => {
-				const sp = span(ev.ds, ev.de);
-				if (!sp) return null;
-				const maxc = Math.max(1, Math.floor((sp.w - 14) / 6));
-				const label = expanded && sp.w > 44 ? (ev.title.length > maxc ? `${ev.title.slice(0, maxc - 1).trimEnd()}…` : ev.title) : '';
-				return { ...sp, ev, k, label };
-			})
-			.filter((x) => x !== null),
+		calendar.flatMap((ev, k) =>
+			ev.pieces
+				.map(([ds, de], pi) => {
+					const sp = span(ds, de);
+					if (!sp) return null;
+					const maxc = Math.max(1, Math.floor((sp.w - 14) / 6));
+					const label = expanded && pi === 0 && sp.w > 44 ? (ev.title.length > maxc ? `${ev.title.slice(0, maxc - 1).trimEnd()}…` : ev.title) : '';
+					return { ...sp, ev, k, ds, de, key: `${k}-${pi}`, label };
+				})
+				.filter((x) => x !== null),
+		),
 	);
 
 	/** An unconnected lane's pill (main.js:1372-1381), centred in the lane. */
@@ -449,8 +452,8 @@
 						<rect x={b.x} y={b.y} width={b.w} height={b.h} rx="1.2" fill={ZONE[b.zone]} fill-opacity={armed && Math.abs(playT - b.t) < 7.5 * MIN ? 1 : 0.9} />
 					{/each}
 				{:else if lane.id === 'calendar' && hasCalendar === true}
-					{#each eventChips as ec (ec.k)}
-						{@const on = live(ec.ev.ds, ec.ev.de)}
+					{#each eventChips as ec (ec.key)}
+						{@const on = live(ec.ds, ec.de)}
 						<g class:unanswered={ec.ev.unanswered}>
 							<rect class="event" data-event={ec.k} x={ec.a} y={y + 2} width={Math.max(ec.w, 2)} height={rowH - 4} rx="5" fill-opacity={on ? 0.24 : 0.12} />
 							<rect class="event-cap" x={ec.a} y={y + 2} width="3" height={rowH - 4} rx="1.5" />
