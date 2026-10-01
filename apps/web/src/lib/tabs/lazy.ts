@@ -34,18 +34,59 @@ export function peekView(loader: ViewLoader): View | undefined {
 	return resolved.get(loader);
 }
 
-/** Load the view, sharing one in-flight import per loader. */
+/** Load the view, sharing one in-flight import per loader.
+ *
+ *  A failed import is forgotten, not kept. The usual failure is a box upgrade
+ *  under an open app: each release ships only its own content-hashed chunks,
+ *  so a view this page never opened now points at a file that is gone. Kept,
+ *  the rejection was handed to every later open of that view, which stayed
+ *  blank until a full reload nobody knew to do. The same happens when the Mac
+ *  or phone app swaps in a new copy of the web app. */
 export function loadView(loader: ViewLoader): Promise<View> {
 	const ready = resolved.get(loader);
 	if (ready) return Promise.resolve(ready);
 	let pending = inflight.get(loader);
 	if (!pending) {
-		pending = loader().then((m) => {
-			resolved.set(loader, m.default);
-			inflight.delete(loader);
-			return m.default;
-		});
+		pending = loader().then(
+			(m) => {
+				resolved.set(loader, m.default);
+				inflight.delete(loader);
+				return m.default;
+			},
+			(err) => {
+				inflight.delete(loader);
+				throw err;
+			},
+		);
 		inflight.set(loader, pending);
 	}
 	return pending;
+}
+
+const RELOAD_KEY = 'virtues-stale-chunk-reload';
+/** One automatic reload per minute at most, so a chunk that is missing for
+ *  some other reason (a box mid-restart, a broken build) shows the error
+ *  instead of reloading forever. */
+const RELOAD_GAP_MS = 60_000;
+
+/**
+ * Reload the page to pick up the box's current build, after a chunk failed to
+ * load. Returns false, and reloads nothing, if this tab already reloaded for
+ * the same reason within the last minute; the caller then shows its error.
+ *
+ * Chat drafts and page edits are kept on the device (drafts.ts, IndexedDB),
+ * so a reload here costs a moment, not work.
+ */
+export function reloadForStaleChunk(): boolean {
+	if (typeof window === 'undefined') return false;
+	try {
+		const last = Number(sessionStorage.getItem(RELOAD_KEY) ?? 0);
+		if (Date.now() - last < RELOAD_GAP_MS) return false;
+		sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
+	} catch {
+		// No session storage, no way to tell a first try from a loop.
+		return false;
+	}
+	window.location.reload();
+	return true;
 }
