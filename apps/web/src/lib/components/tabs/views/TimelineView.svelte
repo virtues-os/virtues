@@ -1148,14 +1148,14 @@
 	{/if}
 
 	{#if status === 'empty' && note}
-		<div class="note tile" class:below={away}>
+		<div class="note tile">
 			<p class="note-title">{note.title}</p>
 			{#each note.lines as line (line)}
 				<p class="note-line">{line}</p>
 			{/each}
 		</div>
 	{:else if status === 'error'}
-		<div class="note tile" class:below={away}><p class="note-title">Your server couldn't load {label}. Reload the page to try again.</p></div>
+		<div class="note tile"><p class="note-title">Your server couldn't load {label}. Reload the page to try again.</p></div>
 	{/if}
 	{#if away}
 		<!-- Apple's re-centre pattern: it exists only once the camera has left the
@@ -1395,13 +1395,12 @@
 	}
 	/* The Reset view pill: solid ink, paper text, so it reads as a control and
 	   not a tile (index.html:822-826). The prototype set it at the top centre;
-	   here the top centre is the scope switcher, so it sits under its scope
-	   bar. */
+	   here it sits at the map's bottom right, just above the scrubber's right
+	   end, clear of the top cards (the owner's call). */
 	.reset {
 		position: absolute;
-		top: calc(var(--nav-bottom) + 12px);
-		left: 50%;
-		transform: translateX(-50%);
+		right: calc(min(384px, 42%) + 32px);
+		bottom: calc(var(--scrub-h) + 28px);
 		z-index: 11;
 		display: inline-flex;
 		align-items: center;
@@ -1420,6 +1419,9 @@
 		cursor: pointer;
 		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
 		box-shadow: var(--tile-shadow);
+	}
+	.timeline:not(.with-rail) .reset {
+		right: 16px;
 	}
 	.reset:hover {
 		background: color-mix(in srgb, var(--color-foreground) 88%, var(--color-background));
@@ -1440,9 +1442,6 @@
 		padding: 8px 14px;
 		border-radius: var(--tile-radius);
 		text-align: center;
-	}
-	.note.below {
-		top: calc(var(--nav-bottom) + 60px);
 	}
 	.note p {
 		margin: 0;
