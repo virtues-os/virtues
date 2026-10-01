@@ -38,7 +38,9 @@ export function anchorAt(fixes: Fix[], s: number, e: number): { lat: number; lng
 
 /** Where the pin sits at `t` (main.js:940-944 `locAt`): on the line between
  *  the two fixes around it, or the first or last fix outside the track's
- *  span; null with no track. */
+ *  span; null with no track. Inside a hole in the recording (the next fix
+ *  arrived across one) the record holds no position, so there is no pin
+ *  (the owner's call; the prototype slid it along the bridge). */
 export function positionAt(fixes: Fix[], t: number): { lat: number; lng: number } | null {
 	if (!fixes.length) return null;
 	const first = fixes[0];
@@ -48,6 +50,8 @@ export function positionAt(fixes: Fix[], t: number): { lat: number; lng: number 
 	const i = fixes.findIndex((f) => f.t >= t);
 	const a = fixes[i - 1];
 	const b = fixes[i];
+	if (b.t === t) return { lat: b.lat, lng: b.lng };
+	if (b.bridge) return null;
 	const u = (t - a.t) / (b.t - a.t || 1);
 	return { lat: a.lat + (b.lat - a.lat) * u, lng: a.lng + (b.lng - a.lng) * u };
 }

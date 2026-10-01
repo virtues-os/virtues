@@ -93,14 +93,13 @@ export async function fetchDayWindow(
 	};
 }
 
-/** When location was last measured, in the prototype's words (`honestWhere`,
- *  dayback/src/main.js:958), on the day's own clock: "last measured at
- *  6:00 PM" on the same day, "last measured Jun 3 · 6:00 PM" on an earlier one. */
-export function lastMeasured(ms: number, sameDay: boolean, zone: string): string {
+/** An instant on the day's own clock: "6:00 PM" on the same day, "Jun 3 ·
+ *  6:00 PM" on an earlier one. */
+export function when(ms: number, sameDay: boolean, zone: string): string {
 	const d = new Date(ms);
 	const time = d.toLocaleTimeString("en-US", { timeZone: zone, hour: "numeric", minute: "2-digit" });
 	const date = d.toLocaleDateString("en-US", { timeZone: zone, month: "short", day: "numeric" });
-	return `last measured ${sameDay ? `at ${time}` : `${date} · ${time}`}`;
+	return sameDay ? time : `${date} · ${time}`;
 }
 
 /** What the record did while location was quiet - the prototype's verdict
@@ -112,20 +111,25 @@ export function gapVerdict(x: { fixes: number; talk: boolean; steps: boolean }):
 	return "Phone on but idle";
 }
 
-/** What a day with no fix says (`honestWhere`, dayback/src/main.js:962-965):
- *  the last place you stayed and when you left it; with no stay before the
- *  day at all, that GPS was silent. Then `gapVerdict` over the day, when its
- *  inputs are known: talk is a window of two or more voices, as the rail's
- *  signal gap counts it (main.js:2538). */
+/** What a day with no fix says: that no location was recorded; when it was
+ *  last measured, and at which stay when that last fix fell inside one; then
+ *  `gapVerdict` over the day, when its inputs are known (talk is a window of
+ *  two or more voices, as the rail's signal gap counts it, main.js:2538).
+ *  Where you probably were is left to the reader (the owner's call; the
+ *  prototype's `honestWhere`, main.js:962-965, titled the day with the last
+ *  stay's place). */
 export function quietDay(
-	last: { title: string; e: number } | null,
+	lastFix: number | null,
+	lastStay: { title: string; s: number; e: number } | null,
 	zone: string,
 	day: { talk: boolean; steps: boolean } | null,
 ): { title: string; lines: string[] } {
-	const where = last
-		? { title: last.title, line: sentence(lastMeasured(last.e, false, zone)) }
-		: { title: "No location fix", line: "GPS silent at this moment" };
-	return { title: where.title, lines: day ? [where.line, gapVerdict({ fixes: 0, ...day })] : [where.line] };
+	const lines: string[] = [];
+	if (lastFix !== null) {
+		// A stay ends at its last fix, give or take the fix the spine kept.
+		const inStay = lastStay && lastFix >= lastStay.s && lastFix <= lastStay.e + 60_000;
+		lines.push(`Last measured${inStay ? ` at ${lastStay.title},` : ""} ${when(lastFix, false, zone)}`);
+	}
+	if (day) lines.push(gapVerdict({ fixes: 0, ...day }));
+	return { title: "No location recorded", lines };
 }
-
-const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

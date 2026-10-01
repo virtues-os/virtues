@@ -466,15 +466,19 @@
 		status = fixes.length ? 'shown' : 'empty';
 		drawn++;
 		if (fixes.length) return;
-		// No fix all day. The prototype's rule (`honestWhere` + `gapWhy`): the
-		// last place you stayed and when you left it, then what the phone did
+		// No fix all day: say so, then when location was last measured (and
+		// at which stay, when the last fix was in one), then what the phone did
 		// that day - told only when the day's voice and steps loaded. The
 		// camera holds the last fix (drawDay).
 		const before = derived?.last_stay_before ?? null;
 		const lastStay = before
-			? { title: placeTitle(derived?.places.find((p) => p.id === before.timeline_place_id)), e: Date.parse(before.ended_at) }
+			? {
+					title: placeTitle(derived?.places.find((p) => p.id === before.timeline_place_id)),
+					s: Date.parse(before.started_at),
+					e: Date.parse(before.ended_at),
+				}
 			: null;
-		note = quietDay(lastStay, zone, voice && lw ? { talk: voice.some((v) => v.speaker_count >= 2), steps: lw.steps.length > 0 } : null);
+		note = quietDay(lastFix?.t ?? null, lastStay, zone, voice && lw ? { talk: voice.some((v) => v.speaker_count >= 2), steps: lw.steps.length > 0 } : null);
 	}
 
 	/** The loaded day on the map: its track, then the frame, the bubbles and

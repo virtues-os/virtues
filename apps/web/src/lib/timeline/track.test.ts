@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TimelineDayPoint } from "$lib/wiki/api";
 import { cleanTrack, dropSpikes, flagHoles, HOLE_MIN_M, HOLE_MIN_MS, metres, splitTrack, toFixes } from "./track";
-import { gapVerdict, lastMeasured, quietDay, stepDay, utcDatesFor } from "./day";
+import { gapVerdict, quietDay, stepDay, utcDatesFor, when } from "./day";
 
 // A fixed spot (open ocean, so no real place) and a way to step north by metres.
 const LAT = 0;
@@ -109,27 +109,30 @@ describe("the empty day, in the prototype's words", () => {
 		expect(gapVerdict({ fixes: 0, talk: false, steps: true })).toBe("Phone on but idle");
 		expect(gapVerdict({ fixes: 3, talk: false, steps: false })).toBe("Phone on but idle");
 	});
-	it("says when location was last measured, as honestWhere does, on the day's clock", () => {
+	it("says an instant on the day's own clock", () => {
 		const t = Date.parse("2026-06-03T23:00:00Z"); // 6:00 PM in Chicago (CDT)
-		expect(lastMeasured(t, false, "America/Chicago")).toBe("last measured Jun 3 · 6:00 PM");
-		expect(lastMeasured(t, true, "America/Chicago")).toBe("last measured at 6:00 PM");
+		expect(when(t, false, "America/Chicago")).toBe("Jun 3 · 6:00 PM");
+		expect(when(t, true, "America/Chicago")).toBe("6:00 PM");
 		// The same instant on a Los Angeles day reads two hours earlier.
-		expect(lastMeasured(t, true, "America/Los_Angeles")).toBe("last measured at 4:00 PM");
-		expect(lastMeasured(Date.parse("2026-01-02T06:05:00Z"), false, "America/Chicago")).toBe("last measured Jan 2 · 12:05 AM");
+		expect(when(t, true, "America/Los_Angeles")).toBe("4:00 PM");
+		expect(when(Date.parse("2026-01-02T06:05:00Z"), false, "America/Chicago")).toBe("Jan 2 · 12:05 AM");
 	});
-	it("titles a day with no fix by the last place you stayed, as honestWhere does", () => {
+	it("says no location was recorded, and leaves where you were to the reader", () => {
 		const left = Date.parse("2026-06-03T23:00:00Z"); // 6:00 PM in Chicago
-		expect(quietDay({ title: "Home", e: left }, "America/Chicago", { talk: true, steps: true })).toEqual({
-			title: "Home",
-			lines: ["Last measured Jun 3 · 6:00 PM", "Phone on, mic active"],
+		const home = { title: "Home", s: left - 3_600_000, e: left };
+		expect(quietDay(left, home, "America/Chicago", { talk: true, steps: true })).toEqual({
+			title: "No location recorded",
+			lines: ["Last measured at Home, Jun 3 · 6:00 PM", "Phone on, mic active"],
 		});
-		expect(quietDay(null, "America/Chicago", { talk: false, steps: false })).toEqual({
-			title: "No location fix",
-			lines: ["GPS silent at this moment", "Nothing recorded"],
+		// The last fix came after the stay, on the road: no place is named.
+		expect(quietDay(left + 1_800_000, home, "America/Chicago", null).lines).toEqual(["Last measured Jun 3 · 6:30 PM"]);
+		expect(quietDay(null, null, "America/Chicago", { talk: false, steps: false })).toEqual({
+			title: "No location recorded",
+			lines: ["Nothing recorded"],
 		});
 	});
 	it("gives no verdict when the day's voice or steps didn't load", () => {
-		expect(quietDay(null, "America/Chicago", null).lines).toEqual(["GPS silent at this moment"]);
+		expect(quietDay(null, null, "America/Chicago", null).lines).toEqual([]);
 	});
 });
 

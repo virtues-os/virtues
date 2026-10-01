@@ -50,4 +50,9 @@ describe("positionAt", () => {
 		expect(positionAt(track, 50)!.lat).toBe(1);
 		expect(positionAt([], 5)).toBeNull();
 	});
+	it("shows no pin inside a hole in the recording", () => {
+		const track = [fix(0, 0), { ...fix(10, 1), bridge: true }];
+		expect(positionAt(track, 5)).toBeNull();
+		expect(positionAt(track, 10)!.lat).toBe(1);
+	});
 });
