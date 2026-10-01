@@ -815,7 +815,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 
 	// ========================================================================
 	// TIMELINE: /timeline — one day on a map: its track, stays, drives and
-	// moments, with the day's rail and scrubber.
+	// moments, with the day's inspector and scrubber.
 	// ========================================================================
 	timeline: {
 		match: (path) => path === '/timeline',

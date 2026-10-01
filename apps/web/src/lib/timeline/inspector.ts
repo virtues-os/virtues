@@ -1,5 +1,5 @@
 /**
- * rail.ts - the day as the rail reads it: sections for where you were (a
+ * inspector.ts - the day as the inspector reads it: sections for where you were (a
  * stay, a drive, a signal gap, In Bed), and rows for what happened (a
  * conversation, a walk) filed under the section that holds their middle
  * (dayback/src/main.js:1562-1584). The highlight never climbs back up: a
@@ -58,14 +58,14 @@ export interface DerivedWindow {
 
 export type SectionKind = "place" | "transit" | "gap" | "sleep";
 
-/** What a click on the rail picked: a section or a row, by kind and span. */
-export interface RailPick {
+/** What a click on the inspector picked: a section or a row, by kind and span. */
+export interface InspectorPick {
 	kind: SectionKind | "conversation" | "walk";
 	s: number;
 	e: number;
 }
 
-export interface RailRow {
+export interface InspectorRow {
 	kind: "conversation" | "walk";
 	s: number;
 	e: number;
@@ -78,7 +78,7 @@ export interface RailRow {
 	convs: VoiceWindow[];
 }
 
-export interface RailSection {
+export interface InspectorSection {
 	kind: SectionKind;
 	s: number;
 	e: number;
@@ -87,7 +87,7 @@ export interface RailSection {
 	/** Up to two lines under the title: only a signal gap explains itself. */
 	notes: string[];
 	placeId: string | null;
-	rows: RailRow[];
+	rows: InspectorRow[];
 	/** A stay's audio note: "no audio" or "silent", only when clear-cut. */
 	atag: "no audio" | "silent" | null;
 	/** In Bed only: where the night came from. */
@@ -142,17 +142,17 @@ export function audioTag(s: number, e: number, windows: { s: number; e: number }
 
 /** The day's sections and rows, clipped to [start, end); `voice` is every
  *  transcription window over the day. */
-export function buildRail(w: DerivedWindow, start: number, end: number, voice: VoiceWindow[] = []): RailSection[] {
+export function buildInspector(w: DerivedWindow, start: number, end: number, voice: VoiceWindow[] = []): InspectorSection[] {
 	const places = new Map(w.places.map((p) => [p.id, p]));
 	const t = (iso: string) => Date.parse(iso);
 	const inDay = w.spans
 		.map((s) => ({ ...s, s: t(s.started_at), e: t(s.ended_at) }))
 		.filter((s) => s.e > start && s.s < end)
 		.sort((a, b) => a.s - b.s);
-	const built: RailSection[] = inDay.map((s) => {
+	const built: InspectorSection[] = inDay.map((s) => {
 		const cs = Math.max(s.s, start);
 		const ce = Math.min(s.e, end);
-		const base = { s: cs, e: ce, placeId: s.timeline_place_id, rows: [] as RailRow[], notes: [] as string[], atag: null, src: null };
+		const base = { s: cs, e: ce, placeId: s.timeline_place_id, rows: [] as InspectorRow[], notes: [] as string[], atag: null, src: null };
 		switch (s.kind) {
 			case "stay":
 				return { ...base, kind: "place", title: placeTitle(places.get(s.timeline_place_id ?? "")), dur: fmtDur(ce - cs) };
@@ -184,7 +184,7 @@ export function buildRail(w: DerivedWindow, start: number, end: number, voice: V
 
 	const windows = voice.map((v) => ({ w: v, s: t(v.started_at), e: t(v.ended_at) }));
 	const talk = windows.filter((v) => v.w.speaker_count >= 2);
-	const rows: RailRow[] = w.moments
+	const rows: InspectorRow[] = w.moments
 		.map((m) => ({ ...m, s: t(m.started_at), e: t(m.ended_at) }))
 		.filter((m) => m.e > start && m.s < end)
 		.sort((a, b) => a.s - b.s)
@@ -201,7 +201,7 @@ export function buildRail(w: DerivedWindow, start: number, end: number, voice: V
 	// a conversation can start seconds before the stay's arrival stamp.
 	for (const r of rows) {
 		const mid = (r.s + r.e) / 2;
-		let home: RailSection | undefined;
+		let home: InspectorSection | undefined;
 		for (const sec of sections) if (sec.s <= mid) home = sec;
 		(home ?? sections[0])?.rows.push(r);
 	}

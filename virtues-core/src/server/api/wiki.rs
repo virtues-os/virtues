@@ -25,7 +25,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/timeline/derived", get(timeline_derived_handler))
         // One local day's bounds, in the zone the day woke up in
         .route("/api/timeline/day-window/:date", get(timeline_day_window_handler))
-        // The transcription windows over a window: the rail's conversations and the mic's coverage
+        // The transcription windows over a window: the inspector's conversations and the mic's coverage
         .route("/api/timeline/voice", get(timeline_voice_handler))
         // The scrubber's Body, Calendar and Finance lanes over a window
         .route("/api/timeline/lanes", get(timeline_lanes_handler))
@@ -1191,7 +1191,7 @@ pub async fn timeline_derived_handler(
 }
 
 /// The transcription windows overlapping `start`..`end` (RFC 3339): the
-/// rail's conversations and transcripts, and whether the mic was on.
+/// inspector's conversations and transcripts, and whether the mic was on.
 pub async fn timeline_voice_handler(State(state): State<AppState>, Query(q): Query<TimelineWindowQuery>) -> Response {
     if q.end <= q.start {
         return error_response(Error::InvalidInput("end must be after start".into()));

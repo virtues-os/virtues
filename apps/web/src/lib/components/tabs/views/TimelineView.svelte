@@ -5,7 +5,7 @@
 	/api/map/vt) showing one local day: its GPS path, solid runs of recorded
 	fixes and dashed bridges across the holes in the recording
 	($lib/timeline/track); the stays, drives and moments the server derives
-	(/api/timeline/derived) as the rail beside it and bubbles on it; the day's
+	(/api/timeline/derived) as the inspector beside it and bubbles on it; the day's
 	streams in the scrubber under it. The date card steps between days.
 
 	Its own map (MapLibre v6), not the Leaflet MovementMap: the prototype's map
@@ -19,10 +19,10 @@
 	import type { GeoJSONSource, LngLat, Map as MlMap, Marker, StyleSpecification } from 'maplibre-gl';
 	import { fetchDayBounds, fetchDayWindow, fetchDerived, fetchLanes, fetchVoice, localDay, quietDay, stepDay } from '$lib/timeline/day';
 	import { cleanTrack, dropSpikes, flagHoles, splitTrack, toFixes, type Fix, type Line } from '$lib/timeline/track';
-	import { buildRail, placeTitle, type RailPick, type RailSection } from '$lib/timeline/rail';
+	import { buildInspector, placeTitle, type InspectorPick, type InspectorSection } from '$lib/timeline/inspector';
 	import { anchorAt, positionAt, trackMetres } from '$lib/timeline/anchor';
 	import { Bubbles, type Area, type MapMoment } from '$lib/timeline/bubbles';
-	import TimelineRail from '$lib/components/timeline/TimelineRail.svelte';
+	import TimelineInspector from '$lib/components/timeline/TimelineInspector.svelte';
 	import TimelineScrubber from '$lib/components/timeline/TimelineScrubber.svelte';
 	import TimelineMonth from '$lib/components/timeline/TimelineMonth.svelte';
 	import { laneData, NO_LANES, type Lanes, type RibbonKind } from '$lib/timeline/lanes';
@@ -130,27 +130,27 @@
 	const navBottom = $derived(navTop + segH + 6 + barHt);
 	/** The bottom of the top cards, for the map's framing and clear area. */
 	const topChrome = $derived(Math.max(16 + cardH, navBottom));
-	/** The rail runs full height, unless the date card would run into it. */
-	const railLow = $derived(paneW > 0 && 16 + cardW + 16 > paneW - Math.min(384, paneW * 0.42) - 16);
+	/** The inspector runs full height, unless the date card would run into it. */
+	const inspectorLow = $derived(paneW > 0 && 16 + cardW + 16 > paneW - Math.min(384, paneW * 0.42) - 16);
 	let note = $state<{ title: string; lines: string[] } | null>(null);
 	let map: MlMap | null = null;
 	let maplibre: typeof import('maplibre-gl') | null = null;
 	let resizer: ResizeObserver | null = null;
-	let rail = $state<ReturnType<typeof TimelineRail> | null>(null);
-	let sections = $state<RailSection[]>([]);
+	let inspector = $state<ReturnType<typeof TimelineInspector> | null>(null);
+	let sections = $state<InspectorSection[]>([]);
 	/** Each place's centre, [lng, lat], by its id: where a picked stay flies in to. */
 	let placeCoords = new Map<string, [number, number]>();
 	let zone = $state('UTC');
-	let railError = $state(false);
+	let inspectorError = $state(false);
 	/** The day's cleaned track: where a picked moment is found on the map. */
 	let dayTrack: Fix[] = [];
 	/** The day's fixes, for framing the whole day. */
 	let dayFixes: Fix[] = [];
 	/** The playhead: a day opens at its midnight, untouched, until the first
 	 *  pick (main.js:1162, 1387). Everything follows it: the pin, the lit
-	 *  bubble, the lit rail section and row, the lit stretch of path. */
+	 *  bubble, the lit inspector section and row, the lit stretch of path. */
 	let playT = $state(0);
-	/** The user has moved the playhead in this day; until then the rail opens
+	/** The user has moved the playhead in this day; until then the inspector opens
 	 *  nothing by itself (main.js:1559). */
 	let armed = $state(false);
 	let dayStart = $state(0);
@@ -166,8 +166,8 @@
 	let bubbles: Bubbles | null = null;
 	/** Which stretch of path is lit, so it is written only when it changes. */
 	let litKey = '';
-	/** What the user last pointed at, for the rail's scroll (main.js:1559). */
-	let railFocus = $state<'row' | 'sec'>('row');
+	/** What the user last pointed at, for the inspector's scroll (main.js:1559). */
+	let inspectorFocus = $state<'row' | 'sec'>('row');
 
 	/** The scrubber's view, the span on screen (main.js:10). It stays put while
 	 *  the playhead moves, and scrolls only to keep the playhead in it. */
@@ -316,13 +316,13 @@
 				// is moving along, in the move colour at the path's own weight, over
 				// a path otherwise blue all day - only what you're looking at turns
 				// orange (the owner's call, after trying every drive orange: too
-				// much orange). A drive picked from the rail turns the brighter
+				// much orange). A drive picked from the inspector turns the brighter
 				// orange, grows heavier and glows (pick, below). Whether a drive or
 				// a moving conversation lit it, it is orange (the prototype lit a
 				// moving conversation in slate).
 				m.addSource('lit-run', { type: 'geojson', data: lines([]) });
 				m.addSource('lit-bridge', { type: 'geojson', data: lines([]) });
-				// A drive picked from the rail glows under its lit stretch while it
+				// A drive picked from the inspector glows under its lit stretch while it
 				// stays picked (pick, below); otherwise the glow is off.
 				m.addLayer({
 					id: 'lit-glow',
@@ -371,8 +371,8 @@
 	});
 
 	// The day loads on its own, and the map draws it once the map is up: the
-	// bar, the rail and a day's note never wait on the tiles (the prototype
-	// draws its rail with no map at all).
+	// bar, the inspector and a day's note never wait on the tiles (the prototype
+	// draws its inspector with no map at all).
 	$effect(() => {
 		void loadDay(date);
 	});
@@ -420,8 +420,8 @@
 		if (mine !== asked) return;
 		const { startMs, endMs } = bounds;
 		zone = bounds.zone;
-		railError = derived === null;
-		sections = derived ? buildRail(derived, startMs, endMs, voice ?? []) : [];
+		inspectorError = derived === null;
+		sections = derived ? buildInspector(derived, startMs, endMs, voice ?? []) : [];
 		placeCoords = new Map((derived?.places ?? []).map((p) => [p.id, [p.longitude, p.latitude] as [number, number]]));
 		unpick();
 		// Spikes go first, then holes are judged across the whole window, then the
@@ -461,7 +461,7 @@
 				park(startMs + nudged.tod);
 			}
 		}
-		railFocus = 'row';
+		inspectorFocus = 'row';
 		litKey = '';
 		lastFix = all.filter((f) => f.t < startMs).at(-1) ?? toFixes(window.before ? [window.before] : [])[0] ?? null;
 		status = fixes.length ? 'shown' : 'empty';
@@ -491,7 +491,7 @@
 		const { runs, bridges } = splitTrack(dayTrack);
 		(m.getSource('track-run') as GeoJSONSource).setData(lines(runs));
 		(m.getSource('track-bridge') as GeoJSONSource).setData(lines(bridges));
-		// The rail draws first, so the framing can leave room for it.
+		// The inspector draws first, so the framing can leave room for it.
 		await tick();
 		if (mine !== asked) return;
 		if (dayFixes.length) {
@@ -510,7 +510,7 @@
 	}
 
 	/** The prototype's framing padding (`v4FitPad`, dayback/src/main.js:1190):
-	 *  the measured top cards, rail and scrubber plus a buffer of max(34 px,
+	 *  the measured top cards, inspector and scrubber plus a buffer of max(34 px,
 	 *  6 % of the smaller side) on every edge, each capped so fitBounds can
 	 *  still move. */
 	function fitPad(m: MlMap) {
@@ -518,12 +518,12 @@
 		const cw = c.clientWidth || 900;
 		const ch = c.clientHeight || 600;
 		const buf = Math.max(34, Math.round(Math.min(cw, ch) * 0.06));
-		const railW = rail?.width() ?? 0;
+		const inspectorW = inspector?.width() ?? 0;
 		return {
 			top: Math.min(topChrome + buf, ch * 0.34),
 			bottom: Math.min(scrubBottom() + buf, ch * 0.45),
 			left: Math.min(buf, cw * 0.4),
-			right: Math.min((railW ? railW + 16 : 0) + buf, cw * 0.5),
+			right: Math.min((inspectorW ? inspectorW + 16 : 0) + buf, cw * 0.5),
 		};
 	}
 
@@ -731,7 +731,7 @@
 	 *  exactly there (main.js:501, 1409-1420). */
 	function scrubSeek(t: number) {
 		cancelAnim();
-		railFocus = 'row';
+		inspectorFocus = 'row';
 		park(t);
 	}
 
@@ -742,7 +742,7 @@
 	 *  jumped after it). */
 	function swipe(t: number) {
 		cancelAnim();
-		railFocus = 'row';
+		inspectorFocus = 'row';
 		if (viewStart <= dayStart && viewEnd >= dayEnd) {
 			park(t);
 			return;
@@ -771,7 +771,7 @@
 		}
 		// Play is a touch too.
 		armed = true;
-		railFocus = 'row';
+		inspectorFocus = 'row';
 		if (playT >= dayEnd - 2 * MIN) playT = dayStart;
 		loopRaf = requestAnimationFrame(loop);
 	}
@@ -812,7 +812,7 @@
 	function nudge(dir: 1 | -1) {
 		const t = tier;
 		if (t === 'min' || t === 'hour') {
-			railFocus = 'row';
+			inspectorFocus = 'row';
 			park(playT + dir * (t === 'min' ? MIN : HOUR));
 			return;
 		}
@@ -859,7 +859,7 @@
 	 *  drive under the playhead, else the moving moment under it. The drive
 	 *  comes first (the prototype put the moment first), so a conversation
 	 *  that runs from a stay into a drive never lights its whole path over
-	 *  the drive, and a drive picked from the rail lights and glows itself. */
+	 *  the drive, and a drive picked from the inspector lights and glows itself. */
 	function syncPlayhead() {
 		const m = map;
 		if (!m) return;
@@ -880,19 +880,19 @@
 		(m.getSource('lit-bridge') as GeoJSONSource | undefined)?.setData(pts.length >= 2 ? lines(bridges) : lines([]));
 	}
 
-	/** A rail pick parks the playhead and takes the map there (main.js:1634-1637,
+	/** An inspector pick parks the playhead and takes the map there (main.js:1634-1637,
 	 *  1087-1101): a row reveals its bubble; a section parks at its start (not
 	 *  when it is already the live one) and a drive is framed whole, anything
 	 *  else opens its bubbles' chip or pans to where the track says you were. */
 	/** A click on a stretch of the scrubber's Location lane: the playhead is
 	 *  already where the click landed; the map goes to the stretch holding it,
-	 *  as a pick in the rail would take it (the owner's call). */
+	 *  as a pick in the inspector would take it (the owner's call). */
 	function revealAt(kind: RibbonKind, t: number) {
 		const sec = sections.find((s) => s.kind === kind && s.s <= t && t < s.e);
 		if (sec) reveal({ kind: sec.kind, s: sec.s, e: sec.e }, false);
 	}
 
-	function reveal(p: RailPick, parkIt = true) {
+	function reveal(p: InspectorPick, parkIt = true) {
 		const m = map;
 		const ml = maplibre;
 		if (!m || !ml) return;
@@ -907,7 +907,7 @@
 		}
 		const i = sections.findIndex((s) => s.kind === p.kind && s.s === p.s);
 		const live = sections.findLastIndex((s) => s.s <= playT && playT < s.e);
-		railFocus = 'sec';
+		inspectorFocus = 'sec';
 		if (parkIt && i !== live) park(p.s);
 		if (p.kind === 'transit') {
 			bubbles?.fold();
@@ -936,15 +936,15 @@
 		if (at) showPoint(m, [at.lng, at.lat]);
 	}
 
-	/** A conversation or a walk picked anywhere - its rail row, its bubble, a
+	/** A conversation or a walk picked anywhere - its inspector row, its bubble, a
 	 *  place card's row - does one thing: the playhead goes to its start, its
-	 *  row opens in the rail (a click on the rail's own row opens or closes it
+	 *  row opens in the inspector (a click on the inspector's own row opens or closes it
 	 *  there), and the map flies in to it, or opens the chip holding it (the
 	 *  owner's call; the prototype only panned a bubble into view). */
 	function pickMoment(s: number, openRow: boolean) {
-		railFocus = 'row';
+		inspectorFocus = 'row';
 		park(s);
-		if (openRow) rail?.expand(s);
+		if (openRow) inspector?.expand(s);
 		bubbles?.reveal(s);
 	}
 
@@ -957,7 +957,7 @@
 		m.easeTo({ center: at, zoom: Math.max(m.getZoom(), 16), offset, duration: 650 });
 	}
 
-	/** A stay or a drive picked from the rail stays marked while the playhead
+	/** A stay or a drive picked from the inspector stays marked while the playhead
 	 *  is inside it: a stay's place pulses (the prototype's "take me there"
 	 *  pin, dayback/index.html:321-322), a drive's lit stretch glows. Any other
 	 *  pick, a scrub, or the playhead leaving it clears the mark. */
@@ -1013,11 +1013,11 @@
 	}
 
 	/** The clear map (`v4ClearArea`, main.js:1042-1044): not under the top
-	 *  cards, the rail or the scrubber, 8 px in from every edge. */
+	 *  cards, the inspector or the scrubber, 8 px in from every edge. */
 	function clearArea(m: MlMap): Area {
 		const c = m.getContainer();
-		const railW = rail?.width() ?? 0;
-		return { l: 8, t: topChrome + 8, r: c.clientWidth - (railW ? railW + 20 : 0) - 8, b: c.clientHeight - scrubBottom() - 8 };
+		const inspectorW = inspector?.width() ?? 0;
+		return { l: 8, t: topChrome + 8, r: c.clientWidth - (inspectorW ? inspectorW + 20 : 0) - 8, b: c.clientHeight - scrubBottom() - 8 };
 	}
 
 	/** What the scrubber takes from the bottom: its card and 26 px under it,
@@ -1069,10 +1069,10 @@
 <div
 	class="timeline"
 	class:stacked
-	class:with-rail={sections.length > 0}
+	class:with-inspector={sections.length > 0}
 	bind:this={root}
 	bind:clientWidth={paneW}
-	style="{colourVars(dark)}; --nav-top: {navTop}px; --nav-bottom: {navBottom}px; --bar-overhang: {overhang}px; --scrub-h: {scrubH}px; --rail-top: {railLow ? topChrome + 12 : 16}px"
+	style="{colourVars(dark)}; --nav-top: {navTop}px; --nav-bottom: {navBottom}px; --bar-overhang: {overhang}px; --scrub-h: {scrubH}px; --inspector-top: {inspectorLow ? topChrome + 12 : 16}px"
 >
 	<div class="timeline-map" bind:this={container}></div>
 
@@ -1121,14 +1121,14 @@
 		</div>
 	</nav>
 
-	<TimelineRail bind:this={rail} {sections}
+	<TimelineInspector bind:this={inspector} {sections}
 		{zone}
 		{playT}
 		{armed}
-		focus={railFocus}
+		focus={inspectorFocus}
 		onpick={reveal}
 		onseek={(t) => {
-			railFocus = 'row';
+			inspectorFocus = 'row';
 			park(t);
 		}}
 	/>
@@ -1163,8 +1163,8 @@
 			onplay={togglePlay}
 		/>
 	{/if}
-	{#if railError && status !== 'error' && status !== 'loading'}
-		<p class="rail-error tile">Your server couldn't load the day's stays. Reload the page to try again.</p>
+	{#if inspectorError && status !== 'error' && status !== 'loading'}
+		<p class="inspector-error tile">Your server couldn't load the day's stays. Reload the page to try again.</p>
 	{/if}
 
 	{#if status === 'empty' && note}
@@ -1193,13 +1193,13 @@
 
 <style>
 	/* One solid material for every card - the date card, the scope switcher
-	   and its scope bar, the rail and the scrubber - so they always match.
+	   and its scope bar, the inspector and the scrubber - so they always match.
 	   Nothing else in Virtues is see-through, so neither is the Timeline. */
 	.timeline {
 		position: absolute;
 		inset: 0;
-		/* What the rail takes from the map's right edge, with its gaps. */
-		--rail-space: 16px;
+		/* What the inspector takes from the map's right edge, with its gaps. */
+		--inspector-space: 16px;
 		--tile-bg: var(--c-tile);
 		--tile-border: 1px solid color-mix(in srgb, var(--color-foreground) 7%, transparent);
 		--tile-radius: 12px;
@@ -1445,7 +1445,7 @@
 		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
 		box-shadow: var(--tile-shadow);
 	}
-	.timeline:not(.with-rail) .reset {
+	.timeline:not(.with-inspector) .reset {
 		right: 16px;
 	}
 	.reset:hover {
@@ -1456,18 +1456,18 @@
 		font-size: 14px;
 		line-height: 1;
 	}
-	.timeline.with-rail {
-		--rail-space: calc(min(384px, 42%) + 32px);
+	.timeline.with-inspector {
+		--inspector-space: calc(min(384px, 42%) + 32px);
 	}
 	/* Front and centre of the clear map, between the top cards and the
-	   scrubber, the left edge and the rail (the owner's call): on a day with
+	   scrubber, the left edge and the inspector (the owner's call): on a day with
 	   no location it is the day's one fact, and the map under it holds the
 	   last known position. */
 	.note {
 		position: absolute;
 		z-index: 10;
 		top: calc((var(--nav-bottom) + 12px + 100% - var(--scrub-h) - 28px) / 2);
-		left: calc((16px + 100% - var(--rail-space)) / 2);
+		left: calc((16px + 100% - var(--inspector-space)) / 2);
 		transform: translate(-50%, -50%);
 		padding: 8px 14px;
 		border-radius: var(--tile-radius);
@@ -1484,7 +1484,7 @@
 		color: var(--color-foreground-muted);
 		font-size: 12px;
 	}
-	.rail-error {
+	.inspector-error {
 		position: absolute;
 		z-index: 10;
 		top: 16px;
@@ -1606,7 +1606,7 @@
 	.timeline :global(.tl-bubble.in-card .tl-bubble-line) {
 		display: none;
 	}
-	/* A stay picked from the rail: its place pulses while it stays picked -
+	/* A stay picked from the inspector: its place pulses while it stays picked -
 	   the prototype's "take me there" pin (dayback/index.html:321-322). */
 	.timeline :global(.tl-pulse) {
 		width: 20px;

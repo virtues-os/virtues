@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { audioTag, buildRail, fmtDur, placeTitle, transitTitle, type DerivedWindow } from "./rail";
+import { audioTag, buildInspector, fmtDur, placeTitle, transitTitle, type DerivedWindow } from "./inspector";
 
 const at = (hhmm: string) => `2026-06-10T${hhmm}:00Z`;
 const day = { start: Date.parse(at("00:00")), end: Date.parse("2026-06-11T00:00:00Z") };
@@ -31,10 +31,10 @@ const window: DerivedWindow = {
 	],
 };
 
-describe("the rail", () => {
+describe("the inspector", () => {
 	it("titles sections the prototype's way", () => {
-		const rail = buildRail(window, day.start, day.end);
-		expect(rail.map((s) => [s.kind, s.title, s.dur])).toEqual([
+		const inspector = buildInspector(window, day.start, day.end);
+		expect(inspector.map((s) => [s.kind, s.title, s.dur])).toEqual([
 			["sleep", "In Bed", "7h"], // a night keeps its full length, and leads a stay opening at midnight too
 			["place", "Home", "8h"], // clipped to the day
 			["transit", "Driving", "20m"],
@@ -42,14 +42,14 @@ describe("the rail", () => {
 			["gap", "Signal gap", "3h"],
 		]);
 		// Where you probably were is left to the reader: the gap says only what the record knows.
-		expect(rail[4].notes).toEqual(["No location recorded", "Phone on, mic active"]);
+		expect(inspector[4].notes).toEqual(["No location recorded", "Phone on, mic active"]);
 	});
 
 	it("files a row under the section holding its middle", () => {
-		const rail = buildRail(window, day.start, day.end);
-		expect(rail[3].rows.map((r) => r.title)).toEqual(["Coffee plans", "Walk · 2.1 km"]);
-		expect(rail[3].rows[0].windowIds).toEqual(["w1", "w2"]);
-		expect(rail[2].rows).toEqual([]);
+		const inspector = buildInspector(window, day.start, day.end);
+		expect(inspector[3].rows.map((r) => r.title)).toEqual(["Coffee plans", "Walk · 2.1 km"]);
+		expect(inspector[3].rows[0].windowIds).toEqual(["w1", "w2"]);
+		expect(inspector[2].rows).toEqual([]);
 	});
 
 	it("never shows the wiki's coordinate stub as a name", () => {
@@ -76,13 +76,13 @@ describe("the rail", () => {
 			win("w2", "08:24", "08:29", 3),
 			win("w3", "08:30", "08:35", 1), // one voice: not a conversation's window
 		];
-		const rail = buildRail(window, day.start, day.end, voice);
-		expect(rail[3].rows[0].convs.map((c) => c.id)).toEqual(["w1", "w2"]);
-		expect(rail[0].src).toBe("healthkit");
+		const inspector = buildInspector(window, day.start, day.end, voice);
+		expect(inspector[3].rows[0].convs.map((c) => c.id)).toEqual(["w1", "w2"]);
+		expect(inspector[0].src).toBe("healthkit");
 		// Home, 8 h with no conversation filed and the mic barely on: "no audio".
-		expect(rail[1].atag).toBe("no audio");
+		expect(inspector[1].atag).toBe("no audio");
 		// The cafe has rows, so no note.
-		expect(rail[3].atag).toBeNull();
+		expect(inspector[3].atag).toBeNull();
 	});
 
 	it("tags a stay only when its audio is clear-cut", () => {

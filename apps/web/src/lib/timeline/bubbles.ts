@@ -22,7 +22,7 @@ export interface Box {
 	w: number;
 	h: number;
 }
-/** The clear map: not under the day bar, the rail or (later) the scrubber. */
+/** The clear map: not under the day bar, the inspector or (later) the scrubber. */
 export interface Area {
 	l: number;
 	t: number;
@@ -202,7 +202,7 @@ export class Bubbles {
 		return k && k.m.moving ? k.m : null;
 	}
 
-	/** A moment picked (its rail row, its bubble, a card row): open the chip
+	/** A moment picked (its inspector row, its bubble, a card row): open the chip
 	 *  holding it, else fly in to it (main.js:1087-1091, which only panned it
 	 *  into view). */
 	reveal(s: number): void {
@@ -220,7 +220,7 @@ export class Bubbles {
 		this.layout();
 	}
 
-	/** A section picked from the rail, with the starts of its rows
+	/** A section picked from the inspector, with the starts of its rows
 	 *  (main.js:1097-1100). True when the bubbles took the map there. */
 	revealSection(keys: number[]): boolean {
 		if (keys.length && this.expanded && keys.every((k) => this.expanded!.keys.has(k))) return true;

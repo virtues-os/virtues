@@ -12,7 +12,7 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { bars, barHeight, barWidth, fitWords, waveform, type RibbonKind, type RibbonSpan, type ScrubConversation, type ScrubEvent } from '$lib/timeline/lanes';
 	import { HOUR, MIN, inFold, ticks, unwarp, warp, type Fold, type Tier } from '$lib/timeline/scale';
-	import { fmtDur } from '$lib/timeline/rail';
+	import { fmtDur } from '$lib/timeline/inspector';
 
 	let {
 		viewStart,
@@ -45,7 +45,7 @@
 	}: {
 		viewStart: number;
 		viewEnd: number;
-		/** The day the title, the map and the rail show. */
+		/** The day the title, the map and the inspector show. */
 		dayStart: number;
 		dayEnd: number;
 		folds: Fold[];
@@ -71,7 +71,7 @@
 		/** A sideways two-finger swipe to time `t`. */
 		onswipe: (t: number) => void;
 		/** A click (not a drag) on a stretch of the Location lane, at time `t`:
-		 *  the map goes there as a pick in the rail would take it. */
+		 *  the map goes there as a pick in the inspector would take it. */
 		onribbon: (r: { kind: RibbonKind; t: number }) => void;
 		onzoom: (factor: number) => void;
 		ontier: (t: Tier) => void;
@@ -522,7 +522,7 @@
 </section>
 
 <style>
-	/* The card along the bottom: beside the rail, never under it (index.html:
+	/* The card along the bottom: beside the inspector, never under it (index.html:
 	   812, 844). */
 	.scrub {
 		position: absolute;
@@ -543,7 +543,7 @@
 		font-family: var(--font-sans);
 		color: var(--color-foreground);
 	}
-	:global(.timeline:not(.with-rail)) .scrub {
+	:global(.timeline:not(.with-inspector)) .scrub {
 		right: 16px;
 	}
 	.top {
@@ -828,7 +828,7 @@
 		fill: var(--color-foreground);
 		pointer-events: none;
 	}
-	/* The hover peek: title, time, who - lighter than the rail, and it never
+	/* The hover peek: title, time, who - lighter than the inspector, and it never
 	   takes the click (index.html:908-911). */
 	.peek {
 		position: absolute;

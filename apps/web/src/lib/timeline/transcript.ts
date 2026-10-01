@@ -1,5 +1,5 @@
 /**
- * transcript.ts - a conversation's words as the rail reads them
+ * transcript.ts - a conversation's words as the inspector reads them
  * (dayback/src/main.js:1549-1555, 1616-1626): speaker turns, never
  * identities, and each line at an estimated moment, since the recorder keeps
  * no per-line times.

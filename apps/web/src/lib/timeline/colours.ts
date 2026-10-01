@@ -3,7 +3,7 @@
  * hue per stream (dayback/index.html:17, the "Apple" preset's side of it,
  * dayback/src/main.js:1662). The Timeline follows the prototype's look
  * rather than the pane's one-accent grammar, by the owner's call
- * (2026-09-30); the map, the scrubber and the rail all read these, so a
+ * (2026-09-30); the map, the scrubber and the inspector all read these, so a
  * stream is the same colour everywhere.
  */
 
@@ -12,7 +12,7 @@ export const COLOURS = {
 	place: "#4C86D6",
 	/** Moving: a drive's section, a walk's row, and the lit stretch of path. */
 	move: "#E6A04E",
-	/** A drive picked from the rail: the move colour at full strength (Apple's
+	/** A drive picked from the inspector: the move colour at full strength (Apple's
 	 *  system orange), so the pick stands out from a drive merely passed. */
 	movePicked: "#FF9500",
 	/** The Voice lane and a conversation's row. */
