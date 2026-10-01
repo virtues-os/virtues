@@ -54,7 +54,7 @@
 		return style ? recolour(style, palette) : bare(palette);
 	}
 	/** The day's own sources and layers, drawn over the basemap. */
-	const OWN = ['track-run', 'track-bridge', 'track-drive', 'track-drive-bridge', 'lit-glow', 'lit-run', 'lit-bridge'];
+	const OWN = ['track-run', 'track-bridge', 'lit-glow', 'lit-run', 'lit-bridge'];
 	/** A theme switch swaps the basemap and carries the day's track across, so
 	 *  nothing reloads. */
 	async function restyle() {
@@ -315,32 +315,14 @@
 					layout: { 'line-join': 'round', 'line-cap': 'butt' },
 					paint: { 'line-color': TRACK, 'line-width': 1.5, 'line-opacity': 0.7, 'line-dasharray': [2, 3] },
 				});
-				// Every drive of the day in the move colour, over the path, so the
-				// map reads the day the way the rail and the scrubber do: blue
-				// where you were, orange where you moved (the owner's call; the
-				// prototype drew the whole path blue and lit only the live drive).
-				m.addSource('track-drive', { type: 'geojson', data: lines([]) });
-				m.addSource('track-drive-bridge', { type: 'geojson', data: lines([]) });
-				m.addLayer({
-					id: 'track-drive',
-					type: 'line',
-					source: 'track-drive',
-					layout: { 'line-join': 'round', 'line-cap': 'round' },
-					paint: { 'line-color': COLOURS.move, 'line-width': 3, 'line-opacity': 0.95 },
-				});
-				m.addLayer({
-					id: 'track-drive-bridge',
-					type: 'line',
-					source: 'track-drive-bridge',
-					layout: { 'line-join': 'round', 'line-cap': 'butt' },
-					paint: { 'line-color': COLOURS.move, 'line-width': 1.5, 'line-opacity': 0.7, 'line-dasharray': [2, 3] },
-				});
 				// The lit stretch (main.js:976-981): the stretch of path the playhead
-				// is moving along, in the move colour at full strength over the
-				// drive's own orange, at the path's own weight - a drive picked
-				// from the rail grows heavier and glows (pick, below). Whether a
-				// drive or a moving conversation lit it, it is orange (the owner's
-				// call; the prototype lit a moving conversation in slate).
+				// is moving along, in the move colour at the path's own weight, over
+				// a path otherwise blue all day - only what you're looking at turns
+				// orange (the owner's call, after trying every drive orange: too
+				// much orange). A drive picked from the rail turns the brighter
+				// orange, grows heavier and glows (pick, below). Whether a drive or
+				// a moving conversation lit it, it is orange (the prototype lit a
+				// moving conversation in slate).
 				m.addSource('lit-run', { type: 'geojson', data: lines([]) });
 				m.addSource('lit-bridge', { type: 'geojson', data: lines([]) });
 				// A drive picked from the rail glows under its lit stretch while it
@@ -357,7 +339,7 @@
 					type: 'line',
 					source: 'lit-run',
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
-					paint: { 'line-color': COLOURS.movePicked, 'line-width': 3, 'line-opacity': 0.95 },
+					paint: { 'line-color': COLOURS.move, 'line-width': 3, 'line-opacity': 0.95 },
 				});
 				m.addLayer({
 					id: 'lit-bridge',
@@ -365,7 +347,7 @@
 					source: 'lit-bridge',
 					layout: { 'line-join': 'round', 'line-cap': 'butt' },
 					paint: {
-						'line-color': COLOURS.movePicked,
+						'line-color': COLOURS.move,
 						'line-width': 1.5,
 						'line-opacity': 0.9,
 						'line-dasharray': [2, 2.5],
@@ -512,9 +494,6 @@
 		const { runs, bridges } = splitTrack(dayTrack);
 		(m.getSource('track-run') as GeoJSONSource).setData(lines(runs));
 		(m.getSource('track-bridge') as GeoJSONSource).setData(lines(bridges));
-		const drives = sections.filter((x) => x.kind === 'transit').map((x) => splitTrack(dayTrack.filter((f) => f.t >= x.s && f.t <= x.e)));
-		(m.getSource('track-drive') as GeoJSONSource).setData(lines(drives.flatMap((d) => d.runs)));
-		(m.getSource('track-drive-bridge') as GeoJSONSource).setData(lines(drives.flatMap((d) => d.bridges)));
 		// The rail draws first, so the framing can leave room for it.
 		await tick();
 		if (mine !== asked) return;
@@ -1006,7 +985,9 @@
 		// through: twice the path's weight, in the move colour at full
 		// strength, under a glow that breathes.
 		m.setPaintProperty('lit-run', 'line-width', 6);
+		m.setPaintProperty('lit-run', 'line-color', COLOURS.movePicked);
 		m.setPaintProperty('lit-bridge', 'line-width', 2.5);
+		m.setPaintProperty('lit-bridge', 'line-color', COLOURS.movePicked);
 		if (calm()) {
 			m.setPaintProperty('lit-glow', 'line-opacity', 0.6);
 			return;
@@ -1029,7 +1010,9 @@
 		if (!m?.getLayer('lit-glow')) return;
 		m.setPaintProperty('lit-glow', 'line-opacity', 0);
 		m.setPaintProperty('lit-run', 'line-width', 3);
+		m.setPaintProperty('lit-run', 'line-color', COLOURS.move);
 		m.setPaintProperty('lit-bridge', 'line-width', 1.5);
+		m.setPaintProperty('lit-bridge', 'line-color', COLOURS.move);
 	}
 
 	/** The clear map (`v4ClearArea`, main.js:1042-1044): not under the top
