@@ -188,11 +188,10 @@ export const ROOMS: Room[] = [
 		group: 'library',
 	},
 	{
-		// Our contribution — the Timeline instrument (map + detail), reached at
-		// /timeline. panel is a stub: a full-page room, not a sidebar list.
-		// NOTE: this is a 7th rail tile, which cuts against the deliberate
-		// reduce-to-six documented at the head of this file; the placement is
-		// provisional, pending Adam.
+		// The Timeline: one day on a map, reached at /timeline. A full-page
+		// room, so its panel is a stub. It is a seventh tile beside the six
+		// the head of this file argues for, kept on purpose: the day is a
+		// place you go to, not a list you open from another room.
 		id: 'timeline',
 		label: 'Timeline',
 		icon: 'lifeline',

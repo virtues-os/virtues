@@ -49,7 +49,6 @@ export interface VoiceWindow {
 }
 
 export interface DerivedWindow {
-	is_built: boolean;
 	spans: DerivedSpan[];
 	moments: DerivedMoment[];
 	/** The last stay that ended before the window opens. */

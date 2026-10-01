@@ -53,7 +53,6 @@ describe("the lanes", () => {
 describe("the lane data", () => {
 	const iso = (m: number) => new Date(m * M).toISOString();
 	const derived: DerivedWindow = {
-		is_built: true,
 		last_stay_before: null,
 		places: [{ id: "p1", latitude: 0, longitude: -30, is_home: true, is_work: false, place_name: null }],
 		spans: [

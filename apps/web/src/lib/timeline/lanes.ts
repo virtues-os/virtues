@@ -211,7 +211,7 @@ export function laneData(derived: DerivedWindow | null, voice: VoiceWindow[], lw
 	const t = (iso: string) => Date.parse(iso);
 	// Whole, never clipped to the window: a night that began before it folds
 	// from its real start, as the prototype's nights do (main.js:100-111).
-	const sections = derived?.is_built ? buildRail(derived, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, voice) : [];
+	const sections = derived ? buildRail(derived, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, voice) : [];
 	const windows = voice.map((v) => ({ v, s: t(v.started_at), e: t(v.ended_at) }));
 	const talk = windows.filter((w) => w.v.speaker_count >= 2);
 	const conversations = (derived?.moments ?? [])

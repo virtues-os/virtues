@@ -17,8 +17,7 @@ use crate::database::Database;
 const TICK: Duration = Duration::from_secs(900);
 
 /// Spawn the Timeline builder as a background tokio task. Errors are logged
-/// and the loop continues; a database without the Timeline's tables is
-/// skipped quietly.
+/// and the loop continues.
 pub fn spawn(db: Arc<Database>) {
     tokio::spawn(async move {
         let mut ticker = interval(TICK);
@@ -27,7 +26,7 @@ pub fn spawn(db: Arc<Database>) {
         loop {
             ticker.tick().await;
             match crate::timeline::rebuild(db.pool()).await {
-                Ok(Some(stats)) => tracing::info!(
+                Ok(stats) => tracing::info!(
                     places = stats.places,
                     stops_on_water = stats.stops_on_water,
                     spans = stats.spans,
@@ -35,7 +34,6 @@ pub fn spawn(db: Arc<Database>) {
                     duration_ms = stats.duration_ms as u64,
                     "timeline rebuild complete"
                 ),
-                Ok(None) => tracing::debug!("timeline tables absent; rebuild skipped"),
                 Err(e) => tracing::warn!(error = %e, "timeline rebuild failed (will retry next tick)"),
             }
         }
