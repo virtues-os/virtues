@@ -817,6 +817,11 @@ pub async fn prepare(force: bool) -> Result<Prepared, crate::Error> {
 }
 
 /// A slot's directory name, for display.
+/// The staged release's slot id (`<tag>-<sha7>`), if one is staged.
+pub fn prepared_slot_id() -> Option<String> {
+    slots::SlotLayout::system().prepared_slot().map(|s| slot_name(&s))
+}
+
 fn slot_name(slot: &Path) -> String {
     slot.file_name()
         .map(|s| s.to_string_lossy().into_owned())
@@ -1308,6 +1313,16 @@ impl Drop for UpgradeLock {
 /// Acquire the single-flight lock, reclaiming a stale one left by a crashed
 /// prior run (its recorded PID no longer exists). Returns an RAII guard whose
 /// drop releases the lock.
+/// How `acquire_lock` starts its refusal. Nothing was attempted, so a caller
+/// that records outcomes (`auto_update::activate_recorded`) leaves it out.
+const LOCK_HELD: &str = "another release operation is already running";
+
+/// True when `err` is `acquire_lock` refusing because another release
+/// operation holds the lock.
+pub fn is_lock_held(err: &crate::Error) -> bool {
+    err.to_string().contains(LOCK_HELD)
+}
+
 fn acquire_lock() -> Result<UpgradeLock, crate::Error> {
     let path = Path::new(LOCK_PATH);
     loop {
@@ -1331,12 +1346,11 @@ fn acquire_lock() -> Result<UpgradeLock, crate::Error> {
                     // and can hold the lock for the length of a ~120MB download
                     // — and "another upgrade is already running" would send
                     // someone looking for an upgrade nobody started.
-                    return Err(crate::Error::Other(
-                        "another release operation is already running (possibly the \
-                         scheduled prepare — `journalctl -u virtues-prepare`). It \
-                         releases the lock when it finishes; try again shortly."
-                            .to_string(),
-                    ));
+                    return Err(crate::Error::Other(format!(
+                        "{LOCK_HELD} (possibly the scheduled prepare — `journalctl -u \
+                         virtues-prepare`). It releases the lock when it finishes; try \
+                         again shortly."
+                    )));
                 }
                 let _ = fs::remove_file(path); // stale — reclaim and retry
             }
