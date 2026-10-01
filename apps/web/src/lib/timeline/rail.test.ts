@@ -42,7 +42,8 @@ describe("the rail", () => {
 			["place", "Corner Cafe", "3h 40m"],
 			["gap", "Signal gap", "3h"],
 		]);
-		expect(rail[4].notes).toEqual(["likely still at Corner Cafe", "Phone on, mic active"]);
+		// Where you probably were is left to the reader: the gap says only what the record knows.
+		expect(rail[4].notes).toEqual(["No location recorded", "Phone on, mic active"]);
 	});
 
 	it("files a row under the section holding its middle", () => {
