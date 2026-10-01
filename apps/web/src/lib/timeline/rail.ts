@@ -28,6 +28,8 @@ export interface DerivedMoment {
 
 export interface DerivedPlace {
 	id: string;
+	latitude: number;
+	longitude: number;
 	is_home: boolean;
 	is_work: boolean;
 	place_name: string | null;

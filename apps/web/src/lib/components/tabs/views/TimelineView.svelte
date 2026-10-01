@@ -54,7 +54,7 @@
 		return style ? recolour(style, palette) : bare(palette);
 	}
 	/** The day's own sources and layers, drawn over the basemap. */
-	const OWN = ['track-run', 'track-bridge', 'lit-run', 'lit-bridge'];
+	const OWN = ['track-run', 'track-bridge', 'lit-glow', 'lit-run', 'lit-bridge'];
 	/** A theme switch swaps the basemap and carries the day's track across, so
 	 *  nothing reloads. */
 	async function restyle() {
@@ -144,6 +144,8 @@
 	let resizer: ResizeObserver | null = null;
 	let rail = $state<ReturnType<typeof TimelineRail> | null>(null);
 	let sections = $state<RailSection[]>([]);
+	/** Each place's centre, [lng, lat], by its id: where a picked stay flies in to. */
+	let placeCoords = new Map<string, [number, number]>();
 	let zone = $state('UTC');
 	let railError = $state(false);
 	/** The day's cleaned track: where a picked moment is found on the map. */
@@ -306,6 +308,15 @@
 				// own weight - the colour marks it, the width says nothing.
 				m.addSource('lit-run', { type: 'geojson', data: lines([]) });
 				m.addSource('lit-bridge', { type: 'geojson', data: lines([]) });
+				// A drive picked from the rail glows under its lit stretch while it
+				// stays picked (pick, below); otherwise the glow is off.
+				m.addLayer({
+					id: 'lit-glow',
+					type: 'line',
+					source: 'lit-run',
+					layout: { 'line-join': 'round', 'line-cap': 'round' },
+					paint: { 'line-color': ['coalesce', ['get', 'color'], COLOURS.move], 'line-width': 12, 'line-blur': 6, 'line-opacity': 0 },
+				});
 				m.addLayer({
 					id: 'lit-run',
 					type: 'line',
@@ -400,6 +411,8 @@
 		zone = bounds.zone;
 		railError = derived === null;
 		sections = derived?.is_built ? buildRail(derived, startMs, endMs, voice ?? []) : [];
+		placeCoords = new Map((derived?.places ?? []).map((p) => [p.id, [p.longitude, p.latitude] as [number, number]]));
+		unpick();
 		// Spikes go first, then holes are judged across the whole window, then the
 		// day is cut out of it.
 		const all = flagHoles(dropSpikes(toFixes(window.points)));
@@ -585,6 +598,7 @@
 	/** Move the playhead: a pick lands exactly there, inside the day, a hair
 	 *  before midnight at most (`v4Seek`, main.js:491). */
 	function park(t: number) {
+		unpick();
 		armed = true;
 		playT = Math.max(dayStart, Math.min(dayEnd - 1000, t));
 		ensureVisible();
@@ -761,6 +775,7 @@
 	function syncPlayhead() {
 		const m = map;
 		if (!m) return;
+		if (picked && !(picked.s <= playT && playT < picked.e)) unpick();
 		const at = positionAt(dayTrack, playT);
 		if (at && pin) pin.setLngLat([at.lng, at.lat]).addTo(m);
 		else pin?.remove();
@@ -807,13 +822,75 @@
 				const b = new ml.LngLatBounds();
 				for (const f of path) b.extend([f.lng, f.lat]);
 				m.fitBounds(b, { padding: fitPad(m), maxZoom: 15, duration: 650 });
+				pick({ kind: 'transit', s: p.s, e: p.e });
 				return;
 			}
+		}
+		// A stay flies in to its place, close enough to read the streets around
+		// it, and its place pulses while it stays picked (the owner's call; the
+		// prototype only pans a stay onto the map, main.js:1101).
+		const place = p.kind === 'place' ? placeCoords.get(sections[i]?.placeId ?? '') : undefined;
+		if (place) {
+			bubbles?.fold();
+			flyIn(m, place);
+			pick({ kind: 'place', s: p.s, e: p.e, at: place });
+			return;
 		}
 		const keys = sections[i]?.rows.map((r) => r.s) ?? [];
 		if (bubbles?.revealSection(keys)) return;
 		const at = anchorAt(dayTrack, p.s, p.e);
 		if (at) showPoint(m, [at.lng, at.lat]);
+	}
+
+	/** Fly in to one spot, centred on the clear map, to zoom 16 - streets and
+	 *  buildings - never zooming out. An indirect move, so it travels. */
+	function flyIn(m: MlMap, at: [number, number]) {
+		const lim = clearArea(m);
+		const c = m.getContainer();
+		const offset: [number, number] = [(lim.l + lim.r) / 2 - c.clientWidth / 2, (lim.t + lim.b) / 2 - c.clientHeight / 2];
+		m.easeTo({ center: at, zoom: Math.max(m.getZoom(), 16), offset, duration: 650 });
+	}
+
+	/** A stay or a drive picked from the rail stays marked while the playhead
+	 *  is inside it: a stay's place pulses (the prototype's "take me there"
+	 *  pin, dayback/index.html:321-322), a drive's lit stretch glows. Any other
+	 *  pick, a scrub, or the playhead leaving it clears the mark. */
+	let picked: { kind: 'place' | 'transit'; s: number; e: number } | null = null;
+	let pulse: Marker | null = null;
+	let glowRaf = 0;
+	const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+	function pick(p: { kind: 'place' | 'transit'; s: number; e: number; at?: [number, number] }) {
+		unpick();
+		const m = map;
+		const ml = maplibre;
+		if (!m || !ml) return;
+		picked = { kind: p.kind, s: p.s, e: p.e };
+		if (p.at) {
+			const el = document.createElement('div');
+			el.className = 'tl-pulse';
+			pulse = new ml.Marker({ element: el, anchor: 'center' }).setLngLat(p.at).addTo(m);
+			return;
+		}
+		if (!m.getLayer('lit-glow')) return;
+		if (calm()) {
+			m.setPaintProperty('lit-glow', 'line-opacity', 0.35);
+			return;
+		}
+		const t0 = performance.now();
+		const step = (now: number) => {
+			const k = 0.5 - 0.5 * Math.cos(((now - t0) / 1900) * 2 * Math.PI);
+			m.setPaintProperty('lit-glow', 'line-opacity', 0.12 + 0.38 * k);
+			glowRaf = requestAnimationFrame(step);
+		};
+		glowRaf = requestAnimationFrame(step);
+	}
+	function unpick() {
+		picked = null;
+		pulse?.remove();
+		pulse = null;
+		cancelAnimationFrame(glowRaf);
+		glowRaf = 0;
+		if (map?.getLayer('lit-glow')) map.setPaintProperty('lit-glow', 'line-opacity', 0);
 	}
 
 	/** The clear map (`v4ClearArea`, main.js:1042-1044): not under the top
@@ -852,6 +929,7 @@
 	});
 
 	onDestroy(() => {
+		unpick();
 		cancelAnim();
 		cancelAnimationFrame(loopRaf);
 		container?.removeEventListener('wheel', onWheel, { capture: true });
@@ -1388,6 +1466,40 @@
 	.timeline :global(.tl-bubble.in-card .tl-bubble-label),
 	.timeline :global(.tl-bubble.in-card .tl-bubble-line) {
 		display: none;
+	}
+	/* A stay picked from the rail: its place pulses while it stays picked -
+	   the prototype's "take me there" pin (dayback/index.html:321-322). */
+	.timeline :global(.tl-pulse) {
+		width: 20px;
+		height: 20px;
+		border-radius: 50%;
+		background: var(--c-place);
+		border: 2.5px solid var(--c-ring);
+		pointer-events: none;
+		z-index: 3;
+		animation: tl-pulse 1.9s ease-in-out infinite;
+	}
+	@keyframes -global-tl-pulse {
+		0%,
+		100% {
+			/* design-ok: the Dayback prototype's glow pin (owner's call, 2026-09-30) */
+			box-shadow:
+				0 0 0 5px color-mix(in srgb, var(--c-place) 22%, transparent),
+				0 0 18px 6px color-mix(in srgb, var(--c-place) 38%, transparent);
+		}
+		50% {
+			/* design-ok: the Dayback prototype's glow pin (owner's call, 2026-09-30) */
+			box-shadow:
+				0 0 0 9px color-mix(in srgb, var(--c-place) 14%, transparent),
+				0 0 30px 12px color-mix(in srgb, var(--c-place) 30%, transparent);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.timeline :global(.tl-pulse) {
+			animation: none;
+			/* design-ok: the Dayback prototype's glow pin, held still (owner's call, 2026-09-30) */
+			box-shadow: 0 0 0 6px color-mix(in srgb, var(--c-place) 22%, transparent);
+		}
 	}
 	/* A knot of moments folded into a count chip; never set transform here,
 	   MapLibre positions the marker with it. */
