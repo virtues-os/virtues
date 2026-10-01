@@ -106,6 +106,7 @@ pub async fn update_story(pool: &PgPool, id: &str, f: &StoryFields) -> Result<St
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update the story: {e}")))?;
+    crate::api::wiki_articles::retitle_article(pool, "story", id).await?;
     get_story(pool, id).await
 }
 

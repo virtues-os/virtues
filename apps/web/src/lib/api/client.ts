@@ -2155,6 +2155,19 @@ export function getChat<T = unknown>(id: string, signal?: AbortSignal): Promise<
 export function getChatUsage<T = unknown>(id: string): Promise<T> {
 	return apiGet<T>(`/chats/${encodeURIComponent(id)}/usage`);
 }
+/** What a URL's thing is called and wears now (`refs::resolve_identities`). */
+export interface RefIdentity {
+	url: string;
+	kind: string;
+	title: string;
+	icon: string | null;
+	color: string | null;
+	state: 'live' | 'trashed' | 'gone' | 'unknown';
+}
+export function resolveRefs(urls: string[]): Promise<{ refs: RefIdentity[] }> {
+	return apiSend('POST', '/refs/resolve', { urls });
+}
+
 /** The chats with a turn running on the box right now, from any device. */
 export function listLiveChats(): Promise<{ running: string[] }> {
 	return apiGet('/chats/live');

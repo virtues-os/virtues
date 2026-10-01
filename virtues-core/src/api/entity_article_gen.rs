@@ -147,22 +147,14 @@ pub async fn write_entity_article_now(
 /// a day and a year are subjects too — and this function has nothing to say
 /// about them. See `agents/build/glossary.md`.
 async fn entity_title(pool: &PgPool, entity_type: &str, entity_id: &str) -> Result<String> {
-    let sql = match entity_type {
-        "person" => "SELECT name FROM wiki_people WHERE id = $1",
-        "place" => "SELECT name FROM wiki_places WHERE id = $1",
-        "organization" => "SELECT name FROM wiki_orgs WHERE id = $1",
-        other => {
-            return Err(Error::InvalidInput(format!(
-                "Not an entity: {other}. A day or a year is a subject with an \
-                 article, but it is not something this writer can title."
-            )))
-        }
-    };
-    sqlx::query_scalar(sql)
-        .bind(entity_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to load the entity: {}", e)))?
+    if !matches!(entity_type, "person" | "place" | "organization") {
+        return Err(Error::InvalidInput(format!(
+            "Not an entity: {entity_type}. A day or a year is a subject with an \
+             article, but it is not something this writer can title."
+        )));
+    }
+    crate::api::wiki_articles::subject_name(pool, entity_type, entity_id)
+        .await?
         .ok_or_else(|| Error::NotFound(format!("No {entity_type}: {entity_id}")))
 }
 
