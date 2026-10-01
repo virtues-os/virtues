@@ -1,10 +1,46 @@
 use anyhow::{Context, Result};
-use iroh::endpoint::Connection;
+use iroh::endpoint::{Connection, ConnectionError, VarInt};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Mutex;
 
 use crate::endpoint::VIRTUES_ALPN;
+use crate::server::CLOSE_NOT_ALLOWLISTED;
+
+/// The box closed the connection because this device's key is not on its
+/// allowlist: the device was removed, or the box was reset or restored from
+/// an older backup. The box answered; it just doesn't know this device, so
+/// the fix is pairing again, not waiting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotAllowlisted;
+
+impl std::fmt::Display for NotAllowlisted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the server doesn't recognize this device")
+    }
+}
+
+impl std::error::Error for NotAllowlisted {}
+
+/// True when `err` (from [`VirtuesIrohClient::request`]) is the box refusing
+/// this device rather than failing to answer.
+pub fn is_not_allowlisted(err: &anyhow::Error) -> bool {
+    err.chain().any(|e| e.is::<NotAllowlisted>())
+}
+
+/// `err`, or [`NotAllowlisted`] when the box closed `conn` for that reason.
+/// The close usually lands after the request is written, so a failure at any
+/// step is checked against the connection's recorded close reason.
+fn explain(conn: &Connection, err: anyhow::Error) -> anyhow::Error {
+    match conn.close_reason() {
+        Some(ConnectionError::ApplicationClosed(close))
+            if close.error_code == VarInt::from_u32(CLOSE_NOT_ALLOWLISTED) =>
+        {
+            anyhow::Error::new(NotAllowlisted)
+        }
+        _ => err,
+    }
+}
 
 /// Max response body we'll buffer from a single request stream (64 MiB).
 const MAX_RESPONSE: usize = 64 * 1024 * 1024;
@@ -143,21 +179,38 @@ impl VirtuesIrohClient {
         // cached connection), drop it, redial ONCE, and reopen. The retry covers
         // ONLY stream setup — never after the request bytes are written — so a
         // non-idempotent request is never executed twice on the box.
-        let opened = match self.connection().await?.open_bi().await {
+        let mut conn = self.connection().await?;
+        let opened = match conn.open_bi().await {
             Ok(streams) => Ok(streams),
-            Err(_) => {
+            Err(e) => {
+                // A refusal is the box's answer; redialing would only be
+                // refused again.
+                let e = explain(&conn, anyhow::Error::new(e));
+                if e.is::<NotAllowlisted>() {
+                    self.drop_connection().await;
+                    return Err(e);
+                }
                 self.drop_connection().await;
-                self.connection().await?.open_bi().await
+                conn = self.connection().await?;
+                conn.open_bi().await
             }
         };
-        let (mut send, mut recv) = opened.context("open_bi")?;
-        send.write_all(raw_http).await.context("write request")?;
+        let (mut send, mut recv) = match opened.context("open_bi") {
+            Ok(streams) => streams,
+            Err(e) => return Err(explain(&conn, e)),
+        };
+        if let Err(e) = send.write_all(raw_http).await.context("write request") {
+            return Err(explain(&conn, e));
+        }
         // Do NOT finish() the send half before reading: on a bidirectional QUIC
         // stream that FIN reads as "peer closed" to the server's hyper, which
         // then aborts before responding. hyper completes the request from its
         // headers (Content-Length / no body) and, with `Connection: close`,
         // finishes its own send half after the response — the EOF we read to.
-        let resp = recv.read_to_end(MAX_RESPONSE).await.context("read response")?;
+        let resp = match recv.read_to_end(MAX_RESPONSE).await.context("read response") {
+            Ok(resp) => resp,
+            Err(e) => return Err(explain(&conn, e)),
+        };
         let _ = send.finish(); // now safe: response is in hand
         Ok(resp)
     }

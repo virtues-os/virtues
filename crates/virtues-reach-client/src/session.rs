@@ -22,6 +22,11 @@ pub async fn probe_session(client: &VirtuesIrohClient) -> SessionState {
     let raw = b"GET /auth/session HTTP/1.1\r\nHost: box\r\nConnection: close\r\n\r\n";
     match client.request(raw).await {
         Ok(bytes) => classify(&String::from_utf8_lossy(&bytes)),
+        // The box closed the connection because this device isn't on its
+        // allowlist. That is an answer, and the same one a 401 gives: before
+        // this arm it read as "unreachable", so a revoked or reset device was
+        // told its server was off and to wait.
+        Err(e) if virtues_iroh::is_not_allowlisted(&e) => SessionState::Rejected,
         Err(_) => SessionState::Unknown,
     }
 }
