@@ -9,7 +9,9 @@ the list below is empty.
 
 Verified on 2026-09-30: both containers healthy with no errors logged, RAID
 and SMART clean, daily backups and WAL archiving current, no health alert has
-fired, and the first map build is published and served.
+fired, and the first map build is published and served. On 2026-10-01 atlas
+was deployed with `make deploy-atlas` for the first time (the refund fix,
+f1ae1f25, is live), so both services now have a `:previous` rollback image.
 
 ## Open
 
@@ -21,23 +23,15 @@ fired, and the first map build is published and served.
    any link in that archive, so no box has fonts or sprites yet. `cut.py` now
    dereferences them: install it on the server before the next run (the timer
    fires early each month), then confirm a box logs its assets unpacked.
-2. **Deploy atlas through `make deploy-atlas`.** Production atlas runs an
-   image from early September. Since then its code has changed by one fix
-   (f1ae1f25: charge refunds no longer touch subscription status) plus copy
-   and Dockerfile changes. Neither deploy target has been run end to end yet;
-   this is the first. The script tags the running image as `:previous` before
-   the swap, so the first deploy creates atlas's rollback image. No
-   subscription was ever set to `refunded` by the old handler (checked
-   2026-09-30).
-3. **Move the review demo** (still on the old hosting). Not onto this
+2. **Move the review demo** (still on the old hosting). Not onto this
    server: a box install beside billing means a second Postgres, a port
    clash, and dev-auth owner access next to the billing service. It needs its
    own VM.
-4. **Decide where the website's database lives.** It is still on the old
+3. **Decide where the website's database lives.** It is still on the old
    hosting, still connected to occasionally, and reachable on its port from
    any address because the website's host has no fixed IPs. The real fix is
    the website not talking to a database directly.
-5. **Shut down the old hosting** after the rollback week (from 2026-10-05).
+4. **Shut down the old hosting** after the rollback week (from 2026-10-05).
    At cutover only the service containers were stopped; the instance and the
    atlas and api databases were deliberately kept running so a rollback
    could be a DNS change and a container start. On 2026-09-30 the containers
