@@ -17,6 +17,8 @@
 	let {
 		viewStart,
 		viewEnd,
+		dayStart,
+		dayEnd,
 		folds,
 		playT,
 		armed,
@@ -43,6 +45,9 @@
 	}: {
 		viewStart: number;
 		viewEnd: number;
+		/** The day the title, the map and the rail show. */
+		dayStart: number;
+		dayEnd: number;
 		folds: Fold[];
 		playT: number;
 		armed: boolean;
@@ -148,6 +153,11 @@
 		});
 		return out;
 	});
+
+	// On the Week span, the day the rest of the screen shows wears a pale band
+	// across every lane, as Calendar shades today's column in a week (the
+	// owner's call); it moves when the playhead walks into another day.
+	const dayBand = $derived(viewEnd - viewStart > dayEnd - dayStart + MIN ? span(dayStart, dayEnd) : null);
 
 	// The folded nights (main.js:1281-1287): one calm band, soft seams, a label.
 	const foldBands = $derived(
@@ -415,6 +425,10 @@
 				{/each}
 			{/each}
 
+			{#if dayBand}
+				<rect class="day-band" x={dayBand.a} y={TOP - 4} width={dayBand.w} height={lanesBot - TOP + 6} rx="6" />
+			{/if}
+
 			{#each foldBands as f, i (i)}
 				<rect class="fold" class:est={f.est} x={f.a} y={TOP} width={f.w} height={lanesBot - TOP} rx="4" />
 				<line class="seam" x1={f.a} y1={TOP} x2={f.a} y2={lanesBot} />
@@ -658,6 +672,12 @@
 	}
 	.tally {
 		stroke: color-mix(in srgb, var(--color-foreground) 15%, transparent);
+	}
+	/* The day on screen, on the Week span: a pale column under every lane. */
+	.day-band {
+		fill: var(--color-foreground);
+		fill-opacity: 0.07;
+		pointer-events: none;
 	}
 	/* A folded night: one quiet fill, whisper seams, a label (main.js:1281-1287). */
 	.fold {

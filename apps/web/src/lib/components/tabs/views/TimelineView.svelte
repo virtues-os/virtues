@@ -24,7 +24,7 @@
 	import TimelineScrubber from '$lib/components/timeline/TimelineScrubber.svelte';
 	import TimelineMonth from '$lib/components/timeline/TimelineMonth.svelte';
 	import { laneData, NO_LANES, type Lanes, type RibbonKind } from '$lib/timeline/lanes';
-	import { buildFolds, clampView, DAY, HOUR, MIN, midnightIn, tierOf, tierView, unwarp, warp, zoneOffset, type Tier } from '$lib/timeline/scale';
+	import { buildFolds, clampView, HOUR, MIN, midnightIn, tierOf, tierView, unwarp, warp, weekOf, zoneOffset, type Tier } from '$lib/timeline/scale';
 	import { APPLE_DARK, APPLE_LIGHT, hsl, recolour, type Palette } from '$lib/timeline/palette';
 	import { COLOURS, colourVars } from '$lib/timeline/colours';
 
@@ -161,6 +161,13 @@
 	let armed = $state(false);
 	let dayStart = $state(0);
 	let dayEnd = $state(0);
+	/** The calendar week holding the day (Monday to Sunday): the Week span's
+	 *  bounds, inside which the playhead may move to another day. */
+	let weekStart = $state(0);
+	let weekEnd = $state(0);
+	/** The playhead crossed into another day of the week: that day loads
+	 *  around it, keeping the playhead and the week in view. */
+	let crossing = false;
 	let pin: Marker | null = null;
 	let bubbles: Bubbles | null = null;
 	/** Which stretch of path is lit, so it is written only when it changes. */
@@ -173,8 +180,8 @@
 	let viewStart = $state(0);
 	let viewEnd = $state(0);
 	let playing = $state(false);
-	/** What the lanes draw: the day, then the week around it once the view
-	 *  leaves the day. */
+	/** What the lanes draw: the day, then its week once the view leaves the
+	 *  day. */
 	let lanes = $state<Lanes>(NO_LANES);
 	/** The local midnights around the day: a date no night touches folds
 	 *  01:00-06:00 instead (main.js:103-104). */
@@ -318,7 +325,7 @@
 					type: 'line',
 					source: 'lit-run',
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
-					paint: { 'line-color': COLOURS.move, 'line-width': 12, 'line-blur': 6, 'line-opacity': 0 },
+					paint: { 'line-color': COLOURS.move, 'line-width': 22, 'line-blur': 10, 'line-opacity': 0 },
 				});
 				m.addLayer({
 					id: 'lit-run',
@@ -424,19 +431,34 @@
 		dayTrack = cleanTrack(fixes);
 		dayStart = startMs;
 		dayEnd = endMs;
-		lanes = laneData(derived, voice ?? [], lw, startMs, endMs);
-		midnights = Array.from({ length: 9 }, (_, i) => midnightIn(stepDay(slug, i - 4), bounds.zone));
-		// A stepped-to day opens whole, at midnight, untouched (main.js:1387);
-		// a nudge lands at its time of day, in its tier.
+		const week = weekOf(slug, bounds.zone);
+		weekStart = week.s;
+		weekEnd = week.e;
+		// Across a crossing the week's lanes already drawn stay, rather than
+		// shrinking to the one day until the week reloads.
+		const across = crossing;
+		crossing = false;
+		if (!(across && lanes.a <= week.s && lanes.b >= week.e)) lanes = laneData(derived, voice ?? [], lw, startMs, endMs);
+		midnights = Array.from({ length: 15 }, (_, i) => midnightIn(stepDay(slug, i - 7), bounds.zone));
 		cancelAnim();
-		playT = startMs;
-		armed = false;
-		setView(startMs, endMs);
-		const nudged = pendingNudge;
-		pendingNudge = null;
-		if (nudged) {
-			setTier(nudged.tier, true);
-			park(startMs + nudged.tod);
+		if (across) {
+			// The playhead walked into this day on the Week span: it stays where
+			// it is, and so does the week.
+			playT = Math.max(startMs, Math.min(endMs - 1000, playT));
+			armed = true;
+			setView(week.s, week.e);
+		} else {
+			// A stepped-to day opens whole, at midnight, untouched (main.js:1387);
+			// a nudge lands at its time of day, in its tier.
+			playT = startMs;
+			armed = false;
+			setView(startMs, endMs);
+			const nudged = pendingNudge;
+			pendingNudge = null;
+			if (nudged) {
+				setTier(nudged.tier, true);
+				park(startMs + nudged.tod);
+			}
 		}
 		railFocus = 'row';
 		litKey = '';
@@ -598,20 +620,45 @@
 		return where?.kind === 'place' ? where.title : null;
 	}
 
-	/** Move the playhead: a pick lands exactly there, inside the day, a hair
-	 *  before midnight at most (`v4Seek`, main.js:491). */
+	/** Whether the scrubber shows more than the day: the Week span, or a
+	 *  pinch out past it. */
+	const wide = (a = viewStart, b = viewEnd) => b - a > dayEnd - dayStart + MIN;
+	/** Where the playhead and the view may go: the day, or on the Week span
+	 *  the week, never past today. */
+	function bounds(isWide: boolean): [number, number] {
+		return isWide ? [weekStart, Math.min(weekEnd, localDay(today).endMs)] : [dayStart, dayEnd];
+	}
+
+	/** Move the playhead: a pick lands exactly there, a hair before the end at
+	 *  most (`v4Seek`, main.js:491). Inside the day, everything follows it; on
+	 *  the Week span it may walk into another day, and that day loads around
+	 *  it (the owner's call; the prototype's playhead never left its day). */
 	function park(t: number) {
 		unpick();
 		armed = true;
-		playT = Math.max(dayStart, Math.min(dayEnd - 1000, t));
+		const [lo, hi] = bounds(wide());
+		playT = Math.max(lo, Math.min(hi - 1000, t));
+		if (playT < dayStart || playT >= dayEnd) {
+			follow(playT);
+			return;
+		}
 		ensureVisible();
 		syncPlayhead();
 	}
+	/** Load the day holding `t`, keeping the playhead and the week. */
+	function follow(t: number) {
+		const slug = new Date(t).toLocaleDateString('en-CA', { timeZone: zone });
+		if (slug === date) return;
+		crossing = true;
+		date = slug;
+	}
 
-	/** The latest the view may reach, two days past the record (main.js:95). */
-	const viewHi = () => localDay(today).endMs + 2 * DAY;
+	/** The view never pans past the day (the owner's call); wider than the
+	 *  day, it never pans past the week, and is centred on it when wider still
+	 *  (the prototype let it run to two days either side of the record). */
 	function setView(a: number, b: number) {
-		[viewStart, viewEnd] = clampView(a, b, Number.NEGATIVE_INFINITY, viewHi());
+		const [lo, hi] = wide(a, b) ? [weekStart, weekEnd] : [dayStart, dayEnd];
+		[viewStart, viewEnd] = clampView(a, b, lo, hi);
 	}
 	/** The view scrolls only when the playhead would leave it, landing it a
 	 *  tenth in from the edge it crossed (main.js:492-495). */
@@ -648,7 +695,7 @@
 	/** Week, Day, Hour, Minute (main.js:82-88): the week around the day, the
 	 *  day, three hours or fourteen minutes around the playhead. */
 	function setTier(t: Tier, instant = false) {
-		const [a, b] = tierView(t, { s: dayStart, e: dayEnd }, playT);
+		const [a, b] = tierView(t, { s: dayStart, e: dayEnd }, { s: weekStart, e: weekEnd }, playT);
 		if (instant) setView(a, b);
 		else glideView(a, b, 560);
 	}
@@ -733,15 +780,20 @@
 		const dt = Math.min(100, now - loopTs);
 		loopTs = now;
 		const next = playT + dt * PLAY_RATE;
-		if (next >= dayEnd) {
+		// On the Week span play runs on into the next day, which loads around it.
+		const [, end] = bounds(wide());
+		if (next >= end) {
 			playing = false;
 			loopRaf = 0;
 			loopTs = null;
 			return;
 		}
 		playT = next;
-		ensureVisible();
-		syncPlayhead();
+		if (next >= dayEnd) follow(next);
+		else {
+			ensureVisible();
+			syncPlayhead();
+		}
 		loopRaf = requestAnimationFrame(loop);
 	}
 
@@ -764,7 +816,7 @@
 
 
 	// The week's lanes load the first time the view leaves the day: the Week
-	// tier, or a pinch out past midnight.
+	// span, or a pinch out past midnight.
 	let wideAsked = 0;
 	$effect(() => {
 		if (!lanes.b || (viewStart >= lanes.a && viewEnd <= lanes.b)) return;
@@ -774,7 +826,7 @@
 		const mine = asked;
 		if (wideAsked === mine) return;
 		wideAsked = mine;
-		const b = { startMs: dayStart - 3 * DAY, endMs: dayStart + 4 * DAY, zone };
+		const b = { startMs: weekStart, endMs: weekEnd, zone };
 		const [derived, voice, lw] = await Promise.all([
 			fetchDerived(b).catch((e) => {
 				console.warn('[Timeline] week derived fetch failed', e);
@@ -902,14 +954,22 @@
 			return;
 		}
 		if (!m.getLayer('lit-glow')) return;
+		// The picked drive stands out from a drive the playhead merely passes
+		// through: twice the path's weight, in the move colour at full
+		// strength, under a glow that breathes.
+		m.setPaintProperty('lit-run', 'line-width', 6);
+		m.setPaintProperty('lit-run', 'line-color', COLOURS.movePicked);
+		m.setPaintProperty('lit-bridge', 'line-width', 2.5);
+		m.setPaintProperty('lit-bridge', 'line-color', COLOURS.movePicked);
+		m.setPaintProperty('lit-glow', 'line-color', COLOURS.movePicked);
 		if (calm()) {
-			m.setPaintProperty('lit-glow', 'line-opacity', 0.35);
+			m.setPaintProperty('lit-glow', 'line-opacity', 0.6);
 			return;
 		}
 		const t0 = performance.now();
 		const step = (now: number) => {
-			const k = 0.5 - 0.5 * Math.cos(((now - t0) / 1900) * 2 * Math.PI);
-			m.setPaintProperty('lit-glow', 'line-opacity', 0.12 + 0.38 * k);
+			const k = 0.5 - 0.5 * Math.cos(((now - t0) / 1600) * 2 * Math.PI);
+			m.setPaintProperty('lit-glow', 'line-opacity', 0.25 + 0.55 * k);
 			glowRaf = requestAnimationFrame(step);
 		};
 		glowRaf = requestAnimationFrame(step);
@@ -920,7 +980,13 @@
 		pulse = null;
 		cancelAnimationFrame(glowRaf);
 		glowRaf = 0;
-		if (map?.getLayer('lit-glow')) map.setPaintProperty('lit-glow', 'line-opacity', 0);
+		const m = map;
+		if (!m?.getLayer('lit-glow')) return;
+		m.setPaintProperty('lit-glow', 'line-opacity', 0);
+		m.setPaintProperty('lit-run', 'line-width', 3);
+		m.setPaintProperty('lit-run', 'line-color', COLOURS.move);
+		m.setPaintProperty('lit-bridge', 'line-width', 1.5);
+		m.setPaintProperty('lit-bridge', 'line-color', COLOURS.move);
 	}
 
 	/** The clear map (`v4ClearArea`, main.js:1042-1044): not under the top
@@ -1002,7 +1068,7 @@
 					<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="3" /><path d="M3.5 10h17M8 3v4M16 3v4" /></svg>
 				</button>
 			</div>
-			<p class="date-title">{title}</p>
+			<button class="date-title" type="button" title="Back to the whole day" onclick={resetView}>{title}</button>
 		</div>
 		{#if monthOpen}
 			<TimelineMonth
@@ -1047,6 +1113,8 @@
 			bind:cardHeight={scrubH}
 			{viewStart}
 			{viewEnd}
+			{dayStart}
+			{dayEnd}
 			{folds}
 			{playT}
 			{armed}
@@ -1183,8 +1251,14 @@
 	}
 	/* The serif page title, as Virtues' Home dateline: regular, never bold. */
 	.date-title {
+		display: block;
 		/* design-ok: the date sits under its controls, as in the mockup (owner's call, 2026-09-30) */
 		margin: 9px 0 0;
+		padding: 0;
+		border: 0;
+		background: none;
+		text-align: left;
+		cursor: pointer;
 		font-family: var(--font-serif);
 		font-weight: 400;
 		font-size: 36px;
