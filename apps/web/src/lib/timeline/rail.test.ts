@@ -6,6 +6,7 @@ const day = { start: Date.parse(at("00:00")), end: Date.parse("2026-09-23T00:00:
 
 const window: DerivedWindow = {
 	is_built: true,
+	last_stay_before: null,
 	places: [
 		{ id: "home", is_home: true, is_work: false, place_name: "Location 30.0000, -97.0000" },
 		{ id: "cafe", is_home: false, is_work: false, place_name: "Corner Cafe" },

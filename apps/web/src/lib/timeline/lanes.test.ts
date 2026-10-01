@@ -48,6 +48,7 @@ describe("the lane data", () => {
 	const iso = (m: number) => new Date(m * M).toISOString();
 	const derived: DerivedWindow = {
 		is_built: true,
+		last_stay_before: null,
 		places: [{ id: "p1", is_home: true, is_work: false, place_name: null }],
 		spans: [
 			{ id: "n", kind: "sleep", started_at: iso(0), ended_at: iso(60), timeline_place_id: null, metadata: {} },

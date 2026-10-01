@@ -12,7 +12,7 @@
  * recorded while travelling keeps its own clock.
  */
 import { apiGet } from "$lib/api/client";
-import { getDayFacts, getDaySources, type TimelineDayLocationChunk, type TimelineDayPoint, type TimelineDayView } from "$lib/wiki/api";
+import type { TimelineDayLocationChunk, TimelineDayPoint, TimelineDayView } from "$lib/wiki/api";
 import type { DerivedWindow, VoiceWindow } from "./rail";
 import type { LaneWindow } from "./lanes";
 
@@ -112,13 +112,20 @@ export function gapVerdict(x: { fixes: number; talk: boolean; steps: boolean }):
 	return "Phone on but idle";
 }
 
-/** `gapVerdict` for a whole day with no fixes: the mic's recorded minutes and
- *  whether any steps arrived. */
-export async function quietDayVerdict(slug: string): Promise<string> {
-	const [facts, sources] = await Promise.all([getDayFacts(slug), getDaySources(slug)]);
-	return gapVerdict({
-		fixes: 0,
-		talk: (facts?.recorded_minutes ?? 0) > 0,
-		steps: sources.some((s) => s.source_type === "steps"),
-	});
+/** What a day with no fix says (`honestWhere`, dayback/src/main.js:962-965):
+ *  the last place you stayed and when you left it; with no stay before the
+ *  day at all, that GPS was silent. Then `gapVerdict` over the day, when its
+ *  inputs are known: talk is a window of two or more voices, as the rail's
+ *  signal gap counts it (main.js:2538). */
+export function quietDay(
+	last: { title: string; e: number } | null,
+	zone: string,
+	day: { talk: boolean; steps: boolean } | null,
+): { title: string; lines: string[] } {
+	const where = last
+		? { title: last.title, line: sentence(lastMeasured(last.e, false, zone)) }
+		: { title: "No location fix", line: "GPS silent at this moment" };
+	return { title: where.title, lines: day ? [where.line, gapVerdict({ fixes: 0, ...day })] : [where.line] };
 }
+
+const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

@@ -15,9 +15,9 @@
 	import { atlasStyle } from '$lib/map/atlas';
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
 	import type { GeoJSONSource, LngLat, Map as MlMap, Marker, StyleSpecification } from 'maplibre-gl';
-	import { fetchDayBounds, fetchDayWindow, fetchDerived, fetchLanes, fetchVoice, lastMeasured, localDay, quietDayVerdict, stepDay } from '$lib/timeline/day';
+	import { fetchDayBounds, fetchDayWindow, fetchDerived, fetchLanes, fetchVoice, localDay, quietDay, stepDay } from '$lib/timeline/day';
 	import { cleanTrack, dropSpikes, flagHoles, splitTrack, toFixes, type Fix, type Line } from '$lib/timeline/track';
-	import { buildRail, type RailPick, type RailSection } from '$lib/timeline/rail';
+	import { buildRail, placeTitle, type RailPick, type RailSection } from '$lib/timeline/rail';
 	import { anchorAt, positionAt, trackMetres } from '$lib/timeline/anchor';
 	import { Bubbles, type Area, type MapMoment } from '$lib/timeline/bubbles';
 	import TimelineRail from '$lib/components/timeline/TimelineRail.svelte';
@@ -383,7 +383,7 @@
 				}),
 				fetchVoice(bounds).catch((e) => {
 					console.warn('[Timeline] voice fetch failed', e);
-					return [];
+					return null;
 				}),
 				fetchLanes(bounds).catch((e) => {
 					console.warn('[Timeline] lanes fetch failed', e);
@@ -399,7 +399,7 @@
 		const { startMs, endMs } = bounds;
 		zone = bounds.zone;
 		railError = derived === null;
-		sections = derived?.is_built ? buildRail(derived, startMs, endMs, voice) : [];
+		sections = derived?.is_built ? buildRail(derived, startMs, endMs, voice ?? []) : [];
 		// Spikes go first, then holes are judged across the whole window, then the
 		// day is cut out of it.
 		const all = flagHoles(dropSpikes(toFixes(window.points)));
@@ -408,7 +408,7 @@
 		dayTrack = cleanTrack(fixes);
 		dayStart = startMs;
 		dayEnd = endMs;
-		lanes = laneData(derived, voice, lw, startMs, endMs);
+		lanes = laneData(derived, voice ?? [], lw, startMs, endMs);
 		midnights = Array.from({ length: 9 }, (_, i) => midnightIn(stepDay(slug, i - 4), bounds.zone));
 		// A stepped-to day opens whole, at midnight, untouched (main.js:1387);
 		// a nudge lands at its time of day, in its tier.
@@ -428,18 +428,15 @@
 		status = fixes.length ? 'shown' : 'empty';
 		drawn++;
 		if (fixes.length) return;
-		// No fix all day. The prototype's rule (`honestWhere` + `gapWhy`): hold the
-		// last position, say when it was measured and what the phone did meanwhile.
-		const measured = lastFix ? lastMeasured(lastFix.t, false, zone) : null;
-		note = { title: 'No location fix', lines: measured ? [sentence(measured)] : [] };
-		let verdict: string | null = null;
-		try {
-			verdict = await quietDayVerdict(slug);
-		} catch (e) {
-			console.warn('[Timeline] day verdict failed', e);
-		}
-		if (mine !== asked || !verdict || !note) return;
-		note = { ...note, lines: [...note.lines, verdict] };
+		// No fix all day. The prototype's rule (`honestWhere` + `gapWhy`): the
+		// last place you stayed and when you left it, then what the phone did
+		// that day - told only when the day's voice and steps loaded. The
+		// camera holds the last fix (drawDay).
+		const before = derived?.last_stay_before ?? null;
+		const lastStay = before
+			? { title: placeTitle(derived?.places.find((p) => p.id === before.timeline_place_id)), e: Date.parse(before.ended_at) }
+			: null;
+		note = quietDay(lastStay, zone, voice && lw ? { talk: voice.some((v) => v.speaker_count >= 2), steps: lw.steps.length > 0 } : null);
 	}
 
 	/** The loaded day on the map: its track, then the frame, the bubbles and
@@ -468,8 +465,6 @@
 		// A day with no fix opens on the held position; that is its home.
 		recordHome();
 	}
-
-	const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 	/** The prototype's framing padding (`v4FitPad`, dayback/src/main.js:1190):
 	 *  the measured top cards, rail and scrubber plus a buffer of max(34 px,
