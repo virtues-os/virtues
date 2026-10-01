@@ -48,13 +48,27 @@
 	const isDark = () => getComputedStyle(document.documentElement).getPropertyValue('--identity-dark').trim() === '1';
 	let dark = $state(browser ? isDark() : false);
 	/** The basemap for a side: the atlas's own flavour, recoloured, or a plain
-	 *  ground in the palette's land colour when the box has no map files. */
+	 *  ground in the palette's land colour when the box has no map files. When
+	 *  the box can't be reached (it's restarting), the ground stands in, no note
+	 *  claims there are no maps, and the map asks again until the box answers. */
 	async function baseStyle(night: boolean): Promise<StyleSpecification> {
 		const palette = night ? APPLE_DARK : APPLE_LIGHT;
-		const style = await atlasStyle(night ? 'dark' : 'light');
+		let style: StyleSpecification | null;
+		try {
+			style = await atlasStyle(night ? 'dark' : 'light');
+		} catch (e) {
+			console.warn('[Timeline] map files unreachable; asking again', e);
+			clearTimeout(mapRetry);
+			mapRetry = window.setTimeout(() => void restyle(), MAP_RETRY_MS);
+			return bare(palette);
+		}
 		basemap = style !== null;
+		if (squares === null) void loadSquares();
 		return style ? recolour(style, palette) : bare(palette);
 	}
+	/** How long to wait before asking an unreachable box for its map again. */
+	const MAP_RETRY_MS = 5000;
+	let mapRetry = 0;
 	/** The day's own sources and layers, drawn over the basemap. */
 	const OWN = ['track-run', 'track-bridge', 'lit-glow', 'lit-run', 'lit-bridge'];
 	/** A theme switch swaps the basemap and carries the day's track across, so
@@ -183,6 +197,13 @@
 	/** The map's centre, zoomed past the world overview, sits outside every
 	 *  street-map square: the bare map says why. */
 	let streetless = $state(false);
+	/** Ask the box which squares hold street maps (again, after it couldn't be reached). */
+	function loadSquares() {
+		return atlasSquares().then((sq) => {
+			squares = sq;
+			syncStreets();
+		});
+	}
 	function syncStreets() {
 		const m = map;
 		if (!m || !squares) {
@@ -265,10 +286,6 @@
 			// of a picked drive or stay.
 			m.on('click', () => {
 				if (picked) unpick();
-			});
-			void atlasSquares().then((sq) => {
-				squares = sq;
-				syncStreets();
 			});
 			maplibre = ml;
 			// MapLibre only follows the window's size. A hidden tab stays mounted
@@ -1031,6 +1048,7 @@
 	});
 
 	onDestroy(() => {
+		clearTimeout(mapRetry);
 		unpick();
 		cancelAnim();
 		cancelAnimationFrame(loopRaf);
