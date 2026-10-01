@@ -441,10 +441,11 @@ pub async fn day_window(pool: &PgPool, date: chrono::NaiveDate) -> Result<DayWin
     })
 }
 
-/// The days in `from..=to` that hold any record of you - a location fix, a
-/// transcription window or a step reading - each read over its own local
-/// day, the same bounds the day view uses. The month's dots: a day with none
-/// has nothing to open.
+/// The days in `from..=to` with a location fix or a transcription window,
+/// each read over its own local day, the same bounds the day view uses. The
+/// month's dots. Step readings alone don't count (the owner's call): the
+/// phone's step history runs years past its location and audio, so every
+/// one of those days would wear a dot and open on an empty map.
 pub async fn recorded_days(pool: &PgPool, from: chrono::NaiveDate, to: chrono::NaiveDate) -> Result<Vec<chrono::NaiveDate>> {
     let mut dates = Vec::new();
     let mut d = from;
@@ -465,8 +466,6 @@ pub async fn recorded_days(pool: &PgPool, from: chrono::NaiveDate, to: chrono::N
                        WHERE p.deleted_at_source IS NULL AND NOT p.is_archived AND p.occurred_at >= w.s AND p.occurred_at < w.e) \
             OR EXISTS (SELECT 1 FROM data_communication_transcription t \
                        WHERE t.deleted_at_source IS NULL AND NOT t.is_archived AND t.started_at >= w.s AND t.started_at < w.e) \
-            OR EXISTS (SELECT 1 FROM data_health_steps h \
-                       WHERE h.deleted_at_source IS NULL AND NOT h.is_archived AND h.occurred_at >= w.s AND h.occurred_at < w.e) \
          ORDER BY w.i",
     )
     .bind(&starts)
