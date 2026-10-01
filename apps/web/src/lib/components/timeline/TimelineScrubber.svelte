@@ -10,7 +10,7 @@
 -->
 <script lang="ts">
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { bars, barHeight, barWidth, waveform, type RibbonSpan, type ScrubConversation, type ScrubEvent } from '$lib/timeline/lanes';
+	import { bars, barHeight, barWidth, waveform, type RibbonKind, type RibbonSpan, type ScrubConversation, type ScrubEvent } from '$lib/timeline/lanes';
 	import { HOUR, MIN, inFold, ticks, unwarp, warp, type Fold, type Tier } from '$lib/timeline/scale';
 	import { fmtDur } from '$lib/timeline/rail';
 
@@ -34,6 +34,8 @@
 		calendar,
 		hasFinance,
 		onseek,
+		onswipe,
+		onribbon,
 		onzoom,
 		ontier,
 		onplay,
@@ -61,6 +63,11 @@
 		calendar: ScrubEvent[];
 		hasFinance: boolean | null;
 		onseek: (t: number) => void;
+		/** A sideways two-finger swipe to time `t`. */
+		onswipe: (t: number) => void;
+		/** A click (not a drag) on a stretch of the Location lane, at time `t`:
+		 *  the map goes there as a pick in the rail would take it. */
+		onribbon: (r: { kind: RibbonKind; t: number }) => void;
 		onzoom: (factor: number) => void;
 		ontier: (t: Tier) => void;
 		onplay: () => void;
@@ -92,6 +99,9 @@
 	/** Expanded: taller rows with their labels (main.js:1257, 1424). */
 	let expanded = $state(false);
 	let scrubbing = false;
+	/** Where a press began, and the Location stretch under it: a press that
+	 *  ends where it began is a click on that stretch. */
+	let pressed: { x: number; y: number; rib: RibbonSpan | null } | null = null;
 	let hover = $state<{ cx: number; cy: number; title: string; meta: string; who: string } | null>(null);
 	let peek = $state<HTMLElement | null>(null);
 	let peekAt = $state({ left: 0, top: 0 });
@@ -279,6 +289,8 @@
 		}
 		scrubbing = true;
 		hover = null;
+		const rib = (e.target as Element).closest<SVGElement>('[data-rib]');
+		pressed = { x: e.clientX, y: e.clientY, rib: rib ? ribbonRects[Number(rib.dataset.rib)].r : null };
 		try {
 			svg!.setPointerCapture(e.pointerId);
 		} catch {
@@ -327,6 +339,9 @@
 	});
 	function up(e: PointerEvent) {
 		scrubbing = false;
+		const p = pressed;
+		pressed = null;
+		if (p?.rib && Math.abs(e.clientX - p.x) + Math.abs(e.clientY - p.y) < 5) onribbon({ kind: p.rib.kind, t: timeAt(e.clientX) });
 		try {
 			svg?.releasePointerCapture(e.pointerId);
 		} catch {
@@ -348,7 +363,7 @@
 			}
 			if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
 			const w = Math.max(1, el.getBoundingClientRect().width - LG - PAD);
-			onseek(unwarp(folds, warp(folds, playT) + (e.deltaX / w) * (wve - wvs)));
+			onswipe(unwarp(folds, warp(folds, playT) + (e.deltaX / w) * (wve - wvs)));
 		};
 		el.addEventListener('wheel', wheel, { passive: false });
 		return () => el.removeEventListener('wheel', wheel);
@@ -418,13 +433,14 @@
 					{#each ribbonRects as rr, k (k)}
 						{@const on = live(rr.r.s, rr.r.e)}
 						<rect
+							data-rib={rr.r.held ? undefined : k}
 							x={rr.a}
 							y={y + 2}
 							width={Math.max(rr.w, 1)}
 							height={rowH - 4}
 							rx="5"
 							fill={rr.colour}
-							fill-opacity={on ? 0.55 : rr.r.held ? 0.1 : rr.r.kind === 'gap' ? 0.16 : 0.24}
+							fill-opacity={on ? 0.9 : rr.r.held ? 0.1 : rr.r.kind === 'gap' ? 0.16 : 0.5}
 						/>
 						{#if on}<rect x={rr.a} y={y + 2} width="3" height={rowH - 4} fill={rr.colour} />{/if}
 						{#if rr.label}<text class="seg-label" x={rr.a + 9} y={y + 2 + (rowH - 4) / 2 + 3.7}>{rr.label}</text>{/if}

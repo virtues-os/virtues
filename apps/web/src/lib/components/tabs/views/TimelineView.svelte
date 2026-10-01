@@ -23,7 +23,7 @@
 	import TimelineRail from '$lib/components/timeline/TimelineRail.svelte';
 	import TimelineScrubber from '$lib/components/timeline/TimelineScrubber.svelte';
 	import TimelineMonth from '$lib/components/timeline/TimelineMonth.svelte';
-	import { laneData, NO_LANES, type Lanes } from '$lib/timeline/lanes';
+	import { laneData, NO_LANES, type Lanes, type RibbonKind } from '$lib/timeline/lanes';
 	import { buildFolds, clampView, DAY, HOUR, MIN, midnightIn, tierOf, tierView, unwarp, warp, zoneOffset, type Tier } from '$lib/timeline/scale';
 	import { APPLE_DARK, APPLE_LIGHT, hsl, recolour, type Palette } from '$lib/timeline/palette';
 	import { COLOURS, colourVars } from '$lib/timeline/colours';
@@ -676,6 +676,26 @@
 		park(t);
 	}
 
+	/** A sideways swipe moves the playhead through time. When the view shows
+	 *  less than the whole day (Hour, Minute), the view slides with it, so the
+	 *  playhead holds its place on screen and the hours pass under it (the
+	 *  owner's call; the prototype's playhead ran off the edge and the view
+	 *  jumped after it). */
+	function swipe(t: number) {
+		cancelAnim();
+		railFocus = 'row';
+		if (viewStart <= dayStart && viewEnd >= dayEnd) {
+			park(t);
+			return;
+		}
+		const wvs = warp(folds, viewStart);
+		const span = warp(folds, viewEnd) - wvs;
+		const frac = span ? (warp(folds, playT) - wvs) / span : 0.5;
+		park(t);
+		const wp = warp(folds, playT);
+		setView(unwarp(folds, wp - frac * span), unwarp(folds, wp + (1 - frac) * span));
+	}
+
 	// Play runs the day at 300x, five minutes a second, in real time whatever
 	// the zoom; it stops at the day's end, and play at the end starts over
 	// (main.js:580-597).
@@ -801,7 +821,15 @@
 	 *  1087-1101): a row reveals its bubble; a section parks at its start (not
 	 *  when it is already the live one) and a drive is framed whole, anything
 	 *  else opens its bubbles' chip or pans to where the track says you were. */
-	function reveal(p: RailPick) {
+	/** A click on a stretch of the scrubber's Location lane: the playhead is
+	 *  already where the click landed; the map goes to the stretch holding it,
+	 *  as a pick in the rail would take it (the owner's call). */
+	function revealAt(kind: RibbonKind, t: number) {
+		const sec = sections.find((s) => s.kind === kind && s.s <= t && t < s.e);
+		if (sec) reveal({ kind: sec.kind, s: sec.s, e: sec.e }, false);
+	}
+
+	function reveal(p: RailPick, parkIt = true) {
 		const m = map;
 		const ml = maplibre;
 		if (!m || !ml) return;
@@ -814,7 +842,7 @@
 		const i = sections.findIndex((s) => s.kind === p.kind && s.s === p.s);
 		const live = sections.findLastIndex((s) => s.s <= playT && playT < s.e);
 		railFocus = 'sec';
-		if (i !== live) park(p.s);
+		if (parkIt && i !== live) park(p.s);
 		if (p.kind === 'transit') {
 			bubbles?.fold();
 			const path = dayTrack.filter((f) => f.t >= p.s && f.t < p.e);
@@ -1034,6 +1062,8 @@
 			calendar={lanes.calendar}
 			hasFinance={lanes.hasFinance}
 			onseek={scrubSeek}
+			onswipe={swipe}
+			onribbon={(r) => revealAt(r.kind, r.t)}
 			onzoom={zoom}
 			ontier={(t) => setTier(t)}
 			onplay={togglePlay}
