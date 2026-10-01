@@ -562,14 +562,29 @@ pub struct TimelineWindow {
     pub is_built: bool,
     pub spans: Vec<TimelineSpan>,
     pub moments: Vec<TimelineMoment>,
-    /// Every place a span in the window stays at.
+    /// The last stay that ended before the window opens: on a day with no
+    /// fix, the place you were last measured at (`dayback/src/main.js:962-964`).
+    pub last_stay_before: Option<TimelineSpan>,
+    /// Every place a span in the window, or the last stay before it, stays at.
     pub places: Vec<TimelinePlace>,
 }
 
-/// Every stretch and moment overlapping `start`..`end`, and their places.
+fn span_row(r: &sqlx::postgres::PgRow) -> std::result::Result<TimelineSpan, sqlx::Error> {
+    Ok(TimelineSpan {
+        id: r.try_get("id")?,
+        kind: r.try_get("kind")?,
+        started_at: r.try_get("started_at")?,
+        ended_at: r.try_get("ended_at")?,
+        timeline_place_id: r.try_get("timeline_place_id")?,
+        metadata: r.try_get("metadata")?,
+    })
+}
+
+/// Every stretch and moment overlapping `start`..`end`, the last stay before
+/// it, and their places.
 pub async fn window(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<TimelineWindow> {
     if !tables_exist(pool).await? {
-        return Ok(TimelineWindow { is_built: false, spans: vec![], moments: vec![], places: vec![] });
+        return Ok(TimelineWindow { is_built: false, spans: vec![], moments: vec![], last_stay_before: None, places: vec![] });
     }
     let spans = sqlx::query(
         "SELECT id, kind, started_at, ended_at, timeline_place_id, metadata FROM wiki_timeline_spans \
@@ -580,17 +595,19 @@ pub async fn window(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> 
     .fetch_all(pool)
     .await?
     .iter()
-    .map(|r| {
-        Ok(TimelineSpan {
-            id: r.try_get("id")?,
-            kind: r.try_get("kind")?,
-            started_at: r.try_get("started_at")?,
-            ended_at: r.try_get("ended_at")?,
-            timeline_place_id: r.try_get("timeline_place_id")?,
-            metadata: r.try_get("metadata")?,
-        })
-    })
+    .map(span_row)
     .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
+
+    let last_stay_before = sqlx::query(
+        "SELECT id, kind, started_at, ended_at, timeline_place_id, metadata FROM wiki_timeline_spans \
+         WHERE kind = 'stay' AND ended_at <= $1 ORDER BY ended_at DESC LIMIT 1",
+    )
+    .bind(start)
+    .fetch_optional(pool)
+    .await?
+    .as_ref()
+    .map(span_row)
+    .transpose()?;
 
     let moments = sqlx::query(
         "SELECT id, kind, started_at, ended_at, title, metadata FROM wiki_timeline_moments \
@@ -613,7 +630,8 @@ pub async fn window(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> 
     })
     .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
 
-    let place_ids: Vec<String> = spans.iter().filter_map(|s| s.timeline_place_id.clone()).collect();
+    let place_ids: Vec<String> =
+        spans.iter().chain(&last_stay_before).filter_map(|s| s.timeline_place_id.clone()).collect();
     let places = sqlx::query(
         "SELECT t.id, t.latitude, t.longitude, t.stop_count, t.dwell_minutes, t.overnight_minutes, \
                 t.is_home, t.is_work, t.place_id, w.name AS place_name \
@@ -640,5 +658,5 @@ pub async fn window(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> 
     })
     .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
 
-    Ok(TimelineWindow { is_built: true, spans, moments, places })
+    Ok(TimelineWindow { is_built: true, spans, moments, last_stay_before, places })
 }
