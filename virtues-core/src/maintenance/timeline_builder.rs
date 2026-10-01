@@ -29,6 +29,7 @@ pub fn spawn(db: Arc<Database>) {
             match crate::timeline::rebuild(db.pool()).await {
                 Ok(Some(stats)) => tracing::info!(
                     places = stats.places,
+                    stops_on_water = stats.stops_on_water,
                     spans = stats.spans,
                     moments = stats.moments,
                     duration_ms = stats.duration_ms as u64,

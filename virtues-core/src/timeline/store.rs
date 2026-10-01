@@ -19,6 +19,8 @@ use crate::ids;
 #[derive(Debug, Clone, Serialize)]
 pub struct RebuildStats {
     pub places: usize,
+    /// Stops dropped for lying on open water.
+    pub stops_on_water: usize,
     pub spans: usize,
     pub moments: usize,
     pub duration_ms: u128,
@@ -33,7 +35,12 @@ pub async fn rebuild(pool: &PgPool) -> Result<Option<RebuildStats>> {
     }
     let started = std::time::Instant::now();
     let record = load(pool).await?;
-    let derived = derive(&record);
+    // Open water is not a place: a stop on it is no stay (`water`).
+    let found = super::stops(&record);
+    let water = super::water::on_open_water(&found).await;
+    let stops_on_water = water.iter().filter(|&&w| w).count();
+    let land: Vec<_> = found.into_iter().zip(water).filter_map(|(s, w)| (!w).then_some(s)).collect();
+    let derived = derive(&record, &land);
 
     let wiki_places = load_wiki_places(pool).await?;
     let mut tx = pool.begin().await?;
@@ -91,6 +98,7 @@ pub async fn rebuild(pool: &PgPool) -> Result<Option<RebuildStats>> {
 
     Ok(Some(RebuildStats {
         places: derived.places.len(),
+        stops_on_water,
         spans: derived.stretches.len(),
         moments: derived.moments.len(),
         duration_ms: started.elapsed().as_millis(),
