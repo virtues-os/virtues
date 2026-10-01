@@ -54,7 +54,7 @@
 		return style ? recolour(style, palette) : bare(palette);
 	}
 	/** The day's own sources and layers, drawn over the basemap. */
-	const OWN = ['track-run', 'track-bridge', 'lit-glow', 'lit-run', 'lit-bridge'];
+	const OWN = ['track-run', 'track-bridge', 'track-drive', 'track-drive-bridge', 'lit-glow', 'lit-run', 'lit-bridge'];
 	/** A theme switch swaps the basemap and carries the day's track across, so
 	 *  nothing reloads. */
 	async function restyle() {
@@ -281,6 +281,11 @@
 			container.addEventListener('wheel', onWheel, { passive: false, capture: true });
 			m.on('move', syncAway);
 			m.on('moveend', syncStreets);
+			// A click on the map itself (not a bubble, a chip or a card) lets go
+			// of a picked drive or stay.
+			m.on('click', () => {
+				if (picked) unpick();
+			});
 			void atlasSquares().then((sq) => {
 				squares = sq;
 				syncStreets();
@@ -310,12 +315,32 @@
 					layout: { 'line-join': 'round', 'line-cap': 'butt' },
 					paint: { 'line-color': TRACK, 'line-width': 1.5, 'line-opacity': 0.7, 'line-dasharray': [2, 3] },
 				});
+				// Every drive of the day in the move colour, over the path, so the
+				// map reads the day the way the rail and the scrubber do: blue
+				// where you were, orange where you moved (the owner's call; the
+				// prototype drew the whole path blue and lit only the live drive).
+				m.addSource('track-drive', { type: 'geojson', data: lines([]) });
+				m.addSource('track-drive-bridge', { type: 'geojson', data: lines([]) });
+				m.addLayer({
+					id: 'track-drive',
+					type: 'line',
+					source: 'track-drive',
+					layout: { 'line-join': 'round', 'line-cap': 'round' },
+					paint: { 'line-color': COLOURS.move, 'line-width': 3, 'line-opacity': 0.95 },
+				});
+				m.addLayer({
+					id: 'track-drive-bridge',
+					type: 'line',
+					source: 'track-drive-bridge',
+					layout: { 'line-join': 'round', 'line-cap': 'butt' },
+					paint: { 'line-color': COLOURS.move, 'line-width': 1.5, 'line-opacity': 0.7, 'line-dasharray': [2, 3] },
+				});
 				// The lit stretch (main.js:976-981): the stretch of path the playhead
-				// is moving along, at the path's own weight - the colour marks it,
-				// the width says nothing. Moving is orange everywhere in the
-				// Timeline, so the lit stretch is too, whether a drive or a moving
-				// conversation lit it (the owner's call; the prototype lit a moving
-				// conversation in slate, a colour nothing else on screen uses).
+				// is moving along, in the move colour at full strength over the
+				// drive's own orange, at the path's own weight - a drive picked
+				// from the rail grows heavier and glows (pick, below). Whether a
+				// drive or a moving conversation lit it, it is orange (the owner's
+				// call; the prototype lit a moving conversation in slate).
 				m.addSource('lit-run', { type: 'geojson', data: lines([]) });
 				m.addSource('lit-bridge', { type: 'geojson', data: lines([]) });
 				// A drive picked from the rail glows under its lit stretch while it
@@ -325,14 +350,14 @@
 					type: 'line',
 					source: 'lit-run',
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
-					paint: { 'line-color': COLOURS.move, 'line-width': 22, 'line-blur': 10, 'line-opacity': 0 },
+					paint: { 'line-color': COLOURS.movePicked, 'line-width': 22, 'line-blur': 10, 'line-opacity': 0 },
 				});
 				m.addLayer({
 					id: 'lit-run',
 					type: 'line',
 					source: 'lit-run',
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
-					paint: { 'line-color': COLOURS.move, 'line-width': 3, 'line-opacity': 0.95 },
+					paint: { 'line-color': COLOURS.movePicked, 'line-width': 3, 'line-opacity': 0.95 },
 				});
 				m.addLayer({
 					id: 'lit-bridge',
@@ -340,7 +365,7 @@
 					source: 'lit-bridge',
 					layout: { 'line-join': 'round', 'line-cap': 'butt' },
 					paint: {
-						'line-color': COLOURS.move,
+						'line-color': COLOURS.movePicked,
 						'line-width': 1.5,
 						'line-opacity': 0.9,
 						'line-dasharray': [2, 2.5],
@@ -354,12 +379,9 @@
 					pad: () => fitPad(m),
 					time: clock,
 					place: placeAt,
-					onpick: (s) => {
-						railFocus = 'row';
-						park(s);
-					},
+					onpick: (s) => pickMoment(s, true),
 					fitDay: () => frameDay(m, 650),
-					showPoint: (ll) => showPoint(m, [ll.lng, ll.lat]),
+					flyTo: (ll) => flyIn(m, [ll.lng, ll.lat]),
 				});
 				ready = true;
 			});
@@ -490,6 +512,9 @@
 		const { runs, bridges } = splitTrack(dayTrack);
 		(m.getSource('track-run') as GeoJSONSource).setData(lines(runs));
 		(m.getSource('track-bridge') as GeoJSONSource).setData(lines(bridges));
+		const drives = sections.filter((x) => x.kind === 'transit').map((x) => splitTrack(dayTrack.filter((f) => f.t >= x.s && f.t <= x.e)));
+		(m.getSource('track-drive') as GeoJSONSource).setData(lines(drives.flatMap((d) => d.runs)));
+		(m.getSource('track-drive-bridge') as GeoJSONSource).setData(lines(drives.flatMap((d) => d.bridges)));
 		// The rail draws first, so the framing can leave room for it.
 		await tick();
 		if (mine !== asked) return;
@@ -586,6 +611,10 @@
 			if (monthOpen) {
 				e.preventDefault();
 				monthOpen = false;
+			} else if (picked) {
+				// Esc lets go of a picked drive or stay first.
+				e.preventDefault();
+				unpick();
 			} else if (away && !e.defaultPrevented) resetView();
 			return;
 		}
@@ -892,9 +921,12 @@
 		const ml = maplibre;
 		if (!m || !ml) return;
 		if (p.kind === 'conversation' || p.kind === 'walk') {
-			railFocus = 'row';
-			park(p.s);
-			bubbles?.reveal(p.s);
+			pickMoment(p.s, false);
+			return;
+		}
+		// A second click on the picked drive or stay lets go of it.
+		if (picked && picked.s === p.s && picked.kind === (p.kind === 'transit' ? 'transit' : 'place')) {
+			unpick();
 			return;
 		}
 		const i = sections.findIndex((s) => s.kind === p.kind && s.s === p.s);
@@ -926,6 +958,18 @@
 		if (bubbles?.revealSection(keys)) return;
 		const at = anchorAt(dayTrack, p.s, p.e);
 		if (at) showPoint(m, [at.lng, at.lat]);
+	}
+
+	/** A conversation or a walk picked anywhere - its rail row, its bubble, a
+	 *  place card's row - does one thing: the playhead goes to its start, its
+	 *  row opens in the rail (a click on the rail's own row opens or closes it
+	 *  there), and the map flies in to it, or opens the chip holding it (the
+	 *  owner's call; the prototype only panned a bubble into view). */
+	function pickMoment(s: number, openRow: boolean) {
+		railFocus = 'row';
+		park(s);
+		if (openRow) rail?.expand(s);
+		bubbles?.reveal(s);
 	}
 
 	/** Fly in to one spot, centred on the clear map, to zoom 16 - streets and
@@ -962,10 +1006,7 @@
 		// through: twice the path's weight, in the move colour at full
 		// strength, under a glow that breathes.
 		m.setPaintProperty('lit-run', 'line-width', 6);
-		m.setPaintProperty('lit-run', 'line-color', COLOURS.movePicked);
 		m.setPaintProperty('lit-bridge', 'line-width', 2.5);
-		m.setPaintProperty('lit-bridge', 'line-color', COLOURS.movePicked);
-		m.setPaintProperty('lit-glow', 'line-color', COLOURS.movePicked);
 		if (calm()) {
 			m.setPaintProperty('lit-glow', 'line-opacity', 0.6);
 			return;
@@ -988,9 +1029,7 @@
 		if (!m?.getLayer('lit-glow')) return;
 		m.setPaintProperty('lit-glow', 'line-opacity', 0);
 		m.setPaintProperty('lit-run', 'line-width', 3);
-		m.setPaintProperty('lit-run', 'line-color', COLOURS.move);
 		m.setPaintProperty('lit-bridge', 'line-width', 1.5);
-		m.setPaintProperty('lit-bridge', 'line-color', COLOURS.move);
 	}
 
 	/** The clear map (`v4ClearArea`, main.js:1042-1044): not under the top

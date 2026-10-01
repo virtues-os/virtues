@@ -109,8 +109,8 @@ export interface BubbleHost {
 	onpick: (s: number) => void;
 	/** Frame the whole day. */
 	fitDay: () => void;
-	/** Bring a spot onto the clear map; whether the camera moved. */
-	showPoint: (ll: LngLat) => boolean;
+	/** Fly in to a picked moment's spot. */
+	flyTo: (ll: LngLat) => void;
 }
 
 interface Mark {
@@ -202,7 +202,9 @@ export class Bubbles {
 		return k && k.m.moving ? k.m : null;
 	}
 
-	/** Picked from the rail: show that moment's bubble (main.js:1087-1091). */
+	/** A moment picked (its rail row, its bubble, a card row): open the chip
+	 *  holding it, else fly in to it (main.js:1087-1091, which only panned it
+	 *  into view). */
 	reveal(s: number): void {
 		for (const rec of this.chips.values()) {
 			if (rec.keys.includes(s)) {
@@ -214,7 +216,8 @@ export class Bubbles {
 		if (!k) return;
 		// An open place card for somewhere else gives up the stage.
 		if (this.expanded && !this.expanded.keys.has(s)) this.expanded = null;
-		if (!this.host.showPoint(k.marker.getLngLat())) this.layout();
+		this.host.flyTo(k.marker.getLngLat());
+		this.layout();
 	}
 
 	/** A section picked from the rail, with the starts of its rows

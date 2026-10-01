@@ -41,6 +41,12 @@
 	export function width(): number {
 		return rail?.offsetWidth ?? 0;
 	}
+	/** Open a conversation row's transcript, as a click on the row does: a
+	 *  moment picked on the map opens its row here too. */
+	export function expand(s: number) {
+		const row = sections.flatMap((x) => x.rows).find((r) => r.s === s);
+		if (row?.convs.length) open = s;
+	}
 
 	// One hue per kind, the same as the map's and the scrubber's (lib/timeline/colours.ts).
 	const DOT: Record<SectionKind | RailRow['kind'], string> = {
@@ -200,6 +206,7 @@
 									<i class="dot" style="background: {DOT[row.kind]}"></i>
 									<b>{row.title}</b>
 									<span class="dur">{row.dur}</span>
+									{#if row.convs.length}<span class="chev" class:open={row.s === open} aria-hidden="true">›</span>{/if}
 								</span>
 							</button>
 							{#if row.s === open && openRow}
@@ -387,6 +394,23 @@
 		font-size: 12px;
 		line-height: 1.3;
 		color: var(--color-foreground-muted);
+	}
+	/* A conversation row opens its transcript: the chevron says so, and
+	   turns down while it is open. */
+	.chev {
+		flex: 0 0 auto;
+		font-size: 14px;
+		line-height: 1;
+		color: var(--color-foreground-subtle);
+		transition: transform 0.18s ease;
+	}
+	.chev.open {
+		transform: rotate(90deg);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.chev {
+			transition: none;
+		}
 	}
 	/* A quiet stay's audio note, after its duration (index.html:936). */
 	.tag {
