@@ -7,6 +7,13 @@ use tokio::sync::Mutex;
 use crate::endpoint::VIRTUES_ALPN;
 use crate::server::CLOSE_NOT_ALLOWLISTED;
 
+/// The longest one dial may take. `connection()` holds its lock across the
+/// dial so concurrent requests share it, which made an unbounded dial (a box
+/// that is off, a path that never forms) a stall for EVERY request behind it,
+/// each then dialing again in turn. A relay path legitimately takes 10-15s to
+/// form, so this leaves room for that and no more.
+const DIAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// The box closed the connection because this device's key is not on its
 /// allowlist: the device was removed, or the box was reset or restored from
 /// an older backup. The box answered; it just doesn't know this device, so
@@ -107,9 +114,9 @@ impl VirtuesIrohClient {
     }
 
     async fn dial(&self) -> Result<Connection> {
-        self.endpoint
-            .connect(self.addr.clone(), VIRTUES_ALPN)
+        tokio::time::timeout(DIAL_TIMEOUT, self.endpoint.connect(self.addr.clone(), VIRTUES_ALPN))
             .await
+            .map_err(|_| anyhow::anyhow!("dial box over iroh: no answer in {}s", DIAL_TIMEOUT.as_secs()))?
             .context("dial box over iroh")
     }
 
