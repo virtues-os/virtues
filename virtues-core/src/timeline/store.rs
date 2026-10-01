@@ -329,7 +329,7 @@ pub async fn lanes(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> R
     })
 }
 
-/// One transcription window, as the rail reads it.
+/// One transcription window, as the inspector reads it.
 #[derive(Debug, Clone, Serialize)]
 pub struct VoiceWindow {
     pub id: String,
@@ -347,7 +347,7 @@ pub struct VoiceWindow {
 
 /// Every transcription window overlapping `start`..`end`, in time order: the
 /// mic's coverage (a window at all means it was recording) and, with two or
-/// more speakers, the conversations a rail row opens (`dayback/build.py:
+/// more speakers, the conversations an inspector row opens (`dayback/build.py:
 /// 387-402, 501-511`).
 pub async fn voice(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<Vec<VoiceWindow>> {
     sqlx::query(

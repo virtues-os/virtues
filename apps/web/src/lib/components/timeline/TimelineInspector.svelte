@@ -1,17 +1,17 @@
 <!--
-	TimelineRail.svelte - the day as one column, in the prototype's two tiers
+	TimelineInspector.svelte - the day as one column, in the prototype's two tiers
 	(dayback/src/main.js:1600-1637, dayback/index.html:912-953): a section for
 	where you were (a stay, a drive, a signal gap, In Bed), titled with a
 	duration only, and under it the moments that happened there, each with its
 	time in the gutter. A section header pins while its rows scroll past.
 
-	A click parks the playhead and takes the map there (`onpick`). The rail
+	A click parks the playhead and takes the map there (`onpick`). The inspector
 	follows the playhead (main.js:1607-1615): the latest-begun section holding
 	it is where you are, the latest-begun row holding it is what's happening.
 -->
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import type { RailPick as Pick, RailRow, RailSection, SectionKind } from '$lib/timeline/rail';
+	import type { InspectorPick as Pick, InspectorRow, InspectorSection, SectionKind } from '$lib/timeline/inspector';
 	import { lineAt, lineTime, rowLines, spkIdx } from '$lib/timeline/transcript';
 
 	let {
@@ -23,11 +23,11 @@
 		onpick,
 		onseek,
 	}: {
-		sections: RailSection[];
+		sections: InspectorSection[];
 		zone: string;
 		playT: number;
 		/** What the user last pointed at: 'sec' after a section click keeps the
-		 *  rail on that section; anything else hands focus back to the moment. */
+		 *  inspector on that section; anything else hands focus back to the moment. */
 		focus?: 'row' | 'sec';
 		/** The user has moved the playhead in this day: until then nothing opens itself. */
 		armed?: boolean;
@@ -36,10 +36,10 @@
 		onseek: (t: number) => void;
 	} = $props();
 
-	let rail = $state<HTMLElement | null>(null);
+	let inspector = $state<HTMLElement | null>(null);
 	let scroller = $state<HTMLElement | null>(null);
 	export function width(): number {
-		return rail?.offsetWidth ?? 0;
+		return inspector?.offsetWidth ?? 0;
 	}
 	/** Open a conversation row's transcript, as a click on the row does: a
 	 *  moment picked on the map opens its row here too. */
@@ -49,7 +49,7 @@
 	}
 
 	// One hue per kind, the same as the map's and the scrubber's (lib/timeline/colours.ts).
-	const DOT: Record<SectionKind | RailRow['kind'], string> = {
+	const DOT: Record<SectionKind | InspectorRow['kind'], string> = {
 		place: 'var(--c-place)',
 		transit: 'var(--c-move)',
 		gap: 'var(--c-gap)',
@@ -97,12 +97,12 @@
 		});
 	});
 
-	function pickSection(i: number, sec: RailSection) {
+	function pickSection(i: number, sec: InspectorSection) {
 		if (i === curSection) secOpen = !secOpen;
 		open = null;
 		onpick({ kind: sec.kind, s: sec.s, e: sec.e });
 	}
-	function pickRow(row: RailRow) {
+	function pickRow(row: InspectorRow) {
 		if (row.convs.length) open = open === row.s ? null : row.s;
 		onpick({ kind: row.kind, s: row.s, e: row.e });
 	}
@@ -180,9 +180,9 @@
 </script>
 
 {#if sections.length}
-	<section class="rail" bind:this={rail} aria-label="The day, stay by stay">
+	<section class="inspector" bind:this={inspector} aria-label="The day, stay by stay">
 		<div class="scroll" bind:this={scroller}>
-			<!-- The day's standout leads the rail once the Timeline can score
+			<!-- The day's standout leads the inspector once the Timeline can score
 			     what was unusual (the prototype's "What stood out" card,
 			     main.js:1615-1617). Until then its place is held, quietly, and
 			     says so, never with a guess. -->
@@ -241,12 +241,12 @@
 {/if}
 
 <style>
-	.rail {
+	.inspector {
 		position: absolute;
 		/* Full height on the right, above the map's markers; a pane too
-		   narrow for the date card beside it starts the rail under the top
-		   cards instead (TimelineView sets --rail-top). */
-		top: var(--rail-top, 16px);
+		   narrow for the date card beside it starts the inspector under the top
+		   cards instead (TimelineView sets --inspector-top). */
+		top: var(--inspector-top, 16px);
 		bottom: 16px;
 		z-index: 10;
 		right: 16px;
@@ -403,7 +403,7 @@
 		line-height: 1.3;
 		color: var(--color-foreground-muted);
 	}
-	/* The standout's held place, at the head of the rail: the prototype's
+	/* The standout's held place, at the head of the inspector: the prototype's
 	   eyebrow (index.html:938-942), greyed, with a quiet line under it. */
 	.standout {
 		display: flex;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { barHeight, bars, barWidth, fitWords, laneData, ribbon, untangle, waveform } from "./lanes";
-import type { DerivedWindow, VoiceWindow } from "./rail";
+import type { DerivedWindow, VoiceWindow } from "./inspector";
 
 const M = 60_000;
 

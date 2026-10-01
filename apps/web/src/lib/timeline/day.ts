@@ -13,7 +13,7 @@
  */
 import { apiGet } from "$lib/api/client";
 import type { TimelineDayLocationChunk, TimelineDayPoint, TimelineDayView } from "$lib/wiki/api";
-import type { DerivedWindow, VoiceWindow } from "./rail";
+import type { DerivedWindow, VoiceWindow } from "./inspector";
 import type { LaneWindow } from "./lanes";
 
 const DAY_MS = 86_400_000;
@@ -38,7 +38,7 @@ export async function fetchDerived(b: DayBounds): Promise<DerivedWindow> {
 	return apiGet<DerivedWindow>(`/timeline/derived?${q}`);
 }
 
-/** Every transcription window over a day (`/timeline/voice`): the rail's
+/** Every transcription window over a day (`/timeline/voice`): the inspector's
  *  conversations and transcripts, and whether the mic was on. */
 export async function fetchVoice(b: DayBounds): Promise<VoiceWindow[]> {
 	const q = new URLSearchParams({ start: new Date(b.startMs).toISOString(), end: new Date(b.endMs).toISOString() });
@@ -114,7 +114,7 @@ export function gapVerdict(x: { fixes: number; talk: boolean; steps: boolean }):
 /** What a day with no fix says: that no location was recorded; when it was
  *  last measured, and at which stay when that last fix fell inside one; then
  *  `gapVerdict` over the day, when its inputs are known (talk is a window of
- *  two or more voices, as the rail's signal gap counts it, main.js:2538).
+ *  two or more voices, as the inspector's signal gap counts it, main.js:2538).
  *  Where you probably were is left to the reader (the owner's call; the
  *  prototype's `honestWhere`, main.js:962-965, titled the day with the last
  *  stay's place). */

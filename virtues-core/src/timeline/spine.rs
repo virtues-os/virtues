@@ -36,8 +36,8 @@ const GAP_MIN_TRACK_M: f64 = 600.0;
 const NO_TRAVEL_KMH: f64 = 4.0;
 /// Speeds over this between two fixes are glitches, not travel.
 const MAX_KMH: f64 = 2000.0;
-/// A trip that never reaches this is not a drive: the rail's own line for
-/// "Driving" (`apps/web/src/lib/timeline/rail.ts`, `transitTitle`).
+/// A trip that never reaches this is not a drive: the inspector's own line for
+/// "Driving" (`apps/web/src/lib/timeline/inspector.ts`, `transitTitle`).
 const DRIVE_KMH: f64 = 45.0;
 
 /// A point of the cleaned track: a spot's centre, or a moving fix.
