@@ -59,6 +59,14 @@ describe("flagHoles", () => {
 	it("does not flag a short silence, however far", () => {
 		expect(track(at(0), at(1.9, 5000))[1].bridge).toBe(false);
 	});
+	it("flags a hop no one could travel, however short the silence", () => {
+		// 8.9 km in 17 seconds: 1,885 km/h.
+		expect(track(at(0), at(17 / 60, 8900)).map((f) => f.bridge)).toEqual([false, true]);
+	});
+	it("does not flag a fast but real hop, or a short one", () => {
+		expect(track(at(0), at(1, 1000))[1].bridge).toBe(false); // 60 km/h
+		expect(track(at(0), at(0.1, 200))[1].bridge).toBe(false); // too short to matter
+	});
 	it("does not flag a long silence that ends where it began", () => {
 		expect(track(at(0), at(90, HOLE_MIN_M - 20))[1].bridge).toBe(false);
 	});
