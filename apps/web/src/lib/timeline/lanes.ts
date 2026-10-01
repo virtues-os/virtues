@@ -41,28 +41,35 @@ export interface ScrubEvent {
 	/** Its real span, for the peek. */
 	s: number;
 	e: number;
-	/** The span the lane draws: where events overlap, each gets its side of
-	 *  the overlap, so the lane never stacks them. */
-	ds: number;
-	de: number;
+	/** The spans the lane draws: where events overlap, each gets its share
+	 *  of the shared time, so the lane never stacks them; an event with a
+	 *  shorter one inside it resumes after it. */
+	pieces: [number, number][];
 	title: string;
 	where: string | null;
 	/** An invitation you haven't answered: drawn faded. */
 	unanswered: boolean;
 }
 
-/** Events in start order with their overlaps split down the middle: where
- *  one runs into the next, the first ends and the next begins halfway
- *  through the time they share. A tiny lane has no room for two rows. */
-export function untangle<T extends { s: number; e: number }>(events: T[]): (T & { ds: number; de: number })[] {
-	const out = [...events].sort((a, b) => a.s - b.s || a.e - b.e).map((ev) => ({ ...ev, ds: ev.s, de: ev.e }));
-	for (let i = 1; i < out.length; i++) {
-		const prev = out[i - 1];
-		const cur = out[i];
-		if (cur.ds >= prev.de) continue;
-		const cut = (cur.ds + Math.min(prev.de, cur.de)) / 2;
-		prev.de = cut;
-		cur.ds = Math.max(cur.ds, cut);
+/** Events in start order, each with the pieces of time the lane draws it
+ *  over. Time only one event covers is its own; time several cover is split
+ *  into equal shares in start order, so two overlapping events meet halfway
+ *  through what they share, and an event with a shorter one inside it gives
+ *  way to it and resumes after. A tiny lane has no room for two rows. */
+export function untangle<T extends { s: number; e: number }>(events: T[]): (T & { pieces: [number, number][] })[] {
+	const out = [...events].sort((a, b) => a.s - b.s || a.e - b.e).map((ev) => ({ ...ev, pieces: [] as [number, number][] }));
+	const cuts = [...new Set(out.flatMap((ev) => [ev.s, ev.e]))].sort((a, b) => a - b);
+	for (let k = 1; k < cuts.length; k++) {
+		const a = cuts[k - 1];
+		const b = cuts[k];
+		const over = out.filter((ev) => ev.s < b && ev.e > a);
+		over.forEach((ev, j) => {
+			const ps = a + ((b - a) * j) / over.length;
+			const pe = a + ((b - a) * (j + 1)) / over.length;
+			const last = ev.pieces.at(-1);
+			if (last && last[1] === ps) last[1] = pe;
+			else ev.pieces.push([ps, pe]);
+		});
 	}
 	return out;
 }
