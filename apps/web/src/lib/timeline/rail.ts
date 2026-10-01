@@ -150,9 +150,6 @@ export function buildRail(w: DerivedWindow, start: number, end: number, voice: V
 		.map((s) => ({ ...s, s: t(s.started_at), e: t(s.ended_at) }))
 		.filter((s) => s.e > start && s.s < end)
 		.sort((a, b) => a.s - b.s);
-	// The located stretches in order, for "likely still at" beside a gap.
-	const located = inDay.filter((s) => s.kind !== "sleep");
-
 	const built: RailSection[] = inDay.map((s) => {
 		const cs = Math.max(s.s, start);
 		const ce = Math.min(s.e, end);
@@ -168,15 +165,16 @@ export function buildRail(w: DerivedWindow, start: number, end: number, voice: V
 				return { ...base, kind: "sleep", title: "In Bed", dur: fmtDur(s.e - s.s), src };
 			}
 			case "unknown": {
-				const i = located.indexOf(s);
-				const beside = [located[i - 1], located[i + 1]].find((n) => n?.kind === "stay");
-				const likely = beside ? `likely still at ${placeTitle(places.get(beside.timeline_place_id ?? ""))}` : "GPS silent";
+				// Says only what the record knows: no location, and what the
+				// phone did meanwhile. Where you probably were is left to the
+				// reader, who can see the stays on either side (the owner's
+				// call; the prototype said "likely still at" the stay beside it).
 				const verdict = gapVerdict({
 					fixes: Number(s.metadata.fix_count ?? 0),
 					talk: Number(s.metadata.conversation_count ?? 0) > 0,
 					steps: Number(s.metadata.step_bin_count ?? 0) > 0,
 				});
-				return { ...base, kind: "gap", title: "Signal gap", dur: fmtDur(ce - cs), notes: [likely, verdict] };
+				return { ...base, kind: "gap", title: "Signal gap", dur: fmtDur(ce - cs), notes: ["No location recorded", verdict] };
 			}
 		}
 	});
