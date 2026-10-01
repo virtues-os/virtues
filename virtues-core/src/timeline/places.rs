@@ -13,8 +13,9 @@ const STOP_ACCURACY_MAX_M: f64 = 50.0;
 const SPIKE_M: f64 = 300.0;
 /// A stop is a run of fixes within this of its first fix...
 const STOP_RADIUS_M: f64 = 100.0;
-/// ...lasting at least this long...
-const STOP_MIN: Ms = 20 * MIN;
+/// ...lasting at least this long (the prototype's 20, halved on the owner's
+/// call so a short errand counts)...
+const STOP_MIN: Ms = 10 * MIN;
 /// ...with at least this many fixes.
 const STOP_MIN_FIXES: usize = 8;
 /// Stops closer than this are the same place.
@@ -54,7 +55,7 @@ pub(crate) fn stop_fixes(fixes: &[Fix]) -> Vec<Fix> {
 }
 
 /// Every stop: a run of fixes within 100 m of the run's first fix, at least
-/// 20 minutes and 8 fixes long, from its first fix to its last; the centre is
+/// 10 minutes and 8 fixes long, from its first fix to its last; the centre is
 /// the median.
 pub(crate) fn stops(fixes: &[Fix]) -> Vec<Stop> {
     let mut out = Vec::new();
@@ -187,11 +188,13 @@ mod tests {
     }
 
     #[test]
-    fn a_stop_needs_twenty_minutes_and_eight_fixes_and_runs_first_fix_to_last() {
+    fn a_stop_needs_ten_minutes_and_eight_fixes_and_runs_first_fix_to_last() {
         let long: Vec<Fix> = (0..10).map(|m| fix(m * 3, 0.0, -30.0, 5.0)).collect(); // 27 min, 10 fixes
         let found = stops(&long);
         assert_eq!(found.len(), 1);
         assert_eq!((found[0].s, found[0].e), (0, 27 * MIN));
+        let errand: Vec<Fix> = (0..12).map(|m| fix(m, 0.0, -30.0, 5.0)).collect(); // 11 min, 12 fixes
+        assert_eq!(stops(&errand).len(), 1);
         let short: Vec<Fix> = (0..10).map(|m| fix(m, 0.0, -30.0, 5.0)).collect(); // 9 min
         assert!(stops(&short).is_empty());
         let sparse: Vec<Fix> = (0..5).map(|m| fix(m * 10, 0.0, -30.0, 5.0)).collect(); // 40 min, 5 fixes
