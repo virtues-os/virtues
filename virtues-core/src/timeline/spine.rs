@@ -32,6 +32,9 @@ const GAP_FIX_EVERY: Ms = 15 * MIN;
 const GAP_MIN_TRACK_M: f64 = 600.0;
 /// Speeds over this between two fixes are glitches, not travel.
 const MAX_KMH: f64 = 2000.0;
+/// A trip that never reaches this is not a drive: the rail's own line for
+/// "Driving" (`apps/web/src/lib/timeline/rail.ts`, `transitTitle`).
+const DRIVE_KMH: f64 = 45.0;
 
 /// A point of the cleaned track: a spot's centre, or a moving fix.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -248,7 +251,20 @@ pub(crate) fn spine(stops: &[Stop], place_of: &[usize], clean: &[Point], moves: 
                 let inside: Vec<&Move> = moves.iter().filter(|m| m.e > c && m.s < vs).collect();
                 let last_is_stay_ending_here =
                     |segs: &Vec<Seg>| segs.last().is_some_and(|l| l.kind != Kind::Transit && l.e == c);
-                if went_away(clean, c, vs, pv.lat, pv.lon) {
+                let away = went_away(clean, c, vs, pv.lat, pv.lon);
+                // A walk from a place back to it: the track left, but the next
+                // stop is at the same place, nothing on the way reached
+                // driving speed, and the fixes cover the time. The stay runs on
+                // through it, and the walk is a moment inside it (`moments`),
+                // as the prototype showed one (the owner's call: a loop round
+                // the block from home is no trip).
+                let walked_back = away
+                    && segs.last().is_some_and(|l| l.kind == Kind::Stay(place) && l.e == c)
+                    && transit_track(clean, c, vs).peak_kmh < DRIVE_KMH
+                    && cov.covered(c, vs);
+                if walked_back {
+                    vs = c;
+                } else if away {
                     if inside.is_empty() {
                         // Movement only in the cleaned track: the whole gap is the drive.
                         segs.push(transit(c, vs));
@@ -444,6 +460,39 @@ mod tests {
         let shape: Vec<(Ms, Ms, Kind)> = segs.iter().map(|s| (s.s / MIN, s.e / MIN, s.kind)).collect();
         // The stay holds until the movement starts (the fix before the first fast one).
         assert_eq!(shape, vec![(0, 70, Kind::Stay(0)), (70, 80, Kind::Transit), (80, 160, Kind::Stay(1))]);
+    }
+
+    #[test]
+    fn a_walk_back_to_the_same_place_is_part_of_the_stay_but_a_drive_is_not() {
+        // At A 0-60 min, out 500 m and back by 80 min, at A again 80-140 min.
+        let a1 = Stop { s: 0, e: 60 * MIN, lat: 0.0, lon: -30.0 };
+        let a2 = Stop { s: 80 * MIN, e: 140 * MIN, lat: 0.0, lon: -30.0 };
+        let trip = |minutes_out: i64| {
+            let mut fixes: Vec<Fix> = (0..=60).map(|m| fix(m, 0.0)).collect();
+            let step = 0.0045 / minutes_out as f64; // 500 m out, the same back
+            fixes.extend((1..=minutes_out).map(|k| fix(60 + k, k as f64 * step)));
+            fixes.extend((1..=minutes_out).map(|k| fix(60 + minutes_out + k, 0.0045 - k as f64 * step)));
+            fixes.extend((60 + 2 * minutes_out + 1..=140).map(|m| fix(m, 0.0)));
+            fixes
+        };
+        let run = |fixes: Vec<Fix>| {
+            let clean = clean_track(&fixes);
+            let times: Vec<Ms> = fixes.iter().map(|f| f.t).collect();
+            let cov = Coverage { fix_times: &times, nights: &[] };
+            spine(&[a1, a2], &[0, 0], &clean, &moves(&fixes), &cov)
+        };
+        // Ten minutes out and ten back: walking pace, one stay.
+        assert_eq!(run(trip(10)), vec![Seg { s: 0, e: 140 * MIN, kind: Kind::Stay(0) }]);
+        // A minute out and a minute back: 30 km/h, still under driving speed.
+        assert_eq!(run(trip(1)).len(), 1);
+        // The same loop at driving speed is a drive between two stays.
+        let fast: Vec<Fix> = trip(10)
+            .into_iter()
+            .map(|f| if f.t > 60 * MIN && f.t < 80 * MIN { Fix { t: 60 * MIN + (f.t - 60 * MIN) / 20, ..f } } else { f })
+            .collect();
+        let mut fast = fast;
+        fast.sort_by_key(|f| f.t);
+        assert_eq!(run(fast).iter().filter(|g| g.kind == Kind::Transit).count(), 1);
     }
 
     #[test]
