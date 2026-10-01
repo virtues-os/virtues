@@ -276,6 +276,119 @@ async fn fetch_names(
     }
 }
 
+/// What a pointer's thing is called and wears right now, and whether it is
+/// still there. The one resolver behind pins and the client's identity
+/// lookups (`POST /api/refs/resolve`): a pointer holds a URL, never a name.
+#[derive(Debug, Clone, Serialize)]
+pub struct RefIdentity {
+    pub url: String,
+    pub kind: String,
+    pub title: String,
+    pub icon: Option<String>,
+    pub color: Option<String>,
+    /// `live`; `trashed` (a chat, page or project in Recently deleted);
+    /// `gone` (no record by that id); or `unknown` (an app screen, or a kind
+    /// with no table to ask).
+    pub state: &'static str,
+}
+
+/// The kinds whose name, icon and color live on their own app table, and
+/// that can be trashed.
+const OWNED: [&str; 3] = ["chat", "page", "project"];
+/// Kinds `fetch_names` can look up, so a miss means the record is gone.
+const LOOKED_UP: [&str; 4] = ["person", "place", "org", "drive"];
+
+/// Resolve many URLs to identities. Chats, pages and projects are read here,
+/// with icon, color and trash state, and a database error is returned; every
+/// other kind goes through [`resolve_refs`], whose misses are cosmetic.
+pub async fn resolve_identities(
+    pool: &PgPool,
+    urls: &[String],
+) -> crate::error::Result<HashMap<String, RefIdentity>> {
+    let mut ids_by_kind: HashMap<&str, Vec<String>> = HashMap::new();
+    let mut others: Vec<String> = Vec::new();
+    for url in urls {
+        match split_ref(url) {
+            Some((kind, id)) if OWNED.contains(&kind) => {
+                let kind = OWNED.iter().find(|k| **k == kind).copied().unwrap_or("page");
+                ids_by_kind.entry(kind).or_default().push(id.to_string());
+            }
+            _ => others.push(url.clone()),
+        }
+    }
+
+    let mut owned: HashMap<(&str, String), (String, Option<String>, Option<String>, bool)> = HashMap::new();
+    for (kind, ids) in &ids_by_kind {
+        let sql = match *kind {
+            "chat" => {
+                "SELECT id, COALESCE(NULLIF(title, ''), 'New chat'), icon, icon_color, deleted_at IS NOT NULL \
+                 FROM app_chats WHERE id = ANY($1)"
+            }
+            "page" => {
+                "SELECT id, COALESCE(NULLIF(title, ''), 'Untitled page'), icon, icon_color, deleted_at IS NOT NULL \
+                 FROM app_pages WHERE id = ANY($1)"
+            }
+            _ => {
+                "SELECT id, COALESCE(NULLIF(name, ''), 'Untitled project'), icon, accent_color, deleted_at IS NOT NULL \
+                 FROM app_projects WHERE id = ANY($1)"
+            }
+        };
+        let rows = sqlx::query_as::<_, (String, String, Option<String>, Option<String>, bool)>(sql)
+            .bind(ids)
+            .fetch_all(pool)
+            .await?;
+        for (id, title, icon, color, trashed) in rows {
+            owned.insert((kind, id), (title, icon, color, trashed));
+        }
+    }
+    let names = resolve_refs(pool, &others).await;
+
+    let mut out = HashMap::with_capacity(urls.len());
+    for url in urls {
+        let parsed = split_ref(url);
+        let identity = match parsed {
+            Some((kind, id)) if OWNED.contains(&kind) => {
+                let key_kind = OWNED.iter().find(|k| **k == kind).copied().unwrap_or("page");
+                match owned.get(&(key_kind, id.to_string())) {
+                    Some((title, icon, color, trashed)) => RefIdentity {
+                        url: url.clone(),
+                        kind: kind.to_string(),
+                        title: title.clone(),
+                        icon: icon.clone(),
+                        color: color.clone(),
+                        state: if *trashed { "trashed" } else { "live" },
+                    },
+                    None => RefIdentity {
+                        url: url.clone(),
+                        kind: kind.to_string(),
+                        title: url.clone(),
+                        icon: None,
+                        color: None,
+                        state: "gone",
+                    },
+                }
+            }
+            _ => match names.get(url) {
+                Some(r) => RefIdentity {
+                    url: url.clone(),
+                    kind: r.kind.clone(),
+                    title: r.title.clone(),
+                    icon: None,
+                    color: None,
+                    state: "live",
+                },
+                None => {
+                    let kind = parsed.map(|(k, _)| k.to_string()).unwrap_or_else(|| "route".to_string());
+                    let state = if LOOKED_UP.contains(&kind.as_str()) { "gone" } else { "unknown" };
+                    RefIdentity { url: url.clone(), kind, title: url.clone(), icon: None, color: None, state }
+                }
+            },
+        };
+        out.insert(url.clone(), identity);
+    }
+    Ok(out)
+}
+
 /// Best-effort name for a single ref. Falls back to the URL itself.
 pub async fn resolve_one(pool: &PgPool, url: &str) -> ResolvedRef {
     let urls = vec![url.to_string()];
@@ -297,6 +410,29 @@ pub async fn resolve_one(pool: &PgPool, url: &str) -> ResolvedRef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Live, trashed and gone for the owned kinds; a wiki name; an app screen
+    /// as unknown.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn identities_say_what_is_there(pool: PgPool) {
+        sqlx::query("INSERT INTO app_pages (id, title) VALUES ('page_l', 'Live'), ('page_t', 'Binned')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE app_pages SET deleted_at = now() WHERE id = 'page_t'").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('person_i1', 'Nick')").execute(&pool).await.unwrap();
+        let urls: Vec<String> = ["/page/page_l", "/page/page_t", "/page/page_gone", "/person/person_i1", "/settings/display"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let got = resolve_identities(&pool, &urls).await.unwrap();
+        let state = |u: &str| (got[u].state, got[u].title.clone());
+        assert_eq!(state("/page/page_l"), ("live", "Live".into()));
+        assert_eq!(state("/page/page_t").0, "trashed");
+        assert_eq!(state("/page/page_gone").0, "gone");
+        assert_eq!(state("/person/person_i1"), ("live", "Nick".into()));
+        assert_eq!(state("/settings/display").0, "unknown");
+    }
 
     #[test]
     fn legacy_notebook_url_parses_as_project() {
