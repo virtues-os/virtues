@@ -48,7 +48,7 @@ export function metres(a: { lat: number; lng: number }, b: { lat: number; lng: n
  * 100 m is dropped: the prototype's rule for movement (dayback/build.py:290),
  * here for the drawn line too. A still phone indoors reports such guesses
  * hundreds of metres to kilometres off and snaps back within a minute, and
- * each drew a straight line out and back (Sep 22: 51 of 665 fixes). The
+ * each drew a straight line out and back (one sparse day: 51 of 665). The
  * prototype's July track rarely had them, so its line never needed the rule.
  */
 export function toFixes(points: TimelineDayPoint[]): Fix[] {

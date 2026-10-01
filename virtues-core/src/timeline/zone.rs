@@ -5,8 +5,8 @@
 //! Only the coordinate lookup is shared (`crate::timezone::coords_to_tz`, an
 //! offline tzf-rs finder); the day arithmetic is here, from the prototype's
 //! rules (`dayback/build.py:181-267`), with the zone database standing in for
-//! its longitude bands. The bands put Boise and Wells, NV in the wrong zone;
-//! the tests below pin both.
+//! its longitude bands. The bands put a place near a zone line in the wrong
+//! zone (Phoenix, for one); the tests below pin it.
 
 use chrono::{DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, Offset, TimeZone};
 use chrono_tz::Tz;
@@ -90,19 +90,19 @@ mod tests {
 
     #[test]
     fn the_finder_names_the_zone_the_bands_got_wrong() {
-        assert_eq!(at(30.27, -97.74), Some(chrono_tz::America::Chicago));
-        assert_eq!(at(47.61, -122.33), Some(chrono_tz::America::Los_Angeles));
-        assert_eq!(at(37.27, -107.88), Some(chrono_tz::America::Denver));
-        // West of -115, so the prototype's bands said Pacific: Boise keeps Mountain time.
-        assert_eq!(at(43.62, -116.21), Some(chrono_tz::America::Boise));
-        // East of -115, so the bands said Mountain: Wells, NV keeps Pacific time.
-        assert_eq!(at(41.11, -114.96), Some(chrono_tz::America::Los_Angeles));
+        assert_eq!(at(40.71, -74.01), Some(chrono_tz::America::New_York));
+        assert_eq!(at(41.88, -87.63), Some(chrono_tz::America::Chicago));
+        assert_eq!(at(39.74, -104.99), Some(chrono_tz::America::Denver));
+        assert_eq!(at(34.05, -118.24), Some(chrono_tz::America::Los_Angeles));
+        // Between -115 and -102, so the prototype's bands said Mountain time with
+        // daylight saving: Phoenix keeps standard time all year.
+        assert_eq!(at(33.45, -112.07), Some(chrono_tz::America::Phoenix));
     }
 
     #[test]
     fn a_summer_midnight_is_daylight_time() {
         let chicago = chrono_tz::America::Chicago;
-        assert_eq!(midnight(date("2026-07-28"), chicago), ms("2026-07-28T05:00:00Z"));
+        assert_eq!(midnight(date("2026-06-10"), chicago), ms("2026-06-10T05:00:00Z"));
         assert_eq!(midnight(date("2026-01-15"), chicago), ms("2026-01-15T06:00:00Z"));
     }
 
@@ -117,11 +117,11 @@ mod tests {
     fn small_hours_are_read_on_the_whole_span_in_local_time() {
         let chicago = chrono_tz::America::Chicago;
         // Home at 19:00, left 08:00: covers 01:00-05:00 local.
-        assert!(covers_small_hours(ms("2026-07-28T00:00:00Z"), ms("2026-07-28T13:00:00Z"), chicago));
+        assert!(covers_small_hours(ms("2026-06-10T00:00:00Z"), ms("2026-06-10T13:00:00Z"), chicago));
         // 22:00-00:30 local: evening only.
-        assert!(!covers_small_hours(ms("2026-07-28T03:00:00Z"), ms("2026-07-28T05:30:00Z"), chicago));
+        assert!(!covers_small_hours(ms("2026-06-10T03:00:00Z"), ms("2026-06-10T05:30:00Z"), chicago));
         // The same UTC span is 01:00-03:30 in Lisbon: covered.
-        assert!(covers_small_hours(ms("2026-07-28T00:00:00Z"), ms("2026-07-28T02:30:00Z"), chrono_tz::Europe::Lisbon));
+        assert!(covers_small_hours(ms("2026-06-10T00:00:00Z"), ms("2026-06-10T02:30:00Z"), chrono_tz::Europe::Lisbon));
         // Across the spring-forward night, 00:30-06:00 local still counts.
         assert!(covers_small_hours(ms("2026-03-08T06:30:00Z"), ms("2026-03-08T11:00:00Z"), chicago));
     }
@@ -129,9 +129,9 @@ mod tests {
     #[test]
     fn a_day_wakes_up_in_the_zone_of_its_first_fix() {
         let chicago = chrono_tz::America::Chicago;
-        let times = vec![ms("2026-07-21T09:00:00Z"), ms("2026-07-22T15:00:00Z")];
-        let coords = vec![(30.27, -97.74), (47.61, -122.33)];
-        assert_eq!(of_day(date("2026-07-22"), &times, &coords, chicago), chrono_tz::America::Los_Angeles);
-        assert_eq!(of_day(date("2026-07-24"), &times, &coords, chicago), chicago);
+        let times = vec![ms("2026-06-01T09:00:00Z"), ms("2026-06-02T15:00:00Z")];
+        let coords = vec![(41.88, -87.63), (34.05, -118.24)];
+        assert_eq!(of_day(date("2026-06-02"), &times, &coords, chicago), chrono_tz::America::Los_Angeles);
+        assert_eq!(of_day(date("2026-06-04"), &times, &coords, chicago), chicago);
     }
 }

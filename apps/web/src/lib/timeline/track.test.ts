@@ -102,18 +102,18 @@ describe("the empty day, in the prototype's words", () => {
 		expect(gapVerdict({ fixes: 3, talk: false, steps: false })).toBe("Phone on but idle");
 	});
 	it("says when location was last measured, as honestWhere does, on the day's clock", () => {
-		const t = Date.parse("2026-09-23T23:00:00Z"); // 6:00 PM in Chicago (CDT)
-		expect(lastMeasured(t, false, "America/Chicago")).toBe("last measured Sep 23 · 6:00 PM");
+		const t = Date.parse("2026-06-03T23:00:00Z"); // 6:00 PM in Chicago (CDT)
+		expect(lastMeasured(t, false, "America/Chicago")).toBe("last measured Jun 3 · 6:00 PM");
 		expect(lastMeasured(t, true, "America/Chicago")).toBe("last measured at 6:00 PM");
-		// The same instant on a Seattle day reads two hours earlier.
+		// The same instant on a Los Angeles day reads two hours earlier.
 		expect(lastMeasured(t, true, "America/Los_Angeles")).toBe("last measured at 4:00 PM");
 		expect(lastMeasured(Date.parse("2026-01-02T06:05:00Z"), false, "America/Chicago")).toBe("last measured Jan 2 · 12:05 AM");
 	});
 	it("titles a day with no fix by the last place you stayed, as honestWhere does", () => {
-		const left = Date.parse("2026-09-23T23:00:00Z"); // 6:00 PM in Chicago
+		const left = Date.parse("2026-06-03T23:00:00Z"); // 6:00 PM in Chicago
 		expect(quietDay({ title: "Home", e: left }, "America/Chicago", { talk: true, steps: true })).toEqual({
 			title: "Home",
-			lines: ["Last measured Sep 23 · 6:00 PM", "Phone on, mic active"],
+			lines: ["Last measured Jun 3 · 6:00 PM", "Phone on, mic active"],
 		});
 		expect(quietDay(null, "America/Chicago", { talk: false, steps: false })).toEqual({
 			title: "No location fix",
