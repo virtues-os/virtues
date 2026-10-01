@@ -241,6 +241,7 @@ pub(crate) fn spine(stops: &[Stop], place_of: &[usize], clean: &[Point], moves: 
 
     for (vi, v) in stops.iter().enumerate() {
         let (mut vs, ve) = (v.s, v.e);
+        let mut place = place_of[vi];
         if let (Some(c), Some(pv)) = (cur, prev) {
             if vs > c {
                 let same = crate::geo::haversine_distance(pv.lat, pv.lon, v.lat, v.lon) <= SAME_STOP_M;
@@ -278,18 +279,20 @@ pub(crate) fn spine(stops: &[Stop], place_of: &[usize], clean: &[Point], moves: 
                     segs.push(transit(c, vs));
                 } else if same && last_is_stay_ending_here(&segs) {
                     if cov.covered(c, vs) {
-                        // The detector blinked and the track saw you stay.
-                        let last = segs.last_mut().expect("checked");
-                        last.e = last.e.max(ve);
-                        cur = Some(c.max(ve));
-                        prev = Some(v);
-                        continue;
-                    }
-                    let held = cov.forward_to(c, vs);
-                    segs.last_mut().expect("checked").e = held;
-                    vs = cov.back_to(c, vs);
-                    if vs > held {
-                        segs.push(transit(held, vs));
+                        // The detector blinked and the track saw you stay: the
+                        // last stay runs on into this stop, at its own place,
+                        // and the silences inside the stop still cut it below.
+                        if let Some(Kind::Stay(p)) = segs.last().map(|l| l.kind) {
+                            place = p;
+                        }
+                        vs = c;
+                    } else {
+                        let held = cov.forward_to(c, vs);
+                        segs.last_mut().expect("checked").e = held;
+                        vs = cov.back_to(c, vs);
+                        if vs > held {
+                            segs.push(transit(held, vs));
+                        }
                     }
                 }
             }
@@ -306,9 +309,14 @@ pub(crate) fn spine(stops: &[Stop], place_of: &[usize], clean: &[Point], moves: 
         // gap, as the prototype makes one between two visits.
         let mut from = vs;
         let first_new = segs.len();
+        // A stay picks up where the same place's stay ended, or starts anew.
+        let stay = |segs: &mut Vec<Seg>, s: Ms, e: Ms| match segs.last_mut() {
+            Some(last) if last.kind == Kind::Stay(place) && last.e >= s => last.e = last.e.max(e),
+            _ => segs.push(Seg { s, e, kind: Kind::Stay(place) }),
+        };
         for (hs, he) in cov.holes(vs, ve) {
             if hs > from {
-                segs.push(Seg { s: from, e: hs, kind: Kind::Stay(place_of[vi]) });
+                stay(&mut segs, from, hs);
             }
             let fresh = segs.len() > first_new;
             match segs.last_mut() {
@@ -318,7 +326,7 @@ pub(crate) fn spine(stops: &[Stop], place_of: &[usize], clean: &[Point], moves: 
             from = he;
         }
         if ve > from {
-            segs.push(Seg { s: from, e: ve, kind: Kind::Stay(place_of[vi]) });
+            stay(&mut segs, from, ve);
         }
         cur = Some(cur.map_or(ve, |c| c.max(ve)));
         prev = Some(v);
@@ -486,6 +494,28 @@ mod tests {
         let night = [Span { s: HOUR, e: 5 * HOUR }];
         let slept = Coverage { fix_times: &times, nights: &night };
         assert_eq!(spine(&[one], &[0], &clean, &[], &slept), vec![Seg { s: 0, e: 6 * HOUR, kind: Kind::Stay(0) }]);
+    }
+
+    #[test]
+    fn a_stay_run_on_into_the_next_stop_is_still_cut_by_a_silence_inside_it() {
+        // Two stops at one place a minute apart; the second has no fix from 2 h to 6 h.
+        let first = Stop { s: 0, e: 30 * MIN, lat: 30.0, lon: -97.0 };
+        let second = Stop { s: 31 * MIN, e: 7 * HOUR, lat: 30.0, lon: -97.0 };
+        let fixes: Vec<Fix> =
+            (0..=420).step_by(5).filter(|m| *m <= 120 || *m >= 360).map(|m| fix(m, 30.0)).chain([fix(31, 30.0)]).collect();
+        let mut fixes = fixes;
+        fixes.sort_by_key(|f| f.t);
+        let clean = clean_track(&fixes);
+        let times: Vec<Ms> = fixes.iter().map(|f| f.t).collect();
+        let cov = Coverage { fix_times: &times, nights: &[] };
+        assert_eq!(
+            spine(&[first, second], &[0, 0], &clean, &[], &cov),
+            vec![
+                Seg { s: 0, e: 2 * HOUR, kind: Kind::Stay(0) },
+                Seg { s: 2 * HOUR, e: 6 * HOUR, kind: Kind::Transit },
+                Seg { s: 6 * HOUR, e: 7 * HOUR, kind: Kind::Stay(0) },
+            ]
+        );
     }
 
     #[test]
