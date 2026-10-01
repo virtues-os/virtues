@@ -13,10 +13,16 @@
 //!
 //!   never   — 0 rows ever. The source was never connected.
 //!   live    — something arrived in the last 24h.
-//!   stalled — nothing in 24h, but it WAS flowing this week. The alarm.
-//!   idle    — has data, but nothing in 7 days. Genuinely quiet, or a long stall.
+//!   stalled — nothing in 24h, but it WAS flowing in the last 30 days. The alarm.
+//!   idle    — has data, but nothing in 30 days. Genuinely quiet, or long dead.
 //!
-//! The 24h/7d split is deliberately coarse: it fires on the failures we
+//! The alarm window was 7 days, which meant it cleared itself: a stream that
+//! stopped and was not noticed within the week turned `idle`, the same word
+//! as a stream with nothing to say, and nothing anywhere said it had broken.
+//! 30 days keeps a stopped stream an alarm long enough for someone to see it
+//! (and for `api::attention` to tell them).
+//!
+//! The 24h/30d split is deliberately coarse: it fires on the failures we
 //! actually hit (a stream that was flowing and stopped) and tolerates a
 //! legitimately quiet stream by calling it `idle`, not `stalled`. A stream's
 //! own rhythm — not a global threshold — is what a later version would compare
@@ -206,6 +212,7 @@ pub async fn stream_health(db: &Database) -> Result<Vec<StreamHealth>> {
                    count(*)::int8 AS total, \
                    count(*) FILTER (WHERE created_at > now() - interval '24 hours')::int8 AS c24, \
                    count(*) FILTER (WHERE created_at > now() - interval '7 days')::int8  AS c7, \
+                   count(*) FILTER (WHERE created_at > now() - interval '30 days')::int8 AS c30, \
                    max({ts})::timestamptz AS last_event, \
                    max(created_at)::timestamptz AS last_ingest \
                  FROM {table}",
@@ -226,11 +233,12 @@ pub async fn stream_health(db: &Database) -> Result<Vec<StreamHealth>> {
             let total: i64 = r.get("total");
             let c24: i64 = r.get("c24");
             let c7: i64 = r.get("c7");
+            let c30: i64 = r.get("c30");
             let status = if total == 0 {
                 "never"
             } else if c24 > 0 {
                 "live"
-            } else if c7 > 0 {
+            } else if c30 > 0 {
                 "stalled"
             } else {
                 "idle"
