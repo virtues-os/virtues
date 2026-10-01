@@ -74,6 +74,20 @@ export function untangle<T extends { s: number; e: number }>(events: T[]): (T & 
 	return out;
 }
 
+/** `text` cut to whole words within `maxc` characters, with an ellipsis when
+ *  cut; empty when not even the first word fits - never a mid-word stub
+ *  (main.js:1328-1330). */
+export function fitWords(text: string, maxc: number): string {
+	if (text.length <= maxc) return text;
+	let acc = "";
+	for (const word of text.split(/\s+/)) {
+		const next = acc ? `${acc} ${word}` : word;
+		if (next.length <= maxc - 1) acc = next;
+		else break;
+	}
+	return acc ? `${acc}…` : "";
+}
+
 export type RibbonKind = "place" | "transit" | "gap";
 
 export interface RibbonSpan {

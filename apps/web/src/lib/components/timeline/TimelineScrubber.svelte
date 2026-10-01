@@ -10,7 +10,7 @@
 -->
 <script lang="ts">
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { bars, barHeight, barWidth, waveform, type RibbonKind, type RibbonSpan, type ScrubConversation, type ScrubEvent } from '$lib/timeline/lanes';
+	import { bars, barHeight, barWidth, fitWords, waveform, type RibbonKind, type RibbonSpan, type ScrubConversation, type ScrubEvent } from '$lib/timeline/lanes';
 	import { HOUR, MIN, inFold, ticks, unwarp, warp, type Fold, type Tier } from '$lib/timeline/scale';
 	import { fmtDur } from '$lib/timeline/rail';
 
@@ -181,21 +181,7 @@
 				const sp = span(r.s, r.e);
 				if (!sp) return null;
 				const colour = r.held ? (r.kind === 'place' ? 'var(--c-place)' : 'var(--c-move)') : r.kind === 'gap' ? 'var(--c-gap)' : r.kind === 'transit' ? 'var(--c-move)' : 'var(--c-place)';
-				const maxc = Math.max(1, Math.floor((sp.w - 16) / 6));
-				let label = '';
-				if (expanded && r.kind === 'place' && !r.held && sp.w > 34) {
-					if (r.title.length <= maxc) label = r.title;
-					else {
-						// Clip on a word; if not even the first word fits, no stub.
-						let acc = '';
-						for (const word of r.title.split(/\s+/)) {
-							const next = acc ? `${acc} ${word}` : word;
-							if (next.length <= maxc - 1) acc = next;
-							else break;
-						}
-						label = acc ? `${acc}…` : '';
-					}
-				}
+				const label = expanded && r.kind === 'place' && !r.held && sp.w > 34 ? fitWords(r.title, Math.floor((sp.w - 16) / 6)) : '';
 				return { ...sp, r, colour, label };
 			})
 			.filter((x) => x !== null),
@@ -249,19 +235,25 @@
 	// Calendar: each timed event a chip with a left cap, the prototype's form
 	// for an event (main.js:1225), drawn over its own share of any overlap (a
 	// long event resumes after a shorter one inside it); an invitation you
-	// haven't answered is faded.
+	// haven't answered is faded. A chip names its event wherever the name
+	// fits, at either height, on its widest piece (the owner's call: a bare
+	// block reads as vague).
 	const eventChips = $derived(
-		calendar.flatMap((ev, k) =>
-			ev.pieces
+		calendar.flatMap((ev, k) => {
+			const shown = ev.pieces.map(([ds, de]) => span(ds, de));
+			let widest = -1;
+			shown.forEach((sp, i) => {
+				if (sp && (widest < 0 || sp.w > (shown[widest]?.w ?? 0))) widest = i;
+			});
+			return ev.pieces
 				.map(([ds, de], pi) => {
-					const sp = span(ds, de);
+					const sp = shown[pi];
 					if (!sp) return null;
-					const maxc = Math.max(1, Math.floor((sp.w - 14) / 6));
-					const label = expanded && pi === 0 && sp.w > 44 ? (ev.title.length > maxc ? `${ev.title.slice(0, maxc - 1).trimEnd()}…` : ev.title) : '';
+					const label = pi === widest ? fitWords(ev.title, Math.floor((sp.w - 14) / 6)) : '';
 					return { ...sp, ev, k, ds, de, key: `${k}-${pi}`, label };
 				})
-				.filter((x) => x !== null),
-		),
+				.filter((x) => x !== null);
+		}),
 	);
 
 	/** An unconnected lane's pill (main.js:1372-1381), centred in the lane. */
@@ -334,7 +326,8 @@
 		} else {
 			const ev = calendar[Number(el.dataset.event)];
 			const who = [ev.unanswered ? 'Not answered yet' : '', ev.where ?? ''].filter(Boolean).join('  ·  ');
-			hover = { ...at, title: ev.title, meta: `${clock(ev.s)} – ${clock(ev.e)} · ${fmtDur(ev.e - ev.s)}`, who };
+			// Scheduled: a calendar event is what was planned, never proof you were at it.
+			hover = { ...at, title: ev.title, meta: `Scheduled ${clock(ev.s)} – ${clock(ev.e)} · ${fmtDur(ev.e - ev.s)}`, who };
 		}
 	}
 	// The peek sits up and to the right of the pointer, flipping left at the
@@ -491,8 +484,8 @@
 						<g class:unanswered={ec.ev.unanswered}>
 							<rect class="event" data-event={ec.k} x={ec.a} y={y + 2} width={Math.max(ec.w, 2)} height={rowH - 4} rx="5" fill-opacity={on ? 0.24 : 0.12} />
 							<rect class="event-cap" x={ec.a} y={y + 2} width="3" height={rowH - 4} rx="1.5" />
+							{#if ec.label}<text class="seg-label" x={ec.a + 9} y={y + 2 + (rowH - 4) / 2 + 3.7}>{ec.label}</text>{/if}
 						</g>
-						{#if ec.label}<text class="seg-label" x={ec.a + 9} y={y + 2 + (rowH - 4) / 2 + 3.7}>{ec.label}</text>{/if}
 					{/each}
 				{:else if (lane.id === 'calendar' && hasCalendar === false) || (lane.id === 'finance' && hasFinance === false)}
 					{@const c = CONNECT[lane.id]}
