@@ -8,8 +8,8 @@ const window: DerivedWindow = {
 	is_built: true,
 	last_stay_before: null,
 	places: [
-		{ id: "home", is_home: true, is_work: false, place_name: "Location 30.0000, -97.0000" },
-		{ id: "cafe", is_home: false, is_work: false, place_name: "Corner Cafe" },
+		{ id: "home", latitude: 0, longitude: -30, is_home: true, is_work: false, place_name: "Location 30.0000, -97.0000" },
+		{ id: "cafe", latitude: 0.01, longitude: -30, is_home: false, is_work: false, place_name: "Corner Cafe" },
 	],
 	spans: [
 		{ id: "a", kind: "stay", started_at: "2026-06-09T20:00:00Z", ended_at: at("08:00"), timeline_place_id: "home", metadata: {} },
@@ -53,12 +53,12 @@ describe("the rail", () => {
 	});
 
 	it("never shows the wiki's coordinate stub as a name", () => {
-		expect(placeTitle({ id: "x", is_home: false, is_work: false, place_name: "Location 1.0, 2.0" })).toBe("Unnamed place");
+		expect(placeTitle({ id: "x", latitude: 0, longitude: -30, is_home: false, is_work: false, place_name: "Location 1.0, 2.0" })).toBe("Unnamed place");
 	});
 
 	it("calls the most-dwelt place Work / frequent until it has a real name", () => {
-		expect(placeTitle({ id: "w", is_home: false, is_work: true, place_name: "Location 1.0, 2.0" })).toBe("Work / frequent");
-		expect(placeTitle({ id: "w", is_home: false, is_work: true, place_name: "The Studio" })).toBe("The Studio");
+		expect(placeTitle({ id: "w", latitude: 0, longitude: -30, is_home: false, is_work: true, place_name: "Location 1.0, 2.0" })).toBe("Work / frequent");
+		expect(placeTitle({ id: "w", latitude: 0, longitude: -30, is_home: false, is_work: true, place_name: "The Studio" })).toBe("The Studio");
 	});
 
 	it("gives a conversation its windows, a night its source, a quiet stay its audio note", () => {

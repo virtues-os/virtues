@@ -49,7 +49,7 @@ describe("the lane data", () => {
 	const derived: DerivedWindow = {
 		is_built: true,
 		last_stay_before: null,
-		places: [{ id: "p1", is_home: true, is_work: false, place_name: null }],
+		places: [{ id: "p1", latitude: 0, longitude: -30, is_home: true, is_work: false, place_name: null }],
 		spans: [
 			{ id: "n", kind: "sleep", started_at: iso(0), ended_at: iso(60), timeline_place_id: null, metadata: {} },
 			{ id: "s", kind: "stay", started_at: iso(0), ended_at: iso(120), timeline_place_id: "p1", metadata: {} },
