@@ -95,39 +95,17 @@
 	let cardH = $state(0);
 	let segW = $state(0);
 	let segH = $state(0);
-	/** Day's and Map's exact widths: whole pixels leave the line between Map
-	 *  and Detail a pixel off Day's centre. Read on any size change (the web
-	 *  font arriving is a fraction of a pixel) and once the fonts are in; the
-	 *  computed width ignores the scope bar's grow transform. */
-	let dayEl = $state<HTMLElement | null>(null);
-	let mapEl = $state<HTMLElement | null>(null);
-	let dayW = $state(0);
-	let mapW = $state(0);
-	$effect(() => {
-		const day = dayEl;
-		const mapSeg = mapEl;
-		if (!day || !mapSeg) return;
-		const measure = () => {
-			dayW = parseFloat(getComputedStyle(day).width);
-			mapW = parseFloat(getComputedStyle(mapSeg).width);
-		};
-		const watch = new ResizeObserver(measure);
-		watch.observe(day);
-		watch.observe(mapSeg);
-		void document.fonts?.ready.then(measure);
-		return () => watch.disconnect();
-	});
+	let barW = $state(0);
 	let barHt = $state(0);
 	let scrubH = $state(0);
 	let monthOpen = $state(false);
 	/** The scope. Life isn't built yet, so Day is the only one to pick; the
 	 *  scope bar's grow and shrink run once a second scope is live. */
 	let scope = $state<'day' | 'life'>('day');
-	/** Map | Detail hangs centred under Day: the line between Map and Detail
-	 *  sits on Day's centre (both cards have a 4 px inset). Where the bar
-	 *  starts, from the switcher's left edge, and how far it reaches past it. */
-	const barLeft = $derived(dayW / 2 - mapW);
-	const overhang = $derived(Math.max(0, -barLeft));
+	/** Map | Detail sits centred under Day | Life (the owner's call; the
+	 *  prototype hung it off Dayline, the line between Map and Detail on
+	 *  Dayline's centre). How far it reaches past the switcher on each side. */
+	const overhang = $derived(Math.max(0, (barW - segW) / 2));
 	/** The scope switcher sits at the top centre unless it (or the scope bar
 	 *  under it) would meet the date card; then it goes under the card. */
 	const stacked = $derived(paneW > 0 && paneW / 2 - segW / 2 - overhang < 16 + cardW + 16);
@@ -1114,11 +1092,11 @@
 	     Map | Detail is Day's own scope bar, hanging off the Day segment. -->
 	<nav class="scope" aria-label="Scope" data-scope={scope}>
 		<div class="scope-seg tile" role="tablist" bind:offsetWidth={segW} bind:offsetHeight={segH}>
-			<button class="seg on" role="tab" aria-selected="true" title="Dayline - a single day" bind:this={dayEl}>Day</button>
+			<button class="seg on" role="tab" aria-selected="true" title="Dayline - a single day">Day</button>
 			<button class="seg" role="tab" aria-selected="false" aria-disabled="true" data-tip="Coming soon">Life</button>
 		</div>
-		<div class="scope-bar tile" role="tablist" aria-label="Day view" bind:offsetHeight={barHt} style="left: {barLeft}px; transform-origin: {4 + mapW}px 0">
-			<button class="seg on" role="tab" aria-selected="true" title="Map - the day on a map" bind:this={mapEl}><i aria-hidden="true">🌐</i>Map</button>
+		<div class="scope-bar tile" role="tablist" aria-label="Day view" bind:offsetWidth={barW} bind:offsetHeight={barHt}>
+			<button class="seg on" role="tab" aria-selected="true" title="Map - the day on a map"><i aria-hidden="true">🌐</i>Map</button>
 			<button class="seg" role="tab" aria-selected="false" aria-disabled="true" data-tip="Coming soon"><i aria-hidden="true">🔍</i>Detail</button>
 		</div>
 	</nav>
@@ -1319,6 +1297,9 @@
 	.scope-bar {
 		position: absolute;
 		top: calc(100% + 6px);
+		left: 50%;
+		transform: translateX(-50%);
+		transform-origin: 50% 0;
 		white-space: nowrap;
 		/* A generous clip leaves the shadow whole at rest. */
 		clip-path: inset(-40px round var(--tile-radius));
@@ -1330,15 +1311,15 @@
 	.scope:not([data-scope='day']) .scope-bar {
 		opacity: 0;
 		pointer-events: none;
-		transform: translateY(-12px) scale(0.6, 0.5);
-		clip-path: inset(0 55% 0 0 round var(--tile-radius));
+		transform: translateX(-50%) translateY(-12px) scale(0.6, 0.5);
+		clip-path: inset(0 round var(--tile-radius));
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.scope-bar {
 			transition: opacity 0.2s ease;
 		}
 		.scope:not([data-scope='day']) .scope-bar {
-			transform: none;
+			transform: translateX(-50%);
 		}
 	}
 	/* The scope bar is Day's child: smaller type, a tighter segment. */

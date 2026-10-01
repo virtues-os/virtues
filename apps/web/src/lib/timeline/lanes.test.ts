@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { barHeight, bars, barWidth, laneData, ribbon, untangle, waveform } from "./lanes";
+import { barHeight, bars, barWidth, fitWords, laneData, ribbon, untangle, waveform } from "./lanes";
 import type { DerivedWindow, VoiceWindow } from "./rail";
 
 const M = 60_000;
@@ -17,6 +17,12 @@ describe("the lanes", () => {
 			["transit", true],
 			["place", false],
 		]);
+	});
+
+	it("cuts a name at a word, never mid-word", () => {
+		expect(fitWords("Team standup", 20)).toBe("Team standup");
+		expect(fitWords("Weekly planning with design", 15)).toBe("Weekly…");
+		expect(fitWords("Retrospective", 6)).toBe("");
 	});
 
 	it("draws a closed silhouette for a conversation", () => {

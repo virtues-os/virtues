@@ -187,7 +187,7 @@
 			     main.js:1615-1617). Until then its place is held, quietly, and
 			     says so, never with a guess. -->
 			<div class="standout" aria-disabled="true">
-				<span class="standout-eye">What stood out</span>
+				<span class="standout-eye">What stood out today</span>
 				<span class="standout-soon">Coming soon</span>
 			</div>
 			{#each sections as sec, i (sec.kind + sec.s)}
