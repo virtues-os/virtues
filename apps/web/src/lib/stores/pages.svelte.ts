@@ -209,7 +209,7 @@ class PagesStore {
 		} catch (e) {
 			console.error('[PagesStore] Failed to load pages:', e);
 			this.pagesError = e instanceof Error ? e.message : 'Failed to load pages';
-			this.pages = [];
+			// Keep the last good list; a failed reload is not an empty one.
 		} finally {
 			this.pagesLoading = false;
 		}
