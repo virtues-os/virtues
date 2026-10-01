@@ -45,7 +45,7 @@ pub(crate) struct Fix {
 /// A stop found in the raw GPS (`dayback/resolve.py` `detect_dwells`): where
 /// you stayed, from its first fix to its last. The prototype took a stay's
 /// times from the visits table and only its place from the stop; here both
-/// come from the stop (Lemur, 2026-09-30), since Virtues' visit finder ends a
+/// come from the stop (the owner's call), since Virtues' visit finder ends a
 /// visit whenever a still phone goes 5 minutes without reporting, and on a
 /// sparse day finds no stay at all where the stop finder does.
 #[derive(Debug, Clone, Copy, PartialEq)]
