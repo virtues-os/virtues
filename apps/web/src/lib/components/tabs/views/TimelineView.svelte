@@ -1,13 +1,15 @@
 <!--
-	TimelineView.svelte — our Timeline instrument, map mode.
+	TimelineView.svelte — the Timeline, map mode.
 
 	A MapLibre map on the box's own atlas tiles (Protomaps, served from
-	/api/map/vt) showing one local day's GPS path: solid runs of recorded fixes
-	and dashed bridges across the holes in the recording ($lib/timeline/track).
-	A bar at the top steps between days. Our resolved stays follow.
+	/api/map/vt) showing one local day: its GPS path, solid runs of recorded
+	fixes and dashed bridges across the holes in the recording
+	($lib/timeline/track); the stays, drives and moments the server derives
+	(/api/timeline/derived) as the rail beside it and bubbles on it; the day's
+	streams in the scrubber under it. The date card steps between days.
 
-	Our own map (MapLibre v6), not the Leaflet MovementMap: the prototype's map
-	logic is MapLibre-native, and this is where it gets ported.
+	Its own map (MapLibre v6), not the Leaflet MovementMap: the prototype's map
+	logic is MapLibre-native, and this is where it lives.
 -->
 <script lang="ts">
 	import { onMount, onDestroy, tick, untrack } from 'svelte';
@@ -402,7 +404,7 @@
 		const { startMs, endMs } = bounds;
 		zone = bounds.zone;
 		railError = derived === null;
-		sections = derived?.is_built ? buildRail(derived, startMs, endMs, voice ?? []) : [];
+		sections = derived ? buildRail(derived, startMs, endMs, voice ?? []) : [];
 		placeCoords = new Map((derived?.places ?? []).map((p) => [p.id, [p.longitude, p.latitude] as [number, number]]));
 		unpick();
 		// Spikes go first, then holes are judged across the whole window, then the

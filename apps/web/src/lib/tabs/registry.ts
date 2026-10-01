@@ -814,8 +814,8 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// TIMELINE (our contribution): /timeline — the day instrument (map + detail).
-	// Scaffold renders a bare atlas map; the day's track and our stays follow.
+	// TIMELINE: /timeline — one day on a map: its track, stays, drives and
+	// moments, with the day's rail and scrubber.
 	// ========================================================================
 	timeline: {
 		match: (path) => path === '/timeline',
@@ -907,7 +907,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'asset', // /drive/file_{id} — must precede 'drive' (which matches all /drive/*)
 		'drive', // Has /drive/* pattern
 		'trash', // Drive trash
-		'timeline', // Timeline instrument (our contribution): /timeline
+		'timeline', // The Timeline: /timeline
 		'chat-history', // Chat history list (before 'chat')
 		// Entity namespaces
 		'chat', // Also matches /

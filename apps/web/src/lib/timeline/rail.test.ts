@@ -5,7 +5,6 @@ const at = (hhmm: string) => `2026-06-10T${hhmm}:00Z`;
 const day = { start: Date.parse(at("00:00")), end: Date.parse("2026-06-11T00:00:00Z") };
 
 const window: DerivedWindow = {
-	is_built: true,
 	last_stay_before: null,
 	places: [
 		{ id: "home", latitude: 0, longitude: -30, is_home: true, is_work: false, place_name: "Location 0.0000, -30.0000" },

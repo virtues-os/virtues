@@ -1,16 +1,12 @@
+-- 0039_timeline_derived
+--
 -- The Timeline's derived layer: stays, drives, signal gaps, nights and the
 -- moments inside them, rebuilt from the raw record by
 -- `maintenance::timeline_builder` on the fast clock.
 --
--- PENDING, NOT A MIGRATION. The number is a placeholder and `.pending` keeps
--- sqlx from seeing the file. Until a real number is claimed it is applied by
--- hand to a local box copy only:
---
---   psql postgres://virtues:virtues@localhost:5432/virtues_boxcopy \
---     -f virtues-core/migrations/0000_timeline_derived.sql.pending
---
--- Every row here is derived and is replaced whole on each rebuild; nothing
--- else writes these tables.
+-- Every row here is derived and is replaced whole on each rebuild, in one
+-- transaction; nothing else writes these tables, so they can be emptied and
+-- rebuilt at any time.
 
 -- A place the Timeline found by stopping there: a raw-GPS stop, or stops
 -- within 80 m of each other, centred on them. Its link to the wiki's own place

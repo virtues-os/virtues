@@ -1,10 +1,6 @@
-//! Reading the raw record, writing the `wiki_timeline_*` tables, and serving a
-//! window of them to the view.
-//!
-//! The tables are created by `migrations/0000_timeline_derived.sql.pending`,
-//! applied by hand while the Timeline is a local build. Where they don't exist
-//! the rebuild does nothing and a window comes back empty with `is_built:
-//! false`, so a database without them is never an error.
+//! Reading the raw record, writing the `wiki_timeline_*` tables
+//! (`migrations/0039_timeline_derived.sql`), and serving a window of them to
+//! the view.
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -27,12 +23,8 @@ pub struct RebuildStats {
 }
 
 /// Rebuild the Timeline's tables from the whole raw record, in one
-/// transaction, so a reader never sees half a rebuild. `None` when the tables
-/// aren't in this database.
-pub async fn rebuild(pool: &PgPool) -> Result<Option<RebuildStats>> {
-    if !tables_exist(pool).await? {
-        return Ok(None);
-    }
+/// transaction, so a reader never sees half a rebuild.
+pub async fn rebuild(pool: &PgPool) -> Result<RebuildStats> {
     let started = std::time::Instant::now();
     let record = load(pool).await?;
     // Open water is not a place: a stop on it is no stay (`water`).
@@ -96,13 +88,13 @@ pub async fn rebuild(pool: &PgPool) -> Result<Option<RebuildStats>> {
     }
     tx.commit().await?;
 
-    Ok(Some(RebuildStats {
+    Ok(RebuildStats {
         places: derived.places.len(),
         stops_on_water,
         spans: derived.stretches.len(),
         moments: derived.moments.len(),
         duration_ms: started.elapsed().as_millis(),
-    }))
+    })
 }
 
 async fn insert_span(
@@ -127,17 +119,6 @@ async fn insert_span(
     .execute(&mut **tx)
     .await?;
     Ok(())
-}
-
-async fn tables_exist(pool: &PgPool) -> Result<bool> {
-    let exists: bool = sqlx::query_scalar(
-        "SELECT to_regclass('public.wiki_timeline_places') IS NOT NULL \
-            AND to_regclass('public.wiki_timeline_spans') IS NOT NULL \
-            AND to_regclass('public.wiki_timeline_moments') IS NOT NULL",
-    )
-    .fetch_one(pool)
-    .await?;
-    Ok(exists)
 }
 
 /// The raw record: every fix, transcription window, HealthKit sleep row and
@@ -574,8 +555,6 @@ pub struct TimelineMoment {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TimelineWindow {
-    /// False when this database has no Timeline tables yet.
-    pub is_built: bool,
     pub spans: Vec<TimelineSpan>,
     pub moments: Vec<TimelineMoment>,
     /// The last stay that ended before the window opens: on a day with no
@@ -599,9 +578,6 @@ fn span_row(r: &sqlx::postgres::PgRow) -> std::result::Result<TimelineSpan, sqlx
 /// Every stretch and moment overlapping `start`..`end`, the last stay before
 /// it, and their places.
 pub async fn window(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<TimelineWindow> {
-    if !tables_exist(pool).await? {
-        return Ok(TimelineWindow { is_built: false, spans: vec![], moments: vec![], last_stay_before: None, places: vec![] });
-    }
     let spans = sqlx::query(
         "SELECT id, kind, started_at, ended_at, timeline_place_id, metadata FROM wiki_timeline_spans \
          WHERE started_at < $2 AND ended_at > $1 ORDER BY started_at, ended_at",
@@ -674,5 +650,5 @@ pub async fn window(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> 
     })
     .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
 
-    Ok(TimelineWindow { is_built: true, spans, moments, last_stay_before, places })
+    Ok(TimelineWindow { spans, moments, last_stay_before, places })
 }
