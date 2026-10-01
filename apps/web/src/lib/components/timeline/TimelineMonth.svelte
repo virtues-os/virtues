@@ -1,8 +1,8 @@
 <!--
 	TimelineMonth.svelte - the date card's month: the month around the day,
-	a dot under every day that holds any record (a location fix, a
-	transcription window or a step reading). A click opens that day. It
-	replaces the week strip.
+	a dot under every day with a location fix or a transcription window
+	(steps alone don't count: the phone's step history runs years past its
+	location and audio). A click opens that day. It replaces the week strip.
 
 	The dots will tell an eventful day (dark) from a recorded one (grey) once
 	our significance exists; until then every recorded day is grey, never a
@@ -79,7 +79,7 @@
 		{/each}
 		{#each days as slug (slug)}
 			{@const has = recorded?.has(slug) ?? false}
-			<button class="day" class:cur={slug === date} disabled={slug > today} title={recorded && slug <= today ? (has ? 'Recorded' : 'Nothing recorded') : undefined} onclick={() => onpick(slug)}>
+			<button class="day" class:cur={slug === date} disabled={slug > today} title={recorded && slug <= today ? (has ? 'Recorded' : 'No location or audio') : undefined} onclick={() => onpick(slug)}>
 				<span class="num">{Number(slug.slice(8))}</span>
 				<span class="dot" class:on={has}></span>
 			</button>

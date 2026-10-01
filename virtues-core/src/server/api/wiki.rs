@@ -1215,8 +1215,8 @@ pub struct TimelineDaysQuery {
     pub to: chrono::NaiveDate,
 }
 
-/// The days in `from`..=`to` (`YYYY-MM-DD`, at most 62) that hold any record:
-/// the Timeline month's dots.
+/// The days in `from`..=`to` (`YYYY-MM-DD`, at most 62) with a location fix or
+/// a transcription window: the Timeline month's dots.
 pub async fn timeline_recorded_handler(State(state): State<AppState>, Query(q): Query<TimelineDaysQuery>) -> Response {
     let span = (q.to - q.from).num_days();
     if !(0..62).contains(&span) {
