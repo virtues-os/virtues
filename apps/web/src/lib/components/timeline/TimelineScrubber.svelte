@@ -6,7 +6,7 @@
 
 	Click or drag moves the playhead exactly there; a sideways two-finger
 	swipe scrubs it; a pinch zooms the scale around it. A lane with no source
-	connected asks for one, and takes you to where it is connected.
+	connected asks for one, and opens where it is connected in a tab of its own.
 -->
 <script lang="ts">
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -293,8 +293,12 @@
 	function down(e: PointerEvent) {
 		const link = (e.target as Element).closest<SVGElement>('[data-connect]');
 		if (link) {
+			// In a tab of its own, so the Timeline stays where it was; a second
+			// click goes back to that tab rather than opening another.
 			const c = CONNECT[link.dataset.connect as keyof typeof CONNECT];
-			windowShellStore.navigate(c.href, { label: c.name });
+			const there = windowShellStore.findTab((t) => t.route === c.href);
+			if (there) windowShellStore.setActiveTab(there.tab.id);
+			else windowShellStore.openTabFromRoute(c.href, { label: c.name, forceNew: true });
 			return;
 		}
 		scrubbing = true;
