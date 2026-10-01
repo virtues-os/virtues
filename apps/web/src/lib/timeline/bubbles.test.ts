@@ -42,12 +42,12 @@ describe("placeLabels", () => {
 });
 
 describe("positionAt", () => {
-	const fix = (t: number, lat: number) => ({ t, lat, lng: -97, bridge: false });
+	const fix = (t: number, lat: number) => ({ t, lat, lng: -30, bridge: false });
 	it("slides along the track between two fixes and holds at its ends", () => {
-		const track = [fix(0, 30), fix(10, 31)];
-		expect(positionAt(track, 5)!.lat).toBeCloseTo(30.5, 9);
-		expect(positionAt(track, -5)!.lat).toBe(30);
-		expect(positionAt(track, 50)!.lat).toBe(31);
+		const track = [fix(0, 0), fix(10, 1)];
+		expect(positionAt(track, 5)!.lat).toBeCloseTo(0.5, 9);
+		expect(positionAt(track, -5)!.lat).toBe(0);
+		expect(positionAt(track, 50)!.lat).toBe(1);
 		expect(positionAt([], 5)).toBeNull();
 	});
 });

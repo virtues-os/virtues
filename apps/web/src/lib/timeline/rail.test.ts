@@ -8,7 +8,7 @@ const window: DerivedWindow = {
 	is_built: true,
 	last_stay_before: null,
 	places: [
-		{ id: "home", latitude: 0, longitude: -30, is_home: true, is_work: false, place_name: "Location 30.0000, -97.0000" },
+		{ id: "home", latitude: 0, longitude: -30, is_home: true, is_work: false, place_name: "Location 0.0000, -30.0000" },
 		{ id: "cafe", latitude: 0.01, longitude: -30, is_home: false, is_work: false, place_name: "Corner Cafe" },
 	],
 	spans: [
