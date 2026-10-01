@@ -9,8 +9,22 @@
 // box's loopback origin; wire `/api` + `/ws` to it. No-op on desktop, where the
 // box serves the app same-origin.
 import { initBackendFromShell } from '$lib/config/backend';
+import { reloadForStaleChunk } from '$lib/tabs/lazy';
 
 initBackendFromShell();
+
+// A new build under an open app (a box upgrade in a browser, an app or
+// web-bundle update on the Mac and phone) removes the old build's chunks, so
+// the next lazy import of something this page never loaded (a terminal, a PDF
+// viewer, a settings section) points at a file that is gone. Vite raises
+// `vite:preloadError` for exactly that; reload once to pick up the current
+// build. When the once-a-minute guard says no, the import's own error stands
+// and the caller shows it.
+if (typeof window !== 'undefined') {
+	window.addEventListener('vite:preloadError', (event) => {
+		if (reloadForStaleChunk()) event.preventDefault();
+	});
+}
 
 // On the native phone shell, lock the viewport so it behaves like an app:
 // no pinch-to-zoom, and no auto-zoom when a text input (< 16px) is focused
