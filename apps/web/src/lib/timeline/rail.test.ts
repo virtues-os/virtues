@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { audioTag, buildRail, fmtDur, placeTitle, transitTitle, type DerivedWindow } from "./rail";
 
-const at = (hhmm: string) => `2026-09-22T${hhmm}:00Z`;
-const day = { start: Date.parse(at("00:00")), end: Date.parse("2026-09-23T00:00:00Z") };
+const at = (hhmm: string) => `2026-06-10T${hhmm}:00Z`;
+const day = { start: Date.parse(at("00:00")), end: Date.parse("2026-06-11T00:00:00Z") };
 
 const window: DerivedWindow = {
 	is_built: true,
@@ -12,8 +12,8 @@ const window: DerivedWindow = {
 		{ id: "cafe", is_home: false, is_work: false, place_name: "Corner Cafe" },
 	],
 	spans: [
-		{ id: "a", kind: "stay", started_at: "2026-09-21T20:00:00Z", ended_at: at("08:00"), timeline_place_id: "home", metadata: {} },
-		{ id: "n", kind: "sleep", started_at: "2026-09-21T23:00:00Z", ended_at: at("06:00"), timeline_place_id: null, metadata: { source: "healthkit" } },
+		{ id: "a", kind: "stay", started_at: "2026-06-09T20:00:00Z", ended_at: at("08:00"), timeline_place_id: "home", metadata: {} },
+		{ id: "n", kind: "sleep", started_at: "2026-06-09T23:00:00Z", ended_at: at("06:00"), timeline_place_id: null, metadata: { source: "healthkit" } },
 		{ id: "b", kind: "transit", started_at: at("08:00"), ended_at: at("08:20"), timeline_place_id: null, metadata: { peak_kmh: 60 } },
 		{ id: "c", kind: "stay", started_at: at("08:20"), ended_at: at("12:00"), timeline_place_id: "cafe", metadata: {} },
 		{

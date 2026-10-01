@@ -95,7 +95,7 @@ export async function fetchDayWindow(
 
 /** When location was last measured, in the prototype's words (`honestWhere`,
  *  dayback/src/main.js:958), on the day's own clock: "last measured at
- *  6:00 PM" on the same day, "last measured Sep 23 · 6:00 PM" on an earlier one. */
+ *  6:00 PM" on the same day, "last measured Jun 3 · 6:00 PM" on an earlier one. */
 export function lastMeasured(ms: number, sameDay: boolean, zone: string): string {
 	const d = new Date(ms);
 	const time = d.toLocaleTimeString("en-US", { timeZone: zone, hour: "numeric", minute: "2-digit" });

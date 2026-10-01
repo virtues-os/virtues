@@ -215,8 +215,8 @@ mod tests {
 
     #[test]
     fn home_is_where_you_slept_and_work_where_the_day_went() {
-        // Minutes after 2026-07-28 00:00Z = 19:00 CDT.
-        let base = chrono::DateTime::parse_from_rfc3339("2026-07-28T00:00:00Z").unwrap().timestamp_millis();
+        // Minutes after 2026-06-10 00:00Z = 19:00 CDT.
+        let base = chrono::DateTime::parse_from_rfc3339("2026-06-10T00:00:00Z").unwrap().timestamp_millis();
         let all = [
             // An evening-to-morning stay (local 19:00 -> 08:00).
             stop(base, base + 13 * 60 * MIN, 30.0),
