@@ -12,6 +12,9 @@ export const COLOURS = {
 	place: "#4C86D6",
 	/** Moving: a drive's section, a walk's row, and the lit stretch of path. */
 	move: "#E6A04E",
+	/** A drive picked from the rail: the move colour at full strength (Apple's
+	 *  system orange), so the pick stands out from a drive merely passed. */
+	movePicked: "#FF9500",
 	/** The Voice lane and a conversation's row. */
 	voice: "#9174BE",
 	/** In Bed: the night band, and its ink. */

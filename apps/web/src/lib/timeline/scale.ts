@@ -76,10 +76,12 @@ export function tierOf(span: number): Tier {
 	return "week";
 }
 
-/** A tier's span (main.js:82-88): the week around the day, the day, three
- *  hours or fourteen minutes around the playhead. */
-export function tierView(t: Tier, day: { s: number; e: number }, playT: number): [number, number] {
-	if (t === "week") return [day.s - 3 * DAY, day.s + 4 * DAY];
+/** A tier's span (main.js:82-88): the calendar week holding the day, the
+ *  day, three hours or fourteen minutes around the playhead. The prototype's
+ *  week ran from three days before the day to four after; a calendar week
+ *  stays put while the day moves inside it (the owner's call). */
+export function tierView(t: Tier, day: { s: number; e: number }, week: { s: number; e: number }, playT: number): [number, number] {
+	if (t === "week") return [week.s, week.e];
 	if (t === "day") return [day.s, day.e];
 	const half = t === "hour" ? 1.5 * HOUR : 7 * MIN;
 	return [playT - half, playT + half];
@@ -154,6 +156,15 @@ export function zoneOffset(t: number, zone: string): number {
 	const n = (type: string) => Number(parts.find((p) => p.type === type)?.value);
 	const asUtc = Date.UTC(n("year"), n("month") - 1, n("day"), n("hour") % 24, n("minute"), n("second"));
 	return asUtc - Math.floor(t / 1000) * 1000;
+}
+
+/** The calendar week, Monday to Sunday, holding a YYYY-MM-DD date: from its
+ *  Monday's local midnight in `zone` to the next Monday's. */
+export function weekOf(slug: string, zone: string): { s: number; e: number } {
+	const [y, m, d] = slug.split("-").map(Number);
+	const monday = d - ((new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7);
+	const at = (day: number) => new Date(Date.UTC(y, m - 1, day)).toISOString().slice(0, 10);
+	return { s: midnightIn(at(monday), zone), e: midnightIn(at(monday + 7), zone) };
 }
 
 /** A YYYY-MM-DD date's local midnight in `zone`, at the date's noon offset

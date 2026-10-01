@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildFolds, clampView, DAY, FOLD_W, HOUR, MIN, ticks, tierOf, tierView, unwarp, warp, zoneOffset } from "./scale";
+import { buildFolds, clampView, DAY, FOLD_W, HOUR, MIN, ticks, tierOf, tierView, unwarp, warp, weekOf, zoneOffset } from "./scale";
 
 describe("the folded axis", () => {
 	it("folds each night, and 1-6 AM on a date no night touches", () => {
@@ -24,8 +24,19 @@ describe("the folded axis", () => {
 describe("tiers and the view", () => {
 	it("reads a span as its tier and gives each tier its span", () => {
 		expect([tierOf(14 * MIN), tierOf(3 * HOUR), tierOf(DAY), tierOf(7 * DAY)]).toEqual(["min", "hour", "day", "week"]);
-		expect(tierView("hour", { s: 0, e: DAY }, 12 * HOUR)).toEqual([10.5 * HOUR, 13.5 * HOUR]);
-		expect(tierView("week", { s: 0, e: DAY }, 0)).toEqual([-3 * DAY, 4 * DAY]);
+		const week = { s: -3 * DAY, e: 4 * DAY };
+		expect(tierView("hour", { s: 0, e: DAY }, week, 12 * HOUR)).toEqual([10.5 * HOUR, 13.5 * HOUR]);
+		expect(tierView("week", { s: 0, e: DAY }, week, 0)).toEqual([-3 * DAY, 4 * DAY]);
+	});
+
+	it("takes the calendar week, Monday to Sunday, holding a date", () => {
+		// 2026-06-11 is a Thursday; its week runs Mon Jun 8 to Sun Jun 14.
+		const w = weekOf("2026-06-11", "America/Chicago");
+		expect(new Date(w.s).toISOString()).toBe("2026-06-08T05:00:00.000Z");
+		expect(new Date(w.e).toISOString()).toBe("2026-06-15T05:00:00.000Z");
+		// A Monday's week starts that day; a Sunday's started six days before.
+		expect(weekOf("2026-06-08", "America/Chicago")).toEqual(w);
+		expect(weekOf("2026-06-14", "America/Chicago")).toEqual(w);
 	});
 
 	it("keeps a view wide enough and inside its bounds", () => {
