@@ -11,6 +11,11 @@
  * and a solid line across the hop would claim a route nobody saw. People turn
  * location off, phones sleep and tunnels swallow signal, so holes are common,
  * and the map says so rather than papering over them.
+ *
+ * A hop no one could travel is a bridge too, however short the silence: two
+ * fixes 300 m or more apart, faster than any airliner flies. The phone
+ * recorded nothing between them it can be trusted on, so the line between
+ * them is a guess (the owner's call, 2026-09-30; the prototype drew it solid).
  */
 import type { TimelineDayPoint } from "$lib/wiki/api";
 
@@ -21,6 +26,9 @@ export const SPIKE_M = 300;
 export const HOLE_MIN_MS = 2 * 60_000;
 /** ...that ends at least this far away is a hole in the recording. */
 export const HOLE_MIN_M = 300;
+/** A hop at least HOLE_MIN_M long and faster than this is a hole too: above
+ *  any airliner's ground speed. */
+export const IMPOSSIBLE_KMH = 1200;
 /** Fixes this close to a spot's first fix are GPS jitter at that spot. */
 export const SPOT_R_M = 30;
 /** A spot held longer than this keeps its leave time as a second point. */
@@ -78,14 +86,20 @@ export function dropSpikes(fixes: Fix[]): Fix[] {
 }
 
 /**
- * The fixes, each flagged when it arrived across a hole. Pass the whole fetched
- * window, not just the day, with its spikes already dropped: the day's first fix
- * is judged against the last fix before it, and a spike is no evidence of a hop.
+ * The fixes, each flagged when it arrived across a hole: a silence of two
+ * minutes or more, or a hop no one could travel, ending 300 m or more away.
+ * Pass the whole fetched window, not just the day, with its spikes already
+ * dropped: the day's first fix is judged against the last fix before it, and
+ * a spike is no evidence of a hop.
  */
 export function flagHoles(fixes: Fix[]): Fix[] {
 	return fixes.map((q, i) => {
 		const p = fixes[i - 1];
-		return { ...q, bridge: !!p && q.t - p.t >= HOLE_MIN_MS && metres(p, q) >= HOLE_MIN_M };
+		if (!p) return { ...q, bridge: false };
+		const m = metres(p, q);
+		const hours = (q.t - p.t) / 3_600_000;
+		const impossible = hours <= 0 || m / 1000 / hours > IMPOSSIBLE_KMH;
+		return { ...q, bridge: m >= HOLE_MIN_M && (q.t - p.t >= HOLE_MIN_MS || impossible) };
 	});
 }
 
