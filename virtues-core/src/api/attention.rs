@@ -160,35 +160,59 @@ fn source_items(items: &mut Vec<AttentionItem>, rows: Vec<(String, String, Strin
     }
 }
 
+/// How long a whole source must be silent before it is an alarm. One quiet
+/// day is a weekend; two in a row from every stream it writes is a pipe.
+const SOURCE_QUIET_DAYS: i64 = 2;
+
 fn stream_items(items: &mut Vec<AttentionItem>, streams: &[crate::api::stream_health::StreamHealth]) {
-    for s in streams {
-        // A stream nothing is connected to is quiet by definition, not stuck.
-        if !s.connected {
+    // A stream whose writer keeps failing is a known fault, reported as one.
+    for s in streams.iter().filter(|s| s.connected && s.status == "blocked") {
+        items.push(AttentionItem {
+            key: format!("stream:{}:blocked", s.name),
+            kind: "stream",
+            title: format!("{} can't sync", s.display_name),
+            body: "Your server's sync for it keeps failing. Open Sources to see why.".into(),
+            route: "/sources",
+        });
+    }
+
+    // Silence is judged per SOURCE, not per stream. Many streams are sparse
+    // by nature (workouts, calendar events, bookmarks), and "Workouts stopped
+    // arriving" after two days without a workout would be a false alarm. A
+    // source whose every stream has gone quiet, though, is the failure that
+    // actually happens: the Mac collector stopped, the phone app was killed,
+    // a sync lost its permission.
+    let mut by_source: std::collections::BTreeMap<&str, Vec<&crate::api::stream_health::StreamHealth>> =
+        Default::default();
+    for s in streams.iter().filter(|s| s.connected) {
+        if let Some(source) = s.provided_by.first() {
+            by_source.entry(source.as_str()).or_default().push(s);
+        }
+    }
+    let now = chrono::Utc::now();
+    for (source, streams) in by_source {
+        if streams.iter().any(|s| s.status == "live" || s.status == "blocked") {
             continue;
         }
-        let (title, body) = match s.status.as_str() {
-            "stalled" => {
-                let days = s
-                    .last_ingest
-                    .map(|t| (chrono::Utc::now() - t).num_days().max(1))
-                    .unwrap_or(1);
-                let span = if days == 1 { "a day".to_string() } else { format!("{days} days") };
-                (
-                    format!("{} stopped arriving", s.display_name),
-                    format!("Your server hasn't received any for {span}. Open Sources to see why."),
-                )
-            }
-            "blocked" => (
-                format!("{} can't sync", s.display_name),
-                "Your server's sync for it keeps failing. Open Sources to see why.".to_string(),
-            ),
-            _ => continue,
+        // Only a source that was flowing recently: `stalled` means it had
+        // data in the last 30 days. Older silence is a source nobody uses.
+        if !streams.iter().any(|s| s.status == "stalled") {
+            continue;
+        }
+        let Some(newest) = streams.iter().filter_map(|s| s.last_ingest).max() else {
+            continue;
         };
+        let days = (now - newest).num_days();
+        if days < SOURCE_QUIET_DAYS {
+            continue;
+        }
         items.push(AttentionItem {
-            key: format!("stream:{}:{}", s.name, s.status),
+            key: format!("source-quiet:{source}"),
             kind: "stream",
-            title,
-            body,
+            title: format!("{source} stopped sending data"),
+            body: format!(
+                "Your server hasn't received anything from it for {days} days. Open Sources to see why."
+            ),
             route: "/sources",
         });
     }
@@ -236,5 +260,42 @@ mod tests {
         );
         assert_eq!(items[0].title, "Google Calendar needs you to sign in again");
         assert_eq!(items[0].key, "source:cred_1:reauth_required");
+    }
+
+    fn stream(name: &str, source: &str, status: &str, days_ago: i64) -> crate::api::stream_health::StreamHealth {
+        crate::api::stream_health::StreamHealth {
+            name: name.into(),
+            display_name: name.into(),
+            status: status.into(),
+            total: 10,
+            count_24h: 0,
+            count_7d: 0,
+            last_event: None,
+            last_ingest: Some(chrono::Utc::now() - chrono::Duration::days(days_ago)),
+            provided_by: vec![source.into()],
+            connected: true,
+            derived: false,
+            blocked_reason: None,
+        }
+    }
+
+    #[test]
+    fn one_quiet_stream_is_not_an_alarm_but_a_quiet_source_is() {
+        let mut items = vec![];
+        // Workouts are quiet; the phone's other stream is live.
+        stream_items(
+            &mut items,
+            &[stream("workouts", "iPhone", "stalled", 5), stream("location", "iPhone", "live", 0)],
+        );
+        assert!(items.is_empty(), "{items:?}");
+
+        // Every stream the Mac writes has been silent for three days.
+        stream_items(
+            &mut items,
+            &[stream("messages", "Mac", "stalled", 3), stream("apps", "Mac", "stalled", 4)],
+        );
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Mac stopped sending data");
+        assert!(items[0].body.contains("for 3 days"), "{}", items[0].body);
     }
 }

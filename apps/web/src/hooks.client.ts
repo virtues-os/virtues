@@ -18,11 +18,11 @@ initBackendFromShell();
 // the next lazy import of something this page never loaded (a terminal, a PDF
 // viewer, a settings section) points at a file that is gone. Vite raises
 // `vite:preloadError` for exactly that; reload once to pick up the current
-// build. When the once-a-minute guard says no, the import's own error stands
-// and the caller shows it.
+// build. The import's own error still reaches its caller, which shows it if
+// the reload doesn't happen (see reloadForStaleChunk for when it won't).
 if (typeof window !== 'undefined') {
-	window.addEventListener('vite:preloadError', (event) => {
-		if (reloadForStaleChunk()) event.preventDefault();
+	window.addEventListener('vite:preloadError', () => {
+		void reloadForStaleChunk();
 	});
 }
 
