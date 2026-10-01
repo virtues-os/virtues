@@ -10,10 +10,8 @@
 export const COLOURS = {
 	/** At a place; also the path and the pin, which are location (main.js:1755). */
 	place: "#4C86D6",
-	/** Driving, flying: a drive's lit stretch and its section. */
+	/** Moving: a drive's section, a walk's row, and the lit stretch of path. */
 	move: "#E6A04E",
-	/** A conversation's lit stretch on the map. */
-	talk: "#4E6A8A",
 	/** The Voice lane and a conversation's row. */
 	voice: "#9174BE",
 	/** In Bed: the night band, and its ink. */

@@ -303,9 +303,12 @@
 					layout: { 'line-join': 'round', 'line-cap': 'butt' },
 					paint: { 'line-color': TRACK, 'line-width': 1.5, 'line-opacity': 0.7, 'line-dasharray': [2, 3] },
 				});
-				// The lit stretch (main.js:976-981): the playhead's moving moment in
-				// the talk colour, else its drive in the move colour, at the path's
-				// own weight - the colour marks it, the width says nothing.
+				// The lit stretch (main.js:976-981): the stretch of path the playhead
+				// is moving along, at the path's own weight - the colour marks it,
+				// the width says nothing. Moving is orange everywhere in the
+				// Timeline, so the lit stretch is too, whether a drive or a moving
+				// conversation lit it (the owner's call; the prototype lit a moving
+				// conversation in slate, a colour nothing else on screen uses).
 				m.addSource('lit-run', { type: 'geojson', data: lines([]) });
 				m.addSource('lit-bridge', { type: 'geojson', data: lines([]) });
 				// A drive picked from the rail glows under its lit stretch while it
@@ -315,14 +318,14 @@
 					type: 'line',
 					source: 'lit-run',
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
-					paint: { 'line-color': ['coalesce', ['get', 'color'], COLOURS.move], 'line-width': 12, 'line-blur': 6, 'line-opacity': 0 },
+					paint: { 'line-color': COLOURS.move, 'line-width': 12, 'line-blur': 6, 'line-opacity': 0 },
 				});
 				m.addLayer({
 					id: 'lit-run',
 					type: 'line',
 					source: 'lit-run',
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
-					paint: { 'line-color': ['coalesce', ['get', 'color'], COLOURS.talk], 'line-width': 3, 'line-opacity': 0.95 },
+					paint: { 'line-color': COLOURS.move, 'line-width': 3, 'line-opacity': 0.95 },
 				});
 				m.addLayer({
 					id: 'lit-bridge',
@@ -330,7 +333,7 @@
 					source: 'lit-bridge',
 					layout: { 'line-join': 'round', 'line-cap': 'butt' },
 					paint: {
-						'line-color': ['coalesce', ['get', 'color'], COLOURS.talk],
+						'line-color': COLOURS.move,
 						'line-width': 1.5,
 						'line-opacity': 0.9,
 						'line-dasharray': [2, 2.5],
@@ -791,7 +794,11 @@
 	}
 
 	/** Everything that follows the playhead on the map (main.js:1004-1016,
-	 *  1103-1113): the pin, the lit bubble, the lit stretch of path. */
+	 *  1103-1113): the pin, the lit bubble, the lit stretch of path - the
+	 *  drive under the playhead, else the moving moment under it. The drive
+	 *  comes first (the prototype put the moment first), so a conversation
+	 *  that runs from a stay into a drive never lights its whole path over
+	 *  the drive, and a drive picked from the rail lights and glows itself. */
 	function syncPlayhead() {
 		const m = map;
 		if (!m) return;
@@ -800,21 +807,16 @@
 		if (at && pin) pin.setLngLat([at.lng, at.lat]).addTo(m);
 		else pin?.remove();
 		bubbles?.sync(playT);
-		const moving = bubbles?.movingCurrent() ?? null;
-		const drive = moving ? null : sections.find((s) => s.kind === 'transit' && s.s <= playT && playT < s.e);
-		const seg = moving ?? drive ?? null;
-		const key = moving ? `m${moving.s}` : drive ? `t${drive.s}` : '';
+		const drive = sections.find((s) => s.kind === 'transit' && s.s <= playT && playT < s.e);
+		const moving = drive ? null : (bubbles?.movingCurrent() ?? null);
+		const seg = drive ?? moving ?? null;
+		const key = drive ? `t${drive.s}` : moving ? `m${moving.s}` : '';
 		if (key === litKey) return;
 		litKey = key;
 		const pts = seg ? dayTrack.filter((f) => f.t >= seg.s && f.t < seg.e) : [];
 		const { runs, bridges } = splitTrack(pts);
-		const color = moving ? COLOURS.talk : COLOURS.move;
-		const run = pts.length >= 2 ? lines(runs) : lines([]);
-		const bridge = pts.length >= 2 ? lines(bridges) : lines([]);
-		run.properties = { color };
-		bridge.properties = { color };
-		(m.getSource('lit-run') as GeoJSONSource | undefined)?.setData(run);
-		(m.getSource('lit-bridge') as GeoJSONSource | undefined)?.setData(bridge);
+		(m.getSource('lit-run') as GeoJSONSource | undefined)?.setData(pts.length >= 2 ? lines(runs) : lines([]));
+		(m.getSource('lit-bridge') as GeoJSONSource | undefined)?.setData(pts.length >= 2 ? lines(bridges) : lines([]));
 	}
 
 	/** A rail pick parks the playhead and takes the map there (main.js:1634-1637,
