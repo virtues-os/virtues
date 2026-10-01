@@ -14,6 +14,7 @@ mod nights;
 mod places;
 mod spine;
 mod store;
+mod water;
 mod zone;
 
 use chrono::{DateTime, NaiveDate};
@@ -97,13 +98,18 @@ pub(crate) struct Derived {
     pub moments: Vec<Moment>,
 }
 
-/// Everything the Timeline shows, from the raw record.
-pub(crate) fn derive(r: &Record) -> Derived {
+/// Every stop in the raw GPS, in time order.
+pub(crate) fn stops(r: &Record) -> Vec<Stop> {
+    places::stops(&places::stop_fixes(&r.fixes))
+}
+
+/// Everything the Timeline shows, from the raw record and the stops that
+/// count as stays (`stops`, less those on open water: `water`).
+pub(crate) fn derive(r: &Record, stops: &[Stop]) -> Derived {
     let zone_at = |lat: f64, lon: f64| zone::at(lat, lon).unwrap_or(r.home);
 
-    let stops = places::stops(&places::stop_fixes(&r.fixes));
-    let place_of = places::merge_stops(&stops);
-    let places = places::places(&stops, &place_of, &zone_at);
+    let place_of = places::merge_stops(stops);
+    let places = places::places(stops, &place_of, &zone_at);
 
     let clean = spine::clean_track(&r.fixes);
     let gps = spine::gps(&r.fixes);
@@ -111,7 +117,7 @@ pub(crate) fn derive(r: &Record) -> Derived {
     let gps_times: Vec<Ms> = gps.iter().map(|f| f.t).collect();
     let healthkit = nights::healthkit_nights(&r.sleep_rows);
     let coverage = spine::Coverage { fix_times: &gps_times, nights: &healthkit };
-    let segs = spine::spine(&stops, &place_of, &clean, &moves, &coverage);
+    let segs = spine::spine(stops, &place_of, &clean, &moves, &coverage);
 
     let talk: Vec<spine::Span> =
         r.windows.iter().filter(|w| w.speakers >= 2).map(|w| spine::Span { s: w.s, e: w.e }).collect();
