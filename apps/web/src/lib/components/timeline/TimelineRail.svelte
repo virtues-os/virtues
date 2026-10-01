@@ -245,19 +245,6 @@
 		border: var(--tile-border);
 		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
 		box-shadow: var(--tile-shadow);
-		-webkit-backdrop-filter: var(--tile-blur);
-		backdrop-filter: var(--tile-blur);
-	}
-	/* Frosted, the rows and headers let the frost through, and the headers
-	   don't pin: a pinned header on a see-through card would sit over the
-	   rows beneath it (dayback/index.html:605-606). */
-	:global(.timeline[data-material='frosted']) .scroll,
-	:global(.timeline[data-material='frosted']) .group,
-	:global(.timeline[data-material='frosted']) .sec {
-		background: transparent;
-	}
-	:global(.timeline[data-material='frosted']) .sec {
-		position: static;
 	}
 	.scroll {
 		overflow-y: auto;

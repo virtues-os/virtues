@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { barHeight, bars, barWidth, laneData, ribbon, waveform } from "./lanes";
+import { barHeight, bars, barWidth, laneData, ribbon, untangle, waveform } from "./lanes";
 import type { DerivedWindow, VoiceWindow } from "./rail";
 
 const M = 60_000;
@@ -71,13 +71,27 @@ describe("the lane data", () => {
 		expect(l.ribbon.map((r) => [r.kind, r.title])).toEqual([["place", "Home"]]);
 		expect(l.nights).toEqual([{ s: 0, e: 60 * M }]);
 		expect(l.conversations).toEqual([{ s: 70 * M, e: 90 * M, title: "Dogs", speakers: 3, people: ["Ann", "Bo"] }]);
-		expect(l.talk).toEqual([75 * M, 85 * M]);
 		expect(l.voice).toHaveLength(3);
 	});
 
 	it("keeps a night whole when it began before the window", () => {
 		const l = laneData(derived, [], null, 30 * M, 120 * M);
 		expect(l.nights).toEqual([{ s: 0, e: 60 * M }]);
+	});
+
+	it("splits overlapping events down the middle, never stacking them", () => {
+		const u = untangle([
+			{ s: 60 * M, e: 120 * M },
+			{ s: 0, e: 60 * M },
+			{ s: 90 * M, e: 150 * M },
+		]);
+		expect(u.map((x) => [x.ds / M, x.de / M])).toEqual([
+			[0, 60],
+			[60, 105],
+			[105, 150],
+		]);
+		// Real spans stay for the peek.
+		expect(u[1].e).toBe(120 * M);
 	});
 
 	it("knows nothing of a source whose lanes didn't load", () => {

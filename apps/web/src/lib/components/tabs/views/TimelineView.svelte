@@ -123,26 +123,6 @@
 	/** The scope. Life isn't built yet, so Day is the only one to pick; the
 	 *  scope bar's grow and shrink run once a second scope is live. */
 	let scope = $state<'day' | 'life'>('day');
-	/** The one material every card reads: solid, or the frosted variant, kept
-	 *  switchable (dev builds only) until the owner picks. */
-	const dev = import.meta.env.DEV;
-	let material = $state<'solid' | 'frosted'>(readMaterial());
-	function readMaterial(): 'solid' | 'frosted' {
-		try {
-			return localStorage.getItem('timeline.material') === 'frosted' ? 'frosted' : 'solid';
-		} catch {
-			// No storage (a private window): the default material.
-			return 'solid';
-		}
-	}
-	function setMaterial(m: 'solid' | 'frosted') {
-		material = m;
-		try {
-			localStorage.setItem('timeline.material', m);
-		} catch {
-			// No storage: the choice lasts until the page reloads.
-		}
-	}
 	/** Map | Detail hangs centred under Day: the line between Map and Detail
 	 *  sits on Day's centre (both cards have a 4 px inset). Where the bar
 	 *  starts, from the switcher's left edge, and how far it reaches past it. */
@@ -556,8 +536,9 @@
 		else if (home) m.easeTo({ center: home.c, zoom: home.z, duration: 650 });
 	}
 	/** The keys (main.js:792-802, 1205): Esc is Reset view; ← → nudge the
-	 *  playhead, with Shift they jump between conversations; Space plays.
-	 *  Only while the Timeline is on screen, and never while typing. */
+	 *  playhead; Space plays. Shift+← → do nothing (the owner's call: the
+	 *  prototype's jump between conversations is left out). Only while the
+	 *  Timeline is on screen, and never while typing. */
 	function onKey(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
 			if (monthOpen) {
@@ -570,11 +551,9 @@
 		const el = e.target as HTMLElement | null;
 		const tag = el?.tagName;
 		if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
-		if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+		if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && !e.shiftKey) {
 			e.preventDefault();
-			const dir = e.key === 'ArrowRight' ? 1 : -1;
-			if (e.shiftKey) jumpConvo(dir);
-			else nudge(dir);
+			nudge(e.key === 'ArrowRight' ? 1 : -1);
 		} else if (e.code === 'Space' && tag !== 'BUTTON') {
 			e.preventDefault();
 			togglePlay();
@@ -745,14 +724,7 @@
 		pendingNudge = { tier: t, tod: playT - dayStart };
 		date = next;
 	}
-	/** Shift+← → glide the view to the middle of the next or previous
-	 *  conversation (`jumpConvo`, main.js:791-794). */
-	function jumpConvo(dir: 1 | -1) {
-		const target = dir > 0 ? lanes.talk.find((m) => m > playT + 1000) : lanes.talk.findLast((m) => m < playT - 1000);
-		if (target === undefined) return;
-		const span = viewEnd - viewStart;
-		glideView(target - span / 2, target + span / 2);
-	}
+
 
 	// The week's lanes load the first time the view leaves the day: the Week
 	// tier, or a pinch out past midnight.
@@ -900,7 +872,6 @@
 	class="timeline"
 	class:stacked
 	class:with-rail={sections.length > 0}
-	data-material={material}
 	bind:this={root}
 	bind:clientWidth={paneW}
 	style="{colourVars(dark)}; --nav-top: {navTop}px; --nav-bottom: {navBottom}px; --bar-overhang: {overhang}px; --scrub-h: {scrubH}px; --rail-top: {railLow ? topChrome + 12 : 16}px"
@@ -1016,32 +987,18 @@
 	{:else if streetless}
 		<p class="map-note tile">Your server doesn't have a street map of this area.</p>
 	{/if}
-	{#if dev}
-		<!-- Dev builds only, until the material is picked: solid or frosted. -->
-		<div class="material tile" role="group" aria-label="Material (dev only)">
-			<span>Material</span>
-			<button class:on={material === 'solid'} onclick={() => setMaterial('solid')}>Solid</button>
-			<button class:on={material === 'frosted'} onclick={() => setMaterial('frosted')}>Frosted</button>
-		</div>
-	{/if}
 </div>
 
 <style>
-	/* One material for every card - the date card, the scope switcher and
-	   its scope bar, the rail and the scrubber - so they always match. Solid
-	   is the default; frosted is the variant, kept switchable until picked. */
+	/* One solid material for every card - the date card, the scope switcher
+	   and its scope bar, the rail and the scrubber - so they always match.
+	   Nothing else in Virtues is see-through, so neither is the Timeline. */
 	.timeline {
 		position: absolute;
 		inset: 0;
 		--tile-bg: var(--c-tile);
 		--tile-border: 1px solid color-mix(in srgb, var(--color-foreground) 7%, transparent);
 		--tile-radius: 12px;
-		--tile-blur: none;
-	}
-	.timeline[data-material='frosted'] {
-		--tile-bg: color-mix(in srgb, var(--c-tile) 66%, transparent);
-		--tile-border: 1px solid color-mix(in srgb, var(--color-foreground) 6%, transparent);
-		--tile-blur: blur(30px) saturate(180%);
 	}
 	/* The map's markers stack at z 1 to 7 (bubbles, chips, the place card);
 	   everything over the map sits at 10 and up, as the prototype's tiles sit
@@ -1058,8 +1015,6 @@
 		border: var(--tile-border);
 		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
 		box-shadow: var(--tile-shadow);
-		-webkit-backdrop-filter: var(--tile-blur);
-		backdrop-filter: var(--tile-blur);
 	}
 	/* The date card, top left. */
 	.date {
@@ -1324,38 +1279,7 @@
 		font-size: 13px;
 		color: var(--color-foreground);
 	}
-	/* Dev builds only: the material switch, above the scrubber at the left. */
-	.material {
-		position: absolute;
-		left: 16px;
-		/* Above the map note's line, so the two never overlap. */
-		bottom: calc(var(--scrub-h) + 70px);
-		z-index: 10;
-		display: inline-flex;
-		align-items: center;
-		/* design-ok: a dev-only switch, removed before the pull request */
-		gap: 4px;
-		/* design-ok: a dev-only switch, removed before the pull request */
-		padding: 4px 4px 4px 10px;
-		border-radius: var(--tile-radius);
-		font-family: var(--font-sans);
-		font-size: 12px;
-		color: var(--color-foreground-muted);
-	}
-	.material button {
-		border: 0;
-		background: none;
-		/* design-ok: a dev-only switch, removed before the pull request */
-		padding: 5px 9px;
-		border-radius: calc(var(--tile-radius) - 4px);
-		font: inherit;
-		color: inherit;
-		cursor: pointer;
-	}
-	.material button.on {
-		background: var(--color-foreground);
-		color: var(--color-background);
-	}
+
 	/* Why the map is bare, just above the scrubber at the left. */
 	.map-note {
 		position: absolute;

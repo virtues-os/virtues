@@ -106,8 +106,6 @@
 		border-radius: var(--tile-radius);
 		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
 		box-shadow: var(--tile-shadow);
-		-webkit-backdrop-filter: var(--tile-blur);
-		backdrop-filter: var(--tile-blur);
 		animation: open 0.28s cubic-bezier(0.2, 0.9, 0.25, 1.08);
 		transform-origin: top left;
 	}
