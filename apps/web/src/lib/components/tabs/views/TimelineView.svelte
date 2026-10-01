@@ -12,7 +12,7 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick, untrack } from 'svelte';
 	import { browser } from '$app/environment';
-	import { atlasStyle } from '$lib/map/atlas';
+	import { atlasSquares, atlasStyle } from '$lib/map/atlas';
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
 	import type { GeoJSONSource, LngLat, Map as MlMap, Marker, StyleSpecification } from 'maplibre-gl';
 	import { fetchDayBounds, fetchDayWindow, fetchDerived, fetchLanes, fetchVoice, localDay, quietDay, stepDay } from '$lib/timeline/day';
@@ -208,6 +208,21 @@
 	let date = $state(today);
 	let ready = $state(false);
 	let basemap = $state(true);
+	/** The squares the box holds street maps for; null until known, or when the
+	 *  box can't say. Outside them the map has only the world overview. */
+	let squares: number[][] | null = null;
+	/** The map's centre, zoomed past the world overview, sits outside every
+	 *  street-map square: the bare map says why. */
+	let streetless = $state(false);
+	function syncStreets() {
+		const m = map;
+		if (!m || !squares) {
+			streetless = false;
+			return;
+		}
+		const c = m.getCenter();
+		streetless = m.getZoom() > 7 && !squares.some(([w, s, e, n]) => c.lng >= w && c.lng <= e && c.lat >= s && c.lat <= n);
+	}
 	let status = $state<'loading' | 'shown' | 'empty' | 'error'>('loading');
 	let asked = 0; // the latest day asked for, so a slow answer can't overwrite a newer one
 
@@ -276,6 +291,11 @@
 			m.touchZoomRotate.disableRotation();
 			container.addEventListener('wheel', onWheel, { passive: false, capture: true });
 			m.on('move', syncAway);
+			m.on('moveend', syncStreets);
+			void atlasSquares().then((sq) => {
+				squares = sq;
+				syncStreets();
+			});
 			maplibre = ml;
 			// MapLibre only follows the window's size. A hidden tab stays mounted
 			// and split view narrows it, so follow the container instead.
@@ -992,7 +1012,9 @@
 		</button>
 	{/if}
 	{#if !basemap}
-		<p class="no-basemap">Your server has no map tiles yet</p>
+		<p class="map-note tile">Your server doesn't have map tiles yet.</p>
+	{:else if streetless}
+		<p class="map-note tile">Your server doesn't have a street map of this area.</p>
 	{/if}
 	{#if dev}
 		<!-- Dev builds only, until the material is picked: solid or frosted. -->
@@ -1302,11 +1324,12 @@
 		font-size: 13px;
 		color: var(--color-foreground);
 	}
-	/* Dev builds only: the material switch, just above the scrubber. */
+	/* Dev builds only: the material switch, above the scrubber at the left. */
 	.material {
 		position: absolute;
 		left: 16px;
-		bottom: calc(var(--scrub-h) + 26px);
+		/* Above the map note's line, so the two never overlap. */
+		bottom: calc(var(--scrub-h) + 70px);
 		z-index: 10;
 		display: inline-flex;
 		align-items: center;
@@ -1333,12 +1356,16 @@
 		background: var(--color-foreground);
 		color: var(--color-background);
 	}
-	.no-basemap {
+	/* Why the map is bare, just above the scrubber at the left. */
+	.map-note {
 		position: absolute;
-		left: 12px;
-		bottom: 10px;
+		left: 16px;
+		bottom: calc(var(--scrub-h) + 26px);
+		z-index: 10;
 		margin: 0;
-		color: var(--color-foreground-subtle);
+		padding: 8px 12px;
+		border-radius: var(--tile-radius);
+		color: var(--color-foreground-muted);
 		font-size: 12px;
 	}
 	/* The map's own marks, made by MapLibre markers outside this component's
