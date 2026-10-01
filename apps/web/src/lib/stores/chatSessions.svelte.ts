@@ -90,7 +90,9 @@ class ChatSessionStore {
 		} catch (err) {
 			console.error('Error loading chat sessions:', err);
 			this.error = err instanceof Error ? err.message : 'Failed to load sessions';
-			this.sessions = [];
+			// Keep what was here. Emptying the list on a failed reload made a
+			// blip read as "all my chats are gone"; `error` (and the bar that
+			// reads it) already says the list may be out of date.
 		} finally {
 			this.isLoading = false;
 		}
