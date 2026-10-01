@@ -30,6 +30,10 @@ const BACKSTOP: Ms = 16 * HOUR;
 const GAP_MIN: Ms = 30 * MIN;
 const GAP_FIX_EVERY: Ms = 15 * MIN;
 const GAP_MIN_TRACK_M: f64 = 600.0;
+/// A transit whose fastest hop is slower than a walk never showed travel:
+/// the only movement is a jump across a silence, so it is a signal gap at
+/// any length.
+const NO_TRAVEL_KMH: f64 = 4.0;
 /// Speeds over this between two fixes are glitches, not travel.
 const MAX_KMH: f64 = 2000.0;
 /// A trip that never reaches this is not a drive: the rail's own line for
@@ -389,11 +393,16 @@ pub(crate) fn transit_track(clean: &[Point], s: Ms, e: Ms) -> TransitTrack {
 }
 
 /// A transit that never really moved: over 30 minutes, with fewer than one
-/// fix per 15 minutes or under 0.6 km of track. The GPS went silent; it was
-/// not a trip.
+/// fix per 15 minutes or under 0.6 km of track; or, at any length, one whose
+/// fastest hop is slower than a walk, so the record never saw travel - the
+/// phone went quiet at one place and came back at another (the owner's call;
+/// the prototype called a silence under 30 minutes a drive). The GPS went
+/// silent; it was not a trip, and when the trip happened inside it is
+/// unknown.
 pub(crate) fn is_signal_gap(s: Ms, e: Ms, track: &TransitTrack) -> bool {
     let span = e - s;
-    span > GAP_MIN && ((track.fixes as f64) < span as f64 / GAP_FIX_EVERY as f64 || track.path_m < GAP_MIN_TRACK_M)
+    let silent = span > GAP_MIN && ((track.fixes as f64) < span as f64 / GAP_FIX_EVERY as f64 || track.path_m < GAP_MIN_TRACK_M);
+    silent || track.peak_kmh < NO_TRAVEL_KMH
 }
 
 #[cfg(test)]
@@ -522,6 +531,18 @@ mod tests {
         );
         let track = transit_track(&clean, HOUR, 5 * HOUR);
         assert!(is_signal_gap(HOUR, 5 * HOUR, &track));
+    }
+
+    #[test]
+    fn a_short_silence_that_never_showed_travel_is_a_signal_gap_and_a_short_drive_is_not() {
+        // The phone at A until 0:15, silent 24 minutes, then at B 400 m away.
+        let quiet: Vec<Fix> = (0..=15).map(|m| fix(m, 0.0)).chain((39..=50).map(|m| fix(m, 0.0036))).collect();
+        let clean = clean_track(&quiet);
+        assert!(is_signal_gap(15 * MIN, 39 * MIN, &transit_track(&clean, 15 * MIN, 39 * MIN)));
+        // The same 400 m driven in two minutes with fixes along the way: a drive.
+        let drove: Vec<Fix> = (0..=15).map(|m| fix(m, 0.0)).chain([fix(16, 0.0018), fix(17, 0.0036)]).collect();
+        let clean = clean_track(&drove);
+        assert!(!is_signal_gap(15 * MIN, 17 * MIN, &transit_track(&clean, 15 * MIN, 17 * MIN)));
     }
 
     #[test]
