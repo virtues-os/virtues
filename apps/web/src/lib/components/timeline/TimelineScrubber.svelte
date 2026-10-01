@@ -227,11 +227,12 @@
 	};
 
 	// Calendar: each timed event a chip with a left cap, the prototype's form
-	// for an event (main.js:1225).
+	// for an event (main.js:1225), drawn over its own side of any overlap; an
+	// invitation you haven't answered is faded.
 	const eventChips = $derived(
 		calendar
 			.map((ev, k) => {
-				const sp = span(ev.s, ev.e);
+				const sp = span(ev.ds, ev.de);
 				if (!sp) return null;
 				const maxc = Math.max(1, Math.floor((sp.w - 14) / 6));
 				const label = expanded && sp.w > 44 ? (ev.title.length > maxc ? `${ev.title.slice(0, maxc - 1).trimEnd()}…` : ev.title) : '';
@@ -303,7 +304,8 @@
 			hover = { ...at, title: c.title, meta: `${clock(c.s)} – ${clock(c.e)} · ${fmtDur(c.e - c.s)}`, who };
 		} else {
 			const ev = calendar[Number(el.dataset.event)];
-			hover = { ...at, title: ev.title, meta: `${clock(ev.s)} – ${clock(ev.e)} · ${fmtDur(ev.e - ev.s)}`, who: ev.where ?? '' };
+			const who = [ev.unanswered ? 'Not answered yet' : '', ev.where ?? ''].filter(Boolean).join('  ·  ');
+			hover = { ...at, title: ev.title, meta: `${clock(ev.s)} – ${clock(ev.e)} · ${fmtDur(ev.e - ev.s)}`, who };
 		}
 	}
 	// The peek sits up and to the right of the pointer, flipping left at the
@@ -448,9 +450,11 @@
 					{/each}
 				{:else if lane.id === 'calendar' && hasCalendar === true}
 					{#each eventChips as ec (ec.k)}
-						{@const on = live(ec.ev.s, ec.ev.e)}
-						<rect class="event" data-event={ec.k} x={ec.a} y={y + 2} width={Math.max(ec.w, 2)} height={rowH - 4} rx="5" fill-opacity={on ? 0.24 : 0.12} />
-						<rect class="event-cap" x={ec.a} y={y + 2} width="3" height={rowH - 4} rx="1.5" />
+						{@const on = live(ec.ev.ds, ec.ev.de)}
+						<g class:unanswered={ec.ev.unanswered}>
+							<rect class="event" data-event={ec.k} x={ec.a} y={y + 2} width={Math.max(ec.w, 2)} height={rowH - 4} rx="5" fill-opacity={on ? 0.24 : 0.12} />
+							<rect class="event-cap" x={ec.a} y={y + 2} width="3" height={rowH - 4} rx="1.5" />
+						</g>
 						{#if ec.label}<text class="seg-label" x={ec.a + 9} y={y + 2 + (rowH - 4) / 2 + 3.7}>{ec.label}</text>{/if}
 					{/each}
 				{:else if (lane.id === 'calendar' && hasCalendar === false) || (lane.id === 'finance' && hasFinance === false)}
@@ -506,8 +510,6 @@
 		border: var(--tile-border);
 		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
 		box-shadow: var(--tile-shadow);
-		-webkit-backdrop-filter: var(--tile-blur);
-		backdrop-filter: var(--tile-blur);
 		font-family: var(--font-sans);
 		color: var(--color-foreground);
 	}
@@ -734,6 +736,10 @@
 		fill: var(--c-calendar);
 		fill-opacity: 0.9;
 		pointer-events: none;
+	}
+	/* An invitation you haven't answered: there, but faded. */
+	.unanswered {
+		opacity: 0.45;
 	}
 	/* Not connected: a dashed pill in the lane's colour (main.js:1376-1378). */
 	.connect {

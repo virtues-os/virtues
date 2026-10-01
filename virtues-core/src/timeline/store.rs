@@ -237,6 +237,8 @@ pub struct CalendarEvent {
     pub ended_at: DateTime<Utc>,
     pub calendar_name: Option<String>,
     pub location_name: Option<String>,
+    /// An invitation you haven't answered yet; the lane draws it faded.
+    pub is_unanswered: bool,
 }
 
 /// What the scrubber's Body, Calendar and Finance lanes draw over a window.
@@ -252,7 +254,8 @@ pub struct LaneWindow {
     /// connect one instead of drawing an empty row.
     pub has_calendar: bool,
     /// Timed events over the window; an all-day event has no place on a
-    /// timeline of hours and is left out.
+    /// timeline of hours, and an invitation you declined isn't one you went
+    /// to, so both are left out.
     pub calendar: Vec<CalendarEvent>,
     /// Whether any financial account has synced.
     pub has_finance: bool,
@@ -292,9 +295,10 @@ pub async fn lanes(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> R
     .fetch_one(pool)
     .await?;
     let calendar = sqlx::query(
-        "SELECT id, title, started_at, ended_at, calendar_name, location_name FROM data_calendar_event \
+        "SELECT id, title, started_at, ended_at, calendar_name, location_name, response_status FROM data_calendar_event \
          WHERE deleted_at_source IS NULL AND NOT is_archived AND NOT is_all_day \
-           AND status IS DISTINCT FROM 'cancelled' AND started_at < $2 AND ended_at > $1 \
+           AND status IS DISTINCT FROM 'cancelled' AND response_status IS DISTINCT FROM 'declined' \
+           AND started_at < $2 AND ended_at > $1 \
          ORDER BY started_at",
     )
     .bind(start)
@@ -303,6 +307,7 @@ pub async fn lanes(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> R
     .await?
     .iter()
     .map(|r| {
+        let response: Option<String> = r.try_get("response_status")?;
         Ok(CalendarEvent {
             id: r.try_get("id")?,
             title: r.try_get("title")?,
@@ -310,6 +315,10 @@ pub async fn lanes(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> R
             ended_at: r.try_get("ended_at")?,
             calendar_name: r.try_get("calendar_name")?,
             location_name: r.try_get("location_name")?,
+            // Google's word for an invitation still waiting on a reply; no
+            // response at all (your own event, or a calendar that doesn't say)
+            // is never read as unanswered.
+            is_unanswered: response.as_deref() == Some("needsAction"),
         })
     })
     .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;

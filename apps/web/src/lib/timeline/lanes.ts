@@ -20,6 +20,7 @@ export interface LaneWindow {
 		ended_at: string;
 		calendar_name: string | null;
 		location_name: string | null;
+		is_unanswered: boolean;
 	}[];
 	has_finance: boolean;
 }
@@ -37,10 +38,33 @@ export interface ScrubConversation {
 
 /** A timed calendar event in the Calendar lane. */
 export interface ScrubEvent {
+	/** Its real span, for the peek. */
 	s: number;
 	e: number;
+	/** The span the lane draws: where events overlap, each gets its side of
+	 *  the overlap, so the lane never stacks them. */
+	ds: number;
+	de: number;
 	title: string;
 	where: string | null;
+	/** An invitation you haven't answered: drawn faded. */
+	unanswered: boolean;
+}
+
+/** Events in start order with their overlaps split down the middle: where
+ *  one runs into the next, the first ends and the next begins halfway
+ *  through the time they share. A tiny lane has no room for two rows. */
+export function untangle<T extends { s: number; e: number }>(events: T[]): (T & { ds: number; de: number })[] {
+	const out = [...events].sort((a, b) => a.s - b.s || a.e - b.e).map((ev) => ({ ...ev, ds: ev.s, de: ev.e }));
+	for (let i = 1; i < out.length; i++) {
+		const prev = out[i - 1];
+		const cur = out[i];
+		if (cur.ds >= prev.de) continue;
+		const cut = (cur.ds + Math.min(prev.de, cur.de)) / 2;
+		prev.de = cut;
+		cur.ds = Math.max(cur.ds, cut);
+	}
+	return out;
 }
 
 export type RibbonKind = "place" | "transit" | "gap";
@@ -137,9 +161,6 @@ export interface Lanes {
 	nights: { s: number; e: number }[];
 	/** Every window the mic recorded. */
 	voice: { s: number; e: number }[];
-	/** The middle of each two-or-more-speaker window, in order: where
-	 *  Shift+arrow goes (main.js:791-794). */
-	talk: number[];
 	conversations: ScrubConversation[];
 	steps: { t: number; v: number }[];
 	stepScale: number;
@@ -154,7 +175,6 @@ export const NO_LANES: Lanes = {
 	ribbon: [],
 	nights: [],
 	voice: [],
-	talk: [],
 	conversations: [],
 	steps: [],
 	stepScale: 1,
@@ -196,18 +216,20 @@ export function laneData(derived: DerivedWindow | null, voice: VoiceWindow[], lw
 		),
 		nights: sections.filter((x) => x.kind === "sleep").map((x) => ({ s: x.s, e: x.e })),
 		voice: windows.map((w) => ({ s: w.s, e: w.e })),
-		talk: talk.map((w) => (w.s + w.e) / 2).sort((x, y) => x - y),
 		conversations,
 		steps: (lw?.steps ?? []).map((x) => ({ t: t(x.occurred_at), v: x.step_count })),
 		stepScale: lw?.step_scale ?? 1,
 		hasCalendar: lw ? lw.has_calendar : null,
-		calendar: (lw?.calendar ?? []).map((ev) => ({
-			s: t(ev.started_at),
-			e: t(ev.ended_at),
-			// Google Calendar's own words for an event with no title.
-			title: ev.title?.trim() || "(No title)",
-			where: ev.location_name,
-		})),
+		calendar: untangle(
+			(lw?.calendar ?? []).map((ev) => ({
+				s: t(ev.started_at),
+				e: t(ev.ended_at),
+				// Google Calendar's own words for an event with no title.
+				title: ev.title?.trim() || "(No title)",
+				where: ev.location_name,
+				unanswered: ev.is_unanswered,
+			})),
+		),
 		hasFinance: lw ? lw.has_finance : null,
 	};
 }
