@@ -55,7 +55,9 @@
 			(err) => {
 				if (cancelled) return;
 				console.warn("[TabContent] view failed to load", err);
-				if (!reloadForStaleChunk()) loadFailed = true;
+				void reloadForStaleChunk().then((reloading) => {
+					if (!reloading && !cancelled) loadFailed = true;
+				});
 			},
 		);
 		return () => {

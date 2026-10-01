@@ -70,21 +70,39 @@ const RELOAD_KEY = 'virtues-stale-chunk-reload';
 const RELOAD_GAP_MS = 60_000;
 
 /**
- * Reload the page to pick up the box's current build, after a chunk failed to
- * load. Returns false, and reloads nothing, if this tab already reloaded for
- * the same reason within the last minute; the caller then shows its error.
+ * Reload the page to pick up the current build, after a chunk failed to load.
+ * Resolves false, and reloads nothing, when this tab already reloaded for the
+ * same reason within the last minute, or when the app's own files can't be
+ * reached right now: in a browser whose server is down, a reload trades a
+ * view that didn't load for the browser's "can't connect" page. The caller
+ * then shows its error instead.
  *
  * Chat drafts and page edits are kept on the device (drafts.ts, IndexedDB),
  * so a reload here costs a moment, not work.
  */
-export function reloadForStaleChunk(): boolean {
+export async function reloadForStaleChunk(): Promise<boolean> {
 	if (typeof window === 'undefined') return false;
 	try {
 		const last = Number(sessionStorage.getItem(RELOAD_KEY) ?? 0);
 		if (Date.now() - last < RELOAD_GAP_MS) return false;
-		sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
 	} catch {
 		// No session storage, no way to tell a first try from a loop.
+		return false;
+	}
+	// SvelteKit's build stamp is served wherever the app's files are: the
+	// box in a browser, the app's own copy on the Mac and phone.
+	try {
+		const res = await fetch('/_app/version.json', {
+			cache: 'no-store',
+			signal: AbortSignal.timeout(5000),
+		});
+		if (!res.ok) return false;
+	} catch {
+		return false;
+	}
+	try {
+		sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
+	} catch {
 		return false;
 	}
 	window.location.reload();
