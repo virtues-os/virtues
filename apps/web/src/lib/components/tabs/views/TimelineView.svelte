@@ -1217,6 +1217,8 @@
 	.timeline {
 		position: absolute;
 		inset: 0;
+		/* What the rail takes from the map's right edge, with its gaps. */
+		--rail-space: 16px;
 		--tile-bg: var(--c-tile);
 		--tile-border: 1px solid color-mix(in srgb, var(--color-foreground) 7%, transparent);
 		--tile-radius: 12px;
@@ -1470,14 +1472,19 @@
 		font-size: 14px;
 		line-height: 1;
 	}
-	/* Under the scope bar, not over the middle: the map holds the last known
-	   position at its centre, and the note must not hide it. */
+	.timeline.with-rail {
+		--rail-space: calc(min(384px, 42%) + 32px);
+	}
+	/* Front and centre of the clear map, between the top cards and the
+	   scrubber, the left edge and the rail (the owner's call): on a day with
+	   no location it is the day's one fact, and the map under it holds the
+	   last known position. */
 	.note {
 		position: absolute;
 		z-index: 10;
-		top: calc(var(--nav-bottom) + 12px);
-		left: 50%;
-		transform: translateX(-50%);
+		top: calc((var(--nav-bottom) + 12px + 100% - var(--scrub-h) - 28px) / 2);
+		left: calc((16px + 100% - var(--rail-space)) / 2);
+		transform: translate(-50%, -50%);
 		padding: 8px 14px;
 		border-radius: var(--tile-radius);
 		text-align: center;

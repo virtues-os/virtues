@@ -587,13 +587,18 @@
 	.exp .grab svg {
 		transform: rotate(0);
 	}
+	/* Play and the spans at the left, the clock in the middle, over the
+	   middle of the day (the owner's call; the prototype kept the middle for
+	   its day stepper, which the date card now holds, and the clock at the
+	   right). */
 	.ctl {
-		display: flex;
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
-		justify-content: space-between;
 		margin-bottom: 8px;
 	}
 	.lead {
+		justify-self: start;
 		display: flex;
 		align-items: center;
 		gap: 10px;
@@ -646,6 +651,7 @@
 		color: var(--color-background);
 	}
 	.clock {
+		justify-self: center;
 		font-size: 14px;
 		font-variant-numeric: tabular-nums;
 		white-space: nowrap;

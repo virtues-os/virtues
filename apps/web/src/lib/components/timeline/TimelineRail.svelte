@@ -182,6 +182,14 @@
 {#if sections.length}
 	<section class="rail" bind:this={rail} aria-label="The day, stay by stay">
 		<div class="scroll" bind:this={scroller}>
+			<!-- The day's standout leads the rail once the Timeline can score
+			     what was unusual (the prototype's "What stood out" card,
+			     main.js:1615-1617). Until then its place is held, quietly, and
+			     says so, never with a guess. -->
+			<div class="standout" aria-disabled="true">
+				<span class="standout-eye">What stood out</span>
+				<span class="standout-soon">Coming soon</span>
+			</div>
 			{#each sections as sec, i (sec.kind + sec.s)}
 				<div class="group" class:bare={!sec.rows.length} class:cur={i === curSection}>
 					<button class="sec" onclick={() => pickSection(i, sec)}>
@@ -394,6 +402,29 @@
 		font-size: 12px;
 		line-height: 1.3;
 		color: var(--color-foreground-muted);
+	}
+	/* The standout's held place, at the head of the rail: the prototype's
+	   eyebrow (index.html:938-942), greyed, with a quiet line under it. */
+	.standout {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 16px 16px 12px;
+		border-bottom: 1px solid color-mix(in srgb, var(--color-foreground) 8%, transparent);
+	}
+	.standout-eye {
+		font-family: var(--font-sans);
+		/* design-ok: the Dayback prototype's standout eyebrow (owner's call, 2026-09-30) */
+		font-size: 10px;
+		font-weight: 600;
+		letter-spacing: 0.11em;
+		text-transform: uppercase;
+		color: var(--color-foreground-subtle);
+	}
+	.standout-soon {
+		font-family: var(--font-sans);
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
 	}
 	/* A conversation row opens its transcript: the chevron says so, and
 	   turns down while it is open. */
