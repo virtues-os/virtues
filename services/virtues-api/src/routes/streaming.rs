@@ -260,7 +260,12 @@ where
                         }
                     }
 
-                    // Forward the data to client
+                    // Forward the data to client. A failed send means the box
+                    // hung up (Stop, a dropped link); reading goes on anyway.
+                    // Vercel's gateway keeps generating and billing after a
+                    // client disconnects (vercel/ai#8325), so hanging up here
+                    // would not save the tokens, only lose the usage trailer,
+                    // and the owner would be charged less than the reply cost.
                     let _ = tx.send(Ok(SseEvent::default().data(data))).await;
                 }
             }
