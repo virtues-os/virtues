@@ -385,12 +385,12 @@ mod tests {
     use super::*;
 
     fn fix(minute: i64, lat: f64) -> Fix {
-        Fix { t: minute * MIN, lat, lon: -97.0, accuracy_m: Some(5.0), speed_mps: None }
+        Fix { t: minute * MIN, lat, lon: -30.0, accuracy_m: Some(5.0), speed_mps: None }
     }
 
     #[test]
     fn a_held_spot_is_an_arrive_and_a_leave_point() {
-        let fixes: Vec<Fix> = (0..5).map(|m| fix(m, 30.0 + m as f64 * 0.00001)).chain([fix(10, 30.01)]).collect();
+        let fixes: Vec<Fix> = (0..5).map(|m| fix(m, 0.0 + m as f64 * 0.00001)).chain([fix(10, 0.01)]).collect();
         let clean = clean_track(&fixes);
         assert_eq!(clean.len(), 3);
         assert_eq!((clean[0].t, clean[1].t, clean[2].t), (0, 4 * MIN, 10 * MIN));
@@ -400,12 +400,12 @@ mod tests {
     #[test]
     fn movement_needs_three_fixes_and_net_ground() {
         // 12 fixes a minute apart, 150 m each: a drive.
-        let drive: Vec<Fix> = (0..12).map(|m| fix(m, 30.0 + m as f64 * 0.00135)).collect();
+        let drive: Vec<Fix> = (0..12).map(|m| fix(m, 0.0 + m as f64 * 0.00135)).collect();
         let found = moves(&drive);
         assert_eq!(found.len(), 1);
         assert_eq!((found[0].s, found[0].e, found[0].fixes), (0, 11 * MIN, 12));
         // Two fixes 500 m apart, then still: a glitch, not a move.
-        let glitch = vec![fix(0, 30.0), fix(1, 30.0045), fix(2, 30.0045)];
+        let glitch = vec![fix(0, 0.0), fix(1, 0.0045), fix(2, 0.0045)];
         assert!(moves(&glitch).is_empty());
     }
 
@@ -432,11 +432,11 @@ mod tests {
     #[test]
     fn a_drive_is_the_movement_inside_the_gap() {
         // Stay at A 0-60 min, drive 70-80 min to B 3 km north, stay at B from 100 min.
-        let a = Stop { s: 0, e: 60 * MIN, lat: 30.0, lon: -97.0 };
-        let b = Stop { s: 100 * MIN, e: 160 * MIN, lat: 30.027, lon: -97.0 };
-        let mut fixes: Vec<Fix> = (0..=69).map(|m| fix(m, 30.0)).collect();
-        fixes.extend((70..=80).map(|m| fix(m, 30.0 + (m - 70) as f64 * 0.0027)));
-        fixes.extend((81..=160).map(|m| fix(m, 30.027)));
+        let a = Stop { s: 0, e: 60 * MIN, lat: 0.0, lon: -30.0 };
+        let b = Stop { s: 100 * MIN, e: 160 * MIN, lat: 0.027, lon: -30.0 };
+        let mut fixes: Vec<Fix> = (0..=69).map(|m| fix(m, 0.0)).collect();
+        fixes.extend((70..=80).map(|m| fix(m, 0.0 + (m - 70) as f64 * 0.0027)));
+        fixes.extend((81..=160).map(|m| fix(m, 0.027)));
         let clean = clean_track(&fixes);
         let times: Vec<Ms> = fixes.iter().map(|f| f.t).collect();
         let cov = Coverage { fix_times: &times, nights: &[] };
@@ -448,9 +448,9 @@ mod tests {
 
     #[test]
     fn a_blink_at_the_same_place_is_one_stay_only_where_the_track_covers_it() {
-        let a1 = Stop { s: 0, e: 60 * MIN, lat: 30.0, lon: -97.0 };
-        let a2 = Stop { s: 5 * HOUR, e: 6 * HOUR, lat: 30.0, lon: -97.0 };
-        let still: Vec<Fix> = (0..=360).step_by(5).map(|m| fix(m, 30.0)).collect();
+        let a1 = Stop { s: 0, e: 60 * MIN, lat: 0.0, lon: -30.0 };
+        let a2 = Stop { s: 5 * HOUR, e: 6 * HOUR, lat: 0.0, lon: -30.0 };
+        let still: Vec<Fix> = (0..=360).step_by(5).map(|m| fix(m, 0.0)).collect();
         let clean = clean_track(&still);
         let times: Vec<Ms> = still.iter().map(|f| f.t).collect();
         let covered = Coverage { fix_times: &times, nights: &[] };
@@ -478,8 +478,8 @@ mod tests {
     #[test]
     fn a_stop_across_an_awake_silence_is_two_stays_and_a_gap_unless_it_was_a_night() {
         // One stop from 0 to 6 h with no fix between 1 h and 5 h.
-        let one = Stop { s: 0, e: 6 * HOUR, lat: 30.0, lon: -97.0 };
-        let fixes: Vec<Fix> = (0..=360).step_by(5).filter(|m| *m <= 60 || *m >= 300).map(|m| fix(m, 30.0)).collect();
+        let one = Stop { s: 0, e: 6 * HOUR, lat: 0.0, lon: -30.0 };
+        let fixes: Vec<Fix> = (0..=360).step_by(5).filter(|m| *m <= 60 || *m >= 300).map(|m| fix(m, 0.0)).collect();
         let clean = clean_track(&fixes);
         let times: Vec<Ms> = fixes.iter().map(|f| f.t).collect();
         let awake = Coverage { fix_times: &times, nights: &[] };
@@ -499,10 +499,10 @@ mod tests {
     #[test]
     fn a_stay_run_on_into_the_next_stop_is_still_cut_by_a_silence_inside_it() {
         // Two stops at one place a minute apart; the second has no fix from 2 h to 6 h.
-        let first = Stop { s: 0, e: 30 * MIN, lat: 30.0, lon: -97.0 };
-        let second = Stop { s: 31 * MIN, e: 7 * HOUR, lat: 30.0, lon: -97.0 };
+        let first = Stop { s: 0, e: 30 * MIN, lat: 0.0, lon: -30.0 };
+        let second = Stop { s: 31 * MIN, e: 7 * HOUR, lat: 0.0, lon: -30.0 };
         let fixes: Vec<Fix> =
-            (0..=420).step_by(5).filter(|m| *m <= 120 || *m >= 360).map(|m| fix(m, 30.0)).chain([fix(31, 30.0)]).collect();
+            (0..=420).step_by(5).filter(|m| *m <= 120 || *m >= 360).map(|m| fix(m, 0.0)).chain([fix(31, 0.0)]).collect();
         let mut fixes = fixes;
         fixes.sort_by_key(|f| f.t);
         let clean = clean_track(&fixes);
@@ -521,9 +521,9 @@ mod tests {
     #[test]
     fn two_silences_a_lone_fix_apart_are_one_gap() {
         // One stop from 0 to 9 h: fixes to 1 h, a lone fix at 4 h, fixes from 7 h.
-        let one = Stop { s: 0, e: 9 * HOUR, lat: 30.0, lon: -97.0 };
+        let one = Stop { s: 0, e: 9 * HOUR, lat: 0.0, lon: -30.0 };
         let fixes: Vec<Fix> =
-            (0..=540).step_by(5).filter(|m| *m <= 60 || *m == 240 || *m >= 420).map(|m| fix(m, 30.0)).collect();
+            (0..=540).step_by(5).filter(|m| *m <= 60 || *m == 240 || *m >= 420).map(|m| fix(m, 0.0)).collect();
         let clean = clean_track(&fixes);
         let times: Vec<Ms> = fixes.iter().map(|f| f.t).collect();
         let cov = Coverage { fix_times: &times, nights: &[] };

@@ -176,11 +176,11 @@ mod tests {
     #[test]
     fn a_lone_spike_and_a_poorly_rated_fix_are_not_used() {
         let fixes = vec![
-            fix(0, 30.0, -97.0, 10.0),
-            fix(1, 30.01, -97.0, 10.0), // 1.1 km from both neighbours
-            fix(2, 30.0, -97.0, 10.0),
-            fix(3, 30.0, -97.0, 80.0), // rated worse than 50 m
-            fix(4, 30.0, -97.0, 10.0),
+            fix(0, 0.0, -30.0, 10.0),
+            fix(1, 0.01, -30.0, 10.0), // 1.1 km from both neighbours
+            fix(2, 0.0, -30.0, 10.0),
+            fix(3, 0.0, -30.0, 80.0), // rated worse than 50 m
+            fix(4, 0.0, -30.0, 10.0),
         ];
         let kept = stop_fixes(&fixes);
         assert_eq!(kept.iter().map(|f| f.t / MIN).collect::<Vec<_>>(), vec![0, 2, 4]);
@@ -188,28 +188,28 @@ mod tests {
 
     #[test]
     fn a_stop_needs_twenty_minutes_and_eight_fixes_and_runs_first_fix_to_last() {
-        let long: Vec<Fix> = (0..10).map(|m| fix(m * 3, 30.0, -97.0, 5.0)).collect(); // 27 min, 10 fixes
+        let long: Vec<Fix> = (0..10).map(|m| fix(m * 3, 0.0, -30.0, 5.0)).collect(); // 27 min, 10 fixes
         let found = stops(&long);
         assert_eq!(found.len(), 1);
         assert_eq!((found[0].s, found[0].e), (0, 27 * MIN));
-        let short: Vec<Fix> = (0..10).map(|m| fix(m, 30.0, -97.0, 5.0)).collect(); // 9 min
+        let short: Vec<Fix> = (0..10).map(|m| fix(m, 0.0, -30.0, 5.0)).collect(); // 9 min
         assert!(stops(&short).is_empty());
-        let sparse: Vec<Fix> = (0..5).map(|m| fix(m * 10, 30.0, -97.0, 5.0)).collect(); // 40 min, 5 fixes
+        let sparse: Vec<Fix> = (0..5).map(|m| fix(m * 10, 0.0, -30.0, 5.0)).collect(); // 40 min, 5 fixes
         assert!(stops(&sparse).is_empty());
     }
 
     fn stop(s: Ms, e: Ms, lat: f64) -> Stop {
-        Stop { s, e, lat, lon: -97.0 }
+        Stop { s, e, lat, lon: -30.0 }
     }
 
     #[test]
     fn stops_within_eighty_meters_are_one_place_centred_on_them() {
-        let all = [stop(0, MIN, 30.0), stop(2 * MIN, 3 * MIN, 30.0005), stop(4 * MIN, 5 * MIN, 30.01)];
+        let all = [stop(0, MIN, 0.0), stop(2 * MIN, 3 * MIN, 0.0005), stop(4 * MIN, 5 * MIN, 0.01)];
         let place_of = merge_stops(&all);
         assert_eq!(place_of, vec![0, 0, 1]);
         let found = places(&all, &place_of, &chicago);
         assert_eq!(found.len(), 2);
-        assert!((found[0].lat - 30.00025).abs() < 1e-9);
+        assert!((found[0].lat - 0.00025).abs() < 1e-9);
         assert_eq!(found[0].stop_count, 2);
     }
 
@@ -219,10 +219,10 @@ mod tests {
         let base = chrono::DateTime::parse_from_rfc3339("2026-06-10T00:00:00Z").unwrap().timestamp_millis();
         let all = [
             // An evening-to-morning stay (local 19:00 -> 08:00).
-            stop(base, base + 13 * 60 * MIN, 30.0),
+            stop(base, base + 13 * 60 * MIN, 0.0),
             // Two daytime stays 2 km away.
-            stop(base + 14 * 60 * MIN, base + 20 * 60 * MIN, 30.02),
-            stop(base + 38 * 60 * MIN, base + 44 * 60 * MIN, 30.02),
+            stop(base + 14 * 60 * MIN, base + 20 * 60 * MIN, 0.02),
+            stop(base + 38 * 60 * MIN, base + 44 * 60 * MIN, 0.02),
         ];
         let found = places(&all, &merge_stops(&all), &chicago);
         assert!(found[0].is_home);
