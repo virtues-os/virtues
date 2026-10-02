@@ -17,12 +17,13 @@ f1ae1f25, is live), so both services now have a `:previous` rollback image.
 
 1. **Map fonts.** The first build (2026-09-28) is published, virtues-api
    serves it from `/v1/maps/*` behind the bearer, Caddy keeps no access log
-   and the routes sit outside request tracing, and a dev box synced its world
+   and the routes sit outside request tracing, and a box on a prerelease synced its world
    file and squares on 2026-09-29. But the build's `assets.tar` held 252
    symlinks (font aliases in the upstream assets repo), and the box refuses
    any link in that archive, so no box has fonts or sprites yet. `cut.py` now
-   dereferences them: install it on the server before the next run (the timer
-   fires early each month), then confirm a box logs its assets unpacked.
+   dereferences them, and the fixed job is installed on the server (2026-09-30).
+   After the next run (early each month), confirm a box logs its assets
+   unpacked.
 2. **Move the review demo** (still on the old hosting). Not onto this
    server: a box install beside billing means a second Postgres, a port
    clash, and dev-auth owner access next to the billing service. It needs its
