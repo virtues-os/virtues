@@ -165,7 +165,7 @@ const MIN_FREE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 ///
 /// `None` means proceed. A guard that cannot read the disk must not be the reason
 /// ingest stops — that would trade a rare failure for a certain one.
-fn free_bytes() -> Option<u64> {
+pub(crate) fn free_bytes() -> Option<u64> {
     free_bytes_at(&std::fs::canonicalize(lake_root()).ok()?)
 }
 
