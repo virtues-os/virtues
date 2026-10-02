@@ -10,4 +10,3 @@ pub mod entity_resolver;
 pub mod pair_rotator;
 pub mod setup_ap;
 pub mod sweeper;
-pub mod timeline_builder;

@@ -83,6 +83,7 @@ pub mod years;
 pub mod lifeline;
 pub mod subjects;
 pub mod wiki_articles;
+pub mod timeline;
 pub mod wiki_days;
 pub mod wiki_events;
 pub mod wiki_streams;
