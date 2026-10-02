@@ -1774,12 +1774,6 @@
 										data-agent-id={messageMetadata.get(
 											message.id,
 										)?.agentId || "general"}
-										data-loading={message.role ===
-											"assistant" &&
-											!message.parts.some(
-												(p: any) =>
-													p.type === "text" && p.text,
-											)}
 									>
 										{#if message.role === "checkpoint"}
 											<!-- Compaction checkpoint message -->
@@ -2119,9 +2113,6 @@
 							{/each}
 
 
-							<!-- Optimistic thinking indicator: shows immediately on submit,
-							     only until the AI SDK creates the assistant message (at text-start).
-							     Once the assistant message exists, the in-message ThinkingBlock takes over. -->
 							{#if inRoom}
 								<!-- The step's controls, right under what the room
 								     just said: pinned above the composer they sat a
