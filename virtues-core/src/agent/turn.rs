@@ -145,6 +145,19 @@ pub(super) fn stream_error_code(e: &StreamError) -> ErrorCode {
     }
 }
 
+/// What the client is told about a failed model call. An outage says so up
+/// front: the generic "LLM error" text read as a fault in the request. The
+/// status stays in the text, because the web client classifies by it.
+pub(super) fn stream_error_text(e: &StreamError) -> String {
+    match e {
+        StreamError::LlmError { status, message } if stream::is_transient_status(*status) => format!(
+            "provider unavailable (status {status}): inference is down at the model's provider, \
+             which refused the call twice: {message}"
+        ),
+        _ => e.to_string(),
+    }
+}
+
 /// A call that was running when Stop was pressed, recorded as stopped so the
 /// transcript and the next turn show it ended rather than hung.
 /// The web client matches this text to draw the call as stopped rather than
@@ -398,6 +411,14 @@ mod tests {
             stream_error_code(&StreamError::LlmError { status: 503, message: "x".into() }),
             ErrorCode::ProviderUnavailable
         );
+    }
+
+    #[test]
+    fn an_outage_names_itself_and_keeps_its_status() {
+        let text = stream_error_text(&StreamError::LlmError { status: 503, message: "busy".into() });
+        assert!(text.starts_with("provider unavailable (status 503)"), "{text}");
+        let other = stream_error_text(&StreamError::LlmError { status: 400, message: "bad".into() });
+        assert!(other.starts_with("LLM error (status 400)"), "{other}");
     }
 
     #[test]

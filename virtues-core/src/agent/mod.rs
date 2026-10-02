@@ -273,9 +273,10 @@ impl AgentLoop {
                         // The one ending that IS an error event: the reply
                         // stopped for a reason outside the turn, and the
                         // person needs the card and the retry.
-                        tracing::error!(step, error = %e, "the model stream failed");
+                        let code = turn::stream_error_code(&e);
+                        tracing::error!(step, ?code, error = %e, "the model stream failed");
                         finish = FinishReason::Error;
-                        yield AgentEvent::error(e.to_string(), Some(turn::stream_error_code(&e)), false);
+                        yield AgentEvent::error(turn::stream_error_text(&e), Some(code), false);
                         break;
                     }
                 };
