@@ -513,10 +513,16 @@ impl SemanticSearchEngine {
         }
         let entity_filter = !filters.entities.is_empty();
         if entity_filter {
+            // A record that mentions the subject, or the subject's own article.
+            // Articles are not in `wiki_refs` (it links records to subjects),
+            // so without the second arm, filtering by a person excludes the one
+            // page written about them.
             filter_sql.push_str(&format!(
-                " AND EXISTS (SELECT 1 FROM wiki_refs er \
+                " AND (EXISTS (SELECT 1 FROM wiki_refs er \
                   WHERE er.source_table = se.source_table AND er.source_id = se.record_id \
-                  AND er.entity_id = ANY(${next}))",
+                  AND er.entity_id = ANY(${next})) \
+                  OR (se.ontology = 'wiki_article' AND EXISTS (SELECT 1 FROM wiki_articles wa \
+                  WHERE wa.page_id = se.record_id AND wa.subject_id = ANY(${next}))))",
             ));
             next += 1;
         }
@@ -1134,4 +1140,65 @@ fn parse_date_filter(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         return Some(d.and_hms_opt(0, 0, 0)?.and_utc());
     }
     None
+}
+
+/// Filtering by a subject has to keep the page written about it: the article
+/// is not in `wiki_refs`, which links records to subjects, so the filter
+/// matches it by `wiki_articles.subject_id` instead.
+#[cfg(test)]
+mod entity_filter_tests {
+    use super::*;
+
+    #[sqlx::test]
+    async fn a_subjects_own_article_survives_its_entity_filter(pool: PgPool) {
+        for sql in [
+            "INSERT INTO app_pages (id, title, kind, content)
+               VALUES ('page-david', 'David Okafor', 'article', 'David writes most mornings.'),
+                      ('page-nick', 'Nick', 'article', 'Nick writes most evenings.')",
+            "INSERT INTO wiki_articles (id, subject_type, subject_id, page_id)
+               VALUES ('art-david', 'person', 'person_david', 'page-david'),
+                      ('art-nick', 'person', 'person_nick', 'page-nick')",
+            "INSERT INTO search_embeddings
+               (id, ontology, record_id, model, chunk_index, content, source_table, bm25_len, doc_hash)
+             VALUES ('wiki_article:page-david:0', 'wiki_article', 'page-david', 'test-model', 0,
+                     'David writes most mornings.', 'app_pages', 4, 'h'),
+                    ('wiki_article:page-nick:0', 'wiki_article', 'page-nick', 'test-model', 0,
+                     'Nick writes most evenings.', 'app_pages', 4, 'h')",
+        ] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        }
+        let dim: i32 = sqlx::query_scalar(
+            "SELECT atttypmod FROM pg_attribute
+             WHERE attrelid = 'search_vectors'::regclass AND attname = 'embedding'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let qv = Vector::from(vec![0.1f32; dim as usize]);
+        for id in ["wiki_article:page-david:0", "wiki_article:page-nick:0"] {
+            sqlx::query("INSERT INTO search_vectors (embedding_id, embedding) VALUES ($1, $2)")
+                .bind(id)
+                .bind(&qv)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let engine = SemanticSearchEngine::new(Arc::new(pool));
+        let filters = SearchFilters {
+            ontologies: vec![],
+            date_after: None,
+            date_before: None,
+            entities: vec!["person_david".into()],
+            nb_records: vec![],
+            nb_entities: vec![],
+            scope_mode: ScopeMode::Weighted,
+        };
+        let hits = engine
+            .recall_and_fuse(&qv, &["writes".to_string()], &filters, 10)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = hits.iter().map(|h| h.record_id.as_str()).collect();
+        assert_eq!(ids, vec!["page-david"], "only David's own article");
+    }
 }
