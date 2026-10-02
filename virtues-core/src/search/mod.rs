@@ -32,6 +32,7 @@ pub mod embedder;
 pub mod indexer;
 pub mod query;
 pub mod reranker;
+pub mod wiki_first;
 
 pub use embedder::{get_embedder, Embedder, LocalEmbedder};
 pub use indexer::run_embedding_job;
