@@ -1062,4 +1062,30 @@ mod tests {
             );
         }
     }
+
+    /// The web client keeps one presentation entry per tool (its noun, its
+    /// depth, its line in the thinking block), and those tables drifted from
+    /// this list unseen: a tool with no entry renders under its raw id. This
+    /// writes the ids where a vitest diffs them against the client's table.
+    /// Regenerate with `UPDATE_FIXTURES=1 cargo test -p virtues-registry tool_ids`.
+    #[test]
+    fn tool_ids_fixture_is_current() {
+        let mut ids: Vec<String> = default_tools().into_iter().map(|t| t.id).collect();
+        ids.sort();
+        let want = serde_json::to_string_pretty(&ids).unwrap() + "\n";
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apps/web/src/lib/ai/fixtures/tool-ids.json");
+        if std::env::var("UPDATE_FIXTURES").is_ok() {
+            std::fs::write(&path, &want).expect("write fixture");
+            return;
+        }
+        let have = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!("{}: {e} (run with UPDATE_FIXTURES=1 to write it)", path.display())
+        });
+        assert_eq!(
+            have, want,
+            "{} is stale: the tool registry changed. Regenerate with UPDATE_FIXTURES=1, then give the new tool an entry in the web client's toolPresentation.ts.",
+            path.display()
+        );
+    }
 }

@@ -112,3 +112,22 @@ describe("toUiMessage", () => {
 		expect(msg.parts.map((p: any) => p.type)).toEqual(["tool-create_page", "tool-web_search"]);
 	});
 });
+
+describe("splitTurn intent", () => {
+	const t = (s: string) => ({ type: "text", text: s });
+	const call = (n: string) => ({ type: `tool-${n}`, toolCallId: n });
+
+	it("is the line that introduced the call in flight", () => {
+		const turn = splitTurn([t("Checking your messages."), call("sql_query")], true);
+		expect(turn.intent).toBe("Checking your messages.");
+	});
+
+	it("goes quiet once the model makes a call without a word", () => {
+		const turn = splitTurn(
+			[t("Checking your messages."), call("sql_query"), call("web_search")],
+			true,
+		);
+		expect(turn.intent).toBe("");
+		expect(turn.narration).toEqual(["Checking your messages."]);
+	});
+});

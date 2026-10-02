@@ -3,27 +3,21 @@
 	import { cubicOut } from "svelte/easing";
 	import ThinkingMark from "./ThinkingMark.svelte";
 	import { toolErrorSummary } from "$lib/components/chat/state/toolError";
+	import {
+		describeTool,
+		toolDepth,
+		toolName,
+		toolNoun,
+		toolStatus,
+		type ToolPart,
+	} from "$lib/components/chat/state/toolPresentation";
 	import type { AgentModeId } from "$lib/config/agentModes";
-
-	interface ToolCallPart {
-		type: string;
-		toolCallId?: string;
-		toolName?: string;
-		input?: Record<string, unknown>;
-		state?:
-			| "pending"
-			| "input-available"
-			| "output-available"
-			| "output-error";
-		output?: unknown;
-		errorText?: string;
-	}
 
 	interface Props {
 		/** Whether the AI is actively thinking/processing */
 		isThinking: boolean;
 		/** Tool call parts from the message */
-		toolCalls: ToolCallPart[];
+		toolCalls: ToolPart[];
 		/** Reasoning/thinking text from the model */
 		reasoningContent?: string;
 		/**
@@ -32,6 +26,12 @@
 		 * before reaching for a tool; the newest one is the status label.
 		 */
 		narration?: string[];
+		/**
+		 * The narration line that introduced the call in flight, if one did
+		 * (`splitTurn`). An older line is not a status: the model may make
+		 * later calls without a word, and the label kept saying the first.
+		 */
+		intent?: string;
 		/** Duration in seconds spent thinking */
 		duration?: number;
 		/**
@@ -52,6 +52,7 @@
 		toolCalls = [],
 		reasoningContent = "",
 		narration = [],
+		intent = "",
 		duration = 0,
 		turnSeconds = 0,
 		agentMode = "chat",
@@ -67,53 +68,9 @@
 
 	/**
 	 * HOW DEEP, in dots. See ThinkingMark for what the dots mean and why they
-	 * are dots; this is the only place that decides which number is true.
-	 *
-	 * There is no enum for "kind of thinking" anywhere in the system, and there
-	 * should not be one — nothing on the wire knows it. What we do know is the
-	 * tool in flight, how long the turn has run, how many calls it has made, and
-	 * the mode the person chose. `ToolCategory` in the registry looks like the
-	 * answer and is not: it is a grouping for settings UI, where `think` and
-	 * `code_interpreter` are Data and `read_asset` is Search. The switch in
-	 * `getToolDescription` below is the real table of tools we have something to
-	 * say about, so the depth lives beside it and the two cannot drift.
-	 *
-	 * Depth is how far it went. The WORDS say what kind of work it is. Keeping
-	 * those orthogonal is what stops this needing twenty states.
+	 * are dots; this is the only place that decides which number is true. Each
+	 * tool's own depth lives with the rest of how it reads (toolPresentation).
 	 */
-	const TOOL_DEPTH: Record<string, 3 | 4 | 5> = {
-		// Reasoning in place, with what is already loaded.
-		think: 3,
-		code_interpreter: 3,
-		// Out to something: the record, the web, a file, a page, an applet.
-		semantic_search: 4,
-		sql_query: 4,
-		sql_write: 4,
-		shell: 4,
-		web_search: 4,
-		read_asset: 4,
-		get_page_content: 4,
-		create_page: 4,
-		edit_page: 4,
-		revise_article: 4,
-		write_it_up: 4,
-		generate_image: 4,
-		update_memory: 4,
-		propose_narrative_identity_edit: 4,
-		get_project_item: 4,
-		record_introductions: 4,
-		skip_step: 4,
-		list_applets: 4,
-		get_applet: 4,
-		setup_applet: 4,
-		edit_applet: 4,
-		delete_applet: 4,
-		run_applet: 4,
-		update_applet_memory: 4,
-		// Many passes at once, by definition: this one IS the fan-out.
-		dispatch_subagents: 5,
-	};
-
 	/** A turn this long is a long one, whatever it is doing. */
 	const LONG_TURN_MS = 15_000;
 	/** Past this, settle into the calmer form of whatever is playing. */
@@ -137,12 +94,10 @@
 	 * starting looks like. Both the label and the depth read this, so they can
 	 * never describe different calls.
 	 */
-	const toolInFlight = $derived.by(() => {
-		const pending = toolCalls.filter(
-			(t) => t.state === "pending" || t.state === "input-available" || !t.state,
-		);
-		return pending.at(-1) ?? toolCalls.at(-1);
-	});
+	const toolRunning = $derived(
+		toolCalls.findLast((t) => toolStatus(t, isThinking) === "running"),
+	);
+	const toolInFlight = $derived(toolRunning ?? toolCalls.at(-1));
 
 	/**
 	 * THE LABEL IS WHAT IS HAPPENING, not a word drawn from a hat.
@@ -159,17 +114,19 @@
 	 * it is doing. So: the model's own last clause, or the tool in flight, and
 	 * only then a plain fallback. Nothing new is fetched and no second model is
 	 * asked — a lite model reading the tool's arguments could only paraphrase
-	 * what `getToolDescription` already derives for free, and would not know
-	 * WHY the call is being made, which is the one thing the narration does.
+	 * what `describeTool` already derives for free, and would not know WHY
+	 * the call is being made, which is the one thing the narration does.
 	 */
 	const thinkingLabel = $derived.by(() => {
-		const said = lastIntent(narration);
+		const said = lastIntent(intent);
 		if (said) return said;
 
-		// Nothing said yet — the tool in flight is the next best truth.
-		const current = toolInFlight;
-		if (current && getToolName(current) !== "think") {
-			return getToolDescription(current, true, true);
+		// Nothing said for this call — the call itself is the next best truth.
+		// Only one still running: a finished call in the present tense was
+		// the label while the reply was already being written.
+		const current = toolRunning;
+		if (current && toolName(current) !== "think") {
+			return describeTool(current, true, true);
 		}
 		// Long and silent: "Thinking" stops being informative somewhere around
 		// the fifteen-second mark, and saying so is the one thing we know that
@@ -180,19 +137,21 @@
 	/**
 	 * The last clause of the newest thing the model said.
 	 *
-	 * The prompt asks for the line to END with what it is about to do, because
-	 * the sentence before it is usually a finding — worth reading, but not a
-	 * status. Taking the last sentence gets the intent without the preamble,
-	 * and degrades to the whole line for a model that ignores the shape.
+	 * The prompt asks for the line to END with a clause naming what it is
+	 * about to do, because what comes before is usually a finding — worth
+	 * reading, but not a status. A clause is often joined by a dash or a
+	 * semicolon rather than a full stop ("He wrote twice in August — checking
+	 * September."), so those split too. Degrades to the whole line for a
+	 * model that ignores the shape.
 	 */
-	function lastIntent(lines: string[]): string {
-		const line = lines.at(-1)?.trim();
+	function lastIntent(line: string): string {
+		line = line.trim();
 		if (!line) return "";
-		const sentences = line.split(/(?<=[.!?])\s+/).filter((t) => t.trim());
-		const last = (sentences.at(-1) ?? line).trim();
+		const pieces = line.split(/(?<=[.!?])\s+|\s+[—–]\s+|;\s+/).filter((t) => t.trim());
+		const last = (pieces.at(-1) ?? line).trim();
 		// A whole paragraph is not a label; better to fall through to the tool.
 		if (last.length > 90) return "";
-		return last;
+		return last.charAt(0).toUpperCase() + last.slice(1);
 	}
 
 	/**
@@ -208,11 +167,10 @@
 
 		// The same call the label is describing — including the one that just
 		// returned, so the gap before the next starts does not flick a dot off.
-		const name = toolInFlight ? getToolName(toolInFlight) : "";
-		if (name === "dispatch_subagents") return 5;
+		const base = toolInFlight ? toolDepth(toolName(toolInFlight)) : 3;
+		if (base === 5) return 5;
 
 		const floor = agentMode === "chat" ? 3 : 4;
-		const base = name ? (TOOL_DEPTH[name] ?? 4) : 3;
 		return Math.max(floor, base) as 3 | 4 | 5;
 	});
 
@@ -291,218 +249,6 @@
 		return `${mins}m ${secs}s`;
 	}
 
-	// Get readable tool name
-	function getToolName(tool: ToolCallPart): string {
-		if (tool.toolName) return tool.toolName;
-		if (tool.type?.startsWith("tool-")) return tool.type.slice(5);
-		return tool.type || "tool";
-	}
-
-	/**
-	 * A tool's name as a person would say it, for the collapsed header.
-	 *
-	 * The header used to print the raw ids — `semantic_search, sql_query` —
-	 * while the expanded list beneath it spoke prose. Two registers for one
-	 * fact, and the register the user meets FIRST was the internal one.
-	 */
-	const TOOL_NOUNS: Record<string, string> = {
-		think: "thinking",
-		web_search: "the web",
-		semantic_search: "your records",
-		sql_query: "your data",
-		read_asset: "a file",
-		get_page_content: "a page",
-		create_page: "a new page",
-		edit_page: "a page",
-		generate_image: "an image",
-		code_interpreter: "a calculation",
-		dispatch_subagents: "a parallel search",
-		run_applet: "an applet",
-		update_memory: "memory",
-		write_it_up: "an article",
-		revise_article: "an article",
-		get_project_item: "a project",
-	};
-
-	function humanToolName(name: string): string {
-		return TOOL_NOUNS[name] ?? name.replace(/_/g, " ");
-	}
-
-	/**
-	 * A model-written argument cut to fit the one-line header: on a word
-	 * boundary, with an ellipsis. The status line had three sources and only
-	 * the narration had a budget, so a tool line quoting a long query wrapped
-	 * the header onto two ragged lines. The expanded list passes the full text.
-	 */
-	const LABEL_ARG_CHARS = 40;
-	function clip(text: string, max = LABEL_ARG_CHARS): string {
-		const flat = text.replace(/\s+/g, " ").trim();
-		if (flat.length <= max) return flat;
-		const cut = flat.slice(0, max);
-		const space = cut.lastIndexOf(" ");
-		return `${(space > max / 2 ? cut.slice(0, space) : cut).replace(/[\s,.;:]+$/, "")}…`;
-	}
-
-	/** `pending ? a : b` — one place, so no description forgets the distinction. */
-	function tense(pending: boolean, doing: string, done: string): string {
-		return pending ? doing : done;
-	}
-
-	/**
-	 * What one tool call is doing, or did.
-	 *
-	 * TENSE IS A PARAMETER, not a per-string accident. This list read
-	 * "Searching:", "Searched the web for", "Queried messages" and "Planning:"
-	 * in one column — every tense at once, so nothing told you whether a line
-	 * was happening or had happened. The row already knows (`isPending` draws
-	 * the spinner); it just wasn't telling the words.
-	 *
-	 * The twelve branches that used to sit at the bottom of this switch —
-	 * `calendar`, `get_contacts`, `recall`, `query_database` and friends — named
-	 * no tool that exists. Meanwhile two dozen real ones (pages, applets,
-	 * images, subagents) had no prose at all and fell to the default, which
-	 * `.replace(/\b\w/g, (c) => c)` left lowercase: it replaced each word's
-	 * first letter with itself. An unmapped tool rendered as "create page".
-	 */
-	function getToolDescription(tool: ToolCallPart, pending = false, short = false): string {
-		const name = getToolName(tool);
-		const input = tool.input || {};
-		// `short`: the header's live label, one line. The list gets it whole.
-		const arg = (text: string) => (short ? clip(text) : text);
-
-		switch (name) {
-			case "think": {
-				const thought = (input.thought as string) || "";
-				const preview = thought.length > 80 ? thought.slice(0, 80) + "…" : thought;
-				return `${tense(pending, "Planning", "Planned")}: "${preview}"`;
-			}
-			case "web_search":
-				return `${tense(pending, "Searching", "Searched")} the web for "${arg(String(input.query || "information"))}"`;
-			case "semantic_search": {
-				// The tool takes `queries` (up to four phrasings of one need) and
-				// keeps `query` only for back-compat — and its own description tells
-				// the model to prefer the array. Reading `query` alone rendered
-				// `Searching: ""` for every call that followed that advice, which
-				// read as a search with nothing in it rather than the widest search
-				// we do. Same precedence the tool itself applies; the other
-				// phrasings become a count, since four wordings of one question are
-				// noise to read in full.
-				const list = (
-					Array.isArray(input.queries) ? (input.queries as unknown[]) : []
-				).filter((q): q is string => typeof q === "string" && q.trim() !== "");
-				if (list.length === 0 && typeof input.query === "string" && input.query.trim()) {
-					list.push(input.query);
-				}
-				const verb = tense(pending, "Searching", "Searched");
-				if (list.length === 0) return `${verb} your records`;
-				const first = short ? clip(list[0]) : list[0].slice(0, 60);
-				const more = list.length > 1 ? ` +${list.length - 1} more` : "";
-				return `${verb} your records for "${first}"${more}`;
-			}
-			case "sql_query": {
-				const op = input.operation as string;
-				if (op === "list_tables") {
-					return tense(pending, "Listing what data there is", "Listed what data there is");
-				}
-				if (op === "get_schema") {
-					const tables = input.tables as string[] | undefined;
-					const verb = tense(pending, "Checking the shape of", "Checked the shape of");
-					if (tables?.length) {
-						const formatted = tables
-							.slice(0, 2)
-							.map((t) => plainTableName(t))
-							.join(", ");
-						const more = tables.length > 2 ? ` +${tables.length - 2} more` : "";
-						return `${verb} ${formatted}${more}`;
-					}
-					return `${verb} a table`;
-				}
-				if (op === "query") {
-					const sql = (input.sql as string) || "";
-					const tableName = plainTableName(sql.match(/FROM\s+([a-z_]+)/i)?.[1] ?? "");
-					const verb = tense(pending, "Reading", "Read");
-					return tableName ? `${verb} your ${tableName}` : `${verb} your data`;
-				}
-				return tense(pending, "Reading your data", "Read your data");
-			}
-			case "read_asset":
-				return tense(pending, "Opening a file", "Opened a file");
-			case "get_page_content":
-				return tense(pending, "Reading a page", "Read a page");
-			case "create_page":
-				return tense(pending, "Writing a new page", "Wrote a new page");
-			case "edit_page":
-				return tense(pending, "Editing a page", "Edited a page");
-			case "generate_image":
-				return tense(pending, "Making an image", "Made an image");
-			case "code_interpreter":
-				return tense(pending, "Working something out", "Worked something out");
-			case "dispatch_subagents":
-				return tense(pending, "Searching several ways at once", "Searched several ways at once");
-			case "run_applet":
-				return tense(pending, "Running an applet", "Ran an applet");
-			case "update_memory":
-				return tense(pending, "Noting something to remember", "Noted something to remember");
-			case "write_it_up":
-				return tense(pending, "Writing it up", "Wrote it up");
-			case "revise_article":
-				return tense(pending, "Revising an article", "Revised an article");
-			case "sql_write":
-				return tense(pending, "Writing to your records", "Wrote to your records");
-			case "shell": {
-				// The command itself, not a paraphrase: in sudo mode this line
-				// is the owner's record of what ran on their server.
-				const command = ((input.command as string) || "").trim().split("\n")[0];
-				const shown = short
-					? arg(command)
-					: command.length > 90
-						? `${command.slice(0, 89)}…`
-						: command;
-				const verb = tense(pending, "Running", "Ran");
-				return shown ? `${verb} ${shown}` : tense(pending, "Running a command", "Ran a command");
-			}
-			case "propose_narrative_identity_edit":
-				return tense(
-					pending,
-					"Suggesting a change to how you're described",
-					"Suggested a change to how you're described",
-				);
-			case "list_applets":
-			case "get_applet":
-				return tense(pending, "Checking what's set up", "Checked what's set up");
-			case "setup_applet":
-				// `{guide: true}` only reads the authoring guide; it sets nothing up.
-				return input.guide === true
-					? tense(pending, "Reading how applets work", "Read how applets work")
-					: tense(pending, "Setting up an applet", "Set up an applet");
-			case "edit_applet":
-				return tense(pending, "Changing an applet", "Changed an applet");
-			case "delete_applet":
-				return tense(pending, "Removing an applet", "Removed an applet");
-			case "update_applet_memory":
-				return tense(pending, "Noting something for next time", "Noted something for next time");
-			case "get_project_item":
-				return tense(pending, "Opening something you're working on", "Opened something you're working on");
-			case "record_introductions":
-				return tense(pending, "Writing the introductions", "Wrote the introductions");
-			default: {
-				// Sentence case, not the machine's name. Whatever is here is a
-				// tool nobody has written a line for yet, so at least say it the
-				// way a person would read it.
-				const words = humanToolName(name);
-				return words.charAt(0).toUpperCase() + words.slice(1);
-			}
-		}
-	}
-
-	/** `data_communication_message` -> `messages`. The prefixes are our namespaces. */
-	function plainTableName(table: string): string {
-		return table
-			.replace(/^(data|wiki|narrative)_/, "")
-			.replace(/^(communication|health|financial|activity|content)_/, "")
-			.replace(/_/g, " ");
-	}
-
 	// Check if we have content
 	const hasContent = $derived(
 		reasoningContent || toolCalls.length > 0 || narration.length > 0,
@@ -511,9 +257,9 @@
 	// Get unique tools for collapsed summary (filter out "think" — rendered inline, not as a tool)
 	const uniqueToolNames = $derived.by(() => {
 		const names = toolCalls
-			.map((t) => getToolName(t))
+			.map(toolName)
 			.filter((n) => n !== "think")
-			.map(humanToolName);
+			.map(toolNoun);
 		return [...new Set(names)];
 	});
 </script>
@@ -616,12 +362,10 @@
 			{#if toolCalls.length > 0}
 				<ul class="tool-list">
 					{#each toolCalls as tool, index (tool.toolCallId || `tool-${index}`)}
-						{@const isPending =
-							tool.state === "pending" ||
-							tool.state === "input-available" ||
-							!tool.state}
-						{@const isError = tool.state === "output-error"}
-						{@const isThinkTool = getToolName(tool) === "think"}
+						{@const status = toolStatus(tool, isThinking)}
+						{@const isPending = status === "running"}
+						{@const isError = status === "failed"}
+						{@const isThinkTool = toolName(tool) === "think"}
 						{#if isThinkTool}
 							<li class="think-item">
 								<p class="think-text">{tool.input?.thought || ""}</p>
@@ -631,6 +375,7 @@
 								class="tool-item"
 								class:pending={isPending}
 								class:error={isError}
+								class:unfinished={status === "unfinished"}
 							>
 								{#if isPending}
 									<span class="tool-spinner"></span>
@@ -645,7 +390,7 @@
 								     for the transcript (ChatView keeps the body-level
 								     error for a turn that ENDED on the failure). -->
 								<span class="tool-description">
-									{getToolDescription(tool, isPending)}{#if isError && tool.errorText}<span class="tool-reason"> · failed: {toolErrorSummary(tool.errorText)}</span>{/if}
+									{describeTool(tool, isPending || status === "unfinished")}{#if isError && tool.errorText}<span class="tool-reason"> · failed: {toolErrorSummary(tool.errorText)}</span>{:else if status === "unfinished"}<span class="tool-reason"> · didn't finish</span>{/if}
 								</span>
 							</li>
 						{/if}
@@ -870,6 +615,10 @@
 	}
 
 	.tool-item.pending {
+		color: var(--color-foreground-muted);
+	}
+
+	.tool-item.unfinished {
 		color: var(--color-foreground-muted);
 	}
 

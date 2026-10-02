@@ -64,6 +64,12 @@ export interface SplitTurn {
 	reasoning: string;
 	/** Text runs that came before the reply: the model saying what it was about to do. */
 	narration: string[];
+	/**
+	 * The newest narration run, if the call right after it is the newest
+	 * call — the line that introduced what is in flight. Empty when the
+	 * model has since made a call without saying anything.
+	 */
+	intent: string;
 	/** Index of the first part that belongs in the body; text before it is narration. */
 	bodyFromIndex: number;
 	/** Whether the thinking block has anything to show. */
@@ -106,13 +112,18 @@ export function splitTurn(parts: any[], isStreaming: boolean): SplitTurn {
 		.map((p) => p.text || "")
 		.filter(Boolean)
 		.join("\n");
-	const narration = parts
-		.filter((p, i) => isText(p) && i < bodyFromIndex)
-		.map((p) => p.text.trim());
+	const narrationAt = parts
+		.map((p, i) => i)
+		.filter((i) => isText(parts[i]) && i < bodyFromIndex);
+	const narration = narrationAt.map((i) => parts[i].text.trim());
+	const lastSaid = narrationAt.at(-1) ?? -1;
+	const callsSince = parts.filter((p, i) => i > lastSaid && p.type.startsWith("tool-")).length;
+	const intent = lastSaid >= 0 && callsSince === 1 ? narration[narration.length - 1] : "";
 	return {
 		toolParts,
 		reasoning,
 		narration,
+		intent,
 		bodyFromIndex,
 		hasThinkingContent: !!reasoning || toolParts.length > 0 || narration.length > 0,
 	};
