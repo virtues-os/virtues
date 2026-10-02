@@ -249,59 +249,6 @@ fn purge_legacy_caches() {
     });
 }
 
-/// The web-mercator tile at zoom `z` holding a point, as `(x, y)`.
-pub(crate) fn tile_at(lat: f64, lon: f64, z: u8) -> (u32, u32) {
-    let n = f64::from(1u32 << z);
-    let max = (1u32 << z) - 1;
-    let x = ((lon + 180.0) / 360.0 * n).floor().max(0.0) as u32;
-    let merc = lat.to_radians().tan().asinh();
-    let y = ((1.0 - merc / std::f64::consts::PI) / 2.0 * n).floor().max(0.0) as u32;
-    (x.min(max), y.min(max))
-}
-
-/// One vector tile, inflated, for a reader on the box rather than a browser.
-pub(crate) struct DetailedTile {
-    pub z: u8,
-    pub x: u32,
-    pub y: u32,
-    /// The raw Mapbox Vector Tile.
-    pub mvt: Vec<u8>,
-}
-
-/// The most detailed tile the box holds at a point - a home square's z15,
-/// else a visited square's z13 - or `None` where only the world overview
-/// covers it, or the tile can't be read. For server-side readers of the map's
-/// own data, such as the Timeline's open-water test.
-pub(crate) async fn detailed_tile_at(lat: f64, lon: f64) -> Option<DetailedTile> {
-    let reg = registry().await;
-    for tier in [Tier::Home, Tier::Visited] {
-        let z = tier.max_zoom();
-        let (x, y) = tile_at(lat, lon, z);
-        let Some(archive) = reg.find(tier, z, x, y) else { continue };
-        let coord = TileCoord::new(z, x, y).ok()?;
-        let bytes = match archive.reader.get_tile(coord).await {
-            Ok(Some(b)) => b,
-            Ok(None) => return None,
-            Err(e) => {
-                tracing::warn!("maps: reading {tier:?} {z}/{x}/{y}: {e}");
-                return None;
-            }
-        };
-        let mvt = if archive.gzip {
-            let mut out = Vec::new();
-            if let Err(e) = std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&bytes[..]), &mut out) {
-                tracing::warn!("maps: inflating {tier:?} {z}/{x}/{y}: {e}");
-                return None;
-            }
-            out
-        } else {
-            bytes.to_vec()
-        };
-        return Some(DetailedTile { z, x, y, mvt });
-    }
-    None
-}
-
 // ─── HTTP ───────────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]

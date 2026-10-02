@@ -567,9 +567,6 @@ pub struct TimelineDayView {
     pub chunks: Vec<TimelineChunk>,
     /// Raw GPS points — used by the map polyline (the actual path you walked)
     pub points: Vec<TimelinePoint>,
-    /// The last raw GPS point before the day starts, so a day with no fixes can
-    /// still say where the phone was last measured, and when.
-    pub last_point_before: Option<TimelinePoint>,
 }
 
 /// Get location visits for a day, returned as timeline chunks with their
@@ -673,28 +670,10 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
 
     let points: Vec<TimelinePoint> = point_rows.iter().filter_map(timeline_point).collect();
 
-    // The last fix before the day: a day with no location of its own can still
-    // say where the phone was last measured, and when.
-    let last_point_before = sqlx::query(
-        r#"
-        SELECT latitude, longitude, occurred_at, horizontal_accuracy, speed
-        FROM data_location_point
-        WHERE occurred_at < $1
-        ORDER BY occurred_at DESC
-        LIMIT 1
-        "#,
-    )
-    .bind(start_of_day)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get the last location point: {}", e)))?
-    .and_then(|row| timeline_point(&row));
-
     Ok(TimelineDayView {
         date: date.to_string(),
         chunks,
         points,
-        last_point_before,
     })
 }
 
@@ -702,7 +681,7 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
 /// row already in hand — the query's own error is handled by the caller — and
 /// a point missing a coordinate or a timestamp is one this timeline cannot
 /// place, so it is dropped rather than invented.
-fn timeline_point(row: &sqlx::postgres::PgRow) -> Option<TimelinePoint> {
+pub(crate) fn timeline_point(row: &sqlx::postgres::PgRow) -> Option<TimelinePoint> {
     use sqlx::Row;
     let lat: Option<f64> = row.try_get("latitude").ok();
     let lng: Option<f64> = row.try_get("longitude").ok();

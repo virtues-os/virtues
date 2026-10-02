@@ -21,14 +21,8 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         // Timeline day (location chunks for movement map)
         .route("/api/timeline/day/:date", get(timeline_get_day_handler))
-        // The Timeline's derived stays, drives, nights and moments over a window
-        .route("/api/timeline/derived", get(timeline_derived_handler))
-        // One local day's bounds, in the zone the day woke up in
-        .route("/api/timeline/day-window/:date", get(timeline_day_window_handler))
-        // The transcription windows over a window: the inspector's conversations and the mic's coverage
-        .route("/api/timeline/voice", get(timeline_voice_handler))
-        // The scrubber's Body, Calendar and Finance lanes over a window
-        .route("/api/timeline/lanes", get(timeline_lanes_handler))
+        // The Timeline: one local day whole, and which days have a record
+        .route("/api/timeline/days/:date", get(timeline_day_handler))
         .route("/api/timeline/recorded", get(timeline_recorded_handler))
         // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
         .route("/api/today/:date/streams", get(today_streams_handler))
@@ -1172,41 +1166,13 @@ pub async fn wiki_delete_auto_events_handler(
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct TimelineWindowQuery {
-    pub start: chrono::DateTime<chrono::Utc>,
-    pub end: chrono::DateTime<chrono::Utc>,
-}
-
-/// The Timeline's derived stretches and moments overlapping `start`..`end`
-/// (RFC 3339), with their places. The view asks for one local day at a time.
-pub async fn timeline_derived_handler(
-    State(state): State<AppState>,
-    Query(q): Query<TimelineWindowQuery>,
-) -> Response {
-    if q.end <= q.start {
-        return error_response(Error::InvalidInput("end must be after start".into()));
+/// One local day of the Timeline (`YYYY-MM-DD`): its bounds and zone, stays,
+/// track, nights, conversations, steps and calendar.
+pub async fn timeline_day_handler(State(state): State<AppState>, Path(date): Path<String>) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(d) => api_response(crate::api::timeline::get_day(state.db.pool(), d).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
     }
-    api_response(crate::timeline::window(state.db.pool(), q.start, q.end).await)
-}
-
-/// The transcription windows overlapping `start`..`end` (RFC 3339): the
-/// inspector's conversations and transcripts, and whether the mic was on.
-pub async fn timeline_voice_handler(State(state): State<AppState>, Query(q): Query<TimelineWindowQuery>) -> Response {
-    if q.end <= q.start {
-        return error_response(Error::InvalidInput("end must be after start".into()));
-    }
-    api_response(crate::timeline::voice(state.db.pool(), q.start, q.end).await)
-}
-
-/// The scrubber's Body, Calendar and Finance lanes over `start`..`end`
-/// (RFC 3339): step bins and their scale, timed calendar events, and which
-/// of those sources are connected.
-pub async fn timeline_lanes_handler(State(state): State<AppState>, Query(q): Query<TimelineWindowQuery>) -> Response {
-    if q.end <= q.start {
-        return error_response(Error::InvalidInput("end must be after start".into()));
-    }
-    api_response(crate::timeline::lanes(state.db.pool(), q.start, q.end).await)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1216,21 +1182,13 @@ pub struct TimelineDaysQuery {
 }
 
 /// The days in `from`..=`to` (`YYYY-MM-DD`, at most 62) with a location fix or
-/// a transcription window: the Timeline month's dots.
+/// a recorded conversation: the Timeline month's dots.
 pub async fn timeline_recorded_handler(State(state): State<AppState>, Query(q): Query<TimelineDaysQuery>) -> Response {
     let span = (q.to - q.from).num_days();
     if !(0..62).contains(&span) {
         return error_response(Error::InvalidInput("to must be on or after from, at most 62 days on".into()));
     }
-    api_response(crate::timeline::recorded_days(state.db.pool(), q.from, q.to).await)
-}
-
-/// A local day's bounds, in the zone the day woke up in (`YYYY-MM-DD`).
-pub async fn timeline_day_window_handler(State(state): State<AppState>, Path(date): Path<String>) -> Response {
-    match date.parse::<chrono::NaiveDate>() {
-        Ok(d) => api_response(crate::timeline::day_window(state.db.pool(), d).await),
-        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
-    }
+    api_response(crate::api::timeline::recorded_days(state.db.pool(), q.from, q.to).await)
 }
 
 /// Get timeline location chunks for a day (movement map)
