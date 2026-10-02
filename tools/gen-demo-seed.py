@@ -1555,6 +1555,7 @@ DO $$
 DECLARE
   cur_anchor date;
   shift_days integer;
+  r record;
 BEGIN
   -- READ THE ANCHOR OUT OF THE DATA, never from a constant. A fixed anchor
   -- makes this file shift again on every run, walking the life further into
@@ -1586,6 +1587,39 @@ BEGIN
   shift_days := current_date - cur_anchor;
   IF shift_days = 0 THEN RETURN; END IF;
 
+  -- MOVE ONLY THE DAY ROWS THIS SET WROTE. Every other table below is
+  -- filtered to this set's ids, and the day rows once were not: the whole of
+  -- `wiki_days` moved while only `p3y_` events moved with it, so any day the
+  -- box made for itself — and every day of another seed — slid away from the
+  -- events and streams still sitting on its old date. The set writes exactly
+  -- `day_<date>` for each generated date, and an id never changes when its
+  -- row moves, so the id still names the date it was written for.
+  CREATE TEMP TABLE _p3y_days ON COMMIT DROP AS
+    SELECT id, date + shift_days AS landing FROM wiki_days
+     WHERE id ~ '^day_[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+       AND substr(id, 5)::date BETWEEN DATE '%FIRST_DAY%' AND DATE '%LAST_DAY%';
+
+  -- A row the box made on a date this set is about to land on would break the
+  -- UNIQUE date, and it is the ordinary case, not an edge: a running box
+  -- creates a hashed-id row for any date someone opens, so the day after the
+  -- life's last one usually exists before the hourly run reaches it, and may
+  -- already hold a paired phone's events. Fold it into the seeded row for that
+  -- date — its events and, when the seeded row has none, its day article —
+  -- then drop it. Raising instead would wedge the re-anchor on the first such
+  -- row and leave the demo ageing a day at a time.
+  FOR r IN
+    SELECT f.id AS foreign_id, o.id AS own_id
+      FROM wiki_days f JOIN _p3y_days o ON f.date = o.landing
+     WHERE f.id NOT IN (SELECT id FROM _p3y_days)
+  LOOP
+    UPDATE wiki_events SET day_id = r.own_id WHERE day_id = r.foreign_id;
+    UPDATE wiki_articles SET subject_id = r.own_id
+     WHERE subject_type = 'day' AND subject_id = r.foreign_id
+       AND NOT EXISTS (SELECT 1 FROM wiki_articles
+                        WHERE subject_type = 'day' AND subject_id = r.own_id);
+    DELETE FROM wiki_days WHERE id = r.foreign_id;
+  END LOOP;
+
   -- `wiki_days.date` is UNIQUE, and Postgres writes a unique index row by row
   -- inside an UPDATE rather than deferring the check to the end of the
   -- statement. A uniform `date + N` therefore collides mid-statement whenever
@@ -1594,8 +1628,8 @@ BEGIN
   -- from there, so neither pass writes a value the column already holds.
   -- (`demo_reanchor.sql` solves the same problem the same way; this file
   -- cannot simply call it, see the header.)
-  UPDATE wiki_days SET date = date + 100000;
-  UPDATE wiki_days SET date = date - 100000 + shift_days;
+  UPDATE wiki_days SET date = date + 100000 WHERE id IN (SELECT id FROM _p3y_days);
+  UPDATE wiki_days SET date = date - 100000 + shift_days WHERE id IN (SELECT id FROM _p3y_days);
   UPDATE wiki_events          SET started_at = started_at + (shift_days || ' days')::interval,
                                   ended_at   = ended_at   + (shift_days || ' days')::interval
                               WHERE id LIKE 'p3y_%%';
@@ -2125,7 +2159,8 @@ def main():
 
     (out / "98_reset.sql").write_text(HEADER + "\n" + RESET)
     (out / "99_reanchor.sql").write_text(
-        HEADER + "\n" + REANCHOR.replace("%ANCHOR%", ANCHOR_END.isoformat()))
+        HEADER + "\n" + REANCHOR.replace("%FIRST_DAY%", START.isoformat())
+                         .replace("%LAST_DAY%", ANCHOR_END.isoformat()))
     run = out / "run.sh"
     run.write_text(RUNSH)
     run.chmod(0o755)
