@@ -580,6 +580,11 @@
 	.exp .grab svg {
 		transform: rotate(0);
 	}
+	@media (prefers-reduced-motion: reduce) {
+		.grab svg {
+			transition: none;
+		}
+	}
 	/* Play and the spans at the left, the clock in the middle, over the
 	   middle of the day (the owner's call; the prototype kept the middle for
 	   its day stepper, which the date card now holds, and the clock at the
@@ -594,7 +599,7 @@
 		justify-self: start;
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: 8px;
 	}
 	.play {
 		width: 27px;
@@ -619,7 +624,7 @@
 		display: inline-flex;
 		/* design-ok: the Dayback prototype's segmented control (owner's call, 2026-09-30) */
 		padding: 2px;
-		border-radius: 8px;
+		border-radius: 6px;
 		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
 	}
 	.tiers button {
