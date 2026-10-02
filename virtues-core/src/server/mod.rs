@@ -227,6 +227,11 @@ fn spawn_background(client: &Virtues, yjs_state: &yjs::YjsState) {
     // day page / timeline fill as the lake does. See `maintenance::entity_resolver`.
     crate::maintenance::entity_resolver::spawn(client.database.clone());
 
+    // Timeline builder: rebuilds the Timeline's derived stays, drives, nights
+    // and moments from the raw record on the same fast clock. See
+    // `maintenance::timeline_builder`.
+    crate::maintenance::timeline_builder::spawn(client.database.clone());
+
     // Hours — the screen's sleep schedule, enforced server-side because sleep
     // is a precedence state (a held button must wake dark glass). No-op off
     // an appliance. See api::system_display::sleep_engine.
