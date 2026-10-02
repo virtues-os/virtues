@@ -169,7 +169,7 @@
 		// Nothing said yet — the tool in flight is the next best truth.
 		const current = toolInFlight;
 		if (current && getToolName(current) !== "think") {
-			return getToolDescription(current, true);
+			return getToolDescription(current, true, true);
 		}
 		// Long and silent: "Thinking" stops being informative somewhere around
 		// the fifteen-second mark, and saying so is the one thing we know that
@@ -328,6 +328,21 @@
 		return TOOL_NOUNS[name] ?? name.replace(/_/g, " ");
 	}
 
+	/**
+	 * A model-written argument cut to fit the one-line header: on a word
+	 * boundary, with an ellipsis. The status line had three sources and only
+	 * the narration had a budget, so a tool line quoting a long query wrapped
+	 * the header onto two ragged lines. The expanded list passes the full text.
+	 */
+	const LABEL_ARG_CHARS = 40;
+	function clip(text: string, max = LABEL_ARG_CHARS): string {
+		const flat = text.replace(/\s+/g, " ").trim();
+		if (flat.length <= max) return flat;
+		const cut = flat.slice(0, max);
+		const space = cut.lastIndexOf(" ");
+		return `${(space > max / 2 ? cut.slice(0, space) : cut).replace(/[\s,.;:]+$/, "")}…`;
+	}
+
 	/** `pending ? a : b` — one place, so no description forgets the distinction. */
 	function tense(pending: boolean, doing: string, done: string): string {
 		return pending ? doing : done;
@@ -349,9 +364,11 @@
 	 * `.replace(/\b\w/g, (c) => c)` left lowercase: it replaced each word's
 	 * first letter with itself. An unmapped tool rendered as "create page".
 	 */
-	function getToolDescription(tool: ToolCallPart, pending = false): string {
+	function getToolDescription(tool: ToolCallPart, pending = false, short = false): string {
 		const name = getToolName(tool);
 		const input = tool.input || {};
+		// `short`: the header's live label, one line. The list gets it whole.
+		const arg = (text: string) => (short ? clip(text) : text);
 
 		switch (name) {
 			case "think": {
@@ -360,7 +377,7 @@
 				return `${tense(pending, "Planning", "Planned")}: "${preview}"`;
 			}
 			case "web_search":
-				return `${tense(pending, "Searching", "Searched")} the web for "${input.query || "information"}"`;
+				return `${tense(pending, "Searching", "Searched")} the web for "${arg(String(input.query || "information"))}"`;
 			case "semantic_search": {
 				// The tool takes `queries` (up to four phrasings of one need) and
 				// keeps `query` only for back-compat — and its own description tells
@@ -378,7 +395,7 @@
 				}
 				const verb = tense(pending, "Searching", "Searched");
 				if (list.length === 0) return `${verb} your records`;
-				const first = list[0].slice(0, 60);
+				const first = short ? clip(list[0]) : list[0].slice(0, 60);
 				const more = list.length > 1 ? ` +${list.length - 1} more` : "";
 				return `${verb} your records for "${first}"${more}`;
 			}
@@ -436,7 +453,11 @@
 				// The command itself, not a paraphrase: in sudo mode this line
 				// is the owner's record of what ran on their server.
 				const command = ((input.command as string) || "").trim().split("\n")[0];
-				const shown = command.length > 90 ? `${command.slice(0, 89)}…` : command;
+				const shown = short
+					? arg(command)
+					: command.length > 90
+						? `${command.slice(0, 89)}…`
+						: command;
 				const verb = tense(pending, "Running", "Ran");
 				return shown ? `${verb} ${shown}` : tense(pending, "Running a command", "Ran a command");
 			}
@@ -543,7 +564,10 @@
 				<span class="duration-text">Worked on this</span>
 			{/if}
 
-			{#if uniqueToolNames.length > 0}
+			<!-- The summary of a finished turn. While it runs, the label already
+			     names the tool in flight, and the two side by side only took
+			     width from the one that is live. -->
+			{#if !isThinking && uniqueToolNames.length > 0}
 				<span class="header-tools">
 					{uniqueToolNames.slice(0, 3).join(", ")}
 					{#if uniqueToolNames.length > 3}
@@ -711,10 +735,31 @@
 		opacity: 1;
 	}
 
+	/* One line, always. The header is status, not content: a long label used
+	   to wrap, and with two flex children each wrapping on its own the row
+	   became two ragged columns. Anything longer ends in an ellipsis; the
+	   whole text is one click away in the list below. */
+	.block-header {
+		max-width: 100%;
+	}
+
 	.header-content {
 		display: flex;
 		align-items: baseline;
 		gap: 8px;
+		min-width: 0;
+		white-space: nowrap;
+	}
+
+	.thinking-text,
+	.header-tools {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.duration-text {
+		flex-shrink: 0;
 	}
 
 	.thinking-text {
