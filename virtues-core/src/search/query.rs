@@ -1131,7 +1131,7 @@ mod live_filter_matrix {
 ///
 /// Accepts what the schema promises (a bare date, read as UTC midnight) and what
 /// a model may send anyway (a full RFC 3339 timestamp).
-fn parse_date_filter(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+pub(crate) fn parse_date_filter(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     let raw = raw.trim();
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(raw) {
         return Some(dt.with_timezone(&chrono::Utc));
