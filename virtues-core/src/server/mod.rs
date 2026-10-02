@@ -929,7 +929,7 @@ mod static_cache_policy_tests {
 
     #[tokio::test]
     async fn fonts_get_a_week_and_revalidate() {
-        let h = probe("/fonts/JJannon-Display-Regular.woff2", "font/woff2").await;
+        let h = probe("/fonts/EBGaramond-Regular-latin.woff2", "font/woff2").await;
         assert_eq!(cache(&h), Some("public, max-age=604800"));
     }
 
@@ -1097,6 +1097,8 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
         Json(serde_json::json!({
             "status": if is_healthy { "healthy" } else { "unhealthy" },
             "version": crate::codename::version(),
+            // What a UI compares against its floor: see crate::api_version.
+            "api_version": crate::api_version::API_VERSION,
             "channel": crate::codename::channel(),
             "commit": env!("GIT_COMMIT"),
             "built_at": env!("BUILD_TIME"),
