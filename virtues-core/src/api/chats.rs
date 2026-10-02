@@ -197,6 +197,12 @@ pub struct MessageResponse {
     pub reasoning_details: Option<serde_json::Value>,
     #[serde(default, with = "crate::api::chat::wire_parts")]
     pub parts: Option<Vec<UIPart>>,
+    /// The span of the turn that wrote an assistant row (migration 0039),
+    /// shown as "Worked for". Absent where it was never recorded.
+    #[serde(rename = "startedAt", skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<Timestamp>,
+    #[serde(rename = "endedAt", skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<Timestamp>,
 }
 
 /// Request to update chat metadata (title and/or icon)
@@ -404,7 +410,8 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
             r#"
             SELECT
                 id, role, content, model, provider, agent_id,
-                reasoning, tool_calls, intent, subject, reasoning_details, created_at, parts
+                reasoning, tool_calls, intent, subject, reasoning_details, created_at, parts,
+                started_at, ended_at
             FROM app_chat_messages
             WHERE chat_id = $1
               AND (subject IS NULL OR subject != 'onboarding_synthetic')
@@ -432,6 +439,8 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
                 let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
                 let timestamp: Timestamp = row.get("created_at");
                 let parts_raw: Option<serde_json::Value> = row.get("parts");
+                let started_at: Option<Timestamp> = row.get("started_at");
+                let ended_at: Option<Timestamp> = row.get("ended_at");
 
                 let tool_calls: Option<Vec<ToolCall>> = tool_calls_raw.and_then(|tc| {
                     serde_json::from_value(tc)
@@ -454,6 +463,8 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
                     subject,
                     reasoning_details,
                     parts,
+                    started_at,
+                    ended_at,
                 }
             })
             .collect();
