@@ -143,19 +143,30 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
     let started = std::time::Instant::now();
     let mut total_embedded = 0u64;
 
+    // Before any draining, so a run that stops at the drain ceiling still
+    // dates every ontology.
+    if !DATES_BACKFILLED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        for ontology in &searchable {
+            let config = ontology.embedding.as_ref().unwrap();
+            let ts = prefix_col(config.timestamp_sql);
+            match backfill_dates(pool, ontology.name, ontology.table_name, &ts).await {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(ontology = ontology.name, dated = n, "backfilled chunk dates"),
+                Err(e) => tracing::error!(
+                    ontology = ontology.name,
+                    error = %e,
+                    "could not backfill chunk dates"
+                ),
+            }
+        }
+    }
+
     'ontologies: for ontology in &searchable {
         let config = ontology.embedding.as_ref().unwrap();
         let table = ontology.table_name;
         let ont_name = ontology.name;
 
         // Find unprocessed records via LEFT JOIN (no cursor — always finds gaps)
-        let prefix_col = |sql: &str| -> String {
-            if sql.contains('.') || sql.contains('(') || sql == "NULL" {
-                sql.to_string()
-            } else {
-                format!("t.{}", sql)
-            }
-        };
         let timestamp_sql = prefix_col(config.timestamp_sql);
         let title_sql = config
             .title_sql
@@ -182,6 +193,10 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
         // The join pins `chunk_index = 0` so a multi-chunk record is one row here,
         // not N.
         //
+        // The timestamp comes back typed. Its text form ('2026-10-02 18:02:52+00')
+        // is not RFC 3339, and parsing it as such stored no date on any chunk, so
+        // every date-filtered search returned nothing.
+        //
         // The staleness test is PARENTHESISED before `embed_where` is appended,
         // and that is load-bearing rather than tidy. The test is a disjunction —
         // never indexed OR indexed from different text — so splicing a scope
@@ -197,7 +212,7 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
              {title} as title, \
              {preview} as preview, \
              {author} as author, \
-             {timestamp}::text as ts, \
+             ({timestamp})::timestamptz as ts, \
              md5(COALESCE({embed_text}, '')) as doc_hash \
              FROM {table} t \
              LEFT JOIN search_embeddings se \
@@ -307,6 +322,45 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
         .await;
 
     Ok(total_embedded)
+}
+
+/// A registry column expression, qualified to the source table's `t` alias
+/// unless it already names a table or is an expression.
+fn prefix_col(sql: &str) -> String {
+    if sql.contains('.') || sql.contains('(') || sql == "NULL" {
+        sql.to_string()
+    } else {
+        format!("t.{}", sql)
+    }
+}
+
+/// Set once per process: the date backfill scans every chunk with no date, and
+/// a record that genuinely has none (a person's article) would be rescanned on
+/// every cron tick.
+static DATES_BACKFILLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Give already-indexed chunks the date their record carries.
+///
+/// The backlog only re-embeds a record whose TEXT changed, so chunks indexed
+/// while dates were being dropped would otherwise stay undated forever, and a
+/// date filter would keep excluding them.
+async fn backfill_dates(
+    pool: &PgPool,
+    ontology: &str,
+    table: &str,
+    timestamp_sql: &str,
+) -> Result<u64> {
+    let done = sqlx::query(&format!(
+        "UPDATE search_embeddings se \
+         SET occurred_at = ({timestamp_sql})::timestamptz \
+         FROM {table} t \
+         WHERE se.ontology = $1 AND se.record_id = t.id \
+           AND se.occurred_at IS NULL AND ({timestamp_sql}) IS NOT NULL"
+    ))
+    .bind(ontology)
+    .execute(pool)
+    .await?;
+    Ok(done.rows_affected())
 }
 
 /// Delete this ontology's embeddings for records that no longer satisfy its
@@ -421,7 +475,7 @@ async fn embed_one_batch(
     table: &str,
 ) -> Result<(usize, u64)> {
     #[allow(clippy::type_complexity)]
-    let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>(sql)
+    let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<String>, Option<String>, Option<chrono::DateTime<chrono::Utc>>, Option<String>)>(sql)
         .bind(ont_name)
         .bind(BATCH_SIZE)
         .fetch_all(pool)
@@ -529,14 +583,6 @@ async fn embed_one_batch(
             }
         };
 
-        // Parse the record timestamp once (config emits via ::text above).
-        let ts_parsed: Option<chrono::DateTime<chrono::Utc>> =
-            timestamp.as_ref().and_then(|s| {
-                chrono::DateTime::parse_from_rfc3339(s)
-                    .ok()
-                    .map(|d| d.with_timezone(&chrono::Utc))
-            });
-
         // Split long records into ~128-token windows (see chunk_text); short
         // records stay a single chunk. Each chunk is its own embedded +
         // lexically-indexed row (chunk_index 0,1,2…).
@@ -546,7 +592,7 @@ async fn embed_one_batch(
             preview,
             author,
             doc_hash,
-            ts: ts_parsed,
+            ts: *timestamp,
             chunks: chunk_text(text),
         });
     }
@@ -1030,5 +1076,80 @@ mod eviction_tests {
                 .unwrap(),
             0
         );
+    }
+}
+
+/// The backfill runs each ontology's `timestamp_sql` against its own table, so
+/// every registered expression has to execute, and a day's article has to land
+/// on that day.
+#[cfg(test)]
+mod date_tests {
+    use super::*;
+
+    async fn index_row(pool: &PgPool, ontology: &str, record_id: &str) {
+        sqlx::query(
+            "INSERT INTO search_embeddings
+               (id, ontology, record_id, model, chunk_index, content, bm25_len, doc_hash, created_at)
+             VALUES ($1, $2, $3, 'test-model', 0, 'text', 1, 'hash', now())",
+        )
+        .bind(format!("{ontology}:{record_id}:0"))
+        .bind(ontology)
+        .bind(record_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn occurred_at(pool: &PgPool, record_id: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+        sqlx::query_scalar("SELECT occurred_at FROM search_embeddings WHERE record_id = $1")
+            .bind(record_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn undated_chunks_take_their_records_date(pool: PgPool) {
+        for sql in [
+            "INSERT INTO wiki_days (id, date) VALUES ('day_2026-03-03', '2026-03-03')",
+            "INSERT INTO app_pages (id, title, kind, content)
+               VALUES ('page-day', 'Tuesday, March 3', 'article', 'A long lunch.'),
+                      ('page-person', 'David Okafor', 'article', 'David writes most mornings.')",
+            "INSERT INTO wiki_articles (id, subject_type, subject_id, page_id)
+               VALUES ('art-day', 'day', 'day_2026-03-03', 'page-day'),
+                      ('art-person', 'person', 'person_david', 'page-person')",
+        ] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO data_content_bookmark
+               (id, url, title, occurred_at, source_stream_id, source_table, source_provider)
+             VALUES ('bm-1', 'https://example.com/a', 'A saved thing',
+                     '2026-02-01T09:30:00Z', 'bm-1', 'test', 'test')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        index_row(&pool, "wiki_article", "page-day").await;
+        index_row(&pool, "wiki_article", "page-person").await;
+        index_row(&pool, "content_bookmark", "bm-1").await;
+
+        for o in virtues_registry::ontologies::registered_ontologies() {
+            let Some(config) = o.embedding.as_ref() else { continue };
+            backfill_dates(&pool, o.name, o.table_name, &prefix_col(config.timestamp_sql))
+                .await
+                .unwrap_or_else(|e| panic!("{}: timestamp_sql does not run: {e}", o.name));
+        }
+
+        assert_eq!(
+            occurred_at(&pool, "bm-1").await.map(|d| d.to_rfc3339()),
+            Some("2026-02-01T09:30:00+00:00".into()),
+        );
+        assert_eq!(
+            occurred_at(&pool, "page-day").await.map(|d| d.to_rfc3339()),
+            Some("2026-03-03T12:00:00+00:00".into()),
+            "a day's article is dated at noon on that day",
+        );
+        assert_eq!(occurred_at(&pool, "page-person").await, None, "a person is not dated");
     }
 }
