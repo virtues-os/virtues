@@ -243,6 +243,9 @@ export function toUiMessage(msg: any, metadata: Map<string, MessageMeta>) {
 		role: msg.role as "user" | "assistant" | "checkpoint",
 		parts: convertMessageToParts(msg, metadata),
 		createdAt: msg.timestamp ? new Date(msg.timestamp) : undefined,
+		// The span of the turn that wrote it, as the box recorded it.
+		startedAt: msg.startedAt ? new Date(msg.startedAt) : undefined,
+		endedAt: msg.endedAt ? new Date(msg.endedAt) : undefined,
 		// The room marks each line it speaks (`gs:done:connect_ai`, …), and
 		// the render needs it to tell a settled step from the one being
 		// asked. Dropped here until now, so every line looked the same.

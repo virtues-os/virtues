@@ -1362,6 +1362,8 @@ async fn chat_handler_inner(
     // ("turn prepared"). Everything here is paid before the first token.
     let started = std::time::Instant::now();
     let ms = |since: std::time::Instant| since.elapsed().as_millis() as u64;
+    // The same moment, kept with the reply: its "Worked for" counts from here.
+    let turn_started_at = crate::types::Timestamp::now();
 
     // The turn's mode, decided once. Some chats are a mode by id (the
     // interview, the getting-started room), whatever the client sent.
@@ -1519,6 +1521,7 @@ async fn chat_handler_inner(
         checkpoint_event,
         turn_token.clone(),
         ghost_permissions,
+        turn_started_at,
     );
     spawn_turn_driver(agent_stream, turn.clone(), turn_token, live_turns, cancel_state, chat_id_str);
 
@@ -1961,6 +1964,8 @@ fn create_agent_stream(
     checkpoint_event: Option<StreamEvent>,
     cancel_token: CancellationToken,
     ghost_permissions: crate::api::chat_permissions::GhostPermissions,
+    // When the box received the request, before history and compaction.
+    started_at: crate::types::Timestamp,
 ) -> Pin<Box<dyn Stream<Item = String> + Send>> {
     let chat_id = request.chat_id.clone();
     // Copied out for the stream block below, which reads `request` for a
@@ -2078,7 +2083,7 @@ fn create_agent_stream(
         let usage = recorder.usage();
         let subject = recorder.subject(was_cancelled, was_unattended);
         let message = recorder.into_message(&model, agent_id, subject);
-        persist_turn(&pool, &chat_id, &model, mode.wire_name(), temporary, message, usage).await;
+        persist_turn(&pool, &chat_id, &model, mode.wire_name(), temporary, message, usage, Some(started_at)).await;
 
         // Clean up cancellation token when stream ends
         cancel_state.remove(&chat_id, &cancel_token);
@@ -2097,6 +2102,7 @@ async fn persist_turn(
     temporary: bool,
     message: Option<ChatMessage>,
     usage: TurnUsage,
+    started_at: Option<crate::types::Timestamp>,
 ) {
     if let Some(assistant_message) = message {
         // WHAT THE REPLY LINKED TO, CHECKED AFTER THE FACT.
@@ -2121,8 +2127,27 @@ async fn persist_turn(
 
         if temporary {
             // Ghost: nothing written. The client keeps the turn in its tab.
-        } else if let Err(e) = append_message(pool, chat_id.to_string(), assistant_message).await {
-            tracing::error!("Failed to save assistant message: {}", e);
+        } else {
+            match append_message(pool, chat_id.to_string(), assistant_message).await {
+                Ok(msg_id) => {
+                    // The turn's span. Its own statement so the shared insert
+                    // paths stay as they are; a failure here costs the
+                    // duration on reload, nothing else.
+                    if let Some(started_at) = started_at {
+                        if let Err(e) = sqlx::query(
+                            "UPDATE app_chat_messages SET started_at = $1, ended_at = created_at WHERE id = $2",
+                        )
+                        .bind(started_at)
+                        .bind(&msg_id)
+                        .execute(pool)
+                        .await
+                        {
+                            tracing::warn!(chat_id = %chat_id, error = %e, "could not record the turn's span");
+                        }
+                    }
+                }
+                Err(e) => tracing::error!("Failed to save assistant message: {}", e),
+            }
         }
     }
 
@@ -2905,8 +2930,9 @@ mod persist_turn_tests {
             .execute(&pool)
             .await
             .unwrap();
+        let began = crate::types::Timestamp::now();
         let (message, usage) = recorded_turn("Hello.");
-        persist_turn(&pool, "chat_p", "anthropic/claude-x", "chat", false, message, usage).await;
+        persist_turn(&pool, "chat_p", "anthropic/claude-x", "chat", false, message, usage, Some(began)).await;
 
         let (role, content, model): (String, String, Option<String>) =
             sqlx::query_as("SELECT role, content, model FROM app_chat_messages WHERE chat_id = 'chat_p'")
@@ -2914,6 +2940,13 @@ mod persist_turn_tests {
                 .await
                 .unwrap();
         assert_eq!((role.as_str(), content.as_str(), model.as_deref()), ("assistant", "Hello.", Some("anthropic/claude-x")));
+        let spanned: bool = sqlx::query_scalar(
+            "SELECT started_at IS NOT NULL AND ended_at >= started_at FROM app_chat_messages WHERE chat_id = 'chat_p'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(spanned, "the row keeps the turn's span");
         let n: i64 = sqlx::query_scalar("SELECT message_count::bigint FROM app_chats WHERE id = 'chat_p'")
             .fetch_one(&pool)
             .await
@@ -2946,7 +2979,7 @@ mod persist_turn_tests {
     async fn a_temporary_turn_writes_only_its_ai_call(pool: PgPool) {
         let (message, usage) = recorded_turn("Off the record.");
         assert!(message.is_some(), "the turn said something; only `temporary` keeps it out");
-        persist_turn(&pool, "chat_ghost", "anthropic/claude-x", "sudo", true, message, usage).await;
+        persist_turn(&pool, "chat_ghost", "anthropic/claude-x", "sudo", true, message, usage, None).await;
 
         assert_eq!(count(&pool, MESSAGES, "chat_ghost").await, 0);
         assert_eq!(count(&pool, USAGE, "chat_ghost").await, 0);
@@ -2968,7 +3001,7 @@ mod persist_turn_tests {
             .unwrap();
         let (message, usage) = recorded_turn("");
         assert!(message.is_none(), "no text and no tools is no message");
-        persist_turn(&pool, "chat_e", "anthropic/claude-x", "council", false, message, usage).await;
+        persist_turn(&pool, "chat_e", "anthropic/claude-x", "council", false, message, usage, None).await;
 
         assert_eq!(count(&pool, MESSAGES, "chat_e").await, 0);
         assert_eq!(count(&pool, USAGE, "chat_e").await, 1);

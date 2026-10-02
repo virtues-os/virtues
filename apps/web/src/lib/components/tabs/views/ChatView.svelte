@@ -933,20 +933,15 @@
 	// Deduplicated messages for rendering
 	const uniqueMessages = $derived(chat?.messages ? deduplicateMessages(chat.messages) : []);
 
-	/** Seconds from each reply's question to the stored reply, for the
-	 *  thinking line of a turn this view did not watch (ThinkingBlock). */
+	/** How long each stored reply's turn worked, from the span the box
+	 *  records with the row (`startedAt`/`endedAt`), for the thinking line of
+	 *  a turn this view did not watch. */
 	const turnSeconds = $derived.by(() => {
 		const out = new Map<string, number>();
-		let askedAt: number | null = null;
-		for (const m of uniqueMessages as { id: string; role: string; createdAt?: Date }[]) {
-			const at = m.createdAt ? new Date(m.createdAt).getTime() : NaN;
-			if (m.role === "user") askedAt = Number.isNaN(at) ? null : at;
-			else if (m.role === "assistant" && askedAt !== null && !Number.isNaN(at) && at > askedAt) {
-				out.set(m.id, (at - askedAt) / 1000);
-				// A second line after the same question (the rooms speak
-				// several) was not the answer's work; it gets no number.
-				askedAt = null;
-			}
+		for (const m of uniqueMessages as { id: string; startedAt?: Date; endedAt?: Date }[]) {
+			if (!m.startedAt || !m.endedAt) continue;
+			const seconds = (m.endedAt.getTime() - m.startedAt.getTime()) / 1000;
+			if (seconds >= 0) out.set(m.id, seconds);
 		}
 		return out;
 	});
