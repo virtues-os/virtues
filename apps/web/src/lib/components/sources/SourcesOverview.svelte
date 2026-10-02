@@ -115,6 +115,17 @@
 			.sort((a, b) => domainRank(a.domain) - domainRank(b.domain) || a.label.localeCompare(b.label));
 	});
 
+	// Fixes keep arriving when the box stops finding stays in them, so the
+	// arrivals grid looks healthy through that failure. This line is the one
+	// place it shows.
+	const coverageLine = $derived.by(() => {
+		const c = streams.find((s) => s.name === 'location_visit')?.coverage;
+		if (!c || c.tracked_hours < 1) return undefined;
+		const stay = Math.round(c.stay_hours);
+		const tracked = Math.round(c.tracked_hours);
+		return `Stays cover ${stay} of the ${tracked} hours your phone reported this week`;
+	});
+
 	const connected = $derived(streams.filter((s) => s.total > 0));
 	const flowing = $derived(streams.filter((s) => s.status === 'live'));
 	const stalled = $derived(streams.filter((s) => s.status === 'stalled'));
@@ -297,7 +308,12 @@
 			</p>
 		{:else}
 			{#each byDomain as g (g.domain)}
-				<StreamGrid title={g.label} streams={g.rows} start={gridStart} />
+				<StreamGrid
+					title={g.label}
+					subtitle={g.domain === domainOf('location_visit') ? coverageLine : undefined}
+					streams={g.rows}
+					start={gridStart}
+				/>
 			{/each}
 		{/if}
 	</section>

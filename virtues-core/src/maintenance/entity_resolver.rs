@@ -33,6 +33,29 @@ const TICK: Duration = Duration::from_secs(900); // 15 minutes
 /// is idempotent so re-processing the overlap is cheap and safe.
 const LOOKBACK_HOURS: i64 = 30;
 
+/// How often the box checks its own stays against the fixes behind them.
+const COVERAGE_EVERY: Duration = Duration::from_secs(24 * 3600);
+
+/// Warn when stays account for under half the week's tracked time.
+///
+/// The fixes keep arriving when the stay detector breaks, so no freshness
+/// check sees it; the stays just thin out. A healthy week sits above 80%. A
+/// week with under a day of tracked time says nothing either way.
+async fn log_stay_coverage(db: &Database) {
+    let since = chrono::Utc::now() - chrono::Duration::days(7);
+    match crate::entity_resolution::places::stay_coverage(db.pool(), since).await {
+        Ok(c) if c.tracked_hours >= 24.0 && c.stay_hours < c.tracked_hours / 2.0 => {
+            tracing::warn!(
+                stay_hours = c.stay_hours,
+                tracked_hours = c.tracked_hours,
+                "stays cover under half of the week's tracked location time"
+            );
+        }
+        Ok(c) => tracing::debug!(stay_hours = c.stay_hours, tracked_hours = c.tracked_hours, "stay coverage"),
+        Err(e) => tracing::warn!(error = %e, "stay coverage check failed"),
+    }
+}
+
 /// Spawn the entity resolver as a background tokio task. Logs resolution counts
 /// when work was done; errors are logged and the loop continues — a transient
 /// DB error must not take the daemon down.
@@ -50,8 +73,13 @@ pub fn spawn(db: Arc<Database>) {
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
         // First tick fires immediately — resolve once at startup so a box that
         // was offline catches up without waiting a full interval.
+        let mut coverage_checked: Option<std::time::Instant> = None;
         loop {
             ticker.tick().await;
+            if coverage_checked.is_none_or(|t| t.elapsed() >= COVERAGE_EVERY) {
+                coverage_checked = Some(std::time::Instant::now());
+                log_stay_coverage(&db).await;
+            }
             let window = TimeWindow::from_lookback_hours(LOOKBACK_HOURS);
             match resolve_entities(&db, window).await {
                 Ok(stats) => {
