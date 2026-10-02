@@ -107,3 +107,11 @@ describe('a checkpoint that arrives while the reply streams', () => {
 		expect(textOf(assistants[1])).toBe('hello back');
 	});
 });
+
+describe('placeCheckpoint on a rejoin', () => {
+	it('does not insert a checkpoint the transcript already has', () => {
+		const cp = { id: 'cp1', role: 'checkpoint' };
+		const messages = [{ id: 'u1', role: 'user' }, cp, { id: 'a1', role: 'assistant' }];
+		expect(placeCheckpoint(messages, { ...cp })).toBe(messages);
+	});
+});

@@ -453,9 +453,6 @@
 
 	function resumeIfDangling() {
 		if (isGhost) return;
-		const now = Date.now();
-		if (now - lastRejoinAt < REJOIN_FLOOR_MS) return;
-		lastRejoinAt = now;
 		// "ready" OR "error": the case this exists for — a Wi-Fi handover, a
 		// phone that slept — ends the SDK's fetch with a TypeError, and the
 		// SDK sets status to error. Gated on ready alone, the rejoin never
@@ -464,6 +461,12 @@
 		if (chat.status !== "ready" && chat.status !== "error") return;
 		const last = chat.messages[chat.messages.length - 1];
 		if (!last) return;
+		// The floor is spent only by an attempt that goes out. A phone wakes
+		// while the dead socket still reads "streaming"; stamped before the
+		// gate, that wake used the floor up and the rejoin it was for never ran.
+		const now = Date.now();
+		if (now - lastRejoinAt < REJOIN_FLOOR_MS) return;
+		lastRejoinAt = now;
 
 		// No "is the last message a user message?" gate any more. It used to be
 		// here, and it meant the rejoin only ever fired for a turn that had not
@@ -761,6 +764,15 @@
 			window.removeEventListener("online", onBack);
 			document.removeEventListener("visibilitychange", onBack);
 		};
+	});
+
+	// And when the wire drops while the screen is on. A failed fetch is a
+	// TypeError; any other error is the box refusing (turn_in_progress, a
+	// wallet), where rejoining would stream an old reply under a message the
+	// box never saved — that one waits for the error card's Try again.
+	$effect(() => {
+		if (!active || chat.status !== "error") return;
+		if (chat.error instanceof TypeError) resumeIfDangling();
 	});
 
 	// The sidebar's spinner and dot (chatActivity). This view reports its own

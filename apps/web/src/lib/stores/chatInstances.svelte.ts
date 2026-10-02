@@ -12,6 +12,7 @@ import { subscriptionStore } from '$lib/stores/subscription.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import type { CheckpointMessage } from '$lib/types/chat';
 import { placeCheckpoint } from '$lib/components/chat/state/checkpoint';
+import { dropReplayedPartial } from '$lib/components/chat/state/rejoin';
 import type { LocalStats } from '$lib/stores/localModel.svelte';
 
 // --- Streaming reactivity helpers (see replaceMessage override below) ---------
@@ -205,59 +206,72 @@ class ChatInstanceStore {
         }
 
         // Create new Chat instance with transport that uses the getters
-        const chat = new Chat({
+        const transport = new DefaultChatTransport({
+            api: '/api/chat',
+            prepareSendMessagesRequest: ({ messages, trigger }) => {
+                const projectId = getProjectId();
+                const activePage = getActivePageContext?.();
+                const persona = getPersona?.() || 'default';
+                const agentMode = getAgentMode?.() || 'chat';
+                const chatMode = getChatMode?.() || 'open';
+                const temporary = getTemporary?.() || false;
+                // Omitted unless the person picked one — see getModel above.
+                const model = getModel();
+
+                // The box owns the history and rebuilds it from its own
+                // store, reading only the last user turn off the wire; it
+                // was sent the whole transcript every turn regardless. Now
+                // only the last message goes. On regenerate that is the
+                // last user message too (the SDK has already dropped the
+                // reply): the box needs it to tell "answer this again"
+                // from "this never reached you" — a Try again after a
+                // refused POST used to send nothing, and the box deleted
+                // the previous good answer instead. A ghost chat is the
+                // one exception, by design: the box holds nothing for it,
+                // so the wire is its whole transcript, every turn.
+                const wireMessages = temporary ? messages : messages.slice(-1);
+
+                return {
+                    body: {
+                        chatId: conversationId,
+                        agentId: 'auto',
+                        messages: wireMessages,
+                        trigger,
+                        persona,
+                        agentMode,
+                        // Retrieval scope for project chats: 'open' (whole
+                        // graph, project up-weighted) or 'scoped' (grounded).
+                        chatMode,
+                        // Ghost/temporary chat — backend should skip persistence when true.
+                        ...(temporary && { temporary: true }),
+                        ...(agentMode === 'local' && { think: getThink?.() ?? false }),
+                        // User's timezone for temporal awareness (IANA format, e.g., "America/Los_Angeles")
+                        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                        // The Space (room) this chat lives in — drives the agent's
+                        // active-space context block and binds the chat on the server.
+                        ...(projectId && { projectId }),
+                        // Include active page context if a page is bound
+                        ...(activePage && { activePage }),
+                        ...(model && { model })
+                    }
+                };
+            }
+        });
+        const reconnect = transport.reconnectToStream.bind(transport);
+        transport.reconnectToStream = async (options) => {
+            const stream = await reconnect(options);
+            if (!stream) return stream;
+            return dropReplayedPartial(
+                stream,
+                () => chat.messages.at(-1)?.id,
+                () => {
+                    chat.messages = chat.messages.slice(0, -1);
+                },
+            );
+        };
+        const chat: Chat = new Chat({
             id: conversationId,
-            transport: new DefaultChatTransport({
-                api: '/api/chat',
-                prepareSendMessagesRequest: ({ messages, trigger }) => {
-                    const projectId = getProjectId();
-                    const activePage = getActivePageContext?.();
-                    const persona = getPersona?.() || 'default';
-                    const agentMode = getAgentMode?.() || 'chat';
-                    const chatMode = getChatMode?.() || 'open';
-                    const temporary = getTemporary?.() || false;
-                    // Omitted unless the person picked one — see getModel above.
-                    const model = getModel();
-
-                    // The box owns the history and rebuilds it from its own
-                    // store, reading only the last user turn off the wire; it
-                    // was sent the whole transcript every turn regardless. Now
-                    // only the last message goes. On regenerate that is the
-                    // last user message too (the SDK has already dropped the
-                    // reply): the box needs it to tell "answer this again"
-                    // from "this never reached you" — a Try again after a
-                    // refused POST used to send nothing, and the box deleted
-                    // the previous good answer instead. A ghost chat is the
-                    // one exception, by design: the box holds nothing for it,
-                    // so the wire is its whole transcript, every turn.
-                    const wireMessages = temporary ? messages : messages.slice(-1);
-
-                    return {
-                        body: {
-                            chatId: conversationId,
-                            agentId: 'auto',
-                            messages: wireMessages,
-                            trigger,
-                            persona,
-                            agentMode,
-                            // Retrieval scope for project chats: 'open' (whole
-                            // graph, project up-weighted) or 'scoped' (grounded).
-                            chatMode,
-                            // Ghost/temporary chat — backend should skip persistence when true.
-                            ...(temporary && { temporary: true }),
-                            ...(agentMode === 'local' && { think: getThink?.() ?? false }),
-                            // User's timezone for temporal awareness (IANA format, e.g., "America/Los_Angeles")
-                            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                            // The Space (room) this chat lives in — drives the agent's
-                            // active-space context block and binds the chat on the server.
-                            ...(projectId && { projectId }),
-                            // Include active page context if a page is bound
-                            ...(activePage && { activePage }),
-                            ...(model && { model })
-                        }
-                    };
-                }
-            }),
+            transport,
             messages: [],
             onData: (dataPart) => {
                 // Handle Deep Research subagent events (transient - drives the live panel)
