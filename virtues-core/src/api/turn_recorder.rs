@@ -157,6 +157,11 @@ impl TurnRecorder {
                 if !self.in_reasoning {
                     self.in_reasoning = true;
                     out.push(StreamEvent::ReasoningStart { id: self.msg_id.clone() });
+                    // Each step thinks afresh; saved as one block, the steps
+                    // ran together ("…done.Now I…").
+                    if !self.reasoning.is_empty() {
+                        self.reasoning.push_str("\n\n");
+                    }
                 }
                 self.reasoning.push_str(&content);
                 out.push(StreamEvent::ReasoningDelta { id: self.msg_id.clone(), delta: content });
@@ -376,13 +381,19 @@ impl TurnRecorder {
     }
 
     /// The assistant row for this turn, or None if it produced neither text
-    /// nor a tool call.
+    /// nor a tool call — unless it ended early while still thinking.
     ///
     /// Text is not the only thing a turn produces: one that called tools and
     /// was stopped — or hit the step ceiling — before it wrote a word still
-    /// has calls the person watched run, and a notice to hang on them.
+    /// has calls the person watched run, and a notice to hang on them. One
+    /// that ended early (`subject` set) while it was still thinking keeps
+    /// its thinking and its notice: with no row, a reload found the question
+    /// unanswered and blamed the server ("never finished") for the person's
+    /// own Stop. History skips a row with nothing to send, so the model never
+    /// sees the empty turn.
     pub fn into_message(self, model: &str, agent_id: String, subject: Option<&str>) -> Option<ChatMessage> {
-        if self.full_content.is_empty() && self.tool_calls.is_empty() {
+        let thought_then_ended = subject.is_some() && !self.reasoning.trim().is_empty();
+        if self.full_content.is_empty() && self.tool_calls.is_empty() && !thought_then_ended {
             return None;
         }
         let parts = build_turn_parts(
@@ -887,6 +898,24 @@ mod tests {
         );
         assert_eq!(r.usage().cost_micros, 9);
         assert!(r.into_message("m1", "auto".into(), None).is_none());
+    }
+
+    /// Stopped while it was still thinking: the row keeps the thinking and
+    /// carries the stop, so a reload says "Stopped", not "never finished".
+    #[test]
+    fn a_turn_stopped_while_thinking_is_a_row() {
+        let mut r = TurnRecorder::new("m".into());
+        feed(
+            &mut r,
+            vec![
+                AgentEvent::ReasoningDelta { content: "First,".into() },
+                AgentEvent::ReasoningDelta { content: " the dates.".into() },
+            ],
+        );
+        let msg = r.into_message("m1", "auto".into(), Some("cancelled")).expect("a row");
+        assert_eq!(msg.content, "");
+        let parts = msg.parts.unwrap();
+        assert!(matches!(&parts[0], UIPart::Reasoning { text } if text == "First, the dates."));
     }
 
     #[test]
