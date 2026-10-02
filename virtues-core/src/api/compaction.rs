@@ -11,6 +11,7 @@ use tokio::time::timeout;
 
 use crate::api::chat::UIPart;
 use crate::api::chats::ChatMessage;
+use crate::api::turn_recorder::TOOL_UNFINISHED;
 use crate::api::token_estimation::{estimate_session_context, ContextStatus};
 use crate::types::Timestamp;
 use crate::error::Result;
@@ -666,11 +667,14 @@ pub fn build_context_for_llm(
                         // A call that FAILED is answered as a failure: replaying
                         // an error object in the result position tells the model
                         // the tool succeeded and returned something odd.
+                        // A call saved as unfinished reads back the same as
+                        // one saved before that state existed (no output).
                         let content = match (error_text, output) {
+                            (Some(err), _) if err.as_str() == TOOL_UNFINISHED => TOOL_UNFINISHED.to_string(),
                             (Some(err), _) => format!("Tool failed ({tool_name}): {err}"),
                             (None, Some(serde_json::Value::String(s))) => s.clone(),
                             (None, Some(res)) => res.to_string(),
-                            (None, None) => "the tool did not finish".to_string(),
+                            (None, None) => TOOL_UNFINISHED.to_string(),
                         };
                         let content = clip_replayed_output(content, replay_cap);
                         tool_results.push(serde_json::json!({
