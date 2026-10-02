@@ -193,12 +193,14 @@ row must produce a 429.
      [seeds/README.md](../../virtues-core/seeds/README.md)). Copy the
      directory to the box and run `DB=virtues sh run.sh` as `postgres`; it
      loads `01_entities` through `05_content` and ends in its own
-     `99_reanchor.sql`. demo3y reuses `demo_day.sql`'s people and places by id,
-     so if the box carries the base seed too, `virtues seed` goes **first** —
-     it ends in `demo_reanchor.sql`, so it must never run again once demo3y is
-     on the box. Check it: `select max(d.date) from wiki_days d where exists
-     (select 1 from wiki_events e where e.day_id = d.id and e.id like
-     'p3y!_%' escape '!')` should return today's date.
+     `99_reanchor.sql`. **Load it on a box without the base seed, and never
+     run `virtues seed` on that box afterwards.** The two sets write the same
+     `day_<date>` ids for the twelve weeks they overlap, so in either order
+     the second set's events attach, at their original dates, to day rows the
+     first set's re-anchor has already moved months away. Check it: `select
+     max(d.date) from wiki_days d where exists (select 1 from wiki_events e
+     where e.day_id = d.id and e.id like 'p3y!_%' escape '!')` should return
+     today's date.
 7a. **Install the timers for whichever seed the box carries.** A re-anchor only
    runs when something runs it, so a box seeded once ages a day at a time and a
    reviewer opening the app two weeks after submission meets the empty Home the
