@@ -90,39 +90,29 @@ RULES:
 
 // ── Timezone helpers ─────────────────────────────────────────────────────────
 
-/// Compute day boundaries in the user's timezone, converted to UTC RFC3339 strings.
-/// Falls back to wide UTC window (00:00 → 12:00 next day) if timezone is None or invalid.
-pub fn day_boundaries_utc(date: NaiveDate, timezone: Option<&str>) -> (String, String) {
-    if let Some(tz_str) = timezone {
-        if let Ok(tz) = tz_str.parse::<Tz>() {
-            let start_local = date.and_hms_opt(0, 0, 0).unwrap();
-            let end_local = date.succ_opt().unwrap().and_hms_opt(0, 0, 0).unwrap();
-
-            let start_utc = tz
-                .from_local_datetime(&start_local)
-                .earliest()
-                .map(|dt| dt.with_timezone(&chrono::Utc));
-            let end_utc = tz
-                .from_local_datetime(&end_local)
-                .earliest()
-                .map(|dt| dt.with_timezone(&chrono::Utc));
-
-            if let (Some(s), Some(e)) = (start_utc, end_utc) {
-                return (s.to_rfc3339(), e.to_rfc3339());
-            }
+/// A local day's bounds as UTC instants: local midnight to the next local
+/// midnight in `timezone`. Falls back to the UTC day when the zone is missing or
+/// invalid, which should be rare: home_timezone is seeded from the server's own
+/// system clock (see agents/record/timezone-model.md).
+pub fn day_bounds(
+    date: NaiveDate,
+    timezone: Option<&str>,
+) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+    let start_local = date.and_hms_opt(0, 0, 0).unwrap();
+    let end_local = date.succ_opt().unwrap().and_hms_opt(0, 0, 0).unwrap();
+    if let Some(tz) = timezone.and_then(|t| t.parse::<Tz>().ok()) {
+        let start = tz.from_local_datetime(&start_local).earliest();
+        let end = tz.from_local_datetime(&end_local).earliest();
+        if let (Some(s), Some(e)) = (start, end) {
+            return (s.with_timezone(&chrono::Utc), e.with_timezone(&chrono::Utc));
         }
     }
+    (start_local.and_utc(), end_local.and_utc())
+}
 
-    // Fallback: a true 24h UTC day when no/invalid timezone is available. (This
-    // should rarely execute — home_timezone is seeded from the server's own
-    // system clock; see agents/record/timezone-model.md.)
-    let start = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
-    let end = date
-        .succ_opt()
-        .unwrap()
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_utc();
+/// [`day_bounds`] as RFC3339 strings, for queries that bind `$1::timestamptz`.
+pub fn day_boundaries_utc(date: NaiveDate, timezone: Option<&str>) -> (String, String) {
+    let (start, end) = day_bounds(date, timezone);
     (start.to_rfc3339(), end.to_rfc3339())
 }
 
@@ -358,14 +348,8 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
     // 1. Gather structured sources (calendar, locations, transactions, chats, pages, etc.)
     let sources = get_day_sources(pool, date, None).await?;
 
-    // 2. Compute date boundaries using the per-day "where the owner was" timezone
-    //    (fixed at the day's start), falling back to the box's home_timezone.
-    //    See agents/record/timezone-model.md.
-    let home_tz = super::profile::get_timezone(pool)
-        .await
-        .unwrap_or(None)
-        .unwrap_or_else(|| "UTC".to_string());
-    let day_tz = crate::timezone::resolve_day_timezone(pool, date, &home_tz).await;
+    // 2. Compute date boundaries in the day's own zone.
+    let day_tz = crate::timezone::day_timezone(pool, date).await?;
     let (start_str, end_str) = day_boundaries_utc(date, Some(&day_tz));
     let timezone: Option<String> = Some(day_tz);
 
@@ -570,30 +554,7 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
         return Ok(None);
     }
 
-    // A day keeps the zone it was first windowed in (agents/record/timezone-model.md).
-    // Resolving afresh from location falls back to the home zone, and to UTC when
-    // the profile can't be read, so a day with no location points would be
-    // re-windowed five hours off and its stored zone overwritten.
-    let stored_tz: Option<String> =
-        sqlx::query_scalar("SELECT start_timezone FROM wiki_days WHERE date = $1")
-            .bind(date)
-            .fetch_optional(pool)
-            .await?
-            .flatten();
-    let day_tz = match stored_tz {
-        Some(tz) => tz,
-        None => {
-            let home_tz = match super::profile::get_timezone(pool).await {
-                Ok(tz) => tz,
-                Err(e) => {
-                    tracing::warn!(date = %date, error = %e, "couldn't read the home timezone; windowing the day in UTC");
-                    None
-                }
-            }
-            .unwrap_or_else(|| "UTC".to_string());
-            crate::timezone::resolve_day_timezone(pool, date, &home_tz).await
-        }
-    };
+    let day_tz = crate::timezone::day_timezone(pool, date).await?;
     let tz: Option<Tz> = day_tz.parse().ok();
     let (start_str, end_str) = day_boundaries_utc(date, Some(&day_tz));
 
