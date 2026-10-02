@@ -789,6 +789,9 @@ export interface StreamHealth {
 	/** No source writes it, yet rows exist — the box computes it from other
 	 *  streams, so "connect something" is the wrong advice. */
 	derived: boolean;
+	/** Stays only: this week's hours at a place, against the hours the phone
+	 *  was reporting. Absent from servers that predate it. */
+	coverage?: { stay_hours: number; tracked_hours: number } | null;
 }
 
 /**

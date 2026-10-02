@@ -61,6 +61,10 @@ pub struct StreamHealth {
     /// Why this stream is `blocked`, verbatim from the failing applet's last
     /// run. `None` for every other status.
     pub blocked_reason: Option<String>,
+    /// For the stays stream only: how much of the week's tracked time its
+    /// stays account for. Fixes keep arriving when the stay detector breaks,
+    /// so this is the only number on the page that shows that failure.
+    pub coverage: Option<crate::entity_resolution::places::StayCoverage>,
 }
 
 /// The arrivals window: the UTC date `days[0]` refers to, and its length.
@@ -256,6 +260,7 @@ pub async fn stream_health(db: &Database) -> Result<Vec<StreamHealth>> {
                 // Filled in below — needs one query, not one per stream.
                 connected: false,
                 blocked_reason: None,
+                coverage: None,
                 derived: writers.is_empty() && total > 0,
                 name,
             }
@@ -309,6 +314,11 @@ pub async fn stream_health(db: &Database) -> Result<Vec<StreamHealth>> {
         }
     }
     out.sort_by(|a, b| rank(&a.status).cmp(&rank(&b.status)).then(a.name.cmp(&b.name)));
+    if let Some(visits) = out.iter_mut().find(|s| s.name == "location_visit" && s.total > 0) {
+        let since = chrono::Utc::now() - chrono::Duration::days(7);
+        visits.coverage = Some(crate::entity_resolution::places::stay_coverage(db.pool(), since).await?);
+    }
+
     Ok(out)
 }
 

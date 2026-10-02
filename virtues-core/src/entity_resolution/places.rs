@@ -886,6 +886,48 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     Ok(())
 }
 
+/// How much of the time the phone was reporting its stays account for.
+///
+/// A broken stay detector does not stop fixes from arriving, so freshness
+/// alone cannot see it: the fixes keep flowing while the stays thin out. This
+/// compares the two. Tracked time is every stretch between consecutive fixes
+/// no longer than `MAX_QUIET_GAP_MINUTES`; the rest is time the phone was not
+/// reporting, which no stay can claim either.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct StayCoverage {
+    pub stay_hours: f64,
+    pub tracked_hours: f64,
+}
+
+pub async fn stay_coverage(pool: &sqlx::PgPool, since: DateTime<Utc>) -> Result<StayCoverage> {
+    let (tracked_hours, stay_hours): (f64, f64) = sqlx::query_as(
+        r#"
+        WITH f AS (
+            SELECT lead(occurred_at) OVER (ORDER BY occurred_at) - occurred_at AS gap
+            FROM data_location_point
+            WHERE occurred_at >= $1
+              AND (horizontal_accuracy IS NULL OR horizontal_accuracy < $3)
+        ),
+        s AS (
+            SELECT unnest(range_agg(tstzrange(greatest(started_at, $1),
+                                              least(COALESCE(ended_at, started_at), now())))) AS r
+            FROM data_location_visit
+            WHERE COALESCE(ended_at, started_at) > $1 AND started_at < now()
+        )
+        SELECT
+            COALESCE((SELECT EXTRACT(EPOCH FROM sum(gap)) FROM f
+                      WHERE gap <= make_interval(mins => $2)), 0)::float8 / 3600,
+            COALESCE((SELECT EXTRACT(EPOCH FROM sum(upper(r) - lower(r))) FROM s), 0)::float8 / 3600
+        "#,
+    )
+    .bind(since)
+    .bind(MAX_QUIET_GAP_MINUTES as i32)
+    .bind(MAX_HORIZONTAL_ACCURACY)
+    .fetch_one(pool)
+    .await?;
+    Ok(StayCoverage { stay_hours, tracked_hours })
+}
+
 /// Which stored visit each recomputed stay takes over.
 #[derive(Debug, Default, PartialEq)]
 struct VisitRebuild {
