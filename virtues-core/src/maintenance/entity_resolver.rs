@@ -39,9 +39,9 @@ const LOOKBACK_HOURS: i64 = 30;
 pub fn spawn(db: Arc<Database>) {
     tokio::spawn(async move {
         // Before the first pass, and in this task so it never races the
-        // writer. A no-op unless stored visits overlap.
-        if let Err(e) = crate::entity_resolution::places::repair_overlapping_visits(&db).await {
-            tracing::warn!(error = %e, "visit overlap repair failed (will retry next start)");
+        // writer. A no-op unless visits were written by an older detector.
+        if let Err(e) = crate::entity_resolution::places::rebuild_visits(&db).await {
+            tracing::warn!(error = %e, "visit rebuild failed (will retry next start)");
         }
 
         // `Skip` so a slow resolution pass (large backlog) doesn't queue
