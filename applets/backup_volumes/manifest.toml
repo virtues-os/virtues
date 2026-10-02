@@ -4,3 +4,12 @@ owner = "system"
 command = ["backup_volumes"]
 triggers = ["cron", "manual"]
 schedule = "0 0 4 * * *"
+
+# A night's backup is a full pg_dump plus the archive's new objects, onto a
+# USB drive, from a small board. The default 300s ceiling SIGKILLed it most
+# nights, so the run read as failed and the drive's `last_ok_at` went stale
+# even when the copy underneath finished. Six hours covers a first copy of a
+# large archive; the next run is a day away, so the ceiling only frees the
+# run lock if `virtues backup` genuinely hangs.
+[config.limits]
+timeout_s = 21600

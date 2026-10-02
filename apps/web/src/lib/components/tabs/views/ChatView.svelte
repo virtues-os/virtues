@@ -426,6 +426,12 @@
 			conversation?: { project_id?: string | null };
 		}>(id, signal);
 		if (signal?.aborted) return false;
+		// A reply still arriving on this instance is newer than the stored
+		// transcript, whose reply row is written only when the turn ends. That
+		// happens when a tab is reopened mid-reply: chatInstances kept the
+		// stream alive while it was gone, and overwriting here would drop the
+		// half-written answer.
+		if (chat.status === "submitted" || chat.status === "streaming") return true;
 		// An older chat is not in the session list; its own detail says where
 		// it is filed. A box older than the field leaves it undefined.
 		if (data.conversation && data.conversation.project_id !== undefined) {
@@ -1497,6 +1503,9 @@
 		// A new turn answers the dangling one, whatever it was.
 		danglingTurn = false;
 
+		// This send creates the conversation (see the route move below).
+		const startsConversation = !isGhost && isNewChat(tab.route);
+
 		// New turn → clear any leftover Deep Research panel from the previous turn.
 		chatInstances.clearSubagents(conversationId);
 
@@ -1514,6 +1523,19 @@
 			// Ghost chats are never created server-side, so skip this.
 			if (!isGhost && isNewChat(tab.route) && editAllowListStore.hasItems) {
 				await editAllowListStore.markChatCreated();
+			}
+
+			// A new chat takes its own route the moment the first message goes
+			// out. It used to wait for the whole reply and its title, so a tab
+			// closed, restored or reloaded mid-reply came back as a fresh chat
+			// with a fresh id: the box finished the reply into a conversation no
+			// tab could reach, and cancelled it after five unwatched minutes.
+			// `previousTabRoute` moves first so the route effect reads this as
+			// the same conversation, not a switch.
+			if (startsConversation) {
+				const newRoute = `/chat/${conversationId}`;
+				previousTabRoute = newRoute;
+				windowShellStore.updateTab(tab.id, { route: newRoute });
 			}
 
 			// No `text` key when nothing was typed: the SDK appends a text part
@@ -1535,15 +1557,7 @@
 			// Titles come from a cloud model, so a local chat never asks for one.
 			if (chat.messages.length >= 2 && !isGhost && !titleDone) {
 				await generateTitle();
-				// Update tab route if it's a new chat
-				if (isNewChat(tab.route)) {
-					// Update previousTabRoute first to prevent the tab-switch effect
-					// from treating this as a tab change and resetting state
-					const newRoute = `/chat/${conversationId}`;
-					previousTabRoute = newRoute;
-					windowShellStore.updateTab(tab.id, {
-						route: newRoute,
-					});
+				if (startsConversation) {
 					// Ensure chat is marked as created (may already be done above if hasItems)
 					await editAllowListStore.markChatCreated();
 					// Invalidate the Chats view cache so it refreshes with the new chat
@@ -1576,6 +1590,12 @@
 			if (!handedOff) {
 				input = messageToSend;
 				attachments.restore(stagedBeforeSend);
+				// Nothing reached the box, so there is no conversation behind
+				// the id the route moved to. Put the tab back on a new chat.
+				if (startsConversation && tab.route === `/chat/${conversationId}`) {
+					previousTabRoute = "/chat";
+					windowShellStore.updateTab(tab.id, { route: "/chat" });
+				}
 			}
 		} finally {
 			isAwaitingResponse = false;
