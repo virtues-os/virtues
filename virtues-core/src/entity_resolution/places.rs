@@ -1099,15 +1099,52 @@ pub async fn rebuild_visits(db: &Database) -> Result<usize> {
     }
     tx.commit().await?;
 
+    let unlinked = keep_one_place_per_visit(db).await?;
     let linked = link_unplaced_visits(db).await?;
     tracing::info!(
         before,
         after = stays.len(),
         kept = kept.len(),
+        unlinked,
         linked,
         "rebuilt visits from stored fixes"
     );
     Ok(stays.len())
+}
+
+/// Leave each visit linked to one place: the nearest of those it points at.
+///
+/// A visit is one stay at one place, but the writer once linked a re-clustered
+/// stay to whichever place its drifted center landed in without checking for
+/// an existing link, so some visits point at two places. Readers then draw
+/// them twice, under two names. The writer no longer does that; this clears
+/// what it left, and the rebuild runs it because recomputed centers decide
+/// which link is right.
+async fn keep_one_place_per_visit(db: &Database) -> Result<u64> {
+    let removed = sqlx::query(
+        r#"
+        DELETE FROM wiki_refs r
+        USING (
+            SELECT r2.id,
+                   row_number() OVER (
+                       PARTITION BY r2.source_id
+                       ORDER BY (p.latitude - v.latitude) ^ 2
+                                  + ((p.longitude - v.longitude) * cos(radians(v.latitude))) ^ 2
+                                NULLS LAST,
+                                r2.created_at DESC, r2.id
+                   ) AS rank
+            FROM wiki_refs r2
+            JOIN data_location_visit v ON v.id = r2.source_id
+            LEFT JOIN wiki_places p ON p.id = r2.entity_id
+            WHERE r2.source_table = 'data_location_visit' AND r2.entity_type = 'place'
+        ) ranked
+        WHERE r.id = ranked.id AND ranked.rank > 1
+        "#,
+    )
+    .execute(db.pool())
+    .await?
+    .rows_affected();
+    Ok(removed)
 }
 
 /// Give every visit with no place link one, the way the rolling pass does for
