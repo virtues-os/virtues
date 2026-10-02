@@ -230,13 +230,19 @@ row must produce a 429.
      never names auth, so paired devices and the review pair code survive a
      night mid-round. The second file is there for `app_assistant_memories`
      alone: its ids carry no seed prefix, so the reset clears it wholesale and
-     `04_creation.sql` puts the seeded memories back while no-opping on every
-     other table through `ON CONFLICT DO NOTHING`.
-   - **`virtues-demo-reanchor.timer` stays disabled and masked** —
-     `systemctl disable --now virtues-demo-reanchor.timer && systemctl mask
-     virtues-demo-reanchor.timer virtues-demo-reanchor.service` — for as long
+     `04_creation.sql` puts the seeded memories back while no-opping on the
+     tables whose ids it writes through `ON CONFLICT DO NOTHING`. It does not
+     no-op on `wiki_notes`: those ids are generated, nothing conflicts, and
+     each run adds the seeded notes again.
+   - **`virtues-demo-reanchor.timer` stays disabled and masked** for as long
      as demo3y is on the box. Disabling alone is not enough: it has already been
-     re-enabled once on a box carrying demo3y.
+     re-enabled once on a box carrying demo3y. Step 7a installs both unit files
+     into `/etc/systemd/system`, where `systemctl mask` refuses ("already
+     exists"), so move them out first:
+     `systemctl disable --now virtues-demo-reanchor.timer`, move
+     `/etc/systemd/system/virtues-demo-reanchor.{timer,service}` aside, then
+     `systemctl daemon-reload && systemctl mask virtues-demo-reanchor.timer
+     virtues-demo-reanchor.service`. Both should then report `masked`.
      When both run, the journal shows the two re-anchors moving the life in
      opposite directions, a few days each way, every hour. After any change to
      the box's units, `systemctl list-timers 'virtues-demo*'` should list the
