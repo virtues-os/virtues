@@ -34,11 +34,15 @@ export type ToolStatus = "running" | "done" | "failed" | "unfinished";
 /** What the box records for a call its turn ended without answering
  *  (`turn_recorder.rs`); the model's own replay says the same words. */
 export const TOOL_UNFINISHED = "the tool did not finish";
+/** What it records for a call running when Stop was pressed (`agent/turn.rs`
+ *  `stopped`), inside its failure envelope. A stop is not a failure. */
+const TOOL_STOPPED = "stopped by the owner before it finished";
 
 export function toolStatus(part: ToolPart, turnWorking: boolean): ToolStatus {
 	if (part.state === "output-available") return "done";
 	if (part.state === "output-error") {
-		return part.errorText === TOOL_UNFINISHED ? "unfinished" : "failed";
+		const text = part.errorText ?? "";
+		return text === TOOL_UNFINISHED || text.includes(TOOL_STOPPED) ? "unfinished" : "failed";
 	}
 	// input-streaming, input-available, an approval, or no state at all: the
 	// call has not answered. While the turn runs that is a call in progress;
@@ -73,8 +77,12 @@ const TOOLS: Record<string, Presentation> = {
 	web_search: {
 		noun: "the web",
 		depth: 4,
-		say: (input, live, short) =>
-			`${live ? "Searching" : "Searched"} the web for "${fit(String(input.query || "information"), short)}"`,
+		// The query streams in after the call starts; until it has, say less.
+		say: (input, live, short) => {
+			const verb = live ? "Searching" : "Searched";
+			const query = typeof input.query === "string" ? input.query.trim() : "";
+			return query ? `${verb} the web for "${fit(query, short)}"` : `${verb} the web`;
+		},
 	},
 	semantic_search: {
 		noun: "your records",
