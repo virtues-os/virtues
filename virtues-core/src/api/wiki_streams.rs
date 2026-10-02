@@ -50,30 +50,15 @@ async fn resolve_render_timezone(
     date: NaiveDate,
     client_tz: Option<&str>,
 ) -> String {
-    use sqlx::Row;
-    // 1. Locked per-day zone from a prior summary.
-    if let Ok(Some(row)) =
-        sqlx::query("SELECT start_timezone FROM wiki_days WHERE date = $1")
-            .bind(date)
-            .fetch_optional(pool)
-            .await
-    {
-        if let Ok(Some(tz)) = row.try_get::<Option<String>, _>("start_timezone") {
-            if !tz.is_empty() {
-                return tz;
-            }
+    let home_tz = crate::timezone::home_timezone_or_utc(pool, date).await;
+
+    // 1–2. The locked zone, else where the owner woke up that day.
+    match crate::timezone::located_day_timezone(pool, date, &home_tz).await {
+        Ok(Some(tz)) => return tz,
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(date = %date, error = %e, "couldn't read the day's locked zone; resolving it afresh");
         }
-    }
-
-    let home_tz = super::profile::get_timezone(pool)
-        .await
-        .unwrap_or(None)
-        .unwrap_or_else(|| "UTC".to_string());
-
-    // 2. Where the owner woke up that day (first located point). Authoritative and
-    //    consistent with the EOD lock — does NOT drift to where the viewer is now.
-    if let Some(tz) = crate::timezone::first_point_timezone(pool, date, &home_tz).await {
-        return tz;
     }
 
     // 3. No location for the day — for an in-progress *today* only, fall back to the
@@ -84,10 +69,8 @@ async fn resolve_render_timezone(
         .ok()
         .map(|tz| Utc::now().with_timezone(&tz).date_naive());
     if today_in_home == Some(date) {
-        if let Some(tz) = client_tz {
-            if !tz.is_empty() {
-                return tz.to_string();
-            }
+        if let Some(tz) = client_tz.filter(|t| !t.is_empty()) {
+            return tz.to_string();
         }
     }
 
@@ -806,18 +789,12 @@ pub struct DayChat {
 
 /// Get all AI chats (in-app + external) that started on the given day.
 ///
-/// Day window matches `get_day_sources`: UTC midnight → noon next day,
-/// which covers every timezone.
+/// The day is the local day in its own zone (`timezone::day_window`). A UTC
+/// midnight → next-noon window put an evening's chats on two days' pages.
 pub async fn get_day_chats(pool: &PgPool, date: NaiveDate) -> Result<Vec<DayChat>> {
     use sqlx::Row;
 
-    let start_of_day = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
-    let end_of_day = date
-        .succ_opt()
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap()
-        .and_utc();
+    let (start_of_day, end_of_day) = crate::timezone::day_window(pool, date).await?;
     let mut chats: Vec<DayChat> = Vec::new();
 
     // ── In-app Virtues chats ────────────────────────────────────────────────
@@ -825,7 +802,7 @@ pub async fn get_day_chats(pool: &PgPool, date: NaiveDate) -> Result<Vec<DayChat
         r#"
         SELECT id, title, message_count, created_at
         FROM app_chats
-        WHERE created_at >= $1 AND created_at <= $2 AND deleted_at IS NULL
+        WHERE created_at >= $1 AND created_at < $2 AND deleted_at IS NULL
         ORDER BY created_at ASC
         "#,
     )
@@ -864,7 +841,7 @@ pub async fn get_day_chats(pool: &PgPool, date: NaiveDate) -> Result<Vec<DayChat
         r#"
         SELECT conversation_id, role, content, provider, occurred_at
         FROM data_content_conversation
-        WHERE occurred_at >= $1 AND occurred_at <= $2
+        WHERE occurred_at >= $1 AND occurred_at < $2
           AND source_provider != 'virtues'
         ORDER BY conversation_id, occurred_at ASC
         "#,

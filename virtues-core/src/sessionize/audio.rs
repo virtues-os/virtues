@@ -166,11 +166,7 @@ pub async fn sessionize_day(pool: &PgPool, date: chrono::NaiveDate) -> Result<u3
     // session timezone and silently shifts the day boundary (it cut a UTC-full day
     // of 271 chunks down to 223 in the wrong zone). Use the same "where you woke
     // up" boundary the rest of the day pipeline uses.
-    let home_tz = crate::api::profile::get_timezone(pool)
-        .await
-        .unwrap_or(None)
-        .unwrap_or_else(|| "UTC".to_string());
-    let tz = crate::timezone::resolve_day_timezone(pool, date, &home_tz).await;
+    let tz = crate::timezone::day_timezone(pool, date).await?;
     let (start_str, end_str) = crate::api::day_summary::day_boundaries_utc(date, Some(&tz));
 
     // The day's chunks: transcription (speech + summary + speaker count) joined to

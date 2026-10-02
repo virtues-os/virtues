@@ -157,35 +157,14 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
 /// Compute scored sleep cycles for a day from sleep stage data + heart rate readings.
 /// Derives cycle boundaries by splitting sleep_stages at "awake" entries,
 /// then computes avg HR per cycle and z-scores against a 14-day sleep HR baseline.
+///
+/// The night is the one the day's sleep event shows: the one it woke up from
+/// (`dayline::sleep::night_for_day`), with all of its records joined.
 async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Result<Vec<ScoredSleepCycle>> {
     Ok({
-        use sqlx::Row;
-
-        let start = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
-        let end = (date + chrono::Duration::days(1))
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc();
-
-        // 1. Get sleep record for this night (overlaps with this calendar day)
-        let sleep_row: Option<sqlx::postgres::PgRow> = sqlx::query(
-            r#"SELECT sleep_stages FROM data_health_sleep
-           WHERE started_at >= $1
-             AND started_at < $2
-           ORDER BY started_at ASC LIMIT 1"#,
-        )
-        .bind(start)
-        .bind(end)
-        .fetch_optional(pool)
-        .await?;
-
-        // sleep_stages is JSONB in pg — sqlx decodes directly into serde_json::Value.
-        let stages: Vec<serde_json::Value> = match sleep_row {
-            Some(row) => match row.try_get::<Option<serde_json::Value>, _>("sleep_stages") {
-                Ok(Some(serde_json::Value::Array(arr))) => arr,
-                _ => return Ok(vec![]),
-            },
-            None => return Ok(vec![]),
+        let stages = match crate::dayline::sleep::night_for_day(pool, date).await? {
+            Some(night) if !night.stages.is_empty() => night.stages,
+            _ => return Ok(vec![]),
         };
 
         // Group consecutive non-awake stages into cycles
@@ -244,24 +223,29 @@ async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Result<Vec<Scor
             return Ok(vec![]);
         }
 
-        // 3. Get 14-day sleep HR baseline (median of nightly avg HRs)
-        let baseline_start = (date - chrono::Duration::days(14))
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc();
-        let baseline_hrs: Vec<f64> = sqlx::query_scalar(
-            r#"SELECT AVG(CAST(hr.bpm AS REAL))
-           FROM data_health_heart_rate hr
-           INNER JOIN data_health_sleep s
-             ON hr.occurred_at >= s.started_at AND hr.occurred_at < s.ended_at
-           WHERE s.started_at >= $1
-             AND s.started_at < $2
-           GROUP BY s.id"#,
+        // 3. Get 14-day sleep HR baseline: one average per joined night, so a
+        //    night HealthKit split into three records counts once, and a
+        //    two-minute fragment is not a night of its own.
+        let (day_start, day_end) = crate::timezone::day_window(pool, date).await?;
+        let nights = crate::dayline::sleep::nights_ending_between(
+            pool,
+            day_start - chrono::Duration::days(14),
+            day_end,
         )
-        .bind(baseline_start)
-        .bind(end)
-        .fetch_all(pool)
         .await?;
+        let mut baseline_hrs: Vec<f64> = Vec::with_capacity(nights.len());
+        for night in &nights {
+            let avg: Option<f64> = sqlx::query_scalar(
+                r#"SELECT AVG(CAST(bpm AS REAL))::float8
+               FROM data_health_heart_rate
+               WHERE occurred_at >= $1 AND occurred_at < $2"#,
+            )
+            .bind(night.start)
+            .bind(night.end)
+            .fetch_one(pool)
+            .await?;
+            baseline_hrs.extend(avg);
+        }
 
         let (baseline_mean, baseline_std) = if baseline_hrs.len() >= 2 {
             let mean = baseline_hrs.iter().sum::<f64>() / baseline_hrs.len() as f64;
@@ -590,14 +574,12 @@ pub struct TimelineDayView {
 
 /// Get location visits for a day, returned as timeline chunks with their
 /// canonical place link (if any).
+///
+/// The day is local midnight to local midnight in the day's own zone, the same
+/// window the day page's events and streams use. A UTC day put a US evening's
+/// visits and points on the next day's page.
 pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDayView> {
-    let start_of_day = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
-    let end_of_day = date
-        .succ_opt()
-        .unwrap()
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_utc();
+    let (start_of_day, end_of_day) = crate::timezone::day_window(pool, date).await?;
 
     // JOIN visits → wiki_refs → wiki_places.
     // er.source_id is the visit's UUID; both sides are stored as TEXT UUIDs,

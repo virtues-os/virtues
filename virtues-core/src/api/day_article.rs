@@ -910,10 +910,7 @@ pub struct DayFacts {
 const COVERAGE_MERGE_MIN: i64 = 10;
 
 pub async fn day_facts(pool: &PgPool, date: NaiveDate) -> Result<DayFacts> {
-    let home_tz = super::profile::get_timezone(pool)
-        .await?
-        .unwrap_or_else(|| "UTC".to_string());
-    let day_tz = crate::timezone::resolve_day_timezone(pool, date, &home_tz).await;
+    let day_tz = crate::timezone::day_timezone(pool, date).await?;
     let (start, end) = super::day_summary::day_boundaries_utc(date, Some(&day_tz));
 
     let (high, low): (Option<f64>, Option<f64>) = sqlx::query_as(
