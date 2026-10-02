@@ -39,6 +39,7 @@
 	import { ToolSideEffects } from "$lib/components/chat/state/toolSideEffects";
 	import { toolErrorDetail, toolErrorSummary } from "$lib/components/chat/state/toolError";
 	import { observeComposerReserve } from "$lib/components/chat/state/composerReserve";
+	import { holdReadingPosition } from "$lib/components/chat/state/holdReadingPosition";
 	import { readDraft, writeDraft, NEW_CHAT_DRAFT_ID } from "$lib/components/chat/state/drafts";
 
 	// ── the narrative interview ────────────────────────────────────────────
@@ -76,9 +77,11 @@
 	import type { Citation } from "$lib/types/Citation";
 	import UserMessage from "$lib/components/UserMessage.svelte";
 	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
+	import { toolStatus } from "$lib/components/chat/state/toolPresentation";
 	import TurnFigures from "$lib/components/chat/TurnFigures.svelte";
 	import SubagentPanel from "$lib/components/SubagentPanel.svelte";
 	import { onMount, onDestroy, tick, untrack } from "svelte";
+	import { SvelteSet } from "svelte/reactivity";
 	import { goto } from "$app/navigation";
 	import { fade, fly } from "svelte/transition";
 	import { cubicInOut } from "svelte/easing";
@@ -695,6 +698,7 @@
 		// (Bound pages are not reset: binding belongs to the chat session.)
 		chat.messages = [];
 		messageMetadata = new Map();
+		liveReplies.clear();
 		contextUsage = undefined;
 		titleDone = false;
 		isAwaitingResponse = false;
@@ -1372,6 +1376,33 @@
 	});
 
 	/**
+	 * Replies this view watched arrive. Their words keep fading in after the
+	 * stream ends rather than being rebuilt as plain text (see Markdown's
+	 * `animate`); a reply loaded from history never fades.
+	 */
+	const liveReplies = new SvelteSet<string>();
+	$effect(() => {
+		if (chat?.status !== "streaming") return;
+		const last = chat.messages[chat.messages.length - 1];
+		if (last?.role === "assistant") untrack(() => liveReplies.add(last.id));
+	});
+
+	// The end of a turn changes heights above a reader scrolled into it, and
+	// WebKit does not anchor scroll. `.pre` so the reading line is measured
+	// before the DOM takes the change.
+	let releaseHold: (() => void) | null = null;
+	let wasRunning = false;
+	$effect.pre(() => {
+		const running = chat?.status === "streaming" || chat?.status === "submitted";
+		if (wasRunning && !running && scrollContainer) {
+			releaseHold?.();
+			releaseHold = holdReadingPosition(scrollContainer);
+		}
+		wasRunning = running;
+	});
+	onDestroy(() => releaseHold?.());
+
+	/**
 	 * Where a room opens. A chat opens at its newest message; the
 	 * getting-started room opens at the TOP, on the cover — the painting is
 	 * the first thing in it and the first thing anyone should see, and on a
@@ -1829,6 +1860,7 @@
 													toolCalls={turn.toolParts}
 													reasoningContent={turn.reasoning}
 													narration={turn.narration}
+													intent={turn.intent}
 													duration={isLastMessage
 														? thinkingDuration
 														: 0}
@@ -1854,6 +1886,7 @@
 														<Markdown
 															content={shown.content}
 															isStreaming={isStreaming || shown.arriving}
+															animate={isStreaming || shown.arriving || liveReplies.has(message.id)}
 															citations={citationContext}
 															onCitationClick={openCitationPanel}
 														/>
@@ -1967,12 +2000,12 @@
 											{/if}
 											{:else if part.type === "tool-code_interpreter"}
 												{@const toolPart = part as any}
-												{@const isRunning = toolPart.state === "input-streaming" || toolPart.state === "input-available"}
-												{@const isError = toolPart.state === "output-error"}
+												{@const status = toolStatus(toolPart, isStreaming)}
+												{@const isError = status === "failed" || status === "unfinished"}
 												<CodeInterpreterCard
-													status={isRunning ? 'running' : isError ? 'error' : 'success'}
+													status={status === "running" ? 'running' : isError ? 'error' : 'success'}
 													code={toolPart.input?.code || ''}
-													output={toolPart.output ?? (isError ? { error: toolPart.errorText } : undefined)}
+													output={toolPart.output ?? (isError ? { error: status === "unfinished" ? "This didn't finish." : toolPart.errorText } : undefined)}
 												/>
 											{:else if part.type === "tool-generate_image"}
 												{@const gen = part as any}
