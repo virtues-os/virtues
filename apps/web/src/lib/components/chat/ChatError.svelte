@@ -45,6 +45,7 @@
 		| "max_steps"
 		| "reconnect"
 		| "rate_limit"
+		| "unavailable"
 		| "too_large"
 		| "interrupted"
 		| "output_limit"
@@ -73,6 +74,9 @@
 		if (has(/unknown_key|missing_key|malformed_key/i) || status === 401) return "reconnect";
 		if (status === 429 || (status === undefined && /rate limit|too many requests|\b429\b/i.test(raw)))
 			return "rate_limit";
+		// The provider was down and refused the call, even after the box
+		// asked twice. The request was fine; the same model may answer soon.
+		if (status === 502 || status === 503 || status === 504) return "unavailable";
 		// The box refused the body outright (VIR-291): a long paste, a stack
 		// of images. Retrying the same message cannot help.
 		if (status === 413 || has(/length limit exceeded|payload too large/i)) return "too_large";
@@ -170,6 +174,10 @@
 		rate_limit: {
 			title: "The model is busy",
 			sentence: "The provider is rate-limiting for a moment. Try again shortly.",
+		},
+		unavailable: {
+			title: "Your assistant's provider couldn't answer",
+			sentence: "It turned this request away. Try again in a minute, or choose another model.",
 		},
 		too_large: {
 			title: "That message is too large to send",

@@ -93,6 +93,7 @@ describe("stopReason", () => {
 		expect(stopReason({ maxSteps: true })).toBe("max_steps");
 		expect(stopReason({ budget: true, stopped: true })).toBe("stopped");
 		expect(stopReason({ unattended: true, interrupted: true })).toBe("interrupted");
+		expect(stopReason({ unavailable: true })).toBe("unavailable");
 	});
 });
 

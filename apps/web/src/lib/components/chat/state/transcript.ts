@@ -32,13 +32,21 @@ export interface MessageMeta {
 	stopped?: boolean;
 	cutShort?: boolean;
 	interrupted?: boolean;
+	unavailable?: boolean;
 	unattended?: boolean;
 	maxSteps?: boolean;
 	budget?: boolean;
 }
 
 /** Why a reply is partial, as StoppedNotice words it. */
-export type StopReason = "stopped" | "length" | "interrupted" | "unattended" | "max_steps" | "budget";
+export type StopReason =
+	| "stopped"
+	| "length"
+	| "interrupted"
+	| "unavailable"
+	| "unattended"
+	| "max_steps"
+	| "budget";
 
 /**
  * The one reason to show under a partial reply, or null for a whole one. A
@@ -49,6 +57,7 @@ export function stopReason(meta: MessageMeta | undefined): StopReason | null {
 	if (!meta) return null;
 	if (meta.stopped) return "stopped";
 	if (meta.cutShort) return "length";
+	if (meta.unavailable) return "unavailable";
 	if (meta.interrupted) return "interrupted";
 	if (meta.unattended) return "unattended";
 	if (meta.maxSteps) return "max_steps";
@@ -153,6 +162,8 @@ export function convertMessageToParts(msg: any, metadata: Map<string, MessageMet
 	const stopped = msg.subject === "cancelled";
 	const cutShort = msg.subject === "length";
 	const interrupted = msg.subject === "interrupted";
+	// The model's provider turned the call away, so nothing was cut off.
+	const unavailable = msg.subject === "unavailable";
 	// The box's own cap, and the turn using up its steps. Both used to arrive
 	// as one of the three above — the cap as the person's own stop.
 	const unattended = msg.subject === "unattended";
@@ -165,6 +176,7 @@ export function convertMessageToParts(msg: any, metadata: Map<string, MessageMet
 		stopped ||
 		cutShort ||
 		interrupted ||
+		unavailable ||
 		unattended ||
 		maxSteps ||
 		budget
@@ -175,6 +187,7 @@ export function convertMessageToParts(msg: any, metadata: Map<string, MessageMet
 			stopped,
 			cutShort,
 			interrupted,
+			unavailable,
 			unattended,
 			maxSteps,
 			budget,
