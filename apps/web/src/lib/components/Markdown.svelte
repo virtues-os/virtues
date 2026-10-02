@@ -13,6 +13,14 @@
 	interface Props {
 		content: string;
 		isStreaming?: boolean;
+		/**
+		 * Fade words in as they arrive. Separate from `isStreaming` because it
+		 * must NOT end with the stream: turning it off rebuilds every word of
+		 * the reply as plain text in one go, and on WebKit (the phone, the Mac
+		 * app) that rebuild threw a reader scrolled into the reply back to its
+		 * first line. The caller keeps it on for a reply it watched arrive.
+		 */
+		animate?: boolean;
 		citations?: CitationContext;
 		onCitationClick?: (citation: Citation) => void;
 		// How inline entity refs render: "link" (default, chat answers) or "quiet"
@@ -35,6 +43,7 @@
 	let {
 		content,
 		isStreaming = false,
+		animate = false,
 		citations,
 		onCitationClick,
 		refVariant = "link",
@@ -145,7 +154,7 @@
 			defaultOrigin={origin}
 			allowedLinkPrefixes={['*']}
 			animation={{
-				enabled: isStreaming,
+				enabled: animate,
 				type: 'fade',
 				duration: 300,
 				tokenize: 'word',
@@ -233,6 +242,21 @@
 
 	.markdown :global(.streamdown-content) {
 		display: block;
+	}
+
+	/* Streamdown fades each word in its own span and makes it inline-block,
+	   which turns the space after a word into a box of its own: a line that
+	   wrapped on a space started with it, indented. Opacity animates on
+	   inline boxes just as well. The style is inline, hence the !important. */
+	.markdown :global(.streamdown-content span[style*="animation-name: sd-"]) {
+		display: inline !important;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.markdown :global(.streamdown-content [style*="animation-name: sd-"]) {
+			animation: none !important;
+			opacity: 1 !important;
+		}
 	}
 
 	.markdown :global(.query-ref) {
