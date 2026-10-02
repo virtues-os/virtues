@@ -1599,6 +1599,15 @@ BEGIN
      WHERE id ~ '^day_[0-9]{4}-[0-9]{2}-[0-9]{2}$'
        AND substr(id, 5)::date BETWEEN DATE '%FIRST_DAY%' AND DATE '%LAST_DAY%';
 
+  -- Events the box wrote onto this set's days ride with them. A box re-reads
+  -- a day it narrates and replaces its events with its own hashed ids, so a
+  -- `p3y_` filter alone leaves those behind a day per run. Taken before the
+  -- fold below: events folded in from a box-made row already sit on the date
+  -- they are moving to.
+  CREATE TEMP TABLE _p3y_riders ON COMMIT DROP AS
+    SELECT e.id FROM wiki_events e JOIN _p3y_days o ON o.id = e.day_id
+     WHERE e.id NOT LIKE 'p3y!_%%' ESCAPE '!';
+
   -- A row the box made on a date this set is about to land on would break the
   -- UNIQUE date, and it is the ordinary case, not an edge: a running box
   -- creates a hashed-id row for any date someone opens, so the day after the
@@ -1633,6 +1642,12 @@ BEGIN
   UPDATE wiki_events          SET started_at = started_at + (shift_days || ' days')::interval,
                                   ended_at   = ended_at   + (shift_days || ' days')::interval
                               WHERE id LIKE 'p3y_%%';
+  UPDATE wiki_events          SET started_at = started_at + (shift_days || ' days')::interval,
+                                  ended_at   = ended_at   + (shift_days || ' days')::interval
+                              WHERE id IN (SELECT id FROM _p3y_riders);
+  -- The box writes a ref per entity it finds in a seeded row, stamped with
+  -- that row's time; the ref moves when its source does.
+  UPDATE wiki_refs SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE source_id LIKE 'p3y_%%';
   UPDATE data_health_heart_rate SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
   UPDATE data_health_hrv        SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
   UPDATE data_health_steps      SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
