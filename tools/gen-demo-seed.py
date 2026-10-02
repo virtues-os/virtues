@@ -1618,6 +1618,9 @@ BEGIN
                                     ended_at   = ended_at   + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
   UPDATE data_environment_weather SET occurred_at = occurred_at + (shift_days||' days')::interval,
                                       issued_at   = issued_at   + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
+  UPDATE data_activity_web_browsing SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
+  UPDATE data_content_bookmark  SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
+  UPDATE data_content_document  SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
   UPDATE app_chats           SET created_at = created_at + (shift_days||' days')::interval,
                                  updated_at = updated_at + (shift_days||' days')::interval WHERE id LIKE 'chat_p3y_%%';
   UPDATE app_chat_messages   SET created_at = created_at + (shift_days||' days')::interval WHERE id LIKE 'chat_p3y_%%';
