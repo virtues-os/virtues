@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitTurn, stopReason, turnMovedPast } from "./transcript";
+import { splitTurn, stopReason, toUiMessage, turnMovedPast } from "./transcript";
 
 const text = (t: string) => ({ type: "text", text: t });
 const tool = (name: string) => ({ type: `tool-${name}`, toolCallId: name });
@@ -93,5 +93,22 @@ describe("stopReason", () => {
 		expect(stopReason({ maxSteps: true })).toBe("max_steps");
 		expect(stopReason({ budget: true, stopped: true })).toBe("stopped");
 		expect(stopReason({ unattended: true, interrupted: true })).toBe("interrupted");
+	});
+});
+
+describe("toUiMessage", () => {
+	it("gives a reloaded tool part its own type, whichever spelling the box sent", () => {
+		const msg = toUiMessage(
+			{
+				id: "m1",
+				role: "assistant",
+				parts: [
+					{ type: "tool-invocation", toolName: "create_page", toolCallId: "c0", state: "output-available" },
+					{ type: "tool-web_search", toolName: "web_search", toolCallId: "c1", state: "output-available" },
+				],
+			},
+			new Map(),
+		);
+		expect(msg.parts.map((p: any) => p.type)).toEqual(["tool-create_page", "tool-web_search"]);
 	});
 });
