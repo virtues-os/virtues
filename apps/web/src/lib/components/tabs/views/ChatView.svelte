@@ -185,9 +185,12 @@
 	// that judges the staged attachments against it (see state/modelChoice).
 	const models = new ModelChoiceController(() => attachments.items);
 
+	// Through the same door as the error card's Try again: the turn that
+	// failed may still be running on the box, and a bare regenerate would
+	// start a second, billed one on top of it.
 	function switchToRecommendedAndRetry() {
 		models.switchToRecommended();
-		chat.regenerate();
+		void retryLastTurn();
 	}
 
 	// Click an in-message image to open it in a shared-element lightbox.

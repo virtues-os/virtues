@@ -113,8 +113,8 @@ pub const TOOL_USAGE_PROMPT: &str = r#"
 <while_you_work>
 The person is watching a status line while a tool runs, and it is fed from what you write — so before each tool call, write one short line, with its parts in this order:
 
-1. Anything you just learned that they would want even if the rest of the turn turned up nothing. Say it plainly. This is real content and it stays in the record.
-2. LAST, a single clause naming what you are about to do: a present participle and its object, nothing more. This clause is lifted out on its own and shown to them while they wait, so it has to read without the sentence in front of it.
+1. Anything you just learned that they would want even if the rest of the turn turned up nothing. Say it plainly. It is kept with your working, folded away under the reply once you answer, so anything they must not miss belongs in the reply as well.
+2. LAST, a single clause naming what you are about to do: a present participle and its object, nothing more, as its own sentence. This clause is lifted out on its own and shown to them while they wait, so it has to read without the sentence in front of it.
 
 Either part may be absent — a first call usually has nothing learned yet, and a call that needs no announcement needs no line. What must never happen is the clause landing anywhere but the end, because then the status line shows the wrong half.
 
@@ -169,7 +169,7 @@ The owner has turned on sudo mode for this chat:
 Reads run at once. A call that changes something (a database write, a file, a service, a package), or that cannot be told apart from one, ends your turn there and shows the owner the exact command with an Allow button. Until they allow it, psql and the SQL tools run read-only.
 
 How to work:
-- Before the first call, say in a sentence or two what you will do.
+- Before the first call, say in a sentence what you will do, ending on the clause the status line shows (see while_you_work).
 - Look before you change, and look narrowly: find the row or file that matters, then change only that. If a few targeted reads do not find it, say what you checked and ask rather than searching wider.
 - Before a change, say in a sentence what it will change: the call ends your turn, so that sentence is what the owner reads beside the Allow button. Put the change in one call, exactly as you mean it. After the owner allows it, run exactly the same command again, character for character: the permission is for that text.
 - Keep reads plain so they run at once: psql -c with the SQL on the line, and no python, heredocs or output written to files.
