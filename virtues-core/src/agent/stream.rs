@@ -124,12 +124,27 @@ where
 
     // Stream through the device api_key. Any auto-top-up-and-retry on a 402
     // happens before the body opens; mid-stream top-up is impossible.
-    let response = match config
-        .client
-        .stream_affine("/v1/ai/chat/completions", &body, session_affinity)
-        .await
-        .map_err(|e| StreamError::Connection(e.to_string()))?
-    {
+    //
+    // A provider that turns the call away before the body opens (502/503/504)
+    // is asked once more: nothing streamed and nothing was billed, and these
+    // are usually a moment's overload. Without it, one blip ended a turn that
+    // had already run its tools.
+    let send = || async {
+        config
+            .client
+            .stream_affine("/v1/ai/chat/completions", &body, session_affinity)
+            .await
+            .map_err(|e| StreamError::Connection(e.to_string()))
+    };
+    let mut outcome = send().await?;
+    if let crate::virtues_api::client::StreamOutcome::Error { status, .. } = &outcome {
+        if is_transient_status(*status) {
+            tracing::warn!(status, model, "provider turned the call away; asking once more");
+            tokio::time::sleep(TRANSIENT_RETRY_DELAY).await;
+            outcome = send().await?;
+        }
+    }
+    let response = match outcome {
         crate::virtues_api::client::StreamOutcome::Stream(resp) => resp,
         crate::virtues_api::client::StreamOutcome::Error { status, body } => {
             return Err(StreamError::LlmError {
@@ -161,6 +176,16 @@ where
         }
     }
     sse.finish(&mut emit)
+}
+
+/// How long to wait before asking a provider that turned a call away again.
+const TRANSIENT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// A refusal that says the provider is briefly unavailable, not that the
+/// request was wrong: worth one more try, and worth telling apart from a
+/// dropped stream when the turn ends on it.
+pub fn is_transient_status(status: u16) -> bool {
+    matches!(status, 502..=504)
 }
 
 /// Whether to keep reading the stream.

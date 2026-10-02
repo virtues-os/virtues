@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 use chrono::Utc;
 
-use crate::agent::{AgentEvent, FinishReason, StepReason};
+use crate::agent::{AgentEvent, ErrorCode, FinishReason, StepReason};
 use crate::api::chat::{StreamEvent, UIPart};
 use crate::api::chats::{ChatMessage, ToolCall};
 use crate::types::Timestamp;
@@ -85,6 +85,10 @@ pub struct TurnRecorder {
     /// Set by any error event mid-turn: the reply on screen is partial, and
     /// the row must say so or a reload shows the stub as the answer.
     interrupted: bool,
+    /// The error was the provider turning the call away, not a dropped
+    /// stream. Saved as its own subject so a reload says the model was
+    /// unavailable rather than that the reply was cut off.
+    provider_unavailable: bool,
     /// How the last LLM step ended, and how the loop ended: together they are
     /// the `finish` event's reason and the row's subject.
     last_step_reason: Option<StepReason>,
@@ -109,6 +113,7 @@ impl TurnRecorder {
             reasoning_details: Vec::new(),
             usage: TurnUsage::default(),
             interrupted: false,
+            provider_unavailable: false,
             last_step_reason: None,
             loop_finish: None,
         }
@@ -277,8 +282,9 @@ impl TurnRecorder {
                 self.reasoning_details.extend(details);
             }
 
-            AgentEvent::Error { message, code: _, recoverable: _ } => {
+            AgentEvent::Error { message, code, recoverable: _ } => {
                 self.interrupted = true;
+                self.provider_unavailable = code == Some(ErrorCode::ProviderUnavailable);
                 out.push(StreamEvent::Error { error_text: message });
             }
 
@@ -351,7 +357,7 @@ impl TurnRecorder {
     /// stop is told apart from the person's: telling someone they stopped a
     /// reply they never touched is a lie about who did what. "interrupted"
     /// is the stream or the model stopping before the reply was finished
-    /// (VIR-334).
+    /// (VIR-334); "unavailable" is the provider refusing the call outright.
     ///
     /// `cancelled` here is the turn's token alone — unlike `close`, a loop
     /// that reported `Cancelled` on an uncancelled token is not a stop.
@@ -368,6 +374,8 @@ impl TurnRecorder {
             Some("max_steps")
         } else if self.loop_finish == Some(FinishReason::BudgetExceeded) {
             Some("budget")
+        } else if self.provider_unavailable {
+            Some("unavailable")
         } else if self.interrupted {
             Some("interrupted")
         } else {
@@ -542,7 +550,6 @@ fn build_turn_parts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::ErrorCode;
     use crate::api::chat::serialize_event;
     use serde_json::json;
 
@@ -944,6 +951,23 @@ mod tests {
             ]
         );
         assert_eq!(r.subject(false, false), Some("interrupted"));
+    }
+
+    /// A provider that refused the call is saved as unavailable, so a reload
+    /// does not say the reply was cut off when it never started.
+    #[test]
+    fn a_refused_call_is_saved_as_unavailable() {
+        let mut r = TurnRecorder::new("m".into());
+        feed(
+            &mut r,
+            vec![AgentEvent::Error {
+                message: "LLM error (status 503): unavailable".into(),
+                code: Some(ErrorCode::ProviderUnavailable),
+                recoverable: false,
+            }],
+        );
+        assert_eq!(r.subject(false, false), Some("unavailable"));
+        assert_eq!(r.subject(true, false), Some("cancelled"));
     }
 
     /// The recorded stopped-turn fixture the web client's vitest parses is

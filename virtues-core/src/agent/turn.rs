@@ -133,10 +133,14 @@ pub(super) fn answered(step_reason: StepReason, last_step: Option<FinishReason>)
 }
 
 /// The error code for a model call that failed. An interrupted stream is not
-/// an LLM error: the model was mid-sentence when the bytes stopped.
+/// an LLM error: the model was mid-sentence when the bytes stopped. Nor is a
+/// provider that refused the call while it was down: the request was fine.
 pub(super) fn stream_error_code(e: &StreamError) -> ErrorCode {
     match e {
         StreamError::Interrupted(_) => ErrorCode::Interrupted,
+        StreamError::LlmError { status, .. } if stream::is_transient_status(*status) => {
+            ErrorCode::ProviderUnavailable
+        }
         _ => ErrorCode::LlmError,
     }
 }
@@ -383,12 +387,16 @@ mod tests {
     }
 
     #[test]
-    fn only_an_interruption_is_not_an_llm_error() {
+    fn interruptions_and_outages_are_not_llm_errors() {
         assert_eq!(stream_error_code(&StreamError::Interrupted("x".into())), ErrorCode::Interrupted);
         assert_eq!(stream_error_code(&StreamError::Connection("x".into())), ErrorCode::LlmError);
         assert_eq!(
             stream_error_code(&StreamError::LlmError { status: 500, message: "x".into() }),
             ErrorCode::LlmError
+        );
+        assert_eq!(
+            stream_error_code(&StreamError::LlmError { status: 503, message: "x".into() }),
+            ErrorCode::ProviderUnavailable
         );
     }
 
