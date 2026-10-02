@@ -1442,6 +1442,34 @@
 		setTimeout(turnWritten, 5000);
 	}
 
+	/** Move a new chat's tab from "/chat" to its own id. The route is what a
+	 *  reload reopens, so it moves the moment the box has the turn: a reload
+	 *  mid-reply then rejoins the turn instead of opening a blank chat while
+	 *  the reply finishes unseen. A temporary chat keeps its route; the box
+	 *  has nothing to reopen. */
+	async function promoteNewChatRoute() {
+		if (isGhost || !isNewChat(tab.route)) return;
+		const newRoute = `/chat/${conversationId}`;
+		// Set first, so `onRouteChange` reads the move as this conversation
+		// getting its id rather than a switch that resets the view.
+		previousTabRoute = newRoute;
+		windowShellStore.updateTab(tab.id, { route: newRoute });
+		// The draft key moves with the route; a debounced write of the cleared
+		// composer to the old key would be dropped and the sent text would come
+		// back in the next new chat.
+		writeDraft(NEW_CHAT_DRAFT_ID, "");
+		await editAllowListStore.markChatCreated();
+		windowShellStore.invalidateViewCache("chat");
+	}
+
+	// The box has stored the chat and the user's message before its first
+	// byte (`store_user_turn` runs ahead of the stream), so "streaming" is the
+	// earliest moment the new route is sure to reopen something.
+	$effect(() => {
+		if (chat.status !== "streaming") return;
+		untrack(() => void promoteNewChatRoute());
+	});
+
 	async function handleChatSubmit(value: string) {
 		let messageToSend = value.trim();
 
@@ -1532,23 +1560,8 @@
 
 			handedOff = true;
 
-			// Titles come from a cloud model, so a local chat never asks for one.
 			if (chat.messages.length >= 2 && !isGhost && !titleDone) {
 				await generateTitle();
-				// Update tab route if it's a new chat
-				if (isNewChat(tab.route)) {
-					// Update previousTabRoute first to prevent the tab-switch effect
-					// from treating this as a tab change and resetting state
-					const newRoute = `/chat/${conversationId}`;
-					previousTabRoute = newRoute;
-					windowShellStore.updateTab(tab.id, {
-						route: newRoute,
-					});
-					// Ensure chat is marked as created (may already be done above if hasItems)
-					await editAllowListStore.markChatCreated();
-					// Invalidate the Chats view cache so it refreshes with the new chat
-					windowShellStore.invalidateViewCache('chat');
-				}
 				await chatSessions.refresh();
 			}
 
