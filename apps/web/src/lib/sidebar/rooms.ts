@@ -188,20 +188,6 @@ export const ROOMS: Room[] = [
 		group: 'library',
 	},
 	{
-		// The Timeline: one day on a map, reached at /timeline. A full-page
-		// room, so its panel is a stub. It is a seventh tile beside the six
-		// the head of this file argues for, kept on purpose: the day is a
-		// place you go to, not a list you open from another room.
-		id: 'timeline',
-		label: 'Timeline',
-		icon: 'lifeline',
-		chord: '⌥⌘T',
-		href: '/timeline',
-		owns: ['/timeline'],
-		panel: { kind: 'stub' },
-		group: 'library',
-	},
-	{
 		// Above Settings, never below it. Settings is the room muscle memory
 		// reaches for at the very foot of a rail — every desktop app it borrows
 		// from puts it there — so Developer takes the slot above rather than

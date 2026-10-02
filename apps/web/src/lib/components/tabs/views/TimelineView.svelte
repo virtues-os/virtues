@@ -1469,7 +1469,7 @@
 		top: calc((var(--nav-bottom) + 12px + 100% - var(--scrub-h) - 28px) / 2);
 		left: calc((16px + 100% - var(--inspector-space)) / 2);
 		transform: translate(-50%, -50%);
-		padding: 8px 14px;
+		padding: 8px 16px;
 		border-radius: var(--tile-radius);
 		text-align: center;
 	}
