@@ -39,6 +39,7 @@ const ProjectDetailView: ViewLoader = () => import('$lib/components/tabs/views/P
 const NarrativeIdentityView: ViewLoader = () => import('$lib/components/tabs/views/NarrativeIdentityView.svelte');
 const DataView: ViewLoader = () => import('$lib/components/tabs/views/DataView.svelte');
 const SetupView: ViewLoader = () => import('$lib/components/tabs/views/SetupView.svelte');
+const TimelineView: ViewLoader = () => import('$lib/components/tabs/views/TimelineView.svelte');
 
 export interface TabDefinition {
 	// Route matching
@@ -813,6 +814,24 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
+	// TIMELINE: /timeline — one day on a map: its track, stays, drives and
+	// moments, with the day's inspector and scrubber.
+	// ========================================================================
+	timeline: {
+		match: (path) => path === '/timeline',
+		parse: () => ({
+			type: 'timeline',
+			label: 'Timeline',
+			icon: 'ri:route-line',
+		}),
+		serialize: () => 'timeline',
+		deserialize: () => '/timeline',
+		icon: 'ri:route-line',
+		defaultLabel: 'Timeline',
+		component: TimelineView,
+	},
+
+	// ========================================================================
 	// SETTINGS NAMESPACE: /virtues[/{section}[/{sub}]]
 	// One room (SettingsView) — You, Assistant, Connections, Billing, Box,
 	// Developer — as a two-level route-driven sub-nav. Legacy flat pages
@@ -888,6 +907,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'asset', // /drive/file_{id} — must precede 'drive' (which matches all /drive/*)
 		'drive', // Has /drive/* pattern
 		'trash', // Drive trash
+		'timeline', // The Timeline: /timeline
 		'chat-history', // Chat history list (before 'chat')
 		// Entity namespaces
 		'chat', // Also matches /
