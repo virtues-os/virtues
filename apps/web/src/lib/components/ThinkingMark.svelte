@@ -1,3 +1,9 @@
+<script lang="ts" module>
+	/** The landing: fall together from wherever you are, then open as the mark.
+	 *  ThinkingBlock holds the mark on screen for exactly this long. */
+	export const LAND_MS = 2000;
+</script>
+
 <script lang="ts">
 	/**
 	 * THE ∴ IN MOTION — how deep it is going, in how many dimensions it stands.
@@ -243,8 +249,6 @@
 		(d, i) => [d[0], d[1], i < 3 ? 3 : 0, i < 3 ? 1 : 0, 0] as Dot,
 	);
 
-	/** The landing: fall together from wherever you are, then open as the mark. */
-	const LAND_MS = 2000;
 	const LAND_CONV: Track = [[0, 0], [0.35, 1], [0.62, 1], [1, 0]];
 
 	function converge(pose: Dot[], amount: number): Dot[] {

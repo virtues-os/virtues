@@ -38,6 +38,12 @@ describe("toolStatus", () => {
 	it("tells a call that never answered from one that failed", () => {
 		expect(toolStatus(at("output-error", TOOL_UNFINISHED), false)).toBe("unfinished");
 		expect(toolStatus(at("output-error", "column does not exist"), false)).toBe("failed");
+		expect(
+			toolStatus(
+				at("output-error", "Tool failed (web_search, execution): stopped by the owner before it finished"),
+				false,
+			),
+		).toBe("unfinished");
 		expect(toolStatus(at("output-available"), true)).toBe("done");
 	});
 });

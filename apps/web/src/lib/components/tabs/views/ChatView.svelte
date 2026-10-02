@@ -78,6 +78,7 @@
 	import UserMessage from "$lib/components/UserMessage.svelte";
 	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
 	import { toolStatus } from "$lib/components/chat/state/toolPresentation";
+	import { TurnPhaseController } from "$lib/components/chat/state/turnPhase.svelte";
 	import TurnFigures from "$lib/components/chat/TurnFigures.svelte";
 	import SubagentPanel from "$lib/components/SubagentPanel.svelte";
 	import { onMount, onDestroy, tick, untrack } from "svelte";
@@ -165,6 +166,17 @@
 	// and sent automatically when the turn finishes (Cursor-style chips above the
 	// composer). Local to the view — a tab drag-away mid-queue is an accepted edge.
 	let queuedMessages = $state<string[]>([]);
+
+	// Whether a turn is working, and for how long (see state/turnPhase). A
+	// stream silent past LET_GO_MS is let go and rejoined: the box's turn
+	// outlives the request, so a dead socket is the only thing lost.
+	const turnPhase = new TurnPhaseController(
+		() => chat,
+		() => {
+			void chat.stop();
+			setTimeout(resumeIfDangling, 500);
+		},
+	);
 
 	// Track E1: multimodal attachments (see state/attachments).
 	const attachments = new AttachmentsController();
@@ -702,6 +714,7 @@
 		contextUsage = undefined;
 		titleDone = false;
 		isAwaitingResponse = false;
+		turnPhase.reset();
 		isGhost = isTemporaryRoute(route);
 		danglingTurn = false;
 		queuedMessages = [];
@@ -790,8 +803,7 @@
 		reportedRunning = id;
 	}
 	$effect(() => {
-		const status = chat.status;
-		const running = !isGhost && (status === "submitted" || status === "streaming");
+		const running = !isGhost && turnPhase.working;
 		const id = conversationId;
 		untrack(() => reportRunning(running ? id : null));
 	});
@@ -807,8 +819,7 @@
 	});
 	$effect(() => {
 		if (!active || !pageVisible || isGhost || isLoading || isNewChat(tab.route)) return;
-		const status = chat.status;
-		if (status === "submitted" || status === "streaming") return;
+		if (turnPhase.working) return;
 		const id = conversationId;
 		untrack(() => chatActivity.markSeen(id));
 	});
@@ -916,12 +927,6 @@
 		}
 	});
 
-	// Derive thinking state from chat status
-	const isThinking = $derived.by(() => {
-		const status = chat?.status;
-		return status === "submitted" || status === "streaming";
-	});
-
 	// Deduplicated messages for rendering
 	const uniqueMessages = $derived(chat?.messages ? deduplicateMessages(chat.messages) : []);
 
@@ -935,6 +940,9 @@
 			if (m.role === "user") askedAt = Number.isNaN(at) ? null : at;
 			else if (m.role === "assistant" && askedAt !== null && !Number.isNaN(at) && at > askedAt) {
 				out.set(m.id, (at - askedAt) / 1000);
+				// A second line after the same question (the rooms speak
+				// several) was not the answer's work; it gets no number.
+				askedAt = null;
 			}
 		}
 		return out;
@@ -997,31 +1005,6 @@
 			}
 		}
 		return null;
-	});
-
-	// Whether the last assistant message has any visible content yet
-	// (text, reasoning, or tool calls). Used to keep the optimistic thinking
-	// indicator showing until real content takes over.
-	const lastAssistantHasVisibleContent = $derived.by(() => {
-		if (!lastAssistantMessage) return false;
-		return lastAssistantMessage.parts.some((p: any) =>
-			(p.type === 'text' && p.text) ||
-			(p.type === 'reasoning' && p.text) ||
-			p.type?.startsWith('tool-')
-		);
-	});
-
-	// Track thinking duration
-	let thinkingStartTime: number | null = null;
-	let thinkingDuration = $state(0);
-
-	$effect(() => {
-		if (isThinking && !thinkingStartTime) {
-			thinkingStartTime = Date.now();
-		} else if (!isThinking && thinkingStartTime) {
-			thinkingDuration = (Date.now() - thinkingStartTime) / 1000;
-			thinkingStartTime = null;
-		}
 	});
 
 	// Local input state
@@ -1092,17 +1075,6 @@
 	// not a choice — record it as one.
 	$effect(() => {
 		models.adoptStoreSelection();
-	});
-
-	// Safety timeout: a turn still thinking after 5 minutes is let go. The
-	// box's stream has no total timeout, only a 300s idle one.
-	$effect(() => {
-		if (!isThinking) return;
-		const t = setTimeout(() => {
-			const s = chat.status;
-			if (s === "error" || s === "streaming" || s === "submitted") chat.clearError();
-		}, 300000);
-		return () => clearTimeout(t);
 	});
 
 	// Derived state for layout mode
@@ -1449,7 +1421,10 @@
 
 		// Mark the in-flight assistant message as user-stopped so the "Stopped"
 		// notice shows immediately (reload reads the persisted subject='cancelled').
-		const stoppedId = lastAssistantMessage?.id;
+		// Only the reply being written: stopped before it existed, the last
+		// assistant message is the PREVIOUS turn's, which was not stopped.
+		const tail = uniqueMessages[uniqueMessages.length - 1];
+		const stoppedId = tail?.role === "assistant" ? tail.id : undefined;
 		if (stoppedId) {
 			const existing = messageMetadata.get(stoppedId) ?? {};
 			messageMetadata.set(stoppedId, { ...existing, stopped: true });
@@ -1501,7 +1476,7 @@
 		// recovery — clear the card and send it.
 		if (chat.status === "error") chat.clearError();
 
-		if (chat.status !== "ready") {
+		if (chat.status !== "ready" || turnPhase.working) {
 			// Queue text; attachments stay staged and ride along when the drain
 			// effect re-sends this once the current turn finishes.
 			queuedMessages = [...queuedMessages, messageToSend];
@@ -1527,8 +1502,9 @@
 		// New turn → clear any leftover Deep Research panel from the previous turn.
 		chatInstances.clearSubagents(conversationId);
 
-		// Optimistic: show thinking indicator immediately (before network round-trip)
+		// The turn is working from here, before the network round-trip.
 		isAwaitingResponse = true;
+		turnPhase.beginSend();
 		await tick(); // Flush DOM so the indicator renders before the network call
 
 		// Auto-scroll to bottom on submit
@@ -1605,6 +1581,7 @@
 			}
 		} finally {
 			isAwaitingResponse = false;
+			turnPhase.endSend();
 		}
 	}
 
@@ -1827,9 +1804,7 @@
 												uniqueMessages[
 													uniqueMessages.length - 1
 												]?.id}
-											{@const isStreaming =
-												(chat.status === "streaming" || chat.status === "submitted") &&
-												isLastMessage}
+											{@const isStreaming = turnPhase.working && isLastMessage}
 											<!-- Narration, tool calls and reasoning go to the thinking
 											     block; the reply starts at bodyFromIndex (see splitTurn). -->
 											{@const turn = splitTurn(message.parts, isStreaming)}
@@ -1853,18 +1828,18 @@
 												     about the person must never surface as chrome
 												     in the room built on their own account. -->
 												<ThinkingBlock
-													isThinking={isStreaming &&
-														isLastMessage &&
-														chat.status ===
-															"streaming"}
+													isThinking={isStreaming}
+													startedAt={turnPhase.startedAt}
+													stalled={isStreaming && turnPhase.stalled}
 													toolCalls={turn.toolParts}
 													reasoningContent={turn.reasoning}
 													narration={turn.narration}
 													intent={turn.intent}
-													duration={isLastMessage
-														? thinkingDuration
-														: 0}
-													turnSeconds={turnSeconds.get(message.id) ?? 0}
+													seconds={turnPhase.secondsFor(message.id) ||
+														turnSeconds.get(message.id) ||
+														0}
+													land={!stopReason(messageMetadata.get(message.id)) &&
+														!chat.error}
 													agentMode={selectedAgentMode}
 												/>
 											{/if}
@@ -2165,25 +2140,29 @@
 								     the same ∴ holding still while it does not. Always
 								     something in the margin, so nothing jumps when the turn
 								     starts — and the room is never empty of its occupant. -->
-								{#if chat.status === "submitted" || chat.status === "streaming"}
+								{#if turnPhase.working}
 									<Composing label="Composing a reply" />
 								{:else}
 									<RestingMark />
 								{/if}
 							{:else if inInterview}
-								{#if reveal.chars || chat.status === "submitted" || chat.status === "streaming"}
+								{#if reveal.chars || turnPhase.working}
 									<Composing label="Composing a reply" />
 								{:else}
 									<RestingMark />
 								{/if}
-							{:else if isAwaitingResponse && !lastAssistantMessage}
+							{:else if turnPhase.awaitingReply}
+								<!-- The turn before its reply exists: from Send until the
+								     box's first event, which can be seconds while it
+								     compacts. The block inside the reply takes over from
+								     the same clock, so the count does not restart. -->
 								<div class="flex justify-start">
 									<div class="message-wrapper" data-role="assistant">
 										<ThinkingBlock
 											isThinking={true}
+											startedAt={turnPhase.startedAt}
+											stalled={turnPhase.stalled}
 											toolCalls={[]}
-											reasoningContent=""
-											duration={0}
 											agentMode={selectedAgentMode}
 										/>
 									</div>
@@ -2328,8 +2307,8 @@
 							bind:value={input}
 							bind:focused={inputFocused}
 							disabled={false}
-							sendDisabled={chat.status === "submitted" || chat.status === "streaming" || (isLocal && !localModel.status.ready)}
-							isStreaming={chat.status === "streaming"}
+							sendDisabled={turnPhase.working || (isLocal && !localModel.status.ready)}
+							isStreaming={turnPhase.working}
 							maxWidth="max-w-3xl"
 							placeholder={isLocal ? "Ask the local model" : isGhost ? "Ask Virtues (temporary)" : "Ask Virtues"}
 							onSubmit={(text) => handleChatSubmit(text)}

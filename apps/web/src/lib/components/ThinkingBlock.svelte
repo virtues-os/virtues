@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { slide } from "svelte/transition";
 	import { cubicOut } from "svelte/easing";
-	import ThinkingMark from "./ThinkingMark.svelte";
+	import { untrack } from "svelte";
+	import ThinkingMark, { LAND_MS } from "./ThinkingMark.svelte";
 	import { toolErrorSummary } from "$lib/components/chat/state/toolError";
 	import {
 		describeTool,
@@ -14,8 +15,13 @@
 	import type { AgentModeId } from "$lib/config/agentModes";
 
 	interface Props {
-		/** Whether the AI is actively thinking/processing */
+		/** This turn is in flight (TurnPhaseController: Send to stream end). */
 		isThinking: boolean;
+		/** When the turn began, for the live clock. Owned by the view, so a
+		 *  block that mounts mid-turn does not restart it at zero. */
+		startedAt?: number | null;
+		/** In flight with nothing arriving: the label says so. */
+		stalled?: boolean;
 		/** Tool call parts from the message */
 		toolCalls: ToolPart[];
 		/** Reasoning/thinking text from the model */
@@ -32,13 +38,11 @@
 		 * later calls without a word, and the label kept saying the first.
 		 */
 		intent?: string;
-		/** Duration in seconds spent thinking */
-		duration?: number;
-		/**
-		 * The whole turn, question to stored reply, in seconds — what a
-		 * reopened chat can still measure after the thinking time is gone.
-		 */
-		turnSeconds?: number;
+		/** How long the turn worked, in seconds; 0 when nobody measured it. */
+		seconds?: number;
+		/** Play the landing when the turn ends. Off for a turn that was
+		 *  stopped or failed: nothing landed. */
+		land?: boolean;
 		/**
 		 * Which mode the turn is running in. Deep Research and Council are, by
 		 * construction, turns that go out to the record — so the mark starts a
@@ -53,32 +57,22 @@
 		reasoningContent = "",
 		narration = [],
 		intent = "",
-		duration = 0,
-		turnSeconds = 0,
+		startedAt = null,
+		stalled = false,
+		seconds = 0,
+		land = true,
 		agentMode = "chat",
 	}: Props = $props();
 
 	// Expansion state - always starts collapsed (user can expand manually)
 	let expanded = $state(false);
 
-	// Track thinking duration
-	let thinkingStartTime = $state<number | null>(null);
-	let calculatedDuration = $state(0);
-	let hasStartedThinking = $state(false);
-
-	/**
-	 * HOW DEEP, in dots. See ThinkingMark for what the dots mean and why they
-	 * are dots; this is the only place that decides which number is true. Each
-	 * tool's own depth lives with the rest of how it reads (toolPresentation).
-	 */
 	/** A turn this long is a long one, whatever it is doing. */
 	const LONG_TURN_MS = 15_000;
 	/** Past this, settle into the calmer form of whatever is playing. */
 	const SUSTAINED_MS = 4_000;
 	/** Enough calls that the turn is plainly working through something. */
 	const MANY_TOOLS = 6;
-	/** How long the landing stays on screen after the turn ends. */
-	const LANDING_MS = 2_000;
 
 	/**
 	 * Elapsed time is the only honest signal for "this is deep". Nothing else
@@ -128,6 +122,9 @@
 		if (current && toolName(current) !== "think") {
 			return describeTool(current, true, true);
 		}
+		// Nothing has arrived for a while, and no call is running to explain
+		// it: the wait is on the server, and saying so is the one true thing.
+		if (stalled) return "Waiting on your server";
 		// Long and silent: "Thinking" stops being informative somewhere around
 		// the fifteen-second mark, and saying so is the one thing we know that
 		// the model has not already said.
@@ -155,7 +152,11 @@
 	}
 
 	/**
-	 * How many dots. The order of these tests is the order of confidence: what
+	 * HOW DEEP, in dots. See ThinkingMark for what the dots mean and why they
+	 * are dots; this is the only place that decides which number is true. Each
+	 * tool's own depth lives with the rest of how it reads (toolPresentation).
+	 *
+	 * The order of these tests is the order of confidence: what
 	 * the turn has already done outranks what it happens to be doing right now,
 	 * because a turn that has run fifteen seconds is a long one even while its
 	 * current call is a quick read.
@@ -190,26 +191,26 @@
 	 * identity across the transition. Running before the DOM update keeps the
 	 * instance, and with it the pose it froze.
 	 */
+	let wasThinking = false;
 	$effect.pre(() => {
-		if (isThinking && !hasStartedThinking) {
-			hasStartedThinking = true;
-			thinkingStartTime = Date.now();
+		if (isThinking && !wasThinking) {
+			wasThinking = true;
 			landing = false;
 			if (landingTimer) {
 				clearTimeout(landingTimer);
 				landingTimer = null;
 			}
-		} else if (!isThinking && hasStartedThinking) {
-			calculatedDuration = thinkingStartTime ? (Date.now() - thinkingStartTime) / 1000 : 0;
-			thinkingStartTime = null;
-			hasStartedThinking = false;
+		} else if (!isThinking && wasThinking) {
+			wasThinking = false;
 			// Three premises fall into one conclusion. This is the ONLY place
-			// the single dot is used, which is what keeps it meaning something.
+			// the single dot is used, which is what keeps it meaning something
+			// — so a turn that was stopped or failed does not get it.
+			if (!untrack(() => land)) return;
 			landing = true;
 			landingTimer = setTimeout(() => {
 				landing = false;
 				landingTimer = null;
-			}, LANDING_MS);
+			}, LAND_MS);
 		}
 	});
 
@@ -221,10 +222,10 @@
 			elapsedMs = 0;
 			return;
 		}
-		const startedAt = Date.now();
-		elapsedMs = 0;
+		const from = startedAt ?? Date.now();
+		elapsedMs = Date.now() - from;
 		const id = setInterval(() => {
-			elapsedMs = Date.now() - startedAt;
+			elapsedMs = Date.now() - from;
 		}, 500);
 		return () => clearInterval(id);
 	});
@@ -236,18 +237,30 @@
 	});
 
 
-	/** What we actually timed: the caller's measurement, or this session's clock.
-	 *  Zero means we were not here for it — see the header. */
-	const knownDuration = $derived(duration || calculatedDuration);
-
-	// Format duration
-	function formatDuration(seconds: number): string {
-		if (seconds < 1) return "<1s";
-		if (seconds < 60) return `${Math.round(seconds)}s`;
-		const mins = Math.floor(seconds / 60);
-		const secs = Math.round(seconds % 60);
-		return `${mins}m ${secs}s`;
+	function formatDuration(total: number): string {
+		if (total < 1) return "<1s";
+		const s = Math.round(total);
+		if (s < 60) return `${s}s`;
+		const h = Math.floor(s / 3600);
+		const m = Math.floor((s % 3600) / 60);
+		const sec = s % 60;
+		return h > 0 ? `${h}h ${m}m` : `${m}m ${sec}s`;
 	}
+
+	/** See the live region in the markup. */
+	let announcement = $state("");
+	let announced = false;
+	$effect(() => {
+		if (isThinking) {
+			announced = true;
+			announcement = "Working on a reply";
+		} else if (announced) {
+			announcement = seconds > 0 ? `Worked for ${formatDuration(seconds)}` : "Reply finished";
+		}
+	});
+
+	const reduceMotion =
+		typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 	// Check if we have content
 	const hasContent = $derived(
@@ -265,11 +278,19 @@
 </script>
 
 <div class="thinking-block">
-	<!-- Header -->
+	<!-- What a screen reader hears: that a turn started, then how long it
+	     took. Outside the button, so the button's name is not a live region,
+	     and present from mount but empty, so the first words are a change a
+	     reader announces rather than text it skips. Not the label itself —
+	     that changes with every call and would be read out every time. -->
+	<span class="sr-only" role="status" aria-live="polite">{announcement}</span>
+	<!-- Header. With nothing to open it is not a control: out of the tab
+	     order rather than a button that does nothing. -->
 	<button
 		type="button"
 		class="block-header"
 		class:has-content={hasContent}
+		tabindex={hasContent ? undefined : -1}
 		onclick={() => {
 			if (hasContent) {
 				expanded = !expanded;
@@ -286,25 +307,13 @@
 			{/if}
 
 			{#if isThinking}
-				<!-- The one place the box says it is working. Its only aria was
-				     `aria-expanded`, so a screen reader was told a button could
-				     be opened and never that anything was happening inside it —
-				     and now that the label is true, it is worth hearing. -->
-				<span class="thinking-text" role="status" aria-live="polite"
-					>{thinkingLabel}</span
-				>
-			{:else if knownDuration > 0}
+				<span class="thinking-text">{thinkingLabel}</span>
+			{:else if seconds > 0}
+				<!-- "Worked", not "Thought": the span covers the tools and the
+				     writing too, and claiming it all as thought overstates the
+				     one thing nobody can see. -->
 				<span class="duration-text">
-					Thought for {formatDuration(knownDuration)}
-				</span>
-			{:else if turnSeconds > 0}
-				<!-- A turn we did not watch: its thinking time was never kept,
-				     but the stored question and reply still say how long the
-				     whole turn took. "Worked", not "Thought": the span covers
-				     the tools and the writing too, and claiming it all as
-				     thought would overstate the one thing we cannot see. -->
-				<span class="duration-text">
-					Worked for {formatDuration(turnSeconds)}
+					Worked for {formatDuration(seconds)}
 				</span>
 			{:else}
 				<span class="duration-text">Worked on this</span>
@@ -323,8 +332,9 @@
 			{/if}
 		</span>
 
-		<!-- The dots lead; the chevron only turns up on hover, trailing, as the
-		     affordance for opening the block rather than a permanent glyph. -->
+		<!-- The dots lead; the chevron turns up on hover, trailing, as the
+		     affordance for opening the block rather than a permanent glyph.
+		     A touch screen has no hover, so there it stays, faintly. -->
 		{#if hasContent}
 			<span class="chevron" class:rotated={expanded}>
 				<svg width="12" height="12" viewBox="0 0 12 12">
@@ -345,7 +355,7 @@
 	{#if expanded && hasContent}
 		<div
 			class="block-content markdown"
-			transition:slide={{ duration: 200, easing: cubicOut }}
+			transition:slide={{ duration: reduceMotion ? 0 : 200, easing: cubicOut }}
 		>
 			{#if reasoningContent}
 				<p class="reasoning-text">{reasoningContent}</p>
@@ -425,6 +435,11 @@
 		font-size: 13px;
 		line-height: 1.5;
 		text-align: left;
+		/* One line, always. The header is status, not content: a long label
+		   used to wrap, and with two flex children each wrapping on its own
+		   the row became two ragged columns. Anything longer ends in an
+		   ellipsis; the whole text is one click away in the list below. */
+		max-width: 100%;
 		/* At rest the words sit flush with the reply's own left edge: the
 		   pill's padding hangs outside the column, where there is nothing to
 		   see. On hover the pill slides in by its padding as its ground fades
@@ -449,14 +464,6 @@
 		color: var(--color-foreground);
 	}
 
-	@media (prefers-reduced-motion: reduce) {
-		.block-header {
-			transition:
-				background-color 0.15s ease,
-				color 0.15s ease;
-		}
-	}
-
 	/* Chevron with rotation animation */
 	.chevron {
 		display: flex;
@@ -475,17 +482,15 @@
 		transform: rotate(90deg);
 	}
 
+	@media (hover: none) {
+		.block-header.has-content .chevron {
+			opacity: 0.6;
+		}
+	}
+
 	.block-header.has-content:hover .chevron,
 	.block-header.has-content:focus-visible .chevron {
 		opacity: 1;
-	}
-
-	/* One line, always. The header is status, not content: a long label used
-	   to wrap, and with two flex children each wrapping on its own the row
-	   became two ragged columns. Anything longer ends in an ellipsis; the
-	   whole text is one click away in the list below. */
-	.block-header {
-		max-width: 100%;
 	}
 
 	.header-content {
@@ -661,14 +666,23 @@
 		}
 	}
 
-	/* Reduced motion */
+	/* Reduced motion: the pill keeps its color fade and loses the slide;
+	   the shimmer stops and the label reads as plain muted text. */
 	@media (prefers-reduced-motion: reduce) {
 		.chevron {
 			transition: none;
 		}
 
 		.block-header {
-			transition: none;
+			transition:
+				background-color 0.15s ease,
+				color 0.15s ease;
+		}
+
+		.thinking-text {
+			animation: none;
+			background: none;
+			color: var(--color-foreground-muted);
 		}
 
 		.tool-spinner {

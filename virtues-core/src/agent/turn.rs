@@ -143,6 +143,8 @@ pub(super) fn stream_error_code(e: &StreamError) -> ErrorCode {
 
 /// A call that was running when Stop was pressed, recorded as stopped so the
 /// transcript and the next turn show it ended rather than hung.
+/// The web client matches this text to draw the call as stopped rather than
+/// failed (`toolPresentation.ts` TOOL_STOPPED).
 pub(super) fn stopped(call: &ToolCall) -> ToolExecutionResult {
     ToolExecutionResult {
         tool_call_id: call.id.clone(),
