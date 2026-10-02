@@ -1,4 +1,4 @@
--- 0039_add_chat_message_span
+-- 0040_add_chat_message_span
 --
 -- How long the turn that wrote an assistant row took: from the box
 -- receiving the request to the row being written. The thinking block shows

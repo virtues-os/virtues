@@ -197,7 +197,7 @@ pub struct MessageResponse {
     pub reasoning_details: Option<serde_json::Value>,
     #[serde(default, with = "crate::api::chat::wire_parts")]
     pub parts: Option<Vec<UIPart>>,
-    /// The span of the turn that wrote an assistant row (migration 0039),
+    /// The span of the turn that wrote an assistant row (migration 0040),
     /// shown as "Worked for". Absent where it was never recorded.
     #[serde(rename = "startedAt", skip_serializing_if = "Option::is_none")]
     pub started_at: Option<Timestamp>,
