@@ -35,12 +35,14 @@ Not measured: whether the answers were right (the owner has to judge), and how
 BM25 and the reranker rank a wiki-only pool (this needs the engine; run it on
 the spare box).
 
-## Step 1: stop filters dropping the wiki
+## Step 1: stop filters dropping the wiki (built 3fc8725b, unverified on a box)
 
-- Give wiki chunks their time. A day article gets its date; an event gets its
-  start time.
-- `entities` also matches the subject's own article, joined through
-  `wiki_articles.subject_id`. This does not write `wiki_refs`.
+Worse than measured: the indexer stored no date on ANY chunk, not just the
+wiki's, so every date-filtered search returned nothing (25 of 25). Fixed at the
+source, with a backfill for chunks already indexed. A day's article is dated
+noon on its day; other articles are undated. `entities` also matches the
+subject's own article. Verify on dragon after release: `occurred_at` is filled,
+and a date or person filter returns wiki rows.
 
 ## Step 2: search the wiki inside every search (option B)
 
