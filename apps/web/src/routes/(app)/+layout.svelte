@@ -25,6 +25,7 @@
 	import { pinsStore } from "$lib/stores/pins.svelte";
 	import { identityOf } from "$lib/refs/identity.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
+	import { installRevalidate } from "$lib/stores/revalidate";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
@@ -203,10 +204,11 @@
 			sidebarState.collapsed = true;
 		}
 
-		// Load global data
+		// Load global data, and reload it whenever the app comes back into view.
 		chatSessions.load();
 		pinsStore.load();
 		projectStore.load();
+		installRevalidate();
 		initTheme();
 
 		// Initialize workspace store (loads workspaces, tree, and tabs)
