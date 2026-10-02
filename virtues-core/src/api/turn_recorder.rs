@@ -15,6 +15,13 @@ use crate::api::chat::{StreamEvent, UIPart};
 use crate::api::chats::{ChatMessage, ToolCall};
 use crate::types::Timestamp;
 
+/// What a call the turn ended without answering is saved as, and what the
+/// model is told about it on replay (`compaction.rs`). Saved as an error so
+/// the client draws it as a call that will not answer: kept as
+/// `input-available`, it reloaded as a spinner that never stopped. The web
+/// client matches this exact text (`toolPresentation.ts` TOOL_UNFINISHED).
+pub const TOOL_UNFINISHED: &str = "the tool did not finish";
+
 /// Where one piece of a turn sat in time.
 ///
 /// The row stores the turn's text (`content`) and its tool calls
@@ -488,18 +495,20 @@ fn build_turn_parts(
                 // block never renders on reload and the replay hands the model
                 // an error object as though it were an answer.
                 let failed = failed_tools.contains(id);
-                let error_text = failed.then(|| {
-                    tc.result
-                        .as_ref()
-                        .and_then(|r| r.get("error"))
-                        .and_then(|e| e.as_str())
-                        .unwrap_or("the tool reported a failure")
-                        .to_string()
-                });
-                let state = match (failed, tc.result.is_some()) {
-                    (true, _) => "output-error",
-                    (false, true) => "output-available",
-                    (false, false) => "input-available",
+                let (state, error_text) = match (failed, tc.result.is_some()) {
+                    (true, _) => (
+                        "output-error",
+                        Some(
+                            tc.result
+                                .as_ref()
+                                .and_then(|r| r.get("error"))
+                                .and_then(|e| e.as_str())
+                                .unwrap_or("the tool reported a failure")
+                                .to_string(),
+                        ),
+                    ),
+                    (false, true) => ("output-available", None),
+                    (false, false) => ("output-error", Some(TOOL_UNFINISHED.to_string())),
                 };
                 parts.push(UIPart::ToolInvocation {
                     tool_call_id: id.clone(),
@@ -1056,8 +1065,8 @@ mod parts_tests {
 
         assert_eq!(
             kinds(&build_turn_parts(&slots, &segments, &calls, &Default::default(), "")),
-            ["text:Looking it up.", "tool:sql_query:input-available"],
-            "a tool that never returned still shows, as awaiting output"
+            ["text:Looking it up.", "tool:sql_query:output-error"],
+            "a tool that never returned still shows, as one that did not finish"
         );
     }
 
