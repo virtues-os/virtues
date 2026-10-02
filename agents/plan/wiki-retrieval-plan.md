@@ -44,18 +44,19 @@ noon on its day; other articles are undated. `entities` also matches the
 subject's own article. Verify on dragon after release: `occurred_at` is filled,
 and a date or person filter returns wiki rows.
 
-## Step 2: search the wiki inside every search (option B)
+## Step 2: the wiki leads every search
 
-`semantic_search` runs a second pass over articles, events and stubs, using the
-full hybrid search and reranker and the same filters.
+**Built (84a2d1f0, unverified on a box):** the deterministic rows. When the
+queries name a subject (by full name, nickname or alias; a first name only when
+it is unique and nothing matched in full) or pass it as `entities`, its article
+leads under `from_your_wiki`, or a card with its id when it has none. A date
+range of a week or less brings those days' articles. 4,000-character budget;
+no repeats below; skipped when domains are named or the project scope is
+exclusive. On one box's history, 35 of 160 searches would have had a lead.
 
-- **Named subjects first, by match rather than similarity.** When the question
-  contains a subject's name, nickname or alias, that subject's article (or stub)
-  leads. 33 of the 108 questions named a subject.
-- Up to 3 more wiki hits, above a relevance floor, shown under **From your
-  wiki** and then **From your records**. Each subject hit carries its id for
-  `entities`.
-- Skipped when the agent asks for a specific domain.
+**Not built: the similarity row** (up to 3 wiki hits for searches that name
+nothing). Run hybrid search and the reranker over a wiki-only pool on real
+queries first; dense similarity alone ranked the wrong things.
 
 ## Step 3: subject stubs
 
