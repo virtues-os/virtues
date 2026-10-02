@@ -278,7 +278,7 @@ fn default_agent_mode() -> String {
 pub struct UIMessage {
     pub id: Option<String>,
     pub role: String,
-    #[serde(default)]
+    #[serde(default, with = "wire_parts")]
     pub parts: Option<Vec<UIPart>>,
     // Legacy format support
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -322,9 +322,11 @@ pub enum UIPart {
     /// On disk and on the wire this is `tool-<toolName>`, NOT the variant's own
     /// name — the client matches an exact type per tool (`tool-create_page`,
     /// `tool-generate_image`, …) and has no branch for anything else, so a part
-    /// stored as `tool-invocation` renders as nothing at all. `parts_to_jsonb`
+    /// sent as `tool-invocation` renders as nothing at all. `parts_to_jsonb`
     /// and `parts_from_jsonb` are the translation, and they are the ONLY way
-    /// this column should be written or read. A single hardcoded
+    /// parts should be written or read — for the column, and for every API
+    /// field through `wire_parts`. The derive alone serializes this variant
+    /// as `tool-invocation`, which is what reloaded chats were served. A single hardcoded
     /// `tool-web_search` variant used to stand in for the whole family; every
     /// other tool fell through to `Unknown` and was dropped.
     #[serde(rename = "tool-invocation")]
@@ -430,6 +432,30 @@ pub fn parts_to_jsonb(parts: &[UIPart]) -> serde_json::Value {
         }
     }
     value
+}
+
+/// `parts` as the client speaks it, for any serde field that crosses the API.
+///
+/// `#[serde(with = "wire_parts")]` on an `Option<Vec<UIPart>>`: tool parts go
+/// out as `tool-<toolName>` and come in from either spelling, through the same
+/// two functions the column uses.
+pub mod wire_parts {
+    use super::{parts_from_jsonb, parts_to_jsonb, UIPart};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        parts: &Option<Vec<UIPart>>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        parts.as_deref().map(parts_to_jsonb).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<Vec<UIPart>>, D::Error> {
+        let raw = Option::<serde_json::Value>::deserialize(d)?;
+        Ok(raw.and_then(|v| parts_from_jsonb(v, "request")))
+    }
 }
 
 /// Streaming event types (AI SDK v6 UI Message Stream Protocol)
@@ -2590,6 +2616,24 @@ mod parts_column_tests {
         assert_eq!(back.len(), 2);
         // The name is recovered from the type when the part does not carry one.
         assert!(matches!(&back[1], UIPart::ToolInvocation { tool_name, .. } if tool_name == "web_search"));
+    }
+
+    /// The API speaks the column's spelling both ways. The derive alone sent
+    /// every reloaded tool part as `tool-invocation`, and the client's
+    /// per-tool cards (pages, applets, images) matched none of them.
+    #[test]
+    fn api_messages_carry_the_per_tool_type() {
+        let incoming = serde_json::json!({
+            "id": "m1", "role": "assistant",
+            "parts": [{ "type": "tool-create_page", "toolCallId": "c0",
+                        "input": {}, "state": "output-available", "output": {} }],
+        });
+        let msg: UIMessage = serde_json::from_value(incoming).unwrap();
+        let parts = msg.parts.as_deref().unwrap();
+        assert!(matches!(&parts[0], UIPart::ToolInvocation { tool_name, .. } if tool_name == "create_page"));
+
+        let out = serde_json::to_value(&msg).unwrap();
+        assert_eq!(out["parts"][0]["type"], "tool-create_page");
     }
 
 }

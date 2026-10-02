@@ -172,7 +172,7 @@ export function convertMessageToParts(msg: any, metadata: Map<string, MessageMet
 
 	// If message already has parts array (e.g., checkpoint messages), use it directly
 	if (msg.parts && Array.isArray(msg.parts) && msg.parts.length > 0) {
-		return msg.parts;
+		return msg.parts.map(perToolType);
 	}
 
 	// Otherwise, construct parts from individual fields (legacy format)
@@ -209,6 +209,17 @@ export function convertMessageToParts(msg: any, metadata: Map<string, MessageMet
 	}
 
 	return parts;
+}
+
+/**
+ * A stored tool part under its own type, `tool-<toolName>`, as it streamed.
+ * Every per-tool render matches that exact type. Boxes before the wire fix
+ * serve reloaded parts as `tool-invocation`, and a phone can be newer than
+ * its box, so the client accepts both.
+ */
+function perToolType(part: any): any {
+	if (part?.type !== "tool-invocation" || !part.toolName) return part;
+	return { ...part, type: `tool-${part.toolName}` };
 }
 
 /** One stored turn as the view holds it. `createdAt` rides along because

@@ -57,6 +57,7 @@ pub struct ChatMessage {
     /// echoes them, because history rebuilds assistant rows as text only.
     #[serde(rename = "reasoningDetails", skip_serializing_if = "Option::is_none")]
     pub reasoning_details: Option<serde_json::Value>,
+    #[serde(default, with = "crate::api::chat::wire_parts")]
     pub parts: Option<Vec<UIPart>>,
 }
 
@@ -194,6 +195,7 @@ pub struct MessageResponse {
     pub subject: Option<String>,
     #[serde(rename = "reasoningDetails", skip_serializing_if = "Option::is_none")]
     pub reasoning_details: Option<serde_json::Value>,
+    #[serde(default, with = "crate::api::chat::wire_parts")]
     pub parts: Option<Vec<UIPart>>,
 }
 
