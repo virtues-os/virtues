@@ -86,6 +86,18 @@ fn own_copy(route: &str) -> WebviewUrl {
     )
 }
 
+/// A dev profile's WebKit data store: the same 16 bytes for the same name on
+/// every launch, so the profile keeps its storage, and never the default
+/// store the real app uses.
+#[cfg(target_os = "macos")]
+fn profile_store_id(profile: &str) -> [u8; 16] {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(format!("virtues/webkit-store/{profile}").as_bytes());
+    let mut id = [0u8; 16];
+    id.copy_from_slice(&digest[..16]);
+    id
+}
+
 fn is_paired() -> bool {
     // Through the plugin's path fn, so a dev profile (VIRTUES_PROFILE) checks
     // ITS store, not the machine's real one.
@@ -1644,7 +1656,7 @@ fn main() {
             // the next page load. See agents/plan/local-ui-plan.md.
             #[cfg(target_os = "macos")]
             {
-                if let Ok(dir) = app.path().app_data_dir() {
+                if let Some(dir) = virtues_lib::ui_data_dir(app.handle()) {
                     let baked = virtues_lib::baked_bundle_version(app.handle());
                     if let Some(dropped) =
                         virtues_lib::web_bundle::drop_stale_overlay(&dir, baked.as_deref())
@@ -1752,7 +1764,16 @@ fn main() {
                 )
             };
 
-            let window = WebviewWindowBuilder::new(app, "main", url)
+            let mut builder = WebviewWindowBuilder::new(app, "main", url);
+            // A dev profile gets its own web storage. The app's own copy is
+            // `virtues://localhost` in every profile, and storage is per
+            // origin, so without this a profile paired with a bench box would
+            // share the real app's (macOS 14+; older macOS shares it).
+            #[cfg(target_os = "macos")]
+            if let Some(p) = tauri_plugin_reach::profile() {
+                builder = builder.data_store_identifier(profile_store_id(p));
+            }
+            let window = builder
                 .title("Virtues")
                 .initialization_script(&box_url_js)
                 .inner_size(1200.0, 800.0)
