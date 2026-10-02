@@ -5,7 +5,8 @@ virtues-api serves them to boxes, the monthly cut produces them, and the box
 downloads what its owner's history calls for (2d6f3950, 1ee9fa7f, 5cb80a62,
 e2733059). The design and why each rule is what it is:
 [map-tiles.md](../record/map-tiles.md). The first build was cut on
-2026-09-28 and a dev box synced from it on 2026-09-29; no released box has
+2026-09-28 and a box on a prerelease synced from it on 2026-09-29; no
+stable release has the sync yet, so no box on one has
 files yet. Delete this plan when the list below is empty.
 
 ## Open
