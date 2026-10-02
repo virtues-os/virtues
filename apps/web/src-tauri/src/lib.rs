@@ -99,19 +99,12 @@ pub struct ShellIdentity {
 /// answer identically — a diagnostic that differs by platform is worse than
 /// none.
 pub fn shell_identity<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> ShellIdentity {
-  use tauri::Manager;
   ShellIdentity {
     app_version: app.package_info().version.to_string(),
     command_surface: COMMAND_SURFACE_VERSION,
-    active_bundle: app
-      .path()
-      .app_data_dir()
-      .ok()
+    active_bundle: ui_data_dir(app)
       .and_then(|d| web_bundle::active_bundle_id(&d)),
-    last_check: app
-      .path()
-      .app_data_dir()
-      .ok()
+    last_check: ui_data_dir(app)
       .and_then(|d| web_bundle::last_outcome(&d)),
   }
 }
@@ -177,13 +170,25 @@ fn bundle_update_ready(app: tauri::AppHandle) -> bool {
   update_ready(&app)
 }
 
+/// Where this app keeps its own copy of the UI (web_bundle.rs): the app's
+/// data dir, or a folder of its own under a dev profile (`VIRTUES_PROFILE`).
+/// A profile pairs with a bench box, and that box's UI bundles must never
+/// become the real app's.
+pub fn ui_data_dir<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<std::path::PathBuf> {
+  use tauri::Manager;
+  let dir = app.path().app_data_dir().ok()?;
+  Some(match tauri_plugin_reach::profile() {
+    Some(p) => dir.join("profiles").join(p),
+    None => dir,
+  })
+}
+
 /// The page rendered: confirm the bundle it was pinned to at load. The shell's
 /// own record (`web_bundle::serving_bundle_id`), never the page's claim, and
 /// never the active pointer, which a background check may already have moved to
 /// a bundle this page never ran. Shared by both shells' `bundle_boot_ok`.
 pub fn confirm_page_load<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-  use tauri::Manager;
-  if let Ok(dir) = app.path().app_data_dir() {
+  if let Some(dir) = ui_data_dir(app) {
     web_bundle::confirm_page_load(&dir);
   }
 }
@@ -192,10 +197,7 @@ pub fn confirm_page_load<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 /// hidden, and reloads if so (`checkForNewUi` in `routes/(app)/+layout.svelte`). Shared by both shells'
 /// `bundle_update_ready`.
 pub fn update_ready<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
-  use tauri::Manager;
-  app
-    .path()
-    .app_data_dir()
+  ui_data_dir(app)
     .map(|d| web_bundle::update_ready(&d))
     .unwrap_or(false)
 }
@@ -230,7 +232,6 @@ fn ota_check_now(app: tauri::AppHandle) {
 /// like OTA never being configured.
 pub fn ota_check<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
   use std::sync::atomic::{AtomicBool, Ordering};
-  use tauri::Manager;
   // One check at a time. The launch check and a foreground `ota_check_now`
   // can overlap (a download takes up to 30s), and two would unpack into the
   // same staging directory and tear each other's files. The second one is
@@ -246,7 +247,7 @@ pub fn ota_check<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
   }
   let _done = Done;
-  let Ok(dir) = app.path().app_data_dir() else { return };
+  let Some(dir) = ui_data_dir(app) else { return };
   let baked = baked_bundle_version(app);
   match web_bundle::check_and_apply(&dir, COMMAND_SURFACE_VERSION, baked.as_deref()) {
     Ok(outcome) => {
@@ -317,7 +318,6 @@ pub fn serve_ui<R: tauri::Runtime>(
   app: &tauri::AppHandle<R>,
   request: &tauri::http::Request<Vec<u8>>,
 ) -> tauri::http::Response<Vec<u8>> {
-  use tauri::Manager;
 
   let path = request.uri().path().to_string();
   let baked = |p: &str| app.asset_resolver().get(p.to_string());
@@ -372,7 +372,7 @@ pub fn serve_ui<R: tauri::Runtime>(
   // one bundle, so every asset it requests afterwards comes from the same
   // place (web_bundle.rs, "The bundle a page load serves from").
   if web_bundle::is_page_document(&resolved) {
-    if let Ok(dir) = app.path().app_data_dir() {
+    if let Some(dir) = ui_data_dir(app) {
       if web_bundle::begin_page_load(&dir) {
         eprintln!("[ota] a staged bundle failed to confirm; rolled back");
       }
@@ -383,10 +383,7 @@ pub fn serve_ui<R: tauri::Runtime>(
   // the baked asset's own mime type is reused when the overlay serves the
   // same path — which it does for every file, both being the same build
   // shape.
-  let overlay = app
-    .path()
-    .app_data_dir()
-    .ok()
+  let overlay = ui_data_dir(app)
     .and_then(|d| web_bundle::read_from_overlay(&d, &resolved));
 
   match (overlay, baked(&resolved)) {
@@ -415,8 +412,7 @@ pub fn serve_ui<R: tauri::Runtime>(
 #[cfg(mobile)]
 #[tauri::mobile_entry_point]
 pub fn run() {
-  // `Manager` for `app.path()` — the OTA bundle store needs the app-data dir.
-  use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+  use tauri::{WebviewUrl, WebviewWindowBuilder};
   use tauri_plugin_reach::ReachExt;
 
   // OTA asset protocol: every request for the UI comes through `serve_ui`.
@@ -491,7 +487,7 @@ pub fn run() {
 
       // OTA rollback is settled per page load now, in `serve_ui` (web_bundle.rs,
       // "The bundle a page load serves from"), not once here.
-      if let Ok(dir) = app.path().app_data_dir() {
+      if let Some(dir) = ui_data_dir(app.handle()) {
         // Drop an overlay the App Store has overtaken. An app update keeps
         // the container, so a bundle applied weeks ago outlives the binary that
         // fetched it and goes on shadowing the newer build THIS binary ships
