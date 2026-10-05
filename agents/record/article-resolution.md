@@ -43,7 +43,7 @@ The split that makes it affordable:
 
 **The story rung is the proof.** Every other page sits on something: a day has
 its events, a year its days, a person the records that mention them. A story —
-"Piano & Composition", "How I learned to pray" — sits on nothing. Nobody has
+"Sailing", "How I learned to cook" — sits on nothing. Nobody has
 gathered its material and no list can be handed to the model. The only way to
 write it is to go and search the record, so revision *has* to be agentic; and
 once it is, years and entities are simply other subjects for the same loop.

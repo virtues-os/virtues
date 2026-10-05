@@ -283,7 +283,7 @@ export const WIKI_MODE: SidebarMode = {
 			group: 'Subjects',
 		},
 		// A subject, not a span — which is exactly what `api/stories.rs` says
-		// separates a story from a chapter: "Piano & Composition" is a thing the
+		// separates a story from a chapter: "Sailing" is a thing the
 		// record is about, "the Berlin years" is a stretch of it. Both are named
 		// by the person rather than derived, which is why they used to sit
 		// together; the two axes split them, and the split is the right one.
