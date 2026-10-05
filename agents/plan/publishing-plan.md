@@ -1,6 +1,6 @@
 # Publishing: virtues introduces, the box serves
 
-> **STATUS 2026-10-05: direction rewritten, spike being set up.** A page is
+> **STATUS 2026-10-05: direction rewritten; spike step 1 green on a laptop.** A page is
 > served **by the box**. A visitor's browser reaches it as an iroh endpoint
 > (iroh compiled to WebAssembly) through the relay we already run, encrypted
 > end to end; virtues introduces the two and, once a direct transport for
@@ -290,6 +290,14 @@ key. With a door, anyone on the internet can send bytes to code on the box.
    a phone on cellular. Questions: loader size, time to first paint, relay
    behavior, iOS Safari, and whether `iroh-webrtc-transport` gets a direct
    path to the spare box (`ssh dragon2`, never the main box).
+   **First results 2026-10-05** (`virtues-labs/publish-spike`, laptop
+   Chromium): the spare Q6A behind office NAT with client isolation loaded
+   5/5, first paint ~0.57 s (connect ~0.3 s, fetch ~0.15 s); a 1 MB page
+   moved at ~7.5 Mbit/s through the relay. The loader is 0.95 MB gzipped
+   before `wasm-opt`. A link to a key nobody holds never connects. **A
+   stopped box makes `connect` hang**: the relay does not report an absent
+   peer, so the loader owns a timeout and the "offline" message. Still open:
+   a phone on cellular, iOS Safari, a direct path.
 2. **The publication primitive and the freezer**: `app_publications`
    (claim a migration number first), face → one self-contained file, the
    box-only lint `publish_to_github` already has.
