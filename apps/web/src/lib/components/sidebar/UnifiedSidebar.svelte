@@ -173,7 +173,13 @@
 		[
 			"sidebar-container relative flex h-full bg-transparent",
 			resizing ? "" : "transition-[width] duration-300 ease-[var(--ease-premium)]",
-			"overflow-hidden",
+			// Clips like overflow-hidden (the panel must not spill while the
+			// width animates) but lets the seam's grip, which is centred on the
+			// panel's right border, overhang the edge by its own half-width.
+			// min-w-0 keeps the flex sizing overflow-hidden used to imply; z-[1]
+			// keeps the pane's positioned content from painting over that
+			// overhang, since clip-path makes the aside its own stacking layer.
+			"z-[1] min-w-0 [clip-path:inset(0_-3px_0_0)]",
 		].join(" "),
 	);
 
@@ -406,6 +412,17 @@
 		pointer-events: none;
 		z-index: 1;
 		transition: background-color 120ms var(--ease-premium);
+		animation: grip-unfold 420ms ease-in-out 120ms both;
+	}
+
+	/* Arrives as a dot and unfolds into the pill. */
+	@keyframes grip-unfold {
+		from {
+			height: 4px;
+		}
+		to {
+			height: 32px;
+		}
 	}
 
 	.sidebar-resizer:hover .sidebar-resizer-grip,
@@ -418,6 +435,7 @@
 		.sidebar-resizer::after,
 		.sidebar-resizer-grip {
 			transition: none;
+			animation: none;
 		}
 	}
 
