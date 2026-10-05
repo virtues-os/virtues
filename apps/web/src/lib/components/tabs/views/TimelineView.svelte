@@ -13,6 +13,8 @@
 -->
 <script lang="ts">
 	import { onMount, onDestroy, tick, untrack } from 'svelte';
+	import type { Tab } from '$lib/tabs/types';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { browser } from '$app/environment';
 	import { atlasSquares, atlasStyle } from '$lib/map/atlas';
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
@@ -20,6 +22,9 @@
 	import { fetchDay, localDay, quietDay, stepDay } from '$lib/timeline/day';
 	import { deriveDay, joinDays, type Sources } from '$lib/timeline/derive';
 	import { getStreamHealth } from '$lib/api/client';
+	import { mergePlace, updatePlace, type NearbyPlace } from '$lib/wiki/api';
+	import type { DerivedWindow, VoiceWindow } from '$lib/timeline/inspector';
+	import type { LaneWindow } from '$lib/timeline/lanes';
 	import { cleanTrack, dropSpikes, flagHoles, splitTrack, toFixes, type Fix, type Line } from '$lib/timeline/track';
 	import { buildInspector, placeTitle, type InspectorPick, type InspectorSection } from '$lib/timeline/inspector';
 	import { anchorAt, positionAt, trackMetres } from '$lib/timeline/anchor';
@@ -32,6 +37,11 @@
 	import { laneData, NO_LANES, type Lanes, type RibbonKind } from '$lib/timeline/lanes';
 	import { buildFolds, clampView, HOUR, MIN, midnightIn, tierOf, tierView, unwarp, warp, weekOf, mondayOf, zoneOffset, type Tier } from '$lib/timeline/scale';
 	import { colourVars, mapInk } from '$lib/timeline/colours';
+
+	/** Below this pane width the list leaves the map's side for a sheet. */
+	const NARROW_PX = 640;
+	/** The narrow layout's sheet, as a share of the pane's height. */
+	const SHEET = 0.34;
 
 	// Without the box's map archives there is no basemap: the page's own
 	// surface, so the path still draws and the page doesn't read as broken.
@@ -118,6 +128,9 @@
 	let monthOpen = $state(false);
 	/** The bottom of the date card, for the map's framing and clear area. */
 	const topChrome = $derived(16 + cardH);
+	/** A pane too narrow for the list beside the map (a phone, a split view)
+	 *  puts it in a sheet across the bottom, under a full-width scrubber. */
+	const narrow = $derived(paneW > 0 && paneW < NARROW_PX);
 	/** The inspector runs full height, unless the date card would run into it. */
 	const inspectorLow = $derived(paneW > 0 && 16 + cardW + 16 > paneW - Math.min(384, paneW * 0.42) - 16);
 	let note = $state<{ title: string; lines: string[] } | null>(null);
@@ -186,8 +199,22 @@
 	 *  the tier; it lands once that day has loaded (main.js:1385-1386). */
 	let pendingNudge: { tier: Tier; tod: number } | null = null;
 
+	let { tab }: { tab: Tab; active: boolean } = $props();
+
 	const today = getLocalDateSlug();
 	let date = $state(today);
+	// `/timeline/YYYY-MM-DD` (the day page's "Open this day in the Timeline")
+	// opens that day, then the route goes back to `/timeline`: one Timeline
+	// tab, which the rail's tile finds again. The write only ever changes the
+	// value, so this effect cannot feed itself.
+	$effect(() => {
+		const asked = tab.route.match(/^\/timeline\/(\d{4}-\d{2}-\d{2})$/)?.[1];
+		if (!asked) return;
+		untrack(() => {
+			date = asked;
+			windowShellStore.updateTab(tab.id, { route: '/timeline' });
+		});
+	});
 	let ready = $state(false);
 	let basemap = $state(true);
 	/** The squares the box holds street maps for; null until known, or when the
@@ -213,6 +240,13 @@
 		streetless = m.getZoom() > 7 && !squares.some(([w, s, e, n]) => c.lng >= w && c.lng <= e && c.lat >= s && c.lat <= n);
 	}
 	let status = $state<'loading' | 'shown' | 'empty' | 'error'>('loading');
+	/** On a day with no location whose list would only repeat the note's
+	 *  "No location recorded", the note on the map says it once and the list
+	 *  stays away. A gap holding conversations keeps the list: they are the
+	 *  day's record. */
+	const shownSections = $derived(
+		status === 'empty' && note && sections.every((x) => x.kind === 'gap' && !x.rows.length) ? [] : sections,
+	);
 	let asked = 0; // the latest day asked for, so a slow answer can't overwrite a newer one
 
 	/** The date card's date (dayback/src/main.js:1531-1534): "Tuesday, July
@@ -393,6 +427,39 @@
 		})
 		.catch((e) => console.warn('[Timeline] stream health unavailable', e));
 
+	/** The loaded day as derived, so naming a place can redraw it in place. */
+	let loaded: { derived: DerivedWindow; voice: VoiceWindow[]; lw: LaneWindow; startMs: number; endMs: number } | null = null;
+
+	/** Redraw the list (and the day's lanes, when they are the day's) after a
+	 *  place changed, without reloading or moving the playhead. */
+	function redrawPlaces() {
+		if (!loaded) return;
+		const { derived, voice, lw, startMs, endMs } = loaded;
+		sections = buildInspector(derived, startMs, endMs, voice);
+		if (lanes.a === startMs && lanes.b === endMs) lanes = laneData(derived, voice, lw, startMs, endMs);
+	}
+
+	async function namePlace(placeId: string, name: string): Promise<boolean> {
+		if (!(await updatePlace(placeId, { name }))) return false;
+		const place = loaded?.derived.places.find((p) => p.id === placeId);
+		if (place) Object.assign(place, { place_name: name, is_named: true });
+		redrawPlaces();
+		return true;
+	}
+
+	async function mergeInto(placeId: string, into: NearbyPlace): Promise<boolean> {
+		if (!(await mergePlace(placeId, into.id))) return false;
+		const derived = loaded?.derived;
+		if (derived) {
+			const from = derived.places.find((p) => p.id === placeId);
+			if (!derived.places.some((p) => p.id === into.id) && from)
+				derived.places.push({ ...from, id: into.id, place_name: into.name, is_named: true });
+			for (const span of derived.spans) if (span.timeline_place_id === placeId) span.timeline_place_id = into.id;
+		}
+		redrawPlaces();
+		return true;
+	}
+
 	async function loadDay(slug: string) {
 		const mine = ++asked;
 		status = 'loading';
@@ -409,6 +476,7 @@
 		}
 		const bounds = { startMs: Date.parse(day.started_at), endMs: Date.parse(day.ended_at), zone: day.zone };
 		const { derived, voice, lanes: lw } = deriveDay(day, sources);
+		loaded = { derived, voice, lw, startMs: Date.parse(day.started_at), endMs: Date.parse(day.ended_at) };
 		const window = { points: day.points, before: day.last_point_before };
 		if (mine !== asked) return;
 		const { startMs, endMs } = bounds;
@@ -503,10 +571,10 @@
 		const cw = c.clientWidth || 900;
 		const ch = c.clientHeight || 600;
 		const buf = Math.max(34, Math.round(Math.min(cw, ch) * 0.06));
-		const inspectorW = inspector?.width() ?? 0;
+		const inspectorW = narrow ? 0 : (inspector?.width() ?? 0);
 		return {
 			top: Math.min(topChrome + buf, ch * 0.34),
-			bottom: Math.min(scrubBottom() + buf, ch * 0.45),
+			bottom: Math.min(scrubBottom() + buf, ch * (narrow ? 0.7 : 0.45)),
 			left: Math.min(buf, cw * 0.4),
 			right: Math.min((inspectorW ? inspectorW + 16 : 0) + buf, cw * 0.5),
 		};
@@ -978,13 +1046,16 @@
 	 *  cards, the inspector or the scrubber, 8 px in from every edge. */
 	function clearArea(m: MlMap): Area {
 		const c = m.getContainer();
-		const inspectorW = inspector?.width() ?? 0;
+		const inspectorW = narrow ? 0 : (inspector?.width() ?? 0);
 		return { l: 8, t: topChrome + 8, r: c.clientWidth - (inspectorW ? inspectorW + 20 : 0) - 8, b: c.clientHeight - scrubBottom() - 8 };
 	}
 
 	/** What the scrubber takes from the bottom: its card and 26 px under it,
 	 *  220 before it has drawn (main.js:1044, 1192). */
-	const scrubBottom = () => (scrubH ? scrubH + 26 : 220);
+	/** How far the bottom cards reach up the pane: the scrubber, and in the
+	 *  narrow layout the sheet under it. */
+	const scrubBottom = () =>
+		(scrubH ? scrubH + 26 : 220) + (narrow && shownSections.length ? Math.round((root?.clientHeight ?? 0) * SHEET) + 8 : 0);
 
 	/** Bring one spot onto the clear map (`v4ShowPoint`, main.js:1092-1094):
 	 *  nothing if it is already there, else ease it to the centre of the clear
@@ -1030,7 +1101,8 @@
 
 <div
 	class="timeline"
-	class:with-inspector={sections.length > 0}
+	class:with-inspector={shownSections.length > 0}
+	class:narrow
 	bind:this={root}
 	bind:clientWidth={paneW}
 	style="{colourVars()}; --top-chrome: {topChrome}px; --scrub-h: {scrubH}px; --inspector-top: {inspectorLow ? topChrome + 12 : 16}px"
@@ -1062,7 +1134,9 @@
 		{/if}
 	</div>
 
-	<TimelineInspector bind:this={inspector} {sections}
+	<TimelineInspector bind:this={inspector} sections={shownSections}
+		onname={namePlace}
+		onmerge={mergeInto}
 		{zone}
 		{playT}
 		{armed}
@@ -1116,7 +1190,7 @@
 	{#if away}
 		<!-- Apple's re-centre pattern: it exists only once the camera has left the
 		     day's frame (dayback/index.html:822-826, 1180). -->
-		<button class="reset" type="button" title="Back to the whole day (Esc)" onclick={resetView}>
+		<button class="reset tile" type="button" title="Back to the whole day (Esc)" onclick={resetView}>
 			Show the whole day
 		</button>
 	{/if}
@@ -1150,6 +1224,25 @@
 	}
 	.timeline.with-inspector {
 		--inspector-space: calc(min(384px, 42%) + 32px);
+	}
+	/* Narrow: the list is a sheet across the bottom third, so nothing sits
+	   beside the map and the bottom cards reach further up. */
+	.timeline.narrow {
+		--inspector-space: 16px;
+		--sheet: 34%;
+	}
+	.timeline.narrow.with-inspector {
+		--below-map: calc(var(--scrub-h) + var(--sheet) + 8px);
+	}
+	.timeline.narrow .reset {
+		right: 16px;
+	}
+	.timeline.narrow.with-inspector .reset,
+	.timeline.narrow.with-inspector .map-note {
+		bottom: calc(var(--below-map) + 28px);
+	}
+	.timeline.narrow.with-inspector .note {
+		top: calc((var(--top-chrome) + 12px + 100% - var(--below-map) - 28px) / 2);
 	}
 
 	/* The date card, top left: the day's controls, then the date as the page's

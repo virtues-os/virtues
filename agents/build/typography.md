@@ -15,7 +15,7 @@ false for every face below.
 
 | Family | Files | Cuts | Token |
 |---|---|---|---|
-| JJannon | `JJannon-Display-Regular.woff2` | **one** | `--font-serif`, `--font-serif-ui` |
+| EB Garamond | `EBGaramond-Regular-latin.woff2`, `-latin-ext.woff2` | **one** (400) | `--font-serif`, `--font-serif-ui` |
 | Avenir | Regular / Medium / Bold `.woff2` | 400 / 500 / 700 | `--font-sans` |
 | IBM Plex Mono | Regular / Medium / SemiBold `.woff2` | 400 / 500 / 600 | `--font-mono` |
 
@@ -30,15 +30,16 @@ build time by `apps/web/scripts/precompress.mjs` — which walks the directory, 
 neither one carries a filename list to update. Nothing else in the repo names a
 font file. Adding or removing a face is `app.css` plus the file.
 
-## JJannon ships exactly one cut
+## The serif ships exactly one cut
 
 **There is no bold serif and no italic serif, and there cannot be one.** This is
 the thing to know before designing anything here.
 
-`app.css` registers that single file three times — `JJannon` at 300, `JJannon`
-at 400, and a separate family `JJannon UI` with corrected vertical metrics — so
-the family reads as richer in the stylesheet than it is on disk. All three are
-the same ink.
+EB Garamond has a bold and an italic; we ship neither. `app.css` registers the
+regular as `EB Garamond` (weights 300–400) and again as `EB Garamond UI` with
+corrected vertical metrics, each as two files split by `unicode-range` (Latin,
+24 KB, and Latin Extended, 57 KB), so a page of English prose fetches one small
+file. Every registration is the same ink.
 
 What follows mechanically, not as preference:
 
@@ -61,21 +62,21 @@ than discovering.
 
 The house rules "the serif is never bold" and "no italic serif" are therefore
 enforced by the file, not only by taste. Anyone proposing a serif system with
-two weights — an outside agency included — is proposing a license purchase and a
-new file, not a CSS change.
+two weights is proposing a new file and a change to the design grammar, not a
+CSS change.
 
 ## Two serif tokens, one face
 
 `--font-serif` is for prose. `--font-serif-ui` is for a serif that shares a row
 with something that is not text — an icon, a dot, a control.
 
-The difference is vertical metrics. JJannon declares ascent/descent =
-0.740/0.260, exactly one em with no leading in it, which leaves centered letters
-0.098em high beside anything drawn to a roomier box. `JJannon UI` overrides the
-metrics to fix that; `JJannon` is left alone because the same correction would
-move first-baseline position across the wiki, pages and home. The full
-derivation is the comment above the `JJannon UI` registration in `app.css` — read
-it there rather than restating it here.
+The difference is vertical metrics. EB Garamond declares ascent/descent =
+1.007/0.298, which leaves centered letters visibly off-center beside an icon.
+`EB Garamond UI` overrides the metrics so the cap band lands on the center line
+(ascent 0.943, descent 0.290); `EB Garamond` is left alone because the same
+correction would move first-baseline position across the wiki, pages and home.
+The full derivation is the comment above the `EB Garamond UI` registration in
+`app.css` — read it there rather than restating it here.
 
 Reaching for `--font-serif` in chrome is the common mistake, and it does not look
 broken so much as slightly *off*. The eye reads the gap between the two zones,
@@ -83,10 +84,10 @@ not the absolute error.
 
 ## The fallback stack is a system stack
 
-`--font-serif: 'JJannon', ui-serif, Georgia, 'Times New Roman', serif`
+`--font-serif: 'EB Garamond', ui-serif, Georgia, 'Times New Roman', serif`
 
 Nothing after the first entry is a webfont, on purpose. The tail is only ever
-drawn during `font-display: swap` or for a glyph JJannon lacks, and a system
+drawn during `font-display: swap` or for a glyph outside the two subsets, and a system
 serif does that instantly for zero bytes. A downloadable fallback is strictly
 worse: it is a second file fetched to cover a moment that ends when the first
 file arrives.
@@ -97,8 +98,8 @@ it comes back as `woff2` and with the gap written down.
 ## Open: the Avenir license
 
 **Unresolved, and only a human can resolve it.** Avenir is a commercial
-Linotype/Monotype typeface. IBM Plex Mono is OFL and safe to redistribute;
-JJannon was licensed deliberately. For the three Avenir `.woff2` files there is
+Linotype/Monotype typeface. IBM Plex Mono and EB Garamond are OFL and safe to
+redistribute. For the three Avenir `.woff2` files there is
 nothing on record here either way.
 
 Self-hosting is a heavier use than "installed on this Mac": the webfont is

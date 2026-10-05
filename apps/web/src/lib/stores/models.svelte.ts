@@ -66,7 +66,7 @@ export function getModelById(modelId: string): ModelOption | undefined {
 }
 
 /**
- * The model the box says the Chat slot resolves to, for DISPLAY only.
+ * The model the box says the Standard slot resolves to, for DISPLAY only.
  *
  * The box decides what actually answers (`model_choice::resolve_turn_model`);
  * this is how the picker names it. It used to fall back to `modelsCache[0]`,

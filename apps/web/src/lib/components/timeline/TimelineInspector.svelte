@@ -13,6 +13,8 @@
 	import { untrack } from 'svelte';
 	import type { InspectorPick as Pick, InspectorRow, InspectorSection } from '$lib/timeline/inspector';
 	import { lineAt, lineTime, rowLines } from '$lib/timeline/transcript';
+	import TextAction from '$lib/components/TextAction.svelte';
+	import { getNearbyPlaces, type NearbyPlace } from '$lib/wiki/api';
 
 	let {
 		sections,
@@ -22,6 +24,8 @@
 		armed = false,
 		onpick,
 		onseek,
+		onname,
+		onmerge,
 	}: {
 		sections: InspectorSection[];
 		zone: string;
@@ -34,7 +38,51 @@
 		onpick: (p: Pick) => void;
 		/** A transcript line was picked: park the playhead at its moment. */
 		onseek: (t: number) => void;
+		/** Name an unnamed place; resolves false when the server refused. */
+		onname: (placeId: string, name: string) => Promise<boolean>;
+		/** Fold an unnamed place into a named one near it. */
+		onmerge: (placeId: string, into: NearbyPlace) => Promise<boolean>;
 	} = $props();
+
+	// Naming a place, one at a time. The named places within 150 m come first,
+	// as "Same as…": a stay's centre drifts, and the place it drifted to is
+	// usually the one already named next door.
+	let naming = $state<string | null>(null);
+	let draft = $state('');
+	let nearby = $state<NearbyPlace[]>([]);
+	let saving = $state(false);
+	let nameError = $state<string | null>(null);
+
+	function startNaming(placeId: string) {
+		naming = placeId;
+		draft = '';
+		nearby = [];
+		nameError = null;
+		getNearbyPlaces(placeId)
+			.then((rows) => {
+				if (naming === placeId) nearby = rows;
+			})
+			.catch(() => {});
+	}
+	function stopNaming() {
+		naming = null;
+		nameError = null;
+	}
+	async function finish(done: Promise<boolean>) {
+		saving = true;
+		nameError = null;
+		const ok = await done.catch(() => false);
+		saving = false;
+		if (ok) stopNaming();
+		else nameError = "Your server couldn't save that. Try again.";
+	}
+	function saveName(placeId: string) {
+		const name = draft.trim();
+		if (name && !saving) void finish(onname(placeId, name));
+	}
+	function sameAs(placeId: string, into: NearbyPlace) {
+		if (!saving) void finish(onmerge(placeId, into));
+	}
 
 	let inspector = $state<HTMLElement | null>(null);
 	let scroller = $state<HTMLElement | null>(null);
@@ -48,7 +96,6 @@
 		if (row?.convs.length) open = s;
 	}
 
-	// One hue per kind, the same as the map's and the scrubber's (lib/timeline/colours.ts).
 	const time = (ms: number) =>
 		new Date(ms).toLocaleTimeString('en-US', { timeZone: zone, hour: 'numeric', minute: '2-digit' });
 	const holds = (x: { s: number; e: number }) => x.s <= playT && playT < x.e;
@@ -189,6 +236,37 @@
 							<span class="note">From Health on your iPhone</span>
 						{/if}
 					</button>
+					{#if sec.kind === 'place' && !sec.named && sec.placeId && !sec.placeId.startsWith('visit:')}
+						{@const placeId = sec.placeId}
+						{#if naming === placeId}
+							<form class="name-form" onsubmit={(e) => (e.preventDefault(), saveName(placeId))}>
+								{#if nearby.length}
+									<p class="same">
+										Same as
+										{#each nearby as p, k (p.id)}{#if k > 0}, {/if}<TextAction inline disabled={saving} onclick={() => sameAs(placeId, p)}>{p.name}</TextAction>{/each}?
+									</p>
+								{/if}
+								<!-- svelte-ignore a11y_autofocus -->
+								<input
+									class="name-input"
+									bind:value={draft}
+									placeholder="Name this place"
+									aria-label="Name this place"
+									autofocus
+									onkeydown={(e) => e.key === 'Escape' && stopNaming()}
+								/>
+								<span class="name-actions">
+									<TextAction type="submit" disabled={!draft.trim()} loading={saving}>Save the name</TextAction>
+									<TextAction quiet onclick={stopNaming}>Cancel</TextAction>
+								</span>
+								{#if nameError}<p class="name-error">{nameError}</p>{/if}
+							</form>
+						{:else}
+							<span class="name-door" class:shown={i === curSection}>
+								<TextAction onclick={() => startNaming(placeId)}>Name this place</TextAction>
+							</span>
+						{/if}
+					{/if}
 					{#each sec.rows as row (row.kind + row.s)}
 						<div class="row" class:cur={row === curRow}>
 							<button class="row-hd" onclick={() => pickRow(row)}>
@@ -241,6 +319,13 @@
 		border-radius: var(--tile-radius);
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
+	}
+	/* Narrow pane: a sheet across the bottom third rather than a column. */
+	:global(.timeline.narrow) .inspector {
+		top: auto;
+		left: 16px;
+		width: auto;
+		height: 34%;
 	}
 	.scroll {
 		overflow-y: auto;
@@ -455,6 +540,53 @@
 	}
 	/* The line being spoken at the playhead. */
 	.line.cur {
+		color: var(--color-foreground);
+	}
+	/* Naming a place: a quiet verb under the stay at the playhead (and under
+	   any stay you point at), then a field where the name goes. */
+	.name-door {
+		display: none;
+		padding: 0 16px 8px 32px;
+		font-size: 13px;
+	}
+	.name-door.shown,
+	.group:hover .name-door,
+	.name-door:focus-within {
+		display: block;
+	}
+	.name-form {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 0 16px 12px 32px;
+	}
+	.same {
+		margin: 0;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+	.name-input {
+		width: 100%;
+		padding: 8px 12px;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-background);
+		color: var(--color-foreground);
+		font-family: var(--font-sans);
+		font-size: 14px;
+	}
+	.name-input:focus {
+		outline: none;
+		border-color: var(--color-primary);
+	}
+	.name-actions {
+		display: flex;
+		gap: 16px;
+		font-size: 14px;
+	}
+	.name-error {
+		margin: 0;
+		font-size: 13px;
 		color: var(--color-foreground);
 	}
 	.spk {

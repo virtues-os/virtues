@@ -363,8 +363,8 @@ export const themePreviewColors: Record<
 		surfaceElevated: '#F4F3F0',
 		foreground: '#1A2030',
 		foregroundMuted: '#3E4459',
-		primary: '#1E3159',
-		syntax: ['#9A2B2E', '#1E3159', '#7E2225', '#1E4E8C', '#6C7185', '#1A2030']
+		primary: '#1D4572',
+		syntax: ['#9A2B2E', '#1D4572', '#7E2225', '#1E4E8C', '#6C7185', '#1A2030']
 	},
 	netherfield: {
 		background: '#FFFFFF',

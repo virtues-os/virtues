@@ -468,6 +468,7 @@
 		/** What it collects — the sub-line while off, and the page's sentence. */
 		what: string;
 		description: string;
+		note?: string;
 	}
 	const STREAMS: StreamMeta[] = [
 		{
@@ -512,7 +513,9 @@
 			icon: "ri:mic-line",
 			what: "Ambient sound & transcripts",
 			description:
-				"The microphone stays on while your phone is with you and records the sound of your day. Your server transcribes the recordings on your server and become part of each day's record.",
+				"Records the sound of your day while your phone is with you, transcribed by your server.",
+			// iOS suspends the wake word while any app holds the mic; ours never lets go.
+			note: "“Hey Siri” is off while recording. Hold the side button instead.",
 		},
 	];
 
@@ -753,6 +756,7 @@
 		status={streamStatus(open)}
 		on={streamOn(open)}
 		description={openMeta.description}
+		note={openMeta.note}
 		action={streamAction(open)}
 		sync={streamSync(open)}
 		{error}

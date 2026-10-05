@@ -133,6 +133,9 @@
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 0.5rem 1.25rem;
+		width: fit-content;
+		max-width: 100%;
+		box-sizing: border-box;
 		background: var(--color-surface-elevated);
 		border-radius: 12px;
 		padding: 0.6875rem 1.125rem;

@@ -133,6 +133,9 @@
 				sudo_request_id: sudoRequestId,
 				endpoint_url: endpointUrl.trim(),
 				api_key: apiKey,
+				// `chat` is the Standard slot's old name. Every box reads it
+				// (a renamed one maps it to `standard`); a box older than the
+				// rename reads nothing else.
 				models: chatModel.trim() ? { chat: chatModel.trim() } : {},
 			});
 			apiKey = "";

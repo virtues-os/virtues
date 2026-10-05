@@ -89,9 +89,10 @@ pub struct SaveRequest {
     /// see [`legacy_preset_endpoint`] for why the table is going away.
     #[serde(default)]
     pub provider: Option<String>,
-    /// What the user's endpoint calls each of our slots: `{"chat":
+    /// What the user's endpoint calls each of our slots: `{"standard":
     /// "x-ai/grok-4.5", "omni": "google/gemini-3.5-flash", …}`. Keys are slot
-    /// names; every one is optional.
+    /// names, the legacy `chat` included (see [`normalize_slot_keys`]); every
+    /// one is optional.
     ///
     /// This is the field that makes a non-Vercel route work. See
     /// [`ByoCredential::models`].
@@ -242,7 +243,11 @@ pub async fn save_handler(
     let probe = probe_endpoint(
         &endpoint_url,
         req.api_key.trim(),
-        req.models.as_ref().and_then(|m| m.get("chat")).map(String::as_str),
+        req.models
+            .as_ref()
+            .map(normalize_slot_keys)
+            .and_then(|m| m.get(virtues_registry::models::ModelSlot::Standard.as_str()).cloned())
+            .as_deref(),
     )
     .await;
     let host = endpoint_host(&endpoint_url).unwrap_or_else(|| "that endpoint".to_string());
@@ -313,7 +318,7 @@ pub async fn save_handler(
         "default_model": req.default_model,
     });
     if let Some(models) = req.models.as_ref().filter(|m| !m.is_empty()) {
-        metadata["models"] = json!(models);
+        metadata["models"] = json!(normalize_slot_keys(models));
     }
     if let Some(w) = req.context_window.filter(|w| *w > 0) {
         metadata["context_window"] = json!(w);
@@ -744,7 +749,7 @@ fn read_context_window(metadata: &serde_json::Value) -> Option<i64> {
 }
 
 fn read_models(metadata: &serde_json::Value) -> std::collections::BTreeMap<String, String> {
-    metadata
+    let raw: std::collections::BTreeMap<String, String> = metadata
         .get("models")
         .and_then(|v| v.as_object())
         .map(|obj| {
@@ -753,7 +758,29 @@ fn read_models(metadata: &serde_json::Value) -> std::collections::BTreeMap<Strin
                 .filter(|(_, v)| !v.trim().is_empty())
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    normalize_slot_keys(&raw)
+}
+
+/// Spell every slot key the current way. Credentials saved before the
+/// 2026-10-05 rename say `chat` for the Standard slot, and an older client
+/// still sends it; every lookup is by `ModelSlot::as_str`, so the map is
+/// rewritten once at each edge rather than every reader trying both. A key
+/// already spelled the current way wins over its legacy twin. Keys that are
+/// not a slot pass through untouched.
+fn normalize_slot_keys(
+    models: &std::collections::BTreeMap<String, String>,
+) -> std::collections::BTreeMap<String, String> {
+    use virtues_registry::models::ModelSlot;
+    let mut out = std::collections::BTreeMap::new();
+    for (k, v) in models {
+        let key = ModelSlot::from_name(k).map(|s| s.as_str().to_string()).unwrap_or_else(|| k.clone());
+        let is_current = ModelSlot::all().iter().any(|s| s.as_str() == k);
+        if is_current || !out.contains_key(&key) {
+            out.insert(key, v.clone());
+        }
+    }
+    out
 }
 
 /// Look up the active BYO credential, decrypt the key, and return the
@@ -822,6 +849,21 @@ pub async fn load_byo_credential(pool: &PgPool) -> Result<Option<ByoCredential>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A credential saved before the Standard/Deep rename keys its chat model
+    /// as `chat`. Every lookup is by the current name, so an unnormalized map
+    /// would silently send our gateway's address to the person's endpoint.
+    #[test]
+    fn a_stored_chat_key_reads_as_standard() {
+        let stored = json!({ "models": { "chat": "their/chat", "omni": "their/omni" } });
+        let models = read_models(&stored);
+        assert_eq!(models.get("standard").map(String::as_str), Some("their/chat"));
+        assert_eq!(models.get("omni").map(String::as_str), Some("their/omni"));
+        assert!(!models.contains_key("chat"));
+
+        let both = json!({ "models": { "chat": "old", "standard": "new" } });
+        assert_eq!(read_models(&both).get("standard").map(String::as_str), Some("new"));
+    }
 
     /// THE REGRESSION THIS GUARDS. The save used to check the URL's shape and
     /// nothing else, so a wrong endpoint or a mistyped key stored clean and

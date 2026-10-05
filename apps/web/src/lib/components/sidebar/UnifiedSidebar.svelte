@@ -173,7 +173,13 @@
 		[
 			"sidebar-container relative flex h-full bg-transparent",
 			resizing ? "" : "transition-[width] duration-300 ease-[var(--ease-premium)]",
-			"overflow-hidden",
+			// Clips like overflow-hidden (the panel must not spill while the
+			// width animates) but lets the seam's grip, which is centred on the
+			// panel's right border, overhang the edge by its own half-width.
+			// min-w-0 keeps the flex sizing overflow-hidden used to imply; z-[1]
+			// keeps the pane's positioned content from painting over that
+			// overhang, since clip-path makes the aside its own stacking layer.
+			"z-[1] min-w-0 [clip-path:inset(0_-3px_0_0)]",
 		].join(" "),
 	);
 
@@ -314,7 +320,7 @@
 			onpointercancel={onResizeEnd}
 			onkeydown={onResizeKey}
 			ondblclick={() => sidebarState.resetWidth()}
-		></div>
+		><span class="sidebar-resizer-grip" aria-hidden="true"></span></div>
 	{/if}
 </aside>
 
@@ -331,8 +337,6 @@
 		border-radius: var(--card-radius) 0 0 var(--card-radius);
 	}
 
-	/* A wider hit area than the 1px line it straddles — 8px is the smallest
-	   comfortable grab target, and it is invisible until you are on it. */
 	/* The hit area. Always transparent — it is a target, never a mark.
 	
 	   Inset by 12px top and bottom to sit inside the panel card (`my-3`). It
@@ -352,46 +356,43 @@
 		background: transparent;
 	}
 
-	/* The MARK: a 1px line, exactly over the panel's right border, that
-	   thickens to 2px and takes the theme's accent on approach.
-	
-	   Filling the 8px target was the wrong read — it made the invisible hit
-	   area visible, which is a band of chrome appearing out of nothing where
-	   the user expected a line to respond. Lighting the line instead says the
-	   same thing about the same object: this edge is the thing you can move.
-	   Colour is doing work here, not decorating — it marks the one draggable
-	   edge in the shell — which is what design.md asks of any colour it
-	   allows. Grown from the right edge so the line never moves; only its
-	   weight does. */
-	.sidebar-resizer::after {
-		content: "";
+	/* The grip: a neutral pill that always sits centred on the panel's right
+	   border, so the seam reads as movable before the pointer finds it. The
+	   border itself never changes; the grip is the one thing that responds.
+	   It darkens and lengthens on approach and takes the accent only while
+	   held. The border's centre is 0.5px in from the right edge; the 4px pill
+	   is centred there, overhanging by 1.5px (the aside's clip allows it). */
+	.sidebar-resizer-grip {
 		position: absolute;
-		top: 0;
-		bottom: 0;
-		right: 0;
-		width: 0;
-		background: var(--color-primary);
+		top: 50%;
+		right: -1.5px;
+		width: 4px;
+		height: 32px;
+		transform: translateY(-50%);
+		border-radius: 999px;
+		background: var(--color-border-strong);
+		pointer-events: none;
+		z-index: 1;
 		transition:
-			width 120ms var(--ease-premium),
-			opacity 120ms var(--ease-premium);
-		opacity: 0;
+			height 160ms var(--ease-premium),
+			background-color 160ms var(--ease-premium);
 	}
 
-	.sidebar-resizer:hover::after,
-	.sidebar-resizer:focus-visible::after {
-		width: 2px;
-		opacity: 1;
+	.sidebar-resizer:hover .sidebar-resizer-grip,
+	.sidebar-resizer:focus-visible .sidebar-resizer-grip {
+		background: var(--color-foreground-subtle);
+		height: 40px;
 	}
 
-	/* Held: full weight, no fade — the line is the thing being dragged. */
-	.sidebar-resizer.dragging::after {
-		width: 2px;
-		opacity: 1;
+	/* Held: the accent says you have it. No easing — it follows the pointer. */
+	.sidebar-resizer.dragging .sidebar-resizer-grip {
+		background: var(--color-primary);
+		height: 40px;
 		transition: none;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.sidebar-resizer::after {
+		.sidebar-resizer-grip {
 			transition: none;
 		}
 	}

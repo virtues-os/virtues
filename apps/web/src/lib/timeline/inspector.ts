@@ -30,8 +30,8 @@ export interface DerivedPlace {
 	id: string;
 	latitude: number;
 	longitude: number;
-	is_home: boolean;
-	is_work: boolean;
+	/** The person named it; an unnamed place carries the resolver's "Location …". */
+	is_named: boolean;
 	place_name: string | null;
 }
 
@@ -87,6 +87,8 @@ export interface InspectorSection {
 	/** Up to two lines under the title: only a signal gap explains itself. */
 	notes: string[];
 	placeId: string | null;
+	/** A stay only: the person named its place. */
+	named: boolean;
 	rows: InspectorRow[];
 	/** A stay's audio note: "no audio" or "silent", only when clear-cut. */
 	atag: "no audio" | "silent" | null;
@@ -105,24 +107,39 @@ export function fmtDur(ms: number): string {
 	return r ? `${h}h ${r}m` : `${h}h`;
 }
 
-/** A place's title: Home; else the wiki's name for it (the user's own, as the
- *  prototype's corrections win over its guesses); else "Work / frequent" for
- *  the most-dwelt place (dayback/build.py:209-210). The wiki names a place it
- *  cannot name "Location <lat>, <lon>"; that is no title to show. */
+/** A place's title: the name the person gave it, else "Unnamed place". The
+ *  wiki names a place nobody named "Location <lat>, <lon>"; that is no title
+ *  to show. */
 export function placeTitle(p: DerivedPlace | undefined): string {
-	if (!p) return "Unnamed place";
-	if (p.is_home) return "Home";
-	if (p.place_name && !p.place_name.startsWith("Location ")) return p.place_name;
-	if (p.is_work) return "Work / frequent";
-	return "Unnamed place";
+	return p?.is_named && p.place_name ? p.place_name : "Unnamed place";
 }
 
-/** A drive's title by its fastest hop: Flying from 350 km/h, Driving from 45,
- *  else In transit; hours on the ground with no stay between say so, rather
- *  than calling it one long drive (main.js:1571, 2547). */
-export function transitTitle(peakKmh: number, ms: number): string {
-	const mode = peakKmh >= 350 ? "Flying" : peakKmh >= 45 ? "Driving" : "In transit";
-	return mode !== "Flying" && ms > 2 * HOUR ? "Out · no stay recorded" : mode;
+/** Faster than anything on the ground: only a flight reaches it. */
+const FLIGHT_KMH = 350;
+/** A walk keeps a walker's pace on average and never spikes past a jog.
+ *  GPS gets that right; it cannot tell a car from a bus, a train or a ride,
+ *  so everything between is "Moving" with what was measured. */
+const WALK_AVG_KMH = 7;
+const WALK_PEAK_KMH = 15;
+
+/** "12 km", "3.4 km", "800 m". */
+export function fmtDistance(meters: number): string {
+	if (meters < 1000) return `${Math.round(meters / 10) * 10} m`;
+	const km = meters / 1000;
+	return `${km < 10 ? km.toFixed(1) : Math.round(km)} km`;
+}
+
+/** A trip's title: its mode only where speed alone proves it (Flight,
+ *  Walk), else "Moving"; then how far the track went. */
+export function movementTitle(pathMeters: number, peakKmh: number, ms: number): string {
+	const avgKmh = ms > 0 ? pathMeters / 1000 / (ms / HOUR) : 0;
+	const mode =
+		peakKmh >= FLIGHT_KMH
+			? "Flight"
+			: pathMeters > 0 && avgKmh < WALK_AVG_KMH && peakKmh < WALK_PEAK_KMH
+				? "Walk"
+				: "Moving";
+	return pathMeters > 0 ? `${mode} · ${fmtDistance(pathMeters)}` : mode;
 }
 
 /** A stay of 25 minutes or more with no conversation filed under it gets an
@@ -152,12 +169,28 @@ export function buildInspector(w: DerivedWindow, start: number, end: number, voi
 	const built: InspectorSection[] = inDay.map((s) => {
 		const cs = Math.max(s.s, start);
 		const ce = Math.min(s.e, end);
-		const base = { s: cs, e: ce, placeId: s.timeline_place_id, rows: [] as InspectorRow[], notes: [] as string[], atag: null, src: null };
+		const base = {
+			s: cs,
+			e: ce,
+			placeId: s.timeline_place_id,
+			named: false,
+			rows: [] as InspectorRow[],
+			notes: [] as string[],
+			atag: null,
+			src: null,
+		};
 		switch (s.kind) {
-			case "stay":
-				return { ...base, kind: "place", title: placeTitle(places.get(s.timeline_place_id ?? "")), dur: fmtDur(ce - cs) };
+			case "stay": {
+				const place = places.get(s.timeline_place_id ?? "");
+				return { ...base, kind: "place", title: placeTitle(place), named: !!place?.is_named, dur: fmtDur(ce - cs) };
+			}
 			case "transit":
-				return { ...base, kind: "transit", title: transitTitle(Number(s.metadata.peak_kmh ?? 0), ce - cs), dur: fmtDur(ce - cs) };
+				return {
+					...base,
+					kind: "transit",
+					title: movementTitle(Number(s.metadata.path_meters ?? 0), Number(s.metadata.peak_kmh ?? 0), s.e - s.s),
+					dur: fmtDur(ce - cs),
+				};
 			case "sleep": {
 				// A night keeps its full length, though the day only shows its part.
 				const src = s.metadata.source === "healthkit" ? "healthkit" : "quiet_hours";

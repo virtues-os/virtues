@@ -181,7 +181,7 @@
 	}
 
 	/* The 500 here was the only thing separating a month from the days under it,
-	   and it never rendered: JJannon ships one cut, so the request resolved back
+	   and it never rendered: the serif ships one cut, so the request resolved back
 	   to the regular silently (agents/build/typography.md). At 18px the heading
 	   sat 3px above a 15px serif lede — barely a rank at all. Taken up to the
 	   scale's section-title size instead, which is where the markdown tokens

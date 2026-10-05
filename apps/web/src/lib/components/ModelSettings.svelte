@@ -13,7 +13,6 @@
 	import TextAction from "./TextAction.svelte";
 	import {
 		modelSlots,
-		SLOTS,
 		type SlotConfig,
 		type CatalogModel,
 	} from "$lib/stores/modelSlots.svelte";
@@ -81,7 +80,7 @@
 		<div class="text-center py-6 text-sm text-error">{modelSlots.error}</div>
 	{:else}
 		<div class="grid grid-cols-2 gap-4 p-4">
-			{#each SLOTS as slot}
+			{#each modelSlots.slots as slot}
 				{@const chosen = modelSlots.chosen[slot.key]}
 				{@const recommended = modelSlots.recommended[slot.key]}
 				<div>

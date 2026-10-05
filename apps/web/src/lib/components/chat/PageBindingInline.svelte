@@ -83,6 +83,7 @@
 			case 'place': return 'M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z';
 			case 'action': return 'M13 2L3 14h7v8l10-12h-7z';
 			case 'command': return 'M4 17l6-5-6-5M12 19h8';
+			case 'publish': return 'M12 16V4M7 9l5-5 5 5M4 20h16';
 			default: return 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z';
 		}
 	}
@@ -102,8 +103,8 @@
 		</div>
 		<div class="binding-text">
 			<span class="binding-message">{displayMessage()}</span>
-			{#if permissionMode && entityType === 'command' && entityTitle}
-				<!-- A sudo change: what runs is exactly this text. -->
+			{#if permissionMode && (entityType === 'command' || entityType === 'publish') && entityTitle}
+				<!-- A sudo change runs exactly this text; a publish goes exactly here. -->
 				<pre class="binding-command">{entityTitle}</pre>
 			{/if}
 			{#if entityId && !permissionMode}

@@ -62,12 +62,21 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelSlot {
-    /// Default chat model - used for general conversations
-    Chat,
-    /// Fast/lite model - used for titles, summaries, background jobs
+    /// The cheap tier: titles, summaries, background jobs. Never a chat
+    /// choice.
     Lite,
-    /// Coding model - used for code generation and technical tasks
-    Coding,
+    /// The everyday tier: every conversation that does not ask for more, and
+    /// the day pipeline's writers.
+    ///
+    /// Spelled `chat` before 2026-10-05. That name is still read where it was
+    /// persisted or sent by an older peer — a BYO credential's model map, an
+    /// applet manifest, the cloud slot map — via [`ModelSlot::legacy_name`].
+    Standard,
+    /// The strong tier: the rare, slow, high-stakes turns (deep research, a
+    /// skill that declares `model: deep`). Picked by the mode, never guessed
+    /// per turn — switching models mid-chat throws away the prompt cache that
+    /// most of a chat's input tokens are served from.
+    Deep,
     /// Image model - text-to-image generation (the `generate_image` tool)
     Image,
     /// Omni model — audio-native multimodal UNDERSTANDING (the transcription
@@ -84,20 +93,39 @@ pub enum ModelSlot {
 impl ModelSlot {
     pub fn as_str(&self) -> &'static str {
         match self {
-            ModelSlot::Chat => "chat",
             ModelSlot::Lite => "lite",
-            ModelSlot::Coding => "coding",
+            ModelSlot::Standard => "standard",
+            ModelSlot::Deep => "deep",
             ModelSlot::Image => "image",
             ModelSlot::Omni => "omni",
         }
     }
 
+    /// The name this slot went by before the 2026-10-05 rename, where it had
+    /// one. Read it wherever an older peer or a stored value may still use it;
+    /// never write it.
+    pub fn legacy_name(&self) -> Option<&'static str> {
+        match self {
+            ModelSlot::Standard => Some("chat"),
+            _ => None,
+        }
+    }
+
+    /// Parse a slot name, accepting the legacy spelling. `None` for anything
+    /// else, including the retired `coding` slot.
+    pub fn from_name(name: &str) -> Option<ModelSlot> {
+        let name = name.trim().to_ascii_lowercase();
+        ModelSlot::all()
+            .into_iter()
+            .find(|s| s.as_str() == name || s.legacy_name() == Some(name.as_str()))
+    }
+
     /// Every slot. Iterate this rather than re-listing the variants.
     pub fn all() -> [ModelSlot; 5] {
         [
-            ModelSlot::Chat,
             ModelSlot::Lite,
-            ModelSlot::Coding,
+            ModelSlot::Standard,
+            ModelSlot::Deep,
             ModelSlot::Image,
             ModelSlot::Omni,
         ]
@@ -188,31 +216,15 @@ pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
         // composer offer a model that reads PDFs (`modelChoice.svelte.ts`).
         // Caching is implicit and per server, so it leans on the session
         // affinity header (`BearerClient::stream_affine`) for its hit rate.
-        ModelSlot::Chat => "spacexai/grok-4.7",
-        // Also off grok-4.5 (`zdr: none`), and onto a model that is both
-        // cheaper and cleaner here. Benched 2026-08-27 by EXECUTING what each
-        // model wrote against six cases rather than reading it:
-        //
-        //   qwen3-coder-plus   4.0s     0 reasoning   6/6   $0.0011/turn
-        //   grok-4.5           3.8s    85 reasoning   6/6   $0.0021/turn
-        //
-        // 1M context is why this beats its own cheaper sibling
-        // `qwen3-coder-next` ($0.0003/turn, 6/6, but 256K): the slot that
-        // writes applets reads a lot of schema first.
-        //
-        // The Chinese "thinking" coders are the trap here, and the prices do
-        // not warn you:
-        //   kimi-k2-thinking   39.1s   3,042 reasoning tokens — and 0/6.
-        //                      It thought for half a minute and got it wrong.
-        //   glm-5.2-fast       137.1s  29,585 reasoning tokens, $0.196 for a
-        //                      SINGLE question — 50x this slot's model, for
-        //                      the same correct answer, from a model with
-        //                      "fast" in its name.
-        //   kimi-k2.7-code     correct, but 1,290 reasoning tokens over 23.2s.
-        //
-        // Minor, known: it wraps output in markdown fences even when told not
-        // to. Callers that paste this straight into a file must strip them.
-        ModelSlot::Coding => "alibaba/qwen3-coder-plus",
+        ModelSlot::Standard => "spacexai/grok-4.7",
+        // Opus 5.5, chosen 2026-10-05 for the slot's first callers, deep
+        // research. `zdr: all` and `no_training: all`, $4/M input
+        // and $20/M output — cheaper per token than the opus-5 that was turned
+        // down for the Standard slot at "$55.01/mo, 9.3x the incumbent". That
+        // verdict was about every unpinned turn; this slot runs only when a
+        // mode asks for it. Reads PDFs, 1M context, and exposes effort
+        // (low..max), so a caller can spend less thinking than the default.
+        ModelSlot::Deep => "anthropic/claude-opus-5.5",
         // Titles, summaries, bookmark extraction, the query the web-search
         // tool composes, entity article drafts, compaction, and the day
         // article's per-sentence check. High volume, and some of its output
@@ -354,6 +366,19 @@ mod tests {
                 slot.as_str()
             );
         }
+    }
+
+    /// `chat` was the Standard slot's name until 2026-10-05, and it is still
+    /// stored on boxes (BYO model maps, applet manifests). It must keep
+    /// parsing, and `coding` — a slot nothing ever called — must not.
+    #[test]
+    fn slot_names_parse_with_the_legacy_spelling() {
+        for slot in ModelSlot::all() {
+            assert_eq!(ModelSlot::from_name(slot.as_str()), Some(slot));
+        }
+        assert_eq!(ModelSlot::from_name("chat"), Some(ModelSlot::Standard));
+        assert_eq!(ModelSlot::from_name(" Standard "), Some(ModelSlot::Standard));
+        assert_eq!(ModelSlot::from_name("coding"), None);
     }
 
     /// A guard against the mirror growing back. If you find yourself wanting to

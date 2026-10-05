@@ -320,7 +320,7 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
             .map(|m| m.model_id)
             .unwrap_or_else(|_| {
                 virtues_registry::models::default_model_for_slot(
-                    virtues_registry::models::ModelSlot::Chat,
+                    virtues_registry::models::ModelSlot::Standard,
                 )
                 .to_string()
             }),

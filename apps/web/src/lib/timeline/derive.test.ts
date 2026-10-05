@@ -41,6 +41,7 @@ const stay = (id: string, s: number, e: number, m = 0) => ({
 	longitude: LNG,
 	place_id: `place_${id}`,
 	place_name: null,
+	place_is_named: false,
 });
 const sources = { calendar: true, finance: false };
 

@@ -139,7 +139,7 @@
 
 	/* 400, and equal to PageContent's .page-title-input — this is the reader's
 	   view of the same page, so the two titles move together or the shared copy
-	   stops being the page. The 500 both carried never rendered anyway: JJannon
+	   stops being the page. The 500 both carried never rendered anyway: the serif
 	   ships one cut and a weight request resolves back to the regular without
 	   warning (agents/build/typography.md). Size and full ink lead the document. */
 	.shared-page-title {

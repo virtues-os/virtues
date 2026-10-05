@@ -81,44 +81,16 @@
 	let allIconsPage = $state(0);
 	const ALL_ICONS_PAGE_SIZE = 200;
 
-	// Emoji categories with common emojis
-	const emojiCategories = [
-		{
-			name: 'Smileys',
-			emojis: ['😀', '😃', '😄', '😁', '😅', '😂', '🙂', '😊', '😇', '🥰', '😍', '🤩', '😘', '😋', '😛', '🤪', '😎', '🤓', '🧐', '🤔', '😏', '😌', '😴', '🥳']
-		},
-		{
-			name: 'Gestures',
-			emojis: ['👋', '🤚', '✋', '🖐️', '👌', '🤌', '✌️', '🤞', '🫰', '🤟', '🤘', '🤙', '👈', '👉', '👆', '👇', '☝️', '👍', '👎', '👊', '✊', '🤛', '🤜', '👏', '🙌', '🫶', '👐', '🤝', '🙏']
-		},
-		{
-			name: 'Objects',
-			emojis: ['📝', '📄', '📁', '📂', '🗂️', '📅', '📆', '📌', '📍', '🔖', '🏷️', '💼', '📦', '🎁', '🔑', '🗝️', '🔒', '🔓', '💡', '🔦', '🧭', '⏰', '⌚', '📱', '💻', '🖥️', '🖨️', '⌨️', '🖱️', '💾']
-		},
-		{
-			name: 'Symbols',
-			emojis: ['❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔', '❣️', '💕', '💞', '💓', '💗', '💖', '💘', '💝', '⭐', '🌟', '✨', '💫', '🔥', '💯', '✅', '❌', '⚠️', '💬', '💭', '🔔']
-		},
-		{
-			name: 'Nature',
-			emojis: ['🌸', '🌺', '🌻', '🌼', '🌷', '🌹', '🥀', '🌱', '🌲', '🌳', '🌴', '🌵', '🍀', '🍁', '🍂', '🍃', '🌈', '☀️', '🌤️', '⛅', '🌦️', '🌧️', '⛈️', '🌩️', '❄️', '🌊']
-		},
-		{
-			name: 'Food',
-			emojis: ['🍎', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🫐', '🍒', '🍑', '🥭', '🍍', '🥥', '🥝', '🍅', '🥑', '🥦', '🥬', '🥒', '🌶️', '🫑', '🌽', '🥕', '🧄', '🧅', '🥔']
-		},
-		{
-			name: 'Activities',
-			emojis: ['⚽', '🏀', '🏈', '⚾', '🥎', '🎾', '🏐', '🏉', '🥏', '🎱', '🏓', '🏸', '🏒', '🥅', '⛳', '🏹', '🎣', '🥊', '🥋', '🎽', '🛹', '🛼', '🎿', '⛷️', '🏂', '🎮', '🎲', '🧩', '🎯', '🎳']
-		},
-		{
-			name: 'Travel',
-			emojis: ['🚗', '🚕', '🚌', '🚎', '🏎️', '🚓', '🚑', '🚒', '🚐', '🛻', '🚚', '🚛', '🚜', '🏍️', '🛵', '🚲', '🛴', '✈️', '🚀', '🛸', '🚁', '🛶', '⛵', '🚤', '🛥️', '🚢', '🏠', '🏡', '🏢', '🏣']
-		}
-	];
-
-	// Flatten emojis for search
-	const allEmojis = emojiCategories.flatMap(cat => cat.emojis);
+	// The full Unicode set, lazy-loaded with its names and keywords so search
+	// can find "dog" rather than only the pasted glyph. Emoji newer than 15.1
+	// are left out: older systems, and the kiosk's emoji font, draw them as
+	// empty boxes. Skin-tone variants are left out too; the base glyph is the
+	// icon.
+	const EMOJI_MAX_VERSION = 15.1;
+	const EMOJI_COMPONENT_GROUP = 2;
+	type EmojiEntry = { emoji: string; label: string; terms: string };
+	let allEmojis = $state<EmojiEntry[]>([]);
+	let emojisLoading = $state(false);
 
 	// All registered icons from icons.ts - organized by category
 	const iconCategories = [
@@ -255,10 +227,41 @@
 		!search && visibleIcons.length < searchableIcons.length
 	);
 
+	// Every word must match a name or keyword, so "red heart" narrows rather
+	// than widens. Pasting the emoji itself also finds it.
 	const visibleEmojis = $derived.by(() => {
 		const q = search.trim().toLowerCase();
-		return q ? allEmojis.filter((e) => e.includes(q)) : allEmojis;
+		if (!q) return allEmojis;
+		const words = q.split(/\s+/);
+		return allEmojis.filter(
+			(e) => e.emoji.includes(q) || words.every((w) => e.terms.includes(w))
+		);
 	});
+
+	async function loadEmojis() {
+		if (allEmojis.length || emojisLoading) return;
+		emojisLoading = true;
+		try {
+			const { default: data } = await import('emojibase-data/en/data.json');
+			allEmojis = data
+				.filter(
+					(e) =>
+						e.group !== undefined &&
+						e.group !== EMOJI_COMPONENT_GROUP &&
+						e.version <= EMOJI_MAX_VERSION
+				)
+				.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+				.map((e) => ({
+					emoji: e.emoji,
+					label: e.label,
+					terms: [e.label, ...(e.tags ?? [])].join(' ').toLowerCase()
+				}));
+		} catch (e) {
+			console.error('Failed to load emoji set:', e);
+		} finally {
+			emojisLoading = false;
+		}
+	}
 
 	// Lazy-load the full Remix Icons collection
 	async function loadFullCollection() {
@@ -282,8 +285,9 @@
 		// Focus search input
 		setTimeout(() => searchInputEl?.focus(), 50);
 
-		// Start loading the full icon collection
+		// Start loading the full icon collection and the emoji set
 		loadFullCollection();
+		loadEmojis();
 	});
 
 	function handleSelect(icon: string) {
@@ -425,13 +429,20 @@
 			{/if}
 		{:else}
 			<div class="emoji-grid">
-				{#each visibleEmojis as emoji (emoji)}
-					<button class="emoji-btn" onclick={() => handleSelect(emoji)}>
+				{#each visibleEmojis as { emoji, label } (emoji)}
+					<button
+						class="emoji-btn"
+						onclick={() => handleSelect(emoji)}
+						title={label}
+						aria-label={label}
+					>
 						{emoji}
 					</button>
 				{/each}
 			</div>
-			{#if visibleEmojis.length === 0}
+			{#if emojisLoading}
+				<div class="empty">Loading emojis...</div>
+			{:else if visibleEmojis.length === 0}
 				<div class="empty">No emojis found</div>
 			{/if}
 		{/if}
@@ -606,17 +617,6 @@
 		max-height: 340px;
 	}
 
-	.category {
-		margin-bottom: 12px;
-	}
-
-	.category-name {
-		font-size: 11px;
-		font-weight: 400;
-		color: var(--color-foreground-subtle);
-		padding: 4px 4px 8px;
-	}
-
 	.emoji-grid {
 		display: grid;
 		grid-template-columns: repeat(8, 1fr);
@@ -671,15 +671,6 @@
 	.icon-btn:hover {
 		background: var(--color-surface-overlay);
 		color: var(--color-foreground);
-	}
-
-	.icon-btn.emoji {
-		font-size: 20px;
-	}
-
-	.emoji-char {
-		font-size: 20px;
-		line-height: 1;
 	}
 
 	.empty {
