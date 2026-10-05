@@ -80,10 +80,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | Some("sudo")
                 | Some("warm-models")
         );
+        // The data verbs (`cli::data`) print a tool's failure themselves, as
+        // their error; the tool's own WARN line would say it twice.
+        let data_verb = matches!(
+            std::env::args().nth(1).as_deref(),
+            Some("query") | Some("search") | Some("schema") | Some("applet") | Some("page")
+        );
         // The format (text on a terminal, JSON under systemd) and the field
         // vocabulary live in `observe`; the noise floor is this binary's own
         // judgment, so it stays here.
-        virtues::observe::init(if interactive { "warn" } else { "info" });
+        virtues::observe::init(if data_verb {
+            "error"
+        } else if interactive {
+            "warn"
+        } else {
+            "info"
+        });
 
         // No metrics exporter, and no continuous telemetry egress: the
         // running box reports nothing anywhere. All of it is box-local (see
@@ -948,6 +960,12 @@ fn maybe_reexec_as_service_user() {
         "configure-inference",
         "lake-adopt",
         "volumes",
+        // The data verbs (`cli::data`) ride the shared pool too.
+        "query",
+        "search",
+        "schema",
+        "applet",
+        "page",
     ];
     let Some(cmd) = std::env::args().nth(1) else { return };
     if !DB_COMMANDS.contains(&cmd.as_str()) {

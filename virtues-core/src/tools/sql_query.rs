@@ -378,7 +378,7 @@ impl SqlQueryTool {
         tables.truncate(3);
         if tables.is_empty() {
             out.push_str(
-                "\nNo catalog table was recognized in this query. Call sql_query with                  operation='list_tables' to see what exists.",
+                "\nNo catalog table was recognized in this query. Call sql_query with operation='list_tables' to see what exists.",
             );
             return out;
         }
@@ -546,13 +546,17 @@ impl SqlQueryTool {
         // Convert rows to JSON
         let mut json_rows = convert_rows_to_json(&rows);
 
+        // The SELECT's own column order. Each row is a JSON object, whose keys
+        // serialize sorted, so this is the only place the order survives; the
+        // CLI prints its table in it.
+        let columns: Vec<String> = rows
+            .first()
+            .map(|r| r.columns().iter().map(|c| c.name().to_string()).collect())
+            .unwrap_or_default();
+
         // A saved result goes to disk whole and the model sees a preview.
         let mut saved = None;
         if let Some((path, name)) = save {
-            let columns: Vec<String> = rows
-                .first()
-                .map(|r| r.columns().iter().map(|c| c.name().to_string()).collect())
-                .unwrap_or_default();
             write_csv(path, &columns, &json_rows).map_err(|e| {
                 ToolError::ExecutionFailed(format!("Your server couldn't save {name}: {e}"))
             })?;
@@ -593,6 +597,7 @@ impl SqlQueryTool {
         let mut result = serde_json::json!({
             "operation": "query",
             "row_count": json_rows.len(),
+            "columns": columns,
             "rows": json_rows,
         });
         if let Some(saved) = saved {

@@ -7,6 +7,7 @@ pub mod backup_volume;
 pub mod volumes;
 pub mod commands;
 pub mod configure_inference;
+pub mod data;
 pub mod deprovision;
 pub mod image_check;
 pub mod diag;
@@ -69,6 +70,30 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         Commands::Restore { .. } => {
             // Same.
             unreachable!("Restore command should be handled in main.rs");
+        }
+
+        // The data verbs. No `initialize()`: that runs migrations, and a read
+        // has no business migrating the database it reads.
+        Commands::Query { .. }
+        | Commands::Search { .. }
+        | Commands::Schema { .. }
+        | Commands::Applet { .. }
+        | Commands::Page { .. } => {
+            let verbs = data::Verbs::new(virtues.database.pool().clone());
+            let outcome = match command {
+                Commands::Query { sql, limit, out } => verbs.query(sql, limit, out).await,
+                Commands::Search { text, entities, domains, after, before, limit, out } => {
+                    verbs.search(text, entities, domains, after, before, limit, out).await
+                }
+                Commands::Schema { tables, out } => verbs.schema(tables, out).await,
+                Commands::Applet { cmd } => verbs.applet(cmd).await,
+                Commands::Page { cmd } => verbs.page(cmd).await,
+                _ => unreachable!(),
+            };
+            if let Err(e) = outcome {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
         }
 
         Commands::Volumes { cmd } => {
