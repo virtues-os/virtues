@@ -10,7 +10,7 @@
 # NVMe-both masters (root on the NVMe, data partition alongside) are detected
 # from the GPT: the read is bounded to the OS partitions and the per-unit
 # virtues-data partition is dropped from the image — each unit carves its own
-# on first boot. See docs/appliance-image.md.
+# on first boot. See agents/build/appliance-image.md.
 #
 # Produces, in ./masters/:
 #     virtues-master-<tag>-<date>.img.zst   the product

@@ -4,7 +4,7 @@
 # Run from the repo root:   bash tools/arch-lint.sh
 # Returns non-zero on the first violation.
 #
-# Each lint codifies a charter invariant from docs/architecture.md. The goal is that a
+# Each lint codifies a charter invariant from agents/build/architecture.md. The goal is that a
 # year from now, none of these patterns sneak back in via code review fatigue.
 
 set -euo pipefail
@@ -164,7 +164,7 @@ fi
 # share NO field, so a subpoena of both still can't join customer↔usage.
 # This enforces it concretely: customer-identity columns must never appear in
 # virtues-api's schema, and bearer/usage columns must never appear in Atlas's.
-# See docs/Virtues-API.md and docs/entitlement.md.
+# See docs/Virtues-API.md and agents/build/entitlement.md.
 
 # Customer-identity columns forbidden in virtues-api migrations.
 if [ -d "services/virtues-api/migrations" ]; then

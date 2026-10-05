@@ -3,10 +3,10 @@
 #
 # Run this on a Dragon that has been flashed with a stock Radxa image and put on
 # a network. It installs Virtues, verifies it, strips every per-unit identity,
-# proves the strip worked, and powers off — leaving a microSD card that is the
-# product. See docs/appliance-image.md.
+# proves the strip worked, and powers off — leaving the disk it booted from
+# (NVMe on the shipping layout) as the product. See agents/build/appliance-image.md.
 #
-#     sudo VIRTUES_VERSION=v0.3.1 sh tools/build-dragon.sh
+#     sudo VIRTUES_VERSION=vX.Y.Z sh tools/build-dragon.sh
 #
 # ## Why this exists rather than a list of commands in a doc
 #
@@ -40,8 +40,8 @@ die() { printf '\n\033[1;31m✖  %s\033[0m\n\n' "$*" >&2; exit 1; }
 # argument makes the operator state, once, which build they are pressing.
 : "${VIRTUES_VERSION:=}"
 [ -n "$VIRTUES_VERSION" ] || die "set VIRTUES_VERSION to the release tag you are pressing,
-   e.g.  sudo VIRTUES_VERSION=v0.3.1 sh tools/build-dragon.sh
-   Stable tags look like v0.3.1; prereleases like v0.1.0-staging.59 or edge.
+   e.g.  sudo VIRTUES_VERSION=vX.Y.Z sh tools/build-dragon.sh
+   Stable tags look like vX.Y.Z; prereleases like vX.Y.Z-staging.N or edge.
    'virtues.com/sh' would give you the newest STABLE, which is usually not what
    you want for a master. Check: gh release list --limit 5"
 
@@ -65,7 +65,7 @@ read -r confirm
 # `apt upgrade` is here and NOT in the installer, and the distinction matters.
 # A kernel upgrade makes `kernel-install` regenerate the systemd-boot loader
 # entries, which is exactly where a hand-edited entry gets silently dropped
-# (see docs/appliance-image.md). That is fine to do once, on a bench, with a
+# (see agents/build/appliance-image.md). That is fine to do once, on a bench, with a
 # human present who can boot the board afterwards and find out. It is not fine
 # to do unattended on every customer install, which is why the installer does
 # `apt-get update` and targeted installs only.
