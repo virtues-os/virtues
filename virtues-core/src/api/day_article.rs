@@ -13,15 +13,19 @@
 //! 1. **Assemble** the day: full transcripts (silence dropped) grouped into
 //!    conversations, messages by thread, the owner's own words, their chats
 //!    and page edits, the day's people as the wiki knows them, their narrative
-//!    identity, the pages for the days before, and the hours with no record.
-//! 2. **Write** on the Chat slot. Every sentence ends with the time of the
-//!    evidence it rests on.
-//! 3. **Check** each sentence on the Lite slot against exactly that evidence
+//!    identity, the pages for the days before, what earlier pages say about
+//!    this day's people (`day_memory`), and the day's timeline.
+//! 2. **Scout** on the Lite slot: read all of it and choose the day's shape,
+//!    its lede, and the moments worth keeping, each named by where it is in
+//!    the record. Code attaches those chunks and messages word for word.
+//! 3. **Write** on the Chat slot from that brief. Every sentence ends with
+//!    the time of the evidence it rests on.
+//! 4. **Check** each sentence on the Lite slot against exactly that evidence
 //!    (plus the rest of its conversation). Unsupported sentences are deleted,
 //!    never repaired: repair and strictness turned pages into inventories.
-//! 4. **Names**: a person named on the page must be in the day's people or in
+//! 5. **Names**: a person named on the page must be in the day's people or in
 //!    the day's record, or the sentence goes.
-//! 5. **Render** markdown: the Abstract first, sections after, evidence as
+//! 6. **Render** markdown: the Abstract first, sections after, evidence as
 //!    footnotes the page draws in its margin (`[^ev-N]`), section time spans as
 //!    context footnotes (`[^cx-N]`).
 //!
@@ -42,13 +46,21 @@ use virtues_registry::models::ModelSlot;
 const MIN_CHUNK_CHARS: usize = 40;
 /// Chunks further apart than this belong to different conversations.
 const CONVERSATION_GAP_MIN: i64 = 10;
-/// A silence in the recording longer than this is a gap worth telling the writer.
+/// A silence in the recording longer than this is worth telling the scout, so
+/// the day's shape says where the record goes quiet.
 const GAP_MINUTES: i64 = 30;
 /// A group thread where the owner sent fewer than this is shown as a count, not
 /// as its chatter.
 const LURK_THRESHOLD: usize = 3;
 /// Message bodies are cut here; the writer needs what a message was about.
 const MESSAGE_CHARS: usize = 280;
+/// A timeline line's summary is cut here: it says where and when, the
+/// transcripts say what.
+const TIMELINE_SUMMARY_CHARS: usize = 220;
+/// The moments the writer gets, and the passages each carries. Beyond these
+/// the brief is the whole day again, which is what the scout is for.
+const MAX_MOMENTS: usize = 10;
+const MAX_PASSAGES: usize = 6;
 /// Three previous pages carry a thread forward; more is prompt weight.
 const RECENT_PAGES: i64 = 3;
 
@@ -83,7 +95,9 @@ pub(crate) struct DayInput {
     pub chunks: Vec<Chunk>,
     pub messages: Vec<Msg>,
     pub people: Vec<Person>,
-    pub gaps_text: String,
+    /// What the writer reads besides the brief: the date, their identity, the
+    /// day's people, the pages just before, and what earlier pages say.
+    pub writer_context: String,
 }
 
 impl DayInput {
@@ -394,17 +408,45 @@ pub(crate) async fn assemble(
     // ── identity ──
     let identity = crate::api::wiki::get_narrative_identity(pool).await?.content;
 
-    // ── the prompt ──
-    let mut p = format!("# {}\n\n", date.format("%A, %B %-d, %Y"));
+    // ── the timeline: where the day went, as segmentation cut it ──
+    let events: Vec<(DateTime<Utc>, DateTime<Utc>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT e.started_at, e.ended_at, COALESCE(e.user_label, e.auto_label), e.event_summary \
+         FROM wiki_events e JOIN wiki_days d ON d.id = e.day_id \
+         WHERE d.date = $1 ORDER BY e.started_at, e.id",
+    )
+    .bind(date)
+    .fetch_all(pool)
+    .await?;
+    let timeline: String = events
+        .iter()
+        .map(|(s, e, label, summary)| {
+            format!(
+                "[{}–{}] {}{}\n",
+                hm(s, tz),
+                hm(e, tz),
+                label.as_deref().unwrap_or("Unknown"),
+                summary.as_deref().map(|x| format!(": {}", cut(x, TIMELINE_SUMMARY_CHARS))).unwrap_or_default()
+            )
+        })
+        .collect();
+
+    // ── what the writer reads besides the brief ──
+    let mut w = format!("# {}\n\n", date.format("%A, %B %-d, %Y"));
     if !identity.trim().is_empty() {
-        p.push_str(&format!("<identity>\n{}\n</identity>\n\n", identity.trim()));
+        w.push_str(&format!("<identity>\n{}\n</identity>\n\n", identity.trim()));
     }
-    p.push_str(&format!("<people>\n{people_block}</people>\n\n"));
+    w.push_str(&format!("<people>\n{people_block}</people>\n\n"));
     if !recent_block.is_empty() {
-        p.push_str(&format!("<recent_days>\nThe pages for the days just before, newest first.\n{recent_block}</recent_days>\n\n"));
+        w.push_str(&format!("<recent_days>\nThe pages for the days just before, newest first.\n{recent_block}</recent_days>\n\n"));
     }
     if !earlier.is_empty() {
-        p.push_str(&format!("<earlier>\nWhat their earlier days' pages already say, by each page's opening paragraph: the people this day was most with and the days that link them, then the rest of the last two weeks. Read this day against it.\n{earlier}</earlier>\n\n"));
+        w.push_str(&format!("<earlier>\nWhat their earlier days' pages already say, by each page's opening paragraph: the people this day was most with and the days that link them, then the rest of the last two weeks. Read this day against it.\n{earlier}</earlier>\n\n"));
+    }
+
+    // ── what the scout reads: all of that, and the whole day ──
+    let mut p = w.clone();
+    if !timeline.is_empty() {
+        p.push_str(&format!("<timeline>\nMachine-written; use it for where and when, not for what mattered.\n{timeline}</timeline>\n\n"));
     }
     p.push_str(&format!("<gaps>\n{gaps_text}</gaps>\n\n"));
     p.push_str(&format!("<your_words>\nEverything you wrote to anyone this day.\n{your_words}</your_words>\n\n"));
@@ -419,7 +461,7 @@ pub(crate) async fn assemble(
         p.push_str(&format!("\n({automated} automated texts left out.)\n"));
     }
 
-    Ok(DayInput { user_prompt: p, chunks, messages, people, gaps_text })
+    Ok(DayInput { user_prompt: p, writer_context: w, chunks, messages, people })
 }
 
 /// Earlier pages feed the writer as prose; their footnotes are page furniture.
@@ -462,66 +504,209 @@ fn gaps(recorded: &[(DateTime<Utc>, DateTime<Utc>)], tz: Option<&Tz>) -> String 
 
 // ── The writer ─────────────────────────────────────────────────────────────
 
-pub(crate) const WRITER_PROMPT: &str = r#"You write one day's page in a person's private journal: the page they will open weeks or years from now to get this day back.
+/// Lite's job: read the whole day against what the earlier pages say, and
+/// choose. It names the moments by where they are in the record; code attaches
+/// those chunks and messages word for word, so nothing the writer reads was
+/// paraphrased on the way.
+pub(crate) const SCOUT_PROMPT: &str = r#"You know this person's life better than anyone who reads their journal. Tonight you prepare one day of it for the writer of their journal page. The writer reads only what you hand over, so your choices decide the page.
 
-You are given the day itself: the conversations the microphone caught, in full; their message threads; their own words that day and what they asked Virtues; the people in it, as their own wiki knows them; the pages for the days just before; and a list of hours with no recording. You are also given their own account of who they are.
+You have the whole day: the day's timeline (where they were and roughly what was happening, written by a machine and often wrong about what mattered), every recorded conversation, their message threads, what they asked Virtues, the people in it, the pages for the days just before, and what their earlier pages say about the people in this day and the weeks before it.
 
-WHAT TO DECIDE
-Before writing, decide the one thing this day was. Not what filled the most hours: what they would want back. A long conversation where something real was said outweighs eight hours at a desk. Continuity matters: if the days before left something in motion (an appointment tomorrow, a trip, a conversation to finish), and today is that day, that is very likely the thread. Their own words are the strongest signal of what mattered to them.
+Read all of it, then hand over the brief as JSON, and nothing else:
 
-<identity> is their own account of who they are. Read it for temperament and for what they care about. It shapes your judgment and never appears on the page: do not quote it, echo it, or explain the day through it.
+{
+  "shape": [
+    {"from": "16:45", "to": "17:24", "where": "the barber", "with": "a stylist", "what": "a haircut"}
+  ],
+  "lede": "the one thing that happened today they would tell first, as an event in a plain sentence; one thing, never a list",
+  "moments": [
+    {"title": "a few words", "why": "why they would want this back", "at": ["20:29", "20:34", "msg 20:21"]}
+  ]
+}
+
+SHAPE is the day in the world: where they were, with whom, for how long, in order. Build it from the timeline and the record together. Plain place words ("the office", "home", "a bar downtown"), never coordinates or app names. Merge desk hours into one line.
+
+THE LEDE is what they would tell first if a friend asked about their day. Read the day against what was already going on: a death that had been coming, a relationship days old, a trip that was planned. The biggest turn in something already in motion usually leads.
+
+MOMENTS are the five to ten things they would want back a year from now: what happened between people, what was said that was real, what was new or funny or hard, what they did with their body and their time. Mostly things that happened in person, in the recordings. A text message is a moment only when the text itself is the event (news arriving, something said that could only be said in writing); ordinary back-and-forth texting is not a moment. Order moments by the time they happened.
+
+AT lists where each moment is in the record: the times of the transcript chunks (as they appear in the transcripts, "20:29") and messages ("msg 20:21") it lives in. The writer receives those chunks and messages in full, word for word, and nothing else from the day, so list every chunk the moment runs through, usually two to six. A moment with no times cannot be written."#;
+
+/// Chat's job: tell the day from the brief.
+pub(crate) const WRITER_PROMPT: &str = r#"You write one day's page in a person's private journal: the page they will open a year from now to get this day back.
+
+Someone who knows their life has read the whole day and brought you a brief: where the day went (the shape), the moments worth keeping as exact passages from the recordings and messages, and a guess at the lede, which you may overrule. You also have the people in it, as their own wiki knows them, the pages for the days just before, what their earlier pages say about the people in this day, and their own account of who they are.
 
 THE PAGE
-1. **Abstract**: one to three plain sentences. Who the day was with, what it was, and the thread that ran through it. Precise, not poetic. It is about the day, never about the record: no gaps, no recordings, nothing about what was or wasn't captured.
-2. Then the body: up to three sections under `## ` headings. A heading is three to six words naming a thing or a moment ("The waiting room at the clinic", "The walk home"), never a bare proper noun. This is the fuller account. Include the specific details that carry the day: the corner, the question asked, the thing on the shelf. Leave out details that do not serve the day's thread: app names, background TV, logistics, group-chat chatter.
-3. When a conversation ran through a list (questions and their answers, options weighed and where they landed, an order placed), write that part as a small markdown table of two columns instead of prose, with a one-line lead-in sentence above it. Put the table's evidence tags alone on the line after it. At most one table.
-Walk the day in order. The body runs 300 to 600 words on a full day; a thin day gets an Abstract and a few lines. Start a new paragraph when the moment changes, and keep a paragraph to five sentences or fewer.
+Begin with the Abstract: the day's one event, said the way they would tell a friend who asked, then one human detail from it. One or two sentences about one thing. If two things happened, the one they would tell first leads and the other waits for the body.
 
-EVERY SENTENCE CARRIES ITS SOURCE
-End every sentence with the time of the evidence it rests on, in square brackets: `[17:59]` for a transcript chunk, `[msg 19:40]` for a message, `[chat 09:18]` for a question they asked Virtues. Several are fine: `[17:14, 17:19]`. A sentence you cannot tag is a sentence you must not write. Each sentence will be checked against exactly the evidence it cites, and unsupported sentences are deleted.
+Then the body: two to four sections, each one moment, in the order the moments happened. A section's `## ` heading is three to six words naming its place or its moment ("Upstairs at the Driskill"). Everything in a section belongs to that moment; nothing from earlier or later in the day is folded in.
 
-WHAT COUNTS AS EVIDENCE
-- Only what is in the transcripts, messages and chats. A detail is written only if it is there; a descriptive word ("well-worn", "lopsided") only if the record uses it.
-- Who someone is to them (partner, friend, roommate, mother) comes only from <people>. Never infer a relationship from context.
-- `[Speaker]:` marks a change of voice and says nothing about who is speaking, not even whether it is the owner. Decide who said something only when a name, a reply, or the content makes it certain. When it could be either of them, write it as shared ("between you, it came to...").
-- Transcription mishears names. A name that sounds like someone in <people> and fits is them; always call people by their <people> name, without emoji.
-- Plans are not events. A plan for later is not evidence it happened.
-- Keep the order the record shows. Never join two things as cause and effect unless the record shows the link.
-- Hours listed in <gaps> have no recording. Never fill them with who was probably there or what probably happened. If a gap is longer than two hours, say once, plainly, in the body where it falls: "Nothing was recorded between 8:40 and 5." Tag that sentence `[gap]`.
+Write each moment as a scene: where they were, who was there, what was said and done, and how it went. Give it room: a full day runs 400 to 700 words, and a moment worth keeping is worth a full paragraph or two. A text message belongs only where it carries something the moment turned on, told as part of the scene, not as a transcript of the exchange.
+
+Use what was already going on only where it changes what a moment means (a death that had been coming for days, a relationship days old), in a clause inside the scene. Most of it never appears; it is there so you understand the day.
+
+When a conversation ran through a list (questions and answers, options weighed, an order placed), write that part as a small two-column markdown table with a one-line lead-in, its evidence tags alone on the line after it. At most one table.
+
+A quiet day gets the Abstract and a few lines. Start a new paragraph when the scene changes, and keep paragraphs to five sentences or fewer.
+
+SOURCES
+End every sentence with the time of the passage it rests on in square brackets: `[17:59]` for a recording, `[msg 19:40]` for a message, `[chat 09:18]` for a question they asked Virtues. Several are fine: `[17:14, 17:19]`. Every sentence is checked against what it cites and deleted if unsupported, so write only what the passages say.
+
+- A detail goes on the page only if a passage holds it.
+- Who someone is to them comes only from <people>.
+- `[Speaker]:` marks a change of voice and nothing else. Say who spoke only when a name, a reply or the content makes it clear; otherwise write it as shared between them.
+- Transcription mishears names; a name that sounds like someone in <people> and fits is them. Always use their <people> name.
+- A plan is not an event. Never join two things as cause and effect unless the passages do.
 
 HARD CONVERSATIONS
-They belong on the page, with discretion. The owner was there; give them a door back into the moment, not its contents. Name what it turned on in a word or two ("an old injury", "family", "a job left behind") and how it moved: it got awkward, someone apologized, it was set down and the evening went on. No body parts, procedures, ages, or third parties named inside it. Feelings someone said aloud are evidence; feelings nobody expressed are not yours to assign. Never quote another person; paraphrase.
+They belong on the page, with discretion: a door back into the moment, not its contents. Name what it turned on in a word or two and how it moved. No body parts, procedures, ages, or third parties named inside it. Feelings someone said aloud are evidence; others are not yours to assign. Paraphrase other people; never quote them.
 
-WHAT THE VEIL MAY HIDE
-The owner can read this page with a veil on, when someone else might see the screen. Wrap every name of a person or a place, and every phrase that names a hard or intimate matter, in ⟦ ⟧: "you drove ⟦Nick⟧ to ⟦the clinic⟧", "a conversation about ⟦an old injury⟧". Inside a link, wrap the link text: [⟦Nick⟧](href). The marks never show when the page is read normally.
+Other people's private lives stay off the page unless they were the moment: someone's family, health, money, marriage or past, and drugs or drinking beyond a plain mention of a night out. The page is about this person's day, and it will be read with others nearby.
+
+THE VEIL
+Wrap every name of a person or a place, and every phrase that names a hard or intimate matter, in ⟦ ⟧: "you drove ⟦Nick⟧ to ⟦the clinic⟧". Inside a link, wrap the link text: [⟦Nick⟧](href).
 
 VOICE
-Second person, past tense. Plain and warm, the voice of a friend who was paying attention. No verdicts on the day, no inner states nobody voiced. No dashes as punctuation: use a comma, a colon or a full stop.
+Second person, past tense. Plain and warm, a friend who was there and paying attention. No verdicts on the day, no inner states nobody voiced. No dashes as punctuation. Link a person's first mention as [Name](href) from <people>; never invent a link.
 
-LINKS
-Link a person's first mention as [Name](href) using the href in <people>. Never invent a link.
+<identity> is their own account of who they are. It shapes your judgment and never appears on the page.
 
 OUTPUT
 Exactly this, and nothing else:
 
-Abstract: <one to three sentences, each tagged>
+Abstract: <one or two sentences, each tagged>
 
 <sections>
 "#;
 
+// ── The brief ─────────────────────────────────────────────────────────────
+
+/// What the scout hands the writer. Anything it gets wrong in shape is
+/// dropped, not guessed at: a moment with no times the record holds has
+/// nothing for the writer to stand on.
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct Brief {
+    #[serde(default)]
+    pub shape: Vec<Stretch>,
+    #[serde(default)]
+    pub lede: String,
+    #[serde(default)]
+    pub moments: Vec<Moment>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct Stretch {
+    #[serde(default)]
+    pub from: String,
+    #[serde(default)]
+    pub to: String,
+    #[serde(default, rename = "where")]
+    pub place: String,
+    #[serde(default)]
+    pub with: String,
+    #[serde(default)]
+    pub what: String,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct Moment {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub why: String,
+    #[serde(default)]
+    pub at: Vec<String>,
+}
+
+/// The scout's JSON, from the first `{` to the last `}`: models wrap it in
+/// fences and prose often enough that a strict parse fails good briefs.
+pub(crate) fn parse_brief(raw: &str) -> Option<Brief> {
+    let s = raw.find('{')?;
+    let e = raw.rfind('}')?;
+    serde_json::from_str(raw.get(s..=e)?).ok()
+}
+
+/// The writer's prompt: its context, the shape and lede, and each moment with
+/// the record it lives in, word for word. Times the record does not hold are
+/// dropped, and so is a moment left with nothing.
+pub(crate) fn writer_prompt(brief: &Brief, input: &DayInput) -> String {
+    let mut p = input.writer_context.clone();
+    let shape: String = brief
+        .shape
+        .iter()
+        .map(|s| {
+            let with = if s.with.trim().is_empty() { String::new() } else { format!(" · with {}", s.with.trim()) };
+            format!("- {}–{} · {}{with} · {}\n", s.from, s.to, s.place, s.what)
+        })
+        .collect();
+    if !shape.is_empty() {
+        p.push_str(&format!("<shape>\nWhere the day went.\n{shape}</shape>\n\n"));
+    }
+    if !brief.lede.trim().is_empty() {
+        p.push_str(&format!("<lede>\n{}\n</lede>\n\n", brief.lede.trim()));
+    }
+    p.push_str("<moments>\nThe moments worth keeping, in order, each with the passages it lives in, word for word.\n");
+    let mut n = 0;
+    for m in brief.moments.iter().take(MAX_MOMENTS) {
+        let mut seen: Vec<&str> = Vec::new();
+        let mut passages = String::new();
+        for at in m.at.iter().map(|a| a.trim()) {
+            if seen.len() >= MAX_PASSAGES || seen.contains(&at) {
+                continue;
+            }
+            let text = if let Some(t) = at.strip_prefix("msg ") {
+                let lines: Vec<String> = input.messages.iter().filter(|x| x.hm == t).map(|x| format!("{}: {}", x.who, x.body)).collect();
+                (!lines.is_empty()).then(|| lines.join("\n"))
+            } else {
+                input.chunks.iter().find(|c| c.hm == at).map(|c| c.text.clone())
+            };
+            if let Some(text) = text {
+                seen.push(at);
+                passages.push_str(&format!("[{at}] {text}\n\n"));
+            }
+        }
+        if passages.is_empty() {
+            continue;
+        }
+        n += 1;
+        p.push_str(&format!("### {n}. {}\n(why: {})\n{passages}", m.title.trim(), m.why.trim()));
+    }
+    p.push_str("</moments>\n");
+    p
+}
+
 /// Write the day. `None` when the day has no substance to write from.
+///
+/// Two calls, so neither has to hold the whole day and the page at once. The
+/// scout (Lite) reads everything and chooses; the writer (Chat) reads the
+/// choice and the record it points at, and writes. One call doing both took
+/// long enough on a full day to outlast the completion timeout.
 pub(crate) async fn write_day(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>, start: &str, end: &str) -> Result<Option<String>> {
     let input = assemble(pool, date, tz, start, end).await?;
     if !input.has_substance() {
         tracing::info!(date = %date, "not enough of the day to write from - no model call");
         return Ok(None);
     }
+    let raw = crate::virtues_api::completion::system_completion(
+        pool,
+        ModelSlot::Lite,
+        "day_article_scout",
+        SCOUT_PROMPT,
+        &input.user_prompt,
+        Thinking::Low,
+        0.3,
+    )
+    .await?;
+    let brief = parse_brief(&raw).filter(|b| !b.moments.is_empty()).ok_or_else(|| {
+        crate::error::Error::Other(format!("day article scout returned no moments for {date}"))
+    })?;
     let draft = crate::virtues_api::completion::system_completion(
         pool,
         ModelSlot::Chat,
         "day_article",
         WRITER_PROMPT,
-        &input.user_prompt,
+        &writer_prompt(&brief, &input),
         Thinking::Low,
         0.7,
     )
@@ -532,6 +717,7 @@ pub(crate) async fn write_day(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>, s
     let md = render(&items, &verdicts, &input, &names);
     tracing::info!(
         date = %date,
+        moments = brief.moments.len(),
         sentences = items.iter().filter(|i| matches!(i, Item::Sentence { .. })).count(),
         kept = verdicts.values().filter(|v| **v).count(),
         "day article written"
@@ -552,7 +738,7 @@ pub(crate) enum Item {
 }
 
 fn tag_re() -> regex::Regex {
-    regex::Regex::new(r"\[((?:msg |chat )?\d{1,2}:\d{2}(?:\s*,\s*(?:msg |chat )?\d{1,2}:\d{2})*|gap)\]").expect("static regex")
+    regex::Regex::new(r"\[((?:msg |chat )?\d{1,2}:\d{2}(?:\s*,\s*(?:msg |chat )?\d{1,2}:\d{2})*)\]").expect("static regex")
 }
 
 fn parse_tags(inner: &str) -> Vec<String> {
@@ -627,9 +813,9 @@ const CHECK_PROMPT: &str = r#"You check one diary page, sentence by sentence, ag
 
 - "supported": everything the sentence claims is in its cited evidence or in the rest of that same conversation (paraphrase is fine; the owner is "you"; a name said anywhere in the conversation identifies who was there; people are listed below).
 - "unsupported": the sentence claims something its evidence does not contain (an invented detail, a descriptive word the evidence lacks, a relationship, a cause, a place, a person being present).
-- "wrong_person": the evidence shows the thing, but assigned to the other person, or speaker labels make who-said-it uncertain while the sentence states it as certain.
+- "wrong_person": the evidence shows the other person said or did it. Transcripts mark every change of voice as [Speaker] with no name, so who spoke is usually a judgment from content and replies: accept the sentence's attribution when the content makes it plausible (who is being taught, who names themself, who answers whom), and mark wrong_person only when the evidence points to someone else.
 - "untagged": the item cites no evidence.
-Be strict about facts (invented details, relationships, causes, presence during a gap, who said what) and relaxed about wording ("your alarm was set for 6:30" supports "you set an alarm for 6:30").
+Be strict about facts (invented details, relationships, causes, presence) and relaxed about wording ("your alarm was set for 6:30" supports "you set an alarm for 6:30").
 
 Return ONLY a JSON array: [{"i": 1, "verdict": "..."}]
 
@@ -639,9 +825,7 @@ ITEMS:
 fn evidence_for(tags: &[String], input: &DayInput) -> String {
     let mut ev = Vec::new();
     for tag in tags {
-        if tag == "gap" {
-            ev.push(format!("GAPS:\n{}", input.gaps_text));
-        } else if let Some(t) = tag.strip_prefix("msg ") {
+        if let Some(t) = tag.strip_prefix("msg ") {
             let hits: Vec<String> = input.messages.iter().filter(|m| m.hm == t).map(|m| format!("{} {}: {}", m.hm, m.who, m.body)).collect();
             ev.push(format!("MESSAGES AT {t}:\n{}", if hits.is_empty() { "(none)".into() } else { hits.join("\n") }));
         } else if tag.starts_with("chat ") {
@@ -767,8 +951,6 @@ fn evidence_label(tag: &str, input: &DayInput) -> Option<(String, String)> {
         Some((format!("Message · {}", twelve_hour(t)), format!("data_communication_message:{}", m.id)))
     } else if let Some(t) = tag.strip_prefix("chat ") {
         Some((format!("Chat · {}", twelve_hour(t)), String::new()))
-    } else if tag == "gap" {
-        None
     } else {
         let c = input.chunks.iter().find(|c| c.hm == tag)?;
         Some((format!("Recording · {}", twelve_hour(tag)), format!("data_communication_transcription:{}", c.id)))
@@ -1023,7 +1205,7 @@ mod tests {
             ],
             messages: vec![Msg { id: "msg_1".into(), hm: "19:40".into(), who: "you".into(), body: "home, walked the dog".into(), from_me: true }],
             people: vec![Person { id: "person_n".into(), name: "Nick".into() }],
-            gaps_text: "- Nothing was recorded between 08:41 and 16:59.\n".into(),
+            writer_context: String::new(),
         }
     }
 
@@ -1070,6 +1252,35 @@ mod tests {
         assert_eq!(invented_name("You met Nick at Fifth.", &inp, &known), None);
         assert_eq!(invented_name("You met Margaret Thornbury.", &inp, &known).as_deref(), Some("Margaret Thornbury"));
         assert!(invented_name("You texted [Dave](/person/person_x).", &inp, &known).is_some());
+    }
+
+    #[test]
+    fn a_brief_survives_fences_and_prose_around_it() {
+        let raw = "Here it is:\n```json\n{\"lede\": \"A walk.\", \"moments\": [{\"title\": \"Home\", \"why\": \"w\", \"at\": [\"17:14\"]}]}\n```";
+        let b = parse_brief(raw).expect("parses");
+        assert_eq!(b.lede, "A walk.");
+        assert_eq!(b.moments[0].at, vec!["17:14".to_string()]);
+        assert!(parse_brief("no json at all").is_none());
+    }
+
+    #[test]
+    fn the_writer_gets_each_moment_word_for_word_and_nothing_invented() {
+        let mut inp = input();
+        inp.writer_context = "# Wednesday\n\n".into();
+        let brief = Brief {
+            lede: "A walk.".into(),
+            moments: vec![
+                Moment { title: "The corner".into(), why: "w".into(), at: vec!["17:14".into(), "17:14".into(), "msg 19:40".into(), "03:00".into()] },
+                Moment { title: "Nothing there".into(), why: "w".into(), at: vec!["04:00".into()] },
+            ],
+            ..Default::default()
+        };
+        let p = writer_prompt(&brief, &inp);
+        assert!(p.starts_with("# Wednesday"), "{p}");
+        assert!(p.contains("[17:14] [Speaker 1]: cross Fifth and Main, Nick"), "{p}");
+        assert!(p.contains("[msg 19:40] you: home, walked the dog"), "{p}");
+        assert_eq!(p.matches("[17:14]").count(), 1, "a repeated time is one passage: {p}");
+        assert!(!p.contains("03:00") && !p.contains("Nothing there"), "times the record lacks, and a moment left empty, are dropped: {p}");
     }
 
     #[test]
