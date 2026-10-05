@@ -31,8 +31,8 @@ pub enum ChatMode {
     /// capped searches. Also what an unknown wire string means — a client
     /// ahead of this box gets ordinary chat.
     Chat,
-    /// The owner's bypass: everything chat has plus `shell`, nothing asks
-    /// first. See `tools::shell`.
+    /// The owner's bypass: everything chat has plus `shell`. Reads run;
+    /// changes ask. See `tools::sudo_gate`.
     Sudo,
     /// Read-only research tools + fan-out + `create_page` for the report.
     DeepResearch,
@@ -134,10 +134,10 @@ impl ChatMode {
                 Thinking::Default,
             ),
             Self::DeepResearch => (50, spend(10_000_000, 25), Thinking::Default),
-            // The owner's bypass: ceilings high enough that no real admin
-            // session meets them. The dollar cap stays as the one thing
-            // between a looping model and the bill.
-            Self::Sudo => (500, spend(50_000_000, 4 * 60), Thinking::Default),
+            // Room for a real admin task, not for a model that has lost the
+            // thread: past these it stops and says what it has, and the
+            // owner can send it on.
+            Self::Sudo => (60, spend(5_000_000, 30), Thinking::Default),
             // One generation, no tools, no gateway, so no cost. The runner
             // holds its own wall-clock limit (`local_model::TURN_TIME_LIMIT`).
             Self::Local => (1, spend(0, 12), Thinking::Default),
@@ -163,7 +163,7 @@ impl ChatMode {
         match self {
             // Write/act tools confirm before running.
             Self::Chat => get_tool_definitions_for_llm(),
-            // Everything chat has, plus `shell`, and nothing asks first.
+            // Everything chat has, plus `shell`; changes ask (`sudo_gate`).
             Self::Sudo => {
                 let mut tools = get_tool_definitions_for_llm();
                 tools.extend(tools_named(crate::tools::SUDO_ONLY_TOOLS));
@@ -188,7 +188,7 @@ impl ChatMode {
         }
     }
 
-    /// The owner's bypass: `ToolContext.sudo`, the shell, no confirmations.
+    /// The owner's bypass: `ToolContext.sudo` and the shell.
     pub fn is_sudo(&self) -> bool {
         matches!(self, Self::Sudo)
     }
@@ -295,7 +295,7 @@ mod tests {
         assert_eq!(l.tool_timeout, Duration::from_secs(30));
 
         let l = ChatMode::Sudo.limits();
-        assert_eq!((l.max_steps, l.budget.max_cost_micros, l.budget.max_wall_clock), (500, Some(50_000_000), secs(240)));
+        assert_eq!((l.max_steps, l.budget.max_cost_micros, l.budget.max_wall_clock), (60, Some(5_000_000), secs(30)));
         assert!(l.budget.tool_caps.is_empty());
         assert_eq!(l.thinking, Thinking::Default);
         assert_eq!(l.tool_timeout, Duration::from_secs(crate::tools::shell::MAX_TIMEOUT_SECS));

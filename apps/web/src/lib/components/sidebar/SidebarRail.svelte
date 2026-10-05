@@ -24,8 +24,8 @@
 	 *
 	 * No separators inside it: separation goes whitespace → lightness →
 	 * elevation and stops at the first that reads, and here whitespace reads.
-	 * One even rhythm for every room; only the utility pair is set apart, by the
-	 * spacer that pushes it to the foot.
+	 * One even rhythm for every room; only Settings is set apart, by the spacer
+	 * that pushes it to the foot.
 	 *
 	 * One object on the rail is not a room: the ∴ mark at the head, which
 	 * toggles the sidebar.
@@ -127,6 +127,12 @@
 	}
 
 	function activate(room: Room) {
+		if (room.panel.kind === 'none') {
+			// A room with no panel is its page: open it, or bring forward the
+			// tab already holding it, and leave the sidebar as it was.
+			windowShellStore.openTabFromRoute(room.href, { label: room.label, focusExisting: true });
+			return;
+		}
 		if (room.id === selectedId) {
 			// The second press on the same room is the collapse. A rail item that
 			// re-navigated here would be a control going where you already are,

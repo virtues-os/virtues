@@ -7,6 +7,13 @@
 //!
 //! Same URL convention as the rest of the app: `/person/per_xxx`,
 //! `/page/page_xxx`, `/person/p_xxx`, or `https://...` for externals.
+//!
+//! A pin holds a URL, not a name. What the sidebar shows is resolved from the
+//! thing each time pins are listed ([`PinView`]): a chat, page or project
+//! shows its own title, icon and color, and a pin to one in the trash is not
+//! listed at all. The row's `label`, `icon` and `color` are the pin's own
+//! only where the thing has none to give: an external URL's label, and the
+//! icon a pin carried before icons moved onto the thing.
 
 use crate::error::{Error, Result};
 use crate::ids::{generate_id, PIN_PREFIX};
@@ -22,9 +29,76 @@ pub struct Pin {
     pub icon: Option<String>,
     pub sort_order: i32,
     pub pinned_at: Timestamp,
-    /// A `--cat-*` token key ('orange', 'emerald'…), never a hex — see
-    /// migration 0070. The sidebar renders it as the row's ribbon.
+    /// A `--cat-*` token key ('orange', 'emerald'…) or a custom hex, which
+    /// the client keeps verbatim and fits to the theme (pin-colors.ts).
     pub color: Option<String>,
+}
+
+/// A pin as the sidebar draws it: the pointer, plus what it points at now.
+#[derive(Debug, Clone, Serialize)]
+pub struct PinView {
+    pub id: String,
+    pub url: String,
+    /// `chat`, `page`, `project`, a wiki kind, `web` for an external URL, or
+    /// `route` for an app screen with no record behind it.
+    pub kind: String,
+    /// The thing's name now. For an external URL, the pin's label or host.
+    pub title: String,
+    /// The thing's icon, else the pin's own.
+    pub icon: Option<String>,
+    /// The thing's color key, else the pin's own.
+    pub color: Option<String>,
+    /// The pin's stored label, which names only an external URL.
+    pub label: Option<String>,
+    pub sort_order: i32,
+    pub pinned_at: Timestamp,
+}
+
+/// Resolve pins against what they point at (`refs::resolve_identities`). A
+/// pin whose chat, page or project is trashed or gone is dropped: the sidebar
+/// never shows a thing in the trash, and restoring it brings the pin back
+/// untouched.
+pub async fn resolve_pins(db: &PgPool, pins: Vec<Pin>) -> Result<Vec<PinView>> {
+    let urls: Vec<String> = pins.iter().map(|p| p.url.clone()).collect();
+    let identities = crate::api::refs::resolve_identities(db, &urls).await?;
+
+    let mut out = Vec::with_capacity(pins.len());
+    for pin in pins {
+        let Some(found) = identities.get(&pin.url) else { continue };
+        let owned = matches!(found.kind.as_str(), "chat" | "page" | "project");
+        if owned && found.state != "live" {
+            continue;
+        }
+        let label = pin.label.as_deref().map(str::trim).filter(|l| !l.is_empty());
+        // An external URL is named by the person (the pin IS the thing); a
+        // record by its own name; an app screen by the label it was pinned
+        // under, having no record to ask.
+        let title = match (found.kind.as_str(), found.state, label) {
+            _ if owned => found.title.clone(),
+            ("web", _, Some(l)) => l.to_string(),
+            (_, "live", _) => found.title.clone(),
+            (_, _, Some(l)) => l.to_string(),
+            _ => pin.url.clone(),
+        };
+        out.push(PinView {
+            id: pin.id,
+            url: pin.url,
+            // Nothing to look up (an app screen): the pin is the thing.
+            kind: if found.state == "unknown" { "route".into() } else { found.kind.clone() },
+            title,
+            icon: found.icon.clone().or_else(|| pin.icon.clone()),
+            color: found.color.clone().or_else(|| pin.color.clone()),
+            label: pin.label,
+            sort_order: pin.sort_order,
+            pinned_at: pin.pinned_at,
+        });
+    }
+    Ok(out)
+}
+
+/// One pin, resolved. `None` when its target is trashed.
+async fn view_of(db: &PgPool, pin: Pin) -> Result<Option<PinView>> {
+    Ok(resolve_pins(db, vec![pin]).await?.into_iter().next())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,7 +118,7 @@ pub struct UpdatePinRequest {
     pub color: Option<Option<String>>,
 }
 
-pub async fn list_pins(db: &PgPool) -> Result<Vec<Pin>> {
+pub async fn list_pins(db: &PgPool) -> Result<Vec<PinView>> {
     let pins = sqlx::query_as::<_, Pin>(
         r#"SELECT id, url, label, icon, sort_order, pinned_at, color
            FROM app_pins
@@ -52,12 +126,19 @@ pub async fn list_pins(db: &PgPool) -> Result<Vec<Pin>> {
     )
     .fetch_all(db)
     .await?;
-    Ok(pins)
+    resolve_pins(db, pins).await
 }
 
 /// Create a pin. If the URL is already pinned, return the existing row
 /// (idempotent — pinning twice is a no-op).
-pub async fn create_pin(db: &PgPool, req: CreatePinRequest) -> Result<Pin> {
+pub async fn create_pin(db: &PgPool, req: CreatePinRequest) -> Result<PinView> {
+    let pin = insert_pin(db, req).await?;
+    view_of(db, pin)
+        .await?
+        .ok_or_else(|| Error::InvalidInput("You can't pin something in Recently deleted. Restore it first.".into()))
+}
+
+async fn insert_pin(db: &PgPool, req: CreatePinRequest) -> Result<Pin> {
     if let Some(existing) = sqlx::query_as::<_, Pin>(
         r#"SELECT id, url, label, icon, sort_order, pinned_at, color
            FROM app_pins WHERE url = $1"#,
@@ -96,7 +177,12 @@ pub async fn create_pin(db: &PgPool, req: CreatePinRequest) -> Result<Pin> {
     .map_err(Error::from)
 }
 
-pub async fn update_pin(db: &PgPool, id: &str, req: UpdatePinRequest) -> Result<Pin> {
+pub async fn update_pin(db: &PgPool, id: &str, req: UpdatePinRequest) -> Result<PinView> {
+    let pin = write_pin(db, id, req).await?;
+    view_of(db, pin).await?.ok_or_else(|| Error::NotFound("Pinned item is in the trash".into()))
+}
+
+async fn write_pin(db: &PgPool, id: &str, req: UpdatePinRequest) -> Result<Pin> {
     if let Some(label) = req.label {
         sqlx::query("UPDATE app_pins SET label = $1 WHERE id = $2")
             .bind(label)
@@ -156,4 +242,39 @@ pub async fn reorder_pins(db: &PgPool, urls: &[String]) -> Result<()> {
     }
     tx.commit().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+
+    fn req(url: &str, label: Option<&str>, icon: Option<&str>) -> CreatePinRequest {
+        CreatePinRequest { url: url.into(), label: label.map(Into::into), icon: icon.map(Into::into), color: None }
+    }
+
+    /// The name is the thing's, the icon falls back to the pin's own, a
+    /// trashed target is not listed and comes back on restore, and an
+    /// external URL keeps the label it was pinned under.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn pins_show_the_thing_as_it_is_now(pool: PgPool) {
+        sqlx::query("INSERT INTO app_pages (id, title, content) VALUES ('page_p', 'Old name', '')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        create_pin(&pool, req("/page/page_p", Some("Stale label"), Some("📝"))).await.unwrap();
+        create_pin(&pool, req("https://example.com/a", Some("Reading list"), None)).await.unwrap();
+
+        sqlx::query("UPDATE app_pages SET title = 'New name' WHERE id = 'page_p'").execute(&pool).await.unwrap();
+        let pins = list_pins(&pool).await.unwrap();
+        let page = pins.iter().find(|p| p.url == "/page/page_p").unwrap();
+        assert_eq!((page.kind.as_str(), page.title.as_str(), page.icon.as_deref()), ("page", "New name", Some("📝")));
+        let web = pins.iter().find(|p| p.kind == "web").unwrap();
+        assert_eq!(web.title, "Reading list");
+
+        sqlx::query("UPDATE app_pages SET deleted_at = now() WHERE id = 'page_p'").execute(&pool).await.unwrap();
+        assert!(list_pins(&pool).await.unwrap().iter().all(|p| p.url != "/page/page_p"));
+
+        sqlx::query("UPDATE app_pages SET deleted_at = NULL WHERE id = 'page_p'").execute(&pool).await.unwrap();
+        assert!(list_pins(&pool).await.unwrap().iter().any(|p| p.url == "/page/page_p"));
+    }
 }

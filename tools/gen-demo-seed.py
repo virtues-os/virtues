@@ -81,9 +81,15 @@ class Table:
 
     CHUNK = 250
 
-    def __init__(self, name: str, cols: list[str]):
+    def __init__(self, name: str, cols: list[str], key: list[str] | None = None):
         self.name = name
         self.cols = cols
+        # For a table whose id Postgres generates, `ON CONFLICT DO NOTHING`
+        # never fires, so a re-run (the nightly reset re-runs 04_creation.sql)
+        # inserts every row again. `key` names the columns that identify a
+        # seeded row instead; each row is then written to insert only when no
+        # row with the same key exists.
+        self.key = key
         self.rows: list[tuple] = []
 
     def add(self, *vals):
@@ -93,6 +99,15 @@ class Table:
     def sql(self) -> str:
         if not self.rows:
             return ""
+        if self.key:
+            head = f"INSERT INTO {self.name} ({', '.join(self.cols)})\n"
+            out = []
+            for r in self.rows:
+                vals = dict(zip(self.cols, r))
+                match = " AND ".join(f"{k} = {q(vals[k])}" for k in self.key)
+                out.append(f"{head}SELECT {', '.join(q(v) for v in r)}\n"
+                           f"WHERE NOT EXISTS (SELECT 1 FROM {self.name} WHERE {match});\n")
+            return "\n".join(out)
         head = f"INSERT INTO {self.name} ({', '.join(self.cols)}) VALUES\n"
         out = []
         for i in range(0, len(self.rows), self.CHUNK):
@@ -333,8 +348,8 @@ def in_chicago(off: int) -> bool:
 def build():
     t = {}
 
-    def tbl(name, cols):
-        t[name] = Table(name, cols)
+    def tbl(name, cols, key=None):
+        t[name] = Table(name, cols, key)
         return t[name]
 
     people = tbl("wiki_people", ["id", "name", "emails", "phones", "relationship_category",
@@ -438,7 +453,8 @@ def build():
                                          "role", "added_by"])
     notes = tbl("wiki_notes", ["subject_type", "subject_id", "kind", "body", "author",
                                "created_at", "source_refs", "resolved_at", "resolution",
-                               "resolved_by"])
+                               "resolved_by"],
+                key=["subject_type", "subject_id", "kind", "body"])
     memories = tbl("app_assistant_memories", ["lane", "body", "author", "created_at",
                                               "updated_at", "retired_at", "retired_reason"])
     marks = tbl("data_content_bookmark", ["id", "url", "title", "description",
@@ -1555,6 +1571,7 @@ DO $$
 DECLARE
   cur_anchor date;
   shift_days integer;
+  r record;
 BEGIN
   -- READ THE ANCHOR OUT OF THE DATA, never from a constant. A fixed anchor
   -- makes this file shift again on every run, walking the life further into
@@ -1586,6 +1603,48 @@ BEGIN
   shift_days := current_date - cur_anchor;
   IF shift_days = 0 THEN RETURN; END IF;
 
+  -- MOVE ONLY THE DAY ROWS THIS SET WROTE. Every other table below is
+  -- filtered to this set's ids, and the day rows once were not: the whole of
+  -- `wiki_days` moved while only `p3y_` events moved with it, so any day the
+  -- box made for itself — and every day of another seed — slid away from the
+  -- events and streams still sitting on its old date. The set writes exactly
+  -- `day_<date>` for each generated date, and an id never changes when its
+  -- row moves, so the id still names the date it was written for.
+  CREATE TEMP TABLE _p3y_days ON COMMIT DROP AS
+    SELECT id, date + shift_days AS landing FROM wiki_days
+     WHERE id ~ '^day_[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+       AND substr(id, 5)::date BETWEEN DATE '%FIRST_DAY%' AND DATE '%LAST_DAY%';
+
+  -- Events the box wrote onto this set's days ride with them. A box re-reads
+  -- a day it narrates and replaces its events with its own hashed ids, so a
+  -- `p3y_` filter alone leaves those behind a day per run. Taken before the
+  -- fold below: events folded in from a box-made row already sit on the date
+  -- they are moving to.
+  CREATE TEMP TABLE _p3y_riders ON COMMIT DROP AS
+    SELECT e.id FROM wiki_events e JOIN _p3y_days o ON o.id = e.day_id
+     WHERE e.id NOT LIKE 'p3y!_%%' ESCAPE '!';
+
+  -- A row the box made on a date this set is about to land on would break the
+  -- UNIQUE date, and it is the ordinary case, not an edge: a running box
+  -- creates a hashed-id row for any date someone opens, so the day after the
+  -- life's last one usually exists before the hourly run reaches it, and may
+  -- already hold a paired phone's events. Fold it into the seeded row for that
+  -- date — its events and, when the seeded row has none, its day article —
+  -- then drop it. Raising instead would wedge the re-anchor on the first such
+  -- row and leave the demo ageing a day at a time.
+  FOR r IN
+    SELECT f.id AS foreign_id, o.id AS own_id
+      FROM wiki_days f JOIN _p3y_days o ON f.date = o.landing
+     WHERE f.id NOT IN (SELECT id FROM _p3y_days)
+  LOOP
+    UPDATE wiki_events SET day_id = r.own_id WHERE day_id = r.foreign_id;
+    UPDATE wiki_articles SET subject_id = r.own_id
+     WHERE subject_type = 'day' AND subject_id = r.foreign_id
+       AND NOT EXISTS (SELECT 1 FROM wiki_articles
+                        WHERE subject_type = 'day' AND subject_id = r.own_id);
+    DELETE FROM wiki_days WHERE id = r.foreign_id;
+  END LOOP;
+
   -- `wiki_days.date` is UNIQUE, and Postgres writes a unique index row by row
   -- inside an UPDATE rather than deferring the check to the end of the
   -- statement. A uniform `date + N` therefore collides mid-statement whenever
@@ -1594,11 +1653,17 @@ BEGIN
   -- from there, so neither pass writes a value the column already holds.
   -- (`demo_reanchor.sql` solves the same problem the same way; this file
   -- cannot simply call it, see the header.)
-  UPDATE wiki_days SET date = date + 100000;
-  UPDATE wiki_days SET date = date - 100000 + shift_days;
+  UPDATE wiki_days SET date = date + 100000 WHERE id IN (SELECT id FROM _p3y_days);
+  UPDATE wiki_days SET date = date - 100000 + shift_days WHERE id IN (SELECT id FROM _p3y_days);
   UPDATE wiki_events          SET started_at = started_at + (shift_days || ' days')::interval,
                                   ended_at   = ended_at   + (shift_days || ' days')::interval
                               WHERE id LIKE 'p3y_%%';
+  UPDATE wiki_events          SET started_at = started_at + (shift_days || ' days')::interval,
+                                  ended_at   = ended_at   + (shift_days || ' days')::interval
+                              WHERE id IN (SELECT id FROM _p3y_riders);
+  -- The box writes a ref per entity it finds in a seeded row, stamped with
+  -- that row's time; the ref moves when its source does.
+  UPDATE wiki_refs SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE source_id LIKE 'p3y_%%';
   UPDATE data_health_heart_rate SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
   UPDATE data_health_hrv        SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
   UPDATE data_health_steps      SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
@@ -1618,6 +1683,9 @@ BEGIN
                                     ended_at   = ended_at   + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
   UPDATE data_environment_weather SET occurred_at = occurred_at + (shift_days||' days')::interval,
                                       issued_at   = issued_at   + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
+  UPDATE data_activity_web_browsing SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
+  UPDATE data_content_bookmark  SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
+  UPDATE data_content_document  SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
   UPDATE app_chats           SET created_at = created_at + (shift_days||' days')::interval,
                                  updated_at = updated_at + (shift_days||' days')::interval WHERE id LIKE 'chat_p3y_%%';
   UPDATE app_chat_messages   SET created_at = created_at + (shift_days||' days')::interval WHERE id LIKE 'chat_p3y_%%';
@@ -2045,7 +2113,9 @@ DELETE FROM app_projects WHERE NOT starts_with(id, 'p3y_nb_');
 -- the seed writes both 'ai' and 'human' and so does the box. Restoring works
 -- for this table alone because memories hold no anchored dates: the timer
 -- re-runs `04_creation.sql` after this file, which no-ops on every other table
--- through `ON CONFLICT DO NOTHING` and re-inserts only these twelve.
+-- (`ON CONFLICT DO NOTHING`, or for `wiki_notes`, whose ids are generated too,
+-- an insert guarded by the note's subject and body) and re-inserts only these
+-- twelve.
 DELETE FROM app_assistant_memories;
 
 -- Nothing seeds these, so anything in them arrived from a visitor.
@@ -2122,7 +2192,8 @@ def main():
 
     (out / "98_reset.sql").write_text(HEADER + "\n" + RESET)
     (out / "99_reanchor.sql").write_text(
-        HEADER + "\n" + REANCHOR.replace("%ANCHOR%", ANCHOR_END.isoformat()))
+        HEADER + "\n" + REANCHOR.replace("%FIRST_DAY%", START.isoformat())
+                         .replace("%LAST_DAY%", ANCHOR_END.isoformat()))
     run = out / "run.sh"
     run.write_text(RUNSH)
     run.chmod(0o755)

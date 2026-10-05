@@ -79,9 +79,10 @@ trusting it.
 
 ## Sleep and wake, as it actually works
 
-Sleep is `systemctl stop virtues-display` plus forcing the connector off; wake
-forces `detect` and starts the unit again. Both are verbs the box can run on a
-timer under the existing privilege model.
+Sleep forces the connector off while the kiosk unit keeps running (cage
+survives losing its outputs, and starts with none); wake forces `detect`, and
+restarts the unit only if it failed anyway. Both run under the existing
+privilege model (`system_display::sleep_engine`).
 
 **The sleep marker carries the connector name** for a reason worth keeping: an
 upgrade restarts `virtues.service` while the display unit keeps running, and

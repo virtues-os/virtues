@@ -239,6 +239,23 @@ export async function otaCheckNow(): Promise<void> {
 }
 
 /**
+ * Has a newer UI bundle been staged since this page loaded? Each page load is
+ * pinned to one bundle (src-tauri/src/web_bundle.rs), so a staged bundle takes
+ * effect at the next load, and the app reloads while it is hidden to get
+ * there. False on a shell older than surface 8 or outside the app.
+ */
+export async function bundleUpdateReady(): Promise<boolean> {
+	if (!(await shellSupports(8))) return false;
+	const invoke = await getInvoke();
+	if (!invoke) return false;
+	try {
+		return (await invoke<boolean>('bundle_update_ready')) === true;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Tell the shell this UI booted successfully.
  *
  * An OTA bundle is *pending* until this lands. If the app starts and still

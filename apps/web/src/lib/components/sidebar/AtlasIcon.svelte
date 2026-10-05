@@ -34,7 +34,11 @@
 		// funnel, which at this size is read as Filter everywhere else.
 		sources:
 			'<ellipse cx="8" cy="6" rx="3.4" ry="1.2"/><path d="M4.6 6v4.3c0 1.2 1.5 2.2 3.4 2.2s3.4-1 3.4-2.2V6"/><path d="M8 2.3v1.7"/>',
-		developer: '<path d="M3 5l3.2 3L3 11"/><path d="M9 11.5h4"/>',
+		// TIMELINE. A route walked between two stops: a filled start, an open
+		// end, and the way between them. Not a clock, which reads as History,
+		// and not the pin, which is Places.
+		timeline:
+			'<circle cx="3.9" cy="11.6" r="1.5" fill="currentColor"/><circle cx="12.1" cy="4.4" r="1.5"/><path d="M5.3 11c2.6-.9 1.2-3.6 3.4-4.4 1.3-.5 1.8-.2 2.3-.9"/>',
 		// The room you land in. A drawn object like the rest — a roof and a
 		// door, not the outline-house-in-a-circle every icon set ships. It is
 		// the one glyph whose room is a PLACE rather than a kind of thing,
@@ -93,8 +97,7 @@
 			'<rect x="2.5" y="4" width="11" height="8.5" rx="1.2"/><path d="M2.5 8.2h11"/><path d="M6.8 6.1h2.4M6.8 10.4h2.4"/>',
 		// Files: a folder with its tab.
 		files: '<path d="M2.5 4.6a1 1 0 0 1 1-1h3l1.3 1.5h4.7a1 1 0 0 1 1 1v6.4a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>',
-		// Streams: two lines running on, each with somewhere to go. Not the
-		// lake's waves: a stream moves, the lake holds.
+		// Streams: two lines running on, each with somewhere to go.
 		streams:
 			'<path d="M2.5 5.2h9M2.5 10.8h9"/><path d="M9.6 3.4l1.9 1.8-1.9 1.8M9.6 9l1.9 1.8-1.9 1.8"/>',
 		// App media: a photograph, sun and hills.
@@ -103,8 +106,6 @@
 		// Recently deleted: the bin, lid and body.
 		trash:
 			'<path d="M3 4.6h10M6.3 4.6V3.2h3.4v1.4"/><path d="M4.2 4.6l.7 8.2a1 1 0 0 0 1 .9h4.2a1 1 0 0 0 1-.9l.7-8.2"/>',
-		// Lake: water, three lines of it. The raw archive everything drains to.
-		lake: '<path d="M2.2 6.2c1.2-1 2.4-1 3.6 0s2.4 1 3.6 0 2.4-1 3.6 0"/><path d="M2.2 9.2c1.2-1 2.4-1 3.6 0s2.4 1 3.6 0 2.4-1 3.6 0"/><path d="M3.8 12.2c1-.8 2-.8 3 0s2 .8 3 0"/>',
 
 		// ── The wiki's own rows ────────────────────────────────────────────
 		// Drawn here rather than pulled from Remix for the reason the set
@@ -126,8 +127,8 @@
 		// CHAPTERS. A line cut into stretches — the life's own partition, which
 		// is what a chapter is. Drawn as a rule with two crossbars rather than
 		// as a segmented capsule: the capsule version read as a battery at
-		// every size. It is line-based on purpose, like Lifeline two rows
-		// down — both are the life seen as one line, one divided and one not.
+		// every size. It is line-based on purpose: the life seen as one line,
+		// divided.
 		//
 		// Not a book. Stories is the open book and `projects` is the closed
 		// one; a third would be the set's third book and nobody's second guess.
@@ -138,10 +139,6 @@
 		// at row size. Bars survive it — and the STAGGER is what keeps them
 		// from being the align-left glyph every icon set ships.
 		chapters: '<path d="M2.7 4.7h6.6M6.2 8h7.1M3.6 11.3h5.2"/>',
-		// LIFELINE. One continuous stroke that rises and falls. The only glyph
-		// in the set with no enclosure, because the thing it names has no edge.
-		lifeline:
-			'<path d="M2.5 10.4c1.7 0 2.1-4.3 3.7-4.3s1.9 5.2 3.4 5.2 1.8-3.2 3.5-3.2"/>',
 		// YOU. One figure, facing out. People is the same figure twice; the
 		// difference has to survive at 16px, so this one is centred and larger
 		// and that one is a pair.

@@ -646,9 +646,12 @@ impl ImprovClient {
                                 "Your server needs an update before you can reconnect it over Bluetooth.",
                             ));
                         }
-                        Some(_) => {
+                        Some(c) if c == ImprovError::NotAuthorized as u8 => {
                             return Err(fail(FailureKind::Refused, "This server isn't asking for its owner."))
                         }
+                        // Anything else (a garbled packet) is a failure to
+                        // talk, not an answer about ownership.
+                        Some(c) => return Err(fail(FailureKind::Failed, ImprovError::describe(c))),
                     }
                 }
                 if let Some(strings) = protocol::parse_result(&n.value, 0x88) {
@@ -685,9 +688,14 @@ impl ImprovClient {
                         None | Some(0) => continue,
                         // One answer for every refusal — not paired, revoked,
                         // stale challenge — because the box gives only one.
-                        Some(_) => {
+                        // Only NotAuthorized means "not yours" (or a stale
+                        // challenge, which the caller retries once). A garbled
+                        // packet is a failure to talk: calling it a refusal
+                        // made /reconnect hide the owner's own server.
+                        Some(c) if c == ImprovError::NotAuthorized as u8 => {
                             return Err(fail(FailureKind::Refused, "This server doesn't recognize this computer."))
                         }
+                        Some(c) => return Err(fail(FailureKind::Failed, ImprovError::describe(c))),
                     }
                 }
                 if protocol::parse_result(&n.value, 0x89).is_some() {

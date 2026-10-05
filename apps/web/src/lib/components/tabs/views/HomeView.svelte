@@ -26,6 +26,7 @@
 	refetches on a 30s beat and stops entirely while the tab is hidden.
 -->
 <script lang="ts">
+	import { untitled } from "$lib/refs/identity.svelte";
 	import { onMount } from "svelte";
 	import {
 		getDayByDate,
@@ -215,24 +216,23 @@
 	// ---- recents: projects, pages and chats blended by recency ----
 	// Not "pinned" — the sidebar's Pinned section is the shelf the user keeps
 	// by hand, and two different meanings for one word is one too many.
-	type RecentItem = { route: string; title: string; kind: string; ts: number; note?: string };
+	type RecentItem = { route: string; title: string; kind: string; ts: number };
 	const recentItems = $derived.by<RecentItem[]>(() => {
 		const nb: RecentItem[] = projectStore.projects.map((n: any) => ({
 			route: `/project/${n.id}`,
-			title: n.name || "Untitled",
+			title: n.name || untitled("project"),
 			kind: "project",
 			ts: n.updated_at ? Date.parse(n.updated_at) : 0,
-			note: n.current_status ? "live" : undefined,
 		}));
 		const pg: RecentItem[] = pagesStore.pages.map((p) => ({
 			route: `/page/${p.id}`,
-			title: p.title || "Untitled",
+			title: p.title || untitled("page"),
 			kind: "page",
 			ts: p.updated_at ? Date.parse(p.updated_at) : 0,
 		}));
 		const ch: RecentItem[] = chatSessions.sessions.map((c) => ({
 			route: `/chat/${c.conversation_id}`,
-			title: c.title || "Untitled",
+			title: c.title || untitled("chat"),
 			kind: "chat",
 			ts: Date.parse(c.last_message_at || c.last_updated || "") || 0,
 		}));
@@ -391,7 +391,7 @@
 						<button class="t" type="button" onclick={() => open(it.route, it.title)}>
 							{it.title}{#if it.kind !== "project"}<span class="s">— {it.kind}</span>{/if}
 						</button>
-						<span class="d">{it.note ?? ago(new Date(it.ts).toISOString())}</span>
+						<span class="d">{ago(new Date(it.ts).toISOString())}</span>
 					</div>
 				{/each}
 			</section>

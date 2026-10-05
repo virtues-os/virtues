@@ -62,66 +62,82 @@ struct ManifestOut {
     config: Option<toml::Value>,
 }
 
-/// Execute the setup_applet tool.
-pub async fn execute(
-    pool: &PgPool,
-    arguments: serde_json::Value,
-    context: &ToolContext,
-) -> Result<ToolResult, ToolError> {
-    // Owned copy up front — borrowing `context` across the awaits below
-    // trips rustc's higher-ranked Send inference inside the agent stream.
-    let chat_id: Option<String> = context.chat_id.clone();
+/// `{"check_only": true}` runs the check and creates nothing: the dry run an
+/// author iterates against (`virtues applet check`), and the reason it needs no
+/// "I allow" in chat.
+pub(crate) fn wants_check_only(arguments: &serde_json::Value) -> bool {
+    arguments.get("check_only").and_then(|v| v.as_bool()) == Some(true)
+}
 
-    if wants_guide(&arguments) {
-        return Ok(ToolResult::success(serde_json::json!({ "guide": authoring_guide() })));
+/// The authored fields, parsed once for the check and the write.
+pub(crate) struct Draft {
+    name: String,
+    description: String,
+    agent: Option<String>,
+    schedule: Option<String>,
+    condition: Option<String>,
+    until: Option<String>,
+    schema_sql: Option<String>,
+    face_html: Option<String>,
+    limits: Option<serde_json::Value>,
+    triggers: Vec<String>,
+}
+
+impl Draft {
+    pub(crate) fn parse(arguments: &serde_json::Value) -> Result<Self, ToolError> {
+        let name = req_str(arguments, "name")?.to_string();
+        let description = req_str(arguments, "description")?.to_string();
+        // `agent` is OPTIONAL. A pure dashboard/View (a face that reads data)
+        // or a Tracker (schema + face) has no server-side run and needs no
+        // prompt — the face queries directly. Only Reflect/Rule applets that
+        // DO something each run (write a page, post to chat, compute) carry
+        // an agent.
+        let agent = opt_str(arguments, "agent").or_else(|| opt_str(arguments, "instruction"));
+        let schedule = opt_str(arguments, "schedule");
+        let triggers: Vec<String> = arguments
+            .get("triggers")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_else(|| {
+                if schedule.is_some() {
+                    vec!["cron".into(), "manual".into(), "tool".into()]
+                } else {
+                    vec!["manual".into(), "tool".into()]
+                }
+            });
+        Ok(Self {
+            name,
+            description,
+            agent,
+            schedule,
+            condition: opt_str(arguments, "condition"),
+            until: opt_str(arguments, "until"),
+            schema_sql: opt_str(arguments, "schema_sql"),
+            face_html: opt_str(arguments, "face_html"),
+            limits: arguments.get("limits").cloned().filter(|v| v.is_object()),
+            triggers,
+        })
     }
+}
 
-    // ---- 1. Parse params -------------------------------------------------
-    let name = req_str(&arguments, "name")?;
-    let description = req_str(&arguments, "description")?;
-    // `agent` is OPTIONAL. A pure dashboard/View (a face that reads data) or a
-    // Tracker (schema + face) has no server-side run and needs no prompt — the
-    // face queries directly. Only Reflect/Rule applets that DO something each
-    // run (write a page, post to chat, compute) carry an agent.
-    let agent = opt_str(&arguments, "agent")
-        .or_else(|| opt_str(&arguments, "instruction"));
-    let schedule = opt_str(&arguments, "schedule")
-        .or_else(|| opt_str(&arguments, "schedule"));
-    let condition = opt_str(&arguments, "condition");
-    let until = opt_str(&arguments, "until");
-    let schema_sql = opt_str(&arguments, "schema_sql");
-    let face_html = opt_str(&arguments, "face_html");
-    let limits = arguments.get("limits").cloned().filter(|v| v.is_object());
+/// The check: every finding a draft has, each naming its fix. Validates
+/// BEFORE anything touches disk, and is the whole of what `check_only` runs.
+pub(crate) async fn check(pool: &PgPool, draft: &Draft) -> Vec<serde_json::Value> {
+    let Draft { name, agent, schedule, condition, until, schema_sql, face_html, limits, triggers, .. } =
+        draft;
+    let mut findings: Vec<serde_json::Value> = Vec::new();
 
     // An applet must DO or SHOW something: a prompt to run, or a face to view.
     if agent.is_none() && face_html.is_none() {
-        return Ok(ToolResult::success(serde_json::json!({
-            "status": "check_failed",
-            "findings": [finding("agent", "an applet needs either an `agent` prompt (to run) or a `face_html` (to show) — a dashboard is face-only, a reminder is agent-only", None)],
-        })));
+        findings.push(finding("agent", "an applet needs either an `agent` prompt (to run) or a `face_html` (to show) — a dashboard is face-only, a reminder is agent-only", None));
     }
 
-    let triggers: Vec<String> = arguments
-        .get("triggers")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_else(|| {
-            if schedule.is_some() {
-                vec!["cron".into(), "manual".into(), "tool".into()]
-            } else {
-                vec!["manual".into(), "tool".into()]
-            }
-        });
-
-    // ---- 2. Check (validate BEFORE anything touches disk) ----------------
-    let mut findings: Vec<serde_json::Value> = Vec::new();
-
-    let slug = slugify(&name);
+    let slug = slugify(name);
     if slug.is_empty() {
         findings.push(finding("name", "name produces an empty slug", None));
     }
 
-    for t in &triggers {
+    for t in triggers {
         if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook" | "message") {
             findings.push(finding(
                 "triggers",
@@ -145,7 +161,7 @@ pub async fn execute(
     if agent.as_deref().is_some_and(|a| a.len() > AGENT_MAX) {
         findings.push(finding("agent", "prompt too large (24KB max)", None));
     }
-    if let Some(f) = &face_html {
+    if let Some(f) = face_html {
         if f.len() > FACE_HTML_MAX {
             findings.push(finding("face_html", "face too large (48KB max)", None));
         }
@@ -207,6 +223,33 @@ pub async fn execute(
         findings.push(f);
     }
 
+    findings
+}
+
+/// Execute the setup_applet tool.
+pub async fn execute(
+    pool: &PgPool,
+    arguments: serde_json::Value,
+    context: &ToolContext,
+) -> Result<ToolResult, ToolError> {
+    // Owned copy up front — borrowing `context` across the awaits below
+    // trips rustc's higher-ranked Send inference inside the agent stream.
+    let chat_id: Option<String> = context.chat_id.clone();
+
+    if wants_guide(&arguments) {
+        return Ok(ToolResult::success(serde_json::json!({ "guide": authoring_guide() })));
+    }
+
+    // ---- 1. Parse, 2. Check ---------------------------------------------
+    let draft = Draft::parse(&arguments)?;
+    let findings = check(pool, &draft).await;
+
+    if wants_check_only(&arguments) {
+        return Ok(ToolResult::success(serde_json::json!({
+            "status": if findings.is_empty() { "ok" } else { "check_failed" },
+            "findings": findings,
+        })));
+    }
     if !findings.is_empty() {
         return Ok(ToolResult::success(serde_json::json!({
             "status": "check_failed",
@@ -214,6 +257,12 @@ pub async fn execute(
             "hint": "fix the findings and call setup_applet again — nothing was created",
         })));
     }
+
+    let Draft { name, description, agent, schedule, condition, until, schema_sql, face_html, limits, triggers } =
+        draft;
+    let name = name.as_str();
+    let description = description.as_str();
+    let slug = slugify(name);
 
     // ---- 3. Resolve the folder (collision-safe) --------------------------
     // Authoring always writes to the state root — never the shipped tree,

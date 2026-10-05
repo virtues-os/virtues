@@ -42,13 +42,15 @@ pub struct Article {
     pub subject_type: String,
     pub subject_id: String,
     pub page_id: String,
-    /// always | auto | never. Replaced `auto_update`, whose second, hidden
-    /// meaning was "the person edited this once".
+    /// `auto` | `never` (the schema's constraint; see `set_maintenance`).
     pub maintenance: String,
 }
 
-/// Look up a subject's article. `None` is the ordinary case, not an error:
-/// articles are opt-in, so most subjects will never have one.
+/// Look up a subject's article. `None` is an ordinary answer, not an error:
+/// days, years, chapters and the narrative identity get articles from their
+/// own pipelines, but a person, place or org gets one only when someone asks
+/// (`entity_article_gen::write_entity_article_now`), so most entities never
+/// have one.
 pub async fn get_article(
     pool: &PgPool,
     subject_type: &str,
@@ -280,7 +282,7 @@ pub async fn set_maintenance(
 /// "Mentioned in N articles" — every page whose prose links to this subject.
 ///
 /// **The edge points at a SUBJECT, not at an article**, and that is the whole
-/// correction. Articles are opt-in, so most subjects will never have prose; an
+/// correction. Entity articles are opt-in, so most subjects will never have prose; an
 /// article↔article graph would be empty on day one and near-empty forever.
 /// Production ref-routes name subjects (`/person/person_ab12`,
 /// `/day/day_2026-03-03`), there is no article route and no article id in any
@@ -547,9 +549,76 @@ fn diff_lines(before: &str, after: &str) -> Vec<DiffLine> {
 }
 
 
+/// A subject's own name, which its article page is titled by. `None` for a
+/// subject with no name of its own to follow (a day, a year) or none found.
+pub async fn subject_name(pool: &PgPool, subject_type: &str, subject_id: &str) -> Result<Option<String>> {
+    let sql = match subject_type {
+        "person" => "SELECT name FROM wiki_people WHERE id = $1",
+        "place" => "SELECT name FROM wiki_places WHERE id = $1",
+        "organization" => "SELECT name FROM wiki_orgs WHERE id = $1",
+        "story" => "SELECT title FROM wiki_stories WHERE id = $1",
+        _ => return Ok(None),
+    };
+    sqlx::query_scalar::<_, String>(sql)
+        .bind(subject_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to read the subject's name: {e}")))
+}
+
+/// Re-title a subject's article page from the subject. The page is created
+/// with a copy of the name; every rename of a person, place, org or story
+/// calls this, so the copy follows instead of keeping the old name forever.
+/// A no-op when the subject has no article or the title already matches.
+pub async fn retitle_article(pool: &PgPool, subject_type: &str, subject_id: &str) -> Result<()> {
+    let Some(name) = subject_name(pool, subject_type, subject_id).await? else {
+        return Ok(());
+    };
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE app_pages p SET title = $3 \
+           FROM wiki_articles a \
+          WHERE a.subject_type = $1 AND a.subject_id = $2 AND p.id = a.page_id \
+            AND p.title IS DISTINCT FROM $3",
+    )
+    .bind(subject_type)
+    .bind(subject_id)
+    .bind(name)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to retitle the article: {e}")))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The article page follows its subject's name, and a subject without
+    /// an article is a no-op rather than an error.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_article_follows_its_subjects_rename(pool: PgPool) {
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('person_r1', 'Nick')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let a = create_article(&pool, "person", "person_r1", "Nick", "Prose.").await.unwrap();
+        sqlx::query("UPDATE wiki_people SET name = 'David Okafor' WHERE id = 'person_r1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        retitle_article(&pool, "person", "person_r1").await.unwrap();
+        let title: String = sqlx::query_scalar("SELECT title FROM app_pages WHERE id = $1")
+            .bind(&a.page_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(title, "David Okafor");
+        retitle_article(&pool, "person", "person_none").await.unwrap();
+    }
 
     /// The invariant the whole design leans on: one function writes both rows,
     /// so `app_pages.kind` and "has a `wiki_articles` row" cannot disagree.

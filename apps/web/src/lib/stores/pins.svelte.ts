@@ -95,6 +95,23 @@ class PinsStore {
 		}
 	}
 
+	/**
+	 * The pin's own label. Only a pin with no record behind it (an external
+	 * URL, an app screen) has one; everything else is named by the thing
+	 * (refs/identity).
+	 */
+	async setLabel(id: string, label: string | null) {
+		const previous = this.pins;
+		this.pins = this.pins.map((p) => (p.id === id ? { ...p, label, title: label ?? p.url } : p));
+		try {
+			await updatePin(id, { label });
+		} catch (e) {
+			this.pins = previous;
+			console.error('[pinsStore] setLabel failed', e);
+			throw e;
+		}
+	}
+
 	/** Same contract as `setColor`, for the pin's glyph. */
 	async setIcon(id: string, icon: string | null) {
 		const previous = this.pins;

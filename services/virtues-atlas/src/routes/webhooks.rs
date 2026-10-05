@@ -116,20 +116,14 @@ async fn handle_webhook(
         // settle via /claim + invoice.paid); only `metadata.type ==
         // "preorder_deposit"` sessions are recorded.
         "checkout.session.completed" => record_preorder(&state, &event.data.object).await,
-        "charge.refunded" | "charge.dispute.created" => {
-            // Flip any matching pre-order deposit to 'refunded' (no-op for
-            // subscription charges).
-            let pre = refund_preorder(&state.pool, &event.data.object).await;
-            // Subscription refunds flip the sub to 'refunded'. A deposit charge
-            // (mode=payment) may carry no customer — skip rather than error so
-            // the delivery isn't retried forever.
-            let sub = if event.data.object.get("customer").and_then(|v| v.as_str()).is_some() {
-                set_status(&state.pool, &event.data.object, "refunded").await
-            } else {
-                Ok(())
-            };
-            pre.and(sub)
-        }
+        // A refund or dispute touches only the pre-order it paid for. It never
+        // moves the subscription: a customer's charges include credit top-ups,
+        // and a status keyed on the customer cannot tell a refunded top-up from
+        // a refunded renewal, so refunding one top-up used to lock a paying
+        // subscriber out of the portal and top-ups. Subscription status follows
+        // the subscription's own events above (`customer.subscription.*`,
+        // `invoice.*`), which Stripe sends when a refund really ends one.
+        "charge.refunded" | "charge.dispute.created" => refund_preorder(&state.pool, &event.data.object).await,
         other => {
             tracing::debug!(event_type = %other, "stripe webhook ignored");
             Ok(())
@@ -307,7 +301,7 @@ async fn refund_preorder(pool: &PgPool, object: &Value) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Set status by customer id (used for cancel/refund).
+/// Set status by customer id (cancellation and dunning).
 async fn set_status(pool: &PgPool, object: &Value, status: &str) -> anyhow::Result<()> {
     let customer_id = extract_customer(object)?;
     sqlx::query("UPDATE subscriptions SET status = $1 WHERE stripe_customer_id = $2")

@@ -30,6 +30,7 @@
 		type Backlink,
 	} from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
+	import { untitled } from "$lib/refs/identity.svelte";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import { createYjsDocument, type YjsDocument } from "$lib/yjs";
 	import { saveVersion } from "$lib/yjs/versions";
@@ -431,7 +432,7 @@
 	// Watch for title changes and sync to stores immediately
 	$effect(() => {
 		if (pageData && title !== undefined) {
-			const currentTitle = title.trim() || "Untitled";
+			const currentTitle = title.trim() || untitled("page");
 
 			// Update the tab label at the top
 			untrack(() => {
@@ -459,6 +460,24 @@
 				scheduleSave();
 			}
 		}
+	});
+
+	// A rename made elsewhere — the sidebar, a pin, a tab — reaches the open
+	// page. Without this the heading kept the old title, and the next save
+	// (an icon, a cover) sent it back and undid the rename. An unsaved edit
+	// in the heading itself wins: the person is typing there.
+	$effect(() => {
+		const id = pageData?.id;
+		if (!id) return;
+		const stored = pagesStore.pages.find((p) => p.id === id)?.title;
+		if (stored === undefined) return;
+		untrack(() => {
+			if (!pageData) return;
+			if (stored === (title.trim() || untitled("page"))) return;
+			if (title !== pageData.title) return;
+			pageData.title = stored;
+			title = stored;
+		});
 	});
 
 	async function save() {

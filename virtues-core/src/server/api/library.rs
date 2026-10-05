@@ -47,6 +47,9 @@ pub fn routes() -> Router<AppState> {
             get(list_pins_handler).post(create_pin_handler),
         )
         .route("/api/pins/reorder", put(reorder_pins_handler))
+        // What a URL's thing is called and wears now, for tabs and ref pills
+        // pointing at things the client has not loaded.
+        .route("/api/refs/resolve", post(resolve_refs_handler))
         .route(
             "/api/pins/:id",
             patch(update_pin_handler).delete(delete_pin_handler),
@@ -231,6 +234,26 @@ pub async fn reorder_pins_handler(
 ) -> Response {
     match crate::api::pins::reorder_pins(state.db.pool(), &request.urls).await {
         Ok(_) => success_message("Pins reordered"),
+        Err(e) => error_response(e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct ResolveRefsRequest {
+    pub urls: Vec<String>,
+}
+
+/// POST /api/refs/resolve — live identities for up to 200 URLs.
+pub async fn resolve_refs_handler(
+    State(state): State<AppState>,
+    Json(request): Json<ResolveRefsRequest>,
+) -> Response {
+    let urls: Vec<String> = request.urls.into_iter().take(200).collect();
+    match crate::api::refs::resolve_identities(state.db.pool(), &urls).await {
+        Ok(map) => {
+            let refs: Vec<_> = urls.iter().filter_map(|u| map.get(u)).collect();
+            Json(serde_json::json!({ "refs": refs })).into_response()
+        }
         Err(e) => error_response(e),
     }
 }

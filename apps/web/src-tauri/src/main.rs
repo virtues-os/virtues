@@ -75,6 +75,29 @@ pub struct FoundServer {
 ///
 /// A bare existence check (not a full parse) — enough for the tray / launch
 /// decision; the reach plugin does the authoritative load when it serves.
+/// A page of the Mac's own copy of the UI, on the `virtues://` scheme the
+/// phone uses (see `serve_ui`). One origin for every page of the app's own
+/// copy, so its storage and its OTA bundles never split across two.
+fn own_copy(route: &str) -> WebviewUrl {
+    WebviewUrl::CustomProtocol(
+        format!("virtues://localhost/{route}")
+            .parse()
+            .expect("static url"),
+    )
+}
+
+/// A dev profile's WebKit data store: the same 16 bytes for the same name on
+/// every launch, so the profile keeps its storage, and never the default
+/// store the real app uses.
+#[cfg(target_os = "macos")]
+fn profile_store_id(profile: &str) -> [u8; 16] {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(format!("virtues/webkit-store/{profile}").as_bytes());
+    let mut id = [0u8; 16];
+    id.copy_from_slice(&digest[..16]);
+    id
+}
+
 fn is_paired() -> bool {
     // Through the plugin's path fn, so a dev profile (VIRTUES_PROFILE) checks
     // ITS store, not the machine's real one.
@@ -224,6 +247,62 @@ async fn diagnose_box() -> String {
     .unwrap_or_else(|_| "box_unreachable".to_string())
 }
 
+/// Whether `url` is one of the pages this window exists to show: the baked
+/// app (`tauri://localhost` on macOS and Linux, `http(s)://tauri.localhost` on
+/// Windows) or the box through the reach loopback on `loopback_port`.
+fn is_own_page(url: &url::Url, loopback_port: u16) -> bool {
+    match url.scheme() {
+        "tauri" => url.host_str() == Some("localhost"),
+        // The app's own copy of the UI (`serve_ui`, the phone's scheme), since
+        // 2026-09-29: agents/plan/local-ui-plan.md.
+        "virtues" => url.host_str() == Some("localhost"),
+        "about" => matches!(url.as_str(), "about:blank" | "about:srcdoc"),
+        "http" | "https" => match url.host_str() {
+            Some("tauri.localhost") => true,
+            Some("localhost") | Some("127.0.0.1") => {
+                url.scheme() == "http" && url.port() == Some(loopback_port)
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod own_page_tests {
+    use super::is_own_page;
+
+    fn own(u: &str) -> bool {
+        is_own_page(&url::Url::parse(u).unwrap(), 7117)
+    }
+
+    #[test]
+    fn the_app_and_the_tunnel_are_allowed() {
+        assert!(own("tauri://localhost/setup"));
+        assert!(own("virtues://localhost/setup"));
+        assert!(own("virtues://localhost/reconnect"));
+        assert!(own("http://tauri.localhost/connect.html#reset"));
+        assert!(own("https://tauri.localhost/"));
+        assert!(own("http://localhost:7117/setup?x=1"));
+        assert!(own("http://127.0.0.1:7117/"));
+        assert!(own("about:blank"));
+        assert!(own("about:srcdoc"));
+    }
+
+    #[test]
+    fn everything_else_is_refused() {
+        assert!(!own("https://virtues.com/docs"));
+        assert!(!own("https://atlas.virtues.com/"));
+        assert!(!own("http://localhost:5173/")); // another local server
+        assert!(!own("https://localhost:7117/"));
+        assert!(!own("http://box.virtues:8000/"));
+        assert!(!own("file:///Users/nick/Downloads/a.pdf"));
+        assert!(!own("tauri://evil.example/"));
+        assert!(!own("virtues://evil.example/"));
+        assert!(!own("data:text/html,hi"));
+    }
+}
+
 #[cfg(test)]
 mod session_probe_tests {
     use super::classify_session_response;
@@ -299,15 +378,29 @@ fn shell_identity_cmd(app: AppHandle) -> virtues_lib::ShellIdentity {
 /// abandoned, pointer reverted. Downloading proved nothing; rendering does.
 #[tauri::command]
 fn bundle_boot_ok(app: AppHandle) {
-    if let Ok(dir) = app.path().app_data_dir() {
-        // Desktop has no OTA overlay store, so `booted_bundle_id()` is always
-        // None here and this is a guaranteed no-op — kept registered so the
-        // SPA's unconditional boot-ok call has somewhere harmless to land.
-        virtues_lib::web_bundle::mark_boot_ok(
-            &dir,
-            virtues_lib::web_bundle::booted_bundle_id().as_deref(),
-        );
-    }
+    // Confirms the bundle this page load was pinned to (the Mac's own copy,
+    // since 2026-09-29). A page the box served has no overlay pin, and this is
+    // then a harmless no-op.
+    virtues_lib::confirm_page_load(&app);
+}
+
+/// Is a newer UI bundle staged since this page loaded? The SPA reloads while
+/// hidden when it is (`checkForNewUi` in `routes/(app)/+layout.svelte`). Same command on the phone.
+#[tauri::command]
+fn bundle_update_ready(app: AppHandle) -> bool {
+    virtues_lib::update_ready(&app)
+}
+
+/// Check the box for a newer UI bundle now, at the UI's request (the window
+/// coming back to the front). Returns at once; the work runs on its own
+/// thread. Same command on the phone. The Mac almost never relaunches (closing
+/// the window only hides it), so the launch check alone would go stale.
+#[tauri::command]
+fn ota_check_now(app: AppHandle) {
+    #[cfg(target_os = "macos")]
+    std::thread::spawn(move || virtues_lib::ota_check(&app));
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 }
 
 /// Returns whether the machine is currently paired to a Virtues server.
@@ -797,6 +890,118 @@ struct ReadyUpdate {
     version: String,
 }
 
+// ============================================================================
+// Attention: the box's "needs you" list, as notifications
+// ============================================================================
+
+/// How often the tray asks the box what needs the owner. The list changes on
+/// the scale of hours (a stream stalls after a day, a backup is late after
+/// two), so five minutes is prompt without being chatty.
+const ATTENTION_EVERY: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+#[derive(serde::Deserialize)]
+struct AttentionItem {
+    key: String,
+    title: String,
+    body: String,
+}
+
+/// Turns `GET /api/attention` into native notifications, once per problem.
+///
+/// The box knew when a stream stopped, a sign-in expired, the backup drive
+/// went missing or an update rolled back, and said so only on pages the
+/// owner had to think to open. This app is the one thing that is always
+/// running, so it is the one that speaks.
+///
+/// A key is notified when it first appears and again only if it goes away
+/// and comes back. The first poll after launch notifies what is already
+/// open; the app runs for days, so that is a reminder, not a stream.
+#[derive(Default)]
+struct AttentionNotifier {
+    last_poll: Option<std::time::Instant>,
+    /// Keys the last successful poll returned.
+    known: std::collections::HashSet<String>,
+}
+
+impl AttentionNotifier {
+    fn tick(&mut self, app: &AppHandle) {
+        if self.last_poll.is_some_and(|t| t.elapsed() < ATTENTION_EVERY) || !is_paired() {
+            return;
+        }
+        self.last_poll = Some(std::time::Instant::now());
+        // A failed poll changes nothing: unreachable is the tray's own line.
+        let Some(items) = fetch_attention_blocking() else { return };
+        let fresh: Vec<&AttentionItem> =
+            items.iter().filter(|i| !self.known.contains(&i.key)).collect();
+        notify_attention(app, &fresh);
+        self.known = items.into_iter().map(|i| i.key).collect();
+    }
+}
+
+fn notify_attention(app: &AppHandle, fresh: &[&AttentionItem]) {
+    use tauri_plugin_notification::NotificationExt;
+    match fresh {
+        [] => {}
+        // A handful each get their own; more than that is one summary, so a
+        // bad morning is one notification rather than a stack of them.
+        items if items.len() <= 3 => {
+            for i in items {
+                let _ = app.notification().builder().title(&i.title).body(&i.body).show();
+            }
+        }
+        items => {
+            let _ = app
+                .notification()
+                .builder()
+                .title(format!("{} things on your server need you", items.len()))
+                .body(format!("{}, and more. Open Virtues to see them.", items[0].title))
+                .show();
+        }
+    }
+}
+
+/// `GET /api/attention` through the loopback. BLOCKING; the tray thread only.
+fn fetch_attention_blocking() -> Option<Vec<AttentionItem>> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let addr = format!("127.0.0.1:{}", tauri_plugin_reach::loopback_port())
+        .parse()
+        .ok()?;
+    let mut s = TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(2)).ok()?;
+    // The loopback dials the box over iroh; a relay path can take a while.
+    let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(30)));
+    s.write_all(b"GET /api/attention HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .ok()?;
+    let mut raw = Vec::new();
+    let _ = s.read_to_end(&mut raw);
+    let raw = String::from_utf8_lossy(&raw);
+    let (head, body) = raw.split_once("\r\n\r\n")?;
+    if !head.lines().next()?.contains(" 200") {
+        return None;
+    }
+    let body = if head.to_ascii_lowercase().contains("transfer-encoding: chunked") {
+        dechunk(body)?
+    } else {
+        body.to_string()
+    };
+    serde_json::from_str(&body).ok()
+}
+
+/// Undo HTTP/1.1 chunked framing. `None` on anything malformed.
+fn dechunk(mut rest: &str) -> Option<String> {
+    let mut out = String::new();
+    loop {
+        let (size, after) = rest.split_once("\r\n")?;
+        let size = usize::from_str_radix(size.split(';').next()?.trim(), 16).ok()?;
+        if size == 0 {
+            return Some(out);
+        }
+        out.push_str(after.get(..size)?);
+        rest = after.get(size..)?.strip_prefix("\r\n")?;
+    }
+}
+
 /// Record a failed check or stage: bump the shared counter, remember the
 /// verdict, and speak exactly once at two consecutive failures.
 fn record_update_failure(app: &AppHandle, err: String) {
@@ -1181,8 +1386,10 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     std::thread::spawn(move || {
         let mut last_visible = std::time::Instant::now();
         const HIDDEN_APPLY_AFTER: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
+        let mut attention = AttentionNotifier::default();
         loop {
             refresh_tray(&app, items.clone());
+            attention.tick(&app);
             let any_visible = app
                 .webview_windows()
                 .values()
@@ -1424,6 +1631,15 @@ const ZOOM_HOTKEYS_JS: &str = r#"
 fn main() {
     let builder = tauri::Builder::default();
 
+    // The app's own copy of the UI, on the phone's scheme and through the
+    // phone's handler (`virtues_lib::serve_ui`): baked build, OTA overlay from
+    // the box, each page load pinned to one bundle. macOS only: Windows and
+    // Linux bake no UI yet. See agents/plan/local-ui-plan.md.
+    #[cfg(target_os = "macos")]
+    let builder = builder.register_uri_scheme_protocol("virtues", |ctx, request| {
+        virtues_lib::serve_ui(ctx.app_handle(), &request)
+    });
+
     // Single-instance guard — Windows/Linux only. macOS is single-instance
     // natively (LaunchServices) and uses the tray + RunEvent::Reopen model, so
     // gating it off there avoids interfering with that. Elsewhere, a second
@@ -1463,6 +1679,8 @@ fn main() {
             command_surface_version,
             shell_identity_cmd,
             bundle_boot_ok,
+            bundle_update_ready,
+            ota_check_now,
             update_state_cmd,
             apply_update_cmd,
             check_app_update_cmd,
@@ -1545,6 +1763,27 @@ fn main() {
             #[cfg(target_os = "macos")]
             app.manage(std::sync::Mutex::new(UpdateState::default()));
 
+            // The Mac's own copy of the UI (`virtues://`), kept current like
+            // the phone's: drop an overlay a newer app build has overtaken
+            // (pointers only, before any page exists), then look for a newer
+            // bundle on the box off the launch path. A staged bundle applies at
+            // the next page load. See agents/plan/local-ui-plan.md.
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(dir) = virtues_lib::ui_data_dir(app.handle()) {
+                    let baked = virtues_lib::baked_bundle_version(app.handle());
+                    if let Some(dropped) =
+                        virtues_lib::web_bundle::drop_stale_overlay(&dir, baked.as_deref())
+                    {
+                        eprintln!("[ota] overlay {dropped} is older than this app's own UI; back to the build it shipped with");
+                    }
+                }
+                if app.reach().is_paired() {
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || virtues_lib::ota_check(&handle));
+                }
+            }
+
             // Decide where to land. A valid pairing reconnects SILENTLY (the
             // 90% reinstall case); we only ever interrupt when something's
             // actually wrong, and the connect screen is the single recovery
@@ -1584,19 +1823,25 @@ fn main() {
                 // steps are safe here; completing a PAIR would still replace
                 // the existing box, exactly as it does on the phone.
                 WebviewUrl::App("connect.html#setup".into())
-            } else if !is_paired() {
-                // UNPAIRED, THE MAC OPENS SETUP (2026-09-27): sign in, find
-                // the server, its four words, Wi-Fi and pairing run from the
-                // app's own copy of the web app (tauri.macos.conf.json bakes
-                // it; apps/web/src/lib/components/setup/prepair.svelte.ts),
-                // and after pairing the window hands over to the server's
-                // copy at the same step. Windows and Linux bake nothing yet
-                // and keep the connect page.
-                if cfg!(target_os = "macos") {
-                    WebviewUrl::App("setup".into())
+            } else if cfg!(target_os = "macos") {
+                // THE MAC IS ITS OWN COPY (2026-09-29, agents/plan/local-ui-plan.md).
+                // It shows the app it carries (`virtues://`, served by
+                // `serve_ui` from the baked build or an OTA overlay) and uses
+                // the box for data only, exactly as the phone does. Unpaired, it
+                // opens Setup; paired, the app, whatever the box is doing: an
+                // unreachable box is the app's own "Can't reach your server"
+                // banner, and a box that refuses this Mac sends `/pair` on to
+                // `/reconnect`. No probe before the window, so a launch never
+                // waits on the network.
+                if is_paired() {
+                    own_copy("")
                 } else {
-                    WebviewUrl::App("connect.html".into())
+                    own_copy("setup")
                 }
+            } else if !is_paired() {
+                // Windows and Linux bake no UI yet: the connect page, then the
+                // box's own copy of the app through the loopback.
+                WebviewUrl::App("connect.html".into())
             } else {
                 match probe_box_session_blocking(1) {
                     Some(true) => WebviewUrl::External(
@@ -1604,28 +1849,45 @@ fn main() {
                             .parse()
                             .unwrap(),
                     ),
-                    // THE MAC RECOVERS IN ITS OWN COPY (2026-09-28): refused
-                    // or unreachable, the window opens `/reconnect` from the
-                    // copy it bakes (tauri.macos.conf.json), which diagnoses
-                    // both itself and can put a moved server back on Wi-Fi
-                    // over Bluetooth (src/lib/components/recovery/). Windows
-                    // and Linux bake nothing yet and keep the connect page.
-                    Some(false) if cfg!(target_os = "macos") => WebviewUrl::App("reconnect".into()),
-                    None if cfg!(target_os = "macos") => WebviewUrl::App("reconnect".into()),
                     Some(false) => WebviewUrl::App("connect.html#reset".into()),
                     None => WebviewUrl::App("connect.html#unreachable".into()),
                 }
             };
 
-            // Tell the airlock (connect.html) which loopback this instance
-            // serves. Its fallback is the default :7117, so this only matters
-            // for dev profiles — but injecting unconditionally keeps one path.
-            let box_url_js = format!(
-                "window.__VIRTUES_BOX_URL__ = 'http://localhost:{}';",
-                tauri_plugin_reach::loopback_port()
-            );
+            // What the page needs to know about its shell.
+            //
+            // The Mac gets what the phone gets (lib.rs): the loopback as the
+            // BACKEND origin, so `/api`, `/auth`, `/ws` go to the box while the
+            // page itself stays the app's own copy (src/lib/config/backend.ts),
+            // and whether it is paired (Setup's `prePair`). It no longer gets
+            // `__VIRTUES_BOX_URL__`: that told a baked page where the box's copy
+            // lived so it could hand over to it, and there is no handing over.
+            //
+            // Windows and Linux keep `__VIRTUES_BOX_URL__` for the connect page,
+            // whose fallback is the default :7117 (this matters for profiles).
+            let box_url_js = if cfg!(target_os = "macos") {
+                format!(
+                    "window.__VIRTUES_BACKEND_ORIGIN__ = 'http://127.0.0.1:{}'; window.__VIRTUES_PAIRED__ = {};",
+                    tauri_plugin_reach::loopback_port(),
+                    is_paired()
+                )
+            } else {
+                format!(
+                    "window.__VIRTUES_BOX_URL__ = 'http://localhost:{}';",
+                    tauri_plugin_reach::loopback_port()
+                )
+            };
 
-            let window = WebviewWindowBuilder::new(app, "main", url)
+            let mut builder = WebviewWindowBuilder::new(app, "main", url);
+            // A dev profile gets its own web storage. The app's own copy is
+            // `virtues://localhost` in every profile, and storage is per
+            // origin, so without this a profile paired with a bench box would
+            // share the real app's (macOS 14+; older macOS shares it).
+            #[cfg(target_os = "macos")]
+            if let Some(p) = tauri_plugin_reach::profile() {
+                builder = builder.data_store_identifier(profile_store_id(p));
+            }
+            let window = builder
                 .title("Virtues")
                 .initialization_script(&box_url_js)
                 .inner_size(1200.0, 800.0)
@@ -1648,28 +1910,32 @@ fn main() {
                 // HTML5 ondrop/dataTransfer.files never fires. Disable it to let
                 // drops fall through to the web layer (works in-browser already).
                 .disable_drag_drop_handler()
-                // The last line of defence for a misaimed file drop. With the OS
-                // handler disabled (above), a file dropped anywhere the web layer
-                // does not claim reaches the webview as a plain navigation, and
-                // the webview happily REPLACES the app with WebKit's own
-                // PDF/image viewer. This window has no back button, no menu bar
-                // and no address bar, so that is a one-way trip: the app is gone
-                // until relaunch (2026-08-17). `(app)/+layout.svelte` swallows
-                // stray drops in the web layer, but that only covers pages the
-                // SPA has booted — connect.html and the pre-mount window are
-                // not, and a guard against losing the entire app belongs below
-                // the web layer anyway.
+                // The window may only ever show our own pages: the baked app
+                // and the box through the loopback tunnel. Everything else is
+                // refused, silently. Two reasons, both below the web layer:
                 //
-                // Denying the `file:` scheme specifically, not allow-listing our
-                // own origins: the app's own URL differs per platform (`tauri://
-                // localhost` on macOS/Linux, `http://tauri.localhost` on
-                // Windows) plus `http://localhost:7117` for the box, so an
-                // allow-list is the fragile spelling. Tauri never serves the
-                // frontend over `file:` on any platform, so nothing legitimate
-                // is caught. A denied navigation is simply inert — the drop
-                // does nothing, which is what dropping a PDF on the sidebar
-                // should do.
-                .on_navigation(|url| url.scheme() != "file")
+                // - The remote origins in capabilities/default.json get the
+                //   app's commands (pairing, installing the collector). A page
+                //   from anywhere else that reached this window by a redirect
+                //   or a link without target=_blank would be one step from
+                //   them if the ACL list were ever widened again.
+                // - A file dropped where the web layer does not claim it
+                //   arrives as a `file:` navigation, and WebKit would REPLACE
+                //   the app with its PDF/image viewer. This window has no back
+                //   button or address bar, so that was a one-way trip until
+                //   relaunch (2026-08-17). A denied navigation is inert.
+                //
+                // On macOS wry asks this for EVERY frame, iframes included, so
+                // a refusal must not open anything elsewhere: a sandboxed face
+                // navigating its own frame would otherwise pop browser tabs.
+                // Links meant for the browser go through `openExternal`.
+                .on_navigation(|url| {
+                    let own = is_own_page(url, tauri_plugin_reach::loopback_port());
+                    if !own {
+                        eprintln!("[nav] refused {}", url.scheme());
+                    }
+                    own
+                })
                 .build()?;
 
             // Only used in debug; silence the release-build unused warning.
@@ -1733,3 +1999,14 @@ fn main() {
         });
 }
 
+
+#[cfg(test)]
+mod attention_tests {
+    use super::dechunk;
+
+    #[test]
+    fn dechunk_joins_chunks_and_rejects_garbage() {
+        assert_eq!(dechunk("4\r\n[{\"k\r\n3\r\n\":1\r\n2\r\n}]\r\n0\r\n\r\n").as_deref(), Some("[{\"k\":1}]"));
+        assert_eq!(dechunk("zz\r\nnope\r\n"), None);
+    }
+}

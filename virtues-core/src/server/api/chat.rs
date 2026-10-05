@@ -29,6 +29,8 @@ pub fn routes() -> Router<AppState> {
                 .delete(delete_chat_handler),
         )
         .route("/api/chats/title", post(generate_chat_title_handler))
+        .route("/api/chats/live", get(live_chats_handler))
+        .route("/api/chats/:id/seen", post(mark_chat_seen_handler))
         // Chat Usage & Compaction API
         .route("/api/chats/:id/usage", get(get_chat_usage_handler))
         .route("/api/chats/:id/compact", post(compact_chat_handler))
@@ -177,6 +179,25 @@ pub async fn delete_chat_handler(
     Path(chat_id): Path<String>,
 ) -> Response {
     api_response(crate::api::chats::delete_chat(state.db.pool(), chat_id).await)
+}
+
+/// GET /api/chats/live - The chats with a turn running on the box right now.
+/// A turn outlives the tab that started it, so only the box can say.
+pub async fn live_chats_handler(State(state): State<AppState>) -> Response {
+    Json(serde_json::json!({ "running": state.live_turns.running() })).into_response()
+}
+
+/// POST /api/chats/:id/seen - The person has this chat on screen.
+pub async fn mark_chat_seen_handler(State(state): State<AppState>, Path(chat_id): Path<String>) -> Response {
+    // The client sees `[DONE]` before the driver writes the reply's row, so
+    // a seen mark stamped on arrival could land just ahead of the reply it
+    // was meant to cover and leave the chat unread with the answer on
+    // screen. Wait out the turn's tail first; the cap only bounds a turn the
+    // person opened mid-reply, whose end sends another mark.
+    if let Some(turn) = state.live_turns.get(&chat_id) {
+        turn.ended(std::time::Duration::from_secs(3)).await;
+    }
+    api_response(crate::api::chats::mark_seen(state.db.pool(), &chat_id).await)
 }
 
 /// Generate a title for a chat

@@ -307,7 +307,16 @@ mod server {
                 // blip on a claimed, offline box lands on the owner-gated
                 // service, which admits no one the database cannot vouch for.
                 let claimed = !crate::api::pair::is_unclaimed(&pool).await;
-                let online = crate::cli::link::has_internet();
+                // `nmcli networking connectivity check` blocks while it probes,
+                // longest exactly when the box is offline: off the async thread.
+                let verdict = tokio::task::spawn_blocking(crate::cli::link::connectivity)
+                    .await
+                    .unwrap_or_else(|_| "unknown".into());
+                // Anything short of `full` counts, `limited` included: a moved
+                // box on a network that blocks the connectivity check (and
+                // with it, often, the relay) is unreachable, and the owner
+                // service admits only a paired device within Bluetooth range.
+                let online = crate::cli::link::verdict_means_online(&verdict);
                 offline_since = match (claimed && !online, offline_since) {
                     (true, None) => Some(std::time::Instant::now()),
                     (true, since) => since,
@@ -333,7 +342,7 @@ mod server {
                         tracing::info!("ble_provision: box is claimed and online, stopping Improv service");
                         serving = None; // handles drop → unregister + stop advertising
                     }
-                    (true, false) => match serve(pool.clone(), claimed).await {
+                    (true, false) => match serve(pool.clone(), claimed, online).await {
                         Ok(h) => {
                             if claimed {
                                 tracing::warn!("ble_provision: claimed box offline, advertising for its owner");
@@ -372,7 +381,7 @@ mod server {
         claimed_at_serve: bool,
     }
 
-    async fn serve(pool: PgPool, claimed: bool) -> bluer::Result<ServeHandles> {
+    async fn serve(pool: PgPool, claimed: bool, online: bool) -> bluer::Result<ServeHandles> {
         use bluer::gatt::local::{
             Application, Characteristic, CharacteristicNotify, CharacteristicNotifyMethod,
             CharacteristicRead, CharacteristicWrite, CharacteristicWriteMethod, Service,
@@ -390,7 +399,6 @@ mod server {
         //
         // A claimed box only serves while offline and says so with the one
         // state the spec reserves for "prove yourself first".
-        let online = crate::cli::link::has_internet();
         let initial = if claimed {
             State::AuthorizationRequired
         } else if online {

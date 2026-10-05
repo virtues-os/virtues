@@ -5,12 +5,21 @@
 	// stop button; "length" is the model's output window running out (the
 	// stream's `finish` said so); "interrupted" is the stream or the model
 	// quitting on them (a dropped connection, the idle timeout — VIR-334);
+	// "unavailable" is the model's provider refusing the call while it was down;
 	// "unattended" is the box stopping a reply nobody was watching, which used
 	// to be reported as the person's own stop; "max_steps" is the turn using
 	// up its allowance of tool calls.
 	// Same chip, different word, because the difference is who to blame.
 	let { reason = 'stopped' }: {
-		reason?: 'stopped' | 'length' | 'interrupted' | 'unattended' | 'max_steps' | 'budget' | 'no_reply';
+		reason?:
+			| 'stopped'
+			| 'length'
+			| 'interrupted'
+			| 'unavailable'
+			| 'unattended'
+			| 'max_steps'
+			| 'budget'
+			| 'no_reply';
 	} = $props();
 </script>
 
@@ -24,6 +33,9 @@
 	{:else if reason === 'interrupted'}
 		<Icon icon="ri:flashlight-line" width="13" />
 		<span>Interrupted before it finished</span>
+	{:else if reason === 'unavailable'}
+		<Icon icon="ri:cloud-off-line" width="13" />
+		<span>Your assistant's provider couldn't answer. Send it again to retry</span>
 	{:else if reason === 'unattended'}
 		<Icon icon="ri:moon-line" width="13" />
 		<span>Stopped by your server. Nothing was watching</span>

@@ -57,19 +57,14 @@
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { pagesStore } from '$lib/stores/pages.svelte';
 	import { pinsStore } from '$lib/stores/pins.svelte';
+	import { chatActivity } from '$lib/stores/chatActivity.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarZones } from '$lib/stores/sidebarZones.svelte';
 	import { search } from '$lib/stores/search.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { promptText } from '$lib/stores/dialog.svelte';
-	import {
-		deleteChat,
-		updateChat,
-		updatePage,
-		type PageSummary,
-		type Pin,
-		type ProjectSummary,
-	} from '$lib/api/client';
+	import { deleteChat, type PageSummary, type Pin, type ProjectSummary } from '$lib/api/client';
+	import { pinIdentity, renameRef, ownedRef, untitled } from '$lib/refs/identity.svelte';
 	import { pinMenuItem, pinIconMenuItem, isPinned, togglePin } from '$lib/pins/pinAction';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
 	import { notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
@@ -80,6 +75,8 @@
 		droppedRefUrl,
 		fileIntoProject,
 		isRefDrag,
+		memberIcon,
+		memberName,
 		newChatInProject,
 		newProject,
 		openProjects,
@@ -93,7 +90,6 @@
 	import AtlasIcon from '../AtlasIcon.svelte';
 	import HoverCard from '../HoverCard.svelte';
 
-	const UNTITLED = 'New chat';
 	const PROJECTS_SHOWN = 5;
 	const RECENTS_CAP = 20;
 
@@ -214,7 +210,7 @@
 	});
 
 	function titleOf(s: ChatSession): string {
-		return s.title?.trim() || UNTITLED;
+		return s.title?.trim() || untitled('chat');
 	}
 
 	function chatRoute(s: ChatSession): string {
@@ -226,7 +222,7 @@
 	}
 
 	function pageTitle(p: PageSummary): string {
-		return p.title?.trim() || 'Untitled';
+		return p.title?.trim() || untitled('page');
 	}
 
 	function pageRoute(p: PageSummary): string {
@@ -237,9 +233,9 @@
 		return /^https?:\/\//i.test(url);
 	}
 
-	/** Falls back to the url when a pin has no label, per PinTarget's contract. */
+	/** A pin's name is its thing's name (refs/identity). */
 	function pinLabel(pin: Pin): string {
-		return pin.label?.trim() || pin.url;
+		return pinIdentity(pin).title;
 	}
 
 	// ── doors ──────────────────────────────────────────────────────────────
@@ -305,48 +301,25 @@
 
 // ── the verbs, per kind ────────────────────────────────────────────────
 
-	/** Every open tab on the route takes the new name, in both panes. */
-	function relabelTabs(route: string, label: string) {
-		for (const pane of windowShellStore.panes) {
-			for (const tab of pane.tabs) {
-				if (tab.route === route) windowShellStore.updateTab(tab.id, { label });
-			}
-		}
-	}
-
-	async function renameChat(s: ChatSession) {
-		const next = await promptText({
-			title: 'Rename chat',
-			initialValue: titleOf(s),
-			confirmLabel: 'Rename',
-		});
+	/** One rename for anything with a url: the thing, its tabs, its pin (refs/identity). */
+	async function renameUrl(url: string, current: string, dialogTitle: string) {
+		const next = await promptText({ title: dialogTitle, initialValue: current, confirmLabel: 'Rename' });
 		const title = next?.trim();
-		if (!title || title === titleOf(s)) return;
-		chatSessions.applyTitle(s.conversation_id, title);
-		relabelTabs(chatRoute(s), title);
+		if (!title || title === current) return;
 		try {
-			await updateChat(s.conversation_id, { title });
+			await renameRef(url, title);
 		} catch (e) {
 			console.error('[HomePanel] rename failed:', e);
-			await chatSessions.refresh();
+			toast.error(`Your server couldn't rename "${current}"`, { description: 'It keeps its old name. Try again' });
 		}
 	}
 
-	async function renamePage(p: PageSummary) {
-		const next = await promptText({
-			title: 'Rename page',
-			initialValue: pageTitle(p),
-			confirmLabel: 'Rename',
-		});
-		const title = next?.trim();
-		if (!title || title === pageTitle(p)) return;
-		relabelTabs(pageRoute(p), title);
-		try {
-			await updatePage(p.id, { title });
-			await pagesStore.loadPages();
-		} catch (e) {
-			console.error('[HomePanel] page rename failed:', e);
-		}
+	function renameChat(s: ChatSession) {
+		return renameUrl(chatRoute(s), titleOf(s), 'Rename chat');
+	}
+
+	function renamePage(p: PageSummary) {
+		return renameUrl(pageRoute(p), pageTitle(p), 'Rename page');
 	}
 
 	// The three deletes below ask nothing. Each is a trip to Recently deleted
@@ -462,7 +435,69 @@
 		}));
 	}
 
+	/**
+	 * A pin's menu is its thing's menu — rename, file, delete or archive act on
+	 * the chat, page or project, as they do from its own row — with the icon
+	 * picker added, and Unpin always there. A thing this client has not loaded
+	 * (an old chat, a page past the list) gets a stand-in row built from the
+	 * pin's resolved name; the verbs only need the id.
+	 */
 	function pinMenu(pin: Pin, at: { x: number; y: number }): ContextMenuItem[] {
+		const owned = ownedRef(pin.url);
+		const look = pinIdentity(pin);
+		const iconItem = pinIconMenuItem(pin.url, { ...at, width: 0, height: 0 });
+		let base: ContextMenuItem[] | null = null;
+		if (owned?.kind === 'chat') {
+			const s = chatSessions.sessions.find((c) => c.conversation_id === owned.id);
+			base = chatMenu(
+				s ?? {
+					conversation_id: owned.id,
+					title: look.title,
+					icon: look.icon,
+					last_updated: null,
+					first_message_at: '',
+					last_message_at: '',
+					message_count: 0,
+					model_used: null,
+					provider: '',
+				},
+			);
+		} else if (owned?.kind === 'page') {
+			const p = pagesStore.pages.find((x) => x.id === owned.id);
+			base = pageMenu(
+				p ?? {
+					id: owned.id,
+					title: look.title,
+					project_id: null,
+					icon: look.icon,
+					icon_color: look.color,
+					cover_url: null,
+					tags: null,
+					created_at: '',
+					updated_at: '',
+				},
+			);
+		} else if (owned?.kind === 'project') {
+			const p = projects.find((x) => x.id === owned.id);
+			base = projectRowMenuItems(p ?? { id: owned.id, name: look.title, icon: look.icon, archived_at: null });
+		}
+		if (base) {
+			const rename = base.findIndex((i) => i.id === 'rename');
+			if (iconItem) base.splice(rename >= 0 ? rename + 1 : base.length, 0, iconItem);
+			if (!base.some((i) => i.id === 'pin-sidebar')) {
+				base.push({
+					id: 'unpin',
+					label: 'Unpin',
+					icon: 'ri:unpin-line',
+					dividerBefore: true,
+					action: () => void pinsStore.remove(pin.id),
+				});
+			}
+			return base;
+		}
+
+		// No record behind it: an external URL or an app screen, where the pin
+		// is the thing, so its name and icon are the pin's own.
 		const items: ContextMenuItem[] = [];
 		if (!isExternal(pin.url)) {
 			items.push({
@@ -474,8 +509,15 @@
 				},
 			});
 		}
+		if (look.kind === 'web' || look.kind === 'route') {
+			items.push({
+				id: 'rename',
+				label: 'Rename',
+				icon: 'ri:edit-line',
+				action: () => void renameUrl(pin.url, look.title, 'Rename pin'),
+			});
+		}
 		// The picker holds the icon AND the color, so one entry, not two.
-		const iconItem = pinIconMenuItem(pin.url, { ...at, width: 0, height: 0 });
 		if (iconItem) items.push(iconItem);
 		items.push({
 			id: 'unpin',
@@ -527,7 +569,10 @@
 	// A menu or a click closes it outright — two floating things at once is
 	// one too many.
 
-	const OPEN_AFTER_MS = 320;
+	// Quick enough to feel like the row opening, slow enough that a pointer
+	// crossing the list on its way somewhere doesn't pop a card per row. Once
+	// one is up, the next row's opens at once: you are reading cards now.
+	const OPEN_AFTER_MS = 90;
 	const CLOSE_AFTER_MS = 180;
 
 	let card = $state<{ project: ProjectSummary; anchor: HTMLElement } | null>(null);
@@ -548,6 +593,12 @@
 	function armCard(project: ProjectSummary, anchor: HTMLElement) {
 		clearTimers();
 		if (card?.project.id === project.id) return;
+		// Start reading what is inside now, so it is there when the card is.
+		void projectStore.get(project.id).catch(() => {});
+		if (card) {
+			card = { project, anchor };
+			return;
+		}
 		openTimer = setTimeout(() => {
 			card = { project, anchor };
 		}, OPEN_AFTER_MS);
@@ -573,6 +624,27 @@
 
 	function onKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape' && card) closeCard();
+	}
+
+	/**
+	 * What the card lists: the few most recent chats and the first few files
+	 * and pages, one click from anywhere. It is the reason the card exists: a
+	 * way into the thing you were after without landing on the project first.
+	 */
+	const CARD_ROWS = 3;
+	const cardDetail = $derived(card ? projectStore.getCached(card.project.id) : undefined);
+	const cardChats = $derived((cardDetail?.chats ?? []).slice(0, CARD_ROWS));
+	const cardItems = $derived(
+		(cardDetail?.items ?? []).filter((i) => !i.url.startsWith('/chat/')).slice(0, CARD_ROWS),
+	);
+
+	function openFromCard(route: string, label: string) {
+		closeCard();
+		if (isExternal(route)) {
+			window.open(route, '_blank', 'noopener,noreferrer');
+			return;
+		}
+		windowShellStore.openTabFromRoute(route, { label, focusExisting: true });
 	}
 
 	/** The live copy of the card's project, so counts move while it is up. */
@@ -702,10 +774,15 @@
 		<!-- A chat in a project wears the project's color on its bubble, so the
 		     filed ones read at a glance in Today and Recent. The bubble stays a
 		     bubble: the row is still a chat, the color says whose. -->
-		<span class="row-glyph" aria-hidden="true" style={tint ? `color: ${tint}` : undefined}
-			><AtlasIcon name="chats" size={15} bare /></span
-		>
+		<span class="row-glyph" aria-hidden="true" style={tint ? `color: ${tint}` : undefined}>
+			{#if chatActivity.running(session.conversation_id)}
+				<Icon icon="ri:loader-4-line" width="14" class="spin" />
+			{:else}
+				<AtlasIcon name="chats" size={15} bare />
+			{/if}
+		</span>
 		<span class="panel-row-text">{titleOf(session)}</span>
+		{@render unreadDot(session.conversation_id)}
 		<span class="row-actions">
 			<button
 				type="button"
@@ -728,6 +805,14 @@
 			</button>
 		</span>
 	</div>
+{/snippet}
+
+<!-- A reply landed while the chat was off screen. It sits where the row's
+     controls appear, and gives way to them on hover. -->
+{#snippet unreadDot(chatId: string | null)}
+	{#if chatId && chatActivity.unread(chatId)}
+		<span class="row-unread" role="img" aria-label="New reply"></span>
+	{/if}
 {/snippet}
 
 {#snippet pageRow(page: PageSummary)}
@@ -787,14 +872,16 @@
 	<div class="sidebar-expandable fold" class:expanded={!folded('pinned')} style={foldStyle(pins.length)}>
 		<div class="sidebar-expandable-inner">
 			{#each pins as pin (pin.id)}
+				{@const pinChat = pin.url.startsWith('/chat/') ? pin.url.slice('/chat/'.length) : null}
+				{@const look = pinIdentity(pin)}
 				<div
 					class="panel-row panel-row-has-actions spine"
 					class:active={activeRoute === pin.url}
 					role="link"
 					tabindex="0"
-					title={pinLabel(pin)}
+					title={look.title}
 					draggable={projectMemberUrl(pin.url) ? 'true' : 'false'}
-					ondragstart={(e) => startRefDrag(e, pin.url, pinLabel(pin))}
+					ondragstart={(e) => startRefDrag(e, pin.url, look.title)}
 					onclick={() => openPin(pin)}
 					onkeydown={(e) => {
 						if (e.key === 'Enter' || e.key === ' ') {
@@ -807,22 +894,25 @@
 					<!-- The glyph if the user picked one, the cloth dot if not: most
 					     pins have no natural icon, which is what the dot is for. -->
 					<span class="row-glyph" aria-hidden="true">
-						{#if pin.icon && isEmoji(pin.icon)}
-							<span class="row-emoji">{pin.icon}</span>
-						{:else if pin.icon}
-							<Icon icon={pin.icon} width="14" style="color: {clothFor(pin)}" />
+						{#if pinChat && chatActivity.running(pinChat)}
+							<Icon icon="ri:loader-4-line" width="14" class="spin" />
+						{:else if look.icon && isEmoji(look.icon)}
+							<span class="row-emoji">{look.icon}</span>
+						{:else if look.icon}
+							<Icon icon={look.icon} width="14" style="color: {clothFor({ url: pin.url, color: look.color })}" />
 						{:else}
-							<i class="row-dot" style="background: {clothFor(pin)}"></i>
+							<i class="row-dot" style="background: {clothFor({ url: pin.url, color: look.color })}"></i>
 						{/if}
 					</span>
-					<span class="panel-row-text">{pinLabel(pin)}</span>
+					<span class="panel-row-text">{look.title}</span>
+					{@render unreadDot(pinChat)}
 					<span class="row-actions">
 						<button
 							type="button"
 							class="row-action"
 							aria-label="Unpin"
 							title="Unpin"
-							onclick={(e) => quickPin(e, { url: pin.url, label: pinLabel(pin), icon: pin.icon })}
+							onclick={(e) => quickPin(e, { url: pin.url, label: look.title })}
 						>
 							<Icon icon="ri:pushpin-fill" width="14" />
 						</button>
@@ -982,9 +1072,30 @@
 			</button>
 		</div>
 		<div class="card-meta">{cardMeta(cardProject)}</div>
-		{#if cardProject.current_status}
-			<!-- The catch-up memo: what the room says when you re-enter it. -->
-			<div class="card-memo">{cardProject.current_status}</div>
+		{#if cardChats.length > 0 || cardItems.length > 0}
+			<div class="card-rule" aria-hidden="true"></div>
+			{#each cardChats as chat (chat.id)}
+				<button
+					type="button"
+					class="card-row card-item"
+					onclick={() => openFromCard(`/chat/${chat.id}`, chat.title || 'Chat')}
+				>
+					<span class="card-item-glyph" style={`color: ${projectColor(cardProject)}`}>
+						<AtlasIcon name="chats" size={14} bare />
+					</span>
+					<span class="card-item-text">{chat.title || untitled('chat')}</span>
+				</button>
+			{/each}
+			{#each cardItems as item (item.url)}
+				<button
+					type="button"
+					class="card-row card-item"
+					onclick={() => openFromCard(item.url, memberName(item))}
+				>
+					<span class="card-item-glyph"><Icon icon={memberIcon(item.url)} width="14" /></span>
+					<span class="card-item-text">{memberName(item)}</span>
+				</button>
+			{/each}
 		{/if}
 		<div class="card-rule" aria-hidden="true"></div>
 		<button type="button" class="card-row" onclick={() => openProject(cardProject)}>
@@ -1237,6 +1348,21 @@
 		box-sizing: border-box;
 	}
 
+	.row-unread {
+		width: 7px;
+		height: 7px;
+		margin-right: 2px;
+		flex: none;
+		border-radius: 999px;
+		background: var(--color-success);
+	}
+
+	.panel-row-has-actions:hover .row-unread,
+	.panel-row-has-actions:focus-within .row-unread,
+	.panel-row-has-actions.carded .row-unread {
+		display: none;
+	}
+
 	/* The controls appear where the pointer is and nowhere else. Kept in the
 	   flow (not absolutely positioned) so the label's ellipsis makes room for
 	   them; a label under a floating button is a label you cannot read. */
@@ -1328,19 +1454,7 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	.card-memo {
-		padding: 0 8px 8px 32px;
-		font-size: 12px;
-		line-height: 1.4;
-		color: var(--color-foreground-muted);
-		display: -webkit-box;
-		-webkit-line-clamp: 3;
-		line-clamp: 3;
-		-webkit-box-orient: vertical;
-		overflow: hidden;
-	}
-
-	/* The one rule the card allows: it divides what the project IS from what
+/* The one rule the card allows: it divides what the project IS from what
 	   you can DO, which is the same seam a menu draws with a divider. */
 	.card-rule {
 		height: 1px;
@@ -1375,5 +1489,27 @@
 	.card-row:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
+	}
+
+	/* The project's contents: quieter than the verbs below them, because
+	   they are places to go, not things to do. */
+	.card-item {
+		color: var(--color-foreground-muted);
+	}
+	.card-item:hover {
+		color: var(--color-foreground);
+	}
+	.card-item-glyph {
+		display: flex;
+		flex: none;
+		width: 16px;
+		justify-content: center;
+		color: var(--color-foreground-subtle);
+	}
+	.card-item-text {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 </style>

@@ -19,6 +19,8 @@ export interface ChatSession {
 	message_count: number;
 	model_used: string | null;
 	provider: string;
+	/** A reply landed after this chat was last on screen, on any device. */
+	unread?: boolean;
 }
 
 class ChatSessionStore {
@@ -73,10 +75,13 @@ class ChatSessionStore {
 	 */
 	async load() {
 		this.isLoading = true;
-		this.error = null;
+		// The error is cleared on success, not here: `reachability` reads it,
+		// and clearing it at the start of every retry made the "Can't reach your
+		// server" bar vanish and come back each time the app looked again.
 
 		try {
 			const data = await listChats<{ conversations?: ChatSession[] }>();
+			this.error = null;
 			// The getting-started chat is not a conversation anyone started:
 			// the server seeds it, and since 2026-09-24 it only carries the
 			// interview behind Setup's one-question pages. Listed, it showed
@@ -85,7 +90,9 @@ class ChatSessionStore {
 		} catch (err) {
 			console.error('Error loading chat sessions:', err);
 			this.error = err instanceof Error ? err.message : 'Failed to load sessions';
-			this.sessions = [];
+			// Keep what was here. Emptying the list on a failed reload made a
+			// blip read as "all my chats are gone"; `error` (and the bar that
+			// reads it) already says the list may be out of date.
 		} finally {
 			this.isLoading = false;
 		}
@@ -148,6 +155,14 @@ class ChatSessionStore {
 				...this.sessions,
 			];
 		}
+	}
+
+	/** Clear a chat's unread flag locally, ahead of the server's seen mark. */
+	markRead(chatId: string) {
+		if (!this.sessions.some((s) => s.conversation_id === chatId && s.unread)) return;
+		this.sessions = this.sessions.map((s) =>
+			s.conversation_id === chatId ? { ...s, unread: false } : s,
+		);
 	}
 
 	/**

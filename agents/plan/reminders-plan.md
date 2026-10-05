@@ -1,13 +1,13 @@
 # Reminders — the box's way of reaching the owner
 
-**Status: phase 1 built, unreleased, unverified on a device.** Written
-2026-09-22. Phase 1 is on `wave` as efe49f8f (box), dcb8613c (phone) and
-a29d8e80 (an audit's five fixes). **The one step left in it is Adam's:** enable
-Push Notifications on the App ID in the developer portal, then add
-`aps-environment` to `virtues_iOS.entitlements`. Adding the entitlement first
-breaks signing. Until it lands, registration fails, the phone reports itself
-unreachable, and both screens say so — which is true, so phase 1 is safe to
-ship ahead of it. Nothing sends yet.
+**Status:** Phase 1 (the address) is in staging prereleases from
+`v0.1.10-staging.84` (efe49f8f box, dcb8613c phone, a29d8e80 audit fixes); no
+stable release carries it, and it is unverified on a device. **Nothing sends:**
+`aps-environment` is still absent from `virtues_iOS.entitlements`, so
+registration fails, the phone reports itself unreachable, and both screens say
+so. The step is the owner's: enable Push Notifications on the App ID in the
+developer portal first, *then* add the entitlement — the other order breaks
+signing. Phases 2 (signer) and 3 (reminders) are not built.
 
 An applet can be woken, can check a condition, and can write to the record.
 It cannot *reach the owner*. `applets-next-plan.md` (Persona) names this precisely
@@ -76,29 +76,26 @@ an errand, not because it is listening. Second, an iOS notification-service
 extension is a **separate process** and cannot inherit the app's endpoint, so
 holding one up would not speed the notification path by a single millisecond.
 
-### The payload is encrypted, and that is the whole privacy story
+### The push carries the text
 
-The push **carries the reminder text, encrypted to a key only that device
-holds**. APNs allows ~4KB, which is ample. The extension decrypts locally in
-microseconds. Web Push has done this since RFC 8291.
+The push **carries the reminder text**; APNs allows ~4KB, which is ample. This
+replaces a contentless-wake-plus-fetch design:
 
-This is strictly better than the contentless-wake-plus-fetch design it
-replaces:
-
-- No dial from the extension, so no 1–5s cold-start on the user-visible path,
-  no 30s ceiling, and no need for a fallback banner that says something
-  useless.
+- No dial from the phone on the user-visible path, so no 1–5s cold start, no
+  30s ceiling, and no fallback banner that says something useless.
 - **It works when the box is asleep, offline, or wedged** — which is exactly
   when a fetch design fails.
-- The claim in the manual becomes *"content is encrypted, so transit does not
-  matter"* rather than *"we promise the wake carries nothing."* The first is a
-  property; the second is a promise.
 
-Key material: the device already presents an ed25519 key at pair time. Either
-convert it for ECDH or mint an X25519 key alongside it — decided at build.
+**What that means for privacy, by phase.** Phase 2 sends the text in
+**plaintext**: Apple and our signer can read every reminder in transit, and the
+manual must say so in those words. Encryption to a key only the device holds
+arrives in v2 with the notification-service extension (see Phases); only then
+does the claim become *"content is encrypted, so transit does not matter"* — a
+property rather than a promise. Until v2 ships, no surface may claim the
+payload is private.
 
-Budget the payload well under 4KB: AEAD overhead plus base64 expands it, and
-`413 PayloadTooLarge` is a silent failure for the owner. Truncate the text
+Budget the payload well under 4KB: AEAD overhead plus base64 expands it in v2,
+and `413 PayloadTooLarge` is a silent failure for the owner. Truncate the text
 **before** encrypting, never after.
 
 ### Who signs
@@ -118,16 +115,14 @@ global capability. Three tiers, one code path:
 rather than rhetorical, and it is the difference between a default and a
 dependency.
 
-**The signer should be unable to correlate**, not merely promise not to. The
-box redeems its `api_key` at atlas for anonymous, unlinkable push tickets
-(blind signature / Privacy Pass shape) and presents a ticket plus a device
-token. The signer verifies the ticket without learning which box issued it. The
-relay is already blind by construction; building this to a weaker standard than
-the relay is the inconsistency someone would rightly write about.
-
-Feedback survives the blinding because it is **request/response, not callback**:
-the box calls the signer, the signer calls APNs, the signer hands the status
-straight back and stores nothing. No correlation needed at any point.
+**What the signer sees, stated plainly.** Blind tickets were considered and
+refused (see Refuted), so the signer is not unable to correlate — it is built to
+keep nothing. Per request it sees the calling box's `api_key` (so, the account),
+the device's APNs token, the request's source IP, and in phase 2 the reminder
+text. It calls APNs, hands the status straight back to the box, and stores
+nothing: feedback is **request/response, not callback**, so no correlation is
+needed at any point. A box that wants none of this takes tier 1 and signs
+locally.
 
 ### Time-sensitive
 
@@ -141,13 +136,16 @@ notification summary stops working and they turn the app off, which is worse
 than a reminder landing an hour late. The authoring model proposes it; the
 owner overrides it.
 
-## Schema
+## Schema (built in phase 1)
 
-| Change | Why |
+Push authorization is not a second field: the phone reports an explicit `null`
+address when notifications are off, so "can the box reach this phone" has one
+source of truth.
+
+| Column | Why |
 |---|---|
 | `app_device.push_address` | The address half of the pair, beside `endpoint_id`, on the row whose revocation already kills reachability for free. |
 | `app_device.push_address_at` | When the box last heard this address was good — bumped on every accepted report, so it means *last confirmed*, not first registration. **Required** to handle a 410 correctly — see below. |
-| ~~Push authorization in `device_info.permissions`~~ | **Built differently.** Authorization is not a second field: the phone reports an explicit `null` address when notifications are off, so "can the box reach this phone" has one source of truth instead of two that can disagree. |
 
 **Never name any of these `device_token`.** That name is already taken on the
 wire by the pairing bearer (`PairingCompleteResponse.device_token`), and APNs
@@ -212,27 +210,20 @@ name is how `credentials` ended up holding two opposite trust directions.
 
 ## Phases
 
-1. **Address. BUILT** (see status). `push_address` + `push_address_at`, a
-   CHECK that they are written together, re-registration on every foreground
-   (never on a background wake, never prompting), an explicit `null` for
-   notifications off, revocation clearing the address on all four revoke
-   paths, and a line on both the phone's own screen and its page elsewhere
-   saying whether the server can reach it. What it established for later
-   phases:
+1. **Address** — built (see Status). What later phases inherit from it:
+   - `push_address` + `push_address_at` (written together; `_at` means *last
+     confirmed*, which is what an APNs 410's timestamp is compared against),
+     re-registered on every foreground, explicit `null` when notifications are
+     off, cleared on every revoke path.
    - The token reaches the box through Rust (`virtues_report_push_address` in
-     the reach plugin), not JS, because JS is not guaranteed to exist when iOS
-     delivers a token. The request builder is `reach_client::push`.
-   - The app delegate is tao's, and Tauri forwards no remote-notification
-     callbacks to plugins, so `PushRegistrar.swift` attaches them to the
-     delegate's class at runtime (`class_addMethod`, call-through if one
-     exists). **Unverified on a device** — the first real test is whether that
-     hook fires.
-   - `push_address_at` is bumped on every accepted report, so it means "last
-     confirmed", which is exactly what an APNs 410's timestamp is compared
-     against.
-   - Phase 2 will also need a `UNUserNotificationCenterDelegate` with
+     the reach plugin, request builder `reach_client::push`), not JS, because JS
+     is not guaranteed to exist when iOS delivers a token.
+   - Tauri forwards no remote-notification callbacks to plugins, so
+     `PushRegistrar.swift` attaches them to tao's app-delegate class at runtime
+     (`class_addMethod`). **The first device test is whether that hook fires.**
+   - Phase 2 also needs a `UNUserNotificationCenterDelegate` with
      `willPresent`: iOS shows nothing for a notification that arrives while the
-     app is in the foreground unless the app asks it to.
+     app is foregrounded unless the app asks.
 2. **Signer.** Relay through `virtues-api`, `VIRTUES_PUSH_SIGNER_URL`, the
    local-p8 path, full response classification. **Plaintext payload** — the
    push carries the text and iOS displays it, no extension involved.
@@ -267,9 +258,6 @@ bytes plus base64, so a 200-character reminder is about 300 bytes against a
 4KB budget. So the v1/v2 line is binary and it is drawn at the extension, not
 at the encryption: build the NSE and encryption comes free with it.
 
-Phase 1 is worth doing before anything else is decided: it is additive, it has
-no cloud dependency, and it converts an invisible failure into a visible one.
-
 ## Refuted
 
 - **Local-only notifications** (`UNLocationNotificationTrigger`, calendar
@@ -281,8 +269,8 @@ no cloud dependency, and it converts an invisible failure into a visible one.
 - **A heartbeat drain** ("anything for me?") on an empty outbox. Spends a dial
   every five minutes forever to rebuild, worse, a connection Apple already
   maintains for every app on the device.
-- **Contentless wake plus a fetch from the extension.** Superseded by the
-  encrypted payload: it put a cold iroh dial on the user-visible path and
+- **Contentless wake plus a fetch from the extension.** Superseded by carrying
+  the text in the push: it put a cold iroh dial on the user-visible path and
   failed precisely when the box was unreachable.
 - **Mac-first notifications.** Free to build and genuinely zero-infrastructure,
   but a desktop banner is a weak product surface and would not have told us

@@ -26,8 +26,9 @@
 >   authenticated by the device's own key against the box's allowlist. There is
 >   no per-box ACME certificate and no bearer token.
 >
-> **The inference boundary section is current** and remains the honest account
-> of where your data actually leaves the box.
+> **Archived 2026-09-29.** The inference boundary, the one part that was still
+> current, is maintained in [`privacy-boundary.md`](../build/privacy-boundary.md);
+> read that, not the copy below.
 
 *Everything from here to the inference boundary is kept as a record of the
 superseded design.* It described how you reached your home box from a browser

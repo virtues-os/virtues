@@ -6,7 +6,9 @@ pub mod channel;
 pub mod backup_volume;
 pub mod volumes;
 pub mod commands;
+pub mod agent_key;
 pub mod configure_inference;
+pub mod data;
 pub mod deprovision;
 pub mod image_check;
 pub mod diag;
@@ -69,6 +71,27 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         Commands::Restore { .. } => {
             // Same.
             unreachable!("Restore command should be handled in main.rs");
+        }
+
+        // The data verbs. No `initialize()`: that runs migrations, and a read
+        // has no business migrating the database it reads.
+        Commands::Query { .. }
+        | Commands::Search { .. }
+        | Commands::Schema { .. }
+        | Commands::Write { .. }
+        | Commands::Applet { .. }
+        | Commands::Page { .. } => {
+            let verbs = data::Verbs::new(virtues.database.pool().clone());
+            let outcome = data::run(&verbs, command).await;
+            if let Err(e) = outcome {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
+        }
+
+        Commands::AgentKey { .. } | Commands::AgentExec { .. } => {
+            // Handled in main.rs: neither opens the database.
+            unreachable!("agent-key and agent-exec are handled in main.rs");
         }
 
         Commands::Volumes { cmd } => {
@@ -310,17 +333,6 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         }
         Commands::Doctor => {
             unreachable!("Doctor command should be handled in main.rs");
-        }
-
-        Commands::Magnet => {
-            virtues.database.initialize().await?;
-            let pool = virtues.database.pool();
-
-            use crate::magnet::{self, PROJECT};
-            let projects = magnet::run_all(pool, PROJECT).await?;
-
-            println!("magnet · projects attached {projects}");
-            return Ok(());
         }
 
         Commands::ComputeNovelty => {

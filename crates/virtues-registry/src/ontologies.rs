@@ -1347,7 +1347,15 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 title_sql: Some("t.title"),
                 preview_sql: "SUBSTR(COALESCE(t.content, ''), 1, 200)",
                 author_sql: None,
-                timestamp_sql: "t.updated_at",
+                // When the article is ABOUT, not when it was written: a day's
+                // article is that day, at noon UTC so a bare-date filter for
+                // the day includes it and one for the next day does not. Any
+                // other subject spans time and carries no date, so a date
+                // filter leaves it out rather than matching last night's
+                // rewrite.
+                timestamp_sql: "(SELECT (d.date + time '12:00') AT TIME ZONE 'UTC' \
+                                FROM wiki_articles a JOIN wiki_days d ON d.id = a.subject_id \
+                                WHERE a.page_id = t.id AND a.subject_type = 'day')",
                 embed_where: Some("AND t.kind = 'article' AND t.deleted_at IS NULL"),
             }),
             extraction: None,

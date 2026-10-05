@@ -11,8 +11,8 @@
 	 *
 	 * Two rules keep it from becoming a tooltip that bites:
 	 *
-	 *   - It opens on a DELAY and closes with a GRACE. The parent owns both
-	 *     timers (it knows which row is hot); this component only reports
+	 *   - It opens on a short DELAY and closes with a GRACE. The parent owns
+	 *     both timers (it knows which row is hot); this component only reports
 	 *     whether the pointer is on the card so the parent can hold it open
 	 *     while you cross the gap to reach a button on it.
 	 *   - It is PORTALED to the body and positioned with floating-ui. The
@@ -37,15 +37,25 @@
 
 	let card = $state<HTMLDivElement | null>(null);
 
+	// Out of the panel's clipping and the aside's width transition.
 	onMount(() => {
 		const el = card;
 		if (!el) return;
-		// Out of the panel's clipping and the aside's width transition.
 		document.body.appendChild(el);
+		return () => el.remove();
+	});
+
+	// Positioned against whichever row it belongs to NOW. The parent moves one
+	// card between rows (a second row's card opens instantly while one is up),
+	// and a card that tracked only the row it opened on stayed beside that one.
+	$effect(() => {
+		const el = card;
+		const target = anchor;
+		if (!el) return;
 
 		const update = async () => {
-			if (!anchor.isConnected) return;
-			const { x, y } = await computePosition(anchor, el, {
+			if (!target.isConnected) return;
+			const { x, y } = await computePosition(target, el, {
 				placement: 'right-start',
 				strategy: 'fixed',
 				middleware: [offset(10), flip({ fallbackPlacements: ['left-start'] }), shift({ padding: 8 })],
@@ -53,12 +63,7 @@
 			el.style.left = `${x}px`;
 			el.style.top = `${y}px`;
 		};
-		const stop = autoUpdate(anchor, el, () => void update());
-
-		return () => {
-			stop();
-			el.remove();
-		};
+		return autoUpdate(target, el, () => void update());
 	});
 </script>
 

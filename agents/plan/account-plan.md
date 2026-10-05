@@ -8,18 +8,14 @@ Delete an item when it ships and move its reasoning into a record.
 
 ## Billing defects
 
-**Refunds are scoped to the customer, not the charge.** In
-`services/virtues-atlas/src/routes/webhooks.rs`, `handle_webhook` sends both
-`charge.refunded` and `charge.dispute.created` to
-`set_status(pool, object, "refunded")`, which runs
-`UPDATE subscriptions SET status = $1 WHERE stripe_customer_id = $2`. Top-ups
-are charges against the same customer, so refunding a $10 goodwill top-up (or
-losing a dispute on one) marks the $20/mo subscription `refunded`, and every
-path that requires an active subscription then refuses: the billing portal,
-manual and auto top-up. Refunds and disputes are not something we choose to
-have. The fix separates the objects: a refund against a top-up debits the
-wallet, and only a refund or dispute against a subscription invoice changes
-subscription status.
+**A refunded top-up leaves its credit in the wallet.** Charge refunds and
+disputes no longer touch subscription status (`webhooks.rs`, 2026-09-30:
+subscription status follows only `customer.subscription.*` and `invoice.*`).
+What is left: a refund or lost dispute on a top-up PaymentIntent should debit
+the wallet by that amount through virtues-api's internal credit endpoint, and
+nothing marks a top-up PaymentIntent as one today (no metadata), so tagging it
+at creation comes first. Also check production once for subscriptions already
+set to `refunded` by the old handler.
 
 **The way to fix a lapsed payment sits behind the payment.**
 `billing_portal.rs::resolve_active_customer` refuses unless the latest
@@ -91,3 +87,18 @@ hosted AI stops.
   cost forecast in one). The rules: aggregates only, unique endpoints counted
   with a sketch such as HLL rather than stored IDs, nothing about who talked to
   whom.
+
+## OAuth proxy and entitlement
+
+Carried from [`../record/entitlement-split.md`](../record/entitlement-split.md);
+each checked against `services/virtues-api/src/routes/oauth.rs` on 2026-09-29.
+
+- **Bind an OAuth session to the box that started it.** `/start` is a browser
+  navigation, so the box cannot put its api_key on it; the session is guarded
+  only by the *shape* of its `return_url`. The box should register the session
+  server-to-server first, then send the browser. Needs a box release.
+- **Require `X-Virtues-Api-Key` on the proxy.** `caller_api_key` reads it and
+  enforces nothing, because boxes that have not upgraded do not send it. Flip it
+  to required once the logs show the fleet has moved — `/refresh` first (worst
+  exposure, one known caller), then the rest.
+- **Count linked-free accounts.** One query on atlas, not yet run.

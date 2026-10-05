@@ -303,7 +303,7 @@ async fn execute_single(
         // the tool advertises, plus room for the sandbox to start.
         Duration::from_secs(150)
     } else if tool_call.name == "shell" {
-        // Carries its own timeout, up to an hour, and kills its process
+        // Carries its own timeout, up to ten minutes, and kills its process
         // group on it. Sit just past that so the tool reports its own kill
         // rather than being cut off here with no result.
         Duration::from_secs(crate::tools::shell::MAX_TIMEOUT_SECS + 15)

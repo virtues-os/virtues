@@ -2,7 +2,7 @@
  * The basemap for a Leaflet map, drawn from the box's own map files.
  *
  * The box holds Protomaps archives in three tiers (virtues-core/src/maps,
- * agents/plan/offline-maps-plan.md): a world overview, the regions you have
+ * agents/record/map-tiles.md): a world overview, the regions you have
  * visited at street level, and home at full detail. Every tile, font and icon
  * comes from the box, so no tile provider ever learns which streets anyone
  * looks at, and the maps work offline.
@@ -146,6 +146,31 @@ function loadEngine() {
 	})();
 	engine.catch(() => (engine = null));
 	return engine;
+}
+
+/**
+ * The MapLibre style for `style`, or null when the box holds no map files yet.
+ * Throws when the box cannot be reached (a restart, say), so the caller can
+ * ask again rather than conclude there are no maps. For a MapLibre map that
+ * draws the atlas directly, rather than the Leaflet-wrapped `atlasLayer` below.
+ */
+export async function atlasStyle(style: AtlasStyle): Promise<StyleSpecification | null> {
+	return buildStyle(style, await loadSources());
+}
+
+/**
+ * Every square the box holds street maps for, as [west, south, east, north]:
+ * the visited regions to zoom 13 and home to zoom 15. Outside them only the
+ * world overview draws, to zoom 7. Null when the box cannot be reached.
+ */
+export async function atlasSquares(): Promise<number[][] | null> {
+	try {
+		const have = await loadSources();
+		return [...have.visited, ...have.home];
+	} catch (e) {
+		console.warn("atlas: sources unavailable", e);
+		return null;
+	}
 }
 
 /**

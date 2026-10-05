@@ -270,43 +270,6 @@ export async function getClock(
 	return res.json();
 }
 
-/** A place a window was spent, found by clustering arrivals. */
-export interface Stay {
-	lat: number;
-	lon: number;
-	visits: number;
-	minutes: number;
-	first: string | null;
-	last: string | null;
-}
-
-/** Where a window was spent. `bbox` is `[latMin, latMax, lonMin, lonMax]`. */
-export interface Ground {
-	bbox: [number, number, number, number] | null;
-	/** The trace, thinned server-side: `[lat, lon]` pairs in time order. */
-	track: [number, number][];
-	track_total: number;
-	stays: Stay[];
-}
-
-/**
- * The ground under a window.
- *
- * A separate request from the lanes because it is answering a different
- * question — where, not when — and because it is only wanted when someone is
- * actually looking at location.
- */
-export async function getGround(
-	from: string,
-	to: string,
-	fetchFn: FetchFn = fetch
-): Promise<Ground | null> {
-	const p = new URLSearchParams({ from, to });
-	const res = await fetchFn(`/api/wiki/lifeline/ground?${p}`);
-	if (!res.ok) return null;
-	return res.json();
-}
-
 /** One row inside a window, rendered by its ontology's own declarations. */
 export interface LifelineRecord {
 	id: string;
@@ -340,42 +303,6 @@ export async function getFeed(
 	if (opts.limit) p.set('limit', String(opts.limit));
 	if (opts.offset) p.set('offset', String(opts.offset));
 	const res = await fetchFn(`/api/wiki/lifeline/feed?${p}`);
-	if (!res.ok) return null;
-	return res.json();
-}
-
-/** A day or event Virtues has interpreted. */
-export interface Interpreted {
-	id: string;
-	kind: string;
-	/** The segmenter's classification — `sleep`, `transit`, `unknown`. */
-	tag: string | null;
-	label: string | null;
-	summary: string | null;
-	start: string;
-	end: string | null;
-}
-
-export interface ProcessedWindow {
-	items: Interpreted[];
-	/** The span over which ANY interpretation exists, whatever the window. */
-	coverage: [string, string] | null;
-	days_processed: number;
-}
-
-/**
- * What Virtues has made of a window, as opposed to what was collected in it.
- *
- * Raw reaches back to 2017; the interpreted layer covers weeks. `coverage`
- * comes back regardless of the window so an empty answer can say why.
- */
-export async function getProcessed(
-	from: string,
-	to: string,
-	fetchFn: FetchFn = fetch
-): Promise<ProcessedWindow | null> {
-	const p = new URLSearchParams({ from, to });
-	const res = await fetchFn(`/api/wiki/lifeline/processed?${p}`);
 	if (!res.ok) return null;
 	return res.json();
 }
@@ -1251,12 +1178,18 @@ export interface TimelineDayPoint {
 	latitude: number;
 	longitude: number;
 	timestamp: string;
+	/** The phone's error radius, metres. Past ~100 m it is a cell tower's guess, not GPS. */
+	horizontal_accuracy: number | null;
+	/** The phone's reported speed, m/s; null when it reported none. */
+	speed: number | null;
 }
 
 export interface TimelineDayView {
 	date: string;
 	chunks: TimelineDayChunk[];
 	points: TimelineDayPoint[];
+	/** The last raw GPS point before the day starts; null when there is none. */
+	last_point_before: TimelineDayPoint | null;
 }
 
 // ============================================================================

@@ -46,7 +46,7 @@ Nothing comes in. The server opens no inbound port, your devices reach it by
 key on a list only the server keeps, and we are not on that list. The relay
 carries sealed bytes it cannot read. [Reaching your server](/docs/operate/reach)
 shows the paths. The
-[privacy model](https://github.com/virtues-os/virtues/blob/main/agents/record/privacy-model.md)
+[privacy boundary](https://github.com/virtues-os/virtues/blob/main/agents/build/privacy-boundary.md)
 is the full account, including exactly what each kind of request sends.
 
 ## How to read this manual

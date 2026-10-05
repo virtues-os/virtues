@@ -278,7 +278,7 @@ fn default_agent_mode() -> String {
 pub struct UIMessage {
     pub id: Option<String>,
     pub role: String,
-    #[serde(default)]
+    #[serde(default, with = "wire_parts")]
     pub parts: Option<Vec<UIPart>>,
     // Legacy format support
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -322,9 +322,11 @@ pub enum UIPart {
     /// On disk and on the wire this is `tool-<toolName>`, NOT the variant's own
     /// name — the client matches an exact type per tool (`tool-create_page`,
     /// `tool-generate_image`, …) and has no branch for anything else, so a part
-    /// stored as `tool-invocation` renders as nothing at all. `parts_to_jsonb`
+    /// sent as `tool-invocation` renders as nothing at all. `parts_to_jsonb`
     /// and `parts_from_jsonb` are the translation, and they are the ONLY way
-    /// this column should be written or read. A single hardcoded
+    /// parts should be written or read — for the column, and for every API
+    /// field through `wire_parts`. The derive alone serializes this variant
+    /// as `tool-invocation`, which is what reloaded chats were served. A single hardcoded
     /// `tool-web_search` variant used to stand in for the whole family; every
     /// other tool fell through to `Unknown` and was dropped.
     #[serde(rename = "tool-invocation")]
@@ -430,6 +432,30 @@ pub fn parts_to_jsonb(parts: &[UIPart]) -> serde_json::Value {
         }
     }
     value
+}
+
+/// `parts` as the client speaks it, for any serde field that crosses the API.
+///
+/// `#[serde(with = "wire_parts")]` on an `Option<Vec<UIPart>>`: tool parts go
+/// out as `tool-<toolName>` and come in from either spelling, through the same
+/// two functions the column uses.
+pub mod wire_parts {
+    use super::{parts_from_jsonb, parts_to_jsonb, UIPart};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        parts: &Option<Vec<UIPart>>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        parts.as_deref().map(parts_to_jsonb).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<Vec<UIPart>>, D::Error> {
+        let raw = Option::<serde_json::Value>::deserialize(d)?;
+        Ok(raw.and_then(|v| parts_from_jsonb(v, "request")))
+    }
 }
 
 /// Streaming event types (AI SDK v6 UI Message Stream Protocol)
@@ -790,11 +816,8 @@ const MAX_PAGE_CONTENT_CHARS: usize = 10_000;
 /// connection to a routine question. A longer NI does not make the assistant
 /// understand you better; it makes it perform understanding more often.
 ///
-/// Truncation happens at a PARAGRAPH boundary. The previous version cut at 800
-/// characters mid-word, which would have fed the model a sentence that stops
-/// in the middle and invited it to complete the thought itself. (It never fired
-/// in practice: the table has no rows on a real box, so NI has been the empty
-/// string in every prompt since it shipped. Fixing it is a build, not a repair.)
+/// Truncation happens at a PARAGRAPH boundary: a cut mid-word feeds the model a
+/// sentence that stops in the middle and invites it to complete the thought.
 async fn build_narrative_identity(pool: &PgPool) -> String {
     // The DOCUMENT itself — "In your own words", the page the person edits.
     // There is deliberately no abridged copy between them and the assistant:
@@ -1037,7 +1060,7 @@ async fn build_system_prompt_blocks(
         },
         // The machine's memory: per-note rows the person can read and edit
         // (Settings), rendered with ids so the update_memory ops can name
-        // them. Three lanes per docs/narrative-identity.md: facts of their
+        // them. Three lanes per agents/build/narrative-identity.md: facts of their
         // world, their preferred manner, their practices.
         Block {
             meta: BlockMeta { tag: "memory", author: Author::Machine, mood: Mood::Declarative, rung: 50, cadence: Cadence::Session },
@@ -1229,12 +1252,6 @@ async fn build_project_context(pool: &PgPool, project_id: &str) -> Option<String
         }
     }
 
-    if let Some(memo) = detail.project.current_status.as_deref() {
-        if !memo.is_empty() {
-            out.push_str(&format!("\n  <memo>{}</memo>", escape_attr(memo)));
-        }
-    }
-
     let total = detail.items.len();
     let shown: Vec<_> = detail
         .items
@@ -1279,7 +1296,7 @@ async fn build_project_context(pool: &PgPool, project_id: &str) -> Option<String
 
     out.push_str("\n</active_project>");
 
-    let preamble = "\n\n<active_project_preamble>\nThis chat lives in the Project (room) below — a collection the user returns to (an undertaking, a pet, a hobby, a goal, or a topic). Treat its members as high-salience: they are the user's actively curated focus for this room. <instructions>, if present, are standing directions for how you should behave in this project — follow them. <memo>, if present, is a catch-up note about the project's current state. Members are also boosted in semantic search while this project is active.\n\nThe member list below IS the project's contents — it is already complete (up to the cap noted at its end). When the user refers to something \"in this project,\" match it here first; do not go looking for the project's contents with other tools.\n\nEach member carries what it is: `title`, `kind`, and `role`. `role=\"library\"` grounds this chat; `role=\"manuscript\"` is the user's own draft, deliberately excluded from retrieval - never cite it back at them as a source; `role=\"pin\"` is navigation only. Files also carry `text`: `indexed` means its contents are searchable, `pending` means extraction has not finished yet, and `none` means no text was extracted — searching for its contents will find nothing, so say so plainly rather than reporting an empty search as an absence of the thing.\n</active_project_preamble>";
+    let preamble = "\n\n<active_project_preamble>\nThis chat lives in the Project (room) below — a collection the user returns to (an undertaking, a pet, a hobby, a goal, or a topic). Treat its members as high-salience: they are the user's actively curated focus for this room. <instructions>, if present, are standing directions for how you should behave in this project — follow them. Members are also boosted in semantic search while this project is active.\n\nThe member list below IS the project's contents — it is already complete (up to the cap noted at its end). When the user refers to something \"in this project,\" match it here first; do not go looking for the project's contents with other tools.\n\nEach member carries what it is: `title`, `kind`, and `role`. `role=\"library\"` grounds this chat; `role=\"manuscript\"` is the user's own draft, deliberately excluded from retrieval - never cite it back at them as a source; `role=\"pin\"` is navigation only. Files also carry `text`: `indexed` means its contents are searchable, `pending` means extraction has not finished yet, and `none` means no text was extracted — searching for its contents will find nothing, so say so plainly rather than reporting an empty search as an absence of the thing.\n</active_project_preamble>";
 
     Some(format!("{}{}", preamble, out))
 }
@@ -1345,6 +1362,8 @@ async fn chat_handler_inner(
     // ("turn prepared"). Everything here is paid before the first token.
     let started = std::time::Instant::now();
     let ms = |since: std::time::Instant| since.elapsed().as_millis() as u64;
+    // The same moment, kept with the reply: its "Worked for" counts from here.
+    let turn_started_at = crate::types::Timestamp::now();
 
     // The turn's mode, decided once. Some chats are a mode by id (the
     // interview, the getting-started room), whatever the client sent.
@@ -1502,6 +1521,7 @@ async fn chat_handler_inner(
         checkpoint_event,
         turn_token.clone(),
         ghost_permissions,
+        turn_started_at,
     );
     spawn_turn_driver(agent_stream, turn.clone(), turn_token, live_turns, cancel_state, chat_id_str);
 
@@ -1944,6 +1964,8 @@ fn create_agent_stream(
     checkpoint_event: Option<StreamEvent>,
     cancel_token: CancellationToken,
     ghost_permissions: crate::api::chat_permissions::GhostPermissions,
+    // When the box received the request, before history and compaction.
+    started_at: crate::types::Timestamp,
 ) -> Pin<Box<dyn Stream<Item = String> + Send>> {
     let chat_id = request.chat_id.clone();
     // Copied out for the stream block below, which reads `request` for a
@@ -2061,7 +2083,7 @@ fn create_agent_stream(
         let usage = recorder.usage();
         let subject = recorder.subject(was_cancelled, was_unattended);
         let message = recorder.into_message(&model, agent_id, subject);
-        persist_turn(&pool, &chat_id, &model, mode.wire_name(), temporary, message, usage).await;
+        persist_turn(&pool, &chat_id, &model, mode.wire_name(), temporary, message, usage, Some(started_at)).await;
 
         // Clean up cancellation token when stream ends
         cancel_state.remove(&chat_id, &cancel_token);
@@ -2080,6 +2102,7 @@ async fn persist_turn(
     temporary: bool,
     message: Option<ChatMessage>,
     usage: TurnUsage,
+    started_at: Option<crate::types::Timestamp>,
 ) {
     if let Some(assistant_message) = message {
         // WHAT THE REPLY LINKED TO, CHECKED AFTER THE FACT.
@@ -2104,8 +2127,27 @@ async fn persist_turn(
 
         if temporary {
             // Ghost: nothing written. The client keeps the turn in its tab.
-        } else if let Err(e) = append_message(pool, chat_id.to_string(), assistant_message).await {
-            tracing::error!("Failed to save assistant message: {}", e);
+        } else {
+            match append_message(pool, chat_id.to_string(), assistant_message).await {
+                Ok(msg_id) => {
+                    // The turn's span. Its own statement so the shared insert
+                    // paths stay as they are; a failure here costs the
+                    // duration on reload, nothing else.
+                    if let Some(started_at) = started_at {
+                        if let Err(e) = sqlx::query(
+                            "UPDATE app_chat_messages SET started_at = $1, ended_at = created_at WHERE id = $2",
+                        )
+                        .bind(started_at)
+                        .bind(&msg_id)
+                        .execute(pool)
+                        .await
+                        {
+                            tracing::warn!(chat_id = %chat_id, error = %e, "could not record the turn's span");
+                        }
+                    }
+                }
+                Err(e) => tracing::error!("Failed to save assistant message: {}", e),
+            }
         }
     }
 
@@ -2601,6 +2643,24 @@ mod parts_column_tests {
         assert!(matches!(&back[1], UIPart::ToolInvocation { tool_name, .. } if tool_name == "web_search"));
     }
 
+    /// The API speaks the column's spelling both ways. The derive alone sent
+    /// every reloaded tool part as `tool-invocation`, and the client's
+    /// per-tool cards (pages, applets, images) matched none of them.
+    #[test]
+    fn api_messages_carry_the_per_tool_type() {
+        let incoming = serde_json::json!({
+            "id": "m1", "role": "assistant",
+            "parts": [{ "type": "tool-create_page", "toolCallId": "c0",
+                        "input": {}, "state": "output-available", "output": {} }],
+        });
+        let msg: UIMessage = serde_json::from_value(incoming).unwrap();
+        let parts = msg.parts.as_deref().unwrap();
+        assert!(matches!(&parts[0], UIPart::ToolInvocation { tool_name, .. } if tool_name == "create_page"));
+
+        let out = serde_json::to_value(&msg).unwrap();
+        assert_eq!(out["parts"][0]["type"], "tool-create_page");
+    }
+
 }
 
 #[cfg(test)]
@@ -2870,8 +2930,9 @@ mod persist_turn_tests {
             .execute(&pool)
             .await
             .unwrap();
+        let began = crate::types::Timestamp::now();
         let (message, usage) = recorded_turn("Hello.");
-        persist_turn(&pool, "chat_p", "anthropic/claude-x", "chat", false, message, usage).await;
+        persist_turn(&pool, "chat_p", "anthropic/claude-x", "chat", false, message, usage, Some(began)).await;
 
         let (role, content, model): (String, String, Option<String>) =
             sqlx::query_as("SELECT role, content, model FROM app_chat_messages WHERE chat_id = 'chat_p'")
@@ -2879,6 +2940,13 @@ mod persist_turn_tests {
                 .await
                 .unwrap();
         assert_eq!((role.as_str(), content.as_str(), model.as_deref()), ("assistant", "Hello.", Some("anthropic/claude-x")));
+        let spanned: bool = sqlx::query_scalar(
+            "SELECT started_at IS NOT NULL AND ended_at >= started_at FROM app_chat_messages WHERE chat_id = 'chat_p'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(spanned, "the row keeps the turn's span");
         let n: i64 = sqlx::query_scalar("SELECT message_count::bigint FROM app_chats WHERE id = 'chat_p'")
             .fetch_one(&pool)
             .await
@@ -2911,7 +2979,7 @@ mod persist_turn_tests {
     async fn a_temporary_turn_writes_only_its_ai_call(pool: PgPool) {
         let (message, usage) = recorded_turn("Off the record.");
         assert!(message.is_some(), "the turn said something; only `temporary` keeps it out");
-        persist_turn(&pool, "chat_ghost", "anthropic/claude-x", "sudo", true, message, usage).await;
+        persist_turn(&pool, "chat_ghost", "anthropic/claude-x", "sudo", true, message, usage, None).await;
 
         assert_eq!(count(&pool, MESSAGES, "chat_ghost").await, 0);
         assert_eq!(count(&pool, USAGE, "chat_ghost").await, 0);
@@ -2933,7 +3001,7 @@ mod persist_turn_tests {
             .unwrap();
         let (message, usage) = recorded_turn("");
         assert!(message.is_none(), "no text and no tools is no message");
-        persist_turn(&pool, "chat_e", "anthropic/claude-x", "council", false, message, usage).await;
+        persist_turn(&pool, "chat_e", "anthropic/claude-x", "council", false, message, usage, None).await;
 
         assert_eq!(count(&pool, MESSAGES, "chat_e").await, 0);
         assert_eq!(count(&pool, USAGE, "chat_e").await, 1);

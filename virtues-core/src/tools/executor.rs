@@ -221,15 +221,7 @@ impl ToolExecutor {
     /// go through `BearerClient`, which sources the URL + bearer itself.
     pub fn new(pool: PgPool) -> Self {
         warm_code_env();
-        let pool = Arc::new(pool);
-        Self {
-            web_search: WebSearchTool::new((*pool).clone()),
-            semantic_search: SemanticSearchTool::new(pool.clone()),
-            sql_query: SqlQueryTool::new(pool.clone()),
-            page_editor: PageEditorTool::new(pool.clone(), None),
-            _pool: pool,
-            yjs_state: None,
-        }
+        Self::without_warmup(pool)
     }
 
     /// Create a new tool executor with YjsState for real-time page editing
@@ -244,6 +236,21 @@ impl ToolExecutor {
             page_editor: PageEditorTool::new(pool.clone(), Some(yjs_state.clone())),
             _pool: pool,
             yjs_state: Some(yjs_state),
+        }
+    }
+
+    /// For a one-shot CLI verb: the same tools, without the code_interpreter
+    /// package build `new` starts. A `virtues query` that began a 400 MB fetch
+    /// on a box missing them would be a surprising side effect of a read.
+    pub fn without_warmup(pool: PgPool) -> Self {
+        let pool = Arc::new(pool);
+        Self {
+            web_search: WebSearchTool::new((*pool).clone()),
+            semantic_search: SemanticSearchTool::new(pool.clone()),
+            sql_query: SqlQueryTool::new(pool.clone()),
+            page_editor: PageEditorTool::new(pool.clone(), None),
+            _pool: pool,
+            yjs_state: None,
         }
     }
 
@@ -290,8 +297,15 @@ impl ToolExecutor {
         if tool_name == "setup_applet" && super::applet_setup::wants_guide(arguments) {
             return Ok(None);
         }
-        // Sudo mode is the owner saying "don't ask" for this chat.
-        if context.sudo && context.applet_id.is_none() {
+        // Nor does a dry run: `check_only` validates and creates nothing.
+        if tool_name == "setup_applet" && super::applet_setup::wants_check_only(arguments) {
+            return Ok(None);
+        }
+        // Sudo sends `sql_write` to `sql_sudo`, whose read-only transaction
+        // is the finer gate: a statement that changes nothing runs, and one
+        // that does asks for itself (`sudo_gate`). The other gated tools ask
+        // in sudo as they do in chat.
+        if tool_name == "sql_write" && context.sudo && context.applet_id.is_none() {
             return Ok(None);
         }
         // Only interactive chat is gated. Autonomous action runs set `applet_id` (and may carry a
@@ -334,17 +348,7 @@ impl ToolExecutor {
                 }
             };
 
-        let granted = if context.temporary {
-            context
-                .ghost_permissions
-                .as_ref()
-                .is_some_and(|g| g.has(chat_id, &entity_id))
-        } else {
-            crate::api::chat_permissions::has_permission(self._pool.as_ref(), chat_id, &entity_id)
-                .await
-                .unwrap_or(false)
-        };
-        if granted {
+        if self.granted(context, chat_id, &entity_id).await {
             return Ok(None);
         }
 
@@ -355,6 +359,28 @@ impl ToolExecutor {
             "entity_title": title,
             "message": format!("AI wants to {verb} \"{title}\""),
         }))))
+    }
+
+    /// Whether the person has allowed `entity_id` in this chat.
+    async fn granted(&self, context: &ToolContext, chat_id: &str, entity_id: &str) -> bool {
+        if context.temporary {
+            context.ghost_permissions.as_ref().is_some_and(|g| g.has(chat_id, entity_id))
+        } else {
+            // A failed lookup reads as "not allowed": the call asks again.
+            crate::api::chat_permissions::has_permission(self._pool.as_ref(), chat_id, entity_id)
+                .await
+                .unwrap_or(false)
+        }
+    }
+
+    /// Whether the owner has allowed this exact sudo command (`sudo_gate`).
+    async fn sudo_granted(&self, context: &ToolContext, kind: &str, command: &str) -> bool {
+        match context.chat_id.as_deref() {
+            Some(chat_id) => {
+                self.granted(context, chat_id, &super::sudo_gate::grant_id(kind, command)).await
+            }
+            None => false,
+        }
     }
 
     /// Execute a tool by name with given arguments
@@ -428,7 +454,9 @@ impl ToolExecutor {
                     && arguments.get("operation").and_then(|v| v.as_str()).unwrap_or("query")
                         == "query" =>
             {
-                super::sql_sudo::execute(&self._pool, arguments).await
+                let sql = super::sql_sudo::statement(&arguments)?;
+                let read_only = !self.sudo_granted(context, "sql", &sql).await;
+                super::sql_sudo::execute(&self._pool, &sql, read_only).await
             }
             "sql_query" => {
                 // A saved chat can keep a result as a file for code_interpreter.
@@ -439,7 +467,29 @@ impl ToolExecutor {
             // The tool lists already keep it out of every other mode; this is
             // the second lock, for a model that names a tool it was not given.
             "shell" if context.sudo && context.applet_id.is_none() => {
-                super::shell::execute(arguments).await
+                use super::sudo_gate;
+                let command =
+                    arguments.get("command").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+                // An empty command: the shell's own error says so.
+                if command.is_empty() || self.sudo_granted(context, "shell", &command).await {
+                    return super::shell::execute(arguments, false).await;
+                }
+                if !sudo_gate::shell_is_read(&command) {
+                    return Ok(sudo_gate::ask("shell", &command));
+                }
+                // A read, as far as the line shows; psql inside it is held
+                // read-only, and a write it tried becomes the same question.
+                // Only a failed command: a read that prints a log line
+                // mentioning the refusal is not one.
+                let result = super::shell::execute(arguments, true).await?;
+                let failed = result.data.get("exit_code").and_then(|v| v.as_i64()) != Some(0);
+                let said = |k: &str| {
+                    result.data.get(k).and_then(|v| v.as_str()).is_some_and(sudo_gate::is_read_only_refusal)
+                };
+                if failed && (said("stderr") || said("stdout")) {
+                    return Ok(sudo_gate::ask("shell", &command));
+                }
+                Ok(result)
             }
             "shell" => Err(ToolError::ExecutionFailed(
                 "shell runs only in sudo mode, which the owner turns on in the chat".into(),
@@ -1256,7 +1306,7 @@ impl ToolExecutor {
                         "type": "project",
                         "id": detail.project.id,
                         "name": detail.project.name,
-                        "status": detail.project.current_status,
+                        "brief": detail.project.instructions,
                         "members": members,
                     })))
                 }

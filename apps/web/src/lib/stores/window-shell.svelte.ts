@@ -2,7 +2,7 @@
  * Window Shell Store
  *
  * The tab/window/navigation shell. SINGLE source of truth for panes, splits,
- * tabs, URL sync, and the entity metadata registry.
+ * tabs and URL sync.
  *
  * Architecture: Always-Panes Model
  * - Every tab lives in a pane
@@ -11,7 +11,6 @@
  *
  * Features:
  * - Tabs (with full split-screen support)
- * - Entity metadata registry (lazy-loaded cache)
  */
 
 import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
@@ -26,7 +25,6 @@ import { parseRoute } from '$lib/tabs/registry';
 import { visits } from '$lib/stores/visits.svelte';
 import { pushState, replaceState } from '$app/navigation';
 import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
-import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 
 // Re-export types for convenience
 export type { Tab, TabType, PaneState };
@@ -35,14 +33,6 @@ export { parseRoute };
 // ============================================================================
 // Types
 // ============================================================================
-
-export interface EntityMetadata {
-	id: string;
-	name: string;
-	type: string;
-	icon: string;
-	route: string;
-}
 
 // Split state for backwards compatibility
 export interface SplitState {
@@ -60,27 +50,6 @@ export interface TabState {
 // ============================================================================
 // Entity Type Utilities
 // ============================================================================
-
-const ENTITY_TYPE_MAP: Record<string, { type: string; icon: string; routePrefix: string }> = {
-	session: { type: 'chat', icon: 'ri:chat-1-line', routePrefix: '/chat' },
-	page: { type: 'page', icon: 'ri:file-text-line', routePrefix: '/page' },
-	person: { type: 'person', icon: 'ri:user-line', routePrefix: '/person' },
-	place: { type: 'place', icon: 'ri:map-pin-line', routePrefix: '/place' },
-	org: { type: 'org', icon: 'ri:building-line', routePrefix: '/org' },
-	day: { type: 'day', icon: 'ri:calendar-line', routePrefix: '/day' },
-	year: { type: 'year', icon: 'ri:calendar-line', routePrefix: '/year' },
-	source: { type: 'source', icon: 'ri:database-2-line', routePrefix: '/sources' },
-	file: { type: 'drive', icon: 'ri:file-line', routePrefix: '/drive' },
-	project: { type: 'project', icon: PROJECT_ICON, routePrefix: '/project' }
-};
-
-/**
- * Get entity type info from an entity ID prefix
- */
-export function getEntityTypeFromId(entityId: string): { type: string; icon: string; routePrefix: string } {
-	const prefix = entityId.split('_')[0];
-	return ENTITY_TYPE_MAP[prefix] || { type: 'unknown', icon: 'ri:question-line', routePrefix: '' };
-}
 
 /**
  * Build a route from an entity ID using namespace-based URLs
@@ -183,7 +152,6 @@ class WindowShellStore {
 	swipeProgress = $state(0);
 
 	viewCacheVersion = $state<number>(0); // Incremented when cache is invalidated
-	registry = $state<Map<string, EntityMetadata>>(new Map());
 
 	private initialized = false;
 	private urlSyncEnabled = false;
@@ -383,19 +351,6 @@ class WindowShellStore {
 		// shelf that read it; views re-fetch on the version bump alone. The
 		// parameter stays so callers that name a namespace still typecheck.
 		this.viewCacheVersion++;
-	}
-
-	// ============================================================================
-	// Entity Registry
-	// ============================================================================
-
-	updateEntityMetadata(entityId: string, updates: Partial<EntityMetadata>): void {
-		const existing = this.registry.get(entityId);
-		if (existing) {
-			const newRegistry = new Map(this.registry);
-			newRegistry.set(entityId, { ...existing, ...updates });
-			this.registry = newRegistry;
-		}
 	}
 
 	// ============================================================================
@@ -1392,8 +1347,7 @@ class WindowShellStore {
 			panes: this.panes,
 			activePaneId: this.activePaneId,
 			isSplit: this.isSplit,
-			activeTab: this.activeTab,
-			registry: Object.fromEntries(this.registry)
+			activeTab: this.activeTab
 		});
 	}
 }

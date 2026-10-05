@@ -8,6 +8,7 @@
 import { sanitizeUrl } from '$lib/utils/urlUtils';
 
 import { noteRequestId } from '$lib/log';
+import { backendUrl } from '$lib/config/backend';
 
 const API_BASE = '/api';
 
@@ -449,14 +450,23 @@ export function setDisplayHours(hours: {
 // Sidebar pins
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * A pin as the box resolves it (`api/pins.rs` PinView): the URL, plus what it
+ * points at now. `title`, `icon` and `color` are the thing's; `label` is the
+ * pin's own and names only a pin with no record behind it.
+ */
 export interface Pin {
 	id: string;
 	url: string;
+	/** `chat`, `page`, `project`, a wiki kind, `web`, or `route`. Absent from an older box. */
+	kind?: string;
+	/** The thing's name now. Absent from an older box, which sends `label` only. */
+	title?: string;
 	label: string | null;
 	icon: string | null;
 	sort_order: number;
 	pinned_at: string;
-	/** A `--cat-*` token key ('orange', 'emerald'…), never a hex. See CAT_COLORS. */
+	/** A `--cat-*` token key, or a custom hex (see pin-colors.ts). */
 	color: string | null;
 }
 
@@ -779,6 +789,9 @@ export interface StreamHealth {
 	/** No source writes it, yet rows exist — the box computes it from other
 	 *  streams, so "connect something" is the wrong advice. */
 	derived: boolean;
+	/** Stays only: this week's hours at a place, against the hours the phone
+	 *  was reporting. Absent from servers that predate it. */
+	coverage?: { stay_hours: number; tracked_hours: number } | null;
 }
 
 /**
@@ -1297,7 +1310,8 @@ export async function uploadDriveFile(
 	// Use XMLHttpRequest for progress tracking
 	return new Promise((resolve, reject) => {
 		const xhr = new XMLHttpRequest();
-		xhr.open('POST', `${API_BASE}/drive/upload`);
+		// XHR bypasses the fetch rewrite, so the box's origin is spelled out.
+		xhr.open('POST', backendUrl(`${API_BASE}/drive/upload`));
 
 		xhr.upload.onprogress = (e) => {
 			if (e.lengthComputable && onProgress) {
@@ -1496,7 +1510,8 @@ export async function uploadMedia(
 	// Use XMLHttpRequest for progress tracking
 	return new Promise((resolve, reject) => {
 		const xhr = new XMLHttpRequest();
-		xhr.open('POST', `${API_BASE}/media/upload`);
+		// XHR bypasses the fetch rewrite, so the box's origin is spelled out.
+		xhr.open('POST', backendUrl(`${API_BASE}/media/upload`));
 
 		xhr.upload.onprogress = (e) => {
 			if (e.lengthComputable && onProgress) {
@@ -1565,7 +1580,7 @@ export function deleteChat(chatId: string): Promise<{ deleted: boolean }> {
 //
 // A Project is a manual collection the user returns to: a project, pet, hobby,
 // goal, or topic. It gathers entities, chats, and pages as URL-native members
-// and carries a single accent tint plus a catch-up memo (`current_status`).
+// and carries an icon, a color and a brief (`instructions`).
 // A chat lives in at most one Project (see `updateChat`'s `projectId`).
 // =============================================================================
 
@@ -1575,8 +1590,6 @@ export interface Project {
 	name: string;
 	icon: string | null;
 	accent_color: string | null;
-	current_status: string | null;
-	current_status_at: string | null;
 	instructions: string | null;
 	sort_order: number;
 	/** Set when the project is closed: kept, out of the working view. Not the trash. */
@@ -1606,6 +1619,11 @@ export interface ProjectItem {
 	sort_order: number;
 	role: ProjectItemRole;
 	added_at: string;
+	/** Resolved by the server with the project. Absent from a box older than the field. */
+	title?: string;
+	kind?: string;
+	/** Drive files only: `extraction_status` as stored. */
+	status?: string;
 }
 
 /** One entity referenced across a project's members. */
@@ -1684,7 +1702,7 @@ export function createProject(body: {
 
 /**
  * PUT /api/projects/:id — update a Project. For the nullable fields
- * (`icon`/`accent_color`/`current_status`): omit the key to leave unchanged,
+ * (`icon`/`accent_color`/`instructions`): omit the key to leave unchanged,
  * send `null` to clear, send a value to set.
  */
 export function updateProject(
@@ -1693,7 +1711,6 @@ export function updateProject(
 		name?: string;
 		icon?: string | null;
 		accent_color?: string | null;
-		current_status?: string | null;
 		instructions?: string | null;
 		sort_order?: number;
 	}
@@ -2140,6 +2157,27 @@ export function getChat<T = unknown>(id: string, signal?: AbortSignal): Promise<
 }
 export function getChatUsage<T = unknown>(id: string): Promise<T> {
 	return apiGet<T>(`/chats/${encodeURIComponent(id)}/usage`);
+}
+/** What a URL's thing is called and wears now (`refs::resolve_identities`). */
+export interface RefIdentity {
+	url: string;
+	kind: string;
+	title: string;
+	icon: string | null;
+	color: string | null;
+	state: 'live' | 'trashed' | 'gone' | 'unknown';
+}
+export function resolveRefs(urls: string[]): Promise<{ refs: RefIdentity[] }> {
+	return apiSend('POST', '/refs/resolve', { urls });
+}
+
+/** The chats with a turn running on the box right now, from any device. */
+export function listLiveChats(): Promise<{ running: string[] }> {
+	return apiGet('/chats/live');
+}
+/** The person has this chat on screen: every reply in it so far is read. */
+export function markChatSeen(id: string): Promise<unknown> {
+	return apiSend('POST', `/chats/${encodeURIComponent(id)}/seen`, {});
 }
 export function setChatTitle<T = unknown>(body: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/chats/title', body);

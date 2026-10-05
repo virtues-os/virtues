@@ -9,6 +9,8 @@ import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { GETTING_STARTED_CHAT_ID } from '$lib/components/chat/getting-started/getting-started';
 import { INTERVIEW_CHAT_ID } from '$lib/components/chat/interview/interview';
 import { PROJECT_ICON } from '$lib/utils/iconHelpers';
+import { parseRef } from '$lib/utils/refRoutes';
+import { untitled } from '$lib/refs/identity.svelte';
 import { chatSessions } from '$lib/stores/chatSessions.svelte';
 import { projectStore } from '$lib/stores/project.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -426,4 +428,54 @@ export function projectRowMenuItems(
 			action: () => void deleteProject(project),
 		},
 	];
+}
+
+/**
+ * The glyph for a project member by its url, from the shell's drawn set so a
+ * project's contents wear the same marks as the sidebar that lists them. A
+ * link out keeps an interface symbol: there is no drawn object for "a page
+ * somewhere else".
+ */
+export function memberIcon(url: string): string {
+	if (/^https?:\/\//.test(url)) return 'ri:external-link-line';
+	const map: Record<string, string> = {
+		page: 'atlas:pages',
+		person: 'atlas:people',
+		place: 'atlas:places',
+		org: 'atlas:organizations',
+		file: 'atlas:files',
+		day: 'atlas:day',
+		year: 'atlas:years',
+		chat: 'atlas:chats',
+		source: 'atlas:sources'
+	};
+	return map[parseRef(url)?.kind ?? ''] ?? 'ri:links-line';
+}
+
+/**
+ * What to call a member: the name the server resolved, else a link's host,
+ * else what kind of thing it is. Never the raw url, which is what a box
+ * older than the resolved names would otherwise show.
+ */
+export function memberName(item: { url: string; title?: string }): string {
+	if (item.title) return item.title;
+	if (/^https?:\/\//.test(item.url)) {
+		try {
+			return new URL(item.url).hostname.replace(/^www\./, '');
+		} catch {
+			return item.url;
+		}
+	}
+	const kind = parseRef(item.url)?.kind;
+	if (kind === 'chat' || kind === 'page' || kind === 'project') return untitled(kind);
+	const names: Record<string, string> = {
+		person: 'Person',
+		place: 'Place',
+		org: 'Organization',
+		file: 'File',
+		day: 'Day',
+		year: 'Year',
+		source: 'Source'
+	};
+	return names[kind ?? ''] ?? 'Item';
 }

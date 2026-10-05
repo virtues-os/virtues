@@ -454,6 +454,7 @@ pub async fn update_person(
         .execute(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to mark person rename: {}", e)))?;
+        crate::api::wiki_articles::retitle_article(pool, "person", &id).await?;
     }
 
     get_person(pool, id).await
@@ -580,6 +581,7 @@ pub async fn update_wiki_place(
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update place: {}", e)))?;
+    crate::api::wiki_articles::retitle_article(pool, "place", &id).await?;
 
     get_wiki_place(pool, id).await
 }
@@ -696,6 +698,7 @@ pub async fn update_organization(
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update organization: {}", e)))?;
+    crate::api::wiki_articles::retitle_article(pool, "organization", &id).await?;
 
     get_organization(pool, id).await
 }

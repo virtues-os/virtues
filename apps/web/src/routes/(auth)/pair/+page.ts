@@ -25,8 +25,12 @@ import type { PageLoad } from './$types';
  * returning would paint the page we are leaving for a frame first.
  */
 export const load: PageLoad = async () => {
-	if (typeof window !== 'undefined' && (window as unknown as Record<string, unknown>).__VIRTUES_MOBILE__) {
-		window.location.replace('/connect.html#reset');
+	const shell = typeof window !== 'undefined' ? (window as unknown as Record<string, unknown>) : null;
+	// The app's own copy (the phone, and the Mac since 2026-09-29): the box
+	// refused this device, and `/reconnect` says so and can pair it again.
+	// It used to go through `connect.html#reset`, which now forwards there.
+	if (shell && (shell.__VIRTUES_BACKEND_ORIGIN__ || shell.__VIRTUES_MOBILE__)) {
+		window.location.replace('/reconnect');
 		await new Promise(() => {});
 	}
 	return {};

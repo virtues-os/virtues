@@ -18,7 +18,6 @@
  */
 
 import { chatSessions } from './chatSessions.svelte';
-import { mobileLayout } from './mobileLayout.svelte';
 
 const RETRY_MS = 12_000;
 
@@ -32,10 +31,12 @@ if (typeof window !== 'undefined') {
 	});
 	window.addEventListener('offline', () => (online = false));
 
-	// Phone chrome only: the desktop has its own error surfaces, and this
-	// module loads everywhere the shell does.
+	// Every layout since 2026-09-29: the Mac keeps its own copy of the app up
+	// when the server goes away, so the desktop needs the banner to heal
+	// itself too (ServerUnreachableBar). Only while there is something to heal
+	// and someone to see it, so a healthy app never polls.
 	setInterval(() => {
-		if (document.hidden || !mobileLayout.isMobile) return;
+		if (document.hidden) return;
 		if (!online || chatSessions.error !== null) void chatSessions.load();
 	}, RETRY_MS);
 }

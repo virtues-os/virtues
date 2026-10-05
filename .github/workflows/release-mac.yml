@@ -43,6 +43,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Tags, for the version stamp on the Mac's own copy of the web app
+          # (apps/web/scripts/bake-desktop-ui.sh): unstamped, it reads `dev`
+          # and refuses every over-the-air update from its server.
+          fetch-depth: 0
 
       # Resolve version + channel from the tag:
       #   • `mac-edge` (or dispatch "edge") → edge channel, prerelease, rolling;

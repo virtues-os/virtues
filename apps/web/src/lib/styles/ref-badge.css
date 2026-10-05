@@ -1,15 +1,14 @@
 /**
- * Reference styles — two densities, one primitive.
+ * Reference styles for rendered output.
  *
- * A ref (and a citation, which is just a ref) has two treatments, chosen by
- * surface: a filled PILL on editable surfaces, where a ref is a token you
- * inserted, and a Wikipedia-style LINK in rendered output, where load-bearing
- * citations recur in prose and must disappear into the text.
+ * A ref (and a citation, which is just a ref) reads as a Wikipedia-style LINK,
+ * because load-bearing citations recur in prose and must disappear into the
+ * text.
  *
- * - Ref.svelte (.ref-link)                    — rendered output: chat answers, previews
- * - CodeMirror (.cm-entity-link, theme.css)   — page editor AND chat composer (editable)
- *
- * Both share the accent color token, so the two treatments read as one family.
+ * - Ref.svelte (.ref-link, .ref-link--quiet)  — rendered output: chat answers, previews, the day biography
+ * - CodeMirror (.cm-ref-link, codemirror/extensions/ref-links.css)
+ *                                             — page editor AND chat composer (editable),
+ *                                               the same dotted hairline as .ref-link--quiet
  */
 
 :root {

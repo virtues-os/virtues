@@ -103,7 +103,7 @@
 	{#if r.phase.kind === "wifi"}
 		{@const link = r.phase.link}
 		<div class="leaf" in:fade={{ duration: 200 }}>
-			<StepWifi {link} onjoined={(url) => void r.joined(url)} onlost={() => r.lost()} />
+			<StepWifi {link} onjoined={(url) => void r.joined(url)} onlost={() => void r.lost()} />
 		</div>
 	{:else}
 		<div class="leaf" in:fade={{ duration: 200 }}>

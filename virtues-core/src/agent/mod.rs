@@ -244,8 +244,9 @@ impl AgentLoop {
 
                 // Checked between events rather than with a `select!`, because
                 // `yield` inside a select arm does not survive `async_stream`.
-                // Aborting drops the response body, which ends the generation
-                // and its billing; what streamed before stands.
+                // Aborting drops the response body; what streamed before
+                // stands. The gateway may still read the provider's reply to
+                // its end and bill it, which this box never sees.
                 let mut cancelled_mid_stream = false;
                 while let Some(event) = events.recv().await {
                     yield event;
@@ -272,9 +273,10 @@ impl AgentLoop {
                         // The one ending that IS an error event: the reply
                         // stopped for a reason outside the turn, and the
                         // person needs the card and the retry.
-                        tracing::error!(step, error = %e, "the model stream failed");
+                        let code = turn::stream_error_code(&e);
+                        tracing::error!(step, ?code, error = %e, "the model stream failed");
                         finish = FinishReason::Error;
-                        yield AgentEvent::error(e.to_string(), Some(turn::stream_error_code(&e)), false);
+                        yield AgentEvent::error(turn::stream_error_text(&e), Some(code), false);
                         break;
                     }
                 };
@@ -301,9 +303,25 @@ impl AgentLoop {
                     break;
                 }
 
-                let tool_results = turn
-                    .run_tools(&tool_executor, result.tool_calls.clone(), &context, &executor_config)
-                    .await;
+                // Raced against Stop, so Stop ends a running tool rather than
+                // waiting on it: dropping the calls drops a shell command's
+                // process-group guard, which kills the command.
+                let run = turn.run_tools(&tool_executor, result.tool_calls.clone(), &context, &executor_config);
+                let ran = match &cancel_token {
+                    Some(token) => tokio::select! {
+                        results = run => Some(results),
+                        _ = token.cancelled() => None,
+                    },
+                    None => Some(run.await),
+                };
+                let Some(tool_results) = ran else {
+                    tracing::info!(step, "Stop pressed while tools ran — stopping them");
+                    for call in &result.tool_calls {
+                        yield turn::stopped(call).to_event();
+                    }
+                    finish = FinishReason::Cancelled;
+                    break;
+                };
                 let awaiting_user = tool_results.iter().any(turn::needs_user);
                 for tool_result in &tool_results {
                     yield tool_result.to_event();

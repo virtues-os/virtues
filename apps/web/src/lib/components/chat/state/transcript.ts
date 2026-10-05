@@ -32,13 +32,21 @@ export interface MessageMeta {
 	stopped?: boolean;
 	cutShort?: boolean;
 	interrupted?: boolean;
+	unavailable?: boolean;
 	unattended?: boolean;
 	maxSteps?: boolean;
 	budget?: boolean;
 }
 
 /** Why a reply is partial, as StoppedNotice words it. */
-export type StopReason = "stopped" | "length" | "interrupted" | "unattended" | "max_steps" | "budget";
+export type StopReason =
+	| "stopped"
+	| "length"
+	| "interrupted"
+	| "unavailable"
+	| "unattended"
+	| "max_steps"
+	| "budget";
 
 /**
  * The one reason to show under a partial reply, or null for a whole one. A
@@ -49,6 +57,7 @@ export function stopReason(meta: MessageMeta | undefined): StopReason | null {
 	if (!meta) return null;
 	if (meta.stopped) return "stopped";
 	if (meta.cutShort) return "length";
+	if (meta.unavailable) return "unavailable";
 	if (meta.interrupted) return "interrupted";
 	if (meta.unattended) return "unattended";
 	if (meta.maxSteps) return "max_steps";
@@ -64,6 +73,12 @@ export interface SplitTurn {
 	reasoning: string;
 	/** Text runs that came before the reply: the model saying what it was about to do. */
 	narration: string[];
+	/**
+	 * The newest narration run, if the call right after it is the newest
+	 * call — the line that introduced what is in flight. Empty when the
+	 * model has since made a call without saying anything.
+	 */
+	intent: string;
 	/** Index of the first part that belongs in the body; text before it is narration. */
 	bodyFromIndex: number;
 	/** Whether the thinking block has anything to show. */
@@ -106,13 +121,18 @@ export function splitTurn(parts: any[], isStreaming: boolean): SplitTurn {
 		.map((p) => p.text || "")
 		.filter(Boolean)
 		.join("\n");
-	const narration = parts
-		.filter((p, i) => isText(p) && i < bodyFromIndex)
-		.map((p) => p.text.trim());
+	const narrationAt = parts
+		.map((p, i) => i)
+		.filter((i) => isText(parts[i]) && i < bodyFromIndex);
+	const narration = narrationAt.map((i) => parts[i].text.trim());
+	const lastSaid = narrationAt.at(-1) ?? -1;
+	const callsSince = parts.filter((p, i) => i > lastSaid && p.type.startsWith("tool-")).length;
+	const intent = lastSaid >= 0 && callsSince === 1 ? narration[narration.length - 1] : "";
 	return {
 		toolParts,
 		reasoning,
 		narration,
+		intent,
 		bodyFromIndex,
 		hasThinkingContent: !!reasoning || toolParts.length > 0 || narration.length > 0,
 	};
@@ -142,6 +162,8 @@ export function convertMessageToParts(msg: any, metadata: Map<string, MessageMet
 	const stopped = msg.subject === "cancelled";
 	const cutShort = msg.subject === "length";
 	const interrupted = msg.subject === "interrupted";
+	// The model's provider turned the call away, so nothing was cut off.
+	const unavailable = msg.subject === "unavailable";
 	// The box's own cap, and the turn using up its steps. Both used to arrive
 	// as one of the three above — the cap as the person's own stop.
 	const unattended = msg.subject === "unattended";
@@ -154,6 +176,7 @@ export function convertMessageToParts(msg: any, metadata: Map<string, MessageMet
 		stopped ||
 		cutShort ||
 		interrupted ||
+		unavailable ||
 		unattended ||
 		maxSteps ||
 		budget
@@ -164,6 +187,7 @@ export function convertMessageToParts(msg: any, metadata: Map<string, MessageMet
 			stopped,
 			cutShort,
 			interrupted,
+			unavailable,
 			unattended,
 			maxSteps,
 			budget,
@@ -172,7 +196,7 @@ export function convertMessageToParts(msg: any, metadata: Map<string, MessageMet
 
 	// If message already has parts array (e.g., checkpoint messages), use it directly
 	if (msg.parts && Array.isArray(msg.parts) && msg.parts.length > 0) {
-		return msg.parts;
+		return msg.parts.map(perToolType);
 	}
 
 	// Otherwise, construct parts from individual fields (legacy format)
@@ -211,6 +235,17 @@ export function convertMessageToParts(msg: any, metadata: Map<string, MessageMet
 	return parts;
 }
 
+/**
+ * A stored tool part under its own type, `tool-<toolName>`, as it streamed.
+ * Every per-tool render matches that exact type. Boxes before the wire fix
+ * serve reloaded parts as `tool-invocation`, and a phone can be newer than
+ * its box, so the client accepts both.
+ */
+function perToolType(part: any): any {
+	if (part?.type !== "tool-invocation" || !part.toolName) return part;
+	return { ...part, type: `tool-${part.toolName}` };
+}
+
 /** One stored turn as the view holds it. `createdAt` rides along because
  *  the getting-started room places the interview's opening among the
  *  turns by time — all three load paths must carry it, and only one did
@@ -221,6 +256,9 @@ export function toUiMessage(msg: any, metadata: Map<string, MessageMeta>) {
 		role: msg.role as "user" | "assistant" | "checkpoint",
 		parts: convertMessageToParts(msg, metadata),
 		createdAt: msg.timestamp ? new Date(msg.timestamp) : undefined,
+		// The span of the turn that wrote it, as the box recorded it.
+		startedAt: msg.startedAt ? new Date(msg.startedAt) : undefined,
+		endedAt: msg.endedAt ? new Date(msg.endedAt) : undefined,
 		// The room marks each line it speaks (`gs:done:connect_ai`, …), and
 		// the render needs it to tell a settled step from the one being
 		// asked. Dropped here until now, so every line looked the same.

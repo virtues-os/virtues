@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cut a dev set of the box's own maps (agents/plan/offline-maps-plan.md) into
+# Cut a dev set of the box's own maps (agents/record/map-tiles.md) into
 # data/maps/, which the dev core reads. Production boxes download the same
 # three kinds of file, pre-cut, from our file host; this makes them locally.
 #

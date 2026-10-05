@@ -6,7 +6,7 @@
  * blockquotes get left border, lists get a hanging indent, etc.
  *
  * Works by walking the Lezer markdown syntax tree and applying decorations.
- * Links are handled separately by entity-links.ts (all links render as pills).
+ * Links are handled separately by ref-links.ts (one plain-link widget).
  *
  * Every reveal here — heading `#`, quote `>`, list marker — requires the
  * editor to HAVE FOCUS, not just a caret on the line. The selection survives

@@ -112,6 +112,20 @@ export function parseEntityRoute(route: string): string | null {
 }
 
 /**
+ * `/kind/id` → its kind and id: the client's twin of the server's
+ * `refs::split_ref`, and the grammar every consumer should parse with. The
+ * legacy `/notebook/` reads as `project`; `?` and `#` never belong to an id.
+ * Null for an external URL or anything that is not a record route.
+ */
+export function parseRef(url: string): { kind: string; id: string } | null {
+	const m = /^\/([^/?#]+)\/([^?#]+)/.exec(url);
+	if (!m) return null;
+	const kind = ROUTE_TO_TYPE[`/${m[1]}`];
+	if (!kind) return null;
+	return { kind, id: decodeURIComponent(m[2]) };
+}
+
+/**
  * Get entity type from a route URL
  * @example getEntityTypeFromRoute('/person/david-okafor') → 'person'
  */

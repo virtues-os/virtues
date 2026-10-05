@@ -273,6 +273,8 @@ pub async fn update_place(pool: &PgPool, id: String, req: UpdatePlaceRequest) ->
     .await
     .map_err(|e| Error::Database(format!("Failed to update place: {}", e)))?;
 
+    crate::api::wiki_articles::retitle_article(pool, "place", &id).await?;
+
     // Fetch the updated place
     get_place(pool, id).await
 }

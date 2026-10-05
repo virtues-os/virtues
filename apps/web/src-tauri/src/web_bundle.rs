@@ -152,6 +152,14 @@ pub enum Outcome {
         box_version: String,
         have: Option<String>,
     },
+    /// The downloaded bundle is not what it says it is: its files do not hash
+    /// to the `contentHash` in its own manifest, or it carries no readable
+    /// manifest. Nothing is applied. Not poisoned either: a box mid-upgrade can
+    /// serve a torn tarball once, and the next check simply tries again.
+    Corrupt {
+        expected: Option<String>,
+        got: String,
+    },
 }
 
 /// `<app-data>/web-bundles`.
@@ -211,22 +219,114 @@ pub fn active_bundle(app_data: &Path) -> Option<PathBuf> {
     is_usable(&dir).then_some(dir)
 }
 
-/// The overlay bundle this PROCESS booted from — captured once, right after
-/// startup resolution and before any window loads. Distinct from
-/// `active_bundle_id`, which re-reads the pointer and therefore changes when
-/// the background check applies a new bundle mid-session; boot identity is a
-/// process-lifetime fact, and boot-ok must be judged against it.
-static BOOTED: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+// ─── The bundle a page load serves from ─────────────────────────────────────
+//
+// **A page load is pinned to one bundle for its whole life.** A loaded
+// `index.html` goes on requesting its own content-hashed chunks, which exist
+// only in the bundle it came from. So which bundle serves is decided once,
+// when the page document is requested, and every later request of that page
+// is answered from the same place.
+//
+// Until 2026-09-29 the pin was per PROCESS for boot-ok (`capture_booted`) but
+// per REQUEST for serving (`active_bundle`, re-read every time), and an apply
+// moves `active` mid-session. So after a second update, a running page asked
+// for its own chunks and got the new bundle, which does not have them: a
+// lazily loaded view 404'd into a blank pane until the app was relaunched.
+// Pinning per page load fixes that, and is what lets a staged bundle apply
+// with a plain page reload (on both platforms: a Mac is almost never
+// relaunched, since closing its window only hides it) instead of waiting for
+// the next launch. See agents/plan/local-ui-plan.md.
 
-/// Call after `resolve_pending_at_startup`, before building the webview.
-pub fn capture_booted(app_data: &Path) {
-    let _ = BOOTED.set(active_bundle_id(app_data));
+/// Held while pointers move, by an apply and by a page load settling
+/// rollback, so neither sees the other half-done. Held for file writes only,
+/// never across a download, so a page load never waits on the network.
+fn pointer_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// `None` = booted from the baked bundle (or a shell that never captured —
-/// the desktop, which has no overlay store).
-pub fn booted_bundle_id() -> Option<String> {
-    BOOTED.get().cloned().flatten()
+/// The current page load's bundle, per bundle store (one per app; keyed so the
+/// tests, which each use their own store, cannot see each other's pins). No
+/// entry: no page has loaded yet. `None`: pinned to the baked build.
+fn serving() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, Option<String>>> {
+    static SERVING: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, Option<String>>>,
+    > = std::sync::OnceLock::new();
+    SERVING.get_or_init(Default::default)
+}
+
+/// The pin for `app_data`: outer `None` when no page has loaded.
+fn pinned(app_data: &Path) -> Option<Option<String>> {
+    serving().lock().ok()?.get(&bundles_root(app_data)).cloned()
+}
+
+/// The box's own paths. They are data, never part of the app, so the app's
+/// scheme answers them with a 404 rather than the SPA fallback. The page is
+/// meant to reach them on the box (`backendUrl()` / the fetch rewrite in
+/// `apps/web/src/lib/config/backend.ts`); a request that lands here instead
+/// is a call site that forgot to, and serving it `200.html` both hid that
+/// (an image that renders nothing, an upload that "succeeds") and started a
+/// new page load in the middle of the page, moving its bundle pin.
+pub fn is_backend_path(uri_path: &str) -> bool {
+    const PREFIXES: [&str; 7] = ["/api", "/auth", "/webhook", "/health", "/face", "/ws", "/oauth"];
+    PREFIXES
+        .iter()
+        .any(|p| uri_path == *p || uri_path.starts_with(&format!("{p}/")))
+}
+
+/// Is `resolved` (from [`resolve_request_path`]) the document a page load
+/// starts with, rather than one of its assets?
+pub fn is_page_document(resolved: &str) -> bool {
+    resolved == "index.html" || resolved == "200.html"
+}
+
+/// A page is loading. Settle rollback ([`resolve_pending`]), then pin this load
+/// to whatever is active now. Call for the page document, before reading it.
+/// Returns true when a rollback happened (worth a log line).
+pub fn begin_page_load(app_data: &Path) -> bool {
+    let _pointers = pointer_lock();
+    let rolled_back = resolve_pending(app_data);
+    let id = active_bundle_id(app_data);
+    if let Ok(mut g) = serving().lock() {
+        g.insert(bundles_root(app_data), id);
+    }
+    rolled_back
+}
+
+/// The bundle the current page load serves from; `None` for the baked build
+/// or before any page has loaded.
+pub fn serving_bundle_id(app_data: &Path) -> Option<String> {
+    pinned(app_data).flatten()
+}
+
+/// Where the current page's assets come from: its pinned bundle, or `None`
+/// for the baked build. A pinned bundle that has become unusable degrades to
+/// the baked build rather than serving half a page. Before any page has loaded
+/// this reads `active`, which is what the first load would pin anyway.
+fn serving_dir(app_data: &Path) -> Option<PathBuf> {
+    match pinned(app_data) {
+        Some(Some(hash)) => {
+            let dir = bundles_root(app_data).join(hash);
+            is_usable(&dir).then_some(dir)
+        }
+        Some(None) => None,
+        None => active_bundle(app_data),
+    }
+}
+
+/// Has a newer bundle been applied since this page loaded? Then the next page
+/// load picks it up, and the UI can reload at a quiet moment (while hidden).
+/// False before any page has loaded.
+pub fn update_ready(app_data: &Path) -> bool {
+    let Some(pin) = pinned(app_data) else {
+        return false;
+    };
+    active_bundle_id(app_data) != pin
+}
+
+/// The page rendered: confirm the bundle it loaded from (see [`mark_boot_ok`]).
+pub fn confirm_page_load(app_data: &Path) {
+    mark_boot_ok(app_data, serving_bundle_id(app_data).as_deref());
 }
 
 /// Identity of the active overlay bundle — its content hash — or `None` when
@@ -242,16 +342,19 @@ pub fn active_bundle_id(app_data: &Path) -> Option<String> {
     is_usable(&root.join(&hash)).then_some(hash)
 }
 
-/// Resolve rollback state at startup, before any window loads.
+/// Resolve rollback state as a page loads, before it is served.
 ///
-/// A pending pointer means a bundle was applied and no session booted from it
-/// has confirmed yet. That is TWO cases, and they used to be conflated:
+/// A pending pointer means a bundle was applied and no page load from it has
+/// confirmed yet. That is TWO cases, and they used to be conflated:
 ///
-///   • No boot has been attempted (apply runs mid-session; the old bundle kept
-///     running). This launch IS the attempt — mark it and serve the bundle.
-///   • The previous launch attempted it (booting == pending) and never
+///   • No load has been attempted (apply runs mid-session; the old bundle kept
+///     serving). This load IS the attempt — mark it and serve the bundle.
+///   • The previous load attempted it (booting == pending) and never
 ///     confirmed — so it does not boot. Abandon it, remember it as poisoned,
 ///     and fall back to whatever it replaced.
+///
+/// Per page load, not per launch, since 2026-09-29: a staged bundle now takes
+/// effect at the next reload (see "The bundle a page load serves from").
 ///
 /// Rolling back on sight of a bare pending pointer — the old behavior — meant
 /// a boot-ok landing before the mid-session apply left a good bundle to be
@@ -259,7 +362,7 @@ pub fn active_bundle_id(app_data: &Path) -> Option<String> {
 ///
 /// Returns true when a rollback happened (worth logging; the user sees only
 /// that the app works).
-pub fn resolve_pending_at_startup(app_data: &Path) -> bool {
+pub fn resolve_pending(app_data: &Path) -> bool {
     let root = bundles_root(app_data);
     let Some(pending) = read_pointer(&root, PTR_PENDING) else {
         // No pending bundle — a leftover attempt marker refers to nothing.
@@ -381,10 +484,14 @@ pub fn mark_boot_ok(app_data: &Path, booted: Option<&str>) {
 /// bundle the app is about to boot from.
 pub fn prune(app_data: &Path) -> usize {
     let root = bundles_root(app_data);
-    let keep: Vec<String> = [PTR_ACTIVE, PTR_PREVIOUS, PTR_PENDING]
+    let mut keep: Vec<String> = [PTR_ACTIVE, PTR_PREVIOUS, PTR_PENDING]
         .iter()
         .filter_map(|p| read_pointer(&root, p))
         .collect();
+    // And the bundle the open page is still serving from: two applies without
+    // a reload in between move it out of every pointer, and deleting it would
+    // pull the files out from under a live page.
+    keep.extend(serving_bundle_id(app_data));
 
     let Ok(entries) = fs::read_dir(&root) else {
         return 0;
@@ -441,6 +548,9 @@ pub fn record_outcome(app_data: &Path, outcome: &Outcome) {
         }),
         Outcome::VersionUnreadable { box_version, have } => serde_json::json!({
             "state": "version_unreadable", "boxVersion": box_version, "have": have,
+        }),
+        Outcome::Corrupt { expected, got } => serde_json::json!({
+            "state": "corrupt", "expected": expected, "got": got,
         }),
     };
     let root = bundles_root(app_data);
@@ -644,37 +754,114 @@ pub fn check_and_apply(
         return Ok(Outcome::NoBundleOnBox);
     };
 
+    apply_tarball(app_data, &tar_gz, &remote.content_hash, shell_surface, baked_version)
+}
+
+/// Unpack a downloaded bundle, prove it is what it says, and make it active.
+///
+/// **The bundle is judged by the manifest INSIDE it, never by the offer.** The
+/// offer (`/api/web-bundle/version`) and the tarball are two requests, so a
+/// box upgraded between them hands over a different build than the one decided
+/// on, and filing it under the offer's hash would put one build in another's
+/// directory. So: read the manifest the tarball carries, recompute the hash of
+/// what was unpacked ([`content_hash`]), refuse on any mismatch, and when the
+/// tarball turns out to be a different build than offered, run the same
+/// pre-download checks on it before it goes anywhere near a pointer.
+///
+/// Until 2026-09-29 nothing re-hashed an unpacked bundle; the directory was
+/// simply named after the hash the offer claimed.
+///
+/// Split from [`check_and_apply`] so everything after the download is testable
+/// with a real archive and no box.
+fn apply_tarball(
+    app_data: &Path,
+    tar_gz: &[u8],
+    offered_hash: &str,
+    shell_surface: u32,
+    baked_version: Option<&str>,
+) -> std::io::Result<Outcome> {
+    let root = bundles_root(app_data);
+
     // Unpack beside the target, then rename into place: a half-written
     // directory must never be reachable through the pointer.
-    let staging = root.join(format!(".staging-{}", remote.content_hash));
+    let staging = root.join(format!(".staging-{offered_hash}"));
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging)?;
-    unpack(&tar_gz, &staging)?;
+    let discard = |outcome: Outcome| -> std::io::Result<Outcome> {
+        let _ = fs::remove_dir_all(&staging);
+        Ok(outcome)
+    };
+    if let Err(e) = unpack(tar_gz, &staging) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(e);
+    }
 
     if !is_usable(&staging) {
-        let _ = fs::remove_dir_all(&staging);
-        return Ok(Outcome::NoBundleOnBox);
+        return discard(Outcome::NoBundleOnBox);
+    }
+    let packed = fs::read_to_string(staging.join(MANIFEST_NAME))
+        .ok()
+        .and_then(|m| Manifest::parse(&m));
+    let actual = content_hash(&staging)?;
+    let remote = match packed {
+        Some(m) if m.content_hash == actual => m,
+        Some(m) => {
+            return discard(Outcome::Corrupt {
+                expected: Some(m.content_hash),
+                got: actual,
+            })
+        }
+        None => return discard(Outcome::Corrupt { expected: None, got: actual }),
+    };
+    if remote.content_hash != offered_hash {
+        // A different build than the one decided on: decide again, on it.
+        if let Some(stop) = decide(&root, &remote, shell_surface, baked_version) {
+            return discard(stop);
+        }
     }
 
     let target = root.join(&remote.content_hash);
-    let _ = fs::remove_dir_all(&target);
-    fs::rename(&staging, &target)?;
-
-    // Remember what we are replacing before we replace it.
-    if let Some(prev) = read_pointer(&root, PTR_ACTIVE) {
-        let _ = write_pointer(&root, PTR_PREVIOUS, &prev);
+    if is_usable(&target) {
+        // Already here under this hash, so the same files: keep the directory
+        // (a page may be serving from it) and drop the download.
+        let _ = fs::remove_dir_all(&staging);
     } else {
-        clear_pointer(&root, PTR_PREVIOUS); // replacing the baked bundle
+        let _ = fs::remove_dir_all(&target);
+        fs::rename(&staging, &target)?;
+    }
+
+    // The pointer writes below and a page load's rollback settling
+    // (`begin_page_load`) must not interleave: a load landing between PENDING
+    // and ACTIVE would read "pending names a bundle that is not active", clear
+    // it as a torn apply, and leave the new bundle active with no rollback.
+    let _pointers = pointer_lock();
+
+    // Remember what we are replacing, as the rollback target, only if it is
+    // known to boot. An active bundle still pending never confirmed a page
+    // load (two applies without a reload in between), so it stays out and the
+    // last confirmed `previous` stands: rolling back must land on something
+    // that has rendered.
+    let pending_now = read_pointer(&root, PTR_PENDING);
+    match read_pointer(&root, PTR_ACTIVE) {
+        Some(prev) if pending_now.as_deref() != Some(prev.as_str()) => {
+            let _ = write_pointer(&root, PTR_PREVIOUS, &prev);
+        }
+        Some(_) => {}
+        None => clear_pointer(&root, PTR_PREVIOUS), // replacing the baked bundle
     }
     // PENDING first, then ACTIVE. These are two files, so a crash lands
     // between them, and the order decides which way that cuts. ACTIVE-first
     // leaves a bundle being served with no pending marker — which is precisely
     // the state rollback keys on, so a bundle that does not boot would have no
     // way back and the app would be stuck on it. PENDING-first leaves a marker
-    // naming a bundle that was never activated, which `resolve_pending_at_startup`
+    // naming a bundle that was never activated, which `resolve_pending`
     // now recognizes and clears.
     write_pointer(&root, PTR_PENDING, &remote.content_hash)?;
     write_pointer(&root, PTR_ACTIVE, &remote.content_hash)?;
+    // Released before the sweep, so a page load never waits on deleting old
+    // bundles. The sweep reads the pointers fresh, and anything a load
+    // settles in the meantime lands on a bundle a pointer still names.
+    drop(_pointers);
 
     // Sweep anything the three pointers no longer name. Done here rather than
     // at startup so it never delays a launch, and after the pointers move so a
@@ -839,14 +1026,15 @@ pub fn resolve_request_path(uri_path: &str) -> Option<String> {
     }
 }
 
-/// Read `path` out of the active overlay bundle, if one is active and has it.
+/// Read `path` out of the current page's overlay bundle, if it has one and the
+/// file is there.
 ///
 /// `None` means "fall through to the baked bundle" for every reason: no
 /// overlay, missing file, unreadable file. The caller must always have that
 /// fallback — this function never being able to fail is the property that keeps
 /// a bad bundle from costing the app its UI.
 pub fn read_from_overlay(app_data: &Path, path: &str) -> Option<Vec<u8>> {
-    let dir = active_bundle(app_data)?;
+    let dir = serving_dir(app_data)?;
     let file = dir.join(path);
     // Re-check after joining: `path` is already normalized, but the cost of
     // being wrong here is serving arbitrary files off the device.
@@ -867,6 +1055,51 @@ pub fn read_from_overlay(app_data: &Path, path: &str) -> Option<Vec<u8>> {
 fn escapes_dest(path: &Path) -> bool {
     path.components()
         .any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::RootDir))
+}
+
+/// A bundle's content hash, exactly as `apps/web/scripts/write-bundle-manifest.mjs`
+/// computes it: SHA-256 over each file's path relative to the bundle root
+/// (`/`-separated) followed by its bytes, in sorted path order, skipping the
+/// `.gz` siblings; the first 16 hex characters. The manifest itself is skipped
+/// too: the build stamps it AFTER hashing, so it was never part of the hash.
+///
+/// Checked against a real box's shipped build (2026-09-29, 597 files): this
+/// recomputation equals the `contentHash` its manifest carries.
+fn content_hash(dir: &Path) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) -> std::io::Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if entry.file_type()?.is_dir() {
+                walk(root, &path, out)?;
+            } else if path.extension().map_or(true, |e| e != "gz") {
+                let rel = path
+                    .strip_prefix(root)
+                    .unwrap_or(&path)
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                if rel != MANIFEST_NAME {
+                    out.push(rel);
+                }
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    walk(dir, dir, &mut files)?;
+    files.sort();
+    let mut hash = Sha256::new();
+    for rel in &files {
+        hash.update(rel.as_bytes());
+        hash.update(fs::read(dir.join(rel))?);
+    }
+    let digest = hash.finalize();
+    let mut hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    hex.truncate(16);
+    Ok(hex)
 }
 
 /// Unpack a gzipped tar into `dest`, skipping any entry that would escape it.
@@ -1075,7 +1308,7 @@ mod tests {
         // And so do pending/booting, which named a bundle we no longer serve —
         // left behind, the next launch would "roll back" what is not active.
         assert_eq!(read_pointer(&root, PTR_PENDING), None);
-        assert!(!resolve_pending_at_startup(&d), "nothing left to resolve");
+        assert!(!resolve_pending(&d), "nothing left to resolve");
     }
 
     #[test]
@@ -1189,10 +1422,10 @@ mod tests {
 
         // First launch after the apply: this IS the attempt, so it is marked
         // and served, not rolled back.
-        assert!(!resolve_pending_at_startup(&d), "first launch attempts it");
+        assert!(!resolve_pending(&d), "first launch attempts it");
         assert_eq!(read_pointer(&root, PTR_ACTIVE).as_deref(), Some("new2"));
         // Second launch with the attempt still unconfirmed: it does not boot.
-        assert!(resolve_pending_at_startup(&d));
+        assert!(resolve_pending(&d));
         assert_eq!(read_pointer(&root, PTR_ACTIVE).as_deref(), Some("old1"));
         assert!(!root.join("new2").exists(), "bad bundle is removed");
     }
@@ -1206,8 +1439,8 @@ mod tests {
         write_pointer(&root, PTR_PENDING, "new2").unwrap();
         // No previous: this overlaid the baked bundle.
 
-        assert!(!resolve_pending_at_startup(&d), "first launch attempts it");
-        assert!(resolve_pending_at_startup(&d));
+        assert!(!resolve_pending(&d), "first launch attempts it");
+        assert!(resolve_pending(&d));
         assert_eq!(read_pointer(&root, PTR_ACTIVE), None);
         assert_eq!(active_bundle(&d), None, "serves the baked bundle again");
     }
@@ -1221,7 +1454,7 @@ mod tests {
         write_pointer(&root, PTR_PENDING, "good3").unwrap();
 
         mark_boot_ok(&d, Some("good3")); // the SPA rendered, from that bundle
-        assert!(!resolve_pending_at_startup(&d), "nothing pending to resolve");
+        assert!(!resolve_pending(&d), "nothing pending to resolve");
         assert_eq!(read_pointer(&root, PTR_ACTIVE).as_deref(), Some("good3"));
     }
 
@@ -1311,6 +1544,98 @@ mod tests {
     }
 
     #[test]
+    fn box_paths_are_never_the_app() {
+        assert!(is_backend_path("/api/drive/files/f1/download"));
+        assert!(is_backend_path("/api"));
+        assert!(is_backend_path("/ws/yjs/p1"));
+        assert!(is_backend_path("/health"));
+        assert!(!is_backend_path("/apiary"), "a route that merely starts with the letters");
+        assert!(!is_backend_path("/"));
+        assert!(!is_backend_path("/setup"));
+        assert!(!is_backend_path("/_app/immutable/a.js"));
+    }
+
+    #[test]
+    fn a_page_keeps_its_own_bundle_until_the_next_load() {
+        // The bug this pin exists for: an apply mid-session moved `active`, and
+        // the open page's next chunk request was answered from the new bundle,
+        // which does not have it.
+        let app = tmp();
+        let root = bundles_root(&app);
+        plant(&root, "pinA");
+        fs::write(root.join("pinA").join("chunk-a.js"), "A").unwrap();
+        write_pointer(&root, PTR_ACTIVE, "pinA").unwrap();
+        assert!(!begin_page_load(&app));
+        assert!(!update_ready(&app));
+
+        // A background check applies B while the page is open.
+        plant(&root, "pinB");
+        write_pointer(&root, PTR_PREVIOUS, "pinA").unwrap();
+        write_pointer(&root, PTR_PENDING, "pinB").unwrap();
+        write_pointer(&root, PTR_ACTIVE, "pinB").unwrap();
+        assert_eq!(read_from_overlay(&app, "chunk-a.js").as_deref(), Some(&b"A"[..]), "still served from A");
+        assert!(update_ready(&app), "B waits for the next load");
+        prune(&app);
+        assert!(root.join("pinA").exists(), "the open page's bundle is never pruned");
+
+        // The next load takes B, and marks it as the attempt.
+        assert!(!begin_page_load(&app));
+        assert_eq!(serving_bundle_id(&app).as_deref(), Some("pinB"));
+        assert_eq!(read_from_overlay(&app, "chunk-a.js"), None, "A's chunk is not in B");
+        assert!(!update_ready(&app));
+        confirm_page_load(&app);
+        assert_eq!(read_pointer(&root, PTR_PENDING), None, "confirmed");
+    }
+
+    #[test]
+    fn two_applies_without_a_reload_keep_the_confirmed_rollback_target() {
+        // A confirmed; B applied but never loaded; then C applied. If C fails
+        // to boot, rollback must land on A, which rendered, not on B.
+        let app = tmp();
+        let root = bundles_root(&app);
+        plant(&root, "prevA");
+        write_pointer(&root, PTR_ACTIVE, "prevA").unwrap();
+
+        let tar_b = tarball(&bundle("0.2.0", BUNDLE_HASH));
+        assert!(matches!(apply_tarball(&app, &tar_b, BUNDLE_HASH, 1, Some("0.1.0")).unwrap(), Outcome::Applied { .. }));
+        assert_eq!(read_pointer(&root, PTR_PREVIOUS).as_deref(), Some("prevA"));
+
+        // C: a different bundle, hashed for real, applied while B is pending.
+        let c_dir = tmp();
+        fs::write(c_dir.join("index.html"), "<html>c</html>").unwrap();
+        fs::write(c_dir.join("200.html"), "<html>c</html>").unwrap();
+        let c_hash = content_hash(&c_dir).unwrap();
+        let tar_c = tarball(&[
+            ("index.html".into(), "<html>c</html>".into()),
+            ("200.html".into(), "<html>c</html>".into()),
+            (
+                MANIFEST_NAME.into(),
+                format!(r#"{{"version":"0.3.0","contentHash":"{c_hash}","minShellVersion":1}}"#),
+            ),
+        ]);
+        assert!(matches!(apply_tarball(&app, &tar_c, &c_hash, 1, Some("0.1.0")).unwrap(), Outcome::Applied { .. }));
+        assert_eq!(read_pointer(&root, PTR_PREVIOUS).as_deref(), Some("prevA"), "the unconfirmed B never becomes previous");
+        assert_eq!(read_pointer(&root, PTR_ACTIVE).as_deref(), Some(c_hash.as_str()));
+    }
+
+    #[test]
+    fn a_load_that_never_confirms_is_rolled_back_by_the_next() {
+        let app = tmp();
+        let root = bundles_root(&app);
+        plant(&root, "goodA");
+        plant(&root, "badB");
+        write_pointer(&root, PTR_PREVIOUS, "goodA").unwrap();
+        write_pointer(&root, PTR_PENDING, "badB").unwrap();
+        write_pointer(&root, PTR_ACTIVE, "badB").unwrap();
+        assert!(!begin_page_load(&app), "the first load is the attempt");
+        assert_eq!(serving_bundle_id(&app).as_deref(), Some("badB"));
+        // No confirm: the page never rendered. The next load rolls back.
+        assert!(begin_page_load(&app));
+        assert_eq!(serving_bundle_id(&app).as_deref(), Some("goodA"));
+        assert_eq!(fs::read_to_string(root.join(POISON_FILE)).unwrap(), "badB");
+    }
+
+    #[test]
     fn prune_keeps_what_the_pointers_name() {
         let d = tmp();
         let root = bundles_root(&d);
@@ -1392,6 +1717,107 @@ mod tests {
         assert_eq!(fs::read_to_string(dest.join("_app/chunk.js")).unwrap(), "console.log(1)");
     }
 
+    /// A gzipped tar of `files`, as the box's `/api/web-bundle/tarball` builds it.
+    fn tarball(files: &[(String, String)]) -> Vec<u8> {
+        let src = tmp();
+        for (path, body) in files {
+            let p = src.join(path);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, body).unwrap();
+        }
+        let mut buf = Vec::new();
+        {
+            let enc = flate2::write::GzEncoder::new(&mut buf, flate2::Compression::fast());
+            let mut b = tar::Builder::new(enc);
+            b.append_dir_all(".", &src).unwrap();
+            b.into_inner().unwrap().finish().unwrap();
+        }
+        buf
+    }
+
+    /// A small bundle whose manifest claims `hash`. The `.gz` file is an
+    /// encoding of a real one, not content, so it never enters the hash.
+    fn bundle(version: &str, hash: &str) -> Vec<(String, String)> {
+        vec![
+            ("index.html".into(), "<html>i</html>".into()),
+            ("200.html".into(), "<html>f</html>".into()),
+            ("_app/immutable/a.js".into(), "console.log(1)".into()),
+            ("_app/immutable/a.js.gz".into(), "gzipped".into()),
+            (
+                MANIFEST_NAME.into(),
+                format!(r#"{{"version":"{version}","contentHash":"{hash}","minShellVersion":1}}"#),
+            ),
+        ]
+    }
+
+    /// What `bundle`'s files really hash to, computed with write-bundle-manifest.mjs's
+    /// own algorithm in Node. Pinned here so this test proves the two
+    /// implementations AGREE rather than that Rust agrees with itself: if it
+    /// breaks, every OTA would be refused as corrupt. Fix the drift, never the
+    /// constant.
+    const BUNDLE_HASH: &str = "6519392619004f08";
+
+    #[test]
+    fn the_hash_matches_the_build_script() {
+        let d = tmp();
+        for (path, body) in bundle("0", "anything") {
+            let p = d.join(path);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, body).unwrap();
+        }
+        assert_eq!(content_hash(&d).unwrap(), BUNDLE_HASH);
+    }
+
+    #[test]
+    fn a_bundle_that_hashes_to_its_manifest_is_applied() {
+        let app = tmp();
+        let tar = tarball(&bundle("0.2.0", BUNDLE_HASH));
+        let out = apply_tarball(&app, &tar, BUNDLE_HASH, 1, Some("0.1.0")).unwrap();
+        assert_eq!(out, Outcome::Applied { content_hash: BUNDLE_HASH.into() });
+        assert_eq!(read_pointer(&bundles_root(&app), PTR_ACTIVE).as_deref(), Some(BUNDLE_HASH));
+    }
+
+    #[test]
+    fn files_that_do_not_match_their_manifest_are_refused() {
+        let app = tmp();
+        let fake = "0000000000000000";
+        let tar = tarball(&bundle("0.2.0", fake));
+        let out = apply_tarball(&app, &tar, fake, 1, Some("0.1.0")).unwrap();
+        assert_eq!(
+            out,
+            Outcome::Corrupt { expected: Some(fake.into()), got: BUNDLE_HASH.into() }
+        );
+        let root = bundles_root(&app);
+        assert_eq!(read_pointer(&root, PTR_ACTIVE), None, "nothing may become active");
+        assert!(!root.join(fake).exists());
+        assert!(!root.join(format!(".staging-{fake}")).exists(), "staging is cleaned up");
+    }
+
+    #[test]
+    fn a_different_build_than_offered_goes_under_its_own_hash() {
+        // The box was upgraded between the offer and the download. The
+        // tarball is a sound bundle, just not the one decided on: it is filed
+        // under the hash it actually has, after passing the same checks.
+        let app = tmp();
+        let tar = tarball(&bundle("0.3.0", BUNDLE_HASH));
+        let out = apply_tarball(&app, &tar, "offered0000000000", 1, Some("0.1.0")).unwrap();
+        assert_eq!(out, Outcome::Applied { content_hash: BUNDLE_HASH.into() });
+        let root = bundles_root(&app);
+        assert!(root.join(BUNDLE_HASH).exists());
+        assert!(!root.join("offered0000000000").exists());
+    }
+
+    #[test]
+    fn a_different_build_that_moved_backward_is_refused() {
+        // Same race, but the box went BACK between the two requests: the
+        // forward-only gate judges what arrived, not what was offered.
+        let app = tmp();
+        let tar = tarball(&bundle("0.0.9", BUNDLE_HASH));
+        let out = apply_tarball(&app, &tar, "offered0000000000", 1, Some("0.1.0")).unwrap();
+        assert!(matches!(out, Outcome::BoxBehind { .. }), "{out:?}");
+        assert_eq!(read_pointer(&bundles_root(&app), PTR_ACTIVE), None);
+    }
+
     #[test]
     fn a_poison_marker_is_dropped_once_the_box_moves_on() {
         let d = tmp();
@@ -1420,7 +1846,7 @@ mod tests {
         // was never served, so there is no evidence it fails to boot.
         write_pointer(&root, PTR_PENDING, "new1").unwrap();
 
-        assert!(!resolve_pending_at_startup(&d), "not a rollback");
+        assert!(!resolve_pending(&d), "not a rollback");
         assert_eq!(read_pointer(&root, PTR_PENDING), None, "marker cleared");
         assert!(
             !root.join(POISON_FILE).exists(),

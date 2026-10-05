@@ -10,8 +10,8 @@
 //!
 //! THE NAME FOLLOWS THE CONTACT until the owner renames the person. The
 //! canonical name is built only from structured fields (given, middle, family),
-//! never from emoji or decoration — a contact typed as "Caity 🌷" names a person
-//! "Caity". Everything else she answers to (the contact's nickname, a maiden
+//! never from emoji or decoration — a contact typed as "Nick 🌷" names a person
+//! "Nick". Everything else they answer to (the contact's nickname, a maiden
 //! name, whatever the name used to be) becomes an alias, which is what matching
 //! reads. The merge path used to leave `name` alone forever, so the first
 //! spelling a contact ever had was the only one the box ever knew.
@@ -297,7 +297,7 @@ fn merge_aliases(existing: &[String], add: &[String], name: &str) -> Vec<String>
 /// the name is still the one the contact last wrote (`contact_name`). Rows from
 /// before `contact_name` existed carry no such record, so for them the contact
 /// owns the name only while it still starts with the contact's given name — a
-/// "Caity 🌷" that has since become "Caity Ryan Richie" — and an owner edit that
+/// "Nick 🌷" that has since become "Nick Moreau" — and an owner edit that
 /// changed it to anything else is left alone.
 fn contact_owns_name(current: &str, metadata: &Value, contact: &ContactRecord) -> bool {
     if metadata.get("name_edited_at").is_some() {

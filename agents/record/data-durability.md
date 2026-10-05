@@ -148,149 +148,33 @@ confirmed-cursor protocol can be built on what's already there.
 
 ---
 
-## Track A — data integrity (no architecture change)
+## What became of the two tracks (2026-09-29)
 
-Fixes F1–F5 and F7's reconcile. Self-contained to the iOS queue + `ios_ingest`
-+ `action_runner`. Order by impact.
+The native iOS app this audit read was deleted; collection moved to the Tauri
+app with one Rust outbox shared by every collector
+(`crates/virtues-reach-client/src/outbox.rs`, from bd54da61). That rewrite, not
+a patch series, is where Track A landed:
 
-### A1. Deterministic record ids for location & HealthKit  *(linchpin)*
+- **A1** deterministic ids — records without a natural id get `UUIDv5(device +
+  stream + canonical record)` on the device, stable across retries.
+- **A2** no delete of un-acked data — a row is deleted only on a durable ack;
+  every failure is a backoff (30s → 5 min), never an age-out. The one exception
+  is a row whose payload no longer parses.
+- **A3** the HealthKit anchor is held when enqueue fails
+  (`plugins/health/ios/Sources/HealthKit.swift`).
+- **A5** subprocess wall-clock timeout plus a stale-`running` TTL
+  (`RUN_STALE_TTL_SECS`, `scheduler/applets.rs`).
+- **A6** batches are bounded by bytes as well as rows; the microphone stream
+  gets back-pressure (enqueue refused past 1 GiB, producer keeps its file)
+  rather than eviction. `ios_ingest` is still not one transaction, which the
+  deterministic ids make harmless: a resend of a half-written batch dedupes.
+- **A7** Low Power Mode throttles the drain (constrained mode) rather than
+  stopping it.
 
-- **Where:** iOS payload structs / `combine()` for `CoreLocationStreamData` and
-  `HealthKitStreamData` (+ the HK subtypes).
-- **What:** generate a stable `id` per record **on the device** — `UUIDv5` of
-  `device_id + timestamp + lat/lon` (location) and `device_id + timestamp +
-  metric_type + value` (HK) — and **persist it with the SQLite row** so a retry
-  re-sends the *same* id. The box already dedupes on it; no box change needed
-  beyond confirming `stream_id_or_new` reads `id`.
-- **Why first:** the moment this lands, every retry is harmless — it de-risks
-  unbounded retry (A2) and the timeout churn (A4).
+**Track B is moot.** WireGuard is gone; the phone reaches the box over iroh, and
+background delivery rides location wakes with endpoint parking. An out-of-band
+wake for a wedged socket is part of
+[`../plan/reminders-plan.md`](../plan/reminders-plan.md).
 
-### A2. Split transient vs permanent; dead-letter instead of delete
-
-- **Where:** `BatchUploadCoordinator.handleFailedUpload` + `SQLiteManager`.
-- **What:** classify `NetworkError`. **Transient** (timeout, no-connection, 5xx,
-  429, `notProcessed`, lost-ack) → retry indefinitely with the existing
-  backoff+jitter; **do not** count toward a delete cap. **Permanent** (400, 403,
-  decode failure) → move to a `dead_letter` status (new) with the reason; surface
-  in the UI; never auto-delete un-acked data. Remove the 3-day delete of
-  transiently-failed rows.
-- **Note:** keep a (large) cap on *attempts-without-progress* only as a
-  poison-pill guard → dead-letter, not deletion.
-
-### A3. Advance HealthKit anchor only after durable enqueue
-
-- **Where:** `HealthKitManager` query→enqueue→anchor sequence.
-- **What:** write the samples to SQLite first; persist the new anchor only after
-  the enqueue is confirmed. On enqueue failure, do not advance the anchor (the
-  next query re-emits).
-
-### A4. Reconcile-after-timeout via the runs API
-
-- **Where:** `BatchUploadCoordinator` upload path + existing
-  `NetworkManager.fetchActionRuns`.
-- **What:** on a tunnel timeout, before counting a failure, query
-  `GET /api/devices/applets/:id/runs` and match the recent run
-  (`result_summary`/`records_processed`/time) to confirm the batch landed. If it
-  did, mark complete (with A1, even a missed reconcile + resend is harmless).
-- **Effect:** kills the false "Not reaching box" and the needless resend.
-
-### A5. Server-side: bound and de-wedge execution
-
-- **Where:** `action_runner` + `scheduler::applets`.
-- **What:** (a) add a subprocess timeout for `ios_ingest`; (b) add a TTL/watchdog
-  so a stale `running` run is reaped without a server restart; (c) consider a
-  **warm execution path** for `ios_ingest` (in-process handler or a warm pool /
-  persistent PG connection) to shrink the per-call cost that drives the timeout
-  race; (d) since ingest is idempotent, consider allowing concurrent ingest runs
-  (drop or narrow the per-applet lock for this applet) so sequential stream
-  uploads don't 409-cascade.
-
-### A6. `ios_ingest` atomicity + byte-bounded batches
-
-- **What:** wrap a webhook's writes in one transaction so a partial failure
-  doesn't leave half a batch (and doesn't trigger a duplicating resend).
-  Bound the device's per-stream batch by **bytes** (not just count) so a large
-  audio backlog never exceeds the 105 MB body limit (→ 413); apply
-  back-pressure to collection if the queue hits its cap rather than rejecting new
-  data.
-
-### A7. Low Power Mode
-
-- **What:** allow uploads in LPM at least on Wi-Fi/charging, or surface a clear
-  "uploads paused (Low Power Mode)" status so the stall isn't silent.
-
-**Track A acceptance:** a stream that is unreachable for hours, then reconnects,
-delivers every record exactly once with no duplicates and no loss; a slow box run
-never shows as a client failure; a crashed run never wedges ingestion.
-
----
-
-## Track B — background reliability (product decision)
-
-Fixes F6. This is the only path to *sanctioned, reliable* background delivery,
-but it reverses a deliberate product choice, so it needs sign-off.
-
-### The decision
-
-Re-implement the iOS tunnel as a **WireGuard `NEPacketTunnelProvider`
-(WireGuardKit) + VPN On-Demand**, and move uploads to a **background
-`URLSession` `uploadTask(fromFile:)`**. The system raises the tunnel on demand
-and routes the out-of-process upload through it with the app suspended or killed
-— the OS-owned upload daemon and the encryption tunnel finally coexist.
-
-### Why it's compatible with the locked networking doctrine
-
-It is still **direct IPv6 WireGuard with SPKI pinning — no overlay, relay, or
-coordinator.** Only the iOS *implementation* changes (system VPN extension vs
-in-app userspace library). `networking.md`'s doctrine is unaffected.
-
-### The tension and its mitigation
-
-`NEPacketTunnelProvider` is a *system VPN* (VPN badge, NetworkExtension/Personal
-VPN entitlement, separate extension target + App Group), which reverses
-BoxTransport's deliberate "the tunnel runs inside the app — it does not take over
-your device VPN" stance. **Mitigation: a split-tunnel On-Demand rule that routes
-only the box's IP through the tunnel**, leaving all other traffic direct. You get
-sanctioned background uploads without becoming a global VPN.
-
-### Complement, not a foundation
-
-Silent APNs background push (`content-available`) can be an **opportunistic drain
-accelerator** (kick a drain after buffering) — but it's throttled (~3/hr) and
-never guaranteed, so it can't be the primary mechanism. Ties into the noted-but-
-not-built APNs wake primitive.
-
-### Cost
-
-Real: extension target, App Group shared storage for the upload queue, the
-NE/Personal VPN entitlement, packaging, and reworking `BoxTransport` to hand the
-transfer to a background session. Recommend a DTS confirmation on the
-extension-loopback caveat before committing.
-
-### Options for sign-off
-
-- **B1 (recommended):** migrate to NEPacketTunnelProvider + split-tunnel
-  on-demand + background `uploadTask(fromFile:)`. Sanctioned, reliable, doctrine-
-  compatible.
-- **B2:** keep in-app WG; lean harder on BGProcessingTask + silent push; accept
-  that background delivery remains best-effort and that location-keepalive is a
-  standing App-Store risk. Lower cost, does not actually fix F6.
-- **B3:** defer Track B; ship Track A only and re-evaluate once we have field
-  data on how often delivery actually stalls.
-
----
-
-## Recommendation
-
-Ship **Track A now** (it fixes everything users actually feel — duplicates,
-false failures, silent loss, the lock-wedge), and take **Track B (B1)** as a
-separate, scheduled effort after sign-off. Track A does not depend on the Track B
-decision, and A1 (deterministic ids) should land first regardless.
-
-## Open questions
-
-1. Track B: B1 vs B2 vs B3?
-2. Dead-letter UX — how should permanently-failed records surface to the user
-   (and do we offer a manual re-send / export)?
-3. Should the confirmed-cursor protocol (F7) be part of Track A, or deferred
-   until after the runs-API reconcile proves out?
+What is still open — permanent vs transient failures, and one poison record
+holding its batch — is [`../plan/ios-durability-plan.md`](../plan/ios-durability-plan.md).

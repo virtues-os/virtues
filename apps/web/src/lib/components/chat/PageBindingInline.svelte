@@ -82,6 +82,7 @@
 			case 'person': return 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z';
 			case 'place': return 'M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z';
 			case 'action': return 'M13 2L3 14h7v8l10-12h-7z';
+			case 'command': return 'M4 17l6-5-6-5M12 19h8';
 			default: return 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z';
 		}
 	}
@@ -101,6 +102,10 @@
 		</div>
 		<div class="binding-text">
 			<span class="binding-message">{displayMessage()}</span>
+			{#if permissionMode && entityType === 'command' && entityTitle}
+				<!-- A sudo change: what runs is exactly this text. -->
+				<pre class="binding-command">{entityTitle}</pre>
+			{/if}
 			{#if entityId && !permissionMode}
 				<span class="binding-page-title">{displayTitle}</span>
 			{/if}
@@ -185,6 +190,17 @@
 	.binding-message {
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
+	}
+
+	.binding-command {
+		margin: 0.25rem 0 0;
+		font: inherit;
+		font-size: 0.8125rem;
+		color: var(--color-foreground);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		max-height: 12rem;
+		overflow-y: auto;
 	}
 
 	.permission-mode .binding-message {

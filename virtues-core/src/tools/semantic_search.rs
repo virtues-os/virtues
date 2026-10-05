@@ -12,12 +12,14 @@ use crate::search::SemanticSearchEngine;
 #[derive(Clone)]
 pub struct SemanticSearchTool {
     engine: Arc<SemanticSearchEngine>,
+    pool: Arc<PgPool>,
 }
 
 impl SemanticSearchTool {
     pub fn new(pool: Arc<PgPool>) -> Self {
         Self {
-            engine: Arc::new(SemanticSearchEngine::new(pool)),
+            engine: Arc::new(SemanticSearchEngine::new(pool.clone())),
+            pool,
         }
     }
 
@@ -100,11 +102,39 @@ impl SemanticSearchTool {
             scope_mode,
             limit: num_results,
         };
-        let results = self
+        let mut results = self
             .engine
             .search_multi(&queries, &opts)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Semantic search failed: {}", e)))?;
+
+        // What the wiki says about anything the search names, ahead of the
+        // results. Not when the agent asked for particular sources, nor in a
+        // chat scoped to a project's materials alone.
+        let scoped = !opts.ontologies.is_empty()
+            || (project_id.is_some() && scope_mode == crate::search::ScopeMode::Exclusive);
+        let mut from_wiki = Vec::new();
+        if !scoped {
+            let parse = |d: Option<&str>| d.and_then(crate::search::query::parse_date_filter);
+            let range = crate::search::wiki_first::day_range(
+                parse(date_after),
+                parse(date_before),
+                chrono::Utc::now().date_naive(),
+            );
+            match crate::search::wiki_first::wiki_first(&self.pool, &queries, &opts.entities, range)
+                .await
+            {
+                Ok(lead) => {
+                    // An article already above is not repeated below.
+                    results.retain(|r| {
+                        !(r.ontology == "wiki_article" && lead.page_ids.contains(&r.record_id))
+                    });
+                    from_wiki = lead.entries;
+                }
+                // The search still answers; it just loses its lead.
+                Err(e) => tracing::warn!(error = %e, "wiki lead failed; returning the search alone"),
+            }
+        }
 
         // Document-chunk hits cite the FILE VIEWER at the right page (with a
         // quote snippet for passage landing), not the raw record route — the
@@ -186,11 +216,17 @@ impl SemanticSearchTool {
             })
             .collect();
 
-        Ok(ToolResult::success(serde_json::json!({
+        let mut body = serde_json::json!({
             "results": result_json,
             "count": results.len(),
             "tip": "Use sql_query with record IDs to get full details for specific results."
-        })))
+        });
+        // Keys serialize in sorted order, and this one sorts ahead of
+        // `results`, so the model reads the wiki first.
+        if !from_wiki.is_empty() {
+            body["from_your_wiki"] = from_wiki.into();
+        }
+        Ok(ToolResult::success(body))
     }
 }
 
