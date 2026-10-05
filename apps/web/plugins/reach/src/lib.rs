@@ -658,24 +658,37 @@ impl ReachState {
     if self.serving.swap(true, Ordering::SeqCst) {
       return Ok(());
     }
-    let rec = match self.store.load()? {
-      Some(r) => r,
-      None => {
+    // Everything up to the spawn below can fail, and every failure has to
+    // put the flag back. It used to stay set on a failed bind or a failed
+    // client build (a launch off the home network with no relay, a port
+    // someone else held), and every later call took the early return above:
+    // nothing listened on the loopback again until the app was killed.
+    let started: Result<(StdTcpListener, _)> = async {
+      let rec = self
+        .store
+        .load()?
+        .ok_or_else(|| Error::Reach("not paired".into()))?;
+
+      let port = loopback_port();
+      let std_listener = StdTcpListener::bind(("127.0.0.1", port))
+        .map_err(|e| Error::Reach(format!("bind 127.0.0.1:{port}: {e}")))?;
+      std_listener.set_nonblocking(true)?;
+
+      // Refresh the outbox's device id now that we're definitely paired
+      // (setup() may have run pre-pair with an empty id).
+      init_outbox(&self.store);
+
+      let client = virtues_reach_client::build_client(&rec).await?;
+      Ok((std_listener, client))
+    }
+    .await;
+    let (std_listener, client) = match started {
+      Ok(v) => v,
+      Err(e) => {
         self.serving.store(false, Ordering::SeqCst);
-        return Err(Error::Reach("not paired".into()));
+        return Err(e);
       }
     };
-
-    let port = loopback_port();
-    let std_listener = StdTcpListener::bind(("127.0.0.1", port))
-      .map_err(|e| Error::Reach(format!("bind 127.0.0.1:{port}: {e}")))?;
-    std_listener.set_nonblocking(true)?;
-
-    // Refresh the outbox's device id now that we're definitely paired (setup()
-    // may have run pre-pair with an empty id).
-    init_outbox(&self.store);
-
-    let client = virtues_reach_client::build_client(&rec).await?;
     // WARM_CLIENT is the single source of truth — the loopback, upload path, and
     // FFI background drain all read it, so a network-change rebuild (which swaps
     // it) is picked up everywhere without restarting anything.
@@ -685,7 +698,13 @@ impl ReachState {
     // Serve the loopback (webview → box). Reads the *current* warm client per
     // connection, so a rebuilt client (recovery from an iOS socket wedge) routes
     // new pages/chat/uploads through the fresh endpoint with no listener restart.
-    let listener = tokio::net::TcpListener::from_std(std_listener)?;
+    let listener = match tokio::net::TcpListener::from_std(std_listener) {
+      Ok(l) => l,
+      Err(e) => {
+        self.serving.store(false, Ordering::SeqCst);
+        return Err(e.into());
+      }
+    };
     let loopback = tauri::async_runtime::spawn(async move {
       if let Err(e) = virtues_reach_client::serve_on_provider(listener, warm_client).await {
         tracing::warn!(error = %format!("{e:#}"), "reach loopback ended");
@@ -781,6 +800,14 @@ impl ReachState {
 
   pub async fn status(&self) -> ReachStatus {
     let paired = self.is_paired();
+    // A launch that couldn't bring the loopback up (no network yet, no relay)
+    // has no warm client, so every probe below would say "unknown" forever.
+    // `/reconnect` asks for status on a timer, which makes this the retry.
+    if paired && !self.serving.load(Ordering::SeqCst) {
+      if let Err(e) = self.ensure_serving().await {
+        tracing::debug!(error = %e, "reach: loopback still can't start");
+      }
+    }
     // The probe both diagnoses auth AND (re)connects, so read the live path
     // AFTER it so `path` reflects the current route rather than a cold cache.
     let session_state = if paired {

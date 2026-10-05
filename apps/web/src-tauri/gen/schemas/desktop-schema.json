@@ -567,6 +567,12 @@
           "markdownDescription": "Enables the bundle_boot_ok command without any pre-configured scope."
         },
         {
+          "description": "Enables the bundle_update_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-bundle-update-ready",
+          "markdownDescription": "Enables the bundle_update_ready command without any pre-configured scope."
+        },
+        {
           "description": "Enables the check_app_update_cmd command without any pre-configured scope.",
           "type": "string",
           "const": "allow-check-app-update-cmd",
@@ -657,6 +663,12 @@
           "markdownDescription": "Enables the recheck_box command without any pre-configured scope."
         },
         {
+          "description": "Enables the recheck_collector command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-recheck-collector",
+          "markdownDescription": "Enables the recheck_collector command without any pre-configured scope."
+        },
+        {
           "description": "Enables the restart_app command without any pre-configured scope.",
           "type": "string",
           "const": "allow-restart-app",
@@ -721,6 +733,12 @@
           "type": "string",
           "const": "deny-bundle-boot-ok",
           "markdownDescription": "Denies the bundle_boot_ok command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the bundle_update_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-bundle-update-ready",
+          "markdownDescription": "Denies the bundle_update_ready command without any pre-configured scope."
         },
         {
           "description": "Denies the check_app_update_cmd command without any pre-configured scope.",
@@ -811,6 +829,12 @@
           "type": "string",
           "const": "deny-recheck-box",
           "markdownDescription": "Denies the recheck_box command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the recheck_collector command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-recheck-collector",
+          "markdownDescription": "Denies the recheck_collector command without any pre-configured scope."
         },
         {
           "description": "Denies the restart_app command without any pre-configured scope.",
@@ -3195,10 +3219,10 @@
           "markdownDescription": "Denies the reveal_item_in_dir command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-grant`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`\n- `allow-pair-handoff-create`\n- `allow-pair-handoff-accept`",
+          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-grant`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-disconnect`\n- `allow-improv-owner-claim`\n- `allow-reach-rehome`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`\n- `allow-pair-handoff-create`\n- `allow-pair-handoff-accept`",
           "type": "string",
           "const": "reach:default",
-          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-grant`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`\n- `allow-pair-handoff-create`\n- `allow-pair-handoff-accept`"
+          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-grant`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-disconnect`\n- `allow-improv-owner-claim`\n- `allow-reach-rehome`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`\n- `allow-pair-handoff-create`\n- `allow-pair-handoff-accept`"
         },
         {
           "description": "Enables the discover command without any pre-configured scope.",
@@ -3241,6 +3265,12 @@
           "type": "string",
           "const": "reach:allow-improv-grant",
           "markdownDescription": "Enables the improv_grant command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the improv_owner_claim command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-improv-owner-claim",
+          "markdownDescription": "Enables the improv_owner_claim command without any pre-configured scope."
         },
         {
           "description": "Enables the improv_pair command without any pre-configured scope.",
@@ -3327,6 +3357,12 @@
           "markdownDescription": "Enables the radio_stats command without any pre-configured scope."
         },
         {
+          "description": "Enables the reach_rehome command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-reach-rehome",
+          "markdownDescription": "Enables the reach_rehome command without any pre-configured scope."
+        },
+        {
           "description": "Enables the reach_status command without any pre-configured scope.",
           "type": "string",
           "const": "reach:allow-reach-status",
@@ -3373,6 +3409,12 @@
           "type": "string",
           "const": "reach:deny-improv-grant",
           "markdownDescription": "Denies the improv_grant command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the improv_owner_claim command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-improv-owner-claim",
+          "markdownDescription": "Denies the improv_owner_claim command without any pre-configured scope."
         },
         {
           "description": "Denies the improv_pair command without any pre-configured scope.",
@@ -3457,6 +3499,12 @@
           "type": "string",
           "const": "reach:deny-radio-stats",
           "markdownDescription": "Denies the radio_stats command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reach_rehome command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-reach-rehome",
+          "markdownDescription": "Denies the reach_rehome command without any pre-configured scope."
         },
         {
           "description": "Denies the reach_status command without any pre-configured scope.",

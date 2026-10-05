@@ -74,6 +74,16 @@ export function abortAiSession(): void {
 	current?.abort();
 }
 
+/**
+ * Abort the running session only if it is writing into `view`. An editor
+ * going away calls this, not `abortAiSession`: there is one session for the
+ * whole app, and a page tab unloading in the background must not stop an AI
+ * edit someone is watching in another page.
+ */
+export function abortAiSessionIn(view: EditorView | null | undefined): void {
+	if (view && current?.writesTo(view)) current.abort();
+}
+
 /** Begin an AI session. Only one runs at a time; a new one supersedes. */
 export async function startAiSession(opts: StartAiOptions): Promise<void> {
 	current?.abort();
@@ -98,6 +108,10 @@ class AiCursorSession {
 
 	private controller = new AbortController();
 	private aborted = false;
+
+	writesTo(view: EditorView): boolean {
+		return this.view === view;
+	}
 
 	private anchor: Y.RelativePosition | null = null;
 	private buffer = "";
