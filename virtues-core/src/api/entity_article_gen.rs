@@ -46,8 +46,21 @@ use crate::error::{Error, Result};
 /// Most recent records shown to the model.
 const DOSSIER_RECORDS: usize = 40;
 
-/// Hard cap on dossier characters.
+/// Dossier size, in characters. The records fill whatever the rest leaves.
 const MAX_TOTAL_CHARS: usize = 14000;
+
+/// The leading lines whose total, newlines included, fits in `room` characters.
+fn lines_that_fit(lines: &[String], room: usize) -> Vec<String> {
+    let mut used = 0;
+    lines
+        .iter()
+        .take_while(|l| {
+            used += l.chars().count() + 1;
+            used <= room
+        })
+        .cloned()
+        .collect()
+}
 /// One due entity: id + which table it lives in.
 #[derive(Debug, Clone)]
 struct DueEntity {
@@ -244,46 +257,6 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, Lin
         p.push_str(&format!("\n## Structured facts\n{}", facts));
     }
 
-    // ── The recent record ──
-    let page = super::wiki::get_entity_records_page(
-        pool,
-        &entity.id,
-        0,
-        DOSSIER_RECORDS as i64,
-        "",
-        &[],
-        true,
-    )
-    .await?;
-    if !page.items.is_empty() {
-        let lines: Vec<String> = page
-            .items
-            .iter()
-            .map(|r| {
-                let role = r.role.as_deref().map(|x| format!(" [{}]", x)).unwrap_or_default();
-                let preview = r
-                    .preview
-                    .as_deref()
-                    .map(|x| format!(" — {}", cap(x, 160)))
-                    .unwrap_or_default();
-                format!(
-                    "- {} {}{}: {}{}",
-                    r.timestamp.format("%Y-%m-%d"),
-                    r.source_type,
-                    role,
-                    cap(&r.label, 120),
-                    preview
-                )
-            })
-            .collect();
-        p.push_str(&format!(
-            "\n## The record (most recent {} of {})\n{}\n",
-            lines.len(),
-            page.total,
-            lines.join("\n")
-        ));
-    }
-
     // ── Link allowlist: co-occurring entities + narrated days ──
     let mut links: Vec<String> = Vec::new();
     let co: Vec<(String, String)> = sqlx::query_as(
@@ -299,7 +272,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, Lin
     .bind(&entity.id)
     .fetch_all(pool)
     .await
-    .unwrap_or_default();
+    .map_err(|e| Error::Database(format!("Failed to read co-occurring subjects: {e}")))?;
     for (etype, eid) in &co {
         let (route, name_sql) = match etype.as_str() {
             "person" => ("person", "SELECT name FROM wiki_people WHERE id = $1"),
@@ -307,11 +280,12 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, Lin
             "organization" => ("org", "SELECT name FROM wiki_orgs WHERE id = $1"),
             _ => continue,
         };
-        if let Ok(Some(n)) = sqlx::query_scalar::<_, String>(name_sql)
+        let name = sqlx::query_scalar::<_, String>(name_sql)
             .bind(eid)
             .fetch_optional(pool)
             .await
-        {
+            .map_err(|e| Error::Database(format!("Failed to read a linked subject's name: {e}")))?;
+        if let Some(n) = name {
             // Offered to the model AND remembered, so the answer can be held
             // to the same list rather than trusted to have read it.
             allowed.push_entity(format!("/{route}/{eid}"), n.clone());
@@ -336,7 +310,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, Lin
     .bind(&entity.id)
     .fetch_all(pool)
     .await
-    .unwrap_or_default();
+    .map_err(|e| Error::Database(format!("Failed to read the subject's days: {e}")))?;
     for (date, lede) in &days {
         let label = date.format("%B %-d, %Y");
         allowed.push_day(format!("/day/day_{}", date.format("%Y-%m-%d")));
@@ -357,9 +331,49 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, Lin
         ));
     }
 
-    if p.len() > MAX_TOTAL_CHARS {
-        p.truncate(MAX_TOTAL_CHARS);
-        p.push_str("\n\n(material truncated)");
+    // ── The recent record ──
+    let page = super::wiki::get_entity_records_page(
+        pool,
+        &entity.id,
+        0,
+        DOSSIER_RECORDS as i64,
+        "",
+        &[],
+        true,
+    )
+    .await?;
+    if !page.items.is_empty() {
+        let all: Vec<String> = page
+            .items
+            .iter()
+            .map(|r| {
+                let role = r.role.as_deref().map(|x| format!(" [{}]", x)).unwrap_or_default();
+                let preview = r
+                    .preview
+                    .as_deref()
+                    .map(|x| format!(" — {}", cap(x, 160)))
+                    .unwrap_or_default();
+                format!(
+                    "- {} {}{}: {}{}",
+                    r.timestamp.format("%Y-%m-%d"),
+                    r.source_type,
+                    role,
+                    cap(&r.label, 120),
+                    preview
+                )
+            })
+            .collect();
+        // Records come last and take what room is left: newest first, whole
+        // lines only, so the facts and the link list the answer is checked
+        // against are never what gets cut.
+        let room = MAX_TOTAL_CHARS.saturating_sub(p.chars().count() + 200);
+        let lines = lines_that_fit(&all, room);
+        p.push_str(&format!(
+            "\n## The record (most recent {} of {})\n{}\n",
+            lines.len(),
+            page.total,
+            lines.join("\n")
+        ));
     }
 
     Ok((p, allowed))
@@ -496,6 +510,18 @@ fn parse_article(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn records_fit_by_whole_lines_whatever_their_characters() {
+        let lines: Vec<String> = (0..50)
+            .map(|i| format!("- 2026-03-0{} message — “déjà vu” at the café ☕ {i}", i % 9))
+            .collect();
+        let kept = super::lines_that_fit(&lines, 300);
+        let used: usize = kept.iter().map(|l| l.chars().count() + 1).sum();
+        assert!(!kept.is_empty() && used <= 300, "{used}");
+        assert_eq!(kept[..], lines[..kept.len()], "newest first, in order, unbroken");
+        assert!(super::lines_that_fit(&lines, 0).is_empty());
+    }
     use super::*;
 
     #[test]
