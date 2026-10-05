@@ -59,6 +59,20 @@ pub enum AppletCmd {
         #[command(flatten)]
         out: OutputArgs,
     },
+
+    /// Check an applet against this box without creating anything.
+    ///
+    /// The same check chat runs before it creates an applet: cron shape, SQL
+    /// conditions EXPLAINed, schema DDL dry-run and drift, table names in the
+    /// prompt, limit keys. Takes an applet folder (`manifest.toml`,
+    /// `face/index.html`, `schema/NNNN_*.sql`) or `-` for `setup_applet`'s
+    /// JSON arguments on stdin. Exits 1 when there are findings.
+    Check {
+        /// The applet folder, or `-` for JSON on stdin.
+        path: String,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
 }
 
 /// `virtues page <action>` — read pages.

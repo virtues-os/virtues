@@ -139,6 +139,8 @@ pub(crate) const CLI_TOOLS: &[&str] = &[
     "list_applets",
     "get_applet",
     "get_page_content",
+    // `virtues applet check` only, which always sends `check_only`.
+    "setup_applet",
 ];
 
 /// The read-only research tools a Deep Research **subagent** (worker) may use. Explicit allow-list

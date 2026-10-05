@@ -226,6 +226,10 @@ pub struct DeclaredTable {
 /// finding that sends the model chasing a problem it does not have, which is
 /// far worse in a retry loop.
 pub fn declared_tables(ddl: &str) -> Vec<DeclaredTable> {
+    // A comment inside the column list reads as a column named `--` (and its
+    // commas split it into more), which is a false drift finding on any
+    // schema that explains itself.
+    let ddl = &strip_sql_comments(ddl);
     let mut out = Vec::new();
     let lower = ddl.to_lowercase();
     let mut search_from = 0usize;
@@ -365,6 +369,50 @@ fn split_statements(ddl: &str) -> Vec<String> {
 }
 
 /// Split a column list on commas that are not inside parentheses or quotes.
+/// DDL with `--` line comments and `/* */` block comments removed, leaving
+/// string literals alone.
+fn strip_sql_comments(ddl: &str) -> String {
+    let mut out = String::with_capacity(ddl.len());
+    let mut chars = ddl.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        if in_string {
+            out.push(c);
+            if c == '\'' {
+                in_string = false;
+            }
+            continue;
+        }
+        match (c, chars.peek()) {
+            ('\'', _) => {
+                in_string = true;
+                out.push(c);
+            }
+            ('-', Some('-')) => {
+                for n in chars.by_ref() {
+                    if n == '\n' {
+                        out.push('\n');
+                        break;
+                    }
+                }
+            }
+            ('/', Some('*')) => {
+                chars.next();
+                let mut prev = ' ';
+                for n in chars.by_ref() {
+                    if prev == '*' && n == '/' {
+                        break;
+                    }
+                    prev = n;
+                }
+                out.push(' ');
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 fn split_top_level(body: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut depth = 0i32;
@@ -660,6 +708,19 @@ mod tests {
         // invent a finding the model would chase.
         assert!(declared_tables("CREATE TABLE applet_x.a").is_empty());
         assert!(declared_tables("ALTER TABLE applet_x.a ADD COLUMN b INT;").is_empty());
+    }
+
+    #[test]
+    fn comments_in_a_column_list_are_not_columns() {
+        let ddl = "-- version 1, explained\n\
+                   CREATE TABLE IF NOT EXISTS applet_x.readings (\n\
+                   -- the day, in local time\n\
+                   day DATE NOT NULL, /* one row, per slot */\n\
+                   slot TEXT DEFAULT '--not a comment'\n\
+                   );";
+        let t = declared_tables(ddl);
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].columns, vec!["day", "slot"]);
     }
 
     async fn insert_applet(pool: &PgPool, id: &str) {
