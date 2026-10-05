@@ -226,7 +226,7 @@
 	/* Mid-sentence. Takes the paragraph's face, size and weight — including
 	   the serif, in the wiki's prose — and keeps only the color and the rule
 	   under it. Setting 14px sans here instead is what would make a word in a
-	   JJannon paragraph jump out of its own line. */
+	   serif paragraph jump out of its own line. */
 	.v-textaction[data-inline="true"] {
 		font: inherit;
 	}

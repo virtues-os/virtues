@@ -24,12 +24,12 @@
     -->
     <style>
       /* ── the app's own faces ──
-         Transcribed from apps/web/src/app.css + themes.css. JJannon has one cut
+         Transcribed from apps/web/src/app.css + themes.css. EB Garamond has one cut
          — no italic, never bold — so 300 and 400 both point at the same file,
          exactly as the app declares them.
 
          PRODUCTION NOTE. connect.html today sets `ui-serif` on purpose, with a
-         comment saying JJannon lives in the SPA bundle, which does not exist
+         comment saying EB Garamond lives in the SPA bundle, which does not exist
          when the airlock draws. That is true and is the thing to fix rather
          than work around: the woff2 has to be embedded in the BINARY next to
          connect.html and served through the `virtues://` handler. First launch
@@ -37,21 +37,20 @@
          rounding error against the plate. `font-display: swap` keeps the screen
          drawing in the fallback if it ever fails to load. */
       @font-face {
-        font-family: 'JJannon';
-        src: url('../../../../apps/web/static/fonts/JJannon-Display-Regular.woff2') format('woff2');
+        font-family: 'EB Garamond';
+        src: url('../../../../apps/web/static/fonts/EBGaramond-Regular-latin.woff2') format('woff2');
         font-weight: 400; font-style: normal; font-display: swap;
       }
       /* The same file with its vertical metrics normalized — for the serif in
-         chrome rather than in prose. JJannon declares ascent/descent =
-         0.740/0.260, exactly one em with no leading, so a centred line box
-         leaves the letters ~0.098em high. The lockup beside the ∴ is precisely
+         chrome rather than in prose. EB Garamond declares ascent/descent =
+         1.007/0.298, so a centred line box leaves the letters off-center. The lockup beside the ∴ is precisely
          the case the app wrote this for: a serif sharing a row with something
          that is not text. */
       @font-face {
-        font-family: 'JJannon UI';
-        src: url('../../../../apps/web/static/fonts/JJannon-Display-Regular.woff2') format('woff2');
+        font-family: 'EB Garamond UI';
+        src: url('../../../../apps/web/static/fonts/EBGaramond-Regular-latin.woff2') format('woff2');
         font-weight: 400; font-style: normal; font-display: swap;
-        ascent-override: 93.6%; descent-override: 26%; line-gap-override: 0%;
+        ascent-override: 94.3%; descent-override: 29%; line-gap-override: 0%;
       }
       @font-face {
         font-family: 'Avenir';
@@ -69,9 +68,9 @@
         --ink: #17171A; --ink-muted: #3F3F46; --ink-subtle: #71717A; --ink-faint: #A1A1AA;
         --line: #E7E7E9; --line-subtle: #F1F1F3; --line-strong: #D4D4D8;
         --blue: #0A84FF; --blue-subtle: #EAF3FF;
-        --serif: 'JJannon', ui-serif, "New York", Georgia, serif;
+        --serif: 'EB Garamond', ui-serif, "New York", Georgia, serif;
         /* Chrome only — see the metric override above. */
-        --serif-ui: 'JJannon UI', ui-serif, Georgia, serif;
+        --serif-ui: 'EB Garamond UI', ui-serif, Georgia, serif;
         --sans: 'Avenir', -apple-system, system-ui, "Segoe UI", sans-serif;
         --ease: cubic-bezier(0.22, 1, 0.36, 1);
         font-family: var(--sans);

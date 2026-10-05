@@ -3,7 +3,7 @@
 draw-dmg-background.py — render the macOS DMG install window background.
 
 The DMG window is the first thing a Mac user sees of Virtues, so it gets the
-same register as the airlock: white paper, graphite ink, JJannon for the one
+same register as the airlock: white paper, graphite ink, EB Garamond for the one
 line of serif, Avenir for the instruction. No color, no texture.
 
 Geometry follows `bundle.macOS.dmg` in apps/web/src-tauri/tauri.conf.json
@@ -50,7 +50,7 @@ def ttf(name: str, tmp: Path) -> Path:
 def main() -> None:
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
-        serif = ImageFont.truetype(str(ttf("JJannon-Display-Regular", tmp)), 40 * S)
+        serif = ImageFont.truetype(str(ttf("EBGaramond-Regular-latin", tmp)), 40 * S)
         sans = ImageFont.truetype(str(ttf("Avenir-Regular", tmp)), 14 * S)
 
         im = Image.new("RGB", (W * S, H * S), PAPER)

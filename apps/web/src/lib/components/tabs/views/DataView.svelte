@@ -226,7 +226,7 @@
 		color: var(--color-foreground-subtle);
 		margin-bottom: 0.75rem;
 	}
-	/* 400, not 500: JJannon ships one cut, so a weight request stays inside the
+	/* 400, not 500: the serif ships one cut, so a weight request stays inside the
 	   family and returns the regular with no warning (agents/build/typography.md).
 	   Nothing is lost — the rank here is already carried by size and ink, 28px in
 	   full foreground over an 11px mono eyebrow and a subtle dateline. */
