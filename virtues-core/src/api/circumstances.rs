@@ -439,21 +439,14 @@ async fn build_section(
             }))
         }
         "recent_days" => {
-            // The last narrated days, until <current_chapter> exists to carry
-            // the middle duration. `date::text` — the column is a Postgres
-            // DATE and decodes into String only through the cast.
-            let rows = sqlx::query_as::<_, (String, Option<String>)>(
-                r#"SELECT date::text, prose FROM wiki_day_prose
-                 WHERE prose IS NOT NULL
-                 ORDER BY date DESC LIMIT 3"#,
-            )
-            .fetch_all(pool)
-            .await?;
+            // The last narrated days, by each page's Abstract (day_memory),
+            // until <current_chapter> exists to carry the middle duration.
+            let rows = crate::api::day_memory::recent(pool, today.succ_opt().unwrap_or(today), 14).await?;
             let items: Vec<String> = rows
                 .iter()
-                .filter_map(|(date, prose)| {
-                    Some(format!("{}: {}", date, clip(prose.as_deref()?, 300)))
-                })
+                .filter(|(_, a)| !a.is_empty())
+                .take(3)
+                .map(|(date, a)| format!("{}: {}", date, clip(a, 300)))
                 .collect();
             Ok((!items.is_empty())
                 .then(|| format!("Recent days, as narrated:\n{}", items.join("\n"))))

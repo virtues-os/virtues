@@ -383,6 +383,11 @@ pub(crate) async fn assemble(
         .map(|(d, c)| format!("#### {}\n{}\n", d.format("%A, %B %-d"), strip_footnotes(c)))
         .collect();
 
+    // ── what the record already says about these people, and the weeks before ──
+    let ids: Vec<String> = people.iter().map(|p| p.id.clone()).collect();
+    let in_full: Vec<NaiveDate> = recent.iter().map(|(d, _)| *d).collect();
+    let earlier = crate::api::day_memory::for_writer(pool, &ids, date, start, end, &in_full).await?;
+
     // ── what the record does not hold ──
     let gaps_text = gaps(&recorded, tz);
 
@@ -397,6 +402,9 @@ pub(crate) async fn assemble(
     p.push_str(&format!("<people>\n{people_block}</people>\n\n"));
     if !recent_block.is_empty() {
         p.push_str(&format!("<recent_days>\nThe pages for the days just before, newest first.\n{recent_block}</recent_days>\n\n"));
+    }
+    if !earlier.is_empty() {
+        p.push_str(&format!("<earlier>\nWhat their earlier days' pages already say, by each page's opening paragraph: the people this day was most with and the days that link them, then the rest of the last two weeks. Read this day against it.\n{earlier}</earlier>\n\n"));
     }
     p.push_str(&format!("<gaps>\n{gaps_text}</gaps>\n\n"));
     p.push_str(&format!("<your_words>\nEverything you wrote to anyone this day.\n{your_words}</your_words>\n\n"));
@@ -997,8 +1005,7 @@ pub async fn similar_days(pool: &PgPool, date: NaiveDate, limit: i64) -> Result<
         .into_iter()
         .map(|(date, content, similarity)| SimilarDay {
             date,
-            // absent-ok: a page with no first paragraph has an empty Abstract; not a query result.
-            abstract_md: content.split("\n\n").next().unwrap_or("").trim().to_string(),
+            abstract_md: crate::api::day_memory::abstract_of(&content).to_string(),
             similarity,
         })
         .collect())
