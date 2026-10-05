@@ -406,37 +406,11 @@
 		right: -4px;
 	}
 
-	/* Takes the accent and doubles in weight on approach — the same gesture the
-	   sidebar seam makes, because they are the same object in two places and a
-	   user who learns one has learned both. */
-	.resize-handle.visible::before {
-		content: "";
-		position: absolute;
-		top: 0;
-		bottom: 0;
-		right: 0;
-		width: 0;
-		background: var(--color-primary);
-		opacity: 0;
-		transition:
-			width 120ms var(--ease-premium),
-			opacity 120ms var(--ease-premium);
-	}
-
-	.resize-handle.visible:hover::before,
-	.resize-handle.visible:focus-visible::before,
-	.resize-handle.dragging::before {
-		width: 2px;
-		opacity: 1;
-	}
-
-	.resize-handle.dragging::before {
-		transition: none;
-	}
-
-	/* The grip: hidden at rest, then on approach a dot that unfolds into a
-	   short accent pill centred on the line. Same shape and behaviour as the
-	   sidebar seam's grip. */
+	/* The grip: a neutral pill that always sits centred on the 1px line, so
+	   the seam reads as movable before the pointer finds it. The line itself
+	   never changes; the grip is the one thing that responds. It darkens and
+	   lengthens on approach and takes the accent only while held. Same object
+	   as the sidebar seam's grip. */
 	.resize-grip {
 		display: none;
 	}
@@ -447,27 +421,31 @@
 		top: 50%;
 		left: 50%;
 		width: 4px;
-		height: 4px;
-		opacity: 0;
+		height: 32px;
 		transform: translate(-50%, -50%);
 		border-radius: 999px;
-		background: var(--color-primary);
+		background: var(--color-border-strong);
 		pointer-events: none;
 		z-index: 1;
 		transition:
-			height 320ms ease-in-out,
-			opacity 120ms ease-in-out;
+			height 160ms var(--ease-premium),
+			background-color 160ms var(--ease-premium);
 	}
 
 	.resize-handle.visible:hover .resize-grip,
-	.resize-handle.visible:focus-visible .resize-grip,
+	.resize-handle.visible:focus-visible .resize-grip {
+		background: var(--color-foreground-subtle);
+		height: 40px;
+	}
+
+	/* Held: the accent says you have it. No easing — it follows the pointer. */
 	.resize-handle.dragging .resize-grip {
-		height: 32px;
-		opacity: 1;
+		background: var(--color-primary);
+		height: 40px;
+		transition: none;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.resize-handle.visible::before,
 		.resize-handle.visible .resize-grip {
 			transition: none;
 		}
