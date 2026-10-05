@@ -11,6 +11,7 @@
   "get_project_item",
   "list_applets",
   "propose_narrative_identity_edit",
+  "publish_to_github",
   "read_asset",
   "record_introductions",
   "revise_article",

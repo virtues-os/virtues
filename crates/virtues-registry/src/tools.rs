@@ -93,8 +93,34 @@ pub fn default_tools() -> Vec<ToolConfig> {
         run_applet_tool(),
         get_project_item_tool(),
         generate_image_tool(),
+        publish_to_github_tool(),
         read_asset_tool(),
     ]
+}
+
+/// Publish an applet's face to a GitHub repo the owner connected.
+fn publish_to_github_tool() -> ToolConfig {
+    ToolConfig {
+        id: "publish_to_github".to_string(),
+        name: "Publish to GitHub".to_string(),
+        description: "Publish an applet's face as a web page through a GitHub repo".to_string(),
+        llm_description: r#"Publish an applet's face (its face/index.html) as one file in a GitHub repo, which the owner's host then serves as a web page. Only when the owner asks to publish or share it; they name the repo and where it goes. The face must stand alone off the box: no virtues.query, virtues.js or /api/, with the content written into the HTML and images as data: URIs. If it does not, rewrite it with edit_applet first. The owner allows each exact publish, so on permission_needed stop and wait; after they allow it, call again with the same arguments. Editing the face afterwards means publishing again."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["applet_id", "repo", "path"],
+            "properties": {
+                "applet_id": { "type": "string" },
+                "repo": { "type": "string", "description": "owner/name" },
+                "path": { "type": "string", "description": "File path in the repo, ending in .html, e.g. static/rome/index.html" },
+                "branch": { "type": "string", "description": "Defaults to main" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:upload-cloud-2-line".to_string(),
+        display_order: 23,
+        is_system: false,
+    }
 }
 
 /// Generate Image tool — text-to-image via the gateway image model.
