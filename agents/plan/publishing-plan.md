@@ -290,7 +290,7 @@ key. With a door, anyone on the internet can send bytes to code on the box.
    a phone on cellular. Questions: loader size, time to first paint, relay
    behavior, iOS Safari, and whether `iroh-webrtc-transport` gets a direct
    path to the spare box (`ssh dragon2`, never the main box).
-   **First results 2026-10-05** (`virtues-labs/publish-spike`, laptop
+   **First results 2026-10-05** (a throwaway spike outside the repo, laptop
    Chromium): the spare Q6A behind office NAT with client isolation loaded
    5/5, first paint ~0.57 s (connect ~0.3 s, fetch ~0.15 s); a 1 MB page
    moved at ~7.5 Mbit/s through the relay. The loader is 0.95 MB gzipped
