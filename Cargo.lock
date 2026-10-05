@@ -8939,6 +8939,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "virtues-door"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "getrandom 0.3.4",
+ "iroh",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "virtues-iroh",
+]
+
+[[package]]
 name = "virtues-helpers"
 version = "0.1.0"
 dependencies = [
