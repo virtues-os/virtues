@@ -67,6 +67,13 @@ pub fn routes() -> Router<AppState> {
         // The visits log: what the owner opens, for ⌘K's frecency prior.
         .route("/api/visits", post(record_visit_handler))
         .route("/api/visits/frecency", get(frecency_handler))
+        // What the owner has shared through the door (`api::publications`).
+        .route(
+            "/api/publications",
+            get(list_publications_handler).post(create_publication_handler),
+        )
+        .route("/api/publications/:id/update", post(update_publication_handler))
+        .route("/api/publications/:id", delete(revoke_publication_handler))
         // Projects API (the "room" a chat lives in)
         .merge(project_routes("/api/projects"))
         .route("/api/projects/:id/archive", post(archive_project_handler))
@@ -488,4 +495,37 @@ pub async fn record_visit_handler(
 /// GET /api/visits/frecency — every visited record's score, highest first.
 pub async fn frecency_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::visits::frecency(state.db.pool()).await)
+}
+
+// ============================================================================
+// Publications — what the owner has shared (`api::publications`)
+// ============================================================================
+
+/// GET /api/publications — every link the owner has made, revoked ones too.
+pub async fn list_publications_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::publications::list(state.db.pool()).await)
+}
+
+/// POST /api/publications — share an applet's face.
+pub async fn create_publication_handler(
+    State(state): State<AppState>,
+    Json(req): Json<crate::api::publications::CreateRequest>,
+) -> Response {
+    api_response(crate::api::publications::create(state.db.pool(), req).await)
+}
+
+/// POST /api/publications/:id/update — re-freeze the face under the same link.
+pub async fn update_publication_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::publications::update(state.db.pool(), &id).await)
+}
+
+/// DELETE /api/publications/:id — stop serving the link.
+pub async fn revoke_publication_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::publications::revoke(state.db.pool(), &id).await)
 }

@@ -8821,6 +8821,7 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+ "virtues-door",
  "virtues-helpers",
  "virtues-improv",
  "virtues-iroh",
