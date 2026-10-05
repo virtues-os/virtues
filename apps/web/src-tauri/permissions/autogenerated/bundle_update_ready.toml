@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-bundle-update-ready"
+description = "Enables the bundle_update_ready command without any pre-configured scope."
+commands.allow = ["bundle_update_ready"]
+
+[[permission]]
+identifier = "deny-bundle-update-ready"
+description = "Denies the bundle_update_ready command without any pre-configured scope."
+commands.deny = ["bundle_update_ready"]
