@@ -84,7 +84,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // their error; the tool's own WARN line would say it twice.
         let data_verb = matches!(
             std::env::args().nth(1).as_deref(),
-            Some("query") | Some("search") | Some("schema") | Some("applet") | Some("page")
+            Some("query")
+                | Some("search")
+                | Some("schema")
+                | Some("write")
+                | Some("applet")
+                | Some("page")
         );
         // The format (text on a terminal, JSON under systemd) and the field
         // vocabulary live in `observe`; the noise floor is this binary's own
@@ -964,6 +969,7 @@ fn maybe_reexec_as_service_user() {
         "query",
         "search",
         "schema",
+        "write",
         "applet",
         "page",
     ];

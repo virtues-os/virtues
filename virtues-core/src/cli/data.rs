@@ -7,6 +7,10 @@
 //! a verb that went around it could read `box_secrets` and the env file. The
 //! plan is agents/plan/cli-data-verbs-plan.md.
 //!
+//! Reads run their tool in this process. Writes run theirs in the server,
+//! through `POST /api/console/tool/:tool` over loopback (`server/api/console.rs`
+//! says why), so a write needs the virtues server running on this machine.
+//!
 //! Output follows the `gh` convention: a table on a terminal, tab-separated
 //! lines with no header when piped, the tool's own JSON with `--json`. Data
 //! goes to stdout; notes and errors go to stderr.
@@ -21,6 +25,81 @@ use crate::tools::{ToolContext, ToolExecutor, CLI_TOOLS};
 
 /// The widest a cell may print on a terminal. Piped output is never cut.
 const MAX_CELL: usize = 60;
+
+/// The daily spend limit an applet put from the CLI gets when it has a prompt
+/// and sets none, in dollars. A scheduled applet written by an outside agent
+/// runs with nobody watching; this is what stops it running up a bill
+/// overnight. The owner can raise or remove it like any limit.
+const DEFAULT_MAX_LLM_COST_PER_DAY: f64 = 1.0;
+
+/// A tool's data says it failed even when the call itself succeeded:
+/// `sql_write` returns `status: "error"`, `edit_applet` `"refused"`, the
+/// check `"check_failed"`.
+fn failed_status(data: &Value) -> Option<String> {
+    let status = data.get("status").and_then(Value::as_str)?;
+    if !matches!(status, "error" | "refused") {
+        return None;
+    }
+    let error = cell(&data["error"]);
+    let error = if error.is_empty() { status.to_string() } else { error };
+    // The tool's hint names the fix (`sql_write`: "applet_* schemas only").
+    Some(match data.get("hint").and_then(Value::as_str) {
+        Some(hint) => format!("{error}\n{hint}"),
+        None => error,
+    })
+}
+
+/// The server on this machine, for the write verbs.
+struct Console {
+    http: reqwest::Client,
+    base: String,
+}
+
+impl Console {
+    fn new() -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            base: format!("http://127.0.0.1:{}", super::types::default_port()),
+        }
+    }
+
+    async fn send(&self, req: reqwest::RequestBuilder) -> Result<Value, String> {
+        let resp = req.send().await.map_err(|e| {
+            if e.is_connect() {
+                format!(
+                    "couldn't reach the virtues server at {}. Writes go through it; check that it is running (systemctl status virtues)",
+                    self.base
+                )
+            } else {
+                e.to_string()
+            }
+        })?;
+        let status = resp.status();
+        let body: Value = resp.json().await.map_err(|e| format!("the server answered {status} with no JSON: {e}"))?;
+        if !status.is_success() {
+            let msg = body.get("error").map(cell).filter(|m| !m.is_empty());
+            return Err(msg.unwrap_or_else(|| format!("the server answered {status}")));
+        }
+        Ok(body)
+    }
+
+    /// Run a write tool in the server. Returns the tool's data.
+    async fn tool(&self, tool: &str, args: Value) -> Result<Value, String> {
+        let url = format!("{}/api/console/tool/{tool}", self.base);
+        let body = self.send(self.http.post(url).json(&args)).await?;
+        let data = body.get("data").cloned().unwrap_or(Value::Null);
+        if let Some(err) = failed_status(&data) {
+            return Err(err);
+        }
+        Ok(data)
+    }
+
+    /// Turn an applet on or off: the app's own Enable switch.
+    async fn set_enabled(&self, id: &str, on: bool) -> Result<Value, String> {
+        let url = format!("{}/api/applets/{id}", self.base);
+        self.send(self.http.patch(url).json(&json!({ "enabled": on }))).await
+    }
+}
 
 pub struct Verbs {
     exec: ToolExecutor,
@@ -172,6 +251,48 @@ impl Verbs {
         Ok(())
     }
 
+    pub async fn write(&self, sql: String, out: OutputArgs) -> Result<(), String> {
+        let sql = if sql == "-" {
+            std::io::read_to_string(std::io::stdin()).map_err(|e| format!("reading stdin: {e}"))?
+        } else {
+            sql
+        };
+        let data = Console::new().tool("sql_write", json!({ "sql": sql })).await?;
+        if out.json {
+            return print_json(&data);
+        }
+        // A statement with RETURNING hands back rows; anything else a count.
+        let rows = array(&data, "rows");
+        if !rows.is_empty() {
+            let cols: Vec<String> = rows[0].as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+            let cols: Vec<&str> = cols.iter().map(String::as_str).collect();
+            table(&cols, rows);
+        } else if ui::tty() {
+            ui::ok(&format!("{} row(s) changed", cell(&data["rows_affected"])));
+        } else {
+            println!("{}", cell(&data["rows_affected"]));
+        }
+        Ok(())
+    }
+
+    async fn switch(&self, id: &str, on: bool) -> Result<(), String> {
+        Console::new().set_enabled(id, on).await?;
+        if ui::tty() {
+            ui::ok(&format!("{id} is {}", if on { "on" } else { "off" }));
+        }
+        Ok(())
+    }
+
+    /// `setup_applet` arguments from a folder, or from JSON on stdin (`-`).
+    async fn draft_args(&self, path: &str) -> Result<(Value, Vec<Value>), String> {
+        if path == "-" {
+            let text = std::io::read_to_string(std::io::stdin()).map_err(|e| format!("reading stdin: {e}"))?;
+            let args: Value = serde_json::from_str(&text).map_err(|e| format!("stdin is not JSON: {e}"))?;
+            return Ok((args, Vec::new()));
+        }
+        folder_args(&self.pool, std::path::Path::new(path)).await
+    }
+
     pub async fn applet(&self, cmd: AppletCmd) -> Result<(), String> {
         match cmd {
             AppletCmd::Ls { all, out } => {
@@ -218,16 +339,66 @@ impl Verbs {
                 }
                 Ok(())
             }
-            AppletCmd::Check { path, out } => {
-                let (mut args, mut findings) = if path == "-" {
-                    let text = std::io::read_to_string(std::io::stdin())
-                        .map_err(|e| format!("reading stdin: {e}"))?;
-                    let args: Value = serde_json::from_str(&text)
-                        .map_err(|e| format!("stdin is not JSON: {e}"))?;
-                    (args, Vec::new())
+            AppletCmd::Put { path, off, out } => {
+                let (mut args, findings) = self.draft_args(&path).await?;
+                if !findings.is_empty() {
+                    // The write would drop these silently; say so instead.
+                    table(&["field", "error", "suggestion"], &findings);
+                    return Err(format!("{} finding(s); nothing was created", findings.len()));
+                }
+                let has_prompt = args.get("agent").or_else(|| args.get("instruction")).is_some();
+                if has_prompt && args["limits"].get("max_llm_cost_per_day").is_none() {
+                    if !args["limits"].is_object() {
+                        args["limits"] = json!({});
+                    }
+                    args["limits"]["max_llm_cost_per_day"] = json!(DEFAULT_MAX_LLM_COST_PER_DAY);
+                }
+                let console = Console::new();
+                let data = console.tool("setup_applet", args).await?;
+                if data["status"] == "check_failed" {
+                    let findings = array(&data, "findings");
+                    table(&["field", "error", "suggestion"], findings);
+                    return Err(format!("{} finding(s); nothing was created", findings.len()));
+                }
+                let id = cell(&data["applet_id"]);
+                let mut enabled = data["enabled"].as_bool() == Some(true);
+                if !enabled && !off {
+                    console.set_enabled(&id, true).await?;
+                    enabled = true;
+                }
+                if out.json {
+                    let mut data = data;
+                    data["enabled"] = json!(enabled);
+                    return print_json(&data);
+                }
+                let state = if enabled { "on" } else { "off" };
+                if ui::tty() {
+                    ui::ok(&format!("{} {id} ({state})", cell(&data["status"])));
                 } else {
-                    folder_args(&self.pool, std::path::Path::new(&path)).await?
-                };
+                    println!("{id}\t{state}");
+                }
+                Ok(())
+            }
+            AppletCmd::On { id } => self.switch(&id, true).await,
+            AppletCmd::Off { id } => self.switch(&id, false).await,
+            AppletCmd::Run { id, date, out } => {
+                let mut args = json!({ "id": id });
+                if let Some(d) = date {
+                    args["date"] = json!(d);
+                }
+                let data = Console::new().tool("run_applet", args).await?;
+                if out.json {
+                    return print_json(&data);
+                }
+                if ui::tty() {
+                    ui::ok(&format!("started run {}", cell(&data["run_id"])));
+                } else {
+                    println!("{}", cell(&data["run_id"]));
+                }
+                Ok(())
+            }
+            AppletCmd::Check { path, out } => {
+                let (mut args, mut findings) = self.draft_args(&path).await?;
                 args["check_only"] = json!(true);
                 let data = self.call("setup_applet", args).await?;
                 findings.extend(array(&data, "findings").iter().cloned());
@@ -254,6 +425,39 @@ impl Verbs {
 
     pub async fn page(&self, cmd: PageCmd) -> Result<(), String> {
         match cmd {
+            PageCmd::New { title, out } => {
+                let mut args = json!({ "title": title });
+                if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                    let body = std::io::read_to_string(std::io::stdin())
+                        .map_err(|e| format!("reading stdin: {e}"))?;
+                    if !body.trim().is_empty() {
+                        args["content"] = json!(body);
+                    }
+                }
+                let data = Console::new().tool("create_page", args).await?;
+                if out.json {
+                    return print_json(&data);
+                }
+                println!("{}", cell(&data["page_id"]));
+                Ok(())
+            }
+            PageCmd::Edit { id, find, replace, out } => {
+                let replace = if replace == "-" {
+                    std::io::read_to_string(std::io::stdin()).map_err(|e| format!("reading stdin: {e}"))?
+                } else {
+                    replace
+                };
+                let data = Console::new()
+                    .tool("edit_page", json!({ "page_id": id, "find": find, "replace": replace }))
+                    .await?;
+                if out.json {
+                    return print_json(&data);
+                }
+                if ui::tty() {
+                    ui::ok(&format!("edited {id}"));
+                }
+                Ok(())
+            }
             PageCmd::Get { id, out } => {
                 let data = self.call("get_page_content", json!({ "page_id": id })).await?;
                 if out.json {

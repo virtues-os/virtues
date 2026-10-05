@@ -672,6 +672,7 @@ fn public_routes() -> Router<AppState> {
 fn protected_routes(state: &AppState) -> Router<AppState> {
     Router::new()
         .merge(api::applets::routes())
+        .merge(api::console::routes())
         .merge(api::settings::routes())
         .merge(api::wiki::routes())
         .merge(api::chat::routes())

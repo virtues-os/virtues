@@ -77,6 +77,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         Commands::Query { .. }
         | Commands::Search { .. }
         | Commands::Schema { .. }
+        | Commands::Write { .. }
         | Commands::Applet { .. }
         | Commands::Page { .. } => {
             let verbs = data::Verbs::new(virtues.database.pool().clone());
@@ -86,6 +87,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                     verbs.search(text, entities, domains, after, before, limit, out).await
                 }
                 Commands::Schema { tables, out } => verbs.schema(tables, out).await,
+                Commands::Write { sql, out } => verbs.write(sql, out).await,
                 Commands::Applet { cmd } => verbs.applet(cmd).await,
                 Commands::Page { cmd } => verbs.page(cmd).await,
                 _ => unreachable!(),
