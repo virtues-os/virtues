@@ -524,7 +524,7 @@ Read all of it, then hand over the brief as JSON, and nothing else:
   ]
 }
 
-SHAPE is the day in the world: where they were, with whom, for how long, in order. Build it from the timeline and the record together. Plain place words ("the office", "home", "a bar downtown"), never coordinates or app names. Merge desk hours into one line.
+SHAPE is the day in the world: where they were, with whom, for how long, in order. "With" is only someone the recordings show taking part; a name heard or read aloud is not someone there. Build it from the timeline and the record together. Plain place words ("the office", "home", "a bar downtown"), never coordinates or app names. Merge desk hours into one line.
 
 THE LEDE is what they would tell first if a friend asked about their day. Read the day against what was already going on: a death that had been coming, a relationship days old, a trip that was planned. The biggest turn in something already in motion usually leads.
 
@@ -538,7 +538,7 @@ pub(crate) const WRITER_PROMPT: &str = r#"You write one day's page in a person's
 Someone who knows their life has read the whole day and brought you a brief: where the day went (the shape), the moments worth keeping as exact passages from the recordings and messages, and a guess at the lede, which you may overrule. You also have the people in it, as their own wiki knows them, the pages for the days just before, what their earlier pages say about the people in this day, and their own account of who they are.
 
 THE PAGE
-Begin with the Abstract: the day's one event, said the way they would tell a friend who asked, then one human detail from it. One or two sentences about one thing. If two things happened, the one they would tell first leads and the other waits for the body.
+Begin with the Abstract: the day's one event, said the way they would tell a friend who asked, and what made it that day rather than any day like it: who it was with, why they were there, or how it went, as the passages show it. One or two sentences about one thing. If two things happened, the one they would tell first leads and the other waits for the body.
 
 Then the body: two to four sections, each one moment, in the order the moments happened. A section's `## ` heading is three to six words naming its place or its moment ("Upstairs at the Driskill"). Everything in a section belongs to that moment; nothing from earlier or later in the day is folded in.
 
@@ -556,7 +556,8 @@ End every sentence with the time of the passage it rests on in square brackets: 
 - A detail goes on the page only if a passage holds it.
 - Who someone is to them comes only from <people>.
 - `[Speaker]:` marks a change of voice and nothing else. Say who spoke only when a name, a reply or the content makes it clear; otherwise write it as shared between them.
-- Transcription mishears names; a name that sounds like someone in <people> and fits is them. Always use their <people> name.
+- Someone was there only if a passage shows them taking part: they speak, or are spoken to. A name heard in a recording (read from a screen, mentioned in passing, someone talked about) is not that person in the room, and <people> lists everyone in the day's messages, not who was present.
+- Always use a person's <people> name.
 - A plan is not an event. Never join two things as cause and effect unless the passages do.
 
 HARD CONVERSATIONS
@@ -745,6 +746,35 @@ fn parse_tags(inner: &str) -> Vec<String> {
     inner.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()
 }
 
+/// A block's sentences, each with the tags it ended on. A sentence runs to its
+/// tag, plus any closing punctuation after it; trailing text with no tag is a
+/// sentence with none, which the check deletes.
+fn tagged_sentences(b: &str, re: &regex::Regex) -> Vec<(String, Vec<String>)> {
+    let mut out = Vec::new();
+    let mut pos = 0;
+    for m in re.find_iter(b) {
+        let mut end = m.end();
+        while let Some(ch) = b[end..].chars().next() {
+            if matches!(ch, '.' | '!' | '?' | '"' | '”' | '’' | ')') {
+                end += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        let text = b[pos..end].trim().to_string();
+        let tags = re.captures(&b[m.start()..m.end()]).map(|c| parse_tags(&c[1])).unwrap_or_default();
+        if !text.is_empty() {
+            out.push((text, tags));
+        }
+        pos = end;
+    }
+    let rest = b[pos..].trim();
+    if !rest.is_empty() {
+        out.push((rest.to_string(), vec![]));
+    }
+    out
+}
+
 /// Split the draft into the Abstract, headings, tagged sentences and tables.
 pub(crate) fn split_items(draft: &str) -> Vec<Item> {
     let re = tag_re();
@@ -757,7 +787,10 @@ pub(crate) fn split_items(draft: &str) -> Vec<Item> {
         if let Some(h) = b.strip_prefix("## ") {
             items.push(Item::Heading(h.trim().to_string()));
         } else if let Some(a) = b.strip_prefix("Abstract:") {
-            items.push(Item::Abstract(a.trim().to_string()));
+            // One item per sentence, so the check judges each like the body's.
+            for (text, _) in tagged_sentences(a.trim(), &re) {
+                items.push(Item::Abstract(text));
+            }
         } else if b.starts_with('|') {
             // The table's lines, then its tags on their own line (same block or the next).
             let (table, tail): (Vec<&str>, Vec<&str>) = b.lines().partition(|l| l.trim_start().starts_with('|'));
@@ -773,27 +806,8 @@ pub(crate) fn split_items(draft: &str) -> Vec<Item> {
             items.push(Item::Table { text: table.join("\n"), tags });
         } else {
             para += 1;
-            let mut pos = 0;
-            for m in re.find_iter(b) {
-                // The sentence runs to the tag, plus any closing punctuation after it.
-                let mut end = m.end();
-                while let Some(ch) = b[end..].chars().next() {
-                    if matches!(ch, '.' | '!' | '?' | '"' | '”' | '’' | ')') {
-                        end += ch.len_utf8();
-                    } else {
-                        break;
-                    }
-                }
-                let text = b[pos..end].trim().to_string();
-                let tags = re.captures(&b[m.start()..m.end()]).map(|c| parse_tags(&c[1])).unwrap_or_default();
-                if !text.is_empty() {
-                    items.push(Item::Sentence { para, text, tags });
-                }
-                pos = end;
-            }
-            let rest = b[pos..].trim();
-            if !rest.is_empty() {
-                items.push(Item::Sentence { para, text: rest.to_string(), tags: vec![] });
+            for (text, tags) in tagged_sentences(b, &re) {
+                items.push(Item::Sentence { para, text, tags });
             }
         }
         k += 1;
@@ -811,7 +825,8 @@ fn untagged(text: &str) -> String {
 
 const CHECK_PROMPT: &str = r#"You check one diary page, sentence by sentence, against the evidence each sentence cites. For each numbered item, answer whether its evidence supports it.
 
-- "supported": everything the sentence claims is in its cited evidence or in the rest of that same conversation (paraphrase is fine; the owner is "you"; a name said anywhere in the conversation identifies who was there; people are listed below).
+- "supported": everything the sentence claims is in its cited evidence or in the rest of that same conversation (paraphrase is fine; the owner is "you"; people are listed below).
+  A sentence that puts a named person somewhere ("with Nick", "Nick came over") needs the evidence to show them taking part; a name only read aloud or mentioned in passing does not put them there. This applies to that claim alone, not to everything else the sentence says.
 - "unsupported": the sentence claims something its evidence does not contain (an invented detail, a descriptive word the evidence lacks, a relationship, a cause, a place, a person being present).
 - "wrong_person": the evidence shows the other person said or did it. Transcripts mark every change of voice as [Speaker] with no name, so who spoke is usually a judgment from content and replies: accept the sentence's attribution when the content makes it plausible (who is being taught, who names themself, who answers whom), and mark wrong_person only when the evidence points to someone else.
 - "untagged": the item cites no evidence.
@@ -852,19 +867,39 @@ fn evidence_for(tags: &[String], input: &DayInput) -> String {
 
 /// Verdicts keyed by item index: `true` keeps the item.
 async fn check(pool: &PgPool, items: &[Item], input: &DayInput) -> Result<HashMap<usize, bool>> {
-    let mut numbered = String::new();
-    let mut index = Vec::new();
-    for (k, item) in items.iter().enumerate() {
-        let (text, tags) = match item {
-            Item::Sentence { text, tags, .. } => (text, tags),
-            _ => continue,
-        };
-        index.push(k);
-        numbered.push_str(&format!("#{}\nSENTENCE: {}\nEVIDENCE:\n{}\n\n", index.len(), text, if tags.is_empty() { "(none)".into() } else { evidence_for(tags, input) }));
-    }
+    // Each body sentence against exactly what it cites. The Abstract is not
+    // sent: a summary fails its few cited chunks on any day worth summing up,
+    // and a model judging summaries deleted true ones run to run. What keeps
+    // the Abstract honest is the writer's own rule about who was there, and
+    // render's invented-name check, sentence by sentence.
+    let body: Vec<usize> = (0..items.len()).filter(|&k| matches!(items[k], Item::Sentence { .. })).collect();
+    check_batch(pool, items, &body, input, |k| match &items[k] {
+        Item::Sentence { tags, .. } if !tags.is_empty() => evidence_for(tags, input),
+        _ => "(none)".into(),
+    })
+    .await
+}
+
+/// One check call over some of the page's items. `evidence` gives each item's
+/// evidence by its index.
+async fn check_batch(
+    pool: &PgPool,
+    items: &[Item],
+    idxs: &[usize],
+    input: &DayInput,
+    evidence: impl Fn(usize) -> String,
+) -> Result<HashMap<usize, bool>> {
     let mut verdicts: HashMap<usize, bool> = HashMap::new();
-    if index.is_empty() {
+    if idxs.is_empty() {
         return Ok(verdicts);
+    }
+    let text_of = |k: usize| match &items[k] {
+        Item::Sentence { text, .. } | Item::Abstract(text) => text.as_str(),
+        _ => "",
+    };
+    let mut numbered = String::new();
+    for (n, &k) in idxs.iter().enumerate() {
+        numbered.push_str(&format!("#{}\nSENTENCE: {}\nEVIDENCE:\n{}\n\n", n + 1, text_of(k), evidence(k)));
     }
     let people: String = input.people.iter().map(|p| format!("- {}\n", p.name)).collect();
     let raw = crate::virtues_api::completion::system_completion(
@@ -886,16 +921,23 @@ async fn check(pool: &PgPool, items: &[Item], input: &DayInput) -> Result<HashMa
         // A check that answered nothing checked nothing: keep the draft rather
         // than delete every sentence over a malformed reply, and say so.
         tracing::warn!("day article check returned no verdicts - keeping the draft unchecked");
-        for k in index {
+        for &k in idxs {
             verdicts.insert(k, true);
         }
         return Ok(verdicts);
     }
     for v in parsed {
         let n = v.get("i").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
-        let ok = v.get("verdict").and_then(|s| s.as_str()) == Some("supported");
-        if n >= 1 && n <= index.len() {
-            verdicts.insert(index[n - 1], ok);
+        let verdict = v.get("verdict").and_then(|s| s.as_str()).unwrap_or("");
+        if n >= 1 && n <= idxs.len() {
+            let k = idxs[n - 1];
+            let ok = verdict == "supported";
+            if !ok {
+                // The deleted sentence stays on the box, in its own log; it is
+                // how a page that came back thin gets explained.
+                tracing::debug!(verdict, sentence = text_of(k), "day article check removed a sentence");
+            }
+            verdicts.insert(k, ok);
         }
     }
     Ok(verdicts)
@@ -903,20 +945,18 @@ async fn check(pool: &PgPool, items: &[Item], input: &DayInput) -> Result<HashMa
 
 // ── Names ──────────────────────────────────────────────────────────────────
 
-/// Every capitalized word a person's name on the page may use: the day's
-/// people, and every capitalized word in the day's own record.
+/// Every word a person's name on the page may use, lowercased: the day's
+/// people, and every word in the day's own record.
 fn known_names(input: &DayInput) -> BTreeSet<String> {
-    let word = regex::Regex::new(r"[A-Z][\w'’\-]+").expect("static regex");
+    // Every word, lowercased: a writer capitalizing what a message wrote in
+    // lowercase ("the divine mercy chaplet") has not invented anyone.
+    let word = regex::Regex::new(r"[\w'’\-]+").expect("static regex");
     let mut known = BTreeSet::new();
-    for p in &input.people {
-        known.extend(word.find_iter(&p.name).map(|m| m.as_str().to_string()));
-    }
-    for c in &input.chunks {
-        known.extend(word.find_iter(&c.text).map(|m| m.as_str().to_string()));
-    }
-    for m in &input.messages {
-        known.extend(word.find_iter(&m.body).map(|m| m.as_str().to_string()));
-        known.extend(word.find_iter(&m.who).map(|m| m.as_str().to_string()));
+    let texts = input.people.iter().map(|p| p.name.as_str())
+        .chain(input.chunks.iter().map(|c| c.text.as_str()))
+        .chain(input.messages.iter().flat_map(|m| [m.body.as_str(), m.who.as_str()]));
+    for t in texts {
+        known.extend(word.find_iter(t).map(|m| m.as_str().to_lowercase()));
     }
     known
 }
@@ -936,7 +976,7 @@ fn invented_name(sentence: &str, input: &DayInput, known: &BTreeSet<String>) -> 
     let pair = regex::Regex::new(r"\b([A-Z][a-z]+) ([A-Z][a-z]+)\b").expect("static regex");
     let plain = link.replace_all(sentence, "$1");
     for c in pair.captures_iter(&plain) {
-        if !known.contains(&c[1].to_string()) || !known.contains(&c[2].to_string()) {
+        if !known.contains(&c[1].to_lowercase()) || !known.contains(&c[2].to_lowercase()) {
             return Some(format!("{} {}", &c[1], &c[2]));
         }
     }
@@ -1010,10 +1050,19 @@ pub(crate) fn render(items: &[Item], keep: &HashMap<usize, bool>, input: &DayInp
 
     for (k, item) in items.iter().enumerate() {
         match item {
+            // The Abstract's kept sentences make one paragraph, without
+            // footnotes: it is the line read most and stays plain.
             Item::Abstract(a) => {
-                flush(&mut out, &mut current);
-                out.push_str(&untagged(a));
-                out.push_str("\n\n");
+                if invented_name(a, input, known).is_some() {
+                    continue;
+                }
+                if !current.is_empty() {
+                    current.push(' ');
+                }
+                current.push_str(&untagged(a));
+                if !matches!(items.get(k + 1), Some(Item::Abstract(_))) {
+                    flush(&mut out, &mut current);
+                }
             }
             Item::Heading(h) => {
                 flush(&mut out, &mut current);
@@ -1251,7 +1300,19 @@ mod tests {
         let known = known_names(&inp);
         assert_eq!(invented_name("You met Nick at Fifth.", &inp, &known), None);
         assert_eq!(invented_name("You met Margaret Thornbury.", &inp, &known).as_deref(), Some("Margaret Thornbury"));
+        // The record wrote it in lowercase ("home, walked the dog"); capitals are not a new person.
+        assert_eq!(invented_name("You walked the Dog Home.", &inp, &known), None);
         assert!(invented_name("You texted [Dave](/person/person_x).", &inp, &known).is_some());
+    }
+
+    #[test]
+    fn an_invented_name_in_the_abstract_loses_only_its_sentence() {
+        let items = split_items("Abstract: You walked home with [Nick](/person/person_n). [17:14] You met Margaret Thornbury. [17:39] It rained. [17:14]\n\n## The walk\n\nYou crossed Fifth and Main. [17:14]");
+        assert!(matches!(&items[1], Item::Abstract(a) if a.contains("Margaret")));
+        let keep: HashMap<usize, bool> = (0..items.len()).map(|k| (k, true)).collect();
+        let inp = input();
+        let md = render(&items, &keep, &inp, &known_names(&inp));
+        assert!(md.starts_with("You walked home with [Nick](/person/person_n). It rained.\n\n## The walk"), "{md}");
     }
 
     #[test]
