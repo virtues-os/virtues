@@ -246,17 +246,6 @@ export const WIKI_MODE: SidebarMode = {
 			href: '/wiki/chapters',
 			group: 'Time',
 		},
-		// The shape of the record before you read a word of it — and it needs no
-		// articles and no model, which is the point. Last in Time because it is
-		// the widest lens, not the first thing you reach for.
-		{
-			id: 'lifeline',
-			label: 'Lifeline',
-			icon: 'ri:pulse-line',
-			glyph: 'lifeline',
-			href: '/wiki/lifeline',
-			group: 'Time',
-		},
 		{
 			id: 'identity',
 			// "You", not "Narrative Identity": that is the name of the artifact,

@@ -127,8 +127,8 @@
 		// CHAPTERS. A line cut into stretches — the life's own partition, which
 		// is what a chapter is. Drawn as a rule with two crossbars rather than
 		// as a segmented capsule: the capsule version read as a battery at
-		// every size. It is line-based on purpose, like Lifeline two rows
-		// down — both are the life seen as one line, one divided and one not.
+		// every size. It is line-based on purpose: the life seen as one line,
+		// divided.
 		//
 		// Not a book. Stories is the open book and `projects` is the closed
 		// one; a third would be the set's third book and nobody's second guess.
@@ -139,10 +139,6 @@
 		// at row size. Bars survive it — and the STAGGER is what keeps them
 		// from being the align-left glyph every icon set ships.
 		chapters: '<path d="M2.7 4.7h6.6M6.2 8h7.1M3.6 11.3h5.2"/>',
-		// LIFELINE. One continuous stroke that rises and falls. The only glyph
-		// in the set with no enclosure, because the thing it names has no edge.
-		lifeline:
-			'<path d="M2.5 10.4c1.7 0 2.1-4.3 3.7-4.3s1.9 5.2 3.4 5.2 1.8-3.2 3.5-3.2"/>',
 		// YOU. One figure, facing out. People is the same figure twice; the
 		// difference has to survive at 16px, so this one is centred and larger
 		// and that one is a pair.
