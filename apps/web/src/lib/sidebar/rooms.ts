@@ -37,10 +37,10 @@
  *     is started, so Pages is a door in the Home panel with a `+` beside it,
  *     the same shape Projects has.
  *
- * Developer was folded into Settings too, and came back out — see its entry.
- * The merges above survive because each pair answers the same question;
- * that one did not, because "what preference is this?" and "run a query" are
- * not the same question.
+ * Developer is a heading inside Settings. It was folded in once before and
+ * came back out, because the fold put a second row of underline tabs under a
+ * first; a panel heading groups the consoles without nesting any nav, which
+ * was the actual objection.
  *
  * ROUTES ARE UNCHANGED. Only labels and grouping move, so the layout can be
  * judged without also judging a migration.
@@ -49,13 +49,15 @@
  * it gets primacy, not parity, and it is the top of the rail, which is what
  * "the ground" should have meant all along.
  *
- * Below it the library: Wiki, Drive, Sources. Sources was at the foot with
- * Developer and Settings (2026-09-21 and before), which filed "connect the
- * things that fill the record" as a utility, next to a SQL console. It is a
- * room a new box's owner walks into on the first day, so it belongs with the
- * library; and it is last in the library because Wiki and Drive are what you
- * come back for daily and Sources is what you visit to feed them. The foot
- * now holds only the two rooms that are actually utilities.
+ * Below it the library: Wiki, Timeline, Drive - what you read the record
+ * through. Timeline is the one room with no panel: the day on a map is a
+ * page you go to, and its tile opens that page rather than a list beside it.
+ *
+ * Settings stands alone at the foot. Sources and Developer had rail doors of
+ * their own until 2026-10-05; they are headings in the Settings panel now,
+ * because connecting a source and opening a console are both things you do
+ * to the server and then leave, and a rail of what you read had grown three
+ * doors to its plumbing.
  */
 
 /**
@@ -77,7 +79,9 @@ export type RoomPanel =
 	/** Setup: the steps, and the way back into them. */
 	| { kind: 'setup' }
 	/** Nothing live yet — the panel offers the room's full page. */
-	| { kind: 'stub' };
+	| { kind: 'stub' }
+	/** No panel: the tile opens the room's page and leaves the sidebar as it was. */
+	| { kind: 'none' };
 
 export interface Room {
 	id: string;
@@ -98,9 +102,8 @@ export interface Room {
 	href: string;
 	/**
 	 * Route prefixes this room owns, for the occupied mark. Longest match wins,
-	 * so `/virtues/developer` resolves to Developer (which owns exactly that)
-	 * rather than to Settings' shorter `/virtues`. Order in this array — and in
-	 * ROOMS — is therefore not load-bearing; specificity is.
+	 * so order in this array — and in ROOMS — is not load-bearing; specificity
+	 * is.
 	 */
 	owns: string[];
 	panel: RoomPanel;
@@ -165,6 +168,17 @@ export const ROOMS: Room[] = [
 		group: 'library',
 	},
 	{
+		// One day on the box's own map. No panel: the page is the room.
+		id: 'timeline',
+		label: 'Timeline',
+		icon: 'timeline',
+		chord: '⌥⌘T',
+		href: '/timeline',
+		owns: ['/timeline'],
+		panel: { kind: 'none' },
+		group: 'library',
+	},
+	{
 		// "Drive", not "Files": the room already had the drive glyph and the
 		// /storage route, and "Files" named the contents rather than the place.
 		// The id stays `files` so a stored rail selection survives the relabel.
@@ -178,48 +192,14 @@ export const ROOMS: Room[] = [
 		group: 'library',
 	},
 	{
-		id: 'sources',
-		label: 'Sources',
-		icon: 'sources',
-		chord: '⌥⌘O',
-		href: '/sources',
-		owns: ['/sources'],
-		panel: { kind: 'rows', modeId: 'sources' },
-		group: 'library',
-	},
-	{
-		// Above Settings, never below it. Settings is the room muscle memory
-		// reaches for at the very foot of a rail — every desktop app it borrows
-		// from puts it there — so Developer takes the slot above rather than
-		// pushing Settings off the anchor.
-		//
-		// Its own door again, after a spell folded into Settings as three rows.
-		// The fold was argued as "three rooms for the handful of people who open
-		// a SQL console is not worth a rail slot" — but the slot is not what it
-		// cost. Buried, the consoles were four clicks deep behind a noun they do
-		// not belong to (a SQL terminal is not a preference), and Settings' own
-		// nav had to grow a SECOND row of tabs to hold them, which is the exact
-		// smell that split Developer out the first time.
-		//
-		// `owns` is LONGER than Settings' `/virtues`, and `roomForRoute` takes
-		// the longest match — that is what keeps `/virtues/developer/sql`
-		// lighting this room rather than Settings.
-		id: 'developer',
-		label: 'Developer',
-		icon: 'developer',
-		chord: '⌥⌘D',
-		href: '/virtues/developer/sql',
-		owns: ['/virtues/developer'],
-		panel: { kind: 'rows', modeId: 'developer' },
-		group: 'utility',
-	},
-	{
 		id: 'settings',
 		label: 'Settings',
 		icon: 'settings',
 		chord: '⌥⌘,',
 		href: '/virtues/you',
-		owns: ['/virtues'],
+		// Sources and the developer consoles are rows in this panel, so their
+		// pages light this tile.
+		owns: ['/virtues', '/sources'],
 		panel: { kind: 'rows', modeId: 'settings' },
 		group: 'utility',
 	},

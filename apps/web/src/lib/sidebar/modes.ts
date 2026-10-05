@@ -4,7 +4,7 @@
  * A mode swaps the sidebar's contents wholesale: the normal destinations slide
  * out to the left and the mode's own rows slide in. You leave through the path
  * mast — `∴ Virtues / Settings`, root clickable — not a bespoke exit row.
- * Settings, Developer, Wiki, and Sources are the consumers.
+ * Home's panel is its own; Settings, Wiki and Drive are the consumers.
  *
  * Deliberately a *sidebar* state and not derived from which tab has focus.
  * Deriving it would be incoherent with split panes — settings in the left pane
@@ -65,106 +65,111 @@ export interface SidebarMode {
 }
 
 /**
- * Settings. Developer used to be a section in here with its own second row of
- * underline tabs — two stacked underline rows being the smell that said the nav
- * had outgrown its container. It's now its own mode (below).
+ * Settings: every room that is the server's plumbing rather than the record,
+ * under four headings, the way the wiki asks Time and Subjects.
+ *
+ *   ACCOUNT — you, your assistant, what AI costs you.
+ *   SERVER — the machine, the devices paired to it, the screen on it.
+ *   SOURCES — what fills the record. Its own rail door until 2026-10-05; the
+ *     rail now holds only what you read (Home, Wiki, Timeline, Drive), and
+ *     connecting a source is a setting you make, then leave.
+ *   DEVELOPER — the SQL and terminal consoles. Tools, not preferences, which
+ *     is why they sit under their own heading at the foot rather than mixed
+ *     into the rows above.
+ *
+ * Sources and the consoles keep their routes (`/sources/*`,
+ * `/virtues/developer/*`); only the door moved. The Settings room owns both
+ * prefixes in `rooms.ts`, so either lights its tile.
  */
 export const SETTINGS_MODE: SidebarMode = {
 	id: 'settings',
 	title: 'Settings',
 	rows: [
-		// "Profile", not "You". `/virtues/you` renders ProfileView — a name, an
-		// avatar, an account. The wiki has the other "You", the narrative
+		// "Profile", not "You": the wiki has the other "You", the narrative
 		// identity, and two rows with one label in two rooms is a question the
 		// user has to answer by clicking both.
-		{ id: 'you', label: 'Profile', icon: 'ri:user-line', glyph: 'profile', href: '/virtues/you' },
+		{ id: 'you', label: 'Profile', icon: 'ri:user-line', glyph: 'profile', href: '/virtues/you', group: 'Account' },
 		{
 			id: 'assistant',
 			label: 'Assistant',
 			icon: 'ri:sparkling-line',
 			glyph: 'assistant',
 			href: '/virtues/assistant',
+			group: 'Account',
 		},
-		// No Models row. The catalog table lives at the bottom of Assistant,
-		// under the slot pickers it serves (2026-09-25). As its own room it was
-		// a second place holding the same setting, with its own words for it.
-		// `/virtues/models` still opens Assistant, for links already out there.
-		// Billing and Usage were two rows answering one question. The balance
-		// sat on one page and the calls that drew it down on another, so
-		// neither could answer "is that number going where I think it is?" —
-		// which is the only reason anyone opens either. (Usage was "Telemetry"
-		// under Developer before that: it is the owner's own AI spend, not a
-		// developer console, and nothing about it is sent anywhere.)
-		//
-		// The merged room was called "Plan" for three days, which named a
-		// choice that does not exist: there is one subscription at one price,
-		// so "Plan" invited a reader to go looking for the other plans. What
-		// the room actually holds is what AI costs and how it gets paid for —
-		// standing, balance, the endpoint you can route around us to, the
-		// Stripe door, and the call log. That is billing.
-		{ id: 'billing', label: 'Billing', icon: 'ri:bank-card-line', glyph: 'billing', href: '/virtues/billing' },
-		// Was one door, "Box", which was a container rather than a subject: it
-		// stacked a Wi-Fi picker, an update installer, an 8-chapter telemetry
-		// console and a revoke-everything button on one scroll, and two of those
-		// duplicated chapters of the console below them. Three subjects, three
-		// doors — the machine, its connection, and the code it runs.
-		// System owns the machine itself and everything physically attached to
-		// it: its readings, the network it is on, the screen bolted to it.
-		// Network and Display were their own rows and are now pages UNDER this
-		// one (/virtues/system/network, /virtues/system/display) — one row in
-		// the sidebar, still a page each, because appending four chapters of
-		// screen settings to eight of telemetry makes a scroll nobody reads.
-		{ id: 'system', label: 'System', icon: 'ri:server-line', glyph: 'system', href: '/virtues/system' },
-		// Devices owns every participant, and the SERVER is the first of them.
-		// "Software" was its own row describing the release the server runs —
-		// which is a fact about a device, on a page that could not show you the
-		// device. Splitting them is what let a collector claim 1.0.0 next to an
-		// app claiming 1.0.25 with neither screen able to say which was wrong.
-		{ id: 'devices', label: 'Devices', icon: 'ri:device-line', glyph: 'devices', href: '/virtues/devices' },
-		// The screen on the server itself. Its own room, not a page under System:
-		// it is four chapters about a physical panel — what it shows, its hours,
-		// other screens — which is a subject someone comes to deliberately, not a
-		// reading they glance at while checking temperatures.
-		{ id: 'display', label: 'Display', icon: 'ri:tv-2-line', glyph: 'display', href: '/virtues/display' },
-		// SQL, Terminal and Lake are NOT here. They lived in this list for a
-		// while, on the argument that they already sit under `/virtues/*` —
-		// true of the route, and beside the point for the nav: they are tools,
-		// not preferences, and putting them here forced Settings' in-page nav to
-		// grow a second row of tabs to hold their sub-sections. They have their
-		// own rail door again (DEVELOPER_MODE below, `developer` in rooms.ts).
-	],
-};
-
-/**
- * Developer. A rail door of its own, beside Sources and Settings at the foot.
- *
- * This constant sat unreferenced for a while, after the three rows were folded
- * into Settings — it is live again rather than rewritten, because the fold
- * changed nothing about what belongs in here.
- */
-export const DEVELOPER_MODE: SidebarMode = {
-	id: 'developer',
-	title: 'Developer',
-	rows: [
-		{ id: 'sql', label: 'SQL', icon: 'ri:terminal-box-line', glyph: 'sql', href: '/virtues/developer/sql' },
+		// What AI costs and how it gets paid for: standing, balance, routing and
+		// the call log on one page, because each answers the others.
+		{
+			id: 'billing',
+			label: 'Billing',
+			icon: 'ri:bank-card-line',
+			glyph: 'billing',
+			href: '/virtues/billing',
+			group: 'Account',
+		},
+		// The machine itself and what is physically attached to it: its readings,
+		// its network (/virtues/system/network).
+		{ id: 'system', label: 'System', icon: 'ri:server-line', glyph: 'system', href: '/virtues/system', group: 'Server' },
+		// Every participant, the server first: the release it runs is a fact
+		// about a device.
+		{
+			id: 'devices',
+			label: 'Devices',
+			icon: 'ri:device-line',
+			glyph: 'devices',
+			href: '/virtues/devices',
+			group: 'Server',
+		},
+		// The screen on the server: what it shows, its hours, other screens.
+		{
+			id: 'display',
+			label: 'Display',
+			icon: 'ri:tv-2-line',
+			glyph: 'display',
+			href: '/virtues/display',
+			group: 'Server',
+		},
+		// In the order the questions get asked: is anything broken right now,
+		// what can I plug in, and what has actually been running.
+		{ id: 'sources', label: 'Overview', icon: 'ri:dashboard-line', glyph: 'overview', href: '/sources', group: 'Sources' },
+		{
+			id: 'catalog',
+			label: 'Catalog',
+			icon: 'ri:apps-line',
+			glyph: 'catalog',
+			href: '/sources/catalog',
+			group: 'Sources',
+		},
+		{
+			id: 'activity',
+			label: 'Activity',
+			icon: 'ri:history-line',
+			glyph: 'history',
+			href: '/sources/activity',
+			group: 'Sources',
+		},
+		{
+			id: 'sql',
+			label: 'SQL',
+			icon: 'ri:terminal-box-line',
+			glyph: 'sql',
+			href: '/virtues/developer/sql',
+			group: 'Developer',
+		},
 		{
 			id: 'terminal',
 			label: 'Terminal',
 			icon: 'ri:terminal-line',
 			glyph: 'terminal',
 			href: '/virtues/developer/terminal',
+			group: 'Developer',
 		},
-		{ id: 'lake', label: 'Lake', icon: 'ri:database-2-line', glyph: 'lake', href: '/virtues/developer/lake' },
-		// Telemetry moved out and became Settings → Usage. Activity — the
-		// auth-audit log — is gone; what it reported on (what is paired, what
-		// you can revoke) is Devices' job, and it had a second reading of the
-		// word "activity" that already meant something else in Sources.
 	],
 };
 
 /**
- * Wiki. The third mode, and the first one that isn't a settings surface — the
- * wiki outgrew a row of underline tabs the same way Developer did.
+ * Wiki. The first mode that isn't a settings surface — the wiki outgrew a row
+ * of underline tabs the way Settings had.
  *
  * TWO AXES, NAMED. Eleven rows in one flat list was the rail's own problem
  * moved a level down: the rail was cut from ten tiles to six because "a rail of
@@ -305,29 +310,6 @@ export const WIKI_MODE: SidebarMode = {
 };
 
 /**
- * Sources. Its own door rather than a row inside Settings, where it had been
- * one line between Assistant and Billing — a hard place to find for the room
- * that decides whether the record has anything in it at all.
- *
- * Not on the Library shelf either: the shelf holds what you author and read
- * (chats, pages, notebooks, the wiki), and this is the plumbing under it. Same
- * argument that put Developer in the footer.
- *
- * Three rows, in the order the questions get asked: is anything broken right
- * now (Overview), what can I plug in and what is already plugged in (Catalog),
- * and what has actually been running (Activity).
- */
-export const SOURCES_MODE: SidebarMode = {
-	id: 'sources',
-	title: 'Sources',
-	rows: [
-		{ id: 'overview', label: 'Overview', icon: 'ri:dashboard-line', glyph: 'overview', href: '/sources' },
-		{ id: 'catalog', label: 'Catalog', icon: 'ri:apps-line', glyph: 'catalog', href: '/sources/catalog' },
-		{ id: 'activity', label: 'Activity', icon: 'ri:history-line', glyph: 'history', href: '/sources/activity' },
-	],
-};
-
-/**
  * Drive's panel: the Storage room's sections as rows, plus Bookmarks, which
  * folded into Drive when the rail went to six rooms. Trash is last because it
  * is the one section you walk to on purpose — everything deleted anywhere in
@@ -348,7 +330,5 @@ export const DRIVE_MODE: SidebarMode = {
 export const SIDEBAR_MODES: Record<string, SidebarMode> = {
 	drive: DRIVE_MODE,
 	settings: SETTINGS_MODE,
-	developer: DEVELOPER_MODE,
 	wiki: WIKI_MODE,
-	sources: SOURCES_MODE,
 };
