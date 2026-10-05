@@ -296,8 +296,9 @@ key. With a door, anyone on the internet can send bytes to code on the box.
    moved at ~7.5 Mbit/s through the relay. The loader is 0.95 MB gzipped
    before `wasm-opt`. A link to a key nobody holds never connects. **A
    stopped box makes `connect` hang**: the relay does not report an absent
-   peer, so the loader owns a timeout and the "offline" message. Still open:
-   a phone on cellular, iOS Safari, a direct path.
+   peer, so the loader owns a timeout and the "offline" message. iOS Safari
+   (Simulator, iOS 26.5, WebKit) loads it too: first paint ~0.73 s. Still
+   open: a real phone on cellular, a direct path.
 2. **The publication primitive and the freezer**: `app_publications`
    (claim a migration number first), face → one self-contained file, the
    box-only lint `publish_to_github` already has.
