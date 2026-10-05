@@ -15,27 +15,26 @@ f1ae1f25, is live), so both services now have a `:previous` rollback image.
 
 ## Open
 
-1. **Map fonts.** The first build (2026-09-28) is published, virtues-api
-   serves it from `/v1/maps/*` behind the bearer, Caddy keeps no access log
-   and the routes sit outside request tracing, and a box on a prerelease synced its world
-   file and squares on 2026-09-29. But the build's `assets.tar` held 252
-   symlinks (font aliases in the upstream assets repo), and the box refuses
-   any link in that archive, so no box has fonts or sprites yet. `cut.py` now
-   dereferences them, and the fixed job is installed on the server (2026-09-30).
-   After the next run (early each month), confirm a box logs its assets
-   unpacked.
-2. **Move the review demo** (still on the old hosting). Not onto this
-   server: a box install beside billing means a second Postgres, a port
-   clash, and dev-auth owner access next to the billing service. It needs its
-   own VM.
-3. **Decide where the website's database lives.** It is still on the old
-   hosting, still connected to occasionally, and reachable on its port from
-   any address because the website's host has no fixed IPs. The real fix is
-   the website not talking to a database directly.
-4. **Shut down the old hosting** after the rollback week (from 2026-10-05).
-   At cutover only the service containers were stopped; the instance and the
-   atlas and api databases were deliberately kept running so a rollback
-   could be a DNS change and a container start. On 2026-09-30 the containers
-   were still stopped and neither database had had a connection since the
-   cutover. After the week, per resource: take a final snapshot, stop, then
-   delete once the snapshot is confirmed (ask first).
+1. **Map fonts.** The 2026-10-02 build's fonts archive holds no links and
+   unpacks, but a box that had recorded the first build's broken archive kept
+   it under the 90-day refresh rule and stayed without fonts. The box now
+   treats an archive with nothing unpacked as stale (aa6f3c8f, unreleased);
+   the one affected box had the archive cleared by hand on 2026-10-05.
+   Confirm that box's log shows the assets unpacked, then delete this item.
+2. **Retire the old demo instance** (from 2026-10-12). The review demo moved
+   to its own small VPS at this provider on 2026-10-05: same version, the
+   database and env file carried over so the box kept its iroh identity and
+   the reviewer's pairing, both hostnames switched in DNS with about two
+   minutes of downtime, and monitoring added (it had none, which is how its
+   nightly reset failed unseen for two weeks). The old instance is stopped
+   at the service level and holds a final database dump. After the week:
+   snapshot, then delete (ask first).
+3. **Decide where the website's database lives.** It is the last database on
+   the old hosting and holds two live projects, the website's and an
+   unrelated one. Its port is open to any address because the website's host
+   has no fixed IPs, so it does not belong on the billing server; the real fix
+   is the website not talking to a database directly.
+
+The old hosting's atlas and api databases, their instance, and the image
+registry were deleted on 2026-10-05 after a final snapshot of each; DNS and
+IAM stay where they are by choice.
