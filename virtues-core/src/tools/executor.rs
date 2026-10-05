@@ -221,15 +221,7 @@ impl ToolExecutor {
     /// go through `BearerClient`, which sources the URL + bearer itself.
     pub fn new(pool: PgPool) -> Self {
         warm_code_env();
-        let pool = Arc::new(pool);
-        Self {
-            web_search: WebSearchTool::new((*pool).clone()),
-            semantic_search: SemanticSearchTool::new(pool.clone()),
-            sql_query: SqlQueryTool::new(pool.clone()),
-            page_editor: PageEditorTool::new(pool.clone(), None),
-            _pool: pool,
-            yjs_state: None,
-        }
+        Self::without_warmup(pool)
     }
 
     /// Create a new tool executor with YjsState for real-time page editing
@@ -244,6 +236,21 @@ impl ToolExecutor {
             page_editor: PageEditorTool::new(pool.clone(), Some(yjs_state.clone())),
             _pool: pool,
             yjs_state: Some(yjs_state),
+        }
+    }
+
+    /// For a one-shot CLI verb: the same tools, without the code_interpreter
+    /// package build `new` starts. A `virtues query` that began a 400 MB fetch
+    /// on a box missing them would be a surprising side effect of a read.
+    pub fn without_warmup(pool: PgPool) -> Self {
+        let pool = Arc::new(pool);
+        Self {
+            web_search: WebSearchTool::new((*pool).clone()),
+            semantic_search: SemanticSearchTool::new(pool.clone()),
+            sql_query: SqlQueryTool::new(pool.clone()),
+            page_editor: PageEditorTool::new(pool.clone(), None),
+            _pool: pool,
+            yjs_state: None,
         }
     }
 

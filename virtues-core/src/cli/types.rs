@@ -39,6 +39,49 @@ pub enum DeviceCommands {
     Add,
 }
 
+/// `virtues applet <action>` — read the box's applets.
+#[derive(Subcommand)]
+pub enum AppletCmd {
+    /// List applets, with each one's last run.
+    #[command(alias = "list")]
+    Ls {
+        /// Include archived applets (their `until` has been met).
+        #[arg(long)]
+        all: bool,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// Show one applet and its last ten runs.
+    Get {
+        /// The applet id, as `virtues applet ls` shows it.
+        id: String,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+}
+
+/// `virtues page <action>` — read pages.
+#[derive(Subcommand)]
+pub enum PageCmd {
+    /// Print a page's markdown.
+    Get {
+        /// The page id.
+        id: String,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+}
+
+/// The output switch every data verb takes. Without it the verb prints a
+/// table on a terminal and tab-separated lines when piped.
+#[derive(clap::Args, Clone, Copy)]
+pub struct OutputArgs {
+    /// Print the tool's JSON result instead of a table.
+    #[arg(long)]
+    pub json: bool,
+}
+
 #[derive(Subcommand)]
 pub enum Commands {
     /// Finish a fresh install: run migrations, mint a pair code, print the
@@ -429,6 +472,67 @@ pub enum Commands {
         /// Emit machine-readable JSON instead of the human-friendly dashboard.
         #[arg(long)]
         json: bool,
+    },
+
+    /// Run a read-only SQL query over your data.
+    ///
+    /// Runs as the same restricted database role chat uses: `data_*` and
+    /// `wiki_*` tables, no secrets, 25 seconds at most. Pass `-` to read the
+    /// SQL from stdin. `virtues schema` lists what you can query.
+    Query {
+        /// The SELECT to run, or `-` for stdin.
+        sql: String,
+        /// Rows to return (max 200).
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// Search your data by meaning.
+    Search {
+        /// What to look for.
+        #[arg(required = true, num_args = 1..)]
+        text: Vec<String>,
+        /// Only records linked to this entity id: `person_…`, `place_…` or
+        /// `org_…` (repeatable).
+        #[arg(long = "entity")]
+        entities: Vec<String>,
+        /// Only these domains: document, email, message, calendar, chat,
+        /// transaction, transcription, page (repeatable).
+        #[arg(long = "domain")]
+        domains: Vec<String>,
+        /// Only records on or after this date (ISO 8601).
+        #[arg(long)]
+        after: Option<String>,
+        /// Only records before this date (ISO 8601).
+        #[arg(long)]
+        before: Option<String>,
+        /// Results to return (max 50).
+        #[arg(long, default_value_t = 10)]
+        limit: u32,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// List the tables you can query, or describe some of them.
+    Schema {
+        /// Tables to describe. With none, lists every queryable table.
+        tables: Vec<String>,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// Read the box's applets.
+    Applet {
+        #[command(subcommand)]
+        cmd: AppletCmd,
+    },
+
+    /// Read pages.
+    Page {
+        #[command(subcommand)]
+        cmd: PageCmd,
     },
 
     /// Report a crash to the Virtues cloud diagnostic endpoint.

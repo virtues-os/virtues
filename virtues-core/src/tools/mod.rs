@@ -129,6 +129,18 @@ pub fn get_tools_for_applet() -> Vec<serde_json::Value> {
     tools_named(APPLET_RUN_ALLOWED_TOOLS)
 }
 
+/// The tools behind the CLI's data verbs (`virtues query`, `search`,
+/// `schema`, `applet`, `page`). Each verb is one of these run through the
+/// executor, so it gets the same role drop, timeout and arguments as chat;
+/// `cli::data` refuses anything not named here.
+pub(crate) const CLI_TOOLS: &[&str] = &[
+    "sql_query",
+    "semantic_search",
+    "list_applets",
+    "get_applet",
+    "get_page_content",
+];
+
 /// The read-only research tools a Deep Research **subagent** (worker) may use. Explicit allow-list
 /// (not a category filter) so workers get pure research capability — no memory/profile writes, and
 /// crucially no `dispatch_subagents` (recursion guard).
