@@ -20,9 +20,18 @@
 	import { formatDate } from '$lib/utils/dateUtils';
 	import UpdateSection from '$lib/components/settings/UpdateSection.svelte';
 	import { BUILD, buildLabel } from '$lib/build';
-	import { shellIdentity, describeOtaCheck, type ShellIdentity } from '$lib/tauri/bridge';
+	import {
+		shellIdentity,
+		describeOtaCheck,
+		runsOwnCopy,
+		stagedBundle,
+		type ShellIdentity
+	} from '$lib/tauri/bridge';
 
 	let shell = $state<ShellIdentity | null>(null);
+	const ownCopy = runsOwnCopy();
+	const staged = $derived(shell && ownCopy ? stagedBundle(shell) : null);
+	const otaNote = $derived(shell ? describeOtaCheck(shell) : null);
 	let version = $state('');
 	let commit = $state('');
 	let builtAt = $state('');
@@ -91,28 +100,28 @@
 			</dd>
 
 			<!--
-				"Interface" is this bundle. When it came over the air the shell knows
-				its content hash and we show that, because two bundles can report the
-				same version (every dev build says "dev") while being different builds.
+				"Interface" is the bundle this page is running. When it came over the
+				air the shell knows its content hash and we show that, because two
+				bundles can report the same version (every dev build says "dev") while
+				being different builds. "Bundled" is a claim about the app's own copy
+				(the Mac and the phone): a browser and the Windows and Linux apps load
+				the copy the box serves, so there it says so.
 			-->
 			<dt>Interface</dt>
 			<dd class="mono">
 				{buildLabel(BUILD)}
-				<!--
-					"bundled" is a claim about a native shell — that this UI shipped
-					inside the app rather than arriving over the air. In a plain
-					browser there is no app for it to have shipped inside; the box
-					served this bundle. Saying "bundled" there was a small lie that
-					only became conspicuous once this page's entire subject was
-					which artifact is which.
-				-->
 				<span class="dim">
-					· {shell
-						? shell.activeBundle
-							? `ota ${shell.activeBundle.slice(0, 8)}`
+					· {shell && ownCopy
+						? shell.servingBundle
+							? `ota ${shell.servingBundle.slice(0, 8)}`
 							: 'bundled'
 						: 'served by the box'}
 				</span>
+				{#if staged}
+					<span class="staged">
+						This app downloaded update {staged.slice(0, 8)} and switches to it the next time it reloads.
+					</span>
+				{/if}
 			</dd>
 
 			<!--
@@ -134,8 +143,8 @@
 			the user still sees stale UI, which without a reason on screen reads as
 			OTA being broken.
 		-->
-		{#if shell && describeOtaCheck(shell.lastCheck)}
-			<p class="ota-note">{describeOtaCheck(shell.lastCheck)}</p>
+		{#if otaNote}
+			<p class="ota-note">{otaNote}</p>
 		{/if}
 	</section>
 </Page>
@@ -185,6 +194,13 @@
 
 	.dim {
 		color: var(--color-foreground-subtle);
+	}
+
+	.staged {
+		display: block;
+		margin-top: 4px;
+		font-family: var(--font-sans, inherit);
+		color: var(--color-foreground-muted);
 	}
 
 	.ota-note {
