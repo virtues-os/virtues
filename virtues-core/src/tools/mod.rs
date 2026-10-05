@@ -143,6 +143,17 @@ pub(crate) const CLI_TOOLS: &[&str] = &[
     "setup_applet",
 ];
 
+/// The tools behind the CLI's write verbs. These run in the server, not the
+/// CLI process (`server/api/console.rs` says why), and that door refuses
+/// anything not named here.
+pub(crate) const CLI_WRITE_TOOLS: &[&str] = &[
+    "create_page",
+    "edit_page",
+    "setup_applet",
+    "run_applet",
+    "sql_write",
+];
+
 /// The read-only research tools a Deep Research **subagent** (worker) may use. Explicit allow-list
 /// (not a category filter) so workers get pure research capability — no memory/profile writes, and
 /// crucially no `dispatch_subagents` (recursion guard).

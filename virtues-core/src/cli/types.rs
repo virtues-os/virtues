@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 
 /// Default port: reads NOMAD_PORT_http env var (Nomad host networking),
 /// falling back to 8000 for local development.
-fn default_port() -> u16 {
+pub(crate) fn default_port() -> u16 {
     std::env::var("NOMAD_PORT_http")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -39,7 +39,7 @@ pub enum DeviceCommands {
     Add,
 }
 
-/// `virtues applet <action>` — read the box's applets.
+/// `virtues applet <action>` — read and change the box's applets.
 #[derive(Subcommand)]
 pub enum AppletCmd {
     /// List applets, with each one's last run.
@@ -60,6 +60,42 @@ pub enum AppletCmd {
         out: OutputArgs,
     },
 
+    /// Create or update an applet from a folder, and turn it on.
+    ///
+    /// Runs the check first and creates nothing when it finds anything. A
+    /// scheduled applet is turned on unless `--off`; one with a prompt and no
+    /// daily spend limit gets `max_llm_cost_per_day = 1.00`. Needs the virtues
+    /// server running on this machine.
+    Put {
+        /// The applet folder, or `-` for `setup_applet`'s JSON on stdin.
+        path: String,
+        /// Leave it turned off.
+        #[arg(long)]
+        off: bool,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// Turn an applet on.
+    On {
+        id: String,
+    },
+
+    /// Turn an applet off.
+    Off {
+        id: String,
+    },
+
+    /// Run an applet now. Count limits do not apply; spend limits do.
+    Run {
+        id: String,
+        /// For an applet that works on one day: YYYY-MM-DD.
+        #[arg(long)]
+        date: Option<String>,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
     /// Check an applet against this box without creating anything.
     ///
     /// The same check chat runs before it creates an applet: cron shape, SQL
@@ -75,9 +111,32 @@ pub enum AppletCmd {
     },
 }
 
-/// `virtues page <action>` — read pages.
+/// `virtues page <action>` — read and write pages.
 #[derive(Subcommand)]
 pub enum PageCmd {
+    /// Create a page. Its markdown comes from stdin when stdin is piped.
+    New {
+        /// The page title.
+        title: String,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// Replace text in a page, through the live document, so an open editor
+    /// sees the change.
+    Edit {
+        /// The page id.
+        id: String,
+        /// The exact text to find.
+        #[arg(long)]
+        find: String,
+        /// What to put in its place, or `-` for stdin.
+        #[arg(long)]
+        replace: String,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
     /// Print a page's markdown.
     Get {
         /// The page id.
@@ -537,13 +596,25 @@ pub enum Commands {
         out: OutputArgs,
     },
 
-    /// Read the box's applets.
+    /// Insert, update or delete rows in an applet's own tables.
+    ///
+    /// Runs as the applet writer role: `applet_*` schemas only, never your
+    /// record. Pass `-` to read the SQL from stdin. Needs the virtues server
+    /// running on this machine.
+    Write {
+        /// The statement to run, or `-` for stdin.
+        sql: String,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// Read and change the box's applets.
     Applet {
         #[command(subcommand)]
         cmd: AppletCmd,
     },
 
-    /// Read pages.
+    /// Read and write pages.
     Page {
         #[command(subcommand)]
         cmd: PageCmd,

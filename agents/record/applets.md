@@ -73,6 +73,16 @@ promoted by reconcile, and deleted applets resurrected from their folders:
   manifest so a rebuilt database keeps the choice. `delete_applet` removes the
   folder. Reconcile's `ai` branch never touches `enabled` or `memory`.
 
+**An outside agent's user-surface action is the owner's approval in its own
+session** (2026-10-05). An agent such as Claude Code works on the box through
+the CLI (`virtues applet put`), and the owner is present in that session,
+approving its commands. So `applet put` turns on what it creates, through the
+app's own switch (`PATCH /api/applets/:id`), unless told `--off`; asking again
+in the app was rejected as a second gate on one decision. The backstop that
+replaces the card: an applet put with a prompt and no daily spend limit gets
+`max_llm_cost_per_day = 1.00`. The chat door is unchanged. The design is
+[cli-data-verbs-plan.md](../plan/cli-data-verbs-plan.md).
+
 ## What an applet may do at runtime
 
 An applet run gets an **explicit allowlist**. The first design gave runtime

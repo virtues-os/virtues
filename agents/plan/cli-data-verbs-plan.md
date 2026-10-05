@@ -62,7 +62,7 @@ gets its own SQL, its own role switch or its own validation:
 | `virtues applet ls/get` | `list_applets`, `get_applet` | |
 | `virtues applet check <dir>` | `setup_applet` with `check_only` | the LSP, standalone: no disk write, no row; `-` reads JSON arguments |
 | `virtues applet put <dir>` | `setup_applet` | |
-| `virtues applet enable/disable <id>` | `edit_applet` | |
+| `virtues applet on/off <id>` | the app's switch, `PATCH /api/applets/:id` | |
 | `virtues applet run <id>` | `run_applet` | "Run now": exempt from count caps, not spend |
 | `virtues write <sql>` | `sql_write` | `applet_*` schemas only |
 | `virtues schema [table]` | the `sql_catalog` description `sql_query` already generates | what an outside agent needs first |
@@ -98,19 +98,19 @@ agent's own session**. The record's wording is updated in the same change
 that ships write verbs. The chat door is unchanged: an applet authored in the
 box's own chat still waits on the Enable card.
 
-What replaces the card as the backstop: **an applet created or edited through
-a CLI verb gets `max_llm_cost_per_day` set by default** when its manifest sets
-none, so a scheduled applet a model wrote cannot run up a bill unattended.
-The owner can raise or remove it like any limit.
+What replaces the card as the backstop: **an applet put through the CLI with
+a prompt gets `max_llm_cost_per_day = 1.00`** when it sets none, so a
+scheduled applet a model wrote cannot run up a bill unattended. The owner can
+raise or remove it like any limit. Both are built and in the record.
 
 ### The trap this has to close anyway
 
 `check_tool_permission` gates only when `context.chat_id` is set: **"Headless
-calls with no chat aren't gated either."** The CLI's verbs will ride that
-headless path, which is now intended, but the context must still name its
-caller (`cli` or `mcp`) so the audit line and the default spend cap know where
-a write came from. A default `ToolContext` that says nothing is the shape
-that let the gate silently stop being a gate before.
+calls with no chat aren't gated either."** The CLI's verbs ride that headless
+path, which is now intended. What says where a write came from is the door it
+came through, not a field: writes arrive only at the console door, which
+takes only the local console and logs each call, and the default spend cap is
+applied by the CLI verb before the tool runs.
 
 ## Reaching the box
 
@@ -127,7 +127,7 @@ protect anything if the credential cannot go around the CLI.
 **First: `virtues agent-key add <pubkey>`** writes the forced-command line for
 the login user, and `agent-key ls/rm` manage them. The forced command dispatches
 `SSH_ORIGINAL_COMMAND` to the CLI's verbs only (lifecycle verbs like `upgrade`
-or `reset` refused) and sets the caller to `cli` with the key's name for the
+or `reset` refused) and passes the key's name to the console door for the
 audit line. Limits: reachable on the LAN or over Tailscale, and only on a box
 running sshd.
 
@@ -137,9 +137,10 @@ speaks iroh. Designed when owners want access away from home; not before.
 
 ## Audit
 
-Server logs only. Every write verb logs one structured event (caller, key
-name, tool, arguments hash, result) through the existing tracing path
-(record/observability.md). No table, no activity list in the app.
+Server logs only. Every write verb logs one structured event through the
+existing tracing path (record/observability.md): `audit = "console_tool"`,
+the tool, a hash of its arguments, and the status. The key name joins it with
+`agent-key`. No table, no activity list in the app.
 
 ## Dev checkouts
 
@@ -171,9 +172,22 @@ which is the boundary that matters. `agent-key` is box-only.
    folder onto the box. Exits 1 on findings. Building it found the drift
    parser reading SQL comments as columns, a false finding on any schema that
    explains itself; fixed.
-3. **Write verbs**: `page new/edit`, `applet put/enable/disable/run`, `write`;
-   a caller (`cli`/`mcp`) on `ToolContext`; the default spend cap; the audit
-   line; the record/applets.md invariant rewritten.
+3. **Write verbs.** Built 2026-10-05: `page new/edit`, `applet put/on/off/run`,
+   `write`. They do not run in the CLI process. A page edit has to go through
+   the live Yjs document the server holds, `setup_applet` reloads the
+   server's applet catalog, and `run_applet` dispatches through the server's
+   runner; a write from another process lands in the database behind all
+   three, and an open page's next save puts the old text back. So the CLI
+   posts the tool to `POST /api/console/tool/:tool` (`server/api/console.rs`),
+   which takes only the local console (loopback, the identity the on-box CLI
+   already has) and only `CLI_WRITE_TOOLS`, runs it through the same
+   executor chat uses, and logs one `audit = "console_tool"` line with the
+   tool and a hash of its arguments. That line is the audit, in the server's
+   own journal. `applet on/off` is the app's switch, `PATCH /api/applets/:id`.
+   `page edit` saves the page at once (`YjsState::flush_page`) so a read
+   straight after sees it. A write needs the server running; the error says
+   so. No caller field on `ToolContext` was needed: the door the call came
+   through says who it is.
 4. **`agent-key`** and the test on the spare box: Claude Code builds three
    typical applets using only the verbs. **Success, written down before the
    run: it never needs a manifest field the verbs cannot reach.** Every field
