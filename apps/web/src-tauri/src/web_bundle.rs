@@ -280,6 +280,17 @@ pub fn is_page_document(resolved: &str) -> bool {
     resolved == "index.html" || resolved == "200.html"
 }
 
+/// Does this request start a page load? Only a navigation does: it asks for
+/// the page document and accepts HTML (`accept` is the request's `Accept`
+/// header). Every extension-less path resolves to `200.html`, so a `fetch` or
+/// an `<img>` aimed at one is answered with the document too, and counting it
+/// as a load re-pins the running page to a just-applied bundle it never ran.
+/// That page never confirms the bundle, so the next real load rolled it back,
+/// and no over-the-air update survived.
+pub fn is_page_load(resolved: &str, accept: Option<&str>) -> bool {
+    is_page_document(resolved) && accept.is_some_and(|a| a.contains("text/html"))
+}
+
 /// A page is loading. Settle rollback ([`resolve_pending`]), then pin this load
 /// to whatever is active now. Call for the page document, before reading it.
 /// Returns true when a rollback happened (worth a log line).
@@ -1553,6 +1564,19 @@ mod tests {
         assert!(!is_backend_path("/"));
         assert!(!is_backend_path("/setup"));
         assert!(!is_backend_path("/_app/immutable/a.js"));
+    }
+
+    #[test]
+    fn only_a_navigation_starts_a_page_load() {
+        let nav = Some("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+        assert!(is_page_load("index.html", nav));
+        assert!(is_page_load("200.html", nav));
+        // A fetch or an image that lands on an extension-less path gets the
+        // document back, but it is not a page load.
+        assert!(!is_page_load("200.html", Some("*/*")));
+        assert!(!is_page_load("200.html", Some("image/webp,image/*,*/*;q=0.8")));
+        assert!(!is_page_load("200.html", None));
+        assert!(!is_page_load("_app/immutable/a.js", nav));
     }
 
     #[test]

@@ -368,15 +368,23 @@ pub fn serve_ui<R: tauri::Runtime>(
       .unwrap();
   }
 
-  // A page document starts a page load: settle rollback and pin this load to
+  // A navigation starts a page load: settle rollback and pin this load to
   // one bundle, so every asset it requests afterwards comes from the same
   // place (web_bundle.rs, "The bundle a page load serves from").
-  if web_bundle::is_page_document(&resolved) {
+  let accept = request
+    .headers()
+    .get(tauri::http::header::ACCEPT)
+    .and_then(|v| v.to_str().ok());
+  if web_bundle::is_page_load(&resolved, accept) {
     if let Some(dir) = ui_data_dir(app) {
       if web_bundle::begin_page_load(&dir) {
         eprintln!("[ota] a staged bundle failed to confirm; rolled back");
       }
     }
+  } else if web_bundle::is_page_document(&resolved) && resolved != "index.html" {
+    // An extension-less path the page asked for as data: a call site that
+    // should be reaching the box. Served the document as before, and named.
+    eprintln!("[ui] {path} is not an app file; answered with 200.html (accept: {accept:?})");
   }
 
   // Overlay first, baked second. `mime_guess` is not a dependency here, so
