@@ -138,12 +138,13 @@ same answer Synology and Home Assistant give.
 
 ### Carry: an iroh endpoint in the visitor's browser
 
-- **The link** is `<loader-domain>/#<endpoint-id>.<page-token>`. The part
-  after `#` never leaves the browser. The EndpointId **is** the door's public
-  key (the door runs on the box with its own key, see wave 1), so dialing it
-  authenticates the door: a server that does not hold that key cannot
-  complete the handshake, virtues included. No certificate, no CA, no per-box
-  DNS name.
+- **The link** comes in two forms (decided below), and both always work:
+  `virtues.ch/<handle>#<token>` and the self-contained
+  `s.virtues.ch/#<door-key>.<token>`. The part after `#` never leaves the
+  browser. The door key **is** the door's public key (the door runs on the
+  box with its own key, see wave 1), so dialing it authenticates the door: a
+  server that does not hold that key cannot complete the handshake, virtues
+  included. No certificate, no CA, no per-box DNS name.
 - **The loader** is one static page: iroh compiled to WebAssembly plus a
   renderer. The same bytes for every box and every page, no content. It is
   the one thing virtues serves, so it stays small, open, version-pinned, and
@@ -161,8 +162,10 @@ same answer Synology and Home Assistant give.
   transport is mature, the loader adds it and most visits hole-punch to the
   box. virtues then only introduces, which is the north star. Nothing about
   the link, the box or the door changes.
-- **Short links** are optional: atlas maps a short id to `(endpoint-id,
-  token)`. That is introduction metadata, not content, and the manual says so.
+- **Handles** are the short form: atlas maps a box's handle to its door
+  key, and nothing else. The token stays after `#`, so virtues never learns
+  which page, and a short id that maps to the token itself is refused
+  (it would make virtues hold the secret).
 
 ### Funnel: a public site on your own domain (later)
 
@@ -353,18 +356,45 @@ never connects. **A stopped box makes `connect` hang**: the relay does not
 report an absent peer, so the loader owns a timeout and the "offline"
 message. Still open: a real phone on cellular.
 
+## Decided 2026-10-05
+
+- **The loader lives on `virtues.ch`**, the domain the relay already uses,
+  not `virtues.com`: shorter links, and shared pages never load on the domain
+  that holds account and billing sessions (GitHub keeps
+  `githubusercontent.com` apart for the same reason). It is one static page,
+  served by Caddy on the relay host; no new server.
+- **Link format: a box handle, with the self-contained form always valid.**
+  - `virtues.ch/<handle>#<token>`, about 35 characters. The handle is a name
+    for the box, like a username; atlas maps it to the door key. That is
+    *naming*, which the doctrine allows; the token never leaves the browser.
+    The trust it costs: virtues could point a handle at an impostor door,
+    the same trust anyone places in DNS.
+  - `s.virtues.ch/#<door-key>.<token>`, about 75 characters with the key in
+    base64url (43) and a 96-bit token (16). virtues holds nothing; this is
+    the form for anyone who wants no trust in virtues at all. Both forms
+    work forever, so no link ever breaks because the format moved on.
+  - The core currently builds the long form with a hex key and a 22-character
+    token; the compact encoding and handles land with the loader.
+- **One door key per box.** Anyone holding two of a box's links can tell
+  they came from the same box; the share sheet's details say so.
+- **The door key is the box's link identity.** Losing it ends every link the
+  box ever shared, so it goes into backups and restores, and "new door key"
+  is an explicit "end all my links" action.
+- **Publishing is part of the subscription**, as Nabu Casa's remote access
+  is. The DIY path (own relay, own domain) arrives with wave 3.
+- **Abuse policy is deferred.** Before any public launch: a stated policy
+  (virtues routes and never reads; on a valid report it stops routing a
+  door key) and terms to match.
+
 ## Open questions
 
-- **The loader domain.** Where the static loader lives; it carries no
-  content, but its reputation is shared by every link.
 - **Relay load.** Until a direct transport lands, every visit's bytes cross
   the OVH relay. The spike measures what a page costs.
 - **Link previews.** Is a generic card acceptable for the default path, or
   does the share sheet offer an owner-written preview (title, one image) that
   the loader domain serves, which would mean virtues holds that much?
-- **Free tier.** Owner reach through the relay is free since 2026-08-31
-  ([open-relay.md](../record/open-relay.md)). Is publishing part of the
-  subscription, as Nabu Casa's remote access is, or free like reach?
+- **Handles.** Chosen by the owner or assigned; how they are claimed,
+  changed, and released, and what an old handle does after a change.
 - **`publish_to_github` in chat now.** Keep it as an expert path until the
   share sheet exists, or pull it so the first thing users meet is not a token
   form.
