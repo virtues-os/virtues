@@ -1,220 +1,317 @@
-# Publishing — one frozen artifact, three surfaces
+# Publishing: the box serves, virtues names and carries
 
-> **STATUS 2026-09-01: direction agreed, nothing built.** The primitive
-> (publications), the medium (a face), and the networking decision (no ingress
-> in v1) are settled. The renderer is the work.
+> **STATUS 2026-10-05: direction rewritten, spike not started.** The
+> 09-01 version decided "v1 builds no ingress" and handed a user with no
+> domain a file. This version reverses that: a page is served **by the box**,
+> through a relay that forwards TLS it cannot read, at a name virtues hands
+> out. The publication primitive, the face as the medium, and the doctrine
+> carry over unchanged. One piece is built (`publish_to_github`, below); it
+> becomes an optional destination, not the front door.
 
-## The ask that produced this
+## The ask
 
-Someone plans a small building project with a person they love, and wants two
-things out of the box at the end: a page that person can open at a URL on a
-domain the owner controls (`example.com/the-project`), and a printed plan to
-hand over.
+Anyone, not just someone who runs a website: make a page in virtues (a trip
+for two, an invitation, a plan) and send a link that opens on any phone.
 
-That is the whole requirement, and it is worth keeping in front of the design,
-because it is the ordinary case. Not a publishing platform — one artifact, one
-recipient, one sheet of paper.
+The test every design below has to pass:
 
-## What exists today (verified 2026-09-01)
+> A person with a virtues box and nothing else (no GitHub, no domain, no idea
+> what a token is) gets a working link in one sheet, and no company holds or
+> can read what they shared.
 
-Page sharing is **already built and already useless**:
+Every "bring your own" option fails the first half. Every hosted option
+(including an encrypted one) fails the second, or makes virtues.com the place
+the content lives, which turns a home server into a client of ours.
 
-- `app_page_shares (id, page_id, token, created_at)`, one row per page
-  (`UNIQUE(page_id)`), token is a UUIDv4
-- `POST/GET/DELETE /api/pages/:id/share`, and `GET /api/s/:token` +
-  `GET /api/s/:token/files/:file_id`, both unauthenticated by design
-  (`server/mod.rs`, in the pre-auth route table)
-- `(public)/s/[token]/+page.svelte` renders it through
-  `PublicPageViewer.svelte` → `createReadOnlyEditor()`, rewriting
-  `/api/drive/files/:id/download` → `/api/s/:token/files/:id` so images work
-  without a session
-
-One line defeats all of it — `PageContent.svelte`:
-
-```js
-const url = `${window.location.origin}/s/${shareToken}`;
-```
-
-On the Mac that origin is `http://localhost:7117`. The box has no public
-listener. **The mechanism is complete except for the part where anyone else
-can load it.**
-
-What is missing, and is not a small gap:
+## What exists today (verified 2026-10-05)
 
 | | |
 |---|---|
-| Print | **Zero** `@media print`, `@page`, or `window.print()` anywhere in `apps/web`, `applets`, or `docs`. |
-| Pagination | The page editor is a Yjs CRDT rendered by CodeMirror as a scrolling text buffer with decorations. CodeMirror does not paginate and will not. |
-| Page layout state | `app_pages` has `kind` (`page`/`article`) and no size/layout column; `pageDisplay` (font/size/width) is a client-only store. |
-| Export | One thing: "Copy as Markdown" in the toolbar overflow. |
-| Face writes | The face runtime is exactly one verb — `virtues.query(sql)`, read-only, as `virtues_face_reader`, in a READ ONLY transaction, 5000-row cap, 1-hour token. |
-| Face images | `FACE_CSP` is `img-src 'self' data: blob:`, and `/api/drive/files/:id/download` is authenticated — an `<img>` cannot send a header. A face's pictures are files inside `face/`, or `data:` URIs out of SQL. |
-| Guests | None. `app_auth_user` plus pairing means *your devices*. There is no second person in the model. |
+| Page shares | `app_page_shares (id, page_id, token, created_at)`, `UNIQUE(page_id)`, UUIDv4 token (`0001_initial.sql`). `GET /api/s/:token` and `/api/s/:token/files/:file_id` are unauthenticated by design. `(public)/s/[token]/+page.svelte` renders through `PublicPageViewer`. |
+| The origin bug | `PageContent.svelte:562` and `:585` build the share URL from `window.location.origin`: `http://localhost:7117` on a Mac. Nobody else can load it. |
+| Listeners | `server/mod.rs`: plain HTTP on :8000 is the only listener; the box has no TLS surface. Off-LAN reach is iroh, allowlisted by EndpointId; a browser has no EndpointId, so **iroh cannot carry a browser.** |
+| Faces | `face/index.html` in a sandboxed iframe, read-only `virtues.query`, 48KB cap (`applet_setup.rs` `FACE_HTML_MAX`). |
+| `publish_to_github` | **Built, wave `322a7a8f`, unreleased, never run against GitHub.** Writes an applet's face as one `.html` file into a repo via the contents API, with a pasted fine-grained token (`github_publish` source). Grant hashes repo, branch, path and bytes; refuses faces that need the box; chat-only. `applets/AGENTS.md` tells faces meant for sharing to stand alone (`7ff23663`). |
+| Print, pagination, export | None. Zero `@media print` in `apps/web`; "Copy as Markdown" is the only export. |
+| Guests | None. `app_auth_user` plus pairing means *your devices*. |
 
-## The primitive: a publication, not a page share
+## Prior art
 
-`app_page_shares` is page-shaped, and the thing we need is not.
+### Home servers converged on one shape
 
-> A **publication** is a frozen, self-contained artifact with a token,
-> produced by any surface: a page, an applet face, a wiki entity, a project,
-> a query result.
+| Product | Remote reach | Sharing |
+|---|---|---|
+| Home Assistant | **Nabu Casa Remote UI**: a relay forwards TLS, the certificate lives on the HA instance, Nabu Casa cannot read it. A subscription, and it funds the open-source project. DIY: DuckDNS plus a port forward. | Guest accounts, not public pages. |
+| Synology | **QuickConnect**: direct when possible, Synology relay otherwise. Or a `synology.me` DDNS name, port forward, Let's Encrypt. | Share links with password and expiry, served by the NAS; dead while it is off. |
+| Plex | Direct, falling back to a bandwidth-capped Plex relay. Per-server certs for `*.<hash>.plex.direct`, so even LAN traffic is HTTPS. | Friends stream from the owner's server, not from Plex. |
+| Nextcloud | DIY port forward or Cloudflare Tunnel, which terminates TLS at Cloudflare (it reads the traffic). | Public links with password and expiry; federated shares between instances. |
+| Umbrel, Start9 | Tor onion services by default; Tailscale as an app. | Links that only open in Tor Browser. |
+| Tailscale Funnel | Relay forwards TLS to the node, which holds the cert. | A public URL per node. |
+| ngrok | Relay terminates TLS. | Free tier shows an interstitial, because free tunnels became a phishing host. |
 
-Pages become one producer among many rather than the special case. One table,
-one route, one renderer.
+What the comps settle:
 
-Freezing is the load-bearing word. A publication is rendered **once** and
-stored as bytes. It does not query at view time, hold a token, or name an API.
-That is what makes the same artifact printable, mailable, and (someday)
-servable without three code paths — and what keeps a published thing correct
-when it is stale, which a live view never is.
+1. **Relay-forwards, device-holds-the-cert is the mainstream answer**, run at
+   consumer scale by Home Assistant, Synology and Plex. It is not exotic.
+2. **Nabu Casa is the business model already proven:** open core, a paid
+   relay that cannot read, the subscription funds the project.
+3. **"The server must be on" is accepted.** Synology and Plex links die with
+   the server and nobody treats that as a defect.
+4. **Everyone who shares uses links with expiry, served by the device.** None
+   uploads the content to the vendor.
+5. **The two extremes fail the test above.** Tor fails "opens on any phone";
+   a terminating tunnel (Cloudflare, ngrok) fails "no company can read it".
+6. **The phishing tax is real** (ngrok's interstitial). A shared domain needs
+   a reputation plan from day one.
 
-## The medium: a face is already the right container
+### We built the relay once already
 
-The insight that makes this cheap. A face's constraints and print's
-constraints and static publishing's constraints are the **same three
-constraints**:
+`48abf48e` built a blind L4 SNI-passthrough relay, a box client, per-box ACME
+and TLS hot-swap, so any browser could reach the box. `e56f0963` replaced it
+with iroh, because the owner's own apps hold keys and iroh gives them direct
+and hole-punched paths with no CA in the loop. That was right for **owner
+reach** and stays right. Publishing is a different reader, a stranger with a
+browser, and for that reader the retired design is the only one that works.
 
-| Face constraint (today) | Why it is also print/publish |
-|---|---|
-| one `face/index.html`, self-contained | that *is* a publishable artifact; export is nearly `cp` |
-| CSP forbids external hosts, ever | nothing breaks when it leaves the box |
-| sandboxed iframe, opaque origin | no ambient authority baked in; works offline forever |
-| arbitrary HTML/CSS you fully control | `@page { size: letter }` is simply allowed |
+What the archive learned, and this plan inherits
+([networking-relay-tee.md](../archive/networking-relay-tee.md),
+[relay-control-plane.md](../archive/relay-control-plane.md)):
 
-The page editor's constraints are the opposite of all four: a CRDT, live
-decorations, box-authenticated media URLs, no pagination. So pages are a
-*producer* of publications; the face is the *shape* a publication takes.
-
-Nothing gets bent to make this work, which is the test of whether an
-abstraction is the right one.
+- **The CA rate limit is a launch gate.** Let's Encrypt caps new
+  certificates per registered domain per week, and every box's name shares
+  that bucket. Plex buys from a commercial CA for this reason. Apply for a
+  rate-limit override early; plan a second CA.
+- **Whoever runs DNS can mint a cert for a box's name.** virtues could
+  impersonate a box. The answer is detectability, not denial: CAA records
+  bound to our ACME account (RFC 8657), plus Certificate Transparency
+  monitoring wired as a real alert. Owners who want no such trust use their
+  own domain.
+- **The privacy hardening was never built** (RAM-only relay, blinded tokens,
+  audits). Do not describe the relay as anything more than "forwards bytes it
+  cannot decrypt, and sees which box and when."
 
 ## Doctrine
-
-Publishing is where a private box touches other people, so the rule it must
-obey is stated once and applies to every later question:
 
 > **The higher level may name, carry, and introduce. It may never hold or
 > read.**
 
-Hold → the box, always. Name → a shared namespace (DNS is irreducibly social;
-you cannot be sovereign over a name). Carry → a blind wire. Read → the
-recipient, and no one else.
-
-And the test that decides any future addition:
+| Role | Who |
+|---|---|
+| Holds the page | the box |
+| Reads it | the visitor's browser |
+| Names it | virtues (a box subdomain), or the owner's own domain |
+| Carries it | a relay that forwards TLS it cannot decrypt |
 
 > **If virtues.com vanished tomorrow, does the box still hold everything and
 > still work for its owner?**
 
-Yes → subsidiary. No → absorption.
+Yes, under this design: links stop resolving, nothing is lost. That is the
+same answer Synology and Home Assistant give.
 
-This is why hosting publications on our infrastructure is refused: it inverts
-the one claim every other feature makes, and creates a deletion promise we
-could not honor. A user with no domain gets a *file*, not a link, and we say
-so in the manual rather than apologizing for it.
+## The design
 
-## Networking: decided, and deferred
+### Name
 
-Two ways to give a stranger a URL, distinguished by where the bytes live when
-they click:
+- **One hostname per box**, pages at unguessable paths:
+  `<box>.<publish-domain>/p/<token>`. Certificate Transparency logs publish
+  every hostname a cert covers within minutes and scanners watch them, so a
+  per-page hostname would announce that the page exists. With paths, the logs
+  show that a box exists and nothing else, and the relay sees "this box got a
+  visit", not which page.
+- **A dedicated domain**, not `virtues.com`, on the **Public Suffix List**, so
+  each box is its own site for cookies and for browser reputation. One box
+  hosting phishing must not get every box's links a red warning.
+- **Own domain** is the same mechanism: a CNAME to the relay, a cert on the
+  box for that name.
 
-- **Push** — the box renders an artifact and sends it somewhere already
-  public. No inbound anything; works while the box sleeps.
-- **Pull** — their browser reaches the box. Needs a **name**, a **cert**, and
-  an **ingress**; box uptime becomes a dependency of every link ever sent.
+### Carry
 
-Pull is what "it stays on my server" means, and it is coherent. It is also the
-only option with a permanent cost: **the box currently has zero
-internet-facing attack surface.**
+The relay host already runs `iroh-relay` on :443 for `relay.virtues.ch`. Add
+a **publish gateway** beside it:
 
-Three facts that constrain any future pull design:
+1. An SNI router on :443 sends `relay.virtues.ch` to iroh-relay and any
+   publish hostname to the gateway. It reads the SNI and nothing else.
+2. The gateway is an iroh endpoint the box allowlists **for one ALPN only**
+   (`virtues/publish/1`). On a browser connection it opens an iroh stream to
+   that box and copies raw TLS bytes both ways.
+3. On the box, that ALPN goes to the publish door (below), **never to the app
+   router**. `relay::maybe_spawn` hands the full API to the iroh transport,
+   which is correct for allowlisted devices and must not be extended to this
+   peer.
 
-1. **iroh cannot carry a browser.** `virtues-iroh/src/server.rs` closes the
-   connection before a byte of HTTP if the peer is not allowlisted, and a
-   browser has no EndpointId. This is not a policy to relax — it is the same
-   argument `review-access-plan.md` makes about pairing. No amount of relay
-   work changes it. (The relay opened on 2026-08-31, which removed the
-   billing entanglement but not this.)
-2. **BYO domain is not an alternative to SNI passthrough — it is a parameter
-   of it.** A domain you own still needs an A record pointing at something
-   that receives packets. `CNAME → the relay` *is* passthrough wearing your
-   name; `A → your house` is a port-forward, and the box has no TLS surface
-   (`server/mod.rs`: "Plain HTTP on :8000 is the only listener"). Ship BYO
-   domain with the ingress, not after it.
-3. **A public ingress must never serve `app.clone()`.** `relay::maybe_spawn`
-   hands the *entire* API to the iroh transport (`server/mod.rs:1233`), which
-   is correct there because the transport is allowlisted. A public door must
-   serve a **separate, minimal router** — the publication route, its asset
-   door, and nothing else. Then a total auth bypass on that path yields
-   exactly the things someone chose to publish. Without this split, the
-   ingress should not be built at all.
+Reusing iroh means no new tunnel protocol: the box already holds a
+reconnecting connection to this host, with hole-punching and backoff.
 
-**v1 builds no ingress.** LAN plus a file covers the actual ask completely,
-keeps the zero-surface property, and wastes nothing: a frozen self-contained
-artifact is precisely what an ingress would later serve.
+The gateway enforces, without reading anything: connection and bandwidth caps
+per box, and an honest "this server is offline" page when the box is not
+connected (served for the hostname, no box content involved).
 
-## The work
+### Certificate
 
-1. **The publication primitive.** `app_publications (id, producer_kind,
-   producer_id, token, title, content_hash, bytes, rendered_at, expires_at,
-   revoked_at)` plus a hit log. Replaces `app_page_shares`, which has no
-   expiry, no revocation record, and no way to answer "was this ever opened."
-   Token stays 122-bit; add the three columns it should always have had.
-2. **The renderer — the actual work, and shared by all three surfaces.**
-   Producer → one self-contained HTML document: assets inlined or `data:`,
-   query results frozen to literals, no `virtues.js`, no `/api/` reference, no
-   token, no box URL. Screen, print, and publish are the same bytes.
-3. **Paged mode.** `@page { size: letter | a4 }`, break control, running
-   heads. Not a CSS pass on the editor — a second render path, for which
-   `createReadOnlyEditor()` is the precedent that a second path is acceptable.
-   Page size belongs on the publication, not on `app_pages`.
-4. **PDF is the browser's job.** `window.print()` on the frozen document; the
-   OS makes the file. No headless browser on the box — Chromium on a Q6A is
-   not a thing we are doing. Typst/weasyprint as a subprocess applet is the
-   later answer *if* unattended PDF is ever needed.
-5. **A publication lint, in the pipeline not the review.** Refuse to publish
-   an artifact containing `virtues.query`, `/api/`, a bearer-shaped string, a
-   localhost URL, or an EndpointId. A publish that ships a dead API call has
-   leaked what the API is named.
-6. **Show what leaves.** Dereference entity links, list every image, resolve
-   the SQL to the actual rows, and put it on screen before anything is
-   written. **This is the most important item on the list.** The failure mode
-   here was never an attacker — it is a page that mentioned `[@Nick]` and
-   quietly carried their phone number into a public artifact.
-7. **Fix the origin bug** (`PageContent.svelte`) — advertise the box's LAN
-   address, which `BOX_DIRECT_ADDRS` already tracks for iroh dialing. Ten
-   lines, and it makes sharing work today for anyone in the room.
-8. **A face asset door** — `GET /api/face/asset/:id?vt=`, gated by the
-   existing face token, so a face can show drive images. ~40 lines beside
-   `face_query_handler`. Without it every visual face is `data:` URIs.
-9. **Deferred, deliberately: face writes.** Read-only is defensible. A board
-   gets edited by talking to virtues, not by clicking the board. Revisit only
-   with a real second producer.
+The box generates and keeps its key. Issuance is DNS-01: the box asks atlas,
+authenticated by its identity, to publish the challenge TXT for its own name
+only, and runs ACME itself. virtues touches DNS, never the key. Rate limits,
+CAA and CT monitoring as above.
 
-## What v1 does not do
+### The door
 
-No ingress, no hosted publishing, no guest identity, no multiplayer, no live
-feeds. A publication is a snapshot handed to one person. Everything above is
-reachable from that; none of it is required by it.
+A **separate process**, its own unix user, systemd-sandboxed
+(`ProtectSystem=strict`, `NoNewPrivileges`, no network except the iroh
+stream), **with no database credentials and no API**. It serves:
+
+- published bundles, read-only, from a content-addressed directory the core
+  writes;
+- for a live page only, the queries that page declared at publish time, asked
+  of the core over a local socket that accepts `(publication_id, query_id)`
+  and nothing else.
+
+A complete compromise of the door yields what the owner already chose to
+publish. If a design ever needs the door to hold more, the design is wrong.
+
+### What a publication is
+
+> A **publication** is a self-contained artifact with a token, produced by
+> any surface: a face, a page, a wiki entity, a project, a query result.
+
+`app_publications (id, producer_kind, producer_id, token, title,
+content_hash, rendered_at, expires_at, revoked_at)` plus a hit log. Replaces
+`app_page_shares`, which has no expiry, no revocation record and no way to
+answer "was this ever opened."
+
+- **Frozen** (the default): rendered once to bytes, no queries, no
+  `virtues.js`, no box URL. The same bytes print, download, and publish to
+  any destination.
+- **Live** (opt-in): the frozen shell plus a declared list of queries. The
+  share sheet shows each one and the rows it returns today.
+
+### The share sheet
+
+The person publishes; the model never does. A **Share** button on the face or
+page opens one sheet:
+
+- the page as it will appear;
+- **what leaves**: every image, every entity a link dereferences, every
+  query and its rows, with anything private-looking (phone, address,
+  confirmation code) flagged. A page that mentions `[@Nick]` must not quietly
+  carry Nick's number. **This is the most important screen in the plan.**
+- expiry (default 30 days), optional password, optional link-preview card;
+- **Create link** → copy, and the phone's share sheet.
+
+Afterwards: **Update link** when the source changes (same URL), and a list of
+every link with opens and **Revoke**. Revoke deletes the bundle on the box;
+there is no other copy.
+
+### Guests writing back (later)
+
+Off by default. A separate **edit link**; writes are size-capped and land in
+that publication's own table, **marked as guest input**. The box's AI reads
+guest rows as data, never as instructions: a stranger's text reaching the
+agent is a prompt-injection path. No guest writes until that marking exists.
+
+### Other destinations
+
+All take the same frozen bundle:
+
+- **Download HTML**: always, including the free open-source build.
+- **GitHub**: `publish_to_github` exists, but a pasted fine-grained token is
+  the wrong front door; nobody makes one. The right one is a **virtues GitHub
+  App** connected by device flow (a code, approve, pick repos on GitHub's own
+  screen), scoped to the chosen repos, no secret on the box and no proxy.
+  Never the owner's ambient `gh` login: it covers every repo.
+- **S3-compatible storage** (R2, B2, any bucket) for people who want a copy
+  off their own box.
+
+These live under **Publish to…**, a destination connector kind, not among the
+data sources.
+
+## What "answers strangers" costs
+
+Today nothing reaches the box's HTTP code until iroh has checked the peer's
+key. With a door, anyone on the internet can send bytes to code on the box.
+
+| Exposure | Answer |
+|---|---|
+| Discovery via CT logs within minutes | one hostname per box, unguessable paths, uniform 404 |
+| A bug in the public code path | separate door process, no DB credentials, sandboxed |
+| Floods on a home uplink and a Q6A CPU | per-box caps at the gateway; one-tap pause on the box |
+| Guest writes as prompt injection | off by default; edit links; rows marked as guest input |
+| One box's phishing tarring every box | Public Suffix List; subscribers only; unroute a name on abuse |
+| Relay metadata (which box, when) | stated plainly; own domain does not remove it, only the box-per-name |
+| Visitor IPs landing on the owner's box | not passed through by default; say so either way |
+| Box off or asleep | the gateway's offline page; an encrypted fallback copy is a later option, never the default |
+| Legal notices | land on virtues as the router; the response is unrouting, never reading |
+
+## Rejected
+
+- **virtues hosts the content in plaintext** (Docs, Notion, Claude
+  artifacts). It makes virtues a company that reads people's pages and a
+  moderation business.
+- **virtues hosts encrypted blobs, key in the URL fragment** (Excalidraw,
+  Proton). Blind, but the content lives on our servers, the box is not the
+  server, and link previews die. It was the default of the previous draft.
+- **A terminating tunnel** (Cloudflare Tunnel, ngrok). The vendor reads.
+- **Tor only.** Fails "opens on any phone".
+- **Port forwarding** as the path. Exposes the home IP and needs router
+  skills; it stays possible for experts with their own domain.
+- **The owner's ambient `gh` login on the box.** Every repo, held by a login
+  the service user cannot see, and absent on every other box.
+
+## The work, in order
+
+1. **Spike on the spare box** (`ssh dragon2`, never the main box): SNI router
+   plus gateway on a scratch port of the relay host, the `virtues/publish/1`
+   ALPN, a cert on the box via DNS-01, and a static page opened from a phone
+   on cellular. Measure: first-byte latency through the relay, behavior when
+   the box drops, what the relay logs.
+2. **The publication primitive and the freezer**: `app_publications`
+   (claim a migration number first), face → one self-contained file, assets
+   inlined or content-addressed, the box-only lint `publish_to_github`
+   already has.
+3. **The door process** and its packaging (unit, user, sandbox, the bundle
+   directory).
+4. **The share sheet and link management** in the app, with "what leaves".
+5. **Fix the origin bug** so existing page shares work on the LAN meanwhile.
+6. **Own domain.**
+7. **Live pages** (declared queries over the local socket).
+8. **Guest writes**, once guest-input marking exists.
+9. **GitHub App and S3 destinations**; retire the pasted-token source.
+
+Paged print (`@page`, break control) rides on the freezer whenever it is
+picked up; PDF is the browser's print dialog, never a headless browser on the
+box.
+
+## Open questions
+
+- **The publish domain.** A new registrable domain on the Public Suffix List.
+  Name not chosen.
+- **The CA.** Let's Encrypt with a rate-limit override, a commercial ACME CA,
+  or both. Decide before more than a few dozen boxes publish.
+- **Free tier.** Owner reach through the relay is free since 2026-08-31
+  ([open-relay.md](../record/open-relay.md)). Is publishing part of the
+  subscription, as Nabu Casa's remote access is, or free like reach?
+- **`publish_to_github` in chat now.** Keep it as an expert path until the
+  share sheet exists, or pull it so the first thing users meet is not a token
+  form.
 
 ## Verification
 
-- A publication renders identically on screen, in the print dialog, and as a
-  saved standalone file opened with the network off.
-- The lint refuses an artifact carrying a token, an `/api/` path, or a
-  localhost URL — proven with a deliberately poisoned fixture, not by
-  inspection.
-- The "what leaves" screen names every image and every dereferenced entity in
-  a page that links a person, before anything is written.
-- A shared page opens from a second device on the same network (item 7).
-- Revoking a publication makes the token 404, and the hit log shows the
-  opens that happened before it.
-- A face with images renders in the app, in print, and in the exported file
-  with no change to its source (item 8).
+- A page published from the spare box opens on a phone over cellular, and the
+  relay host's logs show a hostname and byte counts, nothing else.
+- With the box unplugged, the link shows the offline page within seconds;
+  with it back, the page returns without republishing.
+- The door process, given a deliberately poisoned request set (path
+  traversal, oversized headers, other publications' tokens), serves nothing
+  outside the requested publication, proven by a test.
+- The share sheet names every image and every dereferenced entity in a page
+  that links a person, before anything is written.
+- Revoking makes the URL 404 at once, and the hit log shows the opens before.
+- A frozen bundle renders identically on screen, in the print dialog, and as
+  a downloaded file opened with the network off.
 
 ## Death condition
 
-Delete when a publication can be produced, printed, and handed over. What
-survives: a manual page on publishing and printing, and a record of the
-primitive (frozen artifact, three surfaces) plus the two decisions worth
-keeping — *the face's constraints are print's constraints*, and *the higher
-level may name, carry, introduce; never hold or read*.
+Delete when a person with only a box can make a page, share a link, update
+it and revoke it. What survives: a manual page on sharing, and a record of
+the three decisions worth keeping: *the face's constraints are publishing's
+constraints*; *virtues may name, carry and introduce, never hold or read*;
+and *the box is the server, the relay only forwards*.
