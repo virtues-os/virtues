@@ -56,11 +56,14 @@
 //!
 //! # Rollback
 //!
-//! A freshly flipped bundle is *pending* until the SPA that booted from it says
-//! so (`bundle_boot_ok`). If the app starts and finds a pending bundle, that
-//! bundle failed to confirm on its last try, so it is abandoned and the pointer
-//! reverts. Same spirit as the box's `virtues.bak` swap: the thing that proves
-//! a release works is that it came up, not that it downloaded.
+//! A freshly flipped bundle is *pending* until a page that loaded from it says
+//! it rendered (`bundle_boot_ok`). Each page load that serves a pending bundle
+//! counts as one attempt; after [`BOOT_ATTEMPTS`] attempts without a
+//! confirmation it is abandoned and the pointer reverts. On the desktop a
+//! watchdog reloads a page that has not confirmed within [`BOOT_WATCHDOG`], so a
+//! bundle that boots white falls back without anyone relaunching the app. Same
+//! spirit as the box's `virtues.bak` swap: the thing that proves a release
+//! works is that it came up, not that it downloaded.
 
 use std::fs;
 use std::io::{Read, Write};
@@ -91,10 +94,23 @@ const PTR_PREVIOUS: &str = "previous";
 /// it usually means "no launch has tried this yet". Only pending + booting
 /// agreeing at startup is evidence of a bundle that does not boot.
 const PTR_BOOTING: &str = "booting";
+/// How many page loads have served the pending bundle without a confirmation.
+const ATTEMPTS_FILE: &str = "boot-attempts";
+/// Unconfirmed page loads a pending bundle gets before it is abandoned. More
+/// than one, because a load can die for reasons that are not the bundle's: a
+/// reload or relaunch before the page rendered, or iOS suspending the app
+/// during the reload `checkForNewUi` makes while it is hidden.
+pub const BOOT_ATTEMPTS: u32 = 2;
+/// How long a page serving a pending bundle has to confirm before the desktop
+/// shell reloads it, which counts as its next attempt.
+pub const BOOT_WATCHDOG: Duration = Duration::from_secs(20);
 /// The content hash of the last bundle abandoned by rollback. Without it the
 /// very next check re-downloads the identical failing bundle, every launch and
 /// every foreground, forever.
 const POISON_FILE: &str = "rolled-back";
+/// The content hash of the last download refused after unpacking (unusable or
+/// corrupt), so the same tarball is not fetched again on every check.
+const REFUSED_FILE: &str = "refused";
 const MANIFEST_NAME: &str = ".virtues-bundle.json";
 
 /// What a bundle says about itself. Mirrors what
@@ -114,9 +130,19 @@ impl Manifest {
     /// older bundle pass the forward-only gate.
     pub fn parse(s: &str) -> Option<Self> {
         let v: serde_json::Value = serde_json::from_str(s).ok()?;
+        let content_hash = v.get("contentHash")?.as_str()?.to_string();
+        // It names a directory, so it must be bare, the same rule pointers
+        // follow: the value came off the network, and `..` in it would escape
+        // the bundles directory.
+        if content_hash.is_empty()
+            || content_hash.len() > 64
+            || !content_hash.chars().all(|c| c.is_ascii_alphanumeric())
+        {
+            return None;
+        }
         Some(Manifest {
             version: v.get("version")?.as_str()?.to_string(),
-            content_hash: v.get("contentHash")?.as_str()?.to_string(),
+            content_hash,
             min_shell_version: u32::try_from(v.get("minShellVersion")?.as_u64()?).ok()?,
         })
     }
@@ -133,9 +159,23 @@ pub enum Outcome {
     /// Box offers a bundle needing a newer native shell. This is the guard
     /// that keeps OTA from turning a store round-trip into a white screen.
     ShellTooOld { needs: u32, have: u32 },
-    /// Box serves no static build (headless install, or a dev box whose UI
-    /// comes from vite). Nothing to update from.
+    /// Box serves no static build (a 404: headless install, or a dev box whose
+    /// UI comes from vite). Nothing to update from.
     NoBundleOnBox,
+    /// The box answered, but not with a bundle: any other non-2xx, or an empty
+    /// or unparseable reply (the reach proxy drops the connection when the box
+    /// cannot be reached). Tried again at the next check.
+    BoxUnavailable { status: Option<u16> },
+    /// The box offers the same version this device already serves, built
+    /// differently. Not taken: a build is stamped with its nearest tag, so an
+    /// equal version says nothing about which build is newer.
+    SameVersion { version: String },
+    /// The downloaded bundle cannot serve a page (no `index.html`, `200.html`
+    /// or manifest). Remembered, so it is not downloaded again.
+    Unusable { content_hash: String },
+    /// The box offers a bundle this device already downloaded and refused as
+    /// unusable or corrupt. Clears when the box serves anything else.
+    RefusedBefore { content_hash: String },
     /// Box offers the exact bundle a previous launch rolled back — it failed
     /// to boot here once and is not given a second attempt. Clears itself when
     /// the box serves anything else.
@@ -154,8 +194,9 @@ pub enum Outcome {
     },
     /// The downloaded bundle is not what it says it is: its files do not hash
     /// to the `contentHash` in its own manifest, or it carries no readable
-    /// manifest. Nothing is applied. Not poisoned either: a box mid-upgrade can
-    /// serve a torn tarball once, and the next check simply tries again.
+    /// manifest. Nothing is applied, and the offered hash is remembered so the
+    /// same tarball is not fetched on every check; a box that rebuilds it
+    /// offers a new hash, which clears the record.
     Corrupt {
         expected: Option<String>,
         got: String,
@@ -323,17 +364,40 @@ pub fn is_page_load(resolved: &str, accept: Option<&str>) -> bool {
     is_page_document(resolved) && accept.is_some_and(|a| a.contains("text/html"))
 }
 
+/// What [`begin_page_load`] settled.
+pub struct PageLoad {
+    /// A pending bundle ran out of attempts and was rolled back.
+    pub rolled_back: bool,
+    /// This load serves a pending bundle that has not confirmed yet, so the
+    /// desktop watchdog should watch it.
+    pub unconfirmed: bool,
+    /// Identifies this load to [`awaiting_confirmation`].
+    pub generation: u64,
+}
+
+static PAGE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn page_generation() -> u64 {
+    PAGE_GENERATION.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// A page is loading. Settle rollback ([`resolve_pending`]), then pin this load
 /// to whatever is active now. Call for the page document, before reading it.
-/// Returns true when a rollback happened (worth a log line).
-pub fn begin_page_load(app_data: &Path) -> bool {
+pub fn begin_page_load(app_data: &Path) -> PageLoad {
     let _pointers = pointer_lock();
     let rolled_back = resolve_pending(app_data);
     let id = active_bundle_id(app_data);
+    let unconfirmed = id.is_some()
+        && read_pointer(&bundles_root(app_data), PTR_PENDING).as_deref() == id.as_deref();
     if let Ok(mut g) = serving().lock() {
         g.insert(bundles_root(app_data), id);
     }
-    rolled_back
+    let generation = PAGE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    PageLoad {
+        rolled_back,
+        unconfirmed,
+        generation,
+    }
 }
 
 /// The bundle the current page load serves from; `None` for the baked build
@@ -392,8 +456,9 @@ pub fn active_bundle_id(app_data: &Path) -> Option<String> {
 ///
 ///   • No load has been attempted (apply runs mid-session; the old bundle kept
 ///     serving). This load IS the attempt — mark it and serve the bundle.
-///   • The previous load attempted it (booting == pending) and never
-///     confirmed — so it does not boot. Abandon it, remember it as poisoned,
+///   • Earlier loads attempted it (booting == pending) and none confirmed.
+///     Under [`BOOT_ATTEMPTS`] attempts, count this one and serve it again;
+///     at the limit it does not boot, so abandon it, remember it as poisoned,
 ///     and fall back to whatever it replaced.
 ///
 /// Per page load, not per launch, since 2026-09-29: a staged bundle now takes
@@ -425,13 +490,24 @@ pub fn resolve_pending(app_data: &Path) -> bool {
 
     if read_pointer(&root, PTR_BOOTING).as_deref() != Some(pending.as_str()) {
         let _ = write_pointer(&root, PTR_BOOTING, &pending);
+        let _ = fs::write(root.join(ATTEMPTS_FILE), "1");
         return false;
     }
 
-    // Attempted last launch, never confirmed: it booted badly enough not to
-    // land boot-ok. Do not try it again — and do not re-download it either.
+    let attempts: u32 = fs::read_to_string(root.join(ATTEMPTS_FILE))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(BOOT_ATTEMPTS);
+    if attempts < BOOT_ATTEMPTS {
+        let _ = fs::write(root.join(ATTEMPTS_FILE), (attempts + 1).to_string());
+        return false;
+    }
+
+    // Every attempt loaded and none confirmed: it does not boot. Do not try it
+    // again, and do not re-download it either.
     clear_pointer(&root, PTR_PENDING);
     clear_pointer(&root, PTR_BOOTING);
+    let _ = fs::remove_file(root.join(ATTEMPTS_FILE));
     let _ = fs::write(root.join(POISON_FILE), &pending);
     match read_pointer(&root, PTR_PREVIOUS) {
         Some(prev) if is_usable(&root.join(&prev)) => {
@@ -461,13 +537,13 @@ pub fn resolve_pending(app_data: &Path) -> bool {
 /// the bundle under a live page: the `index.html` already loaded from the old
 /// overlay goes on requesting its own content-hashed chunks, which by
 /// construction are not in the baked build, and the app 404s its way into a
-/// white screen. Same reason `apply` only ever takes effect at the next launch.
+/// white screen. Same reason an apply only takes effect at the next page load.
 ///
 /// # Fail-safe
 ///
 /// Every ambiguity keeps the overlay: no baked version, no active pointer, an
-/// unreadable bundle manifest, either side unparseable, or versions merely
-/// equal. Only a *strictly* newer baked build displaces one — equal versions
+/// unreadable bundle manifest, an unparseable baked version, or versions
+/// merely equal. An unparseable overlay under a stamped binary is dropped. Only a *strictly* newer baked build displaces one — equal versions
 /// mean the overlay is a rebuild of the same release, which is the ordinary
 /// state after any OTA and must be left alone.
 ///
@@ -479,14 +555,16 @@ pub fn drop_stale_overlay(app_data: &Path, baked_version: Option<&str>) -> Optio
     let active = read_pointer(&root, PTR_ACTIVE)?;
     let have = bundle_version(&root, &active)?;
 
-    let (Ok(baked), Ok(overlay)) = (
-        semver::Version::parse(baked),
-        semver::Version::parse(&have),
-    ) else {
+    let Ok(baked) = semver::Version::parse(baked) else {
         return None;
     };
-    if baked <= overlay {
-        return None;
+    // An overlay whose version cannot be ordered against a stamped binary (a
+    // `dev` bundle left in a release app's container) would make every later
+    // offer unorderable and keep serving forever. The stamped build wins.
+    if let Ok(overlay) = semver::Version::parse(&have) {
+        if baked <= overlay {
+            return None;
+        }
     }
 
     // Back to the baked build outright, not to `previous`: if the active
@@ -500,20 +578,34 @@ pub fn drop_stale_overlay(app_data: &Path, baked_version: Option<&str>) -> Optio
     Some(have)
 }
 
-/// Called by the SPA once it has actually rendered. `booted` is the bundle id
-/// the SHELL captured at webview creation — not anything the page reports.
+/// Called by the SPA once it has actually rendered. `booted` is the bundle the
+/// SHELL pinned this page load to, not anything the page reports.
 ///
-/// Confirm only when the pending bundle IS the one this session rendered from.
-/// The launch-time check thread can apply a new bundle while an older session
-/// is still the one calling home, and that session's boot-ok must not vouch
-/// for a bundle it never booted — that race silently disarmed rollback (or,
-/// in the other ordering, rolled back a good bundle forever).
+/// Confirm only when the pending bundle IS the one this page rendered from. A
+/// check can apply a new bundle while an older page is still the one calling
+/// home, and that page's boot-ok must not vouch for a bundle it never booted.
+/// Under the pointer lock, so an apply cannot write a new pending between the
+/// comparison and the clear and have its marker wiped.
 pub fn mark_boot_ok(app_data: &Path, booted: Option<&str>) {
+    let _pointers = pointer_lock();
     let root = bundles_root(app_data);
     if read_pointer(&root, PTR_PENDING).as_deref() == booted && booted.is_some() {
         clear_pointer(&root, PTR_PENDING);
         clear_pointer(&root, PTR_BOOTING);
+        let _ = fs::remove_file(root.join(ATTEMPTS_FILE));
     }
+}
+
+/// Is the page load `generation` still waiting on a confirmation for the
+/// pending bundle it serves? What the desktop watchdog asks before reloading.
+pub fn awaiting_confirmation(app_data: &Path, generation: u64) -> bool {
+    if page_generation() != generation {
+        return false; // a newer load has replaced it
+    }
+    let Some(serving) = serving_bundle_id(app_data) else {
+        return false;
+    };
+    read_pointer(&bundles_root(app_data), PTR_PENDING).as_deref() == Some(serving.as_str())
 }
 
 /// Delete bundle directories nothing points at.
@@ -583,6 +675,18 @@ pub fn record_outcome(app_data: &Path, outcome: &Outcome) {
             "state": "shell_too_old", "needs": needs, "have": have,
         }),
         Outcome::NoBundleOnBox => serde_json::json!({ "state": "no_bundle_on_box" }),
+        Outcome::BoxUnavailable { status } => serde_json::json!({
+            "state": "box_unavailable", "status": status,
+        }),
+        Outcome::SameVersion { version } => serde_json::json!({
+            "state": "same_version", "version": version,
+        }),
+        Outcome::Unusable { content_hash } => serde_json::json!({
+            "state": "unusable", "contentHash": content_hash,
+        }),
+        Outcome::RefusedBefore { content_hash } => serde_json::json!({
+            "state": "refused_before", "contentHash": content_hash,
+        }),
         Outcome::RolledBack { content_hash } => serde_json::json!({
             "state": "rolled_back", "contentHash": content_hash,
         }),
@@ -596,6 +700,27 @@ pub fn record_outcome(app_data: &Path, outcome: &Outcome) {
             "state": "corrupt", "expected": expected, "got": got,
         }),
     };
+    write_outcome(app_data, value);
+}
+
+/// Record a check that could not reach the box at all.
+pub fn record_check_error(app_data: &Path, error: &std::io::Error) {
+    write_outcome(
+        app_data,
+        serde_json::json!({ "state": "check_failed", "error": error.to_string() }),
+    );
+}
+
+/// The record carries when it was written, so a days-old `applied` reads as
+/// days old.
+fn write_outcome(app_data: &Path, mut value: serde_json::Value) {
+    if let Some(obj) = value.as_object_mut() {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        obj.insert("at".into(), secs.into());
+    }
     let root = bundles_root(app_data);
     if fs::create_dir_all(&root).is_ok() {
         let _ = fs::write(root.join(OUTCOME_FILE), value.to_string());
@@ -619,6 +744,8 @@ enum Step {
     Backward,
     /// Not orderable. Refuse, because "cannot tell" is not "forward".
     Unreadable,
+    /// The same version string. Refuse: see [`step`].
+    Same,
 }
 
 /// Order one version string against another.
@@ -635,15 +762,16 @@ enum Step {
 ///     blocking them over an odd version string would be worse than the risk it
 ///     guards. This one runs on a background thread with nobody watching, so
 ///     the safe default is to do nothing and stay on what we have.
-///   • **Byte-equal strings count as forward.** A same-tag rebuild must still
-///     update — that is precisely why the manifest carries a content hash
-///     *as well as* a version, and it is what keeps the dev loop working, where
-///     both sides are stamped the literal `dev` and nothing is orderable.
-///     Equality is decided by the content hash before this is ever consulted;
-///     reaching here with equal versions means the builds genuinely differ.
+///   • **Byte-equal strings are refused.** Builds are stamped with their
+///     nearest tag (`git describe --abbrev=0`), so an app built from `wave`
+///     after a tag carries that tag's version over newer code, and taking the
+///     box's build of the tag would downgrade it. Equal content is caught by
+///     the content hash before this is consulted; reaching here with equal
+///     versions means two builds that cannot be ordered. A release always
+///     moves the version, so nothing real waits on this.
 fn step(remote: &str, have: &str) -> Step {
     if remote == have {
-        return Step::Forward;
+        return Step::Same;
     }
     match (semver::Version::parse(remote), semver::Version::parse(have)) {
         (Ok(r), Ok(h)) if r >= h => Step::Forward,
@@ -686,6 +814,11 @@ fn version_gate(remote: &str, have: &[String]) -> Option<Outcome> {
                 })
             }
             Step::Unreadable => unreadable = unreadable.or(Some(h)),
+            Step::Same => {
+                return Some(Outcome::SameVersion {
+                    version: remote.to_string(),
+                })
+            }
         }
     }
     unreadable.map(|h| Outcome::VersionUnreadable {
@@ -743,28 +876,27 @@ fn decide(
         return Some(refused);
     }
 
-    // A bundle this device already rolled back gets no second download — the
-    // old behavior re-fetched the identical failing bundle on every launch and
-    // every foreground, forever.
-    //
-    // The marker is cleared once the box serves anything else. The docstring
-    // above has always claimed it "clears itself"; nothing ever removed the
-    // file, so a device carried a permanent record of one bad bundle and the
-    // next reader of that directory would have had to guess whether it still
-    // meant anything.
-    match fs::read_to_string(root.join(POISON_FILE)).ok() {
-        Some(poisoned) if poisoned == remote.content_hash => {
-            return Some(Outcome::RolledBack {
-                content_hash: remote.content_hash.clone(),
-            })
-        }
-        Some(_) => {
-            let _ = fs::remove_file(root.join(POISON_FILE));
-        }
-        None => {}
+    // A bundle this device already rolled back, or downloaded and refused,
+    // gets no second download. Both records are left in place here and
+    // cleared when a different bundle is applied: clearing them on sight of a
+    // different offer let a tarball that turned out to be the old build (the
+    // box changed between the two requests) be decided on with no record.
+    if marker(root, POISON_FILE).as_deref() == Some(remote.content_hash.as_str()) {
+        return Some(Outcome::RolledBack {
+            content_hash: remote.content_hash.clone(),
+        });
+    }
+    if marker(root, REFUSED_FILE).as_deref() == Some(remote.content_hash.as_str()) {
+        return Some(Outcome::RefusedBefore {
+            content_hash: remote.content_hash.clone(),
+        });
     }
 
     None
+}
+
+fn marker(root: &Path, name: &str) -> Option<String> {
+    fs::read_to_string(root.join(name)).ok().map(|s| s.trim().to_string())
 }
 
 /// Check the box and apply a newer bundle if there is one this shell can run.
@@ -781,11 +913,14 @@ pub fn check_and_apply(
     shell_surface: u32,
     baked_version: Option<&str>,
 ) -> std::io::Result<Outcome> {
-    let Some(body) = http_get(&box_addr(), "/api/web-bundle/version")? else {
-        return Ok(Outcome::NoBundleOnBox);
+    let body = match http_get(&box_addr(), "/api/web-bundle/version")? {
+        Reply::Body(b) => b,
+        Reply::Status(404) => return Ok(Outcome::NoBundleOnBox),
+        Reply::Status(s) => return Ok(Outcome::BoxUnavailable { status: Some(s) }),
+        Reply::Unreadable => return Ok(Outcome::BoxUnavailable { status: None }),
     };
     let Some(remote) = Manifest::parse(&String::from_utf8_lossy(&body)) else {
-        return Ok(Outcome::NoBundleOnBox);
+        return Ok(Outcome::BoxUnavailable { status: None });
     };
 
     let root = bundles_root(app_data);
@@ -793,8 +928,11 @@ pub fn check_and_apply(
         return Ok(stop);
     }
 
-    let Some(tar_gz) = http_get(&box_addr(), "/api/web-bundle/tarball")? else {
-        return Ok(Outcome::NoBundleOnBox);
+    let tar_gz = match http_get(&box_addr(), "/api/web-bundle/tarball")? {
+        Reply::Body(b) => b,
+        Reply::Status(404) => return Ok(Outcome::NoBundleOnBox),
+        Reply::Status(s) => return Ok(Outcome::BoxUnavailable { status: Some(s) }),
+        Reply::Unreadable => return Ok(Outcome::BoxUnavailable { status: None }),
     };
 
     apply_tarball(app_data, &tar_gz, &remote.content_hash, shell_surface, baked_version)
@@ -830,8 +968,13 @@ fn apply_tarball(
     let staging = root.join(format!(".staging-{offered_hash}"));
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging)?;
+    // A refused download is remembered by the hash it was offered under, so
+    // the next check does not fetch the same tarball again.
     let discard = |outcome: Outcome| -> std::io::Result<Outcome> {
         let _ = fs::remove_dir_all(&staging);
+        if matches!(outcome, Outcome::Unusable { .. } | Outcome::Corrupt { .. }) {
+            let _ = fs::write(root.join(REFUSED_FILE), offered_hash);
+        }
         Ok(outcome)
     };
     if let Err(e) = unpack(tar_gz, &staging) {
@@ -840,7 +983,9 @@ fn apply_tarball(
     }
 
     if !is_usable(&staging) {
-        return discard(Outcome::NoBundleOnBox);
+        return discard(Outcome::Unusable {
+            content_hash: offered_hash.to_string(),
+        });
     }
     let packed = fs::read_to_string(staging.join(MANIFEST_NAME))
         .ok()
@@ -901,6 +1046,12 @@ fn apply_tarball(
     // now recognizes and clears.
     write_pointer(&root, PTR_PENDING, &remote.content_hash)?;
     write_pointer(&root, PTR_ACTIVE, &remote.content_hash)?;
+    // A new pending bundle starts with no attempts, and the records of
+    // bundles refused or rolled back before it are spent.
+    clear_pointer(&root, PTR_BOOTING);
+    let _ = fs::remove_file(root.join(ATTEMPTS_FILE));
+    let _ = fs::remove_file(root.join(POISON_FILE));
+    let _ = fs::remove_file(root.join(REFUSED_FILE));
     // Released before the sweep, so a page load never waits on deleting old
     // bundles. The sweep reads the pointers fresh, and anything a load
     // settles in the meantime lands on a bundle a pointer still names.
@@ -921,9 +1072,8 @@ fn apply_tarball(
 /// reached in-process over the iroh loopback — no TLS, no proxies, no redirects
 /// to follow.
 ///
-/// `Ok(None)` = the box answered non-2xx (e.g. 404 for a headless box). `Err` =
-/// could not talk to it at all.
-fn http_get(addr: &str, path: &str) -> std::io::Result<Option<Vec<u8>>> {
+/// `Err` = could not talk to it at all.
+fn http_get(addr: &str, path: &str) -> std::io::Result<Reply> {
     let sock = addr
         .parse()
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad addr"))?;
@@ -942,7 +1092,34 @@ fn http_get(addr: &str, path: &str) -> std::io::Result<Option<Vec<u8>>> {
 
     let mut raw = Vec::new();
     stream.take(MAX_TARBALL_BYTES as u64).read_to_end(&mut raw)?;
-    Ok(split_http_response(&raw))
+    Ok(reply(&raw))
+}
+
+/// What the box answered, kept apart so a headless box (404) does not read
+/// the same as a box that could not be reached or answered with an error.
+#[derive(Debug, PartialEq, Eq)]
+enum Reply {
+    Body(Vec<u8>),
+    /// A complete non-2xx answer.
+    Status(u16),
+    /// Nothing usable: an empty reply (the reach proxy drops the connection
+    /// when it cannot reach the box), a truncated body, or garbage.
+    Unreadable,
+}
+
+fn reply(raw: &[u8]) -> Reply {
+    if let Some(body) = split_http_response(raw) {
+        return Reply::Body(body);
+    }
+    let status = std::str::from_utf8(raw)
+        .ok()
+        .and_then(|s| s.lines().next())
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse::<u16>().ok());
+    match status {
+        Some(s) if !(200..300).contains(&s) => Reply::Status(s),
+        _ => Reply::Unreadable,
+    }
 }
 
 /// Split a raw HTTP/1.1 response into its body, if the status is 2xx.
@@ -1389,14 +1566,31 @@ mod tests {
     }
 
     #[test]
-    fn a_same_tag_rebuild_still_updates() {
-        // Byte-equal versions are forward: a rebuild at one tag changes the
-        // content hash and nothing else, and the dev loop stamps the literal
-        // `dev` on both sides forever. Refusing here would freeze both.
+    fn an_equal_version_built_differently_is_not_taken() {
+        // An app built from wave after a tag is stamped with that tag over
+        // newer code; the box's build of the tag must not replace it.
         let d = tmp();
         let root = bundles_root(&d);
-        assert_eq!(decide(&root, &offer("0.1.5", "rebuilt"), 4, Some("0.1.5")), None);
-        assert_eq!(decide(&root, &offer("dev", "rebuilt"), 4, Some("dev")), None);
+        assert_eq!(
+            decide(&root, &offer("0.1.5", "rebuilt"), 4, Some("0.1.5")),
+            Some(Outcome::SameVersion { version: "0.1.5".into() })
+        );
+        assert_eq!(
+            decide(&root, &offer("dev", "rebuilt"), 4, Some("dev")),
+            Some(Outcome::SameVersion { version: "dev".into() })
+        );
+    }
+
+    #[test]
+    fn a_hash_that_could_leave_the_bundles_directory_is_unreadable() {
+        let m = |h: &str| {
+            Manifest::parse(&format!(
+                r#"{{"version":"0.1.5","contentHash":"{h}","minShellVersion":1}}"#
+            ))
+        };
+        assert!(m("abc123").is_some());
+        assert!(m("../../evil").is_none());
+        assert!(m("").is_none());
     }
 
     #[test]
@@ -1467,7 +1661,10 @@ mod tests {
         // and served, not rolled back.
         assert!(!resolve_pending(&d), "first launch attempts it");
         assert_eq!(read_pointer(&root, PTR_ACTIVE).as_deref(), Some("new2"));
-        // Second launch with the attempt still unconfirmed: it does not boot.
+        // A second unconfirmed attempt is allowed: a load can die for reasons
+        // that are not the bundle's.
+        assert!(!resolve_pending(&d), "second attempt");
+        // Every attempt used and none confirmed: it does not boot.
         assert!(resolve_pending(&d));
         assert_eq!(read_pointer(&root, PTR_ACTIVE).as_deref(), Some("old1"));
         assert!(!root.join("new2").exists(), "bad bundle is removed");
@@ -1483,6 +1680,7 @@ mod tests {
         // No previous: this overlaid the baked bundle.
 
         assert!(!resolve_pending(&d), "first launch attempts it");
+        assert!(!resolve_pending(&d), "second attempt");
         assert!(resolve_pending(&d));
         assert_eq!(read_pointer(&root, PTR_ACTIVE), None);
         assert_eq!(active_bundle(&d), None, "serves the baked bundle again");
@@ -1610,6 +1808,107 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_download_is_not_fetched_again() {
+        // An unusable tarball (here: no index.html, which every box build
+        // lacked) used to be re-downloaded on every launch and foreground.
+        let app = tmp();
+        let root = bundles_root(&app);
+        let files: Vec<(String, String)> = bundle("0.1.5", "unused")
+            .into_iter()
+            .filter(|(p, _)| p != "index.html")
+            .collect();
+        let out = apply_tarball(&app, &tarball(&files), "noindex1", 4, Some("0.1.4")).unwrap();
+        assert_eq!(out, Outcome::Unusable { content_hash: "noindex1".into() });
+        assert_eq!(
+            decide(&root, &offer("0.1.5", "noindex1"), 4, Some("0.1.4")),
+            Some(Outcome::RefusedBefore { content_hash: "noindex1".into() })
+        );
+        assert_eq!(decide(&root, &offer("0.1.6", "fixed2"), 4, Some("0.1.4")), None);
+    }
+
+    #[test]
+    fn a_confirmed_load_ends_the_watch_and_the_attempt_count() {
+        let app = tmp();
+        let root = bundles_root(&app);
+        plant(&root, "newC");
+        write_pointer(&root, PTR_PENDING, "newC").unwrap();
+        write_pointer(&root, PTR_ACTIVE, "newC").unwrap();
+        let load = begin_page_load(&app);
+        assert!(load.unconfirmed);
+        confirm_page_load(&app);
+        assert!(!awaiting_confirmation(&app, load.generation));
+        assert!(!root.join(ATTEMPTS_FILE).exists());
+        assert!(!begin_page_load(&app).unconfirmed, "a confirmed bundle is not watched");
+    }
+
+    #[test]
+    fn a_reply_says_why_there_is_no_body() {
+        assert_eq!(reply(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"), Reply::Body(b"ok".to_vec()));
+        assert_eq!(reply(b"HTTP/1.1 404 Not Found\r\n\r\n"), Reply::Status(404));
+        assert_eq!(reply(b"HTTP/1.1 503 Service Unavailable\r\n\r\n"), Reply::Status(503));
+        assert_eq!(reply(b""), Reply::Unreadable, "the proxy dropped the connection");
+        assert_eq!(reply(b"HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\nshort"), Reply::Unreadable);
+    }
+
+    #[test]
+    fn overlay_files_are_typed_by_extension_and_documents_by_navigation() {
+        assert_eq!(content_type("_app/immutable/nodes/0.Cq1iOdjC.js"), "text/javascript");
+        assert!(is_page_load("200.html", Some("text/html")));
+    }
+
+    /// The real pipeline, in CI: a `pnpm build` packed by the box's own
+    /// tarball code (`OTA_TARBALL`, written by the virtues-core test that
+    /// reads `OTA_BUILD_DIR`), applied exactly as a device applies it. Every
+    /// one of the bugs that kept OTA from ever working end to end lived in the
+    /// gap between hand-made fixtures and that real build. Skipped when the
+    /// variable is unset.
+    #[test]
+    fn real_box_bundle_applies() {
+        let Ok(path) = std::env::var("OTA_TARBALL") else {
+            return;
+        };
+        let tar_gz = fs::read(&path).expect("OTA_TARBALL is readable");
+        let staged = tmp();
+        unpack(&tar_gz, &staged).unwrap();
+        let manifest = Manifest::parse(&fs::read_to_string(staged.join(MANIFEST_NAME)).unwrap())
+            .expect("the box build carries a readable manifest");
+
+        let app = tmp();
+        let out = apply_tarball(&app, &tar_gz, &manifest.content_hash, crate::COMMAND_SURFACE_VERSION, Some("0.0.0"))
+            .unwrap();
+        assert_eq!(out, Outcome::Applied { content_hash: manifest.content_hash.clone() });
+        assert!(manifest.min_shell_version <= crate::COMMAND_SURFACE_VERSION, "this shell can run it");
+
+        // Every file a page asks for is typed so WebKit will run it: nothing
+        // that is not a document goes out as HTML.
+        let dir = bundles_root(&app).join(&manifest.content_hash);
+        let mut stack = vec![dir.clone()];
+        while let Some(d) = stack.pop() {
+            for e in fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                let rel = p.strip_prefix(&dir).unwrap().to_string_lossy().to_string();
+                let ty = content_type(&rel);
+                if rel.ends_with(".js") || rel.ends_with(".mjs") {
+                    assert_eq!(ty, "text/javascript", "{rel}");
+                }
+                if !rel.ends_with(".html") {
+                    assert_ne!(ty, "text/html", "{rel}");
+                }
+            }
+        }
+        // A navigation boots it and is watched until it confirms.
+        let load = begin_page_load(&app);
+        assert!(load.unconfirmed);
+        assert!(read_from_overlay(&app, "index.html").is_some());
+        confirm_page_load(&app);
+        assert!(!awaiting_confirmation(&app, load.generation));
+    }
+
+    #[test]
     fn only_a_navigation_starts_a_page_load() {
         let nav = Some("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
         assert!(is_page_load("index.html", nav));
@@ -1632,7 +1931,7 @@ mod tests {
         plant(&root, "pinA");
         fs::write(root.join("pinA").join("chunk-a.js"), "A").unwrap();
         write_pointer(&root, PTR_ACTIVE, "pinA").unwrap();
-        assert!(!begin_page_load(&app));
+        assert!(!begin_page_load(&app).rolled_back);
         assert!(!update_ready(&app));
 
         // A background check applies B while the page is open.
@@ -1646,7 +1945,7 @@ mod tests {
         assert!(root.join("pinA").exists(), "the open page's bundle is never pruned");
 
         // The next load takes B, and marks it as the attempt.
-        assert!(!begin_page_load(&app));
+        assert!(!begin_page_load(&app).rolled_back);
         assert_eq!(serving_bundle_id(&app).as_deref(), Some("pinB"));
         assert_eq!(read_from_overlay(&app, "chunk-a.js"), None, "A's chunk is not in B");
         assert!(!update_ready(&app));
@@ -1694,10 +1993,17 @@ mod tests {
         write_pointer(&root, PTR_PREVIOUS, "goodA").unwrap();
         write_pointer(&root, PTR_PENDING, "badB").unwrap();
         write_pointer(&root, PTR_ACTIVE, "badB").unwrap();
-        assert!(!begin_page_load(&app), "the first load is the attempt");
+        let first = begin_page_load(&app);
+        assert!(!first.rolled_back, "the first load is the attempt");
+        assert!(first.unconfirmed, "and the watchdog watches it");
+        assert!(awaiting_confirmation(&app, first.generation));
         assert_eq!(serving_bundle_id(&app).as_deref(), Some("badB"));
-        // No confirm: the page never rendered. The next load rolls back.
-        assert!(begin_page_load(&app));
+        // No confirm: the page never rendered. One more attempt, then the
+        // load after that rolls back.
+        let second = begin_page_load(&app);
+        assert!(!second.rolled_back);
+        assert!(!awaiting_confirmation(&app, first.generation), "a newer load replaced it");
+        assert!(begin_page_load(&app).rolled_back);
         assert_eq!(serving_bundle_id(&app).as_deref(), Some("goodA"));
         assert_eq!(fs::read_to_string(root.join(POISON_FILE)).unwrap(), "badB");
     }
@@ -1899,9 +2205,10 @@ mod tests {
         );
         assert!(root.join(POISON_FILE).exists(), "still the offered bundle");
 
-        // A different bundle is taken, and the marker it has outlived goes.
+        // A different bundle is taken. The marker stays until one is applied,
+        // so a tarball that turns out to be the bad build is still caught.
         assert_eq!(decide(&root, &offer("0.1.5", "good2"), 4, Some("0.1.4")), None);
-        assert!(!root.join(POISON_FILE).exists(), "marker cleared");
+        assert!(root.join(POISON_FILE).exists(), "kept until an apply");
     }
 
     #[test]
