@@ -22,6 +22,8 @@
 		on: boolean;
 		/** What this stream collects, in one sentence. */
 		description: string;
+		/** A short caveat under the description. */
+		note?: string | null;
 		action?: { label: string; onclick: () => void; disabled?: boolean } | null;
 		sync?: OutboxStats | null;
 		error?: string | null;
@@ -36,6 +38,7 @@
 		status,
 		on,
 		description,
+		note = null,
 		action = null,
 		sync = null,
 		error = null,
@@ -74,6 +77,9 @@
 			{/if}
 		</div>
 		<p class="desc">{description}</p>
+		{#if note}
+			<p class="desc sync">{note}</p>
+		{/if}
 		{#if syncLine}
 			<p class="desc sync">{syncLine}</p>
 		{/if}
