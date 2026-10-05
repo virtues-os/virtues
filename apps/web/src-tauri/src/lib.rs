@@ -387,19 +387,16 @@ pub fn serve_ui<R: tauri::Runtime>(
     eprintln!("[ui] {path} is not an app file; answered with 200.html (accept: {accept:?})");
   }
 
-  // Overlay first, baked second. `mime_guess` is not a dependency here, so
-  // the baked asset's own mime type is reused when the overlay serves the
-  // same path — which it does for every file, both being the same build
-  // shape.
+  // Overlay first, baked second.
   let overlay = ui_data_dir(app)
     .and_then(|d| web_bundle::read_from_overlay(&d, &resolved));
 
   match (overlay, baked(&resolved)) {
-    (Some(bytes), asset) => tauri::http::Response::builder()
+    (Some(bytes), _) => tauri::http::Response::builder()
       .status(200)
       .header(
         "Content-Type",
-        asset.map(|a| a.mime_type).unwrap_or_else(|| "text/html".into()),
+        web_bundle::content_type(&resolved),
       )
       .body(bytes)
       .unwrap(),
