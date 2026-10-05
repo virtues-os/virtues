@@ -539,6 +539,37 @@ h6 {
 	border-bottom: none;
 }
 
+/* In an article a table is part of the prose: its cells read at the body's
+   size and face, and its header is a quiet label, not a bold one (the serif
+   is never bold). */
+.markdown--article table,
+.markdown--article td {
+	font-family: var(--md-body-family);
+	font-size: var(--md-body-size);
+	line-height: 1.45;
+}
+
+.markdown--article th {
+	font-family: var(--md-body-family);
+	font-size: 0.8125rem;
+	font-weight: 400;
+	color: var(--color-foreground-muted);
+}
+
+/* The veil (lib/actions/veil.ts): a hidden word keeps its place and loses its
+   ink. A link sets its own color in its component's styles, so the veil has to
+   outrank it; the action brings the ink back inline as the specks gather. */
+.veil-hidden {
+	color: transparent !important;
+	text-decoration-color: transparent !important;
+	cursor: default;
+}
+
+.veil-hidden * {
+	color: inherit !important;
+	text-decoration-color: transparent !important;
+}
+
 .markdown img {
 	@apply max-w-full h-auto rounded-lg my-4;
 }
