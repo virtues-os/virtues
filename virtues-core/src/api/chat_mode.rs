@@ -363,8 +363,16 @@ pub(crate) mod tests {
         const GROUPS: &[(&str, &[&str], usize)] = &[
             (
                 "applets",
-                &["setup_applet", "edit_applet", "list_applets", "run_applet", "get_applet", "delete_applet"],
-                3_000,
+                &[
+                    "setup_applet",
+                    "edit_applet",
+                    "list_applets",
+                    "run_applet",
+                    "get_applet",
+                    "delete_applet",
+                    "publish_to_github",
+                ],
+                4_100,
             ),
             ("analysis", &["code_interpreter", "think", "read_asset", "generate_image"], 2_400),
             ("pages", &["edit_page", "get_page_content", "create_page", "get_project_item"], 2_400),
@@ -386,8 +394,8 @@ pub(crate) mod tests {
         // (mode's wire name, total ceiling). Chat's is the sum of its group
         // ceilings; the rest sit just above their 2026-09-29 size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 18_300),
-            ("sudo", 18_500),
+            ("chat", 19_400),
+            ("sudo", 19_600),
             ("deep_research", 13_100),
             ("interview", 1_500),
             ("getting_started", 2_200),
