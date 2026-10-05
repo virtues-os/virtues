@@ -385,7 +385,10 @@
 
 	/* The divider itself — the same 1px line that divides the sidebar panel
 	   from the pane, drawn once more between the panes. */
+	/* z-index lifts the grip above the panes' own stacked content (the chat
+	   composer), which otherwise paints over the pill's overhang. */
 	.resize-handle.visible {
+		z-index: 5;
 		width: var(--gutter-width, 1px);
 		background: var(--color-border);
 		opacity: 1;
@@ -451,6 +454,17 @@
 		pointer-events: none;
 		z-index: 1;
 		transition: background-color 120ms var(--ease-premium);
+		animation: grip-unfold 420ms ease-in-out 200ms both;
+	}
+
+	/* Arrives as a dot and unfolds into the pill, once the split has opened. */
+	@keyframes grip-unfold {
+		from {
+			height: 4px;
+		}
+		to {
+			height: 32px;
+		}
 	}
 
 	.resize-handle.visible:hover .resize-grip,
@@ -463,6 +477,7 @@
 		.resize-handle.visible::before,
 		.resize-handle.visible .resize-grip {
 			transition: none;
+			animation: none;
 		}
 	}
 
