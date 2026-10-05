@@ -756,11 +756,12 @@ fn setup_applet_tool() -> ToolConfig {
         // `{"guide": true}`. It is one source for the in-box assistant and
         // for agents working in the repo, and it stays out of the definition
         // every chat step re-sends.
-        llm_description: r#"Create or update an applet: a scheduled task, reminder, monitor, tracker or dashboard. First call with {"guide": true} and follow the guide it returns. The same name updates that applet. name and description are required except for the guide. On check_failed, fix the findings and retry; nothing was created."#.to_string(),
+        llm_description: r#"Create or update an applet: a scheduled task, reminder, monitor, tracker or dashboard. First call with {"guide": true} and follow the guide it returns. The same name updates that applet. name and description are required except for the guide. On check_failed, fix the findings and retry; nothing was created. check_only runs the check alone."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
                 "guide": { "type": "boolean" },
+                "check_only": { "type": "boolean" },
                 "name": { "type": "string" },
                 "description": { "type": "string" },
                 "agent": { "type": "string", "description": "Run prompt; omit for a face-only dashboard" },

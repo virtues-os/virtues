@@ -60,7 +60,7 @@ gets its own SQL, its own role switch or its own validation:
 | `virtues search <text>` | `semantic_search` | `--entities`, `--from/--to` pass through |
 | `virtues page new/get/edit` | `create_page`, `get_page_content`, `edit_page` | `edit` reads the body from stdin |
 | `virtues applet ls/get` | `list_applets`, `get_applet` | |
-| `virtues applet check <dir>` | the check inside `setup_applet` | the LSP, standalone: no disk write, no row |
+| `virtues applet check <dir>` | `setup_applet` with `check_only` | the LSP, standalone: no disk write, no row; `-` reads JSON arguments |
 | `virtues applet put <dir>` | `setup_applet` | |
 | `virtues applet enable/disable <id>` | `edit_applet` | |
 | `virtues applet run <id>` | `run_applet` | "Run now": exempt from count caps, not spend |
@@ -159,12 +159,18 @@ which is the boundary that matters. `agent-key` is box-only.
    `DELETE` is refused, a misspelled column gets the did-you-mean.
    `page get` reads the saved page, not live Yjs state, so it can trail an
    open editor by the last save.
-2. **`applet check`** standalone. The highest-value verb for an outside agent:
-   it lets Claude Code iterate on an applet folder against the live catalog
-   without creating anything. The check is inline in
-   `tools/applet_setup.rs::execute` today (`check_prompt_tables`,
-   `check_limits`, `explain_bool_expr`, `applet_schema::check`); lift it into
-   one function both callers use.
+2. **`applet check`.** Built 2026-10-05. The check is one function,
+   `applet_setup::check` over a parsed `Draft`, and `setup_applet` takes
+   `check_only` to run it and create nothing (no "I allow" in chat, since it
+   writes nothing). `virtues applet check <dir>` maps a folder to the tool's
+   arguments: `manifest.toml`, `face/index.html`, and the schema versions this
+   box has not applied, joined in order so an `ALTER` dry-runs after its
+   `CREATE`; a manifest key an authored applet cannot set (`command`,
+   `credential`) is a finding. `virtues applet check -` takes the JSON
+   arguments on stdin, which is how a remote agent checks without copying a
+   folder onto the box. Exits 1 on findings. Building it found the drift
+   parser reading SQL comments as columns, a false finding on any schema that
+   explains itself; fixed.
 3. **Write verbs**: `page new/edit`, `applet put/enable/disable/run`, `write`;
    a caller (`cli`/`mcp`) on `ToolContext`; the default spend cap; the audit
    line; the record/applets.md invariant rewritten.

@@ -297,6 +297,10 @@ impl ToolExecutor {
         if tool_name == "setup_applet" && super::applet_setup::wants_guide(arguments) {
             return Ok(None);
         }
+        // Nor does a dry run: `check_only` validates and creates nothing.
+        if tool_name == "setup_applet" && super::applet_setup::wants_check_only(arguments) {
+            return Ok(None);
+        }
         // Sudo sends `sql_write` to `sql_sudo`, whose read-only transaction
         // is the finer gate: a statement that changes nothing runs, and one
         // that does asks for itself (`sudo_gate`). The other gated tools ask

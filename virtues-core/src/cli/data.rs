@@ -1,4 +1,5 @@
-//! The data verbs: `virtues query`, `search`, `schema`, `applet`, `page`.
+//! The data verbs: `virtues query`, `search`, `schema`, `applet`, `page`,
+//! and `applet check`, the dry run of the check chat runs before it creates.
 //!
 //! Each verb is a registry tool run through `ToolExecutor`, never SQL of its
 //! own. The CLI connects as the `virtues` service user, a database superuser;
@@ -23,11 +24,12 @@ const MAX_CELL: usize = 60;
 
 pub struct Verbs {
     exec: ToolExecutor,
+    pool: PgPool,
 }
 
 impl Verbs {
     pub fn new(pool: PgPool) -> Self {
-        Self { exec: ToolExecutor::without_warmup(pool) }
+        Self { exec: ToolExecutor::without_warmup(pool.clone()), pool }
     }
 
     /// Run one allowlisted tool and return its data, or its error as text.
@@ -216,6 +218,37 @@ impl Verbs {
                 }
                 Ok(())
             }
+            AppletCmd::Check { path, out } => {
+                let (mut args, mut findings) = if path == "-" {
+                    let text = std::io::read_to_string(std::io::stdin())
+                        .map_err(|e| format!("reading stdin: {e}"))?;
+                    let args: Value = serde_json::from_str(&text)
+                        .map_err(|e| format!("stdin is not JSON: {e}"))?;
+                    (args, Vec::new())
+                } else {
+                    folder_args(&self.pool, std::path::Path::new(&path)).await?
+                };
+                args["check_only"] = json!(true);
+                let data = self.call("setup_applet", args).await?;
+                findings.extend(array(&data, "findings").iter().cloned());
+                if out.json {
+                    print_json(&json!({
+                        "status": if findings.is_empty() { "ok" } else { "check_failed" },
+                        "findings": findings,
+                    }))?;
+                } else if findings.is_empty() {
+                    if ui::tty() {
+                        ui::ok("no findings");
+                    }
+                } else {
+                    table(&["field", "error", "suggestion"], &findings);
+                }
+                if findings.is_empty() {
+                    Ok(())
+                } else {
+                    Err(format!("{} finding(s)", findings.len()))
+                }
+            }
         }
     }
 
@@ -235,6 +268,72 @@ impl Verbs {
             }
         }
     }
+}
+
+/// The manifest keys an authored applet can set: what `setup_applet` writes.
+/// Anything else in a folder's manifest (`command`, `credential`, …) belongs
+/// to shipped or trusted applets, and would not survive being put.
+const AUTHORED_KEYS: &[&str] = &[
+    "name", "description", "owner", "agent", "instruction", "schedule", "triggers",
+    "condition", "until", "default_enabled", "enabled", "config",
+];
+
+/// An applet folder as `setup_applet` arguments, plus the findings only the
+/// folder can have (an unreadable or unauthorable manifest).
+///
+/// Schema: the versions on disk this box has not applied yet, joined in
+/// order, so the dry-run sees an `ALTER` after the `CREATE` it depends on.
+/// None pending means none submitted, which is what a re-put would send.
+async fn folder_args(pool: &PgPool, dir: &std::path::Path) -> Result<(Value, Vec<Value>), String> {
+    let manifest_path = dir.join("manifest.toml");
+    let text = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
+    let manifest: toml::Table = text
+        .parse()
+        .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
+    let mut args = serde_json::to_value(&manifest).map_err(|e| e.to_string())?;
+    let mut findings = Vec::new();
+
+    for key in manifest.keys() {
+        if !AUTHORED_KEYS.contains(&key.as_str()) {
+            findings.push(json!({
+                "field": key,
+                "error": "not a field an authored applet can set",
+                "suggestion": "agent, schedule, triggers, condition, until, config.limits",
+            }));
+        }
+    }
+    if let Some(limits) = manifest.get("config").and_then(|c| c.get("limits")) {
+        args["limits"] = serde_json::to_value(limits).map_err(|e| e.to_string())?;
+    }
+
+    let face = dir.join("face").join("index.html");
+    if face.is_file() {
+        let html = std::fs::read_to_string(&face).map_err(|e| format!("{}: {e}", face.display()))?;
+        args["face_html"] = json!(html);
+    }
+
+    let versions = crate::tools::applet_schema::versions_on_disk(dir);
+    if !versions.is_empty() {
+        let name = manifest.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+        let applet_id = format!(
+            "{}{}",
+            crate::scheduler::applets::USER_APPLET_PREFIX,
+            crate::tools::applet_setup::slugify(name)
+        );
+        let latest = crate::tools::applet_schema::applied(pool, &applet_id)
+            .await?
+            .iter()
+            .map(|a| a.version)
+            .max()
+            .unwrap_or(0);
+        let pending: Vec<&str> =
+            versions.iter().filter(|(v, _, _)| *v > latest).map(|(_, _, sql)| sql.as_str()).collect();
+        if !pending.is_empty() {
+            args["schema_sql"] = json!(pending.join("\n\n"));
+        }
+    }
+    Ok((args, findings))
 }
 
 fn array<'a>(v: &'a Value, key: &str) -> &'a [Value] {
