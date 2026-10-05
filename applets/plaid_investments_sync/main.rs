@@ -14,6 +14,16 @@ use virtues_helpers::{connect_from_env, output, read_input};
 
 const ACTION: &str = "plaid_investments_sync";
 
+/// Plaid codes that mean the Item simply lacks this product. Kept in step with
+/// the same list in `plaid_liabilities_sync`.
+const NO_PRODUCT_CODES: &[&str] = &[
+    "INVALID_PRODUCT",
+    "PRODUCTS_NOT_SUPPORTED",
+    "PRODUCT_NOT_READY",
+    "NO_INVESTMENT_ACCOUNTS",
+    "NO_INVESTMENT_AUTH",
+];
+
 #[tokio::main]
 async fn main() -> Result<()> {
     virtues_applets::init_tracing();
@@ -38,13 +48,16 @@ async fn main() -> Result<()> {
     .await?;
 
     if !(200..300).contains(&status) {
-        // Same split as plaid_liabilities_sync: a top-level `error_code` is
-        // Plaid answering (benign — record 0), while `{"error":{"code":...}}` is
-        // our own proxy failing (wallet_empty, service_not_configured, …), which
-        // must stay loud.
+        // Same split as plaid_liabilities_sync: only "this Item has no
+        // investments product" is benign (record 0). Any other Plaid code —
+        // ITEM_LOGIN_REQUIRED above all — fails the run, and so does our own
+        // proxy's `{"error":{"code":...}}` (wallet_empty, service_not_configured, …).
         if let Some(code) = resp.get("error_code").and_then(|v| v.as_str()) {
-            let summary = format!("no investments for this credential (plaid {code})");
-            return output(&summary, &input.config);
+            if NO_PRODUCT_CODES.contains(&code) {
+                let summary = format!("no investments for this credential (plaid {code})");
+                return output(&summary, &input.config);
+            }
+            anyhow::bail!("plaid investments error {code} ({status}): {resp}");
         }
         anyhow::bail!("plaid investments proxy error {status}: {resp}");
     }
