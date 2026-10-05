@@ -5,7 +5,7 @@
  * All functions are no-ops when running in a browser (non-Tauri environment).
  */
 
-import { isTauri } from '$lib/utils/platform';
+import { isIOS, isMacOS, isTauri } from '$lib/utils/platform';
 
 // Lazy load Tauri API to avoid errors in browser environment
 async function getInvoke() {
@@ -139,48 +139,96 @@ export interface ShellIdentity {
 	appVersion: string;
 	/** Command contract this shell exposes. */
 	commandSurface: number;
-	/** Active OTA bundle's content hash, or null when running the baked build. */
+	/**
+	 * The OTA bundle the active pointer names, or null for the baked build. It
+	 * can be newer than the page on screen: a bundle staged since this page
+	 * loaded becomes active at once and runs from the next load.
+	 */
 	activeBundle: string | null;
+	/** The OTA bundle this page was loaded from, or null for the baked build. */
+	servingBundle: string | null;
 	/** What the last update check concluded; null if none has run. */
 	lastCheck: OtaCheck | null;
 }
 
-/** Outcome of the shell's last OTA check. Mirrors `Outcome` in web_bundle.rs. */
-export type OtaCheck =
+/**
+ * Outcome of the shell's last OTA check. Mirrors `Outcome` in web_bundle.rs;
+ * every outcome carries `at`, the check's time in unix seconds.
+ */
+export type OtaCheck = { at?: number } & (
 	| { state: 'up_to_date' }
 	| { state: 'applied'; contentHash: string }
 	| { state: 'shell_too_old'; needs: number; have: number }
+	/** The box answered 404: it serves no bundle. */
 	| { state: 'no_bundle_on_box' }
+	| { state: 'box_unavailable'; status: number | null }
+	| { state: 'same_version'; version: string }
+	| { state: 'unusable'; contentHash: string }
+	| { state: 'refused_before'; contentHash: string }
+	| { state: 'check_failed'; error: string }
 	| { state: 'rolled_back'; contentHash: string }
 	| { state: 'box_behind'; boxVersion: string; have: string }
-	| { state: 'version_unreadable'; boxVersion: string; have: string | null };
+	| { state: 'version_unreadable'; boxVersion: string; have: string | null }
+);
 
 /**
- * One line describing an update check, or null when there is nothing worth
- * saying. Deliberately silent for the ordinary states: "up to date" and "your
- * box serves no bundle" are not news. `shell_too_old` is the one that must
- * always speak — it is the case where everything is working correctly and the
- * user still sees stale UI, which without an explanation reads as a bug.
+ * Whether this page runs the app's own copy of the UI (the `virtues://` origin
+ * on the Mac and the phone) rather than the copy the box serves (a browser, and
+ * the Windows and Linux apps). Only the app's own copy updates over the air.
  */
-export function describeOtaCheck(c: OtaCheck | null): string | null {
-	if (!c) return null;
+export function runsOwnCopy(): boolean {
+	return typeof location !== 'undefined' && location.protocol === 'virtues:';
+}
+
+/**
+ * A downloaded interface that this page is not running yet, or null. The
+ * active pointer moves when a bundle is staged; the page moves at its next load.
+ */
+export function stagedBundle(s: ShellIdentity): string | null {
+	return s.activeBundle && s.activeBundle !== s.servingBundle ? s.activeBundle : null;
+}
+
+/**
+ * One line describing the shell's last update check, or null when there is
+ * nothing worth saying. Silent for the ordinary states: "up to date" and "your
+ * box serves no bundle" are not news, and neither is a bundle this page is
+ * already running or one the Interface row already names as staged.
+ * `shell_too_old` always speaks: everything is working correctly and the user
+ * still sees stale UI, which without an explanation reads as a bug.
+ */
+export function describeOtaCheck(s: ShellIdentity): string | null {
+	const c = s.lastCheck;
+	if (!c || !runsOwnCopy()) return null;
 	switch (c.state) {
 		case 'shell_too_old':
-			return `Your box has newer UI that needs a newer app (needs ${c.needs}, this app has ${c.have}) — update from the App Store.`;
+			return `Your server has a newer interface that needs a newer app (needs ${c.needs}, this app has ${c.have}). ${
+				isIOS ? 'Update the app from the App Store.' : isMacOS ? 'Update the Virtues app on this Mac.' : 'Update the app.'
+			}`;
 		case 'applied':
-			return 'Newer interface downloaded. It loads the next time you open the app.';
+			if (c.contentHash === s.servingBundle || c.contentHash === s.activeBundle) return null;
+			return 'This app downloaded a newer interface and switches to it the next time it reloads.';
+		case 'unusable':
+			// The box offered a bundle the shell could not verify or unpack.
+			return "Your server offered a newer interface this app couldn't use, so it's staying on the one it has.";
+		case 'refused_before':
 		case 'rolled_back':
-			// Also worth a word: the device is deliberately refusing the box's
-			// bundle after a failed boot, which otherwise looks like OTA
-			// silently not working.
-			return 'A newer interface failed to start on this device, so the app set it aside - the next box update clears it.';
+			// The device is deliberately refusing the box's bundle after a
+			// failed boot, which otherwise looks like OTA silently not working.
+			return "A newer interface didn't start on this device, so the app set it aside. Your next server update clears it.";
 		case 'box_behind':
-			// The other half of shell_too_old, and the ordinary one: this app
-			// updates on Apple's cadence, your box when you upgrade it. Silence
-			// here would read as OTA being broken.
-			return `This app already has newer UI than your box (box ${c.boxVersion}, app ${c.have}) — it stays on its own until you run \`sudo virtues upgrade\`.`;
+			// The app updates on Apple's cadence, the box when its owner
+			// upgrades it. Silence here would read as OTA being broken.
+			return `This app already has a newer interface than your server (server ${c.boxVersion}, app ${c.have}). It keeps its own until you run \`sudo virtues upgrade\`.`;
 		case 'version_unreadable':
-			return "This app can't tell whether your server's UI is newer than its own, so it's staying on the build it shipped with.";
+			return "This app can't tell whether your server's interface is newer than its own, so it's staying on the one it shipped with.";
+		case 'box_unavailable':
+		case 'check_failed':
+			// A missed check is retried on the next foreground and launch; it
+			// is news only when it is the last word on why nothing changed.
+			return "This app couldn't check your server for a newer interface. It tries again the next time you open it.";
+		case 'up_to_date':
+		case 'same_version':
+		case 'no_bundle_on_box':
 		default:
 			return null;
 	}
@@ -202,12 +250,18 @@ export async function shellIdentity(): Promise<ShellIdentity | null> {
 			app_version: string;
 			command_surface: number;
 			active_bundle: string | null;
+			serving_bundle?: string | null;
 			last_check: OtaCheck | null;
 		}>('shell_identity_cmd');
+		const activeBundle = r.active_bundle ?? null;
+		// A shell that predates the field cannot say which bundle this page
+		// came from; the active pointer is the nearest answer it has.
+		const serving = 'serving_bundle' in r ? r.serving_bundle : activeBundle;
 		return {
 			appVersion: r.app_version,
 			commandSurface: r.command_surface,
-			activeBundle: r.active_bundle ?? null,
+			activeBundle,
+			servingBundle: serving ?? null,
 			lastCheck: r.last_check ?? null
 		};
 	} catch {

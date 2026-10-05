@@ -2,8 +2,8 @@
 	// Root layout - minimal, delegates to route group layouts
 	// This is kept minimal as (onboarding) and (app) groups have their own layouts
 	import { onMount } from "svelte";
-	import { installErrorReporting } from "$lib/log";
-	import { reportBootOk } from "$lib/tauri/bridge";
+	import { installErrorReporting, log } from "$lib/log";
+	import ErrorState from "$lib/components/ErrorState.svelte";
 
 	let { children } = $props();
 
@@ -15,6 +15,14 @@
 	//
 	// Safe to call during SSR (it no-ops without a `window`) and idempotent.
 	installErrorReporting();
+
+	// A screen that throws while rendering shows the error state below instead
+	// of leaving the window blank.
+	function onRenderError(error: unknown) {
+		// A boundary's catch never reaches `window`'s error event, so the
+		// reporter installed above would not see it.
+		log.error("layout", "a page failed to render", error);
+	}
 
 	// The one thing that cannot live in a route group's layout: swallowing a
 	// file dropped somewhere nothing claims.
@@ -40,18 +48,6 @@
 	// screen. src-tauri/src/main.rs blocks `file:` navigation too, for the
 	// pages the SPA never boots at all (connect.html, and the window before
 	// mount).
-	// Confirm to the shell that this build actually rendered. An OTA bundle
-	// stays pending until this lands, and a page load that finds its
-	// predecessor still pending treats that bundle as one that failed to boot
-	// and rolls it back, so removing this call silently reverts every update.
-	// In the ROOT layout, so every screen confirms, Setup and recovery
-	// included: a copy that only ever opened on Setup must not be rolled back
-	// for it. In onMount, not at module scope, because a module that parses is
-	// not a page that renders. See src-tauri/src/web_bundle.rs.
-	onMount(() => {
-		void reportBootOk();
-	});
-
 	onMount(() => {
 		const swallowStrayDrop = (e: DragEvent) => e.preventDefault();
 		document.addEventListener("drop", swallowStrayDrop);
@@ -59,4 +55,14 @@
 	});
 </script>
 
-{@render children()}
+<svelte:boundary onerror={onRenderError}>
+	{@render children()}
+
+	{#snippet failed()}
+		<ErrorState
+			title="This screen couldn't open"
+			message="Reload to try again."
+			onRetry={() => window.location.reload()}
+		/>
+	{/snippet}
+</svelte:boundary>

@@ -8,10 +8,23 @@
 // The one startup task: on the mobile (bundled) build the shell injects the
 // box's loopback origin; wire `/api` + `/ws` to it. No-op on desktop, where the
 // box serves the app same-origin.
+import type { ClientInit } from '@sveltejs/kit';
 import { initBackendFromShell } from '$lib/config/backend';
 import { reloadForStaleChunk } from '$lib/tabs/lazy';
+import { reportBootOk } from '$lib/tauri/bridge';
 
 initBackendFromShell();
+
+// Tell the shell this UI bundle boots. An over-the-air bundle stays pending
+// until this lands, and one that never confirms is reloaded by the shell's
+// watchdog and then rolled back (src-tauri/src/web_bundle.rs), so removing
+// this call silently reverts every update. Here, once the bundle's code is
+// running and before any page data loads: what an update can break is its own
+// code failing to load, which leaves a white page, and confirming later would
+// make a slow or unreachable box look like a broken bundle.
+export const init: ClientInit = () => {
+	void reportBootOk();
+};
 
 // A new build under an open app (a box upgrade in a browser, an app or
 // web-bundle update on the Mac and phone) removes the old build's chunks, so
