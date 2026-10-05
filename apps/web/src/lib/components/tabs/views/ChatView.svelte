@@ -426,6 +426,12 @@
 			conversation?: { project_id?: string | null };
 		}>(id, signal);
 		if (signal?.aborted) return false;
+		// A reply still arriving on this instance is newer than the stored
+		// transcript, whose reply row is written only when the turn ends. That
+		// happens when a tab is reopened mid-reply: chatInstances kept the
+		// stream alive while it was gone, and overwriting here would drop the
+		// half-written answer.
+		if (chat.status === "submitted" || chat.status === "streaming") return true;
 		// An older chat is not in the session list; its own detail says where
 		// it is filed. A box older than the field leaves it undefined.
 		if (data.conversation && data.conversation.project_id !== undefined) {
