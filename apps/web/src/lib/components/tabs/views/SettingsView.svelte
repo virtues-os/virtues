@@ -21,7 +21,7 @@
 	               /virtues/devices/this   — the machine you're on (local panel)
 	               /virtues/devices/:id    — another device, as the box knows it
 	  Display      /virtues/display        — the screen on the box, and what it shows
-	  Developer    /virtues/developer      — SQL · Terminal · Lake
+	  Developer    /virtues/developer      — SQL · Terminal
 
 	"Box" was three of those in one door (2026-08-17). It stacked a Wi-Fi
 	picker, an update installer, an 8-chapter telemetry console and a
@@ -56,7 +56,6 @@
 	import ThisDeviceView from '$lib/components/tabs/views/ThisDeviceView.svelte';
 	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
-	import DeveloperLakeView from '$lib/components/tabs/views/DeveloperLakeView.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -122,7 +121,6 @@
 		// group that used to self-heal them). One room now.
 		'/virtues/sql': '/virtues/developer/sql',
 		'/virtues/terminal': '/virtues/developer/terminal',
-		'/virtues/lake': '/virtues/developer/lake',
 		// The auth-activity log is gone. Its old doors land on Devices, which is
 		// where the thing it reported on — what is paired, and what you can
 		// revoke — actually lives.
@@ -142,9 +140,18 @@
 		'/virtues/tools',
 	];
 
+	// The Lake console is gone: it listed the archive's streams, which Drive's
+	// Streams page shows. Its doors land there, a different tab type, so they
+	// go through `navigate` like Sources' aliases.
+	const LAKE_ALIASES = ['/virtues/lake', '/virtues/developer/lake'];
+
 	$effect(() => {
 		if (SOURCES_ALIASES.includes(tab.route)) {
 			windowShellStore.navigate('/sources', { label: 'Sources' });
+			return;
+		}
+		if (LAKE_ALIASES.includes(tab.route)) {
+			windowShellStore.navigate('/storage/streams', { label: 'Streams' });
 			return;
 		}
 		const next = LEGACY_ROUTES[tab.route];
@@ -195,11 +202,9 @@
 	// as a nav outgrowing its container — and the container was never the
 	// problem, the second copy was.
 	//
-	// `/virtues/developer/*` still RENDERS here (the consoles are Settings'
-	// components and the route never moved) while belonging to the Developer
-	// room, which `roomForRoute` resolves on the longest match. Nothing in
-	// this file has to know that any more: with no strip, there is no
-	// highlight that could have claimed a SQL console was a preference.
+	// `/virtues/developer/*` renders here too: SQL and Terminal are rows under
+	// the panel's Developer heading, beside the preferences rather than mixed
+	// into them.
 </script>
 
 <div class="settings-view">
@@ -242,8 +247,6 @@
 		{:else if section === 'developer'}
 			{#if sub === 'terminal'}
 				<DeveloperTerminalView {tab} {active} />
-			{:else if sub === 'lake'}
-				<DeveloperLakeView {tab} {active} />
 			{:else}
 				<DeveloperSqlView {tab} {active} />
 			{/if}
