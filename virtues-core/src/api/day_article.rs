@@ -555,7 +555,7 @@ End every sentence with the time of the passage it rests on in square brackets: 
 
 - A detail goes on the page only if a passage holds it.
 - Who someone is to them comes only from <people>.
-- `[Speaker]:` marks a change of voice and nothing else. Say who spoke only when a name, a reply or the content makes it clear; otherwise write it as shared between them.
+- `[Speaker]:` marks a change of voice and nothing else. Say who spoke only when the passage names them or they answer someone by name; otherwise write it as shared between them ("between you, it came to…"). What was said is never a reason to guess who said it.
 - Someone was there only if a passage shows them taking part: they speak, or are spoken to. A name heard in a recording (read from a screen, mentioned in passing, someone talked about) is not that person in the room, and <people> lists everyone in the day's messages, not who was present.
 - Always use a person's <people> name.
 - A plan is not an event. Never join two things as cause and effect unless the passages do.
@@ -828,7 +828,7 @@ const CHECK_PROMPT: &str = r#"You check one diary page, sentence by sentence, ag
 - "supported": everything the sentence claims is in its cited evidence or in the rest of that same conversation (paraphrase is fine; the owner is "you"; people are listed below).
   A sentence that puts a named person somewhere ("with Nick", "Nick came over") needs the evidence to show them taking part; a name only read aloud or mentioned in passing does not put them there. This applies to that claim alone, not to everything else the sentence says.
 - "unsupported": the sentence claims something its evidence does not contain (an invented detail, a descriptive word the evidence lacks, a relationship, a cause, a place, a person being present).
-- "wrong_person": the evidence shows the other person said or did it. Transcripts mark every change of voice as [Speaker] with no name, so who spoke is usually a judgment from content and replies: accept the sentence's attribution when the content makes it plausible (who is being taught, who names themself, who answers whom), and mark wrong_person only when the evidence points to someone else.
+- "wrong_person": the sentence says who said or did something, and the evidence does not show it was them. Transcripts mark every change of voice as [Speaker] with no name, so a sentence may say who spoke only when the evidence names them or they answer someone by name. A sentence that keeps it shared ("between you", "one of you") is not wrong_person.
 - "untagged": the item cites no evidence.
 Be strict about facts (invented details, relationships, causes, presence) and relaxed about wording ("your alarm was set for 6:30" supports "you set an alarm for 6:30").
 
