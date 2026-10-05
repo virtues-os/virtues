@@ -314,7 +314,7 @@
 			onpointercancel={onResizeEnd}
 			onkeydown={onResizeKey}
 			ondblclick={() => sidebarState.resetWidth()}
-		></div>
+		><span class="sidebar-resizer-grip" aria-hidden="true"></span></div>
 	{/if}
 </aside>
 
@@ -390,8 +390,33 @@
 		transition: none;
 	}
 
+	/* The grip: a short pill centred on the border line, so the seam reads as
+	   movable before the pointer finds it. Takes the accent with the line.
+	   The border's centre is 0.5px in from the right edge; the 4px pill is
+	   centred there. */
+	.sidebar-resizer-grip {
+		position: absolute;
+		top: 50%;
+		right: -1.5px;
+		width: 4px;
+		height: 32px;
+		transform: translateY(-50%);
+		border-radius: 999px;
+		background: var(--color-foreground-subtle);
+		pointer-events: none;
+		z-index: 1;
+		transition: background-color 120ms var(--ease-premium);
+	}
+
+	.sidebar-resizer:hover .sidebar-resizer-grip,
+	.sidebar-resizer:focus-visible .sidebar-resizer-grip,
+	.sidebar-resizer.dragging .sidebar-resizer-grip {
+		background: var(--color-primary);
+	}
+
 	@media (prefers-reduced-motion: reduce) {
-		.sidebar-resizer::after {
+		.sidebar-resizer::after,
+		.sidebar-resizer-grip {
 			transition: none;
 		}
 	}
