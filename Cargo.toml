@@ -4,6 +4,7 @@ members = [
     "crates/virtues-helpers",
     "crates/virtues-improv",
     "crates/virtues-iroh",
+    "crates/virtues-door",
     "crates/virtues-iroh-ffi",
     "crates/virtues-reach-client",
     "crates/virtues-registry",
