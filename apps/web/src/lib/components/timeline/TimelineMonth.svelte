@@ -1,15 +1,12 @@
 <!--
 	TimelineMonth.svelte - the date card's month: the month around the day,
-	a dot under every day with a location fix or a transcription window
+	a dot under every day with a location fix or a recorded conversation
 	(steps alone don't count: the phone's step history runs years past its
-	location and audio). A click opens that day. It replaces the week strip.
-
-	The dots will tell an eventful day (dark) from a recorded one (grey) once
-	our significance exists; until then every recorded day is grey, never a
-	guess at which ones stood out.
+	location and audio). A click opens that day.
 -->
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import IconButton from '$lib/components/IconButton.svelte';
 	import { fetchRecorded } from '$lib/timeline/day';
 
 	let { date, today, onpick }: { date: string; today: string; onpick: (slug: string) => void } = $props();
@@ -66,8 +63,8 @@
 	<div class="head">
 		<span class="title">{title}</span>
 		<span class="nav">
-			<button class="btn" aria-label="Previous month" onclick={() => step(-1)}>‹</button>
-			<button class="btn" aria-label="Next month" disabled={month >= today.slice(0, 7)} onclick={() => step(1)}>›</button>
+			<IconButton icon="ri:arrow-left-s-line" label="Previous month" size="sm" onclick={() => step(-1)} />
+			<IconButton icon="ri:arrow-right-s-line" label="Next month" size="sm" disabled={month >= today.slice(0, 7)} onclick={() => step(1)} />
 		</span>
 	</div>
 	<div class="grid">
@@ -93,91 +90,48 @@
 </div>
 
 <style>
+	/* The page's surface in a hairline, like every card over the map. */
 	.month {
 		position: absolute;
 		top: calc(100% + 8px);
 		left: 0;
 		width: 300px;
-		/* design-ok: the mockup's month card, in the Timeline's tile (owner's call, 2026-09-30) */
 		padding: 12px;
-		/* The Timeline's one material (TimelineView's tile variables). */
-		background: var(--tile-bg);
-		border: var(--tile-border);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
 		border-radius: var(--tile-radius);
-		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
-		box-shadow: var(--tile-shadow);
-		animation: open 0.28s cubic-bezier(0.2, 0.9, 0.25, 1.08);
-		transform-origin: top left;
-	}
-	@keyframes open {
-		from {
-			opacity: 0;
-			transform: translateY(-6px) scale(0.97);
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.month {
-			animation: none;
-		}
 	}
 	.head {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		/* design-ok: the mockup's month header inset (owner's call, 2026-09-30) */
-		padding: 0 2px 8px 6px;
+		padding: 0 0 8px 8px;
 	}
 	.title {
-		font-family: var(--font-sans);
-		font-size: 14px;
-		font-weight: 600;
+		font-family: var(--font-serif-ui);
+		font-size: 18px;
 		color: var(--color-foreground);
 	}
 	.nav {
 		display: flex;
-		/* design-ok: the mockup's control spacing (owner's call, 2026-09-30) */
 		gap: 4px;
-	}
-	.btn {
-		height: 26px;
-		min-width: 26px;
-		border: 0;
-		border-radius: 999px;
-		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
-		color: var(--color-foreground);
-		font-family: var(--font-sans);
-		font-size: 13px;
-		font-weight: 600;
-		cursor: pointer;
-	}
-	.btn:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
-	}
-	.btn:disabled {
-		opacity: 0.35;
-		cursor: default;
 	}
 	.grid {
 		display: grid;
 		grid-template-columns: repeat(7, 1fr);
-		/* design-ok: the mockup's month rows (owner's call, 2026-09-30) */
-		row-gap: 2px;
+		row-gap: 4px;
 		text-align: center;
 	}
 	.dow {
 		font-family: var(--font-sans);
 		font-size: 11px;
-		font-weight: 600;
-		letter-spacing: 0.06em;
 		color: var(--color-foreground-subtle);
-		/* design-ok: the mockup's weekday row (owner's call, 2026-09-30) */
-		padding-bottom: 6px;
+		padding-bottom: 4px;
 	}
 	.day {
 		border: 0;
 		background: none;
-		/* design-ok: the mockup's day cell (owner's call, 2026-09-30) */
-		padding: 2px 0;
+		padding: 0;
 		cursor: pointer;
 	}
 	.day:disabled {
@@ -193,7 +147,6 @@
 		border-radius: 50%;
 		font-family: var(--font-sans);
 		font-size: 13px;
-		font-weight: 600;
 		font-variant-numeric: tabular-nums;
 		color: var(--color-foreground);
 	}
@@ -201,20 +154,20 @@
 		color: var(--color-foreground-subtle);
 	}
 	.day:not(:disabled):not(.cur):hover .num {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: var(--hover-bg);
 	}
+	/* The day on screen is the one you are on now: the accent. */
 	.day.cur .num {
-		background: var(--color-foreground);
+		background: var(--color-primary);
 		color: var(--color-background);
 	}
 	.dot {
 		display: block;
-		width: 5px;
-		height: 5px;
-		/* design-ok: the mockup's day dot (owner's call, 2026-09-30) */
-		margin: 2px auto 0;
+		width: 4px;
+		height: 4px;
+		margin: 4px auto 0;
 		border-radius: 50%;
-		background: var(--color-foreground-subtle);
+		background: var(--color-foreground-muted);
 		visibility: hidden;
 	}
 	.dot.on {
@@ -230,12 +183,11 @@
 	}
 	.key i {
 		display: inline-block;
-		width: 6px;
-		height: 6px;
+		width: 4px;
+		height: 4px;
 		border-radius: 50%;
-		/* design-ok: the key's dot sits on the text's midline */
-		margin-right: 5px;
-		vertical-align: 1px;
-		background: var(--color-foreground-subtle);
+		margin-right: 4px;
+		vertical-align: 2px;
+		background: var(--color-foreground-muted);
 	}
 </style>

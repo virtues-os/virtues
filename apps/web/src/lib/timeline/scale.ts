@@ -161,10 +161,19 @@ export function zoneOffset(t: number, zone: string): number {
 /** The calendar week, Monday to Sunday, holding a YYYY-MM-DD date: from its
  *  Monday's local midnight in `zone` to the next Monday's. */
 export function weekOf(slug: string, zone: string): { s: number; e: number } {
+	const monday = mondayOf(slug);
+	return { s: midnightIn(monday, zone), e: midnightIn(shiftDate(monday, 7), zone) };
+}
+
+/** The Monday of the week holding a YYYY-MM-DD date, as YYYY-MM-DD. */
+export function mondayOf(slug: string): string {
 	const [y, m, d] = slug.split("-").map(Number);
-	const monday = d - ((new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7);
-	const at = (day: number) => new Date(Date.UTC(y, m - 1, day)).toISOString().slice(0, 10);
-	return { s: midnightIn(at(monday), zone), e: midnightIn(at(monday + 7), zone) };
+	return shiftDate(slug, -((new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7));
+}
+
+function shiftDate(slug: string, days: number): string {
+	const [y, m, d] = slug.split("-").map(Number);
+	return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
 }
 
 /** A YYYY-MM-DD date's local midnight in `zone`, at the date's noon offset

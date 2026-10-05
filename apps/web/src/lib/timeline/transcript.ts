@@ -44,14 +44,6 @@ export function rowLines(windows: { text: string | null }[]): Line[] {
 	return out;
 }
 
-/** One of four speaker tints: a letter by its place, a name by its hash. */
-export function spkIdx(s: string): number {
-	if (/^[A-Z]$/.test(s)) return (s.charCodeAt(0) - 65) % 4;
-	let h = 0;
-	for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-	return Math.abs(h) % 4;
-}
-
 /** Line `i` of `n` at its estimated moment: evenly spread over [s, e). */
 export function lineTime(s: number, e: number, i: number, n: number): number {
 	return Math.round(s + ((i + 0.5) / n) * ((e - s) || 1));

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TimelineDayPoint } from "$lib/wiki/api";
 import { cleanTrack, dropSpikes, flagHoles, HOLE_MIN_M, HOLE_MIN_MS, metres, splitTrack, toFixes } from "./track";
-import { gapVerdict, quietDay, stepDay, utcDatesFor, when } from "./day";
+import { gapVerdict, quietDay, stepDay, when } from "./day";
 
 // A fixed spot (open ocean, so no real place) and a way to step north by metres.
 const LAT = 0;
@@ -141,10 +141,5 @@ describe("day", () => {
 		expect(stepDay("2026-09-30", 1)).toBe("2026-10-01");
 		expect(stepDay("2026-03-01", -1)).toBe("2026-02-28");
 		expect(stepDay("2026-12-31", 1)).toBe("2027-01-01");
-	});
-	it("covers a local day west of UTC with the UTC days it touches, plus the one before", () => {
-		// 2026-09-15 in a UTC-5 zone: 05:00Z on the 15th to 05:00Z on the 16th.
-		const start = Date.UTC(2026, 8, 15, 5);
-		expect(utcDatesFor(start, start + 86_400_000)).toEqual(["2026-09-14", "2026-09-15", "2026-09-16"]);
 	});
 });
