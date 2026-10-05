@@ -316,15 +316,17 @@
 		// Await ensures the backend has the permission before the retry.
 		await grantEditPermission(entityId, entityType, title);
 
-		// A sudo command: the turn paused on it, and everything before it in
+		// A sudo command or a publish: the turn paused on it, and everything before it in
 		// the turn stands. Regenerating would throw that away and ask the model
 		// to find the command again; instead it is told to run the one allowed.
 		// Sent straight to the SDK, not through the composer, whose draft and
 		// staged files are the person's and stay where they are.
-		if (entityType === "command") {
+		if (entityType === "command" || entityType === "publish") {
 			if (chat.status === "ready") {
 				danglingTurn = false;
-				await chat.sendMessage({ text: "Allowed. Run exactly that command." });
+				await chat.sendMessage({
+					text: entityType === "publish" ? "Allowed. Publish exactly that." : "Allowed. Run exactly that command."
+				});
 				setTimeout(turnWritten, 2000);
 			}
 			return;

@@ -30,6 +30,7 @@ pub(crate) mod sql_write;
 pub(crate) mod shell;
 pub(crate) mod sql_sudo;
 pub(crate) mod sudo_gate;
+pub(crate) mod publish;
 mod page_editor;
 mod semantic_search;
 pub mod applet_schema;

@@ -494,6 +494,23 @@ impl ToolExecutor {
             "shell" => Err(ToolError::ExecutionFailed(
                 "shell runs only in sudo mode, which the owner turns on in the chat".into(),
             )),
+            // Interactive chat only: the grant is for these exact bytes at
+            // this exact place, so an applet run (no one to ask) and a
+            // headless call (no chat to grant in) cannot publish at all.
+            "publish_to_github" => {
+                use super::publish;
+                let Some(chat_id) = context.chat_id.as_deref().filter(|_| context.applet_id.is_none())
+                else {
+                    return Err(ToolError::ExecutionFailed(
+                        "publishing needs the owner present to allow it, in a chat".into(),
+                    ));
+                };
+                let req = publish::prepare(&self._pool, &arguments).await?;
+                if !self.granted(context, chat_id, &req.grant_id()).await {
+                    return Ok(publish::ask(&req));
+                }
+                publish::publish(&self._pool, &req).await
+            }
             "read_asset" => self.execute_read_asset(arguments).await,
             "code_interpreter" => self.execute_code_interpreter(arguments, context).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
