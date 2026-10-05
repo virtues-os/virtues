@@ -48,9 +48,12 @@ and sometimes contradicting each other.
 its own timeline of events and a written account of what happened, generated
 overnight from everything the server saw.
 
-**Article** - a page about a subject rather than a span of time. The people,
-places, and organizations in your record each get one, accumulating what's
-known about them.
+**Article** - the page the wiki writes about one subject: a day, a year, a
+chapter, a person, a place, an organization or a story. Your server writes each
+day's article overnight. For a person, place, organization or year, choose
+Write the article on its page. Turn on the Wiki Editor applet and your server
+also writes your chapters and stories, and keeps every article current as new
+records arrive. Any sentence you write stays as you wrote it.
 
 **Note** - a smaller observation attached to a subject: a correction, an
 appraisal, something worth remembering about it.
