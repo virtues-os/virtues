@@ -61,14 +61,17 @@ pub mod web_bundle;
 /// | 8 | `bundle_update_ready` on both shells, and `ota_check_now` on the Mac:
 /// |   | a staged UI bundle applies by reloading while hidden, each page load
 /// |   | pinned to one bundle (`checkForNewUi` in `routes/(app)/+layout.svelte`, local-ui-plan.md) |
+/// | 9 | a shell that can run a bundle the box serves: overlay files typed by
+/// |   | extension, and only a navigation starts a page load. Below 9 every new
+/// |   | chunk was served as `text/html` and the bundle booted white |
 ///
-/// Note `bundle-contract.json` stays at `minShellVersion: 1`: every addition
-/// so far is called best-effort and the UI works fine without it, so requiring
-/// more would strand clients on an older app for no gain.
+/// `bundle-contract.json` requires 9. No shell below it has ever run a box
+/// bundle (they all boot white), so requiring it strands no client: they keep
+/// the UI they shipped with, which is all they ever had.
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 8;
+pub const COMMAND_SURFACE_VERSION: u32 = 9;
 
 /// What the native shell knows about itself.
 ///
