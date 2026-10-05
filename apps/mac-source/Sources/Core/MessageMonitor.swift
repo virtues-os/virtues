@@ -4,7 +4,13 @@ import SQLite3
 
 class MessageMonitor {
     private let queue: Queue
+    /// The sync cursor: the highest chat.db `message.ROWID` that is safely in
+    /// the local queue. See `syncMessages` for why it is a ROWID, not a date.
+    private var lastRowId: Int64?
+    /// The newest message date synced. No longer the cursor; kept to move an
+    /// install that synced by date onto the ROWID cursor (`startingRowId`).
     private var lastSyncDate: Date?
+    private static let rowCursorKey = "virtues.messages.lastRowId"
     private let dbPath = NSString(string: "~/Library/Messages/chat.db").expandingTildeInPath
     private var timer: DispatchSourceTimer?
     /// Every sync runs here, one at a time: the timer, the startup sync and a
@@ -24,8 +30,11 @@ class MessageMonitor {
     // It grinds rather than gulps: `batchSize` per 5-minute tick, cursor advancing, so
     // a decade of history lands over a day or so of background sync without ever
     // blocking a live message. Bumped to 1000 so the catch-up isn't glacial.
-    private let initialSyncDays = 365 * 20
     private let batchSize = 1000
+    /// How far before the old date watermark an install moving off the date
+    /// cursor re-reads, once. It recovers the late arrivals the date cursor
+    /// skipped (see `syncMessages`); the box dedups on GUID.
+    private let dateCursorRescanDays = 30
     
     // Full Disk Access detection. Probed on every tick while missing, so a
     // grant is picked up by the next tick at the latest.
@@ -41,6 +50,7 @@ class MessageMonitor {
     init(queue: Queue) {
         self.queue = queue
         loadLastSyncDate()
+        loadLastRowId()
         // Check initial permission state, and publish it: this process is the
         // daemon, so its probe is the only one that describes the daemon. See
         // CollectorHealth.
@@ -52,10 +62,12 @@ class MessageMonitor {
         print("Starting message monitor...")
         print("  Database path: \(dbPath)")
         print("  Has Full Disk Access: \(hasFullDiskAccess)")
-        if let lastSync = lastSyncDate {
-            print("  Last sync date: \(ISO8601DateFormatter().string(from: lastSync))")
+        if let rowId = lastRowId {
+            print("  Sync cursor: message row \(rowId)")
+        } else if let lastSync = lastSyncDate {
+            print("  Last sync date: \(ISO8601DateFormatter().string(from: lastSync)) (moving to the row cursor)")
         } else {
-            print("  Last sync date: nil (will perform initial \(initialSyncDays)-day sync)")
+            print("  Sync cursor: none (will perform initial sync of all messages)")
         }
 
         // Perform initial sync asynchronously to avoid blocking caller
@@ -79,6 +91,7 @@ class MessageMonitor {
         timer?.cancel()
         timer = nil
         saveLastSyncDate()
+        saveLastRowId()
         print("Message monitor stopped")
     }
     
@@ -172,31 +185,19 @@ class MessageMonitor {
         // Declared after the close above, so it runs before it.
         defer { runAttachmentJobs(db: db) }
         
-        // Determine sync window
-        let syncFromDate: Date
-        if let lastSync = lastSyncDate {
-            // Incremental sync: from last sync date
-            syncFromDate = lastSync
-            print("Incremental sync from: \(ISO8601DateFormatter().string(from: syncFromDate))")
-        } else {
-            // Initial sync: last N days
-            syncFromDate = Calendar.current.date(byAdding: .day, value: -initialSyncDays, to: Date()) ?? Date()
-            print("Initial sync from: \(ISO8601DateFormatter().string(from: syncFromDate))")
-        }
-        
-        // Convert to Core Data timestamp
-        let coreDataTimestamp = dateToCoreDateTimestamp(syncFromDate)
-        
-        // Safety check: ensure timestamp is reasonable (not in far future)
-        // Messages timestamps should be between 2001 and current time
-        let maxTimestamp = dateToCoreDateTimestamp(Date()) + (365 * 24 * 60 * 60 * 1_000_000_000) // 1 year in future max
-        guard coreDataTimestamp < maxTimestamp else {
-            print("⚠️ Invalid sync timestamp detected. Resetting to 7 days ago.")
-            lastSyncDate = nil
-            syncMessages() // Retry with fresh sync
-            return
-        }
-        
+        // The cursor is chat.db's ROWID, not the message date.
+        //
+        // It used to be the newest `message.date` seen, read forward with
+        // `date > ?`. A message keeps the date it was SENT, not the date it
+        // reached this Mac: a text from the phone that iCloud delivered after
+        // a newer message had already been read sat behind the watermark and
+        // was never read at all, while the collector reported itself healthy.
+        // ROWID is assigned on insert and only grows (the table is
+        // AUTOINCREMENT), so whatever lands after the last tick is read on the
+        // next one, whatever its date.
+        guard let fromRowId = startingRowId(db: db) else { return }
+        print("Syncing messages after row \(fromRowId)")
+
         // Query for messages
         let query = """
             SELECT
@@ -228,8 +229,8 @@ class MessageMonitor {
             LEFT JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
             LEFT JOIN chat c ON cmj.chat_id = c.ROWID
             LEFT JOIN handle h ON m.handle_id = h.ROWID
-            WHERE m.date > ?
-            ORDER BY m.date ASC
+            WHERE m.ROWID > ?
+            ORDER BY m.ROWID ASC
             LIMIT ?
         """
         
@@ -246,12 +247,15 @@ class MessageMonitor {
         }
         
         // Bind parameters
-        sqlite3_bind_int64(statement, 1, Int64(coreDataTimestamp))
+        sqlite3_bind_int64(statement, 1, fromRowId)
         sqlite3_bind_int(statement, 2, Int32(batchSize))
         
         var messages: [Message] = []
         var rowIds: [Int64] = []   // parallel to `messages`; chat.db-local, never uploaded
         var latestMessageDate: Date?
+        // Every row read, valid date or not: a malformed row is dropped below
+        // and must not hold the cursor.
+        var highestRowId: Int64 = fromRowId
 
         // Execute query and collect results
         var rowCount = 0
@@ -265,7 +269,9 @@ class MessageMonitor {
 
             let message = parseMessageRow(statement: stmt)
             messages.append(message)
-            rowIds.append(sqlite3_column_int64(stmt, 19))
+            let rowId = sqlite3_column_int64(stmt, 19)
+            rowIds.append(rowId)
+            highestRowId = max(highestRowId, rowId)
 
             // Track the latest message date for next sync (only if valid)
             let calendar = Calendar.current
@@ -281,6 +287,12 @@ class MessageMonitor {
         
         if messages.isEmpty {
             print("No new messages to sync")
+            // Pin the cursor an install moving off the date cursor just placed,
+            // so the next tick doesn't place it again.
+            if lastRowId == nil {
+                lastRowId = fromRowId
+                saveLastRowId()
+            }
         } else {
             print("Found \(messages.count) messages to sync")
 
@@ -333,10 +345,10 @@ class MessageMonitor {
             group.wait()
 
             guard allStored else {
-                // Hold the watermark: these messages are still in chat.db, so
+                // Hold the cursor: these messages are still in chat.db, so
                 // the next tick re-reads the same window and tries again. The
                 // box dedups on GUID, so a retry costs nothing.
-                print("⚠️ Some messages failed to queue — holding sync date so they are re-read")
+                print("⚠️ Some messages failed to queue — holding the cursor so they are re-read")
                 return
             }
 
@@ -350,8 +362,11 @@ class MessageMonitor {
                 print("⚠️ Could not queue attachments (messages unaffected): \(error)")
             }
 
-            // Update last sync date
-            if let latestDate = latestMessageDate {
+            lastRowId = highestRowId
+            saveLastRowId()
+            // A late arrival is older than the newest date already synced, so
+            // the date only ever moves forward.
+            if let latestDate = latestMessageDate, lastSyncDate.map({ latestDate > $0 }) ?? true {
                 lastSyncDate = latestDate
                 saveLastSyncDate()
             }
@@ -388,12 +403,12 @@ class MessageMonitor {
     /// ROWID that existed when the walk began. Newer messages are queued as
     /// they sync, so the walk never needs to chase the end.
     ///
-    /// Only messages at or before the sync watermark: those are the ones
+    /// Only messages at or before the sync cursor: those are the ones
     /// already in (or through) the message queue. A later one in the same
     /// window is skipped here and queued when it syncs.
     private func backfillAttachments(db: OpaquePointer) {
         let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: Self.backfillDoneKey), let watermark = lastSyncDate else { return }
+        guard !defaults.bool(forKey: Self.backfillDoneKey), let watermark = lastRowId else { return }
 
         var end = (defaults.object(forKey: Self.backfillEndKey) as? NSNumber)?.int64Value
         if end == nil {
@@ -425,7 +440,7 @@ class MessageMonitor {
             FROM message m
             JOIN message_attachment_join maj ON maj.message_id = m.ROWID
             JOIN attachment a ON a.ROWID = maj.attachment_id
-            WHERE m.ROWID > ? AND m.ROWID <= ? AND m.date <= ?
+            WHERE m.ROWID > ? AND m.ROWID <= ? AND m.ROWID <= ?
             ORDER BY m.ROWID, maj.ROWID
         """
         var stmt: OpaquePointer?
@@ -436,7 +451,7 @@ class MessageMonitor {
         }
         sqlite3_bind_int64(stmt, 1, cursor)
         sqlite3_bind_int64(stmt, 2, upper)
-        sqlite3_bind_int64(stmt, 3, Int64(dateToCoreDateTimestamp(watermark)))
+        sqlite3_bind_int64(stmt, 3, watermark)
 
         func text(_ col: Int32) -> String? {
             guard sqlite3_column_type(stmt, col) != SQLITE_NULL, let c = sqlite3_column_text(stmt, col)
@@ -772,6 +787,54 @@ class MessageMonitor {
         return secondsSince2001 * 1_000_000_000
     }
     
+    /// Where this tick reads from: the stored cursor; for an install that
+    /// synced by date, the row just before the first message dated within
+    /// `dateCursorRescanDays` of that date; on a first run, the beginning.
+    /// `nil` when chat.db can't answer, so the tick ends and the next one
+    /// tries again.
+    private func startingRowId(db: OpaquePointer?) -> Int64? {
+        if let rowId = lastRowId { return rowId }
+        guard let lastSync = lastSyncDate else {
+            print("Initial sync: all messages")
+            return 0
+        }
+        let rescanFrom = Calendar.current.date(byAdding: .day, value: -dateCursorRescanDays, to: lastSync) ?? lastSync
+        // With no message dated after that point, everything is behind it:
+        // start after the last row.
+        let sql = """
+            SELECT COALESCE(
+                (SELECT MIN(ROWID) - 1 FROM message WHERE date > ?),
+                (SELECT COALESCE(MAX(ROWID), 0) FROM message))
+        """
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            print("⚠️ Cannot place the message cursor: \(String(cString: sqlite3_errmsg(db)))")
+            return nil
+        }
+        sqlite3_bind_int64(stmt, 1, Int64(dateToCoreDateTimestamp(rescanFrom)))
+        guard sqlite3_step(stmt) == SQLITE_ROW else {
+            print("⚠️ Cannot place the message cursor: \(String(cString: sqlite3_errmsg(db)))")
+            return nil
+        }
+        let rowId = max(0, sqlite3_column_int64(stmt, 0))
+        print("Moving to the row cursor: re-reading from row \(rowId) (\(dateCursorRescanDays) days before \(ISO8601DateFormatter().string(from: lastSync)))")
+        return rowId
+    }
+
+    private func loadLastRowId() {
+        if let stored = UserDefaults.standard.object(forKey: Self.rowCursorKey) as? NSNumber,
+           stored.int64Value >= 0 {
+            lastRowId = stored.int64Value
+        }
+    }
+
+    private func saveLastRowId() {
+        if let rowId = lastRowId {
+            UserDefaults.standard.set(NSNumber(value: rowId), forKey: Self.rowCursorKey)
+        }
+    }
+
     private func loadLastSyncDate() {
         // Load from UserDefaults or local storage
         if let storedDate = UserDefaults.standard.object(forKey: "virtues.messages.lastSyncDate") as? Date {
