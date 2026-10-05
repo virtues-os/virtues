@@ -164,7 +164,7 @@ fi
 # share NO field, so a subpoena of both still can't join customer↔usage.
 # This enforces it concretely: customer-identity columns must never appear in
 # virtues-api's schema, and bearer/usage columns must never appear in Atlas's.
-# See docs/Virtues-API.md and agents/build/entitlement.md.
+# See agents/build/virtues-api.md and agents/build/entitlement.md.
 
 # Customer-identity columns forbidden in virtues-api migrations.
 if [ -d "services/virtues-api/migrations" ]; then
