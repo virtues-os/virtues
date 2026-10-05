@@ -144,10 +144,10 @@ This bug shipped twice: dead hovers across 39 rules, and an active tab rendered
 
 | | face | size | weight |
 |---|---|---|---|
-| Mark (`∴ virtues`) | JJannon | 13px (nav size) | regular, lowercase |
+| Mark (`∴ virtues`) | EB Garamond | 13px (nav size) | regular, lowercase |
 | Destinations | Avenir | 13px | 500 |
 | Children | Avenir | 12px | 400, muted |
-| Body / prose | JJannon | — | the page, not the chrome |
+| Body / prose | EB Garamond | — | the page, not the chrome |
 
 **The serif appears in the chrome exactly once**, in the mark. Serif navigation
 was considered and declined; concentrating the typographic identity in one

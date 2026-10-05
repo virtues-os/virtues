@@ -1306,8 +1306,8 @@
 	/* Spines: the serif appears in the chrome exactly where ownership does —
 	   the names of the user's own things (a pin, a project) get a bookface;
 	   a conversation's title is a caption the model wrote, and stays sans.
-	   The chrome cut sits beside an icon, and JJannon's own metrics would
-	   leave the letters 1.3px above it. */
+	   The chrome cut sits beside an icon, where the serif's own metrics
+	   would leave the letters off-center against it. */
 	.spine {
 		font-family: var(--font-serif-ui);
 		font-size: 13.5px;

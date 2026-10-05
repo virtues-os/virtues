@@ -210,7 +210,7 @@
 		margin-bottom: 2rem;
 	}
 
-	/* 400: JJannon has one cut, so the 500 this carried resolved back to the
+	/* 400: the serif ships one cut, so the 500 this carried resolved back to the
 	   regular and said nothing (agents/build/typography.md). Size and full ink
 	   already outrank the standfirst — same as the wiki overview's mast. */
 	.mast h1 {

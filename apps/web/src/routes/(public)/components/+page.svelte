@@ -490,7 +490,7 @@
 	];
 
 	const TYPE_PROHIBITIONS = [
-		"The serif is never bold and never italic — JJannon ships one cut and has no italic.",
+		"The serif is never bold and never italic — EB Garamond ships here in one cut, with no italic.",
 		"No uppercase serif with tracking.",
 		"No mono outside a chart's own axis and a clock time. Mono kickers at 9.5–10.5px were the strongest tell of the dated register.",
 		"Nothing under 11px.",
@@ -958,13 +958,13 @@
 			<h2>Type scale</h2>
 			<p class="lede">
 				Three faces, the ones <code>themes.css</code> declares, at the sizes
-				<code>agents/build/design-grammar.md</code> §4 specifies. JJannon ships
+				<code>agents/build/design-grammar.md</code> §4 specifies. The serif ships in
 				<strong>one cut</strong> — the weights and the italic below are shown as
 				prohibitions, not as options.
 			</p>
 
 			<div class="faces">
-				{#each [["--font-serif", "JJannon", "prose"], ["--font-serif-ui", "JJannon UI", "chrome — metrics normalized so a centered line box centers the letters"], ["--font-sans", "Avenir", "everything that is not prose"], ["--font-mono", "IBM Plex Mono", "a chart axis and a clock time, nothing else"]] as [tok, name, use] (tok)}
+				{#each [["--font-serif", "EB Garamond", "prose"], ["--font-serif-ui", "EB Garamond UI", "chrome — metrics normalized so a centered line box centers the letters"], ["--font-sans", "Avenir", "everything that is not prose"], ["--font-mono", "IBM Plex Mono", "a chart axis and a clock time, nothing else"]] as [tok, name, use] (tok)}
 					<div class="face">
 						<code class="tok">{tok}</code>
 						<span class="face-name">{name}</span>
@@ -1187,7 +1187,7 @@
 					<span class="spec-label">inline, in the serif</span>
 					<div class="spec-items">
 						<p class="ta-prose-serif">
-							The wiki's prose is JJannon, and eleven of the call sites this
+							The wiki's prose is EB Garamond, and eleven of the call sites this
 							replaces sit inside a paragraph exactly like this one —
 							<TextAction inline>Rename</TextAction> ·
 							<TextAction inline quiet>Unname</TextAction> — so an inline action

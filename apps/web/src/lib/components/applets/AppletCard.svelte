@@ -267,7 +267,7 @@
 		mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
 	}
 	/* The italic that used to be here was marking "this excerpt is prose, not
-	   output" — but JJannon has no italic cut, so every browser synthesized a
+	   output" — but we ship the serif with no italic, so every browser synthesized a
 	   mechanical slant of the roman (agents/build/typography.md). The
 	   distinction was never the slope's to make: the rule beneath sets machine
 	   output in 11px muted mono, so serif against mono, 13 against 11, and full
@@ -283,7 +283,7 @@
 	}
 	/* Not mono — the placeholder is prose about the applet, not its output.
 	   It was italic at 50% opacity to say "this is an absence, not content";
-	   the italic was a synthesized slant, since JJannon ships no italic cut
+	   the italic was a synthesized slant, since the serif ships without its italic
 	   (agents/build/typography.md), and the opacity was an arbitrary fade over
 	   an already-muted ink. Absence is said in ink here, with the token that
 	   says it everywhere else on this surface. */
