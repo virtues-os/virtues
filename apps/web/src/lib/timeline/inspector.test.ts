@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { audioTag, buildInspector, fmtDur, placeTitle, transitTitle, type DerivedWindow } from "./inspector";
+import { audioTag, buildInspector, fmtDistance, fmtDur, movementTitle, placeTitle, type DerivedWindow } from "./inspector";
 
 const at = (hhmm: string) => `2026-06-10T${hhmm}:00Z`;
 const day = { start: Date.parse(at("00:00")), end: Date.parse("2026-06-11T00:00:00Z") };
@@ -7,8 +7,8 @@ const day = { start: Date.parse(at("00:00")), end: Date.parse("2026-06-11T00:00:
 const window: DerivedWindow = {
 	last_stay_before: null,
 	places: [
-		{ id: "home", latitude: 0, longitude: -30, is_home: true, is_work: false, place_name: "Location 0.0000, -30.0000" },
-		{ id: "cafe", latitude: 0.01, longitude: -30, is_home: false, is_work: false, place_name: "Corner Cafe" },
+		{ id: "home", latitude: 0, longitude: -30, is_named: false, place_name: "Location 0.0000, -30.0000" },
+		{ id: "cafe", latitude: 0.01, longitude: -30, is_named: true, place_name: "Corner Cafe" },
 	],
 	spans: [
 		{ id: "a", kind: "stay", started_at: "2026-06-09T20:00:00Z", ended_at: at("08:00"), timeline_place_id: "home", metadata: {} },
@@ -36,8 +36,8 @@ describe("the inspector", () => {
 		const inspector = buildInspector(window, day.start, day.end);
 		expect(inspector.map((s) => [s.kind, s.title, s.dur])).toEqual([
 			["sleep", "In Bed", "7h"], // a night keeps its full length, and leads a stay opening at midnight too
-			["place", "Home", "8h"], // clipped to the day
-			["transit", "Driving", "20m"],
+			["place", "Unnamed place", "8h"], // clipped to the day
+			["transit", "Moving", "20m"],
 			["place", "Corner Cafe", "3h 40m"],
 			["gap", "Signal gap", "3h"],
 		]);
@@ -52,13 +52,9 @@ describe("the inspector", () => {
 		expect(inspector[2].rows).toEqual([]);
 	});
 
-	it("never shows the wiki's coordinate stub as a name", () => {
-		expect(placeTitle({ id: "x", latitude: 0, longitude: -30, is_home: false, is_work: false, place_name: "Location 1.0, 2.0" })).toBe("Unnamed place");
-	});
-
-	it("calls the most-dwelt place Work / frequent until it has a real name", () => {
-		expect(placeTitle({ id: "w", latitude: 0, longitude: -30, is_home: false, is_work: true, place_name: "Location 1.0, 2.0" })).toBe("Work / frequent");
-		expect(placeTitle({ id: "w", latitude: 0, longitude: -30, is_home: false, is_work: true, place_name: "The Studio" })).toBe("The Studio");
+	it("shows a name only when the person gave one", () => {
+		expect(placeTitle({ id: "x", latitude: 0, longitude: -30, is_named: false, place_name: "Location 1.0, 2.0" })).toBe("Unnamed place");
+		expect(placeTitle({ id: "w", latitude: 0, longitude: -30, is_named: true, place_name: "The Studio" })).toBe("The Studio");
 	});
 
 	it("gives a conversation its windows, a night its source, a quiet stay its audio note", () => {
@@ -92,10 +88,14 @@ describe("the inspector", () => {
 		expect(audioTag(0, h, [{ s: 0, e: 0.3 * h }])).toBeNull();
 	});
 
-	it("names a long ground drive for what it is", () => {
-		expect(transitTitle(90, 3 * 3_600_000)).toBe("Out · no stay recorded");
-		expect(transitTitle(800, 3 * 3_600_000)).toBe("Flying");
-		expect(transitTitle(20, 600_000)).toBe("In transit");
+	it("names a trip's mode only where speed proves it, then how far it went", () => {
+		const h = 3_600_000;
+		expect(movementTitle(1200, 9, 15 * 60_000)).toBe("Walk · 1.2 km"); // 4.8 km/h
+		expect(movementTitle(6200, 70, 20 * 60_000)).toBe("Moving · 6.2 km"); // a car, a bus or a train
+		expect(movementTitle(3100, 30, h)).toBe("Moving · 3.1 km"); // slow on average, but no walk tops 15
+		expect(movementTitle(1_300_000, 820, 3 * h)).toBe("Flight · 1300 km");
+		expect(movementTitle(0, 0, h)).toBe("Moving");
+		expect(fmtDistance(640)).toBe("640 m");
 		expect(fmtDur(125 * 60_000)).toBe("2h 5m");
 	});
 });

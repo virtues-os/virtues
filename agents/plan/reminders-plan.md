@@ -27,11 +27,15 @@ A reminder is the first thing that needs the box to go the other way.
 
 ## What this is NOT
 
-The owner learns one word: **reminder**. Not notification, not alert, not
-channel, not push. They say a sentence in chat and it comes back later.
+**Revised 2026-10-05 by [notifications-plan.md](notifications-plan.md).** A
+reminder is still the owner's object and the owner's word: they say a sentence
+in chat and it comes back later. What it *sends* is now a notification — one
+object shared with broken streams, applets and the box's own warnings — and
+the delivery invariants and APNs signer below are that plan's router and first
+push destination. "No notifications room" no longer holds; "no category
+matrix, no per-source toggles" still does, and is enforced there.
 
-There is no notifications room, no category matrix, no per-source toggles. A
-reminder is an applet row: it can be listed, opened, edited and deleted like
+A reminder is an applet row: it can be listed, opened, edited and deleted like
 any other, and the reason it is inspectable is not a design principle — it is
 that the owner wrote it.
 
@@ -272,7 +276,8 @@ at the encryption: build the NSE and encryption comes free with it.
 - **Contentless wake plus a fetch from the extension.** Superseded by carrying
   the text in the push: it put a cold iroh dial on the user-visible path and
   failed precisely when the box was unreachable.
-- **Mac-first notifications.** Free to build and genuinely zero-infrastructure,
+- **Mac-first notifications** (for reminders; a Mac banner for a fix that can
+  only happen on that Mac is allowed by `notifications-plan.md`). Free to build and genuinely zero-infrastructure,
   but a desktop banner is a weak product surface and would not have told us
   whether the feature is any good. Dropped 2026-09-22.
 - **A channel list — Telegram, Slack, Discord, Signal, email — with the owner's

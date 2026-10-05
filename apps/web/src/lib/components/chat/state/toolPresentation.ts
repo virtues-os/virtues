@@ -153,6 +153,14 @@ const TOOLS: Record<string, Presentation> = {
 	},
 	write_it_up: { noun: "an article", depth: 4, say: ["Writing it up", "Wrote it up"] },
 	generate_image: { noun: "an image", depth: 4, say: ["Making an image", "Made an image"] },
+	publish_to_github: {
+		noun: "a page",
+		depth: 4,
+		say: (input, live) => {
+			const repo = (input.repo as string) || "GitHub";
+			return `${live ? "Publishing to" : "Published to"} ${repo}`;
+		},
+	},
 	update_memory: {
 		noun: "memory",
 		depth: 4,

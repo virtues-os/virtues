@@ -130,15 +130,14 @@ vertical claret-dot stepper that replaced all three. See [Struck](#struck).
 
 ## 4. Type
 
-Four faces, the ones `themes.css` declares: `--font-serif` (JJannon),
+Four faces, the ones `themes.css` declares: `--font-serif` (EB Garamond),
 `--font-serif-ui`, `--font-sans` (Avenir), `--font-mono` (IBM Plex Mono).
 
 `--font-serif-ui` is the same file with its vertical metrics normalized, and
 it exists for **serif set beside an icon or inside a fixed-height row**.
-JJannon declares ascent/descent 0.740/0.260 — exactly one em, a metric box
-clamped to the ink with no leading in it — so centering that box in a row
-leaves the letters 0.098em high, which is why a serif spine sat above its icon
-while the sans row beneath it looked fine. The override is expressed in em, so
+EB Garamond declares ascent/descent 1.007/0.298, so centering its line box in
+a row leaves the letters off-center against the icon beside them; the UI
+registration sets the metrics so the cap band lands on the center line. The override is expressed in em, so
 it holds at 13.5px and at 46px alike. Prose keeps `--font-serif`: applying the
 correction there would move first-baseline position across the wiki, pages and
 Home.
@@ -181,12 +180,12 @@ same width and a row of cards agrees on a baseline instead of twitching.
 
 Prohibitions, each of which has shipped:
 
-- **The serif is never bold and never italic.** JJannon has no italic cut.
+- **The serif is never bold and never italic.** We ship the serif with no bold and no italic.
   Hierarchy comes from size and from the weight of the ink, not from shouting.
 - **No uppercase serif with tracking.** A settings heading was set 12px
   uppercase letterspaced in the lightest ink on the page, on the theory that it
-  is a label you scan past. On an `<h2>`, which this app sets in JJannon, that
-  produced faux small caps in a face with no small-cap cut — stretched capitals
+  is a label you scan past. On an `<h2>`, which this app sets in the serif, that
+  produced faux small caps in a face we ship without a small-cap cut — stretched capitals
   with tracking added to keep them apart. It read as decoration, and **it was
   the loudest, ugliest thing on every settings page precisely because it was
   trying to be quiet.** A heading, set like a heading.

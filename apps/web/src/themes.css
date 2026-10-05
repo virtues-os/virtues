@@ -109,17 +109,17 @@
 	/* Font Families */
 	--font-mono: 'IBM Plex Mono', monospace;
 	--font-sans: 'Avenir', sans-serif;
-	/* JJannon ships ONE cut — no bold, no italic, no second size. That is a
-	   technical constraint on any serif hierarchy, not only house taste; the
-	   @font-face note in app.css says what follows from it. The tail is a
+	/* EB Garamond ships here in ONE cut — regular 400, no bold, no italic. That
+	   is a technical constraint on any serif hierarchy, not only house taste;
+	   the @font-face note in app.css says what follows from it. The tail is a
 	   system stack, not a webfont: it is only ever seen during `font-display:
-	   swap` or for a glyph JJannon lacks, and it costs zero bytes to draw. */
-	--font-serif: 'JJannon', ui-serif, Georgia, 'Times New Roman', serif;
+	   swap` or for a glyph outside the two subsets, and it costs zero bytes. */
+	--font-serif: 'EB Garamond', ui-serif, Georgia, 'Times New Roman', serif;
 	/* The serif for chrome — same face, metrics normalized so a centered line
 	   box centers the letters and not the em square. Use it wherever the serif
 	   shares a row with something that isn't text (an icon, a dot, a control);
 	   use --font-serif for prose. See the @font-face note in app.css. */
-	--font-serif-ui: 'JJannon UI', ui-serif, Georgia, 'Times New Roman', serif;
+	--font-serif-ui: 'EB Garamond UI', ui-serif, Georgia, 'Times New Roman', serif;
 
 	/* Animation Tokens — only the three the app actually reads.
 	   --duration-normal, --duration-slow and --ease-out-expo were declared here
@@ -575,10 +575,10 @@
 	--foreground-disabled: #A8A395;
 
 	/* Interactive Colors - Deep heritage navy */
-	--primary: #1E3159;
-	--primary-hover: #294271;
-	--primary-active: #16243F;
-	--primary-subtle: #E9EDF4;
+	--primary: #1D4572;
+	--primary-hover: #255893;
+	--primary-active: #153356;
+	--primary-subtle: #E8EEF5;
 
 	/* Secondary - Claret heritage red (the signature accent) */
 	--secondary: #9A2B2E;
@@ -601,7 +601,7 @@
 	--border: #E3E1DD;
 	--border-subtle: #EFEEEB;
 	--border-strong: #D4D1CC;
-	--border-focus: #1E3159;
+	--border-focus: #1D4572;
 
 	/* Selection/Highlight - A classic yellow highlighter, a little desaturated.
 	   The claret wash that was here borrowed the signature accent, so a marked
@@ -1208,8 +1208,8 @@
 	--shiki-theme: vitesse-dark;
 
 	/* Surface Colors */
-	--background: #0f0f0f;
-	--surface: #131313;
+	--background: #0c0c0c;
+	--surface: #101010;
 	--surface-elevated: #191919;
 	--surface-overlay: #1f1f1f;
 

@@ -815,10 +815,12 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 
 	// ========================================================================
 	// TIMELINE: /timeline — one day on a map: its track, stays, drives and
-	// moments, with the day's inspector and scrubber.
+	// moments, with the day's inspector and scrubber. `/timeline/YYYY-MM-DD`
+	// opens it on that day; the view then puts the route back to `/timeline`,
+	// so there is one Timeline tab and the rail's tile finds it.
 	// ========================================================================
 	timeline: {
-		match: (path) => path === '/timeline',
+		match: (path) => path === '/timeline' || /^\/timeline\/\d{4}-\d{2}-\d{2}$/.test(path),
 		parse: () => ({
 			type: 'timeline',
 			label: 'Timeline',
@@ -907,7 +909,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'asset', // /drive/file_{id} — must precede 'drive' (which matches all /drive/*)
 		'drive', // Has /drive/* pattern
 		'trash', // Drive trash
-		'timeline', // The Timeline: /timeline
+		'timeline', // The Timeline: /timeline, /timeline/YYYY-MM-DD
 		'chat-history', // Chat history list (before 'chat')
 		// Entity namespaces
 		'chat', // Also matches /

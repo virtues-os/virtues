@@ -285,9 +285,9 @@
 	/* THE ROW. Sized in the wordmark's em, so the mark scales with the word,
 	   and set to the word's own lines: the apex's top on the capitals' top,
 	   the feet on the baseline. The dots are r 2.85 on the mark's 24-unit
-	   box, so the ink spans 18.7 units top to bottom; JJannon's capital
-	   height is 0.676em (measured), so the 40-unit svg (padded for the
-	   rings) is 0.676 × 40 / 18.7 = 1.446em square. Its padding is pulled in
+	   box, so the ink spans 18.7 units top to bottom; EB Garamond's capital
+	   height is 0.653em, so the 40-unit svg (padded for the
+	   rings) is 0.653 × 40 / 18.7 = 1.397em square. Its padding is pulled in
 	   by negative margins. The row is one line of text with the mark set
 	   inline in it (no whitespace between them in the markup): an inline
 	   svg stands on the baseline by its bottom MARGIN edge, so pulling that
@@ -301,11 +301,11 @@
 	.mark {
 		display: inline-block;
 		vertical-align: baseline;
-		width: 1.446em;
-		height: 1.446em;
+		width: 1.397em;
+		height: 1.397em;
 		/* Padding in em: left/right (1.65 + 8) / 40, top (2.15 + 8) / 40,
-		   bottom (32 - 20.85) / 40, each × 1.446. Right keeps 0.22em of air. */
-		margin: -0.367em -0.129em -0.403em -0.349em;
+		   bottom (32 - 20.85) / 40, each × 1.397. Right keeps 0.22em of air. */
+		margin: -0.354em -0.117em -0.389em -0.337em;
 		overflow: visible;
 		transform: translateX(var(--shift));
 		transition: transform 1100ms cubic-bezier(0.6, 0, 0.2, 1);

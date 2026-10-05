@@ -41,6 +41,9 @@ pub fn routes() -> Router<AppState> {
                 .put(update_place_handler)
                 .delete(delete_place_handler),
         )
+        // Fold this place into another; the named places close enough to be it
+        .route("/api/entities/places/:id/merge", post(merge_place_handler))
+        .route("/api/entities/places/:id/nearby", get(nearby_places_handler))
         .route(
             "/api/assistant/memories",
             get(list_assistant_memories_handler),
@@ -284,6 +287,32 @@ pub async fn get_place_handler(
     Path(place_id): Path<String>,
 ) -> Response {
     api_response(crate::api::entities::get_place(state.db.pool(), place_id).await)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MergePlaceRequest {
+    /// The place that survives; the one in the path is folded into it.
+    pub into: String,
+}
+
+/// Fold the place in the path into `into`.
+pub async fn merge_place_handler(
+    State(state): State<AppState>,
+    Path(place_id): Path<String>,
+    Json(req): Json<MergePlaceRequest>,
+) -> Response {
+    match crate::api::entities::merge_places(state.db.pool(), &req.into, &place_id).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "id": req.into }))).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// The named places near this one, as "Same as…?" choices.
+pub async fn nearby_places_handler(
+    State(state): State<AppState>,
+    Path(place_id): Path<String>,
+) -> Response {
+    api_response(crate::api::entities::nearby_named_places(state.db.pool(), &place_id).await)
 }
 
 /// Update an existing place

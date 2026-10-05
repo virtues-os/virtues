@@ -221,7 +221,7 @@
 		role="separator"
 		aria-orientation="vertical"
 		tabindex={isSplitEnabled ? 0 : -1}
-	></div>
+	><span class="resize-grip" aria-hidden="true"></span></div>
 
 	<!-- Right Pane Shell: tab bar + background + click zone (no content rendered here) -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
@@ -404,7 +404,10 @@
 
 	/* The divider itself — the same 1px line that divides the sidebar panel
 	   from the pane, drawn once more between the panes. */
+	/* z-index lifts the grip above the panes' own stacked content (the chat
+	   composer), which otherwise paints over the pill's overhang. */
 	.resize-handle.visible {
+		z-index: 5;
 		width: var(--gutter-width, 1px);
 		background: var(--color-border);
 		opacity: 1;
@@ -422,37 +425,47 @@
 		right: -4px;
 	}
 
-	/* Takes the accent and doubles in weight on approach — the same gesture the
-	   sidebar seam makes, because they are the same object in two places and a
-	   user who learns one has learned both. No grip: a grip would be a third
-	   object on a seam whose whole job is to be a line. */
-	.resize-handle.visible::before {
-		content: "";
+	/* The grip: a neutral pill that always sits centred on the 1px line, so
+	   the seam reads as movable before the pointer finds it. The line itself
+	   never changes; the grip is the one thing that responds. It darkens and
+	   lengthens on approach and takes the accent only while held. Same object
+	   as the sidebar seam's grip. */
+	.resize-grip {
+		display: none;
+	}
+
+	.resize-handle.visible .resize-grip {
+		display: block;
 		position: absolute;
-		top: 0;
-		bottom: 0;
-		right: 0;
-		width: 0;
-		background: var(--color-primary);
-		opacity: 0;
+		top: 50%;
+		left: 50%;
+		width: 4px;
+		height: 32px;
+		transform: translate(-50%, -50%);
+		border-radius: 999px;
+		background: var(--color-border-strong);
+		pointer-events: none;
+		z-index: 1;
 		transition:
-			width 120ms var(--ease-premium),
-			opacity 120ms var(--ease-premium);
+			height 160ms var(--ease-premium),
+			background-color 160ms var(--ease-premium);
 	}
 
-	.resize-handle.visible:hover::before,
-	.resize-handle.visible:focus-visible::before,
-	.resize-handle.dragging::before {
-		width: 2px;
-		opacity: 1;
+	.resize-handle.visible:hover .resize-grip,
+	.resize-handle.visible:focus-visible .resize-grip {
+		background: var(--color-foreground-subtle);
+		height: 40px;
 	}
 
-	.resize-handle.dragging::before {
+	/* Held: the accent says you have it. No easing — it follows the pointer. */
+	.resize-handle.dragging .resize-grip {
+		background: var(--color-primary);
+		height: 40px;
 		transition: none;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.resize-handle.visible::before {
+		.resize-handle.visible .resize-grip {
 			transition: none;
 		}
 	}

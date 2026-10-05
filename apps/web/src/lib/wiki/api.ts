@@ -774,6 +774,31 @@ export async function updatePlace(
 	return res.json();
 }
 
+/** A named place close enough to be the same one, offered as "Same as…". */
+export interface NearbyPlace {
+	id: string;
+	name: string;
+	meters: number;
+}
+
+/** The named places within 150 m of a place, nearest first. */
+export async function getNearbyPlaces(id: string, fetchFn: FetchFn = fetch): Promise<NearbyPlace[]> {
+	const res = await fetchFn(`/api/entities/places/${encodeURIComponent(id)}/nearby`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/** Fold place `id` into `into`: its visits, pins and notes move, and `id` is
+ *  deleted. Returns false when the server refused. */
+export async function mergePlace(id: string, into: string, fetchFn: FetchFn = fetch): Promise<boolean> {
+	const res = await fetchFn(`/api/entities/places/${encodeURIComponent(id)}/merge`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ into }),
+	});
+	return res.ok;
+}
+
 // --- Organization ---
 
 export async function getOrganizationById(

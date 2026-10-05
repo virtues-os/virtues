@@ -502,7 +502,7 @@
 	}
 	/* Matches PageHeading's level-1 title and its description, so a hand-rolled
 	   header still reads as a page title. That component dropped its own 500
-	   for the same reason this one does — JJannon ships one cut, so the weight
+	   for the same reason this one does — the serif ships one cut, so the weight
 	   resolved back to the regular and returned silently — and took the size up
 	   to the scale's 36 (agents/build/design-grammar.md §4) to carry the rank
 	   that the weight never did. Both numbers follow it, or the two page titles

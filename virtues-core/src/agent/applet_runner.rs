@@ -74,13 +74,16 @@ pub async fn run_agent_loop(
         .config
         .get("model_slot")
         .and_then(|v| v.as_str())
-        .and_then(|s| match s.to_ascii_lowercase().as_str() {
-            "chat" => Some(virtues_registry::models::ModelSlot::Chat),
-            "lite" => Some(virtues_registry::models::ModelSlot::Lite),
-            "coding" => Some(virtues_registry::models::ModelSlot::Coding),
-            other => {
-                tracing::warn!(applet_id = %action.id, slot = other, "unknown model_slot; using the background model");
-                None
+        .and_then(|s| {
+            use virtues_registry::models::ModelSlot;
+            // `chat` is the Standard slot's old name, and authored applets on
+            // a box may still say it; `from_name` reads it.
+            match ModelSlot::from_name(s) {
+                Some(slot @ (ModelSlot::Lite | ModelSlot::Standard | ModelSlot::Deep)) => Some(slot),
+                _ => {
+                    tracing::warn!(applet_id = %action.id, slot = s, "unknown model_slot; using the background model");
+                    None
+                }
             }
         });
 
@@ -132,11 +135,11 @@ pub async fn run_agent_loop(
         // The person's pin for that slot when they have one, else the
         // registry's — the same door chat resolves through.
         match slot {
-            virtues_registry::models::ModelSlot::Chat => {
-                crate::api::assistant_profile::get_chat_model(pool).await
+            virtues_registry::models::ModelSlot::Standard => {
+                crate::api::assistant_profile::get_standard_model(pool).await
             }
-            virtues_registry::models::ModelSlot::Coding => {
-                crate::api::assistant_profile::get_coding_model(pool).await
+            virtues_registry::models::ModelSlot::Deep => {
+                crate::api::assistant_profile::get_deep_model(pool).await
             }
             _ => crate::api::assistant_profile::get_background_model(pool).await,
         }

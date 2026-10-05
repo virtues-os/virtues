@@ -15,26 +15,18 @@ f1ae1f25, is live), so both services now have a `:previous` rollback image.
 
 ## Open
 
-1. **Map fonts.** The 2026-10-02 build's fonts archive holds no links and
-   unpacks, but a box that had recorded the first build's broken archive kept
-   it under the 90-day refresh rule and stayed without fonts. The box now
-   treats an archive with nothing unpacked as stale (aa6f3c8f, unreleased);
-   the one affected box had the archive cleared by hand on 2026-10-05.
-   Confirm that box's log shows the assets unpacked, then delete this item.
-2. **Retire the old demo instance** (from 2026-10-12). The review demo moved
-   to its own small VPS at this provider on 2026-10-05: same version, the
-   database and env file carried over so the box kept its iroh identity and
-   the reviewer's pairing, both hostnames switched in DNS with about two
-   minutes of downtime, and monitoring added (it had none, which is how its
-   nightly reset failed unseen for two weeks). The old instance is stopped
-   at the service level and holds a final database dump. After the week:
-   snapshot, then delete (ask first).
-3. **Decide where the website's database lives.** It is the last database on
+1. **Decide where the website's database lives.** It is the last database on
    the old hosting and holds two live projects, the website's and an
    unrelated one. Its port is open to any address because the website's host
    has no fixed IPs, so it does not belong on the billing server; the real fix
    is the website not talking to a database directly.
+2. **Delete the final snapshots** (from 2026-11-05). Each retired instance
+   and database left one; nothing has needed them yet.
 
-The old hosting's atlas and api databases, their instance, and the image
-registry were deleted on 2026-10-05 after a final snapshot of each; DNS and
-IAM stay where they are by choice.
+Done on 2026-10-05: the review demo moved to its own small VPS at this
+provider (the database and env file carried over, so the box kept its iroh
+identity and the reviewer's pairing; about two minutes of downtime; health
+checks added, which it had lacked), and the old hosting's instances,
+databases, image registry, and leftover DNS records were deleted. DNS and IAM
+stay where they are by choice. Map fonts reached the one box that had
+recorded the first build's broken archive.

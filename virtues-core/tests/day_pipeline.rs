@@ -374,11 +374,11 @@ fn segmenting_is_not_narrating() {
     let writer = body(&article, "pub(crate) async fn write_day").expect("day_article::write_day exists");
 
     // Both are best-model: the detective fuses noisy witnesses (adjudication), the
-    // day summary writes prose. Neither is a Lite job. The Chat SLOT DEFAULT,
-    // not the profile's pinned chat model (`get_chat_model`) — a ZDR-incapable
+    // day summary writes prose. Neither is a Lite job. The Standard SLOT DEFAULT,
+    // not the profile's pinned Standard model (`get_standard_model`) — a ZDR-incapable
     // pin fails these background writes; see the comments at the call sites.
     assert!(
-        after("pub async fn segment_day_events", "ModelSlot::Chat"),
+        after("pub async fn segment_day_events", "ModelSlot::Standard"),
         "the detective fuses noisy witnesses into a gapless timeline — a best-model job"
     );
     assert!(
@@ -386,14 +386,14 @@ fn segmenting_is_not_narrating() {
         "narrate_day writes the article through day_article::write_day"
     );
     assert!(
-        writer.contains("ModelSlot::Chat"),
-        "narration is the narrative call; it earns the Chat slot"
+        writer.contains("ModelSlot::Standard"),
+        "narration is the narrative call; it earns the Standard slot"
     );
     assert!(
-        !after("pub async fn segment_day_events", "get_chat_model")
-            && !after("pub async fn narrate_day", "get_chat_model")
-            && !article.contains("get_chat_model"),
-        "background writes must not read the user's chat pin — a ZDR-incapable \
+        !after("pub async fn segment_day_events", "get_standard_model")
+            && !after("pub async fn narrate_day", "get_standard_model")
+            && !article.contains("get_standard_model"),
+        "background writes must not read the user's Standard pin — a ZDR-incapable \
          pin (grok) makes virtues-api refuse with no_zdr_providers_available"
     );
 

@@ -309,7 +309,7 @@ impl Catalog {
     ///     picked it, the gateway's capability tags are the provider's own
     ///     claim, and some will misbehave through the OpenAI-compat shim
     ///     (Gemini 3 advertises tool use and 400s on parallel calls).
-    ///   - `is_default` — this model fills the Chat slot.
+    ///   - `is_default` — this model fills the Standard slot.
     ///
     /// Priced-only on purpose: a model whose price we can't read cannot be
     /// billed honestly, so it is not offered. Empty when the catalog is cold —
@@ -324,11 +324,11 @@ impl Catalog {
         // it's a Gemini 3 model, which 400s on parallel tool calls through the
         // shim. Marking it "recommended" would put a known-broken chat model at
         // the top of the picker.
-        let slot_ids: std::collections::HashSet<&str> = [ModelSlot::Chat, ModelSlot::Lite, ModelSlot::Coding]
+        let slot_ids: std::collections::HashSet<&str> = [ModelSlot::Lite, ModelSlot::Standard, ModelSlot::Deep]
             .into_iter()
             .map(default_model_for_slot)
             .collect();
-        let chat_id = default_model_for_slot(ModelSlot::Chat);
+        let chat_id = default_model_for_slot(ModelSlot::Standard);
 
         let guard = match self.inner.read() {
             Ok(g) => g,
@@ -629,10 +629,10 @@ mod tests {
     #[test]
     fn recommended_marks_slot_models_and_nothing_else() {
         use virtues_registry::models::{default_model_for_slot, ModelSlot};
-        let chat = default_model_for_slot(ModelSlot::Chat);
+        let chat = default_model_for_slot(ModelSlot::Standard);
 
         let c = Catalog::new();
-        // The Chat slot model, one ordinary priced language model, and an
+        // The Standard slot model, one ordinary priced language model, and an
         // embedding model that must never reach the picker.
         c.store(vec![
             gw(chat, "0.000002", &["tool-use", "vision"], &["text", "image", "pdf"]),
@@ -647,7 +647,7 @@ mod tests {
 
         let slot_model = picker.iter().find(|m| m.model_id == chat).expect("chat slot model");
         assert!(slot_model.recommended, "a slot model is the vouched set");
-        assert!(slot_model.is_default, "the Chat slot model is the default");
+        assert!(slot_model.is_default, "the Standard slot model is the default");
 
         // Not a slot model — present and selectable, but unvouched. Its facts
         // come from the gateway, not from us.

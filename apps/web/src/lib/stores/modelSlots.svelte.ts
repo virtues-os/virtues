@@ -2,7 +2,7 @@
  * Model slots: which model fills each slot, and whether that is the person's
  * choice or the Virtues recommendation.
  *
- * One store because the Assistant page has two controls over the same four
+ * One store because the Assistant page has two controls over the same
  * values: the slot pickers at the top and the catalog table at the bottom.
  * When each fetched and saved on its own, a choice made in the table left the
  * picker showing the old model until the page was reopened.
@@ -17,7 +17,7 @@ import {
 	updateAssistantProfile,
 } from '$lib/api/client';
 
-export type SlotKey = 'chat' | 'lite' | 'coding' | 'image';
+export type SlotKey = 'lite' | 'standard' | 'deep' | 'image';
 
 export interface SlotConfig {
 	key: SlotKey;
@@ -27,14 +27,24 @@ export interface SlotConfig {
 }
 
 export const SLOTS: SlotConfig[] = [
-	{ key: 'chat', label: 'Chat', description: 'Conversations', dbField: 'chat_model_id' },
+	{
+		key: 'standard',
+		label: 'Standard',
+		description: 'Conversations',
+		dbField: 'standard_model_id',
+	},
+	{
+		key: 'deep',
+		label: 'Deep',
+		description: 'Deep research',
+		dbField: 'deep_model_id',
+	},
 	{
 		key: 'lite',
 		label: 'Lite',
 		description: 'Titles, summaries, background work',
 		dbField: 'lite_model_id',
 	},
-	{ key: 'coding', label: 'Coding', description: 'Code generation', dbField: 'coding_model_id' },
 	{ key: 'image', label: 'Image', description: 'Text-to-image', dbField: 'image_model_id' },
 ];
 
@@ -58,7 +68,7 @@ export interface CatalogModel {
 	no_training?: string | null;
 }
 
-const EMPTY: Record<SlotKey, string | null> = { chat: null, lite: null, coding: null, image: null };
+const EMPTY: Record<SlotKey, string | null> = { lite: null, standard: null, deep: null, image: null };
 
 let models = $state<CatalogModel[]>([]);
 let recommended = $state<Record<string, string>>({});
@@ -68,6 +78,12 @@ let loading = $state(false);
 let loaded = $state(false);
 let error = $state<string | null>(null);
 let saveError = $state<string | null>(null);
+/** Whether the box knows the Standard/Deep tiers. One from before the
+ *  2026-10-05 rename calls Standard `chat` and has no Deep, and this app can
+ *  be newer than the box it talks to — so it reads and writes the old names
+ *  there and hides the Deep picker.
+ *  TODO(2026-10-05): drop once every box runs a release with the rename. */
+let tiered = $state(true);
 
 async function load(force = false) {
 	if (loading || (loaded && !force)) return;
@@ -80,13 +96,15 @@ async function load(force = false) {
 		]);
 		const list: any[] = Array.isArray(data) ? data : (data?.data ?? []);
 		models = list.map((m) => ({ ...m, model_id: m.model_id ?? m.id }));
-		recommended = data?.slots ?? {};
+		const slots = data?.slots ?? {};
+		tiered = profile ? 'standard_model_id' in profile : 'standard' in slots;
+		recommended = { ...slots, standard: slots.standard ?? slots.chat };
 		catalogCold = !!data?.catalog_cold;
 		if (profile) {
 			chosen = {
-				chat: profile.chat_model_id || null,
 				lite: profile.lite_model_id || null,
-				coding: profile.coding_model_id || null,
+				standard: (tiered ? profile.standard_model_id : profile.chat_model_id) || null,
+				deep: profile.deep_model_id || null,
 				image: profile.image_model_id || null,
 			};
 		}
@@ -108,7 +126,8 @@ async function choose(slot: SlotConfig, modelId: string | null) {
 	try {
 		// `null` is how the backend hears "follow the recommendation". An
 		// omitted key would change nothing (see assistant_profile.rs).
-		await updateAssistantProfile({ [slot.dbField]: modelId });
+		const field = !tiered && slot.key === 'standard' ? 'chat_model_id' : slot.dbField;
+		await updateAssistantProfile({ [field]: modelId });
 	} catch (e) {
 		chosen[slot.key] = previous;
 		saveError = `Couldn't save ${slot.label}. ${e instanceof Error ? e.message : ''}`.trim();
@@ -121,6 +140,10 @@ function nameOf(id: string | null | undefined): string {
 }
 
 export const modelSlots = {
+	/** The slots this box has. */
+	get slots() {
+		return tiered ? SLOTS : SLOTS.filter((s) => s.key !== 'deep');
+	},
 	get models() {
 		return models;
 	},

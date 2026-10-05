@@ -44,8 +44,8 @@
 		 *  stopped or failed: nothing landed. */
 		land?: boolean;
 		/**
-		 * Which mode the turn is running in. Deep Research and Council are, by
-		 * construction, turns that go out to the record — so the mark starts a
+		 * Which mode the turn is running in. Deep Research is, by
+		 * construction, a turn that goes out to the record — so the mark starts a
 		 * dimension up rather than waiting for the first tool to prove it.
 		 */
 		agentMode?: AgentModeId;

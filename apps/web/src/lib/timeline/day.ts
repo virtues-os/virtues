@@ -31,6 +31,7 @@ export interface TimelineDay {
 		longitude: number;
 		place_id: string | null;
 		place_name: string | null;
+		place_is_named: boolean;
 	}[];
 	points: TimelineDayPoint[];
 	last_point_before: TimelineDayPoint | null;

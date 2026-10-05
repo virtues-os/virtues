@@ -30,6 +30,7 @@ pub(crate) mod sql_write;
 pub(crate) mod shell;
 pub(crate) mod sql_sudo;
 pub(crate) mod sudo_gate;
+pub(crate) mod publish;
 mod page_editor;
 mod semantic_search;
 pub mod applet_schema;
@@ -170,14 +171,6 @@ pub fn get_tools_for_subagent() -> Vec<serde_json::Value> {
     tools_named(SUBAGENT_TOOLS)
 }
 
-/// A Council voice reasons from its vantage; it does not investigate or cite. `think` only.
-const COUNCIL_VOICE_TOOLS: &[&str] = &["think"];
-
-/// Get tool definitions for a Council voice worker (think-only — voices reason, they don't research).
-pub fn get_tools_for_council_voice() -> Vec<serde_json::Value> {
-    tools_named(COUNCIL_VOICE_TOOLS)
-}
-
 /// The orchestrator's tools in Deep Research mode: the read-only research set, plus the fan-out
 /// tool and `create_page` for the report artifact. Explicit allow-list (not a category filter) so
 /// genuinely read-write Data-category tools (`update_memory`, `sql_write`)
@@ -194,7 +187,7 @@ pub(crate) const DEEP_RESEARCH_TOOLS: &[&str] = &[
 
 #[cfg(test)]
 mod slot_model_smoke {
-    //! Does the Chat slot's model actually drive OUR tool set?
+    //! Does the Standard slot's model actually drive OUR tool set?
     //!
     //! The gateway's `tool-use` tag proves nothing about behaviour through its
     //! OpenAI-compatible shim — Gemini 3 advertises it and 400s on parallel
@@ -322,20 +315,20 @@ mod slot_model_smoke {
 
     #[tokio::test]
     #[ignore = "network + AI_GATEWAY_API_KEY: spends real money on the live gateway"]
-    async fn chat_slot_model_drives_our_real_tool_set() {
+    async fn standard_slot_model_drives_our_real_tool_set() {
         let Ok(key) = std::env::var("AI_GATEWAY_API_KEY") else {
             eprintln!("AI_GATEWAY_API_KEY unset — skipping");
             return;
         };
         let _ = rustls::crypto::ring::default_provider().install_default();
 
-        // Defaults to whatever fills the Chat slot today; set SMOKE_MODEL to
+        // Defaults to whatever fills the Standard slot today; set SMOKE_MODEL to
         // drive a CANDIDATE through the same gate before promoting it. The
         // registry tells you to run this first, and "first" means before the
         // id is in the registry at all.
         let model = std::env::var("SMOKE_MODEL").unwrap_or_else(|_| {
             crate::api::model_catalog::model_for_slot(
-                virtues_registry::models::ModelSlot::Chat,
+                virtues_registry::models::ModelSlot::Standard,
             )
         });
         let tools = get_tool_definitions_for_llm();
@@ -418,7 +411,6 @@ mod sudo_scope {
         for listing in [
             mode("chat"),
             mode("deep_research"),
-            mode("council"),
             mode("interview"),
             mode("getting_started"),
             mode("anything-else"),

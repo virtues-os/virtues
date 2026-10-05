@@ -39,14 +39,14 @@
  *
  * It WAS 12px uppercase letterspaced in `--foreground-subtle`, on the theory
  * that a settings heading is a label you scan past rather than a title you
- * read. Sitting on an `<h2>`, which this app sets in JJannon, that produced
- * faux small caps in a serif that has no small-cap cut — the letterforms are
+ * read. Sitting on an `<h2>`, which this app sets in the serif, that produced
+ * faux small caps in a serif we ship without a small-cap cut — the letterforms are
  * stretched capitals with tracking added to keep them apart, in the lightest
  * ink on the page. It read as decoration, and it was the loudest, ugliest
  * thing on every settings page precisely because it was trying to be quiet.
  *
  * So: a heading, set like a heading. Serif at a readable size, in the
- * page's own ink, roman (JJannon has no italic cut and is never set bold —
+ * page's own ink, roman (the serif ships no italic and is never set bold —
  * hierarchy comes from size and weight of ink, not from shouting).
  */
 .settings-label {
@@ -130,15 +130,15 @@
 	font-display: swap;
 }
 
-/* JJannon (serif) — ONE CUT. Read this before designing anything with it.
-   `JJannon-Display-Regular.woff2` is the only serif file we have: no bold, no
-   semibold, no italic, no second optical size. The three @font-face rules
-   below all point at that same file — 'JJannon' at 300, 'JJannon' at 400, and
-   'JJannon UI' with corrected metrics — so the family looks richer in this
-   stylesheet than it is on disk.
+/* EB Garamond (serif) — ONE WEIGHT, NO ITALIC. Read this before designing
+   anything with it.
+   We ship EB Garamond Regular 400 only, as two subsets split by
+   `unicode-range` (Latin, then Latin Extended), so a page of English prose
+   downloads the 24 KB file and nothing else. The face itself has a bold and an
+   italic; we do not ship them, and the house grammar never asks for them.
 
    The consequence is a CONSTRAINT, not a taste: "the serif is never bold and
-   never italic" cannot be violated, only faked. Ask a browser for JJannon 700
+   never italic" cannot be violated, only faked. Ask a browser for weight 700
    and CSS font matching stays inside the family and hands back the one cut, so
    the heading silently renders regular; ask for italic and the browser
    synthesizes an oblique — a mechanical slant, not a drawn italic, and it
@@ -147,62 +147,73 @@
 
    So a serif hierarchy CANNOT be set with weight or slope. Set it with size,
    case, color, and space — which is what the design grammar already asks for.
-   The 300 and 400 registrations exist so that either number in a `font-weight`
-   resolves without synthesis; they are the same ink.
+   The 300 and 400 registrations exist so that either number in a
+   `font-weight` resolves without synthesis; they are the same ink.
 
-   Anyone proposing a serif system here (including an outside agency) is
-   proposing a license purchase and a new file, not a CSS change. */
+   Adding a weight or the italic is a deliberate change to that grammar, not a
+   CSS tweak: it means shipping another file and deciding where it is allowed. */
 @font-face {
-	font-family: 'JJannon';
-	src: url('/fonts/JJannon-Display-Regular.woff2') format('woff2');
-	font-weight: 300;
+	font-family: 'EB Garamond';
+	src: url('/fonts/EBGaramond-Regular-latin.woff2') format('woff2');
+	font-weight: 300 400;
 	font-style: normal;
 	font-display: swap;
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
 @font-face {
-	font-family: 'JJannon';
-	src: url('/fonts/JJannon-Display-Regular.woff2') format('woff2');
-	font-weight: 400;
+	font-family: 'EB Garamond';
+	src: url('/fonts/EBGaramond-Regular-latin-ext.woff2') format('woff2');
+	font-weight: 300 400;
 	font-style: normal;
 	font-display: swap;
+	unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
-/* The same file again, with its vertical metrics normalized — for the serif in
-   UI chrome rather than in prose.
+/* The same files again, with vertical metrics normalized — for the serif in UI
+   chrome rather than in prose.
 
-   JJannon declares ascent/descent = 0.740/0.260: exactly one em, a metric box
-   clamped to the ink with no leading in it. A line box carries its baseline
-   (ascent − descent)/2 below its own center, so centering that box in a row
-   leaves the letters 0.098em HIGH — which is why a Desk spine sat above its
-   icon while the sans rows on the Library shelf below it, whose font declares
-   a roomier 1.000/0.366, looked fine. The eye reads the gap between the two
-   zones, not the absolute error.
+   EB Garamond declares ascent/descent = 1.007/0.298, a box with room above
+   the caps. A line box carries its baseline (ascent − descent)/2 below its own
+   center, so centering that box in a row beside an icon leaves the letters
+   visibly off-center against the icon.
 
-   ascent − descent = capHeight (0.676) is the condition for the cap band to
-   land on the center line; keeping descent at the real ink depth gives 0.936.
-   Expressed in em, so it holds at 13.5px and at 46px alike — no per-element
-   nudges, and any future serif-beside-an-icon is correct by construction.
+   ascent − descent = capHeight (0.653) is the condition for the cap band to
+   land on the center line; keeping descent at the real ink depth (0.290, the
+   descender of g and p) gives an ascent of 0.943. Expressed in em, so it holds
+   at 13.5px and at 46px alike — no per-element nudges, and any serif beside an
+   icon is correct by construction.
 
-   Not applied to 'JJannon' itself: the same correction would push every prose
-   block down 0.098em (4.5px on a 46px heading), moving first-baseline position
-   across the wiki, pages and home. Arguably also right, but that is a
-   typography pass, not this fix. */
+   Not applied to 'EB Garamond' itself: prose sets its own line-height, and
+   moving every first baseline is a typography pass, not this rule. */
 @font-face {
-	font-family: 'JJannon UI';
-	src: url('/fonts/JJannon-Display-Regular.woff2') format('woff2');
-	font-weight: 400;
+	font-family: 'EB Garamond UI';
+	src: url('/fonts/EBGaramond-Regular-latin.woff2') format('woff2');
+	font-weight: 300 400;
 	font-style: normal;
 	font-display: swap;
-	ascent-override: 93.6%;
-	descent-override: 26%;
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+	ascent-override: 94.3%;
+	descent-override: 29%;
+	line-gap-override: 0%;
+}
+
+@font-face {
+	font-family: 'EB Garamond UI';
+	src: url('/fonts/EBGaramond-Regular-latin-ext.woff2') format('woff2');
+	font-weight: 300 400;
+	font-style: normal;
+	font-display: swap;
+	unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+	ascent-override: 94.3%;
+	descent-override: 29%;
 	line-gap-override: 0%;
 }
 
 /* No serif fallback webfont. Lora used to be registered here — a 212 KB
    UNCOMPRESSED .ttf, the only non-woff2 face we shipped — and it sat second in
-   `--font-serif`, behind JJannon. It could never earn that: family fallback is
-   reached only for a glyph JJannon lacks or during the swap window, and in
+   `--font-serif`, behind the house serif. It could never earn that: family fallback is
+   reached only for a glyph the house serif lacks or during the swap window, and in
    both cases Lora's own coverage is Latin, the same ground a system serif
    already covers for free. So the user paid a quarter of a megabyte for the
    flash before the real serif landed. The fallback is now a system stack —
@@ -526,6 +537,37 @@ h6 {
 
 .markdown tr:last-child td {
 	border-bottom: none;
+}
+
+/* In an article a table is part of the prose: its cells read at the body's
+   size and face, and its header is a quiet label, not a bold one (the serif
+   is never bold). */
+.markdown--article table,
+.markdown--article td {
+	font-family: var(--md-body-family);
+	font-size: var(--md-body-size);
+	line-height: 1.45;
+}
+
+.markdown--article th {
+	font-family: var(--md-body-family);
+	font-size: 0.8125rem;
+	font-weight: 400;
+	color: var(--color-foreground-muted);
+}
+
+/* The veil (lib/actions/veil.ts): a hidden word keeps its place and loses its
+   ink. A link sets its own color in its component's styles, so the veil has to
+   outrank it; the action brings the ink back inline as the specks gather. */
+.veil-hidden {
+	color: transparent !important;
+	text-decoration-color: transparent !important;
+	cursor: default;
+}
+
+.veil-hidden * {
+	color: inherit !important;
+	text-decoration-color: transparent !important;
 }
 
 .markdown img {

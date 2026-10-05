@@ -87,7 +87,7 @@ describe() {
     radius)            echo "border-radius outside {0, 6px, 12px, 50%, a pill} (§6: Nothing else)" ;;
     off-grid)          echo "off-grid px in padding/margin/gap (§6: the 8pt grid — 8·12·16·20·24·32…)" ;;
     no-reduced-motion) echo "file animates with no prefers-reduced-motion block (§7)" ;;
-    serif-impossible)  echo "the serif set bold/medium or italic — JJannon ships ONE cut (agents/build/typography.md)" ;;
+    serif-impossible)  echo "the serif set bold/medium or italic — the serif ships ONE cut (agents/build/typography.md)" ;;
     esac
 }
 
@@ -297,9 +297,9 @@ scan() {
         }
 
         # ── 11. A serif weight or slope that cannot exist ─────────────────
-        # JJannon ships ONE cut. `app.css` registers that single woff2 three
-        # times (JJannon 300, JJannon 400, and JJannon UI with corrected
-        # metrics), so the family reads as richer in the stylesheet than it is
+        # The serif ships ONE cut. `app.css` registers EB Garamond regular as
+        # 'EB Garamond' (300-400) and again as 'EB Garamond UI' with corrected
+        # metrics, so the family reads as richer in the stylesheet than it is
         # on disk — and CSS font matching stays INSIDE the family for weight
         # and style, falling through to ui-serif/Georgia only for a missing
         # glyph or while the file loads. So `font-weight: 500` on the serif is

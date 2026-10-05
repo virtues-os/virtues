@@ -54,6 +54,7 @@
 			class="row"
 			class:row-heading={block.kind === "heading"}
 			class:row-table={block.kind === "table"}
+			class:row-figure={block.markdown.startsWith("![")}
 		>
 			<div class="text" use:veiled={{ hiding: veil.hiding, phrases: marked.phrases }}>
 				<Markdown content={marked.markdown} refVariant="quiet" variant="article" />
@@ -90,7 +91,7 @@
 	}
 
 	.row-heading .text :global(h2) {
-		margin-top: 2rem;
+		margin: 2.25rem 0 0.625rem;
 	}
 
 	.row-heading:first-child .text :global(h2) {
@@ -124,8 +125,28 @@
 		color: var(--color-foreground-subtle);
 	}
 
+	/* A heading's notes hang beside it without making its row taller, so a
+	   second note never pushes the paragraph below away from its heading. */
 	.row-heading .margin {
-		padding-top: 2.6rem;
+		padding-top: 2.5rem;
+		height: 0;
+		overflow: visible;
+	}
+
+	/* A photo with its caption on the line under it: the caption reads as one,
+	   smaller and quieter than the prose around it. */
+	.row-figure .text :global(img) {
+		display: block;
+		width: 100%;
+		margin: 0.375rem 0 0.625rem;
+		border-radius: 6px;
+	}
+
+	.row-figure .text :global(p) {
+		font-size: 0.9375rem;
+		line-height: 1.45;
+		color: var(--color-foreground-muted);
+		margin-bottom: 1.75rem;
 	}
 
 	.note {
@@ -176,6 +197,7 @@
 
 		.row-heading .margin {
 			padding-top: 0;
+			height: auto;
 			margin: 0 0 0.5rem;
 			order: -1;
 		}

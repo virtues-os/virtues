@@ -53,7 +53,13 @@ pub async fn attention(db: &Database) -> Result<Vec<AttentionItem>> {
     }
 
     match crate::api::stream_health::stream_health(db).await {
-        Ok(streams) => stream_items(&mut items, &streams),
+        Ok(streams) => {
+            stream_items(&mut items, &streams);
+            match crate::api::stream_health::stream_days(db, RHYTHM_WINDOW_DAYS).await {
+                Ok(days) => quiet_stream_items(&mut items, &streams, &days),
+                Err(e) => tracing::warn!("attention: stream arrivals unreadable: {e}"),
+            }
+        }
         Err(e) => tracing::warn!("attention: stream health unreadable: {e}"),
     }
 
@@ -100,7 +106,7 @@ fn backup_items(items: &mut Vec<AttentionItem>, state: &str, age_seconds: Option
             "Everything is on one disk. Open System to add a backup drive.".to_string(),
         ),
         "never" => (
-            "Your backup drive hasn't been used yet".to_string(),
+            "Your server hasn't backed up to the drive yet".to_string(),
             "Your server hasn't finished a backup to it. Open System to check the drive.".to_string(),
         ),
         "failing" => (
@@ -111,7 +117,7 @@ fn backup_items(items: &mut Vec<AttentionItem>, state: &str, age_seconds: Option
             let days = age_seconds.unwrap_or(0) / 86_400;
             (
                 format!("Your last backup is {days} days old"),
-                "Check that the backup drive is plugged in. Open System to see the last backup."
+                "Plug in your backup drive, then open System to see the last backup."
                     .to_string(),
             )
         }
@@ -218,6 +224,82 @@ fn stream_items(items: &mut Vec<AttentionItem>, streams: &[crate::api::stream_he
     }
 }
 
+/// Days of arrivals read to judge a stream's rhythm: the 30 before it went
+/// quiet, plus up to `QUIET_MAX_DAYS` of quiet.
+const RHYTHM_WINDOW_DAYS: i64 = 75;
+/// The days before a stream went quiet that set its rhythm.
+const RHYTHM_DAYS: usize = 30;
+/// A stream must have arrived on this many of those days to have a rhythm at
+/// all; sparser ones (workouts, bookmarks) are never flagged on their own.
+const RHYTHM_MIN_ARRIVALS: usize = 6;
+/// Never flag a gap shorter than this, however steady the stream.
+const QUIET_MIN_DAYS: i64 = 3;
+/// Past this the silence is a stream nobody uses, as for a whole source.
+const QUIET_MAX_DAYS: i64 = 30;
+
+/// One stream gone quiet while its source still sends others.
+///
+/// `stream_items` judges silence per source, so a phone that keeps sending
+/// steps hides the sleep and heart rate it stopped sending: a watch set aside
+/// took both, and nothing said so for six weeks. A stream is judged against its
+/// own rhythm instead of a fixed threshold, because streams arrive at different
+/// paces (heart rate daily, sleep in batches every few days): it is quiet when
+/// it has gone twice its longest gap of the month before, and at least
+/// `QUIET_MIN_DAYS`. A stream whose whole source is quiet is left to that
+/// source's item, so one stopped device is one item.
+fn quiet_stream_items(
+    items: &mut Vec<AttentionItem>,
+    streams: &[crate::api::stream_health::StreamHealth],
+    arrivals: &crate::api::stream_health::StreamDaysResponse,
+) {
+    let quiet_sources: std::collections::HashSet<String> = items
+        .iter()
+        .filter_map(|i| i.key.strip_prefix("source-quiet:").map(str::to_string))
+        .collect();
+    let today = arrivals.start + chrono::Duration::days(arrivals.days - 1);
+    let width = arrivals.days as usize;
+
+    for s in streams.iter().filter(|s| s.connected && !s.derived && s.status != "blocked") {
+        let Some(source) = s.provided_by.first() else { continue };
+        if quiet_sources.contains(source) {
+            continue;
+        }
+        // Every provider's rows, one count per day.
+        let mut days = vec![0i64; width];
+        for row in arrivals.streams.iter().filter(|r| r.name == s.name) {
+            for (d, n) in days.iter_mut().zip(&row.days) {
+                *d += n;
+            }
+        }
+        let Some(last) = days.iter().rposition(|&n| n > 0) else { continue };
+        let quiet = (width - 1 - last) as i64;
+        if !(QUIET_MIN_DAYS..=QUIET_MAX_DAYS).contains(&quiet) {
+            continue;
+        }
+        let from = (last + 1).saturating_sub(RHYTHM_DAYS);
+        let arrived: Vec<usize> = (from..=last).filter(|&i| days[i] > 0).collect();
+        if arrived.len() < RHYTHM_MIN_ARRIVALS {
+            continue;
+        }
+        let longest_gap = arrived.windows(2).map(|w| (w[1] - w[0]) as i64).max().unwrap_or(1);
+        if quiet < (2 * longest_gap).max(QUIET_MIN_DAYS) {
+            continue;
+        }
+        let since = (today - chrono::Duration::days(quiet)).format("%B %-d");
+        items.push(AttentionItem {
+            key: format!("stream-quiet:{}", s.name),
+            kind: "stream",
+            title: format!("{} stopped arriving", s.display_name),
+            body: format!(
+                "Nothing since {since}, though {source} still sends other data. \
+                 If you set aside the device that records it, there's nothing to fix. \
+                 Otherwise, open Sources to check."
+            ),
+            route: "/sources",
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +360,78 @@ mod tests {
             blocked_reason: None,
             coverage: None,
         }
+    }
+
+    /// Arrivals for one stream over `RHYTHM_WINDOW_DAYS`, oldest first,
+    /// arriving on the given days-ago and nothing else.
+    fn arrivals(name: &str, days_ago: &[i64]) -> crate::api::stream_health::StreamDays {
+        let width = RHYTHM_WINDOW_DAYS as usize;
+        let mut days = vec![0; width];
+        for &ago in days_ago {
+            days[width - 1 - ago as usize] = 1;
+        }
+        crate::api::stream_health::StreamDays {
+            name: name.into(),
+            display_name: name.into(),
+            provider: "ios".into(),
+            days,
+        }
+    }
+
+    fn window(rows: Vec<crate::api::stream_health::StreamDays>) -> crate::api::stream_health::StreamDaysResponse {
+        crate::api::stream_health::StreamDaysResponse {
+            start: chrono::NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+            days: RHYTHM_WINDOW_DAYS,
+            streams: rows,
+        }
+    }
+
+    #[test]
+    fn a_steady_stream_that_stops_is_flagged_while_its_source_still_sends() {
+        let mut items = vec![];
+        // Heart rate arrived daily until 5 days ago; steps still arrive.
+        let heart: Vec<i64> = (5..40).collect();
+        let steps: Vec<i64> = (0..40).collect();
+        stream_items(
+            &mut items,
+            &[stream("Heart rate", "iPhone", "idle", 5), stream("Steps", "iPhone", "live", 0)],
+        );
+        quiet_stream_items(
+            &mut items,
+            &[stream("Heart rate", "iPhone", "idle", 5), stream("Steps", "iPhone", "live", 0)],
+            &window(vec![arrivals("Heart rate", &heart), arrivals("Steps", &steps)]),
+        );
+        assert_eq!(items.len(), 1, "{items:?}");
+        assert_eq!(items[0].title, "Heart rate stopped arriving");
+        assert_eq!(items[0].key, "stream-quiet:Heart rate");
+    }
+
+    #[test]
+    fn a_stream_is_judged_against_its_own_rhythm() {
+        // Sleep arrives in batches every few days, up to six apart.
+        let sleep: Vec<i64> = vec![10, 14, 20, 23, 27, 30, 36, 40];
+        let mut items = vec![];
+        let s = [stream("Sleep", "iPhone", "idle", 10)];
+        quiet_stream_items(&mut items, &s, &window(vec![arrivals("Sleep", &sleep)]));
+        assert!(items.is_empty(), "10 days is under twice its 6-day gap: {items:?}");
+
+        let later: Vec<i64> = sleep.iter().map(|d| d + 3).collect();
+        let s = [stream("Sleep", "iPhone", "idle", 13)];
+        quiet_stream_items(&mut items, &s, &window(vec![arrivals("Sleep", &later)]));
+        assert_eq!(items.len(), 1, "13 days is past twice its 6-day gap");
+    }
+
+    #[test]
+    fn a_sparse_stream_or_an_old_silence_says_nothing() {
+        let mut items = vec![];
+        // Workouts: four in a month, then a quiet week.
+        let s = [stream("Workouts", "iPhone", "idle", 7)];
+        quiet_stream_items(&mut items, &s, &window(vec![arrivals("Workouts", &[7, 15, 22, 30])]));
+        // A daily stream quiet for six weeks is a stream nobody uses now.
+        let old: Vec<i64> = (42..72).collect();
+        let s = [stream("Heart rate", "iPhone", "idle", 42)];
+        quiet_stream_items(&mut items, &s, &window(vec![arrivals("Heart rate", &old)]));
+        assert!(items.is_empty(), "{items:?}");
     }
 
     #[test]

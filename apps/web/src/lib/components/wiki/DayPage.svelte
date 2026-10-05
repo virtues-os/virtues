@@ -35,9 +35,10 @@
 	import { getOntologyName } from "$lib/wiki/ontology";
 	import { getLocalDateSlug, parseDateSlug } from "$lib/utils/dateUtils";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import TextAction from "$lib/components/TextAction.svelte";
 	import EventTimeline from "./EventTimeline.svelte";
 	import DaylineChart from "./DaylineChart.svelte";
-	import DayToolbar from "./DayToolbar.svelte";
+	import DayDatePicker from "./DayDatePicker.svelte";
 	import NotesRail from "./NotesRail.svelte";
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import DayArticleBody from "./DayArticleBody.svelte";
@@ -137,22 +138,7 @@
 		windowShellStore.openTabFromRoute(`/day/day_${slug}`);
 	}
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// Header scroll observer (show date in toolbar when h1 scrolls away)
-	// ─────────────────────────────────────────────────────────────────────────
-	let headerEl = $state<HTMLElement | null>(null);
 	let scrollContainerEl = $state<HTMLElement | null>(null);
-	let headerScrolledAway = $state(false);
-
-	$effect(() => {
-		if (!browser || !headerEl || !scrollContainerEl) return;
-		const observer = new IntersectionObserver(
-			([entry]) => { headerScrolledAway = !entry.isIntersecting; },
-			{ root: scrollContainerEl, threshold: 0 },
-		);
-		observer.observe(headerEl);
-		return () => observer.disconnect();
-	});
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// Versioned loader: drops stale results when slug changes mid-flight.
@@ -572,6 +558,17 @@
 		scrollContainerEl?.scrollTo({ top: 0 });
 	}
 
+	/** The same day on the map, in the one Timeline tab: brought forward and
+	 *  moved to this day when it is open, else opened on it. */
+	function openInTimeline() {
+		const route = `/timeline/${currentDateSlug}`;
+		const open = windowShellStore.findTab((t) => t.type === "timeline");
+		if (open) {
+			windowShellStore.setActiveTab(open.tab.id);
+			windowShellStore.updateTab(open.tab.id, { route });
+		} else windowShellStore.openTabFromRoute(route, { label: "Timeline" });
+	}
+
 	function showRecord() {
 		void switchView(() => (view = "record"));
 	}
@@ -674,14 +671,6 @@
 </script>
 
 <div class="day-page-outer">
-	<DayToolbar
-		pageDate={date}
-		{currentDateSlug}
-		{todaySlug}
-		onNavigateDay={navigateToDay}
-		{headerScrolledAway}
-	/>
-
 	<div class="day-page-layout">
 		<article class="day-article wiki-article" bind:this={scrollContainerEl}>
 			<div class="day-bar" role="toolbar" aria-label="Day">
@@ -691,7 +680,7 @@
 				<span class="bar-gap"></span>
 				<div class="segmented" role="group" aria-label="View">
 					<button type="button" class="seg" class:active={view === "article"} aria-pressed={view === "article"} onclick={backToArticle}>Article</button>
-					<button type="button" class="seg" class:active={view === "record"} aria-pressed={view === "record"} onclick={showRecord}>Record</button>
+					<button type="button" class="seg" class:active={view === "record"} aria-pressed={view === "record"} onclick={showRecord}>Data</button>
 				</div>
 				<button
 					type="button"
@@ -723,10 +712,18 @@
 			</div>
 
 			<div class="day-content">
-				<header class="day-header" bind:this={headerEl}>
+				<header class="day-header">
 					<p class="day-eyebrow">{dayOfWeek}</p>
-					<h1 class="day-title" title={relativeDateLabel() ?? undefined}>
-						{date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+					<h1 class="day-title">
+						<DayDatePicker
+							pageDate={date}
+							{currentDateSlug}
+							{todaySlug}
+							onNavigateDay={navigateToDay}
+							title={relativeDateLabel() ?? "Go to another day"}
+						>
+							{#snippet label()}{date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}{/snippet}
+						</DayDatePicker>
 					</h1>
 				</header>
 
@@ -799,7 +796,11 @@
 						</section>
 					{/if}
 
-<!-- Dayline chart: visual bridge between narrative and timeline -->
+<p class="to-timeline">
+					<TextAction onclick={openInTimeline}>Open this day in the Timeline</TextAction>
+				</p>
+
+				<!-- Dayline chart: visual bridge between narrative and timeline -->
 				<section class="section" id="dayline">
 					<h2 class="section-title">The Dayline</h2>
 					<DaylineChart events={dayEvents} {priorSleepEvents} timezone={page.start_timezone} pageDate={date} sleepCycles={sleepCycles} {movementStops} {movementTrack} {dedupedMarkers} dayDateSlug={currentDateSlug} {hasLocationData} />
@@ -950,8 +951,9 @@
 	.day-bar {
 		display: flex;
 		align-items: center;
-		gap: 1rem;
+		gap: 1.125rem;
 		max-width: 53.5rem;
+		height: 2.5rem;
 		margin: 0 auto;
 	}
 
@@ -964,7 +966,7 @@
 		background: none;
 		padding: 0.25rem 0;
 		font-family: var(--font-sans);
-		font-size: 0.8125rem;
+		font-size: 0.78125rem;
 		color: var(--color-foreground-subtle);
 		cursor: pointer;
 	}
@@ -1052,8 +1054,6 @@
 	}
 
 	.day-abstract :global(.markdown p) {
-		font-size: 1.375rem;
-		line-height: 1.45;
 		color: var(--color-foreground);
 	}
 
@@ -1206,7 +1206,7 @@
 		overflow-y: auto;
 		scrollbar-width: none;
 		-ms-overflow-style: none;
-		padding: 2rem;
+		padding: 0.5rem 2rem 2rem;
 	}
 
 	.day-article::-webkit-scrollbar {
@@ -1218,7 +1218,7 @@
 		max-width: 53.5rem;
 		width: 100%;
 		margin: 0 auto;
-		padding-top: 1.5rem;
+		padding-top: 1rem;
 		padding-bottom: 4rem;
 	}
 
@@ -1232,7 +1232,7 @@
 
 	.day-title {
 		font-family: var(--font-serif, Georgia, serif);
-		font-size: 2.25rem;
+		font-size: 2.625rem;
 		font-weight: 400;
 		color: var(--color-foreground);
 		margin: 0;
@@ -1263,6 +1263,13 @@
 	.section {
 		position: relative;
 		margin-bottom: 3.5rem;
+	}
+
+	/* The day on the map: a quiet verb above the Dayline, since the Timeline
+	   is where the same day is read in space. */
+	.to-timeline {
+		margin: 0 0 24px;
+		font-size: 14px;
 	}
 
 	.section-title {

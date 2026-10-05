@@ -8,7 +8,7 @@ describe("the lanes", () => {
 	it("holds the last stretch across a gap over three minutes", () => {
 		const r = ribbon([
 			{ s: 0, e: 10 * M, kind: "place", title: "Home" },
-			{ s: 12 * M, e: 20 * M, kind: "transit", title: "Driving" },
+			{ s: 12 * M, e: 20 * M, kind: "transit", title: "Moving · 6.2 km" },
 			{ s: 30 * M, e: 40 * M, kind: "place", title: "Work" },
 		]);
 		expect(r.map((x) => [x.kind, x.held])).toEqual([
@@ -54,7 +54,7 @@ describe("the lane data", () => {
 	const iso = (m: number) => new Date(m * M).toISOString();
 	const derived: DerivedWindow = {
 		last_stay_before: null,
-		places: [{ id: "p1", latitude: 0, longitude: -30, is_home: true, is_work: false, place_name: null }],
+		places: [{ id: "p1", latitude: 0, longitude: -30, is_named: true, place_name: "Home" }],
 		spans: [
 			{ id: "n", kind: "sleep", started_at: iso(0), ended_at: iso(60), timeline_place_id: null, metadata: {} },
 			{ id: "s", kind: "stay", started_at: iso(0), ended_at: iso(120), timeline_place_id: "p1", metadata: {} },

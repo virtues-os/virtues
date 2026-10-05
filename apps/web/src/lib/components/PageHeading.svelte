@@ -5,8 +5,8 @@
 	 * A page's title, its one sentence, and the controls that belong to the
 	 * whole page.
 	 *
-	 * The title was set `font-serif font-medium` — a 500 weight on JJannon,
-	 * which ships exactly one cut. A weight request inside that family resolves
+	 * The title was set `font-serif font-medium` — a 500 weight on the serif,
+	 * which we ship in exactly one cut. A weight request inside that family resolves
 	 * to the regular and returns silently, so the declaration did nothing at
 	 * best; where a browser synthesizes instead, it returned a smeared faux
 	 * bold. design-grammar.md §4 says the serif is never bold, and it is worth

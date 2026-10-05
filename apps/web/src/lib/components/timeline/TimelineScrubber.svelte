@@ -170,8 +170,9 @@
 			.filter((f) => f !== null),
 	);
 
-	// Location (main.js:1319-1333): blue at a place, orange on the move, grey
-	// in a signal gap; a held span faint in the colour it holds.
+	// Location: told apart by form, never by hue (design-grammar §5). A stay
+	// is a full block, a trip a thin line through the lane's middle, a signal
+	// gap a dashed outline with nothing in it; a held span is faint.
 	const ribbonRects = $derived(
 		ribbon
 			.map((r) => {
@@ -441,17 +442,19 @@
 				{#if lane.id === 'where'}
 					{#each ribbonRects as rr, k (k)}
 						{@const on = live(rr.r.s, rr.r.e)}
+						{@const thin = rr.r.kind === 'transit' && !rr.r.held}
+						{@const gap = rr.r.kind === 'gap' && !rr.r.held}
 						<rect
 							data-rib={rr.r.held ? undefined : k}
+							class:rib-gap={gap}
 							x={rr.a}
-							y={y + 2}
+							y={thin ? y + rowH / 2 - 2 : y + 2}
 							width={Math.max(rr.w, 1)}
-							height={rowH - 4}
-							rx="5"
-							fill={rr.colour}
-							fill-opacity={on ? 0.9 : rr.r.held ? 0.1 : rr.r.kind === 'gap' ? 0.16 : 0.5}
+							height={thin ? 4 : rowH - 4}
+							rx={thin ? 2 : 5}
+							fill={gap ? 'transparent' : on ? 'var(--c-sel)' : rr.colour}
+							fill-opacity={on ? 0.85 : rr.r.held ? 0.1 : thin ? 0.9 : 0.5}
 						/>
-						{#if on}<rect x={rr.a} y={y + 2} width="3" height={rowH - 4} fill={rr.colour} />{/if}
 						{#if rr.label}<text class="seg-label" x={rr.a + 9} y={y + 2 + (rowH - 4) / 2 + 3.7}>{rr.label}</text>{/if}
 					{/each}
 				{:else if lane.id === 'voice'}
@@ -532,8 +535,13 @@
 		font-family: var(--font-sans);
 		color: var(--color-foreground);
 	}
-	:global(.timeline:not(.with-inspector)) .scrub {
+	:global(.timeline:not(.with-inspector)) .scrub,
+	:global(.timeline.narrow) .scrub {
 		right: 16px;
+	}
+	/* Narrow pane: full width, on top of the list's sheet. */
+	:global(.timeline.narrow.with-inspector) .scrub {
+		bottom: calc(34% + 24px);
 	}
 	.top {
 		display: flex;
@@ -752,6 +760,11 @@
 	}
 	.rest {
 		fill: var(--c-rest);
+	}
+	.rib-gap {
+		stroke: var(--c-gap);
+		stroke-width: 1;
+		stroke-dasharray: 3 3;
 	}
 	.axis {
 		stroke: var(--color-foreground);

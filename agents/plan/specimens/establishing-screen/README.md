@@ -13,7 +13,7 @@ python3 -m http.server 8899          # from the REPO ROOT, not from here
 open http://127.0.0.1:8899/agents/plan/specimens/establishing-screen/establishing.html
 ```
 
-Serving from the repo root matters: the page loads JJannon from
+Serving from the repo root matters: the page loads EB Garamond from
 `apps/web/static/fonts/`, so that the repo carries one copy of a licensed face
 rather than two.
 
@@ -94,8 +94,8 @@ the fallback state anyway.
 - **The register.** Beat 1 is a room; beats 2–3 are paper. Deliberate, but it
   is a departure from the airlock's white-paper grammar and deserves a decision
   rather than a drift.
-- **JJannon in the airlock.** `connect.html` sets `ui-serif` with a comment
-  explaining that JJannon lives in the SPA bundle, which does not exist when
+- **EB Garamond in the airlock.** `connect.html` sets `ui-serif` with a comment
+  explaining that EB Garamond lives in the SPA bundle, which does not exist when
   the airlock draws. True, and the thing to fix: the woff2 belongs in the
   binary beside `connect.html`, served through the `virtues://` handler. Right
   now every screen in setup is in a different typeface from the app it opens
