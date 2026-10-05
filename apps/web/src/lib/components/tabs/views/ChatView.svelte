@@ -1388,6 +1388,28 @@
 		return false;
 	}
 
+	/**
+	 * Whether the reader has scrolled up out of the newest turn. Drives the
+	 * jump-to-latest button above the composer; the threshold is generous so
+	 * the last line's own padding does not count as "away".
+	 */
+	let awayFromEnd = $state(false);
+	$effect(() => {
+		const scroller = scrollContainer;
+		if (!scroller) return;
+		const measure = () => {
+			awayFromEnd = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight > 240;
+		};
+		measure();
+		const content = new ResizeObserver(measure);
+		if (scroller.firstElementChild) content.observe(scroller.firstElementChild);
+		scroller.addEventListener("scroll", measure, { passive: true });
+		return () => {
+			content.disconnect();
+			scroller.removeEventListener("scroll", measure);
+		};
+	});
+
 	function scrollToBottom(behavior: ScrollBehavior = "smooth") {
 		if (scrollContainer) {
 			scrollContainer.scrollTo({
@@ -2264,6 +2286,18 @@
 						class:focused={inputFocused}
 						class:drag-active={attachments.dragActive}
 					>
+						{#if !isEmpty && awayFromEnd}
+							<button
+								type="button"
+								class="jump-to-end"
+								onclick={() => scrollToBottom("smooth")}
+								aria-label="Scroll to latest"
+								title="Scroll to latest"
+								transition:fade={{ duration: 150 }}
+							>
+								<Icon icon="ri:arrow-down-line" width="16" />
+							</button>
+						{/if}
 						{#if isGhost && !isEmpty}
 							<div class="ghost-caption" in:fade={{ duration: 300 }}>
 								<Icon icon="ri:ghost-line" width="12" />
@@ -2714,6 +2748,38 @@
 		   travel is one interpolatable transition — no snap, no position swap. */
 		transform: translateY(0);
 		will-change: bottom, transform;
+	}
+
+	/* Rides the composer's top edge, so it climbs with a growing draft. */
+	.jump-to-end {
+		position: absolute;
+		bottom: calc(100% + 0.5rem);
+		left: 50%;
+		translate: -50% 0;
+		display: grid;
+		place-items: center;
+		width: 2.25rem;
+		height: 2.25rem;
+		border-radius: 999px;
+		border: 1px solid var(--color-border);
+		background: var(--color-surface-elevated);
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		transition:
+			color 0.15s ease,
+			border-color 0.15s ease,
+			translate 0.15s ease;
+	}
+
+	.jump-to-end:hover {
+		color: var(--color-foreground);
+		border-color: var(--color-border-strong);
+		translate: -50% 1px;
+	}
+
+	.jump-to-end:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
 	}
 
 	/* Track E1 — in-message media */
