@@ -48,7 +48,7 @@ pub async fn background_model_for_slot(pool: &PgPool, slot: ModelSlot) -> Result
 /// `thinking` is what the job wants from the model's reasoning, and the ONLY
 /// lever a caller has. There is no `max_tokens`: on a model that thinks, the
 /// thinking is counted inside that cap, and a cap sized for the answer
-/// returned nothing. Measured on the box 2026-09-04..08, the Chat slot's
+/// returned nothing. Measured on the box 2026-09-04..08, the Standard slot's
 /// model segmenting a day under a 4000 cap spent exactly 4000 tokens
 /// reasoning and returned no content on 237 of 276 calls, every one billed.
 /// The interview drafter failed the same way four days later. The window is

@@ -257,10 +257,17 @@ async fn list_models(State(state): State<Arc<AppState>>) -> Response {
         "object": "list",
         "data": state.catalog.picker(),
         "slots": {
-            "chat":   default_model_for_slot(ModelSlot::Chat),
-            "lite":   default_model_for_slot(ModelSlot::Lite),
-            "coding": default_model_for_slot(ModelSlot::Coding),
-            "image":  default_model_for_slot(ModelSlot::Image),
+            "lite":     default_model_for_slot(ModelSlot::Lite),
+            "standard": default_model_for_slot(ModelSlot::Standard),
+            "deep":     default_model_for_slot(ModelSlot::Deep),
+            "image":    default_model_for_slot(ModelSlot::Image),
+            // Boxes from before the 2026-10-05 Standard/Deep rename require
+            // `chat` and `coding` to parse the slot map at all — a missing
+            // field fails their whole catalog. `coding` was never called, so
+            // it carries the Standard model.
+            // TODO(2026-10-05): drop once every box that checks in runs a release with the rename.
+            "chat":     default_model_for_slot(ModelSlot::Standard),
+            "coding":   default_model_for_slot(ModelSlot::Standard),
         },
         // Tells the box whether `input_cost_per_1k` is real or absent, so it can
         // say "pricing unavailable" rather than render a confident zero.

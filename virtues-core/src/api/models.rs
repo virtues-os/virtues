@@ -88,8 +88,8 @@ pub struct ModelsResponse {
 
 /// List the picker — the gateway's language models, slot models flagged.
 ///
-/// Dedupes by `model_id`: one model can fill several slots (Opus is both chat
-/// and coding) and the picker's keyed `{#each}` throws on duplicate keys.
+/// Dedupes by `model_id`: one model can fill several slots (Lite and Standard
+/// may name the same one) and the picker's keyed `{#each}` throws on duplicate keys.
 pub async fn list_models() -> Result<Vec<ModelInfo>> {
     let mut seen = std::collections::HashSet::new();
     Ok(model_catalog::models()
@@ -108,11 +108,10 @@ pub async fn list_models_with_slots() -> Result<ModelsResponse> {
     })
 }
 
-/// Whatever the Chat slot currently resolves to. This is what "Virtues default"
+/// Whatever the Standard slot currently resolves to. This is what "Virtues default"
 /// means at this moment.
 pub async fn get_default_model() -> Result<ModelInfo> {
-    let chat = model_catalog::slots().chat;
-    get_model(&chat).await
+    get_model(&model_catalog::slots().standard).await
 }
 
 /// Get a specific model by ID

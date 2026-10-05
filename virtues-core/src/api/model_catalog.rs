@@ -93,11 +93,39 @@ pub struct CatalogModel {
 /// Which model fills each slot, per the cloud. Ids only — the models
 /// themselves are in `data`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "SlotMapWire")]
 pub struct SlotMap {
-    pub chat: String,
     pub lite: String,
-    pub coding: String,
+    pub standard: String,
+    pub deep: String,
     pub image: String,
+}
+
+/// What a virtues-api of any age sends. One before the 2026-10-05 rename
+/// sends `chat` and no `deep`; one after sends both spellings, because boxes
+/// that predate the rename require `chat` and `coding`. Every slot is optional
+/// so neither shape can fail the whole catalog parse — a missing slot takes
+/// the compiled floor.
+#[derive(Deserialize)]
+struct SlotMapWire {
+    lite: Option<String>,
+    standard: Option<String>,
+    chat: Option<String>,
+    deep: Option<String>,
+    image: Option<String>,
+}
+
+impl From<SlotMapWire> for SlotMap {
+    fn from(w: SlotMapWire) -> Self {
+        let floor = SlotMap::default();
+        let pick = |v: Option<String>, floor: String| v.filter(|s| !s.trim().is_empty()).unwrap_or(floor);
+        Self {
+            lite: pick(w.lite, floor.lite),
+            standard: pick(w.standard.or(w.chat), floor.standard),
+            deep: pick(w.deep, floor.deep),
+            image: pick(w.image, floor.image),
+        }
+    }
 }
 
 impl Default for SlotMap {
@@ -106,9 +134,9 @@ impl Default for SlotMap {
     fn default() -> Self {
         use virtues_registry::models::{default_model_for_slot, ModelSlot};
         Self {
-            chat: default_model_for_slot(ModelSlot::Chat).to_string(),
             lite: default_model_for_slot(ModelSlot::Lite).to_string(),
-            coding: default_model_for_slot(ModelSlot::Coding).to_string(),
+            standard: default_model_for_slot(ModelSlot::Standard).to_string(),
+            deep: default_model_for_slot(ModelSlot::Deep).to_string(),
             image: default_model_for_slot(ModelSlot::Image).to_string(),
         }
     }
@@ -151,13 +179,13 @@ pub fn models() -> Vec<CatalogModel> {
         }
     }
     use virtues_registry::models::{default_model_for_slot, ModelSlot};
-    let chat = default_model_for_slot(ModelSlot::Chat);
+    let standard = default_model_for_slot(ModelSlot::Standard);
 
     // The chat-facing slots only. Image and Omni are system slots — their
     // models are never picker options (Omni's is a Gemini 3 model, which 400s
     // on parallel tool calls and must not be offered for chat).
     let mut ids: Vec<String> = Vec::new();
-    for slot in [ModelSlot::Chat, ModelSlot::Lite, ModelSlot::Coding] {
+    for slot in [ModelSlot::Standard, ModelSlot::Deep, ModelSlot::Lite] {
         let id = default_model_for_slot(slot).to_string();
         if !ids.contains(&id) {
             ids.push(id);
@@ -170,7 +198,7 @@ pub fn models() -> Vec<CatalogModel> {
             // `provider/model` — the only structure we can rely on offline.
             let (provider, name) = id.split_once('/').unwrap_or(("", id.as_str()));
             CatalogModel {
-                is_default: id == chat,
+                is_default: id == standard,
                 display_name: name.to_string(),
                 provider: provider.to_string(),
                 sort_order: i as i32,
@@ -229,9 +257,9 @@ pub fn model_for_slot(slot: virtues_registry::models::ModelSlot) -> String {
     use virtues_registry::models::{default_model_for_slot, ModelSlot};
     let s = slots();
     match slot {
-        ModelSlot::Chat => s.chat,
         ModelSlot::Lite => s.lite,
-        ModelSlot::Coding => s.coding,
+        ModelSlot::Standard => s.standard,
+        ModelSlot::Deep => s.deep,
         ModelSlot::Image => s.image,
         // Omni (audio transcription) is a fixed system model, not cloud- or
         // user-overridable — it must stay audio-capable — so it resolves from
@@ -244,7 +272,7 @@ pub fn model_for_slot(slot: virtues_registry::models::ModelSlot) -> String {
 /// [`model_for_slot`].
 ///
 /// Exists for the BYO fork. A model id is an *address on a specific gateway*,
-/// not a name: `spacexai/grok-4.5` is where our gateway keeps the chat model, and
+/// not a name: `spacexai/grok-4.5` is where our gateway keeps the Standard model, and
 /// means nothing on someone else's. Callers build bodies with our address, so
 /// the fork has to turn it back into the role it stands for before it can look
 /// up the user's address for that role.
@@ -345,8 +373,33 @@ mod tests {
         // A box that has never reached the cloud must still be usable.
         assert!(!models().is_empty());
         let s = slots();
-        assert!(!s.chat.is_empty() && !s.lite.is_empty());
-        assert!(!s.coding.is_empty() && !s.image.is_empty());
+        assert!(!s.standard.is_empty() && !s.lite.is_empty());
+        assert!(!s.deep.is_empty() && !s.image.is_empty());
+    }
+
+    /// The slot map crosses a version boundary in both directions: a cloud
+    /// that predates the Standard/Deep rename sends `chat` and `coding`, and
+    /// one after it sends both spellings. Neither may fail the catalog parse,
+    /// and an absent slot takes the compiled floor rather than an empty id.
+    #[test]
+    fn slot_maps_from_either_side_of_the_rename_parse() {
+        use virtues_registry::models::{default_model_for_slot, ModelSlot};
+        let old: SlotMap = serde_json::from_value(serde_json::json!({
+            "chat": "x/standard", "lite": "x/lite", "coding": "x/coding", "image": "x/image"
+        }))
+        .expect("pre-rename shape parses");
+        assert_eq!(old.standard, "x/standard");
+        assert_eq!(old.deep, default_model_for_slot(ModelSlot::Deep));
+
+        let both: SlotMap = serde_json::from_value(serde_json::json!({
+            "chat": "x/old", "standard": "x/standard", "deep": "x/deep",
+            "lite": "x/lite", "coding": "x/old", "image": "x/image"
+        }))
+        .expect("transitional shape parses");
+        assert_eq!((both.standard.as_str(), both.deep.as_str()), ("x/standard", "x/deep"));
+
+        let empty: SlotMap = serde_json::from_value(serde_json::json!({ "standard": "" })).unwrap();
+        assert_eq!(empty.standard, default_model_for_slot(ModelSlot::Standard));
     }
 
     /// A virtues-api that predates the retention fields must still parse —
@@ -382,7 +435,7 @@ mod live {
 
     #[tokio::test]
     #[ignore]
-    async fn the_chat_slot_model_can_actually_read_images() {
+    async fn the_standard_slot_model_can_actually_read_images() {
         let url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
         let pool = PgPool::connect(&url).await.expect("dev database");
@@ -397,8 +450,8 @@ mod live {
         println!("catalog: {} models", resp.data.len());
         store(resp);
 
-        let chat = model_for_slot(virtues_registry::models::ModelSlot::Chat);
-        println!("chat slot: {chat}");
+        let chat = model_for_slot(virtues_registry::models::ModelSlot::Standard);
+        println!("standard slot: {chat}");
         for m in models() {
             println!(
                 "  {:<45} vision={:<5} pdf={:<5} audio={:<5} tools={}",
@@ -408,8 +461,8 @@ mod live {
 
         match supports_vision(&chat) {
             Some(true) => println!("\nOK: read_asset attachments will reach the model"),
-            Some(false) => panic!("chat slot {chat} cannot read images — read_asset is inert"),
-            None => panic!("chat slot {chat} is absent from the catalog — gate reads as cannot"),
+            Some(false) => panic!("standard slot {chat} cannot read images — read_asset is inert"),
+            None => panic!("standard slot {chat} is absent from the catalog — gate reads as cannot"),
         }
     }
 }

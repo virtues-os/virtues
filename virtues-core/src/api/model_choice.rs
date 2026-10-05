@@ -95,14 +95,14 @@ pub async fn resolve_turn_model(
         return Ok(crate::api::model_catalog::model_for_slot(slot));
     }
     let standing = match slot {
-        ModelSlot::Chat => crate::api::assistant_profile::get_chat_model(pool).await?,
-        ModelSlot::Coding => crate::api::assistant_profile::get_coding_model(pool).await?,
+        ModelSlot::Standard => crate::api::assistant_profile::get_standard_model(pool).await?,
+        ModelSlot::Deep => crate::api::assistant_profile::get_deep_model(pool).await?,
         other => crate::api::model_catalog::model_for_slot(other),
     };
 
     // A STORED pin can be empty too, and that one is worse than the wire's:
-    // `get_chat_model` falls back on SQL NULL only, and the profile PATCH
-    // binds whatever string it is given, so `{"chat_model_id": ""}` persists
+    // `get_standard_model` falls back on SQL NULL only, and the profile PATCH
+    // binds whatever string it is given, so `{"standard_model_id": ""}` persists
     // an empty pin that outlives the request. Guarding only the wire would
     // leave the same empty model id reaching the gateway, from a value the
     // person cannot see or clear from the picker. This door promises a
@@ -171,8 +171,8 @@ mod tests {
     /// has migrated has one. Worth knowing, because this door made the ordinary
     /// chat path depend on that row for the first time.
     #[sqlx::test]
-    async fn an_unpinned_turn_rides_the_chat_slot(pool: PgPool) {
-        let want = crate::api::model_catalog::model_for_slot(ModelSlot::Chat);
+    async fn an_unpinned_turn_rides_the_standard_slot(pool: PgPool) {
+        let want = crate::api::model_catalog::model_for_slot(ModelSlot::Standard);
         for sent in [None, Some(""), Some("  ")] {
             assert_eq!(
                 resolve_turn_model(&pool, sent, &ChatMode::Chat).await.unwrap(),
@@ -184,7 +184,7 @@ mod tests {
 
     #[sqlx::test]
     async fn a_standing_pin_is_what_answers(pool: PgPool) {
-        sqlx::query("UPDATE app_assistant_profile SET chat_model_id = $1")
+        sqlx::query("UPDATE app_assistant_profile SET standard_model_id = $1")
             .bind("example/pinned-model")
             .execute(&pool)
             .await
@@ -197,7 +197,7 @@ mod tests {
         // And the interview still will not touch it.
         assert_eq!(
             resolve_turn_model(&pool, None, &ChatMode::Interview).await.unwrap(),
-            crate::api::model_catalog::model_for_slot(ModelSlot::Chat)
+            crate::api::model_catalog::model_for_slot(ModelSlot::Standard)
         );
     }
 
@@ -205,14 +205,14 @@ mod tests {
     async fn an_empty_stored_pin_cannot_reach_the_gateway(pool: PgPool) {
         // The profile PATCH binds the string it is handed, so this row state
         // is reachable from the API even though the web UI maps "" to NULL.
-        sqlx::query("UPDATE app_assistant_profile SET chat_model_id = ''")
+        sqlx::query("UPDATE app_assistant_profile SET standard_model_id = ''")
             .execute(&pool)
             .await
             .unwrap();
 
         let got = resolve_turn_model(&pool, None, &ChatMode::Chat).await.unwrap();
         assert!(!got.trim().is_empty(), "resolved an empty model id");
-        assert_eq!(got, crate::api::model_catalog::model_for_slot(ModelSlot::Chat));
+        assert_eq!(got, crate::api::model_catalog::model_for_slot(ModelSlot::Standard));
     }
 
     /// The wire contract, end to end, for the three bodies that actually

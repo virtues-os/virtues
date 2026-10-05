@@ -93,11 +93,11 @@ pub async fn dispatch(
     }
 
     // Resolve the model tiers once (each is a cheap profile read). Deep-research
-    // fan-out workers run on the normal chat model; the orchestrator's "strong"
-    // tier maps to it too — we don't spend the reasoning slot on workers.
+    // fan-out workers run on the Standard model even when the orchestrator
+    // runs on Deep — we don't spend the strong tier on workers.
     //
     // Empty is not a model. The profile readers fall back on a SQL NULL only,
-    // so a stored `chat_model_id = ''` — a state the profile PATCH can reach,
+    // so a stored `standard_model_id = ''` — a state the profile PATCH can reach,
     // and which `model_choice` guards against for exactly this reason —
     // returns `Ok("")`, and `unwrap_or_else` only catches `Err`. Every worker
     // was then dispatched with `model: ""` and rejected at the gateway while
@@ -107,7 +107,7 @@ pub async fn dispatch(
         .ok()
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| default_tier_model("fast"));
-    let balanced = crate::api::assistant_profile::get_chat_model(&pool)
+    let balanced = crate::api::assistant_profile::get_standard_model(&pool)
         .await
         .ok()
         .filter(|m| !m.trim().is_empty())
@@ -483,7 +483,7 @@ fn default_tier_model(tier: &str) -> String {
     use virtues_registry::models::ModelSlot;
     let slot = match tier {
         "fast" => ModelSlot::Lite,
-        _ => ModelSlot::Chat,
+        _ => ModelSlot::Standard,
     };
     // Cloud slot map, else the compiled floor — never a literal model id.
     crate::api::model_catalog::model_for_slot(slot)

@@ -35,7 +35,7 @@ type SseEvent = axum::response::sse::Event;
 
 #[derive(Debug, Deserialize)]
 pub struct AiCompleteRequest {
-    /// The person's pick, if they made one. Absent means the Chat slot — the
+    /// The person's pick, if they made one. Absent means the Standard slot — the
     /// pages editor has no picker of its own, so absent is the normal case.
     /// Same contract as `POST /api/chat`; see `api::model_choice`.
     #[serde(default)]
@@ -112,7 +112,7 @@ pub async fn ai_complete_handler(
     Json(request): Json<AiCompleteRequest>,
 ) -> Response {
     // One door, same as chat_handler: the box resolves the model, the request
-    // only gets to override it. Inline prose editing is the Chat slot's work.
+    // only gets to override it. Inline prose editing is the Standard slot's work.
     let model = match crate::api::model_choice::resolve_turn_model(
         &pool,
         request.model.as_deref(),

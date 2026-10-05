@@ -346,11 +346,11 @@ pub async fn write_year_article(pool: &PgPool, year: i32) -> Result<String> {
         "year",
         &crate::api::wiki_editor::standing_rules(pool).await?,
     )?;
-    // The Chat slot, as the day's narration uses: this is prose a person reads
+    // The Standard slot, as the day's narration uses: this is prose a person reads
     // on their own wiki, not a background summary.
     let article = crate::virtues_api::completion::system_completion(
         pool,
-        virtues_registry::models::ModelSlot::Chat,
+        virtues_registry::models::ModelSlot::Standard,
         "year_article",
         &system,
         &p,

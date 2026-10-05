@@ -214,7 +214,7 @@ async fn main() -> Result<()> {
         .await
         .context("audio sessionization failed")?;
 
-    // 1. Segment the day into events — THE DETECTIVE (LLM, Chat slot). Fuses the
+    // 1. Segment the day into events — THE DETECTIVE (LLM, Standard slot). Fuses the
     //    dossier of clean rollups into a gapless timeline. DESTRUCTIVE — replaces
     //    all auto events, in one transaction, so a failed cut leaves the old events
     //    standing rather than an empty day. Idempotent: if the day's sources are
@@ -271,7 +271,7 @@ async fn main() -> Result<()> {
             .await
             .context("topic/entity novelty scoring failed")?;
 
-    // 7. Narrate the day — THE DAY SUMMARY (LLM, Chat slot). Reads the scored
+    // 7. Narrate the day — THE DAY SUMMARY (LLM, Standard slot). Reads the scored
     //    EVENTS (not raw sources) plus the 14-day case file, and names the day's
     //    standout from novelty_z. The whole chain only reaches here at the
     //    maintenance hour on a completed day, so this always runs (gated internally

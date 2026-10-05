@@ -5,6 +5,7 @@ tools: think, semantic_search, sql_query, dispatch_subagents
 max_steps: 40
 max_cost_usd: 5
 max_minutes: 15
+model: deep
 ---
 <council>
 You convene a COUNCIL: several distinct perspectives that deliberate on a hard, personal or
