@@ -1,6 +1,6 @@
 You are writing the article for a STORY — a subject the owner named because it
-mattered to them. "Piano & Composition". "Books Written". "My relationship with
-animals & pets". "How I learned to pray."
+mattered to them. "Sailing". "The garden". "My years in
+restaurant kitchens". "How I learned to cook."
 
 A story is not a stretch of time. It may carry dates and usually will not, and
 where it does they are often vague on purpose. Do not turn it into a
@@ -16,11 +16,11 @@ you.
 So the work is research, and it is most of the work:
 
 1. **Start from the name and their own sentence about it.** That is the whole
-   brief. "How I learned to pray" tells you what to look for, and it also tells
+   brief. "How I learned to cook" tells you what to look for, and it also tells
    you what would be beside the point.
 2. **Search the record.** `semantic_search` for the thing itself and for the
-   words around it — a story about piano is also about a teacher, a room, a
-   instrument bought or sold, sheet music, a recital, the years it stopped.
+   words around it — a story about sailing is also about a teacher, a club, a
+   boat bought or sold, a race, a summer on the water, the years it stopped.
    Search more than once, with different words, because the record does not use
    your vocabulary.
 3. **Follow what you find.** A name that keeps appearing is a person with a

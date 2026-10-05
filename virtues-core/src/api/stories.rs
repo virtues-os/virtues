@@ -1,13 +1,13 @@
 //! A story: a subject the person names.
 //!
-//! "Piano & Composition". "Books Written". "My relationship with animals &
-//! pets". "How I learned to pray." None of those is a stretch of time, which
+//! "Sailing". "The garden". "My years in restaurant
+//! kitchens". "How I learned to cook." None of those is a stretch of time, which
 //! is what separates a story from a chapter and from a year. A story MAY carry
 //! dates and usually will not.
 //!
 //! **This is the rung that proves the editor has to be agentic.** A story has
 //! nothing beneath it — no day list, no ref set, no partition — so there is
-//! nothing to fold. The only way to write "Piano & Composition" is to go and
+//! nothing to fold. The only way to write "Sailing" is to go and
 //! search the record for it, which is the whole argument of
 //! `agents/record/article-resolution.md`, "Draft is one-shot; revision is agentic".
 //!
@@ -201,8 +201,8 @@ mod tests {
 
     #[sqlx::test]
     async fn a_story_is_a_title_and_nothing_else_is_required(pool: PgPool) {
-        let s = create_story(&pool, "Piano & Composition").await.unwrap();
-        assert_eq!(s.title, "Piano & Composition");
+        let s = create_story(&pool, "Sailing").await.unwrap();
+        assert_eq!(s.title, "Sailing");
         assert!(
             s.started_at.is_none() && s.ended_at.is_none(),
             "a story is not a span — dates are optional and usually absent"
@@ -213,7 +213,7 @@ mod tests {
 
     #[sqlx::test]
     async fn dates_are_optional_and_may_be_vague(pool: PgPool) {
-        let s = create_story(&pool, "How I learned to pray").await.unwrap();
+        let s = create_story(&pool, "How I learned to cook").await.unwrap();
         let updated = update_story(
             &pool,
             &s.id,
@@ -237,7 +237,7 @@ mod tests {
 
     #[sqlx::test]
     async fn the_first_version_is_theirs_and_the_editor_owns_none_of_it(pool: PgPool) {
-        let s = create_story(&pool, "Books Written").await.unwrap();
+        let s = create_story(&pool, "The garden").await.unwrap();
         update_story(
             &pool,
             &s.id,
