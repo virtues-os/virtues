@@ -7,6 +7,7 @@ pub mod ai_complete;
 pub mod assistant_profile;
 pub mod audit;
 pub mod events;
+pub mod attention;
 pub mod backup_status;
 pub mod auth;
 pub mod billing_state;

@@ -422,18 +422,25 @@ class ChatInstanceStore {
 
         if (entry.refCount <= 0) {
             // Start grace period before destruction
-            entry.cleanupTimeout = setTimeout(() => {
+            const sweep = () => {
                 // Double check refCount didn't go back up
-                if (entry.refCount <= 0) {
-                    // Let go of the wire. The box keeps the turn running on
-                    // its own (VIR-323); a view that comes back rejoins it
-                    // through `resumeStream`, so an orphan reader here would
-                    // only hold a socket nobody reads.
-                    void entry.chat.stop();
-                    this.instances.delete(conversationId);
-                    this.subagents.delete(conversationId);
+                if (entry.refCount > 0) return;
+                // A reply still arriving keeps its reader. This stream is the
+                // only thing the box counts as someone watching the turn
+                // (live_turn.rs), and a turn nobody watches is cancelled after
+                // five minutes: closing or unloading a tab mid-reply used to
+                // cut a long answer short. Once the reply ends, let go; a view
+                // that comes back reloads the stored transcript.
+                const status = entry.chat.status;
+                if (status === 'submitted' || status === 'streaming') {
+                    entry.cleanupTimeout = setTimeout(sweep, 5000);
+                    return;
                 }
-            }, 1000);
+                void entry.chat.stop();
+                this.instances.delete(conversationId);
+                this.subagents.delete(conversationId);
+            };
+            entry.cleanupTimeout = setTimeout(sweep, 1000);
         }
     }
 
