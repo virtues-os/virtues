@@ -97,20 +97,18 @@ are deliberately not in this repo.** They live in the private ops note alongside
 the App Review submission record. This file describes the *shape* of the box, not
 its coordinates.
 
-These are **AWS** facts. The demo box is still its own EC2 instance: the
-cloud consolidation of 2026-09-28 moved atlas and virtues-api to the
-dedicated server, and moving the demo there is listed as not yet done in
-[cloud-consolidation-plan.md](../plan/cloud-consolidation-plan.md). When it
-moves, this table, Provisioning steps 1–4 and the stop/EIP advice under
-[Between review rounds](#between-review-rounds) change with it.
+The demo box is a small VPS at the same provider as the cloud server (moved
+off AWS on 2026-10-05), with nothing else on it: a box install beside billing
+would mean a second Postgres, a port clash, and dev-auth owner access next to
+the billing service.
 
 | | |
 |---|---|
-| Instance | t4g.medium (4 GB, arm64), 30 GB gp3 |
-| Address | Elastic IP + a random `demo-<rand>.virtues.ch` Route 53 record |
-| Security group | 80/443 public, no SSH |
-| Access | SSM via an instance profile — no key pair |
-| Cost | ~$27/mo running, ~$6/mo stopped |
+| Machine | VPS, 2 vCPU / 4 GB / 40 GB, x86_64 |
+| Address | the VPS's fixed IPv4 + a random `demo-<rand>.virtues.ch` Route 53 record, and `demo.virtues.com` on the same address |
+| Firewall | ufw: 22, 80, 443 only — iroh's UDP port stays closed, so reach always goes via the relay |
+| Access | SSH, key-only, no root login |
+| Monitoring | `virtues-health` every ten minutes with a demo check file (box, sidecars, both re-anchor timers, and the public doors: review identity 200, both hostnames 401 without credentials); the re-anchor and reset units email on failure; the cloud server also probes the review hostname, because a dead box cannot report itself |
 
 An obscure hostname is not a security control — it only keeps opportunistic
 scanners away, and it does even that only while it stays unpublished. The real
@@ -123,17 +121,18 @@ row must produce a 429.
 
 ## Provisioning
 
-1. Launch t4g.medium (arm64 — both `x86_64` and `aarch64` are built), 30 GB
-   gp3, the SSM-enabled EC2 instance profile, SG with 80/443 open and 22
-   closed. Allocate an Elastic IP so DNS survives stop/start.
-2. Route 53 A record → the EIP.
+1. A VPS as in the table (both `x86_64` and `aarch64` releases are built),
+   reinstalled with an SSH key so no password is ever mailed; then key-only
+   sshd, no root login, ufw 22/80/443, unattended-upgrades.
+2. Route 53 A records for both hostnames → the VPS address (TTL 60 while
+   moving, so a switch takes effect in a minute).
 3. Caddy in front: `demo-<rand>.virtues.ch { reverse_proxy 127.0.0.1:8000 }`.
    Port 80 must stay open for the ACME http-01 challenge.
 4. 4 GB swap. 4 GB RAM is enough at rest (Postgres + `virtues` + two Q8_0 CPU
    sidecars ≈ 2.5–3 GB) but the seed index build wants headroom. Slow is fine
    here; OOM is not.
 5. Install `virtues` from any current release (`gh release list`), pinning it
-   with `VIRTUES_VERSION=vX.Y.Z`. Over SSM there is no TTY, and the installer
+   with `VIRTUES_VERSION=vX.Y.Z`. Over a non-interactive ssh or remote-run there is no TTY, and the installer
    asks two questions — so both answers have to arrive as environment:
 
    ```sh
@@ -208,8 +207,8 @@ row must produce a 429.
    rejection round adds more. Both re-anchor files read their anchor out of the
    data, so hourly is free: a run with nothing to do is one SELECT. Each
    re-anchor timer is `OnCalendar=hourly` with `Persistent=true` and
-   `OnBootSec=2min` — persistent and on-boot because this box is stopped
-   between rounds and must catch up when it comes back. Each unit is a
+   `OnBootSec=2min` — persistent and on-boot because a box that was down for a
+   reboot or a rebuild must catch up when it comes back. Each unit is a
    `Type=oneshot` with `User=postgres` running
    `psql -v ON_ERROR_STOP=1 -d virtues -f <file>`.
 
@@ -313,8 +312,15 @@ the reranker do run locally, CPU-only, and slowness is acceptable.
   forward to today, but never re-age a demo3y box by re-running `virtues seed`:
   that runs `demo_reanchor.sql` against it, which is the same fight step 7a
   masks the old timer to prevent.
-- **Stop**, don't terminate: the EBS volume, seed data, and review-code row all
-  survive, and the EIP keeps DNS valid.
+- **Leave it running.** A VPS bills the same stopped, the seed data and the
+  review-code row live on its disk, and its fixed address keeps DNS valid.
+- **Moving it** to another machine: install the same version, then carry the
+  database dump and `/var/lib/virtues/virtues.env` unchanged. The box's iroh
+  identity is a row in `box_secrets` sealed with `VIRTUES_ENCRYPTION_KEY`, so
+  the two together keep the reviewer's pairing; the `virtues-NNNN` name on
+  `/api/box/identity` comes from `/etc/machine-id` and changes with the
+  machine, which nothing pairs against. Copy Caddy's certificate directory
+  too, and the new box serves both hostnames the moment DNS points at it.
 - Revoke by clearing the env var and restarting, which retires the row. Rotating
   the var to a new code does the same and installs the replacement.
 - Watch `paired_from_ip` in the pairing audit log for anything unexpected.
