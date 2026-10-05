@@ -53,6 +53,9 @@ pub struct Stay {
     /// Resolved at read time: place ids can be merged, visit ids cannot.
     pub place_id: Option<String>,
     pub place_name: Option<String>,
+    /// Whether the person named the place; an unnamed one carries the
+    /// resolver's "Location …" and the view offers to name it.
+    pub place_is_named: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -101,7 +104,8 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
 
     let stays = sqlx::query(
         r#"SELECT v.id, v.started_at, v.ended_at, v.latitude, v.longitude,
-                  p.id AS place_id, p.name AS place_name
+                  p.id AS place_id, p.name AS place_name,
+                  COALESCE(p.is_named, false) AS place_is_named
            FROM data_location_visit v
            -- A visit can carry more than one place ref; the newest is the one
            -- resolution meant, and one visit must stay one stay.
@@ -131,6 +135,7 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
             longitude: r.try_get("longitude")?,
             place_id: r.try_get("place_id")?,
             place_name: r.try_get("place_name")?,
+            place_is_named: r.try_get("place_is_named")?,
         })
     })
     .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;

@@ -20,6 +20,9 @@
 	import { fetchDay, localDay, quietDay, stepDay } from '$lib/timeline/day';
 	import { deriveDay, joinDays, type Sources } from '$lib/timeline/derive';
 	import { getStreamHealth } from '$lib/api/client';
+	import { mergePlace, updatePlace, type NearbyPlace } from '$lib/wiki/api';
+	import type { DerivedWindow, VoiceWindow } from '$lib/timeline/inspector';
+	import type { LaneWindow } from '$lib/timeline/lanes';
 	import { cleanTrack, dropSpikes, flagHoles, splitTrack, toFixes, type Fix, type Line } from '$lib/timeline/track';
 	import { buildInspector, placeTitle, type InspectorPick, type InspectorSection } from '$lib/timeline/inspector';
 	import { anchorAt, positionAt, trackMetres } from '$lib/timeline/anchor';
@@ -393,6 +396,39 @@
 		})
 		.catch((e) => console.warn('[Timeline] stream health unavailable', e));
 
+	/** The loaded day as derived, so naming a place can redraw it in place. */
+	let loaded: { derived: DerivedWindow; voice: VoiceWindow[]; lw: LaneWindow; startMs: number; endMs: number } | null = null;
+
+	/** Redraw the list (and the day's lanes, when they are the day's) after a
+	 *  place changed, without reloading or moving the playhead. */
+	function redrawPlaces() {
+		if (!loaded) return;
+		const { derived, voice, lw, startMs, endMs } = loaded;
+		sections = buildInspector(derived, startMs, endMs, voice);
+		if (lanes.a === startMs && lanes.b === endMs) lanes = laneData(derived, voice, lw, startMs, endMs);
+	}
+
+	async function namePlace(placeId: string, name: string): Promise<boolean> {
+		if (!(await updatePlace(placeId, { name }))) return false;
+		const place = loaded?.derived.places.find((p) => p.id === placeId);
+		if (place) Object.assign(place, { place_name: name, is_named: true });
+		redrawPlaces();
+		return true;
+	}
+
+	async function mergeInto(placeId: string, into: NearbyPlace): Promise<boolean> {
+		if (!(await mergePlace(placeId, into.id))) return false;
+		const derived = loaded?.derived;
+		if (derived) {
+			const from = derived.places.find((p) => p.id === placeId);
+			if (!derived.places.some((p) => p.id === into.id) && from)
+				derived.places.push({ ...from, id: into.id, place_name: into.name, is_named: true });
+			for (const span of derived.spans) if (span.timeline_place_id === placeId) span.timeline_place_id = into.id;
+		}
+		redrawPlaces();
+		return true;
+	}
+
 	async function loadDay(slug: string) {
 		const mine = ++asked;
 		status = 'loading';
@@ -409,6 +445,7 @@
 		}
 		const bounds = { startMs: Date.parse(day.started_at), endMs: Date.parse(day.ended_at), zone: day.zone };
 		const { derived, voice, lanes: lw } = deriveDay(day, sources);
+		loaded = { derived, voice, lw, startMs: Date.parse(day.started_at), endMs: Date.parse(day.ended_at) };
 		const window = { points: day.points, before: day.last_point_before };
 		if (mine !== asked) return;
 		const { startMs, endMs } = bounds;
@@ -1063,6 +1100,8 @@
 	</div>
 
 	<TimelineInspector bind:this={inspector} {sections}
+		onname={namePlace}
+		onmerge={mergeInto}
 		{zone}
 		{playT}
 		{armed}
