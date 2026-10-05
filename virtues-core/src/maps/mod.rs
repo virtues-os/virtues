@@ -41,9 +41,11 @@ const WELL_KNOWN_MAPS_DIR: &str = "/var/lib/virtues/maps";
 /// Dev-only, relative to virtues-core, like the lake's (`data/` is gitignored).
 const DEV_MAPS_DIR_FROM_CORE: &str = "../data/maps";
 
-/// The credit the data's license requires on every map (ODbL).
-pub const ATTRIBUTION: &str =
-    "<a href=\"https://www.openstreetmap.org/copyright\" target=\"_blank\">&copy; OpenStreetMap</a>";
+/// The credit on every map: Protomaps, whose basemap build and styles draw
+/// it, and OpenStreetMap, whose data it is. The second is the one the data's
+/// license (ODbL) requires, so it stays whatever draws the tiles.
+pub const ATTRIBUTION: &str = "<a href=\"https://protomaps.com\" target=\"_blank\">Protomaps</a> \
+     <a href=\"https://www.openstreetmap.org/copyright\" target=\"_blank\">&copy; OpenStreetMap</a>";
 
 /// The maps directory: `VIRTUES_MAPS_DIR`, else the box path when
 /// `/var/lib/virtues` exists, else the dev path. Same precedence, for the same
