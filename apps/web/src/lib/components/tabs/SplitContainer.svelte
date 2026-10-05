@@ -205,7 +205,7 @@
 		role="separator"
 		aria-orientation="vertical"
 		tabindex={isSplitEnabled ? 0 : -1}
-	></div>
+	><span class="resize-grip" aria-hidden="true"></span></div>
 
 	<!-- Right Pane Shell: tab bar + background + click zone (no content rendered here) -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
@@ -405,8 +405,7 @@
 
 	/* Takes the accent and doubles in weight on approach — the same gesture the
 	   sidebar seam makes, because they are the same object in two places and a
-	   user who learns one has learned both. No grip: a grip would be a third
-	   object on a seam whose whole job is to be a line. */
+	   user who learns one has learned both. */
 	.resize-handle.visible::before {
 		content: "";
 		position: absolute;
@@ -432,8 +431,37 @@
 		transition: none;
 	}
 
+	/* The grip: a short pill centred on the line, so the seam reads as
+	   movable before the pointer finds it. Same shape and behaviour as the
+	   sidebar seam's grip. */
+	.resize-grip {
+		display: none;
+	}
+
+	.resize-handle.visible .resize-grip {
+		display: block;
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		width: 4px;
+		height: 32px;
+		transform: translate(-50%, -50%);
+		border-radius: 999px;
+		background: var(--color-foreground-subtle);
+		pointer-events: none;
+		z-index: 1;
+		transition: background-color 120ms var(--ease-premium);
+	}
+
+	.resize-handle.visible:hover .resize-grip,
+	.resize-handle.visible:focus-visible .resize-grip,
+	.resize-handle.dragging .resize-grip {
+		background: var(--color-primary);
+	}
+
 	@media (prefers-reduced-motion: reduce) {
-		.resize-handle.visible::before {
+		.resize-handle.visible::before,
+		.resize-handle.visible .resize-grip {
 			transition: none;
 		}
 	}
