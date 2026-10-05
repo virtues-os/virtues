@@ -80,10 +80,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | Some("sudo")
                 | Some("warm-models")
         );
+        // The data verbs (`cli::data`) print a tool's failure themselves, as
+        // their error; the tool's own WARN line would say it twice.
+        let data_verb = matches!(
+            std::env::args().nth(1).as_deref(),
+            Some("query")
+                | Some("search")
+                | Some("schema")
+                | Some("write")
+                | Some("applet")
+                | Some("page")
+                | Some("agent-key")
+                | Some("agent-exec")
+        );
         // The format (text on a terminal, JSON under systemd) and the field
         // vocabulary live in `observe`; the noise floor is this binary's own
         // judgment, so it stays here.
-        virtues::observe::init(if interactive { "warn" } else { "info" });
+        virtues::observe::init(if data_verb {
+            "error"
+        } else if interactive {
+            "warn"
+        } else {
+            "info"
+        });
 
         // No metrics exporter, and no continuous telemetry egress: the
         // running box reports nothing anywhere. All of it is box-local (see
@@ -683,10 +702,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ─── `virtues activate` ─────────────────────────────────────────────────
-    // Install what `prepare` staged. Like Upgrade, deliberately does NOT touch
-    // the DB here; the new binary's `migrate` does that after the flip.
+    // Install what `prepare` staged, and record how it went where Settings
+    // reads it. Like Upgrade, deliberately does NOT touch the DB here; the new
+    // binary's `migrate` does that after the flip.
     if let Some(Commands::Activate) = &cli.command {
-        match virtues::cli::upgrade::activate_prepared().await {
+        match virtues::cli::auto_update::activate_recorded().await {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: activate failed: {e}");
@@ -705,6 +725,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         }
+    }
+
+    // ─── `virtues agent-key` / `agent-exec` ─────────────────────────────────
+    // Neither opens the database. An agent key's file is a file, and the
+    // agent user it serves has no database role: its verbs go to the server.
+    if matches!(cli.command, Some(Commands::AgentKey { .. } | Commands::AgentExec { .. })) {
+        let outcome = match cli.command {
+            Some(Commands::AgentKey { cmd }) => virtues::cli::agent_key::manage(cmd).await,
+            Some(Commands::AgentExec { key }) => virtues::cli::agent_key::exec(key).await,
+            _ => unreachable!(),
+        };
+        if let Err(e) = outcome {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
+        return Ok(());
     }
 
     // DATABASE_URL (Postgres) must be set — no default. Fail loudly if missing.
@@ -948,6 +984,13 @@ fn maybe_reexec_as_service_user() {
         "configure-inference",
         "lake-adopt",
         "volumes",
+        // The data verbs (`cli::data`) ride the shared pool too.
+        "query",
+        "search",
+        "schema",
+        "write",
+        "applet",
+        "page",
     ];
     let Some(cmd) = std::env::args().nth(1) else { return };
     if !DB_COMMANDS.contains(&cmd.as_str()) {

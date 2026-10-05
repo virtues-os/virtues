@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 
 /// Default port: reads NOMAD_PORT_http env var (Nomad host networking),
 /// falling back to 8000 for local development.
-fn default_port() -> u16 {
+pub(crate) fn default_port() -> u16 {
     std::env::var("NOMAD_PORT_http")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -37,6 +37,149 @@ pub enum DeviceCommands {
     /// Print the pair code to bring a new device onto the allowlist.
     /// Alias for `virtues pair` scoped to the allowlist framing.
     Add,
+}
+
+/// `virtues agent-key <action>` — SSH keys for outside agents.
+#[derive(Subcommand)]
+pub enum AgentKeyCmd {
+    /// Let an agent (Claude Code, Codex) reach this box with a key.
+    ///
+    /// The key goes to its own user, `virtues-agent`, and can run only the
+    /// data verbs: query, search, schema, write, applet, page. No shell, no
+    /// forwarding, nothing else. Run with sudo.
+    Add {
+        /// The public key file (`.pub`), or `-` for stdin.
+        key: String,
+        /// A name for it, shown in `ls` and in the server's audit lines.
+        #[arg(long)]
+        name: String,
+    },
+
+    /// List agent keys.
+    #[command(alias = "list")]
+    Ls,
+
+    /// Remove an agent key. Its next connection is refused.
+    #[command(alias = "revoke")]
+    Rm {
+        name: String,
+    },
+}
+
+/// `virtues applet <action>` — read and change the box's applets.
+#[derive(Subcommand)]
+pub enum AppletCmd {
+    /// List applets, with each one's last run.
+    #[command(alias = "list")]
+    Ls {
+        /// Include archived applets (their `until` has been met).
+        #[arg(long)]
+        all: bool,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// Show one applet and its last ten runs.
+    Get {
+        /// The applet id, as `virtues applet ls` shows it.
+        id: String,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// Create or update an applet from a folder, and turn it on.
+    ///
+    /// Runs the check first and creates nothing when it finds anything. A
+    /// scheduled applet is turned on unless `--off`; one with a prompt and no
+    /// daily spend limit gets `max_llm_cost_per_day = 1.00`. Needs the virtues
+    /// server running on this machine.
+    Put {
+        /// The applet folder, or `-` for `setup_applet`'s JSON on stdin.
+        path: String,
+        /// Leave it turned off.
+        #[arg(long)]
+        off: bool,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// Turn an applet on.
+    On {
+        id: String,
+    },
+
+    /// Turn an applet off.
+    Off {
+        id: String,
+    },
+
+    /// Run an applet now. Count limits do not apply; spend limits do.
+    Run {
+        id: String,
+        /// For an applet that works on one day: YYYY-MM-DD.
+        #[arg(long)]
+        date: Option<String>,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// Check an applet against this box without creating anything.
+    ///
+    /// The same check chat runs before it creates an applet: cron shape, SQL
+    /// conditions EXPLAINed, schema DDL dry-run and drift, table names in the
+    /// prompt, limit keys. Takes an applet folder (`manifest.toml`,
+    /// `face/index.html`, `schema/NNNN_*.sql`) or `-` for `setup_applet`'s
+    /// JSON arguments on stdin. Exits 1 when there are findings.
+    Check {
+        /// The applet folder, or `-` for JSON on stdin.
+        path: String,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+}
+
+/// `virtues page <action>` — read and write pages.
+#[derive(Subcommand)]
+pub enum PageCmd {
+    /// Create a page. Its markdown comes from stdin when stdin is piped.
+    New {
+        /// The page title.
+        title: String,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// Replace text in a page, through the live document, so an open editor
+    /// sees the change.
+    Edit {
+        /// The page id.
+        id: String,
+        /// The exact text to find.
+        #[arg(long)]
+        find: String,
+        /// What to put in its place, or `-` for stdin.
+        #[arg(long)]
+        replace: String,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// Print a page's markdown.
+    Get {
+        /// The page id.
+        id: String,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+}
+
+/// The output switch every data verb takes. Without it the verb prints a
+/// table on a terminal and tab-separated lines when piped.
+#[derive(clap::Args, Clone, Copy)]
+pub struct OutputArgs {
+    /// Print the tool's JSON result instead of a table.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Subcommand)]
@@ -431,6 +574,93 @@ pub enum Commands {
         json: bool,
     },
 
+    /// Run a read-only SQL query over your data.
+    ///
+    /// Runs as the same restricted database role chat uses: `data_*` and
+    /// `wiki_*` tables, no secrets, 25 seconds at most. Pass `-` to read the
+    /// SQL from stdin. `virtues schema` lists what you can query.
+    Query {
+        /// The SELECT to run, or `-` for stdin.
+        sql: String,
+        /// Rows to return (max 200).
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// Search your data by meaning.
+    Search {
+        /// What to look for.
+        #[arg(required = true, num_args = 1..)]
+        text: Vec<String>,
+        /// Only records linked to this entity id: `person_…`, `place_…` or
+        /// `org_…` (repeatable).
+        #[arg(long = "entity")]
+        entities: Vec<String>,
+        /// Only these domains: document, email, message, calendar, chat,
+        /// transaction, transcription, page (repeatable).
+        #[arg(long = "domain")]
+        domains: Vec<String>,
+        /// Only records on or after this date (ISO 8601).
+        #[arg(long)]
+        after: Option<String>,
+        /// Only records before this date (ISO 8601).
+        #[arg(long)]
+        before: Option<String>,
+        /// Results to return (max 50).
+        #[arg(long, default_value_t = 10)]
+        limit: u32,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// List the tables you can query, or describe some of them.
+    Schema {
+        /// Tables to describe. With none, lists every queryable table.
+        tables: Vec<String>,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// Insert, update or delete rows in an applet's own tables.
+    ///
+    /// Runs as the applet writer role: `applet_*` schemas only, never your
+    /// record. Pass `-` to read the SQL from stdin. Needs the virtues server
+    /// running on this machine.
+    Write {
+        /// The statement to run, or `-` for stdin.
+        sql: String,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+
+    /// Manage the SSH keys outside agents use to reach this box.
+    AgentKey {
+        #[command(subcommand)]
+        cmd: AgentKeyCmd,
+    },
+
+    /// The forced command behind an agent key. sshd runs it; never by hand.
+    #[command(hide = true)]
+    AgentExec {
+        /// The key's name, from its `authorized_keys` line.
+        #[arg(long)]
+        key: String,
+    },
+
+    /// Read and change the box's applets.
+    Applet {
+        #[command(subcommand)]
+        cmd: AppletCmd,
+    },
+
+    /// Read and write pages.
+    Page {
+        #[command(subcommand)]
+        cmd: PageCmd,
+    },
+
     /// Report a crash to the Virtues cloud diagnostic endpoint.
     ///
     /// Invoked by systemd's `ExecStopPost=` hook. Reads `$EXIT_STATUS` and
@@ -520,11 +750,6 @@ pub enum Commands {
     /// DB-free composability check for appliance-vs-DIY (web status reads the
     /// same `inference_report::resolution_report`).
     Doctor,
-
-    /// Run the magnet: recompute centroids and attach matching material to
-    /// every project and story with `auto_add_materials` switched on.
-    #[command(hide = true)]
-    Magnet,
 
     /// Compute novelty scores for all days with events
     #[command(hide = true)]

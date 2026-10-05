@@ -48,15 +48,14 @@
 	let archivedOpen = $state(false);
 
 	const columns: Column<ProjectSummary>[] = [
-		{ key: 'name', label: 'Name', icon: PROJECT_ICON, width: '34%', minWidth: '180px' },
-		{ key: 'current_status', label: 'Note', icon: 'ri:sticky-note-line', width: '32%', minWidth: '160px', hideOnMobile: true },
-		{ key: 'chat_count', label: 'Chats', icon: 'ri:chat-3-line', width: '9%', minWidth: '70px', format: 'number' },
-		{ key: 'item_count', label: 'Items', icon: 'ri:stack-line', width: '9%', minWidth: '70px', format: 'number', hideOnMobile: true },
+		{ key: 'name', label: 'Name', icon: PROJECT_ICON, width: '52%', minWidth: '200px' },
+		{ key: 'chat_count', label: 'Chats', icon: 'ri:chat-3-line', width: '14%', minWidth: '70px', format: 'number' },
+		{ key: 'item_count', label: 'Items', icon: 'ri:stack-line', width: '14%', minWidth: '70px', format: 'number', hideOnMobile: true },
 		{
 			key: 'updated_at',
 			label: 'Updated',
 			icon: 'ri:time-line',
-			width: '16%',
+			width: '20%',
 			minWidth: '110px',
 			hideOnMobile: true,
 			getValue: (p) => formatRelativeTimestamp(p.updated_at)
@@ -116,14 +115,7 @@
 						<span class="name-text">{p.name}</span>
 					</span>
 				</td>
-				<td class="col-dim hide-mobile">
-					{#if p.current_status}
-						<span class="note-text">{p.current_status}</span>
-					{:else}
-						<span class="empty-cell">—</span>
-					{/if}
-				</td>
-				<td class="col-num">{p.chat_count || '—'}</td>
+<td class="col-num">{p.chat_count || '—'}</td>
 				<td class="col-num hide-mobile">{p.item_count || '—'}</td>
 				<td class="col-dim hide-mobile">{formatRelativeTimestamp(p.updated_at)}</td>
 			{/snippet}
@@ -142,10 +134,7 @@
 				<div class="card" style={`--room-accent: ${projectColor(p)}`}>
 					<div class="card-glyph"><ProjectGlyph project={p} size={18} inherit /></div>
 					<div class="card-name">{p.name}</div>
-					{#if p.current_status}
-						<div class="card-note">{p.current_status}</div>
-					{/if}
-					<div class="card-meta">{countsLine(p)}</div>
+<div class="card-meta">{countsLine(p)}</div>
 				</div>
 			{/snippet}
 		</UniversalDataGrid>
@@ -216,17 +205,7 @@
 	.col-num {
 		font-variant-numeric: tabular-nums;
 	}
-	.note-text {
-		display: -webkit-box;
-		-webkit-line-clamp: 1;
-		line-clamp: 1;
-		-webkit-box-orient: vertical;
-		overflow: hidden;
-	}
-	.empty-cell {
-		color: var(--color-foreground-subtle);
-	}
-	@media (max-width: 768px) {
+@media (max-width: 768px) {
 		.hide-mobile {
 			display: none;
 		}
@@ -267,17 +246,7 @@
 		font-weight: 550;
 		color: var(--color-foreground);
 	}
-	.card-note {
-		font-size: 0.8125rem;
-		line-height: 1.4;
-		color: var(--color-foreground-muted);
-		display: -webkit-box;
-		-webkit-line-clamp: 2;
-		line-clamp: 2;
-		-webkit-box-orient: vertical;
-		overflow: hidden;
-	}
-	.card-meta {
+.card-meta {
 		margin-top: auto;
 		padding-top: 4px;
 		font-size: 0.75rem;

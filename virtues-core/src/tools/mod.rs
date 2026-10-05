@@ -29,6 +29,7 @@ pub(crate) mod sql_query;
 pub(crate) mod sql_write;
 pub(crate) mod shell;
 pub(crate) mod sql_sudo;
+pub(crate) mod sudo_gate;
 mod page_editor;
 mod semantic_search;
 pub mod applet_schema;
@@ -127,6 +128,31 @@ const APPLET_RUN_ALLOWED_TOOLS: &[&str] = &[
 pub fn get_tools_for_applet() -> Vec<serde_json::Value> {
     tools_named(APPLET_RUN_ALLOWED_TOOLS)
 }
+
+/// The tools behind the CLI's data verbs (`virtues query`, `search`,
+/// `schema`, `applet`, `page`). Each verb is one of these run through the
+/// executor, so it gets the same role drop, timeout and arguments as chat;
+/// `cli::data` refuses anything not named here.
+pub(crate) const CLI_TOOLS: &[&str] = &[
+    "sql_query",
+    "semantic_search",
+    "list_applets",
+    "get_applet",
+    "get_page_content",
+    // `virtues applet check` only, which always sends `check_only`.
+    "setup_applet",
+];
+
+/// The tools behind the CLI's write verbs. These run in the server, not the
+/// CLI process (`server/api/console.rs` says why), and that door refuses
+/// anything not named here.
+pub(crate) const CLI_WRITE_TOOLS: &[&str] = &[
+    "create_page",
+    "edit_page",
+    "setup_applet",
+    "run_applet",
+    "sql_write",
+];
 
 /// The read-only research tools a Deep Research **subagent** (worker) may use. Explicit allow-list
 /// (not a category filter) so workers get pure research capability — no memory/profile writes, and

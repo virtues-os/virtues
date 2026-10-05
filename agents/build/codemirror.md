@@ -13,7 +13,7 @@ Decoration extensions (live preview, widgets, etc.)
 ```
 
 - **Source of truth**: Y.Text named `"content"` in the Yjs Doc
-- **Storage**: `yjs_state` BLOB in `app_pages` table (Yjs v1 encoded), `content` TEXT column materialized on save for search/fallback
+- **Storage**: `yjs_state` `bytea` in `app_pages` (Yjs v1 encoded), `content` TEXT column materialized on save for search/fallback
 - **Sync**: y-websocket → `/ws/yjs/{pageId}` → Rust yrs server with 2s debounced save queue
 - **Editor factory**: `codemirror/editor.ts` — `createCodeMirrorEditor()` (Yjs collab) + `createReadOnlyEditor()` (public pages)
 
@@ -44,16 +44,15 @@ Decoration extensions (live preview, widgets, etc.)
 | Code | `` `text` `` | `.cm-inline-code` mark, hides `` ` `` | `live-preview.ts` | Lezer `InlineCode` |
 | Strikethrough | `~~text~~` | `.cm-strikethrough` mark, hides `~~` | `live-preview.ts` | Lezer `Strikethrough` (GFM) |
 | Underline | `<u>text</u>` | `.cm-underline` mark, hides tags | `live-preview.ts` | Regex-based (not in Lezer) |
-| Entity Link | `[@Label](/type/id)` | Pill chip (icon + text) | `entity-links.ts` | Type-specific icon from URL prefix |
-| External Link | `[text](https://...)` | Favicon + text | `entity-links.ts` | Google favicon, globe SVG fallback |
-| Internal Link | `[text](/path)` | Colored link text | `entity-links.ts` | Click dispatches `page-navigate` event |
+| Highlight | `==text==` | highlight mark, hides `==` | `live-preview.ts` | Parsed by `highlight-parser.ts` |
+| Reference link | `[@Label](/type/id)`, `[text](https://...)`, `[text](/path)` | Plain underlined link (`.cm-ref-link`), `@` stripped | `ref-links.ts` | One inline density for every link; target shown on hover |
 
 ## Interaction Triggers
 
 | Trigger | Scope | What Opens | Result |
 |---------|-------|-----------|--------|
 | `/` | Block (line start / after whitespace) | Slash menu | Insert markdown syntax |
-| `@` | Inline (after whitespace / line start) | Entity picker | Insert `[@Label](/type/id)` |
+| `@` | Inline (after whitespace / line start) | Ref picker | Insert `[@Label](/type/id)` |
 | Text selection | Inline | Selection toolbar | Toggle marks (bold, italic, code, strikethrough, underline, link) |
 | Cursor in table | Block | Table widget UI | In-cell editing, hover strips for add row/col, drag to reorder |
 | Paste image/media | Block | — (auto) | Upload → `![name](url)` |
@@ -65,7 +64,7 @@ Decoration extensions (live preview, widgets, etc.)
 
 Two triggers, one swap gesture:
 
-- **`@`** = inline reference — always produces `[label](url)` rendered as a pill or link
+- **`@`** = inline reference — always produces `[label](url)`, rendered as a plain link
 - **`/`** = block command — inserts block structures (headings, lists, code) or embeds (`![alt](url)`)
 - **Right-click** = swap between reference and embed (plus Go to, Copy, Edit, Remove)
 
@@ -73,21 +72,32 @@ The `@` trigger searches entities (people, pages, places, orgs) and drive files 
 
 ## Link Rendering
 
-`entity-links.ts` classifies `[label](url)` links by URL pattern and renders each with a distinct widget:
+`ref-links.ts` (exported as `entityLinks`) renders every `[label](url)` — entity,
+file, internal path, or external URL — with one widget, `RefLinkWidget`: a
+plain underlined link that belongs to the prose (`.cm-ref-link`, dotted
+hairline, styled in `ref-links.css`). No pill, no chip, no favicon; the `@`
+marker is stripped for display. The target and its type surface in a hover
+preview (`refHoverPlugin`, `RefPreview.svelte` over `RefCard.svelte`), never in
+inline chrome. Entities have no block card: a legacy `![label](/person/…)`
+renders as the same inline link, `!` swallowed.
 
-| URL Pattern | Widget | Rendering | Click |
-|-------------|--------|-----------|-------|
-| `/person/`, `/page/`, `/org/`, `/place/`, `/day/`, `/year/`, `/source/`, `/chat/`, `/drive/` | `EntityLinkWidget` | Pill chip with type-specific iconify-icon | `page-navigate` event |
-| `http://`, `https://` | `ExternalLinkWidget` | Google favicon (globe SVG fallback) + text | Open in new tab |
-| Other `/` paths | `InternalLinkWidget` | Colored link text | `page-navigate` event |
+| Gesture | Effect |
+|---------|--------|
+| Plain click | Places the caret in the line; the text does not change |
+| ⌘/Ctrl-click, entity URL (`/person/`, `/page/`, `/org/`, `/place/`, `/day/`, `/year/`, `/source/`, `/chat/`, `/drive/`, `/space/`) | Opens the route beside the page |
+| ⌘/Ctrl-click, `http(s)://` | Opens in a new tab |
+| ⌘/Ctrl-click, other `/` path | Dispatches a `page-navigate` event |
+| Right-click or long-press | Link context menu |
 
-Active-line exclusion: when the cursor is on the link's line, the raw markdown `[label](url)` is shown instead of the widget.
+Touching a link with the editor focused reveals that one link's raw
+`[label](url)` in place; its neighbours stay rendered. The context menu's Edit
+opens a panel for fixing the label or URL without entering the text.
 
 ## Context Menu
 
-Right-click on any link pill or media embed opens a context menu with actions that operate on the raw markdown text.
+Right-click (or long-press) on any link or media embed opens a context menu with actions that operate on the raw markdown text.
 
-**Link context menu** (`entity-links.ts`):
+**Link context menu** (`ref-links.ts`):
 
 | Action | Effect |
 |--------|--------|
@@ -95,7 +105,7 @@ Right-click on any link pill or media embed opens a context menu with actions th
 | Open in New Tab | Always opens in new tab |
 | Copy link | Copy full URL to clipboard |
 | Turn into embed | Insert `!` before `[` — converts `[label](url)` → `![label](url)` |
-| Edit | Move cursor to link position, revealing raw markdown |
+| Edit | Open the link editor panel for the label and URL |
 | Remove | Delete entire `[label](url)` from document |
 
 **Media context menu** (`media-widgets.ts`):
@@ -151,23 +161,32 @@ AI edits are applied directly to Y.Text via Yjs — the document IS markdown, no
 2. Yjs sync pushes the change to the frontend editor in real-time
 3. User can revert via version history (snapshot saved before each AI edit)
 
-## Active-Line Exclusion
+## Reveal-on-Touch
 
-All decoration extensions follow the **Obsidian pattern**: decorations (hidden syntax, widgets) are NOT applied to the line the cursor is on. This lets the user see and edit raw markdown when focused, and see rendered preview when not.
+Syntax is hidden until the selection touches the construct, then it appears in
+place, dimmed, with the styling still applied — per construct, not per line.
+Inline marks (bold, italic, strikethrough, code, highlight, underline) reveal
+only the construct the selection is inside (`inline-marks.ts` answers where
+the marks are and whether the selection touches one; `live-preview.ts`
+renders from that). Block markers (heading `#`, quote `>`, list markers)
+reveal on the caret's line. Every reveal also requires the editor to **have
+focus**: the selection survives blur, so without that gate a blurred editor,
+an inactive split pane, or the read-only view would hold raw syntax on the
+caret line. Links reveal per link, like inline marks (see above).
 
 ## Extension Architecture
 
 | Extension | Type | Facet | Role |
 |-----------|------|-------|------|
 | `live-preview.ts` | ViewPlugin | decorations | Heading, bold, italic, code, strikethrough, underline, blockquote, HR, lists |
-| `entity-links.ts` | ViewPlugin | decorations | `[label](url)` → URL-aware widgets (entity pill, external favicon, internal link) + context menu |
+| `ref-links.ts` | ViewPlugin | decorations | `[label](url)` → one plain-link widget + hover preview + context menu |
 | `checkboxes.ts` | ViewPlugin | decorations | `- [ ]` / `- [x]` → interactive checkbox widgets |
 | `media-widgets.ts` | StateField | EditorView.decorations | `![alt](url)` → image/audio/video/file widgets + context menu |
 | `code-blocks.ts` | StateField | EditorView.decorations | Fenced code → header widget (language + copy) |
 | `tables.ts` | StateField | EditorView.decorations | GFM tables → interactive HTML `<table>` widgets |
 | `shiki-highlight.ts` | ViewPlugin | decorations | Shiki token-level syntax highlighting in code blocks |
 | `slash-commands.ts` | ViewPlugin | — | `/` detection → opens slash menu (callback-based) |
-| `entity-picker.ts` | ViewPlugin | — | `@` detection → opens entity picker (callback-based) |
+| `ref-picker.ts` | ViewPlugin | — | `@` detection → opens the ref picker (callback-based) |
 | `selection-toolbar.ts` | ViewPlugin | — | Text selection → floating toolbar (callback-based) |
 | `media-paste.ts` | domEventHandlers | — | Paste/drop → upload + insert markdown |
 | `keybindings.ts` | keymap | — | Mod-b, Mod-i, Mod-e, Mod-u, Mod-Shift-s |
@@ -185,10 +204,11 @@ Other: renders as file card (icon + name + extension badge + download)
 
 ## Entity Link URL Prefixes
 
-Entity links use the `[@Label](/type/id)` convention. Recognized prefixes:
+Entity links use the `[@Label](/type/id)` convention. Recognized prefixes
+(`ENTITY_PREFIXES` in `ref-links.ts`):
 
 ```
-/person/, /page/, /place/, /org/, /day/, /year/, /source/, /chat/, /drive/
+/person/, /page/, /org/, /place/, /day/, /year/, /source/, /chat/, /drive/, /space/
 ```
 
 ## Implementation Files
@@ -199,14 +219,14 @@ Entity links use the `[@Label](/type/id)` convention. Recognized prefixes:
 | `apps/web/src/lib/codemirror/theme.ts` | CodeMirror base theme |
 | `apps/web/src/lib/codemirror/theme.css` | Widget CSS (images, audio, video, code, tables) |
 | `apps/web/src/lib/codemirror/extensions/live-preview.ts` | Heading, bold, italic, code, strikethrough, underline, blockquote, HR, lists |
-| `apps/web/src/lib/codemirror/extensions/entity-links.ts` | Link → pill widget decorations |
+| `apps/web/src/lib/codemirror/extensions/ref-links.ts` | Link → plain-link widget, hover preview, context menu |
 | `apps/web/src/lib/codemirror/extensions/checkboxes.ts` | Interactive checkbox decorations |
 | `apps/web/src/lib/codemirror/extensions/media-widgets.ts` | Image/audio/video inline widgets |
 | `apps/web/src/lib/codemirror/extensions/code-blocks.ts` | Code block header widget |
 | `apps/web/src/lib/codemirror/extensions/tables.ts` | Interactive GFM table widget |
 | `apps/web/src/lib/codemirror/extensions/shiki-highlight.ts` | Shiki syntax highlighting in code blocks |
 | `apps/web/src/lib/codemirror/extensions/slash-commands.ts` | Slash command detection + default commands |
-| `apps/web/src/lib/codemirror/extensions/entity-picker.ts` | Entity picker trigger (`@`) |
+| `apps/web/src/lib/codemirror/extensions/ref-picker.ts` | Ref picker trigger (`@`) + `insertRef` |
 | `apps/web/src/lib/codemirror/extensions/selection-toolbar.ts` | Floating formatting toolbar on selection |
 | `apps/web/src/lib/codemirror/extensions/media-paste.ts` | Paste/drop media upload handler |
 | `apps/web/src/lib/codemirror/extensions/keybindings.ts` | Markdown formatting shortcuts |

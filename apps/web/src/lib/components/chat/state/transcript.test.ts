@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitTurn, stopReason, turnMovedPast } from "./transcript";
+import { splitTurn, stopReason, toUiMessage, turnMovedPast } from "./transcript";
 
 const text = (t: string) => ({ type: "text", text: t });
 const tool = (name: string) => ({ type: `tool-${name}`, toolCallId: name });
@@ -93,5 +93,42 @@ describe("stopReason", () => {
 		expect(stopReason({ maxSteps: true })).toBe("max_steps");
 		expect(stopReason({ budget: true, stopped: true })).toBe("stopped");
 		expect(stopReason({ unattended: true, interrupted: true })).toBe("interrupted");
+		expect(stopReason({ unavailable: true })).toBe("unavailable");
+	});
+});
+
+describe("toUiMessage", () => {
+	it("gives a reloaded tool part its own type, whichever spelling the box sent", () => {
+		const msg = toUiMessage(
+			{
+				id: "m1",
+				role: "assistant",
+				parts: [
+					{ type: "tool-invocation", toolName: "create_page", toolCallId: "c0", state: "output-available" },
+					{ type: "tool-web_search", toolName: "web_search", toolCallId: "c1", state: "output-available" },
+				],
+			},
+			new Map(),
+		);
+		expect(msg.parts.map((p: any) => p.type)).toEqual(["tool-create_page", "tool-web_search"]);
+	});
+});
+
+describe("splitTurn intent", () => {
+	const t = (s: string) => ({ type: "text", text: s });
+	const call = (n: string) => ({ type: `tool-${n}`, toolCallId: n });
+
+	it("is the line that introduced the call in flight", () => {
+		const turn = splitTurn([t("Checking your messages."), call("sql_query")], true);
+		expect(turn.intent).toBe("Checking your messages.");
+	});
+
+	it("goes quiet once the model makes a call without a word", () => {
+		const turn = splitTurn(
+			[t("Checking your messages."), call("sql_query"), call("web_search")],
+			true,
+		);
+		expect(turn.intent).toBe("");
+		expect(turn.narration).toEqual(["Checking your messages."]);
 	});
 });

@@ -10,7 +10,7 @@
  * matters: once a client caches a bundle, the box can be upgraded while the
  * client still runs the previous one, and reporting the box's number would
  * assert something the client never loaded. See agents/record/spa-delivery.md and
- * `mac-plan.md` invariant 4 ("no component asserts a fact it didn't observe").
+ * agents/record/mac-silent-outage.md ("no component asserts a fact it didn't observe").
  *
  * Runs as part of `pnpm build`, after vite, so it lands in the adapter's
  * output directory.

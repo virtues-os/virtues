@@ -76,7 +76,6 @@
 	import { toActivityLevels } from '$lib/wiki/activity';
 	import { getProfile } from '$lib/api/client';
 	import WikiHistory from '$lib/components/wiki/WikiHistory.svelte';
-	import LifelineCanvas from '$lib/components/wiki/LifelineCanvas.svelte';
 	import NotesRail from '$lib/components/wiki/NotesRail.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import { getKeepMenuItems } from '$lib/utils/contextMenuItems';
@@ -97,7 +96,7 @@
 	//   - the day page is its own route (`/day`), not a `/wiki/<section>` one,
 	//     so the panel's "Today" row points outside this view.
 
-	type Section = 'overview' | 'stories' | 'days' | 'years' | 'entities' | 'identity' | 'chapters' | 'history' | 'lifeline';
+	type Section = 'overview' | 'stories' | 'days' | 'years' | 'entities' | 'identity' | 'chapters' | 'history';
 
 
 	// The active section comes from the route; the sidebar rail does the linking.
@@ -134,6 +133,12 @@
 				? 'entities'
 				: (routeSegment as Section)
 	);
+
+	// The lifeline left the wiki for the Timeline, the rail's own room for a
+	// life laid out in time. Its old door lands there.
+	$effect(() => {
+		if (routeSegment === 'lifeline') windowShellStore.navigate('/timeline', { label: 'Timeline' });
+	});
 
 	// --- Years ---
 	//
@@ -415,10 +420,8 @@
 	let latestEntry = $state<{ slug: string; label: string; lede: string | null } | null>(null);
 	let standfirst = $state<string | null>(null);
 
-	// The lifeline strip: the whole record flattened to one row (§17.1), plus
-	// what the same response tells us for free — when the record starts, and
-	// which lanes have gone quiet ("where it's thin").
-	let stripDensity = $state<number[]>([]);
+	// The whole record's lanes, read for two facts: when the record starts,
+	// and which lanes have gone quiet ("where it's thin").
 	let recordSince = $state<string | null>(null);
 	let thinLanes = $state<string[]>([]);
 
@@ -447,7 +450,7 @@
 					listOnThisDay(),
 					listDays(getLocalDateSlug(recentStart), getLocalDateSlug(endDate)),
 					getNarrativeIdentity(),
-					// No window: the whole record, which is the point of the strip.
+					// No window: the whole record, to find where it starts.
 					getLifeline(560),
 					listHistory(6),
 					countOpenNotes(),
@@ -457,13 +460,6 @@
 			overviewChapters = chapters ?? [];
 
 			if (lifeline && lifeline.lanes.length) {
-				const n = lifeline.lanes[0]?.density.length ?? 0;
-				const sum = new Array(n).fill(0);
-				for (const l of lifeline.lanes) {
-					const p = l.peak || 1;
-					for (let i = 0; i < n; i++) sum[i] += l.density[i] / p;
-				}
-				stripDensity = sum;
 				recordSince = new Date(lifeline.from).toLocaleDateString('en-US', {
 					month: 'long',
 					year: 'numeric',
@@ -595,34 +591,7 @@
 					</p>
 				</header>
 
-				{#if stripDensity.length}
-					<!-- The whole span at maximum zoom-out, one row (§17.1): the
-					     shape of the record before you read a word of it. Click
-					     lands in the console. -->
-					<button
-						class="strip"
-						onclick={() => goTo('/wiki/lifeline')}
-						aria-label="Open the lifeline"
-					>
-						<svg
-							viewBox="0 0 {stripDensity.length} 40"
-							preserveAspectRatio="none"
-							class="strip-svg"
-						>
-							{#each stripDensity as d, i}
-								{#if d > 0}
-									{@const peak = Math.max(...stripDensity)}
-									{@const h = Math.max(1.5, Math.sqrt(d / peak) * 36)}
-									<rect x={i} y={40 - h} width="0.8" height={h} />
-								{/if}
-							{/each}
-						</svg>
-						<span class="strip-caption">The whole record. Open the lifeline →</span>
-					</button>
-				{/if}
-
-				<!-- Their own partition of their life, directly under the wire that
-				     draws it. The front page led with a heatmap of how much data
+				<!-- Their own partition of their life. The front page led with a heatmap of how much data
 				     arrived, which is a fact about the collector rather than about
 				     the life; the chapters are the first thing here the person
 				     actually wrote. -->
@@ -764,15 +733,6 @@
 						{/if}
 					</aside>
 				</section>
-			</div>
-		{:else if section === 'lifeline'}
-			<!-- Full bleed, and not by preference. Every other section here is
-			     prose and belongs in a 42rem measure; a lifeline is a viewport
-			     onto eight years, and every pixel of width is a week you can
-			     actually see. Putting it in the reading column threw away a
-			     third of the record's resolution. -->
-			<div class="bleed">
-				<LifelineCanvas />
 			</div>
 		{:else if section === 'history'}
 			<div class="measure">
@@ -1011,7 +971,7 @@
 		margin-bottom: 2.5rem;
 	}
 
-	/* 400 is the only weight this face has. A 500 request on JJannon resolves
+	/* 400 is the only weight this face has. A 500 request on the serif resolves
 	   back to the regular inside the family and returns silently, so the mast
 	   never once rendered the way the declaration read (agents/build/typography.md).
 	   The rank it was reaching for is already here: 32px in full foreground
@@ -1046,46 +1006,6 @@
 		font-size: 0.875rem;
 		color: var(--color-foreground-muted);
 		margin: 0;
-	}
-
-	/* The lifeline strip: one row, hairline-quiet, the whole span. */
-	.strip {
-		display: block;
-		width: 100%;
-		margin: 0 0 2.5rem;
-		padding: 0;
-		background: none;
-		border: none;
-		border-bottom: 1px solid var(--color-border);
-		cursor: pointer;
-		text-align: left;
-	}
-
-	.strip-svg {
-		display: block;
-		width: 100%;
-		height: 40px;
-	}
-
-	.strip-svg rect {
-		fill: var(--color-foreground-muted);
-		fill-opacity: 0.5;
-	}
-
-	.strip:hover .strip-svg rect {
-		fill: var(--color-primary);
-		fill-opacity: 0.55;
-	}
-
-	.strip-caption {
-		display: block;
-		padding: 0.375rem 0 0.5rem;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle);
-	}
-
-	.strip:hover .strip-caption {
-		color: var(--color-primary);
 	}
 
 	/* Each section is one grid row: the essay column and its margin. */
@@ -1158,18 +1078,6 @@
 	.measure {
 		max-width: 42rem;
 		padding: 1.5rem 0;
-	}
-
-	/* The one section that is not a document. Fills the room's width and its
-	   remaining height, so lanes get room to be read rather than sitting in a
-	   200px band under a page of white. */
-	.bleed {
-		display: flex;
-		flex-direction: column;
-		width: 100%;
-		height: 100%;
-		min-height: 0;
-		padding: 1rem 0;
 	}
 
 	.years {

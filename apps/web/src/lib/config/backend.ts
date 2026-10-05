@@ -2,12 +2,14 @@
  * Backend origin for API + WebSocket calls.
  *
  * Two deployment shapes share this frontend:
- *  - **Desktop (box-served):** the box serves the app, so `/api` and `/ws` are
- *    same-origin and `backendOrigin` stays empty — nothing changes.
- *  - **Mobile (bundled SPA):** the app is bundled inside the Tauri binary at its
- *    own `tauri://` origin and reaches the box over the in-process iroh loopback.
- *    The mobile shell injects `window.__VIRTUES_BACKEND_ORIGIN__ =
- *    'http://127.0.0.1:7117'`, and we route `/api` + `/ws` there.
+ *  - **Box-served** (a browser on the LAN, the box's panel, and the Windows and
+ *    Linux apps): the box serves the app, so `/api` and `/ws` are same-origin
+ *    and `backendOrigin` stays empty — nothing changes.
+ *  - **The app's own copy** (the phone, and the Mac since 2026-09-29): the app
+ *    carries the SPA at its own `virtues://` origin and reaches the box over
+ *    the in-process iroh loopback. The shell injects
+ *    `window.__VIRTUES_BACKEND_ORIGIN__ = 'http://127.0.0.1:7117'`, and we
+ *    route `/api` + `/ws` there.
  *
  * A single global fetch interceptor (installFetchProxy) rewrites the app's
  * `/api` calls, so the ~110 existing `fetch('/api/...')` sites need no edits.
@@ -29,15 +31,19 @@ export function getBackendOrigin(): string {
  * Absolute URL for a backend path that the browser resolves from MARKUP rather
  * than through `window.fetch` — `<iframe src>`, `<img src>`, `<video src>`,
  * CSS `url()`. The fetch shim below cannot see these: it wraps `window.fetch`,
- * and an attribute-driven load never goes through it. On mobile they would
- * otherwise resolve against the bundled `tauri://` origin, which serves no
- * backend routes, and fail silently (an empty iframe, a broken image).
+ * and an attribute-driven load never goes through it. In the app's own copy
+ * they would otherwise resolve against the `virtues://` origin, which serves
+ * no backend routes, and fail silently (an empty iframe, a broken image).
  *
- * No-op on desktop, where `backendOrigin` is empty and the path is already
- * same-origin.
+ * No-op where the box serves the app: `backendOrigin` is empty and the path
+ * is already same-origin.
  */
 export function backendUrl(path: string): string {
-  return backendOrigin ? backendOrigin + path : path;
+  // Only a root-relative path is the box's. A stored URL can also be a
+  // full `https://` address (an Unsplash cover, an external image) or a
+  // `data:`/`blob:` one, and those load as written.
+  if (!backendOrigin || !path.startsWith('/') || path.startsWith('//')) return path;
+  return backendOrigin + path;
 }
 
 /** Base WebSocket URL (y-websocket appends room/pageId). */
@@ -68,7 +74,10 @@ export function installFetchProxy(): void {
   // for any extension-less path — so the box-upgrade watcher never saw the box
   // go down and reported every successful phone-initiated upgrade as a
   // ten-minute failure, and the Software page's Box row rendered "—" on iOS.
-  const BACKEND_PREFIXES = ['/api', '/auth', '/webhook', '/health'];
+  // `/face` since 2026-09-29: an applet face's own files and query bridge are
+  // the box's, and a Mac or phone running its own copy would otherwise answer
+  // them from its own origin.
+  const BACKEND_PREFIXES = ['/api', '/auth', '/webhook', '/health', '/face'];
   const route = (p: string) => BACKEND_PREFIXES.some((pre) => p === pre || p.startsWith(pre + '/'));
 
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {

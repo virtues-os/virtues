@@ -5,9 +5,10 @@
  * server as `agentMode`, which picks the turn's tools and prompt
  * (`ChatMode::tools`, `agent::prompt`).
  *
- * `sudo` is the owner's bypass: a shell on the server with passwordless sudo,
- * and nothing asks before it runs. It lasts for one chat and starts off every
- * time a chat opens.
+ * `sudo` is the owner's admin mode: a shell on the server with passwordless
+ * sudo. Reads run; a change waits for Allow on the exact command
+ * (`tools::sudo_gate`). It lasts for one chat and starts off every time a chat
+ * opens.
  *
  * `local` runs a small model on the server's NPU and nowhere else. It is
  * offered only when the box says it supports it (`localModel` store), and only
@@ -44,7 +45,7 @@ export const AGENT_MODES: AgentMode[] = [
 	{
 		id: 'sudo',
 		name: 'Sudo',
-		description: 'Full access to the server, nothing asks first',
+		description: 'Full access to the server, asks before changing it',
 		icon: 'ri:terminal-box-line',
 		color: 'var(--color-error)'
 	},

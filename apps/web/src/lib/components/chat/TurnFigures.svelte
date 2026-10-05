@@ -16,11 +16,7 @@
 
 	let { parts }: Props = $props();
 
-	// A streamed part is typed `tool-code_interpreter`; a stored one, as a
-	// reload reads it back, is `tool-invocation` with the name in toolName.
-	const isCodeRun = (p: any) =>
-		p.type === "tool-code_interpreter" ||
-		(p.type === "tool-invocation" && p.toolName === "code_interpreter");
+	const isCodeRun = (p: any) => p.type === "tool-code_interpreter";
 
 	const figures = $derived(
 		parts

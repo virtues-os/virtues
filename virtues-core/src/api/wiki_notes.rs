@@ -217,7 +217,12 @@ pub struct ProposedNote {
     pub source_refs: Vec<String>,
 }
 
-/// Write a pass's notes, capped, and stamp the subjects it touched as dirty.
+/// Write a pass's notes, capped.
+///
+/// Nothing is stamped on the article. A note counts toward the article's
+/// revision once it is resolved, through the editor's evidence fingerprint
+/// (`wiki_editor::evidence_fingerprint`), which is measured when the editor
+/// runs rather than stamped on the way past.
 ///
 /// Returns how many were written. Anything past the cap is dropped and logged —
 /// the log line is the measurement that tells you whether the prompt's bar is
@@ -257,11 +262,6 @@ pub async fn write_machine_notes(
         .execute(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to write note: {}", e)))?;
-
-        // New evidence about a settled article. `wiki_articles.dirty_at` is
-        // authoritative for prose staleness — the 0033 `dirty_at` columns mean
-        // "new evidence about an object" and one of them is already taken by the
-        // magnet to mean a stale centroid. Do not conflate them.
 
         written += 1;
     }
@@ -374,8 +374,8 @@ mod tests {
         assert_eq!(written, 1, "the cited note still lands");
     }
 
-    /// Writing a note marks the subject's article stale, which is how the
-    /// maintenance pass learns there is anything to do.
+    /// Writing a note lands it where the editor's evidence fingerprint reads
+    /// it, and touches nothing on the article itself.
     #[sqlx::test]
     async fn a_note_stamps_the_article_dirty(pool: PgPool) {
         sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('p_1', 'Sarah')")

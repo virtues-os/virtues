@@ -156,6 +156,8 @@ export interface BoxRadio {
 	 * a crowded office still lands on the right one.
 	 */
 	openOwner(box?: NearbyBox): Promise<BoxWifiLink>;
+	/** Drop whatever Bluetooth connection is open. Never throws. */
+	disconnect(): Promise<void>;
 }
 
 // ─── the command surface this needs ─────────────────────────────────────────
@@ -197,14 +199,19 @@ export function boxLabel(name: string | null | undefined): string {
  */
 export const DEADLINE_MS = {
 	claim: 30_000,
-	scan: 35_000,
+	/** Connect (15s) plus the server's own scan (25s on desktop). */
+	scan: 45_000,
 	/** A join is bounded by the server's `nmcli` plus the client's 45s. */
 	join: 60_000,
 	grant: 30_000,
 	/** The server may take 45s + 15s; the clients wait 70s. */
 	pair: 80_000,
-	owner: 45_000
+	/** Connect, challenge and proof: 15 + 25 + 25s on desktop, 55s on iOS. */
+	owner: 75_000
 } as const;
+
+/** A listen of `seconds` gets this much slack before it counts as hung. */
+const DISCOVER_SLACK_MS = 10_000;
 
 function withDeadline<T>(p: Promise<T>, ms: number, onTimeout?: () => void): Promise<T> {
 	let timer: ReturnType<typeof setTimeout>;
@@ -290,9 +297,16 @@ function check<T extends Outcome>(r: T): T {
 	throw new BoxRadioError(code, r.error ?? "Your server couldn't do that.");
 }
 
-/** Drop the connection without caring whether that works. */
-function hangUp(): void {
-	void call('improv_disconnect').catch(() => {});
+/**
+ * Drop the connection, never throwing. Await it before the next connect: the
+ * native side keeps one connection, and a disconnect that lands late drops
+ * whichever connection is current by then, possibly the next server's.
+ */
+function hangUp(): Promise<void> {
+	return call('improv_disconnect').then(
+		() => {},
+		() => {}
+	);
 }
 
 function tauriLink(box: NearbyBox, purpose: 'setup' | 'owner'): BoxWifiLink {
@@ -378,9 +392,13 @@ const tauriRadio: BoxRadio = {
 	available: isTauri && (isIOS || isMacOS || isWindows || isLinux),
 
 	async discover(opts) {
-		const r = await call<{ boxes: Array<Omit<NearbyBox, 'state'> & { improvState: number }>; error?: string }>(
-			'improv_discover',
-			{ seconds: opts?.seconds ?? 4 }
+		const seconds = opts?.seconds ?? 4;
+		const r = await withDeadline(
+			call<{ boxes: Array<Omit<NearbyBox, 'state'> & { improvState: number }>; error?: string }>(
+				'improv_discover',
+				{ seconds }
+			),
+			seconds * 1000 + DISCOVER_SLACK_MS
 		);
 		// A scan that FAILED is not a scan that found nothing — say which.
 		if (r.boxes.length === 0 && r.error) throw new BoxRadioError('unavailable', r.error);
@@ -446,11 +464,13 @@ const tauriRadio: BoxRadio = {
 				// server that went quiet or out of range. Anything else (no
 				// pairing on this device, a stale app) will not change.
 				if (!['refused', 'timeout', 'not-found'].includes(last.code)) throw last;
-				hangUp();
+				await hangUp();
 			}
 		}
 		throw last ?? new BoxRadioError('not-found', 'No server nearby is asking for its owner.');
-	}
+	},
+
+	disconnect: hangUp
 };
 
 // ─── the dev fake ───────────────────────────────────────────────────────────
@@ -546,7 +566,8 @@ export function fakeBoxRadio(opts: FakeRadioOptions = {}): BoxRadio {
 			if (!target) throw new BoxRadioError('not-found', 'No server nearby is asking for its owner.');
 			await wait(900);
 			return link(target, 'owner');
-		}
+		},
+		async disconnect() {}
 	};
 }
 
@@ -565,7 +586,8 @@ const unavailable: BoxRadio = {
 	},
 	async openOwner() {
 		throw new BoxRadioError('unavailable', 'Bluetooth needs the Virtues app.');
-	}
+	},
+	async disconnect() {}
 };
 
 /** `?radio=fake` switches the fake on for this tab; `?radio=off` switches it off. */

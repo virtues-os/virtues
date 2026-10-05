@@ -23,7 +23,7 @@ import { collectCodeRanges, inCode } from './code-context';
 import { selectionTouches } from './inline-marks';
 import { onContextGesture } from './long-press';
 import { dragJustEnded, isMouseSelecting } from './mouse-freeze';
-import { getEntityTypeFromRoute } from '$lib/utils/refRoutes';
+import { getEntityTypeFromRoute, parseRef } from '$lib/utils/refRoutes';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import RefPreview from '$lib/components/RefPreview.svelte';
 import './ref-links.css';
@@ -32,13 +32,9 @@ import './ref-links.css';
 // URL Classification
 // =============================================================================
 
-const ENTITY_PREFIXES = [
-	'/person/', '/page/', '/org/', '/place/',
-	'/day/', '/year/', '/source/', '/chat/', '/drive/', '/space/',
-] as const;
-
+/** A link to a record (refRoutes' grammar), which renders as a ref pill. */
 function isEntityUrl(url: string): boolean {
-	return ENTITY_PREFIXES.some(p => url.startsWith(p));
+	return parseRef(url) !== null;
 }
 
 function isExternalUrl(url: string): boolean {
@@ -167,13 +163,14 @@ function showLinkContextMenu(
  * file, internal path, or external URL) renders as a plain underlined link that
  * belongs to the prose (Wikipedia-style): no pill, no chip, no favicon. The `@`
  * marker, if any, is stripped for display. Target/type is surfaced on hover (see
- * refHoverPlugin) and in the block embed — never in inline chrome.
+ * refHoverPlugin) — never in inline chrome.
  *
  * Click model: ⌘/Ctrl-click acts (external → new tab; entity → open beside;
  * other internal → page-navigate event). Plain click falls through to CM and
  * places the caret in the line — the text no longer changes when it does.
- * Editing the label or the URL is right-click → Edit, which opens a panel; the
- * raw `[label](url)` is not shown in the document at any point.
+ * Touching a link with the editor focused reveals its raw `[label](url)` in
+ * place (buildLinkDecorations); right-click → Edit opens a panel for fixing
+ * the label or URL without entering the text.
  */
 class RefLinkWidget extends WidgetType {
 	constructor(

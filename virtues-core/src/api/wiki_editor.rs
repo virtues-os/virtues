@@ -65,6 +65,19 @@ pub fn system_prompt(subject_type: &str, rules: &[String]) -> Result<String> {
     Ok(p)
 }
 
+/// What the editor agent is handed for one article: the rules it writes
+/// under, then the run's task and material.
+///
+/// The agent phase runs in the generic applet runner, whose system prompt
+/// knows nothing about the wiki. Without this, every revision and every first
+/// write of a chapter or story was made with no constitution, no brief and none
+/// of the owner's standing rules, while the task told it the rules were
+/// "above".
+pub async fn handover(pool: &sqlx::PgPool, subject_type: &str, task: &str) -> Result<String> {
+    let rules = system_prompt(subject_type, &standing_rules(pool).await?)?;
+    Ok(format!("{rules}\n\n---\n\n# This run\n\n{task}"))
+}
+
 /// The person's standing rules, which ride in every editor prompt.
 ///
 /// Returns a Result rather than swallowing: these rules are the person's own
@@ -583,12 +596,24 @@ pub const MAX_PER_RUN: i64 = 3;
 /// in the first place is a separate question with a separate budget, because
 /// "every entity on the box" is 226 articles nobody asked for on a five-month
 /// record.
+///
+/// Only kinds with a brief. The day and the life have none and the editor
+/// never writes them, yet both default to 'auto'. Selected here, every day
+/// older than its interval stayed due forever and sorted first, so the run's
+/// few slots filled with days the editor then skipped, and nothing it does
+/// write was ever reached unless someone pressed update now.
 pub async fn due_articles(pool: &sqlx::PgPool, limit: i64) -> Result<Vec<DueArticle>> {
+    let kinds: Vec<&str> = crate::api::subjects::SUBJECTS
+        .iter()
+        .filter(|s| s.brief.is_some())
+        .map(|s| s.kind)
+        .collect();
     sqlx::query_as::<_, DueArticle>(
         r#"
         SELECT id, subject_type, subject_id, page_id, machine_text, input_fingerprint
         FROM wiki_articles
         WHERE maintenance <> 'never'
+          AND subject_type = ANY($2)
           AND (last_human_edit_at IS NULL OR last_human_edit_at < now() - interval '6 hours')
           AND (
                 update_requested_at IS NOT NULL
@@ -601,6 +626,7 @@ pub async fn due_articles(pool: &sqlx::PgPool, limit: i64) -> Result<Vec<DueArti
         "#,
     )
     .bind(limit)
+    .bind(&kinds)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to select due articles: {e}")))
@@ -1075,6 +1101,20 @@ mod tests {
             ],
             "an inactive rule does not ride, and an avoid is never rendered as a topic"
         );
+    }
+
+    #[sqlx::test]
+    async fn the_editor_agent_is_handed_the_rules_before_the_task(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO wiki_rules (id, kind, rule, active) VALUES ('rule_1', 'avoid', 'my brother', true)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let h = handover(&pool, "chapter", "REVISE this article.").await.unwrap();
+        assert!(h.starts_with(CONSTITUTION), "the constitution leads");
+        assert!(h.contains(CHAPTER_BRIEF), "then the kind's brief");
+        assert!(h.contains("Do not write about my brother."), "then the owner's rules");
+        assert!(h.ends_with("REVISE this article."), "and only then the task");
+        assert!(handover(&pool, "day", "x").await.is_err(), "no brief, no hand-over");
     }
 
     #[test]
@@ -1683,6 +1723,40 @@ mod tests {
         assert!(!got.contains(&off), "maintenance 'never' means never");
         assert!(!got.contains(&resting), "inside its interval");
         assert!(got.contains(&due));
+    }
+
+    #[sqlx::test]
+    async fn days_never_crowd_out_the_kinds_the_editor_writes(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('person_f', 'Fen')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        seed(&pool, "person_f", "auto", Some(90)).await;
+        // Older days than the person's last edition, so they would sort first.
+        for d in 1..=3 {
+            let day = format!("day_2026-01-0{d}");
+            sqlx::query("INSERT INTO wiki_days (id, date) VALUES ($1, $2::date)")
+                .bind(&day)
+                .bind(format!("2026-01-0{d}"))
+                .execute(&pool)
+                .await
+                .unwrap();
+            let a = crate::api::wiki_articles::create_article(&pool, "day", &day, &day, "A day.")
+                .await
+                .unwrap();
+            sqlx::query("UPDATE wiki_articles SET last_written_at = now() - interval '200 days' WHERE id = $1")
+                .bind(&a.id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let got: Vec<String> = due_articles(&pool, 1)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|a| a.subject_type)
+            .collect();
+        assert_eq!(got, ["person"], "a kind with no brief is never due");
     }
 
     #[sqlx::test]

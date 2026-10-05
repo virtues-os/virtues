@@ -1,9 +1,8 @@
 # Deployment & Runtime Architecture
 
 > How Virtues ships and runs. Companion to
-> [`relay-control-plane.md`](../archive/relay-control-plane.md) (how a paired device reaches
-> the box; `networking-relay-tee.md` is the superseded pre-iroh ADR)
-> and [`entitlement.md`](entitlement.md) (the cloud wall).
+> [`open-relay.md`](../record/open-relay.md) (how a paired device reaches the
+> box) and [`entitlement.md`](entitlement.md) (the cloud wall).
 
 ---
 
@@ -13,7 +12,7 @@
 
 | Tier | What it is | How it ships | Privilege |
 |---|---|---|---|
-| **Home box** (DIY + appliance) | `virtues` binary (+ `virtues-qnnd` on NPU boards) | `curl -sSL https://virtues.com/sh \| sudo sh` → systemd units | Rootless throughout — no privileged component |
+| **Home box** (DIY + appliance) | `virtues` binary (+ `virtues-qnnd` on NPU boards, or `virtues-embed` / `virtues-rerank` llama-server sidecars) | `curl -sSL https://virtues.com/sh \| sudo sh` → systemd units | Runs as the `virtues` user; see [Privilege](#privilege) |
 | **Cloud sidecar** (Virtues-operated) | `atlas` + `virtues-api` services | Docker images on one dedicated server + Caddy | `docker run`, no orchestrator |
 | **Clients** | Web UI (SvelteKit), iOS app, Mac collector | Static site / App Store / signed pkg | None |
 
@@ -30,19 +29,21 @@ That's it. No Compose, no Quadlet, no Kubernetes, no Nomad anywhere in the produ
 redirect(302, 'https://github.com/virtues-os/virtues/releases/latest/download/bootstrap.sh');
 ```
 
-`releases/latest` resolves to the newest **stable** (non-prerelease) release, so the one-liner never serves an `edge` build. Testers opt into edge with `virtues upgrade --pre` (or `virtues.com/sh-pre`).
+`releases/latest` is whichever release GitHub flags Latest. `release-linux.yml` claims that flag explicitly for a stable box tag, and the Mac, Windows and Linux-desktop workflows publish with `make_latest: false`, so the one-liner serves the newest stable box release and never a prerelease. Testers opt into prereleases with `virtues upgrade --pre` (or `virtues.com/sh-pre`).
 
-Bootstrap downloads the platform-specific `virtues-installer` binary from the latest GitHub Release, sha-verifies it, and execs it. The installer is idempotent and does, in order:
+Bootstrap downloads the platform-specific `virtues-installer` binary from the latest GitHub Release, sha-verifies it, and execs it. The installer is idempotent; its order is `tools/virtues-installer/src/flow.rs`:
 
-1. **Pick the package manager** (`apt` for Debian/Ubuntu, `dnf` for Fedora) and install: `postgresql-18` + `postgresql-18-pgvector`, `avahi-daemon`, `avahi-utils`, `libnss-mdns`, `ca-certificates`, `curl`.
-2. **Resolve the latest release tag** from `https://api.github.com/repos/virtues-os/virtues/releases/latest`, download the `virtues-<ver>-<arch>-linux.tar.gz` tarball + its `.sha256` from the matching GitHub Release, verify the checksum, extract the `virtues` binary to `/usr/local/bin/`.
-3. **Set hostname** to `virtues` (skip with `VIRTUES_KEEP_HOSTNAME=1`) and drop `/etc/avahi/services/virtues.service` so the box advertises itself on the LAN as `_https._tcp` on `virtues.local`.
-4. **Create the `virtues` system user** that owns the daemon, with a home at `/var/lib/virtues/`.
-5. **Provision the database**: `createdb virtues` and `CREATE EXTENSION vector`. Generate a `VIRTUES_ENCRYPTION_KEY` if `/etc/virtues/env` doesn't already have one.
-6. **Install + enable the systemd unit** `/etc/systemd/system/virtues.service` (runs `/usr/local/bin/virtues` as user `virtues`, with `EnvironmentFile=/etc/virtues/env`).
-7. **Print next steps** — start the service, run `virtues link` for the login URL, optional `virtues subscribe`.
+1. **System packages.** `apt` (Debian/Ubuntu, adding the PGDG repo) or `dnf` (Fedora): Postgres 18 + pgvector, `avahi-daemon`, `avahi-utils`, `libnss-mdns`.
+2. **mDNS.** Set the hostname to `virtues` (skip with `VIRTUES_KEEP_HOSTNAME=1`) and drop `/etc/avahi/services/virtues.service`, advertising `_http._tcp` on port 8000.
+3. **Appliance only:** move the fresh Postgres cluster onto the data disk before it holds anything.
+4. **User and database.** Create the `virtues` system user and the data dir (default `/var/lib/virtues`), then the Postgres role, database, `vector` extension and the NOLOGIN separation roles the migrations expect.
+5. **Binary.** Resolve the release, verify the tarball against its `.sha256`, stage it into a release slot under `/usr/local/share/virtues/releases/` and flip the `current` link (`download.rs`; `virtues upgrade` and `rollback` work within that layout).
+6. **Local inference.** The QNN NPU daemon (`virtues-qnnd`) on a Dragon, the CPU llama-server sidecars (`virtues-embed`, `virtues-rerank`) in bundled mode, nothing for manual endpoints. Then libpdfium.
+7. **Config.** Write the install manifest and the env file `<data dir>/virtues.env` (generating `VIRTUES_ENCRYPTION_KEY` only if it is absent), run migrations, and write `/etc/systemd/system/virtues.service` (`User=virtues`, `EnvironmentFile=-<data dir>/virtues.env`, `server --port 8000`).
+8. **Appliance only:** the first-boot unit (installed with the service unit), then the appliance profile: kiosk display unit, bluetooth for BLE provisioning, unattended security upgrades.
+9. **Start** with `systemctl enable` + `restart`, so a reinstall replaces a running old binary. Run the health check, then exec `virtues init` as the `virtues` user (skipped with `--no-init`).
 
-The user's only interactive step is opening the printed URL in a browser. No `make` commands. No `.env` editing. Subscription is opt-in and decoupled from install.
+No `make` commands and no `.env` editing. Subscription is opt-in and decoupled from install.
 
 ### Why native and not containers
 
@@ -50,36 +51,29 @@ The earlier plan was Podman + Quadlet on the appliance (rationale was "rootless 
 
 - **Quadlet adds a layer we don't need.** systemd already gives us restart-on-failure, dependency ordering, and per-unit security hardening (`ProtectSystem=`, `PrivateTmp=`, `CapabilityBoundingSet=`). Wrapping that in Podman wrappers in Quadlet wrappers in systemd was tower-of-leaky-abstractions.
 - **Native Postgres is simpler.** Postgres-in-container needs volume mounts, init hooks, healthchecks; native Postgres is one apt package with a vendor-maintained systemd unit.
-- **The privileged WG daemon doesn't benefit from containerization.** It needs `NET_ADMIN` against the host kernel either way; the bridge-vs-host networking dance Quadlet exists to manage is the *exact* problem we're avoiding by being on the host.
-- **Distros we target ship modern enough kernels** (Debian 13 trixie ships kernel 6.10+) for kernel WireGuard, so we don't need userspace `wireguard-go` in a container.
+- **The box drives its own host.** Upgrades flip release slots, the appliance claims disks and runs a display, and the web terminal is a shell on the machine. A container would have to be granted all of that back.
 
 The container trade-off makes sense in the cloud (multi-tenant, immutable infra, deploy via image push). It doesn't make sense on a single-tenant box you own.
 
 ---
 
-## Privilege: nothing is rootful
+## Privilege
 
-The box runs **one unprivileged service**. `virtues.service` runs as
-`User=virtues` with no capabilities; on NPU boards `virtues-qnnd.service` joins
-it, also unprivileged. There is no `NET_ADMIN` component and nothing that needs
-`/dev/net/tun`.
+`virtues.service` runs as `User=virtues` with no capabilities, and so do the
+inference sidecars. Reach is iroh over a relay: the box dials outbound, so no
+component needs `NET_ADMIN` or `/dev/net/tun`.
 
-> **This section used to describe a privilege split**, because reach was
-> WireGuard: a minimal rootful `virtues-wireguard` daemon (`crates/virtues-wg`)
-> owned `wg0`, the reconcile loop, the netlink IPv6 watcher, and the
-> mDNS/SSDP multicast functions, coordinating with the rootless app through the
-> DB rather than IPC. **All of it is gone.** Reach is iroh over a relay — the box
-> dials *outbound* and needs no kernel networking privileges at all, which is
-> what let the privileged component be deleted rather than merely shrunk. See
-> [`relay-control-plane.md`](../archive/relay-control-plane.md).
->
-> The only trace left in the codebase is retirement code: `cli/upgrade.rs`
-> disables and removes a leftover `virtues-wireguard.service` on boxes upgrading
-> from a build that had one. That is deliberate and should stay until no such
-> box remains.
+That is not the same as unprivileged. The installer grants the `virtues` user
+passwordless sudo (`/etc/sudoers.d/virtues`), because the account has no
+password and the owner's admin shell is the auth-gated web terminal running as
+that user; the unit sets `NoNewPrivileges=false` so that works. The boundary is
+therefore authentication to the box, not the uid. Code the box did not ship
+(imported applets) runs under `systemd-run` with `NoNewPrivileges=yes` so it
+cannot take that route to root; see [architecture.md](architecture.md#dispatch).
 
-The security argument that motivated the split still holds in its stronger
-form — *risk ≈ privilege × attack surface*, and the privilege term is now zero.
+`cli/upgrade.rs` disables and removes a leftover `virtues-wireguard.service`
+from boxes upgrading off a build that had one; keep it until no such box
+remains.
 
 ---
 
@@ -87,10 +81,9 @@ form — *risk ≈ privilege × attack surface*, and the privilege term is now z
 
 `avahi-daemon` is a stock distro package the installer enables, and the
 installer drops `/etc/avahi/services/virtues.service` so the box advertises
-itself as `_https._tcp` on `virtues.local`. Discovery is therefore Avahi's job,
-not ours — there is no Virtues-owned multicast code and no host-networked
-process. The app binds a single explicit port (`:8000` HTTP, no TLS surface),
-unicast only.
+itself as `_http._tcp` on port 8000 at `virtues.local`. Discovery is therefore
+Avahi's job, not ours — there is no Virtues-owned multicast code. The app binds
+a single explicit port (`:8000` HTTP, no TLS surface), unicast only.
 
 SSDP is gone with the pinhole wizard: there is no port to forward, so there is
 no router to detect.
@@ -111,7 +104,26 @@ Why one server and not a managed platform: cost, unmetered bandwidth for the map
 
 ### Monitoring
 
-Both servers run `virtues-health` every ten minutes and email the operator (through Resend) when something changes and once a day while it stays wrong. It checks RAID members, SMART health and wear, disk space, failed systemd units, both containers, the public `/health` endpoints, backup age and WAL archiving, and certificate expiry. Each server also checks the other's public endpoints, because a dead server cannot report itself. A failed backup or map cut emails immediately (`OnFailure=`), as does an `mdadm` RAID event. Docker logs are capped (`local` driver, 5 × 20 MB).
+Both servers run `virtues-health` every ten minutes and email the operator (through Resend) when something changes and once a day while it stays wrong. It checks RAID (a degraded or missing array, mirrors that disagree after a scrub, `mdmonitor` not running), SMART health and wear, disk space, failed systemd units, both containers, the public `/health` endpoints, backup age and WAL archiving, and certificate expiry. Each server also checks the other's public endpoints, because a dead server cannot report itself. A failed backup or map cut emails immediately (`OnFailure=`), as does an `mdadm` failure event (a failed or missing disk, a degraded array); the monthly scrub's progress events are dropped unless it finds a mismatch. Docker logs are capped (`local` driver, 5 × 20 MB).
+
+---
+
+## Installer env divergence
+
+Dev and CI both provision Postgres more generously than a box does, so an
+install-path bug can pass both and still stop a real box from booting:
+
+| where | the `virtues` role | separation roles (`virtues_face_reader`, `virtues_applet_writer`) |
+|---|---|---|
+| dev (`Makefile`) | `LOGIN CREATEDB CREATEROLE` | pre-created |
+| CI (`ci.yml`) | the service's superuser | pre-created by a setup step |
+| a box (`install.rs`) | `createuser --no-createrole` | pre-created as `postgres` by `provision_separation_roles()`, `WITH ADMIN OPTION` |
+
+A migration that needs a cluster privilege the box's role lacks passes locally
+and in CI and then aborts at pool connect on a box, which exits the server. So
+green CI is not evidence the installer works, and when an install-path failure
+shows up in CI, fix the installer, not the workflow. A new cluster role goes
+into `provision_separation_roles()` in the same change as its migration.
 
 ---
 
@@ -167,8 +179,8 @@ to it.
 
 - `docker-compose.yml` (deleted — orphaned by native install)
 - `deploy/quadlet/` (deleted — orphaned by native install)
-- `deploy/wireguard.Dockerfile` **and the WG daemon itself** (`crates/virtues-wg`,
-  `virtues-wireguard.service`) — deleted with the move to the relay
+- `deploy/wireguard.Dockerfile`, `crates/virtues-wg`, and any privileged
+  networking daemon — reach is iroh over the relay
 - Nomad job files (gone — replaced by `docker run` on the cloud server)
 
 The cloud `services/{atlas,virtues-api}/Dockerfile` are the only Dockerfiles that still matter.

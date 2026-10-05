@@ -21,6 +21,9 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         // Timeline day (location chunks for movement map)
         .route("/api/timeline/day/:date", get(timeline_get_day_handler))
+        // The Timeline: one local day whole, and which days have a record
+        .route("/api/timeline/days/:date", get(timeline_day_handler))
+        .route("/api/timeline/recorded", get(timeline_recorded_handler))
         // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
         .route("/api/today/:date/streams", get(today_streams_handler))
         // Home-page loops — weather · upcoming calendar · unnamed-place backlog
@@ -64,20 +67,12 @@ pub fn routes() -> Router<AppState> {
             get(lifeline_handler),
         )
         .route(
-            "/api/wiki/lifeline/ground",
-            get(lifeline_ground_handler),
-        )
-        .route(
             "/api/wiki/lifeline/clock",
             get(lifeline_clock_handler),
         )
         .route(
             "/api/wiki/lifeline/feed",
             get(lifeline_feed_handler),
-        )
-        .route(
-            "/api/wiki/lifeline/processed",
-            get(lifeline_processed_handler),
         )
         .route(
             "/api/wiki/history",
@@ -419,30 +414,6 @@ pub async fn lifeline_handler(
     )
 }
 
-/// Where a window was spent — the location lane's second view.
-pub async fn lifeline_ground_handler(
-    State(state): State<AppState>,
-    Query(q): Query<LifelineQuery>,
-) -> Response {
-    let (span_from, span_to) = match crate::api::lifeline::corpus_span(state.db.pool()).await {
-        Ok(s) => s,
-        Err(e) => return error_response(e),
-    };
-    let parse = |s: Option<String>, fallback: chrono::DateTime<chrono::Utc>| {
-        s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
-            .map(|d| d.with_timezone(&chrono::Utc))
-            .unwrap_or(fallback)
-    };
-    api_response(
-        crate::api::lifeline::get_ground(
-            state.db.pool(),
-            parse(q.from, span_from),
-            parse(q.to, span_to),
-        )
-        .await,
-    )
-}
-
 /// Time-of-day against date — the lifeline's primary band.
 pub async fn lifeline_clock_handler(
     State(state): State<AppState>,
@@ -497,31 +468,6 @@ pub async fn lifeline_feed_handler(
             lanes,
             q.limit.unwrap_or(50),
             q.offset.unwrap_or(0),
-        )
-        .await,
-    )
-}
-
-/// What Virtues has interpreted inside a window — days and events.
-pub async fn lifeline_processed_handler(
-    State(state): State<AppState>,
-    Query(q): Query<LifelineQuery>,
-) -> Response {
-    let (span_from, span_to) = match crate::api::lifeline::corpus_span(state.db.pool()).await {
-        Ok(s) => s,
-        Err(e) => return error_response(e),
-    };
-    let parse = |s: Option<String>, fallback: chrono::DateTime<chrono::Utc>| {
-        s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
-            .map(|d| d.with_timezone(&chrono::Utc))
-            .unwrap_or(fallback)
-    };
-    api_response(
-        crate::api::lifeline::get_processed(
-            state.db.pool(),
-            parse(q.from, span_from),
-            parse(q.to, span_to),
-            q.limit.unwrap_or(80),
         )
         .await,
     )
@@ -1161,6 +1107,31 @@ pub async fn wiki_delete_auto_events_handler(
             .into_response(),
         Err(e) => error_response(e),
     }
+}
+
+/// One local day of the Timeline (`YYYY-MM-DD`): its bounds and zone, stays,
+/// track, nights, conversations, steps and calendar.
+pub async fn timeline_day_handler(State(state): State<AppState>, Path(date): Path<String>) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(d) => api_response(crate::api::timeline::get_day(state.db.pool(), d).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TimelineDaysQuery {
+    pub from: chrono::NaiveDate,
+    pub to: chrono::NaiveDate,
+}
+
+/// The days in `from`..=`to` (`YYYY-MM-DD`, at most 62) with a location fix or
+/// a recorded conversation: the Timeline month's dots.
+pub async fn timeline_recorded_handler(State(state): State<AppState>, Query(q): Query<TimelineDaysQuery>) -> Response {
+    let span = (q.to - q.from).num_days();
+    if !(0..62).contains(&span) {
+        return error_response(Error::InvalidInput("to must be on or after from, at most 62 days on".into()));
+    }
+    api_response(crate::api::timeline::recorded_days(state.db.pool(), q.from, q.to).await)
 }
 
 /// Get timeline location chunks for a day (movement map)

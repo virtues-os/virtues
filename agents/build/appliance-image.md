@@ -1,35 +1,7 @@
 # The appliance image — how a Dragon becomes a product
 
 > How a Radxa Dragon Q6A goes from a board in a box to a unit a customer can
-> plug in. Written 2026-08-17, after reading the boot chain off a live board
-> rather than off the docs — which described a different layout.
->
-> **Corrected the same day:** the first draft of this document said "eMMC"
-> throughout. The lab board has no eMMC populated at all — `mmc0`, the eMMC
-> controller, has no device on it — and boots from a **microSD card**. Every
-> conclusion below survived the correction; several got stronger. The mistake
-> is recorded rather than quietly fixed because it is the kind that repeats:
-> `mmcblk1` looks like an eMMC device name and is not one, and the only way to
-> know is to ask (`/sys/block/mmcblk1/device/type` → `SD`).
->
-> **Corrected 2026-08-20**, after an eMMC-spec look-up and a fresh read of
-> Radxa's docs — two factual claims below were wrong. Following this document's
-> own practice, the body is fixed and the mistakes recorded here, because they
-> are the kind that repeat:
->
-> - **The Q6A CAN boot from the NVMe.** Radxa documents NVMe as a first-class OS
->   target, and the firmware boots SD/eMMC/USB/UFS/NVMe (documented order
->   USB > SD > NVMe > eMMC > UFS). "Does not boot from the NVMe" was true only of
->   *our* setup — the lab board's NVMe carries no ESP, so the firmware falls
->   through to the card. An NVMe with its own ESP + loader entry should boot on
->   its own; the "twenty minutes on the bench" test below is being run now, and
->   if it passes, NVMe-for-both (no card in the BOM) reopens the SD-boot
->   conclusion here.
-> - **eMMC is a removable module, not soldered and not simply absent.** The Q6A
->   has a shared eMMC/UFS module socket (press-to-click); the lab board just has
->   none fitted. eMMC modules (16/32/64 GB) are ordered separately, and the SKUs
->   differ by RAM, not storage. So "a dead eMMC is an RMA" below is wrong for
->   this board — an eMMC module is swappable like a card.
+> plug in, written against the boot chain as measured on hardware.
 >
 > Companion to [onboarding.md](onboarding.md) (what the owner does),
 > [deployment.md](deployment.md) (how the software ships), and
@@ -37,105 +9,70 @@
 
 ## The one thing to know first
 
-**As we ship it, the Q6A boots from an ESP on the microSD card** — not from the
-NVMe. That ESP holds systemd-boot, the kernel, the initrd and the device tree.
-This is a property of *our layout*, not a firmware limit (see the 2026-08-20
-correction above): the firmware can boot NVMe, but only from an ESP, and the
-lab board's NVMe carries none — so the firmware falls through to the card. The
-NVMe there only supplies the root filesystem, named by UUID in a loader entry
-that also lives on the card.
+**Units ship NVMe-for-both: one NVMe carries the boot chain, the OS and the
+owner's data.** There is no microSD card in the unit.
 
-Measured on the lab board:
+The Q6A's UEFI lives in SPI flash on its own chip, and boots whichever medium
+carries an ESP (documented order USB > SD > NVMe > eMMC > UFS). Shipping boards
+arrive with no OS on internal storage, so flashing is a manufacturing step we
+perform. Storage facts that are easy to get wrong:
 
-```
-mmcblk1 (microSD, 29 GiB, on mmc1)    nvme0n1 (119 GiB)
-├─p1   16M vfat  /config          ← Qualcomm boot config (vendor; never touch)
-├─p2    1G vfat  /boot/efi        ← ESP: systemd-boot + kernel + initrd + DTB
-└─p3  28.1G ext4                  ← the stock Ubuntu root
-                                      └─p1  119.2G ext4  /  ← root, moved here
-                                                             by hand on this box
-```
+- **An NVMe with its own ESP boots on its own** — verified on the bench with
+  the card pulled. A board whose NVMe carries no ESP falls through to the card,
+  which is the only reason it can look as if the NVMe cannot boot.
+- **eMMC is a removable module, not soldered.** The Q6A has a shared eMMC/UFS
+  module socket; SKUs differ by RAM, not storage. We fit none.
+- **`mmcblk1` is not an eMMC.** It looks like one and is the microSD; ask
+  `/sys/block/mmcblk1/device/type` (→ `SD`).
 
-`efibootmgr` reports exactly one entry — `\EFI\systemd\systemd-bootaa64.efi` on
-card p2 — and the NVMe carries a single partition with no ESP. `mmc0` (the eMMC
-controller) enumerates no device: this board has **no eMMC module fitted**. The
-Q6A has a removable eMMC/UFS module socket, not soldered eMMC (see the
-2026-08-20 correction above); the lab board's socket is simply empty.
+## The layouts
 
-Two consequences fall out, and every decision below is downstream of them:
+`virtues-firstboot.sh` handles two layouts, told apart by where `/` is mounted
+from (§1-NVMe runs first; the classic claim skips itself once `$DATA_DIR` is
+mounted):
 
-1. **Flashing only the NVMe cannot boot a virgin board.** The kernel is not on
-   the disk you flashed. The card is the boot medium and must be prepared.
-2. **The kernel and its modules can drift apart silently.** `/lib/modules/<ver>`
-   travels with the root filesystem; the matching kernel travels with the card.
-   Put root on the NVMe, image the two at different times, and you get a box
-   that boots into a rootfs with no modules for its kernel.
+| Layout | Boot + root | `/var/lib/virtues` | Claimed on first boot by |
+|---|---|---|---|
+| **NVMe-both** (ships) | NVMe `p1 config + p2 ESP + p3 root` | NVMe `p4`, GPT name + fs label `virtues-data` | carving p4 from the space past root, growing it to the disk's end |
+| **Card + NVMe** | microSD `p1 config + p2 ESP + p3 root` | the whole separate NVMe | the `for disk` loop, on a blank disk |
 
-Consequence 2 is the argument for keeping root **on the card**, where the stock
-Radxa image puts it. Someone moved it to the NVMe on the lab board by hand and
-added `RadxaOS-nvme.conf` to do it — a loader entry that declares
-`version 6.18.2-99-qcom` while pointing at the `6.18.2-3-qcom` kernel, a
-sort-key hack to win the default. `kernel-install` regenerates loader entries on
-every apt kernel upgrade and will not preserve it. Flashing the stock image and
-leaving root where it lands avoids all of this.
+**Why NVMe-both.** One medium per unit instead of two. The kernel, initrd, DTB
+and the root filesystem that holds `/lib/modules/<ver>` travel together, so
+kernel/module skew is impossible by construction — on the card layout the
+kernel lives on the card's ESP and the modules on root, and imaging the two at
+different times boots a kernel with no modules. The press flow is flashing an
+NVMe over a USB-C adapter from a Mac: no board needed to flash, no EDL, no
+per-board firmware step.
 
-## The layout we ship
+**What is still split: data from the OS, by partition.** Every continuous write
+— Postgres, the lake, the journal, backups, applet state — lands on the
+`virtues-data` partition, and the master image carries the OS partitions only
+(`cut-image.sh` drops the data partition from the GPT). Each unit carves its
+own, so there is no shared data UUID to coordinate.
 
-**Split by write rate, not by size.** The card is the weakest storage on the
-board — microSD endurance under database load is the classic appliance killer,
-and the installer's own `storage.rs` already warns about it in exactly those
-words. The NVMe is fast, replaceable, and has real endurance. So:
+**The trade.** On the card layout, a dead or unseated NVMe leaves the OS
+booting and the panel saying *"I can't find my storage disk. Your record is on
+it, not lost."* (`data_disk.rs`). On NVMe-both a dead NVMe is a dark box; the
+"Storage disconnected" state still covers a data partition that failed to
+claim or mount.
 
-| Medium | Holds | Write rate |
-|---|---|---|
-| **microSD** | `/config`, the ESP, and the **root filesystem**: OS, `virtues` binary, web assets, models | once per release |
-| **NVMe** | `/var/lib/virtues` — Postgres, the lake, the journal, backups, applet state | continuous |
+**The first-boot claim has one trap worth knowing.** The image ships an fstab
+`LABEL=virtues-data` line, and `/` is mounted shared, so the instant a
+partition carries that label systemd mounts it over `$DATA_DIR` — shadowing the
+root-side seed mid-copy, and propagating into any parent bind taken earlier. The
+partition is therefore made under a temporary label (`virtues-seeding`), seeded
+through a *private* bind, and `e2label`ed to `virtues-data` only when the seed
+is complete. A partition already labelled `virtues-data` is adopted, never
+re-made or re-seeded: it may hold the owner's record.
 
-This inverts what the lab board does today, and the inversion is the point.
-
-**Why not NVMe-only root** (what the lab board runs): a box whose NVMe is dead,
-unseated, or never fitted becomes a black screen with no way to tell anyone what
-is wrong. That is exactly the "dead and unrecoverable for support" case. With
-the OS on the card the same box boots, the panel comes up, and it says *"I can't
-find my storage disk. Your record is on it, not lost."* (`data_disk.rs`) — a
-mail-out instead of an RMA.
-
-**Why not card-only:** 29 GiB total, and the database plus the lake would fill
-it and then wear it out. Getting every continuous write off the card is the
-whole point of the split, and it matters *more* on SD than it would have on
-eMMC, not less.
-
-**Why this is also the simplest manufacturing story:** the ship image is the
-card — small, identical across units, one `dd` target, and writable in bulk with
-a card duplicator. No EDL, no USB-C flashing, no per-board firmware step. The
-NVMe ships blank and is claimed on first boot (`virtues-firstboot.sh`), so there
-is no shared root UUID to coordinate and no kernel/module skew possible.
-
-**A removable boot medium is a fine support story.** A dead card is a mail-out
-and a screwdriver. (An earlier draft contrasted this with "a dead eMMC is an
-RMA" — but the Q6A's eMMC is a *removable module*, not soldered, so it is
-swappable too; see the 2026-08-20 correction above.) Since almost nothing
-writes to the boot medium after install, the endurance objection that would
-argue for faster storage mostly evaporates.
-
-> **BOM question — answered 2026-08-18.** Shipping boards arrive with **no OS
-> on internal storage**. The Q6A carries pre-installed SPI boot firmware (UEFI)
-> on a separate chip to run the boot process, but the operating system is ours
-> to supply — so flashing is a manufacturing step we perform, and the
-> card-duplicator story in this document holds.
->
-> One thing that follows and is NOT yet tested: with UEFI in SPI, a board may be
-> able to boot an NVMe that carries its own ESP, which would remove the microSD
-> from the BOM entirely. The lab board boots from the card (`efibootmgr` shows a
-> single entry on card p2, and the NVMe has no ESP), but that is how this board
-> was set up, not a proof it is the only way. Worth twenty minutes on the bench
-> before the first production run — it is the difference between one medium per
-> unit and two.
+**Boot entries are generated, never hand-edited.** `kernel-install` regenerates
+loader entries on every apt kernel upgrade and preserves nothing written by
+hand.
 
 ### Moving the writes
 
 Three things write continuously, and each needed pointing at the data disk
-explicitly. Two are done; one is not.
+explicitly.
 
 | What | Where it lands by default | How it gets moved |
 |---|---|---|
@@ -146,7 +83,7 @@ explicitly. Two are done; one is not.
 ### The Postgres move, in detail
 
 It is the largest and busiest of the three — a WAL flush per transaction,
-forever — so it is the one the card most needs to be rid of.
+forever — so it is the one the OS medium most needs to be rid of.
 
 **A symlink, not `data_directory`.** Debian's `postgresql.conf` has a
 `data_directory` setting and pointing it at the data disk is the obvious move.
@@ -172,9 +109,9 @@ after installing Postgres and before `provision_db`, so the cluster being
 copied is a fresh `initdb` with nothing in it. Run later and it would be
 relocating the owner's record.
 
-**On a fresh unit the cluster is built, not inherited.** The image is the card,
-so it carries the symlink but not the disk it points at — every unit's NVMe is
-blank. `virtues-firstboot.sh` therefore claims the disk and then
+**On a fresh unit the cluster is built, not inherited.** The image carries the
+OS partitions only, so it carries the symlink but not the data it points at —
+every unit's data partition starts empty. `virtues-firstboot.sh` therefore claims the disk and then
 `pg_dropcluster` + `pg_createcluster`s a vanilla cluster on it, creates the
 `virtues` role and database, and stops there. Migrations are deliberately *not*
 run at first boot: `virtues server` already runs them at startup, and one
@@ -214,16 +151,15 @@ The second is the likelier failure on a virgin unit (no NVMe fitted, or the
 blank-disk check declining), and there the dependency resolves to the root mount
 and is trivially satisfied. That is why the drop-in also carries an `ExecStartPre` — but one CONDITIONED on
 fstab declaring a data disk. Asking `mountpoint -q` flatly bricks a board whose
-root is already the NVMe and whose state root is a directory on it, which is
-exactly what the lab board is; running the installer on it would have left
-Postgres refusing to start with nothing saying why. The panel's "Storage disconnected" state checks mount-ness
+root is already the NVMe and whose state root is a plain directory on it (a
+DIY install on an NVMe-root board): Postgres would refuse to start with nothing
+saying why. The panel's "Storage disconnected" state checks mount-ness
 directly and so covers both from the start.
 
 **Deprovision removes the cluster,** because it is per-unit state — it is where
-the record lived. It has to: on the master the data dir is a plain directory on
-the card (the master never had a claimed NVMe), so a surviving cluster would
-ship inside every image under a path each unit then hides with a mount and
-never reads.
+the record lived. Wherever the master's data dir sits on the OS medium, a
+surviving cluster would ship inside every image under a path each unit then
+hides with a mount and never reads.
 
 ## Building the image
 
@@ -237,28 +173,30 @@ sudo VIRTUES_VERSION=v0.3.1 sh tools/build-dragon.sh
 What it does, and what you would otherwise be doing by hand:
 
 ```
- 1. Flash a stock Radxa image to the microSD           (per master, once)
+ 1. Flash a stock Radxa image to the boot medium        (per master, once)
  2. Boot it, install Virtues                            curl virtues.com/sh | sudo sh
  3. Verify the box works                                virtues doctor
  4. Strip per-unit identity                             sudo virtues deprovision
  5. Prove it is stripped                                sudo virtues image-check
  6. Power off WITHOUT booting again                     sudo poweroff
- 7. Image the microSD                                   dd
+ 7. Image the boot medium                               tools/cut-image.sh
 ```
+
+The script finds the boot medium from where `/boot/efi` is mounted rather than
+naming one, so the same script builds either layout.
 
 Steps 1-2 are yours; the script starts at the `apt` and does the rest, stopping
 twice for a human: once to confirm it is about to destroy this board's identity,
-and once to make you actually walk the setup flow before the card is sealed.
+and once to make you actually walk the setup flow before the master is sealed.
 Nothing it runs tests onboarding, and onboarding is the entire product — a
 master that installs cleanly and cannot be set up is the most expensive thing
-to discover after pressing a hundred cards.
+to discover after pressing a hundred units.
 
-Step 5 is new and is the one that was missing. `deprovision` prints
-"safe to image" and nothing ever re-read the disk — so an operator who booted
-the box once more (to check something, to be sure) shipped a master whose
-machine-id and SSH host keys had been re-minted, with no signal that anything
-was wrong. `virtues image-check` is read-only, exits non-zero on any finding,
-and is meant to be the last line of a manufacturing script:
+Step 5 exists because `deprovision` printing "safe to image" is not proof: an
+operator who boots the box once more (to check something, to be sure) ships a
+master whose machine-id and SSH host keys have been re-minted, with no signal
+that anything is wrong. `virtues image-check` is read-only, exits non-zero on
+any finding, and is meant to be the last line of a manufacturing script:
 
 ```bash
 sudo virtues deprovision --yes && sudo virtues image-check && sudo poweroff
@@ -271,8 +209,8 @@ connections **in either place they live** · no wifi password left in
 · no leftover `/var/lib/postgresql.pre-move` · no Postgres cluster on the disk,
 or if there is one, no `virtues` database in it · the lake is empty.
 
-Three of those were added on 2026-08-17, after the first run on real hardware,
-and each existed because a remedy and its check disagreed about where to look:
+Three of those exist because a remedy and its check once disagreed about where
+to look:
 
 **The wifi password was not where either of them looked.** On Ubuntu,
 NetworkManager is a netplan *renderer*, not the system of record. Joining a
@@ -280,16 +218,15 @@ network writes `/etc/netplan/90-NM-<uuid>.yaml` holding the SSID, the password
 in plain text, and on a corporate network the 802.1X identity; NM's own profile
 directory stays empty and the copy it runs from lives in `/run`, which is
 tmpfs. So deprovision wiped an empty directory, reported success, and
-image-check inspected the same empty directory and signed the card off. The lab
-board's corporate wifi account would have shipped readable on every unit.
+image-check inspected the same empty directory and signed the master off — with
+the build board's corporate wifi account readable on every unit.
 
 **The journal vacuum could not have worked.** journald names its directory
 after the machine-id, and deprovision cleared machine-id one step *before*
 vacuuming — so `journalctl` answered "No journal files were found", freed 0 B,
-and 520 MB of the master's history stayed on the card while the tick printed.
-The result had been discarded, so nothing noticed for as long as the code
-existed. The gate that caught it was added the same afternoon and fired on its
-first run.
+and the master's history stayed on the image while the tick printed, because
+the result was discarded. Deprovision now vacuums before clearing machine-id,
+and image-check reads the journal itself.
 
 **Tailscale's `tailscaled.state` is a node key** — every clone would join the
 tailnet as the same node. It is flagged rather than removed: logging out a
@@ -303,8 +240,8 @@ both need a path, one of them now owns the constant and the other imports it.
 ### Cutting the artifact
 
 Everything above happens on the board and ends at `poweroff`. What follows —
-card out, `dd`, compress, checksum, record — is `tools/cut-image.sh`, run on
-the host with the card in a reader:
+medium out, `dd`, compress, checksum, record — is `tools/cut-image.sh`, run on
+the host with the NVMe in a USB adapter (or a card in a reader):
 
 ```bash
 sudo sh tools/cut-image.sh /dev/disk4 v0.3.1
@@ -315,10 +252,16 @@ It refuses the obvious system disks, makes you retype the device, asks whether
 ext4 and the host may be a Mac, so it records an operator assertion rather than
 guessing), then reads and compresses in one pass and writes three files that
 must travel together: the `.img.zst`, its `.sha256`, and a `.json` record
-naming the tag, the base OS image and the card size.
+naming the tag, the base OS image and the medium size.
 
-**Zero the free space on the board first** (`fstrim`, or fill-and-delete).
-`dd` reads the card whole, so otherwise the image carries gigabytes of noise —
+On an NVMe-both master it parses the GPT first: the read stops after the OS
+partitions and the `virtues-data` partition is dropped from the staged image
+(this needs docker). Any parse doubt falls back to a whole-device read, which
+is always correct, merely slower. Shrinking runs as the user
+(`tools/shrink-image.sh`), because its docker loop fails under sudo.
+
+**Zero or trim the free space on the board first** (`build-dragon.sh` runs
+`fstrim`). A whole-device read otherwise carries gigabytes of noise —
 including everything deprovision just deleted, still recoverable.
 
 Store masters **privately**, and keep every one you ship. The image contains
@@ -347,53 +290,24 @@ password to customers.
 All five are invisible on the bench and unfixable in the field. That asymmetry
 is why the check is a hard gate rather than a warning.
 
-## The M.2 → USB flasher
+## The M.2 → USB adapter
 
-Under this layout the flasher is **not** part of manufacturing. Every unit's
-NVMe ships blank and is claimed on first boot, so there is nothing to write to
-it. The flasher's job is **field repair and recovery**: image a replacement
-NVMe with a known-good data skeleton, or read a customer's disk when their box
-will not boot.
-
-That is a better use for it than the alternative, which would have required
-per-unit coordination of a shared root filesystem UUID.
+On NVMe-both it **is** the manufacturing step: the master is flashed onto each
+unit's NVMe over a USB-C adapter from the host, the NVMe is fitted, and the
+unit carves its own data partition on first boot. It is also field repair: image
+a replacement NVMe, or read a customer's disk when their box will not boot.
 
 ## Open — needs the bench
 
-Three things cannot be settled by reading code, in the order they gate the plan.
+**A power-cycle test with the data partition missing.** Confirm that a unit
+whose `virtues-data` partition cannot be claimed or mounted still boots,
+Postgres refuses to start (the conditioned `ExecStartPre`), and the panel says
+*"Storage disconnected"* rather than reporting itself healthy.
 
-**1. Does a `dd`'d microSD boot on a board it was not imaged on?**
-Twenty minutes with two boards, and it de-risks the entire manufacturing plan.
-The firmware in `/config` and the ESP have to travel correctly. If they do not,
-step 7 above needs a per-board firmware flash over USB-C (`rsetup` / EDL) before
-the card goes in — which would change manufacturing from "duplicate cards" to
-"touch every board", so it is worth knowing early.
+## The vendor OS updater is masked
 
-**2. Can the NVMe be made self-contained?**
-Partition it `p1 = ESP` (with `\EFI\BOOT\BOOTAA64.EFI` and its own loader
-entries) `+ p2 = root`, and see whether the Q6A's EDK2 enumerates NVMe via the
-removable fallback path. If it does, the kernel, initrd, DTB and root travel
-together, kernel/module skew becomes impossible by construction, and the M.2
-flasher becomes the *entire* per-unit process. Worth knowing even though the
-recommended layout does not need it — it is the fallback if question 1 goes
-badly.
-
-**3. A real power-cycle test of the first-boot cluster build.**
-The Postgres move is written and the guards are in place, but the path that
-matters most has only been reasoned about: image a unit, boot it with a blank
-NVMe, and confirm `pg_createcluster` runs before Postgres is wanted, the role
-and database appear, and `virtues server` migrates into them. Then do it again
-with the NVMe physically absent and confirm the box boots, Postgres refuses to
-start, and the panel says *"Storage disconnected"* rather than reporting itself
-healthy.
-
-## Two things to fix on the master while you are in there
-
-**`systemd-sysupdate.timer` is enabled and failing.** That is Radxa's own OS
-auto-updater — a second, self-updating release channel underneath ours, which
-is precisely what we rejected snap Chromium for. Mask it in the appliance
-profile.
-
-**The hand-edited loader entry.** `RadxaOS-nvme.conf` will not survive a
-kernel upgrade. Whatever the layout ends up being, the boot entry needs to be
-generated rather than hand-held, or pinned with the kernel package held.
+`systemd-sysupdate` is Radxa's own OS auto-updater — a second, self-updating
+release channel underneath ours, which is precisely what we rejected snap
+Chromium for. The installer masks its timers and services
+(`tools/virtues-installer/src/install.rs`), masked rather than disabled so a
+distro package update cannot re-enable them.

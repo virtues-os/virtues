@@ -516,8 +516,15 @@ async fn activate(
     // channel switch). That prepared release is still downloaded, still valid,
     // and still the thing the box was about to install — dropping it because an
     // unrelated upgrade happened to run would throw away 120MB for nothing.
-    if layout.prepared_slot().as_deref() == Some(slot) {
-        layout.clear_prepared();
+    //
+    // Unless it is no longer newer: once the box runs something at least as new
+    // as the prepared release, activating that release would be a downgrade,
+    // which `activate_prepared` refuses. Kept, it would pin its slot against
+    // pruning, and Settings would offer an update the button can never install.
+    if let Some(prepared) = layout.prepared_slot() {
+        if prepared == slot || stale_prepared(&prepared, target) {
+            layout.clear_prepared();
+        }
     }
 
     // Keep current + one previous; delete older slots.
@@ -601,6 +608,28 @@ fn slot_build_sha(slot: &Path) -> Option<String> {
     m.sha
 }
 
+/// The version a slot holds, from its `BUILD.json`.
+fn slot_version(slot: &Path) -> Option<Version> {
+    let raw = fs::read(slot.join("BUILD.json")).ok()?;
+    let m: BuildManifest = serde_json::from_slice(&raw).ok()?;
+    Version::parse(m.version?.trim_start_matches('v')).ok()
+}
+
+/// Whether a prepared slot is no newer than `running` (a tag such as
+/// `v0.1.10-staging.86`, build metadata allowed), so activating it would be a
+/// downgrade. Compared by semver precedence, which ignores build metadata: a
+/// dev build of staging.86 is running staging.86.
+///
+/// Anything unreadable on either side is NOT stale. Dropping a pointer
+/// wrongly throws away a download, and keeping one wrongly is the behavior
+/// that existed before this check.
+fn stale_prepared(prepared: &Path, running: &str) -> bool {
+    match (slot_version(prepared), Version::parse(running.trim_start_matches('v'))) {
+        (Some(staged), Ok(running)) => staged.cmp_precedence(&running) != std::cmp::Ordering::Greater,
+        _ => false,
+    }
+}
+
 /// Download, verify, stage, and preflight the newest release on this box's
 /// channel — and stop there, with `current` untouched.
 ///
@@ -633,6 +662,17 @@ pub async fn prepare(force: bool) -> Result<Prepared, crate::Error> {
         return Err(crate::Error::Other(
             "this box predates release slots — nothing to prepare into".to_string(),
         ));
+    }
+
+    // A release staged before the box moved past it (a manual `--version`, a
+    // channel switch) can never be activated, but the pointer still pins its
+    // slot. Nothing else clears it until something newer is staged over it,
+    // which on a quiet channel can be weeks.
+    if let Some(prepared) = layout.prepared_slot() {
+        if stale_prepared(&prepared, super::super::codename::version()) {
+            layout.clear_prepared();
+            layout.prune(slots::KEEP_SLOTS - 1);
+        }
     }
 
     // Refuse to prepare a downgrade for the same reason `run` refuses to apply
@@ -777,6 +817,11 @@ pub async fn prepare(force: bool) -> Result<Prepared, crate::Error> {
 }
 
 /// A slot's directory name, for display.
+/// The staged release's slot id (`<tag>-<sha7>`), if one is staged.
+pub fn prepared_slot_id() -> Option<String> {
+    slots::SlotLayout::system().prepared_slot().map(|s| slot_name(&s))
+}
+
 fn slot_name(slot: &Path) -> String {
     slot.file_name()
         .map(|s| s.to_string_lossy().into_owned())
@@ -1268,6 +1313,16 @@ impl Drop for UpgradeLock {
 /// Acquire the single-flight lock, reclaiming a stale one left by a crashed
 /// prior run (its recorded PID no longer exists). Returns an RAII guard whose
 /// drop releases the lock.
+/// How `acquire_lock` starts its refusal. Nothing was attempted, so a caller
+/// that records outcomes (`auto_update::activate_recorded`) leaves it out.
+const LOCK_HELD: &str = "another release operation is already running";
+
+/// True when `err` is `acquire_lock` refusing because another release
+/// operation holds the lock.
+pub fn is_lock_held(err: &crate::Error) -> bool {
+    err.to_string().contains(LOCK_HELD)
+}
+
 fn acquire_lock() -> Result<UpgradeLock, crate::Error> {
     let path = Path::new(LOCK_PATH);
     loop {
@@ -1291,12 +1346,11 @@ fn acquire_lock() -> Result<UpgradeLock, crate::Error> {
                     // and can hold the lock for the length of a ~120MB download
                     // — and "another upgrade is already running" would send
                     // someone looking for an upgrade nobody started.
-                    return Err(crate::Error::Other(
-                        "another release operation is already running (possibly the \
-                         scheduled prepare — `journalctl -u virtues-prepare`). It \
-                         releases the lock when it finishes; try again shortly."
-                            .to_string(),
-                    ));
+                    return Err(crate::Error::Other(format!(
+                        "{LOCK_HELD} (possibly the scheduled prepare — `journalctl -u \
+                         virtues-prepare`). It releases the lock when it finishes; try \
+                         again shortly."
+                    )));
                 }
                 let _ = fs::remove_file(path); // stale — reclaim and retry
             }
@@ -1556,6 +1610,13 @@ pub struct StagedRelease {
 pub fn staged_release() -> Option<StagedRelease> {
     let layout = slots::SlotLayout::system();
     let slot = layout.prepared_slot()?;
+    // Settings treats a staged release as an available update and the update
+    // button activates it, so an older one would be offered and then refused
+    // as a downgrade, on every click. Falling through to "nothing staged" sends
+    // the button down the full `upgrade` path instead.
+    if stale_prepared(&slot, super::super::codename::version()) {
+        return None;
+    }
     let build: Option<BuildManifest> = fs::read(slot.join("BUILD.json"))
         .ok()
         .and_then(|raw| serde_json::from_slice(&raw).ok());
@@ -1866,6 +1927,47 @@ const SLOT_HEADROOM: u64 = UNPACK_INFLATION;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn slot_with_version(name: &str, version: Option<&str>) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("stale-prepared-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        if let Some(v) = version {
+            fs::write(d.join("BUILD.json"), format!(r#"{{"version":"{v}","sha":"cf71b22"}}"#)).unwrap();
+        }
+        d
+    }
+
+    /// The case found on a bench box: v0.1.9 staged by the nightly, then the
+    /// box moved to a staging build by hand. That release can never activate.
+    #[test]
+    fn a_prepared_release_older_than_the_running_one_is_stale() {
+        let s = slot_with_version("older", Some("v0.1.9"));
+        assert!(stale_prepared(&s, "v0.1.10-staging.86"));
+        assert!(stale_prepared(&s, "v0.1.10-staging.86+136.gebfb6879"), "dev builds carry build metadata");
+        assert!(stale_prepared(&s, "v0.1.9"), "the same release is not an update either");
+    }
+
+    #[test]
+    fn a_prepared_release_newer_than_the_running_one_is_kept() {
+        let s = slot_with_version("newer", Some("v0.1.10-staging.88"));
+        assert!(!stale_prepared(&s, "v0.1.10-staging.86"));
+        assert!(!stale_prepared(&s, "v0.1.9"));
+        let stable = slot_with_version("stable", Some("v0.1.10"));
+        assert!(!stale_prepared(&stable, "v0.1.10-staging.88"), "a stable release outranks its prereleases");
+    }
+
+    /// Unreadable means unknown, and unknown keeps the pointer: dropping it
+    /// wrongly discards a download, keeping it wrongly is the old behavior.
+    #[test]
+    fn anything_unreadable_is_not_stale() {
+        let none = slot_with_version("no-manifest", None);
+        assert!(!stale_prepared(&none, "v0.1.10"));
+        let junk = slot_with_version("junk-version", Some("not-a-version"));
+        assert!(!stale_prepared(&junk, "v0.1.10"));
+        let s = slot_with_version("dev-running", Some("v0.1.9"));
+        assert!(!stale_prepared(&s, "0.1.0-dirty-unparseable+"), "an unparseable running version");
+    }
 
     /// The scratch directory holds the tarball AND its unpacked tree at once,
     /// so its budget must exceed the slots budget by exactly one tarball.

@@ -404,9 +404,11 @@ fn semantic_search_tool() -> ToolConfig {
         id: "semantic_search".to_string(),
         name: "Semantic Search".to_string(),
         description: "Search personal data by meaning".to_string(),
-        llm_description: r#"Search the user's own data by meaning: emails, messages, calendar, chats, documents, transactions, transcriptions, pages.
+        llm_description: r#"Search the user's own data by meaning; `domains` lists what it holds.
 
-Omit `domains` to search everything; in a project-grounded chat always omit it, or the project's materials drop out. For a broad or vague need, pass 2-4 phrasings in `queries`; one for a precise lookup. Rank is order within this result set, not match quality. Cite each result's `ref` as returned; read the whole row with sql_query by its id when the preview is not enough."#.to_string(),
+Omit `domains` to search everything; always omit it in a project chat, or its materials drop out. Pass 2-4 phrasings in `queries` for a vague need, one for a precise lookup. Rank is order, not match quality. Cite each `ref` as returned; read a full row with sql_query by its id.
+
+Naming a person, place or org, or dates spanning a week or less, puts `from_your_wiki` first: an article, or a card whose id fits `entities`."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
@@ -709,13 +711,13 @@ fn shell_tool() -> ToolConfig {
         id: "shell".to_string(),
         name: "Shell".to_string(),
         description: "Run a command on the server, with sudo".to_string(),
-        llm_description: r#"Run a shell command on the server this assistant runs on, as its admin account, which has passwordless sudo. Anything a person could do over ssh is possible: read and change files anywhere, query or change any database, read logs, manage services, install packages.
+        llm_description: r#"Run a shell command on the server this assistant runs on, as its admin account, which has passwordless sudo. Anything a person could do over ssh is possible: read and change files anywhere, query or change any database, read logs, manage services, install packages. Reads run at once; changes wait for the owner to allow them.
 
 The command runs through bash -c with no terminal and no stdin, so anything that prompts reads nothing: pass -y / --yes / --no-pager, and never open an editor or a pager. Returns exit_code, stdout and stderr; long output keeps its beginning and its end.
 
-- Database: psql "$DATABASE_URL" -c '…' as the app's role, or sudo -u postgres psql virtues -c '…' as the superuser.
+- Database: psql "$DATABASE_URL" -c '…', as the app's role.
 - Logs: journalctl -u virtues --no-pager -n 200 (add -p warning, --since "1 hour ago").
-- Long jobs: raise timeout_seconds (default 120, max 3600), or run them in the background with output to a file (nohup … >/tmp/job.log 2>&1 &) and check the file later.
+- Long jobs: raise timeout_seconds (default 120, max 600), or run them in the background with output to a file (nohup … >/tmp/job.log 2>&1 &) and check the file later.
 
 This server is running this conversation: restarting the virtues service, rebooting, or killing its process ends the turn mid-reply, so do that last."#.to_string(),
         parameters: serde_json::json!({
@@ -728,7 +730,7 @@ This server is running this conversation: restarting the virtues service, reboot
                 },
                 "timeout_seconds": {
                     "type": "integer",
-                    "description": "Kill the command after this many seconds (default 120, max 3600)"
+                    "description": "Kill the command after this many seconds (default 120, max 600)"
                 },
                 "cwd": {
                     "type": "string",
@@ -754,11 +756,12 @@ fn setup_applet_tool() -> ToolConfig {
         // `{"guide": true}`. It is one source for the in-box assistant and
         // for agents working in the repo, and it stays out of the definition
         // every chat step re-sends.
-        llm_description: r#"Create or update an applet: a scheduled task, reminder, monitor, tracker or dashboard. First call with {"guide": true} and follow the guide it returns. The same name updates that applet. name and description are required except for the guide. On check_failed, fix the findings and retry; nothing was created."#.to_string(),
+        llm_description: r#"Create or update an applet: a scheduled task, reminder, monitor, tracker or dashboard. First call with {"guide": true} and follow the guide it returns. The same name updates that applet. name and description are required except for the guide. On check_failed, fix the findings and retry; nothing was created. check_only runs the check alone."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
                 "guide": { "type": "boolean" },
+                "check_only": { "type": "boolean" },
                 "name": { "type": "string" },
                 "description": { "type": "string" },
                 "agent": { "type": "string", "description": "Run prompt; omit for a face-only dashboard" },
@@ -1061,5 +1064,31 @@ mod tests {
                 tool.id
             );
         }
+    }
+
+    /// The web client keeps one presentation entry per tool (its noun, its
+    /// depth, its line in the thinking block), and those tables drifted from
+    /// this list unseen: a tool with no entry renders under its raw id. This
+    /// writes the ids where a vitest diffs them against the client's table.
+    /// Regenerate with `UPDATE_FIXTURES=1 cargo test -p virtues-registry tool_ids`.
+    #[test]
+    fn tool_ids_fixture_is_current() {
+        let mut ids: Vec<String> = default_tools().into_iter().map(|t| t.id).collect();
+        ids.sort();
+        let want = serde_json::to_string_pretty(&ids).unwrap() + "\n";
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apps/web/src/lib/ai/fixtures/tool-ids.json");
+        if std::env::var("UPDATE_FIXTURES").is_ok() {
+            std::fs::write(&path, &want).expect("write fixture");
+            return;
+        }
+        let have = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!("{}: {e} (run with UPDATE_FIXTURES=1 to write it)", path.display())
+        });
+        assert_eq!(
+            have, want,
+            "{} is stale: the tool registry changed. Regenerate with UPDATE_FIXTURES=1, then give the new tool an entry in the web client's toolPresentation.ts.",
+            path.display()
+        );
     }
 }

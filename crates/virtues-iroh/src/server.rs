@@ -11,6 +11,12 @@ use tower::ServiceExt; // for Router::oneshot
 
 use crate::endpoint::VIRTUES_ALPN;
 
+/// QUIC application close code the box sends a peer whose key is not on its
+/// allowlist: a revoked device, or one paired to a box that was since reset
+/// or restored. Clients read it back (`client::NotAllowlisted`) to tell "your
+/// server doesn't recognize this device" from "can't reach your server".
+pub const CLOSE_NOT_ALLOWLISTED: u32 = 1;
+
 /// Decides whether a remote `EndpointId` may connect. On the box this is the set
 /// of non-revoked paired-device EndpointIds — a transport-level ACL below the
 /// app-layer bearer/cookie authorization.
@@ -72,7 +78,7 @@ impl ProtocolHandler for HttpHandler {
         let remote = conn.remote_id();
         if !self.allow.is_allowed(remote) {
             tracing::warn!(%remote, "iroh: rejecting connection — not allowlisted");
-            conn.close(1u32.into(), b"not allowlisted");
+            conn.close(CLOSE_NOT_ALLOWLISTED.into(), b"not allowlisted");
             return Ok(());
         }
         // One HTTP/1 connection per bi-stream; the client opens a stream per

@@ -551,6 +551,21 @@ impl YjsState {
         }
     }
 
+    /// Write one page's queued edit now, ignoring the debounce.
+    ///
+    /// For a write whose caller reads the page straight back from the
+    /// database: `virtues page edit` then `virtues page get` would otherwise
+    /// see the text from before the edit for the length of the debounce.
+    pub async fn flush_page(&self, page_id: &str) -> Result<(), String> {
+        let queued = self.save_queue.pending.write().await.remove(page_id);
+        match queued {
+            Some(save) => save_and_materialize(&self.pool, page_id, &save.yjs_state)
+                .await
+                .map_err(|e| e.to_string()),
+            None => Ok(()),
+        }
+    }
+
     /// Get the current Yjs document state as bytes (for snapshots/versioning).
     pub async fn get_document_snapshot(&self, page_id: &str) -> Result<Vec<u8>, String> {
         let page_doc = self.doc_cache.get_or_create(page_id, &self.pool)

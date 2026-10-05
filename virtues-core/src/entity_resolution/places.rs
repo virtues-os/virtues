@@ -10,10 +10,13 @@
 //! ## Location Clustering Process
 //!
 //! 1. Fetch location_point records in time window
-//! 2. Auto-detect sampling rate (points/minute)
-//! 3. Run spatial-temporal clustering
-//! 4. Write location_visit records
-//! 5. Link visits to place entities (create if new)
+//! 2. Split them into stays (`detect_stays`), bridging the quiet stretches of a
+//!    still phone up to `MAX_QUIET_GAP_MINUTES`
+//! 3. Write location_visit records, merging with the stays already stored
+//! 4. Link visits to place entities (create if new)
+//!
+//! `rebuild_visits` recomputes all of history the same way whenever
+//! `TIMELINE_VERSION` moves.
 //!
 //! ## Merchant Resolution Process
 //!
@@ -34,7 +37,20 @@ use crate::ids;
 /// Spatial clustering parameters
 const SPATIAL_EPSILON_METERS: f64 = 100.0; // Max distance within a cluster
 const MIN_VISIT_DURATION_MINUTES: i64 = 10; // Minimum visit duration (filters traffic/parking noise)
-const TEMPORAL_GAP_MINUTES: i64 = 5; // Max time gap within visit (robust for iOS backgrounding)
+/// Two stays this close in time are one stay when they also share a spot: the
+/// detector's back-to-back stays under `SPATIAL_EPSILON_METERS` apart (a stay
+/// split by GPS drift), and stored stays under `SAME_STAY_METERS` apart (one
+/// stay seen by two passes). Measured on a rebuild of 339 stays: 41 pairs sat
+/// within 100 m and 10 minutes of each other, the same stay cut in two.
+const SPLIT_STAY_GAP_MINUTES: i64 = 10;
+/// Longest silence between two fixes at the same spot that still counts as
+/// staying put. A still phone reports about every 15 minutes, so this is three
+/// missed reports: past it, the phone stopped and the gap is unknown.
+const MAX_QUIET_GAP_MINUTES: i64 = 45;
+/// Stamped into every visit's metadata. Visits written by an older stay
+/// detector carry a lower number (or none), and `rebuild_visits` recomputes
+/// them all from the stored fixes. Bump it whenever the detector changes.
+const TIMELINE_VERSION: i64 = 3;
 const MAX_HORIZONTAL_ACCURACY: f64 = 100.0; // Filter low-quality points
 const DEFAULT_PLACE_RADIUS_METERS: f64 = 100.0; // Default radius for new places
 
@@ -96,12 +112,7 @@ async fn resolve_location_visits(db: &Database, window: TimeWindow) -> Result<us
 
     tracing::debug!(point_count = points.len(), "Fetched location points");
 
-    // Auto-detect sampling rate
-    let sampling_rate = detect_sampling_rate(&points);
-    tracing::debug!(points_per_minute = sampling_rate, "Detected sampling rate");
-
-    // Run density-adaptive clustering
-    let visits = cluster_location_points(&points, sampling_rate)?;
+    let visits = detect_stays(&points)?;
 
     tracing::debug!(ref_count = visits.len(), "Completed clustering");
 
@@ -494,118 +505,83 @@ async fn fetch_location_points(db: &Database, window: TimeWindow) -> Result<Vec<
     Ok(points)
 }
 
-/// Auto-detect sampling rate from point density
-fn detect_sampling_rate(points: &[LocationPoint]) -> f64 {
-    if points.len() < 10 {
-        return 1.0; // Default to 1 point/min
-    }
+/// Split a time-ordered run of fixes into stays.
+///
+/// The phone samples densely only while it moves. Standing still, it drops to
+/// a battery-saving mode that reports a single still-check fix about every 15
+/// minutes, and any real departure wakes dense sampling again within a few
+/// hundred meters. So silence between two fixes at the same spot means the
+/// person stayed, up to `MAX_QUIET_GAP_MINUTES`; past that the phone itself
+/// stopped reporting and the gap is unknown, not a stay. A clusterer that
+/// treated every quiet stretch over a few minutes as a departure saw almost
+/// none of the stays this phone reports, since most of a still day is quiet.
+///
+/// Stays are found in one forward pass and never overlap: each one claims every
+/// fix up to where it ends. A single fix far from the stay, with the next back
+/// inside it, is GPS jitter and is absorbed; two far fixes in a row are a
+/// departure.
+fn detect_stays(points: &[LocationPoint]) -> Result<Vec<Visit>> {
+    let quiet = chrono::Duration::minutes(MAX_QUIET_GAP_MINUTES);
+    let near = |lat: f64, lon: f64, p: &LocationPoint| {
+        haversine_distance(lat, lon, p.latitude, p.longitude) <= SPATIAL_EPSILON_METERS
+    };
 
-    // Calculate median time gap between consecutive points
-    let mut gaps: Vec<f64> = points
-        .windows(2)
-        .filter_map(|w| {
-            let gap_seconds = (w[1].timestamp - w[0].timestamp).num_seconds();
-            if gap_seconds > 0 && gap_seconds < 600 {
-                // Sanity check: 0-10 minutes
-                Some(60.0 / gap_seconds as f64)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if gaps.is_empty() {
-        return 1.0;
-    }
-
-    gaps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    gaps[gaps.len() / 2] // Median points per minute
-}
-
-/// Cluster location points using density-adaptive spatial-temporal clustering
-fn cluster_location_points(points: &[LocationPoint], points_per_minute: f64) -> Result<Vec<Visit>> {
-    // Calculate density-adaptive parameters
-    let min_cluster_size = (MIN_VISIT_DURATION_MINUTES as f64 * points_per_minute).round() as usize;
-    let min_cluster_size = min_cluster_size.max(3); // At least 3 points
-
-    tracing::debug!(min_cluster_size, "Calculated adaptive parameters");
-
-    // Simple density-based clustering (DBSCAN-like)
-    let mut visits = Vec::new();
-    let mut visited = vec![false; points.len()];
-
-    for i in 0..points.len() {
-        if visited[i] {
-            continue;
-        }
-
-        // Start a new potential cluster
-        let mut cluster_points = vec![points[i].clone()];
-        visited[i] = true;
-
-        // Expand cluster
+    let mut stays: Vec<Visit> = Vec::new();
+    let mut i = 0;
+    while i < points.len() {
+        let mut members = vec![points[i].clone()];
+        let (mut lat, mut lon) = (points[i].latitude, points[i].longitude);
         let mut j = i + 1;
         while j < points.len() {
-            if visited[j] {
+            let last = members.last().map(|m| m.timestamp).unwrap_or(points[i].timestamp);
+            let p = &points[j];
+            if p.timestamp - last > quiet {
+                break;
+            }
+            if near(lat, lon, p) {
+                members.push(p.clone());
+                let n = members.len() as f64;
+                lat += (p.latitude - lat) / n;
+                lon += (p.longitude - lon) / n;
                 j += 1;
                 continue;
             }
-
-            let last_point = cluster_points.last().unwrap();
-            let current_point = &points[j];
-
-            // Check spatial distance
-            let distance = haversine_distance(
-                last_point.latitude,
-                last_point.longitude,
-                current_point.latitude,
-                current_point.longitude,
-            );
-
-            // Check temporal gap
-            let time_gap = (current_point.timestamp - last_point.timestamp).num_minutes();
-
-            if distance <= SPATIAL_EPSILON_METERS && time_gap <= TEMPORAL_GAP_MINUTES {
-                // Point belongs to cluster
-                cluster_points.push(current_point.clone());
-                visited[j] = true;
-                j += 1;
-            } else if time_gap > TEMPORAL_GAP_MINUTES {
-                // Temporal gap too large - end cluster
+            let jitter = points
+                .get(j + 1)
+                .is_some_and(|q| q.timestamp - last <= quiet && near(lat, lon, q));
+            if !jitter {
                 break;
-            } else {
-                // Spatial distance too large but temporal OK - skip point
-                j += 1;
             }
+            j += 1;
         }
 
-        // Check if cluster meets minimum size
-        if cluster_points.len() >= min_cluster_size {
-            let visit = create_visit_from_cluster(cluster_points)?;
-            let duration_minutes = (visit.end_time - visit.start_time).num_minutes();
-
-            // Filter by minimum duration
-            if duration_minutes >= MIN_VISIT_DURATION_MINUTES {
-                // A stay claims its whole span of time. The expansion above
-                // SKIPS far points rather than stopping on them (so one bad fix
-                // cannot split a stay), which left those skipped points free to
-                // seed a second cluster over the same minutes. GPS jitter
-                // between two spots then yielded two interleaved "visits" at
-                // once — a person counted in two places simultaneously. Consume
-                // every point inside the accepted span so clusters from one
-                // pass never overlap in time.
-                for (k, p) in points.iter().enumerate().skip(i) {
-                    if p.timestamp > visit.end_time {
-                        break;
-                    }
-                    visited[k] = true;
+        let span = members[members.len() - 1].timestamp - members[0].timestamp;
+        if members.len() >= 2 && span.num_minutes() >= MIN_VISIT_DURATION_MINUTES {
+            let stay = create_visit_from_cluster(members)?;
+            // GPS drift can end a stay on two far fixes in a row and start the
+            // next one moments later on the same spot: one stay, cut in two.
+            match stays.last_mut() {
+                Some(prev) if is_split(prev, &stay) => {
+                    let mut joined = std::mem::take(&mut prev.points);
+                    joined.extend(stay.points);
+                    *prev = create_visit_from_cluster(joined)?;
                 }
-                visits.push(visit);
+                _ => stays.push(stay),
             }
+            i = j;
+        } else {
+            i += 1;
         }
     }
+    Ok(stays)
+}
 
-    Ok(visits)
+/// Whether `next` resumes `prev`: it starts within `SPLIT_STAY_GAP_MINUTES` of
+/// `prev` ending, and at the same spot.
+fn is_split(prev: &Visit, next: &Visit) -> bool {
+    next.start_time - prev.end_time <= chrono::Duration::minutes(SPLIT_STAY_GAP_MINUTES)
+        && haversine_distance(prev.centroid_lat, prev.centroid_lon, next.centroid_lat, next.centroid_lon)
+            <= SPATIAL_EPSILON_METERS
 }
 
 /// Create a visit from a cluster of points
@@ -718,7 +694,7 @@ fn plan_visit_write(
     centroid: (f64, f64),
     stored: &[StoredVisit],
 ) -> VisitWrite {
-    let gap = chrono::Duration::minutes(TEMPORAL_GAP_MINUTES);
+    let gap = chrono::Duration::minutes(SPLIT_STAY_GAP_MINUTES);
     let (mut same, mut rivals): (Vec<&StoredVisit>, Vec<&StoredVisit>) = (Vec::new(), Vec::new());
     for s in stored {
         let meters = haversine_distance(centroid.0, centroid.1, s.latitude, s.longitude);
@@ -788,7 +764,7 @@ fn longest_uncovered(
 /// collapses it, within the window the pass covers.
 async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> {
     let pool = db.pool();
-    let gap = chrono::Duration::minutes(TEMPORAL_GAP_MINUTES);
+    let gap = chrono::Duration::minutes(SPLIT_STAY_GAP_MINUTES);
 
     let stored: Vec<StoredVisit> = sqlx::query_as::<_, (String, DateTime<Utc>, DateTime<Utc>, f64, f64)>(
         r#"
@@ -846,10 +822,9 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     let metadata = serde_json::json!({
         "point_count": points.len(),
         "radius_meters": calculate_visit_radius(visit),
+        "timeline": TIMELINE_VERSION,
     });
     let duration_minutes = (span.1 - span.0).num_minutes() as i32;
-
-    let place_id = resolve_or_create_place(db, visit.centroid_lat, visit.centroid_lon).await?;
 
     let visit_id: String = match keeper {
         Some(keeper) => {
@@ -913,6 +888,22 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     // the place it was first resolved to; a second place ref would make one
     // visit two places. The row's own id, never `candidate_id`: on conflict the
     // row keeps its ORIGINAL id, and binding the drifted one orphaned refs.
+    //
+    // The place is resolved only once the visit is known to need one. Resolving
+    // first created a place wherever an extended stay's centroid drifted, and
+    // the guard below then declined to link it: every such pass left an empty
+    // "Location …" place behind.
+    let placed: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM wiki_refs \
+           WHERE source_table = 'data_location_visit' AND source_id = $1 AND entity_type = 'place')",
+    )
+    .bind(&visit_id)
+    .fetch_one(pool)
+    .await?;
+    if placed {
+        return Ok(());
+    }
+    let place_id = resolve_or_create_place(db, visit.centroid_lat, visit.centroid_lon).await?;
     let ref_id = ids::generate_id("eref", &[&visit_id, &place_id, "location"]);
     sqlx::query(
         "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at) \
@@ -932,102 +923,133 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     Ok(())
 }
 
-/// What repairing the stored visits should do.
+/// How much of the time the phone was reporting its stays account for.
+///
+/// A broken stay detector does not stop fixes from arriving, so freshness
+/// alone cannot see it: the fixes keep flowing while the stays thin out. This
+/// compares the two. Tracked time is every stretch between consecutive fixes
+/// no longer than `MAX_QUIET_GAP_MINUTES`; the rest is time the phone was not
+/// reporting, which no stay can claim either.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct StayCoverage {
+    pub stay_hours: f64,
+    pub tracked_hours: f64,
+}
+
+pub async fn stay_coverage(pool: &sqlx::PgPool, since: DateTime<Utc>) -> Result<StayCoverage> {
+    let (tracked_hours, stay_hours): (f64, f64) = sqlx::query_as(
+        r#"
+        WITH f AS (
+            SELECT lead(occurred_at) OVER (ORDER BY occurred_at) - occurred_at AS gap
+            FROM data_location_point
+            WHERE occurred_at >= $1
+              AND (horizontal_accuracy IS NULL OR horizontal_accuracy < $3)
+        ),
+        s AS (
+            SELECT unnest(range_agg(tstzrange(greatest(started_at, $1),
+                                              least(COALESCE(ended_at, started_at), now())))) AS r
+            FROM data_location_visit
+            WHERE COALESCE(ended_at, started_at) > $1 AND started_at < now()
+        )
+        SELECT
+            COALESCE((SELECT EXTRACT(EPOCH FROM sum(gap)) FROM f
+                      WHERE gap <= make_interval(mins => $2)), 0)::float8 / 3600,
+            COALESCE((SELECT EXTRACT(EPOCH FROM sum(upper(r) - lower(r))) FROM s), 0)::float8 / 3600
+        "#,
+    )
+    .bind(since)
+    .bind(MAX_QUIET_GAP_MINUTES as i32)
+    .bind(MAX_HORIZONTAL_ACCURACY)
+    .fetch_one(pool)
+    .await?;
+    Ok(StayCoverage { stay_hours, tracked_hours })
+}
+
+/// Which stored visit each recomputed stay takes over.
 #[derive(Debug, Default, PartialEq)]
-struct VisitRepair {
-    /// Rows that survive with a new span.
-    reshape: Vec<(String, DateTime<Utc>, DateTime<Utc>)>,
-    /// Surviving row → the rows folded into it, whose place link it may inherit.
-    absorbed: Vec<(String, Vec<String>)>,
-    /// Every row to delete: the absorbed, and rows a rival left too short to keep.
+struct VisitRebuild {
+    /// One entry per stay, in order: the stored visit whose id it keeps, if any.
+    keep: Vec<Option<String>>,
+    /// Stored visits no stay took over.
     delete: Vec<String>,
 }
 
-/// Replay every stored visit, in start order, through `plan_visit_write` as if
-/// it were arriving now. What comes out is the table the fixed writer would
-/// have produced: one row per stay, no minute claimed twice. The earlier row
-/// wins a clash between places, which is the writer's "stored row keeps its
-/// minutes" rule applied in time order.
-fn plan_visit_repair(mut rows: Vec<StoredVisit>) -> VisitRepair {
-    rows.sort_by(|a, b| (a.start, &a.id).cmp(&(b.start, &b.id)));
-    let original: std::collections::HashMap<String, (DateTime<Utc>, DateTime<Utc>)> =
-        rows.iter().map(|r| (r.id.clone(), (r.start, r.end))).collect();
-    let gap = chrono::Duration::minutes(TEMPORAL_GAP_MINUTES);
+/// Match recomputed stays to stored visits so a rebuild keeps ids where it can.
+///
+/// Chat citations and place refs point at visit ids, so a stay that covers a
+/// stored visit takes over that visit's id instead of minting a new one. Each
+/// stored visit goes to at most one stay, and the largest overlap is matched
+/// first. Stored visits no stay covers are deleted: every stay is derived from
+/// the stored fixes, so a row the fixes no longer support is not a stay.
+fn plan_visit_rebuild(
+    stays: &[(DateTime<Utc>, DateTime<Utc>)],
+    stored: &[StoredVisit],
+) -> VisitRebuild {
+    let mut by_start: Vec<usize> = (0..stored.len()).collect();
+    by_start.sort_by_key(|&k| stored[k].start);
+    let longest = stored.iter().map(|s| s.end - s.start).max().unwrap_or_default();
 
-    // Kept rows stay disjoint and sorted by start, so their ends ascend too and
-    // only a suffix of them can touch the next row.
-    let mut kept: Vec<StoredVisit> = Vec::new();
-    let mut folded: std::collections::HashMap<String, Vec<String>> = Default::default();
-    let mut delete: Vec<String> = Vec::new();
-
-    for row in rows {
-        let from = kept.partition_point(|k| k.end < row.start - gap);
-        match plan_visit_write((row.start, row.end), (row.latitude, row.longitude), &kept[from..]) {
-            VisitWrite::Extend { keeper, absorb, span } => {
-                let mut into = folded.remove(&keeper).unwrap_or_default();
-                kept.retain(|k| !absorb.contains(&k.id));
-                for id in absorb {
-                    into.extend(folded.remove(&id).unwrap_or_default());
-                    into.push(id.clone());
-                    delete.push(id);
-                }
-                if let Some(k) = kept.iter_mut().find(|k| k.id == keeper) {
-                    (k.start, k.end) = span;
-                }
-                into.push(row.id.clone());
-                delete.push(row.id);
-                folded.insert(keeper, into);
+    let mut pairs: Vec<(chrono::Duration, usize, usize)> = Vec::new();
+    for (i, &(a, b)) in stays.iter().enumerate() {
+        let lo = by_start.partition_point(|&k| stored[k].start < a - longest);
+        let hi = by_start.partition_point(|&k| stored[k].start < b);
+        for &k in &by_start[lo..hi] {
+            let overlap = b.min(stored[k].end) - a.max(stored[k].start);
+            if overlap > chrono::Duration::zero() {
+                pairs.push((overlap, i, k));
             }
-            VisitWrite::Insert { span } => {
-                kept.push(StoredVisit { start: span.0, end: span.1, ..row });
-            }
-            VisitWrite::Skip => delete.push(row.id),
         }
     }
+    pairs.sort_by(|x, y| y.0.cmp(&x.0).then(x.1.cmp(&y.1)).then(x.2.cmp(&y.2)));
 
-    let reshape = kept
+    let mut keep: Vec<Option<String>> = vec![None; stays.len()];
+    let mut taken = vec![false; stored.len()];
+    for (_, i, k) in pairs {
+        if keep[i].is_none() && !taken[k] {
+            keep[i] = Some(stored[k].id.clone());
+            taken[k] = true;
+        }
+    }
+    let mut delete: Vec<String> = stored
         .iter()
-        .filter(|k| original.get(&k.id) != Some(&(k.start, k.end)))
-        .map(|k| (k.id.clone(), k.start, k.end))
+        .zip(&taken)
+        .filter(|(_, t)| !**t)
+        .map(|(s, _)| s.id.clone())
         .collect();
-    let mut absorbed: Vec<(String, Vec<String>)> = folded.into_iter().collect();
-    absorbed.sort();
-    VisitRepair { reshape, absorbed, delete }
+    delete.sort();
+    VisitRebuild { keep, delete }
 }
 
-/// Collapse visits already stored on top of each other.
+/// Recompute every stored visit from the stored fixes, once per detector
+/// version.
 ///
-/// Rows written before the writer matched on time and distance are the same
-/// stay stored many times over (summed durations ran to several times the
-/// hours they covered), and the rolling re-cluster only ever revisits its last
-/// 30 hours, so history would stay that way. Guarded on the defect itself —
-/// it does nothing unless two stored visits overlap — so it is a no-op after
-/// its first run, and runs again only if something reintroduces the overlap.
-/// One transaction: a box never shows a half-repaired timeline.
-pub async fn repair_overlapping_visits(db: &Database) -> Result<usize> {
+/// The rolling pass only revisits its last 30 hours, so a detector fix never
+/// reaches history on its own. Guarded on `TIMELINE_VERSION`: it runs while
+/// any visit was written by an older detector, rewrites them all in one
+/// transaction (a box never shows a half-rebuilt timeline), and is a no-op
+/// afterwards. Stays keep the ids of the visits they replace; see
+/// `plan_visit_rebuild`.
+pub async fn rebuild_visits(db: &Database) -> Result<usize> {
     let pool = db.pool();
-    let overlapping: bool = sqlx::query_scalar(
-        r#"
-        SELECT EXISTS (
-            SELECT 1 FROM (
-                SELECT started_at,
-                       max(COALESCE(ended_at, started_at)) OVER (
-                           ORDER BY started_at, id
-                           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS prior_end
-                FROM data_location_visit
-            ) v
-            WHERE v.started_at < v.prior_end
-        )
-        "#,
+    let stale: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM data_location_visit \
+                         WHERE COALESCE((metadata->>'timeline')::bigint, 0) < $1)",
     )
+    .bind(TIMELINE_VERSION)
     .fetch_one(pool)
     .await?;
-    if !overlapping {
+    if !stale {
         return Ok(0);
     }
 
+    let everything = TimeWindow::new(
+        DateTime::from_timestamp(0, 0).unwrap_or_default(),
+        Utc::now() + chrono::Duration::days(1),
+    );
+    let stays = detect_stays(&fetch_location_points(db, everything).await?)?;
+
     let mut tx = pool.begin().await?;
-    let rows: Vec<StoredVisit> = sqlx::query_as::<_, (String, DateTime<Utc>, DateTime<Utc>, f64, f64)>(
+    let stored: Vec<StoredVisit> = sqlx::query_as::<_, (String, DateTime<Utc>, DateTime<Utc>, f64, f64)>(
         "SELECT id, started_at, COALESCE(ended_at, started_at), latitude, longitude \
          FROM data_location_visit FOR UPDATE",
     )
@@ -1036,53 +1058,9 @@ pub async fn repair_overlapping_visits(db: &Database) -> Result<usize> {
     .into_iter()
     .map(|(id, start, end, latitude, longitude)| StoredVisit { id, start, end, latitude, longitude })
     .collect();
-    let before = rows.len();
-    let plan = plan_visit_repair(rows);
-
-    for (id, start, end) in &plan.reshape {
-        sqlx::query(
-            "UPDATE data_location_visit \
-             SET started_at = $2, ended_at = $3, duration_minutes = $4, updated_at = now() \
-             WHERE id = $1",
-        )
-        .bind(id)
-        .bind(start)
-        .bind(end)
-        .bind((*end - *start).num_minutes() as i32)
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    // A surviving row with no place link inherits one from a row folded into
-    // it, so the stay stays attached to its place once the duplicates go.
-    for (keeper, folded) in &plan.absorbed {
-        let place: Option<String> = sqlx::query_scalar(
-            "SELECT r.entity_id FROM wiki_refs r \
-             WHERE r.source_table = 'data_location_visit' AND r.entity_type = 'place' \
-               AND r.source_id = ANY($2) \
-               AND NOT EXISTS (SELECT 1 FROM wiki_refs k \
-                   WHERE k.source_table = 'data_location_visit' AND k.entity_type = 'place' \
-                     AND k.source_id = $1) \
-             ORDER BY r.occurred_at, r.id LIMIT 1",
-        )
-        .bind(keeper)
-        .bind(folded)
-        .fetch_optional(&mut *tx)
-        .await?;
-        if let Some(place) = place {
-            sqlx::query(
-                "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at) \
-                 SELECT $1, 'place', $2, 'data_location_visit', $3, 'location', started_at \
-                 FROM data_location_visit WHERE id = $3 \
-                 ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING",
-            )
-            .bind(ids::generate_id("eref", &[keeper, &place, "location"]))
-            .bind(&place)
-            .bind(keeper)
-            .execute(&mut *tx)
-            .await?;
-        }
-    }
+    let before = stored.len();
+    let spans: Vec<_> = stays.iter().map(|v| (v.start_time, v.end_time)).collect();
+    let plan = plan_visit_rebuild(&spans, &stored);
 
     sqlx::query(
         "DELETE FROM wiki_refs WHERE source_table = 'data_location_visit' AND source_id = ANY($1)",
@@ -1094,15 +1072,179 @@ pub async fn repair_overlapping_visits(db: &Database) -> Result<usize> {
         .bind(&plan.delete)
         .execute(&mut *tx)
         .await?;
+
+    // A kept row takes its stay's first fix as `source_stream_id`, which is
+    // UNIQUE, and another kept row may hold that value until its own turn.
+    // Park every kept row on a value no fix can have first.
+    let kept: Vec<String> = plan.keep.iter().flatten().cloned().collect();
+    sqlx::query(
+        "UPDATE data_location_visit SET source_stream_id = 'rebuild:' || id WHERE id = ANY($1)",
+    )
+    .bind(&kept)
+    .execute(&mut *tx)
+    .await?;
+
+    for (stay, keep) in stays.iter().zip(&plan.keep) {
+        let first_point = stay.points[0].id.to_string();
+        let metadata = serde_json::json!({
+            "point_count": stay.points.len(),
+            "radius_meters": calculate_visit_radius(stay),
+            "timeline": TIMELINE_VERSION,
+        });
+        let duration_minutes = (stay.end_time - stay.start_time).num_minutes() as i32;
+        match keep {
+            Some(id) => {
+                sqlx::query(
+                    "UPDATE data_location_visit \
+                     SET started_at = $2, ended_at = $3, duration_minutes = $4, latitude = $5, \
+                         longitude = $6, source_stream_id = $7, metadata = $8, updated_at = now() \
+                     WHERE id = $1",
+                )
+                .bind(id)
+                .bind(stay.start_time)
+                .bind(stay.end_time)
+                .bind(duration_minutes)
+                .bind(stay.centroid_lat)
+                .bind(stay.centroid_lon)
+                .bind(&first_point)
+                .bind(&metadata)
+                .execute(&mut *tx)
+                .await?;
+            }
+            None => {
+                sqlx::query(
+                    "INSERT INTO data_location_visit \
+                     (id, latitude, longitude, started_at, ended_at, duration_minutes, \
+                      source_stream_id, source_table, source_provider, metadata) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, 'location_point', 'ios', $8)",
+                )
+                // Keyed on the first fix, not `generate_visit_id`: a kept row
+                // may already hold the (centroid, start) id this stay would
+                // derive, while no two stays share a fix.
+                .bind(Uuid::new_v5(&Uuid::NAMESPACE_OID, format!("visit:{first_point}").as_bytes()).to_string())
+                .bind(stay.centroid_lat)
+                .bind(stay.centroid_lon)
+                .bind(stay.start_time)
+                .bind(stay.end_time)
+                .bind(duration_minutes)
+                .bind(&first_point)
+                .bind(&metadata)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+    }
     tx.commit().await?;
 
+    let unlinked = keep_one_place_per_visit(db).await?;
+    let linked = link_unplaced_visits(db).await?;
+    let emptied = delete_empty_places(db).await?;
     tracing::info!(
         before,
-        after = before - plan.delete.len(),
-        reshaped = plan.reshape.len(),
-        "repaired overlapping visits"
+        after = stays.len(),
+        kept = kept.len(),
+        unlinked,
+        linked,
+        emptied,
+        "rebuilt visits from stored fixes"
     );
-    Ok(plan.delete.len())
+    Ok(stays.len())
+}
+
+/// Leave each visit linked to one place: the nearest of those it points at.
+///
+/// A visit is one stay at one place, but the writer once linked a re-clustered
+/// stay to whichever place its drifted center landed in without checking for
+/// an existing link, so some visits point at two places. Readers then draw
+/// them twice, under two names. The writer no longer does that; this clears
+/// what it left, and the rebuild runs it because recomputed centers decide
+/// which link is right.
+async fn keep_one_place_per_visit(db: &Database) -> Result<u64> {
+    let removed = sqlx::query(
+        r#"
+        DELETE FROM wiki_refs r
+        USING (
+            SELECT r2.id,
+                   row_number() OVER (
+                       PARTITION BY r2.source_id
+                       ORDER BY (p.latitude - v.latitude) ^ 2
+                                  + ((p.longitude - v.longitude) * cos(radians(v.latitude))) ^ 2
+                                NULLS LAST,
+                                r2.created_at DESC, r2.id
+                   ) AS rank
+            FROM wiki_refs r2
+            JOIN data_location_visit v ON v.id = r2.source_id
+            LEFT JOIN wiki_places p ON p.id = r2.entity_id
+            WHERE r2.source_table = 'data_location_visit' AND r2.entity_type = 'place'
+        ) ranked
+        WHERE r.id = ranked.id AND ranked.rank > 1
+        "#,
+    )
+    .execute(db.pool())
+    .await?
+    .rows_affected();
+    Ok(removed)
+}
+
+/// Delete the places the resolver made that nothing points at any more.
+///
+/// A place is created for a stay, and a rebuild that joins or moves stays
+/// leaves some places with none: 23 of 75 on a rebuilt copy, each a
+/// "Location <lat>, <lon>" with no visit, no article and nothing a person did
+/// to it. Only those go. A place is kept while anything refers to it or the
+/// person has touched it: a ref from any source, a name of their own, the
+/// audio mute, a pin, a project, a note, an article, a rule, a chat's edit
+/// grant, or being home.
+async fn delete_empty_places(db: &Database) -> Result<u64> {
+    let removed = sqlx::query(
+        r#"
+        DELETE FROM wiki_places p
+        WHERE p.name LIKE 'Location %'
+          AND p.metadata->>'source' IS DISTINCT FROM 'user'
+          AND NOT COALESCE(p.is_audio_muted, false)
+          AND NOT EXISTS (SELECT 1 FROM wiki_refs r WHERE r.entity_id = p.id)
+          AND NOT EXISTS (SELECT 1 FROM app_user_profile u WHERE u.home_place_id = p.id)
+          AND NOT EXISTS (SELECT 1 FROM app_pins x WHERE x.url = '/place/' || p.id)
+          AND NOT EXISTS (SELECT 1 FROM app_project_items x WHERE x.url = '/place/' || p.id)
+          AND NOT EXISTS (SELECT 1 FROM wiki_notes n WHERE n.subject_type = 'place' AND n.subject_id = p.id)
+          AND NOT EXISTS (SELECT 1 FROM wiki_articles a WHERE a.subject_type = 'place' AND a.subject_id = p.id)
+          AND NOT EXISTS (SELECT 1 FROM wiki_rules w WHERE w.subject_type = 'place' AND w.subject_id = p.id)
+          AND NOT EXISTS (SELECT 1 FROM app_chat_edit_permissions c WHERE c.entity_id = p.id)
+        "#,
+    )
+    .execute(db.pool())
+    .await?
+    .rows_affected();
+    Ok(removed)
+}
+
+/// Give every visit with no place link one, the way the rolling pass does for
+/// the visits it writes.
+async fn link_unplaced_visits(db: &Database) -> Result<usize> {
+    let unplaced: Vec<(String, f64, f64, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT v.id, v.latitude, v.longitude, v.started_at FROM data_location_visit v \
+         WHERE NOT EXISTS (SELECT 1 FROM wiki_refs r \
+             WHERE r.source_table = 'data_location_visit' AND r.source_id = v.id \
+               AND r.entity_type = 'place') \
+         ORDER BY v.started_at",
+    )
+    .fetch_all(db.pool())
+    .await?;
+    for (id, lat, lon, started_at) in &unplaced {
+        let place_id = resolve_or_create_place(db, *lat, *lon).await?;
+        sqlx::query(
+            "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at) \
+             VALUES ($1, 'place', $2, 'data_location_visit', $3, 'location', $4) \
+             ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING",
+        )
+        .bind(ids::generate_id("eref", &[id, &place_id, "location"]))
+        .bind(&place_id)
+        .bind(id)
+        .bind(started_at)
+        .execute(db.pool())
+        .await?;
+    }
+    Ok(unplaced.len())
 }
 
 /// Find or create a place entity for the given coordinates
@@ -1308,22 +1450,80 @@ mod tests {
     const NEAR: (f64, f64) = (30.0005, -97.0); // ≈ 55 m
     const FAR: (f64, f64) = (30.0027, -97.0);
 
-    /// Fixes that jitter between two spots used to yield two clusters over the
-    /// same minutes, because the far points were skipped rather than claimed.
+    /// A still phone reports once every ~15 minutes. Those quiet stretches
+    /// are the stay, not departures between a dozen ten-minute fragments.
     #[test]
-    fn one_pass_never_yields_overlapping_visits() {
+    fn quiet_still_reports_are_one_stay() {
+        let mut points: Vec<LocationPoint> = (0..5).map(|m| point(m, HERE.0, HERE.1)).collect();
+        points.extend((1..=12).map(|k| point(k * 15, NEAR.0, NEAR.1)));
+        let stays = detect_stays(&points).unwrap();
+        assert_eq!(stays.len(), 1);
+        assert_eq!((stays[0].start_time, stays[0].end_time), (at(0), at(180)));
+    }
+
+    /// Past the quiet cap the phone stopped reporting: the gap is unknown, so
+    /// the stay ends at the last fix before it instead of spanning the outage.
+    #[test]
+    fn silence_past_the_cap_is_not_a_stay() {
+        let points = vec![
+            point(0, HERE.0, HERE.1),
+            point(15, HERE.0, HERE.1),
+            point(15 + MAX_QUIET_GAP_MINUTES + 1, HERE.0, HERE.1),
+            point(30 + MAX_QUIET_GAP_MINUTES + 1, HERE.0, HERE.1),
+        ];
+        let stays = detect_stays(&points).unwrap();
+        assert_eq!(stays.len(), 2);
+        assert_eq!(stays[0].end_time, at(15));
+        assert_eq!(stays[1].start_time, at(15 + MAX_QUIET_GAP_MINUTES + 1));
+    }
+
+    /// One wild fix is jitter; two in a row are a departure.
+    #[test]
+    fn one_far_fix_is_jitter_two_are_a_departure() {
+        let mut points: Vec<LocationPoint> = (0..20).map(|m| point(m, HERE.0, HERE.1)).collect();
+        points[10] = point(10, FAR.0, FAR.1);
+        points.extend((20..40).map(|m| point(m, FAR.0, FAR.1)));
+        let stays = detect_stays(&points).unwrap();
+        assert_eq!(stays.len(), 2);
+        assert_eq!((stays[0].start_time, stays[0].end_time), (at(0), at(19)));
+        assert_eq!(stays[1].start_time, at(20));
+    }
+
+    /// Two far fixes in a row end a stay; when the phone is back on the same
+    /// spot minutes later it was GPS drift, and the two halves are one stay.
+    #[test]
+    fn a_stay_split_by_drift_is_one_stay() {
+        let mut points: Vec<LocationPoint> = (0..20).map(|m| point(m, HERE.0, HERE.1)).collect();
+        points.push(point(20, FAR.0, FAR.1));
+        points.push(point(21, FAR.0, FAR.1));
+        points.extend((25..45).map(|m| point(m, NEAR.0, NEAR.1)));
+        let stays = detect_stays(&points).unwrap();
+        assert_eq!(stays.len(), 1);
+        assert_eq!((stays[0].start_time, stays[0].end_time), (at(0), at(44)));
+    }
+
+    /// A real trip and a return stays two stays: the gap is past
+    /// `SPLIT_STAY_GAP_MINUTES`.
+    #[test]
+    fn leaving_and_coming_back_later_is_two_stays() {
+        let mut points: Vec<LocationPoint> = (0..20).map(|m| point(m, HERE.0, HERE.1)).collect();
+        points.extend((21..25).map(|m| point(m, FAR.0, FAR.1)));
+        let back = 20 + SPLIT_STAY_GAP_MINUTES + 5;
+        points.extend((back..back + 20).map(|m| point(m, HERE.0, HERE.1)));
+        let stays = detect_stays(&points).unwrap();
+        assert_eq!(stays.len(), 2);
+    }
+
+    /// Fixes alternating between two spots never yield two stays over the
+    /// same minutes.
+    #[test]
+    fn stays_never_overlap() {
         let points: Vec<LocationPoint> = (0..40)
             .map(|m| if m % 2 == 0 { point(m, HERE.0, HERE.1) } else { point(m, FAR.0, FAR.1) })
             .collect();
-        let visits = cluster_location_points(&points, 1.0).unwrap();
-        assert!(!visits.is_empty());
-        for (i, a) in visits.iter().enumerate() {
-            for b in &visits[i + 1..] {
-                assert!(
-                    a.end_time < b.start_time || b.end_time < a.start_time,
-                    "two visits claim the same minutes"
-                );
-            }
+        let stays = detect_stays(&points).unwrap();
+        for w in stays.windows(2) {
+            assert!(w[0].end_time < w[1].start_time, "two stays claim the same minutes");
         }
     }
 
@@ -1361,37 +1561,27 @@ mod tests {
         assert_eq!(longest_uncovered((at(0), at(10)), [(at(0), at(10))].into_iter()), None);
     }
 
-    /// The pre-fix shape: one stay stored as a staircase of rows that all end
-    /// together, plus a rival at another place overlapping the tail.
+    /// A rebuilt stay keeps the id of the stored visit it covers most, so
+    /// citations to it still resolve; stored rows no stay covers go.
     #[test]
-    fn repair_collapses_a_staircase_and_clips_a_rival() {
+    fn rebuild_keeps_ids_by_largest_overlap() {
         let rows = vec![
-            stored("s1", 0, 180, HERE.0, HERE.1),
-            stored("s2", 15, 180, NEAR.0, NEAR.1),
-            stored("s3", 30, 180, HERE.0, HERE.1),
-            stored("away", 170, 240, FAR.0, FAR.1),
-            stored("blip", 175, 185, FAR.0, FAR.1),
+            stored("old_a", 0, 30, HERE.0, HERE.1),
+            stored("old_b", 10, 120, HERE.0, HERE.1),
+            stored("orphan", 300, 320, FAR.0, FAR.1),
         ];
-        let plan = plan_visit_repair(rows);
-        assert_eq!(
-            plan.absorbed,
-            vec![
-                ("away".into(), vec!["blip".into()]),
-                ("s1".into(), vec!["s2".into(), "s3".into()]),
-            ]
-        );
-        // `away` loses the ten minutes `s1` already held; `blip` is the same
-        // stay as `away` and folds into it.
-        assert_eq!(plan.reshape, vec![("away".into(), at(180), at(240))]);
-        let mut deleted = plan.delete.clone();
-        deleted.sort();
-        assert_eq!(deleted, vec!["blip", "s2", "s3"]);
+        let plan = plan_visit_rebuild(&[(at(0), at(130)), (at(140), at(200))], &rows);
+        assert_eq!(plan.keep, vec![Some("old_b".into()), None]);
+        assert_eq!(plan.delete, vec!["old_a".to_string(), "orphan".into()]);
     }
 
+    /// Two stays both overlapping one stored row: only one may take its id.
     #[test]
-    fn repair_of_a_clean_table_is_empty() {
-        let rows = vec![stored("a", 0, 60, HERE.0, HERE.1), stored("b", 90, 120, FAR.0, FAR.1)];
-        assert_eq!(plan_visit_repair(rows), VisitRepair::default());
+    fn rebuild_never_gives_one_id_to_two_stays() {
+        let rows = vec![stored("wide", 0, 200, HERE.0, HERE.1)];
+        let plan = plan_visit_rebuild(&[(at(0), at(50)), (at(60), at(200))], &rows);
+        assert_eq!(plan.keep, vec![None, Some("wide".into())]);
+        assert!(plan.delete.is_empty());
     }
 
     #[test]
@@ -1404,5 +1594,48 @@ mod tests {
         let id2 = generate_visit_id(lat, lon, time);
 
         assert_eq!(id1, id2);
+    }
+
+    /// The rebuild deletes a place only when nothing points at it and the
+    /// person never touched it.
+    #[sqlx::test]
+    async fn only_untouched_empty_places_are_deleted(pool: sqlx::PgPool) {
+        let place = |id: &str, name: &str| {
+            let (id, name) = (id.to_string(), name.to_string());
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO wiki_places (id, name, latitude, longitude, radius_m) VALUES ($1, $2, 30.0, -97.0, 100)",
+                )
+                .bind(id)
+                .bind(name)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        place("place_empty", "Location 30.0000, -97.0000").await;
+        place("place_visited", "Location 30.0001, -97.0000").await;
+        place("place_pinned", "Location 30.0002, -97.0000").await;
+        place("place_named", "Corner bakery").await;
+        sqlx::query(
+            "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id) \
+             VALUES ('r_1', 'place', 'place_visited', 'data_location_visit', 'v_1')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO app_pins (id, url) VALUES ('pin_1', '/place/place_pinned')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let db = Database::from_pool(pool.clone());
+        assert_eq!(delete_empty_places(&db).await.unwrap(), 1);
+        let left: Vec<String> = sqlx::query_scalar("SELECT id FROM wiki_places ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, ["place_named", "place_pinned", "place_visited"]);
     }
 }

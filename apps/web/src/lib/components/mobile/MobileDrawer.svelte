@@ -30,12 +30,14 @@
 	 * Position, the slide and the gesture all belong to MobileShell; this
 	 * component only renders content (the shell moves it for parallax).
 	 */
+	import { untitled } from "$lib/refs/identity.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
 	import SetupRing from "$lib/components/sidebar/SetupRing.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
+	import { chatActivity } from "$lib/stores/chatActivity.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
 	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
 	import { search } from "$lib/stores/search.svelte";
@@ -214,7 +216,7 @@
 				>
 					<span class="chat-title with-glyph">
 						<ProjectGlyph project={p} size={16} />
-						<span class="title-text">{p.name || "Untitled"}</span>
+						<span class="title-text">{p.name || untitled("project")}</span>
 					</span>
 					<span class="chat-when">{p.chat_count === 1 ? "1 chat" : `${p.chat_count} chats`}</span>
 				</button>
@@ -230,7 +232,16 @@
 				aria-current={activeRoute === route ? "page" : undefined}
 				onclick={() => go(route, s.title || "Chat")}
 			>
-				<span class="chat-title">{s.title || "Untitled"}</span>
+				<!-- Working, or a reply not yet read: the same two states the
+				     desktop row shows, after the title. -->
+				<span class="chat-title with-glyph">
+					<span class="title-text">{s.title || untitled("chat")}</span>
+					{#if chatActivity.running(s.conversation_id)}
+						<Icon icon="ri:loader-4-line" width="14" class="spin state-mark" />
+					{:else if chatActivity.unread(s.conversation_id)}
+						<span class="row-unread" role="img" aria-label="New reply"></span>
+					{/if}
+				</span>
 				<!-- A chat in a project says which, in the project's own mark and
 				     color, before when: the phone's form of the desktop row's
 				     tinted glyph. -->
@@ -505,6 +516,21 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.row-unread {
+		width: 8px;
+		height: 8px;
+		margin-left: auto;
+		flex: none;
+		border-radius: 999px;
+		background: var(--color-success);
+	}
+
+	.chat-title :global(.state-mark) {
+		margin-left: auto;
+		flex: none;
+		color: var(--color-foreground-muted);
 	}
 
 	.chat-when {

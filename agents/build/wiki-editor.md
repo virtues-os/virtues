@@ -112,12 +112,11 @@ gets an article, a revision history or a maintenance setting. Articles are for
 things a person would name; that is what keeps their number bounded. Do not
 add `event` to `wiki_articles.subject_type` or give it a brief.
 
-## The trap that produced this doc
+## A prompt with no caller is a comment
 
-`refresh_due_entity_articles` documents, in its own comment, that maintenance
-"belongs in an applet's AGENT phase… and edits through the same find/replace
-path the assistant already uses on pages — which is also the only way to get
-reviewable diffs instead of a 100% rewrite every edition." That was written,
-and then the function returned `Ok(0)` for months while its applet shipped
-disabled. **A prompt with no caller is not a plan, it is a comment.** Do not
-add a brief for a subject kind until something actually runs it.
+The failure class this doc exists to prevent: a brief or a maintenance
+function that describes the right design — edit through the same find/replace
+path the assistant uses on pages, in an applet's AGENT phase, so edits are
+reviewable diffs rather than rewrites — while nothing calls it. It reads as a
+plan, returns nothing, and its applet ships disabled, for months. **Do not add
+a brief for a subject kind until something actually runs it.**

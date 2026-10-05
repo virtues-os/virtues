@@ -18,14 +18,12 @@
 //! (manifests removed upstream) are deleted by diffing the row set under the
 //! slug's id prefix before/after reconcile.
 //!
-//! **Trust note, and it is the whole story right now:** cloned manifests run
-//! with the same privileges as built-ins. `command` is argv and the authoring
-//! docs teach `["python3", "main.py"]`, so an import is arbitrary code
-//! execution as the box user — which has passwordless sudo. There is no
-//! sandbox yet. Until P4 of `agents/plan/sources-packages-plan.md` lands (argv policy
-//! by provenance, sudo-gating, and the `systemd-run` jail that
-//! `code_interpreter` already proves out), this endpoint should not be put in
-//! front of anyone who would not audit the repo themselves.
+//! **Trust note:** `command` is argv, so an import runs somebody else's native
+//! code. What holds is not a ban but the route: importing is sudo-gated
+//! (`import_applet_package`), and an unshipped applet spawns inside a
+//! transient `systemd-run` unit (`NoNewPrivileges`, `ProtectSystem=strict`, a
+//! syscall filter, memory and runtime ceilings), because the box user has
+//! passwordless sudo. See `agents/record/sources-packages.md`.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -175,7 +173,7 @@ fn validate_url(url: &str) -> Result<()> {
 /// check, not full SSRF protection — a hostname that *resolves* to a private
 /// address still passes, and DNS rebinding is not addressed. It stops the
 /// obvious and the accidental; the real containment for what an import can do
-/// once fetched is the jail (P4 in agents/plan/sources-packages-plan.md).
+/// once fetched is the jail (P4 in agents/record/sources-packages.md).
 fn deny_internal_host(url: &str) -> Result<()> {
     let no_scheme = url
         .split_once("://")

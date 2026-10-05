@@ -11,7 +11,7 @@
 
 use std::sync::OnceLock;
 
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::{PgPool, Row};
 
 use crate::api::day_summary::day_boundaries_utc;
@@ -83,10 +83,58 @@ pub async fn first_point_timezone(
     }
 }
 
-/// Resolve the per-day "where the owner was" timezone for `date`, falling back to
-/// `home_tz` when the day has no located points. Used at the EOD lock.
-pub async fn resolve_day_timezone(pool: &PgPool, date: NaiveDate, home_tz: &str) -> String {
-    first_point_timezone(pool, date, home_tz)
-        .await
-        .unwrap_or_else(|| home_tz.to_string())
+/// The zone `date` is windowed in, the one every reader of a day uses:
+///   1. `wiki_days.start_timezone`, once narration has locked it: a day keeps
+///      the zone it was first windowed in;
+///   2. else the zone of the day's first located point ("where you woke up");
+///   3. else `home_timezone`, and UTC only when the profile cannot be read.
+///
+/// Falling through to the home zone on a day with no location is what step 1
+/// exists to stop: re-resolving a locked past day would re-window it hours off.
+/// See agents/record/timezone-model.md.
+pub async fn day_timezone(pool: &PgPool, date: NaiveDate) -> crate::error::Result<String> {
+    let home_tz = home_timezone_or_utc(pool, date).await;
+    Ok(located_day_timezone(pool, date, &home_tz)
+        .await?
+        .unwrap_or(home_tz))
+}
+
+/// Steps 1 and 2 of [`day_timezone`]: the zone the record itself gives `date`,
+/// or `None` when it gives none and the caller must pick a fallback.
+pub async fn located_day_timezone(
+    pool: &PgPool,
+    date: NaiveDate,
+    home_tz: &str,
+) -> crate::error::Result<Option<String>> {
+    let locked: Option<String> =
+        sqlx::query_scalar("SELECT start_timezone FROM wiki_days WHERE date = $1")
+            .bind(date)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+    if let Some(tz) = locked.filter(|t| !t.is_empty()) {
+        return Ok(Some(tz));
+    }
+    Ok(first_point_timezone(pool, date, home_tz).await)
+}
+
+/// The box's home zone, or UTC when the profile cannot be read.
+pub async fn home_timezone_or_utc(pool: &PgPool, date: NaiveDate) -> String {
+    match crate::api::profile::get_timezone(pool).await {
+        Ok(tz) => tz,
+        Err(e) => {
+            tracing::warn!(date = %date, error = %e, "couldn't read the home timezone; windowing the day in UTC");
+            None
+        }
+    }
+    .unwrap_or_else(|| "UTC".to_string())
+}
+
+/// `date`'s local midnight to the next local midnight, in [`day_timezone`].
+pub async fn day_window(
+    pool: &PgPool,
+    date: NaiveDate,
+) -> crate::error::Result<(DateTime<Utc>, DateTime<Utc>)> {
+    let tz = day_timezone(pool, date).await?;
+    Ok(crate::api::day_summary::day_bounds(date, Some(&tz)))
 }

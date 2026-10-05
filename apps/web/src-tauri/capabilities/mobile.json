@@ -8,6 +8,7 @@
     "allow-command-surface-version",
     "allow-shell-identity-cmd",
     "allow-bundle-boot-ok",
+    "allow-bundle-update-ready",
     "allow-set-appearance",
     "allow-ota-check-now",
     "core:default",

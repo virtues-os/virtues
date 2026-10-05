@@ -105,16 +105,21 @@ does not cost the user their wallet.
 ## 4. Flows
 
 ### 4.1 Signup → link (once)
-1. Customer pays via Stripe Checkout → `success_url?session_id=cs_xxx`.
-2. Home server `POST /claim {session_id}` to Atlas.
-3. Atlas verifies `payment_status == "paid"`, upserts `customers` +
-   `subscriptions`, assigns an `account_id` if the customer has none, mints a
-   random **api_key**, and stores only its hash.
-4. Atlas registers the device with virtues-api (`POST /internal/device`) — the
-   api_key hash plus the `account_id` — and credits the wallet
-   (`POST /internal/credit`).
-5. Atlas returns the raw api_key. The home server stores it in the credential
-   vault under `source_id = "virtues_api"`.
+The box never holds a Stripe key and never sees a checkout page. Linking is a
+device-authorization flow (RFC 8628 shape, `services/virtues-atlas/src/routes/link.rs`):
+
+1. Box `POST /init/start` to Atlas → `device_code` (secret, kept in
+   `box_secrets`) plus a short `user_code` and verification URL shown to the
+   user.
+2. The user opens the URL and is redirected to Stripe Checkout.
+3. On Stripe success Atlas finalizes (`GET /init/done`): verifies payment,
+   upserts `customers` + `subscriptions`, assigns an `account_id` if the
+   customer has none, mints a random **api_key** and stores only its hash,
+   registers it with virtues-api (`POST /internal/device`, hash plus
+   `account_id`) and credits the wallet (`POST /internal/credit`).
+4. Box `POST /init/poll {device_code}` in a loop; on `ready` it receives the
+   raw api_key and stores it in the credential vault under
+   `source_id = "virtues_api"`.
 
 Re-linking rotates the api_key and re-points the device at the **same**
 `account_id`, so the balance survives.
@@ -131,8 +136,9 @@ The box sends `Authorization: Bearer <api_key>` on every proxy call. virtues-api
 SHA-256s it, resolves `device_keys → accounts`, checks the balance and the daily
 cap (lazy reset on the first call after `today_reset_at`), then appends a debit
 to `ledger` and decrements the projection. AI cost is authoritative from Vercel
-AI Gateway's `usage.cost`; fixed-cost routes (Places/Exa/Unsplash) use a
-constant; failed upstreams refund by appending a credit.
+AI Gateway's `usage.cost`; Places charges a constant per call, web search
+(`/v1/ai/search`) charges the model cost plus a per-search fee, and Unsplash
+is not charged; failed upstreams refund by appending a credit.
 
 **402 means the wallet is empty** (surface it, or auto-topup). **401 means the
 key is unknown** (re-link). These are the only two states the box must handle.
@@ -185,13 +191,17 @@ v2 is written down rather than dropped.
 ## 7. Endpoints
 
 **Atlas**
-- `POST /claim {session_id}` — Stripe session → device api_key (registers the
-  device + credits the wallet with virtues-api as a side effect)
+- `POST /init/start`, `POST /init/poll`, `GET /init/done` — the device link
+  (§4.1); `GET /init/checkout` and the `/init/login*` routes serve the
+  browser side
+- `POST /claim {session_id}` — Stripe session → api_key. Still mounted; no
+  box calls it. Its finalizer is the one `/init/done` and the account
+  checkout share
+- `POST /billing/checkout/sessions` — a linked free account subscribes
 - `POST /credits/topup` / `POST /credits/auto-topup` — card-funded wallet top-up
 - `POST /billing/portal/sessions` — → Stripe Customer Portal `{url}`
 - `POST /webhooks/stripe` — maintains subscription status; drives renewal
   crediting (signature-verified, idempotent)
-- `POST /init/*`, `GET /init/poll` — box link/login session dance
 - `POST /relay/config` — the box learns which relay to home on. Reach is NOT
   entitlement-gated: the relay admits everyone and defends itself with rate
   limits, so any linked box may ask (agents/record/open-relay.md, 2026-08-31).
@@ -207,9 +217,9 @@ v2 is written down rather than dropped.
   (internal-secret gated)
 - `POST /internal/credit` — Atlas credits a wallet (internal-secret gated)
 - `POST /internal/block` / `POST /internal/unblock` / `GET /internal/blocklist`
-- `GET /v1/whoami`, `GET /v1/usage`, `POST /v1/charge-test` — api_key canaries
+- `GET /v1/whoami`, `GET /v1/usage` — account identity and balance + ledger
 - `/v1/ai/*` (chat/completions, completions, models, search),
-  `/v1/places/*`, `/v1/unsplash/*`,
+  `/v1/places/*`, `/v1/unsplash/*`, `/v1/maps/*`,
   `/v1/services/plaid/*` — gated upstreams
 - `/{provider}/start|callback|exchange|refresh` — the OAuth proxy leg
 - `GET /health`, `GET /ready`
@@ -233,19 +243,21 @@ voucher model.
 The home server (core) talks to the cloud through `virtues-core/src/virtues_api/`:
 
 - **`renew.rs`** — keeps its name from the voucher era, but there is no renewal
-  dance left in it. It is the api_key's lifecycle: `claim()` (Stripe session →
-  api_key), `store_api_key()` / `read_api_key()` / `has_api_key()` against the
-  credential vault (`source_id = "virtues_api"`), plus `auto_topup()` and
-  `fetch_portal_session()`. The api_key is a single rotatable credential — there
+  dance left in it. It is the api_key's lifecycle: `store_api_key()` /
+  `read_api_key()` / `has_api_key()` against the credential vault
+  (`source_id = "virtues_api"`), plus `auto_topup()`, `fetch_entitlement()`,
+  `fetch_portal_session()` and `fetch_checkout_session()`. The api_key is a single rotatable credential — there
   is no refresh/access token pair.
 - **`client.rs`** — `BearerClient` attaches the api_key to every proxy call.
   `post_json` for buffered calls; `stream` for SSE. It no longer auto-renews on
   402: a 402 now means *the wallet is empty*, which retrying cannot fix, so it
   surfaces (and may trigger auto-topup) instead.
-- **Onboarding** — core `POST /api/billing/claim {session_id}`
-  (`server/api.rs::claim_billing_handler`) runs `renew::claim()` +
-  `store_api_key()`. Atlas has already registered the device and credited the
-  wallet by the time that returns, so there is no second step.
+- **`link.rs`** — the box side of §4.1. Core `POST /api/billing/link/start`
+  and `GET /api/billing/link/status` (`server/api/settings.rs`) drive
+  `link::start` / `link::poll`; on `ready` the api_key is stored and Atlas has
+  already registered the device and credited the wallet, so there is no
+  second step. `POST /api/billing/subscribe` is the linked-free-account
+  upgrade (`renew::fetch_checkout_session`).
 
 **Everything goes through `BearerClient`.** Every home-server path that hits a
 Virtues AI or utility upstream authenticates with the device api_key:
@@ -256,9 +268,10 @@ Virtues AI or utility upstream authenticates with the device api_key:
   `BearerClient::stream("/v1/ai/chat/completions", …)`, so `chat_handler` and
   every agent-loop call (including the applet runner) go through it.
   `LlmConfig` carries the `BearerClient` rather than url+user_id+secret.
-- Utilities: `places.rs` → `/v1/places/*`, `exa.rs` → `/v1/exa/search`,
-  `unsplash.rs` → `/v1/unsplash/search`; `tools/web_search.rs` delegates to
-  `api::exa::search`.
+- Utilities (`virtues-core/src/api/`): `places.rs` → `/v1/places/*`,
+  `web_search.rs` → `/v1/ai/search`, `unsplash.rs` → `/v1/unsplash/search`;
+  the `web_search` tool (`tools/web_search.rs`) delegates to
+  `api::web_search`.
 - Day-illustration image generation routes through `/v1/ai/chat/completions`;
   `AI_GATEWAY_API_KEY` is not used anywhere in core.
 - The standalone `llm/client.rs` (`VirtuesApiClient`) was removed.
@@ -273,15 +286,17 @@ mint a Stripe-hosted Customer Portal session, returning `{url}` for the web
 BillingView. Card, invoice, and cancellation management all live on Stripe;
 Atlas never exposes a billing UI.
 
-The streaming path forwards `provider_options` and `thought_signature` end to
-end (`agent/stream.rs` adds both when present), so extended-thinking and
-tool-signature continuity are preserved.
+The streaming path forwards `provider_options` on the request and accumulates
+the gateway's `reasoning_details` per step (`agent/stream.rs`, merged by
+index, last signature kept); `agent/executor.rs` echoes them on the assistant
+message of the next request, so reasoning and tool-signature continuity are
+preserved.
 
 ---
 
 ## 10. Open / deferred
 
-- `/claim` real-Stripe smoke test (needs a live Stripe test account).
+- Device-link real-Stripe smoke test (needs a live Stripe test account).
 - Plaid per-Item cost model — Plaid data sync ships via the standard registry
   source model; a per-Item monthly-cost entitlement treatment is still open.
 - Dunning recovery beyond `past_due` (full retry/grace flow).

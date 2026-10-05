@@ -488,50 +488,69 @@ async fn execute_prepared_inner(
         {
             Ok(agent_result) => {
                 let steps = agent_result.steps as i64;
-
-                // Stopped at the ceiling: the work is partial by definition, so
-                // it is neither a success nor a failure. Recording it as
-                // `success` would let `until = "once"` archive an applet that
-                // never finished its one job.
-                if let Some(reason) = agent_result.budget_stopped {
-                    if let Err(e) = applets::complete_run(
-                        &deps.db,
-                        &run_id,
-                        "budget_exceeded",
-                        steps,
-                        None,
-                        Some(&reason),
-                    )
-                    .await
-                    {
-                        tracing::error!(applet_id, error = %e, "complete_run failed after budget stop");
-                    }
-                    return AppletRunResult {
-                        run_id: Some(run_id),
-                        status: AppletRunStatus::BudgetExceeded,
-                        summary: reason,
-                        error: None,
-                    };
-                }
-
-                let summary = agent_result
-                    .message
-                    .clone()
-                    .or(subprocess_summary.clone())
-                    .unwrap_or_default();
-                if let Err(e) =
-                    applets::complete_run(&deps.db, &run_id, "success", steps, None, Some(&summary))
+                match agent_outcome(agent_result, subprocess_summary.clone()) {
+                    AgentOutcome::Failed(msg) => {
+                        if let Err(e) = applets::complete_run(
+                            &deps.db,
+                            &run_id,
+                            "error",
+                            steps,
+                            Some(&msg),
+                            None,
+                        )
                         .await
-                {
-                    tracing::error!(applet_id, error = %e, "complete_run failed after agent success");
+                        {
+                            tracing::error!(applet_id, error = %e, "complete_run failed while recording agent error");
+                        }
+                        return AppletRunResult {
+                            run_id: Some(run_id),
+                            status: AppletRunStatus::Failed,
+                            summary: String::new(),
+                            error: Some(msg),
+                        };
+                    }
+                    AgentOutcome::BudgetExceeded(reason) => {
+                        if let Err(e) = applets::complete_run(
+                            &deps.db,
+                            &run_id,
+                            "budget_exceeded",
+                            steps,
+                            None,
+                            Some(&reason),
+                        )
+                        .await
+                        {
+                            tracing::error!(applet_id, error = %e, "complete_run failed after budget stop");
+                        }
+                        return AppletRunResult {
+                            run_id: Some(run_id),
+                            status: AppletRunStatus::BudgetExceeded,
+                            summary: reason,
+                            error: None,
+                        };
+                    }
+                    AgentOutcome::Success(summary) => {
+                        if let Err(e) = applets::complete_run(
+                            &deps.db,
+                            &run_id,
+                            "success",
+                            steps,
+                            None,
+                            Some(&summary),
+                        )
+                        .await
+                        {
+                            tracing::error!(applet_id, error = %e, "complete_run failed after agent success");
+                        }
+                        maybe_archive_on_until(&deps.db, &action).await;
+                        return AppletRunResult {
+                            run_id: Some(run_id),
+                            status: AppletRunStatus::Success,
+                            summary,
+                            error: None,
+                        };
+                    }
                 }
-                maybe_archive_on_until(&deps.db, &action).await;
-                return AppletRunResult {
-                    run_id: Some(run_id),
-                    status: AppletRunStatus::Success,
-                    summary,
-                    error: None,
-                };
             }
             Err(e) => {
                 let msg = e.to_string();
@@ -555,6 +574,35 @@ async fn execute_prepared_inner(
         summary,
         error: None,
     }
+}
+
+/// How an agent pass is recorded on its run row.
+#[derive(Debug, PartialEq)]
+enum AgentOutcome {
+    Failed(String),
+    BudgetExceeded(String),
+    Success(String),
+}
+
+/// Decide the run's status from what the agent loop reported. Only a clean
+/// finish is `Success`, and only `Success` reaches `maybe_archive_on_until` —
+/// so `until = "once"` never archives an applet whose one job did not run.
+/// An error wins over a ceiling stop: it is the reason the work is missing.
+/// A ceiling stop is partial by definition, so it is neither success nor
+/// failure.
+fn agent_outcome(
+    result: crate::agent::applet_runner::AgentLoopResult,
+    subprocess_summary: Option<String>,
+) -> AgentOutcome {
+    if let Some(msg) = result.error {
+        return AgentOutcome::Failed(msg);
+    }
+    if let Some(reason) = result.budget_stopped {
+        return AgentOutcome::BudgetExceeded(reason);
+    }
+    // No reply and no subprocess output is a legitimate empty summary: the
+    // agent finished without saying anything.
+    AgentOutcome::Success(result.message.or(subprocess_summary).unwrap_or_default())
 }
 
 // ============================================================================
@@ -1457,6 +1505,58 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r.status, AppletRunStatus::Forbidden);
+    }
+
+    fn loop_result(
+        message: Option<&str>,
+        budget_stopped: Option<&str>,
+        error: Option<&str>,
+    ) -> crate::agent::applet_runner::AgentLoopResult {
+        crate::agent::applet_runner::AgentLoopResult {
+            applet_id: "applet_x".into(),
+            chat_id: None,
+            steps: 0,
+            message: message.map(str::to_string),
+            cost_micros: 0,
+            budget_stopped: budget_stopped.map(str::to_string),
+            error: error.map(str::to_string),
+        }
+    }
+
+    /// A model stream that errors ends the loop quietly with zero steps. That
+    /// must record `error`, not a clean empty `success` — which would also let
+    /// `until = "once"` archive an applet that never did its one job.
+    #[test]
+    fn a_model_error_is_a_failed_run() {
+        let r = loop_result(None, None, Some("no virtues_api key"));
+        assert_eq!(
+            agent_outcome(r, Some("subprocess said hi".into())),
+            AgentOutcome::Failed("no virtues_api key".into())
+        );
+
+        // Partial text before the error does not rescue it.
+        let r = loop_result(Some("half a"), None, Some("stream reset"));
+        assert_eq!(agent_outcome(r, None), AgentOutcome::Failed("stream reset".into()));
+
+        // Nor does a ceiling stop: the error is why the work is missing.
+        let r = loop_result(None, Some("ceiling"), Some("upstream 500"));
+        assert_eq!(agent_outcome(r, None), AgentOutcome::Failed("upstream 500".into()));
+    }
+
+    #[test]
+    fn a_clean_finish_is_success_and_a_ceiling_is_neither() {
+        assert_eq!(
+            agent_outcome(loop_result(Some("done"), None, None), Some("sub".into())),
+            AgentOutcome::Success("done".into())
+        );
+        assert_eq!(
+            agent_outcome(loop_result(None, None, None), Some("sub".into())),
+            AgentOutcome::Success("sub".into())
+        );
+        assert_eq!(
+            agent_outcome(loop_result(Some("x"), Some("ceiling"), None), None),
+            AgentOutcome::BudgetExceeded("ceiling".into())
+        );
     }
 
     /// The vault master key must never be granted by the blanket passthrough.

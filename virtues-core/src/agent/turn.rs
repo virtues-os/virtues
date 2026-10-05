@@ -9,7 +9,7 @@ use serde_json::Value;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::JoinHandle;
 
-use super::executor::{self, ExecutorConfig, ToolExecutionResult};
+use super::executor::{self, ExecutorConfig, ToolExecutionError, ToolExecutionResult};
 use super::protocol::{AgentEvent, ErrorCode, FinishReason, StepReason};
 use super::stream::{self, LlmConfig, LlmStreamResult, StepOptions, StreamError, ToolCall};
 use super::{caps, guard, TurnBudget};
@@ -133,19 +133,50 @@ pub(super) fn answered(step_reason: StepReason, last_step: Option<FinishReason>)
 }
 
 /// The error code for a model call that failed. An interrupted stream is not
-/// an LLM error: the model was mid-sentence when the bytes stopped.
+/// an LLM error: the model was mid-sentence when the bytes stopped. Nor is a
+/// provider that refused the call while it was down: the request was fine.
 pub(super) fn stream_error_code(e: &StreamError) -> ErrorCode {
     match e {
         StreamError::Interrupted(_) => ErrorCode::Interrupted,
+        StreamError::LlmError { status, .. } if stream::is_transient_status(*status) => {
+            ErrorCode::ProviderUnavailable
+        }
         _ => ErrorCode::LlmError,
     }
 }
 
-/// Whether a tool result asks the person to act (binding a page) before the
-/// turn can go on.
+/// What the client is told about a failed model call. An outage says so up
+/// front: the generic "LLM error" text read as a fault in the request. The
+/// status stays in the text, because the web client classifies by it.
+pub(super) fn stream_error_text(e: &StreamError) -> String {
+    match e {
+        StreamError::LlmError { status, message } if stream::is_transient_status(*status) => format!(
+            "provider unavailable (status {status}): inference is down at the model's provider, \
+             which refused the call twice: {message}"
+        ),
+        _ => e.to_string(),
+    }
+}
+
+/// A call that was running when Stop was pressed, recorded as stopped so the
+/// transcript and the next turn show it ended rather than hung.
+/// The web client matches this text to draw the call as stopped rather than
+/// failed (`toolPresentation.ts` TOOL_STOPPED).
+pub(super) fn stopped(call: &ToolCall) -> ToolExecutionResult {
+    ToolExecutionResult {
+        tool_call_id: call.id.clone(),
+        tool_name: call.name.clone(),
+        result: Err(ToolExecutionError::ExecutionFailed("stopped by the owner before it finished".into())),
+    }
+}
+
+/// Whether a tool result asks the person to act (binding a page, allowing a
+/// sudo write) before the turn can go on.
 pub(super) fn needs_user(result: &ToolExecutionResult) -> bool {
     result.result.as_ref().is_ok_and(|r| {
-        r.data.get("needs_binding").and_then(|v| v.as_bool()).unwrap_or(false)
+        let flag = |k: &str| r.data.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+        // `awaiting_owner`: a sudo write waiting for Allow (`tools::sudo_gate`).
+        flag("needs_binding") || flag("awaiting_owner")
     })
 }
 
@@ -369,13 +400,25 @@ mod tests {
     }
 
     #[test]
-    fn only_an_interruption_is_not_an_llm_error() {
+    fn interruptions_and_outages_are_not_llm_errors() {
         assert_eq!(stream_error_code(&StreamError::Interrupted("x".into())), ErrorCode::Interrupted);
         assert_eq!(stream_error_code(&StreamError::Connection("x".into())), ErrorCode::LlmError);
         assert_eq!(
             stream_error_code(&StreamError::LlmError { status: 500, message: "x".into() }),
             ErrorCode::LlmError
         );
+        assert_eq!(
+            stream_error_code(&StreamError::LlmError { status: 503, message: "x".into() }),
+            ErrorCode::ProviderUnavailable
+        );
+    }
+
+    #[test]
+    fn an_outage_names_itself_and_keeps_its_status() {
+        let text = stream_error_text(&StreamError::LlmError { status: 503, message: "busy".into() });
+        assert!(text.starts_with("provider unavailable (status 503)"), "{text}");
+        let other = stream_error_text(&StreamError::LlmError { status: 400, message: "bad".into() });
+        assert!(other.starts_with("LLM error (status 400)"), "{other}");
     }
 
     #[test]

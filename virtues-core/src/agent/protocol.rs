@@ -163,6 +163,9 @@ pub enum ErrorCode {
     /// The stream ended before the model finished (dropped connection, idle
     /// timeout, gateway error frame). What streamed is kept; it is partial.
     Interrupted,
+    /// The provider turned the call away (502/503/504), even after one more
+    /// try. Nothing is wrong with the request; the model was unavailable.
+    ProviderUnavailable,
 }
 
 impl AgentEvent {

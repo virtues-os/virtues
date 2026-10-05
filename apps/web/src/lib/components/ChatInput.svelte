@@ -153,8 +153,13 @@
 	// The turn is in flight (content queued/sending) — show the spinner.
 	const isBusy = $derived(sendDisabled && (!inputIsEmpty || allowEmptySubmit));
 
+	// Text typed during a running turn is a follow-up for the parent to queue,
+	// so the button offers Send while there is a draft and Stop once it is
+	// empty. A phone has no Enter to reach the queue, so this is its only door.
+	const canQueue = $derived(isStreaming && (!inputIsEmpty || allowEmptySubmit));
+
 	// Which action the single trailing button performs right now.
-	const trailingMode = $derived(isStreaming ? "stop" : "send");
+	const trailingMode = $derived(isStreaming && !canQueue ? "stop" : "send");
 	const trailingLabel = $derived(trailingMode === "stop" ? "Stop" : "Send");
 	function trailingAction() {
 		if (trailingMode === "stop") handleStop();
@@ -389,15 +394,15 @@
 			<button
 				type="button"
 				onclick={trailingAction}
-				disabled={trailingMode === "send" && !canSubmit}
+				disabled={trailingMode === "send" && !canSubmit && !canQueue}
 				class="pill-btn action-btn btn-primary"
 				aria-label={trailingLabel}
 			>
 				<span class="icon-swap">
-					<span class="swap-icon" class:active={trailingMode === "send" && !isBusy}>
+					<span class="swap-icon" class:active={trailingMode === "send" && (!isBusy || canQueue)}>
 						<Icon icon="ri:arrow-up-line" width="15" style="color: inherit" />
 					</span>
-					<span class="swap-icon" class:active={trailingMode === "send" && isBusy}>
+					<span class="swap-icon" class:active={trailingMode === "send" && isBusy && !canQueue}>
 						<Icon icon="ri:loader-4-line" class="animate-spin" width="15" style="color: inherit" />
 					</span>
 					<span class="swap-icon" class:active={trailingMode === "stop"}>
@@ -461,6 +466,9 @@
 		gap: 0.25rem;
 		padding: 0.4375rem 0.5rem 0.4375rem 0.5625rem;
 		border-radius: 1.75rem;
+		/* design-ok: the composer floats over the page (§6 elevation), so it
+		   takes the faintest lift — a whisper, not a card shadow. */
+		box-shadow: 0 2px 4px color-mix(in srgb, var(--color-foreground) 5%, transparent);
 		transition:
 			border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
 			box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);

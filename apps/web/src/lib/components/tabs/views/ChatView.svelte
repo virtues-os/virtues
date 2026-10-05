@@ -39,6 +39,7 @@
 	import { ToolSideEffects } from "$lib/components/chat/state/toolSideEffects";
 	import { toolErrorDetail, toolErrorSummary } from "$lib/components/chat/state/toolError";
 	import { observeComposerReserve } from "$lib/components/chat/state/composerReserve";
+	import { holdReadingPosition } from "$lib/components/chat/state/holdReadingPosition";
 	import { readDraft, writeDraft, NEW_CHAT_DRAFT_ID } from "$lib/components/chat/state/drafts";
 
 	// ── the narrative interview ────────────────────────────────────────────
@@ -76,13 +77,17 @@
 	import type { Citation } from "$lib/types/Citation";
 	import UserMessage from "$lib/components/UserMessage.svelte";
 	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
+	import { toolStatus } from "$lib/components/chat/state/toolPresentation";
+	import { TurnPhaseController } from "$lib/components/chat/state/turnPhase.svelte";
 	import TurnFigures from "$lib/components/chat/TurnFigures.svelte";
 	import SubagentPanel from "$lib/components/SubagentPanel.svelte";
 	import { onMount, onDestroy, tick, untrack } from "svelte";
+	import { SvelteSet } from "svelte/reactivity";
 	import { goto } from "$app/navigation";
 	import { fade, fly } from "svelte/transition";
 	import { cubicInOut } from "svelte/easing";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
+	import { chatActivity } from "$lib/stores/chatActivity.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
 	import ProjectChip from "$lib/components/ProjectChip.svelte";
@@ -124,6 +129,7 @@
 	import LocalModelCard from "$lib/components/chat/local/LocalModelCard.svelte";
 	import LocalStatsLine from "$lib/components/chat/local/LocalStatsLine.svelte";
 	import { localModel } from "$lib/stores/localModel.svelte";
+	import { chatUsage } from "$lib/stores/chatUsage.svelte";
 
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -161,6 +167,17 @@
 	// composer). Local to the view — a tab drag-away mid-queue is an accepted edge.
 	let queuedMessages = $state<string[]>([]);
 
+	// Whether a turn is working, and for how long (see state/turnPhase). A
+	// stream silent past LET_GO_MS is let go and rejoined: the box's turn
+	// outlives the request, so a dead socket is the only thing lost.
+	const turnPhase = new TurnPhaseController(
+		() => chat,
+		() => {
+			void chat.stop();
+			setTimeout(resumeIfDangling, 500);
+		},
+	);
+
 	// Track E1: multimodal attachments (see state/attachments).
 	const attachments = new AttachmentsController();
 
@@ -168,9 +185,12 @@
 	// that judges the staged attachments against it (see state/modelChoice).
 	const models = new ModelChoiceController(() => attachments.items);
 
+	// Through the same door as the error card's Try again: the turn that
+	// failed may still be running on the box, and a bare regenerate would
+	// start a second, billed one on top of it.
 	function switchToRecommendedAndRetry() {
 		models.switchToRecommended();
-		chat.regenerate();
+		void retryLastTurn();
 	}
 
 	// Click an in-message image to open it in a shared-element lightbox.
@@ -296,6 +316,20 @@
 		// Await ensures the backend has the permission before the retry.
 		await grantEditPermission(entityId, entityType, title);
 
+		// A sudo command: the turn paused on it, and everything before it in
+		// the turn stands. Regenerating would throw that away and ask the model
+		// to find the command again; instead it is told to run the one allowed.
+		// Sent straight to the SDK, not through the composer, whose draft and
+		// staged files are the person's and stay where they are.
+		if (entityType === "command") {
+			if (chat.status === "ready") {
+				danglingTurn = false;
+				await chat.sendMessage({ text: "Allowed. Run exactly that command." });
+				setTimeout(turnWritten, 2000);
+			}
+			return;
+		}
+
 		// Regenerate = remove last assistant message + re-request
 		if (chat.status === 'ready') {
 			try {
@@ -335,6 +369,13 @@
 		status: "healthy" | "warning" | "critical";
 	}
 	let contextUsage = $state<ContextUsageState | undefined>(undefined);
+
+	// A turn in this chat has been saved: read its usage here, and tell the
+	// context view (another tab) to read it too.
+	function turnWritten() {
+		refreshContextUsage();
+		if (conversationId) chatUsage.turnWritten(conversationId);
+	}
 
 	// Fetch context usage from API
 	async function refreshContextUsage() {
@@ -385,6 +426,12 @@
 			conversation?: { project_id?: string | null };
 		}>(id, signal);
 		if (signal?.aborted) return false;
+		// A reply still arriving on this instance is newer than the stored
+		// transcript, whose reply row is written only when the turn ends. That
+		// happens when a tab is reopened mid-reply: chatInstances kept the
+		// stream alive while it was gone, and overwriting here would drop the
+		// half-written answer.
+		if (chat.status === "submitted" || chat.status === "streaming") return true;
 		// An older chat is not in the session list; its own detail says where
 		// it is filed. A box older than the field leaves it undefined.
 		if (data.conversation && data.conversation.project_id !== undefined) {
@@ -430,9 +477,6 @@
 
 	function resumeIfDangling() {
 		if (isGhost) return;
-		const now = Date.now();
-		if (now - lastRejoinAt < REJOIN_FLOOR_MS) return;
-		lastRejoinAt = now;
 		// "ready" OR "error": the case this exists for — a Wi-Fi handover, a
 		// phone that slept — ends the SDK's fetch with a TypeError, and the
 		// SDK sets status to error. Gated on ready alone, the rejoin never
@@ -441,6 +485,12 @@
 		if (chat.status !== "ready" && chat.status !== "error") return;
 		const last = chat.messages[chat.messages.length - 1];
 		if (!last) return;
+		// The floor is spent only by an attempt that goes out. A phone wakes
+		// while the dead socket still reads "streaming"; stamped before the
+		// gate, that wake used the floor up and the rejoin it was for never ran.
+		const now = Date.now();
+		if (now - lastRejoinAt < REJOIN_FLOOR_MS) return;
+		lastRejoinAt = now;
 
 		// No "is the last message a user message?" gate any more. It used to be
 		// here, and it meant the rejoin only ever fired for a turn that had not
@@ -669,9 +719,11 @@
 		// (Bound pages are not reset: binding belongs to the chat session.)
 		chat.messages = [];
 		messageMetadata = new Map();
+		liveReplies.clear();
 		contextUsage = undefined;
-		titleGenerated = false;
+		titleDone = false;
 		isAwaitingResponse = false;
+		turnPhase.reset();
 		isGhost = isTemporaryRoute(route);
 		danglingTurn = false;
 		queuedMessages = [];
@@ -738,6 +790,47 @@
 			window.removeEventListener("online", onBack);
 			document.removeEventListener("visibilitychange", onBack);
 		};
+	});
+
+	// And when the wire drops while the screen is on. A failed fetch is a
+	// TypeError; any other error is the box refusing (turn_in_progress, a
+	// wallet), where rejoining would stream an old reply under a message the
+	// box never saved — that one waits for the error card's Try again.
+	$effect(() => {
+		if (!active || chat.status !== "error") return;
+		if (chat.error instanceof TypeError) resumeIfDangling();
+	});
+
+	// The sidebar's spinner and dot (chatActivity). This view reports its own
+	// turn the moment it starts, ahead of the box's list; when the view lets
+	// go (another chat, unmount) the box's list takes over, since the turn
+	// keeps running there.
+	let reportedRunning: string | null = null;
+	function reportRunning(id: string | null) {
+		if (reportedRunning && reportedRunning !== id) chatActivity.setLocalRunning(reportedRunning, false);
+		if (id && reportedRunning !== id) chatActivity.setLocalRunning(id, true);
+		reportedRunning = id;
+	}
+	$effect(() => {
+		const running = !isGhost && turnPhase.working;
+		const id = conversationId;
+		untrack(() => reportRunning(running ? id : null));
+	});
+	onDestroy(() => reportRunning(null));
+
+	// Seen: this chat is on screen, loaded, and not mid-reply. Re-runs when a
+	// reply finishes, so an answer watched as it arrived is never unread.
+	let pageVisible = $state(typeof document === "undefined" || !document.hidden);
+	$effect(() => {
+		const onVis = () => (pageVisible = !document.hidden);
+		document.addEventListener("visibilitychange", onVis);
+		return () => document.removeEventListener("visibilitychange", onVis);
+	});
+	$effect(() => {
+		if (!active || !pageVisible || isGhost || isLoading || isNewChat(tab.route)) return;
+		if (turnPhase.working) return;
+		const id = conversationId;
+		untrack(() => chatActivity.markSeen(id));
 	});
 
 	// Load conversation data on mount
@@ -843,14 +936,21 @@
 		}
 	});
 
-	// Derive thinking state from chat status
-	const isThinking = $derived.by(() => {
-		const status = chat?.status;
-		return status === "submitted" || status === "streaming";
-	});
-
 	// Deduplicated messages for rendering
 	const uniqueMessages = $derived(chat?.messages ? deduplicateMessages(chat.messages) : []);
+
+	/** How long each stored reply's turn worked, from the span the box
+	 *  records with the row (`startedAt`/`endedAt`), for the thinking line of
+	 *  a turn this view did not watch. */
+	const turnSeconds = $derived.by(() => {
+		const out = new Map<string, number>();
+		for (const m of uniqueMessages as { id: string; startedAt?: Date; endedAt?: Date }[]) {
+			if (!m.startedAt || !m.endedAt) continue;
+			const seconds = (m.endedAt.getTime() - m.startedAt.getTime()) / 1000;
+			if (seconds >= 0) out.set(m.id, seconds);
+		}
+		return out;
+	});
 	/** The interview's opening plate is in this thread — mid-thread here,
 	 *  not first as in the old standalone room — so the container must not
 	 *  clip paint at its edge. Without this the plate lost both ends. */
@@ -911,34 +1011,12 @@
 		return null;
 	});
 
-	// Whether the last assistant message has any visible content yet
-	// (text, reasoning, or tool calls). Used to keep the optimistic thinking
-	// indicator showing until real content takes over.
-	const lastAssistantHasVisibleContent = $derived.by(() => {
-		if (!lastAssistantMessage) return false;
-		return lastAssistantMessage.parts.some((p: any) =>
-			(p.type === 'text' && p.text) ||
-			(p.type === 'reasoning' && p.text) ||
-			p.type?.startsWith('tool-')
-		);
-	});
-
-	// Track thinking duration
-	let thinkingStartTime: number | null = null;
-	let thinkingDuration = $state(0);
-
-	$effect(() => {
-		if (isThinking && !thinkingStartTime) {
-			thinkingStartTime = Date.now();
-		} else if (!isThinking && thinkingStartTime) {
-			thinkingDuration = (Date.now() - thinkingStartTime) / 1000;
-			thinkingStartTime = null;
-		}
-	});
-
 	// Local input state
 	let input = $state("");
 	let inputFocused = $state(false);
+	// The hidden figure: "∴" or "therefore" sent into an empty chat opens the
+	// three-body orbit instead of sending. Loaded only when asked for.
+	let threeBodyOpen = $state(false);
 
 	// Draft persistence — see state/drafts for why an unsent chat shares one key.
 	const draftId = $derived(extractConversationId(tab.route) ?? NEW_CHAT_DRAFT_ID);
@@ -972,8 +1050,10 @@
 		return () => clearTimeout(t);
 	});
 
-	// Title generation state
-	let titleGenerated = $state(false);
+	// Whether the server has said no automatic title will be written to this
+	// chat again. Reset per chat; the server decides from who wrote the
+	// title, so asking once after opening an old chat costs a no-op call.
+	let titleDone = $state(false);
 	let refreshDataTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// Agent mode and persona selection state - used for tool filtering on backend
@@ -999,17 +1079,6 @@
 	// not a choice — record it as one.
 	$effect(() => {
 		models.adoptStoreSelection();
-	});
-
-	// Safety timeout: a turn still thinking after 5 minutes is let go. The
-	// box's stream has no total timeout, only a 300s idle one.
-	$effect(() => {
-		if (!isThinking) return;
-		const t = setTimeout(() => {
-			const s = chat.status;
-			if (s === "error" || s === "streaming" || s === "submitted") chat.clearError();
-		}, 300000);
-		return () => clearTimeout(t);
 	});
 
 	// Derived state for layout mode
@@ -1122,10 +1191,13 @@
 	//
 	// Placeholders only — a label the user has renamed by hand must not be
 	// overwritten by the server's copy.
-	const PLACEHOLDER_LABELS = new Set(["Chat", "New Chat", "Temporary Chat"]);
+	// Compared lowercased: openers spell it "New chat" and the registry
+	// "New Chat", and an exact match left every tab opened the first way
+	// wearing the placeholder for good.
+	const PLACEHOLDER_LABELS = new Set(["chat", "new chat", "temporary chat"]);
 	$effect(() => {
 		if (!chatTitle || !tab) return;
-		if (!PLACEHOLDER_LABELS.has(tab.label)) return;
+		if (!PLACEHOLDER_LABELS.has(tab.label.toLowerCase())) return;
 		// Never write a label that is already there. This effect READS
 		// `tab.label` and WRITES it, so it is only safe while every write
 		// changes the value — and the guard above assumed a saved title is
@@ -1236,19 +1308,19 @@
 
 	// Generate title after first assistant response
 	async function generateTitle() {
-		if (titleGenerated || chat.messages.length < 2) return;
+		if (titleDone || chat.messages.length < 2) return;
 		// The interview keeps the name it was seeded with. Its transcript is
 		// the most private text on the box, and a generated title puts a
 		// summary of it in the sidebar — this chat had renamed itself after
 		// the person's own childhood. The server refuses this too (the id
 		// decides, never the client); this only saves the round trip.
 		if (conversationId === INTERVIEW_CHAT_ID || isGettingStartedChat(conversationId)) {
-			titleGenerated = true;
+			titleDone = true;
 			return;
 		}
 
 		try {
-			const data = await setChatTitle<{ title?: string }>({
+			const data = await setChatTitle<{ title?: string; done?: boolean }>({
 				chatId: conversationId,
 				messages: chat.messages.map((m) => ({
 					role: m.role,
@@ -1256,10 +1328,11 @@
 				})),
 			});
 
-			// Only mark done once we actually have a title, so an ok-but-empty
-			// response retries on the next turn instead of giving up silently.
+			// The server answers every ask with the title it has, generated or
+			// kept, and `done` once it will never write another. A server that
+			// predates `done` generated on every ask, so its answer stops us.
+			titleDone = data.done ?? true;
 			if (data.title) {
-				titleGenerated = true;
 				windowShellStore.updateTab(tab.id, { label: data.title });
 				// Optimistically seed the shared session store so the header
 				// breadcrumb (and any store-bound surface) updates immediately,
@@ -1279,6 +1352,33 @@
 	});
 
 	/**
+	 * Replies this view watched arrive. Their words keep fading in after the
+	 * stream ends rather than being rebuilt as plain text (see Markdown's
+	 * `animate`); a reply loaded from history never fades.
+	 */
+	const liveReplies = new SvelteSet<string>();
+	$effect(() => {
+		if (chat?.status !== "streaming") return;
+		const last = chat.messages[chat.messages.length - 1];
+		if (last?.role === "assistant") untrack(() => liveReplies.add(last.id));
+	});
+
+	// The end of a turn changes heights above a reader scrolled into it, and
+	// WebKit does not anchor scroll. `.pre` so the reading line is measured
+	// before the DOM takes the change.
+	let releaseHold: (() => void) | null = null;
+	let wasRunning = false;
+	$effect.pre(() => {
+		const running = chat?.status === "streaming" || chat?.status === "submitted";
+		if (wasRunning && !running && scrollContainer) {
+			releaseHold?.();
+			releaseHold = holdReadingPosition(scrollContainer);
+		}
+		wasRunning = running;
+	});
+	onDestroy(() => releaseHold?.());
+
+	/**
 	 * Where a room opens. A chat opens at its newest message; the
 	 * getting-started room opens at the TOP, on the cover — the painting is
 	 * the first thing in it and the first thing anyone should see, and on a
@@ -1293,6 +1393,31 @@
 		}
 		return false;
 	}
+
+	/**
+	 * Whether the reader has scrolled up out of the newest turn. Drives the
+	 * jump-to-latest button above the composer; the threshold is generous so
+	 * the last line's own padding does not count as "away".
+	 */
+	let awayFromEnd = $state(false);
+	$effect(() => {
+		const scroller = scrollContainer;
+		if (!scroller) return;
+		const measure = () => {
+			awayFromEnd = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight > 240;
+		};
+		measure();
+		// The transcript growing, and the scroller itself resizing (a phone's
+		// keyboard, a rotation), both move the end without a scroll event.
+		const content = new ResizeObserver(measure);
+		content.observe(scroller);
+		if (scroller.firstElementChild) content.observe(scroller.firstElementChild);
+		scroller.addEventListener("scroll", measure, { passive: true });
+		return () => {
+			content.disconnect();
+			scroller.removeEventListener("scroll", measure);
+		};
+	});
 
 	function scrollToBottom(behavior: ScrollBehavior = "smooth") {
 		if (scrollContainer) {
@@ -1325,7 +1450,10 @@
 
 		// Mark the in-flight assistant message as user-stopped so the "Stopped"
 		// notice shows immediately (reload reads the persisted subject='cancelled').
-		const stoppedId = lastAssistantMessage?.id;
+		// Only the reply being written: stopped before it existed, the last
+		// assistant message is the PREVIOUS turn's, which was not stopped.
+		const tail = uniqueMessages[uniqueMessages.length - 1];
+		const stoppedId = tail?.role === "assistant" ? tail.id : undefined;
 		if (stoppedId) {
 			const existing = messageMetadata.get(stoppedId) ?? {};
 			messageMetadata.set(stoppedId, { ...existing, stopped: true });
@@ -1339,7 +1467,39 @@
 		} catch (e) {
 			console.error('[ChatView] Failed to cancel chat:', e);
 		}
+		// The box saves the stopped turn once its loop has wound down, after
+		// this returns. Read usage once it has, and once more for a slow one.
+		setTimeout(turnWritten, 1500);
+		setTimeout(turnWritten, 5000);
 	}
+
+	/** Move a new chat's tab from "/chat" to its own id. The route is what a
+	 *  reload reopens, so it moves the moment the box has the turn: a reload
+	 *  mid-reply then rejoins the turn instead of opening a blank chat while
+	 *  the reply finishes unseen. A temporary chat keeps its route; the box
+	 *  has nothing to reopen. */
+	async function promoteNewChatRoute() {
+		if (isGhost || !isNewChat(tab.route)) return;
+		const newRoute = `/chat/${conversationId}`;
+		// Set first, so `onRouteChange` reads the move as this conversation
+		// getting its id rather than a switch that resets the view.
+		previousTabRoute = newRoute;
+		windowShellStore.updateTab(tab.id, { route: newRoute });
+		// The draft key moves with the route; a debounced write of the cleared
+		// composer to the old key would be dropped and the sent text would come
+		// back in the next new chat.
+		writeDraft(NEW_CHAT_DRAFT_ID, "");
+		await editAllowListStore.markChatCreated();
+		windowShellStore.invalidateViewCache("chat");
+	}
+
+	// The box has stored the chat and the user's message before its first
+	// byte (`store_user_turn` runs ahead of the stream), so "streaming" is the
+	// earliest moment the new route is sure to reopen something.
+	$effect(() => {
+		if (chat.status !== "streaming") return;
+		untrack(() => void promoteNewChatRoute());
+	});
 
 	async function handleChatSubmit(value: string) {
 		let messageToSend = value.trim();
@@ -1355,6 +1515,12 @@
 			return;
 		}
 
+		if (isEmpty && /^(∴|therefore)$/i.test(messageToSend)) {
+			input = "";
+			threeBodyOpen = true;
+			return;
+		}
+
 		// Track E1: block sending if an attachment isn't supported by the active
 		// model — the capability banner prompts a switch instead.
 		if (models.capabilityIssue) return;
@@ -1367,7 +1533,7 @@
 		// recovery — clear the card and send it.
 		if (chat.status === "error") chat.clearError();
 
-		if (chat.status !== "ready") {
+		if (chat.status !== "ready" || turnPhase.working) {
 			// Queue text; attachments stay staged and ride along when the drain
 			// effect re-sends this once the current turn finishes.
 			queuedMessages = [...queuedMessages, messageToSend];
@@ -1393,8 +1559,9 @@
 		// New turn → clear any leftover Deep Research panel from the previous turn.
 		chatInstances.clearSubagents(conversationId);
 
-		// Optimistic: show thinking indicator immediately (before network round-trip)
+		// The turn is working from here, before the network round-trip.
 		isAwaitingResponse = true;
+		turnPhase.beginSend();
 		await tick(); // Flush DOM so the indicator renders before the network call
 
 		// Auto-scroll to bottom on submit
@@ -1424,23 +1591,8 @@
 
 			handedOff = true;
 
-			// Titles come from a cloud model, so a local chat never asks for one.
-			if (chat.messages.length >= 2 && !isGhost && !titleGenerated) {
+			if (chat.messages.length >= 2 && !isGhost && !titleDone) {
 				await generateTitle();
-				// Update tab route if it's a new chat
-				if (isNewChat(tab.route)) {
-					// Update previousTabRoute first to prevent the tab-switch effect
-					// from treating this as a tab change and resetting state
-					const newRoute = `/chat/${conversationId}`;
-					previousTabRoute = newRoute;
-					windowShellStore.updateTab(tab.id, {
-						route: newRoute,
-					});
-					// Ensure chat is marked as created (may already be done above if hasItems)
-					await editAllowListStore.markChatCreated();
-					// Invalidate the Chats view cache so it refreshes with the new chat
-					windowShellStore.invalidateViewCache('chat');
-				}
 				await chatSessions.refresh();
 			}
 
@@ -1448,7 +1600,7 @@
 				clearTimeout(refreshDataTimeout as any);
 			}
 			refreshDataTimeout = setTimeout(() => {
-				refreshContextUsage();
+				turnWritten();
 				refreshDataTimeout = null;
 			}, 2000);
 		} catch (error) {
@@ -1471,6 +1623,7 @@
 			}
 		} finally {
 			isAwaitingResponse = false;
+			turnPhase.endSend();
 		}
 	}
 
@@ -1665,12 +1818,6 @@
 										data-agent-id={messageMetadata.get(
 											message.id,
 										)?.agentId || "general"}
-										data-loading={message.role ===
-											"assistant" &&
-											!message.parts.some(
-												(p: any) =>
-													p.type === "text" && p.text,
-											)}
 									>
 										{#if message.role === "checkpoint"}
 											<!-- Compaction checkpoint message -->
@@ -1693,9 +1840,7 @@
 												uniqueMessages[
 													uniqueMessages.length - 1
 												]?.id}
-											{@const isStreaming =
-												(chat.status === "streaming" || chat.status === "submitted") &&
-												isLastMessage}
+											{@const isStreaming = turnPhase.working && isLastMessage}
 											<!-- Narration, tool calls and reasoning go to the thinking
 											     block; the reply starts at bodyFromIndex (see splitTurn). -->
 											{@const turn = splitTurn(message.parts, isStreaming)}
@@ -1719,16 +1864,18 @@
 												     about the person must never surface as chrome
 												     in the room built on their own account. -->
 												<ThinkingBlock
-													isThinking={isStreaming &&
-														isLastMessage &&
-														chat.status ===
-															"streaming"}
+													isThinking={isStreaming}
+													startedAt={turnPhase.startedAt}
+													stalled={isStreaming && turnPhase.stalled}
 													toolCalls={turn.toolParts}
 													reasoningContent={turn.reasoning}
 													narration={turn.narration}
-													duration={isLastMessage
-														? thinkingDuration
-														: 0}
+													intent={turn.intent}
+													seconds={turnPhase.secondsFor(message.id) ||
+														turnSeconds.get(message.id) ||
+														0}
+													land={!stopReason(messageMetadata.get(message.id)) &&
+														!chat.error}
 													agentMode={selectedAgentMode}
 												/>
 											{/if}
@@ -1750,6 +1897,7 @@
 														<Markdown
 															content={shown.content}
 															isStreaming={isStreaming || shown.arriving}
+															animate={isStreaming || shown.arriving || liveReplies.has(message.id)}
 															citations={citationContext}
 															onCitationClick={openCitationPanel}
 														/>
@@ -1863,12 +2011,12 @@
 											{/if}
 											{:else if part.type === "tool-code_interpreter"}
 												{@const toolPart = part as any}
-												{@const isRunning = toolPart.state === "input-streaming" || toolPart.state === "input-available"}
-												{@const isError = toolPart.state === "output-error"}
+												{@const status = toolStatus(toolPart, isStreaming)}
+												{@const isError = status === "failed" || status === "unfinished"}
 												<CodeInterpreterCard
-													status={isRunning ? 'running' : isError ? 'error' : 'success'}
+													status={status === "running" ? 'running' : isError ? 'error' : 'success'}
 													code={toolPart.input?.code || ''}
-													output={toolPart.output ?? (isError ? { error: toolPart.errorText } : undefined)}
+													output={toolPart.output ?? (isError ? { error: status === "unfinished" ? "This didn't finish." : toolPart.errorText } : undefined)}
 												/>
 											{:else if part.type === "tool-generate_image"}
 												{@const gen = part as any}
@@ -2009,9 +2157,6 @@
 							{/each}
 
 
-							<!-- Optimistic thinking indicator: shows immediately on submit,
-							     only until the AI SDK creates the assistant message (at text-start).
-							     Once the assistant message exists, the in-message ThinkingBlock takes over. -->
 							{#if inRoom}
 								<!-- The step's controls, right under what the room
 								     just said: pinned above the composer they sat a
@@ -2028,25 +2173,29 @@
 								     the same ∴ holding still while it does not. Always
 								     something in the margin, so nothing jumps when the turn
 								     starts — and the room is never empty of its occupant. -->
-								{#if chat.status === "submitted" || chat.status === "streaming"}
+								{#if turnPhase.working}
 									<Composing label="Composing a reply" />
 								{:else}
 									<RestingMark />
 								{/if}
 							{:else if inInterview}
-								{#if reveal.chars || chat.status === "submitted" || chat.status === "streaming"}
+								{#if reveal.chars || turnPhase.working}
 									<Composing label="Composing a reply" />
 								{:else}
 									<RestingMark />
 								{/if}
-							{:else if isAwaitingResponse && !lastAssistantMessage}
+							{:else if turnPhase.awaitingReply}
+								<!-- The turn before its reply exists: from Send until the
+								     box's first event, which can be seconds while it
+								     compacts. The block inside the reply takes over from
+								     the same clock, so the count does not restart. -->
 								<div class="flex justify-start">
 									<div class="message-wrapper" data-role="assistant">
 										<ThinkingBlock
 											isThinking={true}
+											startedAt={turnPhase.startedAt}
+											stalled={turnPhase.stalled}
 											toolCalls={[]}
-											reasoningContent=""
-											duration={0}
 											agentMode={selectedAgentMode}
 										/>
 									</div>
@@ -2094,7 +2243,11 @@
 						<ConversationRail turns={railTurnList} {scrollContainer} />
 					{/if}
 
-					{#if isEmpty && !isGhost && attachments.count === 0}
+					{#if isEmpty && threeBodyOpen}
+						{#await import("$lib/components/chat/ThreeBody.svelte") then { default: ThreeBody }}
+							<ThreeBody onClose={() => (threeBodyOpen = false)} />
+						{/await}
+					{:else if isEmpty && !isGhost && attachments.count === 0}
 						<!-- The opening image: the mark assembling itself in the space
 						     a conversation will fill. Both layouts left this expanse
 						     blank — the phone docks the composer to the bottom, the
@@ -2107,7 +2260,7 @@
 						     Decorative, so hidden from the tree and transparent to
 						     touches. -->
 						<div class="init-hero" aria-hidden="true" out:fade={{ duration: 200 }}>
-							<svg class="init-mark" viewBox="0 0 12 10.5" width="30" height="26.25" fill="currentColor">
+							<svg class="init-mark" viewBox="0 0 12 10.5" width="19.87" height="17.39" fill="currentColor">
 								<circle class="init-dot init-dot-1" cx="6" cy="2.4" r="1.5" />
 								<circle class="init-dot init-dot-2" cx="2.6" cy="8.1" r="1.5" />
 								<circle class="init-dot init-dot-3" cx="9.4" cy="8.1" r="1.5" />
@@ -2142,6 +2295,18 @@
 						class:focused={inputFocused}
 						class:drag-active={attachments.dragActive}
 					>
+						{#if !isEmpty && awayFromEnd}
+							<button
+								type="button"
+								class="jump-to-end"
+								onclick={() => scrollToBottom("smooth")}
+								aria-label="Scroll to latest"
+								title="Scroll to latest"
+								transition:fade={{ duration: 150 }}
+							>
+								<Icon icon="ri:arrow-down-line" width="16" />
+							</button>
+						{/if}
 						{#if isGhost && !isEmpty}
 							<div class="ghost-caption" in:fade={{ duration: 300 }}>
 								<Icon icon="ri:ghost-line" width="12" />
@@ -2187,8 +2352,8 @@
 							bind:value={input}
 							bind:focused={inputFocused}
 							disabled={false}
-							sendDisabled={chat.status === "submitted" || chat.status === "streaming" || (isLocal && !localModel.status.ready)}
-							isStreaming={chat.status === "streaming"}
+							sendDisabled={turnPhase.working || (isLocal && !localModel.status.ready)}
+							isStreaming={turnPhase.working}
 							maxWidth="max-w-3xl"
 							placeholder={isLocal ? "Ask the local model" : isGhost ? "Ask Virtues (temporary)" : "Ask Virtues"}
 							onSubmit={(text) => handleChatSubmit(text)}
@@ -2435,8 +2600,10 @@
 	/* ── The phone's opening image ──
 	   The ∴ mark and wordmark, seated in the upper half of the empty room —
 	   above center so the (bottom-docked) composer and rising keyboard never
-	   crowd it. The entrance is the mark ASSEMBLING: three dots settle into
-	   the trivet one by one, then the word surfaces under them. All
+	   crowd it. Mark and word sit on one line, the mark a touch under the
+	   word's size so the two read as one lockup. The entrance is the mark
+	   ASSEMBLING: three dots settle into the trivet one by one, then the
+	   word surfaces beside them. All
 	   keyframes are from-only with `backwards` fill — an explicit `to` with
 	   a fill-mode is what once pinned a disabled button solid ink (see the
 	   airlock's rise animation for the same rule). */
@@ -2447,10 +2614,9 @@
 		bottom: calc(50% + 72px);
 		z-index: 2;
 		display: flex;
-		flex-direction: column;
 		align-items: center;
-		gap: 0.875rem;
-		text-align: center;
+		justify-content: center;
+		gap: 0.5rem;
 		pointer-events: none;
 		color: var(--color-foreground);
 	}
@@ -2591,6 +2757,38 @@
 		   travel is one interpolatable transition — no snap, no position swap. */
 		transform: translateY(0);
 		will-change: bottom, transform;
+	}
+
+	/* Rides the composer's top edge, so it climbs with a growing draft. */
+	.jump-to-end {
+		position: absolute;
+		bottom: calc(100% + 0.5rem);
+		/* Flush with the pill's right edge (the wrapper's side padding). */
+		right: 2rem;
+		display: grid;
+		place-items: center;
+		width: 2.25rem;
+		height: 2.25rem;
+		border-radius: 999px;
+		border: 1px solid var(--color-border);
+		background: var(--color-surface-elevated);
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		transition:
+			color 0.15s ease,
+			border-color 0.15s ease,
+			translate 0.15s ease;
+	}
+
+	.jump-to-end:hover {
+		color: var(--color-foreground);
+		border-color: var(--color-border-strong);
+		translate: 0 1px;
+	}
+
+	.jump-to-end:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
 	}
 
 	/* Track E1 — in-message media */

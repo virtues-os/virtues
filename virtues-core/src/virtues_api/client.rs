@@ -6,7 +6,7 @@
 //! (which charges the card + credits the wallet) and retries; other 402s
 //! (wallet_expired) and 401 (unknown_key → re-link) surface to the caller.
 //!
-//! Use this for the proxy routes (`/v1/ai/*`, `/v1/places/*`, `/v1/parallel/*`,
+//! Use this for the proxy routes (`/v1/ai/*`, `/v1/places/*`,
 //! `/v1/unsplash/*`).
 //!
 //! ## The BYO fork
@@ -23,7 +23,7 @@
 //! new AI caller cannot forget to opt in. That mattered: until 2026-08-05
 //! only `stream()` honored the key, and compaction, day summaries, image
 //! generation and transcription quietly billed the wallet while the UI said
-//! "BYO active". Non-AI routes (`/v1/places/*`, `/v1/parallel/*`, `/v1/unsplash/*`)
+//! "BYO active". Non-AI routes (`/v1/places/*`, `/v1/unsplash/*`)
 //! are per-user vendor bills that BYO says nothing about, so they keep going
 //! through the wallet. Plan of record: `agents/plan/byo-ai-plan.md`.
 //!
@@ -42,7 +42,7 @@ use sqlx::PgPool;
 use super::renew;
 
 /// Is this one of the metered *inference* routes, as opposed to the fixed-cost
-/// vendor proxies (`/v1/places/*`, `/v1/parallel/*`, `/v1/unsplash/*`)?
+/// vendor proxies (`/v1/places/*`, `/v1/unsplash/*`)?
 ///
 /// Two things key on this and must not drift apart: whether a call may divert
 /// to the user's BYO endpoint, and whether its `usage` block is captured into

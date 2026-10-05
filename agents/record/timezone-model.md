@@ -79,7 +79,13 @@ on a travel day. The resolution ladder is:
 This is re-derived per request rather than persisted-at-rollover; identical result
 either way for a stationary day, and step 2 makes live-today consistent with the
 EOD lock on a travel day. At the EOD lock the same ladder (minus the device step)
-writes `start_timezone` via `resolve_day_timezone` in `generate_day_summary`.
+writes `start_timezone`. That ladder is `timezone::day_timezone`, and
+`timezone::day_window` turns it into the day's UTC bounds: segmentation,
+narration, audio sessions, day facts, the location timeline
+(`get_timeline_day`) and the sleep step all window a day through it. Sleep
+belongs to the day you wake up on, in that day's zone; until 2026-10-02 the
+sleep step and the location timeline cut days at UTC midnight, which moved a
+US evening onto the next day.
 
 - **Rendering:** the day page renders timestamps in the *same* zone the day was
   windowed in. The web Time column / chat times use `page.start_timezone` (the
@@ -158,7 +164,8 @@ Landed (Rust `cargo check --workspace` + web `svelte-check` clean):
 - **`virtues-core/src/timezone.rs`** (new module) — `system_timezone()`
   (`iana-time-zone`), `coords_to_tz()` (`tzf-rs`, memoised `DefaultFinder`),
   `first_point_timezone()` (first located point of the day → `Option`), and
-  `resolve_day_timezone()` (= first point → home fallback; used at the EOD lock).
+  `resolve_day_timezone()` (= first point → home fallback; used at the EOD lock;
+  since replaced by `day_timezone()`, which also reads the locked zone first).
 - **`profile::get_timezone()`** is a **pure read**; seeding moved to
   `ensure_home_timezone()`, called once at server startup ([server/mod.rs](../../virtues-core/src/server/mod.rs))
   before the scheduler resolves cron zones, and in the pairing cross-check.

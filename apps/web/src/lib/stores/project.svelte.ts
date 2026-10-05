@@ -22,7 +22,6 @@ import {
 	reorderProjectItems,
 	setProjectItemRole,
 	type ProjectItemRole,
-	updateChat,
 	type Project,
 	type ProjectSummary,
 	type ProjectDetail
@@ -94,7 +93,7 @@ export class ProjectStore {
 		} catch (e) {
 			console.error('[ProjectStore] Failed to load projects:', e);
 			this.error = e instanceof Error ? e.message : 'Failed to load projects';
-			this.all = [];
+			// Keep the last good list; a failed reload is not an empty one.
 		} finally {
 			this.loading = false;
 		}
@@ -151,7 +150,6 @@ export class ProjectStore {
 			name?: string;
 			icon?: string | null;
 			accent_color?: string | null;
-			current_status?: string | null;
 			instructions?: string | null;
 			sort_order?: number;
 		}
@@ -256,18 +254,7 @@ export class ProjectStore {
 		}
 	}
 
-	/**
-	 * Bind (or detach, with `null`) a chat to a Project. Folds the chat into the
-	 * Project's membership server-side, so we reload the list (chat_count changes).
-	 */
-	async setChatProject(chatId: string, projectId: string | null): Promise<void> {
-		const url = `/chat/${chatId}`;
-		await updateChat(chatId, { projectId });
-		chatSessions.noteProject(chatId, projectId);
-		await this.afterMembershipChange(url);
-	}
-
-	/** The live projects holding `url`, once `loadHolders(url)` has asked. */
+/** The live projects holding `url`, once `loadHolders(url)` has asked. */
 	holding(url: string): ProjectSummary[] {
 		const ids = this.holders[url];
 		if (!ids) return [];

@@ -1,46 +1,37 @@
 # BYO AI — Plan of Record
 
-> **STATUS 2026-08-28, verified against code: ABOUT 60% SHIPPED.** The line
-> below saying "nothing here is built yet" is false. Shipped: the leak fix
-> (all `/v1/ai/*` fork at `BearerClient` rather than per caller),
-> `normalize_upstream_error`, the per-slot model map on the credential,
-> tokens-not-dollars for BYO usage, the URL field replacing the provider
-> dropdown, and the employer-visibility warning.
->
-> **What remains is the thesis:** the per-slot **route** axis was never built,
-> so BYO is still all-or-nothing — any `/v1/ai/*` call diverts if one
-> credential exists. With it go many-credentials (`*_route` columns), the
-> per-route audio encoder, "Test this slot" probes, and a selectable option
-> list for the Image slot, which has a UI row bound to `image_model_id` and
-> nothing to put in it.
->
-> **Known limitation worth carrying into the manual:** BYO audio and
-> transcription do not work. The Omni path sends audio as an `image_url` data
-> URI, the Gemini-through-our-gateway idiom; OpenAI-compatible endpoints want
-> `input_audio`. Fixing it needs the route axis, because the encoder has to
-> know where the call is going. It fails legibly rather than silently —
-> `normalize_upstream_error` turns the provider's 2xx-with-error body into a
-> 502 carrying their message — but it cannot succeed in that shape.
->
-> **False below:** `default_model` is deprecated and never fires; Image is now
-> user-overridable; every use of `xai/grok-4.5` as "our chat address" is
-> historical, since the chat slot moved to `anthropic/claude-sonnet-5` on
-> 2026-08-27 over `zdr: none` retention; the `byo_slot_routes` migration was
-> never claimed.
+**Status:** Open. The route axis is not built, so BYO is still all-or-nothing:
+any `/v1/ai/*` call diverts if one credential exists. What remains is the
+resolver and per-route audio encoder (Phase 2), many credentials (3b), the
+"Test this slot" probes (4), and the per-slot route UI (6).
 
-[`composable-inference.md`](../build/composable-inference.md), which already ships the
-same idea for embeddings and reranking: the user owns the endpoint, and we
-validate it at the door. Nothing here is built yet; §"What is already true"
-separates the two.*
+Shipped, and not re-described here: every `/v1/ai/*` call forks at
+`BearerClient` (no per-caller opt-in, no fallback to the wallet on failure);
+`normalize_upstream_error`; the per-slot model map on the credential
+(`apply_byo_model` — a model id is an address on one gateway, so the route
+carries the address and the slot keeps the role); tokens-not-dollars for BYO
+usage; the endpoint-URL field replacing the provider dropdown; the
+employer-visibility warning. The idea is the same one
+[`composable-inference.md`](../build/composable-inference.md) ships for
+embeddings and reranking: the user owns the endpoint, and we validate it at
+the door.
+
+**Known limitation worth carrying into the manual:** BYO audio transcription
+does not work. The `transcription_resolution` applet sends audio as an
+`image_url` data URI, the Vercel-gateway idiom; OpenAI-compatible endpoints
+want `input_audio` (chat attachments already send that shape, from
+`api/compaction.rs`). Fixing it needs the route axis, because the encoder has
+to know where the call is going. It fails legibly rather than silently —
+`normalize_upstream_error` turns the provider's 2xx-with-error body into a 502
+carrying their message — but it cannot succeed in that shape.
 
 ## The one-sentence architecture
 
 **A slot has two independent axes — which model fills it, and whose
 credential pays for it — and BYO moves only the second.**
 
-Today those two are conflated: the BYO credential carries a single
-`default_model`, so turning BYO on is an all-or-nothing switch that also
-overrides model choice. Splitting them is the whole plan. Once route and
+Today the route axis has one position: a single active BYO credential takes
+every AI call. Splitting the two axes per slot is the whole plan. Once route and
 model are separate, "BYO" stops being a mode and becomes a per-slot routing
 decision, and every hard question below answers itself.
 
@@ -51,8 +42,8 @@ decision, and every hard question below answers itself.
 | **Chat** | user-choosable *(already shipped)* | BYO | `slot_model_smoke` legs |
 | **Coding** | user-choosable *(already shipped)* | BYO | `slot_model_smoke` legs |
 | **Lite** | user-choosable *(already shipped)* | BYO | answers; no runaway reasoning tokens |
-| **Image** | user-choosable *(needs exposing)* | BYO | prompt → bytes decode as an image |
-| **Omni** | **pinned to `google/gemini-3-flash`** | BYO | transport only — reaches the id, accepts our audio shape |
+| **Image** | overridable (`image_model_id`); not yet a picker option | BYO | prompt → bytes decode as an image |
+| **Omni** | **pinned** (the registry's Omni default, a Gemini flash) | BYO | transport only — reaches the id, accepts our audio shape |
 
 Omni stays pinned on the model axis because there is one right answer today,
 not as paternalism. Local STT is not a substitute — in-pocket, muffled audio
@@ -82,55 +73,7 @@ would have picked.
 | **Never claim BYO is more private** | Routing personal-life prompts through a work Bedrock account means the employer can read them. The honest claim is "you control the vendor and the bill." Same invariant class as the backup-key doctrine — a claim about what Virtues cannot see must be true or not made. |
 | **The wallet survives BYO** | Exa, Places, Unsplash and Plaid are per-user vendor bills that BYO does nothing about. They keep drawing from the wallet at cost; the wallet just goes mostly idle. |
 
-## What is already true
-
-More of the shape exists than it looks:
-
-- **Slot resolution is already three-layered** — user override → cloud
-  `SlotMap` → the compiled floor in `virtues-registry::models`. Chat, Lite and
-  Coding are already user-overridable via `app_assistant_profile`
-  (`chat_model_id`, `lite_model_id`, `coding_model_id`).
-- **`recommended` already means the right thing** — `catalog.rs` flags the
-  five slot models and nothing else, with the comment that everything else is
-  "the BYO path: selectable, but its capability flags are the provider's own
-  claim."
-- **The verifier exists** — `slot_model_smoke` in `virtues-core/src/tools/mod.rs`
-  drives a candidate with the real ~40-tool set and checks tool selection,
-  valid names, parseable arguments, and parallel calls in one turn. It is
-  `#[ignore]`d and run by hand before promoting a model.
-- **The unknown-vs-false doctrine exists** — `model_catalog::supports_vision`
-  and `::pricing` both return `Option` and say why.
-- **One BYO route works** — `client.rs::stream()` consults
-  `load_byo_credential` and calls `stream_direct_upstream`.
-- **The credential store works** — encrypted at rest via `TokenEncryptor`,
-  sudo-gated on `change_byo_key`, single active row at
-  `source_id = "__byo_ai_key__"`.
-
 ## What must be built
-
-### Phase 1 — Stop the leak *(correctness fix; do this regardless)*
-
-**Done 2026-08-05.** `stream()` was the only path honoring BYO. The audit in
-this doc counted four leaking callers; there were **seven** —
-`api/compaction.rs`, `api/day_summary.rs`, `api/image_gen.rs`,
-`api/entity_article_gen.rs`, `api/narrative_identity_gen.rs`, `api/chats.rs`,
-and the `transcription_resolution` applet.
-
-The fix is one fork inside `BearerClient::post_json`, gated on the same
-`is_ai_path` predicate that already decides cost capture — not a new
-`post_ai()` method that callers opt into. That choice is what caught the three
-the audit missed, and it is why a future AI caller cannot regress this. Keep
-it: an opt-in chokepoint is not a chokepoint.
-
-No fallback on failure. A BYO call that 401s, 404s or 429s returns the
-provider's own error; it never quietly re-runs on the wallet, because that is
-exactly the surprise charge BYO exists to prevent.
-
-**Shipping order: phase 1 can go alone, and probably should.** It is about a
-day, it is pure correctness, it requires no product decisions, and it makes
-the claim already on screen true. Phases 2–6 are speculative until a real BYO
-user asks for them — and phases 4 (probes) and 6 (UI) are the two that will
-grow without a bound if nothing is pulling on them.
 
 ### Phase 2 — The resolver
 
@@ -145,44 +88,13 @@ Every AI call in the box goes through this. It is also the natural place to
 tag which axis produced the answer, which the usage view needs.
 
 **Plus a per-route audio encoder.** Vercel, OpenRouter and LiteLLM agree on
-the OpenAI chat/completions shape, but *not* on how audio rides in it. We
-currently send audio as `type: "image_url"` with a `data:audio/…` URI — a
+the OpenAI chat/completions shape, but *not* on how audio rides in it. The
+transcription applet sends audio as `type: "image_url"` with a `data:audio/…` URI — a
 Vercel-gateway quirk. OpenAI's spec, which OpenRouter follows, uses
 `input_audio: {data, format}`. So the one call carrying the largest line item
 is also the one most likely to 400 on a different gateway. A two-arm match on
 route kind, ~60 lines, but it must exist before Omni can be routed anywhere
 but Vercel.
-
-### Phase 3a — The model map *(done 2026-08-05)*
-
-**A model id is an address on one gateway, not a portable name.** That single
-sentence is the whole of it, and everything else in this plan was downstream of
-getting it wrong: `xai/grok-4.5` is where *Vercel* keeps the chat model, means
-`x-ai/grok-4.5` on OpenRouter, and means nothing at all on an endpoint that
-does not carry it. Since every caller pins a model, sending ours to someone
-else's endpoint failed for four of our five slots — so BYO in practice only
-worked on Vercel, while the UI promised any OpenAI-compatible endpoint.
-
-So the address belongs to the **route**, and the slot keeps only the **role**.
-A credential carries a `models` map — slot name → the id on the user's
-endpoint, every entry optional. At the fork, `apply_byo_model` turns the body's
-model back into the slot it stands for (`model_catalog::slot_for_model`) and
-substitutes the user's id for that role.
-
-Three things pass through untranslated, all deliberately: an unmapped slot
-(their endpoint may use our ids — Vercel does), a model the user hand-picked
-from the picker (not a slot default, so there is no role to look up), and a
-body naming no model (no caller does this; legacy `default_model` still fills
-it). Each failure is loud and names the model.
-
-**Nothing in the resolver knows which slot is which — Omni included.** Which
-model actually suits a role is *advice*, and advice lives in the Billing UI
-where a copy edit can fix it, not in a schema or a match arm. The audio field
-carries the reasoning about Gemini flash there.
-
-This was mis-scoped as invasive because it was bundled with many-credentials
-below. It is not: no migration, no new table, one JSON blob on the credential
-and one resolver branch.
 
 ### Phase 3b — Many credentials *(still deferred)*
 
@@ -204,11 +116,10 @@ One migration, all columns — there is no new table here.
   `billing_state.rs`, `credentials.rs`, and `cli/commands/status_json.rs`,
   all of which assume a single active row).
 - **Routes are columns, not a table.** `app_assistant_profile` already
-  carries `chat_model_id`, `lite_model_id`, `coding_model_id`; five
-  `*_route` columns sit alongside them and skip a migration's worth of CRUD.
+  carries `chat_model_id`, `lite_model_id`, `coding_model_id`,
+  `image_model_id`; five `*_route` columns (none exist yet) sit alongside them and skip a migration's worth of CRUD.
   A dedicated table for five fixed rows is the overengineered choice.
-- Add `image_model_id` to `app_assistant_profile`. Do **not** add
-  `omni_model_id`.
+- Do **not** add `omni_model_id`.
 - `SlotMap` grows nothing — Omni deliberately stays out of the cloud map.
 
 ### Phase 4 — The probes
@@ -224,7 +135,7 @@ on save.
   mode: ~300–460 per turn, uncontrollable, stacking into 20s+ stalls).
 - **Image** — prompt, assert bytes return and decode.
 - **Omni** — **transport only.** Two questions, both of which the gateway
-  answers for free: does this endpoint reach `google/gemini-3-flash` (a 404
+  answers for free: does this endpoint reach the pinned Omni id (a 404
   says no), and does it accept our audio part shape (a 400 says no). Roughly
   0.2s of *generated silence* carries both — no fixture, no recorded voice,
   no privacy question, and it makes no claim about quality. Silence is
@@ -242,34 +153,16 @@ A failed probe **blocks the route** for that slot and says which leg failed
 in the provider's own words. It never silently falls back to the wallet —
 that would spend the user's money to paper over their misconfiguration.
 
-### Phase 5 — Honest accounting
-
-- BYO traffic records **tokens and model, no cost**. The usage view shows
-  "4.2M tokens on your key" and never a dollar figure.
-- The wallet keeps showing dollars for whatever is still on it — Omni or Image
-  if unrouted, plus Exa, Places, Unsplash, Plaid.
-- One screen, two sections, no invented numbers.
-
 ### Phase 6 — The UI
 
-- **Drop the provider dropdown; ask for a URL.** *(Rust side done 2026-08-05.)*
-  `provider` never drove behavior — nothing branches on it, because there is
-  nothing to branch on. All it did was pick a hardcoded URL, and hardcoded
-  URLs rot: `anthropic` pointed at `/v1/messages` and `google` at a bare
-  `/v1beta` for months in a user-facing dropdown, neither of which we can
-  call. Fixing the two strings was the small fix; removing the class was the
-  real one. The field is now endpoint URL + key, `provider` is a deprecated
-  input for un-updated clients, and the old table survives only to resolve
-  rows saved before the change — which is why this needed no migration.
 - **Example URLs go in help text, not in code.** A stale doc line is wrong; a
   stale shipped option is broken. Name Vercel AI Gateway, OpenRouter, LiteLLM
   and a local Ollama, and state the contract in one sentence — gateways are
   worth recommending because one credential covers all five slots, not
   because they are special.
-- Expose Image in the picker — `model_catalog::models()` currently filters it
-  out with Omni as a "system slot."
+- Expose Image in the picker — `model_catalog.rs` still filters it out with
+  Omni as a "system slot."
 - Per-slot route selector, with the wallet as the visible default.
-- The employer-visibility warning, stated plainly.
 
 ## How much the gateways actually agree
 
@@ -293,6 +186,9 @@ exception, and it is the exception that pays for the feature.
 
 ### Probed against live OpenRouter, 2026-08-05
 
+The ids below are the slot defaults of that date; the current ones live in
+`crates/virtues-registry/src/models.rs`.
+
 Reasoning replaced by measurement. A free key, four probes:
 
 | probe | result |
@@ -314,7 +210,7 @@ Three things this settles:
    the upstream's refusal, then retrying every cron tick and re-billing the
    user's key. Fixed by `normalize_upstream_error`: a 2xx carrying `error` and
    no `choices` becomes a 502 with the upstream's own message.
-3. **Phase 3 is bigger than "spelled differently".** Of our five slot ids, one
+3. **The model map was bigger than "spelled differently".** Of our five slot ids, one
    matches verbatim (`google/gemini-3-pro-image`), one is respelled
    (`xai/`→`x-ai/`), and two have **no equivalent** — `zai/glm-4.7-flash` and
    `google/gemini-3-flash`. So a BYO route needs its own model id per slot,

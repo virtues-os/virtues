@@ -5,6 +5,8 @@
 	import { UnifiedSidebar } from "$lib/components/sidebar";
 	import { SplitContainer } from "$lib/components/tabs";
 	import MobileShell from "$lib/components/mobile/MobileShell.svelte";
+	import ServerUnreachableBar from "$lib/components/ServerUnreachableBar.svelte";
+	import { reachability } from "$lib/stores/reachability.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
 	import SearchModal from "$lib/components/sidebar/SearchModal.svelte";
@@ -18,8 +20,12 @@
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { chatInstances } from "$lib/stores/chatInstances.svelte";
+	import { isTemporaryRoute } from "$lib/components/chat/state/chatRoute";
 	import { pinsStore } from "$lib/stores/pins.svelte";
+	import { identityOf } from "$lib/refs/identity.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
+	import { installRevalidate } from "$lib/stores/revalidate";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
@@ -37,7 +43,7 @@
 	import type { Snippet } from "svelte";
 
 	import { installClientHeader, setShellAppVersion } from "$lib/build";
-	import { reportBootOk, otaCheckNow, shellIdentity } from "$lib/tauri/bridge";
+	import { otaCheckNow, bundleUpdateReady, shellIdentity } from "$lib/tauri/bridge";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 
@@ -60,7 +66,34 @@
 	// Foreground OTA check — hoisted to component scope so onDestroy can remove
 	// it. `onMount` is async here, so a returned cleanup would never run.
 	function checkForNewUi() {
-		if (!document.hidden) void otaCheckNow();
+		if (!document.hidden) {
+			void otaCheckNow();
+			return;
+		}
+		// Hidden: if the shell has staged a newer UI since this page loaded,
+		// reload now, while nobody is looking, and the next time the app is
+		// shown it is the new one. One rule on the phone and the Mac (a Mac is
+		// almost never relaunched; closing its window only hides it). Only in
+		// the app itself: Setup and the recovery screens hold state a reload
+		// would lose, like an open Bluetooth link. agents/plan/local-ui-plan.md.
+		void bundleUpdateReady().then((ready) => {
+			if (ready && document.hidden && nothingToLose()) window.location.reload();
+		});
+	}
+
+	/**
+	 * Would a reload now cost anything that isn't saved? The staged UI waits
+	 * for the next time the app is hidden with nothing at stake: a temporary
+	 * chat (its transcript lives only in this page), a reply still streaming,
+	 * or text in the focused field (a half-entered key or rename). Composer
+	 * drafts are saved as they are typed, so they don't count.
+	 */
+	function nothingToLose(): boolean {
+		const tabs = windowShellStore.panes.flatMap((p) => p.tabs);
+		if (tabs.some((t) => isTemporaryRoute(t.route))) return false;
+		if (chatInstances.debug().some((c) => c.status === "streaming" || c.status === "submitted")) return false;
+		const focused = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+		return !(focused && typeof focused.value === "string" && focused.value.length > 0);
 	}
 
 	// Get session expiry from page data
@@ -136,22 +169,18 @@
 
 	// Load chat sessions, workspaces, and initialize theme on mount
 	onMount(async () => {
-		// Confirm to the shell that this build actually rendered. An OTA bundle
-		// stays pending until this lands, and a bundle still pending at the next
-		// launch is treated as one that failed to boot and is rolled back — so
-		// removing this call silently reverts every update. It lives in onMount,
-		// not at module scope, because a module that parses is not a page that
-		// renders, and rendering is the thing being proven. See
-		// src-tauri/src/web_bundle.rs.
-		void reportBootOk();
+		// Boot-ok (confirming this bundle rendered) moved to the ROOT layout on
+		// 2026-09-29, so Setup and the recovery screens confirm too: a page load
+		// that never confirms is rolled back by the next one.
 
 		// Ask the shell to look for newer UI whenever we come back to the
 		// foreground. The shell also checks at launch, but this app is not
 		// relaunched often — the mic session keeps it alive for days — so
 		// without this a phone could sit on a stale bundle indefinitely. The
 		// check is cheap when there is nothing new (one small GET) and never
-		// swaps the bundle underneath the running session; anything it applies
-		// takes effect at the next launch. Registers the COMPONENT-SCOPE
+		// swaps the bundle underneath the running page; anything it applies
+		// takes effect at the next page load, which `checkForNewUi` triggers
+		// while the app is hidden. Registers the COMPONENT-SCOPE
 		// function above — an identical inner copy used to shadow it here, so
 		// onDestroy removed a function that was never registered and the
 		// listener leaked per layout mount (audit, minor).
@@ -175,10 +204,11 @@
 			sidebarState.collapsed = true;
 		}
 
-		// Load global data
+		// Load global data, and reload it whenever the app comes back into view.
 		chatSessions.load();
 		pinsStore.load();
 		projectStore.load();
+		installRevalidate();
 		initTheme();
 
 		// Initialize workspace store (loads workspaces, tree, and tabs)
@@ -349,7 +379,20 @@
 	// made where it is honest: the metered 402 itself names the door
 	// (virtues_api::client::payment_required_message), and Settings → Billing
 	// carries the standing.
+
+	// The window's title is the active tab's thing, by its name now
+	// (refs/identity): the browser tab, the history menu and the OS window
+	// switcher all read it, and it said nothing at all before.
+	const windowTitle = $derived.by(() => {
+		const tab = windowShellStore.activeTab;
+		if (!tab) return "Virtues";
+		return `${identityOf(tab.route, { title: tab.label }).title} · Virtues`;
+	});
 </script>
+
+<svelte:head>
+	<title>{windowTitle}</title>
+</svelte:head>
 
 <!-- Top-center everywhere, as onboarding and auth already are. On desktop the
      offset drops the toast just below the chrome row (tab bar + pane toolbar),
@@ -416,6 +459,12 @@
 				     is mounted. -->
 				<MobileShell />
 			{:else}
+				<!-- The phone draws this in MobileShell; the desktop here, now
+				     that the Mac keeps its own copy of the app up when the
+				     server goes away (agents/plan/local-ui-plan.md). -->
+				{#if reachability.unreachable}
+					<ServerUnreachableBar />
+				{/if}
 				<!-- SplitContainer handles both split and mono modes -->
 				<SplitContainer />
 			{/if}

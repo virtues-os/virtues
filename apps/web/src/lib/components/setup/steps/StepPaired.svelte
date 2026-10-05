@@ -6,7 +6,7 @@
 	the way on. Only what this device can know: it reached the server. Not
 	how (over the relay "it's on your network" was false), and not over what
 	(an ethernet server has no Wi-Fi to report). They become real screens when Setup runs before pairing, in
-	the apps (setup-plan.md, slice 2).
+	the apps (agents/build/onboarding.md, "Setup").
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";

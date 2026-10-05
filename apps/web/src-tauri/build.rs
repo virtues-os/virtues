@@ -58,6 +58,7 @@ const APP_COMMANDS: &[&str] = &[
     "command_surface_version",
     "shell_identity_cmd",
     "bundle_boot_ok",
+    "bundle_update_ready",
     "set_appearance",
     "ota_check_now",
     // App updater (desktop).
@@ -112,6 +113,9 @@ fn main() {
     // 2. Every registered command needs `allow-<kebab>` in the capability that
     //    covers its platform, or the ACL cannot resolve it.
     check_capability(root, "capabilities/default.json", &desktop);
+    // The Mac's own capability since 2026-09-29 (no remote grant: every page
+    // it shows is its own copy). Same commands, so the same check.
+    check_capability(root, "capabilities/mac.json", &desktop);
     check_capability(root, "capabilities/mobile.json", &mobile);
 
     tauri_build::try_build(

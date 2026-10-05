@@ -29,6 +29,11 @@ pub struct AgentLoopResult {
     /// than finishing. The run is recorded `budget_exceeded`, not `error`:
     /// nothing broke, a ceiling the owner set was reached.
     pub budget_stopped: Option<String>,
+    /// Set when the model stream reported an error (no key, upstream failure,
+    /// a tool loop that died). The run is recorded `error`, never `success` —
+    /// the loop ends quietly after an error event, so without this a run that
+    /// never reached the model looked like a clean zero-step finish.
+    pub error: Option<String>,
 }
 
 /// Run one pass of the LLM agent loop for an action.
@@ -178,6 +183,7 @@ pub async fn run_agent_loop(
     let mut step_count: u32 = 0;
     let mut cost_micros: i64 = 0;
     let mut budget_stopped: Option<String> = None;
+    let mut error: Option<String> = None;
 
     while let Some(event) = stream.next().await {
         match event {
@@ -245,6 +251,8 @@ pub async fn run_agent_loop(
             }
             crate::agent::AgentEvent::Error { message, .. } => {
                 tracing::error!(applet_id, error = %message, "Applet run error");
+                // The first error is the cause; anything after it is fallout.
+                error.get_or_insert_with(|| message.clone());
                 if let Some(cid) = &chat_id {
                     let error_msg = ChatMessage {
                         id: None,
@@ -261,7 +269,9 @@ pub async fn run_agent_loop(
                         reasoning_details: None,
                         parts: None,
                     };
-                    let _ = append_message(pool, cid.clone(), error_msg).await;
+                    if let Err(e) = append_message(pool, cid.clone(), error_msg).await {
+                        tracing::warn!(applet_id, error = %e, "failed to post applet error to its chat");
+                    }
                 }
             }
             _ => {}
@@ -286,7 +296,9 @@ pub async fn run_agent_loop(
                 reasoning_details: None,
                 parts: None,
             };
-            let _ = append_message(pool, cid.clone(), msg).await;
+            if let Err(e) = append_message(pool, cid.clone(), msg).await {
+                tracing::warn!(applet_id, error = %e, "failed to post applet reply to its chat");
+            }
         }
     }
 
@@ -294,6 +306,7 @@ pub async fn run_agent_loop(
         applet_id,
         steps = step_count,
         cost_micros,
+        failed = error.is_some(),
         "Applet run complete"
     );
 
@@ -308,6 +321,7 @@ pub async fn run_agent_loop(
         },
         cost_micros,
         budget_stopped,
+        error,
     })
 }
 

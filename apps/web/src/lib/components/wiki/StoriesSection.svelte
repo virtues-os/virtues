@@ -4,7 +4,7 @@
 	 *
 	 * Every other room in this wiki lists things the record produced: days it
 	 * segmented, years it partitioned, people it resolved. This one lists
-	 * things nothing produced. "Piano & Composition" exists because somebody
+	 * things nothing produced. "Sailing" exists because somebody
 	 * decided it mattered, and the record then goes looking for it.
 	 *
 	 * So the empty state is not an apology for having no data. It is an
@@ -31,10 +31,10 @@
 	let failed = $state<string | null>(null);
 
 	const EXAMPLES = [
-		'Piano & Composition',
-		'Books Written',
-		'How I learned to pray',
-		'My relationship with animals'
+		'Sailing',
+		'The garden',
+		'How I learned to cook',
+		'My years in restaurant kitchens'
 	];
 
 	onMount(load);

@@ -10,10 +10,16 @@
  * every compaction turn showed an empty answer until reload.
  *
  * So the checkpoint goes BEFORE a trailing assistant message, and at the end
- * only when nothing has been pushed for the reply yet. Pure, so the SDK's
+ * only when nothing has been pushed for the reply yet — and not at all when
+ * it is already there. Pure, so the SDK's
  * own write order can be tested against it (checkpoint.test.ts).
  */
-export function placeCheckpoint<M extends { role: string }>(messages: M[], checkpoint: M): M[] {
+export function placeCheckpoint<M extends { role: string; id?: string }>(
+	messages: M[],
+	checkpoint: M,
+): M[] {
+	// A rejoin replays the turn from its first event, checkpoint included.
+	if (checkpoint.id && messages.some((m) => m.id === checkpoint.id)) return messages;
 	const tail = messages[messages.length - 1];
 	return tail && tail.role === 'assistant'
 		? [...messages.slice(0, -1), checkpoint, tail]

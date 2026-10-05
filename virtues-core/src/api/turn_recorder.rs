@@ -10,10 +10,17 @@ use std::collections::HashSet;
 
 use chrono::Utc;
 
-use crate::agent::{AgentEvent, FinishReason, StepReason};
+use crate::agent::{AgentEvent, ErrorCode, FinishReason, StepReason};
 use crate::api::chat::{StreamEvent, UIPart};
 use crate::api::chats::{ChatMessage, ToolCall};
 use crate::types::Timestamp;
+
+/// What a call the turn ended without answering is saved as, and what the
+/// model is told about it on replay (`compaction.rs`). Saved as an error so
+/// the client draws it as a call that will not answer: kept as
+/// `input-available`, it reloaded as a spinner that never stopped. The web
+/// client matches this exact text (`toolPresentation.ts` TOOL_UNFINISHED).
+pub const TOOL_UNFINISHED: &str = "the tool did not finish";
 
 /// Where one piece of a turn sat in time.
 ///
@@ -78,6 +85,10 @@ pub struct TurnRecorder {
     /// Set by any error event mid-turn: the reply on screen is partial, and
     /// the row must say so or a reload shows the stub as the answer.
     interrupted: bool,
+    /// The error was the provider turning the call away, not a dropped
+    /// stream. Saved as its own subject so a reload says the model was
+    /// unavailable rather than that the reply was cut off.
+    provider_unavailable: bool,
     /// How the last LLM step ended, and how the loop ended: together they are
     /// the `finish` event's reason and the row's subject.
     last_step_reason: Option<StepReason>,
@@ -102,6 +113,7 @@ impl TurnRecorder {
             reasoning_details: Vec::new(),
             usage: TurnUsage::default(),
             interrupted: false,
+            provider_unavailable: false,
             last_step_reason: None,
             loop_finish: None,
         }
@@ -150,6 +162,11 @@ impl TurnRecorder {
                 if !self.in_reasoning {
                     self.in_reasoning = true;
                     out.push(StreamEvent::ReasoningStart { id: self.msg_id.clone() });
+                    // Each step thinks afresh; saved as one block, the steps
+                    // ran together ("…done.Now I…").
+                    if !self.reasoning.is_empty() {
+                        self.reasoning.push_str("\n\n");
+                    }
                 }
                 self.reasoning.push_str(&content);
                 out.push(StreamEvent::ReasoningDelta { id: self.msg_id.clone(), delta: content });
@@ -265,8 +282,9 @@ impl TurnRecorder {
                 self.reasoning_details.extend(details);
             }
 
-            AgentEvent::Error { message, code: _, recoverable: _ } => {
+            AgentEvent::Error { message, code, recoverable: _ } => {
                 self.interrupted = true;
+                self.provider_unavailable = code == Some(ErrorCode::ProviderUnavailable);
                 out.push(StreamEvent::Error { error_text: message });
             }
 
@@ -339,7 +357,7 @@ impl TurnRecorder {
     /// stop is told apart from the person's: telling someone they stopped a
     /// reply they never touched is a lie about who did what. "interrupted"
     /// is the stream or the model stopping before the reply was finished
-    /// (VIR-334).
+    /// (VIR-334); "unavailable" is the provider refusing the call outright.
     ///
     /// `cancelled` here is the turn's token alone — unlike `close`, a loop
     /// that reported `Cancelled` on an uncancelled token is not a stop.
@@ -356,6 +374,8 @@ impl TurnRecorder {
             Some("max_steps")
         } else if self.loop_finish == Some(FinishReason::BudgetExceeded) {
             Some("budget")
+        } else if self.provider_unavailable {
+            Some("unavailable")
         } else if self.interrupted {
             Some("interrupted")
         } else {
@@ -369,13 +389,19 @@ impl TurnRecorder {
     }
 
     /// The assistant row for this turn, or None if it produced neither text
-    /// nor a tool call.
+    /// nor a tool call — unless it ended early while still thinking.
     ///
     /// Text is not the only thing a turn produces: one that called tools and
     /// was stopped — or hit the step ceiling — before it wrote a word still
-    /// has calls the person watched run, and a notice to hang on them.
+    /// has calls the person watched run, and a notice to hang on them. One
+    /// that ended early (`subject` set) while it was still thinking keeps
+    /// its thinking and its notice: with no row, a reload found the question
+    /// unanswered and blamed the server ("never finished") for the person's
+    /// own Stop. History skips a row with nothing to send, so the model never
+    /// sees the empty turn.
     pub fn into_message(self, model: &str, agent_id: String, subject: Option<&str>) -> Option<ChatMessage> {
-        if self.full_content.is_empty() && self.tool_calls.is_empty() {
+        let thought_then_ended = subject.is_some() && !self.reasoning.trim().is_empty();
+        if self.full_content.is_empty() && self.tool_calls.is_empty() && !thought_then_ended {
             return None;
         }
         let parts = build_turn_parts(
@@ -488,18 +514,20 @@ fn build_turn_parts(
                 // block never renders on reload and the replay hands the model
                 // an error object as though it were an answer.
                 let failed = failed_tools.contains(id);
-                let error_text = failed.then(|| {
-                    tc.result
-                        .as_ref()
-                        .and_then(|r| r.get("error"))
-                        .and_then(|e| e.as_str())
-                        .unwrap_or("the tool reported a failure")
-                        .to_string()
-                });
-                let state = match (failed, tc.result.is_some()) {
-                    (true, _) => "output-error",
-                    (false, true) => "output-available",
-                    (false, false) => "input-available",
+                let (state, error_text) = match (failed, tc.result.is_some()) {
+                    (true, _) => (
+                        "output-error",
+                        Some(
+                            tc.result
+                                .as_ref()
+                                .and_then(|r| r.get("error"))
+                                .and_then(|e| e.as_str())
+                                .unwrap_or("the tool reported a failure")
+                                .to_string(),
+                        ),
+                    ),
+                    (false, true) => ("output-available", None),
+                    (false, false) => ("output-error", Some(TOOL_UNFINISHED.to_string())),
                 };
                 parts.push(UIPart::ToolInvocation {
                     tool_call_id: id.clone(),
@@ -522,7 +550,6 @@ fn build_turn_parts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::ErrorCode;
     use crate::api::chat::serialize_event;
     use serde_json::json;
 
@@ -880,6 +907,24 @@ mod tests {
         assert!(r.into_message("m1", "auto".into(), None).is_none());
     }
 
+    /// Stopped while it was still thinking: the row keeps the thinking and
+    /// carries the stop, so a reload says "Stopped", not "never finished".
+    #[test]
+    fn a_turn_stopped_while_thinking_is_a_row() {
+        let mut r = TurnRecorder::new("m".into());
+        feed(
+            &mut r,
+            vec![
+                AgentEvent::ReasoningDelta { content: "First,".into() },
+                AgentEvent::ReasoningDelta { content: " the dates.".into() },
+            ],
+        );
+        let msg = r.into_message("m1", "auto".into(), Some("cancelled")).expect("a row");
+        assert_eq!(msg.content, "");
+        let parts = msg.parts.unwrap();
+        assert!(matches!(&parts[0], UIPart::Reasoning { text } if text == "First, the dates."));
+    }
+
     #[test]
     fn an_error_mid_turn_closes_the_part_and_marks_the_row() {
         let mut r = TurnRecorder::new("m".into());
@@ -906,6 +951,23 @@ mod tests {
             ]
         );
         assert_eq!(r.subject(false, false), Some("interrupted"));
+    }
+
+    /// A provider that refused the call is saved as unavailable, so a reload
+    /// does not say the reply was cut off when it never started.
+    #[test]
+    fn a_refused_call_is_saved_as_unavailable() {
+        let mut r = TurnRecorder::new("m".into());
+        feed(
+            &mut r,
+            vec![AgentEvent::Error {
+                message: "LLM error (status 503): unavailable".into(),
+                code: Some(ErrorCode::ProviderUnavailable),
+                recoverable: false,
+            }],
+        );
+        assert_eq!(r.subject(false, false), Some("unavailable"));
+        assert_eq!(r.subject(true, false), Some("cancelled"));
     }
 
     /// The recorded stopped-turn fixture the web client's vitest parses is
@@ -1056,8 +1118,8 @@ mod parts_tests {
 
         assert_eq!(
             kinds(&build_turn_parts(&slots, &segments, &calls, &Default::default(), "")),
-            ["text:Looking it up.", "tool:sql_query:input-available"],
-            "a tool that never returned still shows, as awaiting output"
+            ["text:Looking it up.", "tool:sql_query:output-error"],
+            "a tool that never returned still shows, as one that did not finish"
         );
     }
 
