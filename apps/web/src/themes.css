@@ -575,10 +575,10 @@
 	--foreground-disabled: #A8A395;
 
 	/* Interactive Colors - Deep heritage navy */
-	--primary: #1E3159;
-	--primary-hover: #294271;
-	--primary-active: #16243F;
-	--primary-subtle: #E9EDF4;
+	--primary: #1D4572;
+	--primary-hover: #255893;
+	--primary-active: #153356;
+	--primary-subtle: #E8EEF5;
 
 	/* Secondary - Claret heritage red (the signature accent) */
 	--secondary: #9A2B2E;
@@ -601,7 +601,7 @@
 	--border: #E3E1DD;
 	--border-subtle: #EFEEEB;
 	--border-strong: #D4D1CC;
-	--border-focus: #1E3159;
+	--border-focus: #1D4572;
 
 	/* Selection/Highlight - A classic yellow highlighter, a little desaturated.
 	   The claret wash that was here borrowed the signature accent, so a marked
@@ -1208,8 +1208,8 @@
 	--shiki-theme: vitesse-dark;
 
 	/* Surface Colors */
-	--background: #0f0f0f;
-	--surface: #131313;
+	--background: #0c0c0c;
+	--surface: #101010;
 	--surface-elevated: #191919;
 	--surface-overlay: #1f1f1f;
 
