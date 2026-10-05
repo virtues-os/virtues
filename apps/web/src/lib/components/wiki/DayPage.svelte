@@ -35,6 +35,7 @@
 	import { getOntologyName } from "$lib/wiki/ontology";
 	import { getLocalDateSlug, parseDateSlug } from "$lib/utils/dateUtils";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import TextAction from "$lib/components/TextAction.svelte";
 	import EventTimeline from "./EventTimeline.svelte";
 	import DaylineChart from "./DaylineChart.svelte";
 	import DayToolbar from "./DayToolbar.svelte";
@@ -572,6 +573,17 @@
 		scrollContainerEl?.scrollTo({ top: 0 });
 	}
 
+	/** The same day on the map, in the one Timeline tab: brought forward and
+	 *  moved to this day when it is open, else opened on it. */
+	function openInTimeline() {
+		const route = `/timeline/${currentDateSlug}`;
+		const open = windowShellStore.findTab((t) => t.type === "timeline");
+		if (open) {
+			windowShellStore.setActiveTab(open.tab.id);
+			windowShellStore.updateTab(open.tab.id, { route });
+		} else windowShellStore.openTabFromRoute(route, { label: "Timeline" });
+	}
+
 	function showRecord() {
 		void switchView(() => (view = "record"));
 	}
@@ -691,7 +703,7 @@
 				<span class="bar-gap"></span>
 				<div class="segmented" role="group" aria-label="View">
 					<button type="button" class="seg" class:active={view === "article"} aria-pressed={view === "article"} onclick={backToArticle}>Article</button>
-					<button type="button" class="seg" class:active={view === "record"} aria-pressed={view === "record"} onclick={showRecord}>Record</button>
+					<button type="button" class="seg" class:active={view === "record"} aria-pressed={view === "record"} onclick={showRecord}>Data</button>
 				</div>
 				<button
 					type="button"
@@ -799,7 +811,11 @@
 						</section>
 					{/if}
 
-<!-- Dayline chart: visual bridge between narrative and timeline -->
+<p class="to-timeline">
+					<TextAction onclick={openInTimeline}>Open this day in the Timeline</TextAction>
+				</p>
+
+				<!-- Dayline chart: visual bridge between narrative and timeline -->
 				<section class="section" id="dayline">
 					<h2 class="section-title">The Dayline</h2>
 					<DaylineChart events={dayEvents} {priorSleepEvents} timezone={page.start_timezone} pageDate={date} sleepCycles={sleepCycles} {movementStops} {movementTrack} {dedupedMarkers} dayDateSlug={currentDateSlug} {hasLocationData} />
@@ -1263,6 +1279,13 @@
 	.section {
 		position: relative;
 		margin-bottom: 3.5rem;
+	}
+
+	/* The day on the map: a quiet verb above the Dayline, since the Timeline
+	   is where the same day is read in space. */
+	.to-timeline {
+		margin: 0 0 24px;
+		font-size: 14px;
 	}
 
 	.section-title {

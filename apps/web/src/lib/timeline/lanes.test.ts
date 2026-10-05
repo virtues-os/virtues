@@ -8,7 +8,7 @@ describe("the lanes", () => {
 	it("holds the last stretch across a gap over three minutes", () => {
 		const r = ribbon([
 			{ s: 0, e: 10 * M, kind: "place", title: "Home" },
-			{ s: 12 * M, e: 20 * M, kind: "transit", title: "Driving" },
+			{ s: 12 * M, e: 20 * M, kind: "transit", title: "Moving · 6.2 km" },
 			{ s: 30 * M, e: 40 * M, kind: "place", title: "Work" },
 		]);
 		expect(r.map((x) => [x.kind, x.held])).toEqual([
