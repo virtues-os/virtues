@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TimelineDay } from "./day";
-import { conversationTitle, deriveDay, isTravel, joinDays, trackOver, uncovered } from "./derive";
+import { deriveDay, isTravel, joinDays, trackOver, uncovered } from "./derive";
 import { toFixes } from "./track";
 
 // Open ocean, so no real place, and a way to step north by metres.
@@ -86,13 +86,15 @@ describe("deriveDay", () => {
 		const d = deriveDay(
 			day({
 				stays: [stay("a", 0, 6 * 60), stay("b", 10 * 60, 24 * 60)],
-				sessions: [{ id: "s1", started_at: iso(7 * 60), ended_at: iso(7 * 60 + 20), speaker_mode: 2, content: "We talked." }],
+				sessions: [
+					{ id: "s1", started_at: iso(7 * 60), ended_at: iso(7 * 60 + 20), speaker_mode: 2, title: "Weekend plans", content: "We talked." },
+				],
 			}),
 			sources,
 		);
 		const gap = d.derived.spans.find((s) => s.kind === "unknown");
 		expect(gap?.metadata.conversation_count).toBe(1);
-		expect(d.derived.moments).toHaveLength(1);
+		expect(d.derived.moments.map((m) => m.title)).toEqual(["Weekend plans"]);
 	});
 
 	it("keeps a night as a night, and never calls its silence a gap", () => {
@@ -143,13 +145,5 @@ describe("joinDays", () => {
 		const a = deriveDay(day({ stays: [stay("x", 20 * 60, 30 * 60)] }), sources);
 		const b = deriveDay(day({ stays: [stay("x", 20 * 60, 30 * 60)] }), sources);
 		expect(joinDays([a, b]).derived.spans.filter((s) => s.kind === "stay")).toHaveLength(1);
-	});
-});
-
-describe("conversationTitle", () => {
-	it("is the first sentence, cut at a word", () => {
-		expect(conversationTitle("Planning the trip. Then lunch.")).toBe("Planning the trip");
-		expect(conversationTitle("a ".repeat(60))?.endsWith("…")).toBe(true);
-		expect(conversationTitle(null)).toBeNull();
 	});
 });
