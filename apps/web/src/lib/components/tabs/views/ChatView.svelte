@@ -859,10 +859,13 @@
 			const profilePromise = (async () => {
 				try {
 					const profile = await getAssistantProfile<{
+						standard_model_id?: string;
+						/** The same pin, from a box older than the Standard rename. */
 						chat_model_id?: string;
 						persona?: string;
 					}>();
-					profileDefaultModelId = profile.chat_model_id;
+					profileDefaultModelId =
+						profile.standard_model_id ?? profile.chat_model_id;
 					profileDefaultPersona = profile.persona;
 				} catch (error) {
 					console.error("Failed to load assistant profile:", error);

@@ -92,10 +92,11 @@ pub struct AssistantProfile {
     // registry's then-current chat default into default_model_id, and the
     // .or() fallback then served that snapshot as if the person had pinned it
     // — grok-4.5 outliving its ZDR delisting by a week, breaking every
-    // server-side model call routed through it.
-    pub chat_model_id: Option<String>,
+    // server-side model call routed through it. chat_model_id and
+    // coding_model_id are kept and unread for the same reason (migration 0042).
     pub lite_model_id: Option<String>,
-    pub coding_model_id: Option<String>,
+    pub standard_model_id: Option<String>,
+    pub deep_model_id: Option<String>,
     pub image_model_id: Option<String>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,

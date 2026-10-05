@@ -1097,17 +1097,17 @@ fn split_draft(raw: &str) -> (String, Vec<String>) {
     (doc.trim().to_string(), rules)
 }
 
-/// Both writes go through the shared background helper on the CHAT slot.
+/// Both writes go through the shared background helper on the STANDARD slot.
 ///
-/// The Chat slot, not Lite, for BOTH — including the chapters extraction that
+/// The Standard slot, not Lite, for BOTH — including the chapters extraction that
 /// a cheaper model could do — because the interview promised a no-retention
 /// agreement in as many words, and the Lite slot honors the owner's
 /// background pin, which may be a BYO endpoint or a provider with no ZDR.
-/// The Chat slot is the Virtues-curated map and stays ZDR-capable. (See
+/// The Standard slot is the Virtues-curated map and stays ZDR-capable. (See
 /// `model_choice::honors_pin` for the same ruling on the interview turns.)
 ///
 /// Thinking OFF, no cap: both jobs are arrangement, not composition. There
-/// was a cap of 4000 here once, and the Chat slot's model reasoned inside it:
+/// was a cap of 4000 here once, and the Standard slot's model reasoned inside it:
 /// on a 19-chapter transcript the extraction spent the cap thinking and
 /// returned a truncated array, which serde refused, and the person was told
 /// their chapters "didn't take" for a reason that had nothing to do with what
@@ -1121,7 +1121,7 @@ async fn call_model(
 ) -> Result<String> {
     crate::virtues_api::completion::system_completion(
         pool,
-        virtues_registry::models::ModelSlot::Chat,
+        virtues_registry::models::ModelSlot::Standard,
         feature,
         system_prompt,
         user_prompt,

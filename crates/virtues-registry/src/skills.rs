@@ -45,6 +45,10 @@ pub struct Skill {
     pub max_cost_usd: f64,
     /// The wall-clock ceiling, in minutes.
     pub max_minutes: u64,
+    /// The model tier the turn runs on: `model: standard` (the default when
+    /// the key is absent) or `model: deep`. A skill picks its tier the way it
+    /// picks its tools — by declaring it, not by a router guessing.
+    pub slot: crate::models::ModelSlot,
 }
 
 const COUNCIL: &str = include_str!("../../../skills/council/SKILL.md");
@@ -89,6 +93,7 @@ fn parse(src: &str) -> Result<Skill, String> {
     let mut max_steps = None;
     let mut max_cost_usd = None;
     let mut max_minutes = None;
+    let mut slot = crate::models::ModelSlot::Standard;
     for line in front.lines() {
         let (key, value) = line
             .split_once(':')
@@ -111,6 +116,13 @@ fn parse(src: &str) -> Result<Skill, String> {
             "max_minutes" => {
                 max_minutes = Some(value.parse().map_err(|e| format!("max_minutes: {e}"))?)
             }
+            "model" => {
+                use crate::models::ModelSlot;
+                slot = match ModelSlot::from_name(value) {
+                    Some(s @ (ModelSlot::Standard | ModelSlot::Deep)) => s,
+                    _ => return Err(format!("model: {value:?} is not standard or deep")),
+                }
+            }
             other => return Err(format!("unknown frontmatter key {other:?}")),
         }
     }
@@ -127,6 +139,7 @@ fn parse(src: &str) -> Result<Skill, String> {
         max_steps: max_steps.ok_or("max_steps is required")?,
         max_cost_usd: max_cost_usd.ok_or("max_cost_usd is required")?,
         max_minutes: max_minutes.ok_or("max_minutes is required")?,
+        slot,
     })
 }
 
@@ -162,6 +175,7 @@ mod tests {
         assert!(parse("---\nname: x\n---\n").unwrap_err().contains("empty"));
         assert!(parse("---\nname: x\nbogus: 1\n---\nbody").unwrap_err().contains("bogus"));
         assert!(parse("---\nname: x\n---\nbody").unwrap_err().contains("description"));
+        assert!(parse("---\nname: x\nmodel: image\n---\nbody").unwrap_err().contains("standard or deep"));
     }
 
     #[test]
@@ -169,6 +183,7 @@ mod tests {
         let c = skill_named("council").expect("council");
         assert_eq!(c.tools, ["think", "semantic_search", "sql_query", "dispatch_subagents"]);
         assert_eq!(c.max_steps, 40);
+        assert_eq!(c.slot, crate::models::ModelSlot::Deep, "council runs on the strong tier");
         assert!(c.body.starts_with("<council>"));
         assert!(skill_named("chat").is_none(), "ordinary chat is not a skill");
     }

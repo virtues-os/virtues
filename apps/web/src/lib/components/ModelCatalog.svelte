@@ -32,7 +32,6 @@
 	import type { FilterDef } from "$lib/components/datagrid/types";
 	import {
 		modelSlots,
-		SLOTS,
 		type CatalogModel,
 	} from "$lib/stores/modelSlots.svelte";
 
@@ -47,7 +46,9 @@
 
 	// The table lists language models, so the Image slot has no row to choose
 	// from here. Its picker above is the only control for it.
-	const TABLE_SLOTS = SLOTS.filter((s) => s.key !== "image");
+	const TABLE_SLOTS = $derived(
+		modelSlots.slots.filter((s) => s.key !== "image"),
+	);
 
 	/** Slot chips for a row. The recommended model keeps its chip while a
 	 *  choice overrides it, so the table always shows where "Use recommended"

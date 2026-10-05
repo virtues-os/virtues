@@ -18,7 +18,7 @@
 //! 2. **Scout** on the Lite slot: read all of it and choose the day's shape,
 //!    its lede, and the moments worth keeping, each named by where it is in
 //!    the record. Code attaches those chunks and messages word for word.
-//! 3. **Write** on the Chat slot from that brief. Every sentence ends with
+//! 3. **Write** on the Standard slot from that brief. Every sentence ends with
 //!    the time of the evidence it rests on.
 //! 4. **Check** each sentence on the Lite slot against exactly that evidence
 //!    (plus the rest of its conversation). Unsupported sentences are deleted,
@@ -703,7 +703,7 @@ pub(crate) async fn write_day(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>, s
     })?;
     let draft = crate::virtues_api::completion::system_completion(
         pool,
-        ModelSlot::Chat,
+        ModelSlot::Standard,
         "day_article",
         WRITER_PROMPT,
         &writer_prompt(&brief, &input),

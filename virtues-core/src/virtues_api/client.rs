@@ -1180,9 +1180,9 @@ mod byo_fork_tests {
     #[test]
     fn our_address_is_swapped_for_theirs() {
         use virtues_registry::models::{default_model_for_slot, ModelSlot};
-        let ours = default_model_for_slot(ModelSlot::Chat);
+        let ours = default_model_for_slot(ModelSlot::Standard);
         let body = json!({"model": ours, "messages": []});
-        let out = apply_byo_model(&body, &byo_with(None, &[("chat", "x-ai/grok-4.5")]));
+        let out = apply_byo_model(&body, &byo_with(None, &[("standard", "x-ai/grok-4.5")]));
         assert_eq!(model_of(&out), "x-ai/grok-4.5");
     }
 
@@ -1192,7 +1192,7 @@ mod byo_fork_tests {
     #[test]
     fn an_unmapped_slot_passes_through_untouched() {
         use virtues_registry::models::{default_model_for_slot, ModelSlot};
-        let ours = default_model_for_slot(ModelSlot::Chat);
+        let ours = default_model_for_slot(ModelSlot::Standard);
         let body = json!({"model": ours, "messages": []});
         let out = apply_byo_model(&body, &byo_with(None, &[("omni", "google/gemini-3.5-flash")]));
         assert_eq!(model_of(&out), ours);
@@ -1203,12 +1203,12 @@ mod byo_fork_tests {
     #[test]
     fn a_hand_picked_model_is_never_rewritten() {
         let body = json!({"model": "some/exotic-model", "messages": []});
-        let out = apply_byo_model(&body, &byo_with(None, &[("chat", "x-ai/grok-4.5")]));
+        let out = apply_byo_model(&body, &byo_with(None, &[("standard", "x-ai/grok-4.5")]));
         assert_eq!(model_of(&out), "some/exotic-model");
     }
 
     /// Nothing in the mapping knows which slot is which. Omni is re-addressed
-    /// by exactly the same path as chat — the "which model suits audio"
+    /// by exactly the same path as Standard — the "which model suits audio"
     /// judgment lives in the UI, not here.
     #[test]
     fn every_slot_maps_by_the_same_rule_including_omni() {
@@ -1217,6 +1217,7 @@ mod byo_fork_tests {
             (ModelSlot::Omni, "google/gemini-3.5-flash"),
             (ModelSlot::Image, "google/gemini-3-pro-image"),
             (ModelSlot::Lite, "z-ai/glm-4.7"),
+            (ModelSlot::Deep, "anthropic/claude-opus-5.5"),
         ] {
             let ours = default_model_for_slot(slot);
             let body = json!({"model": ours, "messages": []});

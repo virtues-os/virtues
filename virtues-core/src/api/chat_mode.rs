@@ -206,16 +206,20 @@ impl ChatMode {
         !matches!(self, Self::Interview)
     }
 
-    /// Which model slot the turn belongs to.
+    /// Which model tier the turn runs on.
     ///
-    /// Every mode is the Chat slot today: they answer the same kind of hard
-    /// turn and differ only in tools and prompt. It is a method anyway
-    /// because it is the seam the mode/slot question belongs at. The Coding
-    /// slot is pinnable in Settings while NOTHING in the box asks for it
-    /// (`get_coding_model` has no callers), so the day applet authoring
-    /// becomes a mode, this is the one line that wires it up.
+    /// The mode decides, and nothing guesses per turn. Deep research and a
+    /// skill that declares `model: deep` (council) are the rare, slow,
+    /// high-stakes turns the strong tier exists for; everything else is
+    /// Standard. Deciding per turn instead would mean switching models inside
+    /// a chat, and every switch starts a cold prompt cache — most of a chat's
+    /// input tokens are served from that cache.
     pub fn slot(&self) -> ModelSlot {
-        ModelSlot::Chat
+        match self {
+            Self::DeepResearch => ModelSlot::Deep,
+            Self::Skill(skill) => skill.slot,
+            _ => ModelSlot::Standard,
+        }
     }
 }
 
@@ -436,7 +440,10 @@ mod tests {
         for mode in all_modes() {
             assert_eq!(mode.honors_pin(), !matches!(mode, ChatMode::Interview), "{mode:?}");
             assert_eq!(mode.is_sudo(), matches!(mode, ChatMode::Sudo), "{mode:?}");
-            assert_eq!(mode.slot(), ModelSlot::Chat, "{mode:?}");
+            let deep = matches!(mode, ChatMode::DeepResearch)
+                || matches!(mode, ChatMode::Skill(ref s) if s.name == "council");
+            let want = if deep { ModelSlot::Deep } else { ModelSlot::Standard };
+            assert_eq!(mode.slot(), want, "{mode:?}");
         }
     }
 

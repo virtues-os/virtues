@@ -19,7 +19,7 @@ use super::wiki_streams::{get_day_sources, DaySource};
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-/// THE DETECTIVE — the Chat slot. Fuse the day's witnesses into events.
+/// THE DETECTIVE — the Standard slot. Fuse the day's witnesses into events.
 ///
 /// This is not grunt work and it is not prose. It is adjudication: every source
 /// lies a little (calendars run long, GPS drifts, diarization miscounts), the
@@ -447,11 +447,11 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
         "segmenting day into events (detective)"
     );
 
-    // Chat slot: fusing noisy witnesses into a gapless timeline is adjudication,
+    // Standard slot: fusing noisy witnesses into a gapless timeline is adjudication,
     // not extraction — a best-model job, run once nightly on a completed day.
     // The completion helper resolves the slot's DEFAULT, never the profile's
     // pinned chat model — see virtues_api::completion for the ZDR class.
-    let raw_response = call_virtues_api(pool, SEGMENT_PROMPT, ModelSlot::Chat, &prompt).await?;
+    let raw_response = call_virtues_api(pool, SEGMENT_PROMPT, ModelSlot::Standard, &prompt).await?;
 
     // An empty parse is a FAILURE, not a day with nothing in it.
     //
@@ -1097,7 +1097,7 @@ struct MessageBurst {
 ///
 /// This is an egress decision, made deliberately: message bodies now leave the
 /// box for whichever inference endpoint is configured, which under BYO AI is
-/// whatever the user pointed the Chat slot at. Budgets below are what keep that
+/// whatever the user pointed the Standard slot at. Budgets below are what keep that
 /// bounded — a talkative day cannot ship the whole inbox.
 async fn day_message_bursts(
     pool: &PgPool,
@@ -1732,7 +1732,7 @@ async fn recent_event_labels(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>) ->
 /// Call virtues-api for the summary generation
 /// One call, two jobs — so the caller says which slot and which instructions.
 ///
-/// Both callers resolve the Chat slot today: segmentation is adjudication, not
+/// Both callers resolve the Standard slot today: segmentation is adjudication, not
 /// extraction (see the callers' comments), and the narration is the narrative
 /// call. If segmentation ever moves to Lite for cost, change it at the caller —
 /// this function takes whatever slot it is handed, and the shared completion
@@ -1759,7 +1759,7 @@ async fn call_virtues_api(
         // whatever lever the model lists, and a model without one ignores it.
         //
         // There used to be a number here, twice. 1000 truncated a rich day
-        // mid-array. 4000 then failed one level up when the Chat slot became
+        // mid-array. 4000 then failed one level up when the Standard slot became
         // a model that thinks inside max_tokens: 237 of 276 calls spent the
         // whole cap reasoning and returned nothing, all billed, hourly, on
         // the same day (2026-09-04..08). 16k worked by paying for thinking

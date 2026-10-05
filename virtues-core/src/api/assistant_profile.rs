@@ -15,7 +15,7 @@ use sqlx::PgPool;
 ///   `"model-id"` → `Some(Some(_))`→ SET the column to that value
 ///
 /// Plain `Option<String>` cannot do this: serde folds both *absent* and *null*
-/// into `None`, so `{"chat_model_id": null}` was silently a no-op and a pinned
+/// into `None`, so `{"standard_model_id": null}` was silently a no-op and a pinned
 /// slot could never be un-pinned. That is exactly what "Virtues default" needs
 /// to write — see `ModelSettings.svelte`.
 fn double_option<'de, D, T>(de: D) -> std::result::Result<Option<Option<T>>, D::Error>
@@ -28,7 +28,7 @@ where
 
 /// Request to update assistant profile
 ///
-/// Every field is optional (absent = don't touch). The four model slots are
+/// Every field is optional (absent = don't touch). The model slots are
 /// *doubly* optional, because clearing a slot back to "Virtues default" means
 /// writing NULL, and NULL has to be distinguishable from "not mentioned".
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -39,11 +39,14 @@ pub struct UpdateAssistantProfileRequest {
     // Model slots. NULL here = "follow the Virtues default" (the cloud slot
     // map, then the compiled floor — see api::model_catalog).
     #[serde(deserialize_with = "double_option")]
-    pub chat_model_id: Option<Option<String>>,
-    #[serde(deserialize_with = "double_option")]
     pub lite_model_id: Option<Option<String>>,
+    /// `chat_model_id` is what a client from before the Standard/Deep rename
+    /// sends for this slot. A phone's bundle outlives a box upgrade, so its
+    /// save has to keep landing.
+    #[serde(deserialize_with = "double_option", alias = "chat_model_id")]
+    pub standard_model_id: Option<Option<String>>,
     #[serde(deserialize_with = "double_option")]
-    pub coding_model_id: Option<Option<String>>,
+    pub deep_model_id: Option<Option<String>>,
     #[serde(deserialize_with = "double_option")]
     pub image_model_id: Option<Option<String>>,
     pub enabled_tools: Option<serde_json::Value>,
@@ -116,9 +119,9 @@ pub async fn update_assistant_profile(
 
     add_field!(request.assistant_name, "assistant_name");
     add_field!(request.default_agent_id, "default_agent_id");
-    add_field!(request.chat_model_id, "chat_model_id");
     add_field!(request.lite_model_id, "lite_model_id");
-    add_field!(request.coding_model_id, "coding_model_id");
+    add_field!(request.standard_model_id, "standard_model_id");
+    add_field!(request.deep_model_id, "deep_model_id");
     add_field!(request.image_model_id, "image_model_id");
     add_field!(request.enabled_tools, "enabled_tools");
     add_field!(request.ui_preferences, "ui_preferences");
@@ -148,13 +151,13 @@ pub async fn update_assistant_profile(
     // Double-option: the outer Some means "this field was mentioned"; the inner
     // Option is the value, and `None` binds as SQL NULL — which is how a slot
     // gets reset to the Virtues default.
-    if let Some(v) = &request.chat_model_id {
-        q = q.bind(v.as_deref());
-    }
     if let Some(v) = &request.lite_model_id {
         q = q.bind(v.as_deref());
     }
-    if let Some(v) = &request.coding_model_id {
+    if let Some(v) = &request.standard_model_id {
+        q = q.bind(v.as_deref());
+    }
+    if let Some(v) = &request.deep_model_id {
         q = q.bind(v.as_deref());
     }
     if let Some(v) = &request.image_model_id {
@@ -204,30 +207,30 @@ pub async fn get_background_model(db: &PgPool) -> Result<String> {
         )))
 }
 
-/// Helper to get the chat model (default for conversations)
+/// Helper to get the Standard model (the default for conversations)
 ///
 /// Pin, else the Virtues default — never the legacy default_model_id column.
 /// That column held a SNAPSHOT of the registry default frozen at seed time, so
 /// its `.or()` fallback kept serving a model Virtues had since moved off of,
 /// wearing the costume of a user pin.
-pub async fn get_chat_model(db: &PgPool) -> Result<String> {
+pub async fn get_standard_model(db: &PgPool) -> Result<String> {
     let profile = get_assistant_profile(db).await?;
 
     Ok(profile
-        .chat_model_id
+        .standard_model_id
         .unwrap_or_else(|| crate::api::model_catalog::model_for_slot(
-            virtues_registry::models::ModelSlot::Chat
+            virtues_registry::models::ModelSlot::Standard
         )))
 }
 
-/// Helper to get the coding model (code generation)
-pub async fn get_coding_model(db: &PgPool) -> Result<String> {
+/// Helper to get the Deep model (the modes that ask for the strong tier)
+pub async fn get_deep_model(db: &PgPool) -> Result<String> {
     let profile = get_assistant_profile(db).await?;
 
     Ok(profile
-        .coding_model_id
+        .deep_model_id
         .unwrap_or_else(|| crate::api::model_catalog::model_for_slot(
-            virtues_registry::models::ModelSlot::Coding
+            virtues_registry::models::ModelSlot::Deep
         )))
 }
 
@@ -277,35 +280,37 @@ mod tests {
     fn slot_distinguishes_absent_from_null_from_value() {
         let absent: UpdateAssistantProfileRequest =
             serde_json::from_str(r#"{"persona":"casual"}"#).unwrap();
-        assert_eq!(absent.chat_model_id, None, "absent = leave the column alone");
+        assert_eq!(absent.standard_model_id, None, "absent = leave the column alone");
 
         let cleared: UpdateAssistantProfileRequest =
-            serde_json::from_str(r#"{"chat_model_id":null}"#).unwrap();
+            serde_json::from_str(r#"{"standard_model_id":null}"#).unwrap();
         assert_eq!(
-            cleared.chat_model_id,
+            cleared.standard_model_id,
             Some(None),
             "explicit null = SET NULL = follow the Virtues default"
         );
 
         let pinned: UpdateAssistantProfileRequest =
-            serde_json::from_str(r#"{"chat_model_id":"anthropic/claude-opus-4.8"}"#).unwrap();
+            serde_json::from_str(r#"{"standard_model_id":"anthropic/claude-opus-4.8"}"#).unwrap();
         assert_eq!(
-            pinned.chat_model_id,
+            pinned.standard_model_id,
             Some(Some("anthropic/claude-opus-4.8".to_string())),
             "a value = pin it"
         );
     }
 
     /// Old clients still send the retired legacy columns
-    /// (default_model_id/background_model_id) alongside their slot. Those keys
-    /// must be silently ignored — not an error — or every stale SPA's model
-    /// save starts failing on upgrade.
+    /// (default_model_id/background_model_id, and coding_model_id from before
+    /// the Standard/Deep rename) alongside their slot. Those keys must be
+    /// silently ignored — not an error — or every stale SPA's model save
+    /// starts failing on upgrade. And their `chat_model_id` is the Standard
+    /// slot, so it must still land there.
     #[test]
     fn retired_legacy_keys_from_old_clients_are_ignored() {
         let req: UpdateAssistantProfileRequest = serde_json::from_str(
-            r#"{"chat_model_id":null,"default_model_id":null,"background_model_id":"x/y"}"#,
+            r#"{"chat_model_id":"x/z","default_model_id":null,"background_model_id":"x/y","coding_model_id":null}"#,
         )
         .unwrap();
-        assert_eq!(req.chat_model_id, Some(None));
+        assert_eq!(req.standard_model_id, Some(Some("x/z".to_string())));
     }
 }
