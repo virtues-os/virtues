@@ -8,6 +8,7 @@
  * the playhead wears the place colour and a larger label.
  */
 import type { LngLat, Map as MlMap, Marker, PaddingOptions } from "maplibre-gl";
+import { fmtDistance } from "./inspector";
 
 /** Dots closer than this on screen fold into one count chip. */
 export const CLUSTER_PX = 48;
@@ -133,7 +134,7 @@ function labelHtml(m: MapMoment, time: (ms: number) => string): HTMLElement {
 	lbl.append(title, when);
 	if (m.moving && m.kind !== "walk") {
 		const far = document.createElement("i");
-		far.textContent = `On the move · ${m.km.toFixed(1)} km`;
+		far.textContent = `Moving · ${fmtDistance(m.km * 1000)}`;
 		lbl.append(far);
 	}
 	return lbl;
@@ -339,7 +340,10 @@ export class Bubbles {
 				this.chips.set(key, rec);
 			} else rec.marker.setLngLat(ll);
 			rec.el.textContent = String(c.items.length);
-			rec.el.title = `${c.items.length} events here`;
+			// Every moment on the map is a conversation; the count is how many
+			// happened at this spot, and a click lists them.
+			rec.el.title = `${c.items.length} conversations here. Select to list them.`;
+			rec.el.setAttribute("aria-label", rec.el.title);
 			// The chip lights when the playhead's moment is inside it.
 			rec.el.classList.toggle("cur", c.items.some((it) => it.cur));
 		}

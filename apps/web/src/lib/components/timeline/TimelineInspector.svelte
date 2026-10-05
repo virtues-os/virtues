@@ -320,6 +320,13 @@
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 	}
+	/* Narrow pane: a sheet across the bottom third rather than a column. */
+	:global(.timeline.narrow) .inspector {
+		top: auto;
+		left: 16px;
+		width: auto;
+		height: 34%;
+	}
 	.scroll {
 		overflow-y: auto;
 		padding: 4px 0 8px;
