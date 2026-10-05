@@ -7,7 +7,7 @@
  * nothing is stored: a stay is a visit; what lies between two stays is a drive
  * when the track shows travel and a signal gap when it does not; a night is
  * a joined HealthKit night; a conversation is an audio session with two or
- * more voices in it.
+ * more voices in it, under the transcriber's own title for it.
  */
 import type { TimelineDay } from "./day";
 import type { DerivedMoment, DerivedPlace, DerivedSpan, DerivedWindow, VoiceWindow } from "./inspector";
@@ -28,8 +28,6 @@ const MIN_HOP_MS = 10_000;
 const LONG_MS = 30 * MIN;
 const LONG_FIX_EVERY_MS = 15 * MIN;
 const LONG_MIN_PATH_M = 600;
-/** A conversation's title is the start of what was said, cut at a word. */
-const TITLE_CHARS = 60;
 
 type Span = { s: number; e: number };
 
@@ -71,15 +69,6 @@ export function uncovered(lo: number, hi: number, cover: Span[]): Span[] {
 	}
 	if (cursor < hi) out.push({ s: cursor, e: hi });
 	return out;
-}
-
-/** The first sentence of what was said, cut at a word. */
-export function conversationTitle(content: string | null): string | null {
-	const first = content?.trim().match(/^[^.!?\n]+/)?.[0]?.trim();
-	if (!first) return null;
-	if (first.length <= TITLE_CHARS) return first;
-	const cut = first.slice(0, TITLE_CHARS);
-	return `${cut.slice(0, cut.lastIndexOf(" ") > 20 ? cut.lastIndexOf(" ") : TITLE_CHARS).trim()}…`;
 }
 
 export interface Sources {
@@ -163,7 +152,7 @@ export function deriveDay(day: TimelineDay, sources: Sources): DerivedDay {
 			kind: "conversation",
 			started_at: x.started_at,
 			ended_at: x.ended_at,
-			title: conversationTitle(x.content),
+			title: x.title,
 			metadata: { window_ids: [x.id], speaker_count: x.speaker_mode },
 		}));
 
@@ -172,7 +161,7 @@ export function deriveDay(day: TimelineDay, sources: Sources): DerivedDay {
 		started_at: x.started_at,
 		ended_at: x.ended_at,
 		speaker_count: x.speaker_mode,
-		title: conversationTitle(x.content),
+		title: x.title,
 		text: x.content,
 		people: [],
 	}));

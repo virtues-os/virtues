@@ -69,6 +69,9 @@ pub struct AudioSession {
     pub ended_at: DateTime<Utc>,
     /// 0 ambient, 1 one voice, 2 a conversation, 3 a group.
     pub speaker_mode: i16,
+    /// The title the transcriber gave the session's longest stretch of
+    /// speech; none when nothing in it was speech.
+    pub title: Option<String>,
     pub content: Option<String>,
 }
 
@@ -166,8 +169,16 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
         .collect();
 
     let sessions = sqlx::query(
-        "SELECT id, started_at, ended_at, speaker_mode, content FROM data_audio_session \
-         WHERE started_at < $2 AND ended_at > $1 ORDER BY started_at",
+        "SELECT s.id, s.started_at, s.ended_at, s.speaker_mode, s.content, t.title \
+         FROM data_audio_session s \
+         LEFT JOIN LATERAL ( \
+             SELECT title FROM data_communication_transcription \
+             WHERE started_at >= s.started_at AND started_at < s.ended_at \
+               AND text <> '' AND title IS NOT NULL \
+               AND deleted_at_source IS NULL AND NOT is_archived \
+             ORDER BY length(text) DESC LIMIT 1 \
+         ) t ON TRUE \
+         WHERE s.started_at < $2 AND s.ended_at > $1 ORDER BY s.started_at",
     )
     .bind(start)
     .bind(end)
@@ -180,6 +191,7 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
             started_at: r.try_get("started_at")?,
             ended_at: r.try_get("ended_at")?,
             speaker_mode: r.try_get("speaker_mode")?,
+            title: r.try_get("title")?,
             content: r.try_get("content")?,
         })
     })

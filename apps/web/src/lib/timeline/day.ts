@@ -36,8 +36,16 @@ export interface TimelineDay {
 	last_point_before: TimelineDayPoint | null;
 	/** Nights overlapping the day, each joined from all of its records. */
 	nights: { started_at: string; ended_at: string; asleep_minutes: number }[];
-	/** speaker_mode: 0 ambient, 1 one voice, 2 a conversation, 3 a group. */
-	sessions: { id: string; started_at: string; ended_at: string; speaker_mode: number; content: string | null }[];
+	/** speaker_mode: 0 ambient, 1 one voice, 2 a conversation, 3 a group.
+	 *  title: the transcriber's heading for its longest stretch of speech. */
+	sessions: {
+		id: string;
+		started_at: string;
+		ended_at: string;
+		speaker_mode: number;
+		title: string | null;
+		content: string | null;
+	}[];
 	/** Ten-minute bins, stamped at their middle. */
 	steps: { at: string; steps: number }[];
 	step_scale: number;
