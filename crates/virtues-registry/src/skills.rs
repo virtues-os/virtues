@@ -1,11 +1,10 @@
 //! Skills: a prompt the chat reaches for, the way it reaches for a tool.
 //!
-//! Council and Deep Research were "modes" — and a mode here was four things
-//! bolted together: a prompt block baked into the cached prefix, a tool
-//! allowlist in `tools/mod.rs`, a step ceiling in `chat.rs`, and a picker in
-//! the composer. Three of the four had to be edited in three files to change
-//! one behavior, and the prompt block sat in the prefix, so switching modes
-//! mid-chat rewrote the cache.
+//! A built-in "mode" is four things bolted together: a prompt block baked
+//! into the cached prefix, a tool allowlist in `tools/mod.rs`, a step ceiling
+//! in `chat.rs`, and a picker in the composer. Changing one behavior means
+//! editing three files, and the prompt block sits in the prefix, so switching
+//! modes mid-chat rewrites the cache.
 //!
 //! A skill is one file. Frontmatter names it, says in one line when it
 //! applies, and lists the tools and ceilings it needs; the body is the
@@ -51,15 +50,17 @@ pub struct Skill {
     pub slot: crate::models::ModelSlot,
 }
 
-const COUNCIL: &str = include_str!("../../../skills/council/SKILL.md");
+/// The shipped skill files, as `(name, include_str!("../../../skills/<name>/SKILL.md"))`.
+/// None ship today.
+const SHIPPED: &[(&str, &str)] = &[];
 
 /// Every shipped skill. Parsed on each call, like `default_tools()`; the
 /// sources are compiled in, so a parse failure is a build-time mistake
 /// caught by the test below, and at runtime a bad file is skipped and
 /// logged rather than taking the chat down with it.
 pub fn default_skills() -> Vec<Skill> {
-    [("council", COUNCIL)]
-        .into_iter()
+    SHIPPED
+        .iter()
         .filter_map(|(name, src)| match parse(src) {
             Ok(skill) => Some(skill),
             Err(e) => {
@@ -79,7 +80,7 @@ pub fn skill_named(name: &str) -> Option<Skill> {
 /// Parse `---` frontmatter of `key: value` lines, then the body. No YAML
 /// library: the fields are flat scalars and a comma list, and a format this
 /// small is better read by ten lines that say exactly what they accept.
-fn parse(src: &str) -> Result<Skill, String> {
+pub fn parse(src: &str) -> Result<Skill, String> {
     let rest = src
         .strip_prefix("---\n")
         .ok_or("frontmatter must open with --- on the first line")?;
@@ -150,11 +151,11 @@ mod tests {
 
     /// The shipped files parse, and every tool a skill names is a tool the
     /// registry has — a typo here would silently hand a skill no tools at
-    /// all, and the model would be told to convene voices it cannot call.
+    /// all, and the model would be told to use tools it cannot call.
     #[test]
     fn every_shipped_skill_parses_and_names_real_tools() {
         let skills = default_skills();
-        assert!(skills.iter().any(|s| s.name == "council"), "council ships");
+        assert_eq!(skills.len(), SHIPPED.len(), "a shipped skill failed to parse");
         let known: Vec<String> = default_tools().into_iter().map(|t| t.id).collect();
         for s in &skills {
             assert!(!s.description.is_empty(), "{} has no description", s.name);
@@ -179,12 +180,14 @@ mod tests {
     }
 
     #[test]
-    fn council_carries_its_ceilings() {
-        let c = skill_named("council").expect("council");
-        assert_eq!(c.tools, ["think", "semantic_search", "sql_query", "dispatch_subagents"]);
-        assert_eq!(c.max_steps, 40);
-        assert_eq!(c.slot, crate::models::ModelSlot::Deep, "council runs on the strong tier");
-        assert!(c.body.starts_with("<council>"));
+    fn a_skill_carries_its_ceilings_and_tier() {
+        let s = parse("---\nname: x\ndescription: d\ntools: think, sql_query\nmax_steps: 40\nmax_cost_usd: 5\nmax_minutes: 15\nmodel: deep\n---\n<x>body</x>")
+            .expect("parses");
+        assert_eq!(s.tools, ["think", "sql_query"]);
+        assert_eq!((s.max_steps, s.max_minutes), (40, 15));
+        assert_eq!(s.slot, crate::models::ModelSlot::Deep);
+        let plain = parse("---\nname: y\ndescription: d\nmax_steps: 1\nmax_cost_usd: 1\nmax_minutes: 1\n---\nbody").unwrap();
+        assert_eq!(plain.slot, crate::models::ModelSlot::Standard, "no model key is Standard");
         assert!(skill_named("chat").is_none(), "ordinary chat is not a skill");
     }
 }

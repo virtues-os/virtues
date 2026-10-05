@@ -72,10 +72,10 @@ pub enum ModelSlot {
     /// persisted or sent by an older peer — a BYO credential's model map, an
     /// applet manifest, the cloud slot map — via [`ModelSlot::legacy_name`].
     Standard,
-    /// The strong tier: the rare, slow, high-stakes turns (deep research,
-    /// council). Picked by the mode, never guessed per turn — switching models
-    /// mid-chat throws away the prompt cache that most of a chat's input
-    /// tokens are served from.
+    /// The strong tier: the rare, slow, high-stakes turns (deep research, a
+    /// skill that declares `model: deep`). Picked by the mode, never guessed
+    /// per turn — switching models mid-chat throws away the prompt cache that
+    /// most of a chat's input tokens are served from.
     Deep,
     /// Image model - text-to-image generation (the `generate_image` tool)
     Image,
@@ -218,7 +218,7 @@ pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
         // affinity header (`BearerClient::stream_affine`) for its hit rate.
         ModelSlot::Standard => "spacexai/grok-4.7",
         // Opus 5.5, chosen 2026-10-05 for the slot's first callers, deep
-        // research and council. `zdr: all` and `no_training: all`, $4/M input
+        // research. `zdr: all` and `no_training: all`, $4/M input
         // and $20/M output — cheaper per token than the opus-5 that was turned
         // down for the Standard slot at "$55.01/mo, 9.3x the incumbent". That
         // verdict was about every unpinned turn; this slot runs only when a

@@ -36,7 +36,7 @@ export const SLOTS: SlotConfig[] = [
 	{
 		key: 'deep',
 		label: 'Deep',
-		description: 'Deep research and council',
+		description: 'Deep research',
 		dbField: 'deep_model_id',
 	},
 	{
