@@ -34,13 +34,6 @@ async fn main() -> Result<()> {
     .await?;
 
     for article in due {
-        // Only kinds with a brief. A subject whose brief does not exist yet is
-        // not handed the generic door — the day is the case that matters, and
-        // its narrator is released and tuned.
-        if virtues::api::wiki_editor::brief_for(&article.subject_type).is_none() {
-            continue;
-        }
-
         let fingerprint =
             virtues::api::wiki_editor::evidence_fingerprint(&pool, &article).await?;
         if article.input_fingerprint.as_deref() == Some(fingerprint.as_str()) {
@@ -94,16 +87,17 @@ async fn main() -> Result<()> {
              leave every sentence that is still true exactly as it is."
         };
 
-        output(
-            &format!(
-                "{task}\n\nsubject_type={} subject_id={}\n\n\
-                 WHAT THE RECORD HAS:\n{changed}\n\n\
-                 THE PAGE AS IT STANDS — pass the whole finished text to \
-                 `revise_article`:\n\n{current}",
-                article.subject_type, article.subject_id
-            ),
-            &input.config,
-        )?;
+        let run = format!(
+            "{task}\n\nsubject_type={} subject_id={}\n\n\
+             WHAT THE RECORD HAS:\n{changed}\n\n\
+             THE PAGE AS IT STANDS — pass the whole finished text to \
+             `revise_article`:\n\n{current}",
+            article.subject_type, article.subject_id
+        );
+        // The rules lead: the agent phase's own prompt carries none of them.
+        let handed =
+            virtues::api::wiki_editor::handover(&pool, &article.subject_type, &run).await?;
+        output(&handed, &input.config)?;
         return Ok(());
     }
 
