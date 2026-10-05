@@ -14,6 +14,15 @@ use virtues_helpers::{connect_from_env, output, read_input};
 
 const ACTION: &str = "plaid_liabilities_sync";
 
+/// Plaid codes that mean the Item simply lacks this product. Kept in step with
+/// the same list in `plaid_investments_sync`.
+const NO_PRODUCT_CODES: &[&str] = &[
+    "INVALID_PRODUCT",
+    "PRODUCTS_NOT_SUPPORTED",
+    "PRODUCT_NOT_READY",
+    "NO_LIABILITY_ACCOUNTS",
+];
+
 #[tokio::main]
 async fn main() -> Result<()> {
     virtues_applets::init_tracing();
@@ -35,15 +44,19 @@ async fn main() -> Result<()> {
     .await?;
 
     if !(200..300).contains(&status) {
-        // Distinguish a genuine Plaid response from a proxy-layer failure.
-        // Plaid errors carry a top-level `error_code` (e.g. PRODUCTS_NOT_SUPPORTED
-        // for accounts that don't support liabilities → benign, record 0).
+        // Only the codes meaning "this Item has no liabilities product" are
+        // benign (record 0). Items are linked with `transactions` only, so the
+        // one seen in practice is INVALID_PRODUCT. Every other Plaid code —
+        // ITEM_LOGIN_REQUIRED above all — is a real failure, and reporting it
+        // as "no liabilities" hides an expired bank login behind a green run.
         // Proxy errors are shaped `{"error":{"code":...}}` (wallet_empty,
-        // service_not_configured, unknown_key, upstream_error) — those are real
-        // failures and must NOT be silently reported as "no liabilities".
+        // service_not_configured, unknown_key, upstream_error) and fail too.
         if let Some(code) = body.get("error_code").and_then(|v| v.as_str()) {
-            let summary = format!("no liabilities for this credential (plaid {code})");
-            return output(&summary, &input.config);
+            if NO_PRODUCT_CODES.contains(&code) {
+                let summary = format!("no liabilities for this credential (plaid {code})");
+                return output(&summary, &input.config);
+            }
+            anyhow::bail!("plaid liabilities error {code} ({status}): {body}");
         }
         anyhow::bail!("plaid liabilities proxy error {status}: {body}");
     }
