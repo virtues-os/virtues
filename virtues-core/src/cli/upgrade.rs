@@ -69,9 +69,11 @@ pub async fn run(
     // the whole identity. Prerelease/edge builds all report the bare crate
     // version, so equality there means nothing — those fall through to the
     // SHA comparison after download (the fix for "edge→edge is impossible").
-    // `--force` bypasses every equality short-circuit.
+    // `--force` bypasses every equality short-circuit, and so does `--only`:
+    // refreshing the running release's web/ is what it is for.
+    let skip_if_current = equality_short_circuits(force, &only);
     let is_stable_tag = !target.contains('-') && target.chars().next().is_some_and(|c| c.is_ascii_digit());
-    if !force && is_stable_tag && target == current {
+    if skip_if_current && is_stable_tag && target == current {
         ui::ok(&format!("already on {current} — nothing to do (--force to reinstall)"));
         return Ok(());
     }
@@ -161,7 +163,7 @@ pub async fn run(
     // era carry one). The SHA is the only honest identity for prerelease
     // builds — every edge build reports the same crate version.
     let build = read_build_manifest(&extracted);
-    if !force {
+    if skip_if_current {
         if let Some(sha) = build.as_ref().and_then(|b| b.sha.as_deref()) {
             let running = env!("GIT_COMMIT");
             if !running.is_empty() && running != "unknown" && sha.starts_with(&running[..running.len().min(7)]) {
@@ -251,6 +253,13 @@ pub async fn run(
         prior_slot,
     )
     .await
+}
+
+/// Whether an upgrade may stop early because the box already runs the target.
+/// Not under `--force`, and not under `--only`, whose common use is refreshing
+/// the web/ of the release the box is already on.
+fn equality_short_circuits(force: bool, only: &Option<String>) -> bool {
+    !force && only.is_none()
 }
 
 /// This release's slot directory name: `<tag>-<sha7>` when the tarball carries
@@ -1693,25 +1702,21 @@ fn extract_binary(tarball: &Path, work: &Path) -> Result<PathBuf, crate::Error> 
     Ok(bin)
 }
 
-/// Like [`find_named`] but for a directory (e.g. the `web` build dir).
+/// A top-level directory of the extracted release (`web/`, `applets/`, …).
+///
+/// Top level only: the release tarball lays its components out flat
+/// (`release-linux.yml`), and a search that descends would take any nested
+/// directory of the same name — a route folder called `web` inside the SPA
+/// build, say — for the component.
 fn find_dir_named(dir: &Path, name: &str) -> Result<PathBuf, crate::Error> {
-    for entry in fs::read_dir(dir)
-        .map_err(|e| crate::Error::Other(format!("read {}: {e}", dir.display())))?
-    {
-        let entry = entry.map_err(|e| crate::Error::Other(format!("dir entry: {e}")))?;
-        let path = entry.path();
-        if path.is_dir() {
-            if path.file_name().and_then(|s| s.to_str()) == Some(name) {
-                return Ok(path);
-            }
-            if let Ok(found) = find_dir_named(&path, name) {
-                return Ok(found);
-            }
-        }
+    let path = dir.join(name);
+    if path.is_dir() {
+        Ok(path)
+    } else {
+        Err(crate::Error::Other(format!(
+            "{name}/ not found at the top of the release tarball"
+        )))
     }
-    Err(crate::Error::Other(format!(
-        "{name}/ not found inside the release tarball"
-    )))
 }
 
 /// Replace the contents of `dst` with the freshly-extracted `src` directory.
@@ -1927,6 +1932,28 @@ const SLOT_HEADROOM: u64 = UNPACK_INFLATION;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_skips_the_already_current_short_circuit() {
+        assert!(equality_short_circuits(false, &None));
+        assert!(!equality_short_circuits(true, &None));
+        assert!(
+            !equality_short_circuits(false, &Some("web".into())),
+            "--only web must be able to refresh the release the box already runs"
+        );
+    }
+
+    #[test]
+    fn find_dir_named_looks_only_at_the_top_level() {
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir_all(d.path().join("applets/web")).unwrap();
+        assert!(
+            find_dir_named(d.path(), "web").is_err(),
+            "a nested web/ is not the release's web component"
+        );
+        fs::create_dir_all(d.path().join("web")).unwrap();
+        assert_eq!(find_dir_named(d.path(), "web").unwrap(), d.path().join("web"));
+    }
 
     fn slot_with_version(name: &str, version: Option<&str>) -> PathBuf {
         let d = std::env::temp_dir().join(format!("stale-prepared-{}-{name}", std::process::id()));

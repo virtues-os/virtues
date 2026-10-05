@@ -295,8 +295,9 @@ pub fn ota_check<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 /// manifest that build stamped for itself.
 ///
 /// Read rather than asserted. `.virtues-bundle.json` is written by
-/// `apps/web/scripts/write-bundle-manifest.mjs` into the same `build/` that
-/// `tauri.ios.conf.json` bakes as `frontendDist`, so the asset resolver hands
+/// `apps/web/scripts/write-bundle-manifest.mjs` into the build that
+/// `scripts/bake-desktop-ui.sh` copies to each app's `frontendDist`
+/// (`build-ios`, `build-desktop`), so the asset resolver hands
 /// back the binary's own copy of exactly the document the box serves at
 /// `/api/web-bundle/version`. Baking the version into Rust separately would be
 /// a second number to keep in step, and the delivery plan's fourth invariant is
