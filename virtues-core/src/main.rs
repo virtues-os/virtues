@@ -90,6 +90,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | Some("write")
                 | Some("applet")
                 | Some("page")
+                | Some("agent-key")
+                | Some("agent-exec")
         );
         // The format (text on a terminal, JSON under systemd) and the field
         // vocabulary live in `observe`; the noise floor is this binary's own
@@ -722,6 +724,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         }
+    }
+
+    // ─── `virtues agent-key` / `agent-exec` ─────────────────────────────────
+    // Neither opens the database. An agent key's file is a file, and the
+    // agent user it serves has no database role: its verbs go to the server.
+    if matches!(cli.command, Some(Commands::AgentKey { .. } | Commands::AgentExec { .. })) {
+        let outcome = match cli.command {
+            Some(Commands::AgentKey { cmd }) => virtues::cli::agent_key::manage(cmd).await,
+            Some(Commands::AgentExec { key }) => virtues::cli::agent_key::exec(key).await,
+            _ => unreachable!(),
+        };
+        if let Err(e) = outcome {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
+        return Ok(());
     }
 
     // DATABASE_URL (Postgres) must be set — no default. Fail loudly if missing.

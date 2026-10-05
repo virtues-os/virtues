@@ -39,6 +39,33 @@ pub enum DeviceCommands {
     Add,
 }
 
+/// `virtues agent-key <action>` — SSH keys for outside agents.
+#[derive(Subcommand)]
+pub enum AgentKeyCmd {
+    /// Let an agent (Claude Code, Codex) reach this box with a key.
+    ///
+    /// The key goes to its own user, `virtues-agent`, and can run only the
+    /// data verbs: query, search, schema, write, applet, page. No shell, no
+    /// forwarding, nothing else. Run with sudo.
+    Add {
+        /// The public key file (`.pub`), or `-` for stdin.
+        key: String,
+        /// A name for it, shown in `ls` and in the server's audit lines.
+        #[arg(long)]
+        name: String,
+    },
+
+    /// List agent keys.
+    #[command(alias = "list")]
+    Ls,
+
+    /// Remove an agent key. Its next connection is refused.
+    #[command(alias = "revoke")]
+    Rm {
+        name: String,
+    },
+}
+
 /// `virtues applet <action>` — read and change the box's applets.
 #[derive(Subcommand)]
 pub enum AppletCmd {
@@ -606,6 +633,20 @@ pub enum Commands {
         sql: String,
         #[command(flatten)]
         out: OutputArgs,
+    },
+
+    /// Manage the SSH keys outside agents use to reach this box.
+    AgentKey {
+        #[command(subcommand)]
+        cmd: AgentKeyCmd,
+    },
+
+    /// The forced command behind an agent key. sshd runs it; never by hand.
+    #[command(hide = true)]
+    AgentExec {
+        /// The key's name, from its `authorized_keys` line.
+        #[arg(long)]
+        key: String,
     },
 
     /// Read and change the box's applets.

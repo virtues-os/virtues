@@ -1,4 +1,4 @@
-//! The CLI's write door: `POST /api/console/tool/:tool`.
+//! The CLI's door into the server: `POST /api/console/tool/:tool`.
 //!
 //! The CLI's read verbs run their tools in the CLI process. Its write verbs
 //! cannot: a page edit has to go through the live Yjs document this process
@@ -24,7 +24,11 @@ use sha2::{Digest, Sha256};
 
 use crate::middleware::auth::{AuthUser, CONSOLE_DEVICE_ID};
 use crate::server::AppState;
-use crate::tools::{ToolContext, ToolExecutor, CLI_WRITE_TOOLS};
+use crate::tools::{ToolContext, ToolExecutor, CLI_TOOLS, CLI_WRITE_TOOLS};
+
+/// The agent key a call arrived on (`cli/agent_key.rs`), for the audit line.
+/// Trusted only as far as an audit label: only the console reaches this door.
+pub const AGENT_KEY_HEADER: &str = "x-virtues-agent-key";
 
 pub fn routes() -> Router<AppState> {
     Router::new().route("/api/console/tool/:tool", post(console_tool_handler))
@@ -33,6 +37,7 @@ pub fn routes() -> Router<AppState> {
 async fn console_tool_handler(
     State(state): State<AppState>,
     user: AuthUser,
+    headers: axum::http::HeaderMap,
     Path(tool): Path<String>,
     Json(arguments): Json<serde_json::Value>,
 ) -> Response {
@@ -41,9 +46,12 @@ async fn console_tool_handler(
     if user.device_id != CONSOLE_DEVICE_ID {
         return refuse(StatusCode::FORBIDDEN, "the console tool door takes local callers only");
     }
-    if !CLI_WRITE_TOOLS.contains(&tool.as_str()) {
-        return refuse(StatusCode::NOT_FOUND, &format!("{tool} is not a CLI write verb"));
+    // Writes always come here; reads come here from an agent key, whose user
+    // has no database of its own.
+    if !CLI_WRITE_TOOLS.contains(&tool.as_str()) && !CLI_TOOLS.contains(&tool.as_str()) {
+        return refuse(StatusCode::NOT_FOUND, &format!("{tool} is not a CLI verb"));
     }
+    let key = headers.get(AGENT_KEY_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
 
     let args_sha = {
         let mut h = Sha256::new();
@@ -79,6 +87,7 @@ async fn console_tool_handler(
     tracing::info!(
         audit = "console_tool",
         tool = %tool,
+        agent_key = %key,
         args_sha = %args_sha,
         status = status.as_u16(),
         "console tool call"
