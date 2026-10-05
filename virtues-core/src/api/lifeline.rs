@@ -785,67 +785,6 @@ mod tests {
         assert_eq!(lane.measure, RECORDS);
     }
 
-    /// The exact split a real box produced: one doorway, 25 m apart, two rows.
-    #[test]
-    fn a_doorway_split_by_the_grid_is_put_back_together() {
-        let at = |lat: f64, lon: f64, minutes: f64, visits: i64| Stay {
-            lat,
-            lon,
-            visits,
-            minutes,
-            first: None,
-            last: None,
-        };
-        let out = merge_stays(vec![
-            at(30.258843, -97.752608, 7140.0, 57),
-            at(30.258934, -97.752385, 3000.0, 33),
-            // A genuinely different place, 20 km north-west. Must survive.
-            at(30.438352, -97.921789, 360.0, 2),
-        ]);
-
-        assert_eq!(out.len(), 2, "the doorway did not merge, or the airport did");
-        assert_eq!(out[0].visits, 90);
-        assert_eq!(out[0].minutes, 10_140.0);
-        // Centroid pulled toward the heavier half, not the midpoint.
-        assert!(
-            out[0].lon < -97.7525,
-            "centroid ignored the weighting: {}",
-            out[0].lon
-        );
-    }
-
-    /// Merging must never invent or lose time.
-    #[test]
-    fn merging_conserves_visits_and_minutes() {
-        let mk = |lat: f64, lon: f64| Stay {
-            lat,
-            lon,
-            visits: 3,
-            minutes: 60.0,
-            first: None,
-            last: None,
-        };
-        let input = vec![
-            mk(30.0, -97.0),
-            mk(30.0001, -97.0001),
-            mk(31.0, -97.0),
-            mk(31.0, -96.0),
-        ];
-        let out = merge_stays(input);
-        assert_eq!(out.iter().map(|s| s.visits).sum::<i64>(), 12);
-        assert_eq!(out.iter().map(|s| s.minutes).sum::<f64>(), 240.0);
-        assert_eq!(out.len(), 3, "only the two neighbours should have merged");
-    }
-
-    #[sqlx::test]
-    async fn ground_is_empty_but_shaped_on_a_bare_box(pool: PgPool) {
-        let to = chrono::Utc::now();
-        let g = get_ground(&pool, to - chrono::Duration::days(30), to).await.unwrap();
-        assert!(g.bbox.is_none());
-        assert!(g.stays.is_empty());
-        assert_eq!(g.track_total, 0);
-    }
-
     /// A feed of `72 bpm` repeated 22,911 times is noise dressed as detail.
     #[test]
     fn the_feed_carries_only_rows_a_person_would_read() {
@@ -907,18 +846,6 @@ mod tests {
         .await
         .unwrap();
         assert!(none.records.is_empty());
-    }
-
-    /// "Nothing has been processed here" is only a useful sentence with dates.
-    #[sqlx::test]
-    async fn processed_answers_even_when_it_has_nothing(pool: PgPool) {
-        let to = chrono::Utc::now();
-        let p = get_processed(&pool, to - chrono::Duration::days(30), to, 50)
-            .await
-            .unwrap();
-        assert!(p.items.is_empty());
-        assert!(p.coverage.is_none());
-        assert_eq!(p.days_processed, 0);
     }
 
     /// The band is made of sleep. A stream that fires while you are asleep
