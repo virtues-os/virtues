@@ -34,7 +34,7 @@
 	let autoError = $state<string | null>(null);
 
 	/** null = idle. Otherwise the box is being replaced under us. */
-	let restart = $state<{ phase: 'going' | 'back'; error?: string } | null>(null);
+	let restart = $state<{ phase: 'going' | 'back'; error?: string; detail?: string } | null>(null);
 	let applyError = $state<string | null>(null);
 	let watchTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -122,14 +122,41 @@
 		if (!ok) return;
 
 		try {
+			// The build the box is running now, so the watcher can tell a box
+			// that came back on the new release from one that rolled back.
+			const before = await probe();
 			await applyUpdate();
 			restart = { phase: 'going' };
-			watchForBox();
+			watchForBox(before?.build ?? null);
 		} catch (err) {
 			// The box's own words. A bare "update failed" is what sends someone
 			// to SSH into the box to find out what actually happened.
 			applyError = err instanceof Error ? err.message : String(err);
 		}
+	}
+
+	/** `/health`, and the build the box stamps on every response. `null` when it doesn't answer. */
+	async function probe(): Promise<{ ok: boolean; build: string | null } | null> {
+		try {
+			const res = await fetch('/health', { cache: 'no-store' });
+			return { ok: res.ok, build: res.headers.get('x-virtues-box-build') };
+		} catch {
+			return null;
+		}
+	}
+
+	/**
+	 * The box's record of an install that started after `since`, if it failed.
+	 * `virtues activate` writes it whether Settings or the night started it.
+	 */
+	async function failedInstallSince(since: number) {
+		try {
+			const install = autoUpdateOf(await getUpdateStatus())?.install;
+			if (install && !install.ok && new Date(install.at).getTime() >= since) return install;
+		} catch {
+			// No record to read; the caller says what it can without one.
+		}
+		return null;
 	}
 
 	/**
@@ -139,48 +166,68 @@
 	 * thing that proves the new binary is genuinely serving, and it's what the
 	 * box itself considers "up".
 	 *
-	 * Two phases, because the interesting failure is invisible otherwise. A box
-	 * that never goes down means the upgrade didn't start — reporting "back up"
-	 * because it answered immediately would be a false success. So we wait to
-	 * see it leave before we accept it returning.
+	 * Going down and coming back is not success on its own. An activation that
+	 * fails flips the box back to the release it had and restarts that, which
+	 * looks exactly the same from here, and this screen used to say "Back up"
+	 * and then offer the same update again. So success is the build stamp
+	 * changing. A box that comes back on the same build failed, and the box's
+	 * own record of the attempt says why.
+	 *
+	 * A box that never goes down means the upgrade didn't start, or is still
+	 * downloading. That is only a failure once the box records one, or the
+	 * wait runs out.
 	 */
-	function watchForBox() {
+	function watchForBox(before: string | null) {
 		const startedAt = Date.now();
-		// Long enough to cover a migration on a slow box; short enough that a
-		// genuinely bricked upgrade doesn't spin forever.
+		// Long enough to cover a download and a migration on a slow box; short
+		// enough that a genuinely stuck upgrade doesn't spin forever.
 		const LIMIT_MS = 10 * 60 * 1000;
 		let sawItGo = false;
 
-		const poll = async () => {
-			if (Date.now() - startedAt > LIMIT_MS) {
-				restart = {
-					phase: 'going',
-					error:
-						"Your server hasn't come back after ten minutes. It may have rolled " +
-						'itself back. Check `journalctl -u virtues-upgrade` on your server.'
-				};
-				return;
-			}
+		const failed = (install: { to: string; error: string | null } | null) => {
+			restart = {
+				phase: 'going',
+				error: install
+					? `Your server couldn't install ${releaseName(install.to)}, so it went back to the version it had. Nothing changed, and you can try again.`
+					: "Your server didn't install the update. It's still running the version it had, and nothing changed. Try again in a few minutes.",
+				detail: install?.error ?? undefined
+			};
+			void check();
+		};
 
-			let alive = false;
-			try {
-				const res = await fetch('/health', { cache: 'no-store' });
-				alive = res.ok;
-			} catch {
-				alive = false;
-			}
+		const poll = async () => {
+			const now = await probe();
+			const alive = !!now?.ok;
+			// Older servers send no stamp; for them, coming back is all there is.
+			const moved = before === null || (!!now?.build && now.build !== before);
 
 			if (!alive) {
 				sawItGo = true;
 				restart = { phase: 'going' };
-			} else if (sawItGo) {
-				// Back, and on the new build. A reload is genuinely right here:
-				// the served assets have changed underneath this tab.
+			} else if (moved) {
+				// On the new build (whether or not a poll caught it down). A
+				// reload is right here: the served assets changed underneath.
 				restart = { phase: 'back' };
 				setTimeout(() => location.reload(), 1200);
 				return;
+			} else if (sawItGo) {
+				// Back on the build it had: the activation rolled back.
+				failed(await failedInstallSince(startedAt));
+				return;
+			} else {
+				// Still up on the old build: downloading, or refused before it
+				// stopped anything. A refusal is on the box's record.
+				const refused = await failedInstallSince(startedAt);
+				if (refused) {
+					failed(refused);
+					return;
+				}
 			}
 
+			if (Date.now() - startedAt > LIMIT_MS) {
+				failed(null);
+				return;
+			}
 			watchTimer = setTimeout(poll, 2000);
 		};
 
@@ -217,6 +264,10 @@
 					<Icon icon="ri:error-warning-line" width="14" />
 					{restart.error}
 				</p>
+				{#if restart.detail}
+					<p class="how">Your server said: {restart.detail}</p>
+				{/if}
+				<Button variant="secondary" size="sm" onclick={() => (restart = null)}>Done</Button>
 			{:else if restart.phase === 'back'}
 				<p>
 					<Icon icon="ri:check-line" width="14" />

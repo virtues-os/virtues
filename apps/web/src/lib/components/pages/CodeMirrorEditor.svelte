@@ -16,6 +16,7 @@
 	import {
 		startAiSession,
 		abortAiSession,
+		abortAiSessionIn,
 		isAiSessionActive,
 	} from "$lib/ai/aiCursorSession";
 	import { registerPageEditor, unregisterPageEditor } from "$lib/ai/aiPresence";
@@ -507,7 +508,7 @@
 	});
 
 	onDestroy(() => {
-		abortAiSession();
+		abortAiSessionIn(view);
 		cleanupListeners?.();
 		cleanupListeners = null;
 		if (pageId && view) unregisterPageEditor(pageId, view);
