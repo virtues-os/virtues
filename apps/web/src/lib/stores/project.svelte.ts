@@ -93,7 +93,7 @@ export class ProjectStore {
 		} catch (e) {
 			console.error('[ProjectStore] Failed to load projects:', e);
 			this.error = e instanceof Error ? e.message : 'Failed to load projects';
-			this.all = [];
+			// Keep the last good list; a failed reload is not an empty one.
 		} finally {
 			this.loading = false;
 		}

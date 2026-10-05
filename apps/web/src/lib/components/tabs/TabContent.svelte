@@ -2,7 +2,8 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { type Tab, routeToEntityId } from "$lib/tabs/types";
 	import { tabRegistry, getComponent, getVirtuesComponent } from "$lib/tabs/registry";
-	import { loadView, peekView, type View, type ViewLoader } from "$lib/tabs/lazy";
+	import { loadView, peekView, reloadForStaleChunk, type View, type ViewLoader } from "$lib/tabs/lazy";
+	import Button from "$lib/components/Button.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -32,8 +33,14 @@
 	// never renders an empty frame. A first-time view shows nothing for the
 	// few milliseconds its chunk takes — a spinner for that would flash.
 	let ViewComponent = $state<View | null>(null);
+	// The chunk failed and an automatic reload was already spent: say so,
+	// instead of the blank pane this used to leave.
+	let loadFailed = $state(false);
+	let attempt = $state(0);
 	$effect(() => {
 		const wanted = loader;
+		void attempt;
+		loadFailed = false;
 		const ready = peekView(wanted);
 		if (ready) {
 			ViewComponent = ready;
@@ -41,9 +48,18 @@
 		}
 		ViewComponent = null;
 		let cancelled = false;
-		loadView(wanted).then((view) => {
-			if (!cancelled) ViewComponent = view;
-		});
+		loadView(wanted).then(
+			(view) => {
+				if (!cancelled) ViewComponent = view;
+			},
+			(err) => {
+				if (cancelled) return;
+				console.warn("[TabContent] view failed to load", err);
+				void reloadForStaleChunk().then((reloading) => {
+					if (!reloading && !cancelled) loadFailed = true;
+				});
+			},
+		);
 		return () => {
 			cancelled = true;
 		};
@@ -53,6 +69,16 @@
 <div class="tab-content" class:active style:display={active ? "flex" : "none"}>
 	{#if ViewComponent}
 		<ViewComponent {tab} {active} />
+	{:else if loadFailed}
+		<div class="placeholder" role="alert">
+			<Icon icon="ri:refresh-line" />
+			<span class="title">This view didn't load</span>
+			<span class="subtitle">Your server may have just updated. Reload the app to get its latest version.</span>
+			<div class="actions">
+				<Button variant="secondary" size="sm" onclick={() => (attempt += 1)}>Try again</Button>
+				<Button size="sm" onclick={() => window.location.reload()}>Reload the app</Button>
+			</div>
+		</div>
 	{:else if !tabRegistry[tab.type]}
 		<!-- Placeholder for unknown tab types -->
 		<div class="placeholder">
@@ -96,6 +122,14 @@
 	.placeholder .subtitle {
 		font-size: 14px;
 		opacity: 0.7;
+		max-width: 36ch;
+		text-align: center;
+	}
+
+	.placeholder .actions {
+		display: flex;
+		gap: 8px;
+		margin-top: 8px;
 	}
 
 </style>

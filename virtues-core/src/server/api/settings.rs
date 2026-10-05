@@ -68,6 +68,9 @@ pub fn routes() -> Router<AppState> {
         // Per-stream ingest freshness — surfaces a stalled source instead of
         // letting it rot silently.
         .route("/api/streams/health", get(stream_health_handler))
+        // Everything that needs the owner, in one list: the Mac app turns a
+        // new item into a notification (api/attention.rs).
+        .route("/api/attention", get(attention_handler))
         .route("/api/streams/days", get(stream_days_handler))
         // Subscription & Billing API
         .route("/api/subscription", get(get_subscription_handler))
@@ -211,6 +214,10 @@ pub async fn list_models_with_slots_handler() -> Response {
 /// messages, the calendar sync, and finance each went dark unnoticed.
 pub async fn stream_health_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::stream_health::stream_health(&state.db).await)
+}
+
+pub async fn attention_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::attention::attention(&state.db).await)
 }
 
 #[derive(Debug, Deserialize)]
