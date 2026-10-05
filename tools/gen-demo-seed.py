@@ -81,9 +81,15 @@ class Table:
 
     CHUNK = 250
 
-    def __init__(self, name: str, cols: list[str]):
+    def __init__(self, name: str, cols: list[str], key: list[str] | None = None):
         self.name = name
         self.cols = cols
+        # For a table whose id Postgres generates, `ON CONFLICT DO NOTHING`
+        # never fires, so a re-run (the nightly reset re-runs 04_creation.sql)
+        # inserts every row again. `key` names the columns that identify a
+        # seeded row instead; each row is then written to insert only when no
+        # row with the same key exists.
+        self.key = key
         self.rows: list[tuple] = []
 
     def add(self, *vals):
@@ -93,6 +99,15 @@ class Table:
     def sql(self) -> str:
         if not self.rows:
             return ""
+        if self.key:
+            head = f"INSERT INTO {self.name} ({', '.join(self.cols)})\n"
+            out = []
+            for r in self.rows:
+                vals = dict(zip(self.cols, r))
+                match = " AND ".join(f"{k} = {q(vals[k])}" for k in self.key)
+                out.append(f"{head}SELECT {', '.join(q(v) for v in r)}\n"
+                           f"WHERE NOT EXISTS (SELECT 1 FROM {self.name} WHERE {match});\n")
+            return "\n".join(out)
         head = f"INSERT INTO {self.name} ({', '.join(self.cols)}) VALUES\n"
         out = []
         for i in range(0, len(self.rows), self.CHUNK):
@@ -333,8 +348,8 @@ def in_chicago(off: int) -> bool:
 def build():
     t = {}
 
-    def tbl(name, cols):
-        t[name] = Table(name, cols)
+    def tbl(name, cols, key=None):
+        t[name] = Table(name, cols, key)
         return t[name]
 
     people = tbl("wiki_people", ["id", "name", "emails", "phones", "relationship_category",
@@ -438,7 +453,8 @@ def build():
                                          "role", "added_by"])
     notes = tbl("wiki_notes", ["subject_type", "subject_id", "kind", "body", "author",
                                "created_at", "source_refs", "resolved_at", "resolution",
-                               "resolved_by"])
+                               "resolved_by"],
+                key=["subject_type", "subject_id", "kind", "body"])
     memories = tbl("app_assistant_memories", ["lane", "body", "author", "created_at",
                                               "updated_at", "retired_at", "retired_reason"])
     marks = tbl("data_content_bookmark", ["id", "url", "title", "description",
@@ -2097,7 +2113,9 @@ DELETE FROM app_projects WHERE NOT starts_with(id, 'p3y_nb_');
 -- the seed writes both 'ai' and 'human' and so does the box. Restoring works
 -- for this table alone because memories hold no anchored dates: the timer
 -- re-runs `04_creation.sql` after this file, which no-ops on every other table
--- through `ON CONFLICT DO NOTHING` and re-inserts only these twelve.
+-- (`ON CONFLICT DO NOTHING`, or for `wiki_notes`, whose ids are generated too,
+-- an insert guarded by the note's subject and body) and re-inserts only these
+-- twelve.
 DELETE FROM app_assistant_memories;
 
 -- Nothing seeds these, so anything in them arrived from a visitor.
