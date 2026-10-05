@@ -11,8 +11,8 @@
 -->
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import type { InspectorPick as Pick, InspectorRow, InspectorSection, SectionKind } from '$lib/timeline/inspector';
-	import { lineAt, lineTime, rowLines, spkIdx } from '$lib/timeline/transcript';
+	import type { InspectorPick as Pick, InspectorRow, InspectorSection } from '$lib/timeline/inspector';
+	import { lineAt, lineTime, rowLines } from '$lib/timeline/transcript';
 
 	let {
 		sections,
@@ -49,15 +49,6 @@
 	}
 
 	// One hue per kind, the same as the map's and the scrubber's (lib/timeline/colours.ts).
-	const DOT: Record<SectionKind | InspectorRow['kind'], string> = {
-		place: 'var(--c-place)',
-		transit: 'var(--c-move)',
-		gap: 'var(--c-gap)',
-		sleep: 'var(--c-rest-ink)',
-		conversation: 'var(--c-voice)',
-		walk: 'var(--c-move)',
-	};
-
 	const time = (ms: number) =>
 		new Date(ms).toLocaleTimeString('en-US', { timeZone: zone, hour: 'numeric', minute: '2-digit' });
 	const holds = (x: { s: number; e: number }) => x.s <= playT && playT < x.e;
@@ -182,19 +173,11 @@
 {#if sections.length}
 	<section class="inspector" bind:this={inspector} aria-label="The day, stay by stay">
 		<div class="scroll" bind:this={scroller}>
-			<!-- The day's standout leads the inspector once the Timeline can score
-			     what was unusual (the prototype's "What stood out" card,
-			     main.js:1615-1617). Until then its place is held, quietly, and
-			     says so, never with a guess. -->
-			<div class="standout" aria-disabled="true">
-				<span class="standout-eye">What stood out today</span>
-				<span class="standout-soon">Coming soon</span>
-			</div>
 			{#each sections as sec, i (sec.kind + sec.s)}
 				<div class="group" class:bare={!sec.rows.length} class:cur={i === curSection}>
 					<button class="sec" onclick={() => pickSection(i, sec)}>
 						<span class="hd">
-							<i class="dot" style="background: {DOT[sec.kind]}"></i>
+							<i class="dot {sec.kind}"></i>
 							<b>{sec.title}</b>
 							<span class="dur">{sec.dur}</span>
 							{#if sec.atag}<em class="tag">· {sec.atag}</em>{/if}
@@ -203,7 +186,7 @@
 							<span class="note">{line}</span>
 						{/each}
 						{#if secOpen && i === curSection && curRow === null && sec.kind === 'sleep'}
-							<span class="note">Source · {sec.src === 'healthkit' ? 'iPhone (Health, In Bed)' : 'quiet hours, no conversation'}</span>
+							<span class="note">From Health on your iPhone</span>
 						{/if}
 					</button>
 					{#each sec.rows as row (row.kind + row.s)}
@@ -211,7 +194,7 @@
 							<button class="row-hd" onclick={() => pickRow(row)}>
 								<span class="t">{time(row.s)}</span>
 								<span class="hd">
-									<i class="dot" style="background: {DOT[row.kind]}"></i>
+									<i class="dot {row.kind}"></i>
 									<b>{row.title}</b>
 									<span class="dur">{row.dur}</span>
 									{#if row.convs.length}<span class="chev" class:open={row.s === open} aria-hidden="true">›</span>{/if}
@@ -225,7 +208,7 @@
 										<div class="lines">
 											{#each openLines as q, li (li)}
 												<button class="line" class:cur={li === liveLine} onclick={() => onseek(lineTime(row.s, row.e, li, openLines.length))}>
-													{#if q.spk}<span class="spk" style="color: var(--c-spk{spkIdx(q.spk)})">{q.spk}</span>{' '}{/if}{q.txt}
+													{#if q.spk}<span class="spk">{q.spk}</span>{' '}{/if}{q.txt}
 												</button>
 											{/each}
 										</div>
@@ -241,11 +224,12 @@
 {/if}
 
 <style>
+	/* The day as one column on the right, the page's surface in a hairline
+	   like every card over the map. A pane too narrow for the date card beside
+	   it starts the inspector under the date card (TimelineView sets
+	   --inspector-top). */
 	.inspector {
 		position: absolute;
-		/* Full height on the right, above the map's markers; a pane too
-		   narrow for the date card beside it starts the inspector under the top
-		   cards instead (TimelineView sets --inspector-top). */
 		top: var(--inspector-top, 16px);
 		bottom: 16px;
 		z-index: 10;
@@ -254,37 +238,19 @@
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
-		/* The Timeline's one material (TimelineView's tile variables). */
 		border-radius: var(--tile-radius);
-		background: var(--tile-bg);
-		border: var(--tile-border);
-		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
-		box-shadow: var(--tile-shadow);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
 	}
 	.scroll {
 		overflow-y: auto;
-		padding-bottom: 8px;
+		padding: 4px 0 8px;
 		background: inherit;
 	}
 	.group {
 		position: relative;
 		background: inherit;
 	}
-	/* Where you are: a soft edge down the whole stay (index.html:915). */
-	.group.cur::before {
-		content: '';
-		position: absolute;
-		left: 0;
-		top: 8px;
-		bottom: 8px;
-		width: 3px;
-		/* design-ok: the Dayback prototype's 2 px mark (owner's call, 2026-09-30) */
-		border-radius: 2px;
-		background: var(--c-place);
-		opacity: 0.3;
-	}
-	/* The prototype's 2 px marks below (edge-strip ends, a baseline nudge) sit
-	   off the page grammar's scale; each carries design-ok for that reason. */
 	button {
 		display: block;
 		width: 100%;
@@ -299,22 +265,18 @@
 	.sec {
 		position: sticky;
 		/* Pinned, it pokes 1 px out of the box: that is how the observer tells
-		   pinned from at rest (index.html:916). */
+		   pinned from at rest. */
 		top: -1px;
 		z-index: 2;
-		background: var(--c-tile);
+		background: var(--color-surface);
 		padding: 16px 16px 8px;
 	}
-	/* A hairline only while rows are passing beneath it (index.html:917). */
+	/* A hairline only while rows are passing beneath it. */
 	.sec:global(.stuck) {
-		/* design-ok: the Dayback prototype's pinned-header hairline (owner's call, 2026-09-30) */
-		box-shadow: 0 1px 0 color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		border-bottom: 1px solid var(--color-border);
 	}
 	.bare .sec {
 		padding-bottom: 12px;
-	}
-	.bare.cur .sec {
-		background: color-mix(in srgb, var(--c-place) 7%, var(--c-tile));
 	}
 	.row {
 		position: relative;
@@ -325,13 +287,12 @@
 		grid-template-columns: 56px 1fr;
 		gap: 8px;
 	}
+	.sec:hover,
 	.row:hover {
-		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+		background: var(--hover-bg);
 	}
-	/* The live row: tinted, with the place-blue edge (index.html:928-929). */
-	.row.cur {
-		background: color-mix(in srgb, var(--c-place) 7%, transparent);
-	}
+	/* Where the playhead is: an edge in the accent, which means now. */
+	.group.cur::before,
 	.row.cur::before {
 		content: '';
 		position: absolute;
@@ -339,9 +300,12 @@
 		top: 8px;
 		bottom: 8px;
 		width: 3px;
-		/* design-ok: the Dayback prototype's 2 px mark (owner's call, 2026-09-30) */
-		border-radius: 2px;
-		background: var(--c-place);
+		border-radius: 999px;
+		background: var(--c-sel);
+		z-index: 3;
+	}
+	.group.cur::before {
+		opacity: 0.35;
 	}
 	.hd {
 		display: flex;
@@ -349,6 +313,9 @@
 		gap: 8px;
 		min-width: 0;
 	}
+	/* What a stretch was, by form: a stay is filled ink, a drive a hollow
+	   ring, a gap a dashed one, a night half-filled, a conversation a small
+	   dot. No hue (design-grammar §5). */
 	.dot {
 		flex: 0 0 8px;
 		width: 8px;
@@ -356,75 +323,78 @@
 		border-radius: 50%;
 		position: relative;
 		top: -1px;
+		box-sizing: border-box;
 	}
+	.dot.place {
+		background: var(--c-place);
+	}
+	.dot.transit,
+	.dot.walk {
+		border: 1.5px solid var(--c-move);
+	}
+	.dot.gap {
+		border: 1.5px dashed var(--c-gap);
+	}
+	.dot.sleep {
+		border: 1.5px solid var(--c-rest-ink);
+		background: linear-gradient(90deg, var(--c-rest-ink) 50%, transparent 50%);
+	}
+	.dot.conversation {
+		flex-basis: 6px;
+		width: 6px;
+		height: 6px;
+		background: var(--c-voice);
+	}
+	/* Two voices: a section names where you were in the serif, a row says
+	   what happened in the sans; durations and times are the caption. */
 	.hd b {
 		flex: 1 1 auto;
 		min-width: 0;
 		font-family: var(--font-sans);
-		font-size: 13px;
-		font-weight: 500;
-		line-height: 1.25;
+		font-size: 14px;
+		font-weight: 400;
+		line-height: 1.3;
 		color: var(--color-foreground);
 	}
-	.row.cur .hd b {
-		font-weight: 600;
+	/* A conversation's title is the start of its summary: two lines at most,
+	   and the open transcript holds the rest. */
+	.row .hd b {
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
 	}
 	.sec .hd b {
-		font-size: 14px;
-		font-weight: 700;
-	}
-	.sec:hover .hd b {
-		color: var(--c-place);
+		font-family: var(--font-serif-ui);
+		font-size: 18px;
+		line-height: 1.2;
 	}
 	/* Nothing filed here (a drive, a gap): a quieter line. */
 	.bare .sec .hd b {
-		font-weight: 500;
 		color: var(--color-foreground-muted);
+	}
+	.row.cur .hd b {
+		color: var(--color-foreground);
 	}
 	.dur,
 	.t {
 		font-family: var(--font-sans);
-		font-size: 11px;
+		font-size: 13px;
 		color: var(--color-foreground-muted);
 		font-variant-numeric: tabular-nums;
 		white-space: nowrap;
 	}
 	.t {
 		text-align: right;
-		/* design-ok: the Dayback prototype's 2 px mark (owner's call, 2026-09-30) */
-		padding-top: 2px;
 	}
 	.note {
 		display: block;
-		/* design-ok: the Dayback prototype's 2 px mark (owner's call, 2026-09-30) */
-		margin: 2px 0 0 16px;
+		margin: 4px 0 0 16px;
 		font-family: var(--font-sans);
-		font-size: 12px;
+		font-size: 13px;
 		line-height: 1.3;
 		color: var(--color-foreground-muted);
-	}
-	/* The standout's held place, at the head of the inspector: the prototype's
-	   eyebrow (index.html:938-942), greyed, with a quiet line under it. */
-	.standout {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-		padding: 16px 16px 12px;
-		border-bottom: 1px solid color-mix(in srgb, var(--color-foreground) 8%, transparent);
-	}
-	.standout-eye {
-		font-family: var(--font-sans);
-		/* design-ok: the Dayback prototype's standout eyebrow (owner's call, 2026-09-30) */
-		font-size: 10px;
-		font-weight: 600;
-		letter-spacing: 0.11em;
-		text-transform: uppercase;
-		color: var(--color-foreground-subtle);
-	}
-	.standout-soon {
-		font-family: var(--font-sans);
-		font-size: 12px;
-		color: var(--color-foreground-subtle);
 	}
 	/* A conversation row opens its transcript: the chevron says so, and
 	   turns down while it is open. */
@@ -443,47 +413,41 @@
 			transition: none;
 		}
 	}
-	/* A quiet stay's audio note, after its duration (index.html:936). */
+	/* A quiet stay's audio note, after its duration. */
 	.tag {
 		flex: 0 0 auto;
 		font-style: normal;
 		font-family: var(--font-sans);
-		font-size: 11px;
-		font-weight: 500;
+		font-size: 13px;
 		color: var(--color-foreground-subtle);
 		white-space: nowrap;
 	}
-	/* The open conversation, under its row and out of the time gutter
-	   (index.html:944-953): the voices, the names mentioned, then the lines. */
+	/* The open conversation, under its row and out of the time gutter: the
+	   voices, the names mentioned, then the lines. */
 	.open {
 		display: block;
-		/* design-ok: the Dayback prototype's 2 px mark (owner's call, 2026-09-30) */
-		margin-top: 2px;
+		margin-top: 4px;
 	}
 	.sub,
 	.people {
 		display: block;
 		font-family: var(--font-sans);
-		font-size: 11px;
+		font-size: 13px;
 		color: var(--color-foreground-muted);
 	}
 	.people {
-		/* design-ok: the Dayback prototype's line spacing (owner's call, 2026-09-30) */
 		margin-top: 4px;
 	}
 	.lines {
-		/* design-ok: the Dayback prototype's transcript spacing (owner's call, 2026-09-30) */
-		margin-top: 9px;
-		/* design-ok: the Dayback prototype's transcript spacing (owner's call, 2026-09-30) */
-		padding-top: 7px;
-		border-top: 1px solid color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		margin-top: 8px;
+		padding-top: 8px;
+		border-top: 1px solid var(--color-border);
 	}
 	.line {
-		/* design-ok: the Dayback prototype's transcript line (owner's call, 2026-09-30) */
-		padding: 2.5px 0;
+		padding: 4px 0;
 		font-family: var(--font-sans);
-		font-size: 12px;
-		line-height: 1.42;
+		font-size: 13px;
+		line-height: 1.45;
 		color: var(--color-foreground-muted);
 	}
 	.line:hover {
@@ -492,6 +456,9 @@
 	/* The line being spoken at the playhead. */
 	.line.cur {
 		color: var(--color-foreground);
+	}
+	.spk {
 		font-weight: 600;
+		color: var(--color-foreground);
 	}
 </style>

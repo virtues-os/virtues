@@ -36,6 +36,10 @@ pub struct TimelineDay {
     pub nights: Vec<NightSpan>,
     pub sessions: Vec<AudioSession>,
     pub steps: Vec<StepBin>,
+    /// A busy 10 minutes for this person: the 92nd percentile of their step
+    /// bins over the last 90 days, so ordinary movement fills the lane rather
+    /// than one peak setting its ceiling. 1 when nothing was ever counted.
+    pub step_scale: f64,
     pub calendar: Vec<CalendarEvent>,
 }
 
@@ -70,7 +74,8 @@ pub struct AudioSession {
 
 #[derive(Debug, Serialize)]
 pub struct StepBin {
-    pub started_at: DateTime<Utc>,
+    /// The bin's middle.
+    pub at: DateTime<Utc>,
     pub steps: i64,
 }
 
@@ -83,6 +88,7 @@ pub struct CalendarEvent {
     pub is_all_day: bool,
     pub calendar_name: Option<String>,
     pub location_name: Option<String>,
+    pub status: Option<String>,
     pub response_status: Option<String>,
 }
 
@@ -180,7 +186,7 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
     .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
 
     let steps = sqlx::query(
-        "SELECT to_timestamp(floor(extract(epoch FROM occurred_at) / $3) * $3) AS bin, \
+        "SELECT to_timestamp(floor(extract(epoch FROM occurred_at) / $3) * $3 + $3 / 2) AS bin, \
                 sum(step_count)::int8 AS steps \
          FROM data_health_steps \
          WHERE occurred_at >= $1 AND occurred_at < $2 AND step_count > 0 \
@@ -193,11 +199,24 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
     .fetch_all(pool)
     .await?
     .iter()
-    .map(|r| Ok(StepBin { started_at: r.try_get("bin")?, steps: r.try_get("steps")? }))
+    .map(|r| Ok(StepBin { at: r.try_get("bin")?, steps: r.try_get("steps")? }))
     .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
 
+    let step_scale: Option<f64> = sqlx::query_scalar(
+        "SELECT percentile_disc(0.92) WITHIN GROUP (ORDER BY n)::float8 FROM ( \
+           SELECT sum(step_count) AS n FROM data_health_steps \
+           WHERE occurred_at >= $1 - interval '90 days' AND occurred_at < $1 \
+             AND deleted_at_source IS NULL AND NOT is_archived \
+           GROUP BY floor(extract(epoch FROM occurred_at) / $2) \
+           HAVING sum(step_count) > 0) bins",
+    )
+    .bind(end)
+    .bind((STEP_BIN_MINUTES * 60) as f64)
+    .fetch_one(pool)
+    .await?;
+
     let calendar = sqlx::query(
-        "SELECT id, title, started_at, ended_at, is_all_day, calendar_name, location_name, response_status \
+        "SELECT id, title, started_at, ended_at, is_all_day, calendar_name, location_name, status, response_status \
          FROM data_calendar_event \
          WHERE started_at < $2 AND ended_at > $1 \
            AND deleted_at_source IS NULL AND NOT is_archived \
@@ -217,6 +236,7 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
             is_all_day: r.try_get("is_all_day")?,
             calendar_name: r.try_get("calendar_name")?,
             location_name: r.try_get("location_name")?,
+            status: r.try_get("status")?,
             response_status: r.try_get("response_status")?,
         })
     })
@@ -233,6 +253,8 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
         nights,
         sessions,
         steps,
+        // absent-ok: no step was ever counted, so any scale draws nothing.
+        step_scale: step_scale.unwrap_or(1.0).max(1.0),
         calendar,
     })
 }

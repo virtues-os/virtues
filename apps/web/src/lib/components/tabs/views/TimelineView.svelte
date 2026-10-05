@@ -17,7 +17,9 @@
 	import { atlasSquares, atlasStyle } from '$lib/map/atlas';
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
 	import type { GeoJSONSource, LngLat, Map as MlMap, Marker, StyleSpecification } from 'maplibre-gl';
-	import { fetchDayBounds, fetchDayWindow, fetchDerived, fetchLanes, fetchVoice, localDay, quietDay, stepDay } from '$lib/timeline/day';
+	import { fetchDay, localDay, quietDay, stepDay } from '$lib/timeline/day';
+	import { deriveDay, joinDays, type Sources } from '$lib/timeline/derive';
+	import { getStreamHealth } from '$lib/api/client';
 	import { cleanTrack, dropSpikes, flagHoles, splitTrack, toFixes, type Fix, type Line } from '$lib/timeline/track';
 	import { buildInspector, placeTitle, type InspectorPick, type InspectorSection } from '$lib/timeline/inspector';
 	import { anchorAt, positionAt, trackMetres } from '$lib/timeline/anchor';
@@ -25,34 +27,36 @@
 	import TimelineInspector from '$lib/components/timeline/TimelineInspector.svelte';
 	import TimelineScrubber from '$lib/components/timeline/TimelineScrubber.svelte';
 	import TimelineMonth from '$lib/components/timeline/TimelineMonth.svelte';
+	import IconButton from '$lib/components/IconButton.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import { laneData, NO_LANES, type Lanes, type RibbonKind } from '$lib/timeline/lanes';
-	import { buildFolds, clampView, HOUR, MIN, midnightIn, tierOf, tierView, unwarp, warp, weekOf, zoneOffset, type Tier } from '$lib/timeline/scale';
-	import { APPLE_DARK, APPLE_LIGHT, hsl, recolour, type Palette } from '$lib/timeline/palette';
-	import { COLOURS, colourVars } from '$lib/timeline/colours';
+	import { buildFolds, clampView, HOUR, MIN, midnightIn, tierOf, tierView, unwarp, warp, weekOf, mondayOf, zoneOffset, type Tier } from '$lib/timeline/scale';
+	import { colourVars, mapInk } from '$lib/timeline/colours';
 
-	// The path and the pin are location, so they wear the place colour.
-	const TRACK = COLOURS.place;
-	// Without the box's map archives there is no basemap: a plain surface in the
-	// palette's land colour, so the path still draws and the page doesn't read
-	// as broken.
-	const bare = (palette: Palette): StyleSpecification => ({
+	// Without the box's map archives there is no basemap: the page's own
+	// surface, so the path still draws and the page doesn't read as broken.
+	const bare = (): StyleSpecification => ({
 		version: 8,
 		sources: {},
-		layers: [{ id: 'bare', type: 'background', paint: { 'background-color': hsl(palette.land) } }],
+		layers: [
+			{
+				id: 'bare',
+				type: 'background',
+				paint: { 'background-color': getComputedStyle(document.documentElement).getPropertyValue('--color-surface').trim() },
+			},
+		],
 	});
 
 	/** Virtues' own scheme: its dark themes set `--identity-dark: 1` (themes.css),
 	 *  and a theme switch fires `themechange` (utils/theme.ts), as the Home day
-	 *  page reads it. The map follows with the prototype's night palette
-	 *  (dayback/src/main.js:928-935). */
+	 *  page reads it. The map follows with the atlas's own dark style. */
 	const isDark = () => getComputedStyle(document.documentElement).getPropertyValue('--identity-dark').trim() === '1';
 	let dark = $state(browser ? isDark() : false);
-	/** The basemap for a side: the atlas's own flavour, recoloured, or a plain
-	 *  ground in the palette's land colour when the box has no map files. When
+	/** The basemap for a side: the atlas's own style, or the page's plain
+	 *  ground when the box has no map files. When
 	 *  the box can't be reached (it's restarting), the ground stands in, no note
 	 *  claims there are no maps, and the map asks again until the box answers. */
 	async function baseStyle(night: boolean): Promise<StyleSpecification> {
-		const palette = night ? APPLE_DARK : APPLE_LIGHT;
 		let style: StyleSpecification | null;
 		try {
 			style = await atlasStyle(night ? 'dark' : 'light');
@@ -60,11 +64,11 @@
 			console.warn('[Timeline] map files unreachable; asking again', e);
 			clearTimeout(mapRetry);
 			mapRetry = window.setTimeout(() => void restyle(), MAP_RETRY_MS);
-			return bare(palette);
+			return bare();
 		}
 		basemap = style !== null;
 		if (squares === null) void loadSquares();
-		return style ? recolour(style, palette) : bare(palette);
+		return style ?? bare();
 	}
 	/** How long to wait before asking an unreachable box for its map again. */
 	const MAP_RETRY_MS = 5000;
@@ -93,6 +97,7 @@
 		if (d === dark) return;
 		dark = d;
 		void restyle();
+		paintInk();
 	}
 	$effect(() => {
 		window.addEventListener('themechange', onThemeChange);
@@ -104,36 +109,29 @@
 	/** The pane's own width (split view, a small window), which decides where
 	 *  the top cards go. */
 	let paneW = $state(0);
-	/** The date card, its month and the scope switcher float on the map as
-	 *  separate cards; their measures place everything else. */
+	/** The date card and its month float on the map; its measures place
+	 *  everything else. */
 	let dateWrap = $state<HTMLElement | null>(null);
 	let cardW = $state(0);
 	let cardH = $state(0);
-	let segW = $state(0);
-	let segH = $state(0);
-	let barW = $state(0);
-	let barHt = $state(0);
 	let scrubH = $state(0);
 	let monthOpen = $state(false);
-	/** The scope. Life isn't built yet, so Day is the only one to pick; the
-	 *  scope bar's grow and shrink run once a second scope is live. */
-	let scope = $state<'day' | 'life'>('day');
-	/** Map | Detail sits centred under Day | Life (the owner's call; the
-	 *  prototype hung it off Dayline, the line between Map and Detail on
-	 *  Dayline's centre). How far it reaches past the switcher on each side. */
-	const overhang = $derived(Math.max(0, (barW - segW) / 2));
-	/** The scope switcher sits at the top centre unless it (or the scope bar
-	 *  under it) would meet the date card; then it goes under the card. */
-	const stacked = $derived(paneW > 0 && paneW / 2 - segW / 2 - overhang < 16 + cardW + 16);
-	const navTop = $derived(stacked ? 16 + cardH + 8 : 16);
-	/** Where the scope bar ends: the Reset pill and a quiet day's note go under it. */
-	const navBottom = $derived(navTop + segH + 6 + barHt);
-	/** The bottom of the top cards, for the map's framing and clear area. */
-	const topChrome = $derived(Math.max(16 + cardH, navBottom));
+	/** The bottom of the date card, for the map's framing and clear area. */
+	const topChrome = $derived(16 + cardH);
 	/** The inspector runs full height, unless the date card would run into it. */
 	const inspectorLow = $derived(paneW > 0 && 16 + cardW + 16 > paneW - Math.min(384, paneW * 0.42) - 16);
 	let note = $state<{ title: string; lines: string[] } | null>(null);
 	let map: MlMap | null = null;
+	/** The map's paint, read off the theme (colours.ts). */
+	let ink = browser ? mapInk() : { track: '', now: '' };
+	/** A theme switch repaints the day's own layers. */
+	function paintInk() {
+		ink = mapInk();
+		const m = map;
+		if (!m?.getLayer('track-run')) return;
+		for (const id of ['track-run', 'track-bridge']) m.setPaintProperty(id, 'line-color', ink.track);
+		for (const id of ['lit-glow', 'lit-run', 'lit-bridge']) m.setPaintProperty(id, 'line-color', ink.now);
+	}
 	let maplibre: typeof import('maplibre-gl') | null = null;
 	let resizer: ResizeObserver | null = null;
 	let inspector = $state<ReturnType<typeof TimelineInspector> | null>(null);
@@ -141,7 +139,6 @@
 	/** Each place's centre, [lng, lat], by its id: where a picked stay flies in to. */
 	let placeCoords = new Map<string, [number, number]>();
 	let zone = $state('UTC');
-	let inspectorError = $state(false);
 	/** The day's cleaned track: where a picked moment is found on the map. */
 	let dayTrack: Fix[] = [];
 	/** The day's fixes, for framing the whole day. */
@@ -158,6 +155,8 @@
 	/** The calendar week holding the day (Monday to Sunday): the Week span's
 	 *  bounds, inside which the playhead may move to another day. */
 	let weekStart = $state(0);
+	/** The Monday of the loaded day's week, YYYY-MM-DD. */
+	let weekSlug = '';
 	let weekEnd = $state(0);
 	/** The playhead crossed into another day of the week: that day loads
 	 *  around it, keeping the playhead and the week in view. */
@@ -301,7 +300,7 @@
 					type: 'line',
 					source: 'track-run',
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
-					paint: { 'line-color': TRACK, 'line-width': 3, 'line-opacity': 0.95 },
+					paint: { 'line-color': ink.track, 'line-width': 3, 'line-opacity': 0.55 },
 				});
 				// A hole in the recording: thin and dashed, so the straight hop
 				// reads as a bridge, not a route.
@@ -310,16 +309,13 @@
 					type: 'line',
 					source: 'track-bridge',
 					layout: { 'line-join': 'round', 'line-cap': 'butt' },
-					paint: { 'line-color': TRACK, 'line-width': 1.5, 'line-opacity': 0.7, 'line-dasharray': [2, 3] },
+					paint: { 'line-color': ink.track, 'line-width': 1.5, 'line-opacity': 0.4, 'line-dasharray': [2, 3] },
 				});
-				// The lit stretch (main.js:976-981): the stretch of path the playhead
-				// is moving along, in the move colour at the path's own weight, over
-				// a path otherwise blue all day - only what you're looking at turns
-				// orange (the owner's call, after trying every drive orange: too
-				// much orange). A drive picked from the inspector turns the brighter
-				// orange, grows heavier and glows (pick, below). Whether a drive or
-				// a moving conversation lit it, it is orange (the prototype lit a
-				// moving conversation in slate).
+				// The lit stretch: the stretch of path the playhead is moving along,
+				// in the accent at the path's own weight, over a path otherwise ink
+				// all day - the accent means now, so only what you're looking at
+				// takes it. A drive picked from the inspector grows heavier over a
+				// soft halo (pick, below).
 				m.addSource('lit-run', { type: 'geojson', data: lines([]) });
 				m.addSource('lit-bridge', { type: 'geojson', data: lines([]) });
 				// A drive picked from the inspector glows under its lit stretch while it
@@ -329,14 +325,14 @@
 					type: 'line',
 					source: 'lit-run',
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
-					paint: { 'line-color': COLOURS.movePicked, 'line-width': 22, 'line-blur': 10, 'line-opacity': 0 },
+					paint: { 'line-color': ink.now, 'line-width': 22, 'line-blur': 10, 'line-opacity': 0 },
 				});
 				m.addLayer({
 					id: 'lit-run',
 					type: 'line',
 					source: 'lit-run',
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
-					paint: { 'line-color': COLOURS.move, 'line-width': 3, 'line-opacity': 0.95 },
+					paint: { 'line-color': ink.now, 'line-width': 3, 'line-opacity': 0.95 },
 				});
 				m.addLayer({
 					id: 'lit-bridge',
@@ -344,7 +340,7 @@
 					source: 'lit-bridge',
 					layout: { 'line-join': 'round', 'line-cap': 'butt' },
 					paint: {
-						'line-color': COLOURS.move,
+						'line-color': ink.now,
 						'line-width': 1.5,
 						'line-opacity': 0.9,
 						'line-dasharray': [2, 2.5],
@@ -387,59 +383,56 @@
 	/** Bumped when a day's data is in, so the map draws it. */
 	let drawn = $state(0);
 
+	/** Whether a calendar and a financial account have ever synced: an empty
+	 *  lane and one nothing writes to are told apart. */
+	let sources: Sources = { calendar: null, finance: null };
+	const sourcesReady = getStreamHealth()
+		.then((rows) => {
+			const ever = (...names: string[]) => rows.some((r) => names.includes(r.name) && r.status !== 'never');
+			sources = { calendar: ever('calendar_event'), finance: ever('financial_transaction', 'financial_account') };
+		})
+		.catch((e) => console.warn('[Timeline] stream health unavailable', e));
+
 	async function loadDay(slug: string) {
 		const mine = ++asked;
 		status = 'loading';
 		note = null;
-		let bounds, window, derived, voice, lw;
+		let day;
 		try {
-			// The day in the zone it woke up in, then every fix around it, the
-			// server's stays, drives and moments over it, what the mic heard, and
-			// the scrubber's steps and calendar.
-			bounds = await fetchDayBounds(slug);
-			[window, derived, voice, lw] = await Promise.all([
-				fetchDayWindow(bounds.startMs, bounds.endMs),
-				fetchDerived(bounds).catch((e) => {
-					console.warn('[Timeline] derived fetch failed', e);
-					return null;
-				}),
-				fetchVoice(bounds).catch((e) => {
-					console.warn('[Timeline] voice fetch failed', e);
-					return null;
-				}),
-				fetchLanes(bounds).catch((e) => {
-					console.warn('[Timeline] lanes fetch failed', e);
-					return null;
-				}),
-			]);
+			// The day in the zone it woke up in, whole: its visits, fixes,
+			// nights, conversations, steps and calendar.
+			[day] = await Promise.all([fetchDay(slug), sourcesReady]);
 		} catch (e) {
 			console.warn('[Timeline] day fetch failed', e);
 			if (mine === asked) status = 'error';
 			return;
 		}
+		const bounds = { startMs: Date.parse(day.started_at), endMs: Date.parse(day.ended_at), zone: day.zone };
+		const { derived, voice, lanes: lw } = deriveDay(day, sources);
+		const window = { points: day.points, before: day.last_point_before };
 		if (mine !== asked) return;
 		const { startMs, endMs } = bounds;
 		zone = bounds.zone;
-		inspectorError = derived === null;
-		sections = derived ? buildInspector(derived, startMs, endMs, voice ?? []) : [];
-		placeCoords = new Map((derived?.places ?? []).map((p) => [p.id, [p.longitude, p.latitude] as [number, number]]));
+		sections = buildInspector(derived, startMs, endMs, voice);
+		placeCoords = new Map(derived.places.map((p) => [p.id, [p.longitude, p.latitude] as [number, number]]));
 		unpick();
 		// Spikes go first, then holes are judged across the whole window, then the
 		// day is cut out of it.
-		const all = flagHoles(dropSpikes(toFixes(window.points)));
+		const all = flagHoles(dropSpikes(toFixes(window.before ? [window.before, ...window.points] : window.points)));
 		const fixes = all.filter((f) => f.t >= startMs && f.t < endMs);
 		dayFixes = fixes;
 		dayTrack = cleanTrack(fixes);
 		dayStart = startMs;
 		dayEnd = endMs;
 		const week = weekOf(slug, bounds.zone);
+		weekSlug = mondayOf(slug);
 		weekStart = week.s;
 		weekEnd = week.e;
 		// Across a crossing the week's lanes already drawn stay, rather than
 		// shrinking to the one day until the week reloads.
 		const across = crossing;
 		crossing = false;
-		if (!(across && lanes.a <= week.s && lanes.b >= week.e)) lanes = laneData(derived, voice ?? [], lw, startMs, endMs);
+		if (!(across && lanes.a <= week.s && lanes.b >= week.e)) lanes = laneData(derived, voice, lw, startMs, endMs);
 		midnights = Array.from({ length: 15 }, (_, i) => midnightIn(stepDay(slug, i - 7), bounds.zone));
 		cancelAnim();
 		if (across) {
@@ -471,15 +464,7 @@
 		// at which stay, when the last fix was in one), then what the phone did
 		// that day - told only when the day's voice and steps loaded. The
 		// camera holds the last fix (drawDay).
-		const before = derived?.last_stay_before ?? null;
-		const lastStay = before
-			? {
-					title: placeTitle(derived?.places.find((p) => p.id === before.timeline_place_id)),
-					s: Date.parse(before.started_at),
-					e: Date.parse(before.ended_at),
-				}
-			: null;
-		note = quietDay(lastFix?.t ?? null, lastStay, zone, voice && lw ? { talk: voice.some((v) => v.speaker_count >= 2), steps: lw.steps.length > 0 } : null);
+		note = quietDay(lastFix?.t ?? null, null, zone, { talk: voice.some((v) => v.speaker_count >= 2), steps: lw.steps.length > 0 });
 	}
 
 	/** The loaded day on the map: its track, then the frame, the bubbles and
@@ -836,21 +821,17 @@
 		if (wideAsked === mine) return;
 		wideAsked = mine;
 		const b = { startMs: weekStart, endMs: weekEnd, zone };
-		const [derived, voice, lw] = await Promise.all([
-			fetchDerived(b).catch((e) => {
-				console.warn('[Timeline] week derived fetch failed', e);
-				return null;
-			}),
-			fetchVoice(b).catch((e) => {
-				console.warn('[Timeline] week voice fetch failed', e);
-				return [];
-			}),
-			fetchLanes(b).catch((e) => {
-				console.warn('[Timeline] week lanes fetch failed', e);
-				return null;
-			}),
-		]);
+		const slugs = Array.from({ length: 7 }, (_, i) => stepDay(weekSlug, i));
+		const days = await Promise.all(
+			slugs.map((d) =>
+				fetchDay(d).catch((e) => {
+					console.warn('[Timeline] week day fetch failed', d, e);
+					return null;
+				}),
+			),
+		);
 		if (mine !== asked) return;
+		const { derived, voice, lanes: lw } = joinDays(days.flatMap((d) => (d ? [deriveDay(d, sources)] : [])));
 		lanes = laneData(derived, voice, lw, b.startMs, b.endMs);
 	}
 
@@ -958,13 +939,10 @@
 	}
 
 	/** A stay or a drive picked from the inspector stays marked while the playhead
-	 *  is inside it: a stay's place pulses (the prototype's "take me there"
-	 *  pin, dayback/index.html:321-322), a drive's lit stretch glows. Any other
-	 *  pick, a scrub, or the playhead leaving it clears the mark. */
+	 *  is inside it: a stay's place wears a ring, a drive's lit stretch a halo.
+	 *  Any other pick, a scrub, or the playhead leaving it clears the mark. */
 	let picked: { kind: 'place' | 'transit'; s: number; e: number } | null = null;
 	let pulse: Marker | null = null;
-	let glowRaf = 0;
-	const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 	function pick(p: { kind: 'place' | 'transit'; s: number; e: number; at?: [number, number] }) {
 		unpick();
 		const m = map;
@@ -979,37 +957,21 @@
 		}
 		if (!m.getLayer('lit-glow')) return;
 		// The picked drive stands out from a drive the playhead merely passes
-		// through: twice the path's weight, in the move colour at full
-		// strength, under a glow that breathes.
+		// through: twice the path's weight, over a still halo. Nothing on the
+		// page breathes but Home's now-marker (design-grammar §7).
 		m.setPaintProperty('lit-run', 'line-width', 6);
-		m.setPaintProperty('lit-run', 'line-color', COLOURS.movePicked);
 		m.setPaintProperty('lit-bridge', 'line-width', 2.5);
-		m.setPaintProperty('lit-bridge', 'line-color', COLOURS.movePicked);
-		if (calm()) {
-			m.setPaintProperty('lit-glow', 'line-opacity', 0.6);
-			return;
-		}
-		const t0 = performance.now();
-		const step = (now: number) => {
-			const k = 0.5 - 0.5 * Math.cos(((now - t0) / 1600) * 2 * Math.PI);
-			m.setPaintProperty('lit-glow', 'line-opacity', 0.25 + 0.55 * k);
-			glowRaf = requestAnimationFrame(step);
-		};
-		glowRaf = requestAnimationFrame(step);
+		m.setPaintProperty('lit-glow', 'line-opacity', 0.3);
 	}
 	function unpick() {
 		picked = null;
 		pulse?.remove();
 		pulse = null;
-		cancelAnimationFrame(glowRaf);
-		glowRaf = 0;
 		const m = map;
 		if (!m?.getLayer('lit-glow')) return;
 		m.setPaintProperty('lit-glow', 'line-opacity', 0);
 		m.setPaintProperty('lit-run', 'line-width', 3);
-		m.setPaintProperty('lit-run', 'line-color', COLOURS.move);
 		m.setPaintProperty('lit-bridge', 'line-width', 1.5);
-		m.setPaintProperty('lit-bridge', 'line-color', COLOURS.move);
 	}
 
 	/** The clear map (`v4ClearArea`, main.js:1042-1044): not under the top
@@ -1068,11 +1030,10 @@
 
 <div
 	class="timeline"
-	class:stacked
 	class:with-inspector={sections.length > 0}
 	bind:this={root}
 	bind:clientWidth={paneW}
-	style="{colourVars(dark)}; --nav-top: {navTop}px; --nav-bottom: {navBottom}px; --bar-overhang: {overhang}px; --scrub-h: {scrubH}px; --inspector-top: {inspectorLow ? topChrome + 12 : 16}px"
+	style="{colourVars()}; --top-chrome: {topChrome}px; --scrub-h: {scrubH}px; --inspector-top: {inspectorLow ? topChrome + 12 : 16}px"
 >
 	<div class="timeline-map" bind:this={container}></div>
 
@@ -1081,16 +1042,11 @@
 	     like Calendar's month title, with ‹ Today › and the month beside it. -->
 	<div class="date" bind:this={dateWrap}>
 		<div class="date-card tile" bind:offsetWidth={cardW} bind:offsetHeight={cardH}>
-			<!-- The day's standout line joins this row, in small caps, once our
-			     significance exists; until then the row holds only the day's
-			     controls, never a guessed line. -->
 			<div class="date-row">
-				<button class="date-btn" aria-label="Previous day" title="Previous day" onclick={() => (date = stepDay(date, -1))}>‹</button>
-				<button class="date-btn" disabled={date === today} onclick={() => (date = today)}>Today</button>
-				<button class="date-btn" aria-label="Next day" title="Next day" disabled={date >= today} onclick={() => (date = stepDay(date, 1))}>›</button>
-				<button class="date-btn" aria-label="Show the month" title="Show the month" aria-expanded={monthOpen} onclick={() => (monthOpen = !monthOpen)}>
-					<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="3" /><path d="M3.5 10h17M8 3v4M16 3v4" /></svg>
-				</button>
+				<IconButton icon="ri:arrow-left-s-line" label="Previous day" size="sm" onclick={() => (date = stepDay(date, -1))} />
+				<IconButton icon="ri:arrow-right-s-line" label="Next day" size="sm" disabled={date >= today} onclick={() => (date = stepDay(date, 1))} />
+				<IconButton icon="ri:calendar-line" label="Show the month" size="sm" pressed={monthOpen} onclick={() => (monthOpen = !monthOpen)} />
+				{#if date !== today}<span class="date-today"><TextAction onclick={() => (date = today)}>Today</TextAction></span>{/if}
 			</div>
 			<button class="date-title" type="button" title="Back to the whole day" onclick={resetView}>{title}</button>
 		</div>
@@ -1105,21 +1061,6 @@
 			/>
 		{/if}
 	</div>
-
-	<!-- The scope switcher, top centre, where Calendar keeps Day Week Month
-	     Year: its labels are scopes, and "Dayline" stays the feature's name.
-	     Only built scopes are live; Year is left out and Life shows greyed.
-	     Map | Detail is Day's own scope bar, hanging off the Day segment. -->
-	<nav class="scope" aria-label="Scope" data-scope={scope}>
-		<div class="scope-seg tile" role="tablist" bind:offsetWidth={segW} bind:offsetHeight={segH}>
-			<button class="seg on" role="tab" aria-selected="true" title="Dayline - a single day">Day</button>
-			<button class="seg" role="tab" aria-selected="false" aria-disabled="true" data-tip="Coming soon">Life</button>
-		</div>
-		<div class="scope-bar tile" role="tablist" aria-label="Day view" bind:offsetWidth={barW} bind:offsetHeight={barHt}>
-			<button class="seg on" role="tab" aria-selected="true" title="Map - the day on a map"><i aria-hidden="true">🌐</i>Map</button>
-			<button class="seg" role="tab" aria-selected="false" aria-disabled="true" data-tip="Coming soon"><i aria-hidden="true">🔍</i>Detail</button>
-		</div>
-	</nav>
 
 	<TimelineInspector bind:this={inspector} {sections}
 		{zone}
@@ -1154,8 +1095,7 @@
 			stepScale={lanes.stepScale}
 			hasCalendar={lanes.hasCalendar}
 			calendar={lanes.calendar}
-			hasFinance={lanes.hasFinance}
-			onseek={scrubSeek}
+				onseek={scrubSeek}
 			onswipe={swipe}
 			onribbon={(r) => revealAt(r.kind, r.t)}
 			onzoom={zoom}
@@ -1163,10 +1103,6 @@
 			onplay={togglePlay}
 		/>
 	{/if}
-	{#if inspectorError && status !== 'error' && status !== 'loading'}
-		<p class="inspector-error tile">Your server couldn't load the day's stays. Reload the page to try again.</p>
-	{/if}
-
 	{#if status === 'empty' && note}
 		<div class="note tile">
 			<p class="note-title">{note.title}</p>
@@ -1181,7 +1117,7 @@
 		<!-- Apple's re-centre pattern: it exists only once the camera has left the
 		     day's frame (dayback/index.html:822-826, 1180). -->
 		<button class="reset" type="button" title="Back to the whole day (Esc)" onclick={resetView}>
-			<i aria-hidden="true">⤢</i>Reset view
+			Show the whole day
 		</button>
 	{/if}
 	{#if !basemap}
@@ -1192,35 +1128,32 @@
 </div>
 
 <style>
-	/* One solid material for every card - the date card, the scope switcher
-	   and its scope bar, the inspector and the scrubber - so they always match.
-	   Nothing else in Virtues is see-through, so neither is the Timeline. */
+	/* Every card over the map is the page's own material: the surface inside a
+	   hairline at 12px, and no shadow (design-grammar §6). It reads as separate
+	   because it floats over the map, not because it is lifted. */
 	.timeline {
 		position: absolute;
 		inset: 0;
 		/* What the inspector takes from the map's right edge, with its gaps. */
 		--inspector-space: 16px;
-		--tile-bg: var(--c-tile);
-		--tile-border: 1px solid color-mix(in srgb, var(--color-foreground) 7%, transparent);
 		--tile-radius: 12px;
 	}
 	/* The map's markers stack at z 1 to 7 (bubbles, chips, the place card);
-	   everything over the map sits at 10 and up, as the prototype's tiles sit
-	   above its markers. */
+	   everything over the map sits at 10 and up. */
 	.timeline-map {
 		position: absolute;
 		inset: 0;
 	}
-	/* A card over the map, in the prototype's look: a ground, a faint ink
-	   border and one soft shadow (dayback/index.html:599-601), all from the
-	   material above. */
 	.tile {
-		background: var(--tile-bg);
-		border: var(--tile-border);
-		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
-		box-shadow: var(--tile-shadow);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
 	}
-	/* The date card, top left. */
+	.timeline.with-inspector {
+		--inspector-space: calc(min(384px, 42%) + 32px);
+	}
+
+	/* The date card, top left: the day's controls, then the date as the page's
+	   title - the 36px serif of the scale, never bold. */
 	.date {
 		position: absolute;
 		top: 16px;
@@ -1228,58 +1161,22 @@
 		z-index: 12;
 	}
 	.date-card {
-		/* design-ok: the mockup's date card inset (owner's call, 2026-09-30) */
-		padding: 11px 12px 14px 18px;
+		padding: 12px 20px 16px 16px;
 		border-radius: var(--tile-radius);
 	}
-	/* The day's controls sit at the card's left edge, so they stay put
-	   whatever the length of the date under them. */
 	.date-row {
 		display: flex;
-		justify-content: flex-start;
-		/* design-ok: the mockup's control spacing (owner's call, 2026-09-30) */
-		gap: 4px;
-	}
-	.date-btn {
-		height: 26px;
-		min-width: 26px;
-		/* design-ok: the mockup's small round control (owner's call, 2026-09-30) */
-		padding: 0 9px;
-		border: 0;
-		border-radius: 999px;
-		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
-		color: var(--color-foreground);
-		font-family: var(--font-sans);
-		font-size: 12px;
-		font-weight: 600;
-		line-height: 1;
-		cursor: pointer;
-		display: inline-flex;
 		align-items: center;
-		justify-content: center;
+		gap: 4px;
+		min-height: 24px;
 	}
-	.date-btn:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
+	.date-today {
+		margin-left: 8px;
+		font-size: 13px;
 	}
-	.date-btn:disabled {
-		opacity: 0.35;
-		cursor: default;
-	}
-	.date-btn[aria-expanded='true'] {
-		background: var(--color-foreground);
-		color: var(--color-background);
-	}
-	.date-btn svg {
-		fill: none;
-		stroke: currentColor;
-		stroke-width: 2;
-		stroke-linecap: round;
-	}
-	/* The serif page title, as Virtues' Home dateline: regular, never bold. */
 	.date-title {
 		display: block;
-		/* design-ok: the date sits under its controls, as in the mockup (owner's call, 2026-09-30) */
-		margin: 9px 0 0;
+		margin: 8px 0 0 4px;
 		padding: 0;
 		border: 0;
 		background: none;
@@ -1293,183 +1190,40 @@
 		white-space: nowrap;
 		color: var(--color-foreground);
 	}
-	/* The scope switcher, top centre; it never moves. Its scope bar hangs
-	   off the Day segment and grows out of it, or shrinks back into it when
-	   another scope is picked. */
-	.scope {
-		position: absolute;
-		top: var(--nav-top);
-		left: 50%;
-		transform: translateX(-50%);
-		z-index: 11;
-	}
-	/* Under the date card, far enough in that the scope bar stays on screen. */
-	.stacked .scope {
-		left: calc(16px + var(--bar-overhang));
-		transform: none;
-	}
-	.scope-seg,
-	.scope-bar {
-		display: inline-flex;
-		padding: 4px;
-		border-radius: var(--tile-radius);
-	}
-	.scope-bar {
-		position: absolute;
-		top: calc(100% + 6px);
-		left: 50%;
-		transform: translateX(-50%);
-		transform-origin: 50% 0;
-		white-space: nowrap;
-		/* A generous clip leaves the shadow whole at rest. */
-		clip-path: inset(-40px round var(--tile-radius));
-		transition:
-			transform 0.38s cubic-bezier(0.2, 0.9, 0.25, 1.08),
-			clip-path 0.38s cubic-bezier(0.2, 0.9, 0.25, 1.08),
-			opacity 0.2s ease;
-	}
-	.scope:not([data-scope='day']) .scope-bar {
-		opacity: 0;
-		pointer-events: none;
-		transform: translateX(-50%) translateY(-12px) scale(0.6, 0.5);
-		clip-path: inset(0 round var(--tile-radius));
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.scope-bar {
-			transition: opacity 0.2s ease;
-		}
-		.scope:not([data-scope='day']) .scope-bar {
-			transform: translateX(-50%);
-		}
-	}
-	/* The scope bar is Day's child: smaller type, a tighter segment. */
-	.scope-bar .seg {
-		font-size: 12px;
-		/* design-ok: the Dayback prototype's lens segment (owner's call, 2026-09-30) */
-		padding: 7px 12px;
-	}
-	.scope-bar .seg i {
-		font-style: normal;
-		font-size: 11px;
-		line-height: 1;
-		/* design-ok: the Dayback prototype's lens icon gap (owner's call, 2026-09-30) */
-		margin-right: 5px;
-	}
-	.seg {
-		border: 0;
-		background: none;
-		/* design-ok: the Dayback prototype's toggle segment (owner's call, 2026-09-30) */
-		padding: 10px 15px;
-		/* Concentric with the card's corner at a 4 px inset. */
-		border-radius: calc(var(--tile-radius) - 4px);
-		font-family: var(--font-sans);
-		font-weight: 600;
-		font-size: 14px;
-		line-height: 1;
-		letter-spacing: -0.005em;
-		white-space: nowrap;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-	}
-	.seg.on {
-		color: var(--color-foreground);
-		background: var(--color-background);
-		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
-		box-shadow: var(--toggle-shadow);
-	}
-	/* A scale not built yet (index.html:974). It stays hoverable (so no
-	   `disabled`, which would swallow the hover) and does nothing on click. */
-	.seg[aria-disabled='true'] {
-		position: relative;
-		color: color-mix(in srgb, var(--color-foreground-subtle) 55%, transparent);
-		cursor: default;
-	}
-	.seg[aria-disabled='true'] i {
-		opacity: 0.55;
-	}
-	/* "Coming soon", a tenth of a second after the pointer arrives - the
-	   browser's own title tooltip waits about a second. */
-	.seg[data-tip]::after {
-		content: attr(data-tip);
-		position: absolute;
-		top: calc(100% + 8px);
-		left: 50%;
-		transform: translateX(-50%);
-		padding: 4px 8px;
-		border-radius: 6px;
-		background: var(--color-foreground);
-		color: var(--color-background);
-		font-family: var(--font-sans);
-		font-size: 12px;
-		font-weight: 500;
-		white-space: nowrap;
-		pointer-events: none;
-		opacity: 0;
-		transition: opacity 120ms ease;
-		z-index: 5;
-	}
-	.seg[data-tip]:hover::after,
-	.seg[data-tip]:focus-visible::after {
-		opacity: 1;
-		transition-delay: 100ms;
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.seg[data-tip]::after {
-			transition: none;
-		}
-	}
-	/* The Reset view pill: solid ink, paper text, so it reads as a control and
-	   not a tile (index.html:822-826). The prototype set it at the top centre;
-	   here it sits at the map's bottom right, just above the scrubber's right
-	   end, clear of the top cards (the owner's call). */
+
+	/* Back to the whole day: a quiet verb in the accent, since it is pressable,
+	   at the map's bottom right above the scrubber. It exists only once the
+	   camera has left the day's frame. */
 	.reset {
 		position: absolute;
 		right: calc(min(384px, 42%) + 32px);
 		bottom: calc(var(--scrub-h) + 28px);
 		z-index: 11;
-		display: inline-flex;
-		align-items: center;
-		/* design-ok: the Dayback prototype's pill (owner's call, 2026-09-30) */
-		gap: 7px;
-		/* design-ok: the Dayback prototype's pill (owner's call, 2026-09-30) */
-		padding: 7px 14px 7px 12px;
-		border: 0;
+		padding: 8px 16px;
 		border-radius: 999px;
-		background: var(--color-foreground);
-		color: var(--color-background);
 		font-family: var(--font-sans);
-		/* design-ok: the Dayback prototype's pill (owner's call, 2026-09-30) */
-		font-size: 12.5px;
-		font-weight: 600;
+		font-size: 14px;
+		font-weight: 500;
+		color: var(--color-primary);
 		cursor: pointer;
-		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
-		box-shadow: var(--tile-shadow);
 	}
 	.timeline:not(.with-inspector) .reset {
 		right: 16px;
 	}
 	.reset:hover {
-		background: color-mix(in srgb, var(--color-foreground) 88%, var(--color-background));
+		background: var(--hover-bg);
 	}
-	.reset i {
-		font-style: normal;
-		font-size: 14px;
-		line-height: 1;
-	}
-	.timeline.with-inspector {
-		--inspector-space: calc(min(384px, 42%) + 32px);
-	}
-	/* Front and centre of the clear map, between the top cards and the
-	   scrubber, the left edge and the inspector (the owner's call): on a day with
-	   no location it is the day's one fact, and the map under it holds the
-	   last known position. */
+
+	/* A day with no location: its one fact, centred on the clear map between
+	   the date card and the scrubber, the left edge and the inspector. The
+	   map under it holds the last known position. */
 	.note {
 		position: absolute;
 		z-index: 10;
-		top: calc((var(--nav-bottom) + 12px + 100% - var(--scrub-h) - 28px) / 2);
+		top: calc((var(--top-chrome) + 12px + 100% - var(--scrub-h) - 28px) / 2);
 		left: calc((16px + 100% - var(--inspector-space)) / 2);
 		transform: translate(-50%, -50%);
-		padding: 8px 16px;
+		padding: 12px 20px;
 		border-radius: var(--tile-radius);
 		text-align: center;
 	}
@@ -1477,77 +1231,58 @@
 		margin: 0;
 	}
 	.note-title {
+		font-family: var(--font-serif);
+		font-size: 18px;
 		color: var(--color-foreground);
-		font-size: 14px;
 	}
 	.note-line {
-		color: var(--color-foreground-muted);
-		font-size: 12px;
-	}
-	.inspector-error {
-		position: absolute;
-		z-index: 10;
-		top: 16px;
-		right: 16px;
-		max-width: min(384px, 42%);
-		margin: 0;
-		padding: 12px 16px;
-		border-radius: var(--tile-radius);
+		margin-top: 4px;
 		font-size: 13px;
-		color: var(--color-foreground);
+		color: var(--color-foreground-muted);
 	}
 
 	/* Why the map is bare, just above the scrubber at the left. */
 	.map-note {
 		position: absolute;
 		left: 16px;
-		bottom: calc(var(--scrub-h) + 26px);
+		bottom: calc(var(--scrub-h) + 28px);
 		z-index: 10;
 		margin: 0;
 		padding: 8px 12px;
 		border-radius: var(--tile-radius);
 		color: var(--color-foreground-muted);
-		font-size: 12px;
+		font-size: 13px;
 	}
+
 	/* The map's own marks, made by MapLibre markers outside this component's
-	   markup, so :global. The prototype's pin, bubbles, chips and place card
-	   (dayback/index.html:104-129). */
+	   markup, so :global. The pin is now, so it takes the accent. */
 	.timeline :global(.tl-pin) {
 		width: 16px;
 		height: 16px;
 		border-radius: 50%;
-		background: var(--c-place);
+		background: var(--c-sel);
 		border: 3px solid var(--c-ring);
-		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
-		box-shadow: var(--pin-shadow);
 	}
 	.timeline :global(.tl-bubble) {
-		width: 10px;
-		height: 10px;
+		width: 12px;
+		height: 12px;
 		border-radius: 50%;
 		background: var(--c-tile);
 		border: 2px solid var(--c-mark);
-		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
-		box-shadow: var(--mark-shadow);
 		cursor: pointer;
 		z-index: 1;
 	}
 	.timeline :global(.tl-bubble.cur) {
-		width: 12px;
-		height: 12px;
-		background: var(--c-place);
+		background: var(--c-sel);
 		border-color: var(--c-ring);
-		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
-		box-shadow: var(--mark-cur-shadow);
 		z-index: 6;
 	}
 	/* Every moment's label surfaces; the layout puts it in a free slot around
-	   its dot, and the label is part of the click target. */
+	   its dot, and the label is part of the click target. Two voices: what
+	   happened, and when. */
 	.timeline :global(.tl-bubble-label) {
 		display: flex;
 		flex-direction: column;
-		/* design-ok: the Dayback prototype's 1 px line gap (owner's call, 2026-09-30) */
-		gap: 1px;
 		position: absolute;
 		left: 50%;
 		top: 50%;
@@ -1556,30 +1291,25 @@
 		max-width: 200px;
 		text-align: center;
 		background: var(--c-tile);
+		border: 1px solid var(--color-border);
 		border-radius: 12px;
-		/* design-ok: the Dayback prototype's label padding (owner's call, 2026-09-30) */
-		padding: 5px 11px;
-		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
-		box-shadow: var(--label-shadow);
+		padding: 4px 12px;
 		font-family: var(--font-sans);
-		font-size: 11.5px;
-		font-weight: 600;
-		letter-spacing: -0.01em;
-		line-height: 1.22;
+		font-size: 12px;
+		font-weight: 500;
+		line-height: 1.25;
 		color: var(--color-foreground);
 		cursor: pointer;
 		z-index: 2;
 	}
 	.timeline :global(.tl-bubble-label i) {
 		font-style: normal;
-		font-weight: 500;
-		font-size: 10px;
+		font-size: 11px;
+		font-variant-numeric: tabular-nums;
 		color: var(--color-foreground-muted);
 	}
 	.timeline :global(.tl-bubble.cur .tl-bubble-label) {
-		font-size: 12.5px;
-		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
-		box-shadow: var(--label-cur-shadow);
+		border-color: var(--c-sel);
 	}
 	.timeline :global(.tl-bubble-line) {
 		position: absolute;
@@ -1598,47 +1328,24 @@
 		stroke-linecap: round;
 	}
 	.timeline :global(.tl-bubble.cur .tl-bubble-line line) {
-		stroke: var(--c-place);
-		stroke-width: 1.7;
+		stroke: var(--c-sel);
 	}
 	/* A card member keeps its shared dot and drops its label and line. */
 	.timeline :global(.tl-bubble.in-card .tl-bubble-label),
 	.timeline :global(.tl-bubble.in-card .tl-bubble-line) {
 		display: none;
 	}
-	/* A stay picked from the inspector: its place pulses while it stays picked -
-	   the prototype's "take me there" pin (dayback/index.html:321-322). */
+	/* A stay picked from the inspector: a still ring at its place while it
+	   stays picked. Nothing here breathes (design-grammar §7). */
 	.timeline :global(.tl-pulse) {
 		width: 20px;
 		height: 20px;
 		border-radius: 50%;
-		background: var(--c-place);
-		border: 2.5px solid var(--c-ring);
+		background: var(--c-sel);
+		border: 3px solid var(--c-ring);
+		outline: 6px solid color-mix(in srgb, var(--c-sel) 22%, transparent);
 		pointer-events: none;
 		z-index: 3;
-		animation: tl-pulse 1.9s ease-in-out infinite;
-	}
-	@keyframes -global-tl-pulse {
-		0%,
-		100% {
-			/* design-ok: the Dayback prototype's glow pin (owner's call, 2026-09-30) */
-			box-shadow:
-				0 0 0 5px color-mix(in srgb, var(--c-place) 22%, transparent),
-				0 0 18px 6px color-mix(in srgb, var(--c-place) 38%, transparent);
-		}
-		50% {
-			/* design-ok: the Dayback prototype's glow pin (owner's call, 2026-09-30) */
-			box-shadow:
-				0 0 0 9px color-mix(in srgb, var(--c-place) 14%, transparent),
-				0 0 30px 12px color-mix(in srgb, var(--c-place) 30%, transparent);
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.timeline :global(.tl-pulse) {
-			animation: none;
-			/* design-ok: the Dayback prototype's glow pin, held still (owner's call, 2026-09-30) */
-			box-shadow: 0 0 0 6px color-mix(in srgb, var(--c-place) 22%, transparent);
-		}
 	}
 	/* A knot of moments folded into a count chip; never set transform here,
 	   MapLibre positions the marker with it. */
@@ -1656,26 +1363,21 @@
 		line-height: 24px;
 		text-align: center;
 		font-variant-numeric: tabular-nums;
-		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
-		box-shadow: var(--knot-shadow);
 		cursor: pointer;
 		z-index: 5;
 	}
-	.timeline :global(.tl-knot:hover) {
-		filter: brightness(1.12);
-	}
+	.timeline :global(.tl-knot:hover),
 	.timeline :global(.tl-knot.cur) {
-		background: var(--c-place);
+		background: var(--c-sel);
 	}
 	/* One callout for a shared spot, its moments as rows. */
 	.timeline :global(.tl-card) {
 		width: max-content;
-		min-width: 230px;
-		max-width: 310px;
+		min-width: 232px;
+		max-width: 312px;
 		background: var(--c-tile);
+		border: 1px solid var(--color-border);
 		border-radius: 12px;
-		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
-		box-shadow: var(--card-shadow);
 		font-family: var(--font-sans);
 		color: var(--color-foreground);
 		z-index: 7;
@@ -1684,18 +1386,17 @@
 		display: flex;
 		align-items: baseline;
 		gap: 8px;
-		/* design-ok: the Dayback prototype's card padding (owner's call, 2026-09-30) */
-		padding: 10px 10px 8px 14px;
-		border-bottom: 1px solid color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		padding: 12px 12px 8px 16px;
+		border-bottom: 1px solid var(--color-border);
 	}
 	.timeline :global(.tl-card-hd b) {
-		font-size: 13px;
-		font-weight: 700;
-		letter-spacing: -0.01em;
+		font-family: var(--font-serif);
+		font-size: 18px;
+		font-weight: 400;
 		white-space: nowrap;
 	}
 	.timeline :global(.tl-card-hd span) {
-		font-size: 11px;
+		font-size: 13px;
 		color: var(--color-foreground-muted);
 		font-variant-numeric: tabular-nums;
 		white-space: nowrap;
@@ -1704,67 +1405,60 @@
 		margin-left: auto;
 		border: 0;
 		background: none;
-		color: var(--color-foreground-subtle);
+		color: var(--color-foreground-muted);
 		font-size: 16px;
 		line-height: 1;
 		cursor: pointer;
-		/* design-ok: the Dayback prototype's 2 px mark (owner's call, 2026-09-30) */
-		padding: 0 2px;
+		padding: 0 4px;
 	}
 	.timeline :global(.tl-card-x:hover) {
 		color: var(--color-foreground);
 	}
 	.timeline :global(.tl-card-rows) {
 		overflow: auto;
-		/* design-ok: the Dayback prototype's list inset (owner's call, 2026-09-30) */
 		padding: 4px 0;
 	}
 	.timeline :global(.tl-card-row) {
 		display: flex;
 		align-items: baseline;
-		/* design-ok: the Dayback prototype's row gap (owner's call, 2026-09-30) */
-		gap: 10px;
+		gap: 12px;
 		width: 100%;
 		text-align: left;
 		border: 0;
 		background: none;
-		/* design-ok: the Dayback prototype's row padding (owner's call, 2026-09-30) */
-		padding: 6px 14px;
+		padding: 8px 16px;
 		cursor: pointer;
 		font-family: var(--font-sans);
 		color: var(--color-foreground);
 	}
 	.timeline :global(.tl-card-row:hover) {
-		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+		background: var(--hover-bg);
 	}
 	.timeline :global(.tl-card-row i) {
 		font-style: normal;
-		font-size: 11px;
+		font-size: 13px;
 		color: var(--color-foreground-muted);
 		font-variant-numeric: tabular-nums;
-		flex: 0 0 58px;
+		flex: 0 0 64px;
 	}
 	.timeline :global(.tl-card-row span) {
-		font-size: 12.5px;
-		font-weight: 600;
-		letter-spacing: -0.01em;
-		line-height: 1.25;
+		font-size: 13px;
+		line-height: 1.3;
 	}
 	.timeline :global(.tl-card-row.cur i),
 	.timeline :global(.tl-card-row.cur span) {
-		color: var(--c-place);
+		color: var(--c-sel);
 	}
 	/* The pointer from the card to its dot. */
 	.timeline :global(.tl-card-tail) {
 		position: absolute;
 		left: 50%;
-		/* design-ok: the Dayback prototype's card tail (owner's call, 2026-09-30) */
 		bottom: -6px;
 		width: 12px;
 		height: 12px;
 		background: var(--c-tile);
+		border-right: 1px solid var(--color-border);
+		border-bottom: 1px solid var(--color-border);
 		transform: translateX(-50%) rotate(45deg);
-		/* design-ok: the Timeline follows the Dayback prototype's look (owner's call, 2026-09-30) */
-		box-shadow: var(--card-tail-shadow);
 	}
 </style>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convLines, lineAt, lineTime, parseLine, rowLines, spkIdx } from "./transcript";
+import { convLines, lineAt, lineTime, parseLine, rowLines } from "./transcript";
 
 describe("a transcript", () => {
 	it("reads a tagged window line by line and an untagged blob sentence by sentence", () => {
@@ -18,8 +18,7 @@ describe("a transcript", () => {
 		expect(lines.map((l) => l.spk + l.txt)).toEqual(["Aa", "Bb", "Cc"]);
 	});
 
-	it("tints a letter by its place and spreads lines evenly over the conversation", () => {
-		expect([spkIdx("A"), spkIdx("B"), spkIdx("E")]).toEqual([0, 1, 0]);
+	it("spreads lines evenly over the conversation", () => {
 		expect(lineTime(0, 100, 0, 4)).toBe(13);
 		expect(lineAt(0, 100, 4, 60)).toBe(2);
 	});

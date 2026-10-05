@@ -1,22 +1,13 @@
 /**
  * day.ts - one local day of the record, fetched whole.
  *
- * /api/timeline/day cuts its days at UTC midnight, so a local day spans two of
- * them. The Timeline fetches every UTC day the local day touches, plus the one
- * before, so the day's first fix can be judged against the fix before it (a
- * hole across midnight is still a hole). Visits come back under the UTC day
- * they started in, so neighbouring days never repeat one.
- *
- * A day's bounds come from the server (`/timeline/day-window`): local midnight
- * in the zone the day woke up in, to where the next day begins - so a day
- * recorded while travelling keeps its own clock.
+ * `/api/timeline/days/:date` serves the day in the zone it woke up in (local
+ * midnight to local midnight): its visits, fixes, nights, audio sessions,
+ * step bins and calendar, all read from the tables every other room uses.
+ * `derive.ts` turns that into what the inspector and the lanes draw.
  */
 import { apiGet } from "$lib/api/client";
-import type { TimelineDayLocationChunk, TimelineDayPoint, TimelineDayView } from "$lib/wiki/api";
-import type { DerivedWindow, VoiceWindow } from "./inspector";
-import type { LaneWindow } from "./lanes";
-
-const DAY_MS = 86_400_000;
+import type { TimelineDayPoint } from "$lib/wiki/api";
 
 /** A local day's bounds and the zone it is read in. */
 export interface DayBounds {
@@ -25,35 +16,50 @@ export interface DayBounds {
 	zone: string;
 }
 
-/** The day a YYYY-MM-DD slug names, in the zone it woke up in. */
-export async function fetchDayBounds(slug: string): Promise<DayBounds> {
-	const w = await apiGet<{ zone: string; started_at: string; ended_at: string }>(`/timeline/day-window/${slug}`);
-	return { startMs: Date.parse(w.started_at), endMs: Date.parse(w.ended_at), zone: w.zone };
+/** One local day, as `/api/timeline/days/:date` serves it. */
+export interface TimelineDay {
+	date: string;
+	zone: string;
+	started_at: string;
+	ended_at: string;
+	/** Visits overlapping the day, unclipped. */
+	stays: {
+		id: string;
+		started_at: string;
+		ended_at: string;
+		latitude: number;
+		longitude: number;
+		place_id: string | null;
+		place_name: string | null;
+	}[];
+	points: TimelineDayPoint[];
+	last_point_before: TimelineDayPoint | null;
+	/** Nights overlapping the day, each joined from all of its records. */
+	nights: { started_at: string; ended_at: string; asleep_minutes: number }[];
+	/** speaker_mode: 0 ambient, 1 one voice, 2 a conversation, 3 a group. */
+	sessions: { id: string; started_at: string; ended_at: string; speaker_mode: number; content: string | null }[];
+	/** Ten-minute bins, stamped at their middle. */
+	steps: { at: string; steps: number }[];
+	step_scale: number;
+	calendar: {
+		id: string;
+		title: string;
+		started_at: string;
+		ended_at: string;
+		is_all_day: boolean;
+		calendar_name: string | null;
+		location_name: string | null;
+		status: string | null;
+		response_status: string | null;
+	}[];
 }
 
-/** The server's derived stays, drives, gaps, nights and moments over a day
- *  (`/timeline/derived`, rebuilt from the raw record every 15 minutes). */
-export async function fetchDerived(b: DayBounds): Promise<DerivedWindow> {
-	const q = new URLSearchParams({ start: new Date(b.startMs).toISOString(), end: new Date(b.endMs).toISOString() });
-	return apiGet<DerivedWindow>(`/timeline/derived?${q}`);
-}
-
-/** Every transcription window over a day (`/timeline/voice`): the inspector's
- *  conversations and transcripts, and whether the mic was on. */
-export async function fetchVoice(b: DayBounds): Promise<VoiceWindow[]> {
-	const q = new URLSearchParams({ start: new Date(b.startMs).toISOString(), end: new Date(b.endMs).toISOString() });
-	return apiGet<VoiceWindow[]>(`/timeline/voice?${q}`);
-}
-
-/** The scrubber's Body, Calendar and Finance lanes over a window
- *  (`/timeline/lanes`). */
-export async function fetchLanes(b: DayBounds): Promise<LaneWindow> {
-	const q = new URLSearchParams({ start: new Date(b.startMs).toISOString(), end: new Date(b.endMs).toISOString() });
-	return apiGet<LaneWindow>(`/timeline/lanes?${q}`);
+export async function fetchDay(slug: string): Promise<TimelineDay> {
+	return apiGet<TimelineDay>(`/timeline/days/${slug}`);
 }
 
 /** The days in `from`..`to` (YYYY-MM-DD, both included) with a location
- *  fix or a transcription window, each read over its own local day
+ *  fix or a recorded conversation, each read over its own local day
  *  (`/timeline/recorded`). */
 export async function fetchRecorded(from: string, to: string): Promise<string[]> {
 	return apiGet<string[]>(`/timeline/recorded?${new URLSearchParams({ from, to })}`);
@@ -71,26 +77,6 @@ export function stepDay(slug: string, n: number): string {
 	const [y, m, d] = slug.split("-").map(Number);
 	const t = new Date(y, m - 1, d + n);
 	return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
-}
-
-/** The endpoint's UTC dates covering [startMs, endMs), and the day before. */
-export function utcDatesFor(startMs: number, endMs: number): string[] {
-	const dates = new Set([startMs - DAY_MS, startMs, endMs - 1].map((t) => new Date(t).toISOString().slice(0, 10)));
-	return [...dates].sort();
-}
-
-/** Every raw fix and visit across the window around a local day, and the last
- *  fix before the window, for a day that has none of its own. */
-export async function fetchDayWindow(
-	startMs: number,
-	endMs: number,
-): Promise<{ points: TimelineDayPoint[]; visits: TimelineDayLocationChunk[]; before: TimelineDayPoint | null }> {
-	const days = await Promise.all(utcDatesFor(startMs, endMs).map((d) => apiGet<TimelineDayView>(`/timeline/day/${d}`)));
-	return {
-		points: days.flatMap((v) => v.points ?? []),
-		visits: days.flatMap((v) => v.chunks ?? []).filter((c): c is TimelineDayLocationChunk => c.type === "location"),
-		before: days[0]?.last_point_before ?? null,
-	};
 }
 
 /** An instant on the day's own clock: "6:00 PM" on the same day, "Jun 3 ·
