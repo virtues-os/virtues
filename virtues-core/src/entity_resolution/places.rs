@@ -37,7 +37,12 @@ use crate::ids;
 /// Spatial clustering parameters
 const SPATIAL_EPSILON_METERS: f64 = 100.0; // Max distance within a cluster
 const MIN_VISIT_DURATION_MINUTES: i64 = 10; // Minimum visit duration (filters traffic/parking noise)
-const TEMPORAL_GAP_MINUTES: i64 = 5; // Stored stays this close in time and space are one stay
+/// Two stays this close in time are one stay when they also share a spot: the
+/// detector's back-to-back stays under `SPATIAL_EPSILON_METERS` apart (a stay
+/// split by GPS drift), and stored stays under `SAME_STAY_METERS` apart (one
+/// stay seen by two passes). Measured on a rebuild of 339 stays: 41 pairs sat
+/// within 100 m and 10 minutes of each other, the same stay cut in two.
+const SPLIT_STAY_GAP_MINUTES: i64 = 10;
 /// Longest silence between two fixes at the same spot that still counts as
 /// staying put. A still phone reports about every 15 minutes, so this is three
 /// missed reports: past it, the phone stopped and the gap is unknown.
@@ -45,7 +50,7 @@ const MAX_QUIET_GAP_MINUTES: i64 = 45;
 /// Stamped into every visit's metadata. Visits written by an older stay
 /// detector carry a lower number (or none), and `rebuild_visits` recomputes
 /// them all from the stored fixes. Bump it whenever the detector changes.
-const TIMELINE_VERSION: i64 = 2;
+const TIMELINE_VERSION: i64 = 3;
 const MAX_HORIZONTAL_ACCURACY: f64 = 100.0; // Filter low-quality points
 const DEFAULT_PLACE_RADIUS_METERS: f64 = 100.0; // Default radius for new places
 
@@ -521,7 +526,7 @@ fn detect_stays(points: &[LocationPoint]) -> Result<Vec<Visit>> {
         haversine_distance(lat, lon, p.latitude, p.longitude) <= SPATIAL_EPSILON_METERS
     };
 
-    let mut stays = Vec::new();
+    let mut stays: Vec<Visit> = Vec::new();
     let mut i = 0;
     while i < points.len() {
         let mut members = vec![points[i].clone()];
@@ -552,13 +557,31 @@ fn detect_stays(points: &[LocationPoint]) -> Result<Vec<Visit>> {
 
         let span = members[members.len() - 1].timestamp - members[0].timestamp;
         if members.len() >= 2 && span.num_minutes() >= MIN_VISIT_DURATION_MINUTES {
-            stays.push(create_visit_from_cluster(members)?);
+            let stay = create_visit_from_cluster(members)?;
+            // GPS drift can end a stay on two far fixes in a row and start the
+            // next one moments later on the same spot: one stay, cut in two.
+            match stays.last_mut() {
+                Some(prev) if is_split(prev, &stay) => {
+                    let mut joined = std::mem::take(&mut prev.points);
+                    joined.extend(stay.points);
+                    *prev = create_visit_from_cluster(joined)?;
+                }
+                _ => stays.push(stay),
+            }
             i = j;
         } else {
             i += 1;
         }
     }
     Ok(stays)
+}
+
+/// Whether `next` resumes `prev`: it starts within `SPLIT_STAY_GAP_MINUTES` of
+/// `prev` ending, and at the same spot.
+fn is_split(prev: &Visit, next: &Visit) -> bool {
+    next.start_time - prev.end_time <= chrono::Duration::minutes(SPLIT_STAY_GAP_MINUTES)
+        && haversine_distance(prev.centroid_lat, prev.centroid_lon, next.centroid_lat, next.centroid_lon)
+            <= SPATIAL_EPSILON_METERS
 }
 
 /// Create a visit from a cluster of points
@@ -671,7 +694,7 @@ fn plan_visit_write(
     centroid: (f64, f64),
     stored: &[StoredVisit],
 ) -> VisitWrite {
-    let gap = chrono::Duration::minutes(TEMPORAL_GAP_MINUTES);
+    let gap = chrono::Duration::minutes(SPLIT_STAY_GAP_MINUTES);
     let (mut same, mut rivals): (Vec<&StoredVisit>, Vec<&StoredVisit>) = (Vec::new(), Vec::new());
     for s in stored {
         let meters = haversine_distance(centroid.0, centroid.1, s.latitude, s.longitude);
@@ -741,7 +764,7 @@ fn longest_uncovered(
 /// collapses it, within the window the pass covers.
 async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> {
     let pool = db.pool();
-    let gap = chrono::Duration::minutes(TEMPORAL_GAP_MINUTES);
+    let gap = chrono::Duration::minutes(SPLIT_STAY_GAP_MINUTES);
 
     let stored: Vec<StoredVisit> = sqlx::query_as::<_, (String, DateTime<Utc>, DateTime<Utc>, f64, f64)>(
         r#"
@@ -802,8 +825,6 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
         "timeline": TIMELINE_VERSION,
     });
     let duration_minutes = (span.1 - span.0).num_minutes() as i32;
-
-    let place_id = resolve_or_create_place(db, visit.centroid_lat, visit.centroid_lon).await?;
 
     let visit_id: String = match keeper {
         Some(keeper) => {
@@ -867,6 +888,22 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     // the place it was first resolved to; a second place ref would make one
     // visit two places. The row's own id, never `candidate_id`: on conflict the
     // row keeps its ORIGINAL id, and binding the drifted one orphaned refs.
+    //
+    // The place is resolved only once the visit is known to need one. Resolving
+    // first created a place wherever an extended stay's centroid drifted, and
+    // the guard below then declined to link it: every such pass left an empty
+    // "Location …" place behind.
+    let placed: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM wiki_refs \
+           WHERE source_table = 'data_location_visit' AND source_id = $1 AND entity_type = 'place')",
+    )
+    .bind(&visit_id)
+    .fetch_one(pool)
+    .await?;
+    if placed {
+        return Ok(());
+    }
+    let place_id = resolve_or_create_place(db, visit.centroid_lat, visit.centroid_lon).await?;
     let ref_id = ids::generate_id("eref", &[&visit_id, &place_id, "location"]);
     sqlx::query(
         "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at) \
@@ -1101,12 +1138,14 @@ pub async fn rebuild_visits(db: &Database) -> Result<usize> {
 
     let unlinked = keep_one_place_per_visit(db).await?;
     let linked = link_unplaced_visits(db).await?;
+    let emptied = delete_empty_places(db).await?;
     tracing::info!(
         before,
         after = stays.len(),
         kept = kept.len(),
         unlinked,
         linked,
+        emptied,
         "rebuilt visits from stored fixes"
     );
     Ok(stays.len())
@@ -1139,6 +1178,38 @@ async fn keep_one_place_per_visit(db: &Database) -> Result<u64> {
             WHERE r2.source_table = 'data_location_visit' AND r2.entity_type = 'place'
         ) ranked
         WHERE r.id = ranked.id AND ranked.rank > 1
+        "#,
+    )
+    .execute(db.pool())
+    .await?
+    .rows_affected();
+    Ok(removed)
+}
+
+/// Delete the places the resolver made that nothing points at any more.
+///
+/// A place is created for a stay, and a rebuild that joins or moves stays
+/// leaves some places with none: 23 of 75 on a rebuilt copy, each a
+/// "Location <lat>, <lon>" with no visit, no article and nothing a person did
+/// to it. Only those go. A place is kept while anything refers to it or the
+/// person has touched it: a ref from any source, a name of their own, the
+/// audio mute, a pin, a project, a note, an article, a rule, a chat's edit
+/// grant, or being home.
+async fn delete_empty_places(db: &Database) -> Result<u64> {
+    let removed = sqlx::query(
+        r#"
+        DELETE FROM wiki_places p
+        WHERE p.name LIKE 'Location %'
+          AND p.metadata->>'source' IS DISTINCT FROM 'user'
+          AND NOT COALESCE(p.is_audio_muted, false)
+          AND NOT EXISTS (SELECT 1 FROM wiki_refs r WHERE r.entity_id = p.id)
+          AND NOT EXISTS (SELECT 1 FROM app_user_profile u WHERE u.home_place_id = p.id)
+          AND NOT EXISTS (SELECT 1 FROM app_pins x WHERE x.url = '/place/' || p.id)
+          AND NOT EXISTS (SELECT 1 FROM app_project_items x WHERE x.url = '/place/' || p.id)
+          AND NOT EXISTS (SELECT 1 FROM wiki_notes n WHERE n.subject_type = 'place' AND n.subject_id = p.id)
+          AND NOT EXISTS (SELECT 1 FROM wiki_articles a WHERE a.subject_type = 'place' AND a.subject_id = p.id)
+          AND NOT EXISTS (SELECT 1 FROM wiki_rules w WHERE w.subject_type = 'place' AND w.subject_id = p.id)
+          AND NOT EXISTS (SELECT 1 FROM app_chat_edit_permissions c WHERE c.entity_id = p.id)
         "#,
     )
     .execute(db.pool())
@@ -1418,6 +1489,31 @@ mod tests {
         assert_eq!(stays[1].start_time, at(20));
     }
 
+    /// Two far fixes in a row end a stay; when the phone is back on the same
+    /// spot minutes later it was GPS drift, and the two halves are one stay.
+    #[test]
+    fn a_stay_split_by_drift_is_one_stay() {
+        let mut points: Vec<LocationPoint> = (0..20).map(|m| point(m, HERE.0, HERE.1)).collect();
+        points.push(point(20, FAR.0, FAR.1));
+        points.push(point(21, FAR.0, FAR.1));
+        points.extend((25..45).map(|m| point(m, NEAR.0, NEAR.1)));
+        let stays = detect_stays(&points).unwrap();
+        assert_eq!(stays.len(), 1);
+        assert_eq!((stays[0].start_time, stays[0].end_time), (at(0), at(44)));
+    }
+
+    /// A real trip and a return stays two stays: the gap is past
+    /// `SPLIT_STAY_GAP_MINUTES`.
+    #[test]
+    fn leaving_and_coming_back_later_is_two_stays() {
+        let mut points: Vec<LocationPoint> = (0..20).map(|m| point(m, HERE.0, HERE.1)).collect();
+        points.extend((21..25).map(|m| point(m, FAR.0, FAR.1)));
+        let back = 20 + SPLIT_STAY_GAP_MINUTES + 5;
+        points.extend((back..back + 20).map(|m| point(m, HERE.0, HERE.1)));
+        let stays = detect_stays(&points).unwrap();
+        assert_eq!(stays.len(), 2);
+    }
+
     /// Fixes alternating between two spots never yield two stays over the
     /// same minutes.
     #[test]
@@ -1498,5 +1594,48 @@ mod tests {
         let id2 = generate_visit_id(lat, lon, time);
 
         assert_eq!(id1, id2);
+    }
+
+    /// The rebuild deletes a place only when nothing points at it and the
+    /// person never touched it.
+    #[sqlx::test]
+    async fn only_untouched_empty_places_are_deleted(pool: sqlx::PgPool) {
+        let place = |id: &str, name: &str| {
+            let (id, name) = (id.to_string(), name.to_string());
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO wiki_places (id, name, latitude, longitude, radius_m) VALUES ($1, $2, 30.0, -97.0, 100)",
+                )
+                .bind(id)
+                .bind(name)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        place("place_empty", "Location 30.0000, -97.0000").await;
+        place("place_visited", "Location 30.0001, -97.0000").await;
+        place("place_pinned", "Location 30.0002, -97.0000").await;
+        place("place_named", "Corner bakery").await;
+        sqlx::query(
+            "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id) \
+             VALUES ('r_1', 'place', 'place_visited', 'data_location_visit', 'v_1')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO app_pins (id, url) VALUES ('pin_1', '/place/place_pinned')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let db = Database::from_pool(pool.clone());
+        assert_eq!(delete_empty_places(&db).await.unwrap(), 1);
+        let left: Vec<String> = sqlx::query_scalar("SELECT id FROM wiki_places ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, ["place_named", "place_pinned", "place_visited"]);
     }
 }
