@@ -59,6 +59,8 @@ export interface WikiPlaceApi {
 	last_seen: string | null;
 	/** The phone keeps no audio while you are inside this place. */
 	is_audio_muted?: boolean;
+	/** Write-only: the update takes it, the page response does not carry it. */
+	radius_m?: number;
 	created_at: string;
 	updated_at: string;
 	/** Is the record keeping this article up to date? Off unless asked. */

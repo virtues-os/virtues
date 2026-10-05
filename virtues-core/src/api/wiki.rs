@@ -204,6 +204,8 @@ pub struct UpdateWikiPlaceRequest {
     pub address: Option<String>,
     /// Mute the phone's audio collector inside this place.
     pub is_audio_muted: Option<bool>,
+    /// The place's radius in meters, set from the phone's muted-places list.
+    pub radius_m: Option<f64>,
 }
 
 /// Request to update an organization wiki page
@@ -552,11 +554,23 @@ pub async fn list_wiki_places(pool: &PgPool) -> Result<Vec<WikiPlaceListItem>> {
 }
 
 /// Update a place wiki content
+/// Bounds on a radius the owner sets: tighter than GPS jitter is meaningless,
+/// wider than a neighborhood stops being a place.
+const PLACE_RADIUS_MIN_M: f64 = 50.0;
+const PLACE_RADIUS_MAX_M: f64 = 2000.0;
+
 pub async fn update_wiki_place(
     pool: &PgPool,
     id: String,
     req: UpdateWikiPlaceRequest,
 ) -> Result<WikiPlace> {
+    if let Some(r) = req.radius_m {
+        if !r.is_finite() || !(PLACE_RADIUS_MIN_M..=PLACE_RADIUS_MAX_M).contains(&r) {
+            return Err(Error::InvalidInput(format!(
+                "radius_m must be between {PLACE_RADIUS_MIN_M} and {PLACE_RADIUS_MAX_M}"
+            )));
+        }
+    }
     sqlx::query!(
         r#"
         UPDATE wiki_places
@@ -581,6 +595,14 @@ pub async fn update_wiki_place(
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update place: {}", e)))?;
+    if let Some(r) = req.radius_m {
+        sqlx::query("UPDATE wiki_places SET radius_m = $2 WHERE id = $1")
+            .bind(&id)
+            .bind(r)
+            .execute(pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to update place radius: {}", e)))?;
+    }
     if req.name.is_some() {
         crate::api::entities::mark_place_named(pool, &id).await?;
     }

@@ -24,7 +24,13 @@
 	import { onMount } from "svelte";
 	import MobileStreamPage from "./MobileStreamPage.svelte";
 	import MobileAudioSettings from "./MobileAudioSettings.svelte";
-	import type { AudioStatus, OutboxStats, StreamKey, StreamStatus } from "$lib/mobile/deviceTypes";
+	import {
+		audioState,
+		type AudioStatus,
+		type OutboxStats,
+		type StreamKey,
+		type StreamStatus,
+	} from "$lib/mobile/deviceTypes";
 
 	interface ProbeRow {
 		ts: string;
@@ -362,6 +368,25 @@
 	/// handler that calls disable is exactly the re-evict this guards.
 	const audioOn = $derived(!!(audio?.recording || audio?.pausedReason));
 
+	/// What the mic is doing right now. `now` ticks with the poll below so an
+	/// "until 7:00 AM" line and a crossed boundary both stay current.
+	let now = $state(new Date());
+	const audioNow = $derived(audioState(audio, now));
+
+	/// The mic is always on, so the page's job is to say whether anything is
+	/// being kept this minute. Re-read the plugin while the Audio page is open.
+	$effect(() => {
+		if (open !== "audio") return;
+		const tick = async () => {
+			if (document.visibilityState !== "visible") return;
+			const s = await invoke<AudioStatus>("plugin:audio|status").catch(() => null);
+			if (s) audio = s;
+			now = new Date();
+		};
+		const id = setInterval(tick, 3000);
+		return () => clearInterval(id);
+	});
+
 	async function toggleAudio() {
 		togglingAudio = true;
 		error = null;
@@ -551,12 +576,8 @@
 			case "finance":
 				return finance?.authorized ? `On${syncWord(financeSync)}` : meta.what;
 			case "audio":
-				if (audio?.mutedBy === "schedule") return "On · not recording now (hours)";
-				if (audio?.mutedBy === "place") return "On · not recording here";
-				if (audio?.recording) return `Recording${syncWord(audioSync)}`;
-				if (audio?.pausedReason === "carplay") return "Paused · CarPlay";
-				if (audio?.authorized) return "Paused";
-				return meta.what;
+				if (!audioNow) return meta.what;
+				return audioNow.live ? `${audioNow.label}${syncWord(audioSync)}` : audioNow.label;
 		}
 	}
 
@@ -755,6 +776,8 @@
 		icon={openMeta.icon}
 		status={streamStatus(open)}
 		on={streamOn(open)}
+		live={open === "audio" && audio?.authorized ? !!audioNow?.live : null}
+		statusNote={open === "audio" ? audioNow?.explain : null}
 		description={openMeta.description}
 		note={openMeta.note}
 		action={streamAction(open)}
@@ -771,8 +794,8 @@
 				<div class="consent">
 					<p>
 						The microphone stays on while your phone is with you. It records the sound of
-						your day, and everyone in the room. Recordings and transcripts go to your
-						server and nowhere else.
+						your day, and everyone in the room. Your server has a cloud AI model
+						transcribe the recordings and keeps the transcripts in your record.
 					</p>
 					<p>
 						Recording hours can silence any part of the week, and a place can be marked
