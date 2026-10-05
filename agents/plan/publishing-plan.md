@@ -1,6 +1,6 @@
 # Publishing: virtues introduces, the box serves
 
-> **STATUS 2026-10-05: direction rewritten; spike step 1 green on a laptop.** A page is
+> **STATUS 2026-10-05: spike green (laptop and iOS Safari); wave 1 started.** A page is
 > served **by the box**. A visitor's browser reaches it as an iroh endpoint
 > (iroh compiled to WebAssembly) through the relay we already run, encrypted
 > end to end; virtues introduces the two and, once a direct transport for
@@ -282,41 +282,75 @@ key. With a door, anyone on the internet can send bytes to code on the box.
 - **The owner's ambient `gh` login on the box.** Every repo, held by a login
   the service user cannot see, and absent on every other box.
 
-## The work, in order
+## The work, in waves
 
-1. **Spike: a browser reaches a box as an iroh endpoint.** A native endpoint
-   serving one HTML file on a spike ALPN, a WebAssembly loader that dials it
-   by EndpointId through `relay.virtues.ch`, measured from a laptop and from
-   a phone on cellular. Questions: loader size, time to first paint, relay
-   behavior, iOS Safari, and whether `iroh-webrtc-transport` gets a direct
-   path to the spare box (`ssh dragon2`, never the main box).
-   **First results 2026-10-05** (a throwaway spike outside the repo, laptop
-   Chromium): the spare Q6A behind office NAT with client isolation loaded
-   5/5, first paint ~0.57 s (connect ~0.3 s, fetch ~0.15 s); a 1 MB page
-   moved at ~7.5 Mbit/s through the relay. The loader is 0.95 MB gzipped
-   before `wasm-opt`. A link to a key nobody holds never connects. **A
-   stopped box makes `connect` hang**: the relay does not report an absent
-   peer, so the loader owns a timeout and the "offline" message. iOS Safari
-   (Simulator, iOS 26.5, WebKit) loads it too: first paint ~0.73 s. Still
-   open: a real phone on cellular, a direct path.
-2. **The publication primitive and the freezer**: `app_publications`
-   (claim a migration number first), face → one self-contained file, the
-   box-only lint `publish_to_github` already has.
-3. **The publish ALPN and the door process** (unit, user, sandbox, bundle
-   directory), never touching the allowlisted app path.
-4. **The loader**, published with its hash.
-5. **The share sheet and link management** in the app, with "what leaves".
-6. **Fix the origin bug** so existing page shares work on the LAN meanwhile.
-7. **Direct transport** once WebRTC or WebTransport for iroh is mature.
-8. **Live pages**, then **guest writes** once guest-input marking exists.
-9. **Box to box**: a link opened by another virtues owner goes app to box
-   over native iroh; `iroh-docs` is the candidate for shared documents.
-10. **Destinations**: own-domain Funnel, the GitHub App, S3. Retire the
-    pasted-token source.
+Each wave is usable on its own and builds on the last without redoing it.
 
-Paged print (`@page`, break control) rides on the freezer whenever it is
-picked up; PDF is the browser's print dialog, never a headless browser on the
-box.
+### Wave 1: share anything, kept current
+
+| Piece | What it takes | Difficulty |
+|---|---|---|
+| **Core sharing** | `app_publications`, the freezer, the door, the loader with its offline timeout, the Share sheet with "what leaves", update and revoke | Medium: the largest chunk, no unknowns left after the spike |
+| **Live pages** | queries approved on the Share sheet, stored with the publication; the door asks the core for those and only those; the page keeps calling `virtues.query` as faces already do | Easy to medium: the review UI is the work, not the plumbing |
+| **Preview cards** | opt-in title and one image; a small service at the loader's domain fetches them from the box when a link unfurler asks, stores nothing | Easy |
+| **Box-to-box viewing** | another owner's app dials the door over native iroh and renders the page, no loader | Trivial |
+
+They ship together because they share one rule: the door serves only what
+the owner approved, whether a frozen file, a declared query or a card, and
+the Share sheet shows all three before anything leaves.
+
+**The door is its own iroh endpoint.** It holds its own key, homes on the
+relay itself, and the link names *its* EndpointId, not the box's. Public
+traffic therefore never reaches the core process: the core writes bundles
+into a directory the door reads, and (for live pages) answers the door's
+declared-query requests on a local socket. A compromise of the door cannot
+speak as the box, because it never held the box's key.
+
+Wire protocol on `virtues/publish/1`: one bi-stream per request, a JSON
+request line (`{"op":"page","token":…}`, later `"query"` and `"card"`), a
+one-line JSON status header, then the body.
+
+### Wave 2: simple collaboration
+
+Writes the page declares at publish time (a checklist tick, an RSVP, a vote,
+a comment), approved on the Share sheet like queries in reverse, through an
+**edit link**. Guest rows are marked as guest input so the box's AI reads
+them as data, never as instructions; open viewers get updates pushed.
+Medium.
+
+### Wave 3: reach and speed
+
+- **Own domain** (`trip.yourname.com`, no JavaScript, real previews and
+  search): an SNI router beside the relay, a cert on the box via TLS-ALPN-01
+  through the passthrough (the owner adds one DNS record), the door serving
+  plain HTTPS. Medium to hard, mostly operational care.
+- **Direct connections**: the WebRTC custom transport for iroh, once the
+  external crates mature. Medium to hard; can wait.
+
+### Wave 4: full co-editing and box-to-box sync
+
+Two people editing one document live, and two boxes keeping a shared project
+in sync (`iroh-docs`, or the page editor's existing CRDT). Hard. A privacy
+fact the sheet must state: data synced to another box cannot be pulled back
+by revoking.
+
+### Also on the way
+
+- **Fix the origin bug** so existing page shares work on the LAN meanwhile.
+- **GitHub App and S3 destinations**; retire the pasted-token source.
+- **Paged print** (`@page`, break control) rides on the freezer; PDF is the
+  browser's print dialog, never a headless browser on the box.
+
+### Spike results, 2026-10-05
+
+A throwaway spike outside the repo, laptop Chromium: the spare Q6A behind
+office NAT with client isolation loaded 5/5, first paint ~0.57 s (connect
+~0.3 s, fetch ~0.15 s); a 1 MB page moved at ~7.5 Mbit/s through the relay.
+iOS Safari (Simulator, iOS 26.5) loads it too, first paint ~0.73 s. The
+loader is 0.95 MB gzipped before `wasm-opt`. A link to a key nobody holds
+never connects. **A stopped box makes `connect` hang**: the relay does not
+report an absent peer, so the loader owns a timeout and the "offline"
+message. Still open: a real phone on cellular.
 
 ## Open questions
 
