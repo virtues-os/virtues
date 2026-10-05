@@ -280,6 +280,38 @@ pub fn is_page_document(resolved: &str) -> bool {
     resolved == "index.html" || resolved == "200.html"
 }
 
+/// The `Content-Type` for a file served from an overlay bundle, by extension.
+///
+/// Not borrowed from the baked build's file at the same path: a newer build's
+/// chunks have new hashed names, so most of its files have no baked twin, and
+/// WebKit refuses to run a module script served as anything but JavaScript.
+/// Borrowing with a `text/html` default made every update that changed code
+/// boot to a white page.
+pub fn content_type(resolved: &str) -> &'static str {
+    let ext = resolved.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
+    match ext.as_deref() {
+        Some("html") => "text/html",
+        Some("js" | "mjs") => "text/javascript",
+        Some("css") => "text/css",
+        Some("json") => "application/json",
+        Some("webmanifest") => "application/manifest+json",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        Some("ico") => "image/x-icon",
+        Some("woff2") => "font/woff2",
+        Some("woff") => "font/woff",
+        Some("ttf") => "font/ttf",
+        Some("wasm") => "application/wasm",
+        Some("mp3") => "audio/mpeg",
+        Some("mp4") => "video/mp4",
+        Some("txt") => "text/plain",
+        _ => "application/octet-stream",
+    }
+}
+
 /// Does this request start a page load? Only a navigation does: it asks for
 /// the page document and accepts HTML (`accept` is the request's `Accept`
 /// header). Every extension-less path resolves to `200.html`, so a `fetch` or
@@ -1564,6 +1596,17 @@ mod tests {
         assert!(!is_backend_path("/"));
         assert!(!is_backend_path("/setup"));
         assert!(!is_backend_path("/_app/immutable/a.js"));
+    }
+
+    #[test]
+    fn overlay_files_are_typed_by_extension() {
+        // A chunk the baked build has never seen must still run as a module.
+        assert_eq!(content_type("_app/immutable/chunks/pPhroByK.js"), "text/javascript");
+        assert_eq!(content_type("_app/immutable/assets/0.Ab.css"), "text/css");
+        assert_eq!(content_type("index.html"), "text/html");
+        assert_eq!(content_type("fonts/EBGaramond-Regular-latin.woff2"), "font/woff2");
+        assert_eq!(content_type("favicon.PNG"), "image/png");
+        assert_eq!(content_type("LICENSE"), "application/octet-stream");
     }
 
     #[test]
