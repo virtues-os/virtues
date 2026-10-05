@@ -434,8 +434,8 @@
 		transition: none;
 	}
 
-	/* The grip: a short pill centred on the line, so the seam reads as
-	   movable before the pointer finds it. Same shape and behaviour as the
+	/* The grip: hidden at rest, then on approach a dot that unfolds into a
+	   short accent pill centred on the line. Same shape and behaviour as the
 	   sidebar seam's grip. */
 	.resize-grip {
 		display: none;
@@ -447,37 +447,29 @@
 		top: 50%;
 		left: 50%;
 		width: 4px;
-		height: 32px;
+		height: 4px;
+		opacity: 0;
 		transform: translate(-50%, -50%);
 		border-radius: 999px;
-		background: var(--color-foreground-subtle);
+		background: var(--color-primary);
 		pointer-events: none;
 		z-index: 1;
-		transition: background-color 120ms var(--ease-premium);
-		animation: grip-unfold 420ms ease-in-out 200ms both;
-	}
-
-	/* Arrives as a dot and unfolds into the pill, once the split has opened. */
-	@keyframes grip-unfold {
-		from {
-			height: 4px;
-		}
-		to {
-			height: 32px;
-		}
+		transition:
+			height 320ms ease-in-out,
+			opacity 120ms ease-in-out;
 	}
 
 	.resize-handle.visible:hover .resize-grip,
 	.resize-handle.visible:focus-visible .resize-grip,
 	.resize-handle.dragging .resize-grip {
-		background: var(--color-primary);
+		height: 32px;
+		opacity: 1;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
 		.resize-handle.visible::before,
 		.resize-handle.visible .resize-grip {
 			transition: none;
-			animation: none;
 		}
 	}
 
