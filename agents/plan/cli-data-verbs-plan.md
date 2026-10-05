@@ -125,7 +125,8 @@ protect anything if the credential cannot go around the CLI.
 | An HTTP port with a token | an internet-facing listener | whatever the token reaches | **rejected**: the box has no internet-facing surface |
 
 **First: `virtues agent-key add <pubkey>`** writes the forced-command line for
-the login user, and `agent-key ls/rm` manage them. The forced command dispatches
+the `virtues-agent` user (slice 4 says why not the login user), and
+`agent-key ls/rm` manage them. The forced command dispatches
 `SSH_ORIGINAL_COMMAND` to the CLI's verbs only (lifecycle verbs like `upgrade`
 or `reset` refused) and passes the key's name to the console door for the
 audit line. Limits: reachable on the LAN or over Tailscale, and only on a box
@@ -188,11 +189,28 @@ which is the boundary that matters. `agent-key` is box-only.
    straight after sees it. A write needs the server running; the error says
    so. No caller field on `ToolContext` was needed: the door the call came
    through says who it is.
-4. **`agent-key`** and the test on the spare box: Claude Code builds three
-   typical applets using only the verbs. **Success, written down before the
-   run: it never needs a manifest field the verbs cannot reach.** Every field
-   it does need is listed, and that list decides how big applets have to be,
-   and whether data triggers and Persona are still wanted.
+4. **`agent-key`.** Built 2026-10-05; the spare-box test below is still to
+   run. The key does not go to the owner's login (a shell) or to `virtues`,
+   which the installer gives passwordless `sudo ALL` and a `nologin` shell (a
+   key to root, and one whose forced command could not run). It goes to its
+   own user, `virtues-agent`: `/bin/sh` (sshd runs a forced command through
+   the user's shell), no sudo, no groups, no database role. `sudo virtues
+   agent-key add <key.pub> --name <n>` creates the user when missing and
+   writes `restrict,command="/usr/local/bin/virtues agent-exec --key <n>"`;
+   `ls` and `rm` touch only lines it wrote. `agent-exec` parses
+   `SSH_ORIGINAL_COMMAND` (never executes it), allows only the data verbs, and
+   since its user has no database, sends every verb, reads included, to the
+   console door over loopback with the key's name in a header; the door logs
+   it as `agent_key`. A folder path is refused there (it names a directory on
+   the box); `applet check -` and `applet put -` take JSON. Tested locally
+   with `SSH_ORIGINAL_COMMAND` set by hand against a scratch server; not yet
+   through a real sshd.
+
+   **The test on the spare box**: Claude Code builds three typical applets
+   using only the verbs. **Success, written down before the run: it never
+   needs a manifest field the verbs cannot reach.** Every field it does need
+   is listed, and that list decides how big applets have to be, and whether
+   data triggers and Persona are still wanted.
 5. **`virtues mcp`** over the same verbs, for agents without a shell.
 6. A manual page (`docs/`) only when slice 3 is in a released box.
 

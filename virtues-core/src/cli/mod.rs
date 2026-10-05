@@ -6,6 +6,7 @@ pub mod channel;
 pub mod backup_volume;
 pub mod volumes;
 pub mod commands;
+pub mod agent_key;
 pub mod configure_inference;
 pub mod data;
 pub mod deprovision;
@@ -81,21 +82,16 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         | Commands::Applet { .. }
         | Commands::Page { .. } => {
             let verbs = data::Verbs::new(virtues.database.pool().clone());
-            let outcome = match command {
-                Commands::Query { sql, limit, out } => verbs.query(sql, limit, out).await,
-                Commands::Search { text, entities, domains, after, before, limit, out } => {
-                    verbs.search(text, entities, domains, after, before, limit, out).await
-                }
-                Commands::Schema { tables, out } => verbs.schema(tables, out).await,
-                Commands::Write { sql, out } => verbs.write(sql, out).await,
-                Commands::Applet { cmd } => verbs.applet(cmd).await,
-                Commands::Page { cmd } => verbs.page(cmd).await,
-                _ => unreachable!(),
-            };
+            let outcome = data::run(&verbs, command).await;
             if let Err(e) = outcome {
                 eprintln!("error: {e}");
                 std::process::exit(1);
             }
+        }
+
+        Commands::AgentKey { .. } | Commands::AgentExec { .. } => {
+            // Handled in main.rs: neither opens the database.
+            unreachable!("agent-key and agent-exec are handled in main.rs");
         }
 
         Commands::Volumes { cmd } => {

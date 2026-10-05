@@ -133,6 +133,8 @@ croner = "2.2"
 # Encryption for credentials
 ring = "0.17"
 base64 = "0.22"
+# Splits an agent key's SSH_ORIGINAL_COMMAND into words (cli/agent_key.rs).
+shlex = "2"
 hex = "0.4"
 
  # HMAC signing for OAuth state tokens

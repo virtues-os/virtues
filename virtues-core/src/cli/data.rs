@@ -21,6 +21,8 @@ use sqlx::PgPool;
 
 use super::types::{AppletCmd, OutputArgs, PageCmd};
 use super::ui;
+use super::types::Commands;
+use crate::server::api::console::AGENT_KEY_HEADER;
 use crate::tools::{ToolContext, ToolExecutor, CLI_TOOLS};
 
 /// The widest a cell may print on a terminal. Piped output is never cut.
@@ -49,21 +51,28 @@ fn failed_status(data: &Value) -> Option<String> {
     })
 }
 
-/// The server on this machine, for the write verbs.
+/// The server on this machine: every write, and every read from an agent key.
 struct Console {
     http: reqwest::Client,
     base: String,
+    /// The agent key this call came in on, for the server's audit line.
+    key: Option<String>,
 }
 
 impl Console {
-    fn new() -> Self {
+    fn new(key: Option<String>) -> Self {
         Self {
             http: reqwest::Client::new(),
             base: format!("http://127.0.0.1:{}", super::types::default_port()),
+            key,
         }
     }
 
     async fn send(&self, req: reqwest::RequestBuilder) -> Result<Value, String> {
+        let req = match &self.key {
+            Some(key) => req.header(AGENT_KEY_HEADER, key),
+            None => req,
+        };
         let resp = req.send().await.map_err(|e| {
             if e.is_connect() {
                 format!(
@@ -102,30 +111,39 @@ impl Console {
 }
 
 pub struct Verbs {
-    exec: ToolExecutor,
-    pool: PgPool,
+    /// Set when this process can open the database (the owner at the box, or
+    /// a dev checkout): reads run here and need no server.
+    local: Option<(ToolExecutor, PgPool)>,
+    console: Console,
 }
 
 impl Verbs {
     pub fn new(pool: PgPool) -> Self {
-        Self { exec: ToolExecutor::without_warmup(pool.clone()), pool }
+        Self { local: Some((ToolExecutor::without_warmup(pool.clone()), pool)), console: Console::new(None) }
     }
 
-    /// Run one allowlisted tool and return its data, or its error as text.
+    /// For an agent key: no database here, so every verb goes to the server.
+    pub fn remote(key: String) -> Self {
+        Self { local: None, console: Console::new(Some(key)) }
+    }
+
+    /// Run one allowlisted read tool and return its data, or its error as text.
     async fn call(&self, tool: &str, args: Value) -> Result<Value, String> {
         if !CLI_TOOLS.contains(&tool) {
             return Err(format!("{tool} is not available to the CLI"));
         }
-        let result = self
-            .exec
-            .execute(tool, args, &ToolContext::default())
-            .await
-            .map_err(|e| e.to_string())?;
+        let Some((exec, _)) = &self.local else {
+            return self.console.tool(tool, args).await;
+        };
+        let result = exec.execute(tool, args, &ToolContext::default()).await.map_err(|e| e.to_string())?;
         if !result.success {
             return Err(match result.error {
                 Some(message) => message,
                 None => format!("{tool} failed"),
             });
+        }
+        if let Some(err) = failed_status(&result.data) {
+            return Err(err);
         }
         Ok(result.data)
     }
@@ -257,7 +275,7 @@ impl Verbs {
         } else {
             sql
         };
-        let data = Console::new().tool("sql_write", json!({ "sql": sql })).await?;
+        let data = self.console.tool("sql_write", json!({ "sql": sql })).await?;
         if out.json {
             return print_json(&data);
         }
@@ -276,7 +294,7 @@ impl Verbs {
     }
 
     async fn switch(&self, id: &str, on: bool) -> Result<(), String> {
-        Console::new().set_enabled(id, on).await?;
+        self.console.set_enabled(id, on).await?;
         if ui::tty() {
             ui::ok(&format!("{id} is {}", if on { "on" } else { "off" }));
         }
@@ -290,7 +308,10 @@ impl Verbs {
             let args: Value = serde_json::from_str(&text).map_err(|e| format!("stdin is not JSON: {e}"))?;
             return Ok((args, Vec::new()));
         }
-        folder_args(&self.pool, std::path::Path::new(path)).await
+        let Some((_, pool)) = &self.local else {
+            return Err("an applet folder is read on this machine; send its JSON on stdin with `-`".into());
+        };
+        folder_args(pool, std::path::Path::new(path)).await
     }
 
     pub async fn applet(&self, cmd: AppletCmd) -> Result<(), String> {
@@ -353,7 +374,7 @@ impl Verbs {
                     }
                     args["limits"]["max_llm_cost_per_day"] = json!(DEFAULT_MAX_LLM_COST_PER_DAY);
                 }
-                let console = Console::new();
+                let console = &self.console;
                 let data = console.tool("setup_applet", args).await?;
                 if data["status"] == "check_failed" {
                     let findings = array(&data, "findings");
@@ -386,7 +407,7 @@ impl Verbs {
                 if let Some(d) = date {
                     args["date"] = json!(d);
                 }
-                let data = Console::new().tool("run_applet", args).await?;
+                let data = self.console.tool("run_applet", args).await?;
                 if out.json {
                     return print_json(&data);
                 }
@@ -434,7 +455,7 @@ impl Verbs {
                         args["content"] = json!(body);
                     }
                 }
-                let data = Console::new().tool("create_page", args).await?;
+                let data = self.console.tool("create_page", args).await?;
                 if out.json {
                     return print_json(&data);
                 }
@@ -447,7 +468,7 @@ impl Verbs {
                 } else {
                     replace
                 };
-                let data = Console::new()
+                let data = self.console
                     .tool("edit_page", json!({ "page_id": id, "find": find, "replace": replace }))
                     .await?;
                 if out.json {
@@ -633,4 +654,19 @@ fn print_json(data: &Value) -> Result<(), String> {
     let text = if ui::tty() { serde_json::to_string_pretty(data) } else { serde_json::to_string(data) };
     println!("{}", text.map_err(|e| e.to_string())?);
     Ok(())
+}
+
+/// Run one data verb. The one dispatch for the owner's CLI and an agent key.
+pub async fn run(verbs: &Verbs, command: Commands) -> Result<(), String> {
+    match command {
+        Commands::Query { sql, limit, out } => verbs.query(sql, limit, out).await,
+        Commands::Search { text, entities, domains, after, before, limit, out } => {
+            verbs.search(text, entities, domains, after, before, limit, out).await
+        }
+        Commands::Schema { tables, out } => verbs.schema(tables, out).await,
+        Commands::Write { sql, out } => verbs.write(sql, out).await,
+        Commands::Applet { cmd } => verbs.applet(cmd).await,
+        Commands::Page { cmd } => verbs.page(cmd).await,
+        _ => Err("not a data verb".into()),
+    }
 }
