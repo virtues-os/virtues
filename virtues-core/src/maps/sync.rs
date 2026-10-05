@@ -230,6 +230,11 @@ fn is_current(manifest: &Manifest, dir: &Path, f: &IndexFile, build: &str) -> bo
     if *held_sha == f.sha256 {
         return true;
     }
+    // An older fonts archive that never unpacked serves nothing, so the
+    // refresh window must not keep it: the newer build's archive may unpack.
+    if f.tier == "assets" && !dir.join("assets").exists() {
+        return false;
+    }
     match (build_date(held_build), build_date(build)) {
         (Some(held), Some(now)) => (now - held).num_days() < REFRESH_AFTER_DAYS,
         _ => false,
@@ -579,6 +584,20 @@ mod tests {
         let mut n: Vec<&str> = picked.iter().map(|f| f.name.as_str()).collect();
         n.sort_unstable();
         n
+    }
+
+    #[test]
+    fn an_older_fonts_archive_that_never_unpacked_is_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("assets.tar"), b"old").unwrap();
+        let mut manifest = Manifest::default();
+        manifest.files.insert("assets.tar".into(), ("20260928".into(), "old".into()));
+        let f = file("assets.tar", "assets", 0, 0, 0, 1);
+        // Four days newer is inside the refresh window, but nothing unpacked.
+        assert!(!is_current(&manifest, dir.path(), &f, "20261002"));
+        // Once the fonts are on disk, the window applies as to any other file.
+        std::fs::create_dir(dir.path().join("assets")).unwrap();
+        assert!(is_current(&manifest, dir.path(), &f, "20261002"));
     }
 
     #[test]
