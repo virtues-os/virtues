@@ -33,8 +33,6 @@ fi
 pnpm build
 rm -rf "$out"
 cp -R build "$out"
-# SvelteKit's SPA fallback, answered for "/" too.
-cp "$out/200.html" "$out/index.html"
 # Precompressed siblings are for the server's static files, not this copy.
 find "$out" -name '*.gz' -delete
 # The connect page and its assets, which main.rs still opens for the

@@ -3,7 +3,7 @@
   "identifier": "com.virtues.app",
   "version": "1.2.19",
   "build": {
-    "beforeBuildCommand": "pnpm build && cp build/200.html build/index.html && find build -name '*.gz' -delete",
+    "beforeBuildCommand": "pnpm build && find build -name '*.gz' -delete",
     "frontendDist": "../build"
   },
   "bundle": {
