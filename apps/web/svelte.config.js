@@ -1,5 +1,26 @@
 import adapterStatic from '@sveltejs/adapter-static';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+import { execFileSync } from 'node:child_process';
+
+/**
+ * The build's version name, which SvelteKit writes into `_app/version.json`
+ * and the client bundle. Its default is `Date.now()`, which makes two builds
+ * of one commit differ, and so their bundle `contentHash` differs and every
+ * client re-downloads a UI it already has. The commit is the same for every
+ * build of it: GIT_COMMIT where a release script sets it, else git, else
+ * `dev` outside a checkout.
+ */
+function versionName() {
+	if (process.env.GIT_COMMIT) return process.env.GIT_COMMIT;
+	try {
+		return execFileSync('git', ['rev-parse', 'HEAD'], {
+			encoding: 'utf8',
+			stdio: ['ignore', 'pipe', 'ignore']
+		}).trim();
+	} catch {
+		return 'dev';
+	}
+}
 
 // Cosmetic compiler warnings we don't want flooding `make dev`. These are
 // style/a11y nags, not correctness issues — kept out of the dev console so the
@@ -34,7 +55,8 @@ const config = {
 			fallback: '200.html', // SPA fallback for client-side routing
 			precompress: false,
 			strict: true
-		})
+		}),
+		version: { name: versionName() }
 		// No CSRF config needed - static SPA has no server-side form handling
 	}
 };

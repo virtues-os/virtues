@@ -1,9 +1,11 @@
 # SPA delivery: over-the-air UI for the phone
 
-Written 2026-09-29. Built August to September 2026. The mobile app runs a UI
-bundle baked into its binary and upgrades it over the air from the box it is
-paired with, forward only, with rollback on a failed boot. The Mac half (the
-Mac taking its own copy of the SPA, and offline) is not built and is owned by
+Written 2026-09-29, corrected 2026-10-05. Built August to September 2026. The
+mobile app runs a UI bundle baked into its binary and is built to upgrade it
+over the air from the box it is paired with, forward only, with rollback on a
+failed boot. **No device ever completed that loop before 2026-10-05**: see
+"It never worked end to end" below. The Mac half (the Mac taking its own copy
+of the SPA) is built on `wave`, unreleased, and owned by
 `agents/plan/local-ui-plan.md`.
 
 The code:
@@ -58,23 +60,29 @@ returns, is a bundle declaring a minimum *box* version, mirroring
    `shellSupports()` in `bridge.ts`, which features use to degrade
    deliberately instead of failing inside an unknown command. This defect was
    live before OTA existed: the Mac already rendered box-served JS against its
-   own binary with no negotiation. `minShellVersion` stays at 1 because every
-   command added so far is called best-effort, and raising it strands every
-   client that has not updated its app.
+   own binary with no negotiation. `minShellVersion` is 9: no shell below
+   surface 9 can run a box bundle at all (it served new chunks as
+   `text/html`), so those shells keep the UI they shipped with.
 2. **The recovery surface is never OTA'd.** The resolver serves the airlock
    pages from the binary unconditionally, checked before the overlay rather
    than as its fallback. Learned on 2026-08-11, when a stale pair page left
    in the SPA build output shadowed the compiled copy and a day of fixes never
    reached the phone.
-3. **Rollback on failed boot, by evidence rather than timer.** A flipped
-   bundle stays pending until a launch that rendered from it reports boot-ok.
-   A pending bundle that a launch attempted and never confirmed is abandoned
-   at the next startup and the pointer reverts. Its content hash is recorded
-   so the next check does not re-download the same failing bundle forever.
+3. **Rollback on failed boot.** A flipped bundle stays pending until a page
+   loaded from it reports boot-ok, which the SPA sends from
+   `hooks.client.ts` `init`, once its code runs and before any page data
+   loads. Each page load serving a pending bundle is an attempt; after
+   `BOOT_ATTEMPTS` (2) unconfirmed attempts it is abandoned and the pointer
+   reverts. On the desktop a watchdog reloads a visible page that has not
+   confirmed within 20 seconds, which is the next attempt. A rolled-back hash
+   and a download refused after unpacking are both recorded, so neither is
+   fetched again until the box offers a different build.
 4. **Fail-safe resolution.** Every lookup answers "use the baked bundle"
    unless an overlay is provably good: pointer present, directory there,
    `index.html` inside, manifest parses. Corrupt state is the default path,
-   not an error path. The worst case is the version the app shipped with.
+   not an error path. The worst case is a white screen for up to two
+   watchdog periods on the Mac (on a phone, until the app is next opened),
+   then the version the app shipped with.
 
 Identity is the manifest's `contentHash`, computed over the tree; there is no
 separate checksum step. A bundle is staged in the background and takes effect
@@ -121,6 +129,38 @@ connectivity.
   client never displays a version it has not loaded.
 - The boot-ok beacon and rollback.
 
-Not built, and owned by `local-ui-plan.md`: the Mac adopting the resolver, and
-the offline copy pass. The mobile path is compiled for `cfg(mobile)`, so it
-covers Android builds too; everything above was written against iOS.
+Owned by `local-ui-plan.md`: the Mac adopting the resolver (built on `wave`,
+unreleased) and the offline copy pass. The mobile path is compiled for
+`cfg(mobile)`, so it covers Android builds too; everything above was written
+against iOS.
+
+## It never worked end to end
+
+Found 2026-10-05, when a Mac running the own-copy build stayed on its baked UI
+through a box upgrade. Three defects, each enough on its own:
+
+1. **The box build had no `index.html`.** `pnpm build` writes only SvelteKit's
+   `200.html`; the iOS and Mac bakes each copied it to `index.html` for their
+   own copy, the box build never did. `is_usable` requires both, so every
+   device threw away every bundle any box offered, and recorded it as
+   `no_bundle_on_box`, the same state a headless box reports. Fixed in the
+   build (`scripts/index-html.mjs`, 718ca34e).
+2. **An update's code was served as `text/html`.** `serve_ui` gave an overlay
+   file the Content-Type of the baked file at the same path, defaulting to
+   `text/html`. A newer build's chunks have new hashed names and no baked
+   twin, so WebKit refused them as module scripts and the bundle booted white
+   (025f06dd). Every iOS build through 1.2.19 has this, which is why box
+   bundles now require surface 9.
+3. **Any extension-less request counted as a page load**, re-pinning a running
+   page to a just-applied bundle (d9b7c472).
+
+Nobody noticed because the `src-tauri` tests never ran in CI, the test
+fixtures wrote `index.html` by hand, nothing fed a real `pnpm build` through
+the box's tarball and the device's apply, and the one real-build check
+(85a3664a) verified the hash of a build that had no `index.html`. CI now runs
+`real_box_bundle_applies` over a real build packed by the box's own code.
+
+The same audit fixed the rollback rules described above (attempts, watchdog,
+the boot-ok signal moved before page data loads), the shell's outcome
+reporting, the SPA's routing of absolute box URLs, and a race that could
+disarm rollback (57444fe6, 940052aa).

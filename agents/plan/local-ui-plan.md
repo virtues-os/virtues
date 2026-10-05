@@ -13,7 +13,7 @@ record.
 ## The decision
 
 Every native app shows **its own copy** of the SPA and treats the box as a
-source of data. The iPhone already works this way. The Mac becomes the same
+source of data. The iPhone is built this way, though no iPhone completed an over-the-air update before 2026-10-05 (`agents/record/spa-delivery.md`, "It never worked end to end"). The Mac becomes the same
 program: same scheme, same resolver, same updates, same reachability, same
 recovery. LAN browsers and the box's own panel keep loading the box-served SPA,
 unchanged. Windows and Linux keep today's model; no date yet.
@@ -32,7 +32,7 @@ the app disappearing with its server. Remove the cause and they all go.
 | App files from | Overlay bundle (OTA) → baked (`web_bundle.rs`) | The box, through the loopback |
 | Data from | Loopback `http://127.0.0.1:7117`, via the rewrite in `backend.ts:73-89` | Same loopback, same origin as the page |
 | Box gone | App opens, banner, `/reconnect` | Nothing to show; the shell picks another copy at launch only |
-| UI updates | OTA from the box, forward-only, next launch, rollback | Whenever the box updates |
+| UI updates | OTA from the box, forward-only, next page load, rollback after two unconfirmed loads | Whenever the box updates |
 | Shell ↔ UI gate | `minShellVersion`, in `decide()` | None (audit U13) |
 | UI ↔ box gate | None | None (the box served it, so they matched) |
 
@@ -155,7 +155,7 @@ sleep. The tray keeps its own probe.
 | A box older than `api_version` | Reads as 0; runs, since `MIN_BOX_API` starts at 0 |
 | Box below the UI's `MIN_BOX_API` | "Your server needs an update," nothing half-broken |
 | Box newer than the app's UI | App pulls the box's bundle, applies on the next hidden reload |
-| Bad OTA bundle | That page load never confirms; the next load rolls back; the hash is never fetched again |
+| Bad OTA bundle | It never confirms; the watchdog reloads it after 20s, the second unconfirmed load is its last, the next rolls back; the hash is not fetched again until the box offers another |
 | Bundle needs a newer shell | Refused; current UI stays until the app updates |
 | Sleep at home, wake at work | Banner after the grace period, "Fix it" → `/reconnect` |
 | LAN browser, the panel | Unchanged: box-served |

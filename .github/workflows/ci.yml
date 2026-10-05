@@ -125,6 +125,80 @@ jobs:
         working-directory: apps/web
         run: pnpm check
 
+  # The over-the-air UI loop, end to end, on real artifacts: a real `pnpm
+  # build`, packed by the box's own tarball code, unpacked and verified by the
+  # shell's own apply code. Each half has unit tests over hand-made trees; this
+  # is the one place the two halves meet a real build, which is where a
+  # mismatch in what gets hashed, skipped or required actually shows up.
+  #
+  # Also the only CI run of src-tauri's unit tests: it is outside the cargo
+  # workspace, so `rust`'s `cargo test --workspace` never reaches it. Linux
+  # builds it fine with the Tauri system packages release-linux-desktop.yml
+  # installs, and on Linux its frontendDist is the checked-in `ui/`, so the
+  # tests need no web build of their own.
+  ota:
+    name: OTA pipeline
+    runs-on: blacksmith-8vcpu-ubuntu-2204
+    env:
+      SQLX_OFFLINE: 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ota
+          workspaces: |
+            . -> target
+            apps/web/src-tauri -> target
+
+      # libdbus for the box (bluer); the rest are Tauri's Linux packages,
+      # the same list release-linux-desktop.yml builds the app with.
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      # A release-shaped stamp, so the manifest orders as a real bundle would.
+      - name: Build the web bundle
+        working-directory: apps/web
+        env:
+          GIT_DESCRIBE: v0.0.0-ci.1
+        run: pnpm build
+
+      - name: Box packs the bundle
+        env:
+          OTA_BUILD_DIR: ${{ github.workspace }}/apps/web/build
+          OTA_TARBALL_OUT: ${{ runner.temp }}/bundle.tar.gz
+        run: |
+          cargo test -p virtues --lib -- --exact api::web_bundle::tests::real_build_tarball_for_the_shell --nocapture
+          # The test returns early when its env is missing; make sure it did not.
+          test -s "$OTA_TARBALL_OUT"
+
+      - name: Shell applies the box's bundle
+        env:
+          OTA_TARBALL: ${{ runner.temp }}/bundle.tar.gz
+        run: cargo test --manifest-path apps/web/src-tauri/Cargo.toml --lib real_box_bundle_applies -- --nocapture
+
+      - name: Shell unit tests
+        run: cargo test --manifest-path apps/web/src-tauri/Cargo.toml --lib
+
   rust:
     runs-on: blacksmith-8vcpu-ubuntu-2204
     # A real Postgres for the #[sqlx::test] tests (action_templates,
@@ -375,8 +449,8 @@ jobs:
       # runs DB-free or against the service Postgres above.
       #
       # NOTE: the Tauri mobile plugins and src-tauri are in the workspace
-      # `exclude` list, so `--workspace` still does not reach them. They are
-      # covered by the mobile build, not here.
+      # `exclude` list, so `--workspace` still does not reach them. src-tauri's
+      # unit tests run in the `ota` job; the plugins only in the mobile build.
       - name: Unit tests
         run: cargo test --workspace -- --skip api::code::tests::test_timeout
 

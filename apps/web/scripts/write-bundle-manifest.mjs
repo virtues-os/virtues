@@ -17,7 +17,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, lstatSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -45,14 +45,30 @@ function deriveChannel(raw) {
  * The `.gz` siblings precompress.mjs writes are an encoding of these files,
  * not content, and the phone's OTA tarball excludes them — so they are left
  * out here too, and the hash of a bundle is the hash of what a client unpacks.
+ * The manifest itself is left out, as the client leaves it out, so stamping
+ * an already-stamped build gives the same hash.
+ *
+ * A symlink fails the build. The box's tarball skips symlinks
+ * (virtues-core/src/api/web_bundle.rs), so a hash that followed one would
+ * cover a file no client receives, and every client would reject the bundle
+ * after unpacking it.
  */
 function hashTree(dir) {
 	const files = [];
 	(function walk(d) {
 		for (const entry of readdirSync(d)) {
 			const p = join(d, entry);
-			if (statSync(p).isDirectory()) walk(p);
-			else if (!p.endsWith('.gz')) files.push(p);
+			const st = lstatSync(p);
+			if (st.isSymbolicLink()) {
+				console.error(
+					`✗ ${relative(dir, p)} is a symlink. The box's OTA tarball skips symlinks, ` +
+						'so this bundle could never match its own contentHash on a client. ' +
+						'Copy the file into the build instead.'
+				);
+				process.exit(1);
+			}
+			if (st.isDirectory()) walk(p);
+			else if (!p.endsWith('.gz') && p !== MANIFEST) files.push(p);
 		}
 	})(dir);
 
