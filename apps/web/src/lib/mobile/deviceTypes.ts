@@ -167,7 +167,7 @@ export function nextScheduleChange(s: MuteSchedule, from: Date): Date | null {
 
 /** What the microphone is doing right now, as the page and the list show it. */
 export interface AudioState {
-	/** The status line: "Live", "Idle · not recording until 7:00 AM", … */
+	/** The status line: "Live", "Idle until 7:00 AM", … */
 	label: string;
 	/** Audio is being kept right now. */
 	live: boolean;
@@ -189,9 +189,13 @@ export function audioState(a: AudioStatus | null, now = new Date()): AudioState 
 			: null;
 	}
 	if (a.mutedBy === "schedule") {
-		const next = a.schedule ? nextScheduleChange(a.schedule, now) : null;
+		// Name an end only when this clock agrees the hours are muting now: the
+		// plugin's reason is the truth, and a skewed clock or zone would make
+		// "until" name the moment muting starts.
+		const next =
+			a.schedule && scheduleMutedAt(a.schedule, now) ? nextScheduleChange(a.schedule, now) : null;
 		return {
-			label: next ? `Idle · not recording until ${fmtClock(next.getHours() * 60 + next.getMinutes())}` : "Idle · not recording",
+			label: next ? `Idle until ${fmtClock(next.getHours() * 60 + next.getMinutes())}` : "Idle · not recording",
 			live: false,
 			explain: `${MIC_LIT} Nothing is kept until your hours allow it.`,
 		};

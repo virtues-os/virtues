@@ -82,7 +82,15 @@ describe("audioState", () => {
 			at(0, 23),
 		);
 		expect(s?.live).toBe(false);
-		expect(s?.label).toMatch(/^Idle · not recording until 7:00/);
+		expect(s?.label).toMatch(/^Idle until 7:00/);
+	});
+
+	it("names no end when this clock disagrees with the plugin's reason", () => {
+		const s = audioState(
+			{ ...base, mutedBy: "schedule", schedule: sched({ mon: [NIGHT] }) },
+			at(0, 16),
+		);
+		expect(s?.label).toBe("Idle · not recording");
 	});
 
 	it("tells a stopped mic from a denied one", () => {
