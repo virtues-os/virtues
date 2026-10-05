@@ -139,10 +139,11 @@ same answer Synology and Home Assistant give.
 ### Carry: an iroh endpoint in the visitor's browser
 
 - **The link** is `<loader-domain>/#<endpoint-id>.<page-token>`. The part
-  after `#` never leaves the browser. The EndpointId **is** the box's public
-  key, so dialing it authenticates the box: a server that is not that box
-  cannot complete the handshake, virtues included. No certificate, no CA, no
-  per-box DNS name.
+  after `#` never leaves the browser. The EndpointId **is** the door's public
+  key (the door runs on the box with its own key, see wave 1), so dialing it
+  authenticates the door: a server that does not hold that key cannot
+  complete the handshake, virtues included. No certificate, no CA, no per-box
+  DNS name.
 - **The loader** is one static page: iroh compiled to WebAssembly plus a
   renderer. The same bytes for every box and every page, no content. It is
   the one thing virtues serves, so it stays small, open, version-pinned, and
@@ -151,11 +152,11 @@ same answer Synology and Home Assistant give.
   open to any endpoint with rate limits since 2026-08-31). Browser traffic is
   relayed until a direct transport exists; the relay sees two EndpointIds and
   byte counts, never content.
-- **On the box**, a publish ALPN accepts **any** EndpointId and routes only to
-  the door process. Today `crates/virtues-iroh/src/server.rs` closes any peer
-  not on the allowlist before a byte of HTTP, and `relay::maybe_spawn` hands
-  allowlisted devices the full API. Both stay exactly as they are; the publish
-  ALPN is a second, separate handler.
+- **On the box**, the door is a second iroh endpoint that accepts **any**
+  EndpointId on `virtues/publish/1`. The core's endpoint is untouched:
+  `crates/virtues-iroh/src/server.rs` still closes any peer not on the
+  allowlist before a byte of HTTP, and `relay::maybe_spawn` still hands only
+  allowlisted devices the full API.
 - **Direct later, same link:** when a WebRTC (or WebTransport) custom
   transport is mature, the loader adds it and most visits hole-punch to the
   box. virtues then only introduces, which is the north star. Nothing about
