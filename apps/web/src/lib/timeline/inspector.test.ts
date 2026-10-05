@@ -7,8 +7,8 @@ const day = { start: Date.parse(at("00:00")), end: Date.parse("2026-06-11T00:00:
 const window: DerivedWindow = {
 	last_stay_before: null,
 	places: [
-		{ id: "home", latitude: 0, longitude: -30, is_home: true, is_work: false, place_name: "Location 0.0000, -30.0000" },
-		{ id: "cafe", latitude: 0.01, longitude: -30, is_home: false, is_work: false, place_name: "Corner Cafe" },
+		{ id: "home", latitude: 0, longitude: -30, is_named: false, place_name: "Location 0.0000, -30.0000" },
+		{ id: "cafe", latitude: 0.01, longitude: -30, is_named: true, place_name: "Corner Cafe" },
 	],
 	spans: [
 		{ id: "a", kind: "stay", started_at: "2026-06-09T20:00:00Z", ended_at: at("08:00"), timeline_place_id: "home", metadata: {} },
@@ -36,7 +36,7 @@ describe("the inspector", () => {
 		const inspector = buildInspector(window, day.start, day.end);
 		expect(inspector.map((s) => [s.kind, s.title, s.dur])).toEqual([
 			["sleep", "In Bed", "7h"], // a night keeps its full length, and leads a stay opening at midnight too
-			["place", "Home", "8h"], // clipped to the day
+			["place", "Unnamed place", "8h"], // clipped to the day
 			["transit", "Driving", "20m"],
 			["place", "Corner Cafe", "3h 40m"],
 			["gap", "Signal gap", "3h"],
@@ -52,13 +52,9 @@ describe("the inspector", () => {
 		expect(inspector[2].rows).toEqual([]);
 	});
 
-	it("never shows the wiki's coordinate stub as a name", () => {
-		expect(placeTitle({ id: "x", latitude: 0, longitude: -30, is_home: false, is_work: false, place_name: "Location 1.0, 2.0" })).toBe("Unnamed place");
-	});
-
-	it("calls the most-dwelt place Work / frequent until it has a real name", () => {
-		expect(placeTitle({ id: "w", latitude: 0, longitude: -30, is_home: false, is_work: true, place_name: "Location 1.0, 2.0" })).toBe("Work / frequent");
-		expect(placeTitle({ id: "w", latitude: 0, longitude: -30, is_home: false, is_work: true, place_name: "The Studio" })).toBe("The Studio");
+	it("shows a name only when the person gave one", () => {
+		expect(placeTitle({ id: "x", latitude: 0, longitude: -30, is_named: false, place_name: "Location 1.0, 2.0" })).toBe("Unnamed place");
+		expect(placeTitle({ id: "w", latitude: 0, longitude: -30, is_named: true, place_name: "The Studio" })).toBe("The Studio");
 	});
 
 	it("gives a conversation its windows, a night its source, a quiet stay its audio note", () => {

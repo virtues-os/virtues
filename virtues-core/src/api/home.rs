@@ -163,7 +163,7 @@ pub struct UnnamedPlace {
 /// The unnamed places worth asking about, busiest first.
 ///
 /// `wiki_places.seen_count` is not the count to sort on: it is maintained for
-/// named places and sits at 0 for every `Location %` row on both a dev box and
+/// named places and sits at 0 for every unnamed row on both a dev box and
 /// a nine-year one — which is exactly the set this returns, so ordering by it
 /// ranked the backlog at random and reported every place as never visited.
 ///
@@ -191,7 +191,7 @@ pub async fn get_unnamed_places(pool: &PgPool, limit: i64) -> Result<Vec<Unnamed
         SELECT c.id, c.name, c.latitude, c.longitude, count(a.place_id) AS ref_count
         FROM wiki_places c
         LEFT JOIN assigned a ON a.place_id = c.id
-        WHERE c.name LIKE 'Location %'
+        WHERE NOT c.is_named
         GROUP BY c.id, c.name, c.latitude, c.longitude
         HAVING count(a.place_id) > 0
         ORDER BY ref_count DESC

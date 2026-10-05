@@ -581,6 +581,9 @@ pub async fn update_wiki_place(
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update place: {}", e)))?;
+    if req.name.is_some() {
+        crate::api::entities::mark_place_named(pool, &id).await?;
+    }
     crate::api::wiki_articles::retitle_article(pool, "place", &id).await?;
 
     get_wiki_place(pool, id).await

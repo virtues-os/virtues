@@ -219,6 +219,7 @@ pub async fn create_place(
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to create place: {}", e)))?;
+    mark_place_named(pool, &id_str).await?;
 
     // Set as home if requested
     let is_home = req.set_as_home.unwrap_or(false);
@@ -272,11 +273,134 @@ pub async fn update_place(pool: &PgPool, id: String, req: UpdatePlaceRequest) ->
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update place: {}", e)))?;
+    if req.label.is_some() {
+        mark_place_named(pool, &id).await?;
+    }
 
     crate::api::wiki_articles::retitle_article(pool, "place", &id).await?;
 
     // Fetch the updated place
     get_place(pool, id).await
+}
+
+/// Record that the person named a place. The flag outlives the name: a place
+/// they named keeps counting as named even if a later rename happens to read
+/// like the resolver's "Location …".
+pub async fn mark_place_named(pool: &PgPool, id: &str) -> Result<()> {
+    sqlx::query("UPDATE wiki_places SET is_named = true WHERE id = $1 AND NOT is_named")
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to mark place named: {}", e)))?;
+    Ok(())
+}
+
+/// Fold `absorb` into `keep`: one place, seen as two.
+///
+/// Two places a few dozen metres apart are often one doorway that two stays'
+/// centres drifted across, and once one is named the other sits beside it as a
+/// second "Location …" that the same visits keep landing on. Merging moves
+/// everything that pointed at `absorb` to `keep` - its visits and every other
+/// ref, notes, rules, a chat's edit grant, pins, project items, home - then
+/// deletes it. `keep` takes `absorb`'s name only when it has none of its own,
+/// and keeps it as an alias otherwise, so a name the person gave either is
+/// never lost.
+pub async fn merge_places(pool: &PgPool, keep: &str, absorb: &str) -> Result<()> {
+    if keep == absorb {
+        return Err(Error::InvalidInput("That's the same place. Choose a different one to merge into.".into()));
+    }
+    let db = |e: sqlx::Error| Error::Database(format!("Failed to merge places: {e}"));
+    let mut tx = pool.begin().await.map_err(db)?;
+    let found: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM (SELECT 1 FROM wiki_places WHERE id = ANY($1) FOR UPDATE) p")
+            .bind([keep, absorb])
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db)?;
+    if found != 2 {
+        return Err(Error::NotFound("Place not found".into()));
+    }
+
+    // Each statement first drops what would collide with a row `keep` already
+    // has, then moves the rest.
+    let steps: [&str; 13] = [
+        "DELETE FROM wiki_refs a USING wiki_refs k \
+         WHERE a.entity_id = $2 AND k.entity_id = $1 AND a.source_table = k.source_table \
+           AND a.source_id = k.source_id AND a.role IS NOT DISTINCT FROM k.role",
+        "UPDATE wiki_refs SET entity_id = $1 WHERE entity_id = $2",
+        "UPDATE wiki_notes SET subject_id = $1 WHERE subject_type = 'place' AND subject_id = $2",
+        "UPDATE wiki_rules SET subject_id = $1 WHERE subject_type = 'place' AND subject_id = $2",
+        "DELETE FROM app_chat_edit_permissions a USING app_chat_edit_permissions k \
+         WHERE a.entity_id = $2 AND k.entity_id = $1 AND a.chat_id = k.chat_id",
+        "UPDATE app_chat_edit_permissions SET entity_id = $1 WHERE entity_id = $2",
+        "DELETE FROM app_pins WHERE url = '/place/' || $2 \
+           AND EXISTS (SELECT 1 FROM app_pins WHERE url = '/place/' || $1)",
+        "UPDATE app_pins SET url = '/place/' || $1 WHERE url = '/place/' || $2",
+        "DELETE FROM app_project_items a USING app_project_items k \
+         WHERE a.url = '/place/' || $2 AND k.url = '/place/' || $1 AND a.project_id = k.project_id",
+        "UPDATE app_project_items SET url = '/place/' || $1 WHERE url = '/place/' || $2",
+        "UPDATE app_user_profile SET home_place_id = $1 WHERE home_place_id = $2",
+        "UPDATE wiki_places k SET \
+           name = CASE WHEN a.is_named AND NOT k.is_named THEN a.name ELSE k.name END, \
+           aliases = CASE WHEN a.is_named AND k.is_named AND a.name <> k.name \
+                          AND NOT COALESCE(k.aliases, '[]'::jsonb) ? a.name \
+                     THEN COALESCE(k.aliases, '[]'::jsonb) || to_jsonb(a.name) \
+                     ELSE k.aliases END, \
+           is_named = k.is_named OR a.is_named, \
+           is_audio_muted = COALESCE(k.is_audio_muted, false) OR COALESCE(a.is_audio_muted, false), \
+           updated_at = now() \
+         FROM wiki_places a WHERE k.id = $1 AND a.id = $2",
+        "DELETE FROM wiki_places WHERE id = $2",
+    ];
+    for sql in steps {
+        sqlx::query(sql).bind(keep).bind(absorb).execute(&mut *tx).await.map_err(db)?;
+    }
+    tx.commit().await.map_err(db)?;
+
+    // The absorbed place's article, if one was written, describes a place that
+    // is now part of another; `keep`'s article is retitled to the merged name.
+    crate::api::wiki_articles::delete_article(pool, "place", absorb).await?;
+    crate::api::wiki_articles::retitle_article(pool, "place", keep).await?;
+    Ok(())
+}
+
+/// A named place near another, as a "Same as…?" choice.
+#[derive(Debug, Serialize)]
+pub struct NearbyPlace {
+    pub id: String,
+    pub name: String,
+    pub meters: f64,
+}
+
+/// How close a named place must be to offer itself as the same place. Past
+/// the 100 m a stay can drift, and short of the next building over.
+pub const SAME_PLACE_METERS: f64 = 150.0;
+
+/// The named places within `SAME_PLACE_METERS` of a place, nearest first.
+pub async fn nearby_named_places(pool: &PgPool, id: &str) -> Result<Vec<NearbyPlace>> {
+    let rows: Vec<(String, String, f64)> = sqlx::query_as(
+        r#"
+        WITH me AS (SELECT latitude, longitude FROM wiki_places WHERE id = $1)
+        SELECT p.id, p.name,
+               6371000 * 2 * asin(sqrt(
+                   power(sin(radians(p.latitude - me.latitude) / 2), 2)
+                   + cos(radians(me.latitude)) * cos(radians(p.latitude))
+                     * power(sin(radians(p.longitude - me.longitude) / 2), 2))) AS meters
+        FROM wiki_places p, me
+        WHERE p.id <> $1 AND p.is_named
+          AND abs(p.latitude - me.latitude) < 0.01 AND abs(p.longitude - me.longitude) < 0.01
+        ORDER BY meters
+        "#,
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to find nearby places: {e}")))?;
+    Ok(rows
+        .into_iter()
+        .filter(|(_, _, m)| *m <= SAME_PLACE_METERS)
+        .map(|(id, name, meters)| NearbyPlace { id, name, meters: meters.round() })
+        .collect())
 }
 
 /// Delete a place by ID
@@ -680,6 +804,96 @@ mod entity_crud_tests {
             .await
             .unwrap();
         assert_eq!(pins, 0, "a pin to a deleted person opens nothing");
+    }
+
+    async fn insert_place(pool: &PgPool, id: &str, name: &str, named: bool, lat: f64) {
+        sqlx::query(
+            "INSERT INTO wiki_places (id, name, latitude, longitude, radius_m, is_named) \
+             VALUES ($1, $2, $3, -97.0, 100, $4)",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(lat)
+        .bind(named)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Merging moves every visit and pin to the surviving place, never makes a
+    /// duplicate ref, and keeps a name the person gave either place.
+    #[sqlx::test]
+    async fn merging_places_moves_what_pointed_at_the_absorbed_one(pool: PgPool) {
+        insert_place(&pool, "place_keep", "Location 30.0000, -97.0000", false, 30.0).await;
+        insert_place(&pool, "place_gone", "Corner bakery", true, 30.0004).await;
+        sqlx::query(
+            "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role) VALUES \
+             ('r_1', 'place', 'place_keep', 'data_location_visit', 'v_1', 'location'), \
+             ('r_2', 'place', 'place_gone', 'data_location_visit', 'v_2', 'location'), \
+             ('r_3', 'place', 'place_gone', 'data_location_visit', 'v_1', 'location')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO app_pins (id, url) VALUES ('pin_1', '/place/place_gone')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        merge_places(&pool, "place_keep", "place_gone").await.unwrap();
+
+        let visits: Vec<String> =
+            sqlx::query_scalar("SELECT source_id FROM wiki_refs WHERE entity_id = 'place_keep' ORDER BY source_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(visits, ["v_1", "v_2"], "both visits, v_1 once");
+        let (name, named): (String, bool) =
+            sqlx::query_as("SELECT name, is_named FROM wiki_places WHERE id = 'place_keep'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((name.as_str(), named), ("Corner bakery", true));
+        let gone: i64 = sqlx::query_scalar("SELECT count(*) FROM wiki_places WHERE id = 'place_gone'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(gone, 0);
+        let pin: String = sqlx::query_scalar("SELECT url FROM app_pins WHERE id = 'pin_1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(pin, "/place/place_keep");
+    }
+
+    /// Only named places close enough to be the same doorway are offered.
+    #[sqlx::test]
+    async fn nearby_offers_only_close_named_places(pool: PgPool) {
+        insert_place(&pool, "place_me", "Location 30.0000, -97.0000", false, 30.0).await;
+        insert_place(&pool, "place_close", "Corner bakery", true, 30.0009).await; // ~100 m
+        insert_place(&pool, "place_far", "Library", true, 30.0030).await; // ~330 m
+        insert_place(&pool, "place_unnamed", "Location 30.0002, -97.0000", false, 30.0002).await;
+        let near = nearby_named_places(&pool, "place_me").await.unwrap();
+        assert_eq!(near.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["place_close"]);
+    }
+
+    /// Renaming a place marks it named, which keeps it out of the naming queue
+    /// and out of the empty-place sweep.
+    #[sqlx::test]
+    async fn renaming_a_place_marks_it_named(pool: PgPool) {
+        insert_place(&pool, "place_x", "Location 30.0000, -97.0000", false, 30.0).await;
+        crate::api::wiki::update_wiki_place(
+            &pool,
+            "place_x".into(),
+            serde_json::from_value(serde_json::json!({ "name": "Studio" })).unwrap(),
+        )
+        .await
+        .unwrap();
+        let named: bool = sqlx::query_scalar("SELECT is_named FROM wiki_places WHERE id = 'place_x'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(named);
     }
 
     /// The owner is a person by definition (migration 0080). Deleting yourself

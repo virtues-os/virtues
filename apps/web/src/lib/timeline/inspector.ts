@@ -30,8 +30,8 @@ export interface DerivedPlace {
 	id: string;
 	latitude: number;
 	longitude: number;
-	is_home: boolean;
-	is_work: boolean;
+	/** The person named it; an unnamed place carries the resolver's "Location …". */
+	is_named: boolean;
 	place_name: string | null;
 }
 
@@ -87,6 +87,8 @@ export interface InspectorSection {
 	/** Up to two lines under the title: only a signal gap explains itself. */
 	notes: string[];
 	placeId: string | null;
+	/** A stay only: the person named its place. */
+	named: boolean;
 	rows: InspectorRow[];
 	/** A stay's audio note: "no audio" or "silent", only when clear-cut. */
 	atag: "no audio" | "silent" | null;
@@ -105,16 +107,11 @@ export function fmtDur(ms: number): string {
 	return r ? `${h}h ${r}m` : `${h}h`;
 }
 
-/** A place's title: Home; else the wiki's name for it (the user's own, as the
- *  prototype's corrections win over its guesses); else "Work / frequent" for
- *  the most-dwelt place (dayback/build.py:209-210). The wiki names a place it
- *  cannot name "Location <lat>, <lon>"; that is no title to show. */
+/** A place's title: the name the person gave it, else "Unnamed place". The
+ *  wiki names a place nobody named "Location <lat>, <lon>"; that is no title
+ *  to show. */
 export function placeTitle(p: DerivedPlace | undefined): string {
-	if (!p) return "Unnamed place";
-	if (p.is_home) return "Home";
-	if (p.place_name && !p.place_name.startsWith("Location ")) return p.place_name;
-	if (p.is_work) return "Work / frequent";
-	return "Unnamed place";
+	return p?.is_named && p.place_name ? p.place_name : "Unnamed place";
 }
 
 /** A drive's title by its fastest hop: Flying from 350 km/h, Driving from 45,
@@ -152,10 +149,21 @@ export function buildInspector(w: DerivedWindow, start: number, end: number, voi
 	const built: InspectorSection[] = inDay.map((s) => {
 		const cs = Math.max(s.s, start);
 		const ce = Math.min(s.e, end);
-		const base = { s: cs, e: ce, placeId: s.timeline_place_id, rows: [] as InspectorRow[], notes: [] as string[], atag: null, src: null };
+		const base = {
+			s: cs,
+			e: ce,
+			placeId: s.timeline_place_id,
+			named: false,
+			rows: [] as InspectorRow[],
+			notes: [] as string[],
+			atag: null,
+			src: null,
+		};
 		switch (s.kind) {
-			case "stay":
-				return { ...base, kind: "place", title: placeTitle(places.get(s.timeline_place_id ?? "")), dur: fmtDur(ce - cs) };
+			case "stay": {
+				const place = places.get(s.timeline_place_id ?? "");
+				return { ...base, kind: "place", title: placeTitle(place), named: !!place?.is_named, dur: fmtDur(ce - cs) };
+			}
 			case "transit":
 				return { ...base, kind: "transit", title: transitTitle(Number(s.metadata.peak_kmh ?? 0), ce - cs), dur: fmtDur(ce - cs) };
 			case "sleep": {

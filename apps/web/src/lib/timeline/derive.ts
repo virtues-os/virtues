@@ -98,8 +98,7 @@ export function deriveDay(day: TimelineDay, sources: Sources): DerivedDay {
 				id: placeId,
 				latitude: v.latitude,
 				longitude: v.longitude,
-				is_home: false,
-				is_work: false,
+				is_named: v.place_is_named,
 				place_name: v.place_name,
 			});
 		return { id: v.id, kind: "stay", started_at: v.started_at, ended_at: v.ended_at, timeline_place_id: placeId, metadata: {} };

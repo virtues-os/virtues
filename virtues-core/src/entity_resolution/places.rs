@@ -1192,15 +1192,14 @@ async fn keep_one_place_per_visit(db: &Database) -> Result<u64> {
 /// leaves some places with none: 23 of 75 on a rebuilt copy, each a
 /// "Location <lat>, <lon>" with no visit, no article and nothing a person did
 /// to it. Only those go. A place is kept while anything refers to it or the
-/// person has touched it: a ref from any source, a name of their own, the
-/// audio mute, a pin, a project, a note, an article, a rule, a chat's edit
+/// person has touched it: a ref from any source, a name of their own
+/// (`is_named`), the audio mute, a pin, a project, a note, an article, a rule, a chat's edit
 /// grant, or being home.
 async fn delete_empty_places(db: &Database) -> Result<u64> {
     let removed = sqlx::query(
         r#"
         DELETE FROM wiki_places p
-        WHERE p.name LIKE 'Location %'
-          AND p.metadata->>'source' IS DISTINCT FROM 'user'
+        WHERE NOT p.is_named
           AND NOT COALESCE(p.is_audio_muted, false)
           AND NOT EXISTS (SELECT 1 FROM wiki_refs r WHERE r.entity_id = p.id)
           AND NOT EXISTS (SELECT 1 FROM app_user_profile u WHERE u.home_place_id = p.id)
@@ -1618,6 +1617,10 @@ mod tests {
         place("place_visited", "Location 30.0001, -97.0000").await;
         place("place_pinned", "Location 30.0002, -97.0000").await;
         place("place_named", "Corner bakery").await;
+        sqlx::query("UPDATE wiki_places SET is_named = true WHERE id = 'place_named'")
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id) \
              VALUES ('r_1', 'place', 'place_visited', 'data_location_visit', 'v_1')",
