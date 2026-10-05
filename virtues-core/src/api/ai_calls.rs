@@ -23,7 +23,7 @@ use sqlx::PgPool;
 /// One paid AI call to record. Cost is micros-USD from the gateway `usage.cost`.
 #[derive(Debug, Clone, Default)]
 pub struct AiCall {
-    /// Coarse bucket: chat | council | deep_research | transcription |
+    /// Coarse bucket: chat | deep_research | transcription |
     /// compaction | day_summary | … (the calling feature, or the client's
     /// purpose tag for callers that don't set one).
     pub feature: String,

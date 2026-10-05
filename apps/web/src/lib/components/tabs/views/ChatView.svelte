@@ -1857,10 +1857,7 @@
 														)
 													: []}
 											{#if subagents.length > 0}
-												<SubagentPanel
-													{subagents}
-													variant="research"
-												/>
+												<SubagentPanel {subagents} />
 											{/if}
 
 											{#if !inInterview && (turn.hasThinkingContent || (isStreaming && isLastMessage))}

@@ -219,9 +219,6 @@ When your investigation is complete, write the full report to a page with create
 </output>
 "#;
 
-// Council lives in skills/council/SKILL.md now — a skill, not a mode. See
-// virtues_registry::skills for what that changes.
-
 // The June-era chat onboarding (ONBOARDING_OPENING_MESSAGE + NEW_USER_PROMPT)
 // was deleted 2026-09-01. It had been disabled since the letter/GettingStarted
 // flow shipped, but sat fully wired one comment-flip from waking, carrying a
@@ -572,12 +569,12 @@ mod tests {
         assert!(!prompt.contains("<narrative_identity>"));
     }
 
-    /// Council has no page tools, so it must not be told to reach for them.
+    /// A skill without page tools must not be told to reach for them.
     #[test]
     fn page_guidance_rides_with_the_modes_that_have_page_tools() {
-        let council = build_personalized_prompt("Ari", "Adam", None, &ChatMode::from_wire("council"), "");
-        assert!(!council.contains("get_page_content"));
-        assert!(!council.contains("edit_page"));
+        let skill = build_personalized_prompt("Ari", "Adam", None, &crate::api::chat_mode::tests::fixture_skill(), "");
+        assert!(!skill.contains("get_page_content"));
+        assert!(!skill.contains("edit_page"));
 
         let chat = build_personalized_prompt("Ari", "Adam", None, &ChatMode::Chat, "");
         assert!(chat.contains("get_page_content"));

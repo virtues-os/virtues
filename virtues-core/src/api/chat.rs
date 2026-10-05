@@ -2209,8 +2209,8 @@ async fn persist_turn(
     if let Err(e) = crate::api::ai_calls::record_ai_call(
         pool,
         &crate::api::ai_calls::AiCall {
-            // Real feature bucket: chat | council | deep_research (these
-            // modes share this handler), so spend attributes correctly.
+            // Real feature bucket: the mode's wire name (every mode shares
+            // this handler), so spend attributes correctly.
             feature: agent_mode.to_string(),
             model: model.to_string(),
             prompt_tokens: usage.input_tokens as i64,
@@ -2376,14 +2376,14 @@ mod tests {
     #[sqlx::test]
     async fn a_skill_rides_in_the_tail_and_chat_carries_none(pool: PgPool) {
         let (stable, volatile, rendered) = build_system_prompt_blocks(
-            &pool, None, Some("America/Chicago"), &ChatMode::from_wire("council"), None, "Ari", "Adam",
+            &pool, None, Some("America/Chicago"), &crate::api::chat_mode::tests::fixture_skill(), None, "Ari", "Adam",
         )
         .await;
-        assert!(rendered.iter().any(|r| r.tag == "skill"), "council renders its skill block");
-        assert!(!stable.contains("<skill name=\"council\">"), "the skill body must not be in the cached prefix");
-        assert!(volatile.contains("<skill name=\"council\">"), "the skill body is in the tail");
-        assert!(volatile.contains("<council>"), "the body is the file's body");
-        assert!(!stable.contains("<page_tools>"), "council has no page tools, so no page guidance");
+        assert!(rendered.iter().any(|r| r.tag == "skill"), "a skill renders its skill block");
+        assert!(!stable.contains("<skill name=\"fixture\">"), "the skill body must not be in the cached prefix");
+        assert!(volatile.contains("<skill name=\"fixture\">"), "the skill body is in the tail");
+        assert!(volatile.contains("<fixture>"), "the body is the file's body");
+        assert!(!stable.contains("<page_tools>"), "a skill without page tools gets no page guidance");
 
         let (stable, volatile, rendered) = build_system_prompt_blocks(
             &pool, None, Some("America/Chicago"), &ChatMode::Chat, None, "Ari", "Adam",
@@ -3001,10 +3001,10 @@ mod persist_turn_tests {
             .unwrap();
         let (message, usage) = recorded_turn("");
         assert!(message.is_none(), "no text and no tools is no message");
-        persist_turn(&pool, "chat_e", "anthropic/claude-x", "council", false, message, usage, None).await;
+        persist_turn(&pool, "chat_e", "anthropic/claude-x", "deep_research", false, message, usage, None).await;
 
         assert_eq!(count(&pool, MESSAGES, "chat_e").await, 0);
         assert_eq!(count(&pool, USAGE, "chat_e").await, 1);
-        assert_eq!(count(&pool, AI_CALLS, "council").await, 1);
+        assert_eq!(count(&pool, AI_CALLS, "deep_research").await, 1);
     }
 }

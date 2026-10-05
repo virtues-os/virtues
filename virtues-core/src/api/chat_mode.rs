@@ -209,8 +209,8 @@ impl ChatMode {
     /// Which model tier the turn runs on.
     ///
     /// The mode decides, and nothing guesses per turn. Deep research and a
-    /// skill that declares `model: deep` (council) are the rare, slow,
-    /// high-stakes turns the strong tier exists for; everything else is
+    /// skill that declares `model: deep` are the rare, slow, high-stakes
+    /// turns the strong tier exists for; everything else is
     /// Standard. Deciding per turn instead would mean switching models inside
     /// a chat, and every switch starts a cold prompt cache — most of a chat's
     /// input tokens are served from that cache.
@@ -224,7 +224,7 @@ impl ChatMode {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
@@ -235,8 +235,20 @@ mod tests {
             .collect()
     }
 
+    /// A skill as a file would declare it. None ship, so the Skill arm is
+    /// exercised through this.
+    pub(crate) fn fixture_skill() -> ChatMode {
+        ChatMode::Skill(
+            virtues_registry::skills::parse(
+                "---\nname: fixture\ndescription: d\ntools: think, semantic_search, sql_query\n\
+                 max_steps: 40\nmax_cost_usd: 5\nmax_minutes: 15\nmodel: deep\n---\n<fixture>body</fixture>",
+            )
+            .expect("fixture skill parses"),
+        )
+    }
+
     fn all_modes() -> Vec<ChatMode> {
-        ["chat", "sudo", "deep_research", "interview", "getting_started", "council", "local"]
+        ["chat", "sudo", "deep_research", "interview", "getting_started", "local"]
             .into_iter()
             .map(ChatMode::from_wire)
             .collect()
@@ -251,7 +263,7 @@ mod tests {
 
     #[test]
     fn every_known_wire_name_round_trips() {
-        for name in ["chat", "sudo", "deep_research", "interview", "getting_started", "council", "local"] {
+        for name in ["chat", "sudo", "deep_research", "interview", "getting_started", "local"] {
             assert_eq!(ChatMode::from_wire(name).wire_name(), name);
         }
         assert!(matches!(ChatMode::from_wire("sudo"), ChatMode::Sudo));
@@ -259,7 +271,8 @@ mod tests {
         assert!(matches!(ChatMode::from_wire("interview"), ChatMode::Interview));
         assert!(matches!(ChatMode::from_wire("local"), ChatMode::Local));
         assert!(matches!(ChatMode::from_wire("getting_started"), ChatMode::GettingStarted));
-        assert!(matches!(ChatMode::from_wire("council"), ChatMode::Skill(ref s) if s.name == "council"));
+        // Council was removed; a client that still sends it gets chat.
+        assert!(matches!(ChatMode::from_wire("council"), ChatMode::Chat));
     }
 
     /// A client ahead of this box gets ordinary chat, not an error.
@@ -304,8 +317,8 @@ mod tests {
         assert_eq!(l.thinking, Thinking::Default);
         assert_eq!(l.tool_timeout, Duration::from_secs(crate::tools::shell::MAX_TIMEOUT_SECS));
 
-        // Council's file: 40 steps, $5, 15 minutes.
-        let l = ChatMode::from_wire("council").limits();
+        // A skill's file: 40 steps, $5, 15 minutes.
+        let l = fixture_skill().limits();
         assert_eq!((l.max_steps, l.budget.max_cost_micros, l.budget.max_wall_clock), (40, Some(5_000_000), secs(15)));
         assert!(l.budget.tool_caps.is_empty());
         assert_eq!(l.thinking, Thinking::Default);
@@ -330,10 +343,7 @@ mod tests {
         );
         assert_eq!(tool_names(&ChatMode::Interview), set(&["write_it_up"]));
         assert_eq!(tool_names(&ChatMode::GettingStarted), set(&["skip_step", "record_introductions"]));
-        assert_eq!(
-            tool_names(&ChatMode::from_wire("council")),
-            set(&["think", "semantic_search", "sql_query", "dispatch_subagents"])
-        );
+        assert_eq!(tool_names(&fixture_skill()), set(&["think", "semantic_search", "sql_query"]));
     }
 
     /// Every model step re-sends the mode's tool definitions ahead of the
@@ -382,7 +392,6 @@ mod tests {
             ("interview", 1_500),
             ("getting_started", 2_200),
             ("local", 0),
-            ("council", 11_000),
         ];
 
         let size = |t: &serde_json::Value| serde_json::to_string(t).unwrap().chars().count();
@@ -440,11 +449,10 @@ mod tests {
         for mode in all_modes() {
             assert_eq!(mode.honors_pin(), !matches!(mode, ChatMode::Interview), "{mode:?}");
             assert_eq!(mode.is_sudo(), matches!(mode, ChatMode::Sudo), "{mode:?}");
-            let deep = matches!(mode, ChatMode::DeepResearch)
-                || matches!(mode, ChatMode::Skill(ref s) if s.name == "council");
-            let want = if deep { ModelSlot::Deep } else { ModelSlot::Standard };
+            let want = if matches!(mode, ChatMode::DeepResearch) { ModelSlot::Deep } else { ModelSlot::Standard };
             assert_eq!(mode.slot(), want, "{mode:?}");
         }
+        assert_eq!(fixture_skill().slot(), ModelSlot::Deep, "a skill's `model: deep` is honoured");
     }
 
     /// The chat id beats the wire: the interview's chat is the interviewer,

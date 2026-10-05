@@ -171,14 +171,6 @@ pub fn get_tools_for_subagent() -> Vec<serde_json::Value> {
     tools_named(SUBAGENT_TOOLS)
 }
 
-/// A Council voice reasons from its vantage; it does not investigate or cite. `think` only.
-const COUNCIL_VOICE_TOOLS: &[&str] = &["think"];
-
-/// Get tool definitions for a Council voice worker (think-only — voices reason, they don't research).
-pub fn get_tools_for_council_voice() -> Vec<serde_json::Value> {
-    tools_named(COUNCIL_VOICE_TOOLS)
-}
-
 /// The orchestrator's tools in Deep Research mode: the read-only research set, plus the fan-out
 /// tool and `create_page` for the report artifact. Explicit allow-list (not a category filter) so
 /// genuinely read-write Data-category tools (`update_memory`, `sql_write`)
@@ -419,7 +411,6 @@ mod sudo_scope {
         for listing in [
             mode("chat"),
             mode("deep_research"),
-            mode("council"),
             mode("interview"),
             mode("getting_started"),
             mode("anything-else"),
