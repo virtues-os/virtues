@@ -14,8 +14,8 @@ subscription status follows only `customer.subscription.*` and `invoice.*`).
 What is left: a refund or lost dispute on a top-up PaymentIntent should debit
 the wallet by that amount through virtues-api's internal credit endpoint, and
 nothing marks a top-up PaymentIntent as one today (no metadata), so tagging it
-at creation comes first. Also check production once for subscriptions already
-set to `refunded` by the old handler.
+at creation comes first. (The fix is deployed; production had no
+subscription the old handler had flipped.)
 
 **The way to fix a lapsed payment sits behind the payment.**
 `billing_portal.rs::resolve_active_customer` refuses unless the latest
