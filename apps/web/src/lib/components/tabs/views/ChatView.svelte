@@ -1401,7 +1401,10 @@
 			awayFromEnd = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight > 240;
 		};
 		measure();
+		// The transcript growing, and the scroller itself resizing (a phone's
+		// keyboard, a rotation), both move the end without a scroll event.
 		const content = new ResizeObserver(measure);
+		content.observe(scroller);
 		if (scroller.firstElementChild) content.observe(scroller.firstElementChild);
 		scroller.addEventListener("scroll", measure, { passive: true });
 		return () => {
@@ -2754,8 +2757,8 @@
 	.jump-to-end {
 		position: absolute;
 		bottom: calc(100% + 0.5rem);
-		left: 50%;
-		translate: -50% 0;
+		/* Flush with the pill's right edge (the wrapper's side padding). */
+		right: 2rem;
 		display: grid;
 		place-items: center;
 		width: 2.25rem;
@@ -2774,7 +2777,7 @@
 	.jump-to-end:hover {
 		color: var(--color-foreground);
 		border-color: var(--color-border-strong);
-		translate: -50% 1px;
+		translate: 0 1px;
 	}
 
 	.jump-to-end:focus-visible {
