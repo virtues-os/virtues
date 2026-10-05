@@ -104,7 +104,7 @@ Why one server and not a managed platform: cost, unmetered bandwidth for the map
 
 ### Monitoring
 
-Both servers run `virtues-health` every ten minutes and email the operator (through Resend) when something changes and once a day while it stays wrong. It checks RAID members, SMART health and wear, disk space, failed systemd units, both containers, the public `/health` endpoints, backup age and WAL archiving, and certificate expiry. Each server also checks the other's public endpoints, because a dead server cannot report itself. A failed backup or map cut emails immediately (`OnFailure=`), as does an `mdadm` RAID event. Docker logs are capped (`local` driver, 5 × 20 MB).
+Both servers run `virtues-health` every ten minutes and email the operator (through Resend) when something changes and once a day while it stays wrong. It checks RAID (a degraded or missing array, mirrors that disagree after a scrub, `mdmonitor` not running), SMART health and wear, disk space, failed systemd units, both containers, the public `/health` endpoints, backup age and WAL archiving, and certificate expiry. Each server also checks the other's public endpoints, because a dead server cannot report itself. A failed backup or map cut emails immediately (`OnFailure=`), as does an `mdadm` failure event (a failed or missing disk, a degraded array); the monthly scrub's progress events are dropped unless it finds a mismatch. Docker logs are capped (`local` driver, 5 × 20 MB).
 
 ---
 
