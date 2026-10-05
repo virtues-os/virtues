@@ -380,7 +380,9 @@
 		const tick = async () => {
 			if (document.visibilityState !== "visible") return;
 			const s = await invoke<AudioStatus>("plugin:audio|status").catch(() => null);
-			if (s) audio = s;
+			// Swap only on a real change: a fresh object every tick re-renders the
+			// settings, and resetting a time field mid-pick loses what was typed.
+			if (s && JSON.stringify(s) !== JSON.stringify(audio)) audio = s;
 			now = new Date();
 		};
 		const id = setInterval(tick, 3000);
@@ -538,7 +540,7 @@
 			icon: "ri:mic-line",
 			what: "Ambient sound & transcripts",
 			description:
-				"Records the sound of your day while your phone is with you, transcribed by your server.",
+				"Records the sound of your day while your phone is with you. Your server has the recordings transcribed.",
 			// iOS suspends the wake word while any app holds the mic; ours never lets go.
 			note: "“Hey Siri” is off while recording. Hold the side button instead.",
 		},

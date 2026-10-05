@@ -19,6 +19,7 @@
 -->
 <script lang="ts">
 	import { invoke } from "@tauri-apps/api/core";
+	import { untrack } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import MobilePlacePicker from "./MobilePlacePicker.svelte";
 	import {
@@ -100,6 +101,9 @@
 		save(m === "only", ws);
 	}
 	function editWindow(i: number, patch: Partial<HoursWindow>) {
+		const next = { ...windows[i], ...patch };
+		// A window that starts when it ends covers nothing; the store would drop it.
+		if (next.start === next.end) return onError("A window needs different start and end times.");
 		save(
 			mode === "only",
 			windows.map((w, j) => (j === i ? { ...w, ...patch } : w)),
@@ -125,7 +129,10 @@
 	}
 
 	const hoursSentence = $derived.by(() => {
-		if (mode === "always") return "Virtues records whenever the mic is on, except at the places below.";
+		if (mode === "always")
+			return hasPlaces
+				? "Virtues records whenever the mic is on, except at the places below."
+				: "Virtues records whenever the mic is on.";
 		if (mode === "except")
 			return "During these hours, Virtues doesn't record. The mic stays on, so recording picks up again when they end.";
 		return "Outside these hours, Virtues doesn't record. The mic stays on, so recording picks up again when they begin.";
@@ -178,8 +185,10 @@
 	}
 
 	// Copy the box's muted places into the plugin whenever this page opens.
+	// Untracked: the page re-reads the plugin every few seconds, and reading
+	// `audio.places` here would refetch the box's places on every read.
 	$effect(() => {
-		if (hasPlaces) void refreshPlaces();
+		if (hasPlaces) untrack(() => void refreshPlaces());
 	});
 
 	// ── How recording works ─────────────────────────────────────────────
@@ -214,7 +223,7 @@
 {:else}
 	<div class="card editor">
 		<div class="seg" role="radiogroup" aria-label="Recording hours">
-			{#each [["always", "Always"], ["except", "Don't record during"], ["only", "Only record during"]] as [m, label] (m)}
+			{#each [["always", "Always"], ["except", "Not during"], ["only", "Only during"]] as [m, label] (m)}
 				<button
 					type="button"
 					role="radio"
@@ -368,7 +377,7 @@
 			</p>
 			<div class="label">When it isn't recording</div>
 			<p class="about-text">
-				During your recording hours' off time, or inside a place you've added, Virtues keeps
+				When your recording hours or a place you've added stop recording, Virtues keeps
 				nothing. The mic stays on, so your iPhone's orange microphone dot stays lit and recording
 				picks up again on its own. Your record notes the gap, never the place.
 			</p>
@@ -435,9 +444,6 @@
 		font-size: 13px;
 		line-height: 1.2;
 		cursor: pointer;
-	}
-	.seg button:first-child {
-		flex: 0.7;
 	}
 	.seg button.sel {
 		background: var(--color-surface);
@@ -623,6 +629,7 @@
 		padding: 6px 16px max(24px, env(safe-area-inset-bottom));
 	}
 	.about-body h2 {
+		font-family: var(--font-sans);
 		font-size: 19px;
 		font-weight: 550;
 		margin: 4px 4px 4px;
