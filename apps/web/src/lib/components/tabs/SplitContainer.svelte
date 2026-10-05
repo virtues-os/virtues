@@ -10,6 +10,8 @@
 	import WindowTabBar from "./WindowTabBar.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import TabContent from "./TabContent.svelte";
+	import { mountedTabs, touch } from "$lib/tabs/keepAlive";
+	import { untrack } from "svelte";
 	import ChatView from "./views/ChatView.svelte";
 
 	let isResizing = $state(false);
@@ -53,6 +55,20 @@
 	// All tabs across all panes - single source for the unified {#each} loop
 	// Svelte 5 keyed {#each} preserves component identity when items stay in the array
 	const allTabs = $derived(windowShellStore.getAllTabs());
+
+	// Which hidden tabs keep their view mounted ($lib/tabs/keepAlive). The
+	// visible ones always do; the recency list decides the rest.
+	const visibleTabIds = $derived(
+		[leftPaneActiveTabId, isSplitEnabled ? rightPaneActiveTabId : null].filter(
+			(id): id is string => !!id,
+		),
+	);
+	let recentTabIds = $state<string[]>([]);
+	$effect(() => {
+		const visible = visibleTabIds;
+		untrack(() => (recentTabIds = touch(recentTabIds, visible)));
+	});
+	const mountedTabIds = $derived(mountedTabs(allTabs, visibleTabIds, recentTabIds));
 
 	// Compute widths
 	const leftWidth = $derived(
@@ -227,9 +243,10 @@
 	</div>
 
 	<!-- Tab Content Layer: single {#each} loop, absolutely positioned per-pane.
-	     When a tab moves between panes, only CSS classes change — the component
-	     instance is never destroyed. This preserves Yjs documents, WebSocket
-	     connections, chat streaming, undo history, and scroll position. -->
+	     When a tab moves between panes, only CSS classes change, so a mounted
+	     view survives the move. A hidden tab outside the keep-alive set
+	     ($lib/tabs/keepAlive) keeps its slot but not its view, and remounts
+	     from its route when it is opened again. -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	{#each allTabs as tab (tab.id)}
 		{@const paneId = windowShellStore.findTabPane(tab.id) ?? "left"}
@@ -243,7 +260,9 @@
 			style:display={isActive ? "flex" : "none"}
 			onpointerdown={() => isSplitEnabled && handlePaneClick(paneId)}
 		>
-			<TabContent {tab} active={isActive} />
+			{#if mountedTabIds.has(tab.id)}
+				<TabContent {tab} active={isActive} />
+			{/if}
 		</div>
 	{/each}
 

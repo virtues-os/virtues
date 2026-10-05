@@ -17,11 +17,11 @@ mod client;
 mod endpoint;
 mod server;
 
-pub use client::{PathKind, VirtuesIrohClient};
+pub use client::{is_not_allowlisted, NotAllowlisted, PathKind, VirtuesIrohClient};
 pub use endpoint::{
     build_endpoint, install_crypto_provider, iroh_port, DEFAULT_IROH_PORT, VIRTUES_ALPN,
 };
-pub use server::{serve, AllowPolicy, ProvenPeer, StaticAllow};
+pub use server::{serve, AllowPolicy, ProvenPeer, StaticAllow, CLOSE_NOT_ALLOWLISTED};
 
 // Re-export the iroh types callers need so they don't depend on iroh directly.
 // `Watcher` is the trait behind `Endpoint::home_relay_status()`; a consumer
@@ -81,5 +81,43 @@ mod tests {
         let text = String::from_utf8_lossy(&resp);
         assert!(text.starts_with("HTTP/1.1 200"), "unexpected status: {text}");
         assert!(text.contains("world"), "missing body: {text}");
+    }
+
+    /// A device the box doesn't have on its allowlist gets a request error
+    /// that says so (`is_not_allowlisted`), not a bare connection failure that
+    /// reads the same as "the box is off".
+    #[tokio::test]
+    async fn a_device_off_the_allowlist_is_told_so() {
+        let server_ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await
+            .expect("bind server");
+        let client_ep = Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await
+            .expect("bind client");
+        let server_id = server_ep.id();
+        let port = server_ep
+            .bound_sockets()
+            .iter()
+            .find(|s| s.is_ipv4())
+            .map(|s| s.port())
+            .expect("server bound port");
+
+        // Allowlist someone else entirely.
+        let stranger = SecretKey::from_bytes(&[7u8; 32]).public();
+        let allow: Arc<dyn AllowPolicy> = Arc::new(StaticAllow::new([stranger]));
+        let app = AxumRouter::new().route("/hello", get(|| async { "world" }));
+        let _iroh_router = serve(server_ep, app, allow);
+
+        let addr = EndpointAddr::new(server_id)
+            .with_ip_addr(format!("127.0.0.1:{port}").parse().unwrap());
+        let client = VirtuesIrohClient::new(client_ep, addr);
+
+        let req = b"GET /hello HTTP/1.1\r\nHost: box\r\nConnection: close\r\n\r\n";
+        let err = client.request(req).await.expect_err("an unknown device must be refused");
+        assert!(is_not_allowlisted(&err), "refusal not recognized: {err:#}");
     }
 }

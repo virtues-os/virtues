@@ -430,11 +430,11 @@ fn semantic_search_tool() -> ToolConfig {
         id: "semantic_search".to_string(),
         name: "Semantic Search".to_string(),
         description: "Search personal data by meaning".to_string(),
-        llm_description: r#"Search the user's own data by meaning: emails, messages, calendar, chats, documents, transactions, transcriptions, pages.
+        llm_description: r#"Search the user's own data by meaning; `domains` lists what it holds.
 
-Omit `domains` to search everything; in a project-grounded chat always omit it, or the project's materials drop out. For a broad or vague need, pass 2-4 phrasings in `queries`; one for a precise lookup. Rank is order within this result set, not match quality. Cite each result's `ref` as returned; read the whole row with sql_query by its id when the preview is not enough.
+Omit `domains` to search everything; always omit it in a project chat, or its materials drop out. Pass 2-4 phrasings in `queries` for a vague need, one for a precise lookup. Rank is order, not match quality. Cite each `ref` as returned; read a full row with sql_query by its id.
 
-When the queries name a person, place or organization, or the dates span a week or less, `from_your_wiki` comes first: the wiki's article on each, or a card with its id. Start there; pass a subject's id as `entities` to search its records."#.to_string(),
+Naming a person, place or org, or dates spanning a week or less, puts `from_your_wiki` first: an article, or a card whose id fits `entities`."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {

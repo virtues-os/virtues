@@ -890,6 +890,118 @@ struct ReadyUpdate {
     version: String,
 }
 
+// ============================================================================
+// Attention: the box's "needs you" list, as notifications
+// ============================================================================
+
+/// How often the tray asks the box what needs the owner. The list changes on
+/// the scale of hours (a stream stalls after a day, a backup is late after
+/// two), so five minutes is prompt without being chatty.
+const ATTENTION_EVERY: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+#[derive(serde::Deserialize)]
+struct AttentionItem {
+    key: String,
+    title: String,
+    body: String,
+}
+
+/// Turns `GET /api/attention` into native notifications, once per problem.
+///
+/// The box knew when a stream stopped, a sign-in expired, the backup drive
+/// went missing or an update rolled back, and said so only on pages the
+/// owner had to think to open. This app is the one thing that is always
+/// running, so it is the one that speaks.
+///
+/// A key is notified when it first appears and again only if it goes away
+/// and comes back. The first poll after launch notifies what is already
+/// open; the app runs for days, so that is a reminder, not a stream.
+#[derive(Default)]
+struct AttentionNotifier {
+    last_poll: Option<std::time::Instant>,
+    /// Keys the last successful poll returned.
+    known: std::collections::HashSet<String>,
+}
+
+impl AttentionNotifier {
+    fn tick(&mut self, app: &AppHandle) {
+        if self.last_poll.is_some_and(|t| t.elapsed() < ATTENTION_EVERY) || !is_paired() {
+            return;
+        }
+        self.last_poll = Some(std::time::Instant::now());
+        // A failed poll changes nothing: unreachable is the tray's own line.
+        let Some(items) = fetch_attention_blocking() else { return };
+        let fresh: Vec<&AttentionItem> =
+            items.iter().filter(|i| !self.known.contains(&i.key)).collect();
+        notify_attention(app, &fresh);
+        self.known = items.into_iter().map(|i| i.key).collect();
+    }
+}
+
+fn notify_attention(app: &AppHandle, fresh: &[&AttentionItem]) {
+    use tauri_plugin_notification::NotificationExt;
+    match fresh {
+        [] => {}
+        // A handful each get their own; more than that is one summary, so a
+        // bad morning is one notification rather than a stack of them.
+        items if items.len() <= 3 => {
+            for i in items {
+                let _ = app.notification().builder().title(&i.title).body(&i.body).show();
+            }
+        }
+        items => {
+            let _ = app
+                .notification()
+                .builder()
+                .title(format!("{} things on your server need you", items.len()))
+                .body(format!("{}, and more. Open Virtues to see them.", items[0].title))
+                .show();
+        }
+    }
+}
+
+/// `GET /api/attention` through the loopback. BLOCKING; the tray thread only.
+fn fetch_attention_blocking() -> Option<Vec<AttentionItem>> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let addr = format!("127.0.0.1:{}", tauri_plugin_reach::loopback_port())
+        .parse()
+        .ok()?;
+    let mut s = TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(2)).ok()?;
+    // The loopback dials the box over iroh; a relay path can take a while.
+    let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(30)));
+    s.write_all(b"GET /api/attention HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .ok()?;
+    let mut raw = Vec::new();
+    let _ = s.read_to_end(&mut raw);
+    let raw = String::from_utf8_lossy(&raw);
+    let (head, body) = raw.split_once("\r\n\r\n")?;
+    if !head.lines().next()?.contains(" 200") {
+        return None;
+    }
+    let body = if head.to_ascii_lowercase().contains("transfer-encoding: chunked") {
+        dechunk(body)?
+    } else {
+        body.to_string()
+    };
+    serde_json::from_str(&body).ok()
+}
+
+/// Undo HTTP/1.1 chunked framing. `None` on anything malformed.
+fn dechunk(mut rest: &str) -> Option<String> {
+    let mut out = String::new();
+    loop {
+        let (size, after) = rest.split_once("\r\n")?;
+        let size = usize::from_str_radix(size.split(';').next()?.trim(), 16).ok()?;
+        if size == 0 {
+            return Some(out);
+        }
+        out.push_str(after.get(..size)?);
+        rest = after.get(size..)?.strip_prefix("\r\n")?;
+    }
+}
+
 /// Record a failed check or stage: bump the shared counter, remember the
 /// verdict, and speak exactly once at two consecutive failures.
 fn record_update_failure(app: &AppHandle, err: String) {
@@ -1274,8 +1386,10 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     std::thread::spawn(move || {
         let mut last_visible = std::time::Instant::now();
         const HIDDEN_APPLY_AFTER: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
+        let mut attention = AttentionNotifier::default();
         loop {
             refresh_tray(&app, items.clone());
+            attention.tick(&app);
             let any_visible = app
                 .webview_windows()
                 .values()
@@ -1885,3 +1999,14 @@ fn main() {
         });
 }
 
+
+#[cfg(test)]
+mod attention_tests {
+    use super::dechunk;
+
+    #[test]
+    fn dechunk_joins_chunks_and_rejects_garbage() {
+        assert_eq!(dechunk("4\r\n[{\"k\r\n3\r\n\":1\r\n2\r\n}]\r\n0\r\n\r\n").as_deref(), Some("[{\"k\":1}]"));
+        assert_eq!(dechunk("zz\r\nnope\r\n"), None);
+    }
+}
