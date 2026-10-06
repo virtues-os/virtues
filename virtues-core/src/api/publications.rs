@@ -698,7 +698,11 @@ async fn get(pool: &PgPool, id: &str) -> Result<Publication> {
 
 /// Everything the owner has shared, newest first, revoked ones included.
 pub async fn list(pool: &PgPool) -> Result<Vec<Publication>> {
-    door_key(pool).await?;
+    // The records are worth showing even when the key cannot be read; their
+    // links are then absent, and the log says why.
+    if let Err(e) = door_key(pool).await {
+        tracing::warn!(error = %e, "publications: the door key is unavailable, so links are not shown");
+    }
     let rows = sqlx::query_as::<_, Publication>(&format!(
         "SELECT {COLUMNS} FROM app_publications ORDER BY created_at DESC"
     ))
@@ -991,6 +995,15 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn the_door_key_is_minted_once_and_kept(pool: PgPool) {
+        // Sealing needs a vault key; CI has none. Thirty-two zero bytes, as
+        // the crypto crate's own tests use, and only when nothing is set.
+        if std::env::var("VIRTUES_ENCRYPTION_KEY").is_err() {
+            use base64::Engine;
+            std::env::set_var(
+                "VIRTUES_ENCRYPTION_KEY",
+                base64::engine::general_purpose::STANDARD.encode([0u8; 32]),
+            );
+        }
         let a = door_key(&pool).await.unwrap();
         let b = door_key(&pool).await.unwrap();
         assert_eq!(a, b);
