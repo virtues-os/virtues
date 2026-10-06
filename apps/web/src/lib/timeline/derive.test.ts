@@ -24,6 +24,7 @@ function day(over: Partial<TimelineDay> = {}): TimelineDay {
 		ended_at: iso(24 * 60),
 		stays: [],
 		points: [],
+		place_titles: {},
 		last_point_before: null,
 		nights: [],
 		sessions: [],

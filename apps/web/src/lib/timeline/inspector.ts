@@ -33,6 +33,8 @@ export interface DerivedPlace {
 	/** The person named it; an unnamed place carries the resolver's "Location …". */
 	is_named: boolean;
 	place_name: string | null;
+	/** The box's title for it: Home or Work, the map's match, else its city. */
+	title?: string;
 }
 
 /** One transcription window, as `/api/timeline/voice` serves it. */
@@ -107,11 +109,12 @@ export function fmtDur(ms: number): string {
 	return r ? `${h}h ${r}m` : `${h}h`;
 }
 
-/** A place's title: the name the person gave it, else "Unnamed place". The
+/** A place's title: the name the person gave it, else the box's title for
+ *  it (Home or Work, the map's match, its city), else "Unnamed place". The
  *  wiki names a place nobody named "Location <lat>, <lon>"; that is no title
  *  to show. */
 export function placeTitle(p: DerivedPlace | undefined): string {
-	return p?.is_named && p.place_name ? p.place_name : "Unnamed place";
+	return p?.is_named && p.place_name ? p.place_name : (p?.title ?? "Unnamed place");
 }
 
 /** Faster than anything on the ground: only a flight reaches it. */

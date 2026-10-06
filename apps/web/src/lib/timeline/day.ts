@@ -16,6 +16,13 @@ export interface DayBounds {
 	zone: string;
 }
 
+/** A place's title (`api::place_review`): the name the person gave, Home or
+ *  Work from where the time went, the map's clear match, else its city. */
+export interface PlaceTitle {
+	title: string;
+	source: "named" | "home" | "work" | "map" | "city" | "none";
+}
+
 /** One local day, as `/api/timeline/days/:date` serves it. */
 export interface TimelineDay {
 	date: string;
@@ -34,6 +41,8 @@ export interface TimelineDay {
 		place_is_named: boolean;
 	}[];
 	points: TimelineDayPoint[];
+	/** Each stay's place by id: its title and where it came from. */
+	place_titles: Record<string, PlaceTitle>;
 	last_point_before: TimelineDayPoint | null;
 	/** Nights overlapping the day, each joined from all of its records. */
 	nights: { started_at: string; ended_at: string; asleep_minutes: number }[];
