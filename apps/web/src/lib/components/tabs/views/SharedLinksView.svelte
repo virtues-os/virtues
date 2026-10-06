@@ -68,7 +68,12 @@
 	}
 
 	function openApplet(p: Publication) {
-		const route = p.producer_kind === 'page' ? `/page/${p.producer_id}` : `/applet/${p.producer_id}`;
+		const route =
+			p.producer_kind === 'page'
+				? `/page/${p.producer_id}`
+				: p.producer_kind === 'chat'
+					? `/chat/${p.producer_id}`
+					: `/applet/${p.producer_id}`;
 		windowShellStore.navigate(route, { label: p.title });
 	}
 
@@ -119,8 +124,8 @@
 			<span class="empty-glyph"><Icon icon="ri:share-forward-line" width="28" /></span>
 			<p class="empty-title">Nothing shared yet</p>
 			<p class="empty-body">
-				Open a page, or an applet that shows one, and choose Share. Every link you make
-				appears here, and you can turn any of them off.
+				Share a page, a chat, or an applet that shows a page. Every link you make appears
+				here, and you can turn any of them off.
 			</p>
 		</div>
 	{:else}
