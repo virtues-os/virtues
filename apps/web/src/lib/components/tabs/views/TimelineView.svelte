@@ -37,24 +37,19 @@
 	import { laneData, NO_LANES, type Lanes, type RibbonKind } from '$lib/timeline/lanes';
 	import { buildFolds, clampView, HOUR, MIN, midnightIn, tierOf, tierView, unwarp, warp, weekOf, mondayOf, zoneOffset, type Tier } from '$lib/timeline/scale';
 	import { colourVars, mapInk } from '$lib/timeline/colours';
+	import { APPLE_DARK, APPLE_LIGHT, hsl, recolour, type Palette } from '$lib/timeline/palette';
 
 	/** Below this pane width the list leaves the map's side for a sheet. */
 	const NARROW_PX = 640;
 	/** The narrow layout's sheet, as a share of the pane's height. */
 	const SHEET = 0.34;
 
-	// Without the box's map archives there is no basemap: the page's own
-	// surface, so the path still draws and the page doesn't read as broken.
-	const bare = (): StyleSpecification => ({
+	// Without the box's map archives there is no basemap: the palette's
+	// ground alone, so the path still draws and the page doesn't read as broken.
+	const bare = (palette: Palette): StyleSpecification => ({
 		version: 8,
 		sources: {},
-		layers: [
-			{
-				id: 'bare',
-				type: 'background',
-				paint: { 'background-color': getComputedStyle(document.documentElement).getPropertyValue('--color-surface').trim() },
-			},
-		],
+		layers: [{ id: 'bare', type: 'background', paint: { 'background-color': hsl(palette.land) } }],
 	});
 
 	/** Virtues' own scheme: its dark themes set `--identity-dark: 1` (themes.css),
@@ -62,11 +57,14 @@
 	 *  page reads it. The map follows with the atlas's own dark style. */
 	const isDark = () => getComputedStyle(document.documentElement).getPropertyValue('--identity-dark').trim() === '1';
 	let dark = $state(browser ? isDark() : false);
-	/** The basemap for a side: the atlas's own style, or the page's plain
-	 *  ground when the box has no map files. When
+	/** The basemap for a side: the atlas's own style in the prototype's
+	 *  palette (cream land, white streets, green parks, blue water; see
+	 *  palette.ts), or the palette's plain ground when the box has no map
+	 *  files. When
 	 *  the box can't be reached (it's restarting), the ground stands in, no note
 	 *  claims there are no maps, and the map asks again until the box answers. */
 	async function baseStyle(night: boolean): Promise<StyleSpecification> {
+		const palette = night ? APPLE_DARK : APPLE_LIGHT;
 		let style: StyleSpecification | null;
 		try {
 			style = await atlasStyle(night ? 'dark' : 'light');
@@ -74,11 +72,11 @@
 			console.warn('[Timeline] map files unreachable; asking again', e);
 			clearTimeout(mapRetry);
 			mapRetry = window.setTimeout(() => void restyle(), MAP_RETRY_MS);
-			return bare();
+			return bare(palette);
 		}
 		basemap = style !== null;
 		if (squares === null) void loadSquares();
-		return style ?? bare();
+		return style ? recolour(style, palette) : bare(palette);
 	}
 	/** How long to wait before asking an unreachable box for its map again. */
 	const MAP_RETRY_MS = 5000;
