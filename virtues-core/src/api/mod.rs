@@ -59,6 +59,7 @@ pub mod trash;
 pub mod visits;
 pub mod publications;
 pub mod search_local;
+pub mod place_review;
 pub mod places;
 pub mod profile;
 pub mod census;

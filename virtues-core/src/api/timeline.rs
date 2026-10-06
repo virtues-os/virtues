@@ -41,6 +41,10 @@ pub struct TimelineDay {
     /// than one peak setting its ceiling. 1 when nothing was ever counted.
     pub step_scale: f64,
     pub calendar: Vec<CalendarEvent>,
+    /// Each stay's place by id: its title (the person's name, Home or Work,
+    /// the map's clear match, else its city) and where that came from
+    /// (`place_review::titles`).
+    pub place_titles: std::collections::HashMap<String, super::place_review::PlaceTitle>,
 }
 
 #[derive(Debug, Serialize)]
@@ -259,6 +263,11 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
     })
     .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
 
+    let mut place_ids: Vec<String> = stays.iter().filter_map(|s| s.place_id.clone()).collect();
+    place_ids.sort();
+    place_ids.dedup();
+    let place_titles = super::place_review::titles(pool, &place_ids).await?;
+
     Ok(TimelineDay {
         date,
         zone,
@@ -273,6 +282,7 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
         // absent-ok: no step was ever counted, so any scale draws nothing.
         step_scale: step_scale.unwrap_or(1.0).max(1.0),
         calendar,
+        place_titles,
     })
 }
 
