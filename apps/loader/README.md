@@ -60,6 +60,28 @@ X-Content-Type-Options: nosniff
 `srcdoc` frame, which inherits this policy, and applet pages use inline
 scripts; the frame adds its own policy that blocks every network request.
 
+## Deploy
+
+```sh
+sh apps/loader/stage.sh     # after the build above; writes apps/loader/dist/
+```
+
+`stage.sh` puts each build's script and wasm under `wasm/<version>/` and
+points `index.html` at that version. `index.html` is served uncached and the
+wasm is cached, so a fixed path would let a new `index.html` load an old
+cached script (which is exactly what broke the first live-pages deploy for
+anyone who had opened a link in the previous hour). Copy `dist/` to the
+served directory, keep older `wasm/<version>/` folders for an hour or so,
+and update the table below.
+
+## Link previews
+
+Every link shows the same card ("Shared page", from the tags in
+`index.html`). A link preview service fetches the page without the part after
+`#`, so it cannot tell which page or whose server, and that is on purpose: a
+per-link card would need something in the visible part of the URL, and then
+`s.virtues.ch` would learn which link was opened.
+
 ## Published files
 
 What `s.virtues.ch` serves, so anyone can check it against a build of this
@@ -67,9 +89,9 @@ directory (`sha256`):
 
 | File | sha256 |
 |---|---|
-| `index.html` | `ad5d49a981c52638778c72f227f8d551fd2025c4486b7b019d8a621bfc5c9920` |
-| `wasm/virtues_loader.js` | `59e4e16d34698376f9fabd72b5139eaa473bbbaf1ebcc377da9c63bea3b38cea` |
-| `wasm/virtues_loader_bg.wasm` | `24675e7e7bfc3e76d501710bd410d502ddcbb79716ebbe2454ca5f83bb981d24` |
+| `index.html` | `44c897660f5d2829bc0be331b7a78638a09640490ad10b7267b80d58c9a69ace` |
+| `wasm/e6e52a7f74a5/virtues_loader.js` | `cf35b309e1efbb32f553545371517e58b52c0070b2dc401c2df2a3d657030efe` |
+| `wasm/e6e52a7f74a5/virtues_loader_bg.wasm` | `cd96d7ff2c1cf0f0cf97b6f2590b33c749d7677c416babb62d531c5c596e1feb` |
 
 Update this table with every deploy. A build is not yet reproducible
 byte-for-byte across machines, so for now the hashes say what is served, not

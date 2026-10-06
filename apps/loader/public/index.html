@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
 <title>Shared page</title>
+<!-- The same card for every link: a link preview fetches this page without
+     the part after #, so it cannot know which page or whose server. -->
+<meta name="description" content="A page someone shared from their own virtues server.">
+<meta property="og:site_name" content="virtues">
+<meta property="og:title" content="Shared page">
+<meta property="og:description" content="A page someone shared from their own virtues server.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
 <style>
   :root { color-scheme: light dark; --fg: #1b1f1d; --muted: #66706c; --bg: #f7f7f5; --line: #e2e4e0; }
   @media (prefers-color-scheme: dark) { :root { --fg: #e8ebe9; --muted: #98a19d; --bg: #141716; --line: #2a2f2d; } }

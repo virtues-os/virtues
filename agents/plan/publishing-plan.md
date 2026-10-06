@@ -296,7 +296,7 @@ Each wave is usable on its own and builds on the last without redoing it.
 |---|---|---|
 | **Core sharing** | `app_publications`, the freezer, the door, the loader with its offline timeout, the Share sheet with "what leaves", update and revoke | Medium: the largest chunk, no unknowns left after the spike |
 | **Live pages** | queries approved on the Share sheet, stored with the publication; the door asks the core for those and only those; the page keeps calling `virtues.query` as faces already do | Easy to medium: the review UI is the work, not the plumbing |
-| **Preview cards** | opt-in title and one image; a small service at the loader's domain fetches them from the box when a link unfurler asks, stores nothing | Easy |
+| **Preview cards** | dropped for now: one generic card for every link, so virtues never learns which link is opened | Done (generic) |
 | **Box-to-box viewing** | another owner's app dials the door over native iroh and renders the page, no loader | Trivial |
 
 **Built 2026-10-06:** core sharing (Share sheet, door supervisor, loader at
@@ -304,9 +304,10 @@ Each wave is usable on its own and builds on the last without redoing it.
 **snapshot** (rows baked in, the server answers nothing) or **live** (the
 page sends approved query keys through the loader and the door to the core,
 which runs only those, read-only). The door reports opens, so counts are
-real. Preview cards wait on a decision: an unfurler never sees the `#`, so a
-per-link card puts an identifier in the visible path, and then `s.virtues.ch`
-learns which card-enabled link is opened.
+real. **Preview cards: decided against for now (2026-10-06).** An unfurler
+never sees the `#`, so a per-link card would put an identifier in the visible
+path, and then `s.virtues.ch` would learn which link is opened. Every link
+shows the same generic card instead.
 
 They ship together because they share one rule: the door serves only what
 the owner approved, whether a frozen file, a declared query or a card, and
