@@ -85,10 +85,18 @@ fn door_id() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// `<loader>#<door-id>.<token>`, when both are known. The part after `#`
+/// A door's EndpointId (64 hex characters, as iroh prints it) in the 43
+/// base64url characters a link carries.
+fn compact_key(hex_id: &str) -> Option<String> {
+    use base64::Engine;
+    let bytes = hex::decode(hex_id).ok().filter(|b| b.len() == 32)?;
+    Some(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+}
+
+/// `<loader>#<door-key>.<token>`, when both are known. The part after `#`
 /// never leaves the visitor's browser.
 fn link_for(loader: Option<&str>, door: Option<&str>, token: &str) -> Option<String> {
-    Some(format!("{}#{}.{token}", loader?, door?))
+    Some(format!("{}#{}.{token}", loader?, compact_key(door?)?))
 }
 
 fn link(token: &str) -> Option<String> {
@@ -242,7 +250,10 @@ async fn create_frozen(
     .fetch_one(pool)
     .await;
     match inserted {
-        Ok(p) => Ok(p),
+        Ok(p) => {
+            crate::door::wake();
+            Ok(p)
+        }
         Err(e) => {
             let _ = bundle::remove(root, &token);
             Err(Error::Database(format!("record publication: {e}")))
@@ -311,14 +322,17 @@ pub async fn revoke(pool: &PgPool, id: &str) -> Result<Publication> {
 async fn revoke_in(pool: &PgPool, root: &Path, id: &str) -> Result<Publication> {
     let current = get(pool, id).await?;
     bundle::remove(root, &current.token).map_err(door_error)?;
-    sqlx::query_as::<_, Publication>(&format!(
+    let revoked = sqlx::query_as::<_, Publication>(&format!(
         "UPDATE app_publications SET revoked_at = COALESCE(revoked_at, now()) \
          WHERE id = $1 RETURNING {COLUMNS}"
     ))
     .bind(id)
     .fetch_one(pool)
     .await
-    .map_err(|e| Error::Database(format!("revoke publication: {e}")))
+    .map_err(|e| Error::Database(format!("revoke publication: {e}")))?;
+    // The last live link revoked closes the door.
+    crate::door::wake();
+    Ok(revoked)
 }
 
 #[cfg(test)]
@@ -349,12 +363,12 @@ mod tests {
 
     #[test]
     fn a_link_needs_both_a_loader_and_a_door() {
-        assert_eq!(
-            link_for(Some("https://l.example/"), Some("abc"), "tok").as_deref(),
-            Some("https://l.example/#abc.tok")
-        );
-        assert_eq!(link_for(None, Some("abc"), "tok"), None);
+        let door = "dc70ba6300c2042b3d3c6ae34dba6b978c1e0d38cb9a7a1b90ccd6acb324baff";
+        let link = link_for(Some("https://l.example/"), Some(door), "tok").unwrap();
+        assert_eq!(link, "https://l.example/#3HC6YwDCBCs9PGrjTbprl4weDTjLmnobkMzWrLMkuv8.tok");
+        assert_eq!(link_for(None, Some(door), "tok"), None);
         assert_eq!(link_for(Some("https://l.example/"), None, "tok"), None);
+        assert_eq!(link_for(Some("https://l.example/"), Some("not-a-key"), "tok"), None);
     }
 
     #[sqlx::test(migrations = "./migrations")]

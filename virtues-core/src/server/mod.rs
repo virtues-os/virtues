@@ -46,6 +46,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // helper. See `crate::relay`.
     crate::relay::maybe_spawn(client.database.pool().clone(), app.clone());
 
+    // The door serves shared links, as its own process with its own key, and
+    // only while something is shared. See `crate::door`.
+    crate::door::maybe_spawn(client.database.pool().clone());
+
     let transport = build_transport(host, port);
     let listener = transport.bind().await?;
 

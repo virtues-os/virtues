@@ -1,9 +1,9 @@
 //! `virtues-door --root <bundles> --key-dir <dir> [--relay <url>]`
 //!
 //! Serves published bundles as its own iroh endpoint. On first start it makes
-//! a key in `--key-dir` and writes its EndpointId beside it (`endpoint-id`),
-//! which is what the core reads to build links. The key is the door's, never
-//! the box's.
+//! a key in `--key-dir` and writes its EndpointId beside it (`endpoint-id`)
+//! and to stdout (`endpoint-id <id>`), which is what the core reads to build
+//! links. The key is the door's, never the box's.
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -70,6 +70,9 @@ async fn main() -> Result<()> {
     let endpoint = virtues_iroh::build_endpoint(key, Some(relay), None).await?;
     let id = endpoint.id();
     std::fs::write(key_dir.join("endpoint-id"), id.to_string()).context("write endpoint-id")?;
+    // The core reads this line: on a box the key directory is the door's own,
+    // and the core cannot read it.
+    println!("endpoint-id {id}");
 
     let router = virtues_door::serve(endpoint, virtues_door::bundle::Store::new(&root));
     tracing::info!(%id, root = %root.display(), "door open");
