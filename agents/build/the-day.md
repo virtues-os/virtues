@@ -207,9 +207,8 @@ An earlier design embedded the whole day's text per-domain and stored
 `chaos_score = 1 - cosine_sim(today_embedding, centroid_embedding)` on
 `wiki_days`. It was deleted with the scoring rewrite — the column no longer
 exists. Cross-day entropy is now answered two ways: per-event novelty
-aggregated over the day (below), and the home page's live rhythm strip
-(`DayNovelty.svelte`: total-variation distance of today's activity shape from
-the trailing 12-week median, embedding-free).
+aggregated over the day (below). The home page's live rhythm strip, which
+answered it a second way, was removed with the home page on 2026-10-06.
 
 ### Intra-Day Novelty (built)
 

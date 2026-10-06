@@ -124,8 +124,6 @@ import riLockLine from '@iconify-icons/ri/lock-line';
 import riLogoutBoxRLine from '@iconify-icons/ri/logout-box-r-line';
 // Mobile bottom-tab bar: line + fill pairs (rendered offline on the phone,
 // so they must live in this registry — the network Iconify API is unavailable).
-import riHome5Line from '@iconify-icons/ri/home-5-line';
-import riHome5Fill from '@iconify-icons/ri/home-5-fill';
 import riSunLine from '@iconify-icons/ri/sun-line';
 import riSunFill from '@iconify-icons/ri/sun-fill';
 import riUser3Fill from '@iconify-icons/ri/user-3-fill';
@@ -313,8 +311,6 @@ addIcon('ri:loader-4-line', riLoader4Line);
 addIcon('ri:lock-line', riLockLine);
 addIcon('ri:logout-box-r-line', riLogoutBoxRLine);
 // Mobile bottom-tab bar icons (line + fill pairs).
-addIcon('ri:home-5-line', riHome5Line);
-addIcon('ri:home-5-fill', riHome5Fill);
 addIcon('ri:sun-line', riSunLine);
 addIcon('ri:sun-fill', riSunFill);
 addIcon('ri:user-3-fill', riUser3Fill);
