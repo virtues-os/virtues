@@ -369,12 +369,12 @@ message. Still open: a real phone on cellular.
     *naming*, which the doctrine allows; the token never leaves the browser.
     The trust it costs: virtues could point a handle at an impostor door,
     the same trust anyone places in DNS.
-  - `s.virtues.ch/#<door-key>.<token>`, about 75 characters with the key in
-    base64url (43) and a 96-bit token (16). virtues holds nothing; this is
+  - `s.virtues.ch/#<door-key>.<token>`, about 81 characters with the key in
+    base64url (43) and a 128-bit token (22). virtues holds nothing; this is
     the form for anyone who wants no trust in virtues at all. Both forms
     work forever, so no link ever breaks because the format moved on.
-  - The core currently builds the long form with a hex key and a 22-character
-    token; the compact encoding and handles land with the loader.
+  - The core builds the long form today (`api::publications::link_for`);
+    handles need atlas and come later.
 - **One door key per box.** Anyone holding two of a box's links can tell
   they came from the same box; the share sheet's details say so.
 - **The door key is the box's link identity.** Losing it ends every link the

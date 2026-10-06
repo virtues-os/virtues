@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>Shared page</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1b1f1d; --muted: #66706c; --bg: #f7f7f5; --line: #e2e4e0; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #e8ebe9; --muted: #98a19d; --bg: #141716; --line: #2a2f2d; } }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  #bar { padding: 8px 16px; padding-top: calc(8px + env(safe-area-inset-top, 0px));
+    border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+  #page { flex: 1; border: 0; width: 100%; display: block; background: #fff; }
+  #msg { margin: auto; max-width: 30rem; padding: 32px 16px; text-align: center; }
+  #msg h1 { font-size: 1.15rem; font-weight: 600; margin: 0 0 8px; }
+  #msg p { margin: 0; color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="bar">Shared from a virtues server, encrypted from the sender's server to you.</div>
+<div id="msg"><h1>Opening…</h1><p>Connecting to the server that shared this page.</p></div>
+<iframe id="page" hidden title="Shared page" sandbox="allow-scripts"></iframe>
+<script type="module">
+  import init, { open_link } from "./wasm/virtues_loader.js";
+
+  const $ = (id) => document.getElementById(id);
+  const say = (title, body) => {
+    $("msg").innerHTML = "";
+    const h = document.createElement("h1"); h.textContent = title;
+    const p = document.createElement("p"); p.textContent = body;
+    $("msg").append(h, p);
+    $("msg").hidden = false;
+    $("page").hidden = true;
+  };
+
+  // The shared page may run its own scripts, in an opaque origin, but may not
+  // load anything from the network: everything it needs is inside it.
+  const POLICY = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; ` +
+    `img-src data: blob:; media-src data: blob:; font-src data:; style-src 'unsafe-inline'; ` +
+    `script-src 'unsafe-inline'">`;
+  const withPolicy = (html) => {
+    const head = html.match(/<head[^>]*>/i);
+    if (head) return html.replace(head[0], head[0] + POLICY);
+    return `<!doctype html><head>${POLICY}</head>` + html;
+  };
+
+  async function main() {
+    if (location.pathname !== "/" && location.pathname !== "/index.html") {
+      say("Short links don't open yet", "Ask the person who sent this for the full link.");
+      return;
+    }
+    const [door, token] = location.hash.slice(1).split(".");
+    if (!door || !token) {
+      say("This link is incomplete", "Ask the person who sent it for the full link.");
+      return;
+    }
+    await init();
+    let r;
+    try {
+      r = await open_link(door, token);
+    } catch (e) {
+      say("This page couldn't open", "Something went wrong reaching the server that shared it. Try again in a moment.");
+      console.error(e);
+      return;
+    }
+    switch (r.outcome) {
+      case "page": {
+        const title = r.html.match(/<title[^>]*>([^<]*)<\/title>/i);
+        if (title) document.title = title[1];
+        $("page").srcdoc = withPolicy(r.html);
+        $("page").hidden = false;
+        $("msg").hidden = true;
+        window.__open = { connect_ms: r.connect_ms, total_ms: r.total_ms, bytes: r.bytes };
+        break;
+      }
+      case "gone":
+        say("This link doesn't open a page", "It may have expired, or the person who shared it turned it off.");
+        break;
+      case "offline":
+        say("The server that shared this page isn't reachable", "It may be switched off or offline. Try again later.");
+        break;
+      default:
+        say("This link is incomplete", "Ask the person who sent it for the full link.");
+    }
+  }
+  main();
+</script>
+</body>
+</html>
