@@ -5,6 +5,8 @@
  * Backend wiki pages are views of entities/narratives.
  */
 
+import { apiGet } from '$lib/api/client';
+
 // ============================================================================
 // API Response Types (match Rust backend types)
 // ============================================================================
@@ -1178,6 +1180,25 @@ export async function getDayFacts(date: string, fetchFn: FetchFn = fetch): Promi
 	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/facts`);
 	if (!res.ok) return null;
 	return res.json();
+}
+
+/** A person as of one day: the facts behind a day page's gloss card. */
+export interface PersonGlossApi {
+	id: string;
+	date: string;
+	first_message_on: string | null;
+	/** Whether that first message was in a group thread. */
+	first_message_in_group: boolean | null;
+	last_message_before_on: string | null;
+	/** The days just before `date` that `days_in_window` counts over. */
+	window_days: number;
+	days_in_window: number;
+	direct_messages_in_window: number;
+	group_messages_in_window: number;
+}
+
+export function getPersonGloss(id: string, date: string): Promise<PersonGlossApi> {
+	return apiGet<PersonGlossApi>(`/wiki/person/${encodeURIComponent(id)}/gloss`, { date });
 }
 
 /** A day whose page reads like this one's. */

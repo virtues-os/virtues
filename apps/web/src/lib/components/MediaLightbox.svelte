@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { portal } from "$lib/actions/portal";
 	import { onMount } from "svelte";
 	import { animate } from "motion";
 	import Icon from "$lib/components/Icon.svelte";
@@ -22,11 +23,6 @@
 		window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
 	const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
-
-	function portal(node: HTMLElement) {
-		document.body.appendChild(node);
-		return { destroy: () => node.remove() };
-	}
 
 	// FLIP open: paint the full image at its final centered size, then start it
 	// transformed back onto the thumbnail's footprint and release it.
