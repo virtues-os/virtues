@@ -356,6 +356,15 @@ never connects. **A stopped box makes `connect` hang**: the relay does not
 report an absent peer, so the loader owns a timeout and the "offline"
 message. Still open: a real phone on cellular.
 
+**The sandboxed door on a real box, 2026-10-06** (spare Q6A, the same
+`systemd-run` properties `crate::door` uses): it ran as a DynamicUser, homed
+on the relay, and served a page through the loader in ~0.6 s. Probes run
+inside the same sandbox: the box's env file denied, the Postgres socket
+directory denied, the core's :8000 on loopback denied, the bundle directory
+readable and read-only. The full Share loop (sheet, link, door started by the
+first link and stopped by the last revoke) was verified on a scratch core on
+a laptop; the two have not yet run together on one box.
+
 ## Decided 2026-10-05
 
 - **The loader lives on `virtues.ch`**, the domain the relay already uses,
