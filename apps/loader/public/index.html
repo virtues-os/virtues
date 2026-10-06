@@ -57,9 +57,9 @@
       say("This link is incomplete", "Ask the person who sent it for the full link.");
       return;
     }
-    await init();
     let r;
     try {
+      await init();
       r = await open_link(door, token);
     } catch (e) {
       say("This page couldn't open", "Something went wrong reaching the server that shared it. Try again in a moment.");

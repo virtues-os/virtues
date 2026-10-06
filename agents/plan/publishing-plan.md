@@ -1,6 +1,6 @@
 # Publishing: virtues introduces, the box serves
 
-> **STATUS 2026-10-05: spike green (laptop and iOS Safari); wave 1 started.** A page is
+> **STATUS 2026-10-06: wave 1 core sharing built; the loader is live at `s.virtues.ch`.** A page is
 > served **by the box**. A visitor's browser reaches it as an iroh endpoint
 > (iroh compiled to WebAssembly) through the relay we already run, encrypted
 > end to end; virtues introduces the two and, once a direct transport for
@@ -370,8 +370,11 @@ a laptop; the two have not yet run together on one box.
 - **The loader lives on `virtues.ch`**, the domain the relay already uses,
   not `virtues.com`: shorter links, and shared pages never load on the domain
   that holds account and billing sessions (GitHub keeps
-  `githubusercontent.com` apart for the same reason). It is one static page,
-  served by Caddy on the relay host; no new server.
+  `githubusercontent.com` apart for the same reason). **Live at
+  `https://s.virtues.ch/` since 2026-10-06**, static files behind the Caddy
+  that already serves the API (iroh-relay holds ports 80 and 443 on the relay
+  host itself). Headers and file hashes: `apps/loader/README.md`. A link to
+  the spare box's test door opened through it in ~0.6 s.
 - **Link format: a box handle, with the self-contained form always valid.**
   - `virtues.ch/<handle>#<token>`, about 35 characters. The handle is a name
     for the box, like a username; atlas maps it to the door key. That is
