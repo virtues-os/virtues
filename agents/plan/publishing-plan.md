@@ -350,7 +350,9 @@ by revoking.
 
 ### Also on the way
 
-- **Fix the origin bug** so existing page shares work on the LAN meanwhile.
+- **Pages publish through the door (built 2026-10-06, a5b6b59d).** The old
+  page share, whose links carried the app's own origin, is removed; its
+  table waits for a later migration to drop.
 - **GitHub App and S3 destinations**; retire the pasted-token source.
 - **Paged print** (`@page`, break control) rides on the freezer; PDF is the
   browser's print dialog, never a headless browser on the box.
