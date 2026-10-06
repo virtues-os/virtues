@@ -6,7 +6,8 @@
 //!
 //! Uses deterministic UUIDv5 IDs keyed on Apple's finance account/transaction IDs
 //! so upserts are idempotent. Amounts are stored as cents (integer) to avoid
-//! floating-point precision issues.
+//! floating-point precision issues, signed the way the table signs every
+//! provider: positive is money leaving. See `signed_cents`.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -82,7 +83,7 @@ pub async fn write_accounts(db: &PgPool, wrapper_records: &[Value]) -> Result<us
                 name.to_string(),
                 acct_type.to_string(),
                 institution.to_string(),
-                (balance * 100.0) as i64,
+                (balance * 100.0).round() as i64,
                 currency.to_string(),
                 apple_id.to_string(),
                 metadata,
@@ -159,7 +160,8 @@ type TransactionRow = (
     String,         // id (deterministic UUIDv5)
     String,         // account_id (deterministic UUIDv5)
     String,         // transaction_id (apple_id)
-    i64,            // amount (cents)
+    i64,            // amount (cents, positive = money leaving)
+    Option<String>, // transaction_type (FinanceKit's; NULL = direction unknown)
     Option<String>, // merchant_name
     Value,          // category (jsonb array)
     Option<String>, // description
@@ -184,7 +186,7 @@ pub async fn write_transactions(db: &PgPool, wrapper_records: &[Value]) -> Resul
                 continue;
             }
 
-            let amount = tx.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let (amount_cents, transaction_type) = signed_cents(tx);
             let timestamp = tx
                 .get("date")
                 .and_then(|v| v.as_str())
@@ -231,7 +233,8 @@ pub async fn write_transactions(db: &PgPool, wrapper_records: &[Value]) -> Resul
                 internal_tx_id.to_string(),
                 internal_account_id.to_string(),
                 apple_id.to_string(),
-                (amount * 100.0) as i64,
+                amount_cents,
+                transaction_type,
                 merchant_name,
                 category,
                 description,
@@ -255,17 +258,44 @@ pub async fn write_transactions(db: &PgPool, wrapper_records: &[Value]) -> Resul
     Ok(written)
 }
 
+/// Cents signed the way the table signs every provider (positive = money
+/// leaving), and FinanceKit's own name for what the transaction was.
+///
+/// FinanceKit reports `amount` as a magnitude and the direction separately, as
+/// `creditDebitIndicator`. A phone that predates sending it gets the amount as
+/// received and no type: a NULL `transaction_type` on an `apple_finance` row
+/// is what tells a reader its direction is unknown, so the type is only ever
+/// written beside a sign. The phone re-sends its history on every sync, and
+/// the upsert overwrites both together.
+fn signed_cents(tx: &Value) -> (i64, Option<String>) {
+    let amount = tx.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let sign = match tx.get("creditDebitIndicator").and_then(|v| v.as_str()) {
+        Some("debit") => 1,
+        Some("credit") => -1,
+        _ => return ((amount * 100.0).round() as i64, None),
+    };
+    // `unknown` is FinanceKit's own case name, for a phone that sent a
+    // direction without a type.
+    let kind = tx
+        .get("transactionType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    (sign * (amount.abs() * 100.0).round() as i64, Some(kind.to_string()))
+}
+
 async fn flush_transactions(db: &PgPool, records: &[TransactionRow]) -> Result<usize> {
     // Collapse repeats of the conflict key (id) within the batch — FinanceKit ships a
     // transaction as both pending and posted — or the ON CONFLICT DO UPDATE aborts.
     let records = dedup_refs_keep_last(records, |r| &r.0);
     let query_str = format!(
         "INSERT INTO data_financial_transaction (
-            id, account_id, transaction_id, amount, merchant_name, category, description,
-            is_pending, occurred_at, source_stream_id, source_table, source_provider, metadata
+            id, account_id, transaction_id, amount, transaction_type, merchant_name, category,
+            description, is_pending, occurred_at, source_stream_id, source_table, source_provider,
+            metadata
         ) VALUES {}
         ON CONFLICT (id) DO UPDATE SET
             amount = EXCLUDED.amount,
+            transaction_type = EXCLUDED.transaction_type,
             merchant_name = EXCLUDED.merchant_name,
             category = EXCLUDED.category,
             description = EXCLUDED.description,
@@ -274,18 +304,19 @@ async fn flush_transactions(db: &PgPool, records: &[TransactionRow]) -> Result<u
             updated_at = now()",
         (0..records.len())
             .map(|i| format!(
-                "(${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, 'stream_ios_financekit', 'apple_finance', ${})",
-                i * 11 + 1,
-                i * 11 + 2,
-                i * 11 + 3,
-                i * 11 + 4,
-                i * 11 + 5,
-                i * 11 + 6,
-                i * 11 + 7,
-                i * 11 + 8,
-                i * 11 + 9,
-                i * 11 + 10,
-                i * 11 + 11
+                "(${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, 'stream_ios_financekit', 'apple_finance', ${})",
+                i * 12 + 1,
+                i * 12 + 2,
+                i * 12 + 3,
+                i * 12 + 4,
+                i * 12 + 5,
+                i * 12 + 6,
+                i * 12 + 7,
+                i * 12 + 8,
+                i * 12 + 9,
+                i * 12 + 10,
+                i * 12 + 11,
+                i * 12 + 12
             ))
             .collect::<Vec<_>>()
             .join(", ")
@@ -297,6 +328,7 @@ async fn flush_transactions(db: &PgPool, records: &[TransactionRow]) -> Result<u
         account_id,
         transaction_id,
         amount,
+        transaction_type,
         merchant,
         cat,
         desc,
@@ -311,6 +343,7 @@ async fn flush_transactions(db: &PgPool, records: &[TransactionRow]) -> Result<u
             .bind(account_id)
             .bind(transaction_id)
             .bind(amount)
+            .bind(transaction_type)
             .bind(merchant)
             .bind(cat)
             .bind(desc)
@@ -322,4 +355,53 @@ async fn flush_transactions(db: &PgPool, records: &[TransactionRow]) -> Result<u
 
     let result = query.execute(db).await?;
     Ok(result.rows_affected() as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The sign is the whole point: an unsigned deposit reads as spending.
+    #[test]
+    fn credits_are_negative_and_debits_positive() {
+        let purchase = json!({"amount": 12.5, "creditDebitIndicator": "debit",
+                              "transactionType": "pointOfSale"});
+        assert_eq!(signed_cents(&purchase), (1250, Some("pointOfSale".into())));
+
+        let deposit = json!({"amount": 3.0, "creditDebitIndicator": "credit",
+                             "transactionType": "deposit"});
+        assert_eq!(signed_cents(&deposit), (-300, Some("deposit".into())));
+    }
+
+    /// FinanceKit sends a magnitude, but the direction must come from the
+    /// indicator alone, never from a sign that happens to be on the number.
+    #[test]
+    fn the_indicator_decides_even_if_the_amount_is_signed() {
+        let tx = json!({"amount": -40.0, "creditDebitIndicator": "debit",
+                        "transactionType": "fee"});
+        assert_eq!(signed_cents(&tx).0, 4000);
+    }
+
+    /// An older phone sends no indicator. Its direction is unknown, and the
+    /// NULL type is what marks that; it must not get a type without a sign.
+    #[test]
+    fn no_indicator_means_no_type() {
+        let legacy = json!({"amount": 7.25, "description": "Deposit"});
+        assert_eq!(signed_cents(&legacy), (725, None));
+
+        let unrecognized = json!({"amount": 7.25, "creditDebitIndicator": "sideways",
+                                  "transactionType": "deposit"});
+        assert_eq!(signed_cents(&unrecognized), (725, None));
+    }
+
+    /// `(0.29 * 100.0) as i64` is 28. Truncation lost a cent on about one
+    /// FinanceKit row in eleven.
+    #[test]
+    fn cents_round_rather_than_truncate() {
+        let tx = json!({"amount": 0.29, "creditDebitIndicator": "debit",
+                        "transactionType": "pointOfSale"});
+        assert_eq!(signed_cents(&tx).0, 29);
+        assert_eq!(signed_cents(&json!({"amount": 0.29})).0, 29);
+    }
 }

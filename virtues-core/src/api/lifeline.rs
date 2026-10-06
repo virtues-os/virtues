@@ -764,6 +764,135 @@ mod tests {
         }
     }
 
+    /// One measure over the last week, as a single bucket.
+    async fn measure_total(pool: &PgPool, lane: &str, id: &str) -> f64 {
+        let to = chrono::Utc::now();
+        let out = get_lifeline(
+            pool,
+            to - chrono::Duration::days(7),
+            to,
+            1,
+            Some(vec![lane.to_string()]),
+            None,
+            Some(vec![format!("{lane}:{id}")]),
+        )
+        .await
+        .unwrap();
+        let l = out.lanes.iter().find(|l| l.id == lane).unwrap();
+        assert_eq!(l.measure, id, "{id} was not applied");
+        l.density[0]
+    }
+
+    async fn seed_transactions(pool: &PgPool) {
+        for (id, provider) in [("acct_plaid", "plaid"), ("acct_fk", "apple_finance"), ("acct_demo", "demo")] {
+            sqlx::query(
+                "INSERT INTO data_financial_account
+                    (id, account_name, account_type, source_stream_id, source_table, source_provider)
+                 VALUES ($1, 'Everyday Checking', 'checking', $1, 'test', $2)",
+            )
+            .bind(id)
+            .bind(provider)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        // (account, provider, cents, plaid category, FinanceKit type)
+        let rows: &[(&str, &str, i64, Option<&str>, Option<&str>)] = &[
+            // Plaid: one purchase, and every way money moves without being one.
+            ("acct_plaid", "plaid", 2500, Some("FOOD_AND_DRINK"), None),
+            ("acct_plaid", "plaid", 40000, Some("LOAN_PAYMENTS"), None), // paying the card
+            ("acct_plaid", "plaid", -40000, Some("LOAN_PAYMENTS"), None), // the card receiving it
+            ("acct_plaid", "plaid", 10000, Some("TRANSFER_OUT"), None),
+            ("acct_plaid", "plaid", -10000, Some("TRANSFER_IN"), None),
+            ("acct_plaid", "plaid", -300000, Some("INCOME"), None),
+            ("acct_plaid", "plaid", -1200, Some("GENERAL_MERCHANDISE"), None), // a refund
+            // FinanceKit, signed at ingest.
+            ("acct_fk", "apple_finance", 1800, None, Some("pointOfSale")),
+            ("acct_fk", "apple_finance", 250, None, Some("interest")), // charged
+            ("acct_fk", "apple_finance", -90000, None, Some("billPayment")),
+            ("acct_fk", "apple_finance", 5000, None, Some("withdrawal")),
+            ("acct_fk", "apple_finance", -35, None, Some("deposit")), // Daily Cash
+            ("acct_fk", "apple_finance", -412, None, Some("interest")), // earned
+            // FinanceKit from a phone that sent no direction: unsigned, untyped.
+            ("acct_fk", "apple_finance", 7000, None, None),
+            ("acct_fk", "apple_finance", 900, None, None),
+            // A provider with no vocabulary here is read by sign alone.
+            ("acct_demo", "demo", 1000, Some("GROCERY"), None),
+        ];
+        let at = chrono::Utc::now() - chrono::Duration::days(1);
+        for (i, (acct, provider, cents, category, kind)) in rows.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO data_financial_transaction
+                    (id, account_id, transaction_id, amount, merchant_category, transaction_type,
+                     occurred_at, source_stream_id, source_table, source_provider)
+                 VALUES ($1, $2, $1, $3, $4, $5, $6, $1, 'test', $7)",
+            )
+            .bind(format!("tx_{i}"))
+            .bind(acct)
+            .bind(cents)
+            .bind(category)
+            .bind(kind)
+            .bind(at)
+            .bind(provider)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    /// Spend is purchases. A card payment pays for purchases already counted
+    /// on the card, a transfer is your own money moving, and a FinanceKit row
+    /// with no direction cannot be told from a deposit.
+    #[sqlx::test]
+    async fn spend_counts_purchases_once(pool: PgPool) {
+        seed_transactions(&pool).await;
+        let spend = measure_total(&pool, "financial", "spend").await;
+        // 25.00 + 18.00 + 2.50 interest charged + 10.00 demo
+        assert!((spend - 55.50).abs() < 1e-9, "spend was {spend}");
+    }
+
+    /// Income is earnings. Signing FinanceKit turns card payments and Daily
+    /// Cash into credits, and none of them is income.
+    #[sqlx::test]
+    async fn income_counts_earnings_only(pool: PgPool) {
+        seed_transactions(&pool).await;
+        let income = measure_total(&pool, "financial", "income").await;
+        // 3000.00 Plaid INCOME + 4.12 FinanceKit interest earned
+        assert!((income - 3004.12).abs() < 1e-9, "income was {income}");
+    }
+
+    /// The owner's sent rows carry '' as their handle, and so do short codes
+    /// and blank senders. None of them is a person who messaged you.
+    #[sqlx::test]
+    async fn people_counts_senders_but_not_the_owner(pool: PgPool) {
+        let at = chrono::Utc::now() - chrono::Duration::days(1);
+        let rows: &[(Option<&str>, bool)] = &[
+            (Some(""), true),                // the owner, writing back
+            (Some("+15125550101"), false),
+            (Some("+15125550101"), false),   // same person, counted once
+            (Some("nick@example.com"), false),
+            (Some(""), false),               // a short code
+            (None, false),                   // not yet normalized
+        ];
+        for (i, (handle, from_me)) in rows.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO data_communication_message
+                    (id, message_id, channel, from_identifier, from_handle, occurred_at,
+                     source_stream_id, source_table, source_provider, metadata)
+                 VALUES ($1, $1, 'imessage', 'x', $2, $3, $1, 'test', 'test',
+                         jsonb_build_object('is_from_me', $4::bool))",
+            )
+            .bind(format!("msg_{i}"))
+            .bind(handle)
+            .bind(at)
+            .bind(from_me)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        assert_eq!(measure_total(&pool, "communication", "people").await, 2.0);
+    }
+
     /// A URL outlives the code it was written against. A view saved when
     /// `spend` existed must not 500 after `spend` is renamed.
     #[sqlx::test]
