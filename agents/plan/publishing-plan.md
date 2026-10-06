@@ -373,7 +373,15 @@ inside the same sandbox: the box's env file denied, the Postgres socket
 directory denied, the core's :8000 on loopback denied, the bundle directory
 readable and read-only. The full Share loop (sheet, link, door started by the
 first link and stopped by the last revoke) was verified on a scratch core on
-a laptop; the two have not yet run together on one box.
+a laptop.
+
+**Everything together on a real box, 2026-10-06** (`v0.1.10-staging.92` on
+the spare Q6A): a live link made through the API started the door on its
+own, as a transient unit under DynamicUser `virtues-door`; the link opened
+through `s.virtues.ch` in ~0.5 s and its approved query returned the box's
+current time twice, seconds apart; the open was counted; revoking deleted the
+bundle, stopped the door within the minute, and the link then showed "This
+page isn't available right now".
 
 ## Decided 2026-10-05
 
