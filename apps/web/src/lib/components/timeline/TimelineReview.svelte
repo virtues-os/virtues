@@ -3,6 +3,11 @@
 	dayback/index.html:266-326): a pill under the date card with the count of
 	places to name, and the card it opens below it.
 
+	The card asks about the places of the day on show first, then says how
+	many more there are from other days and carries on through them: each
+	place is still asked once, and its answer names it on every day
+	(TIMELINE-DESIGN-PRINCIPLES.md, "Resolve once per entity").
+
 	The card asks about one place at a time: first whether the place with the
 	most nights is home and the place with the most time otherwise is where
 	the person works (asked, never assumed), then the rest, the most time
@@ -17,7 +22,7 @@
 	the checkmark, where a wrong one is marked and corrected.
 -->
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import { listPeople } from '$lib/wiki/api';
@@ -36,11 +41,14 @@
 
 	let {
 		open = $bindable(false),
+		dayPlaces = [],
 		onfocus,
 		onday,
 		onanswered,
 	}: {
 		open?: boolean;
+		/** The places of the day on show, asked about first. */
+		dayPlaces?: string[];
 		/** The place being asked about and the named places around it, for the
 		 *  map to go to and label; `null` lets go. */
 		onfocus: (at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null) => void;
@@ -65,9 +73,14 @@
 	let flagged = $state<string | null>(null);
 	let people = $state<string[] | null>(null);
 
-	const questions = $derived(review?.questions ?? []);
+	/** The day's places first, then the rest, each in the server's order:
+	 *  Home and Work first, then the most time. */
+	const onDay = $derived((review?.questions ?? []).filter((q) => dayPlaces.includes(q.id)));
+	const questions = $derived([...onDay, ...(review?.questions ?? []).filter((q) => !dayPlaces.includes(q.id))]);
+	const fromOthers = $derived(questions.length - onDay.length);
+	const at = $derived(Math.min(idx, questions.length - 1));
 	const confirmed = $derived(review?.confirmed ?? []);
-	const current = $derived<PlaceQuestion | null>(questions[Math.min(idx, questions.length - 1)] ?? null);
+	const current = $derived<PlaceQuestion | null>(questions[at] ?? null);
 	const ask = $derived(current ? askFor(current) : null);
 	const suggestions = $derived([...new Set(ask?.other === 'person' ? (people ?? []) : (current?.naming.nearby ?? []))]);
 
@@ -81,6 +94,15 @@
 		}
 	}
 	onMount(() => void load());
+
+	// Another day on show: its places come first, so start from the top.
+	$effect(() => {
+		void dayPlaces;
+		untrack(() => {
+			idx = 0;
+			resetOther();
+		});
+	});
 
 	// The map follows the question on show; anything else lets it go.
 	$effect(() => {
@@ -196,7 +218,7 @@
 			{#if mode === 'questions' && questions.length}
 				<span class="nav">
 					<IconButton icon="ri:arrow-left-s-line" label="Previous place" size="sm" disabled={idx <= 0} onclick={() => page(-1)} />
-					<span class="count">{Math.min(idx, questions.length - 1) + 1} of {questions.length}</span>
+					<span class="count">{at + 1} of {questions.length}</span>
 					<IconButton icon="ri:arrow-right-s-line" label="Next place" size="sm" disabled={idx >= questions.length - 1} onclick={() => page(1)} />
 				</span>
 			{/if}
@@ -241,6 +263,16 @@
 				{/each}
 				{#if saveFailed}<p class="note">Error: your server couldn't save that. Try again.</p>{/if}
 			{:else if current && ask}
+				{#if at < onDay.length}
+					<p class="scope">This day</p>
+				{:else if at === onDay.length}
+					<p class="scope">
+						{onDay.length ? "That's all from this day." : 'Nothing to ask about this day.'}
+						{plural(fromOthers, 'place')} from other days.
+					</p>
+				{:else}
+					<p class="scope">From another day</p>
+				{/if}
 				<p class="q">{ask.text}</p>
 				<div class="chips">
 					{#each ask.picks as c (c.name)}
@@ -387,6 +419,11 @@
 		overflow-y: auto;
 		padding: 8px 16px 16px;
 		border-top: 1px solid var(--color-border);
+	}
+	.scope {
+		margin: 4px 0 0;
+		font-size: 12px;
+		color: var(--color-foreground-muted);
 	}
 	.q {
 		margin: 4px 0 12px;
