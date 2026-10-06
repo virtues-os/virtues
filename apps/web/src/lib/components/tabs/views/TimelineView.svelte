@@ -128,6 +128,8 @@
 	let monthOpen = $state(false);
 	/** "Help Virtues out" is open; it and the month take turns under the date card. */
 	let reviewOpen = $state(false);
+	/** The day's places, which "Help Virtues out" asks about first. */
+	let dayPlaces = $state<string[]>([]);
 	$effect(() => {
 		if (monthOpen) untrack(() => (reviewOpen = false));
 	});
@@ -528,6 +530,7 @@
 		const bounds = { startMs: Date.parse(day.started_at), endMs: Date.parse(day.ended_at), zone: day.zone };
 		const { derived, voice, lanes: lw } = deriveDay(day, sources);
 		loaded = { derived, voice, lw, startMs: Date.parse(day.started_at), endMs: Date.parse(day.ended_at) };
+		dayPlaces = derived.places.map((p) => p.id);
 		const window = { points: day.points, before: day.last_point_before };
 		if (mine !== asked) return;
 		const { startMs, endMs } = bounds;
@@ -1237,6 +1240,7 @@
 		</div>
 		<TimelineReview
 			bind:open={reviewOpen}
+			{dayPlaces}
 			onfocus={focusPlace}
 			onday={(slug) => (date = slug)}
 			onanswered={() => void refreshTitles()}
