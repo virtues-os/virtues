@@ -1516,7 +1516,7 @@
 		// never sees it. Any other slash text sends.
 		if (messageToSend === SKIP_COMMAND) {
 			input = "";
-			void goto("/home");
+			void goto("/chat");
 			return;
 		}
 

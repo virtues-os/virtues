@@ -21,7 +21,7 @@ import {
 	entityIdToRoute,
 	routeToEntityId
 } from '$lib/tabs/types';
-import { parseRoute } from '$lib/tabs/registry';
+import { parseRoute, tabRegistry } from '$lib/tabs/registry';
 import { visits } from '$lib/stores/visits.svelte';
 import { pushState, replaceState } from '$app/navigation';
 import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
@@ -402,6 +402,9 @@ class WindowShellStore {
 					const migratedPanes = data.panes.map((pane: PaneState) => {
 						const seenIds = new Set<string>();
 						const uniqueTabs = pane.tabs
+							// A tab whose view no longer exists restores as nothing
+							// rather than as "Unknown View".
+							.filter((tab: Tab) => tab.type in tabRegistry)
 							.filter((tab: Tab) => {
 								if (seenIds.has(tab.id)) {
 									console.warn(`[WindowShellStore] Removing duplicate tab: ${tab.id}`);
@@ -411,11 +414,15 @@ class WindowShellStore {
 								return true;
 							})
 							.map((tab: Tab) => this.ensureHistory(tab));
-						return { ...pane, tabs: uniqueTabs };
+						const activeTabId = uniqueTabs.some((t: Tab) => t.id === pane.activeTabId)
+							? pane.activeTabId
+							: (uniqueTabs[0]?.id ?? null);
+						return { ...pane, tabs: uniqueTabs, activeTabId };
 					});
 
 					this.panes = migratedPanes;
 					this.activePaneId = data.activePaneId || 'left';
+					if (migratedPanes.every((p: PaneState) => p.tabs.length === 0)) this.openDefaultTab();
 					return;
 				}
 
@@ -433,10 +440,7 @@ class WindowShellStore {
 	}
 
 	private openDefaultTab(): void {
-		// Fresh sessions land on a new chat. They landed on Home (the "Return"
-		// surface) while Home was the top tile on the rail; the rail's ground is
-		// Chats now (2026-09-21), and a first screen the rail cannot lead back
-		// to is a room with no door. /home is still a page, not the landing.
+		// Fresh sessions land on a new chat: home and chat are one place.
 		this.openTab({ type: 'chat', label: 'New chat', route: '/', icon: 'ri:chat-1-line' });
 	}
 

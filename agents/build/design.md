@@ -35,7 +35,7 @@ The rail, top to bottom, in three gap-separated groups:
 
 | Group | Room | Route |
 |---|---|---|
-| ground | **Home** | `/home` |
+| ground | **Home** | `/chat` |
 | library | **Wiki** | `/wiki` |
 | library | **Drive** | `/storage` |
 | utility | **Sources** | `/sources` |
@@ -45,8 +45,8 @@ The rail, top to bottom, in three gap-separated groups:
 - **Home is the ground.** It sits alone above the first gap and at the top
   of the rail. It was called Chats until its panel held pages, projects and
   applets too; a user reads the panel's title as the name of the place, so
-  the room is named for the place, not one of its contents. Its page is
-  `/home`, the Daily Office.
+  the room is named for the place, not one of its contents. Its tile opens
+  a new chat; there is no separate home page.
 - **Drive, not Files.** The room kept its glyph and its `/storage` route; the
   label names the place rather than its contents.
 - **Applets is not a room, and neither is Pages.** Each is a door at the top
@@ -203,8 +203,8 @@ carry a contents page.
   already in the nav; the sidebar was the largest contributor to its own
   history list. Recents returned at the foot of the Home panel, where it
   lists chats only, so no row in it can be a room.
-- **Today.** `/home` is the live view of today; `/day` only exists after the
-  nightly run.
+- **Today.** The Timeline is the live view of today; `/day` only exists
+  after the nightly run.
 
 ## Naming
 

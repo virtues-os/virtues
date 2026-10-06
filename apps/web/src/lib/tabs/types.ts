@@ -9,8 +9,6 @@
 
 // All supported tab types - consolidated namespace-based types
 export type TabType =
-	// Landing surface
-	| 'home' // Home / "Return" page: /home
 	// Entity namespaces (Postgres backend)
 	| 'chat' // Chat conversations: /, /chat, /chat/chat_{id}
 	| 'chat-history' // Chat history list: /chat-history

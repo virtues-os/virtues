@@ -27,8 +27,8 @@
  *     panel holds chats, pages, projects and applets, and a user reads the
  *     panel's title as the name of the place they are in — "Chats" over a
  *     list of pages and projects was the room named after one of its
- *     contents. Its page is `/home`, the Daily Office, so the tile leads
- *     somewhere real.
+ *     contents. Its tile opens a new chat: home and chat are one place, so
+ *     there is no separate home page.
  *   - Applets left the rail the same day. An applet is something you run from
  *     a conversation, so its door is a row at the top of the Home panel,
  *     beside New chat — a rail tile for a list that is opened from chat was
@@ -128,7 +128,7 @@ export const ROOMS: Room[] = [
 		label: 'Home',
 		icon: 'home',
 		chord: '⌥⌘H',
-		href: '/home',
+		href: '/chat',
 		// Chats, projects, applets and pages are all reached from this panel,
 		// so the pane that holds one lights this tile: the rail is a lens over
 		// where you are, and where you are is "in something Home led you to".
@@ -139,7 +139,6 @@ export const ROOMS: Room[] = [
 		// tile while the Wiki panel sat there with the day's own index in it.
 		owns: [
 			'/',
-			'/home',
 			'/chat',
 			'/chat-history',
 			'/project',

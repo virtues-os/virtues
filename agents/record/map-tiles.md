@@ -1,7 +1,7 @@
 # Map tiles
 
 Written 2026-09-29; the design built 2026-09-25 to 09-29 (2d6f3950, 1ee9fa7f,
-5cb80a62, e2733059). Every Leaflet map (`MovementMap`, `DayGround`) draws its
+5cb80a62, e2733059). Every Leaflet map (`MovementMap`) draws its
 basemap from Protomaps files the box holds itself, so no tile provider learns
 which streets anyone looks at and the maps work offline. `$lib/map/atlas.ts`
 is the one seam: `atlasLayer(style)` returns the basemap layer, or null when

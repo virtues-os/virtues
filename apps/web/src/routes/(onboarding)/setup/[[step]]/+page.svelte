@@ -392,13 +392,13 @@
 		// time to read.
 		await new Promise((r) => setTimeout(r, closeLine ? (still ? 2000 : 3800) : still ? 800 : 2300));
 		// The app opens on page one of what Setup made: the story told in the
-		// interview ("You"), else the chapters drawn, else home.
+		// interview ("You"), else the chapters drawn, else a new chat.
 		const dest =
 			setup.status("interview") === "done"
 				? "/wiki/identity"
 				: setup.status("timeline") === "done"
 					? "/wiki/chapters"
-					: "/home";
+					: "/chat";
 		await titleBar("visible");
 		await openApp(dest);
 	}
