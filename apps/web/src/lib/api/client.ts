@@ -1893,22 +1893,6 @@ export function searchRefs(query: string): Promise<RefSearchResponse> {
 	return apiGet<RefSearchResponse>('/pages/search/refs', { q: query });
 }
 
-// Page Sharing
-export interface PageShare {
-	id: string;
-	page_id: string;
-	token: string;
-	created_at: string;
-}
-
-export interface SharedPage {
-	title: string;
-	content: string;
-	icon: string | null;
-	cover_url: string | null;
-	share_token: string;
-}
-
 /**
  * Append a markdown block to a page THROUGH Yjs (researcher-plan D4).
  *
@@ -1920,23 +1904,6 @@ export function appendToPage(pageId: string, markdown: string): Promise<{ conten
 	return apiSend<{ content: string }>('POST', `/pages/${encodeURIComponent(pageId)}/append`, {
 		markdown,
 	});
-}
-
-export function createPageShare(pageId: string): Promise<PageShare> {
-	return apiSend<PageShare>('POST', `/pages/${pageId}/share`);
-}
-
-export async function getPageShare(pageId: string): Promise<PageShare | null> {
-	return (await apiGet<PageShare | null>(`/pages/${pageId}/share`)) ?? null;
-}
-
-export async function deletePageShare(pageId: string): Promise<void> {
-	await apiSend('DELETE', `/pages/${pageId}/share`);
-}
-
-/** Throws {@link ApiError}; the public viewer keys "no longer shared" off a 404. */
-export function getSharedPage(token: string): Promise<SharedPage> {
-	return apiGet<SharedPage>(`/s/${token}`);
 }
 
 // ============================================================================
@@ -2321,10 +2288,17 @@ export function searchUnsplash<T = unknown>(body: Record<string, unknown>): Prom
 // Publications — pages the owner shared through the door (api::publications)
 // ============================================================================
 
+/** What a link shares: an applet's face or a page. */
+export type ShareProducer = { kind: 'applet' | 'page'; id: string };
+
+function producerParams(p: ShareProducer): { applet_id?: string; page_id?: string } {
+	return p.kind === 'page' ? { page_id: p.id } : { applet_id: p.id };
+}
+
 /** One shared link. `link` is null until the door has started, and after revoke. */
 export interface Publication {
 	id: string;
-	producer_kind: 'applet';
+	producer_kind: 'applet' | 'page';
 	producer_id: string;
 	title: string;
 	size_bytes: number;
@@ -2358,6 +2332,10 @@ export interface SharePreview {
 	image_count: number;
 	links: string[];
 	looks_private: string[];
+	/** People, places and things a page names; only the names leave. */
+	names: string[];
+	/** Images from other sites, left out of the shared copy. */
+	images_left_out: number;
 	/** The page reads data, so it can be shared as a snapshot or live. */
 	reads_data: boolean;
 	queries: SharedQuery[];
@@ -2367,8 +2345,8 @@ export function listPublications(): Promise<Publication[]> {
 	return apiGet<Publication[]>('/publications');
 }
 
-export function previewPublication(appletId: string): Promise<SharePreview> {
-	return apiGet<SharePreview>('/publications/preview', { applet_id: appletId });
+export function previewPublication(producer: ShareProducer): Promise<SharePreview> {
+	return apiGet<SharePreview>('/publications/preview', producerParams(producer));
 }
 
 /**
@@ -2377,12 +2355,12 @@ export function previewPublication(appletId: string): Promise<SharePreview> {
  * carrying a snapshot.
  */
 export function createPublication(
-	appletId: string,
+	producer: ShareProducer,
 	expiresInDays?: number,
 	live = false
 ): Promise<Publication> {
 	return apiSend<Publication>('POST', '/publications', {
-		applet_id: appletId,
+		...producerParams(producer),
 		expires_in_days: expiresInDays,
 		live
 	});

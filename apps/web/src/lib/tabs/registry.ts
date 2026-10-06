@@ -14,8 +14,6 @@ import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 
 // Views are loaders (see ./lazy.ts): each chunk arrives the first time a
 // tab of that kind opens. Chat and home stay eager — a session opens on them.
-import HomeViewEager from '$lib/components/tabs/views/HomeView.svelte';
-const HomeView: ViewLoader = eager(HomeViewEager);
 import ChatViewEager from '$lib/components/tabs/views/ChatView.svelte';
 const ChatView: ViewLoader = eager(ChatViewEager);
 const HistoryView: ViewLoader = () => import('$lib/components/tabs/views/HistoryView.svelte');
@@ -90,23 +88,6 @@ export const SOURCES_SECTIONS = ['catalog', 'activity'] as const;
 export type SourcesSection = (typeof SOURCES_SECTIONS)[number];
 
 export const tabRegistry: Record<TabType, TabDefinition> = {
-	// ========================================================================
-	// HOME: /home — the default landing / "Return" page (synthesis surface)
-	// ========================================================================
-	home: {
-		match: (path) => path === '/home',
-		parse: () => ({
-			type: 'home',
-			label: 'Home',
-			icon: 'ri:home-5-line',
-		}),
-		serialize: () => 'home',
-		deserialize: () => '/home',
-		icon: 'ri:home-5-line',
-		defaultLabel: 'Home',
-		component: HomeView,
-	},
-
 	// ========================================================================
 	// CHAT NAMESPACE: /, /chat, /chat/chat_{id}
 	// ========================================================================
@@ -896,8 +877,6 @@ export function parseRoute(route: string): ParsedRoute {
 	// Try to match against registry in priority order
 	// Note: Order matters for overlapping patterns
 	const orderedTypes: TabType[] = [
-		// Landing surface (exact /home; no overlap with '/')
-		'home',
 		// Specific patterns first
 		'source', // Source list and detail views
 		'applets', // Applets list page (must come before singular 'applet')

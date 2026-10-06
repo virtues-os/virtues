@@ -516,7 +516,11 @@
 				</div>
 				<FaceFrame appletId={action.id} height="460px" />
 			</section>
-			<ShareSheet open={sharing} appletId={action.id} onClose={() => (sharing = false)} />
+			<ShareSheet
+				open={sharing}
+				producer={{ kind: 'applet', id: action.id }}
+				onClose={() => (sharing = false)}
+			/>
 		{/if}
 
 		<div class="body">

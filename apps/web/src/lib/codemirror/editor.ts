@@ -127,30 +127,3 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 
 	return view;
 }
-
-/** Options for creating a read-only CodeMirror editor (no Yjs) */
-export interface ReadOnlyEditorOptions {
-	parent: HTMLElement;
-	content: string;
-}
-
-/** Create a read-only CodeMirror editor for rendering markdown without Yjs */
-export function createReadOnlyEditor(options: ReadOnlyEditorOptions): EditorView {
-	const { parent, content } = options;
-
-	return new EditorView({
-		parent,
-		state: EditorState.create({
-			doc: content,
-			extensions: [
-				virtuesMarkdown(),
-				EditorView.lineWrapping,
-				virtuesTheme,
-				// Reading is always rendered — raw is an authoring escape hatch.
-				renderMode(false),
-				EditorView.editable.of(false),
-				EditorState.readOnly.of(true),
-			],
-		}),
-	});
-}

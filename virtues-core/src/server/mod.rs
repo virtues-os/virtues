@@ -641,12 +641,6 @@ fn public_routes() -> Router<AppState> {
         )
         .route("/face/:applet_id/", get(faces::face_index_handler))
         .route("/face/:applet_id/*path", get(faces::face_file_handler))
-        // Public page sharing (token-based access, no session needed)
-        .route("/api/s/:token", get(api::pages::get_shared_page_handler))
-        .route(
-            "/api/s/:token/files/:file_id",
-            get(api::pages::shared_file_download_handler),
-        )
         // Webhook ingestion. Authenticated by the proven iroh key — the
         // handler takes a hard `AuthUser`, so an unauthenticated caller is
         // rejected there rather than by the route_layer.
