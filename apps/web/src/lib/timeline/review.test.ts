@@ -3,6 +3,7 @@ import { askFor, focusZoom, homeOf, pickAnswer, type PlaceCandidate, type PlaceQ
 
 const cand = (name: string, meters: number, category = "dining"): PlaceCandidate => ({ name, meters, kind: "cafe", category, lat: 30, lon: -97 });
 const question = (over: Partial<Omit<PlaceQuestion, "naming">> & { naming?: Partial<PlaceQuestion["naming"]> } = {}): PlaceQuestion => ({
+	ask: "place",
 	id: "p",
 	latitude: 30,
 	longitude: -97,
@@ -29,6 +30,17 @@ const question = (over: Partial<Omit<PlaceQuestion, "naming">> & { naming?: Part
 });
 
 describe("the place questions", () => {
+	it("asks whether it's home, or where the person works, never assuming either", () => {
+		const h = askFor(question({ ask: "home", overnight: true, naming: { tier: "confident", name: "Corner Cafe" } }));
+		expect(h.text).toBe("Is this home?");
+		expect(h.chips.map((c) => [c.label, c.answer])).toEqual([
+			["Yes", { kind: "home" }],
+			["No", { kind: "not_home" }],
+		]);
+		expect(h.other).toBeNull();
+		expect(askFor(question({ ask: "work" })).text).toBe("Is this where you work?");
+	});
+
 	it("asks which of several close places, any number picked together", () => {
 		const a = askFor(question({ naming: { tier: "ambiguous", candidates: [cand("Maple Diner", 20), cand("Pine Grill", 30)] } }));
 		expect(a.text).toBe("Which of these were you at?");
