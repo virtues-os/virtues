@@ -350,7 +350,9 @@ by revoking.
 
 ### Also on the way
 
-- **Pages publish through the door (built 2026-10-06, a5b6b59d).** The old
+- **Pages publish through the door (built 2026-10-06, a5b6b59d; verified on
+  the spare box at `staging.93`: names only, outside image left out, the door
+  key unchanged across the upgrade).** The old
   page share, whose links carried the app's own origin, is removed; its
   table waits for a later migration to drop.
 - **GitHub App and S3 destinations**; retire the pasted-token source.
