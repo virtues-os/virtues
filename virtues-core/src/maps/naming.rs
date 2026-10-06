@@ -134,6 +134,9 @@ pub struct Candidate {
     /// The kind's category, written with the name when the person picks it.
     pub category: &'static str,
     pub name: String,
+    /// Where the map puts it, so the map can label it while it's offered.
+    pub lat: f64,
+    pub lon: f64,
 }
 
 /// What the map says a place is.
@@ -174,7 +177,14 @@ pub(crate) fn resolve(lat: f64, lon: f64, centre: &[Label], block: &[Label]) -> 
         if EXCLUDE.contains(&p.kind.as_str()) || p.name.is_empty() {
             continue;
         }
-        let c = Candidate { meters: (d * 10.0).round() / 10.0, kind: p.kind.clone(), category: category(&p.kind), name: p.name.clone() };
+        let c = Candidate {
+            meters: (d * 10.0).round() / 10.0,
+            kind: p.kind.clone(),
+            category: category(&p.kind),
+            name: p.name.clone(),
+            lat: p.lat,
+            lon: p.lon,
+        };
         if d <= RAD_M {
             cands.push(c);
         } else if d <= HINT_M {
@@ -199,6 +209,8 @@ pub(crate) fn resolve(lat: f64, lon: f64, centre: &[Label], block: &[Label]) -> 
                 kind: "aerodrome".into(),
                 category: category("aerodrome"),
                 name: p.name.clone(),
+                lat: p.lat,
+                lon: p.lon,
             }];
             return out;
         }

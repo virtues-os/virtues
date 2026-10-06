@@ -32,6 +32,8 @@
 	import TimelineInspector from '$lib/components/timeline/TimelineInspector.svelte';
 	import TimelineScrubber from '$lib/components/timeline/TimelineScrubber.svelte';
 	import TimelineMonth from '$lib/components/timeline/TimelineMonth.svelte';
+	import TimelineReview from '$lib/components/timeline/TimelineReview.svelte';
+	import { focusZoom, type PlaceCandidate } from '$lib/timeline/review';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import { laneData, NO_LANES, type Lanes, type RibbonKind } from '$lib/timeline/lanes';
@@ -82,7 +84,7 @@
 	const MAP_RETRY_MS = 5000;
 	let mapRetry = 0;
 	/** The day's own sources and layers, drawn over the basemap. */
-	const OWN = ['track-run', 'track-bridge', 'track-drive', 'lit-glow', 'lit-run', 'lit-bridge'];
+	const OWN = ['track-run', 'track-bridge', 'track-drive', 'lit-glow', 'lit-run', 'lit-bridge', 'review-dots', 'review-names'];
 	/** A theme switch swaps the basemap and carries the day's track across, so
 	 *  nothing reloads. */
 	async function restyle() {
@@ -124,6 +126,14 @@
 	let cardH = $state(0);
 	let scrubH = $state(0);
 	let monthOpen = $state(false);
+	/** "Help Virtues out" is open; it and the month take turns under the date card. */
+	let reviewOpen = $state(false);
+	$effect(() => {
+		if (monthOpen) untrack(() => (reviewOpen = false));
+	});
+	$effect(() => {
+		if (reviewOpen) untrack(() => (monthOpen = false));
+	});
 	/** The bottom of the date card, for the map's framing and clear area. */
 	const topChrome = $derived(16 + cardH);
 	/** A pane too narrow for the list beside the map (a phone, a split view)
@@ -134,7 +144,7 @@
 	let note = $state<{ title: string; lines: string[] } | null>(null);
 	let map: MlMap | null = null;
 	/** The map's paint, read off the theme (colours.ts). */
-	let ink = browser ? mapInk() : { track: '', move: '', now: '' };
+	let ink = browser ? mapInk() : { track: '', move: '', now: '', label: '', halo: '' };
 	/** A theme switch repaints the day's own layers. */
 	function paintInk() {
 		ink = mapInk();
@@ -142,6 +152,10 @@
 		if (!m?.getLayer('track-run')) return;
 		for (const id of ['track-run', 'track-bridge']) m.setPaintProperty(id, 'line-color', ink.track);
 		m.setPaintProperty('track-drive', 'line-color', ink.move);
+		m.setPaintProperty('review-dots', 'circle-color', ink.track);
+		m.setPaintProperty('review-dots', 'circle-stroke-color', ink.halo);
+		m.setPaintProperty('review-names', 'text-color', ink.label);
+		m.setPaintProperty('review-names', 'text-halo-color', ink.halo);
 		for (const id of ['lit-glow', 'lit-run', 'lit-bridge']) m.setPaintProperty(id, 'line-color', ink.now);
 	}
 	let maplibre: typeof import('maplibre-gl') | null = null;
@@ -388,6 +402,34 @@
 						'line-opacity': 0.9,
 						'line-dasharray': [2, 2.5],
 					},
+				});
+				// While "Help Virtues out" asks about a place, the named places it
+				// offers are labelled on the map, so each choice can be found
+				// (main.js:916-924); otherwise nothing.
+				m.addSource('review-names', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+				m.addLayer({
+					id: 'review-dots',
+					type: 'circle',
+					source: 'review-names',
+					paint: { 'circle-radius': 4, 'circle-color': ink.track, 'circle-stroke-width': 1.5, 'circle-stroke-color': ink.halo },
+				});
+				m.addLayer({
+					id: 'review-names',
+					type: 'symbol',
+					source: 'review-names',
+					layout: {
+						'text-field': ['get', 'name'],
+						'text-font': ['Noto Sans Medium'],
+						'text-size': 13,
+						// Each name finds a side of its dot clear of the others,
+						// so a street of bars side by side stays readable.
+						'text-variable-anchor': ['top', 'bottom', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right'],
+						'text-radial-offset': 0.7,
+						'text-justify': 'auto',
+						'text-padding': 2,
+						'text-max-width': 9,
+					},
+					paint: { 'text-color': ink.label, 'text-halo-color': ink.halo, 'text-halo-width': 1.5 },
 				});
 				const el = document.createElement('div');
 				el.className = 'tl-pin';
@@ -644,13 +686,70 @@
 		if (dayFixes.length) frameDay(m, 650);
 		else if (home) m.easeTo({ center: home.c, zoom: home.z, duration: 650 });
 	}
+	/** The day's path at its own weights, and faded while a place is asked
+	 *  about (main.js:2209-2214): the place is the subject then. */
+	const TRACK_OPACITY = { 'track-run': [0.55, 0.1], 'track-bridge': [0.4, 0.08], 'track-drive': [0.85, 0.1] } as const;
+	let glow: Marker | null = null;
+	/** A place is being asked about: the map is on it, the day faded. */
+	let focusing = $state(false);
+	/** Take the map to the place "Help Virtues out" is asking about, framed so
+	 *  the named places it offers read, under a glowing pin, with the day's
+	 *  path and marks faded (main.js:2209-2221); `null` gives the day back. */
+	function focusPlace(at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null) {
+		const m = map;
+		if (!m || !maplibre || !m.getLayer('track-run')) return;
+		glow?.remove();
+		glow = null;
+		const names = m.getSource('review-names') as GeoJSONSource | undefined;
+		focusing = !!at;
+		for (const [id, [day, faded]] of Object.entries(TRACK_OPACITY)) m.setPaintProperty(id, 'line-opacity', at ? faded : day);
+		names?.setData({
+			type: 'FeatureCollection',
+			features: (at?.shown ?? []).map((c) => ({ type: 'Feature', properties: { name: c.name }, geometry: { type: 'Point', coordinates: [c.lon, c.lat] } })),
+		});
+		if (!at) return;
+		const el = document.createElement('div');
+		el.className = 'tl-glow';
+		glow = new maplibre.Marker({ element: el, anchor: 'center' }).setLngLat([at.lon, at.lat]).addTo(m);
+		// Centred in the map left clear of the card (under the date card), the
+		// inspector and the scrubber.
+		const pad = fitPad(m);
+		m.easeTo({
+			center: [at.lon, at.lat],
+			zoom: focusZoom(at.lat, at.reachM, m.getZoom()),
+			padding: { ...pad, left: Math.max(pad.left, 16 + 336 + 16) },
+			duration: 820,
+		});
+	}
+
+	/** After an answer, the day's titles again: a place just named, or one no
+	 *  longer called by the map's wrong match, reads its new title. */
+	async function refreshTitles() {
+		const at = date;
+		try {
+			const day = await fetchDay(at);
+			if (at !== date || !loaded) return;
+			for (const p of loaded.derived.places) {
+				const stay = day.stays.find((s) => s.place_id === p.id);
+				p.title = day.place_titles[p.id]?.title ?? p.title;
+				if (stay) [p.is_named, p.place_name] = [stay.place_is_named, stay.place_name];
+			}
+			redrawPlaces();
+		} catch (e) {
+			console.warn('[Timeline] titles after an answer unavailable', e);
+		}
+	}
+
 	/** The keys (main.js:792-802, 1205): Esc is Reset view; ← → nudge the
 	 *  playhead; Space plays. Shift+← → do nothing (the owner's call: the
 	 *  prototype's jump between conversations is left out). Only while the
 	 *  Timeline is on screen, and never while typing. */
 	function onKey(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
-			if (monthOpen) {
+			if (reviewOpen) {
+				e.preventDefault();
+				reviewOpen = false;
+			} else if (monthOpen) {
 				e.preventDefault();
 				monthOpen = false;
 			} else if (picked) {
@@ -1114,6 +1213,7 @@
 
 <div
 	class="timeline"
+	class:focusing
 	class:with-inspector={shownSections.length > 0}
 	class:narrow
 	bind:this={root}
@@ -1135,6 +1235,12 @@
 			</div>
 			<button class="date-title" type="button" title="Back to the whole day" onclick={resetView}>{title}</button>
 		</div>
+		<TimelineReview
+			bind:open={reviewOpen}
+			onfocus={focusPlace}
+			onday={(slug) => (date = slug)}
+			onanswered={() => void refreshTitles()}
+		/>
 		{#if monthOpen}
 			<TimelineMonth
 				{date}
@@ -1362,6 +1468,26 @@
 
 	/* The map's own marks, made by MapLibre markers outside this component's
 	   markup, so :global. The pin is now, so it takes the accent. */
+	/* The place asked about: a glowing pin (index.html:321-323), still, as the
+	   pane's grammar keeps motion for Home's now-marker. */
+	.timeline :global(.tl-glow) {
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		background: var(--c-place);
+		border: 3px solid var(--color-background);
+		box-shadow: 0 0 0 6px color-mix(in srgb, var(--c-place) 30%, transparent); /* design-ok: the prototype's glow around the place asked about (index.html:321) */
+	}
+	/* The day's note speaks of the day, not of the place asked about. */
+	.timeline.focusing .note {
+		display: none;
+	}
+	/* The day's own marks step back while a place is asked about. MapLibre
+	   writes a marker's opacity inline, so a filter fades them instead. */
+	.timeline.focusing :global(.tl-pin),
+	.timeline.focusing :global(.tl-bubble) {
+		filter: opacity(0.22);
+	}
 	.timeline :global(.tl-pin) {
 		width: 16px;
 		height: 16px;
