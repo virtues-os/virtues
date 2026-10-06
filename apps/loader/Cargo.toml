@@ -1,0 +1,34 @@
+[package]
+name = "virtues-loader"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+# The page every shared link opens: iroh compiled to WebAssembly, dialing the
+# sharer's door through the relay. Built for wasm32 only; see README.md.
+# Standalone (excluded from the root workspace) with its own Cargo.lock.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+iroh = { version = "1", default-features = false, features = ["tls-ring"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+console_error_panic_hook = "0.1"
+wasm-bindgen = "=0.2.122"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde-wasm-bindgen = "0.6"
+n0-future = "0.3"
+
+[profile.release]
+codegen-units = 1
+strip = "symbols"
+lto = true
+opt-level = "z"
+panic = "abort"

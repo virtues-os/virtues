@@ -285,7 +285,10 @@ pub async fn face_query_handler(
 
     let pool = state.db.pool();
     match run_face_query(pool, &body.sql).await {
-        Ok(rows) => with_cors((StatusCode::OK, Json(rows))),
+        Ok(rows) => {
+            note_query(&applet_id, &body.sql);
+            with_cors((StatusCode::OK, Json(rows)))
+        }
         Err(e) => {
             tracing::debug!(applet_id = %applet_id, error = %e, "face query failed");
             with_cors((
@@ -313,7 +316,32 @@ fn with_cors(resp: impl IntoResponse) -> Response {
     r
 }
 
-async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::result::Result<serde_json::Value, String> {
+/// How many distinct queries per applet [`seen_queries`] remembers.
+const QUERIES_KEPT: usize = 32;
+
+fn seen_store() -> &'static Mutex<HashMap<String, Vec<String>>> {
+    static S: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn note_query(applet_id: &str, sql: &str) {
+    let mut store = seen_store().lock().expect("face query store poisoned");
+    let seen = store.entry(applet_id.to_string()).or_default();
+    seen.retain(|q| q != sql);
+    seen.push(sql.to_string());
+    if seen.len() > QUERIES_KEPT {
+        seen.remove(0);
+    }
+}
+
+/// The queries this applet's face ran successfully since the server started,
+/// oldest first. Sharing a face that reads data publishes exactly these
+/// (`api::publications`): what the owner last saw is what the page shows.
+pub(crate) fn seen_queries(applet_id: &str) -> Vec<String> {
+    seen_store().lock().expect("face query store poisoned").get(applet_id).cloned().unwrap_or_default()
+}
+
+pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::result::Result<serde_json::Value, String> {
     if sql.len() > 20_000 {
         return Err("query too long".into());
     }
@@ -466,7 +494,7 @@ const VIRTUES_JS: &str = r#"// virtues.js — the face runtime bridge (read-only
 })();
 "#;
 
-const VIRTUES_CSS: &str = r#"/* virtues.css — face theme variables + minimal base. */
+pub(crate) const VIRTUES_CSS: &str = r#"/* virtues.css — face theme variables + minimal base. */
 :root {
   --color-surface: #ffffff;
   --color-surface-elevated: #f3f4f6;

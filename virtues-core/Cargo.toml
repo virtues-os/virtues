@@ -48,6 +48,7 @@ virtues-qairt = { path = "../crates/virtues-qairt" }
 # only — the `client` feature (btleplug) must never be enabled for the box.
 virtues-improv = { path = "../crates/virtues-improv" }
 virtues-iroh = { path = "../crates/virtues-iroh" }
+virtues-door = { path = "../crates/virtues-door" }
 # Wire-protocol types shared with every paired-device daemon (iOS, desktop
 # client, etc.). Pure data + serde; no I/O.
 

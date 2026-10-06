@@ -132,6 +132,17 @@
 		box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
 		overflow: hidden;
 		animation: modal-slide-in 150ms ease-out;
+		/* A modal taller than the window scrolls its body; the header and
+		   footer stay put. Without this, anything past the fold could not be
+		   reached at all. */
+		display: flex;
+		flex-direction: column;
+		max-height: 100%;
+	}
+
+	.modal-header,
+	.modal-footer {
+		flex-shrink: 0;
 	}
 
 	.max-w-sm { max-width: 360px; }
@@ -185,6 +196,8 @@
 
 	.modal-body {
 		padding: 20px;
+		min-height: 0;
+		overflow-y: auto;
 	}
 
 	.modal-footer {

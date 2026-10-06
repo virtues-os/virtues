@@ -15,8 +15,8 @@
 //!   edited after it was allowed asks again.
 //! - **A face that only works on the box is refused.** One that still calls
 //!   `virtues.query`, loads `virtues.js`, or names `/api/` or a localhost URL
-//!   would publish a dead page that also names the box's API. The model is
-//!   told to write the content into the HTML instead.
+//!   would publish a dead page that also names the box's API. The check is
+//!   `api::publications::standalone_face`, the same one the Share sheet runs.
 
 use base64::Engine;
 use sha2::{Digest, Sha256};
@@ -26,32 +26,6 @@ use super::executor::{ToolError, ToolResult};
 
 /// The credential source this publishes with (`applets/sources.toml`).
 pub const SOURCE_ID: &str = "github_publish";
-
-/// GitHub's contents API takes the file in one JSON body; a page past this
-/// is carrying video or unoptimized images, which belong elsewhere.
-const MAX_BYTES: usize = 5 * 1024 * 1024;
-
-/// What a face that still depends on the box contains. Matched
-/// case-insensitively; a mention in prose refuses too, which costs a rewrite.
-const BOX_ONLY: &[(&str, &str)] = &[
-    ("virtues.query", "queries the box at view time"),
-    ("virtues.js", "loads the box's face runtime"),
-    ("virtues.css", "loads the box's face stylesheet"),
-    ("/api/", "names the box's API"),
-    ("?vt=", "carries a face token"),
-    ("localhost", "points at a local address"),
-    ("127.0.0.1", "points at a local address"),
-];
-
-/// Every reason `html` would not stand on its own off the box.
-pub fn box_only_findings(html: &str) -> Vec<String> {
-    let lower = html.to_lowercase();
-    BOX_ONLY
-        .iter()
-        .filter(|(needle, _)| lower.contains(needle))
-        .map(|(needle, why)| format!("`{needle}` {why}"))
-        .collect()
-}
 
 /// `owner/name`, GitHub's own character set.
 fn valid_repo(repo: &str) -> bool {
@@ -129,42 +103,14 @@ pub async fn prepare(pool: &PgPool, arguments: &serde_json::Value) -> Result<Req
         return Err(bad(format!("not a branch name: {branch:?}")));
     }
 
-    let applet_name = crate::scheduler::applets::get_applet(pool, &applet_id)
+    // The same check the Share sheet runs: one file, nothing that needs the
+    // box at view time.
+    let (applet_name, html) = crate::api::publications::standalone_face(pool, &applet_id)
         .await
-        .map(|a| a.name)
-        .map_err(|_| bad(format!("no applet {applet_id:?}")))?;
-    let face_dir = crate::server::faces::face_dir_for(&applet_id)
-        .ok_or_else(|| bad(format!("\"{applet_name}\" has no face to publish")))?;
-
-    // One file goes up. A face that loads a sibling file would publish with
-    // that file missing.
-    let siblings: Vec<String> = std::fs::read_dir(&face_dir)
-        .map_err(|e| ToolError::ExecutionFailed(format!("reading the face: {e}")))?
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n != "index.html")
-        .collect();
-    if !siblings.is_empty() {
-        return Err(bad(format!(
-            "only a single-file face publishes; this one also has {}. Inline them \
-             (CSS in <style>, images as data: URIs) and remove the files.",
-            siblings.join(", ")
-        )));
-    }
-
-    let html = std::fs::read_to_string(face_dir.join("index.html"))
-        .map_err(|e| ToolError::ExecutionFailed(format!("reading the face: {e}")))?;
-    if html.len() > MAX_BYTES {
-        return Err(bad(format!("the face is {} KB; the limit is {} KB", html.len() / 1024, MAX_BYTES / 1024)));
-    }
-    let findings = box_only_findings(&html);
-    if !findings.is_empty() {
-        return Err(bad(format!(
-            "this face only works on the box: {}. Write the content into the HTML itself \
-             (edit_applet face_html), then publish again.",
-            findings.join("; ")
-        )));
-    }
+        .map_err(|e| match e {
+            crate::error::Error::InvalidInput(m) | crate::error::Error::NotFound(m) => bad(m),
+            other => ToolError::ExecutionFailed(other.to_string()),
+        })?;
 
     Ok(Request { applet_id, applet_name, repo, branch, path, html })
 }
@@ -297,15 +243,6 @@ async fn github_failure(resp: reqwest::Response) -> ToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_face_that_needs_the_box_is_named() {
-        let live = r#"<script src="virtues.js"></script><script>virtues.query("select 1")</script>"#;
-        let found = box_only_findings(live);
-        assert_eq!(found.len(), 2, "{found:?}");
-        assert!(box_only_findings("<img src='http://LOCALHOST:7117/x.png'>").len() == 1);
-        assert!(box_only_findings("<h1>Rome</h1><p>Day 1: Pantheon</p>").is_empty());
-    }
 
     #[test]
     fn repos_and_paths_stay_inside_their_lines() {

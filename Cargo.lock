@@ -8821,6 +8821,7 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+ "virtues-door",
  "virtues-helpers",
  "virtues-improv",
  "virtues-iroh",
@@ -8936,6 +8937,23 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "virtues-reach-client",
+]
+
+[[package]]
+name = "virtues-door"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "getrandom 0.3.4",
+ "iroh",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "virtues-iroh",
 ]
 
 [[package]]

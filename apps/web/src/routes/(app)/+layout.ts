@@ -7,7 +7,6 @@ import { boxBelowFloor } from '$lib/boxApi';
 const OFFLINE_DATA = {
 	session: null,
 	preferredName: null,
-	serverStatus: 'ready',
 	sessionExpires: null,
 	homeTimezone: null,
 	onboardingStatus: 'active'
@@ -134,19 +133,17 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		// Let in: from here `/setup` opens as a tab in the app, not the stage.
 		markInApp(true);
 
-		// Fetch profile for user preferences and server status
+		// Fetch profile for user preferences
 		const profileResponse = await fetch('/api/profile');
 
 		if (profileResponse.ok) {
 			const profile = await profileResponse.json();
 
 			// (Onboarding redirects live above, off /api/setup/state. This fetch
-			// only feeds preferences and the ServerProvisioning overlay, which
-			// +layout.svelte shows while server_status is not 'ready'.)
+			// only feeds preferences.)
 			return {
 				session: sessionData,
 				preferredName: profile.preferred_name || null,
-				serverStatus: profile.server_status || 'ready',
 				sessionExpires: sessionData.expires || null,
 				homeTimezone: profile.home_timezone || null,
 				onboardingStatus: profile.onboarding_status || 'active'
@@ -156,7 +153,6 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		return {
 			session: sessionData,
 			preferredName: null,
-			serverStatus: 'ready', // Assume ready if profile fetch fails
 			sessionExpires: sessionData.expires || null,
 			homeTimezone: null,
 			onboardingStatus: 'active'

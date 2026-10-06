@@ -5,6 +5,7 @@
 	// to differ by target type.
 	import Icon from "$lib/components/Icon.svelte";
 	import { backendUrl } from "$lib/config/backend";
+	import { toast } from "svelte-sonner";
 	import { Button } from "$lib";
 	import CsvPane from "$lib/components/asset/CsvPane.svelte";
 	import PdfPane from "$lib/components/asset/PdfPane.svelte";
@@ -96,11 +97,36 @@
 		return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
 	}
 
-	function download() {
+	let downloading = $state(false);
+
+	function saveAs(href: string) {
 		const a = document.createElement("a");
-		a.href = downloadUrl;
+		a.href = href;
 		a.download = file?.filename ?? "";
 		a.click();
+	}
+
+	// WebKit ignores `download` on a cross-origin link and navigates to the
+	// file instead, which in the app's own copy (the box at another origin)
+	// replaces the app. So a cross-origin file is fetched and saved from a
+	// same-origin object URL.
+	async function download() {
+		if (new URL(downloadUrl, location.href).origin === location.origin) {
+			saveAs(downloadUrl);
+			return;
+		}
+		downloading = true;
+		try {
+			const res = await fetch(downloadUrl);
+			if (!res.ok) throw new Error(String(res.status));
+			const href = URL.createObjectURL(await res.blob());
+			saveAs(href);
+			setTimeout(() => URL.revokeObjectURL(href), 60_000);
+		} catch {
+			toast.error("Couldn't download this file from your server. Check that it's reachable and try again.");
+		} finally {
+			downloading = false;
+		}
 	}
 </script>
 
@@ -115,7 +141,7 @@
 			<span class="asset-meta">{formatBytes(file.size_bytes)}</span>
 		{/if}
 		<div class="asset-spacer"></div>
-		<Button variant="secondary" size="sm" icon="ri:download-line" onclick={download}
+		<Button variant="secondary" size="sm" icon="ri:download-line" loading={downloading} onclick={download}
 			>Download</Button
 		>
 	</header>
@@ -169,7 +195,7 @@
 					variant="secondary"
 					size="sm"
 					icon="ri:download-line"
-					onclick={download}>Download</Button
+					loading={downloading} onclick={download}>Download</Button
 				>
 			</div>
 		{/if}

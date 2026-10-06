@@ -26,9 +26,10 @@ pub fn routes() -> Router<AppState> {
                                           .post(crate::api::settings_byo::save_handler)
                                           .delete(crate::api::settings_byo::delete_handler))
         // ─── Web bundle (the box IS the update server) ────────────────
-        // What UI build this box serves, and the build itself. A client that
-        // can only run a bundle the box handed it cannot get ahead of the box,
-        // which is the point — see api/web_bundle.rs.
+        // What UI build this box serves, and the build itself. A client can
+        // be AHEAD of its box: an app update bakes newer UI, and the client
+        // refuses to downgrade to the box's older bundle — see
+        // api/web_bundle.rs for what that leaves open.
         .route("/api/web-bundle/version", get(crate::api::web_bundle::version_handler))
         .route("/api/web-bundle/tarball", get(crate::api::web_bundle::tarball_handler))
         // ─── Billing-state aggregator (local view) ────────────────────

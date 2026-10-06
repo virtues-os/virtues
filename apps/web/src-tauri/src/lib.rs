@@ -61,14 +61,17 @@ pub mod web_bundle;
 /// | 8 | `bundle_update_ready` on both shells, and `ota_check_now` on the Mac:
 /// |   | a staged UI bundle applies by reloading while hidden, each page load
 /// |   | pinned to one bundle (`checkForNewUi` in `routes/(app)/+layout.svelte`, local-ui-plan.md) |
+/// | 9 | a shell that can run a bundle the box serves: overlay files typed by
+/// |   | extension, and only a navigation starts a page load. Below 9 every new
+/// |   | chunk was served as `text/html` and the bundle booted white |
 ///
-/// Note `bundle-contract.json` stays at `minShellVersion: 1`: every addition
-/// so far is called best-effort and the UI works fine without it, so requiring
-/// more would strand clients on an older app for no gain.
+/// `bundle-contract.json` requires 9. No shell below it has ever run a box
+/// bundle (they all boot white), so requiring it strands no client: they keep
+/// the UI they shipped with, which is all they ever had.
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 8;
+pub const COMMAND_SURFACE_VERSION: u32 = 9;
 
 /// What the native shell knows about itself.
 ///
@@ -84,9 +87,13 @@ pub struct ShellIdentity {
   pub app_version: String,
   /// The command contract this binary exposes; see [`COMMAND_SURFACE_VERSION`].
   pub command_surface: u32,
-  /// Content hash of the active OTA bundle, or `None` when running the build
-  /// baked into the app. This is the bit the SPA cannot know about itself.
+  /// Content hash of the active OTA bundle, or `None` for the build baked into
+  /// the app. The NEXT page load serves this; it differs from
+  /// `serving_bundle` while an applied update waits for a reload.
   pub active_bundle: Option<String>,
+  /// Content hash of the bundle THIS page loaded from, or `None` for the baked
+  /// build. This is the bit the SPA cannot know about itself.
+  pub serving_bundle: Option<String>,
   /// What the last update check concluded, or `None` if none has run.
   ///
   /// Carries the refusal case especially: a shell too old for the bundle the
@@ -104,6 +111,8 @@ pub fn shell_identity<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> ShellIden
     command_surface: COMMAND_SURFACE_VERSION,
     active_bundle: ui_data_dir(app)
       .and_then(|d| web_bundle::active_bundle_id(&d)),
+    serving_bundle: ui_data_dir(app)
+      .and_then(|d| web_bundle::serving_bundle_id(&d)),
     last_check: ui_data_dir(app)
       .and_then(|d| web_bundle::last_outcome(&d)),
   }
@@ -257,7 +266,7 @@ pub fn ota_check<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         }
         web_bundle::Outcome::ShellTooOld { needs, have } => eprintln!(
           "[ota] box bundle needs shell surface {needs}, this app has {have} — \
-           staying on the bundled build (update the app from the App Store)"
+           staying on the bundled build until the app is updated"
         ),
         web_bundle::Outcome::BoxBehind { box_version, have } => eprintln!(
           "[ota] box serves UI {box_version}, this app already runs {have} — \
@@ -275,7 +284,10 @@ pub fn ota_check<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
       }
       web_bundle::record_outcome(&dir, &outcome);
     }
-    Err(e) => eprintln!("[ota] check failed (harmless, will retry): {e}"),
+    Err(e) => {
+      eprintln!("[ota] check failed (harmless, will retry): {e}");
+      web_bundle::record_check_error(&dir, &e);
+    }
   }
 }
 
@@ -283,8 +295,9 @@ pub fn ota_check<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 /// manifest that build stamped for itself.
 ///
 /// Read rather than asserted. `.virtues-bundle.json` is written by
-/// `apps/web/scripts/write-bundle-manifest.mjs` into the same `build/` that
-/// `tauri.ios.conf.json` bakes as `frontendDist`, so the asset resolver hands
+/// `apps/web/scripts/write-bundle-manifest.mjs` into the build that
+/// `scripts/bake-desktop-ui.sh` copies to each app's `frontendDist`
+/// (`build-ios`, `build-desktop`), so the asset resolver hands
 /// back the binary's own copy of exactly the document the box serves at
 /// `/api/web-bundle/version`. Baking the version into Rust separately would be
 /// a second number to keep in step, and the delivery plan's fourth invariant is
@@ -368,31 +381,60 @@ pub fn serve_ui<R: tauri::Runtime>(
       .unwrap();
   }
 
-  // A page document starts a page load: settle rollback and pin this load to
-  // one bundle, so every asset it requests afterwards comes from the same
-  // place (web_bundle.rs, "The bundle a page load serves from").
-  if web_bundle::is_page_document(&resolved) {
-    if let Some(dir) = ui_data_dir(app) {
-      if web_bundle::begin_page_load(&dir) {
-        eprintln!("[ota] a staged bundle failed to confirm; rolled back");
-      }
-    }
+  let accept = request
+    .headers()
+    .get(tauri::http::header::ACCEPT)
+    .and_then(|v| v.to_str().ok());
+  let dir = ui_data_dir(app);
+
+  // The baked build's file at exactly this path. Tauri's resolver answers a
+  // miss with `index.html` instead of nothing, so an HTML answer for a path
+  // that is not HTML is a miss, not the file.
+  let baked_exact = |p: &str| {
+    baked(p).filter(|a| p.ends_with(".html") || !a.mime_type.starts_with("text/html"))
+  };
+  let exists = |p: &str| {
+    dir.as_deref().is_some_and(|d| web_bundle::read_from_overlay(d, p).is_some())
+      || baked_exact(p).is_some()
+  };
+
+  // A navigation to a route whose last segment has a dot in it (a file name
+  // in a Drive path) resolves to a file that does not exist. It is a route:
+  // answer it with the document, as a page load.
+  let mut resolved = resolved;
+  if accept.is_some_and(|a| a.contains("text/html"))
+    && !web_bundle::is_page_document(&resolved)
+    && !exists(&resolved)
+  {
+    resolved = "200.html".into();
   }
 
-  // Overlay first, baked second. `mime_guess` is not a dependency here, so
-  // the baked asset's own mime type is reused when the overlay serves the
-  // same path — which it does for every file, both being the same build
-  // shape.
-  let overlay = ui_data_dir(app)
-    .and_then(|d| web_bundle::read_from_overlay(&d, &resolved));
+  // A navigation starts a page load: settle rollback and pin this load to
+  // one bundle, so every asset it requests afterwards comes from the same
+  // place (web_bundle.rs, "The bundle a page load serves from").
+  if web_bundle::is_page_load(&resolved, accept) {
+    if let Some(dir) = &dir {
+      let load = web_bundle::begin_page_load(dir);
+      if load.rolled_back {
+        eprintln!("[ota] a staged bundle never confirmed a page load; rolled back");
+      }
+      #[cfg(desktop)]
+      if load.unconfirmed {
+        watch_boot(app.clone(), dir.clone(), load.generation);
+      }
+    }
+  } else if web_bundle::is_page_document(&resolved) && resolved != "index.html" {
+    // An extension-less path the page asked for as data: a call site that
+    // should be reaching the box. Served the document, and named.
+    eprintln!("[ui] {path} is not an app file; answered with 200.html (accept: {accept:?})");
+  }
 
-  match (overlay, baked(&resolved)) {
-    (Some(bytes), asset) => tauri::http::Response::builder()
+  // Overlay first, baked second, typed by extension either way.
+  let overlay = dir.as_deref().and_then(|d| web_bundle::read_from_overlay(d, &resolved));
+  match (overlay, baked_exact(&resolved)) {
+    (Some(bytes), _) => tauri::http::Response::builder()
       .status(200)
-      .header(
-        "Content-Type",
-        asset.map(|a| a.mime_type).unwrap_or_else(|| "text/html".into()),
-      )
+      .header("Content-Type", web_bundle::content_type(&resolved))
       .body(bytes)
       .unwrap(),
     (None, Some(asset)) => tauri::http::Response::builder()
@@ -400,13 +442,39 @@ pub fn serve_ui<R: tauri::Runtime>(
       .header("Content-Type", asset.mime_type)
       .body(asset.bytes)
       .unwrap(),
-    // The airlock pages are answered before this match ever runs (see
-    // above), so a miss here is a genuine 404.
     (None, None) => tauri::http::Response::builder()
       .status(404)
       .body(Vec::new())
       .unwrap(),
   }
+}
+
+/// Reload a page that serves a pending bundle and has not confirmed within
+/// [`web_bundle::BOOT_WATCHDOG`]. The reload is the bundle's next attempt, and
+/// the last one rolls it back, so a bundle that boots white falls back to one
+/// that works on its own. Without this a Mac, whose window is hidden rather
+/// than closed and which is almost never relaunched, stayed white for days.
+///
+/// Desktop only. A phone suspends a hidden app, so a page that has not
+/// confirmed there may simply not have run yet, and its next launch is the
+/// next attempt anyway. A hidden Mac window is left alone for the same reason
+/// and checked again later.
+#[cfg(desktop)]
+fn watch_boot<R: tauri::Runtime>(app: tauri::AppHandle<R>, dir: std::path::PathBuf, generation: u64) {
+  use tauri::Manager;
+  std::thread::spawn(move || loop {
+    std::thread::sleep(web_bundle::BOOT_WATCHDOG);
+    if !web_bundle::awaiting_confirmation(&dir, generation) {
+      return;
+    }
+    let Some(window) = app.get_webview_window("main") else { return };
+    if !window.is_visible().unwrap_or(false) || window.is_minimized().unwrap_or(false) {
+      continue;
+    }
+    eprintln!("[ota] the page did not confirm its bundle in time; reloading");
+    let _ = window.eval("location.reload()");
+    return;
+  });
 }
 
 #[cfg(mobile)]
@@ -491,8 +559,7 @@ pub fn run() {
         // Drop an overlay the App Store has overtaken. An app update keeps
         // the container, so a bundle applied weeks ago outlives the binary that
         // fetched it and goes on shadowing the newer build THIS binary ships
-        // with. After the rollback above, so a revert to `previous` is judged
-        // too; before the window, because this moves the pointer a live page
+        // with. Before the window, because this moves the pointer a live page
         // would be serving from.
         let baked = baked_bundle_version(app.handle());
         if let Some(dropped) = web_bundle::drop_stale_overlay(&dir, baked.as_deref()) {

@@ -20,6 +20,7 @@
 	  Devices      /virtues/devices        — paired devices (Unpair, Start over)
 	               /virtues/devices/this   — the machine you're on (local panel)
 	               /virtues/devices/:id    — another device, as the box knows it
+	  Shared links /virtues/shared         — every link shared through the door
 	  Display      /virtues/display        — the screen on the box, and what it shows
 	  Developer    /virtues/developer      — SQL · Terminal
 
@@ -56,6 +57,7 @@
 	import ThisDeviceView from '$lib/components/tabs/views/ThisDeviceView.svelte';
 	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
+	import SharedLinksView from '$lib/components/tabs/views/SharedLinksView.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -171,6 +173,7 @@
 		| 'billing'
 		| 'system'
 		| 'devices'
+		| 'shared'
 		| 'display'
 		| 'developer';
 
@@ -179,6 +182,7 @@
 		'billing',
 		'system',
 		'devices',
+		'shared',
 		'display',
 		'developer',
 	];
@@ -219,6 +223,8 @@
 			<SystemInfoView {tab} {active} />
 		{:else if section === 'display'}
 			<DisplayView />
+		{:else if section === 'shared'}
+			<SharedLinksView />
 		{:else if section === 'devices'}
 			{#if !sub}
 				<DevicesView {tab} {active} />
