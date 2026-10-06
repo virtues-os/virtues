@@ -1,4 +1,4 @@
-//! `virtues-door --root <bundles> --key-dir <dir> [--relay <url>]`
+//! `virtues-door --root <bundles> --key-dir <dir> [--relay <url>] [--core-socket <path>]`
 //!
 //! Serves published bundles as its own iroh endpoint. On first start it makes
 //! a key in `--key-dir` and writes its EndpointId beside it (`endpoint-id`)
@@ -74,7 +74,8 @@ async fn main() -> Result<()> {
     // and the core cannot read it.
     println!("endpoint-id {id}");
 
-    let router = virtues_door::serve(endpoint, virtues_door::bundle::Store::new(&root));
+    let core = virtues_door::core::Core::at(arg("--core-socket").map(PathBuf::from));
+    let router = virtues_door::serve(endpoint, virtues_door::bundle::Store::new(&root), core);
     tracing::info!(%id, root = %root.display(), "door open");
 
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;

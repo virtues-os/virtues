@@ -24,7 +24,7 @@
 <div id="msg"><h1>Opening…</h1><p>Connecting to the server that shared this page.</p></div>
 <iframe id="page" hidden title="Shared page" sandbox="allow-scripts"></iframe>
 <script type="module">
-  import init, { open_link } from "./wasm/virtues_loader.js";
+  import init, { open_link, query } from "./wasm/virtues_loader.js";
 
   const $ = (id) => document.getElementById(id);
   const say = (title, body) => {
@@ -46,6 +46,23 @@
     if (head) return html.replace(head[0], head[0] + POLICY);
     return `<!doctype html><head>${POLICY}</head>` + html;
   };
+
+  // A live page asks for its data by key; the loader passes each ask to the
+  // server over the open connection and hands the rows back. Only messages
+  // from the page's own frame are answered.
+  window.addEventListener("message", async (e) => {
+    const ask = e.data && e.data.virtuesQuery;
+    const frame = $("page").contentWindow;
+    if (!ask || e.source !== frame || typeof ask.key !== "string") return;
+    let rows = null;
+    try {
+      const text = await query(ask.key);
+      rows = text ? JSON.parse(text) : null;
+    } catch (err) {
+      console.error(err);
+    }
+    frame.postMessage({ virtuesReply: { id: ask.id, rows } }, "*");
+  });
 
   async function main() {
     if (location.pathname !== "/" && location.pathname !== "/index.html") {

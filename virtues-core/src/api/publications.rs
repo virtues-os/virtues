@@ -6,9 +6,17 @@
 //! and this table is the owner's record of it: updating rewrites the bundle
 //! under the same token, revoking deletes it.
 //!
-//! Only a face that stands alone publishes. Off the box nothing answers
-//! `virtues.query` or serves `virtues.js`, so a live face would publish as an
-//! empty page that also names the box's API; [`standalone_face`] refuses it.
+//! A face that reads data (`virtues.query`) shares in one of two ways. A
+//! **snapshot** carries the rows its queries returned when the owner last
+//! looked at it, baked into the page, and asks the box for nothing. A **live**
+//! page carries the same queries' keys and asks the box, through the loader
+//! and the door, each time someone opens it; the core runs a query only if
+//! its key is one approved for that link ([`answer`]). Either way the face's
+//! `virtues.js` is replaced by a small inline stand-in ([`freeze`]).
+//!
+//! Anything else that only works on the box (`/api/`, a face token, a
+//! localhost URL) is refused, as is any face for the GitHub path, which has
+//! no door to answer queries ([`standalone_face`]).
 
 use std::path::{Path, PathBuf};
 
@@ -39,12 +47,24 @@ const BOX_ONLY: &[(&str, &str)] = &[
     ("127.0.0.1", "points at a local address"),
 ];
 
+/// The face runtime, which [`freeze`] replaces when sharing through the door.
+const RUNTIME: &[&str] = &["virtues.query", "virtues.js", "virtues.css"];
+
 /// Every reason `html` would not stand on its own off the box.
 pub fn box_only_findings(html: &str) -> Vec<String> {
+    findings(html, |_| true)
+}
+
+/// The reasons that survive [`freeze`]: everything but the face runtime.
+fn server_only_findings(html: &str) -> Vec<String> {
+    findings(html, |needle| !RUNTIME.contains(&needle))
+}
+
+fn findings(html: &str, keep: impl Fn(&str) -> bool) -> Vec<String> {
     let lower = html.to_lowercase();
     BOX_ONLY
         .iter()
-        .filter(|(needle, _)| lower.contains(needle))
+        .filter(|(needle, _)| keep(needle) && lower.contains(needle))
         .map(|(needle, why)| format!("`{needle}` {why}"))
         .collect()
 }
@@ -128,6 +148,9 @@ pub struct Publication {
     pub revoked_at: Option<DateTime<Utc>>,
     pub open_count: i64,
     pub last_opened_at: Option<DateTime<Utc>>,
+    /// A live page asks the server for its data when opened; otherwise it
+    /// carries a snapshot (or reads no data at all).
+    pub is_live: bool,
     /// Filled on the way out; `None` until the door has run and a loader is
     /// configured.
     #[sqlx(skip)]
@@ -144,11 +167,43 @@ impl Publication {
 }
 
 const COLUMNS: &str = "id, token, producer_kind, producer_id, title, size_bytes, card_title, \
-     created_at, updated_at, expires_at, revoked_at, open_count, last_opened_at";
+     created_at, updated_at, expires_at, revoked_at, open_count, last_opened_at, \
+     EXISTS (SELECT 1 FROM app_publication_queries q \
+             WHERE q.publication_id = app_publications.id) AS is_live";
 
-/// The page in `face_dir`, if it stands alone off the box. `Err` names what
-/// to change.
+/// The page in `face_dir`, if it stands alone off the box with nothing to
+/// stand in for. `Err` names what to change.
 pub fn standalone_html(face_dir: &Path) -> Result<String> {
+    let html = read_face(face_dir)?;
+    let findings = box_only_findings(&html);
+    if !findings.is_empty() {
+        return Err(Error::InvalidInput(format!(
+            "this page only works on your server: {}. Write the content into the HTML itself, \
+             then publish again.",
+            findings.join("; ")
+        )));
+    }
+    Ok(html)
+}
+
+/// The page in `face_dir` if sharing it through the door can work, and
+/// whether it reads data.
+fn shareable_html(face_dir: &Path) -> Result<(String, bool)> {
+    let html = read_face(face_dir)?;
+    let findings = server_only_findings(&html);
+    if !findings.is_empty() {
+        return Err(Error::InvalidInput(format!(
+            "this page only works on your server: {}. Ask the assistant to change that part, \
+             then share it again.",
+            findings.join("; ")
+        )));
+    }
+    let reads = html.to_lowercase().contains("virtues.query");
+    Ok((html, reads))
+}
+
+/// One face file, within the size limit.
+fn read_face(face_dir: &Path) -> Result<String> {
     // One file goes out. A face that loads a sibling file would publish with
     // that file missing.
     let siblings: Vec<String> = std::fs::read_dir(face_dir)
@@ -173,15 +228,129 @@ pub fn standalone_html(face_dir: &Path) -> Result<String> {
             MAX_FACE_BYTES / 1024
         )));
     }
-    let findings = box_only_findings(&html);
-    if !findings.is_empty() {
+    Ok(html)
+}
+
+/// A query a shared page runs: the key the page sends, the SQL the core
+/// runs for that key, and (for a snapshot) the rows baked in.
+#[derive(Debug, Clone)]
+pub struct FrozenQuery {
+    pub key: String,
+    pub sql: String,
+    pub rows: serde_json::Value,
+}
+
+/// The key a shared page sends for `sql`: never the SQL itself, so the only
+/// statements the core will run for a link are the ones stored for it.
+fn query_key(sql: &str) -> String {
+    hex::encode(&Sha256::digest(sql.as_bytes())[..16])
+}
+
+/// JSON that is safe inside a `<script>` element.
+fn script_json(v: &serde_json::Value) -> String {
+    v.to_string().replace('<', "\\u003c")
+}
+
+const SHIM: &str = r#"(function () {
+  var KEYS = __KEYS__;
+  var ROWS = __ROWS__;
+  var LIVE = __LIVE__;
+  var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  var theme = dark ? 'dark' : 'light';
+  document.documentElement.dataset.theme = theme;
+  var pending = {};
+  var next = 0;
+  window.addEventListener('message', function (e) {
+    var r = e.data && e.data.virtuesReply;
+    if (!r || !pending[r.id]) return;
+    var p = pending[r.id];
+    delete pending[r.id];
+    if (r.rows) p.resolve(r.rows);
+    else p.reject(new Error("The server that shared this page couldn't send this data."));
+  });
+  function query(sql) {
+    var key = KEYS[sql];
+    if (!key) return Promise.reject(new Error('This page shows only what its owner shared.'));
+    if (!LIVE) return Promise.resolve(ROWS[key]);
+    return new Promise(function (resolve, reject) {
+      var id = String(++next);
+      pending[id] = { resolve: resolve, reject: reject };
+      parent.postMessage({ virtuesQuery: { id: id, key: key } }, '*');
+    });
+  }
+  window.virtues = { query: query, theme: theme, surface: '' };
+})();"#;
+
+/// Replace the face runtime in `html` with the inline stand-in. A snapshot
+/// carries each query's rows; a live page carries only keys.
+pub fn freeze(html: &str, queries: &[FrozenQuery], live: bool) -> Result<String> {
+    use std::sync::OnceLock;
+    static SCRIPT: OnceLock<regex::Regex> = OnceLock::new();
+    static LINK: OnceLock<regex::Regex> = OnceLock::new();
+    let script = SCRIPT.get_or_init(|| {
+        regex::Regex::new(r#"(?is)<script\b[^>]*\bsrc\s*=\s*["']?(?:\./)?virtues\.js["']?[^>]*>\s*</script>"#).unwrap()
+    });
+    let link = LINK.get_or_init(|| {
+        regex::Regex::new(r#"(?is)<link\b[^>]*\bhref\s*=\s*["']?(?:\./)?virtues\.css["']?[^>]*>"#).unwrap()
+    });
+    let keys: serde_json::Map<String, serde_json::Value> =
+        queries.iter().map(|q| (q.sql.clone(), q.key.clone().into())).collect();
+    let rows: serde_json::Map<String, serde_json::Value> = if live {
+        serde_json::Map::new()
+    } else {
+        queries.iter().map(|q| (q.key.clone(), q.rows.clone())).collect()
+    };
+    let shim = SHIM
+        .replace("__KEYS__", &script_json(&keys.into()))
+        .replace("__ROWS__", &script_json(&rows.into()))
+        .replace("__LIVE__", if live { "true" } else { "false" });
+    // Placeholders first, so the check below sees only what the face itself
+    // still references (the inlined stylesheet names itself in a comment).
+    const SHIM_AT: &str = "\u{0}virtues-shim\u{0}";
+    const CSS_AT: &str = "\u{0}virtues-css\u{0}";
+    let marked = script.replace_all(html, regex::NoExpand(SHIM_AT));
+    let marked = link.replace_all(&marked, regex::NoExpand(CSS_AT));
+    let lower = marked.to_lowercase();
+    if lower.contains("virtues.js") || lower.contains("virtues.css") {
+        return Err(Error::InvalidInput(
+            "this page loads virtues.js or virtues.css in a way sharing can't replace. Ask the \
+             assistant to load them with plain <script src> and <link href> tags."
+                .into(),
+        ));
+    }
+    let out = marked
+        .replace(SHIM_AT, &format!("<script>{shim}</script>"))
+        .replace(CSS_AT, &format!("<style>{}</style>", crate::server::faces::VIRTUES_CSS));
+    if out.len() > MAX_FACE_BYTES {
         return Err(Error::InvalidInput(format!(
-            "this page only works on your server: {}. Write the content into the HTML itself, \
-             then publish again.",
-            findings.join("; ")
+            "with its data the page is {} KB; the limit is {} KB. Show fewer rows, then share it again.",
+            out.len() / 1024,
+            MAX_FACE_BYTES / 1024
         )));
     }
-    Ok(html)
+    Ok(out)
+}
+
+/// Run each query this applet's face ran recently, for a snapshot or for the
+/// owner to see what a live page would show today.
+async fn run_seen_queries(pool: &PgPool, applet_id: &str) -> Result<Vec<FrozenQuery>> {
+    let seen = crate::server::faces::seen_queries(applet_id);
+    if seen.is_empty() {
+        return Err(Error::InvalidInput(
+            "open this page in virtues once so your server can see what it shows, then share it."
+                .into(),
+        ));
+    }
+    let mut out = Vec::with_capacity(seen.len());
+    for sql in seen {
+        let rows = crate::server::faces::run_face_query(pool, &sql).await.map_err(|e| {
+            Error::InvalidInput(format!(
+                "one of this page's queries failed just now ({e}). Open the page again, then share it."
+            ))
+        })?;
+        out.push(FrozenQuery { key: query_key(&sql), sql, rows });
+    }
+    Ok(out)
 }
 
 /// An applet's name and its face, if the face stands alone.
@@ -209,8 +378,41 @@ pub struct SharePreview {
     pub image_count: usize,
     /// Addresses of other sites the page links to.
     pub links: Vec<String>,
-    /// Text that looks like contact details: emails and phone numbers.
+    /// Text that looks like contact details: emails and phone numbers,
+    /// in the page or in the rows it carries.
     pub looks_private: Vec<String>,
+    /// Whether the page reads data, and so can be a snapshot or live.
+    pub reads_data: bool,
+    /// The queries it runs, with what each returns right now.
+    pub queries: Vec<QueryPreview>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct QueryPreview {
+    pub sql: String,
+    pub row_count: usize,
+    /// The first few rows, as they would leave.
+    pub sample: serde_json::Value,
+}
+
+impl SharePreview {
+    fn cannot(title: String, why: String) -> Self {
+        // The same sentences are API errors, which start lowercase; on the
+        // sheet they stand alone.
+        let mut chars = why.chars();
+        let why = chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or(why);
+        SharePreview {
+            title,
+            html: None,
+            problem: Some(why),
+            size_bytes: 0,
+            image_count: 0,
+            links: Vec::new(),
+            looks_private: Vec::new(),
+            reads_data: false,
+            queries: Vec::new(),
+        }
+    }
 }
 
 /// Everything in `html` the Share sheet should name.
@@ -248,47 +450,76 @@ fn scan(html: &str) -> (usize, Vec<String>, Vec<String>) {
     (image_count, links, private)
 }
 
-/// What sharing this applet's face would send.
+/// What sharing this applet's face would send. For a page that reads data,
+/// `html` is the snapshot, which is also what a live page shows today.
 pub async fn preview(pool: &PgPool, applet_id: &str) -> Result<SharePreview> {
     let name = crate::scheduler::applets::get_applet(pool, applet_id)
         .await
         .map(|a| a.name)
         .map_err(|_| Error::NotFound(format!("no applet {applet_id:?}")))?;
     let Some(face_dir) = crate::server::faces::face_dir_for(applet_id) else {
-        return Ok(SharePreview {
-            title: name,
-            html: None,
-            problem: Some("This applet has nothing to show, so there is no page to share.".into()),
-            size_bytes: 0,
-            image_count: 0,
-            links: Vec::new(),
-            looks_private: Vec::new(),
-        });
+        return Ok(SharePreview::cannot(
+            name,
+            "This applet has nothing to show, so there is no page to share.".into(),
+        ));
     };
-    Ok(match standalone_html(&face_dir) {
-        Ok(html) => {
-            let (image_count, links, looks_private) = scan(&html);
+    let built = async {
+        let (html, reads) = shareable_html(&face_dir)?;
+        let queries = if reads { run_seen_queries(pool, applet_id).await? } else { Vec::new() };
+        let page = if reads || html.to_lowercase().contains("virtues.") {
+            freeze(&html, &queries, false)?
+        } else {
+            html
+        };
+        Ok::<_, Error>((page, reads, queries))
+    };
+    Ok(match built.await {
+        Ok((page, reads, queries)) => {
+            let (image_count, links, looks_private) = scan(&page);
             SharePreview {
                 title: name,
-                size_bytes: html.len(),
-                html: Some(html),
+                size_bytes: page.len(),
+                html: Some(page),
                 problem: None,
                 image_count,
                 links,
                 looks_private,
+                reads_data: reads,
+                queries: queries
+                    .into_iter()
+                    .map(|q| {
+                        let all = q.rows.as_array().cloned().unwrap_or_default();
+                        QueryPreview {
+                            sql: q.sql,
+                            row_count: all.len(),
+                            sample: all.into_iter().take(3).collect::<Vec<_>>().into(),
+                        }
+                    })
+                    .collect(),
             }
         }
-        Err(Error::InvalidInput(why)) => SharePreview {
-            title: name,
-            html: None,
-            problem: Some(why),
-            size_bytes: 0,
-            image_count: 0,
-            links: Vec::new(),
-            looks_private: Vec::new(),
-        },
+        Err(Error::InvalidInput(why)) => SharePreview::cannot(name, why),
         Err(e) => return Err(e),
     })
+}
+
+/// The page to publish for an applet, and the queries a live page may ask
+/// for (empty for a snapshot or a page that reads nothing).
+async fn build(pool: &PgPool, applet_id: &str, live: bool) -> Result<(String, String, Vec<FrozenQuery>)> {
+    let name = crate::scheduler::applets::get_applet(pool, applet_id)
+        .await
+        .map(|a| a.name)
+        .map_err(|_| Error::NotFound(format!("no applet {applet_id:?}")))?;
+    let face_dir = crate::server::faces::face_dir_for(applet_id)
+        .ok_or_else(|| Error::InvalidInput(format!("\"{name}\" has no face to publish")))?;
+    let (html, reads) = shareable_html(&face_dir)?;
+    if !reads {
+        let page = if html.to_lowercase().contains("virtues.") { freeze(&html, &[], false)? } else { html };
+        return Ok((name, page, Vec::new()));
+    }
+    let queries = run_seen_queries(pool, applet_id).await?;
+    let page = freeze(&html, &queries, live)?;
+    Ok((name, page, if live { queries } else { Vec::new() }))
 }
 
 fn content_hash(bytes: &[u8]) -> String {
@@ -309,13 +540,17 @@ pub struct CreateRequest {
     /// Days until the link stops working. Absent means
     /// [`DEFAULT_EXPIRY_DAYS`]; `0` means never.
     pub expires_in_days: Option<u32>,
+    /// For a page that reads data: ask the server each time it is opened,
+    /// rather than carry a snapshot. Ignored for a page that reads nothing.
+    #[serde(default)]
+    pub live: bool,
 }
 
 /// Share an applet's face: freeze it, put the bundle where the door serves
 /// it, record it.
 pub async fn create(pool: &PgPool, req: CreateRequest) -> Result<Publication> {
-    let (title, html) = standalone_face(pool, &req.applet_id).await?;
-    create_frozen(pool, &bundles_dir(), &req.applet_id, &title, html.as_bytes(), req.expires_in_days)
+    let (title, page, live) = build(pool, &req.applet_id, req.live).await?;
+    create_frozen(pool, &bundles_dir(), &req.applet_id, &title, page.as_bytes(), req.expires_in_days, &live)
         .await
         .map(Publication::with_link)
 }
@@ -327,6 +562,7 @@ async fn create_frozen(
     title: &str,
     page: &[u8],
     expires_in_days: Option<u32>,
+    live: &[FrozenQuery],
 ) -> Result<Publication> {
     let token = token::generate();
     let id = crate::ids::generate_id("pub", &[&token]);
@@ -352,6 +588,10 @@ async fn create_frozen(
     .bind(expires_at)
     .fetch_one(pool)
     .await;
+    let inserted = match inserted {
+        Ok(p) => replace_queries(pool, &p.id, live).await.map(|()| Publication { is_live: !live.is_empty(), ..p }),
+        Err(e) => Err(Error::Database(format!("record publication: {e}"))),
+    };
     match inserted {
         Ok(p) => {
             crate::door::wake();
@@ -359,9 +599,32 @@ async fn create_frozen(
         }
         Err(e) => {
             let _ = bundle::remove(root, &token);
-            Err(Error::Database(format!("record publication: {e}")))
+            Err(e)
         }
     }
+}
+
+/// Make `queries` the whole set a link may ask for.
+async fn replace_queries(pool: &PgPool, publication_id: &str, queries: &[FrozenQuery]) -> Result<()> {
+    let mut tx = pool.begin().await.map_err(|e| Error::Database(e.to_string()))?;
+    sqlx::query("DELETE FROM app_publication_queries WHERE publication_id = $1")
+        .bind(publication_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::Database(format!("clear approved queries: {e}")))?;
+    for q in queries {
+        sqlx::query(
+            "INSERT INTO app_publication_queries (publication_id, query_key, sql) VALUES ($1, $2, $3) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(publication_id)
+        .bind(&q.key)
+        .bind(&q.sql)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::Database(format!("approve query: {e}")))?;
+    }
+    tx.commit().await.map_err(|e| Error::Database(e.to_string()))
 }
 
 async fn get(pool: &PgPool, id: &str) -> Result<Publication> {
@@ -385,12 +648,20 @@ pub async fn list(pool: &PgPool) -> Result<Vec<Publication>> {
 }
 
 /// Re-freeze the applet's face under the same link.
+/// A live link stays live and a snapshot takes a new snapshot.
 pub async fn update(pool: &PgPool, id: &str) -> Result<Publication> {
     let current = get(pool, id).await?;
-    let (title, html) = standalone_face(pool, &current.producer_id).await?;
-    update_frozen(pool, &bundles_dir(), current, &title, html.as_bytes())
-        .await
-        .map(Publication::with_link)
+    let was_live: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM app_publication_queries WHERE publication_id = $1)",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("read approved queries: {e}")))?;
+    let (title, page, live) = build(pool, &current.producer_id, was_live).await?;
+    let updated = update_frozen(pool, &bundles_dir(), current, &title, page.as_bytes()).await?;
+    replace_queries(pool, &updated.id, &live).await?;
+    Ok(Publication { is_live: !live.is_empty(), ..updated }.with_link())
 }
 
 async fn update_frozen(
@@ -436,6 +707,59 @@ async fn revoke_in(pool: &PgPool, root: &Path, id: &str) -> Result<Publication> 
     // The last live link revoked closes the door.
     crate::door::wake();
     Ok(revoked)
+}
+
+/// What the core tells the door (`virtues_door::core`): rows for a query
+/// approved for a live link, and a count when a page is served. A dead link
+/// or an unknown key is `ok: false`, the same as any failure.
+pub async fn answer(pool: &PgPool, request: virtues_door::core::CoreRequest) -> virtues_door::core::CoreAnswer {
+    use virtues_door::core::{CoreAnswer, CoreRequest};
+    let no = CoreAnswer { ok: false, rows: None };
+    match request {
+        CoreRequest::Query { token, key } => {
+            let sql: Option<String> = match sqlx::query_scalar(
+                "SELECT q.sql FROM app_publication_queries q \
+                 JOIN app_publications p ON p.id = q.publication_id \
+                 WHERE p.token = $1 AND q.query_key = $2 AND p.revoked_at IS NULL \
+                   AND (p.expires_at IS NULL OR p.expires_at > now())",
+            )
+            .bind(&token)
+            .bind(&key)
+            .fetch_optional(pool)
+            .await
+            {
+                Ok(sql) => sql,
+                Err(e) => {
+                    tracing::warn!(error = %e, "door: approved-query lookup failed");
+                    return no;
+                }
+            };
+            let Some(sql) = sql else { return no };
+            match crate::server::faces::run_face_query(pool, &sql).await {
+                Ok(rows) => CoreAnswer { ok: true, rows: Some(rows) },
+                Err(e) => {
+                    tracing::warn!(error = %e, "door: an approved query failed");
+                    no
+                }
+            }
+        }
+        CoreRequest::Opened { token } => {
+            match sqlx::query(
+                "UPDATE app_publications SET open_count = open_count + 1, last_opened_at = now() \
+                 WHERE token = $1 AND revoked_at IS NULL",
+            )
+            .bind(&token)
+            .execute(pool)
+            .await
+            {
+                Ok(_) => CoreAnswer { ok: true, rows: None },
+                Err(e) => {
+                    tracing::warn!(error = %e, "door: could not count an open");
+                    no
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -492,7 +816,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = bundle::Store::new(dir.path());
 
-        let p = create_frozen(&pool, dir.path(), "applet_user__rome", "Rome", b"v1", None)
+        let p = create_frozen(&pool, dir.path(), "applet_user__rome", "Rome", b"v1", None, &[])
             .await
             .unwrap();
         assert_eq!(store.load(&p.token).as_deref(), Some(&b"v1"[..]));
@@ -510,10 +834,52 @@ mod tests {
         assert!(update_frozen(&pool, dir.path(), revoked, "Rome", b"v3").await.is_err());
         assert_eq!(store.load(&p.token), None, "a revoked link stays dead");
 
-        let never = create_frozen(&pool, dir.path(), "applet_user__rome", "Rome", b"x", Some(0))
+        let never = create_frozen(&pool, dir.path(), "applet_user__rome", "Rome", b"x", Some(0), &[])
             .await
             .unwrap();
         assert!(never.expires_at.is_none());
         assert_eq!(list(&pool).await.unwrap().len(), 2);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_live_link_answers_only_its_approved_queries(pool: PgPool) {
+        use virtues_door::core::CoreRequest;
+        let dir = tempfile::tempdir().unwrap();
+        let approved = FrozenQuery { key: query_key("SELECT 1 AS n"), sql: "SELECT 1 AS n".into(), rows: serde_json::Value::Null };
+        let p = create_frozen(&pool, dir.path(), "applet_user__rome", "Rome", b"x", None, &[approved.clone()])
+            .await
+            .unwrap();
+
+        let ask = |key: &str| CoreRequest::Query { token: p.token.clone(), key: key.into() };
+        let got = answer(&pool, ask(&approved.key)).await;
+        assert!(got.ok);
+        assert_eq!(got.rows.unwrap(), serde_json::json!([{ "n": 1 }]));
+        assert!(!answer(&pool, ask(&query_key("SELECT 2"))).await.ok, "not approved");
+        let other = CoreRequest::Query { token: token::generate(), key: approved.key.clone() };
+        assert!(!answer(&pool, other).await.ok, "another link's token");
+
+        assert!(answer(&pool, CoreRequest::Opened { token: p.token.clone() }).await.ok);
+        assert_eq!(get(&pool, &p.id).await.unwrap().open_count, 1);
+
+        revoke_in(&pool, dir.path(), &p.id).await.unwrap();
+        assert!(!answer(&pool, ask(&approved.key)).await.ok, "a revoked link answers nothing");
+    }
+
+    #[test]
+    fn freezing_replaces_the_runtime_and_carries_rows_or_keys() {
+        let face = r#"<html><head><link rel="stylesheet" href="virtues.css"><script src="virtues.js"></script></head>
+            <body><script>virtues.query("SELECT 1").then(r => document.body.dataset.n = r[0].n)</script></body></html>"#;
+        let q = FrozenQuery { key: query_key("SELECT 1"), sql: "SELECT 1".into(), rows: serde_json::json!([{ "n": "</script>" }]) };
+        let snap = freeze(face, &[q.clone()], false).unwrap();
+        assert!(!snap.contains("src=\"virtues.js\""));
+        assert!(!snap.contains("href=\"virtues.css\""));
+        assert!(snap.contains(&q.key));
+        assert!(snap.contains("\\u003c/script>"), "rows cannot close the script element");
+        assert!(snap.contains("var LIVE = false"));
+        let live = freeze(face, &[q.clone()], true).unwrap();
+        assert!(live.contains("var LIVE = true"));
+        assert!(!live.contains("u003c/script>"), "a live page carries no rows");
+        assert!(server_only_findings(face).is_empty());
+        assert_eq!(box_only_findings(face).len(), 3);
     }
 }

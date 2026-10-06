@@ -2335,7 +2335,16 @@ export interface Publication {
 	revoked_at: string | null;
 	open_count: number;
 	last_opened_at: string | null;
+	/** Asks your server for its data each time it is opened. */
+	is_live: boolean;
 	link: string | null;
+}
+
+/** A query a shared page runs, with what it returns right now. */
+export interface SharedQuery {
+	sql: string;
+	row_count: number;
+	sample: Record<string, unknown>[];
 }
 
 /** What sharing an applet's page would send, before anything leaves. */
@@ -2349,6 +2358,9 @@ export interface SharePreview {
 	image_count: number;
 	links: string[];
 	looks_private: string[];
+	/** The page reads data, so it can be shared as a snapshot or live. */
+	reads_data: boolean;
+	queries: SharedQuery[];
 }
 
 export function listPublications(): Promise<Publication[]> {
@@ -2359,11 +2371,20 @@ export function previewPublication(appletId: string): Promise<SharePreview> {
 	return apiGet<SharePreview>('/publications/preview', { applet_id: appletId });
 }
 
-/** `expiresInDays`: 0 never expires; omitted uses the server's default (30). */
-export function createPublication(appletId: string, expiresInDays?: number): Promise<Publication> {
+/**
+ * `expiresInDays`: 0 never expires; omitted uses the server's default (30).
+ * `live`: for a page that reads data, ask the server when opened instead of
+ * carrying a snapshot.
+ */
+export function createPublication(
+	appletId: string,
+	expiresInDays?: number,
+	live = false
+): Promise<Publication> {
 	return apiSend<Publication>('POST', '/publications', {
 		applet_id: appletId,
-		expires_in_days: expiresInDays
+		expires_in_days: expiresInDays,
+		live
 	});
 }
 
