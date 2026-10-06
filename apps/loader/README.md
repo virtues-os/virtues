@@ -33,7 +33,7 @@ output and is not committed.
 |---|---|
 | the page | the page, under a one-line bar naming where it came from |
 | not found (never shared, revoked, expired) | "This link doesn't open a page" |
-| no answer in 8 s | "The server that shared this page isn't reachable" |
+| no answer in 8 s (the server is off, or shares nothing so it runs no door) | "This page isn't available right now" |
 | a malformed link | "This link is incomplete" |
 
 The page runs its own scripts in an opaque origin under a policy that allows

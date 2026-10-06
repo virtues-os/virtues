@@ -72,6 +72,7 @@ pub fn routes() -> Router<AppState> {
             "/api/publications",
             get(list_publications_handler).post(create_publication_handler),
         )
+        .route("/api/publications/preview", get(preview_publication_handler))
         .route("/api/publications/:id/update", post(update_publication_handler))
         .route("/api/publications/:id", delete(revoke_publication_handler))
         // Projects API (the "room" a chat lives in)
@@ -512,6 +513,19 @@ pub async fn create_publication_handler(
     Json(req): Json<crate::api::publications::CreateRequest>,
 ) -> Response {
     api_response(crate::api::publications::create(state.db.pool(), req).await)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PreviewQuery {
+    pub applet_id: String,
+}
+
+/// GET /api/publications/preview?applet_id= — what sharing would send.
+pub async fn preview_publication_handler(
+    State(state): State<AppState>,
+    Query(q): Query<PreviewQuery>,
+) -> Response {
+    api_response(crate::api::publications::preview(state.db.pool(), &q.applet_id).await)
 }
 
 /// POST /api/publications/:id/update — re-freeze the face under the same link.

@@ -99,9 +99,17 @@ fn link_for(loader: Option<&str>, door: Option<&str>, token: &str) -> Option<Str
     Some(format!("{}#{}.{token}", loader?, compact_key(door?)?))
 }
 
+/// Where links open: the loader on `virtues.ch` (`apps/loader`), or
+/// `VIRTUES_SHARE_LOADER_URL` for a loader served somewhere else, such as a
+/// dev machine.
+const DEFAULT_LOADER_URL: &str = "https://s.virtues.ch/";
+
 fn link(token: &str) -> Option<String> {
-    let loader = std::env::var("VIRTUES_SHARE_LOADER_URL").ok().filter(|s| !s.is_empty());
-    link_for(loader.as_deref(), door_id().as_deref(), token)
+    let loader = std::env::var("VIRTUES_SHARE_LOADER_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_LOADER_URL.to_string());
+    link_for(Some(&loader), door_id().as_deref(), token)
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -186,6 +194,101 @@ pub async fn standalone_face(pool: &PgPool, applet_id: &str) -> Result<(String, 
         .ok_or_else(|| Error::InvalidInput(format!("\"{name}\" has no face to publish")))?;
     let html = standalone_html(&face_dir)?;
     Ok((name, html))
+}
+
+/// What the Share sheet shows before anything leaves: the page as it will
+/// appear, and what in it the owner might not mean to send.
+#[derive(Debug, Serialize)]
+pub struct SharePreview {
+    pub title: String,
+    /// The page, or `None` when it cannot be shared as it is.
+    pub html: Option<String>,
+    /// Why it cannot be shared, and what to change.
+    pub problem: Option<String>,
+    pub size_bytes: usize,
+    pub image_count: usize,
+    /// Addresses of other sites the page links to.
+    pub links: Vec<String>,
+    /// Text that looks like contact details: emails and phone numbers.
+    pub looks_private: Vec<String>,
+}
+
+/// Everything in `html` the Share sheet should name.
+fn scan(html: &str) -> (usize, Vec<String>, Vec<String>) {
+    use std::sync::OnceLock;
+    static LINK: OnceLock<regex::Regex> = OnceLock::new();
+    static EMAIL: OnceLock<regex::Regex> = OnceLock::new();
+    static PHONE: OnceLock<regex::Regex> = OnceLock::new();
+    let link = LINK.get_or_init(|| regex::Regex::new(r#"https?://[^\s"'<>)]+"#).unwrap());
+    let email = EMAIL.get_or_init(|| {
+        regex::Regex::new(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}").unwrap()
+    });
+    // Ten or more digits, allowing the separators people write numbers with.
+    let phone = PHONE.get_or_init(|| regex::Regex::new(r"\+?\d[\d\s().-]{8,}\d").unwrap());
+
+    let image_count = html.matches("data:image/").count() + html.matches("<img").count();
+    let mut links: Vec<String> = link.find_iter(html).map(|m| m.as_str().to_string()).collect();
+    links.sort();
+    links.dedup();
+    // Inline images are base64; digits inside them are not phone numbers.
+    let mut parts = html.split("data:");
+    let mut text = parts.next().unwrap_or_default().to_string();
+    for part in parts {
+        // Drop the URI itself, up to the quote or paren that closes it.
+        text.push(' ');
+        text.push_str(part.split_once(['"', '\'', ')']).map_or("", |(_, rest)| rest));
+    }
+    let mut private: Vec<String> = email
+        .find_iter(&text)
+        .chain(phone.find_iter(&text).filter(|m| m.as_str().chars().filter(char::is_ascii_digit).count() >= 10))
+        .map(|m| m.as_str().trim().to_string())
+        .collect();
+    private.sort();
+    private.dedup();
+    (image_count, links, private)
+}
+
+/// What sharing this applet's face would send.
+pub async fn preview(pool: &PgPool, applet_id: &str) -> Result<SharePreview> {
+    let name = crate::scheduler::applets::get_applet(pool, applet_id)
+        .await
+        .map(|a| a.name)
+        .map_err(|_| Error::NotFound(format!("no applet {applet_id:?}")))?;
+    let Some(face_dir) = crate::server::faces::face_dir_for(applet_id) else {
+        return Ok(SharePreview {
+            title: name,
+            html: None,
+            problem: Some("This applet has nothing to show, so there is no page to share.".into()),
+            size_bytes: 0,
+            image_count: 0,
+            links: Vec::new(),
+            looks_private: Vec::new(),
+        });
+    };
+    Ok(match standalone_html(&face_dir) {
+        Ok(html) => {
+            let (image_count, links, looks_private) = scan(&html);
+            SharePreview {
+                title: name,
+                size_bytes: html.len(),
+                html: Some(html),
+                problem: None,
+                image_count,
+                links,
+                looks_private,
+            }
+        }
+        Err(Error::InvalidInput(why)) => SharePreview {
+            title: name,
+            html: None,
+            problem: Some(why),
+            size_bytes: 0,
+            image_count: 0,
+            links: Vec::new(),
+            looks_private: Vec::new(),
+        },
+        Err(e) => return Err(e),
+    })
 }
 
 fn content_hash(bytes: &[u8]) -> String {
@@ -359,6 +462,19 @@ mod tests {
 
         std::fs::write(dir.path().join("index.html"), "<script src=virtues.js></script>").unwrap();
         assert!(matches!(standalone_html(dir.path()), Err(Error::InvalidInput(_))));
+    }
+
+    #[test]
+    fn the_preview_names_what_leaves() {
+        let html = r#"<p>Call +1 512 555 0142 or mail nick@example.com</p>
+            <a href="https://maps.example.com/rome">map</a>
+            <img src="data:image/png;base64,MTIzNDU2Nzg5MDEyMzQ1Ng==">"#;
+        let (images, links, private) = scan(html);
+        assert_eq!(images, 2, "one <img>, one data:image");
+        assert_eq!(links, vec!["https://maps.example.com/rome".to_string()]);
+        assert_eq!(private, vec!["+1 512 555 0142".to_string(), "nick@example.com".to_string()]);
+        let (_, _, none) = scan("<h1>Day 3 · Vatican</h1><p>Museums at 9:00, 2026-10-14</p>");
+        assert!(none.is_empty(), "{none:?}");
     }
 
     #[test]
