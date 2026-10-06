@@ -31,7 +31,6 @@
 		type WikiDayApi,
 	} from "$lib/wiki/api";
 	import { apiToDayEvent } from "$lib/wiki/converters";
-	import Markdown from "$lib/components/Markdown.svelte";
 	import { getOntologyName } from "$lib/wiki/ontology";
 	import { getLocalDateSlug, parseDateSlug } from "$lib/utils/dateUtils";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
@@ -43,6 +42,9 @@
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import DayArticleBody from "./DayArticleBody.svelte";
 	import DayFactStrip from "./DayFactStrip.svelte";
+	import DayInline from "./DayInline.svelte";
+	import { getRecord } from "$lib/api/client";
+	import DayGloss from "./DayGloss.svelte";
 	import { parseDayArticle, abstractOf, veilMarks } from "$lib/wiki/dayArticle";
 	import { veiled } from "$lib/actions/veil";
 	import { veil } from "$lib/stores/veil.svelte";
@@ -581,13 +583,14 @@
 			citedRef = null;
 		}).then(() => {
 			if (!ref) return;
-			const row = scrollContainerEl
-				?.querySelector(`[data-ref="${CSS.escape(ref)}"]`)
-				?.closest(".row");
-			if (!row) return;
-			row.scrollIntoView({ block: "center" });
-			row.classList.add("flash");
-			setTimeout(() => row.classList.remove("flash"), 1400);
+			const sentence = scrollContainerEl?.querySelector<HTMLElement>(`[data-refs~="${CSS.escape(ref)}"]`);
+			if (!sentence) return;
+			sentence.scrollIntoView({ block: "center" });
+			sentence.classList.remove("flash");
+			void sentence.offsetWidth;
+			sentence.classList.add("flash");
+			setTimeout(() => sentence.classList.remove("flash"), 1700);
+			sentence.focus({ preventScroll: true });
 		});
 	}
 
@@ -596,6 +599,36 @@
 		if (!citedRef) return null;
 		const id = citedRef.split(":").slice(1).join(":");
 		return dataSources.find((s) => s.id === id) ?? null;
+	});
+
+	/**
+	 * A cited record the day's list doesn't carry (a recording chunk is never
+	 * a day source), fetched whole so the card can still show its words.
+	 */
+	let citedRecord = $state<{ ref: string; time: string; kind: string; text: string } | null>(null);
+	$effect(() => {
+		const ref = citedRef;
+		if (!ref || citedRow) {
+			citedRecord = null;
+			return;
+		}
+		const [table, ...rest] = ref.split(":");
+		getRecord(table, rest.join(":"))
+			.then((r) => {
+				if (citedRef !== ref) return;
+				const row = r.row as Record<string, unknown>;
+				const at = String(row[r.timestamp_column] ?? "");
+				const raw = String(row.body ?? row.text ?? "").replace(/\[Speaker(?: \d+)?\]:\s*/g, "").trim();
+				citedRecord = {
+					ref,
+					time: at ? new Date(at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: rowTz }) : "",
+					kind: r.display_name,
+					text: raw.length > 600 ? `${raw.slice(0, 600)}…` : raw,
+				};
+			})
+			.catch(() => {
+				if (citedRef === ref) citedRecord = null;
+			});
 	});
 
 	const parsed = $derived(parseDayArticle(summaryText));
@@ -670,6 +703,8 @@
 
 </script>
 
+{#snippet personGloss({ name, url }: { name: string; url: string })}<DayGloss {name} {url} date={currentDateSlug} onday={(slug) => navigateToDay(parseDateSlug(slug))} />{/snippet}
+
 <div class="day-page-outer">
 	<div class="day-page-layout">
 		<article class="day-article wiki-article" bind:this={scrollContainerEl}>
@@ -731,11 +766,11 @@
 					{#if showAutobiography}
 						{#if parsed.abstract}
 							<div class="day-abstract" use:veiled={{ hiding: veil.hiding, phrases: abstractMarked.phrases }}>
-								<Markdown content={abstractMarked.markdown} refVariant="quiet" variant="article" />
+								<div class="markdown markdown--article"><p><DayInline markdown={abstractMarked.markdown} person={personGloss} /></p></div>
 							</div>
 						{/if}
 						<DayFactStrip {facts} people={abstractPeople} timezone={page.start_timezone} novelty={noveltyPoints} />
-						<DayArticleBody blocks={parsed.blocks} oncite={openCitation} />
+						<DayArticleBody blocks={parsed.blocks} oncite={openCitation} person={personGloss} />
 					{:else}
 						<DayFactStrip {facts} people={[]} timezone={page.start_timezone} novelty={noveltyPoints} />
 						<div class="empty-state">
@@ -790,8 +825,14 @@
 									<span class="cited-label">{citedRow.label}</span>
 								</p>
 								{#if citedRow.preview}<p class="cited-preview">{citedRow.preview}</p>{/if}
+							{:else if citedRecord}
+								<p class="cited-row">
+									<span class="cited-time">{citedRecord.time}</span>
+									<span>{citedRecord.kind}</span>
+								</p>
+								{#if citedRecord.text}<p class="cited-preview">{citedRecord.text}</p>{/if}
 							{:else}
-								<p class="cited-preview">This record isn't in the day's list below.</p>
+								<p class="cited-preview">Loading the record…</p>
 							{/if}
 						</section>
 					{/if}
@@ -1053,7 +1094,10 @@
 		margin-bottom: 1.375rem;
 	}
 
+	/* The Abstract is the line read first and most: a size above the body. */
 	.day-abstract :global(.markdown p) {
+		font-size: 1.375rem;
+		line-height: 1.45;
 		color: var(--color-foreground);
 	}
 

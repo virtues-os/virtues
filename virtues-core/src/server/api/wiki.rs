@@ -144,6 +144,7 @@ pub fn routes() -> Router<AppState> {
             "/api/wiki/person/:id",
             get(wiki_get_person_handler).put(wiki_update_person_handler),
         )
+        .route("/api/wiki/person/:id/gloss", get(wiki_person_gloss_handler))
         // Wiki - Place
         .route("/api/wiki/places", get(wiki_list_places_handler))
         .route(
@@ -887,6 +888,24 @@ pub async fn wiki_get_person_handler(
     Path(id): Path<String>,
 ) -> Response {
     api_response(crate::api::wiki::get_person(state.db.pool(), id).await)
+}
+
+#[derive(Deserialize)]
+pub struct PersonGlossQuery {
+    /// The day page asking, `YYYY-MM-DD`.
+    pub date: String,
+}
+
+/// A person as of one day: the facts behind a day page's gloss card.
+pub async fn wiki_person_gloss_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<PersonGlossQuery>,
+) -> Response {
+    match q.date.parse::<chrono::NaiveDate>() {
+        Ok(date) => api_response(crate::api::wiki::person_gloss(state.db.pool(), &id, date).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", q.date))),
+    }
 }
 
 /// List all people

@@ -45,6 +45,40 @@ describe("parseDayArticle", () => {
 		expect(a.blocks.some((b) => b.markdown === "")).toBe(false);
 	});
 
+	it("splits a paragraph into sentences, each with the evidence that closes it", () => {
+		const a = parseDayArticle(PAGE);
+		expect(a.blocks[1].sentences).toEqual([
+			{
+				markdown: "You crossed Fifth and Main.",
+				evidence: [{ kind: "ev", label: "Recording · 5:14 PM", ref: "data_communication_transcription:tr_a" }],
+			},
+			{
+				markdown: "You got home.",
+				evidence: [{ kind: "ev", label: "Message · 7:40 PM", ref: "data_communication_message:msg_1" }],
+			},
+		]);
+		const lead = a.blocks.find((b) => b.markdown === "A few of the questions:");
+		expect(lead?.sentences).toEqual([{ markdown: "A few of the questions:", evidence: [] }]);
+		expect(a.blocks.find((b) => b.kind === "table")?.sentences).toEqual([]);
+	});
+
+	it("keeps links and veil marks inside a sentence, and joins a marker run", () => {
+		const a = parseDayArticle(
+			"Lede.\n\nYou met [⟦Nick⟧](/person/p) at ⟦the clinic⟧.[^ev-1][^ev-2] Then\nhome. [^cx-1]\n\n" +
+				"[^ev-1]: Message · 9:00 AM · data_communication_message:m1\n" +
+				"[^ev-2]: Recording · 9:05 AM · data_communication_transcription:t1\n" +
+				"[^cx-1]: 97° at 5 PM",
+		);
+		const [first, second] = a.blocks[0].sentences;
+		expect(first.markdown).toBe("You met [⟦Nick⟧](/person/p) at ⟦the clinic⟧.");
+		expect(first.evidence.map((n) => n.ref)).toEqual([
+			"data_communication_message:m1",
+			"data_communication_transcription:t1",
+		]);
+		expect(second).toEqual({ markdown: "Then home.", evidence: [] });
+		expect(a.blocks[0].notes.map((n) => n.kind)).toEqual(["ev", "ev", "cx"]);
+	});
+
 	it("reads a page written before footnotes as a lede and a body", () => {
 		const a = parseDayArticle("A quiet day.\n\n## Morning\n\nCoffee.");
 		expect(a.abstract).toBe("A quiet day.");

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { portal } from "$lib/actions/portal";
 	// Preview: the middle reference density. A floating card shown on hover/focus
 	// of any ref pill. The body is the shared RefCard (per-type content); this
 	// component owns only the floating shell, positioning, and actions. Portalled
@@ -28,11 +29,6 @@
 		oncardenter?: () => void;
 		oncardleave?: () => void;
 	}>();
-
-	function portal(node: HTMLElement) {
-		document.body.appendChild(node);
-		return { destroy: () => node.remove() };
-	}
 
 	// Position: fixed card off the anchor rect, flipped above/below with clamping.
 	let card = $state<HTMLElement | null>(null);

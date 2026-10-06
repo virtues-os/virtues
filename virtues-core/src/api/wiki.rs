@@ -283,6 +283,94 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
     })
 }
 
+/// What a day page's gloss card says about a person, as of that day: when you
+/// first messaged, how often in the month before, and when last. Messages
+/// only, by the `sender`/`recipient` refs entity resolution writes; tapbacks
+/// and deleted messages don't count. Everything is relative to the page's
+/// day, read in that day's timezone, so an old page tells you what was true
+/// then rather than now.
+#[derive(Debug, Serialize)]
+pub struct PersonGloss {
+    pub id: String,
+    pub date: NaiveDate,
+    pub first_message_on: Option<NaiveDate>,
+    /// Whether that first message was in a group thread.
+    pub first_message_in_group: Option<bool>,
+    pub last_message_before_on: Option<NaiveDate>,
+    /// The window `days_in_window` counts over: the days just before `date`.
+    pub window_days: i64,
+    pub days_in_window: i64,
+    pub direct_messages_in_window: i64,
+    pub group_messages_in_window: i64,
+}
+
+pub const PERSON_GLOSS_WINDOW_DAYS: i64 = 31;
+
+pub async fn person_gloss(pool: &PgPool, id: &str, date: NaiveDate) -> Result<PersonGloss> {
+    sqlx::query_scalar::<_, i32>("SELECT 1 FROM wiki_people WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| Error::NotFound(format!("Person not found: {}", id)))?;
+
+    let tz = crate::timezone::day_timezone(pool, date).await?;
+    let (day_start, day_end) = crate::api::day_summary::day_bounds(date, Some(&tz));
+    let (window_start, _) = crate::api::day_summary::day_bounds(
+        date - chrono::Duration::days(PERSON_GLOSS_WINDOW_DAYS),
+        Some(&tz),
+    );
+
+    // An aggregate always returns its one row, so fetch_one: a failure here
+    // is a broken query, never "no messages".
+    let (first_on, first_in_group, last_before_on, days, direct, group): (
+        Option<NaiveDate>,
+        Option<bool>,
+        Option<NaiveDate>,
+        i64,
+        i64,
+        i64,
+    ) = sqlx::query_as(
+        r#"
+        SELECT
+          (min(r.occurred_at) AT TIME ZONE $5::text)::date,
+          (array_agg(m.is_group_message ORDER BY r.occurred_at))[1],
+          (max(r.occurred_at) FILTER (WHERE r.occurred_at < $2) AT TIME ZONE $5::text)::date,
+          count(DISTINCT (r.occurred_at AT TIME ZONE $5::text)::date)
+                FILTER (WHERE r.occurred_at >= $3 AND r.occurred_at < $2),
+          count(*) FILTER (WHERE r.occurred_at >= $3 AND r.occurred_at < $2 AND NOT m.is_group_message),
+          count(*) FILTER (WHERE r.occurred_at >= $3 AND r.occurred_at < $2 AND m.is_group_message)
+        FROM wiki_refs r
+        JOIN data_communication_message m ON m.id = r.source_id
+        WHERE r.entity_id = $1
+          AND r.entity_type = 'person'
+          AND r.source_table = 'data_communication_message'
+          AND r.role IN ('sender', 'recipient')
+          AND r.occurred_at < $4
+          AND m.deleted_at_source IS NULL
+          AND m.metadata->>'reaction_type' IS NULL
+        "#,
+    )
+    .bind(id)
+    .bind(day_start)
+    .bind(window_start)
+    .bind(day_end)
+    .bind(&tz)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(PersonGloss {
+        id: id.to_string(),
+        date,
+        first_message_on: first_on,
+        first_message_in_group: first_in_group,
+        last_message_before_on: last_before_on,
+        window_days: PERSON_GLOSS_WINDOW_DAYS,
+        days_in_window: days,
+        direct_messages_in_window: direct,
+        group_messages_in_window: group,
+    })
+}
+
 /// List all people
 
 /// Overlay a subject's article from `wiki_articles` onto the legacy column.
@@ -1045,5 +1133,68 @@ mod tests {
             normalize_aliases(Some(&empty)).expect("some"),
             serde_json::json!([])
         );
+    }
+
+    async fn message(pool: &PgPool, id: &str, at: &str, group: bool, meta: &str, role: &str) {
+        sqlx::query(
+            "INSERT INTO data_communication_message
+                 (id, message_id, channel, body, from_identifier, occurred_at, is_group_message,
+                  source_stream_id, source_table, source_provider, metadata)
+             VALUES ($1, $1, 'imessage', 'hi', '+15125550100', $2::timestamptz, $3,
+                     $1, 'mac_imessage', 'mac', $4::jsonb)",
+        )
+        .bind(id)
+        .bind(at)
+        .bind(group)
+        .bind(meta)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
+             VALUES ($1, 'person', 'person_t1', 'data_communication_message', $2, $3, $4::timestamptz)",
+        )
+        .bind(format!("ref_{id}"))
+        .bind(id)
+        .bind(role)
+        .bind(at)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// The gloss is about the page's day, not today: what came after the day
+    /// never shows, the day itself is not "before", and a tapback or a deleted
+    /// message is not contact.
+    #[sqlx::test]
+    async fn person_gloss_counts_messages_up_to_the_day(pool: PgPool) {
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('person_t1', 'Nick')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        message(&pool, "m_first", "2025-09-23T15:00:00Z", true, "{}", "sender").await;
+        message(&pool, "m_a", "2026-09-10T15:00:00Z", false, "{}", "recipient").await;
+        message(&pool, "m_b", "2026-09-22T15:00:00Z", false, "{}", "sender").await;
+        message(&pool, "m_c", "2026-09-22T18:00:00Z", false, "{}", "recipient").await;
+        message(&pool, "m_tap", "2026-09-20T15:00:00Z", false, r#"{"reaction_type": 2000}"#, "sender").await;
+        message(&pool, "m_day", "2026-09-23T15:00:00Z", false, "{}", "sender").await;
+        message(&pool, "m_after", "2026-10-01T15:00:00Z", false, "{}", "sender").await;
+        message(&pool, "m_gone", "2026-09-15T15:00:00Z", false, "{}", "sender").await;
+        sqlx::query("UPDATE data_communication_message SET deleted_at_source = now() WHERE id = 'm_gone'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let date = NaiveDate::from_ymd_opt(2026, 9, 23).unwrap();
+        let g = person_gloss(&pool, "person_t1", date).await.unwrap();
+        assert_eq!(g.first_message_on, NaiveDate::from_ymd_opt(2025, 9, 23));
+        assert_eq!(g.first_message_in_group, Some(true));
+        assert_eq!(g.last_message_before_on, NaiveDate::from_ymd_opt(2026, 9, 22));
+        assert_eq!(g.days_in_window, 2, "Sep 10 and Sep 22; the tapback and the deleted message don't count");
+        assert_eq!(g.direct_messages_in_window, 3);
+        assert_eq!(g.group_messages_in_window, 0);
+
+        let missing = person_gloss(&pool, "person_nobody", date).await;
+        assert!(matches!(missing, Err(Error::NotFound(_))));
     }
 }
