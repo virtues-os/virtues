@@ -299,6 +299,15 @@ Each wave is usable on its own and builds on the last without redoing it.
 | **Preview cards** | opt-in title and one image; a small service at the loader's domain fetches them from the box when a link unfurler asks, stores nothing | Easy |
 | **Box-to-box viewing** | another owner's app dials the door over native iroh and renders the page, no loader | Trivial |
 
+**Built 2026-10-06:** core sharing (Share sheet, door supervisor, loader at
+`s.virtues.ch`) and live pages. A page that reads data shares as a
+**snapshot** (rows baked in, the server answers nothing) or **live** (the
+page sends approved query keys through the loader and the door to the core,
+which runs only those, read-only). The door reports opens, so counts are
+real. Preview cards wait on a decision: an unfurler never sees the `#`, so a
+per-link card puts an identifier in the visible path, and then `s.virtues.ch`
+learns which card-enabled link is opened.
+
 They ship together because they share one rule: the door serves only what
 the owner approved, whether a frozen file, a declared query or a card, and
 the Share sheet shows all three before anything leaves.
