@@ -401,7 +401,12 @@ a laptop; the two have not yet run together on one box.
   they came from the same box; the share sheet's details say so.
 - **The door key is the box's link identity.** Losing it ends every link the
   box ever shared, so it goes into backups and restores, and "new door key"
-  is an explicit "end all my links" action.
+  is an explicit "end all my links" action. **Built 2026-10-06:** the key
+  lives sealed in `box_secrets` and each page in `app_publications.page`
+  (0044); the core rebuilds the bundle directory from the database before
+  starting the door, so a restored box serves its links again. Settings has a
+  Shared links page listing every link with turn-off. ("New door key" as a
+  button is not built.)
 - **Publishing is part of the subscription**, as Nabu Casa's remote access
   is. The DIY path (own relay, own domain) arrives with wave 3.
 - **Abuse policy is deferred.** Before any public launch: a stated policy
