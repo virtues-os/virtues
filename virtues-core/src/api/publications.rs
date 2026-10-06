@@ -97,12 +97,70 @@ pub fn door_dir() -> PathBuf {
     state_dir().join("door")
 }
 
-/// The door's EndpointId, once it has run at least once.
+/// Where the door key lives in `box_secrets`, sealed with the vault key, so
+/// it travels with database backups. Losing it ends every link the box has
+/// shared.
+const DOOR_KEY_SECRET: &str = "door_key";
+
+fn door_id_cache() -> &'static std::sync::RwLock<Option<String>> {
+    static ID: std::sync::OnceLock<std::sync::RwLock<Option<String>>> = std::sync::OnceLock::new();
+    ID.get_or_init(|| std::sync::RwLock::new(None))
+}
+
+/// The door's EndpointId (hex), once [`door_key`] has run in this process.
 fn door_id() -> Option<String> {
-    std::fs::read_to_string(door_dir().join("endpoint-id"))
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    door_id_cache().read().ok()?.clone()
+}
+
+/// The door's secret key: from `box_secrets`, else adopted from a key file a
+/// door made for itself before the key moved here (so its links keep
+/// working), else new. Also caches the door's EndpointId for links.
+pub async fn door_key(pool: &PgPool) -> Result<[u8; 32]> {
+    let decode = |hex_key: &str| -> Option<[u8; 32]> {
+        hex::decode(hex_key.trim()).ok()?.try_into().ok()
+    };
+    let stored = crate::box_secrets::get(pool, DOOR_KEY_SECRET)
+        .await
+        .map_err(|e| Error::Other(format!("read the door key: {e:#}")))?;
+    let seed = match stored.and_then(|(secret, _)| decode(&secret)) {
+        Some(seed) => seed,
+        None => {
+            let adopted = std::fs::read(door_dir().join("door.key"))
+                .ok()
+                .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok());
+            let seed = match adopted {
+                Some(seed) => seed,
+                None => {
+                    use ring::rand::SecureRandom;
+                    let mut seed = [0u8; 32];
+                    ring::rand::SystemRandom::new()
+                        .fill(&mut seed)
+                        .map_err(|_| Error::Other("the system random source failed".into()))?;
+                    seed
+                }
+            };
+            let id = virtues_iroh::SecretKey::from_bytes(&seed).public().to_string();
+            crate::box_secrets::put_if_absent(
+                pool,
+                DOOR_KEY_SECRET,
+                &hex::encode(seed),
+                &serde_json::json!({ "endpoint_id": id }),
+            )
+            .await
+            .map_err(|e| Error::Other(format!("store the door key: {e:#}")))?;
+            // Another caller may have stored one first; theirs wins.
+            let (secret, _) = crate::box_secrets::get(pool, DOOR_KEY_SECRET)
+                .await
+                .map_err(|e| Error::Other(format!("read the door key: {e:#}")))?
+                .ok_or_else(|| Error::Other("the door key vanished after storing it".into()))?;
+            decode(&secret).ok_or_else(|| Error::Other("the door key in box_secrets is not 32 bytes of hex".into()))?
+        }
+    };
+    let id = virtues_iroh::SecretKey::from_bytes(&seed).public().to_string();
+    if let Ok(mut cached) = door_id_cache().write() {
+        *cached = Some(id);
+    }
+    Ok(seed)
 }
 
 /// A door's EndpointId (64 hex characters, as iroh prints it) in the 43
@@ -549,6 +607,7 @@ pub struct CreateRequest {
 /// Share an applet's face: freeze it, put the bundle where the door serves
 /// it, record it.
 pub async fn create(pool: &PgPool, req: CreateRequest) -> Result<Publication> {
+    door_key(pool).await?;
     let (title, page, live) = build(pool, &req.applet_id, req.live).await?;
     create_frozen(pool, &bundles_dir(), &req.applet_id, &title, page.as_bytes(), req.expires_in_days, &live)
         .await
@@ -576,8 +635,8 @@ async fn create_frozen(
     bundle::write(root, &token, page, &meta_for(expires_at)).map_err(door_error)?;
     let inserted = sqlx::query_as::<_, Publication>(&format!(
         "INSERT INTO app_publications \
-            (id, token, producer_kind, producer_id, title, content_hash, size_bytes, expires_at) \
-         VALUES ($1, $2, 'applet', $3, $4, $5, $6, $7) RETURNING {COLUMNS}"
+            (id, token, producer_kind, producer_id, title, content_hash, size_bytes, expires_at, page) \
+         VALUES ($1, $2, 'applet', $3, $4, $5, $6, $7, $8) RETURNING {COLUMNS}"
     ))
     .bind(&id)
     .bind(&token)
@@ -586,6 +645,7 @@ async fn create_frozen(
     .bind(content_hash(page))
     .bind(page.len() as i64)
     .bind(expires_at)
+    .bind(page)
     .fetch_one(pool)
     .await;
     let inserted = match inserted {
@@ -638,6 +698,7 @@ async fn get(pool: &PgPool, id: &str) -> Result<Publication> {
 
 /// Everything the owner has shared, newest first, revoked ones included.
 pub async fn list(pool: &PgPool) -> Result<Vec<Publication>> {
+    door_key(pool).await?;
     let rows = sqlx::query_as::<_, Publication>(&format!(
         "SELECT {COLUMNS} FROM app_publications ORDER BY created_at DESC"
     ))
@@ -650,6 +711,7 @@ pub async fn list(pool: &PgPool) -> Result<Vec<Publication>> {
 /// Re-freeze the applet's face under the same link.
 /// A live link stays live and a snapshot takes a new snapshot.
 pub async fn update(pool: &PgPool, id: &str) -> Result<Publication> {
+    door_key(pool).await?;
     let current = get(pool, id).await?;
     let was_live: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM app_publication_queries WHERE publication_id = $1)",
@@ -676,13 +738,14 @@ async fn update_frozen(
     }
     bundle::write(root, &current.token, page, &meta_for(current.expires_at)).map_err(door_error)?;
     sqlx::query_as::<_, Publication>(&format!(
-        "UPDATE app_publications SET title = $2, content_hash = $3, size_bytes = $4, \
+        "UPDATE app_publications SET title = $2, content_hash = $3, size_bytes = $4, page = $5, \
             updated_at = now() WHERE id = $1 RETURNING {COLUMNS}"
     ))
     .bind(&current.id)
     .bind(title)
     .bind(content_hash(page))
     .bind(page.len() as i64)
+    .bind(page)
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("update publication: {e}")))
@@ -707,6 +770,45 @@ async fn revoke_in(pool: &PgPool, root: &Path, id: &str) -> Result<Publication> 
     // The last live link revoked closes the door.
     crate::door::wake();
     Ok(revoked)
+}
+
+/// Make the bundle directory match the database: every live link's page
+/// written (unless the copy on disk already matches), and every revoked or
+/// unknown bundle removed. Rows from before pages were stored (`page IS
+/// NULL`) keep whatever bundle they have. This is what lets a restored
+/// database bring its links back.
+pub async fn materialize(pool: &PgPool, root: &Path) -> Result<()> {
+    let rows: Vec<(String, Option<Vec<u8>>, String, Option<DateTime<Utc>>, bool)> = sqlx::query_as(
+        "SELECT token, page, content_hash, expires_at, \
+                (revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())) AS live \
+         FROM app_publications",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("read publications: {e}")))?;
+
+    let mut keep = std::collections::HashSet::new();
+    for (token, page, hash, expires_at, live) in rows {
+        if !live {
+            continue;
+        }
+        keep.insert(token.clone());
+        let Some(page) = page else { continue };
+        let on_disk = std::fs::read(root.join(&token).join("index.html")).ok();
+        if on_disk.as_deref().map(content_hash).as_deref() == Some(hash.as_str()) {
+            continue;
+        }
+        bundle::write(root, &token, &page, &meta_for(expires_at)).map_err(door_error)?;
+    }
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if token::is_valid(&name) && !keep.contains(&name) {
+                bundle::remove(root, &name).map_err(door_error)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// What the core tells the door (`virtues_door::core`): rows for a query
@@ -863,6 +965,37 @@ mod tests {
 
         revoke_in(&pool, dir.path(), &p.id).await.unwrap();
         assert!(!answer(&pool, ask(&approved.key)).await.ok, "a revoked link answers nothing");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restored_database_rebuilds_its_bundles(pool: PgPool) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = bundle::Store::new(dir.path());
+        let kept = create_frozen(&pool, dir.path(), "applet_user__rome", "Rome", b"kept", None, &[]).await.unwrap();
+        let gone = create_frozen(&pool, dir.path(), "applet_user__rome", "Rome", b"gone", None, &[]).await.unwrap();
+        revoke_in(&pool, dir.path(), &gone.id).await.unwrap();
+
+        // A fresh disk, as after a restore onto a new box, plus a stray bundle
+        // no row knows about and the revoked one somehow back.
+        let fresh = tempfile::tempdir().unwrap();
+        bundle::write(fresh.path(), &token::generate(), b"stray", &bundle::Meta::default()).unwrap();
+        bundle::write(fresh.path(), &gone.token, b"gone", &bundle::Meta::default()).unwrap();
+        materialize(&pool, fresh.path()).await.unwrap();
+
+        let fresh_store = bundle::Store::new(fresh.path());
+        assert_eq!(fresh_store.load(&kept.token).as_deref(), Some(&b"kept"[..]));
+        assert_eq!(fresh_store.load(&gone.token), None);
+        assert_eq!(std::fs::read_dir(fresh.path()).unwrap().count(), 1, "only the live bundle remains");
+        assert_eq!(store.load(&kept.token).as_deref(), Some(&b"kept"[..]));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_door_key_is_minted_once_and_kept(pool: PgPool) {
+        let a = door_key(&pool).await.unwrap();
+        let b = door_key(&pool).await.unwrap();
+        assert_eq!(a, b);
+        let id = virtues_iroh::SecretKey::from_bytes(&a).public().to_string();
+        assert_eq!(door_id().as_deref(), Some(id.as_str()));
     }
 
     #[test]

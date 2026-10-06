@@ -17,8 +17,12 @@
 //! rather than run it unsandboxed. A debug build (a dev machine, macOS) runs
 //! it as a plain child with an empty environment.
 //!
-//! The door prints `endpoint-id <id>` once it is up; the supervisor stores
-//! that where `api::publications` builds links from.
+//! The door's key belongs to the core: it lives in `box_secrets`, so it
+//! travels with database backups (`api::publications::door_key`). Before
+//! each start the supervisor writes it to a file only the server's user can
+//! read, which systemd hands to the door as a credential, and rebuilds the
+//! bundle directory from the database (`api::publications::materialize`). A
+//! restore therefore brings every live link back as it was.
 //!
 //! The core listens on a Unix socket for the door's two requests (a live
 //! page's approved query, and "a page was opened"), answered by
@@ -186,7 +190,29 @@ async fn supervise(pool: PgPool) {
     }
 }
 
-/// Launch the door and start reading its stdout for its EndpointId.
+/// Where the core writes the door key for systemd (or a dev door) to read.
+fn key_file() -> std::path::PathBuf {
+    publications::door_dir().join("door.key")
+}
+
+/// Write the door key where only this user can read it.
+fn write_key_file(seed: &[u8; 32]) -> std::io::Result<()> {
+    let path = key_file();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("key.tmp");
+    std::fs::write(&tmp, seed)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+    }
+    std::fs::rename(&tmp, &path)
+}
+
+/// Launch the door, with its key in place and the bundle directory matching
+/// the database.
 async fn start(pool: &PgPool) -> Option<Child> {
     let Some(relay) = crate::relay::relay_for_door(pool).await else {
         tracing::info!("door: the relay is off, so shared links cannot be served");
@@ -195,6 +221,21 @@ async fn start(pool: &PgPool) -> Option<Child> {
     let bundles = publications::bundles_dir();
     if let Err(e) = std::fs::create_dir_all(&bundles) {
         tracing::error!(error = %e, dir = %bundles.display(), "door: cannot create the bundle directory");
+        return None;
+    }
+    let seed = match publications::door_key(pool).await {
+        Ok(seed) => seed,
+        Err(e) => {
+            tracing::error!(error = %e, "door: no key, so shared links cannot be served");
+            return None;
+        }
+    };
+    if let Err(e) = write_key_file(&seed) {
+        tracing::error!(error = %e, "door: could not write its key file");
+        return None;
+    }
+    if let Err(e) = publications::materialize(pool, &bundles).await {
+        tracing::error!(error = %e, "door: could not rebuild the shared pages");
         return None;
     }
     let program = crate::applet_runner::resolve_program("virtues-door");
@@ -211,34 +252,13 @@ async fn start(pool: &PgPool) -> Option<Child> {
             return None;
         }
     };
-    cmd.stdout(std::process::Stdio::piped()).kill_on_drop(true);
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
+    cmd.kill_on_drop(true);
+    match cmd.spawn() {
+        Ok(c) => Some(c),
         Err(e) => {
             tracing::error!(error = %e, program = %program.display(), "door: could not start");
-            return None;
+            None
         }
-    };
-    if let Some(stdout) = child.stdout.take() {
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if let Some(id) = line.strip_prefix("endpoint-id ") {
-                    record_endpoint_id(id.trim());
-                }
-            }
-        });
-    }
-    Some(child)
-}
-
-fn record_endpoint_id(id: &str) {
-    let dir = publications::door_dir();
-    let written = std::fs::create_dir_all(&dir)
-        .and_then(|()| std::fs::write(dir.join("endpoint-id"), id));
-    match written {
-        Ok(()) => tracing::info!(door = %id, "door: open"),
-        Err(e) => tracing::error!(error = %e, "door: could not record its EndpointId"),
     }
 }
 
@@ -263,10 +283,10 @@ fn sandbox_properties(bundles: &Path) -> Vec<String> {
         // A throwaway uid: the unit is created through sudo, and a system
         // unit with no user runs as root.
         "DynamicUser=yes",
-        // Its key survives restarts here, owned by whatever uid it gets.
-        // TODO(2026-10-05): migrate the door key into box backups and restores;
-        // losing it ends every link the box has shared.
-        "StateDirectory=virtues-door",
+        // The key is the core's (box_secrets). systemd reads the file the
+        // core writes and hands it to this unit alone, under
+        // $CREDENTIALS_DIRECTORY, so the throwaway uid never needs access to
+        // the server's files.
         "ProtectSystem=strict",
         "ProtectHome=yes",
         "PrivateTmp=yes",
@@ -309,6 +329,7 @@ fn sandbox_properties(bundles: &Path) -> Vec<String> {
     ] {
         props.push(format!("InaccessiblePaths=-{}", path.display()));
     }
+    props.push(format!("LoadCredential=door.key:{}", key_file().display()));
     // Mounted from the host side, so the hidden paths above do not hide them.
     props.push(format!("BindReadOnlyPaths={}:/pub", bundles.display()));
     props.push(format!("BindPaths={}:{SOCKET_IN_SANDBOX}", core_socket_path().display()));
@@ -323,7 +344,7 @@ fn sandboxed(program: &Path, bundles: &Path, relay: &str) -> Command {
     }
     cmd.args(["-E", "RUST_LOG=virtues_door=info,iroh=warn", "--"]);
     cmd.arg(program);
-    cmd.args(["--root", "/pub", "--key-dir", "/var/lib/virtues-door", "--relay", relay]);
+    cmd.args(["--root", "/pub", "--relay", relay]);
     cmd.args(["--core-socket", SOCKET_IN_SANDBOX]);
     cmd
 }
@@ -335,8 +356,8 @@ fn direct(program: &Path, bundles: &Path, relay: &str) -> Command {
         .env("RUST_LOG", "virtues_door=info,iroh=warn")
         .arg("--root")
         .arg(bundles)
-        .arg("--key-dir")
-        .arg(publications::door_dir())
+        .arg("--key-file")
+        .arg(key_file())
         .args(["--relay", relay])
         .arg("--core-socket")
         .arg(core_socket_path());
@@ -362,6 +383,11 @@ mod tests {
             assert!(props.iter().any(|p| p == must), "missing {must}");
         }
         assert!(!props.iter().any(|p| p.starts_with("User=")), "a named user replaces the throwaway uid");
+        assert!(
+            props.iter().any(|p| p.starts_with("LoadCredential=door.key:")),
+            "the key arrives as a credential from the core's box_secrets copy"
+        );
+        assert!(!props.iter().any(|p| p.starts_with("StateDirectory=")), "the door keeps no key of its own");
         let writable: Vec<_> = props.iter().filter(|p| p.starts_with("BindPaths=")).collect();
         assert_eq!(writable.len(), 1, "only the core's socket: {writable:?}");
         assert!(writable[0].ends_with(":/run/virtues-core.sock"));
