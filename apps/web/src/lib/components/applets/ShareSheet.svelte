@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * Share an applet's page as a link anyone can open.
+	 * Share an applet's face or a page as a link anyone can open.
 	 *
 	 * The sheet shows what leaves before anything does: the page exactly as a
 	 * visitor sees it, its images and outside links, and anything that looks
@@ -18,16 +18,17 @@
 		updatePublication,
 		revokePublication,
 		type Publication,
-		type SharePreview
+		type SharePreview,
+		type ShareProducer
 	} from '$lib/api/client';
 
 	type Props = {
 		open: boolean;
-		appletId: string;
+		producer: ShareProducer;
 		onClose: () => void;
 	};
 
-	let { open, appletId, onClose }: Props = $props();
+	let { open, producer, onClose }: Props = $props();
 
 	let preview = $state<SharePreview | null>(null);
 	let links = $state<Publication[]>([]);
@@ -50,9 +51,11 @@
 		loading = true;
 		error = null;
 		try {
-			const [p, all] = await Promise.all([previewPublication(appletId), listPublications()]);
+			const [p, all] = await Promise.all([previewPublication(producer), listPublications()]);
 			preview = p;
-			links = all.filter((l) => l.producer_id === appletId && !l.revoked_at);
+			links = all.filter(
+				(l) => l.producer_kind === producer.kind && l.producer_id === producer.id && !l.revoked_at
+			);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -61,7 +64,7 @@
 	}
 
 	$effect(() => {
-		if (open && appletId) {
+		if (open && producer.id) {
 			copied = null;
 			confirmRevoke = null;
 			load();
@@ -85,7 +88,7 @@
 		busy = true;
 		error = null;
 		try {
-			const made = await createPublication(appletId, Number(expiry), preview?.reads_data && live);
+			const made = await createPublication(producer, Number(expiry), preview?.reads_data && live);
 			links = [made, ...links];
 			if (!made.link) await waitForLink(made.id);
 		} catch (e) {
@@ -101,7 +104,7 @@
 		try {
 			const fresh = await updatePublication(id);
 			links = links.map((l) => (l.id === id ? fresh : l));
-			preview = await previewPublication(appletId);
+			preview = await previewPublication(producer);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -173,7 +176,9 @@
 				<div>
 					<p class="warn-title">You can't share this page yet</p>
 					<p>{preview.problem}</p>
-					<p>Ask the assistant to rewrite it so everything is inside the page.</p>
+					{#if producer.kind === 'applet'}
+						<p>Ask the assistant to rewrite it so everything is inside the page.</p>
+					{/if}
 				</div>
 			</div>
 		{:else if preview?.html}
@@ -192,6 +197,19 @@
 							? 'No images.'
 							: `${preview.image_count} ${preview.image_count === 1 ? 'image' : 'images'}, inside the page.`}
 					</li>
+					{#if preview.images_left_out}
+						<li>
+							{preview.images_left_out === 1
+								? '1 image from another site is left out; only images in your Drive go with the page.'
+								: `${preview.images_left_out} images from other sites are left out; only images in your Drive go with the page.`}
+						</li>
+					{/if}
+					{#if preview.names.length}
+						<li>
+							The names {preview.names.join(', ')}, as plain text. Nothing else about them goes
+							with the page.
+						</li>
+					{/if}
 					{#if preview.links.length}
 						<li>
 							Links to {preview.links.map(host).filter((h, i, a) => a.indexOf(h) === i).join(', ')}.

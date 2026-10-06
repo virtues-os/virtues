@@ -29,12 +29,13 @@
 //! so nothing checks them here or ever should.
 //!
 //! Other tokens DO exist, and are presented by callers and checked outside
-//! this extractor: a page-share token (`/api/s/:token`, public by design), a
-//! pair token (redeemed once at `/api/pair/consume`), a signed OAuth state and
-//! exchange token (one round-trip each), and a face token (`server::faces`,
-//! in-memory, minted behind this extractor). **None of them is a way to
-//! authenticate as a device.** Each opens exactly one thing — one shared page,
-//! one pairing, one OAuth completion, one face load — and not the API.
+//! this extractor: a pair token (redeemed once at `/api/pair/consume`), a
+//! signed OAuth state and exchange token (one round-trip each), and a face
+//! token (`server::faces`, in-memory, minted behind this extractor). **None of
+//! them is a way to authenticate as a device.** Each opens exactly one thing —
+//! one pairing, one OAuth completion, one face load — and not the API. Shared
+//! links are served by the door, a separate process that presents nothing to
+//! this extractor (`crate::door`).
 //!
 //! (An earlier revision of this paragraph, correcting a false claim, made its
 //! own: it said faces held the only other token in the process. Stated here

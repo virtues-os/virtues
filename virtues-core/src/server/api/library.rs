@@ -512,20 +512,25 @@ pub async fn create_publication_handler(
     State(state): State<AppState>,
     Json(req): Json<crate::api::publications::CreateRequest>,
 ) -> Response {
-    api_response(crate::api::publications::create(state.db.pool(), req).await)
+    api_response(crate::api::publications::create(state.db.pool(), &state.drive_config, req).await)
 }
 
 #[derive(Debug, Deserialize)]
 pub struct PreviewQuery {
-    pub applet_id: String,
+    pub applet_id: Option<String>,
+    pub page_id: Option<String>,
 }
 
-/// GET /api/publications/preview?applet_id= — what sharing would send.
+/// GET /api/publications/preview?applet_id= | ?page_id= — what sharing would send.
 pub async fn preview_publication_handler(
     State(state): State<AppState>,
     Query(q): Query<PreviewQuery>,
 ) -> Response {
-    api_response(crate::api::publications::preview(state.db.pool(), &q.applet_id).await)
+    let producer = match crate::api::publications::Producer::from_ids(q.applet_id, q.page_id) {
+        Ok(p) => p,
+        Err(e) => return error_response(e),
+    };
+    api_response(crate::api::publications::preview(state.db.pool(), &state.drive_config, &producer).await)
 }
 
 /// POST /api/publications/:id/update — re-freeze the face under the same link.
@@ -533,7 +538,7 @@ pub async fn update_publication_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::publications::update(state.db.pool(), &id).await)
+    api_response(crate::api::publications::update(state.db.pool(), &state.drive_config, &id).await)
 }
 
 /// DELETE /api/publications/:id — stop serving the link.

@@ -3,8 +3,8 @@
 	 * Settings → Shared links: every link this server has shared, in one place.
 	 *
 	 * Live links sit in the grid with copy and revoke; revoked and expired ones
-	 * fold underneath, as archived projects do. A link opens the applet it came
-	 * from, where its Share sheet updates it. The links themselves are served by
+	 * fold underneath, as archived projects do. A link opens the page or applet
+	 * it came from, where its Share modal updates it. The links themselves are served by
 	 * the door (`api::publications`), and only while this server is on.
 	 */
 	import { onMount } from 'svelte';
@@ -68,7 +68,8 @@
 	}
 
 	function openApplet(p: Publication) {
-		windowShellStore.navigate(`/applet/${p.producer_id}`, { label: p.title });
+		const route = p.producer_kind === 'page' ? `/page/${p.producer_id}` : `/applet/${p.producer_id}`;
+		windowShellStore.navigate(route, { label: p.title });
 	}
 
 	async function copy(p: Publication) {
@@ -118,8 +119,8 @@
 			<span class="empty-glyph"><Icon icon="ri:share-forward-line" width="28" /></span>
 			<p class="empty-title">Nothing shared yet</p>
 			<p class="empty-body">
-				Open an applet that shows a page and choose Share. Every link you make appears here,
-				and you can turn any of them off.
+				Open a page, or an applet that shows one, and choose Share. Every link you make
+				appears here, and you can turn any of them off.
 			</p>
 		</div>
 	{:else}
