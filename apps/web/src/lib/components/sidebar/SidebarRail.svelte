@@ -129,8 +129,12 @@
 	function activate(room: Room) {
 		if (room.panel.kind === 'none') {
 			// A room with no panel is its page: open it, or bring forward the
-			// tab already holding it, and leave the sidebar as it was.
+			// tab already holding it, full width. The last room's panel closes,
+			// or it would stay open beside a page that has none, with nothing on
+			// the page to close it. Only the rail tile does this: switching tabs
+			// leaves the sidebar as it was.
 			windowShellStore.openTabFromRoute(room.href, { label: room.label, focusExisting: true });
+			sidebarState.collapsed = true;
 			return;
 		}
 		if (room.id === selectedId) {
