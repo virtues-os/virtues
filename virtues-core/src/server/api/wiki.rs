@@ -24,6 +24,9 @@ pub fn routes() -> Router<AppState> {
         // The Timeline: one local day whole, and which days have a record
         .route("/api/timeline/days/:date", get(timeline_day_handler))
         .route("/api/timeline/recorded", get(timeline_recorded_handler))
+        // "Help Virtues out": the places the map can't name, and their answers
+        .route("/api/timeline/places/review", get(place_review_handler))
+        .route("/api/timeline/places/:id/answer", post(place_answer_handler))
         // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
         .route("/api/today/:date/streams", get(today_streams_handler))
         // Home-page loops — weather · upcoming calendar · unnamed-place backlog
@@ -1155,6 +1158,20 @@ pub struct TimelineDaysQuery {
 
 /// The days in `from`..=`to` (`YYYY-MM-DD`, at most 62) with a location fix or
 /// a recorded conversation: the Timeline month's dots.
+/// The places "Help Virtues out" asks about, and the ones named without asking.
+pub async fn place_review_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::place_review::review(state.db.pool()).await)
+}
+
+/// One answer about a place, written to its `wiki_places` row.
+pub async fn place_answer_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(a): Json<crate::api::place_review::Answer>,
+) -> Response {
+    api_response(crate::api::place_review::answer(state.db.pool(), &id, &a).await)
+}
+
 pub async fn timeline_recorded_handler(State(state): State<AppState>, Query(q): Query<TimelineDaysQuery>) -> Response {
     let span = (q.to - q.from).num_days();
     if !(0..62).contains(&span) {
