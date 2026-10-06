@@ -475,6 +475,24 @@ async fn resolve_relay_url(db: &PgPool) -> Option<RelayUrl> {
     None
 }
 
+/// The relay the door homes on: the box's own relay, or [`DEFAULT_RELAY_URL`]
+/// on a dev machine that has none configured. `None` only when the owner
+/// turned the relay off, and then no link can be served.
+pub(crate) async fn relay_for_door(db: &PgPool) -> Option<RelayUrl> {
+    if let Some(url) = resolve_relay_url(db).await {
+        return Some(url);
+    }
+    let off_in_env = std::env::var("VIRTUES_RELAY_URL").is_ok_and(|raw| relay_disabled_by_env(&raw));
+    let off_in_config = matches!(
+        crate::virtues_api::relay::load(db).await,
+        Ok(Some(rc)) if relay_disabled_by_env(&rc.relay_url)
+    );
+    if off_in_env || off_in_config {
+        return None;
+    }
+    RelayUrl::from_str(DEFAULT_RELAY_URL).ok()
+}
+
 /// Fetch + store this box's relay config from atlas if it isn't stored yet.
 /// Best-effort and idempotent (no-op once homed). A freshly-fetched relay only
 /// takes effect on the next endpoint bind — the running endpoint keeps the relay

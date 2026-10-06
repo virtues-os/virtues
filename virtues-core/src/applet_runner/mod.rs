@@ -1354,7 +1354,7 @@ const WELL_KNOWN_APPLETS_BIN_DIR: &str = "/usr/local/libexec/virtues";
 /// cwd. If no workspace binary matches (e.g. `python3`, `node`) the name is
 /// returned verbatim so the OS resolves it on `PATH`. Explicit paths
 /// (`./x`, `/usr/bin/x`) pass through.
-fn resolve_program(argv0: &str) -> PathBuf {
+pub(crate) fn resolve_program(argv0: &str) -> PathBuf {
     if argv0.contains('/') {
         return PathBuf::from(argv0);
     }

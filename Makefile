@@ -276,7 +276,7 @@ dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seed
 # in ONE cargo invocation shares the dependency graph, so this is one parallel
 # build rather than two serial ones, and the `cargo run` below starts with
 # nothing left to compile. Warm-tree cost: a freshness check, ~1s.
-	SQLX_OFFLINE="$(SQLX_OFFLINE)" cargo build -p virtues -p virtues-applets
+	SQLX_OFFLINE="$(SQLX_OFFLINE)" cargo build -p virtues -p virtues-applets -p virtues-door
 	RUST_LOG="$(RUST_LOG),noq_udp=error" \
 	SQLX_OFFLINE="$(SQLX_OFFLINE)" \
 	VIRTUES_DEV_SKIP_SETUP="$(VIRTUES_DEV_SKIP_SETUP)" \

@@ -193,7 +193,8 @@ jobs:
           cargo build --profile ${{ env.CARGO_PROFILE }} --target ${{ matrix.target }} \
             -p virtues --bin virtues \
             -p virtues-installer --bin virtues-installer \
-            -p virtues-applets --bins
+            -p virtues-applets --bins \
+            -p virtues-door --bin virtues-door
 
       # Desktop daemon (v0.2). Linux-only today — macOS / Windows daemons land
       # in v0.2.1+. A PREVIEW whose tunnel isn't finished (see PR #18) — its
@@ -392,6 +393,10 @@ jobs:
             test -x "$REL/$b" || (echo "action binary $b not built at $REL/$b" >&2 && exit 1)
             cp "$REL/$b" "staging/applets-bin/$b"
           done
+          # The door (shared links) lives beside the applet binaries, where the
+          # core resolves helper programs (applet_runner::resolve_program).
+          test -x "$REL/virtues-door" || (echo "virtues-door not built at $REL/virtues-door" >&2 && exit 1)
+          cp "$REL/virtues-door" staging/applets-bin/virtues-door
 
           # virtues-qnnd — Dragon NPU daemon, aarch64 only (built against QAIRT
           # above). Packaged when present; the installer extracts it if there and
