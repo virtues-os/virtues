@@ -82,7 +82,7 @@
 	const MAP_RETRY_MS = 5000;
 	let mapRetry = 0;
 	/** The day's own sources and layers, drawn over the basemap. */
-	const OWN = ['track-run', 'track-bridge', 'lit-glow', 'lit-run', 'lit-bridge'];
+	const OWN = ['track-run', 'track-bridge', 'track-drive', 'lit-glow', 'lit-run', 'lit-bridge'];
 	/** A theme switch swaps the basemap and carries the day's track across, so
 	 *  nothing reloads. */
 	async function restyle() {
@@ -134,13 +134,14 @@
 	let note = $state<{ title: string; lines: string[] } | null>(null);
 	let map: MlMap | null = null;
 	/** The map's paint, read off the theme (colours.ts). */
-	let ink = browser ? mapInk() : { track: '', now: '' };
+	let ink = browser ? mapInk() : { track: '', move: '', now: '' };
 	/** A theme switch repaints the day's own layers. */
 	function paintInk() {
 		ink = mapInk();
 		const m = map;
 		if (!m?.getLayer('track-run')) return;
 		for (const id of ['track-run', 'track-bridge']) m.setPaintProperty(id, 'line-color', ink.track);
+		m.setPaintProperty('track-drive', 'line-color', ink.move);
 		for (const id of ['lit-glow', 'lit-run', 'lit-bridge']) m.setPaintProperty(id, 'line-color', ink.now);
 	}
 	let maplibre: typeof import('maplibre-gl') | null = null;
@@ -343,6 +344,16 @@
 					layout: { 'line-join': 'round', 'line-cap': 'butt' },
 					paint: { 'line-color': ink.track, 'line-width': 1.5, 'line-opacity': 0.4, 'line-dasharray': [2, 3] },
 				});
+				// Every drive in moving's hue over the path, so the map tells being
+				// somewhere from going somewhere as the lanes and the list do.
+				m.addSource('track-drive', { type: 'geojson', data: lines([]) });
+				m.addLayer({
+					id: 'track-drive',
+					type: 'line',
+					source: 'track-drive',
+					layout: { 'line-join': 'round', 'line-cap': 'round' },
+					paint: { 'line-color': ink.move, 'line-width': 3, 'line-opacity': 0.85 },
+				});
 				// The lit stretch: the stretch of path the playhead is moving along,
 				// in the accent at the path's own weight, over a path otherwise ink
 				// all day - the accent means now, so only what you're looking at
@@ -542,6 +553,10 @@
 		const { runs, bridges } = splitTrack(dayTrack);
 		(m.getSource('track-run') as GeoJSONSource).setData(lines(runs));
 		(m.getSource('track-bridge') as GeoJSONSource).setData(lines(bridges));
+		const drives = sections
+			.filter((s) => s.kind === 'transit')
+			.flatMap((d) => splitTrack(dayTrack.filter((f) => f.t >= d.s && f.t < d.e)).runs);
+		(m.getSource('track-drive') as GeoJSONSource).setData(lines(drives));
 		// The inspector draws first, so the framing can leave room for it.
 		await tick();
 		if (mine !== asked) return;
