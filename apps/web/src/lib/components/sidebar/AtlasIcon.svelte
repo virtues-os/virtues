@@ -76,6 +76,9 @@
 		// Display: a monitor on its stand, the panel on the server.
 		display:
 			'<rect x="2.2" y="2.8" width="11.6" height="7.6" rx="1"/><path d="M8 10.4v2.5M5.4 13.1h5.2"/>',
+		// Shared links: one page, two people it went to.
+		shared:
+			'<circle cx="4.6" cy="8" r="1.9"/><circle cx="11.4" cy="4.2" r="1.9"/><circle cx="11.4" cy="11.8" r="1.9"/><path d="M6.3 7.1 9.7 5.1M6.3 8.9 9.7 10.9"/>',
 
 		// ── Developer's own rows ───────────────────────────────────────────
 		// SQL: a table, a header row and a key column. Not the stacked-cylinder
