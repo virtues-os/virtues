@@ -5,6 +5,7 @@
 	import { toast } from "svelte-sonner";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
+	import ShareSheet from "$lib/components/applets/ShareSheet.svelte";
 	import { getInitializationPromise } from "$lib/stores/models.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import StoppedNotice from "$lib/components/StoppedNotice.svelte";
@@ -1227,6 +1228,9 @@
 	// whether the chat is kept at all.
 	const showChatMenu = $derived(!inRoom);
 
+	// The Share modal (api::publications): the conversation's words, read-only.
+	let sharing = $state(false);
+
 	async function deleteThisChat() {
 		// Read before the delete: the title comes off the session row that is
 		// about to go, and Undo has to put back the tab this closes.
@@ -1284,6 +1288,17 @@
 		// way. A temporary chat has nowhere to be filed.
 		if (!isGhost) {
 			items.push(...projectMenuItems(targetForTab(tab)).map((i) => ({ ...i, dividerBefore: false })));
+		}
+		if (canManageChat && conversationId) {
+			items.push({
+				id: "share",
+				label: "Share chat…",
+				description: "A read-only link to the conversation",
+				icon: "ri:share-forward-line",
+				action: () => {
+					sharing = true;
+				},
+			});
 		}
 		items.push({
 			id: "pin",
@@ -1689,6 +1704,14 @@
 		return () => mobileLayout.setChatChrome(null);
 	});
 </script>
+
+{#if conversationId && canManageChat}
+	<ShareSheet
+		open={sharing}
+		producer={{ kind: "chat", id: conversationId }}
+		onClose={() => (sharing = false)}
+	/>
+{/if}
 
 {#if lightbox}
 	<MediaLightbox

@@ -445,6 +445,9 @@ pub struct SharePreview {
     pub names: Vec<String>,
     /// Images that are not in Drive and so are left out of the shared page.
     pub images_left_out: usize,
+    /// A chat: how many messages go, and how many attachments stay behind.
+    pub message_count: usize,
+    pub attachments_left_out: usize,
     /// Whether the page reads data, and so can be a snapshot or live.
     pub reads_data: bool,
     /// The queries it runs, with what each returns right now.
@@ -475,26 +478,35 @@ impl SharePreview {
             looks_private: Vec::new(),
             names: Vec::new(),
             images_left_out: 0,
+            message_count: 0,
+            attachments_left_out: 0,
             reads_data: false,
             queries: Vec::new(),
         }
     }
 }
 
-/// What a link shares: an applet's face or a page.
+/// What a link shares: an applet's face, a page, or a chat.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Producer {
     Applet(String),
     Page(String),
+    Chat(String),
 }
 
 impl Producer {
-    /// From a request naming exactly one of `applet_id` or `page_id`.
-    pub fn from_ids(applet_id: Option<String>, page_id: Option<String>) -> Result<Self> {
-        match (applet_id.filter(|s| !s.is_empty()), page_id.filter(|s| !s.is_empty())) {
-            (Some(a), None) => Ok(Producer::Applet(a)),
-            (None, Some(p)) => Ok(Producer::Page(p)),
-            _ => Err(Error::InvalidInput("name exactly one of applet_id or page_id".into())),
+    /// From a request naming exactly one of `applet_id`, `page_id` or `chat_id`.
+    pub fn from_ids(
+        applet_id: Option<String>,
+        page_id: Option<String>,
+        chat_id: Option<String>,
+    ) -> Result<Self> {
+        let named = |v: Option<String>| v.filter(|s| !s.is_empty());
+        match (named(applet_id), named(page_id), named(chat_id)) {
+            (Some(a), None, None) => Ok(Producer::Applet(a)),
+            (None, Some(p), None) => Ok(Producer::Page(p)),
+            (None, None, Some(c)) => Ok(Producer::Chat(c)),
+            _ => Err(Error::InvalidInput("name exactly one of applet_id, page_id or chat_id".into())),
         }
     }
 
@@ -502,6 +514,7 @@ impl Producer {
         match kind {
             "applet" => Ok(Producer::Applet(id.to_string())),
             "page" => Ok(Producer::Page(id.to_string())),
+            "chat" => Ok(Producer::Chat(id.to_string())),
             other => Err(Error::Other(format!("unknown publication producer {other:?}"))),
         }
     }
@@ -510,12 +523,13 @@ impl Producer {
         match self {
             Producer::Applet(_) => "applet",
             Producer::Page(_) => "page",
+            Producer::Chat(_) => "chat",
         }
     }
 
     fn id(&self) -> &str {
         match self {
-            Producer::Applet(id) | Producer::Page(id) => id,
+            Producer::Applet(id) | Producer::Page(id) | Producer::Chat(id) => id,
         }
     }
 }
@@ -578,6 +592,46 @@ pub async fn preview(pool: &PgPool, drive: &DriveConfig, producer: &Producer) ->
                 looks_private,
                 names: frozen.names,
                 images_left_out: frozen.images_left_out,
+                message_count: 0,
+                attachments_left_out: 0,
+                reads_data: false,
+                queries: Vec::new(),
+            })
+        }
+        Producer::Chat(id) => {
+            let frozen = match crate::api::publish_chat::freeze_chat(pool, id).await {
+                Ok(f) => f,
+                Err(Error::InvalidInput(why)) => {
+                    let title: Option<String> =
+                        sqlx::query_scalar("SELECT title FROM app_chats WHERE id = $1")
+                            .bind(id)
+                            .fetch_optional(pool)
+                            .await
+                            .map_err(|e| Error::Database(format!("read chat: {e}")))?;
+                    let title = title.ok_or_else(|| Error::NotFound(format!("no chat {id:?}")))?;
+                    return Ok(SharePreview::cannot(title, why));
+                }
+                Err(e) => return Err(e),
+            };
+            let (image_count, links, looks_private) = scan(&frozen.html);
+            Ok(SharePreview {
+                title: frozen.title,
+                size_bytes: frozen.html.len(),
+                problem: (frozen.html.len() > MAX_FACE_BYTES).then(|| {
+                    format!(
+                        "the conversation is {} KB; the limit is {} KB.",
+                        frozen.html.len() / 1024,
+                        MAX_FACE_BYTES / 1024
+                    )
+                }),
+                html: Some(frozen.html),
+                image_count,
+                links,
+                looks_private,
+                names: frozen.names,
+                images_left_out: 0,
+                message_count: frozen.message_count,
+                attachments_left_out: frozen.attachments_left_out,
                 reads_data: false,
                 queries: Vec::new(),
             })
@@ -621,6 +675,8 @@ async fn preview_applet(pool: &PgPool, applet_id: &str) -> Result<SharePreview> 
                 looks_private,
                 names: Vec::new(),
                 images_left_out: 0,
+                message_count: 0,
+                attachments_left_out: 0,
                 reads_data: reads,
                 queries: queries
                     .into_iter()
@@ -655,6 +711,17 @@ async fn build(
             if frozen.html.len() > MAX_FACE_BYTES {
                 return Err(Error::InvalidInput(format!(
                     "with its images the page is {} KB; the limit is {} KB. Use fewer or smaller images.",
+                    frozen.html.len() / 1024,
+                    MAX_FACE_BYTES / 1024
+                )));
+            }
+            Ok((frozen.title, frozen.html, Vec::new()))
+        }
+        Producer::Chat(id) => {
+            let frozen = crate::api::publish_chat::freeze_chat(pool, id).await?;
+            if frozen.html.len() > MAX_FACE_BYTES {
+                return Err(Error::InvalidInput(format!(
+                    "the conversation is {} KB; the limit is {} KB.",
                     frozen.html.len() / 1024,
                     MAX_FACE_BYTES / 1024
                 )));
@@ -700,6 +767,8 @@ pub struct CreateRequest {
     pub applet_id: Option<String>,
     #[serde(default)]
     pub page_id: Option<String>,
+    #[serde(default)]
+    pub chat_id: Option<String>,
     /// Days until the link stops working. Absent means
     /// [`DEFAULT_EXPIRY_DAYS`]; `0` means never.
     pub expires_in_days: Option<u32>,
@@ -712,7 +781,7 @@ pub struct CreateRequest {
 /// Share an applet's face: freeze it, put the bundle where the door serves
 /// it, record it.
 pub async fn create(pool: &PgPool, drive: &DriveConfig, req: CreateRequest) -> Result<Publication> {
-    let producer = Producer::from_ids(req.applet_id, req.page_id)?;
+    let producer = Producer::from_ids(req.applet_id, req.page_id, req.chat_id)?;
     door_key(pool).await?;
     let (title, page, live) = build(pool, drive, &producer, req.live).await?;
     create_frozen(pool, &bundles_dir(), &producer, &title, page.as_bytes(), req.expires_in_days, &live)
