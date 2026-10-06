@@ -32,6 +32,9 @@ exclude = [
     "apps/web/plugins/audio",
     # Build-dep of every plugin above (the COMMANDS lockstep enforcer).
     "apps/web/plugins/lockstep",
+    # The share-link loader: iroh compiled to WebAssembly, its own Cargo.lock
+    # and wasm32 build (apps/loader/README.md). Never part of the box build.
+    "apps/loader",
     # Throwaway iroh evaluation crate — own Cargo.lock, kept out of the main
     # build so iroh's dep tree can't destabilize it during the spike.
     "spike-iroh",
