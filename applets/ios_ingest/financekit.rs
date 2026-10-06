@@ -395,6 +395,38 @@ mod tests {
         assert_eq!(signed_cents(&unrecognized), (725, None));
     }
 
+    /// The re-sync is what signs history: a row an older phone wrote unsigned
+    /// and untyped must come back signed and typed when a newer phone re-sends
+    /// it, both in the same upsert.
+    #[sqlx::test(migrations = "../virtues-core/migrations")]
+    async fn a_resync_signs_a_row_an_older_phone_wrote(pool: PgPool) {
+        let tx = |extra: Value| {
+            let mut t = json!({"id": "fk-tx-1", "accountId": "fk-acct-1", "amount": 25.0,
+                               "date": "2026-09-23T15:00:00Z", "status": "booked",
+                               "description": "Deposit"});
+            t.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            json!({"transactions": [t]})
+        };
+        let accounts = json!({"accounts": [{"id": "fk-acct-1", "name": "Everyday Checking"}]});
+        write_accounts(&pool, &[accounts]).await.unwrap();
+
+        let read = || async {
+            sqlx::query_as::<_, (i64, Option<String>)>(
+                "SELECT amount, transaction_type FROM data_financial_transaction",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+
+        write_transactions(&pool, &[tx(json!({}))]).await.unwrap();
+        assert_eq!(read().await, (2500, None));
+
+        let signed = tx(json!({"creditDebitIndicator": "credit", "transactionType": "deposit"}));
+        write_transactions(&pool, &[signed]).await.unwrap();
+        assert_eq!(read().await, (-2500, Some("deposit".into())));
+    }
+
     /// `(0.29 * 100.0) as i64` is 28. Truncation lost a cent on about one
     /// FinanceKit row in eleven.
     #[test]
