@@ -68,12 +68,12 @@ async fn inline_image(pool: &PgPool, drive: &DriveConfig, url: &str) -> Option<S
     Some(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
 }
 
-fn escape(text: &str) -> String {
+pub(crate) fn escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
 /// Labels for internal links, and which of them name people or places.
-fn strip_internal_links(markdown: &str) -> (String, Vec<String>) {
+pub(crate) fn strip_internal_links(markdown: &str) -> (String, Vec<String>) {
     let mut names = Vec::new();
     let text = internal_link_re().replace_all(markdown, |c: &regex::Captures| {
         let label = c[1].trim().to_string();
@@ -88,7 +88,7 @@ fn strip_internal_links(markdown: &str) -> (String, Vec<String>) {
     (text.into_owned(), names)
 }
 
-fn render(markdown: &str) -> String {
+pub(crate) fn render(markdown: &str) -> String {
     use pulldown_cmark::{html, Options, Parser};
     let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let mut out = String::new();

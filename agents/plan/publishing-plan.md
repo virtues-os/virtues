@@ -350,9 +350,16 @@ by revoking.
 
 ### Also on the way
 
-- **Pages publish through the door (built 2026-10-06, a5b6b59d).** The old
+- **Pages publish through the door (built 2026-10-06, a5b6b59d; verified on
+  the spare box at `staging.93`: names only, outside image left out, the door
+  key unchanged across the upgrade).** The old
   page share, whose links carried the app's own origin, is removed; its
   table waits for a later migration to drop.
+- **Chats share read-only (built 2026-10-06, 36479821; 0047).** Only the
+  visible words leave: tool calls and results, reasoning, sources and
+  attachments stay. Multiplayer chat is not planned as a guest talking to the
+  owner's assistant; the safe shape is "ask about this page", answering only
+  from what was shared, after wave 2.
 - **GitHub App and S3 destinations**; retire the pasted-token source.
 - **Paged print** (`@page`, break control) rides on the freezer; PDF is the
   browser's print dialog, never a headless browser on the box.
