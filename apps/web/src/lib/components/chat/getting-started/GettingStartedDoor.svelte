@@ -29,7 +29,7 @@
 	const label = $derived(underway ? "Stop for now" : "Come back to this later");
 
 	async function leave() {
-		await goto("/home");
+		await goto("/chat");
 	}
 </script>
 

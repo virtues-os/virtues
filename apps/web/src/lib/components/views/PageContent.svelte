@@ -21,14 +21,13 @@
 	import type { EditorView } from "@codemirror/view";
 	import { Popover } from "$lib/floating";
 	import {
-		createPageShare,
-		getPageShare,
-		deletePageShare,
 		getPageBacklinks,
+		listPublications,
 		request,
 		ApiError,
 		type Backlink,
 	} from "$lib/api/client";
+	import ShareSheet from "$lib/components/applets/ShareSheet.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { untitled } from "$lib/refs/identity.svelte";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
@@ -165,8 +164,26 @@
 	// Copy state
 	let copied = $state(false);
 
-	// Share state
-	let shareToken = $state<string | null>(null);
+	// Share: the Share modal (api::publications), and whether a link to this
+	// page is working right now, which the toolbar shows.
+	let sharing = $state(false);
+	let isShared = $state(false);
+
+	async function refreshShared() {
+		try {
+			const links = await listPublications();
+			isShared = links.some(
+				(l) =>
+					l.producer_kind === 'page' &&
+					l.producer_id === pageId &&
+					!l.revoked_at &&
+					(!l.expires_at || new Date(l.expires_at).getTime() > Date.now())
+			);
+		} catch {
+			// Not knowing reads as "not shared"; the toolbar only marks it.
+			isShared = false;
+		}
+	}
 
 	async function autoSnapshot(description: string, keepalive = false) {
 		if (!hasEditsSinceSnapshot || !yjsDoc) return;
@@ -400,12 +417,7 @@
 
 			// Content sync happens via Yjs. Doc stats are pushed via onDocChange callback.
 
-			// Fetch share state (non-blocking)
-			getPageShare(pageId).then((share) => {
-				shareToken = share?.token ?? null;
-			}).catch(() => {
-				shareToken = null;
-			});
+			void refreshShared();
 		} catch (e) {
 			// Ignore aborted fetches (cancelled by a newer loadPage call)
 			if (e instanceof DOMException && e.name === "AbortError") return;
@@ -554,45 +566,6 @@
 			console.error("Failed to copy markdown:", err);
 		}
 	}
-
-	async function handleShare() {
-		try {
-			if (shareToken) {
-				// Already shared — copy link and offer revoke
-				const url = `${window.location.origin}/s/${shareToken}`;
-				await navigator.clipboard.writeText(url);
-				// Import toast dynamically to avoid adding dependency to this file's top-level
-				const { toast } = await import("svelte-sonner");
-				toast.success("Share link copied!", {
-					description: url,
-					action: {
-						label: "Revoke",
-						onClick: async () => {
-							try {
-								await deletePageShare(pageId);
-								shareToken = null;
-								toast.info("Share link revoked");
-							} catch (err) {
-								console.error("Failed to revoke share:", err);
-							}
-						},
-					},
-				});
-			} else {
-				// Create new share
-				const share = await createPageShare(pageId);
-				shareToken = share.token;
-				const url = `${window.location.origin}/s/${share.token}`;
-				await navigator.clipboard.writeText(url);
-				const { toast } = await import("svelte-sonner");
-				toast.success("Share link copied to clipboard!", {
-					description: url,
-				});
-			}
-		} catch (err) {
-			console.error("Failed to share page:", err);
-		}
-	}
 </script>
 
 <Page padding="none" scrollable={false}>
@@ -628,10 +601,10 @@
 				{pageId}
 				{yjsDoc}
 				bind:showCoverPicker
-				isShared={!!shareToken}
+				{isShared}
 				referencesActive={showReferences}
 				onToggleReferences={toggleReferences}
-				onShare={handleShare}
+				onShare={() => (sharing = true)}
 				onIconColorSelect={(value) => {
 				iconColor = value;
 				if (pageData) {
@@ -801,6 +774,16 @@
 			/>
 		</div>
 	{/if}
+	{#if pageId}
+		<ShareSheet
+			open={sharing}
+			producer={{ kind: "page", id: pageId }}
+			onClose={() => {
+				sharing = false;
+				void refreshShared();
+			}}
+		/>
+	{/if}
 </Page>
 
 <style>
@@ -867,8 +850,9 @@
 		margin-bottom: 0.5rem;
 	}
 
-	/* 400, and it must stay equal to .shared-page-title in the public /s/[token]
-	   view or the same page reads differently to its author and its reader.
+	/* 400, and it must stay equal to the shared copy's title (normal weight,
+	   in api/publish_page.rs) or the same page reads differently to its author
+	   and its reader.
 	   The 500 was never drawn either way: the serif ships one cut and the request
 	   resolves back to the regular in silence (agents/build/typography.md). At
 	   32px in full ink above the body the title already leads the document. */

@@ -3,9 +3,7 @@
  *
  * The editor's document is always plain markdown; "rendered" is purely a view
  * layer built from decorations. This module owns that bundle as ONE list, so
- * the write path (createCodeMirrorEditor) and the read path
- * (createReadOnlyEditor) cannot drift apart, and so raw mode can drop the whole
- * surface in a single reconfigure.
+ * raw mode can drop the whole surface in a single reconfigure.
  *
  * Raw mode removes the extensions entirely rather than asking each one to
  * no-op. That is the point: with the extensions uninstalled there is no way for
