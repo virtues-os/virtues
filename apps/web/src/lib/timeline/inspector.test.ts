@@ -52,9 +52,13 @@ describe("the inspector", () => {
 		expect(inspector[2].rows).toEqual([]);
 	});
 
-	it("shows a name only when the person gave one", () => {
+	it("titles a place by the person's name, else the box's title, else Unnamed place", () => {
 		expect(placeTitle({ id: "x", latitude: 0, longitude: -30, is_named: false, place_name: "Location 1.0, 2.0" })).toBe("Unnamed place");
 		expect(placeTitle({ id: "w", latitude: 0, longitude: -30, is_named: true, place_name: "The Studio" })).toBe("The Studio");
+		// The box's title (Home, the map's match, a city) stands in until the person names it...
+		expect(placeTitle({ id: "c", latitude: 0, longitude: -30, is_named: false, place_name: "Location 1.0, 2.0", title: "Riverton" })).toBe("Riverton");
+		// ...and the person's own name wins over it.
+		expect(placeTitle({ id: "h", latitude: 0, longitude: -30, is_named: true, place_name: "The Farm", title: "Home" })).toBe("The Farm");
 	});
 
 	it("gives a conversation its windows, a night its source, a quiet stay its audio note", () => {
