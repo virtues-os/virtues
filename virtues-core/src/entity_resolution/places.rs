@@ -1193,13 +1193,15 @@ async fn keep_one_place_per_visit(db: &Database) -> Result<u64> {
 /// "Location <lat>, <lon>" with no visit, no article and nothing a person did
 /// to it. Only those go. A place is kept while anything refers to it or the
 /// person has touched it: a ref from any source, a name of their own
-/// (`is_named`), the audio mute, a pin, a project, a note, an article, a rule, a chat's edit
-/// grant, or being home.
+/// (`is_named`), an answer that it was no place to name ("just passing
+/// through") or that the map's name for it is wrong, the audio mute, a pin, a
+/// project, a note, an article, a rule, a chat's edit grant, or being home.
 async fn delete_empty_places(db: &Database) -> Result<u64> {
     let removed = sqlx::query(
         r#"
         DELETE FROM wiki_places p
         WHERE NOT p.is_named
+          AND NOT (p.metadata ? 'passing_through' OR p.metadata ? 'rejected_match')
           AND NOT COALESCE(p.is_audio_muted, false)
           AND NOT EXISTS (SELECT 1 FROM wiki_refs r WHERE r.entity_id = p.id)
           AND NOT EXISTS (SELECT 1 FROM app_user_profile u WHERE u.home_place_id = p.id)
@@ -1617,6 +1619,15 @@ mod tests {
         place("place_visited", "Location 30.0001, -97.0000").await;
         place("place_pinned", "Location 30.0002, -97.0000").await;
         place("place_named", "Corner bakery").await;
+        place("place_passed", "Location 30.0003, -97.0000").await;
+        place("place_not_this", "Location 30.0004, -97.0000").await;
+        sqlx::query(
+            "UPDATE wiki_places SET metadata = CASE id WHEN 'place_passed' THEN '{\"passing_through\": true}'::jsonb \
+             ELSE '{\"rejected_match\": \"Corner Cafe\"}'::jsonb END WHERE id IN ('place_passed', 'place_not_this')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query("UPDATE wiki_places SET is_named = true WHERE id = 'place_named'")
             .execute(&pool)
             .await
@@ -1639,6 +1650,6 @@ mod tests {
             .fetch_all(&pool)
             .await
             .unwrap();
-        assert_eq!(left, ["place_named", "place_pinned", "place_visited"]);
+        assert_eq!(left, ["place_named", "place_not_this", "place_passed", "place_pinned", "place_visited"]);
     }
 }
