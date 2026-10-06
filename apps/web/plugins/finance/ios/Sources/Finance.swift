@@ -131,10 +131,15 @@ public final class FinanceCollector {
       if let txns = try? await store.transactions(query: query) {
         var batch: [[String: Any]] = []
         for t in txns {
+          // `amount` is a magnitude; the direction is `creditDebitIndicator`.
+          // The box signs the amount from it, so without it a deposit reads
+          // as spending.
           let amount = NSDecimalNumber(decimal: t.transactionAmount.amount).doubleValue
           var rec: [String: Any] = [
             "id": t.id.uuidString,
             "amount": amount,
+            "creditDebitIndicator": "\(t.creditDebitIndicator)",
+            "transactionType": "\(t.transactionType)",
             "currencyCode": t.transactionAmount.currencyCode,
             "date": iso.string(from: t.transactionDate),
             "accountId": t.accountID.uuidString,
