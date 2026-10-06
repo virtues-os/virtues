@@ -120,6 +120,15 @@ export const SETTINGS_MODE: SidebarMode = {
 			href: '/virtues/devices',
 			group: 'Server',
 		},
+		// Every link the owner has shared, live or ended, with revoke.
+		{
+			id: 'shared',
+			label: 'Shared links',
+			icon: 'ri:share-forward-line',
+			glyph: 'shared',
+			href: '/virtues/shared',
+			group: 'Server',
+		},
 		// The screen on the server: what it shows, its hours, other screens.
 		{
 			id: 'display',
