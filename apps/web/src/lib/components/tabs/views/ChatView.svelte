@@ -2301,12 +2301,17 @@
 							<button
 								type="button"
 								class="jump-to-end"
+								class:working={turnPhase.working}
 								onclick={() => scrollToBottom("smooth")}
-								aria-label="Scroll to latest"
+								aria-label={turnPhase.working ? "Scroll to latest (responding)" : "Scroll to latest"}
 								title="Scroll to latest"
 								transition:fade={{ duration: 150 }}
 							>
-								<Icon icon="ri:arrow-down-line" width="16" />
+								{#if turnPhase.working}
+									<span class="jump-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+								{:else}
+									<Icon icon="ri:arrow-down-line" width="16" />
+								{/if}
 							</button>
 						{/if}
 						{#if isGhost && !isEmpty}
@@ -2761,12 +2766,13 @@
 		will-change: bottom, transform;
 	}
 
-	/* Rides the composer's top edge, so it climbs with a growing draft. */
+	/* Rides the composer's top edge, so it climbs with a growing draft;
+	   centered over the pill. */
 	.jump-to-end {
 		position: absolute;
 		bottom: calc(100% + 0.5rem);
-		/* Flush with the pill's right edge (the wrapper's side padding). */
-		right: 2rem;
+		left: 50%;
+		margin-left: -1.125rem;
 		display: grid;
 		place-items: center;
 		width: 2.25rem;
@@ -2780,6 +2786,53 @@
 			color 0.15s ease,
 			border-color 0.15s ease,
 			translate 0.15s ease;
+	}
+
+	/* While a turn is working the arrow becomes the reply's pulse: three
+	   dots in a travelling wave, so the reader scrolled up can see the
+	   answer is still arriving below. */
+	.jump-to-end.working {
+		width: 2.75rem;
+		height: 2.75rem;
+		margin-left: -1.375rem;
+	}
+
+	.jump-dots {
+		display: flex;
+		gap: 0.25rem;
+	}
+
+	.jump-dots i {
+		width: 0.3125rem;
+		height: 0.3125rem;
+		border-radius: 999px;
+		background: var(--color-primary);
+		opacity: 0.45;
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.jump-dots i {
+			animation: jump-dot-wave 1.2s ease-in-out infinite;
+		}
+		.jump-dots i:nth-child(2) {
+			animation-delay: 0.15s;
+		}
+		.jump-dots i:nth-child(3) {
+			animation-delay: 0.3s;
+		}
+	}
+
+	@keyframes jump-dot-wave {
+		0%,
+		60%,
+		100% {
+			opacity: 0.45;
+			transform: translateY(0);
+		}
+		30% {
+			opacity: 1;
+			transform: translateY(-2px);
+		}
 	}
 
 	.jump-to-end:hover {
