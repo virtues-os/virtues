@@ -31,6 +31,8 @@ use axum::{
 use pmtiles::{AsyncPmTilesReader, Compression, MmapBackend, TileCoord};
 use serde::Serialize;
 
+mod mvt;
+pub(crate) mod naming;
 pub mod sync;
 
 /// Where the maps live on an installed box, beside the lake rather than in
@@ -249,6 +251,66 @@ fn purge_legacy_caches() {
             }
         }
     });
+}
+
+/// The web-mercator tile at zoom `z` holding a point, as `(x, y)`.
+pub(crate) fn tile_at(lat: f64, lon: f64, z: u8) -> (u32, u32) {
+    let n = f64::from(1u32 << z);
+    let max = (1u32 << z) - 1;
+    let x = ((lon + 180.0) / 360.0 * n).floor().max(0.0) as u32;
+    let merc = lat.to_radians().tan().asinh();
+    let y = ((1.0 - merc / std::f64::consts::PI) / 2.0 * n).floor().max(0.0) as u32;
+    (x.min(max), y.min(max))
+}
+
+/// One vector tile, inflated, for a reader on the box rather than a browser.
+pub(crate) struct DetailedTile {
+    pub z: u8,
+    pub x: u32,
+    pub y: u32,
+    /// The raw Mapbox Vector Tile.
+    pub mvt: Vec<u8>,
+}
+
+/// Tile `z/x/y` from whichever file holds it at that zoom - a home square,
+/// a visited square, else the world overview - or `None` when none does or
+/// it can't be read. For server-side readers of the map's own data: place
+/// names read a city's label at z7 and the points of interest around a place
+/// at z15 (`naming`).
+pub(crate) async fn tile(z: u8, x: u32, y: u32) -> Option<DetailedTile> {
+    let reg = registry().await;
+    for tier in [Tier::Home, Tier::Visited, Tier::World] {
+        if z > tier.max_zoom() {
+            continue;
+        }
+        let Some(archive) = reg.find(tier, z, x, y) else { continue };
+        return read_tile(archive, z, x, y).await;
+    }
+    None
+}
+
+async fn read_tile(archive: &Archive, z: u8, x: u32, y: u32) -> Option<DetailedTile> {
+    let tier = archive.tier;
+    let coord = TileCoord::new(z, x, y).ok()?;
+    let bytes = match archive.reader.get_tile(coord).await {
+        Ok(Some(b)) => b,
+        Ok(None) => return None,
+        Err(e) => {
+            tracing::warn!("maps: reading {tier:?} {z}/{x}/{y}: {e}");
+            return None;
+        }
+    };
+    let mvt = if archive.gzip {
+        let mut out = Vec::new();
+        if let Err(e) = std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&bytes[..]), &mut out) {
+            tracing::warn!("maps: inflating {tier:?} {z}/{x}/{y}: {e}");
+            return None;
+        }
+        out
+    } else {
+        bytes.to_vec()
+    };
+    Some(DetailedTile { z, x, y, mvt })
 }
 
 // ─── HTTP ───────────────────────────────────────────────────────────────────
