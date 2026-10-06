@@ -119,6 +119,7 @@
 	/** The pane's own width (split view, a small window), which decides where
 	 *  the top cards go. */
 	let paneW = $state(0);
+	let paneH = $state(0);
 	/** The date card and its month float on the map; its measures place
 	 *  everything else. */
 	let dateWrap = $state<HTMLElement | null>(null);
@@ -698,7 +699,7 @@
 	/** Take the map to the place "Help Virtues out" is asking about, framed so
 	 *  the named places it offers read, under a glowing pin, with the day's
 	 *  path and marks faded (main.js:2209-2221); `null` gives the day back. */
-	function focusPlace(at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null) {
+	function focusPlace(at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[]; cardRight: number } | null) {
 		const m = map;
 		if (!m || !maplibre || !m.getLayer('track-run')) return;
 		glow?.remove();
@@ -714,13 +715,14 @@
 		const el = document.createElement('div');
 		el.className = 'tl-glow';
 		glow = new maplibre.Marker({ element: el, anchor: 'center' }).setLngLat([at.lon, at.lat]).addTo(m);
-		// Centred in the map left clear of the card (under the date card), the
-		// inspector and the scrubber.
+		// Centred in the map left clear of the card, the inspector and the
+		// scrubber.
 		const pad = fitPad(m);
+		const cardEdge = at.cardRight - m.getContainer().getBoundingClientRect().left + 16;
 		m.easeTo({
 			center: [at.lon, at.lat],
 			zoom: focusZoom(at.lat, at.reachM, m.getZoom()),
-			padding: { ...pad, left: Math.max(pad.left, 16 + 336 + 16) },
+			padding: { ...pad, left: Math.max(pad.left, cardEdge) },
 			duration: 820,
 		});
 	}
@@ -1221,6 +1223,7 @@
 	class:narrow
 	bind:this={root}
 	bind:clientWidth={paneW}
+	bind:clientHeight={paneH}
 	style="{colourVars()}; --top-chrome: {topChrome}px; --scrub-h: {scrubH}px; --inspector-top: {inspectorLow ? topChrome + 12 : 16}px"
 >
 	<div class="timeline-map" bind:this={container}></div>
@@ -1241,6 +1244,7 @@
 		<TimelineReview
 			bind:open={reviewOpen}
 			{dayPlaces}
+			room={Math.max(240, paneH - topChrome - 56 - scrubH - 36)}
 			onfocus={focusPlace}
 			onday={(slug) => (date = slug)}
 			onanswered={() => void refreshTitles()}
