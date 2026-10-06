@@ -3,16 +3,18 @@
 	dayback/index.html:266-326): a pill under the date card with the count of
 	places to name, and the card it opens below it.
 
-	The card asks about one place at a time, the place with the most time
+	The card asks about one place at a time: first whether the place with the
+	most nights is home and the place with the most time otherwise is where
+	the person works (asked, never assumed), then the rest, the most time
 	first: which of several close places (any number picked together),
 	whether it was a named place just out of reach, whose home after a night
 	there, else what it was. Each question offers Other (a typed answer, with
 	the named places around it or the people Virtues knows as suggestions) and
 	Just passing through, and below them what jogs the memory: when, a line
 	from a conversation there, and that full day. The map goes to the place
-	while it's asked about. Places named without asking (Home, Work, a clear
-	match on the map) are listed under the checkmark, where a wrong one is
-	marked and corrected.
+	while it's asked about. Places already named (a clear match on the map,
+	the person's own names, Home and Work as the person set them) are listed under
+	the checkmark, where a wrong one is marked and corrected.
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
@@ -162,15 +164,14 @@
 	}
 
 	/** A confirmed place's right name, typed after marking it wrong (main.js:
-	 *  2141): a name saves it; left blank, the map's match is set aside (the
-	 *  place is asked about again) and the person's own name is cleared, while
-	 *  Home and Work, which come from time spent there, stay as they are. */
+	 *  2141): a name saves it; left blank, the map's match is set aside, and
+	 *  the person's own answer (a name, Home, Work) is forgotten, so the place
+	 *  is asked about again. */
 	function correct(c: ConfirmedPlace, value: string) {
 		const v = value.trim();
 		if (v) void answer(c.id, { kind: 'name', name: v });
 		else if (c.source === 'map') void answer(c.id, { kind: 'not_this', name: c.title });
-		else if (c.source === 'named') void answer(c.id, { kind: 'reopen' });
-		else flagged = null;
+		else void answer(c.id, { kind: 'reopen' });
 	}
 
 	function seeDay(slug: string) {
@@ -179,8 +180,8 @@
 	}
 
 	const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
-	/** Why a place is named (main.js:2113): Home and Work by time spent there. */
-	const SOURCE = { home: 'home', work: 'work', named: 'named by you', map: 'from the map' };
+	/** Why a place is named (main.js:2113). */
+	const SOURCE = { home: 'your home', work: 'where you work', named: 'named by you', map: 'from the map' };
 </script>
 
 <button class="pill tile" type="button" aria-expanded={open} onclick={toggle}>
@@ -248,7 +249,9 @@
 					{#each ask.chips as c (c.label)}
 						<button class="chip" type="button" disabled={saving} onclick={() => void answer(current.id, c.answer)}>{c.label}</button>
 					{/each}
-					{#if otherOpen}
+					{#if !ask.other}
+						<!-- A yes-or-no question: no typed answer, no passing through. -->
+					{:else if otherOpen}
 						<input
 							class="field"
 							bind:this={otherInput}
@@ -261,7 +264,9 @@
 					{:else}
 						<button class="chip ghost" type="button" onclick={() => void openOther()}>Other</button>
 					{/if}
-					<button class="chip ghost" type="button" disabled={saving} onclick={() => void answer(current.id, { kind: 'passing' })}>Just passing through</button>
+					{#if ask.other}
+						<button class="chip ghost" type="button" disabled={saving} onclick={() => void answer(current.id, { kind: 'passing' })}>Just passing through</button>
+					{/if}
 				</div>
 				{#if ask.picks.length}
 					<p class="picks">

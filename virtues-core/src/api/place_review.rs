@@ -2,11 +2,17 @@
 //! questions for the person, and their answers (`dayback/src/main.js:
 //! 2113-2201`, `dayback/build.py:181-216` and `521-575`).
 //!
-//! A place's title is, in order: the name the person gave; Home or Work,
-//! from where the time went; the map's clear match (`maps::naming`), unless
-//! the person said it was wrong; else the city it lies in. Home, Work and a
-//! clear match are accepted without asking and listed for review; every other
-//! place is a question, the place with the most time first.
+//! A place's title is, in order: the name the person gave; Home or Work, as
+//! the person set them; the map's clear match (`maps::naming`), unless the
+//! person said it was wrong; else the city it lies in. A clear match is
+//! accepted without asking and listed for review; every other place is a
+//! question, the place with the most time first.
+//!
+//! Home and Work are never assumed. Where the time went only picks the place
+//! to ask about first: "Is this home?" for the place with the most nights,
+//! "Is this where you work?" for the place with the most time otherwise,
+//! among places stayed at twice or more. A "no" is kept, and the next place
+//! is asked about.
 //!
 //! An answer is written to the place's `wiki_places` row, the row "Name this
 //! place" writes: a name and its category in their columns, "just passing
@@ -39,6 +45,11 @@ struct Place {
     is_named: bool,
     passing_through: bool,
     rejected_match: Option<String>,
+    /// The person said it's where they work.
+    is_work: bool,
+    /// The person said it isn't home, or isn't where they work.
+    not_home: bool,
+    not_work: bool,
     /// The time-weighted centre of its stays.
     latitude: f64,
     longitude: f64,
@@ -63,6 +74,9 @@ async fn places(pool: &PgPool) -> Result<Vec<Place>> {
         r#"SELECT p.id, p.name, COALESCE(p.is_named, false) AS is_named,
                   COALESCE(p.metadata->>'passing_through' = 'true', false) AS passing_through,
                   p.metadata->>'rejected_match' AS rejected_match,
+                  COALESCE(p.metadata->>'is_work' = 'true', false) AS is_work,
+                  COALESCE(p.metadata->>'not_home' = 'true', false) AS not_home,
+                  COALESCE(p.metadata->>'not_work' = 'true', false) AS not_work,
                   v.latitude, v.longitude, v.started_at,
                   COALESCE(v.ended_at, v.started_at + make_interval(mins => COALESCE(v.duration_minutes, 0))) AS ended_at
            FROM data_location_visit v
@@ -90,6 +104,9 @@ async fn places(pool: &PgPool) -> Result<Vec<Place>> {
                 is_named: r.try_get("is_named")?,
                 passing_through: r.try_get("passing_through")?,
                 rejected_match: r.try_get("rejected_match")?,
+                is_work: r.try_get("is_work")?,
+                not_home: r.try_get("not_home")?,
+                not_work: r.try_get("not_work")?,
                 latitude: lat,
                 longitude: lon,
                 tz: chrono_tz::UTC,
@@ -142,19 +159,27 @@ fn covers_small_hours(s: DateTime<Utc>, e: DateTime<Utc>, tz: Tz) -> bool {
     false
 }
 
-/// Home and Work, as ids (`build.py:204-206`): Home is the place the person
-/// set, else the place with the most nights; Work the place with the most
-/// time otherwise, among places stayed at twice or more.
-fn home_and_work(places: &[Place], set_home: Option<&str>) -> (Option<String>, Option<String>) {
-    let home = set_home.map(str::to_string).or_else(|| {
-        places.iter().filter(|p| p.night_ms > 0).max_by_key(|p| p.night_ms).map(|p| p.id.clone())
-    });
-    let work = places
-        .iter()
-        .filter(|p| Some(&p.id) != home.as_ref() && p.stays.len() >= 2)
-        .max_by_key(|p| p.total_ms)
-        .map(|p| p.id.clone());
-    (home, work)
+/// The places to ask "Is this home?" and "Is this where you work?" about,
+/// as ids (`build.py:204-206`, as questions rather than answers): with no
+/// Home set, the place with the most nights not already said no to; with no
+/// Work set, the place with the most time otherwise, among places stayed at
+/// twice or more and not said no to.
+fn home_and_work_to_ask(places: &[Place], home: Option<&str>) -> (Option<String>, Option<String>) {
+    let ask_home = match home {
+        Some(_) => None,
+        None => places.iter().filter(|p| p.night_ms > 0 && !p.not_home).max_by_key(|p| p.night_ms).map(|p| p.id.clone()),
+    };
+    let ask_work = if places.iter().any(|p| p.is_work) {
+        None
+    } else {
+        places
+            .iter()
+            .filter(|p| Some(p.id.as_str()) != home && Some(&p.id) != ask_home.as_ref())
+            .filter(|p| p.stays.len() >= 2 && !p.not_work)
+            .max_by_key(|p| p.total_ms)
+            .map(|p| p.id.clone())
+    };
+    (ask_home, ask_work)
 }
 
 async fn set_home(pool: &PgPool) -> Result<Option<String>> {
@@ -168,12 +193,12 @@ async fn set_home(pool: &PgPool) -> Result<Option<String>> {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PlaceTitle {
     pub title: String,
-    /// `named` (the person's own), `home`, `work`, `map` (a clear match),
-    /// `city`, or `none`.
+    /// `named` (the person's own), `home` and `work` (as the person set
+    /// them), `map` (a clear match), `city`, or `none`.
     pub source: &'static str,
 }
 
-fn title(p: &Place, naming: &Naming, home: Option<&str>, work: Option<&str>) -> PlaceTitle {
+fn title(p: &Place, naming: &Naming, home: Option<&str>) -> PlaceTitle {
     let t = |title: &str, source| PlaceTitle { title: title.to_string(), source };
     if p.is_named {
         return t(&p.name, "named");
@@ -181,8 +206,8 @@ fn title(p: &Place, naming: &Naming, home: Option<&str>, work: Option<&str>) -> 
     if home == Some(p.id.as_str()) {
         return t("Home", "home");
     }
-    if work == Some(p.id.as_str()) {
-        return t("Work / frequent", "work");
+    if p.is_work {
+        return t("Work", "work");
     }
     match (&naming.name, &naming.city) {
         (Some(n), _) if naming.tier == "confident" && p.rejected_match.as_deref() != Some(n) => t(n, "map"),
@@ -194,12 +219,12 @@ fn title(p: &Place, naming: &Naming, home: Option<&str>, work: Option<&str>) -> 
 /// The titles of `ids`, by place id: what a stay at each place is called.
 pub async fn titles(pool: &PgPool, ids: &[String]) -> Result<HashMap<String, PlaceTitle>> {
     let all = places(pool).await?;
-    let (home, work) = home_and_work(&all, set_home(pool).await?.as_deref());
+    let home = set_home(pool).await?;
     let mut tiles = Tiles::default();
     let mut out = HashMap::new();
     for p in all.iter().filter(|p| ids.contains(&p.id)) {
         let naming = tiles.name(p.latitude, p.longitude).await;
-        out.insert(p.id.clone(), title(p, &naming, home.as_deref(), work.as_deref()));
+        out.insert(p.id.clone(), title(p, &naming, home.as_deref()));
     }
     Ok(out)
 }
@@ -215,6 +240,9 @@ pub struct Review {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Question {
+    /// `home`: "Is this home?"; `work`: "Is this where you work?"; `place`:
+    /// what the place was.
+    pub ask: &'static str,
     pub id: String,
     pub latitude: f64,
     pub longitude: f64,
@@ -252,12 +280,20 @@ pub struct Confirmed {
 pub async fn review(pool: &PgPool) -> Result<Review> {
     let mut all = places(pool).await?;
     all.sort_by(|a, b| b.total_ms.cmp(&a.total_ms).then(a.id.cmp(&b.id)));
-    let (home, work) = home_and_work(&all, set_home(pool).await?.as_deref());
+    let home = set_home(pool).await?;
+    let (ask_home, ask_work) = home_and_work_to_ask(&all, home.as_deref());
     let mut tiles = Tiles::default();
     let (mut questions, mut confirmed) = (Vec::new(), Vec::new());
     for p in &all {
         let naming = tiles.name(p.latitude, p.longitude).await;
-        let t = title(p, &naming, home.as_deref(), work.as_deref());
+        let t = title(p, &naming, home.as_deref());
+        let ask = if ask_home.as_ref() == Some(&p.id) {
+            "home"
+        } else if ask_work.as_ref() == Some(&p.id) {
+            "work"
+        } else {
+            "place"
+        };
         match t.source {
             "named" | "home" | "work" | "map" => confirmed.push(Confirmed {
                 id: p.id.clone(),
@@ -268,10 +304,11 @@ pub async fn review(pool: &PgPool) -> Result<Review> {
                 hours: p.hours(),
                 stop_count: p.stays.len(),
             }),
-            _ if p.passing_through => {}
+            _ if p.passing_through && ask == "place" => {}
             _ => {
                 let (recall, best_day) = recall_line(&p.stays, p.tz);
                 questions.push(Question {
+                    ask,
                     id: p.id.clone(),
                     latitude: p.latitude,
                     longitude: p.longitude,
@@ -288,6 +325,12 @@ pub async fn review(pool: &PgPool) -> Result<Review> {
             }
         }
     }
+    // Home first, then Work: the two answers every other title leans on.
+    questions.sort_by_key(|q| match q.ask {
+        "home" => 0,
+        "work" => 1,
+        _ => 2,
+    });
     Ok(Review { questions, confirmed })
 }
 
@@ -409,7 +452,9 @@ fn recall_line(stays: &[(DateTime<Utc>, DateTime<Utc>)], tz: Tz) -> (String, Opt
 #[derive(Debug, Clone, Deserialize)]
 pub struct Answer {
     /// `name`: what the place was (and its category); `passing`: just passing
-    /// through; `not_this`: the map's match is wrong; `reopen`: ask again.
+    /// through; `not_this`: the map's match is wrong; `home` / `not_home` and
+    /// `work` / `not_work`: whether it's home, or where the person works;
+    /// `reopen`: forget every answer about it and ask again.
     pub kind: String,
     pub name: Option<String>,
     pub category: Option<String>,
@@ -424,7 +469,7 @@ fn stub(lat: f64, lon: f64) -> String {
 /// Writes an answer to the place's `wiki_places` row.
 pub async fn answer(pool: &PgPool, id: &str, a: &Answer) -> Result<()> {
     let name = a.name.as_deref().map(str::trim).filter(|n| !n.is_empty());
-    if !matches!(a.kind.as_str(), "name" | "passing" | "not_this" | "reopen") {
+    if !matches!(a.kind.as_str(), "name" | "passing" | "not_this" | "home" | "not_home" | "work" | "not_work" | "reopen") {
         return Err(Error::InvalidInput(format!("unknown answer `{}`", a.kind)));
     }
     if matches!(a.kind.as_str(), "name" | "not_this") && name.is_none() {
@@ -444,6 +489,33 @@ pub async fn answer(pool: &PgPool, id: &str, a: &Answer) -> Result<()> {
              updated_at = NOW() WHERE id = $1",
         )
         .bind(id),
+        "home" => {
+            // Home is the profile's, the one place every reader of Home shares.
+            let mut tx = pool.begin().await?;
+            let cleared = sqlx::query(
+                "UPDATE wiki_places SET metadata = COALESCE(metadata, '{}'::jsonb) - 'not_home', updated_at = NOW() WHERE id = $1",
+            )
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+            if cleared.rows_affected() == 0 {
+                return Err(Error::NotFound(format!("No place {id}")));
+            }
+            if sqlx::query("UPDATE app_user_profile SET home_place_id = $1").bind(id).execute(&mut *tx).await?.rows_affected() == 0 {
+                return Err(Error::NotFound("No profile to set Home on".into()));
+            }
+            tx.commit().await?;
+            return Ok(());
+        }
+        "not_home" | "work" | "not_work" => sqlx::query(
+            "UPDATE wiki_places SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object($2::text, true), \
+             updated_at = NOW() WHERE id = $1",
+        )
+        .bind(id)
+        .bind(match a.kind.as_str() {
+            "work" => "is_work",
+            k => k,
+        }),
         "not_this" => sqlx::query(
             "UPDATE wiki_places SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('rejected_match', $2::text), \
              updated_at = NOW() WHERE id = $1",
@@ -456,9 +528,14 @@ pub async fn answer(pool: &PgPool, id: &str, a: &Answer) -> Result<()> {
                 .fetch_optional(pool)
                 .await?
                 .ok_or_else(|| Error::NotFound(format!("No place {id}")))?;
+            sqlx::query("UPDATE app_user_profile SET home_place_id = NULL WHERE home_place_id = $1")
+                .bind(id)
+                .execute(pool)
+                .await?;
             sqlx::query(
                 "UPDATE wiki_places SET name = CASE WHEN is_named THEN $2 ELSE name END, is_named = false, \
-                 metadata = COALESCE(metadata, '{}'::jsonb) - 'passing_through' - 'rejected_match' - 'source', \
+                 metadata = COALESCE(metadata, '{}'::jsonb) - 'passing_through' - 'rejected_match' - 'source' \
+                     - 'is_work' - 'not_home' - 'not_work', \
                  updated_at = NOW() WHERE id = $1",
             )
             .bind(id)
@@ -520,6 +597,9 @@ mod tests {
             is_named: false,
             passing_through: false,
             rejected_match: None,
+            is_work: false,
+            not_home: false,
+            not_work: false,
             latitude: 0.0,
             longitude: 0.0,
             tz: chrono_tz::UTC,
@@ -530,11 +610,16 @@ mod tests {
     }
 
     #[test]
-    fn home_is_where_the_nights_are_and_work_where_the_rest_went() {
+    fn home_and_work_are_asked_about_never_assumed() {
         let ps = [place("bed", 9, 120, 100), place("desk", 6, 60, 0), place("cafe", 1, 70, 0)];
-        assert_eq!(home_and_work(&ps, None), (Some("bed".into()), Some("desk".into())), "one long stay is no Work");
-        assert_eq!(home_and_work(&ps, Some("desk")), (Some("desk".into()), Some("bed".into())), "the person's Home wins");
-        assert_eq!(home_and_work(&[place("desk", 3, 9, 0)], None), (None, Some("desk".into())), "no nights, no Home");
+        assert_eq!(home_and_work_to_ask(&ps, None), (Some("bed".into()), Some("desk".into())), "one long stay is no Work");
+        assert_eq!(home_and_work_to_ask(&ps, Some("bed")), (None, Some("desk".into())), "Home set: only Work is asked");
+        let mut no = ps;
+        no[0].not_home = true;
+        no[1].not_work = true;
+        assert_eq!(home_and_work_to_ask(&no, None), (None, Some("bed".into())), "a no moves on to the next place");
+        no[2].is_work = true;
+        assert_eq!(home_and_work_to_ask(&no, None).1, None, "Work set: not asked");
     }
 
     #[test]
@@ -547,16 +632,18 @@ mod tests {
         };
         let mut p = place("p", 2, 3, 0);
         let clear = naming("confident", Some("Corner Cafe"), Some("Riverton"));
-        assert_eq!(title(&p, &clear, None, None).title, "Corner Cafe");
-        assert_eq!(title(&p, &naming("ambiguous", None, Some("Riverton")), None, None).source, "city");
-        assert_eq!(title(&p, &naming("none", None, None), None, None).title, "Unnamed place");
-        assert_eq!(title(&p, &clear, Some("p"), None).title, "Home", "Home beats the map");
-        assert_eq!(title(&p, &clear, None, Some("p")).title, "Work / frequent");
+        assert_eq!(title(&p, &clear, None).title, "Corner Cafe");
+        assert_eq!(title(&p, &naming("ambiguous", None, Some("Riverton")), None).source, "city");
+        assert_eq!(title(&p, &naming("none", None, None), None).title, "Unnamed place");
+        assert_eq!(title(&p, &clear, Some("p")).title, "Home", "the person's Home beats the map");
+        p.is_work = true;
+        assert_eq!(title(&p, &clear, None).title, "Work");
+        p.is_work = false;
         p.rejected_match = Some("Corner Cafe".into());
-        assert_eq!(title(&p, &clear, None, None).title, "Riverton", "a rejected match steps aside");
+        assert_eq!(title(&p, &clear, None).title, "Riverton", "a rejected match steps aside");
         p.is_named = true;
         p.name = "The Farm".into();
-        assert_eq!(title(&p, &clear, Some("p"), None).title, "The Farm", "the person's name beats all");
+        assert_eq!(title(&p, &clear, Some("p")).title, "The Farm", "the person's name beats all");
     }
 
     #[test]
@@ -620,6 +707,29 @@ mod tests {
         let (name, is_named, _, source, passing) = row(&pool, &id).await;
         assert_eq!((name.as_str(), is_named, source, passing), ("Location 0.5000, -30.5000", false, None, None));
         assert!(review(&pool).await.unwrap().questions.iter().any(|q| q.id == id));
+    }
+
+    #[sqlx::test]
+    async fn home_is_asked_until_the_person_answers_and_a_no_is_kept(pool: PgPool) {
+        let id = sea_place(&pool).await;
+        sqlx::query("UPDATE data_location_visit SET started_at = '2026-09-12 02:00Z', ended_at = '2026-09-12 09:00Z'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let asked = |r: &Review| r.questions.iter().find(|q| q.id == id).map(|q| q.ask);
+        assert_eq!(asked(&review(&pool).await.unwrap()), Some("home"), "the most nights: asked, not assumed");
+        assert_eq!(titles(&pool, &[id.clone()]).await.unwrap()[&id].title, "Unnamed place", "no Home until the person says so");
+
+        answer(&pool, &id, &Answer { kind: "not_home".into(), name: None, category: None }).await.unwrap();
+        assert_eq!(asked(&review(&pool).await.unwrap()), Some("place"), "a no is kept: asked what it was instead");
+
+        answer(&pool, &id, &Answer { kind: "home".into(), name: None, category: None }).await.unwrap();
+        let r = review(&pool).await.unwrap();
+        assert!(r.confirmed.iter().any(|c| c.id == id && c.source == "home" && c.title == "Home"));
+        assert_eq!(titles(&pool, &[id.clone()]).await.unwrap()[&id].title, "Home");
+
+        answer(&pool, &id, &Answer { kind: "reopen".into(), name: None, category: None }).await.unwrap();
+        assert_eq!(asked(&review(&pool).await.unwrap()), Some("home"), "reopened: Home is asked again");
     }
 
     #[sqlx::test]

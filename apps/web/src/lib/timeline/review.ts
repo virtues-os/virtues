@@ -1,8 +1,9 @@
 /**
  * review.ts - "Help Virtues out": the places the box's map can't name, asked
  * one at a time, the place with the most time first (dayback/src/main.js:
- * 2113-2201). A clear match, Home and Work are accepted without asking and
- * listed for review. Every answer is written to the place's `wiki_places`
+ * 2113-2201), after "Is this home?" and "Is this where you work?", which are
+ * asked, never assumed. A clear match is accepted without asking and listed
+ * for review. Every answer is written to the place's `wiki_places`
  * row (`POST /api/timeline/places/:id/answer`), so a place is asked once.
  */
 import { apiGet, apiSend } from "$lib/api/client";
@@ -36,6 +37,9 @@ export interface PlaceNaming {
 }
 
 export interface PlaceQuestion {
+	/** `home`: "Is this home?"; `work`: "Is this where you work?"; `place`:
+	 *  what the place was. */
+	ask: "home" | "work" | "place";
 	id: string;
 	latitude: number;
 	longitude: number;
@@ -75,6 +79,7 @@ export type Answer =
 	| { kind: "name"; name: string; category?: string | null }
 	| { kind: "passing" }
 	| { kind: "not_this"; name: string }
+	| { kind: "home" | "not_home" | "work" | "not_work" }
 	| { kind: "reopen" };
 
 export function fetchReview(): Promise<PlaceReview> {
@@ -93,8 +98,10 @@ export interface Ask {
 	/** "Which of these were you at?": the places to pick from, more than one
 	 *  allowed, saved together. */
 	picks: PlaceCandidate[];
-	/** What "Other" takes: the place's name, or whose home it was. */
-	other: "place" | "person";
+	/** What "Other" takes: the place's name, or whose home it was; `null`
+	 *  for a yes-or-no question, which offers neither Other nor Just passing
+	 *  through. */
+	other: "place" | "person" | null;
 	/** The named places the question is about, labelled on the map. */
 	shown: PlaceCandidate[];
 	/** How far out they lie, so the map frames them readably; 0 with none. */
@@ -119,7 +126,8 @@ export function pickAnswer(picked: PlaceCandidate[]): Answer {
 	return { kind: "name", name: picked.map((c) => c.name).join(", "), category: cats.size === 1 ? picked[0].category : null };
 }
 
-/** The question for a place (main.js:2156-2179): which of several close
+/** The question for a place (main.js:2156-2179): whether it's home, or
+ *  where the person works, for the places where the time went; else which of several close
  *  places; whether it was a named place just out of reach (or someone's
  *  home, after a night there); whose home (where the map's places would
  *  show a hotel, else where they stayed); else what it was. A match the
@@ -128,6 +136,19 @@ export function askFor(q: PlaceQuestion): Ask {
 	const n = q.naming;
 	const cands = n.candidates.filter((c) => c.name !== q.rejected_match);
 	const named = (name: string, category: string | null = null): Answer => ({ kind: "name", name, category });
+	const yesNo = (text: string, yes: Answer, no: Answer): Ask => ({
+		text,
+		chips: [
+			{ label: "Yes", answer: yes },
+			{ label: "No", answer: no },
+		],
+		picks: [],
+		other: null,
+		shown: [],
+		reachM: 0,
+	});
+	if (q.ask === "home") return yesNo("Is this home?", { kind: "home" }, { kind: "not_home" });
+	if (q.ask === "work") return yesNo("Is this where you work?", { kind: "work" }, { kind: "not_work" });
 	if (cands.length > 1)
 		return {
 			text: "Which of these were you at?",
