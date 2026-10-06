@@ -19,6 +19,12 @@
 //!
 //! The door prints `endpoint-id <id>` once it is up; the supervisor stores
 //! that where `api::publications` builds links from.
+//!
+//! The core listens on a Unix socket for the door's two requests (a live
+//! page's approved query, and "a page was opened"), answered by
+//! `api::publications::answer`. On a box that socket is bound into the
+//! door's sandbox at `/run/virtues-core.sock` and is the only thing inside it
+//! that leads anywhere on the box.
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -53,9 +59,69 @@ pub fn wake() {
     notify().notify_one();
 }
 
-/// Start the supervisor. Call once, from the server's startup.
+/// Where the door finds the core inside its sandbox.
+const SOCKET_IN_SANDBOX: &str = "/run/virtues-core.sock";
+
+/// Start the supervisor and the core's socket. Call once, from the server's
+/// startup.
 pub fn maybe_spawn(pool: PgPool) {
+    let listener_pool = pool.clone();
+    tokio::spawn(async move {
+        if let Err(e) = listen(listener_pool).await {
+            tracing::error!(error = %e, "door: the core's socket failed; live pages and open counts are off");
+        }
+    });
     tokio::spawn(async move { supervise(pool).await });
+}
+
+/// The core's socket. Under the publication state directory when that path
+/// fits a Unix socket address; a dev checkout's deep path may not, and then
+/// the temporary directory.
+pub fn core_socket_path() -> std::path::PathBuf {
+    let preferred = publications::door_dir().join("core.sock");
+    if preferred.as_os_str().len() < 100 {
+        return preferred;
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&preferred, &mut h);
+    std::env::temp_dir().join(format!("virtues-core-{:x}.sock", std::hash::Hasher::finish(&h)))
+}
+
+async fn listen(pool: PgPool) -> anyhow::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let path = core_socket_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let _ = std::fs::remove_file(&path);
+    let listener = tokio::net::UnixListener::bind(&path)?;
+    // The door runs as a throwaway uid; the socket is reachable only where it
+    // is bound into the door's sandbox, and asks need a live link's token.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666))?;
+    }
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            let (read, mut write) = stream.into_split();
+            let mut line = String::new();
+            let mut reader = BufReader::new(tokio::io::AsyncReadExt::take(read, 64 * 1024));
+            if reader.read_line(&mut line).await.is_err() {
+                return;
+            }
+            let answer = match serde_json::from_str::<virtues_door::core::CoreRequest>(line.trim()) {
+                Ok(request) => publications::answer(&pool, request).await,
+                Err(_) => virtues_door::core::CoreAnswer { ok: false, rows: None },
+            };
+            if let Ok(mut out) = serde_json::to_vec(&answer) {
+                out.push(b'\n');
+                let _ = write.write_all(&out).await;
+            }
+        });
+    }
 }
 
 async fn anything_shared(pool: &PgPool) -> bool {
@@ -243,8 +309,9 @@ fn sandbox_properties(bundles: &Path) -> Vec<String> {
     ] {
         props.push(format!("InaccessiblePaths=-{}", path.display()));
     }
-    // Mounted from the host side, so the hidden paths above do not hide it.
+    // Mounted from the host side, so the hidden paths above do not hide them.
     props.push(format!("BindReadOnlyPaths={}:/pub", bundles.display()));
+    props.push(format!("BindPaths={}:{SOCKET_IN_SANDBOX}", core_socket_path().display()));
     props
 }
 
@@ -257,6 +324,7 @@ fn sandboxed(program: &Path, bundles: &Path, relay: &str) -> Command {
     cmd.args(["-E", "RUST_LOG=virtues_door=info,iroh=warn", "--"]);
     cmd.arg(program);
     cmd.args(["--root", "/pub", "--key-dir", "/var/lib/virtues-door", "--relay", relay]);
+    cmd.args(["--core-socket", SOCKET_IN_SANDBOX]);
     cmd
 }
 
@@ -269,7 +337,9 @@ fn direct(program: &Path, bundles: &Path, relay: &str) -> Command {
         .arg(bundles)
         .arg("--key-dir")
         .arg(publications::door_dir())
-        .args(["--relay", relay]);
+        .args(["--relay", relay])
+        .arg("--core-socket")
+        .arg(core_socket_path());
     cmd
 }
 
@@ -292,7 +362,9 @@ mod tests {
             assert!(props.iter().any(|p| p == must), "missing {must}");
         }
         assert!(!props.iter().any(|p| p.starts_with("User=")), "a named user replaces the throwaway uid");
-        assert!(!props.iter().any(|p| p.starts_with("BindPaths=")), "the door never writes bundles");
+        let writable: Vec<_> = props.iter().filter(|p| p.starts_with("BindPaths=")).collect();
+        assert_eq!(writable.len(), 1, "only the core's socket: {writable:?}");
+        assert!(writable[0].ends_with(":/run/virtues-core.sock"));
     }
 
     #[test]

@@ -9,9 +9,12 @@
 //! - [`bundle`]: the directory layout, shared with the core, which writes it.
 //! - [`protocol`]: one request per stream, a JSON line in, a JSON line and a
 //!   body out.
+//! - [`core`]: the one line back to the core, for live pages' approved
+//!   queries and open counts.
 //! - [`serve`]: the iroh handler that ties them together.
 
 pub mod bundle;
+pub mod core;
 pub mod protocol;
 pub mod token;
 
@@ -31,6 +34,7 @@ const MAX_REQUESTS_PER_CONNECTION: usize = 64;
 #[derive(Debug, Clone)]
 struct Door {
     store: Arc<bundle::Store>,
+    core: core::Core,
 }
 
 impl ProtocolHandler for Door {
@@ -43,8 +47,9 @@ impl ProtocolHandler for Door {
                 break;
             };
             let store = self.store.clone();
+            let core = self.core.clone();
             tokio::spawn(async move {
-                if let Err(e) = protocol::handle(&store, send, recv).await {
+                if let Err(e) = protocol::handle(&store, &core, send, recv).await {
                     tracing::debug!(%remote, error = %e, "request failed");
                 }
             });
@@ -54,9 +59,10 @@ impl ProtocolHandler for Door {
 }
 
 /// Serve `store` on `endpoint` until the returned router is shut down.
-pub fn serve(endpoint: Endpoint, store: bundle::Store) -> Router {
+/// `core` is where approved queries and open counts go.
+pub fn serve(endpoint: Endpoint, store: bundle::Store, core: core::Core) -> Router {
     Router::builder(endpoint)
-        .accept(PUBLISH_ALPN, Door { store: Arc::new(store) })
+        .accept(PUBLISH_ALPN, Door { store: Arc::new(store), core })
         .spawn()
 }
 
@@ -92,7 +98,7 @@ mod tests {
             .unwrap();
         let addr = EndpointAddr::new(server.id())
             .with_ip_addr(format!("127.0.0.1:{port}").parse().unwrap());
-        let _router = serve(server, bundle::Store::new(dir.path()));
+        let _router = serve(server, bundle::Store::new(dir.path()), core::Core::default());
 
         let conn = client.connect(addr, PUBLISH_ALPN).await.unwrap();
         let ask = |line: String| {

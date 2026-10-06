@@ -35,6 +35,7 @@
 	let busy = $state(false);
 	let error = $state<string | null>(null);
 	let expiry = $state('30');
+	let live = $state(false);
 	let copied = $state<string | null>(null);
 	let confirmRevoke = $state<string | null>(null);
 
@@ -84,7 +85,7 @@
 		busy = true;
 		error = null;
 		try {
-			const made = await createPublication(appletId, Number(expiry));
+			const made = await createPublication(appletId, Number(expiry), preview?.reads_data && live);
 			links = [made, ...links];
 			if (!made.link) await waitForLink(made.id);
 		} catch (e) {
@@ -140,6 +141,19 @@
 		return `Expires ${new Date(l.expires_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
 	}
 
+	function opened(l: Publication): string {
+		if (l.open_count === 0) return 'Not opened yet';
+		return l.open_count === 1 ? 'Opened once' : `Opened ${l.open_count} times`;
+	}
+
+	// One row of a query's result, as the few values a person can scan.
+	function rowText(row: Record<string, unknown>): string {
+		return Object.entries(row)
+			.slice(0, 4)
+			.map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`)
+			.join(' · ');
+	}
+
 	function host(url: string): string {
 		try {
 			return new URL(url).host;
@@ -184,6 +198,43 @@
 						</li>
 					{/if}
 				</ul>
+				{#if preview.reads_data}
+					<div class="data">
+						<h3>Data on this page</h3>
+						{#each preview.queries as q, i (i)}
+							<div class="query">
+								<p>
+									{q.row_count === 1 ? '1 row' : `${q.row_count} rows`}{q.sample.length
+										? ', starting with:'
+										: '.'}
+								</p>
+								{#each q.sample as row, j (j)}
+									<p class="row">{rowText(row)}</p>
+								{/each}
+								<details>
+									<summary>Show the query</summary>
+									<pre>{q.sql}</pre>
+								</details>
+							</div>
+						{/each}
+						<fieldset class="mode">
+							<label>
+								<input type="radio" name="share-mode" value={false} bind:group={live} />
+								<span>
+									<strong>Snapshot.</strong> The page carries these rows as they are now. Opening
+									it asks your server for nothing.
+								</span>
+							</label>
+							<label>
+								<input type="radio" name="share-mode" value={true} bind:group={live} />
+								<span>
+									<strong>Live.</strong> Your server runs these queries each time someone opens
+									the page, so they see current data. It runs only these, read-only.
+								</span>
+							</label>
+						</fieldset>
+					</div>
+				{/if}
 				{#if preview.looks_private.length}
 					<div class="warn">
 						<Icon icon="ri:eye-line" width="16" />
@@ -207,7 +258,11 @@
 								<span class="hint">Starting your share server…</span>
 							{/if}
 							<div class="link-meta">
+								{#if preview?.reads_data}
+									<span>{l.is_live ? 'Live' : 'Snapshot'}</span>
+								{/if}
 								<span>{expires(l)}</span>
+								<span>{opened(l)}</span>
 							</div>
 							<div class="link-actions">
 								{#if l.link}
@@ -299,6 +354,51 @@
 	}
 	.warn-title {
 		font-weight: 600;
+	}
+	.data {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		margin-top: 1rem;
+	}
+	.query p {
+		margin: 0;
+		font-size: 0.8125rem;
+	}
+	.query .row {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+		overflow-wrap: anywhere;
+	}
+	details {
+		margin-top: 0.25rem;
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+	}
+	pre {
+		margin: 0.25rem 0 0;
+		padding: 0.5rem;
+		border-radius: 6px;
+		background: var(--color-surface-elevated);
+		font-size: 0.75rem;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+	.mode {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		margin: 0;
+		padding: 0;
+		border: 0;
+	}
+	.mode label {
+		display: flex;
+		gap: 0.5rem;
+		align-items: flex-start;
+		font-size: 0.8125rem;
+		line-height: 1.5;
 	}
 	.private {
 		font-family: var(--font-mono);
