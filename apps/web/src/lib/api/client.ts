@@ -2289,16 +2289,16 @@ export function searchUnsplash<T = unknown>(body: Record<string, unknown>): Prom
 // ============================================================================
 
 /** What a link shares: an applet's face or a page. */
-export type ShareProducer = { kind: 'applet' | 'page'; id: string };
+export type ShareProducer = { kind: 'applet' | 'page' | 'chat'; id: string };
 
-function producerParams(p: ShareProducer): { applet_id?: string; page_id?: string } {
-	return p.kind === 'page' ? { page_id: p.id } : { applet_id: p.id };
+function producerParams(p: ShareProducer): Record<string, string> {
+	return { [`${p.kind}_id`]: p.id };
 }
 
 /** One shared link. `link` is null until the door has started, and after revoke. */
 export interface Publication {
 	id: string;
-	producer_kind: 'applet' | 'page';
+	producer_kind: 'applet' | 'page' | 'chat';
 	producer_id: string;
 	title: string;
 	size_bytes: number;
@@ -2336,6 +2336,9 @@ export interface SharePreview {
 	names: string[];
 	/** Images from other sites, left out of the shared copy. */
 	images_left_out: number;
+	/** A chat: messages that go, and attachments that stay on the server. */
+	message_count: number;
+	attachments_left_out: number;
 	/** The page reads data, so it can be shared as a snapshot or live. */
 	reads_data: boolean;
 	queries: SharedQuery[];

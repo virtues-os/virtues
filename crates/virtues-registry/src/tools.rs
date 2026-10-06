@@ -104,7 +104,7 @@ fn publish_to_github_tool() -> ToolConfig {
         id: "publish_to_github".to_string(),
         name: "Publish to GitHub".to_string(),
         description: "Publish an applet's face as a web page through a GitHub repo".to_string(),
-        llm_description: r#"Publish an applet's face (its face/index.html) as one file in a GitHub repo, which the owner's host then serves as a web page. Only when the owner asks to publish or share it; they name the repo and where it goes. The face must stand alone off the box: no virtues.query, virtues.js or /api/, with the content written into the HTML and images as data: URIs. If it does not, rewrite it with edit_applet first. The owner allows each exact publish, so on permission_needed stop and wait; after they allow it, call again with the same arguments. Editing the face afterwards means publishing again."#.to_string(),
+        llm_description: r#"Put an applet's face in the owner's GitHub repo as one HTML file, which their host serves. Only when the owner asks for GitHub specifically; the Share button is the usual way to share. The face must stand alone: no virtues.query, virtues.js or /api/. The owner allows each exact publish: on permission_needed stop, and once allowed call again with the same arguments."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["applet_id", "repo", "path"],

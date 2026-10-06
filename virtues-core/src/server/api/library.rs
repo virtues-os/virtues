@@ -519,14 +519,15 @@ pub async fn create_publication_handler(
 pub struct PreviewQuery {
     pub applet_id: Option<String>,
     pub page_id: Option<String>,
+    pub chat_id: Option<String>,
 }
 
-/// GET /api/publications/preview?applet_id= | ?page_id= — what sharing would send.
+/// GET /api/publications/preview?applet_id= | ?page_id= | ?chat_id= — what sharing would send.
 pub async fn preview_publication_handler(
     State(state): State<AppState>,
     Query(q): Query<PreviewQuery>,
 ) -> Response {
-    let producer = match crate::api::publications::Producer::from_ids(q.applet_id, q.page_id) {
+    let producer = match crate::api::publications::Producer::from_ids(q.applet_id, q.page_id, q.chat_id) {
         Ok(p) => p,
         Err(e) => return error_response(e),
     };

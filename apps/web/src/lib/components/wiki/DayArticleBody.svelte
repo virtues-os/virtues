@@ -1,54 +1,84 @@
 <!--
 	DayArticleBody.svelte
 
-	The day article's body with its margin. Each block of the page sits beside
-	the notes that belong to it, in two kinds only:
+	The day article's body with its margin.
 
-	- context (a section's time span): always shown, plain text;
-	- evidence (the record a sentence rests on): shown when the paragraph is
-	  hovered or focused, always shown beside a table. `↗` means one thing:
-	  open Record on that item.
+	Every sentence the writer tagged with evidence opens that evidence when
+	clicked: the record's own words in a card beside it (DayEvidence), with a
+	way on to the record in Data. A table or a photo opens its evidence the same
+	way, as a whole. Nothing in the margin repeats it; the margin holds only the
+	context notes (a section's time span), as quiet text.
 
-	Captions and tables carry no links; the margin does. On a narrow screen the
-	margin drops under its block. The markdown and its footnotes come from
-	`parseDayArticle` (lib/wiki/dayArticle.ts).
+	Paragraphs are drawn sentence by sentence (DayInline) so each can be its
+	own element; headings, tables and figures go through Markdown. On a narrow
+	screen the margin drops under its block. The markdown and its footnotes come
+	from `parseDayArticle` (lib/wiki/dayArticle.ts).
 -->
 <script lang="ts">
+	import type { Snippet } from "svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import { veilMarks, type ArticleBlock, type MarginNote } from "$lib/wiki/dayArticle";
 	import { veiled } from "$lib/actions/veil";
 	import { veil } from "$lib/stores/veil.svelte";
+	import DayInline from "./DayInline.svelte";
+	import DayEvidence from "./DayEvidence.svelte";
 
 	interface Props {
 		blocks: ArticleBlock[];
-		/** Open Record on a cited item (`table:id`). */
+		/** Open Data on a cited item (`table:id`). */
 		oncite?: (ref: string) => void;
+		/** Draws a person link inside a sentence (the day's gloss card). */
+		person?: Snippet<[{ name: string; url: string }]>;
 	}
 
-	let { blocks, oncite }: Props = $props();
+	let { blocks, oncite, person }: Props = $props();
 
 	const context = (b: ArticleBlock) => b.notes.filter((n) => n.kind === "cx");
-	const evidence = (b: ArticleBlock) => {
-		// One entry per label: a paragraph can cite the same moment twice.
-		const seen = new Set<string>();
-		return b.notes.filter((n) => n.kind === "ev" && !seen.has(n.label) && seen.add(n.label));
-	};
-</script>
+	const blockEvidence = (b: ArticleBlock) => b.notes.filter((n) => n.kind === "ev" && n.ref);
 
-{#snippet note(n: MarginNote)}
-	{#if n.kind === "ev" && n.ref && oncite}
-		<button type="button" class="note note-evidence" data-ref={n.ref} onclick={() => oncite?.(n.ref as string)}>
-			{n.label} <span aria-hidden="true">↗</span>
-		</button>
-	{:else}
-		<span class="note">{n.label}</span>
-	{/if}
-{/snippet}
+	/** The open card: the element it belongs to, and what it shows. */
+	let open = $state<{ anchor: HTMLElement; evidence: MarginNote[]; sentence: string } | null>(null);
+
+	function show(anchor: HTMLElement, evidence: MarginNote[], sentence: string) {
+		const again = open?.anchor === anchor;
+		close();
+		if (again) return;
+		anchor.classList.add("active");
+		open = { anchor, evidence, sentence };
+	}
+
+	function close() {
+		open?.anchor.classList.remove("active");
+		open = null;
+	}
+
+	const refsOf = (evidence: MarginNote[]) => evidence.map((n) => n.ref).filter(Boolean).join(" ");
+
+	function onClick(e: MouseEvent, evidence: MarginNote[], sentence: string) {
+		// A link inside the sentence is its own target, and a reader selecting
+		// words to copy them isn't asking for the source.
+		if ((e.target as HTMLElement).closest("button, a")) return;
+		if (String(window.getSelection() ?? "").trim()) return;
+		show(e.currentTarget as HTMLElement, evidence, sentence);
+	}
+
+	function onKey(e: KeyboardEvent, evidence: MarginNote[], sentence: string) {
+		if (e.target !== e.currentTarget) return;
+		if (e.key !== "Enter" && e.key !== " ") return;
+		e.preventDefault();
+		show(e.currentTarget as HTMLElement, evidence, sentence);
+	}
+
+	function cite(ref: string) {
+		close();
+		oncite?.(ref);
+	}
+</script>
 
 <div class="day-body">
 	{#each blocks as block, i (i)}
 		{@const cx = context(block)}
-		{@const ev = evidence(block)}
+		{@const ev = blockEvidence(block)}
 		{@const marked = veilMarks(block.markdown)}
 		<div
 			class="row"
@@ -57,19 +87,47 @@
 			class:row-figure={block.markdown.startsWith("![")}
 		>
 			<div class="text" use:veiled={{ hiding: veil.hiding, phrases: marked.phrases }}>
-				<Markdown content={marked.markdown} refVariant="quiet" variant="article" />
-			</div>
-			<aside class="margin" aria-label="Notes on this passage">
-				{#each cx as n (n.label)}{@render note(n)}{/each}
-				{#if ev.length}
-					<div class="evidence" class:always={block.kind === "table"}>
-						{#each ev as n (n.label)}{@render note(n)}{/each}
+				{#if block.kind === "paragraph"}
+					<div class="markdown markdown--article">
+						<p>
+							{#each block.sentences as s, j (j)}{#if j > 0}{" "}{/if}{#if s.evidence.some((n) => n.ref)}<span
+										class="s"
+										data-refs={refsOf(s.evidence)}
+										role="button"
+										tabindex="0"
+										aria-haspopup="dialog"
+										onclick={(e) => onClick(e, s.evidence, s.markdown)}
+										onkeydown={(e) => onKey(e, s.evidence, s.markdown)}
+									><DayInline markdown={veilMarks(s.markdown).markdown} {person} /></span
+								>{:else}<DayInline markdown={veilMarks(s.markdown).markdown} {person} />{/if}{/each}
+						</p>
 					</div>
+				{:else if ev.length}
+					<div
+						class="s s-block"
+						data-refs={refsOf(ev)}
+						role="button"
+						tabindex="0"
+						aria-haspopup="dialog"
+						onclick={(e) => onClick(e, ev, block.markdown)}
+						onkeydown={(e) => onKey(e, ev, block.markdown)}
+					>
+						<Markdown content={marked.markdown} refVariant="quiet" variant="article" />
+					</div>
+				{:else}
+					<Markdown content={marked.markdown} refVariant="quiet" variant="article" />
 				{/if}
+			</div>
+			<aside class="margin" aria-label="When">
+				{#each cx as n (n.label)}<span class="note">{n.label}</span>{/each}
 			</aside>
 		</div>
 	{/each}
 </div>
+
+{#if open}
+	<DayEvidence anchor={open.anchor} evidence={open.evidence} sentence={open.sentence} oncite={cite} onclose={close} />
+{/if}
 
 <style>
 	.day-body {
@@ -114,21 +172,76 @@
 		transition: none;
 	}
 
+	/* A sentence with evidence carries no mark until it is touched: a faint
+	   wash on hover (after a beat, so reading past it doesn't flicker), the
+	   highlight while its card is open. */
+	.s {
+		cursor: pointer;
+		border-radius: 3px;
+		box-decoration-break: clone;
+		-webkit-box-decoration-break: clone;
+		transition: background-color 0.12s ease;
+	}
+
+	.s:hover {
+		background-color: color-mix(in srgb, var(--color-primary) 6%, transparent);
+		transition-delay: 0.2s;
+	}
+
+	.s:focus-visible {
+		outline: 2px solid var(--color-border-focus);
+		outline-offset: 1px;
+	}
+
+	.s:global(.active) {
+		background-color: var(--color-highlight);
+		transition-delay: 0s;
+	}
+
+	/* Back from Data: the sentence the citation came from, lit and let go. */
+	.s:global(.flash) {
+		animation: sentence-flash 1.6s ease;
+	}
+
+	@keyframes sentence-flash {
+		0%,
+		40% {
+			background-color: var(--color-highlight);
+		}
+		100% {
+			background-color: transparent;
+		}
+	}
+
+	.s-block {
+		display: block;
+		border-radius: 8px;
+	}
+
+	.s-block:hover {
+		background-color: transparent;
+	}
+
+	.row-table .s-block :global(tr:hover td) {
+		background-color: color-mix(in srgb, var(--color-primary) 5%, transparent);
+	}
+
 	.margin {
 		display: flex;
 		flex-direction: column;
 		gap: 0.375rem;
 		padding-top: 0.3rem;
 		font-family: var(--font-sans);
-		font-size: 0.6875rem;
+		font-size: 0.75rem;
 		line-height: 1.35;
 		color: var(--color-foreground-subtle);
+		font-variant-numeric: tabular-nums;
 	}
 
 	/* A heading's notes hang beside it without making its row taller, so a
 	   second note never pushes the paragraph below away from its heading. */
 	.row-heading .margin {
-		padding-top: 2.5rem;
+		padding-top: 2.6rem;
 		height: 0;
 		overflow: visible;
 	}
@@ -151,38 +264,6 @@
 
 	.note {
 		display: block;
-		background: var(--color-surface-elevated);
-		border-radius: 6px;
-		padding: 0.4375rem 0.625rem;
-		text-align: left;
-	}
-
-	.note-evidence {
-		border: none;
-		font: inherit;
-		color: var(--color-primary);
-		cursor: pointer;
-		width: 100%;
-	}
-
-	.note-evidence:hover {
-		color: var(--color-primary-hover, var(--color-primary));
-	}
-
-	/* A paragraph's evidence appears when you are reading it; a table's is
-	   always there, because the table is a block the eye lands on whole. */
-	.evidence {
-		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
-		opacity: 0;
-		transition: opacity 0.15s ease;
-	}
-
-	.row:hover .evidence,
-	.row:focus-within .evidence,
-	.evidence.always {
-		opacity: 1;
 	}
 
 	@media (max-width: 56rem) {
@@ -198,26 +279,13 @@
 		.row-heading .margin {
 			padding-top: 0;
 			height: auto;
-			margin: 0 0 0.5rem;
-			order: -1;
-		}
-
-		.row-heading .note {
-			background: none;
-			padding: 0;
-		}
-
-		.evidence {
-			display: none;
-		}
-
-		.evidence.always {
-			display: flex;
+			margin: -0.375rem 0 0.75rem;
 		}
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.evidence {
+		.s,
+		.text {
 			transition: none;
 		}
 	}

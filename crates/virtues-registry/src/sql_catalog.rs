@@ -280,7 +280,10 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "financial",
         key_columns: &["account_id", "amount", "currency", "merchant_name", "merchant_category", "description", "category", "is_pending", "transaction_type", "payment_channel", "occurred_at"],
         join_hint: Some("JOIN data_financial_account ON account_id = data_financial_account.id"),
-        note: Some("amounts in cents; positive = money out; group by merchant_category"),
+        // FinanceKit rows written before the phone sent a direction are all
+        // positive, deposits and card payments included; the lifeline's spend
+        // and income skip them, and a model's query has to as well.
+        note: Some("amounts in cents; positive = money out; group by merchant_category (Plaid) or transaction_type (apple_finance); apple_finance rows with NULL transaction_type have no direction, so leave them out of spend and income"),
     });
     m.insert("data_financial_asset", TableMetadata {
         description: "Investment holdings (stocks, crypto, etc.)",

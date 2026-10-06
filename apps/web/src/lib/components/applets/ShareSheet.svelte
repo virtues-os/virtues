@@ -191,7 +191,24 @@
 					srcdoc={preview.html}
 				></iframe>
 				<ul class="facts">
-					<li>This page, {kb(preview.size_bytes)}, exactly as shown above.</li>
+					{#if producer.kind === 'chat'}
+						<li>
+							{preview.message_count === 1 ? '1 message' : `${preview.message_count} messages`},
+							your words and the assistant's replies, exactly as shown above ({kb(preview.size_bytes)}).
+						</li>
+						<li>
+							Tool results, the assistant's reasoning and its sources stay on your server.
+						</li>
+						{#if preview.attachments_left_out}
+							<li>
+								{preview.attachments_left_out === 1
+									? '1 attachment stays on your server.'
+									: `${preview.attachments_left_out} attachments stay on your server.`}
+							</li>
+						{/if}
+					{:else}
+						<li>This page, {kb(preview.size_bytes)}, exactly as shown above.</li>
+					{/if}
 					<li>
 						{preview.image_count === 0
 							? 'No images.'
@@ -206,8 +223,9 @@
 					{/if}
 					{#if preview.names.length}
 						<li>
-							The names {preview.names.join(', ')}, as plain text. Nothing else about them goes
-							with the page.
+							{preview.names.length === 1
+								? `The name ${preview.names[0]}, as plain text. Nothing else about them goes with it.`
+								: `The names ${preview.names.join(', ')}, as plain text. Nothing else about them goes with it.`}
 						</li>
 					{/if}
 					{#if preview.links.length}

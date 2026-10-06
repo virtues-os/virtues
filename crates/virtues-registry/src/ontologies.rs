@@ -231,6 +231,12 @@ pub struct LaneMeasure {
     pub agg: &'static str,
     /// Rows that carry this measure at all, ANDed onto the window.
     pub filter: Option<&'static str>,
+    /// Rows this measure can judge, when that is narrower than the table.
+    /// A window whose rows all fall outside it was not measured, which is not
+    /// the same as a zero: spend over a day of FinanceKit rows with no
+    /// direction is unknown, not $0. `None` means every row can be judged.
+    /// `filter` must imply it.
+    pub coverage: Option<&'static str>,
     pub kind: MeasureKind,
 }
 
@@ -253,75 +259,112 @@ pub enum MeasureKind {
 /// Every measure the lifeline can draw.
 ///
 /// `is_from_me` lives in `metadata` rather than a column, so the sent/received
-/// split reads JSONB; it is present on all 169k message rows as the text
-/// 'true'/'false'. Financial amounts follow the Plaid sign convention —
-/// POSITIVE is money leaving — which is why `spend` filters `> 0` and `income`
-/// negates. Both were checked against a real box rather than assumed.
+/// split reads JSONB; it is present on every message row as the text
+/// 'true'/'false'. Sent rows carry `from_handle = ''`, which is also what a
+/// short code or a blank sender normalizes to, so `''` is never a person.
+///
+/// Financial amounts are signed one way for every provider: POSITIVE is money
+/// leaving. Plaid sends it that way; the FinanceKit ingest signs from the
+/// phone's credit/debit indicator. A FinanceKit row written before the phone
+/// sent that indicator has no direction (every one is positive, deposits and
+/// card payments included) and carries a NULL `transaction_type`. Spend and
+/// income leave those rows out rather than guess. The phone re-sends three
+/// years of history on every sync, which signs them.
+///
+/// Each provider says what a row is in its own column and vocabulary: Plaid's
+/// category in `merchant_category`, FinanceKit's in `transaction_type`.
 pub fn lane_measures() -> &'static [LaneMeasure] {
     use MeasureKind::{Rate, Total};
+    // A FinanceKit row from a phone that sent no direction: neither spend nor
+    // income can say anything about it.
+    const HAS_DIRECTION: &str =
+        "NOT (source_provider = 'apple_finance' AND transaction_type IS NULL)";
     const M: &[LaneMeasure] = &[
         // ── health ──────────────────────────────────────────────────────────
         LaneMeasure { id: "heart_rate", lane: "health", table: "data_health_heart_rate",
             timestamp_column: "occurred_at", label: "heart rate", unit: "bpm",
-            agg: "avg(bpm)", filter: Some("bpm > 0"), kind: Rate },
+            agg: "avg(bpm)", filter: Some("bpm > 0"), coverage: None, kind: Rate },
         LaneMeasure { id: "hrv", lane: "health", table: "data_health_hrv",
             timestamp_column: "occurred_at", label: "HRV", unit: "ms",
-            agg: "avg(hrv_ms)", filter: Some("hrv_ms > 0"), kind: Rate },
+            agg: "avg(hrv_ms)", filter: Some("hrv_ms > 0"), coverage: None, kind: Rate },
         LaneMeasure { id: "sleep", lane: "health", table: "data_health_sleep",
             timestamp_column: "started_at", label: "sleep", unit: "h",
-            agg: "sum(duration_minutes) / 60.0", filter: None, kind: Total },
+            agg: "sum(duration_minutes) / 60.0", filter: None, coverage: None, kind: Total },
         LaneMeasure { id: "steps", lane: "health", table: "data_health_steps",
             timestamp_column: "occurred_at", label: "steps", unit: "",
-            agg: "sum(step_count)", filter: None, kind: Total },
+            agg: "sum(step_count)", filter: None, coverage: None, kind: Total },
         LaneMeasure { id: "workouts", lane: "health", table: "data_health_workout",
             timestamp_column: "started_at", label: "workouts", unit: "",
-            agg: "count(*)", filter: None, kind: Total },
+            agg: "count(*)", filter: None, coverage: None, kind: Total },
         // ── location ────────────────────────────────────────────────────────
         LaneMeasure { id: "visits", lane: "location", table: "data_location_visit",
             timestamp_column: "started_at", label: "visits", unit: "",
-            agg: "count(*)", filter: None, kind: Total },
+            agg: "count(*)", filter: None, coverage: None, kind: Total },
         LaneMeasure { id: "time_out", lane: "location", table: "data_location_visit",
             timestamp_column: "started_at", label: "time out", unit: "h",
-            agg: "sum(duration_minutes) / 60.0", filter: None, kind: Total },
+            agg: "sum(duration_minutes) / 60.0", filter: None, coverage: None, kind: Total },
         LaneMeasure { id: "places", lane: "location", table: "data_location_visit",
             timestamp_column: "started_at", label: "distinct places", unit: "",
             agg: "count(DISTINCT place_name)", filter: Some("place_name IS NOT NULL"),
-            kind: Total },
+            coverage: None, kind: Total },
         // ── communication ───────────────────────────────────────────────────
         LaneMeasure { id: "sent", lane: "communication", table: "data_communication_message",
             timestamp_column: "occurred_at", label: "messages sent", unit: "",
-            agg: "count(*)", filter: Some("metadata->>'is_from_me' = 'true'"), kind: Total },
+            agg: "count(*)", filter: Some("metadata->>'is_from_me' = 'true'"), coverage: None, kind: Total },
         LaneMeasure { id: "received", lane: "communication", table: "data_communication_message",
             timestamp_column: "occurred_at", label: "messages received", unit: "",
-            agg: "count(*)", filter: Some("metadata->>'is_from_me' = 'false'"), kind: Total },
+            agg: "count(*)", filter: Some("metadata->>'is_from_me' = 'false'"), coverage: None, kind: Total },
+        // Senders only. Counting both directions added the owner (every sent
+        // row's '' handle) to any day they wrote back.
         LaneMeasure { id: "people", lane: "communication", table: "data_communication_message",
-            timestamp_column: "occurred_at", label: "people spoken to", unit: "",
-            agg: "count(DISTINCT from_handle)", filter: Some("from_handle IS NOT NULL"),
-            kind: Total },
+            timestamp_column: "occurred_at", label: "people who messaged you", unit: "",
+            agg: "count(DISTINCT from_handle)",
+            filter: Some("from_handle <> '' AND metadata->>'is_from_me' = 'false'"),
+            coverage: None, kind: Total },
         LaneMeasure { id: "talk", lane: "communication", table: "data_communication_transcription",
             timestamp_column: "started_at", label: "speech heard", unit: "min",
-            agg: "sum(duration_seconds) / 60.0", filter: None, kind: Total },
+            agg: "sum(duration_seconds) / 60.0", filter: None, coverage: None, kind: Total },
         // ── financial ───────────────────────────────────────────────────────
+        // Purchases: money that left for someone else. Not a transfer between
+        // your own accounts, and not a card or loan payment — a card payment
+        // pays for purchases already counted on the card, so counting it too
+        // doubles them. Fees and interest charged stay in: that money is gone.
         LaneMeasure { id: "spend", lane: "financial", table: "data_financial_transaction",
             timestamp_column: "occurred_at", label: "spend", unit: "$",
-            agg: "sum(amount) / 100.0", filter: Some("amount > 0"), kind: Total },
+            agg: "sum(amount) / 100.0",
+            filter: Some("amount > 0 AND CASE source_provider \
+                WHEN 'plaid' THEN coalesce(merchant_category, '') \
+                    NOT IN ('TRANSFER_IN', 'TRANSFER_OUT', 'LOAN_PAYMENTS') \
+                WHEN 'apple_finance' THEN transaction_type IS NOT NULL \
+                    AND transaction_type NOT IN ('billPayment', 'transfer', 'withdrawal', 'atm', 'loan') \
+                ELSE true END"),
+            coverage: Some(HAS_DIRECTION), kind: Total },
+        // Earnings: what the provider itself calls income. Money arriving is
+        // mostly not that — a refund, a transfer in, the card side of a card
+        // payment, Apple's Daily Cash deposits — so this names what counts
+        // rather than listing what doesn't.
         LaneMeasure { id: "income", lane: "financial", table: "data_financial_transaction",
             timestamp_column: "occurred_at", label: "income", unit: "$",
-            agg: "sum(-amount) / 100.0", filter: Some("amount < 0"), kind: Total },
+            agg: "sum(-amount) / 100.0",
+            filter: Some("amount < 0 AND CASE source_provider \
+                WHEN 'plaid' THEN merchant_category = 'INCOME' \
+                WHEN 'apple_finance' THEN transaction_type IN ('directDeposit', 'interest', 'dividend') \
+                ELSE true END"),
+            coverage: Some(HAS_DIRECTION), kind: Total },
         LaneMeasure { id: "transactions", lane: "financial", table: "data_financial_transaction",
             timestamp_column: "occurred_at", label: "transactions", unit: "",
-            agg: "count(*)", filter: None, kind: Total },
+            agg: "count(*)", filter: None, coverage: None, kind: Total },
         // ── activity ────────────────────────────────────────────────────────
         LaneMeasure { id: "screen", lane: "activity", table: "data_activity_app_session",
             timestamp_column: "started_at", label: "screen time", unit: "h",
             agg: "sum(EXTRACT(EPOCH FROM (ended_at - started_at))) / 3600.0",
-            filter: Some("ended_at IS NOT NULL"), kind: Total },
+            filter: Some("ended_at IS NOT NULL"), coverage: None, kind: Total },
         LaneMeasure { id: "apps", lane: "activity", table: "data_activity_app_session",
             timestamp_column: "started_at", label: "distinct apps", unit: "",
-            agg: "count(DISTINCT app_name)", filter: Some("app_name IS NOT NULL"), kind: Total },
+            agg: "count(DISTINCT app_name)", filter: Some("app_name IS NOT NULL"), coverage: None, kind: Total },
         LaneMeasure { id: "browsing", lane: "activity", table: "data_activity_web_browsing",
             timestamp_column: "occurred_at", label: "pages visited", unit: "",
-            agg: "count(*)", filter: None, kind: Total },
+            agg: "count(*)", filter: None, coverage: None, kind: Total },
     ];
     M
 }
