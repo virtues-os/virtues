@@ -57,6 +57,9 @@ export interface MapInk {
 	track: string;
 	/** A drive's stretch of the path: moving's hue. */
 	move: string;
+	/** A label drawn on the map, and the halo that keeps it legible. */
+	label: string;
+	halo: string;
 	/** The stretch of path at the playhead, and a picked drive. */
 	now: string;
 }
@@ -65,5 +68,11 @@ export function mapInk(el: Element = document.documentElement): MapInk {
 	const css = getComputedStyle(el);
 	const read = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
 	// design-ok: last-resort fallbacks for a theme that failed to load, never the paint itself
-	return { track: PAINT["--c-place"], move: PAINT["--c-move"], now: read("--color-primary", "#335") };
+	return {
+		track: PAINT["--c-place"],
+		move: PAINT["--c-move"],
+		now: read("--color-primary", "#335"),
+		label: read("--color-foreground", "#333"),
+		halo: read("--color-background", "#fff"),
+	};
 }
