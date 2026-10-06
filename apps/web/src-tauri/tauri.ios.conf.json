@@ -3,8 +3,8 @@
   "identifier": "com.virtues.app",
   "version": "1.2.19",
   "build": {
-    "beforeBuildCommand": "pnpm build && cp build/200.html build/index.html && find build -name '*.gz' -delete",
-    "frontendDist": "../build"
+    "beforeBuildCommand": "GIT_DESCRIBE=\"${GIT_DESCRIBE:-dev}\" bash scripts/bake-desktop-ui.sh --out build-ios",
+    "frontendDist": "../build-ios"
   },
   "bundle": {
     "externalBin": [],

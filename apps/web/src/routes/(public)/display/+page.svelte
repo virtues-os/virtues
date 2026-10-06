@@ -88,6 +88,7 @@
 -->
 <script lang="ts">
 	import { onMount, onDestroy } from "svelte";
+	import { backendUrl } from "$lib/config/backend";
 
 	type DisplayState = {
 		box_name: string;
@@ -462,9 +463,11 @@
 				if (!res.ok) throw new Error(String(res.status));
 				const { token } = await res.json();
 				if (cancelled) return;
-				faceSrc = `/face/${encodeURIComponent(id)}/?vt=${encodeURIComponent(
-					token,
-				)}&theme=dark&surface=panel`;
+				faceSrc = backendUrl(
+					`/face/${encodeURIComponent(id)}/?vt=${encodeURIComponent(
+						token,
+					)}&theme=dark&surface=panel`,
+				);
 			} catch {
 				// A face that can't be hung (applet deleted, token refused) must
 				// not blank the glass — fall through to the record screen, which

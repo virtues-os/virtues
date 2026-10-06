@@ -27,3 +27,4 @@ vite.config.ts.timestamp-*
 /src-tauri/binaries/*
 !/src-tauri/binaries/.gitkeep
 /build-desktop
+/build-ios

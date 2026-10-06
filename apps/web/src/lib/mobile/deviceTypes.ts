@@ -98,31 +98,127 @@ export const DAYS: [string, string][] = [
 	["sun", "Sunday"],
 ];
 
-/** The one window shared by all seven days, if that is what the schedule is. */
-export function uniformWindow(s: MuteSchedule | null | undefined): [number, number] | null {
-	if (!s) return null;
-	const lists = DAYS.map(([k]) => s.days[k] ?? []);
-	const first = lists[0];
-	if (first.length !== 1) return null;
-	const same = lists.every(
-		(l) => l.length === 1 && l[0][0] === first[0][0] && l[0][1] === first[0][1],
-	);
-	return same ? first[0] : null;
-}
-
 export function scheduleHasWindows(s: MuteSchedule | null | undefined): boolean {
 	return !!s && Object.values(s.days).some((w) => w.length > 0);
 }
 
-/** The schedule in one phrase, for a value row: "Always", "Except 10:00 PM – 7:00 AM", … */
-export function describeSchedule(s: MuteSchedule | null | undefined): string {
-	if (!s) return "Always";
-	const windows = scheduleHasWindows(s);
-	if (!windows) return s.default_muted ? "Never" : "Always";
-	const u = uniformWindow(s);
-	if (u) {
-		const span = `${fmtClock(u[0])} – ${fmtClock(u[1])}`;
-		return s.default_muted ? `${span} daily` : `Except ${span}`;
+/** One window and the days it starts on, indexed like `DAYS`. A window whose
+ * end is before its start runs past midnight into the next day. */
+export interface HoursWindow {
+	start: number;
+	end: number;
+	days: boolean[];
+}
+
+/** The schedule's per-day lists, folded into windows: days that share the
+ * same start and end are one window with several days ticked. */
+export function scheduleWindows(s: MuteSchedule | null | undefined): HoursWindow[] {
+	if (!s) return [];
+	const out: HoursWindow[] = [];
+	DAYS.forEach(([key], di) => {
+		for (const [start, end] of s.days[key] ?? []) {
+			let w = out.find((x) => x.start === start && x.end === end);
+			if (!w) {
+				w = { start, end, days: DAYS.map(() => false) };
+				out.push(w);
+			}
+			w.days[di] = true;
+		}
+	});
+	return out;
+}
+
+/** Windows back into the per-day lists the plugin stores. */
+export function windowsToDays(ws: HoursWindow[]): Record<string, [number, number][]> {
+	const days: Record<string, [number, number][]> = {};
+	DAYS.forEach(([key], di) => {
+		days[key] = ws.filter((w) => w.days[di] && w.start !== w.end).map((w) => [w.start, w.end]);
+	});
+	return days;
+}
+
+/** `Date.getDay()` (0 = Sunday) → the schedule's day key. */
+const JS_DAY = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+/** Whether the schedule keeps nothing at `at`. Mirrors the plugin's gate
+ * (Audio.swift `MuteSchedule.muted`): a window that wraps past midnight
+ * covers the start of the next day too. */
+export function scheduleMutedAt(s: MuteSchedule, at: Date): boolean {
+	const m = at.getHours() * 60 + at.getMinutes();
+	const today = JS_DAY[at.getDay()];
+	const yesterday = JS_DAY[(at.getDay() + 6) % 7];
+	const inWindow =
+		(s.days[today] ?? []).some(([a, b]) => (a < b ? m >= a && m < b : m >= a)) ||
+		(s.days[yesterday] ?? []).some(([a, b]) => a > b && m < b);
+	return inWindow !== s.default_muted;
+}
+
+/** The next minute the schedule flips, within a week; null when it never does. */
+export function nextScheduleChange(s: MuteSchedule, from: Date): Date | null {
+	const t = new Date(from);
+	t.setSeconds(0, 0);
+	const now = scheduleMutedAt(s, t);
+	for (let i = 0; i < 7 * 24 * 60; i++) {
+		t.setMinutes(t.getMinutes() + 1);
+		if (scheduleMutedAt(s, t) !== now) return t;
 	}
-	return "Varies by day";
+	return null;
+}
+
+/** What the microphone is doing right now, as the page and the list show it. */
+export interface AudioState {
+	/** The status line: "Live", "Idle until 7:00 AM", … */
+	label: string;
+	/** Audio is being kept right now. */
+	live: boolean;
+	/** One sentence under the header when the state needs explaining. */
+	explain: string | null;
+}
+
+const MIC_LIT = "The mic stays on, so your iPhone's orange microphone dot stays lit.";
+
+export function audioState(a: AudioStatus | null, now = new Date()): AudioState | null {
+	if (!a) return null;
+	if (!a.authorized) {
+		return a.mic === "denied"
+			? {
+					label: "Microphone access is off",
+					live: false,
+					explain: "To record, allow microphone access for Virtues in iPhone Settings.",
+				}
+			: null;
+	}
+	if (a.mutedBy === "schedule") {
+		// Name an end only when this clock agrees the hours are muting now: the
+		// plugin's reason is the truth, and a skewed clock or zone would make
+		// "until" name the moment muting starts.
+		const next =
+			a.schedule && scheduleMutedAt(a.schedule, now) ? nextScheduleChange(a.schedule, now) : null;
+		return {
+			label: next ? `Idle until ${fmtClock(next.getHours() * 60 + next.getMinutes())}` : "Idle · not recording",
+			live: false,
+			explain: `${MIC_LIT} Nothing is kept until your hours allow it.`,
+		};
+	}
+	if (a.mutedBy === "place") {
+		return {
+			label: "Idle · not recording here",
+			live: false,
+			explain: `${MIC_LIT} Nothing is kept while you're at this place.`,
+		};
+	}
+	if (a.recording) return { label: "Live", live: true, explain: null };
+	if (a.pausedReason === "carplay") {
+		return {
+			label: "Paused for CarPlay",
+			live: false,
+			explain: "Recording picks up again after CarPlay disconnects.",
+		};
+	}
+	if (a.enabled) return { label: "Paused", live: false, explain: null };
+	return {
+		label: "Stopped",
+		live: false,
+		explain: "Recording is off. Your hours and places stay saved.",
+	};
 }

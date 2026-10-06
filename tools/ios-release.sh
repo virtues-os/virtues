@@ -74,8 +74,9 @@ say "flattening app icons to RGB"
 python3 "$REPO_ROOT/tools/strip-icon-alpha.py"
 
 # ── 3. archive + export ─────────────────────────────────────────────────────
-# `beforeBuildCommand` in tauri.ios.conf.json runs `pnpm build`, which stamps
-# build/.virtues-bundle.json — the same manifest shape the box serves for OTA,
+# `beforeBuildCommand` in tauri.ios.conf.json bakes the SPA into
+# apps/web/build-ios/ (scripts/bake-desktop-ui.sh --out build-ios), whose
+# .virtues-bundle.json — the same manifest shape the box serves for OTA — is
 # baked into the binary as its own `version`.
 #
 # STAMP IT, or the binary bakes a SPA calling itself `dev`. That is not

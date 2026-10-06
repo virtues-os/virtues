@@ -19,7 +19,7 @@
 
 	  /wiki           Overview — the front page: standfirst, activity, on
 	                  this day, the latest entry, and the index.
-	  /wiki/days      Days — the temporal spine, a year calendar + chronicle.
+	  /wiki/days      Days — the temporal spine, a six-month heatmap + chronicle.
 	  /wiki/entities  Entities — one index; person/place/org are filters.
 	  /wiki/identity  Narrative identity — user-authored, essay register.
 
@@ -47,11 +47,14 @@
 		type Column,
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import type { FilterDef } from '$lib/components/datagrid/types';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { Button } from '$lib';
 	import { getLocalDateSlug, formatLongDate } from '$lib/utils/dateUtils';
-	import { lede } from '$lib/wiki/lede';
+	import { lede, ledeSentence } from '$lib/wiki/lede';
+	import { veilMarks } from '$lib/wiki/dayArticle';
+	import { veiled } from '$lib/actions/veil';
+	import { veil } from '$lib/stores/veil.svelte';
 	import {
 		listPeople,
 		listPlaces,
@@ -59,8 +62,10 @@
 		listDays,
 		listDayActivity,
 		listYears,
+		getYear,
 		getChapters,
 		type ChapterApi,
+		type YearApi,
 		type YearSummaryApi,
 		listOnThisDay,
 		getNarrativeIdentity,
@@ -73,7 +78,7 @@
 		type OnThisDayApi,
 		type HistoryEntry,
 	} from '$lib/wiki/api';
-	import { toActivityLevels } from '$lib/wiki/activity';
+	import { activityThresholds, toActivityDays } from '$lib/wiki/activity';
 	import { getProfile } from '$lib/api/client';
 	import WikiHistory from '$lib/components/wiki/WikiHistory.svelte';
 	import NotesRail from '$lib/components/wiki/NotesRail.svelte';
@@ -409,13 +414,7 @@
 
 	// --- Overview data ---
 
-	let activityData = $state<Map<string, number>>(new Map());
-	let loadingActivity = $state(true);
-	let activityStats = $state<{ recorded: number; narrated: number; stubs: number }>({
-		recorded: 0,
-		narrated: 0,
-		stubs: 0,
-	});
+	let unwrittenDays = $state(0);
 	let onThisDay = $state<OnThisDayApi[]>([]);
 	let latestEntry = $state<{ slug: string; label: string; lede: string | null } | null>(null);
 	let standfirst = $state<string | null>(null);
@@ -431,8 +430,8 @@
 	let recentEdits = $state<HistoryEntry[]>([]);
 	let openNoteCount = $state(0);
 
-	// One source of truth for the window: fetch exactly what the heatmap draws.
-	const HEATMAP_WEEKS = 26;
+	// The window the overview counts unwritten days over.
+	const UNWRITTEN_WEEKS = 26;
 
 	onMount(async () => {
 		loadAllEntities();
@@ -440,7 +439,7 @@
 		try {
 			const endDate = new Date();
 			const startDate = new Date();
-			startDate.setDate(startDate.getDate() - HEATMAP_WEEKS * 7);
+			startDate.setDate(startDate.getDate() - UNWRITTEN_WEEKS * 7);
 			const recentStart = new Date();
 			recentStart.setDate(recentStart.getDate() - 45);
 
@@ -494,12 +493,7 @@
 			recentEdits = edits;
 			openNoteCount = openNotes;
 
-			activityData = toActivityLevels(activity);
-			activityStats = {
-				recorded: activity.filter((d) => d.event_count > 0).length,
-				narrated: activity.filter((d) => d.narrated).length,
-				stubs: activity.filter((d) => d.event_count > 0 && !d.narrated).length,
-			};
+			unwrittenDays = activity.filter((d) => d.event_count > 0 && !d.narrated).length;
 
 			onThisDay = otd;
 
@@ -535,9 +529,63 @@
 			}
 		} catch (e) {
 			console.error('Failed to load overview data:', e);
-		} finally {
-			loadingActivity = false;
 		}
+	});
+
+	// --- Days: one year as a heatmap ---
+	//
+	// A calendar year, Jan to Dec, from the year endpoint, which carries each
+	// day's count and opening line in one call. Selecting a day reads that line
+	// underneath; opening it is a second, deliberate step, so a tap on a small
+	// square never lands on the wrong day.
+
+	let mapYear = $state<YearApi | null>(null);
+	let mapLoading = $state(false);
+	let selectedDay = $state<string | null>(null);
+
+	const mapDays = $derived(
+		mapYear
+			? toActivityDays(mapYear.days, new Date(mapYear.year, 0, 1), new Date(mapYear.year, 11, 31))
+			: []
+	);
+	const mapLimits = $derived(activityThresholds(mapDays));
+	/** Years worth switching to: the ones with recorded days, newest first. */
+	const mapYears = $derived(years.filter((y) => y.days_recorded > 0).map((y) => y.year));
+
+	async function loadMapYear(year: number) {
+		mapLoading = true;
+		const next = await getYear(year);
+		if (next) {
+			mapYear = next;
+			selectedDay = null;
+		}
+		mapLoading = false;
+	}
+
+	$effect(() => {
+		if (section !== 'days') return;
+		untrack(() => {
+			void loadYears();
+			if (!mapYear && !mapLoading) void loadMapYear(new Date().getFullYear());
+		});
+	});
+
+	const selectedLine = $derived.by(() => {
+		if (!selectedDay || !mapYear) return null;
+		const day = mapYear.days.find((d) => d.date === selectedDay);
+		const count = day?.event_count ?? 0;
+		const marked = veilMarks(ledeSentence(day?.lede) ?? '');
+		return {
+			date: new Date(selectedDay + 'T12:00:00').toLocaleDateString('en-US', {
+				weekday: 'long',
+				month: 'long',
+				day: 'numeric',
+			}),
+			count: count ? `${count} ${count === 1 ? 'event' : 'events'}` : 'No events',
+			lede: marked.markdown || null,
+			phrases: marked.phrases,
+			unwritten: count > 0 && !day?.narrated,
+		};
 	});
 
 	// Handle day click from heatmap / chronicle / links
@@ -715,7 +763,7 @@
 								<dd>{openNoteCount}</dd>
 							</div>
 						</dl>
-						{#if thinLanes.length || activityStats.stubs > 0}
+						{#if thinLanes.length || unwrittenDays > 0}
 							<!-- Where it's thin (§17.5): a record that says where it
 							     is incomplete is more trustworthy than one that
 							     presents itself as finished. -->
@@ -723,10 +771,10 @@
 								{#each thinLanes as t (t)}
 									<li>{t}</li>
 								{/each}
-								{#if activityStats.stubs > 0}
+								{#if unwrittenDays > 0}
 									<li>
-										{activityStats.stubs}
-										{activityStats.stubs === 1 ? 'day' : 'days'} with events, unwritten
+										{unwrittenDays}
+										{unwrittenDays === 1 ? 'day' : 'days'} with events, unwritten
 									</li>
 								{/if}
 							</ul>
@@ -764,40 +812,64 @@
 			</div>
 		{:else if section === 'days'}
 			<div class="days-wrap">
-				<!-- The heatmap moved here from the front page. How much data
-				     arrived is a fact about the collector rather than about the
-				     life, and on the days index its counts are the subject. -->
-				<section class="sec">
-					<div class="sec-main">
-						<h2>Activity</h2>
-						{#if loadingActivity}
-							<p class="quiet">Loading activity…</p>
-						{:else}
-							<ActivityHeatmap
-								{activityData}
-								onDayClick={(_d, slug) => openDay(slug)}
-							/>
-						{/if}
-					</div>
-					<aside class="sec-aside">
-						{#if !loadingActivity}
-							<dl class="stat-stack">
-								<div>
-									<dt>Days recorded</dt>
-									<dd>{activityStats.recorded}</dd>
-								</div>
-								<div>
-									<dt>Narrated</dt>
-									<dd>{activityStats.narrated}</dd>
-								</div>
-								<div>
-									<dt>Awaiting narration</dt>
-									<dd>{activityStats.stubs}</dd>
-								</div>
-							</dl>
-							<p class="aside-note">The last six months, day by day.</p>
-						{/if}
-					</aside>
+				<!-- How much data arrived is a fact about the collector rather
+				     than about the life, so this lives on the days index, where
+				     its counts are the subject, and not on the front page. -->
+				<section class="year-map" aria-label="Activity">
+					{#if mapYear}
+						<ActivityHeatmap
+							days={mapDays}
+							thresholds={mapLimits}
+							lastDay={todaySlug}
+							label="Events per day in {mapYear.year}"
+							period={String(mapYear.year)}
+							selectedDate={selectedDay}
+							onSelectDate={(date) => (selectedDay = selectedDay === date ? null : date)}
+						>
+							{#snippet actions()}
+								{#if mapYears.length > 1}
+									<div class="year-switch" role="group" aria-label="Year">
+										{#each mapYears as y (y)}
+											<button
+												type="button"
+												class="year-seg"
+												aria-pressed={y === mapYear?.year}
+												disabled={mapLoading}
+												onclick={() => loadMapYear(y)}>{y}</button
+											>
+										{/each}
+									</div>
+								{/if}
+							{/snippet}
+							{#snippet footer()}
+								{#if selectedLine && selectedDay}
+									{@const slug = selectedDay}
+									<p class="day-line">
+										<span class="day-line-date">{selectedLine.date}:</span>
+										{selectedLine.count}.
+										{#key slug}
+											{#if selectedLine.lede}
+												<span use:veiled={{ hiding: veil.hiding, phrases: selectedLine.phrases }}
+													>{selectedLine.lede}</span
+												>
+											{:else if selectedLine.unwritten}
+												Unwritten.
+											{/if}
+										{/key}
+										<TextAction inline onclick={() => openDay(slug)}>Open the day</TextAction>
+									</p>
+								{:else}
+									<p class="day-line">
+										{mapYear?.days_recorded ?? 0}
+										{mapYear?.days_recorded === 1 ? 'day' : 'days'} recorded, {mapYear?.days_narrated ?? 0}
+										narrated. Select a day to read its first line.
+									</p>
+								{/if}
+							{/snippet}
+						</ActivityHeatmap>
+					{:else}
+						<p class="quiet">Loading activity…</p>
+					{/if}
 				</section>
 
 				<DaysChronicle onOpenDay={openDay} />
@@ -948,6 +1020,54 @@
 		max-width: 72rem;
 		width: 100%;
 		margin: 0 auto;
+	}
+
+	/* The year's heatmap opens the days index: no rule, no heading, no
+	   margin column. Its summary line is the heading, and the line under it
+	   carries what the stats column used to. */
+	.year-map {
+		padding: 8px 0 48px;
+	}
+
+	.day-line {
+		margin: 0;
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+
+	.day-line-date {
+		color: var(--color-foreground);
+		font-weight: 500;
+	}
+
+	.year-switch {
+		display: flex;
+		gap: 4px;
+		padding: 4px;
+		border-radius: 999px;
+		background: color-mix(in oklab, var(--color-foreground) 5%, var(--color-surface));
+	}
+
+	.year-seg {
+		padding: 4px 12px;
+		border: 0;
+		border-radius: 999px;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		font: inherit;
+		font-size: 13px;
+		font-variant-numeric: tabular-nums;
+		cursor: pointer;
+	}
+
+	.year-seg:hover {
+		color: var(--color-foreground);
+	}
+
+	.year-seg[aria-pressed='true'] {
+		background: var(--color-surface);
+		color: var(--color-foreground);
 	}
 
 	.identity-wrap {

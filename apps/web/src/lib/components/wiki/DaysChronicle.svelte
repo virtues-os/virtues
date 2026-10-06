@@ -1,8 +1,9 @@
 <!--
 	DaysChronicle.svelte
 
-	The wiki's temporal spine: a year of activity as a calendar, then the
-	recent record as a month-grouped chronicle. Each day is one line — date,
+	The wiki's temporal spine: the recent record as a month-grouped
+	chronicle. The Days section's Activity heatmap sits above it, so this
+	draws no calendar of its own. Each day is one line — date,
 	then the first sentence of the article's lede if the night's narration has
 	run, an honest "unwritten" stub if it hasn't. Reads like an annal, not a
 	feed. (The narrator no longer writes an epigraph — that line drifted into
@@ -11,10 +12,8 @@
 
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import ActivityHeatmap from './ActivityHeatmap.svelte';
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
 	import { listDayActivity, listDays, type DayActivityApi } from '$lib/wiki/api';
-	import { toActivityLevels } from '$lib/wiki/activity';
 	import { ledeSentence } from '$lib/wiki/lede';
 
 	interface Props {
@@ -41,23 +40,18 @@
 	const CHRONICLE_DAYS = 180;
 
 	let loading = $state(true);
-	let activityData = $state<Map<string, number>>(new Map());
 	let months = $state<MonthGroup[]>([]);
 
 	onMount(async () => {
 		try {
 			const end = new Date();
-			const calStart = new Date();
-			calStart.setDate(calStart.getDate() - 52 * 7);
 			const listStart = new Date();
 			listStart.setDate(listStart.getDate() - CHRONICLE_DAYS);
 
 			const [activity, days] = await Promise.all([
-				listDayActivity(getLocalDateSlug(calStart), getLocalDateSlug(end)),
+				listDayActivity(getLocalDateSlug(listStart), getLocalDateSlug(end)),
 				listDays(getLocalDateSlug(listStart), getLocalDateSlug(end)),
 			]);
-
-			activityData = toActivityLevels(activity);
 
 			const countByDate = new Map<string, DayActivityApi>(
 				activity.map((a) => [a.date, a])
@@ -101,17 +95,9 @@
 			loading = false;
 		}
 	});
-
-	function handleCalendarClick(_date: Date, slug: string) {
-		onOpenDay(slug);
-	}
 </script>
 
 <div class="chronicle">
-	<section class="cal">
-		<ActivityHeatmap {activityData} weeksToShow={52} onDayClick={handleCalendarClick} />
-	</section>
-
 	{#if loading}
 		<p class="quiet">Loading the record…</p>
 	{:else if months.length === 0}
@@ -158,11 +144,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 2.5rem;
-	}
-
-	.cal {
-		overflow-x: auto;
-		padding-bottom: 0.25rem;
 	}
 
 	.quiet {

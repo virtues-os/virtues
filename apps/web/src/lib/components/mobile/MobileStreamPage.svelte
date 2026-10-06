@@ -20,6 +20,11 @@
 		status: string;
 		/** Lit when the stream is on. */
 		on: boolean;
+		/** A live/idle dot before the status, for a stream that can be on
+		 * without keeping anything (audio). Absent draws no dot. */
+		live?: boolean | null;
+		/** One sentence under the header explaining the current state. */
+		statusNote?: string | null;
 		/** What this stream collects, in one sentence. */
 		description: string;
 		/** A short caveat under the description. */
@@ -37,6 +42,8 @@
 		icon,
 		status,
 		on,
+		live = null,
+		statusNote = null,
 		description,
 		note = null,
 		action = null,
@@ -68,7 +75,9 @@
 			<div class="h-icon" class:on><Icon {icon} width={22} /></div>
 			<div class="h-body">
 				<div class="h-title">{title}</div>
-				<div class="h-status">{status}</div>
+				<div class="h-status">
+					{#if live != null}<span class="live-dot" class:live aria-hidden="true"></span>{/if}{status}
+				</div>
 			</div>
 			{#if action}
 				<button class="act" type="button" onclick={action.onclick} disabled={action.disabled}>
@@ -76,6 +85,9 @@
 				</button>
 			{/if}
 		</div>
+		{#if statusNote}
+			<p class="desc state">{statusNote}</p>
+		{/if}
 		<p class="desc">{description}</p>
 		{#if note}
 			<p class="desc sync">{note}</p>
@@ -172,6 +184,33 @@
 		font-size: 13px;
 		color: var(--color-foreground-muted);
 		margin-top: 2px;
+	}
+	.live-dot {
+		display: inline-block;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		margin-right: 6px;
+		vertical-align: 1px;
+		border: 1.5px solid var(--color-foreground-muted);
+	}
+	.live-dot.live {
+		border-color: var(--color-success);
+		background: var(--color-success);
+		animation: breathe 2s ease-in-out infinite;
+	}
+	@keyframes breathe {
+		50% {
+			opacity: 0.45;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.live-dot.live {
+			animation: none;
+		}
+	}
+	.desc.state {
+		color: var(--color-foreground);
 	}
 	.act {
 		flex: none;

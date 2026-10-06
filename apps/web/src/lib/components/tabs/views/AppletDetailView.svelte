@@ -2,6 +2,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import AppletSource from '$lib/components/applets/AppletSource.svelte';
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
+	import ShareSheet from '$lib/components/applets/ShareSheet.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
@@ -28,6 +29,8 @@
 	import { isTauri } from '$lib/utils/platform';
 
 	let { tab }: { tab: Tab; active: boolean } = $props();
+
+	let sharing = $state(false);
 
 	const appletId = $derived(routeToEntityId(tab.route));
 
@@ -496,15 +499,24 @@
 			<section class="face-block">
 				<div class="face-head">
 					<h2>What it shows</h2>
-					<Button
-						variant="secondary"
-						size="sm"
-						icon="ri:external-link-line"
-						onclick={openView}>Open full page</Button
-					>
+					<div class="face-actions">
+						<Button
+							variant="secondary"
+							size="sm"
+							icon="ri:share-forward-line"
+							onclick={() => (sharing = true)}>Share</Button
+						>
+						<Button
+							variant="secondary"
+							size="sm"
+							icon="ri:external-link-line"
+							onclick={openView}>Open full page</Button
+						>
+					</div>
 				</div>
 				<FaceFrame appletId={action.id} height="460px" />
 			</section>
+			<ShareSheet open={sharing} appletId={action.id} onClose={() => (sharing = false)} />
 		{/if}
 
 		<div class="body">
@@ -957,6 +969,10 @@
 		align-items: baseline;
 		justify-content: space-between;
 		margin-bottom: 0.5rem;
+	}
+	.face-actions {
+		display: flex;
+		gap: 0.5rem;
 	}
 	.face-head h2 {
 		margin: 0;

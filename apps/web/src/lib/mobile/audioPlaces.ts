@@ -81,6 +81,20 @@ export async function setPlaceMuted(id: string, muted: boolean, name?: string): 
 	return (await updatePlace(id, data)) != null;
 }
 
+/** The radii the muted-places list offers. The phone's gate never enters
+ * inside 100 m (Audio.swift `enterRadius`), so nothing smaller is offered. */
+export const PLACE_RADII = [100, 250, 500];
+
+/** The radius the phone's gate actually uses for a place. */
+export function effectiveRadius(p: MutedPlace): number {
+	return Math.max(Math.round(p.radiusM), 100);
+}
+
+/** Change one place's radius on the box. */
+export async function setPlaceRadius(id: string, radiusM: number): Promise<boolean> {
+	return (await updatePlace(id, { radius_m: radiusM })) != null;
+}
+
 /** "Mute here": a new place at the given fix, muted from birth. */
 export async function createMutedPlace(
 	label: string,

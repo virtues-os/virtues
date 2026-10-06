@@ -12,9 +12,9 @@
  *    route `/api` + `/ws` there.
  *
  * A single global fetch interceptor (installFetchProxy) rewrites the app's
- * `/api` calls, so the ~110 existing `fetch('/api/...')` sites need no edits.
- * Only `/api` is rewritten — SvelteKit's own bundled assets/data (`/_app`,
- * route data) must keep loading from the local origin.
+ * box paths (BACKEND_PREFIXES), so the existing `fetch('/api/...')` sites need
+ * no edits. Only box paths are rewritten: SvelteKit's own bundled assets and
+ * data (`/_app`, route data) must keep loading from the local origin.
  */
 
 let backendOrigin = '';
@@ -28,22 +28,55 @@ export function getBackendOrigin(): string {
 }
 
 /**
+ * The box's paths. The shell's `serve_ui` answers exactly these with a 404 on
+ * the app's own origin (src-tauri), so the two lists move together.
+ * `/auth/session` is the session gate: miss it and the app thinks it's
+ * unpaired and bounces to the connect screen. `/health` matters because the
+ * app's origin answers any other extension-less path with the SPA's HTML and a
+ * 200, so the box-upgrade watcher would never see the box go down. `/face` is
+ * an applet face's own files and query bridge.
+ */
+const BACKEND_PREFIXES = ['/api', '/auth', '/webhook', '/health', '/face', '/ws', '/oauth'];
+
+function isBackendPath(pathname: string): boolean {
+  return BACKEND_PREFIXES.some((pre) => pathname === pre || pathname.startsWith(pre + '/'));
+}
+
+/**
+ * Resolve `raw` against this page and say whether it names this page's own
+ * origin. Compared by protocol and host rather than `URL.origin`, which is
+ * the opaque "null" for a non-special scheme like `virtues:`.
+ */
+function sameOrigin(raw: string): URL | null {
+  if (typeof location === 'undefined') return null;
+  let u: URL;
+  try {
+    u = new URL(raw, location.href);
+  } catch {
+    return null;
+  }
+  return u.protocol === location.protocol && u.host === location.host ? u : null;
+}
+
+/**
  * Absolute URL for a backend path that the browser resolves from MARKUP rather
  * than through `window.fetch` — `<iframe src>`, `<img src>`, `<video src>`,
- * CSS `url()`. The fetch shim below cannot see these: it wraps `window.fetch`,
- * and an attribute-driven load never goes through it. In the app's own copy
- * they would otherwise resolve against the `virtues://` origin, which serves
- * no backend routes, and fail silently (an empty iframe, a broken image).
+ * CSS `url()`, an XHR. The fetch shim below cannot see these: it wraps
+ * `window.fetch`, and an attribute-driven load never goes through it. In the
+ * app's own copy they would otherwise resolve against the `virtues://` origin,
+ * which serves no backend routes, and fail silently (an empty iframe, a broken
+ * image).
  *
- * No-op where the box serves the app: `backendOrigin` is empty and the path
- * is already same-origin.
+ * A root-relative path is the box's, and so is a box path on this page's own
+ * origin spelled out in full. Any other URL (an Unsplash cover, a `data:` or `blob:`
+ * one) loads as written. No-op where the box serves the app: `backendOrigin`
+ * is empty and the path is already same-origin.
  */
 export function backendUrl(path: string): string {
-  // Only a root-relative path is the box's. A stored URL can also be a
-  // full `https://` address (an Unsplash cover, an external image) or a
-  // `data:`/`blob:` one, and those load as written.
-  if (!backendOrigin || !path.startsWith('/') || path.startsWith('//')) return path;
-  return backendOrigin + path;
+  if (!backendOrigin) return path;
+  if (path.startsWith('/') && !path.startsWith('//')) return backendOrigin + path;
+  const u = sameOrigin(path);
+  return u && isBackendPath(u.pathname) ? backendOrigin + u.pathname + u.search + u.hash : path;
 }
 
 /** Base WebSocket URL (y-websocket appends room/pageId). */
@@ -57,46 +90,35 @@ export function getWsUrl(path = '/ws/yjs'): string {
 }
 
 /**
- * When a backend origin is set (mobile), install a global fetch shim routing
- * root-relative `/api` requests to it. No-op when unset (desktop, same-origin).
+ * When a backend origin is set (the app's own copy), install a global fetch
+ * shim routing box paths to it. No-op when unset (the box serves the app).
+ *
+ * Every input is resolved against this page first, because a box path does
+ * not always arrive root-relative: SvelteKit's load `fetch` passes an absolute
+ * `virtues://localhost/auth/session` after the first navigation, and a URL or
+ * Request carries the page's origin too. Missed, that request lands on the
+ * app's own origin, 404s, and a load quietly takes its offline branch.
  */
 export function installFetchProxy(): void {
   if (!backendOrigin || typeof window === 'undefined') return;
   const origin = backendOrigin;
   const orig = window.fetch.bind(window);
 
-  // Backend path prefixes to route to the box. Everything else (SvelteKit's
-  // /_app assets, bundled html, client route data) stays on the local origin.
-  // NB: `/auth/session` is the session gate — miss it and the app thinks it's
-  // unpaired and bounces to the connect screen.
-  // NB: `/health` missing from this list was audit defect U16: on the phone it
-  // fell through to the OTA scheme handler, which serves index.html with a 200
-  // for any extension-less path — so the box-upgrade watcher never saw the box
-  // go down and reported every successful phone-initiated upgrade as a
-  // ten-minute failure, and the Software page's Box row rendered "—" on iOS.
-  // `/face` since 2026-09-29: an applet face's own files and query bridge are
-  // the box's, and a Mac or phone running its own copy would otherwise answer
-  // them from its own origin.
-  const BACKEND_PREFIXES = ['/api', '/auth', '/webhook', '/health', '/face'];
-  const route = (p: string) => BACKEND_PREFIXES.some((pre) => p === pre || p.startsWith(pre + '/'));
-
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    if (typeof input === 'string' && route(input)) {
-      return orig(origin + input, init);
+    const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const u = sameOrigin(raw);
+    if (u && isBackendPath(u.pathname)) {
+      const target = origin + u.pathname + u.search;
+      // A Request keeps its method, headers and body across the move.
+      return orig(input instanceof Request ? new Request(target, input) : target, init);
     }
-    if (input instanceof URL && input.origin === location.origin && route(input.pathname)) {
-      return orig(origin + input.pathname + input.search, init);
-    }
-    if (input instanceof Request && input.url.startsWith(location.origin) && route(new URL(input.url).pathname)) {
-      return orig(new Request(origin + input.url.slice(location.origin.length), input), init);
-    }
-    return orig(input as RequestInfo, init);
+    return orig(input, init);
   }) as typeof window.fetch;
 }
 
 /**
- * Read the mobile shell's injected origin and wire routing. No-op on desktop
- * (the global is absent). Call once at client startup.
+ * Read the shell's injected origin and wire routing. No-op where the box
+ * serves the app (the global is absent). Call once at client startup.
  */
 export function initBackendFromShell(): void {
   const injected =

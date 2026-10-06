@@ -2316,3 +2316,82 @@ export function getDriveMedia<T = unknown>(): Promise<T> {
 export function searchUnsplash<T = unknown>(body: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/unsplash/search', body);
 }
+
+// ============================================================================
+// Publications — pages the owner shared through the door (api::publications)
+// ============================================================================
+
+/** One shared link. `link` is null until the door has started, and after revoke. */
+export interface Publication {
+	id: string;
+	producer_kind: 'applet';
+	producer_id: string;
+	title: string;
+	size_bytes: number;
+	card_title: string | null;
+	created_at: string;
+	updated_at: string;
+	expires_at: string | null;
+	revoked_at: string | null;
+	open_count: number;
+	last_opened_at: string | null;
+	/** Asks your server for its data each time it is opened. */
+	is_live: boolean;
+	link: string | null;
+}
+
+/** A query a shared page runs, with what it returns right now. */
+export interface SharedQuery {
+	sql: string;
+	row_count: number;
+	sample: Record<string, unknown>[];
+}
+
+/** What sharing an applet's page would send, before anything leaves. */
+export interface SharePreview {
+	title: string;
+	/** The page as it will appear, or null when it cannot be shared as it is. */
+	html: string | null;
+	/** Why it cannot be shared, and what to change. */
+	problem: string | null;
+	size_bytes: number;
+	image_count: number;
+	links: string[];
+	looks_private: string[];
+	/** The page reads data, so it can be shared as a snapshot or live. */
+	reads_data: boolean;
+	queries: SharedQuery[];
+}
+
+export function listPublications(): Promise<Publication[]> {
+	return apiGet<Publication[]>('/publications');
+}
+
+export function previewPublication(appletId: string): Promise<SharePreview> {
+	return apiGet<SharePreview>('/publications/preview', { applet_id: appletId });
+}
+
+/**
+ * `expiresInDays`: 0 never expires; omitted uses the server's default (30).
+ * `live`: for a page that reads data, ask the server when opened instead of
+ * carrying a snapshot.
+ */
+export function createPublication(
+	appletId: string,
+	expiresInDays?: number,
+	live = false
+): Promise<Publication> {
+	return apiSend<Publication>('POST', '/publications', {
+		applet_id: appletId,
+		expires_in_days: expiresInDays,
+		live
+	});
+}
+
+export function updatePublication(id: string): Promise<Publication> {
+	return apiSend<Publication>('POST', `/publications/${encodeURIComponent(id)}/update`);
+}
+
+export function revokePublication(id: string): Promise<Publication> {
+	return apiSend<Publication>('DELETE', `/publications/${encodeURIComponent(id)}`);
+}

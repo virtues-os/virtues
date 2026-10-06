@@ -1,0 +1,402 @@
+//! Running the door (`virtues-door`), the process strangers holding a link
+//! can reach.
+//!
+//! **It runs only while something is shared.** A box with no live
+//! publication answers no one, so the supervisor starts the door when the
+//! first link goes live and stops it when the last one is revoked or expires.
+//! [`wake`] nudges it after a change instead of waiting for the next check.
+//!
+//! On a box the door is a transient `systemd-run` unit, created through
+//! `sudo` as `api::code` creates its sandbox: a throwaway uid
+//! (`DynamicUser`), its key in a systemd-managed state directory, the bundle
+//! directory bound read-only at `/pub`, and the box's data, the database
+//! socket and loopback all out of reach. It reaches the internet, because it
+//! homes on the relay, and nothing on the box but its own files.
+//!
+//! A release build without `systemd-run` does not start the door at all,
+//! rather than run it unsandboxed. A debug build (a dev machine, macOS) runs
+//! it as a plain child with an empty environment.
+//!
+//! The door's key belongs to the core: it lives in `box_secrets`, so it
+//! travels with database backups (`api::publications::door_key`). Before
+//! each start the supervisor writes it to a file only the server's user can
+//! read, which systemd hands to the door as a credential, and rebuilds the
+//! bundle directory from the database (`api::publications::materialize`). A
+//! restore therefore brings every live link back as it was.
+//!
+//! The core listens on a Unix socket for the door's two requests (a live
+//! page's approved query, and "a page was opened"), answered by
+//! `api::publications::answer`. On a box that socket is bound into the
+//! door's sandbox at `/run/virtues-core.sock` and is the only thing inside it
+//! that leads anywhere on the box.
+
+use std::path::Path;
+use std::sync::OnceLock;
+use std::time::Duration;
+
+use sqlx::PgPool;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, Command};
+use tokio::sync::Notify;
+
+use crate::api::publications;
+
+/// The transient unit's name on a box.
+const UNIT: &str = "virtues-door";
+
+/// How often the supervisor rechecks whether anything is shared, when
+/// nothing wakes it sooner (expiry is the case nothing wakes it for).
+const RECHECK: Duration = Duration::from_secs(60);
+
+/// The wait before restarting a door that exited on its own, doubled per
+/// consecutive failure up to [`MAX_BACKOFF`].
+const MIN_BACKOFF: Duration = Duration::from_secs(5);
+const MAX_BACKOFF: Duration = Duration::from_secs(300);
+
+fn notify() -> &'static Notify {
+    static N: OnceLock<Notify> = OnceLock::new();
+    N.get_or_init(Notify::new)
+}
+
+/// Tell the supervisor the set of live publications may have changed.
+pub fn wake() {
+    notify().notify_one();
+}
+
+/// Where the door finds the core inside its sandbox.
+const SOCKET_IN_SANDBOX: &str = "/run/virtues-core.sock";
+
+/// Start the supervisor and the core's socket. Call once, from the server's
+/// startup.
+pub fn maybe_spawn(pool: PgPool) {
+    let listener_pool = pool.clone();
+    tokio::spawn(async move {
+        if let Err(e) = listen(listener_pool).await {
+            tracing::error!(error = %e, "door: the core's socket failed; live pages and open counts are off");
+        }
+    });
+    tokio::spawn(async move { supervise(pool).await });
+}
+
+/// The core's socket. Under the publication state directory when that path
+/// fits a Unix socket address; a dev checkout's deep path may not, and then
+/// the temporary directory.
+pub fn core_socket_path() -> std::path::PathBuf {
+    let preferred = publications::door_dir().join("core.sock");
+    if preferred.as_os_str().len() < 100 {
+        return preferred;
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&preferred, &mut h);
+    std::env::temp_dir().join(format!("virtues-core-{:x}.sock", std::hash::Hasher::finish(&h)))
+}
+
+async fn listen(pool: PgPool) -> anyhow::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let path = core_socket_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let _ = std::fs::remove_file(&path);
+    let listener = tokio::net::UnixListener::bind(&path)?;
+    // The door runs as a throwaway uid; the socket is reachable only where it
+    // is bound into the door's sandbox, and asks need a live link's token.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666))?;
+    }
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            let (read, mut write) = stream.into_split();
+            let mut line = String::new();
+            let mut reader = BufReader::new(tokio::io::AsyncReadExt::take(read, 64 * 1024));
+            if reader.read_line(&mut line).await.is_err() {
+                return;
+            }
+            let answer = match serde_json::from_str::<virtues_door::core::CoreRequest>(line.trim()) {
+                Ok(request) => publications::answer(&pool, request).await,
+                Err(_) => virtues_door::core::CoreAnswer { ok: false, rows: None },
+            };
+            if let Ok(mut out) = serde_json::to_vec(&answer) {
+                out.push(b'\n');
+                let _ = write.write_all(&out).await;
+            }
+        });
+    }
+}
+
+async fn anything_shared(pool: &PgPool) -> bool {
+    match sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM app_publications \
+         WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now()))",
+    )
+    .fetch_one(pool)
+    .await
+    {
+        Ok(b) => b,
+        Err(e) => {
+            // Not knowing is treated as "nothing shared": the door stays shut
+            // until the question can be answered.
+            tracing::warn!(error = %e, "door: could not check for live publications");
+            false
+        }
+    }
+}
+
+async fn supervise(pool: PgPool) {
+    let mut backoff = MIN_BACKOFF;
+    loop {
+        if !anything_shared(&pool).await {
+            let _ = tokio::time::timeout(RECHECK, notify().notified()).await;
+            continue;
+        }
+        let Some(mut child) = start(&pool).await else {
+            tokio::time::sleep(MAX_BACKOFF).await;
+            continue;
+        };
+        tracing::info!("door: started");
+        let started = std::time::Instant::now();
+
+        // Run until the door exits, or nothing is shared any more.
+        let exited = loop {
+            tokio::select! {
+                status = child.wait() => break Some(status),
+                _ = tokio::time::timeout(RECHECK, notify().notified()) => {
+                    if !anything_shared(&pool).await {
+                        break None;
+                    }
+                }
+            }
+        };
+        match exited {
+            None => {
+                stop(&mut child).await;
+                tracing::info!("door: stopped, nothing is shared");
+                backoff = MIN_BACKOFF;
+            }
+            Some(status) => {
+                tracing::warn!(?status, "door: exited; restarting");
+                stop_unit().await;
+                if started.elapsed() > MAX_BACKOFF {
+                    backoff = MIN_BACKOFF;
+                }
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(MAX_BACKOFF);
+            }
+        }
+    }
+}
+
+/// Where the core writes the door key for systemd (or a dev door) to read.
+fn key_file() -> std::path::PathBuf {
+    publications::door_dir().join("door.key")
+}
+
+/// Write the door key where only this user can read it.
+fn write_key_file(seed: &[u8; 32]) -> std::io::Result<()> {
+    let path = key_file();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("key.tmp");
+    std::fs::write(&tmp, seed)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+    }
+    std::fs::rename(&tmp, &path)
+}
+
+/// Launch the door, with its key in place and the bundle directory matching
+/// the database.
+async fn start(pool: &PgPool) -> Option<Child> {
+    let Some(relay) = crate::relay::relay_for_door(pool).await else {
+        tracing::info!("door: the relay is off, so shared links cannot be served");
+        return None;
+    };
+    let bundles = publications::bundles_dir();
+    if let Err(e) = std::fs::create_dir_all(&bundles) {
+        tracing::error!(error = %e, dir = %bundles.display(), "door: cannot create the bundle directory");
+        return None;
+    }
+    let seed = match publications::door_key(pool).await {
+        Ok(seed) => seed,
+        Err(e) => {
+            tracing::error!(error = %e, "door: no key, so shared links cannot be served");
+            return None;
+        }
+    };
+    if let Err(e) = write_key_file(&seed) {
+        tracing::error!(error = %e, "door: could not write its key file");
+        return None;
+    }
+    if let Err(e) = publications::materialize(pool, &bundles).await {
+        tracing::error!(error = %e, "door: could not rebuild the shared pages");
+        return None;
+    }
+    let program = crate::applet_runner::resolve_program("virtues-door");
+    let mut cmd = match crate::applet_runner::which_systemd_run() {
+        Some(_) => {
+            // A unit left by a previous run of the server would make the new
+            // one fail to start under the same name.
+            stop_unit().await;
+            sandboxed(&program, &bundles, relay.as_str())
+        }
+        None if cfg!(debug_assertions) => direct(&program, &bundles, relay.as_str()),
+        None => {
+            tracing::error!("door: systemd-run is unavailable; refusing to serve links unsandboxed");
+            return None;
+        }
+    };
+    cmd.kill_on_drop(true);
+    match cmd.spawn() {
+        Ok(c) => Some(c),
+        Err(e) => {
+            tracing::error!(error = %e, program = %program.display(), "door: could not start");
+            None
+        }
+    }
+}
+
+async fn stop(child: &mut Child) {
+    stop_unit().await;
+    let _ = child.kill().await;
+}
+
+/// Stop the transient unit, if this is a box and one exists.
+async fn stop_unit() {
+    if crate::applet_runner::which_systemd_run().is_some() {
+        let _ = Command::new("sudo")
+            .args(["-n", "systemctl", "stop", &format!("{UNIT}.service")])
+            .output()
+            .await;
+    }
+}
+
+/// The unit properties, separate so a test can hold the boundary in place.
+fn sandbox_properties(bundles: &Path) -> Vec<String> {
+    let mut props: Vec<String> = [
+        // A throwaway uid: the unit is created through sudo, and a system
+        // unit with no user runs as root.
+        "DynamicUser=yes",
+        // The key is the core's (box_secrets). systemd reads the file the
+        // core writes and hands it to this unit alone, under
+        // $CREDENTIALS_DIRECTORY, so the throwaway uid never needs access to
+        // the server's files.
+        "ProtectSystem=strict",
+        "ProtectHome=yes",
+        "PrivateTmp=yes",
+        "PrivateDevices=yes",
+        "ProtectProc=invisible",
+        "ProcSubset=pid",
+        "NoNewPrivileges=yes",
+        "RestrictNamespaces=yes",
+        "RestrictRealtime=yes",
+        "LockPersonality=yes",
+        "SystemCallArchitectures=native",
+        "SystemCallFilter=@system-service",
+        "SystemCallErrorNumber=EPERM",
+        // The internet, for the relay. Netlink lets iroh see interface changes.
+        "RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX",
+        // Nothing on loopback: not the core's API, not Postgres over TCP.
+        "IPAddressDeny=localhost",
+        "MemoryMax=256M",
+        "TasksMax=64",
+        "CPUQuota=100%",
+        "Restart=no",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    for path in [
+        "/var/lib/virtues",
+        "/etc/virtues",
+        "/var/lib/postgresql",
+        "/run/postgresql",
+        "/run/dbus",
+        "/run/user",
+    ] {
+        props.push(format!("InaccessiblePaths=-{path}"));
+    }
+    for path in [
+        crate::applet_templates::state_root(),
+        crate::storage::lake::lake_root(),
+        crate::api::code_env::code_root(),
+    ] {
+        props.push(format!("InaccessiblePaths=-{}", path.display()));
+    }
+    props.push(format!("LoadCredential=door.key:{}", key_file().display()));
+    // Mounted from the host side, so the hidden paths above do not hide them.
+    props.push(format!("BindReadOnlyPaths={}:/pub", bundles.display()));
+    props.push(format!("BindPaths={}:{SOCKET_IN_SANDBOX}", core_socket_path().display()));
+    props
+}
+
+fn sandboxed(program: &Path, bundles: &Path, relay: &str) -> Command {
+    let mut cmd = Command::new("sudo");
+    cmd.args(["-n", "systemd-run", "--unit", UNIT, "--pipe", "--wait", "--collect", "--quiet"]);
+    for p in sandbox_properties(bundles) {
+        cmd.args(["-p", &p]);
+    }
+    cmd.args(["-E", "RUST_LOG=virtues_door=info,iroh=warn", "--"]);
+    cmd.arg(program);
+    cmd.args(["--root", "/pub", "--relay", relay]);
+    cmd.args(["--core-socket", SOCKET_IN_SANDBOX]);
+    cmd
+}
+
+fn direct(program: &Path, bundles: &Path, relay: &str) -> Command {
+    let mut cmd = Command::new(program);
+    // Nothing of the server's environment: no database URL, no secrets.
+    cmd.env_clear()
+        .env("RUST_LOG", "virtues_door=info,iroh=warn")
+        .arg("--root")
+        .arg(bundles)
+        .arg("--key-file")
+        .arg(key_file())
+        .args(["--relay", relay])
+        .arg("--core-socket")
+        .arg(core_socket_path());
+    cmd
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_properties_pin_the_boundary() {
+        let props = sandbox_properties(Path::new("/b"));
+        for must in [
+            "DynamicUser=yes",
+            "NoNewPrivileges=yes",
+            "ProtectSystem=strict",
+            "IPAddressDeny=localhost",
+            "InaccessiblePaths=-/var/lib/virtues",
+            "InaccessiblePaths=-/run/postgresql",
+            "BindReadOnlyPaths=/b:/pub",
+        ] {
+            assert!(props.iter().any(|p| p == must), "missing {must}");
+        }
+        assert!(!props.iter().any(|p| p.starts_with("User=")), "a named user replaces the throwaway uid");
+        assert!(
+            props.iter().any(|p| p.starts_with("LoadCredential=door.key:")),
+            "the key arrives as a credential from the core's box_secrets copy"
+        );
+        assert!(!props.iter().any(|p| p.starts_with("StateDirectory=")), "the door keeps no key of its own");
+        let writable: Vec<_> = props.iter().filter(|p| p.starts_with("BindPaths=")).collect();
+        assert_eq!(writable.len(), 1, "only the core's socket: {writable:?}");
+        assert!(writable[0].ends_with(":/run/virtues-core.sock"));
+    }
+
+    #[test]
+    fn the_direct_door_inherits_no_environment() {
+        let cmd = direct(Path::new("/bin/virtues-door"), Path::new("/b"), "https://relay.example");
+        let envs: Vec<_> = cmd.as_std().get_envs().collect();
+        assert!(envs.iter().all(|(k, _)| *k == "RUST_LOG"), "{envs:?}");
+    }
+}

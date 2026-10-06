@@ -1,7 +1,14 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import { updated } from "$app/state";
-	import { appUpdateState, applyAppUpdate } from "$lib/tauri/bridge";
+	import {
+		appUpdateState,
+		applyAppUpdate,
+		bundleUpdateReady,
+		runsOwnCopy,
+		shellIdentity,
+		stagedBundle,
+	} from "$lib/tauri/bridge";
 	import { onBoxBuildChanged } from "$lib/build";
 
 	interface Props {
@@ -63,41 +70,28 @@
 
 	// ── The OTHER update track ───────────────────────────────────────────────
 	//
-	// Two clocks reach this app, and until now the chip only knew one. The
-	// SHELL stages a signed release and needs a relaunch (above). The UI is a
-	// separate thing entirely: the desktop bakes no SPA at all
-	// (`frontendDist: "ui"` is the airlock), so after pairing it renders the
-	// box's live SPA over the loopback proxy — meaning a box upgrade changes
-	// the UI with no app release involved, and this window keeps showing the
-	// old bundle until something reloads it. A menu-bar resident is never
-	// relaunched, so "until something reloads it" rounds to never, exactly as
-	// the shell's own comment says of "next launch".
+	// The UI moves separately from the app, and a menu-bar resident that is
+	// never relaunched keeps showing the old one until something reloads it.
+	// Where the page comes from decides how to tell:
 	//
-	// THE SIGNAL IS BUNDLE-TO-BUNDLE, and it took a pinned-open chip to learn
-	// why it has to be. This used to compare the SPA's baked commit against
-	// `/health`'s — but `/health` reports the BOX BINARY's commit, and the two
-	// are different artifacts that the product deliberately lets drift:
-	// `virtues upgrade --only web` refreshes the served build with no binary
-	// swap ("no migration, no restart", cli/upgrade.rs), and a hand-built box
-	// carries a binary from one commit beside a CI-built dist from another.
-	// So the comparison was wrong in both directions at once — pinned open
-	// whenever the binary was merely DIFFERENT (and `reload` could never
-	// change the binary, so the chip came straight back, forever), and silent
-	// after a web-only refresh, which is the one case a reload would have
-	// fixed. The old comment called the difference "the signal"; it was two
-	// questions wearing one name.
-	//
-	// SvelteKit already answers the real question. It bakes a build id into
-	// this bundle and publishes the deployed one at `/_app/version.json`;
-	// `updated.current` is the comparison. Same kind on both sides, so it
-	// converges by construction: reload, and the page that comes back IS the
-	// deployed build. No `dev` special case is needed either — a vite dev
-	// server has no version.json to disagree with.
-	const uiStale = $derived(updated.current);
+	// - The app's own copy (`virtues://`, the Mac and the phone): the shell
+	//   downloads the box's bundle and stages it, and this page runs the one it
+	//   loaded from. SvelteKit's `updated` would compare against the app's own
+	//   origin, which always matches itself, so the shell answers instead:
+	//   `bundleUpdateReady()` is true when a bundle newer than this page waits.
+	// - The box's copy (a browser, the Windows and Linux apps): SvelteKit bakes
+	//   a build id into this bundle and the box publishes the deployed one at
+	//   `/_app/version.json`, so `updated.current` is the comparison. It is
+	//   bundle to bundle, so a reload converges by construction. Not `/health`:
+	//   that reports the box BINARY's commit, which drifts from the served UI
+	//   on purpose (`virtues upgrade --only web`, a hand-built box).
+	const ownCopy = runsOwnCopy();
+	let bundleStaged = $state(false);
+	const uiStale = $derived(ownCopy ? bundleStaged : updated.current);
 
-	// The dist's own short sha, for the chip's second line. Read from
-	// `/api/web-bundle/version`, which describes the build the box is SERVING
-	// — the only identity that says anything about the thing being offered.
+	// The offered build's identity, for the chip's second line: the staged
+	// bundle's hash in the app's own copy, and otherwise the sha from
+	// `/api/web-bundle/version`, which describes the build the box is SERVING.
 	// Fetched only when the chip is about to show, because that is the only
 	// time anyone reads it.
 	let distSha = $state<string | null>(null);
@@ -105,6 +99,14 @@
 	async function pollUpdate() {
 		const s = await appUpdateState();
 		stagedVersion = s?.stagedVersion ?? null;
+
+		if (ownCopy) {
+			bundleStaged = await bundleUpdateReady();
+			const shell = bundleStaged ? await shellIdentity() : null;
+			const staged = shell ? stagedBundle(shell) : null;
+			distSha = staged ? staged.slice(0, 8) : null;
+			return;
+		}
 
 		// No try/catch: `check()` answers `false` on every failure path rather
 		// than throwing — non-2xx, unparseable, offline — so a dropped poll or a
@@ -198,7 +200,9 @@
 			type="button"
 			class="relaunch"
 			onclick={() => window.location.reload()}
-			title="Your server is serving a newer interface - reload to pick it up"
+			title={ownCopy
+				? "This app downloaded a newer interface - reload to switch to it"
+				: "Your server is serving a newer interface - reload to pick it up"}
 		>
 			<span class="relaunch-label">Reload for the latest</span>
 			{#if distSha}<span class="relaunch-version">{distSha}</span>{/if}

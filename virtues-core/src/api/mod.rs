@@ -57,6 +57,7 @@ pub mod turn_recorder;
 pub mod pins;
 pub mod trash;
 pub mod visits;
+pub mod publications;
 pub mod search_local;
 pub mod places;
 pub mod profile;

@@ -27,21 +27,29 @@ export function lede(article: string | null | undefined): string | null {
 }
 
 /**
- * The lede's first sentence, as plain text — for a row that is one line and
- * lets CSS clip whatever is left.
+ * The lede's first sentence, with its markdown dropped — for a row that is
+ * one line and lets CSS clip whatever is left.
  *
- * Markdown links keep their label, emphasis marks are dropped. A sentence ends
- * at a terminal mark followed by whitespace and a capital, so "Toys \"R\" Us."
- * and "St. Mary" do not cut it early.
+ * Emphasis marks are dropped. A link keeps its label, wrapped in the veil's
+ * ⟦ ⟧ marks: every lede link names a person, place or organization, which the
+ * day page veils as a link, and a plain-text row has no link left to veil. So
+ * the result can carry marks, and a caller showing it runs `veilMarks` over it.
+ *
+ * A sentence ends at a terminal mark followed by whitespace and a capital,
+ * outside any ⟦ ⟧ mark, so "Toys \"R\" Us." and a linked "St. Mary's" do not
+ * cut it early. An unlinked, unmarked "St. Mary" still does.
  */
 export function ledeSentence(article: string | null | undefined): string | null {
 	const paragraph = lede(article);
 	if (!paragraph) return null;
 	const plain = paragraph
-		.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+		.replace(/\[([^\]]*)\]\([^)]*\)/g, (_, label: string) => `⟦${label.replace(/[⟦⟧]/g, '')}⟧`)
 		.replace(/[*_`]/g, '')
 		.replace(/\s+/g, ' ')
 		.trim();
-	const m = plain.match(/^[\s\S]*?[.!?]["')]?(?=\s+[A-Z])/);
-	return (m ? m[0] : plain) || null;
+	for (const end of plain.matchAll(/[.!?]["')⟧]?(?=\s+⟦?[A-Z])/g)) {
+		const head = plain.slice(0, end.index + end[0].length);
+		if (head.split('⟦').length === head.split('⟧').length) return head;
+	}
+	return plain || null;
 }

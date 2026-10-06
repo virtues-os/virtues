@@ -12,7 +12,6 @@
 	import SearchModal from "$lib/components/sidebar/SearchModal.svelte";
 	import { search } from "$lib/stores/search.svelte";
 	import DialogHost from "$lib/components/DialogHost.svelte";
-	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
 	import { FloatingContent } from "$lib/floating";
 	import IconPicker from "$lib/components/IconPicker.svelte";
 	import LinkEditorPopover from "$lib/components/pages/LinkEditorPopover.svelte";
@@ -85,12 +84,16 @@
 	 * Would a reload now cost anything that isn't saved? The staged UI waits
 	 * for the next time the app is hidden with nothing at stake: a temporary
 	 * chat (its transcript lives only in this page), a reply still streaming,
-	 * or text in the focused field (a half-entered key or rename). Composer
-	 * drafts are saved as they are typed, so they don't count.
+	 * Setup showing in a pane (a step can hold a connection or an interview
+	 * mid-flight), or text in the focused field (a half-entered key or
+	 * rename). Composer drafts are saved as they are typed, so they don't
+	 * count.
 	 */
 	function nothingToLose(): boolean {
 		const tabs = windowShellStore.panes.flatMap((p) => p.tabs);
 		if (tabs.some((t) => isTemporaryRoute(t.route))) return false;
+		const showing = windowShellStore.panes.map((p) => p.tabs.find((t) => t.id === p.activeTabId)?.route ?? "");
+		if (showing.some((r) => r === "/setup" || r.startsWith("/setup/"))) return false;
 		if (chatInstances.debug().some((c) => c.status === "streaming" || c.status === "submitted")) return false;
 		const focused = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
 		return !(focused && typeof focused.value === "string" && focused.value.length > 0);
@@ -169,9 +172,8 @@
 
 	// Load chat sessions, workspaces, and initialize theme on mount
 	onMount(async () => {
-		// Boot-ok (confirming this bundle rendered) moved to the ROOT layout on
-		// 2026-09-29, so Setup and the recovery screens confirm too: a page load
-		// that never confirms is rolled back by the next one.
+		// Boot-ok (confirming this bundle rendered) lives in the ROOT layout,
+		// so Setup and the recovery screens confirm too.
 
 		// Ask the shell to look for newer UI whenever we come back to the
 		// foreground. The shell also checks at launch, but this app is not
@@ -487,11 +489,6 @@
 	>
 		<Icon icon="ri:fullscreen-exit-line" width="18" />
 	</button>
-{/if}
-
-<!-- Server Provisioning Overlay (shown while virtues-api is hydrating) -->
-{#if data?.serverStatus && data.serverStatus !== "ready"}
-	<ServerProvisioning initialStatus={data.serverStatus} />
 {/if}
 
 <!-- Global icon picker.
