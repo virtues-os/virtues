@@ -55,6 +55,8 @@ export function colourVars(): string {
 export interface MapInk {
 	/** The day's path: location, so a stay's hue. */
 	track: string;
+	/** A drive's stretch of the path: moving's hue. */
+	move: string;
 	/** The stretch of path at the playhead, and a picked drive. */
 	now: string;
 }
@@ -63,5 +65,5 @@ export function mapInk(el: Element = document.documentElement): MapInk {
 	const css = getComputedStyle(el);
 	const read = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
 	// design-ok: last-resort fallbacks for a theme that failed to load, never the paint itself
-	return { track: PAINT["--c-place"], now: read("--color-primary", "#335") };
+	return { track: PAINT["--c-place"], move: PAINT["--c-move"], now: read("--color-primary", "#335") };
 }
