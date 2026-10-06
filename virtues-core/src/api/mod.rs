@@ -58,6 +58,7 @@ pub mod pins;
 pub mod trash;
 pub mod visits;
 pub mod publications;
+pub mod publish_page;
 pub mod search_local;
 pub mod places;
 pub mod profile;

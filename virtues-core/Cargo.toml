@@ -226,8 +226,8 @@ y-sync = "0.4"
 moka = { version = "0.12", features = ["sync"] }
 similar = "2.7.0"
 
-# Markdown parsing for AI editing
-pulldown-cmark = { version = "0.10", default-features = false, features = ["simd"] }
+# Markdown rendering: a shared page is frozen to HTML (api::publish_page).
+pulldown-cmark = { version = "0.10", default-features = false, features = ["simd", "html"] }
 
 bytes = "1.7"
 age = { version = "0.12.1", features = ["armor"] }

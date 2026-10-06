@@ -1,6 +1,7 @@
 //! Publications: what the owner has shared (migration 0043).
 //!
-//! Publishing freezes an applet's face into a bundle the door serves
+//! Publishing freezes an applet's face or a page (`api::publish_page`) into
+//! a bundle the door serves
 //! (`virtues-door`), records it in `app_publications`, and hands back a link.
 //! The door has no database access, so the bundle directory is what is live
 //! and this table is the owner's record of it: updating rewrites the bundle
@@ -25,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
+use crate::api::drive::DriveConfig;
 use crate::error::{Error, Result};
 use virtues_door::{bundle, token};
 
@@ -439,6 +441,10 @@ pub struct SharePreview {
     /// Text that looks like contact details: emails and phone numbers,
     /// in the page or in the rows it carries.
     pub looks_private: Vec<String>,
+    /// The people, places and things a page names; only the names leave.
+    pub names: Vec<String>,
+    /// Images that are not in Drive and so are left out of the shared page.
+    pub images_left_out: usize,
     /// Whether the page reads data, and so can be a snapshot or live.
     pub reads_data: bool,
     /// The queries it runs, with what each returns right now.
@@ -467,8 +473,49 @@ impl SharePreview {
             image_count: 0,
             links: Vec::new(),
             looks_private: Vec::new(),
+            names: Vec::new(),
+            images_left_out: 0,
             reads_data: false,
             queries: Vec::new(),
+        }
+    }
+}
+
+/// What a link shares: an applet's face or a page.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Producer {
+    Applet(String),
+    Page(String),
+}
+
+impl Producer {
+    /// From a request naming exactly one of `applet_id` or `page_id`.
+    pub fn from_ids(applet_id: Option<String>, page_id: Option<String>) -> Result<Self> {
+        match (applet_id.filter(|s| !s.is_empty()), page_id.filter(|s| !s.is_empty())) {
+            (Some(a), None) => Ok(Producer::Applet(a)),
+            (None, Some(p)) => Ok(Producer::Page(p)),
+            _ => Err(Error::InvalidInput("name exactly one of applet_id or page_id".into())),
+        }
+    }
+
+    fn from_row(kind: &str, id: &str) -> Result<Self> {
+        match kind {
+            "applet" => Ok(Producer::Applet(id.to_string())),
+            "page" => Ok(Producer::Page(id.to_string())),
+            other => Err(Error::Other(format!("unknown publication producer {other:?}"))),
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Producer::Applet(_) => "applet",
+            Producer::Page(_) => "page",
+        }
+    }
+
+    fn id(&self) -> &str {
+        match self {
+            Producer::Applet(id) | Producer::Page(id) => id,
         }
     }
 }
@@ -508,9 +555,39 @@ fn scan(html: &str) -> (usize, Vec<String>, Vec<String>) {
     (image_count, links, private)
 }
 
+/// What sharing would send.
+pub async fn preview(pool: &PgPool, drive: &DriveConfig, producer: &Producer) -> Result<SharePreview> {
+    match producer {
+        Producer::Applet(id) => preview_applet(pool, id).await,
+        Producer::Page(id) => {
+            let frozen = crate::api::publish_page::freeze_page(pool, drive, id).await?;
+            let (image_count, links, looks_private) = scan(&frozen.html);
+            Ok(SharePreview {
+                title: frozen.title,
+                size_bytes: frozen.html.len(),
+                problem: (frozen.html.len() > MAX_FACE_BYTES).then(|| {
+                    format!(
+                        "with its images the page is {} KB; the limit is {} KB. Use fewer or smaller images.",
+                        frozen.html.len() / 1024,
+                        MAX_FACE_BYTES / 1024
+                    )
+                }),
+                html: Some(frozen.html),
+                image_count,
+                links,
+                looks_private,
+                names: frozen.names,
+                images_left_out: frozen.images_left_out,
+                reads_data: false,
+                queries: Vec::new(),
+            })
+        }
+    }
+}
+
 /// What sharing this applet's face would send. For a page that reads data,
 /// `html` is the snapshot, which is also what a live page shows today.
-pub async fn preview(pool: &PgPool, applet_id: &str) -> Result<SharePreview> {
+async fn preview_applet(pool: &PgPool, applet_id: &str) -> Result<SharePreview> {
     let name = crate::scheduler::applets::get_applet(pool, applet_id)
         .await
         .map(|a| a.name)
@@ -542,6 +619,8 @@ pub async fn preview(pool: &PgPool, applet_id: &str) -> Result<SharePreview> {
                 image_count,
                 links,
                 looks_private,
+                names: Vec::new(),
+                images_left_out: 0,
                 reads_data: reads,
                 queries: queries
                     .into_iter()
@@ -561,9 +640,31 @@ pub async fn preview(pool: &PgPool, applet_id: &str) -> Result<SharePreview> {
     })
 }
 
-/// The page to publish for an applet, and the queries a live page may ask
-/// for (empty for a snapshot or a page that reads nothing).
-async fn build(pool: &PgPool, applet_id: &str, live: bool) -> Result<(String, String, Vec<FrozenQuery>)> {
+/// The page to publish, and the queries a live page may ask for (empty for a
+/// snapshot, a page, or a face that reads nothing).
+async fn build(
+    pool: &PgPool,
+    drive: &DriveConfig,
+    producer: &Producer,
+    live: bool,
+) -> Result<(String, String, Vec<FrozenQuery>)> {
+    match producer {
+        Producer::Applet(id) => build_applet(pool, id, live).await,
+        Producer::Page(id) => {
+            let frozen = crate::api::publish_page::freeze_page(pool, drive, id).await?;
+            if frozen.html.len() > MAX_FACE_BYTES {
+                return Err(Error::InvalidInput(format!(
+                    "with its images the page is {} KB; the limit is {} KB. Use fewer or smaller images.",
+                    frozen.html.len() / 1024,
+                    MAX_FACE_BYTES / 1024
+                )));
+            }
+            Ok((frozen.title, frozen.html, Vec::new()))
+        }
+    }
+}
+
+async fn build_applet(pool: &PgPool, applet_id: &str, live: bool) -> Result<(String, String, Vec<FrozenQuery>)> {
     let name = crate::scheduler::applets::get_applet(pool, applet_id)
         .await
         .map(|a| a.name)
@@ -594,7 +695,11 @@ fn door_error(e: anyhow::Error) -> Error {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateRequest {
-    pub applet_id: String,
+    /// Exactly one of these names what is shared.
+    #[serde(default)]
+    pub applet_id: Option<String>,
+    #[serde(default)]
+    pub page_id: Option<String>,
     /// Days until the link stops working. Absent means
     /// [`DEFAULT_EXPIRY_DAYS`]; `0` means never.
     pub expires_in_days: Option<u32>,
@@ -606,10 +711,11 @@ pub struct CreateRequest {
 
 /// Share an applet's face: freeze it, put the bundle where the door serves
 /// it, record it.
-pub async fn create(pool: &PgPool, req: CreateRequest) -> Result<Publication> {
+pub async fn create(pool: &PgPool, drive: &DriveConfig, req: CreateRequest) -> Result<Publication> {
+    let producer = Producer::from_ids(req.applet_id, req.page_id)?;
     door_key(pool).await?;
-    let (title, page, live) = build(pool, &req.applet_id, req.live).await?;
-    create_frozen(pool, &bundles_dir(), &req.applet_id, &title, page.as_bytes(), req.expires_in_days, &live)
+    let (title, page, live) = build(pool, drive, &producer, req.live).await?;
+    create_frozen(pool, &bundles_dir(), &producer, &title, page.as_bytes(), req.expires_in_days, &live)
         .await
         .map(Publication::with_link)
 }
@@ -617,7 +723,7 @@ pub async fn create(pool: &PgPool, req: CreateRequest) -> Result<Publication> {
 async fn create_frozen(
     pool: &PgPool,
     root: &Path,
-    applet_id: &str,
+    producer: &Producer,
     title: &str,
     page: &[u8],
     expires_in_days: Option<u32>,
@@ -636,16 +742,17 @@ async fn create_frozen(
     let inserted = sqlx::query_as::<_, Publication>(&format!(
         "INSERT INTO app_publications \
             (id, token, producer_kind, producer_id, title, content_hash, size_bytes, expires_at, page) \
-         VALUES ($1, $2, 'applet', $3, $4, $5, $6, $7, $8) RETURNING {COLUMNS}"
+         VALUES ($1, $2, $9, $3, $4, $5, $6, $7, $8) RETURNING {COLUMNS}"
     ))
     .bind(&id)
     .bind(&token)
-    .bind(applet_id)
+    .bind(producer.id())
     .bind(title)
     .bind(content_hash(page))
     .bind(page.len() as i64)
     .bind(expires_at)
     .bind(page)
+    .bind(producer.kind())
     .fetch_one(pool)
     .await;
     let inserted = match inserted {
@@ -714,9 +821,10 @@ pub async fn list(pool: &PgPool) -> Result<Vec<Publication>> {
 
 /// Re-freeze the applet's face under the same link.
 /// A live link stays live and a snapshot takes a new snapshot.
-pub async fn update(pool: &PgPool, id: &str) -> Result<Publication> {
+pub async fn update(pool: &PgPool, drive: &DriveConfig, id: &str) -> Result<Publication> {
     door_key(pool).await?;
     let current = get(pool, id).await?;
+    let producer = Producer::from_row(&current.producer_kind, &current.producer_id)?;
     let was_live: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM app_publication_queries WHERE publication_id = $1)",
     )
@@ -724,7 +832,7 @@ pub async fn update(pool: &PgPool, id: &str) -> Result<Publication> {
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("read approved queries: {e}")))?;
-    let (title, page, live) = build(pool, &current.producer_id, was_live).await?;
+    let (title, page, live) = build(pool, drive, &producer, was_live).await?;
     let updated = update_frozen(pool, &bundles_dir(), current, &title, page.as_bytes()).await?;
     replace_queries(pool, &updated.id, &live).await?;
     Ok(Publication { is_live: !live.is_empty(), ..updated }.with_link())
@@ -922,7 +1030,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = bundle::Store::new(dir.path());
 
-        let p = create_frozen(&pool, dir.path(), "applet_user__rome", "Rome", b"v1", None, &[])
+        let p = create_frozen(&pool, dir.path(), &Producer::Applet("applet_user__rome".into()), "Rome", b"v1", None, &[])
             .await
             .unwrap();
         assert_eq!(store.load(&p.token).as_deref(), Some(&b"v1"[..]));
@@ -940,7 +1048,7 @@ mod tests {
         assert!(update_frozen(&pool, dir.path(), revoked, "Rome", b"v3").await.is_err());
         assert_eq!(store.load(&p.token), None, "a revoked link stays dead");
 
-        let never = create_frozen(&pool, dir.path(), "applet_user__rome", "Rome", b"x", Some(0), &[])
+        let never = create_frozen(&pool, dir.path(), &Producer::Applet("applet_user__rome".into()), "Rome", b"x", Some(0), &[])
             .await
             .unwrap();
         assert!(never.expires_at.is_none());
@@ -952,7 +1060,7 @@ mod tests {
         use virtues_door::core::CoreRequest;
         let dir = tempfile::tempdir().unwrap();
         let approved = FrozenQuery { key: query_key("SELECT 1 AS n"), sql: "SELECT 1 AS n".into(), rows: serde_json::Value::Null };
-        let p = create_frozen(&pool, dir.path(), "applet_user__rome", "Rome", b"x", None, &[approved.clone()])
+        let p = create_frozen(&pool, dir.path(), &Producer::Applet("applet_user__rome".into()), "Rome", b"x", None, &[approved.clone()])
             .await
             .unwrap();
 
@@ -975,8 +1083,8 @@ mod tests {
     async fn a_restored_database_rebuilds_its_bundles(pool: PgPool) {
         let dir = tempfile::tempdir().unwrap();
         let store = bundle::Store::new(dir.path());
-        let kept = create_frozen(&pool, dir.path(), "applet_user__rome", "Rome", b"kept", None, &[]).await.unwrap();
-        let gone = create_frozen(&pool, dir.path(), "applet_user__rome", "Rome", b"gone", None, &[]).await.unwrap();
+        let kept = create_frozen(&pool, dir.path(), &Producer::Applet("applet_user__rome".into()), "Rome", b"kept", None, &[]).await.unwrap();
+        let gone = create_frozen(&pool, dir.path(), &Producer::Applet("applet_user__rome".into()), "Rome", b"gone", None, &[]).await.unwrap();
         revoke_in(&pool, dir.path(), &gone.id).await.unwrap();
 
         // A fresh disk, as after a restore onto a new box, plus a stray bundle
