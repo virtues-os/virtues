@@ -80,7 +80,9 @@
         say("This link doesn't open a page", "It may have expired, or the person who shared it turned it off.");
         break;
       case "offline":
-        say("The server that shared this page isn't reachable", "It may be switched off or offline. Try again later.");
+        // A server with nothing shared runs no door, so a revoked or expired
+        // link looks the same as a server that is off.
+        say("This page isn't available right now", "The link may have expired or been turned off, or the server that shared it is offline.");
         break;
       default:
         say("This link is incomplete", "Ask the person who sent it for the full link.");
