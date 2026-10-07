@@ -39,6 +39,27 @@ def check_version(app: Path, expected: str) -> None:
     print(f"  version {got} (build {build})")
 
 
+def check_extensions(app: Path) -> None:
+    """Every embedded extension carries the app's exact version.
+
+    App Store validation rejects an extension whose CFBundleShortVersionString
+    or CFBundleVersion differs from its app's. Tauri writes the version into
+    the app's Info.plist only; the extension's is copied over by a build phase
+    ("Stamp the app's version" in VirtuesControls), so this reads the result.
+    """
+    with (app / "Info.plist").open("rb") as fh:
+        info = plistlib.load(fh)
+    want = (info.get("CFBundleShortVersionString"), info.get("CFBundleVersion"))
+    appexes = sorted((app / "PlugIns").glob("*.appex"))
+    for appex in appexes:
+        with (appex / "Info.plist").open("rb") as fh:
+            ext = plistlib.load(fh)
+        got = (ext.get("CFBundleShortVersionString"), ext.get("CFBundleVersion"))
+        if got != want:
+            fail(f"{appex.name} is version {got}, the app is {want}")
+    print(f"  {len(appexes)} extension(s), versions match the app")
+
+
 def check_icons(app: Path) -> None:
     """Every app icon carrying pixels must be opaque.
 
@@ -164,6 +185,7 @@ def main() -> int:
         fail(f"no archived app at {app}")
 
     check_version(app, expected)
+    check_extensions(app)
     check_icons(app)
     check_nested_platforms(app)
     check_signing(build_dir)
@@ -187,6 +209,7 @@ def main() -> int:
                 fail(f"{ipa.name} has no Payload/*.app")
             print("  — and the exported IPA:")
             check_version(payload[0], expected)
+            check_extensions(payload[0])
             check_nested_platforms(payload[0])
     return 0
 

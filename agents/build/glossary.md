@@ -50,9 +50,11 @@ primitive below cannot.**
   narrative: an investigation worked through the person's own data, the
   kind a project holds ("why do I get sad at work sometimes"). Declared by
   the person, never inferred.
-- A calendrical article is written once, when its period closes, and never
-  again. The live maintenance load is four time-articles at any moment,
-  whether the person is twenty or eighty.
+- A day's page is written once on its own, when the day closes, and again
+  only when the person asks (Rewrite this page). Years and chapters are
+  revised by the wiki editor, when it is on, as the days beneath them are
+  written, a rewritten day included. The live maintenance load is four
+  time-articles at any moment, whether the person is twenty or eighty.
 
 ## Tense
 

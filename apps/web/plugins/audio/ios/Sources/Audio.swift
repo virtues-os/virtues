@@ -3,6 +3,7 @@ import CallKit
 import Foundation
 import UIKit
 import UserNotifications
+import WidgetKit
 
 // Shared outbox enqueue (defined in the reach plugin's ffi.rs). The whole app
 // links one static lib, so this resolves by symbol name — no bridging header.
@@ -104,16 +105,18 @@ public final class AudioRecorder: NSObject {
     applySchedule(MuteSchedule.uniform(start: start, end: end), source: "quiet-hours")
   }
 
-  // MARK: - Mute policy: schedule + places (mute-don't-release)
+  // MARK: - Mute policy: override + schedule + places (mute-don't-release)
   //
-  // One gate, two reasons. The tap asks `muteReason(at:)` once per buffer and
-  // the answer is nil, "schedule" or "place". Neither ever stops the session:
-  // iOS will not restart a background audio session for us when a window
-  // ends or the owner walks out, so the graph stays armed and only chunk
-  // writing pauses — the quiet-hours contract, generalized. While muted, a
-  // metadata-only MARKER ships every chunk interval naming the reason (never
-  // the place), so the box can tell a chosen silence from a dead collector;
-  // without it both are the same thing: no rows.
+  // One gate, three reasons. The tap asks `muteReason(at:)` once per buffer
+  // and the answer is nil, "pause", "schedule" or "place"; a manual override
+  // (MARK: Override) outranks the other two in either direction. None ever
+  // stops the session: iOS will not restart a background audio session for us
+  // when a window ends, the owner walks out, or a pause runs out, so the
+  // graph stays armed and only chunk writing pauses — the quiet-hours
+  // contract, generalized. While muted, a metadata-only MARKER ships every
+  // chunk interval naming the reason (never the place), so the box can tell a
+  // chosen silence from a dead collector; without it both are the same thing:
+  // no rows.
 
   /// The weekly schedule. `defaultMuted` is what happens outside every window;
   /// a window inverts it. `false` + 22:00→07:00 every day is quiet hours;
@@ -363,13 +366,184 @@ public final class AudioRecorder: NSObject {
     return 2 * r * atan2(sqrt(a), sqrt(1 - a))
   }
 
-  /// Why the tap must not keep this buffer; nil to record. Schedule first (no
-  /// location needed), then place.
+  /// Why the tap must not keep this buffer; nil to record. A manual override
+  /// first, then the rules: schedule (no location needed), then place. Also
+  /// publishes what the rules alone say whenever that changes, so the control
+  /// can offer "record anyway" while they mute. Tap thread only.
   private func muteReason(at now: Date) -> String? {
+    let g = gate(at: now)
+    if !rulePublished || g.rule != lastRule {
+      rulePublished = true
+      lastRule = g.rule
+      publishRule(g.rule)
+    }
+    return g.mute
+  }
+
+  private func gate(at now: Date) -> (mute: String?, rule: String?) {
+    policyLock.lock()
+    var rule: String?
+    if schedule.muted(at: now, calendar: Calendar.current) {
+      rule = "schedule"
+    } else if insidePlaceId != nil {
+      rule = "place"
+    }
+    var ended: Override?
+    if let m = manual {
+      let timeUp = m.until.map { now >= $0 } ?? false
+      if timeUp || (m.mode == "record" && rule == nil) {
+        ended = m
+        manual = nil
+      }
+    }
+    let m = manual
+    policyLock.unlock()
+    if let e = ended { overrideEnded(e) }
+    if let m = m { return (m.mode == "silence" ? "pause" : nil, rule) }
+    return (rule, rule)
+  }
+
+  // MARK: - Override (the Control Center control)
+  //
+  // The one mute decision a person makes by hand, in either direction:
+  // "silence" mutes while the rules would record, "record" keeps audio while
+  // the schedule or a place would mute. The Virtues control in Control Center
+  // (the VirtuesControls widget extension) sets one; the app can end it. Both
+  // mute, never release, so starting or ending one works from the lock screen
+  // without opening the app. The orange dot stays lit through a silence, which
+  // is why the control says "Paused" and never "Mic off"; the real off is
+  // `disable()`.
+  //
+  // Every override ends by itself. A silence ends at `until`, or when the
+  // person resumes if there is none. A record ends at `until` or when the
+  // rules stop muting, whichever is first, so "record anyway" at a muted place
+  // cannot outlive the visit and quietly switch the place rule off. The tap
+  // notices the end on its next buffer; nothing has to wake.
+  //
+  // The control runs in its own process, so the override lives in the App
+  // Group's defaults. The control writes it and posts `overrideChangedNote`;
+  // this process re-reads on that note, and again on every event-driven
+  // ensureRecording, so a note posted while we were suspended lands on the
+  // next wake. The recorder mirrors back what the control needs to label
+  // itself: whether recording is on in the app, and what the rules say.
+  // These names must match VirtuesControls/RecordingControl.swift.
+  static let appGroup = "group.com.virtues.app"
+  static let overrideModeKey = "virtues.audio.override"  // "silence" | "record"
+  static let overrideUntilKey = "virtues.audio.overrideUntil"  // epoch s; absent = open
+  static let enabledMirrorKey = "virtues.audio.enabled"
+  static let ruleMirrorKey = "virtues.audio.ruleMute"  // "schedule" | "place" | absent
+  static let overrideChangedNote = "com.virtues.audio.override-changed"
+  static let controlKind = "com.virtues.app.recording"
+
+  struct Override: Equatable {
+    let mode: String
+    let until: Date?
+  }
+
+  private let groupDefaults = UserDefaults(suiteName: AudioRecorder.appGroup)
+  /// Behind `policyLock`: the tap reads it.
+  private var manual: Override?
+  // What the rules last said, tap thread only.
+  private var lastRule: String?
+  private var rulePublished = false
+
+  /// The live override for status: mode and end in epoch ms (nil = open).
+  public func overrideStatus() -> (mode: String, untilMs: Double?)? {
     policyLock.lock(); defer { policyLock.unlock() }
-    if schedule.muted(at: now, calendar: Calendar.current) { return "schedule" }
-    if insidePlaceId != nil { return "place" }
-    return nil
+    guard let m = manual else { return nil }
+    if let u = m.until, u <= Date() { return nil }
+    return (m.mode, m.until.map { $0.timeIntervalSince1970 * 1000 })
+  }
+
+  /// Start or end an override from the app; the control writes its own.
+  /// `mode` nil ends it; `minutes` nil leaves it open-ended.
+  public func setOverride(mode: String?, minutes: Int?) {
+    let d = groupDefaults
+    if let mode = mode, mode == "silence" || mode == "record" {
+      if let m = minutes, m > 0 {
+        d?.set(Date().addingTimeInterval(Double(m) * 60).timeIntervalSince1970,
+               forKey: Self.overrideUntilKey)
+      } else {
+        d?.removeObject(forKey: Self.overrideUntilKey)
+      }
+      d?.set(mode, forKey: Self.overrideModeKey)
+    } else {
+      d?.removeObject(forKey: Self.overrideModeKey)
+      d?.removeObject(forKey: Self.overrideUntilKey)
+    }
+    reloadOverride(source: "app")
+    reloadControl()
+  }
+
+  private func storedOverride() -> Override? {
+    guard let d = groupDefaults, let mode = d.string(forKey: Self.overrideModeKey),
+          mode == "silence" || mode == "record" else { return nil }
+    let until = (d.object(forKey: Self.overrideUntilKey) as? NSNumber)?.doubleValue
+    return Override(mode: mode, until: until.map { Date(timeIntervalSince1970: $0) })
+  }
+
+  private func reloadOverride(source: String) {
+    let next = storedOverride()
+    policyLock.lock()
+    let was = manual
+    manual = next
+    policyLock.unlock()
+    if was != next {
+      NSLog("[Audio] override %@ → %@ (%@)", describe(was), describe(next), source)
+    }
+  }
+
+  /// The tap saw an override run out. Clear it from the shared defaults only
+  /// if it is still the one stored: the control may have just written a new
+  /// one, and that must not be wiped by the end of the old.
+  private func overrideEnded(_ e: Override) {
+    NSLog("[Audio] override ended: %@", describe(e))
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
+      if self.storedOverride() == e {
+        self.groupDefaults?.removeObject(forKey: Self.overrideModeKey)
+        self.groupDefaults?.removeObject(forKey: Self.overrideUntilKey)
+      }
+      self.reloadControl()
+    }
+  }
+
+  private func publishRule(_ rule: String?) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
+      if let r = rule {
+        self.groupDefaults?.set(r, forKey: Self.ruleMirrorKey)
+      } else {
+        self.groupDefaults?.removeObject(forKey: Self.ruleMirrorKey)
+      }
+      self.reloadControl()
+    }
+  }
+
+  private func describe(_ o: Override?) -> String {
+    guard let o = o else { return "none" }
+    guard let u = o.until else { return "\(o.mode) (open)" }
+    return "\(o.mode) until \(isoMillis.string(from: u))"
+  }
+
+  /// The control shows Off rather than Recording when the in-app switch is
+  /// off, so the switch's state is mirrored where it can read it.
+  private func mirrorEnabled() {
+    groupDefaults?.set(cachedEnabled, forKey: Self.enabledMirrorKey)
+    reloadControl()
+  }
+
+  private func reloadControl() {
+    if #available(iOS 18.0, *) {
+      ControlCenter.shared.reloadControls(ofKind: Self.controlKind)
+    }
+  }
+
+  private func observeOverrideNote() {
+    CFNotificationCenterAddObserver(
+      CFNotificationCenterGetDarwinNotifyCenter(), Unmanaged.passUnretained(self).toOpaque(),
+      { _, _, _, _, _ in AudioRecorder.shared.reloadOverride(source: "control") },
+      AudioRecorder.overrideChangedNote as CFString, nil, .deliverImmediately)
   }
 
   // Markers. Every `chunkSeconds` of continuous mute ships one metadata-only
@@ -556,6 +730,9 @@ public final class AudioRecorder: NSObject {
     // The OS keeps monitored regions across launches, but the location
     // plugin's own list starts empty; hand it ours again.
     pushRegions(places)
+    reloadOverride(source: "launch")
+    mirrorEnabled()
+    observeOverrideNote()
     let nc = NotificationCenter.default
     nc.addObserver(self, selector: #selector(handleInterruption),
       name: AVAudioSession.interruptionNotification, object: session)
@@ -626,16 +803,21 @@ public final class AudioRecorder: NSObject {
       if granted {
         self.cachedEnabled = true
         UserDefaults.standard.set(true, forKey: self.enabledKey)
+        // Turning recording on means following the rules again: an override
+        // left from before the last Stop does not outlive it.
+        self.setOverride(mode: nil, minutes: nil)
+        self.mirrorEnabled()
         self.armEngine(reason: "enable")
       }
       completion(granted)
     }
   }
 
-  /// Toggle off / pause: clear the enabled flag, finalize, and stop the engine.
+  /// Toggle off: clear the enabled flag, finalize, and stop the engine.
   public func disable() {
     cachedEnabled = false
     UserDefaults.standard.set(false, forKey: enabledKey)
+    mirrorEnabled()
     virtues_location_audio_state(0)
     // stopWatchdog runs on q: `watchdog` is written by startWatchdog on q (via
     // startEngine), and stopping it from the caller's thread (Tauri's ipc
@@ -666,6 +848,10 @@ public final class AudioRecorder: NSObject {
       DispatchQueue.main.async { [weak self] in self?.ensureRecording(reason: reason) }
       return
     }
+    // The backstop for a missed override note (see MARK: Override). Every
+    // vector but the 5s watchdog, which would make it a defaults read per
+    // beat; a location wake costs one read beside the fix's own outbox write.
+    if reason != "watchdog" { reloadOverride(source: reason) }
     guard authorized(), cachedEnabled else { return }
     // CarPlay pause outranks every re-arm vector, including the foreground and
     // explicit-resume paths that clear the interruption hold: any arm here

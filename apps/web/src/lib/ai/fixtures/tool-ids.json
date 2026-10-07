@@ -1,4 +1,11 @@
 [
+  "browser_click",
+  "browser_open",
+  "browser_press",
+  "browser_screenshot",
+  "browser_scroll",
+  "browser_snapshot",
+  "browser_type",
   "code_interpreter",
   "create_page",
   "delete_applet",

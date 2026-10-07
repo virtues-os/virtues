@@ -2,11 +2,12 @@
 	DayGloss.svelte
 
 	A person's name in a day article, glossed: hover it (or click, or press
-	Enter) for a small card of facts about them as of this day. When you first
-	messaged, how many of the days before this one you were in touch, and the
-	last day before it, which opens that day. Facts are computed from the
-	record, never written by the narrator, so the card says only what the
-	messages say (`/api/wiki/person/:id/gloss`).
+	Enter) for a small card of facts about them as of this day. The earliest
+	message between you on record, on how many of the days before this one
+	there were messages (one-to-one in either direction; group chats only
+	where they wrote), and the last day before it, which opens that day.
+	Facts are computed from the record, never written by the narrator
+	(`/api/wiki/person/:id/gloss`).
 
 	It keeps the quiet ref look and the `ref-link` class, so the veil hides
 	the name like any other.
@@ -15,6 +16,8 @@
 	import { portal } from "$lib/actions/portal";
 	import { FloatingContent, useClickOutside, useEscapeKey } from "$lib/floating";
 	import { getPersonGloss, type PersonGlossApi } from "$lib/wiki/api";
+	import { ApiError } from "$lib/api/client";
+	import { tick } from "svelte";
 	import { parseDateSlug } from "$lib/utils/dateUtils";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { veil } from "$lib/stores/veil.svelte";
@@ -38,6 +41,8 @@
 	let hovered = false;
 	let gloss = $state<PersonGlossApi | null>(null);
 	let failed = $state(false);
+	/** The person is no longer in the wiki (merged or removed) though the page still names them. */
+	let missing = $state(false);
 
 	let showTimer: ReturnType<typeof setTimeout> | undefined;
 	let hideTimer: ReturnType<typeof setTimeout> | undefined;
@@ -56,18 +61,25 @@
 			return;
 		}
 		failed = false;
+		missing = false;
 		getPersonGloss(id, date)
 			.then((g) => {
 				cache.set(key, g);
 				gloss = g;
 			})
-			.catch(() => (failed = true));
+			.catch((e) => {
+				if (e instanceof ApiError && e.status === 404) missing = true;
+				else failed = true;
+			});
 	}
 
 	function show(byHover: boolean) {
 		hovered = byHover;
 		open = true;
 		load();
+		// Opened on purpose, the card takes focus so its links are the next Tab;
+		// a hover never moves focus away from where the reader is.
+		if (!byHover) void tick().then(() => card?.focus({ preventScroll: true }));
 	}
 
 	function onclick(e: MouseEvent) {
@@ -102,7 +114,7 @@
 		});
 	}
 
-	/** "a year before this day" when the first message fell on this date in an earlier year. */
+	/** "a year before this day" when the earliest message on record fell on this date in an earlier year. */
 	function anniversary(slug: string): string | null {
 		const d = parseDateSlug(slug);
 		const years = page.getFullYear() - d.getFullYear();
@@ -148,15 +160,17 @@
 					<div class="quiet">Veiled. Hold V to read.</div>
 				{:else}
 					<div class="name">{name}</div>
-					{#if failed}
-						<div class="quiet">Couldn't load what the record knows. Try again in a moment.</div>
+					{#if missing}
+						<div class="quiet">{name} isn't in your wiki anymore.</div>
+					{:else if failed}
+						<div class="quiet">Couldn't load your messages with them. Close this card and open it again to retry.</div>
 					{:else if !gloss}
 						<div class="quiet">Loading…</div>
 					{:else if !gloss.first_message_on}
 						<div class="quiet">No messages with them before this day.</div>
 					{:else}
 						<dl>
-							<dt>First message</dt>
+							<dt>First message on record</dt>
 							<dd>{day(gloss.first_message_on)}{gloss.first_message_in_group ? ", in a group chat" : ""}</dd>
 							{#if anniversary(gloss.first_message_on)}
 								<dt></dt>
@@ -164,7 +178,7 @@
 							{/if}
 							<dt>Messages</dt>
 							<dd>
-								on {gloss.days_in_window} of the {gloss.window_days} days before{#if gloss.direct_messages_in_window && gloss.group_messages_in_window}, {gloss.direct_messages_in_window} one-to-one and {gloss.group_messages_in_window} in groups{:else if gloss.group_messages_in_window}, all in group chats{/if}
+								{#if gloss.days_in_window === 0}None in the {gloss.window_days} days before{:else}On {gloss.days_in_window} of the {gloss.window_days} days before{#if gloss.direct_messages_in_window && gloss.group_messages_in_window}, {gloss.direct_messages_in_window} one-to-one and {gloss.group_messages_in_window} from them in group chats{:else if gloss.group_messages_in_window}, all from them in group chats{/if}{/if}
 							</dd>
 							{#if gloss.last_message_before_on}
 								<dt>Last before this day</dt>
@@ -178,7 +192,7 @@
 							{/if}
 						</dl>
 					{/if}
-					<div class="foot"><button type="button" class="link" onclick={openPerson}>Open {name} →</button></div>
+					{#if !missing}<div class="foot"><button type="button" class="link" onclick={openPerson}>Open {name} →</button></div>{/if}
 				{/if}
 			</div>
 		</FloatingContent>

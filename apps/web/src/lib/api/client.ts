@@ -49,6 +49,17 @@ export class ApiError extends Error {
 type QueryValue = string | number | boolean | null | undefined;
 
 /**
+ * A signal that aborts after `ms`, as `AbortSignal.timeout` does. That one is
+ * missing before Safari 16, and the app still runs on iOS 15 and older macOS.
+ */
+export function deadline(ms: number): AbortSignal {
+	if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+	const c = new AbortController();
+	setTimeout(() => c.abort(new DOMException('The operation timed out.', 'TimeoutError')), ms);
+	return c.signal;
+}
+
+/**
  * Core fetch wrapper for JSON endpoints under `/api`. Serializes an optional
  * query object, throws {@link ApiError} (with status) on non-2xx, and returns
  * the parsed JSON body (or `undefined` for empty/204 responses).
@@ -756,6 +767,17 @@ export interface SourceCatalogItem {
 	provides?: string[];
 	/** The life-domains those fall in (`health`, `financial`, …). */
 	domains?: string[];
+	/** Connect by logging in instead of pasting: the app opens `url`, and once
+	 *  every cookie in `cookies` is set it fills the fields from the cookie jar.
+	 *  `jar_field` set: that one field gets the whole jar as a Cookie header.
+	 *  Absent from boxes older than the field. */
+	login?: SourceLogin | null;
+}
+
+export interface SourceLogin {
+	url: string;
+	cookies: string[];
+	jar_field?: string | null;
 }
 
 /**
@@ -944,16 +966,18 @@ export interface ApiKeyCompleteResponse {
 	credential_id: string;
 }
 
-/** POST /api/connect/:source_id/complete — encrypt + store a pasted token. */
+/** POST /api/connect/:source_id/complete — encrypt + store a pasted token.
+ *  With `credentialId`, replace that credential's secrets (reconnecting). */
 export function apikeyComplete(
 	source_id: string,
 	name: string,
-	fields: Record<string, string>
+	fields: Record<string, string>,
+	credentialId?: string
 ): Promise<ApiKeyCompleteResponse> {
 	return apiSend<ApiKeyCompleteResponse>(
 		'POST',
 		`/connect/${encodeURIComponent(source_id)}/complete`,
-		{ name, fields }
+		{ name, fields, credential_id: credentialId }
 	);
 }
 
@@ -2078,6 +2102,17 @@ export function getAssistantProfile<T = unknown>(): Promise<T> {
 }
 export function updateAssistantProfile<T = unknown>(patch: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('PUT', '/assistant-profile', patch);
+}
+
+/**
+ * Change some of your UI preferences, keeping the rest. The server replaces
+ * `ui_preferences` whole, so this reads them first; a failed read throws
+ * rather than writing, because writing the patch alone would erase every
+ * other preference.
+ */
+export async function updateUiPreferences(patch: Record<string, unknown>): Promise<void> {
+	const profile = await getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>();
+	await updateAssistantProfile({ ui_preferences: { ...(profile?.ui_preferences ?? {}), ...patch } });
 }
 
 // ── Billing / wallet ─────────────────────────────────────────────────────────

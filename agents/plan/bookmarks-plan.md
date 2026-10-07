@@ -11,11 +11,12 @@ drain (`ShareInbox.swift`) and the box arm (`ios_ingest/bookmark.rs`) are
 built. The extension is in no Xcode target. In order, each step depending on
 the one before:
 
-1. Register the App Group `group.com.virtues.app` in the Apple Developer
-   portal, enable it on `com.virtues.app`, and create `com.virtues.app.share`
-   with it. Owner's account; cannot be done from the repo.
-2. Only then add the application-groups entitlement to the app (`project.yml`
-   and `virtues_iOS.entitlements`). Before step 1 this breaks signing.
+1. ~~Register the App Group and `com.virtues.app.share` with it.~~ Done
+   2026-10-07, for the Control Center control (audio-schedule-places-plan.md
+   slice 5), which needed the same group.
+2. ~~Add the application-groups entitlement to the app.~~ Done the same day.
+   `ShareInbox` now finds the shared container; until the extension writes
+   to it, there is nothing to drain.
 3. Add the target by editing the project in place — **never by running
    `xcodegen generate`**. Measured 2026-09-23: regenerating drops five
    Tauri-merged `Info.plist` keys (Bluetooth — BLE onboarding crashes without

@@ -62,7 +62,7 @@
 		}
 	}
 
-	async function handleRestore(versionId: string) {
+	async function handleRestore(version: PageVersion) {
 		if (!yjsDoc) return;
 		const ok = await confirmAction({
 			title: 'Restore this version?',
@@ -71,18 +71,32 @@
 		});
 		if (!ok) return;
 
-		restoringId = versionId;
+		restoringId = version.id;
 		error = null;
 		try {
-			// Snapshot current state before restoring so the user can undo the restore
-			await saveVersion(yjsDoc.ydoc, pageId, 'Auto-saved before restore', 'auto');
-
-			const success = await restoreVersion(yjsDoc, versionId);
-			if (success) {
-				close();
-			} else {
-				error = 'Failed to restore';
+			// A version holds the page as the edit it records left it. The one
+			// before keeps any edits not yet saved, so the restore can be undone;
+			// the one after is the restore itself, yours in History. The confirm
+			// promised the one before, so without it nothing is put back.
+			const kept = await saveVersion(yjsDoc.ydoc, pageId, 'Auto-saved before restore', 'auto');
+			if (!kept) {
+				error = "Your server couldn't save a copy of this page first, so it didn't put the version back. Try again.";
+				return;
 			}
+
+			const success = await restoreVersion(yjsDoc, version.id);
+			if (!success) {
+				error = 'Failed to restore';
+				return;
+			}
+			const recorded = await saveVersion(yjsDoc.ydoc, pageId, `Put back v${version.version_number}`, 'user');
+			if (!recorded) {
+				// The list gains the copy saved before; the panel stays open to say why.
+				await loadVersions();
+				error = "Your server put the version back but couldn't add it to History. Save a version to keep it there.";
+				return;
+			}
+			close();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to restore';
 		} finally {
@@ -140,7 +154,7 @@
 						size="sm"
 						loading={restoringId === version.id}
 						disabled={restoringId !== null}
-						onclick={() => handleRestore(version.id)}
+						onclick={() => handleRestore(version)}
 					>
 						Restore
 					</Button>

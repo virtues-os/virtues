@@ -58,20 +58,8 @@ async fn console_tool_handler(
         h.update(arguments.to_string().as_bytes());
         format!("{:x}", h.finalize())
     };
-    let page_id = arguments.get("page_id").and_then(|v| v.as_str()).map(str::to_string);
     let exec = ToolExecutor::new_with_yjs(state.db.pool().clone(), state.yjs_state.clone());
     let outcome = exec.execute(&tool, arguments, &ToolContext::default()).await;
-
-    // An edit lands in the live document and reaches the database on a
-    // debounce; the CLI reads the database. Save it now so the next command
-    // sees it.
-    if let (Some(page_id), Ok(result)) = (&page_id, &outcome) {
-        if tool == "edit_page" && result.success {
-            if let Err(e) = state.yjs_state.flush_page(page_id).await {
-                tracing::error!(page = %page_id, error = %e, "could not save a console page edit; it saves on the next debounce");
-            }
-        }
-    }
 
     let (status, body) = match outcome {
         Ok(result) => {

@@ -25,7 +25,7 @@
 use std::sync::{OnceLock, RwLock};
 
 use crate::error::{Error, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 
@@ -52,6 +52,13 @@ pub struct Source {
     /// Branch, tag, or path within the repo, when the whole repo is too coarse.
     #[serde(default)]
     pub repo_ref: Option<String>,
+    /// A login page whose session is the credential, for sources with no API a
+    /// personal box can use (X, Instagram). The app opens `url` in a browser
+    /// window, the owner logs in, and once every cookie in `cookies` is set the
+    /// app fills the `api_key` fields from the cookie jar. Only meaningful for
+    /// `api_key` sources; the paste form stays the fallback.
+    #[serde(default)]
+    pub login: Option<SourceLogin>,
     /// Which package contributed this row, relative to whichever root it was
     /// found in. Empty for the box's own top-level `sources.toml`. Populated by
     /// the loader from the on-disk path, never read from TOML — a file cannot
@@ -59,6 +66,22 @@ pub struct Source {
     /// thing that would have to be uninstalled to remove it.
     #[serde(skip)]
     pub dir: String,
+}
+
+/// See [`Source::login`].
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct SourceLogin {
+    /// Where the owner logs in.
+    pub url: String,
+    /// Cookies that exist only once the owner is logged in. The login is done
+    /// when all of them are set.
+    pub cookies: Vec<String>,
+    /// Absent: each name in `cookies` is also an `api_key` field, filled with
+    /// that cookie's value. Present: this one field gets the site's whole
+    /// cookie jar as a `Cookie:` header (`a=1; b=2`), for a site that checks
+    /// more of the jar than a fixed list (Instagram).
+    #[serde(default)]
+    pub jar_field: Option<String>,
 }
 
 /// How a source authenticates. Matches the three auth kinds in the charter.
@@ -1548,6 +1571,7 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
             auth: SourceAuth::ViaProxy { start_path: "/google/start".into() },
             repo: None,
             repo_ref: None,
+            login: None,
             dir: String::new(),
         }];
         for s in found {
@@ -1735,6 +1759,30 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
                 "duplicate source id in sources.toml: {}",
                 s.id
             );
+        }
+    }
+
+    /// A login must be able to fill the form it replaces, or the app would hand
+    /// the box a credential the connect route then rejects as incomplete.
+    #[test]
+    fn source_logins_fill_their_fields() {
+        let snapshot: ParsedTemplates = {
+            let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+            guard.clone()
+        };
+        for s in &snapshot.source {
+            let Some(login) = &s.login else { continue };
+            let SourceAuth::ApiKey { fields } = &s.auth else {
+                panic!("source {} declares a login but is not api_key", s.id);
+            };
+            assert!(!login.cookies.is_empty(), "source {}: login names no cookies", s.id);
+            let filled: Vec<&String> = match &login.jar_field {
+                Some(f) => vec![f],
+                None => login.cookies.iter().collect(),
+            };
+            for f in fields {
+                assert!(filled.contains(&f), "source {}: login does not fill field {f}", s.id);
+            }
         }
     }
 

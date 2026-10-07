@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * History — every edit the record made to its own prose.
+	 * History — every edit to the wiki's articles, the record's and your own.
 	 *
 	 * This is the room that makes "keep this updated" a safe thing to switch on.
 	 * Articles are opt-in and maintenance is a second, separate consent; the
@@ -11,7 +11,9 @@
 	 *
 	 * Entries read as sentences, not as commits: "the record rewrote Sarah,
 	 * Tuesday". The diff is available underneath for anyone who wants it, but
-	 * the default posture is a feed you can skim and ignore.
+	 * the default posture is a feed you can skim and ignore. Each entry is one
+	 * edit: the diff from the version before it (`before_version`) to the
+	 * version it made, so undoing it means putting `before_version` back.
 	 */
 	import { onMount } from 'svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
@@ -19,20 +21,22 @@
 		listHistory,
 		getArticleHistory,
 		revertArticle,
+		editKey,
 		type HistoryEntry,
 		type ArticleRevision
 	} from '$lib/wiki/api';
 
 	let entries = $state<HistoryEntry[]>([]);
 	let loading = $state(true);
-	/** subject key → its revisions, fetched only when someone opens one. */
+	/** entry key → its article's revisions, fetched only when someone opens one. */
 	let opened = $state<Record<string, ArticleRevision[]>>({});
 	let openKey = $state<string | null>(null);
 	/** The entry being reverted, and the outcome once it is done. */
 	let reverting = $state<string | null>(null);
 	let reverted = $state<Record<string, string>>({});
 
-	const key = (e: HistoryEntry) => `${e.subject_type}/${e.subject_id}/${e.version_number}`;
+	/** Two entries for one page can share a version_number, never the pair (`editKey`). */
+	const key = (e: HistoryEntry) => `${e.subject_type}/${e.subject_id}/${editKey(e)}`;
 
 	onMount(async () => {
 		try {
@@ -55,24 +59,38 @@
 	}
 
 	/**
-	 * Put an article back. The docstring above promised this from the day the
-	 * room shipped and there was no way to do it.
+	 * Undo the edit an entry shows, by putting back the version it started
+	 * from.
 	 *
 	 * Reverting adds a version rather than rewinding one, so this is not a
-	 * destructive act and does not ask twice. The feed reloads because the
-	 * revert is itself an edit and belongs in it.
+	 * destructive act and does not ask twice. When the page changed, the feed
+	 * reloads, because the revert is itself an edit and belongs in it. The
+	 * line afterwards is your server's own, so it says when the page already
+	 * read that way, and when your server couldn't save it yet. A feed that
+	 * doesn't reload leaves that line as it is: the put-back happened.
+	 *
+	 * A server that sends no `before_version` (one older than this app) can't
+	 * name the version to put back, so its entries offer none.
 	 */
 	async function revert(e: HistoryEntry) {
+		if (e.before_version == null) return;
 		const k = key(e);
 		reverting = k;
+		let changed = false;
 		try {
-			await revertArticle(e.subject_type, e.subject_id, e.version_number);
-			reverted[k] = 'Put back.';
-			entries = await listHistory(50);
+			const outcome = await revertArticle(e.subject_type, e.subject_id, e.before_version);
+			reverted[k] = outcome.message || 'Your server put that version back.';
+			changed = outcome.changed;
 		} catch {
 			reverted[k] = "Your server couldn't put that back. The old version is still in this list, so try again.";
 		} finally {
 			reverting = null;
+		}
+		if (!changed) return;
+		try {
+			entries = await listHistory(50);
+		} catch {
+			// The list on screen stays; the put-back's line already says how it went.
 		}
 	}
 
@@ -108,26 +126,28 @@
 
 				{#if openKey === key(e)}
 					{@const revs = opened[key(e)] ?? []}
-					{@const rev = revs.find((r) => r.version_number === e.version_number)}
+					{@const rev = revs.find((r) => editKey(r) === editKey(e))}
 					{#if rev && rev.diff.length}
 						<pre class="diff">{#each rev.diff as line}<span class="l {line.kind}">{line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '} {line.text}</span>
 {/each}</pre>
 					{:else}
 						<p class="quiet small">No textual change recorded for this edit.</p>
 					{/if}
-					<p class="actions">
-						{#if reverted[key(e)]}
+					{#if reverted[key(e)]}
+						<p class="actions">
 							<span class="quiet small">{reverted[key(e)]}</span>
-						{:else}
+						</p>
+					{:else if e.before_version != null}
+						<p class="actions">
 							<TextAction
 								loading={reverting === key(e)}
 								loadingLabel="Putting back…"
 								onclick={() => revert(e)}
 							>
-								Put this version back
+								Put the earlier version back
 							</TextAction>
-						{/if}
-					</p>
+						</p>
+					{/if}
 				{/if}
 			</li>
 		{/each}

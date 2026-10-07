@@ -22,7 +22,7 @@
 	 * Chrome matches the context menu's card exactly — same surface, border,
 	 * radius, shadow — because to the eye it IS a menu that opened itself.
 	 */
-	import { onMount } from 'svelte';
+	import { portal } from '$lib/actions/portal';
 	import { autoUpdate, computePosition, flip, offset, shift } from '@floating-ui/dom';
 
 	interface Props {
@@ -36,14 +36,6 @@
 	let { anchor, onenter, onleave, children }: Props = $props();
 
 	let card = $state<HTMLDivElement | null>(null);
-
-	// Out of the panel's clipping and the aside's width transition.
-	onMount(() => {
-		const el = card;
-		if (!el) return;
-		document.body.appendChild(el);
-		return () => el.remove();
-	});
 
 	// Positioned against whichever row it belongs to NOW. The parent moves one
 	// card between rows (a second row's card opens instantly while one is up),
@@ -69,6 +61,7 @@
 
 <div
 	bind:this={card}
+	use:portal
 	class="hover-card"
 	role="dialog"
 	tabindex="-1"

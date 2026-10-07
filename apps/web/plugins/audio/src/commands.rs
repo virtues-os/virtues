@@ -68,3 +68,15 @@ pub(crate) async fn set_places<R: Runtime>(
 ) -> Result<AudioStatus> {
   app.audio().set_places(places)
 }
+
+/// Start or end the override the Control Center control sets: `mode`
+/// "silence" or "record" for `minutes` (None = open-ended), or no mode to end
+/// it. Mute-don't-release, so the mic stays on either way.
+#[command]
+pub(crate) async fn set_override<R: Runtime>(
+  app: AppHandle<R>,
+  mode: Option<String>,
+  minutes: Option<u32>,
+) -> Result<AudioStatus> {
+  app.audio().set_override(mode, minutes)
+}
