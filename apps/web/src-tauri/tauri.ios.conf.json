@@ -11,7 +11,7 @@
     "resources": [],
     "iOS": {
       "developmentTeam": "4YV9K677RY",
-      "minimumSystemVersion": "16.4"
+      "minimumSystemVersion": "26.2"
     }
   },
   "app": {
