@@ -178,6 +178,8 @@ const TOOLS: Record<string, Presentation> = {
 	},
 	write_it_up: { noun: "an article", depth: 4, say: ["Writing it up", "Wrote it up"] },
 	generate_image: { noun: "an image", depth: 4, say: ["Making an image", "Made an image"] },
+	// Drawn in the reply; listed here only when a call failed.
+	show: { noun: "a figure", depth: 4, say: ["Drawing a figure", "Drew a figure"] },
 	publish_to_github: {
 		noun: "a page",
 		depth: 4,

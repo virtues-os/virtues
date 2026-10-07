@@ -26,6 +26,7 @@
   "semantic_search",
   "setup_applet",
   "shell",
+  "show",
   "skip_step",
   "sql_query",
   "sql_write",
