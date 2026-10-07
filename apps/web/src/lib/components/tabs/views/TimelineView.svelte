@@ -33,7 +33,7 @@
 	import TimelineScrubber from '$lib/components/timeline/TimelineScrubber.svelte';
 	import TimelineMonth from '$lib/components/timeline/TimelineMonth.svelte';
 	import TimelineReview from '$lib/components/timeline/TimelineReview.svelte';
-	import { focusZoom, type PlaceCandidate } from '$lib/timeline/review';
+	import { focusZoom, sendAnswer, type PlaceCandidate } from '$lib/timeline/review';
 	import Icon from '$lib/components/Icon.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
@@ -703,6 +703,19 @@
 	let tapped = $state<{ lat: number; lon: number } | null>(null);
 	let tapMark: Marker | null = null;
 	let review = $state<ReturnType<typeof TimelineReview> | null>(null);
+	/** Home is set somewhere (from the review), for the stay list. */
+	let homeSet = $state(false);
+	/** A stay's name field made its place Home or Work. */
+	async function setRole(placeId: string, role: 'home' | 'work'): Promise<boolean> {
+		try {
+			await sendAnswer(placeId, { kind: role });
+			await Promise.all([refreshTitles(), review?.load()]);
+			return true;
+		} catch (e) {
+			console.warn('[Timeline] setting Home or Work failed', e);
+			return false;
+		}
+	}
 	function setPointing(role: 'home' | 'work' | null) {
 		pointing = role;
 		tapped = null;
@@ -1276,6 +1289,7 @@
 		<TimelineReview
 			bind:this={review}
 			bind:open={reviewOpen}
+			bind:homeSet
 			onpoint={setPointing}
 			{dayPlaces}
 			room={Math.max(240, paneH - topChrome - 56 - scrubH - 36)}
@@ -1313,6 +1327,8 @@
 
 	<TimelineInspector bind:this={inspector} sections={shownSections}
 		onname={namePlace}
+		onrole={setRole}
+		{homeSet}
 		onmerge={mergeInto}
 		{zone}
 		{playT}

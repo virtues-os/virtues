@@ -35,6 +35,8 @@ export interface DerivedPlace {
 	place_name: string | null;
 	/** The box's title for it: Home or Work, the map's match, else its city. */
 	title?: string;
+	/** Where that title came from: `map` is the map's guess, never confirmed. */
+	title_source?: string;
 }
 
 /** One transcription window, as `/api/timeline/voice` serves it. */
@@ -91,6 +93,8 @@ export interface InspectorSection {
 	placeId: string | null;
 	/** A stay only: the person named its place. */
 	named: boolean;
+	/** A stay only: its title is the map's guess, offered for correction. */
+	guessed?: boolean;
 	rows: InspectorRow[];
 	/** A stay's audio note: "no audio" or "silent", only when clear-cut. */
 	atag: "no audio" | "silent" | null;
@@ -185,7 +189,14 @@ export function buildInspector(w: DerivedWindow, start: number, end: number, voi
 		switch (s.kind) {
 			case "stay": {
 				const place = places.get(s.timeline_place_id ?? "");
-				return { ...base, kind: "place", title: placeTitle(place), named: !!place?.is_named, dur: fmtDur(ce - cs) };
+				return {
+					...base,
+					kind: "place",
+					title: placeTitle(place),
+					named: !!place?.is_named,
+					guessed: !place?.is_named && place?.title_source === "map",
+					dur: fmtDur(ce - cs),
+				};
 			}
 			case "transit":
 				return {
