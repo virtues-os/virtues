@@ -30,6 +30,7 @@
 	import { listPeople } from '$lib/wiki/api';
 	import {
 		askFor,
+		weekly,
 		fetchReview,
 		homeOf,
 		pickAnswer,
@@ -367,7 +368,8 @@
 				</div>
 				<div class="pad">
 					<h3 class="q">{ask.text}</h3>
-					{#if current.recall}<p class="sub">{current.recall}</p>{/if}
+					{#if ask.role}<p class="sub">{weekly(current)}</p>
+					{:else if current.recall}<p class="sub">{current.recall}</p>{/if}
 
 					{#if ask.picks.length}
 						<ul class="checklist">
