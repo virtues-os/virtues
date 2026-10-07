@@ -112,9 +112,9 @@ impl Database {
             self.run_migrations().await?;
         }
 
-        // Size the vector columns to the configured embedding model. Migrations
-        // create them at the Dragon default (256); a manual endpoint with
-        // different native dims needs a resize before anything is indexed.
+        // Size the vector columns to the width the index was built at. A box
+        // that has never embedded has no recorded width; its first embed sizes
+        // them (`search::indexer`).
         self.ensure_embedding_dims().await?;
 
         Ok(())
@@ -128,10 +128,11 @@ impl Database {
     /// database remembers; the embedder's job at runtime is to *verify* that memory
     /// (see `search::indexer`), not to supply it.
     ///
-    /// No recorded width means the index has never been built — leave the column at
-    /// its migration default and let the first embed record the truth. Refuses to
-    /// resize a populated index: that is a re-embed, and `virtues reindex` owns it.
-    async fn ensure_embedding_dims(&self) -> Result<()> {
+    /// No recorded width means the index has never been built — leave the columns at
+    /// their migration default. The first embed records the truth and calls this
+    /// again before writing a vector. Refuses to resize a populated index: that is a
+    /// re-embed, and `virtues reindex` owns it.
+    pub(crate) async fn ensure_embedding_dims(&self) -> Result<()> {
         let Some(target) = crate::search::embedder::index_dim(&self.pool).await else {
             // Never embedded. Nothing to match yet.
             return Ok(());

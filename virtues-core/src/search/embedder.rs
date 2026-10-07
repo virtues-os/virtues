@@ -42,8 +42,9 @@
 //!
 //! **BYO (manual)** is any OpenAI-compatible endpoint. Stored width is the
 //! model's native dims (no truncation — most models aren't Matryoshka-trained),
-//! resolved from `VIRTUES_EMBED_DIMS`; the vector column is sized to match at
-//! bringup (`database::ensure_embedding_dims`). Prompt prefixes come from
+//! resolved from `VIRTUES_EMBED_DIMS`; the vector columns are sized to match by
+//! the first embed (`search::indexer`), and held there at every bringup
+//! (`database::ensure_embedding_dims`). Prompt prefixes come from
 //! `VIRTUES_EMBED_QUERY_PROMPT` / `_DOC_PROMPT`. A fingerprint is pinned at setup
 //! and re-checked at boot, so a silently-swapped model cannot corrupt the index.
 //!
@@ -91,8 +92,8 @@ pub fn requested_embed_dim() -> Option<usize> {
 /// The width the index is CURRENTLY built at — read from the database, never
 /// from a constant and never from the network.
 ///
-/// Bringup has to size the vector column before anything embeds, and it must do
-/// so on a box whose sidecar is not running (`virtues migrate`, most of the CLI).
+/// Bringup sizes the vector columns to it, and it must do so on a box whose
+/// sidecar is not running (`virtues migrate`, most of the CLI).
 /// So the geometry lives in `search_index_meta` and the embedder's job at runtime
 /// is to *verify* it, not to supply it.
 ///

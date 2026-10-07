@@ -50,20 +50,21 @@ pub async fn run(yes: bool) -> Result<()> {
         }
     }
 
-    // 1. Wipe the derived index (source untouched). Must precede the resize:
-    //    ensure_embedding_dims refuses a width change while vectors are stored.
+    // 1. Wipe the derived index and its recorded geometry (source untouched).
     println!("→ wiping the derived index (vectors + BM25)…");
     wipe(db.pool()).await?;
 
-    // 2. Migrations (idempotent) + vector-column resize/halfvec-convert. The
-    //    tables are empty now, so the width change is allowed.
-    println!("→ ensuring schema + sizing the vector index to the model…");
+    // 2. Migrations (idempotent). This cannot size the vector columns: bringup
+    //    sizes them to the recorded width, and the wipe just cleared it.
+    println!("→ ensuring schema…");
     db.initialize()
         .await
-        .map_err(|e| Error::Other(format!("schema/resize: {e}")))?;
+        .map_err(|e| Error::Other(format!("schema: {e}")))?;
 
     // 3. Re-embed from source, inline, to completion (drains the backlog; caps
     //    at the indexer's internal ceiling, after which a restart continues it).
+    //    Its first step records the current model's width and sizes the vector
+    //    columns to it, before any vector is written.
     println!("→ re-embedding from source (this can take a while)…");
     let embedded = crate::search::indexer::run_embedding_job(db.pool())
         .await
@@ -98,7 +99,7 @@ pub async fn run(yes: bool) -> Result<()> {
 /// (both FK-reference it). The single-row `search_index_meta` isn't FK'd, so it
 /// is reset explicitly — guarded with `to_regclass` in case reindex runs before
 /// the BM25 migration has ever been applied on this box.
-async fn wipe(pool: &PgPool) -> Result<()> {
+pub(crate) async fn wipe(pool: &PgPool) -> Result<()> {
     for stmt in [
         "TRUNCATE search_embeddings CASCADE",
         "TRUNCATE search_topic_cache",
