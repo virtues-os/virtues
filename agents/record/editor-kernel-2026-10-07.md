@@ -48,3 +48,10 @@ bug Pages has had came from that.
   sync server.
 - When articles (`kind = 'article'`) move: last, after their writers are
   ported. See the plan.
+
+## Correction (2026-10-07, same day)
+
+"Search, embeddings, publishing and the wiki's readers keep reading text"
+is wrong about publishing: `api/publish_page.rs` decodes `yjs_state` as
+Y.Text rather than reading `content`, so it must be ported for tree pages
+(plan, slice 1). The decision is unchanged.
