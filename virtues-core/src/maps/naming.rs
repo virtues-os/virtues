@@ -153,6 +153,9 @@ pub struct Naming {
     pub candidates: Vec<Candidate>,
     /// With no candidate: the nearest named place within 250 m, to offer by name.
     pub hint: Option<Candidate>,
+    /// The nearest hotel (or other lodging) within 250 m: after a night
+    /// there, the question is whether it was this hotel.
+    pub lodging: Option<Candidate>,
     /// Named places within 300 m, nearest first: the answer field's suggestions.
     pub nearby: Vec<String>,
     /// The city the place lies in: its title until it has a name.
@@ -191,7 +194,13 @@ pub(crate) fn resolve(lat: f64, lon: f64, centre: &[Label], block: &[Label]) -> 
             wide.push(c);
         }
     }
-    let mut out = Naming { tier: "none", nearby: nearby(lat, lon, block), street_detail: true, ..Naming::default() };
+    let mut out = Naming {
+        tier: "none",
+        nearby: nearby(lat, lon, block),
+        lodging: lodging(lat, lon, block),
+        street_detail: true,
+        ..Naming::default()
+    };
     // On airport ground with no business to name: the whole airport, never "which gate?".
     if infra > 0 {
         let aero = block
@@ -236,6 +245,24 @@ pub(crate) fn resolve(lat: f64, lon: f64, centre: &[Label], block: &[Label]) -> 
     }
     out.candidates = cands;
     out
+}
+
+/// The nearest named lodging within 250 m.
+fn lodging(lat: f64, lon: f64, block: &[Label]) -> Option<Candidate> {
+    block
+        .iter()
+        .filter(|p| category(&p.kind) == "lodging" && !p.name.is_empty())
+        .map(|p| (crate::geo::haversine_distance(lat, lon, p.lat, p.lon), p))
+        .filter(|(d, _)| *d <= HINT_M)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(d, p)| Candidate {
+            meters: (d * 10.0).round() / 10.0,
+            kind: p.kind.clone(),
+            category: "lodging",
+            name: p.name.clone(),
+            lat: p.lat,
+            lon: p.lon,
+        })
 }
 
 /// Named places a person can stay at within 300 m, nearest first, each name
@@ -408,6 +435,15 @@ mod tests {
         assert_eq!(n.hint.as_ref().map(|h| h.name.as_str()), Some("Country Club"));
         assert_eq!(n.nearby, ["Country Club"], "only names within 300 m are suggested");
         assert_eq!(resolve_here(&[at(400.0, "cafe", "Far")]).hint, None);
+    }
+
+    #[test]
+    fn the_nearest_hotel_within_250_m_is_kept_for_a_night() {
+        let n = resolve_here(&[at(40.0, "cafe", "Corner Cafe"), at(120.0, "hotel", "Hotel Rowan"), at(300.0, "hotel", "Far Inn")]);
+        let l = n.lodging.expect("a hotel within 250 m");
+        assert_eq!(l.name, "Hotel Rowan", "a nearer cafe doesn't hide it");
+        assert!((l.meters - 120.0).abs() < 0.5);
+        assert_eq!(resolve_here(&[at(300.0, "hotel", "Far Inn")]).lodging, None);
     }
 
     #[test]

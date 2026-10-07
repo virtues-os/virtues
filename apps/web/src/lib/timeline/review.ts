@@ -29,6 +29,8 @@ export interface PlaceNaming {
 	candidates: PlaceCandidate[];
 	/** With none within 60 m: the nearest named place within 250 m. */
 	hint: PlaceCandidate | null;
+	/** The nearest hotel within 250 m: after a night, asked about first. */
+	lodging: PlaceCandidate | null;
 	/** Named places within 300 m: the typed answer's suggestions. */
 	nearby: string[];
 	city: string | null;
@@ -61,6 +63,9 @@ export interface PlaceQuestion {
 	snippet: string | null;
 	/** The day with the most time there, YYYY-MM-DD. */
 	best_day: string | null;
+	/** A typical week there, from the first stay to the last. */
+	hours_a_week: number;
+	nights_a_week: number;
 }
 
 export interface ConfirmedPlace {
@@ -135,6 +140,13 @@ export function pickAnswer(picked: PlaceCandidate[]): Answer {
 	return { kind: "name", name: picked.map((c) => c.name).join(", "), category: cats.size === 1 ? picked[0].category : null };
 }
 
+/** A typical week there, for Home and Work: "About 6 nights a week",
+ *  "About 10 hours a week". */
+export function weekly(q: PlaceQuestion): string {
+	if (q.ask === "home") return q.nights_a_week < 1 ? "Less than a night a week" : `About ${Math.round(q.nights_a_week)} ${Math.round(q.nights_a_week) === 1 ? "night" : "nights"} a week`;
+	return q.hours_a_week < 1 ? "Less than an hour a week" : `About ${Math.round(q.hours_a_week)} ${Math.round(q.hours_a_week) === 1 ? "hour" : "hours"} a week`;
+}
+
 /** The question for a place (main.js:2156-2179): whether it's home, or
  *  where the person works, for the places where the time went; else which of several close
  *  places; whether it was a named place just out of reach (or someone's
@@ -160,6 +172,17 @@ export function askFor(q: PlaceQuestion): Ask {
 	if (q.ask === "home") return yesNo(q.changed ? "Is this your home now?" : "Is this home?", "home", { kind: "home" }, { kind: "not_home" });
 	if (q.ask === "work")
 		return yesNo(q.changed ? "Is this where you work now?" : "Is this where you work?", "work", { kind: "work" }, { kind: "not_work" });
+	// A night beside a hotel: was it the hotel?
+	const hotel = n.lodging && n.lodging.name !== q.rejected_match ? n.lodging : null;
+	if (q.overnight && hotel)
+		return {
+			text: `Were you at ${hotel.name}?`,
+			chips: [{ label: "Yes, that’s it", answer: named(hotel.name, hotel.category) }],
+			picks: [],
+			other: "person",
+			shown: [hotel],
+			reachM: hotel.meters,
+		};
 	if (cands.length > 1)
 		return {
 			text: "Which of these were you at?",

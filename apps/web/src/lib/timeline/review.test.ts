@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { askFor, focusZoom, homeOf, pickAnswer, type PlaceCandidate, type PlaceQuestion } from "./review";
+import { askFor, focusZoom, homeOf, pickAnswer, weekly, type PlaceCandidate, type PlaceQuestion } from "./review";
 
 const cand = (name: string, meters: number, category = "dining"): PlaceCandidate => ({ name, meters, kind: "cafe", category, lat: 30, lon: -97 });
 const question = (over: Partial<Omit<PlaceQuestion, "naming">> & { naming?: Partial<PlaceQuestion["naming"]> } = {}): PlaceQuestion => ({
@@ -16,6 +16,8 @@ const question = (over: Partial<Omit<PlaceQuestion, "naming">> & { naming?: Part
 	recall: "",
 	snippet: null,
 	best_day: null,
+	hours_a_week: 0,
+	nights_a_week: 0,
 	...over,
 	naming: {
 		tier: "none",
@@ -23,6 +25,7 @@ const question = (over: Partial<Omit<PlaceQuestion, "naming">> & { naming?: Part
 		category: null,
 		candidates: [],
 		hint: null,
+		lodging: null,
 		nearby: [],
 		city: "Riverton",
 		street_detail: true,
@@ -43,6 +46,8 @@ describe("the place questions", () => {
 		expect(askFor(question({ ask: "work" })).text).toBe("Is this where you work?");
 		// A place that has led since Home was set elsewhere.
 		expect(askFor(question({ ask: "home", changed: true })).text).toBe("Is this your home now?");
+		expect(weekly(question({ ask: "home", nights_a_week: 5.6 }))).toBe("About 6 nights a week");
+		expect(weekly(question({ ask: "work", hours_a_week: 10.2 }))).toBe("About 10 hours a week");
 	});
 
 	it("asks which of several close places, any number picked together", () => {
@@ -72,6 +77,11 @@ describe("the place questions", () => {
 		expect(b.text).toBe("Were you at Hotel Rowan, or someone’s home?");
 		expect(b.other).toBe("person");
 		expect(homeOf(" Sam ")).toBe("Sam’s place");
+		// A night beside a hotel asks about the hotel, even with a nearer place.
+		const h = askFor(question({ overnight: true, naming: { tier: "ambiguous", candidates: [cand("Maple Diner", 20), cand("Pine Grill", 30)], lodging: cand("Hotel Rowan", 90, "lodging") } }));
+		expect(h.text).toBe("Were you at Hotel Rowan?");
+		expect(h.chips[0].answer).toEqual({ kind: "name", name: "Hotel Rowan", category: "lodging" });
+		expect(askFor(question({ naming: { lodging: cand("Hotel Rowan", 90, "lodging") } })).text).not.toContain("Hotel Rowan");
 		// Where the box holds no list of places, a night there is no evidence of a home.
 		const c = askFor(question({ overnight: true, naming: { street_detail: false } }));
 		expect(c.text).toBe("Where did you stay that night?");

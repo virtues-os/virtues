@@ -321,6 +321,30 @@ pub struct Question {
     pub snippet: Option<String>,
     /// The day with the most time there: "See that full day".
     pub best_day: Option<NaiveDate>,
+    /// A typical week there, from the first stay to the last (a week at the
+    /// least): hours, and nights.
+    pub hours_a_week: f64,
+    pub nights_a_week: f64,
+}
+
+/// Hours and nights a week at a place, over the weeks from its first stay to
+/// its last, a week at the least.
+fn per_week(p: &Place) -> (f64, f64) {
+    let (Some(first), Some(last)) = (p.stays.iter().map(|s| s.0).min(), p.stays.iter().map(|s| s.1).max()) else {
+        return (0.0, 0.0);
+    };
+    // Whole days, first to last, both counted: three weeks of daily visits
+    // are three weeks, not the 20 days and 3 hours between first and last.
+    let days = (local(last, p.tz).date() - local(first, p.tz).date()).num_days() + 1;
+    let weeks = (days as f64 / 7.0).max(1.0);
+    let nights: std::collections::HashSet<NaiveDate> = p
+        .stays
+        .iter()
+        .filter(|(s, e)| covers_small_hours(*s, *e, p.tz))
+        .map(|(_, e)| local(*e, p.tz).date())
+        .collect();
+    let round = |v: f64| (v * 10.0).round() / 10.0;
+    (round(p.total_ms as f64 / 3_600_000.0 / weeks), round(nights.len() as f64 / weeks))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -364,6 +388,7 @@ pub async fn review(pool: &PgPool) -> Result<Review> {
             _ if p.passing_through && ask == "place" => {}
             _ => {
                 let (recall, best_day) = recall_line(&p.stays, p.tz);
+                let (hours_a_week, nights_a_week) = per_week(p);
                 questions.push(Question {
                     ask,
                     changed,
@@ -379,6 +404,8 @@ pub async fn review(pool: &PgPool) -> Result<Review> {
                     recall,
                     snippet: snippet(pool, &p.stays).await?,
                     best_day,
+                    hours_a_week,
+                    nights_a_week,
                 });
             }
         }
@@ -814,6 +841,17 @@ mod tests {
         p.is_named = true;
         p.name = "The Farm".into();
         assert_eq!(title(&p, &clear, Some("p")).title, "The Farm", "the person's name beats all");
+    }
+
+    #[test]
+    fn a_week_there_reads_in_hours_and_nights() {
+        let now = chrono_tz::UTC.with_ymd_and_hms(2026, 10, 7, 12, 0, 0).unwrap().with_timezone(&Utc);
+        // Three weeks of a 3-hour morning every day, and ten nights.
+        let work = lived("desk", 0, 21, now);
+        assert_eq!(per_week(&work), (21.0, 0.0), "21 hours a week, no nights");
+        let home = lived("bed", 10, 0, now);
+        assert_eq!(per_week(&home).1, 7.0, "10 nights over 10 days: every night");
+        assert_eq!(per_week(&lived("one", 1, 0, now)), (10.0, 1.0), "less than a week counts as one");
     }
 
     #[test]
