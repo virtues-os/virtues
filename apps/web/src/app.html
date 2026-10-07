@@ -9,17 +9,17 @@
 		     visible in the Tauri webview, where there's no browser chrome to
 		     hide behind. Both values are written by applyTheme().
 
-		     `--surface`, NOT `--background`. `body` is `--background`, which is
-		     what this painted until 2026-09-14 — but both shells cover the
-		     window in `--surface` (the phone's `.viewport`, the desktop pane),
-		     so on any theme where the two differ this painted one colour and
-		     the app arrived in another. Oxford, the default, is exactly that
-		     case: #FDFCF9 here and #FFFFFF a quarter-second later, measured.
-		     Paint what the app is about to look like. `--background` is kept as
-		     the fallback for a cache written before this key existed.
+		     The page (`--page`), NOT `--background` or `--surface`: both shells
+		     cover the window in the page (the phone's `.viewport`, the desktop's
+		     main card), so on any theme where the tokens differ, painting
+		     another one shows one colour and the app arrives in another a
+		     quarter-second later, measured. Paint what the app is about to look
+		     like. applyTheme() caches it under `virtues-theme-surface`;
+		     `virtues-theme-bg` is the fallback for a cache written before that
+		     key existed.
 
-		     The literal fallback tracks the DEFAULT theme — Oxford's `--surface`,
-		     #FFFFFF. Only a first run reaches it (afterwards localStorage has
+		     The literal fallback tracks the DEFAULT theme — Oxford's `--page`,
+		     #FDFCF9. Only a first run reaches it (afterwards localStorage has
 		     the real value), so getting it wrong means every new box flashes one
 		     colour on its very first paint and then settles to another. Keep it
 		     in step with virtues-registry DEFAULT_THEME. -->
@@ -31,7 +31,7 @@
 					var bg =
 						localStorage.getItem("virtues-theme-surface") ||
 						localStorage.getItem("virtues-theme-bg") ||
-						"#FFFFFF";
+						"#FDFCF9";
 					document.documentElement.style.backgroundColor = bg;
 				} catch (e) {
 					/* private mode / storage disabled — the stylesheet still wins */
