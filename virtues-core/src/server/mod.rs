@@ -324,6 +324,8 @@ fn build_state(client: &Virtues, yjs_state: yjs::YjsState) -> AppState {
         ghost_permissions: crate::api::chat_permissions::GhostPermissions::new(),
         // Turns outlive their requests; this is where a client finds one to rejoin.
         live_turns: crate::api::live_turn::LiveTurns::new(),
+        // A day's rewrite outlives its request too; this is where its page reads how it went.
+        day_rewrites: crate::api::day_rewrites::DayRewrites::new(),
     }
 }
 
@@ -722,6 +724,9 @@ fn protected_routes(state: &AppState) -> Router<AppState> {
             "/ws/terminal",
             get(crate::api::terminal::terminal_ws_handler),
         )
+        // The owner's browser: the Mac app holds this socket open and the
+        // assistant's browser_* tools ride it (`browser.rs`).
+        .route("/ws/browser", get(crate::browser::ws_handler))
         // Paste/drop a file into the terminal: writes it under the user's home
         // and returns the path, which the frontend types at the cursor.
         .route(

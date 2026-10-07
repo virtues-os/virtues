@@ -620,12 +620,16 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
 
 /// Cut a version from bytes the server already holds.
 ///
-/// `create_version` takes a base64 snapshot from a client request, which is
-/// the only way versions were ever made: no component under `components/wiki/`
-/// calls it, so a wiki article's history was whatever the generic page editor
-/// happened to autosave. The editor cuts its own versions — one before it
-/// edits, carrying the person's changes, and one after, carrying its own —
-/// so the history of an article is a real account of who wrote what.
+/// `create_version` takes a base64 snapshot from a client request; no
+/// component under `components/wiki/` calls it, so without this a wiki
+/// article's history would be whatever the generic page editor happened to
+/// autosave. The machine's writers cut their own versions, so the history of
+/// an article is a real account of who wrote what.
+///
+/// The convention every writer follows: a version's snapshot is the state
+/// AFTER the edit it records, and `created_by` names who produced that state.
+/// A writer keeps the state before its edit with `cut_restore_point` first,
+/// and versions the edit with `cut_version`.
 #[allow(clippy::too_many_arguments)]
 pub async fn create_version_from_snapshot(
     pool: &PgPool,
@@ -648,6 +652,163 @@ pub async fn create_version_from_snapshot(
     .await
 }
 
+/// What a restore point says in `description`. With `created_by = 'auto'`
+/// it is how History tells a restore point from the owner's own autosave
+/// (`'auto'` too, described "Auto-saved (idle)" and the like), so it is a
+/// contract with `wiki_articles`' reader, not a label to reword.
+pub const RESTORE_POINT: &str = "Restore point";
+
+/// Whether a version row is a restore point: the page as it stood before a
+/// machine changed the whole of it, kept so the change can be put back.
+///
+/// It is not an edit, so History shows no entry for it; it is the text the
+/// next entry is diffed against.
+pub fn is_restore_point(created_by: &str, description: Option<&str>) -> bool {
+    created_by == "auto" && description == Some(RESTORE_POINT)
+}
+
+/// A version that holds what a page said before a machine changed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestorePoint {
+    pub version_number: i64,
+    /// The text it holds: the page as `cut_restore_point` read it.
+    pub text: String,
+}
+
+/// Keep what a page says now, before a machine changes it, so the change can
+/// be put back. The one way to cut a restore point of a page as it stands;
+/// a page's first draft, before anything has versioned it, is kept by
+/// `keep_first_draft`.
+///
+/// Returns a version that holds exactly the current text: the latest
+/// version when it already does (nothing new is cut), otherwise a new
+/// restore point. Undoing the change means putting that version back.
+///
+/// Labelled `'auto'`, the browser's word for a save nobody asked for, rather
+/// than `'ai'` or `'user'`: the text in it was written by whoever wrote it,
+/// and History credits that to the versions around it. Like every machine
+/// row it can be pruned once fifty newer versions exist; the owner's own are
+/// never pruned.
+pub async fn cut_restore_point(
+    pool: &PgPool,
+    yjs: &crate::server::yjs::YjsState,
+    page_id: &str,
+) -> Result<RestorePoint> {
+    let now = yjs
+        .text_and_state(page_id)
+        .await
+        .map_err(|e| Error::Other(format!("could not read the page: {e}")))?;
+
+    let latest: Option<(i64, Option<Vec<u8>>)> = sqlx::query_as(
+        "SELECT version_number, yjs_snapshot FROM app_page_versions \
+         WHERE page_id = $1 ORDER BY version_number DESC LIMIT 1",
+    )
+    .bind(page_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to read the latest version: {e}")))?;
+    if let Some((number, Some(snapshot))) = latest {
+        if crate::server::yjs::extract_text_content(&snapshot) == now.text {
+            return Ok(RestorePoint {
+                version_number: number,
+                text: now.text,
+            });
+        }
+    }
+
+    let kept = create_version_from_snapshot(
+        pool,
+        page_id,
+        &now.state,
+        &now.text,
+        "auto",
+        Some(RESTORE_POINT),
+    )
+    .await?;
+    Ok(RestorePoint {
+        version_number: kept.version_number,
+        text: now.text,
+    })
+}
+
+/// Keep a page's first draft as its first version, when it has no version
+/// yet: a restore point, so History has the text every later edit is diffed
+/// against, and putting it back undoes them.
+///
+/// For a draft the server has as markdown rather than in a live doc: an
+/// article as it is created, or as the editor last wrote it when nothing
+/// versioned it then. The state is built from the text
+/// (`yjs::state_from_text`); a version is put back by its text, so a state
+/// built apart from the page's own doc serves. Takes any executor, so an
+/// article is created with its first version in one transaction.
+///
+/// Returns the version's number, or `None` when the page already has a
+/// version and nothing is cut.
+pub async fn keep_first_draft<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    page_id: &str,
+    text: &str,
+) -> Result<Option<i64>> {
+    let id = generate_id(
+        PAGE_VERSION_PREFIX,
+        &[page_id, &chrono::Utc::now().to_rfc3339()],
+    );
+    let preview: String = text.chars().take(500).collect();
+    sqlx::query_scalar::<_, i64>(
+        "INSERT INTO app_page_versions \
+             (id, page_id, version_number, yjs_snapshot, content_preview, created_by, description) \
+         SELECT $1, $2, 1, $3, $4, 'auto', $5 \
+         WHERE NOT EXISTS (SELECT 1 FROM app_page_versions WHERE page_id = $2) \
+         ON CONFLICT (page_id, version_number) DO NOTHING \
+         RETURNING version_number",
+    )
+    .bind(&id)
+    .bind(page_id)
+    .bind(crate::server::yjs::state_from_text(text))
+    .bind(&preview)
+    .bind(RESTORE_POINT)
+    .fetch_optional(executor)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to keep the first draft: {e}")))
+}
+
+/// Version what a write left on the page (`written`, as the write returned
+/// it), credited to `created_by`. The one way to cut a version after an
+/// edit.
+///
+/// Cut from the write's own state rather than from a fresh read, so the
+/// version holds exactly that write: an open editor's keystroke landing just
+/// after it goes into the owner's next autosave instead.
+///
+/// Returns the version's number, or `None` when it could not be saved. The
+/// change is already on the page by then, so a failure costs History its
+/// entry, not the change, and is logged rather than returned.
+pub async fn cut_version(
+    pool: &PgPool,
+    page_id: &str,
+    written: &crate::server::yjs::Written,
+    created_by: &str,
+    description: Option<&str>,
+) -> Option<i64> {
+    match create_version_from_snapshot(
+        pool,
+        page_id,
+        &written.state,
+        &written.text,
+        created_by,
+        description,
+    )
+    .await
+    {
+        Ok(version) => Some(version.version_number),
+        Err(e) => {
+            tracing::error!(page = %page_id, created_by, error = %e,
+                "the change is on the page but its version was not saved");
+            None
+        }
+    }
+}
+
 /// Create a new version snapshot for a page
 pub async fn create_version(
     pool: &PgPool,
@@ -662,39 +823,50 @@ pub async fn create_version(
         .decode(&req.snapshot)
         .map_err(|e| Error::InvalidInput(format!("Invalid base64 snapshot: {}", e)))?;
 
-    // Get next version number
-    let max_version: Option<i64> = sqlx::query_scalar(
-        "SELECT MAX(version_number) FROM app_page_versions WHERE page_id = $1",
-    )
-    .bind(page_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get max version: {}", e)))?;
+    // The number is MAX + 1 under UNIQUE (page_id, version_number), so two
+    // writers cutting a version of one page at the same moment (an open
+    // editor's autosave and a server-side edit) can read the same MAX. The
+    // loser tries once more with the winner's row in place.
+    let mut retried = false;
+    let version = loop {
+        let max_version: Option<i64> = sqlx::query_scalar(
+            "SELECT MAX(version_number) FROM app_page_versions WHERE page_id = $1",
+        )
+        .bind(page_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to get max version: {}", e)))?;
 
-    let version_number = max_version.unwrap_or(0) + 1;
+        let version_number = max_version.unwrap_or(0) + 1;
 
-    // Generate version ID
-    let timestamp = chrono::Utc::now().to_rfc3339();
-    let id = generate_id(PAGE_VERSION_PREFIX, &[page_id, &timestamp]);
+        // Generate version ID
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let id = generate_id(PAGE_VERSION_PREFIX, &[page_id, &timestamp]);
 
-    // Insert version
-    let version = sqlx::query_as::<_, PageVersionSummary>(
-        r#"
-        INSERT INTO app_page_versions (id, page_id, version_number, yjs_snapshot, content_preview, created_by, description)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id, page_id, version_number, content_preview, created_at, created_by, description
-        "#,
-    )
-    .bind(&id)
-    .bind(page_id)
-    .bind(version_number)
-    .bind(&snapshot_bytes)
-    .bind(&req.content_preview)
-    .bind(&req.created_by)
-    .bind(&req.description)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to create version: {}", e)))?;
+        let inserted = sqlx::query_as::<_, PageVersionSummary>(
+            r#"
+            INSERT INTO app_page_versions (id, page_id, version_number, yjs_snapshot, content_preview, created_by, description)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING id, page_id, version_number, content_preview, created_at, created_by, description
+            "#,
+        )
+        .bind(&id)
+        .bind(page_id)
+        .bind(version_number)
+        .bind(&snapshot_bytes)
+        .bind(&req.content_preview)
+        .bind(&req.created_by)
+        .bind(&req.description)
+        .fetch_one(pool)
+        .await;
+        match inserted {
+            Ok(version) => break version,
+            Err(sqlx::Error::Database(e)) if e.is_unique_violation() && !retried => {
+                retried = true;
+            }
+            Err(e) => return Err(Error::Database(format!("Failed to create version: {}", e))),
+        }
+    };
 
     // Prune old versions beyond the cap (keep most recent 50)
     sqlx::query(
@@ -798,4 +970,183 @@ pub async fn get_version(pool: &PgPool, version_id: &str) -> Result<PageVersionD
         created_by: row.created_by,
         description: row.description,
     })
+}
+
+/// For a test that stops a writer partway: wait until a statement of this
+/// test's database whose text matches `like` is waiting on a lock the test
+/// holds.
+#[cfg(test)]
+pub(crate) async fn until_a_statement_waits(pool: &PgPool, like: &str) {
+    for _ in 0..500 {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE $1",
+        )
+        .bind(like)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if waiting > 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("no statement like {like} came to wait on the lock");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::yjs::YjsState;
+
+    async fn page(pool: &PgPool, content: &str) -> String {
+        create_page(
+            pool,
+            CreatePageRequest {
+                title: "Notes".into(),
+                content: content.into(),
+                project_id: None,
+                icon: None,
+                icon_color: None,
+                cover_url: None,
+                tags: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    /// Two writers cutting a version of one page at once both read the same
+    /// MAX. Both versions must land, numbered apart, instead of the second
+    /// failing on the unique constraint.
+    #[sqlx::test]
+    async fn two_versions_cut_at_once_both_land(pool: PgPool) {
+        let page_id = page(&pool, "Text.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let state = yjs.text_and_state(&page_id).await.unwrap().state;
+        let cut = |who: &'static str| {
+            let (pool, page_id, state) = (pool.clone(), page_id.clone(), state.clone());
+            async move {
+                create_version_from_snapshot(&pool, &page_id, &state, "Text.\n", who, None).await
+            }
+        };
+        let (a, b) = tokio::join!(cut("auto"), cut("ai"));
+        let mut numbers = vec![a.unwrap().version_number, b.unwrap().version_number];
+        numbers.sort();
+        assert_eq!(numbers, vec![1, 2]);
+    }
+
+    /// A restore point holds exactly what the page said, and is cut only when
+    /// no version already does: the number it returns is always one whose text
+    /// is the page's.
+    #[sqlx::test]
+    async fn a_restore_point_keeps_the_current_text_once(pool: PgPool) {
+        let page_id = page(&pool, "The page as it was.\n").await;
+        let yjs = YjsState::new(pool.clone());
+
+        let kept = cut_restore_point(&pool, &yjs, &page_id).await.unwrap();
+        assert_eq!(kept.text, "The page as it was.\n");
+        let (by, description, snapshot): (String, Option<String>, Vec<u8>) = sqlx::query_as(
+            "SELECT created_by, description, yjs_snapshot FROM app_page_versions \
+             WHERE page_id = $1 AND version_number = $2",
+        )
+        .bind(&page_id)
+        .bind(kept.version_number)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(is_restore_point(&by, description.as_deref()));
+        assert_eq!(
+            crate::server::yjs::extract_text_content(&snapshot),
+            "The page as it was.\n"
+        );
+
+        // Nothing changed since: the same version answers, and no row is added.
+        assert_eq!(cut_restore_point(&pool, &yjs, &page_id).await.unwrap(), kept);
+
+        // The page moves on: a new restore point is cut for the new text.
+        yjs.replace_text(&page_id, "The page as it was.\n", "The page now.\n")
+            .await
+            .unwrap();
+        let next = cut_restore_point(&pool, &yjs, &page_id).await.unwrap();
+        assert!(next.version_number > kept.version_number);
+        assert_eq!(next.text, "The page now.\n");
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM app_page_versions WHERE page_id = $1")
+                .bind(&page_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    /// A first draft is kept as a page's first version, a restore point
+    /// holding its text, and only while the page has no version at all.
+    #[sqlx::test]
+    async fn a_first_draft_is_kept_only_on_a_page_with_no_version(pool: PgPool) {
+        let page_id = page(&pool, "The draft.\n").await;
+
+        assert_eq!(keep_first_draft(&pool, &page_id, "The draft.\n").await.unwrap(), Some(1));
+        let (by, description, snapshot): (String, Option<String>, Vec<u8>) = sqlx::query_as(
+            "SELECT created_by, description, yjs_snapshot FROM app_page_versions \
+             WHERE page_id = $1 AND version_number = 1",
+        )
+        .bind(&page_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(is_restore_point(&by, description.as_deref()));
+        assert_eq!(crate::server::yjs::extract_text_content(&snapshot), "The draft.\n");
+
+        assert_eq!(keep_first_draft(&pool, &page_id, "Another.\n").await.unwrap(), None);
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM app_page_versions WHERE page_id = $1")
+                .bind(&page_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    /// A version holds what the write that returned it left on the page, not
+    /// whatever the page says by the time the version is cut: a keystroke
+    /// that lands in between belongs to whoever typed it, in their next
+    /// version.
+    #[sqlx::test]
+    async fn a_version_holds_what_its_write_left(pool: PgPool) {
+        let page_id = page(&pool, "Text.\n").await;
+        let yjs = YjsState::new(pool.clone());
+
+        let written = yjs.replace_text(&page_id, "Text.\n", "Text, revised.\n").await.unwrap();
+        yjs.apply_text_diff(&page_id, "Text, revised.\n", "Text, revised.\nTyped after.\n")
+            .await
+            .unwrap();
+
+        let number = cut_version(&pool, &page_id, &written, "ai", Some("revised"))
+            .await
+            .expect("the version is saved");
+        let (by, preview, snapshot): (String, String, Vec<u8>) = sqlx::query_as(
+            "SELECT created_by, content_preview, yjs_snapshot FROM app_page_versions \
+             WHERE page_id = $1 AND version_number = $2",
+        )
+        .bind(&page_id)
+        .bind(number)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(by, "ai");
+        assert_eq!(preview, "Text, revised.\n");
+        assert_eq!(crate::server::yjs::extract_text_content(&snapshot), "Text, revised.\n");
+    }
+
+    /// An owner's autosave is labelled `'auto'` too; only the fixed
+    /// description makes a restore point.
+    #[test]
+    fn only_the_fixed_label_is_a_restore_point() {
+        assert!(is_restore_point("auto", Some(RESTORE_POINT)));
+        assert!(!is_restore_point("auto", Some("Auto-saved (idle)")));
+        assert!(!is_restore_point("auto", None));
+        assert!(!is_restore_point("ai", Some(RESTORE_POINT)));
+    }
 }

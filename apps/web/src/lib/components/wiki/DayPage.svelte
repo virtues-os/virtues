@@ -8,13 +8,17 @@
 	- Data: the evidence: the dayline, the timeline, your chats, and every
 	  record of the day. A sentence's source opens Data on its record.
 	Write a note writes in the margin about the whole day (nothing reads day
-	notes yet); Edit opens the article page.
+	notes yet); Edit opens the article page. Rewrite this page, at the foot of
+	a past day's article, asks your server to write the page again from the
+	day's record; it keeps the current page in History, asks before replacing
+	changes you made, and says how it went in a line above the Abstract
+	(lib/wiki/dayRewrite.ts).
 -->
 
 <script lang="ts">
 	import { subjectHref } from "$lib/wiki/links";
 	import { browser } from "$app/environment";
-	import { tick } from "svelte";
+	import { tick, untrack } from "svelte";
 	import type { DayEvent } from "$lib/wiki/types";
 	import {
 		getDaySources,
@@ -30,6 +34,11 @@
 		type WikiNote,
 		type SimilarDayApi,
 		getArticle,
+		getDayRewrite,
+		rewriteDay,
+		revertArticle,
+		type DayRewriteStatus,
+		type RevertOutcome,
 		type DayFactsApi,
 		type DaySourceApi,
 		type DayChatApi,
@@ -49,11 +58,35 @@
 	import DayDateline from "./DayDateline.svelte";
 	import DayNumbers from "./DayNumbers.svelte";
 	import DayInline from "./DayInline.svelte";
-	import { getRecord, getAssistantProfile, updateUiPreferences } from "$lib/api/client";
+	import { ApiError, getRecord, getAssistantProfile, updateUiPreferences } from "$lib/api/client";
+	import { confirmAction } from "$lib/stores/dialog.svelte";
 	import { messageBody, nearTurns } from "$lib/wiki/recordWords";
 	import type { NoteAnchor } from "$lib/wiki/dayNotes";
 	import DayGloss from "./DayGloss.svelte";
 	import { parseDayArticle, abstractOf, veilMarks } from "$lib/wiki/dayArticle";
+	import {
+		IDLE,
+		POLL_MS,
+		STOPPED,
+		UNKNOWN,
+		SHOW_FAILED,
+		StatusAsks,
+		keepsAsking,
+		CONFIRM_TITLE,
+		CONFIRM_LABEL,
+		CANCEL_LABEL,
+		readStatus,
+		afterUnansweredStart,
+		readRefusal,
+		failedCopy,
+		putBackCopy,
+		confirmBody,
+		anchoredNoteCount,
+		movedNoteCount,
+		movedNotesCopy,
+		type RewriteLine,
+		type StartRefusal,
+	} from "$lib/wiki/dayRewrite";
 	import { veiled } from "$lib/actions/veil";
 	import { veil } from "$lib/stores/veil.svelte";
 
@@ -444,35 +477,31 @@
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// Autobiography (read-only display + inline edit)
+	// The day's prose (read-only here)
 	// ─────────────────────────────────────────────────────────────────────────
 	// READ-ONLY here. The day's prose lives on its article page, and `Edit`
 	// (openDayArticle, below) opens that page in the real editor.
 	//
-	// There used to be an inline contenteditable that saved through
-	// `updateDay({ autobiography })` — into the LEGACY column. Since 0083 moved
-	// day prose onto article pages and `wiki_day_prose` began preferring the
-	// page, that write went somewhere nothing reads: the article shadowed it, so
-	// a user's edit vanished the instant they saved it, while
-	// `last_edited_by: "user"` still claimed the day and stopped narration. The
-	// worst of both.
+	// Don't add an inline editor that writes the page's `content`. Once a page
+	// has been opened, its live Yjs document wins, and a plain content write
+	// under it is lost or doubles the page. The nightly writer keeps the same
+	// rule: `save_day_article` writes through the pool only while
+	// `yjs_state IS NULL` and otherwise leaves the page as it is. Rewrite this
+	// page goes through your server's live document instead. The page editor
+	// is CRDT-aware; one editor, and it is that one.
 	//
-	// Porting the inline editor to write the page instead was the obvious fix
-	// and is wrong: an article page may carry a live Yjs document, and a plain
-	// content write under one is silently clobbered — the hazard
-	// `save_day_article` already guards against by refusing when
-	// `yjs_state IS NOT NULL`. The page editor is CRDT-aware; this was never
-	// going to be. One editor, and it is that one.
+	// `summaryText` follows the page you were handed, and Show it / Put the
+	// earlier page back set it to what your server has now.
 	let summaryText = $state((page.article ?? "") || "");
 
 	$effect(() => {
 		summaryText = (page.article ?? "") || "";
 	});
 
-	// The day article IS a page — Edit opens the page editor. Editing it does
-	// stop the nightly narration for that day, which is the one rung where that
-	// is still true: narration writes a whole first draft and has no way to
-	// edit around your sentences, so it stands down once there are any.
+	// The day article IS a page: Edit opens the page editor. The nightly writes
+	// a day's page once, and never over changes you made or over a page you've
+	// opened. After that, Rewrite this page writes it again when you ask, and
+	// asks before replacing changes you made.
 	async function openDayArticle() {
 		const a = await getArticle("day", page.id);
 		if (a?.page_id) windowShellStore.openTabFromRoute(`/page/${a.page_id}`);
@@ -786,6 +815,275 @@
 	/** No hover and a coarse pointer: a phone or tablet, where "hold V" means nothing. */
 	const touchOnly = browser && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
 
+	// ─────────────────────────────────────────────────────────────────────────
+	// Rewrite this page
+	// ─────────────────────────────────────────────────────────────────────────
+	// Your server writes the page in the background, so this page only reads
+	// where that stands: on arrival at a past day with a page, then every few
+	// seconds while it runs (or while a start that got no answer leaves it
+	// unknown) and the page is on screen, and at once when you come back to
+	// it. Rewrite this page appears once your server has answered that the
+	// day has a page, so a server without the rewrite never offers it; until
+	// an answer comes, coming back to the page asks again. What each answer
+	// says is lib/wiki/dayRewrite.ts.
+
+	/** The line above the Abstract. */
+	let rewriteLine = $state.raw<RewriteLine>(IDLE);
+	const rewriteRunning = $derived(rewriteLine.kind === "running");
+	/** From your server on every ask. When true, the confirm says the rewrite replaces your changes. */
+	let hasYourEdits = $state(false);
+	/** The start request is out. */
+	let rewriteSending = $state(false);
+	let showingRewrite = $state(false);
+	let puttingBack = $state(false);
+
+	/** The confirm is open or the start request is out: one start at a time. */
+	let rewriteStarting = false;
+	/** This client saw the day's rewrite running, so how it ends is news here. */
+	let watching = false;
+	/** `has_page` from your server's latest answer about this day; null until one comes. */
+	let rewriteHasPage = $state<boolean | null>(null);
+	/** The `started_at` of the last status the page read about this day. */
+	let lastStartedAt: string | null = null;
+	/** Once a start came back here: `lastStartedAt` as it was before that start (`Seen.before`). */
+	let startedAfter: string | null | undefined = undefined;
+	/** Bumped when the day changes or the page goes: answers for another day are dropped. */
+	let rewriteSeq = 0;
+	/** One ask out at a time (focus and visibility fire together), and none read from before a start. */
+	const statusAsks = new StatusAsks();
+	let rewriteTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function stopRewritePolling() {
+		if (rewriteTimer) clearTimeout(rewriteTimer);
+		rewriteTimer = null;
+	}
+
+	function scheduleRewriteAsk(slug: string) {
+		stopRewritePolling();
+		if (!document.hidden) rewriteTimer = setTimeout(() => void askRewrite(slug), POLL_MS);
+	}
+
+	/**
+	 * Ask where the day's rewrite stands, and again in a few seconds while the
+	 * line waits on your server. Resolves true when your server's answer was
+	 * read: it answered, about this day, after the latest start.
+	 */
+	async function askRewrite(slug: string): Promise<boolean> {
+		const ask = statusAsks.send(rewriteSeq);
+		if (!ask) return false;
+		stopRewritePolling();
+		let s: DayRewriteStatus | null = null;
+		try {
+			s = await getDayRewrite(slug);
+		} catch {
+			// A failed ask says nothing about the rewrite: keep the line and ask again.
+		}
+		const { current, again } = statusAsks.landed(ask, rewriteSeq);
+		if (ask.day !== rewriteSeq) return false;
+		// An answer to an ask sent before the latest start can't say how that
+		// start went, so it changes nothing, and the asking goes on.
+		if (s && current) {
+			hasYourEdits = s.has_your_edits;
+			rewriteHasPage = s.has_page === true;
+			lastStartedAt = s.started_at ?? null;
+			const next = readStatus(s, { watched: watching, before: startedAfter }, Date.now());
+			watching = next.kind === "running";
+			rewriteLine = next;
+		}
+		if (keepsAsking(rewriteLine)) {
+			// An ask that waited behind a dropped answer still wants one now.
+			if (again && !current) void askRewrite(slug);
+			else scheduleRewriteAsk(slug);
+		}
+		return s !== null && current;
+	}
+
+	$effect(() => {
+		const slug = currentDateSlug;
+		const ask = browser && showAutobiography && slug < todaySlug;
+		untrack(() => {
+			rewriteSeq++;
+			stopRewritePolling();
+			watching = false;
+			rewriteLine = IDLE;
+			hasYourEdits = false;
+			rewriteHasPage = ask ? null : false;
+			lastStartedAt = null;
+			startedAfter = undefined;
+			showingRewrite = false;
+			puttingBack = false;
+			if (ask) void askRewrite(slug);
+		});
+		return () => {
+			rewriteSeq++;
+			stopRewritePolling();
+		};
+	});
+
+	$effect(() => {
+		if (!browser) return;
+		const wake = () => {
+			if (!document.hidden && (keepsAsking(rewriteLine) || rewriteHasPage === null)) void askRewrite(currentDateSlug);
+		};
+		window.addEventListener("focus", wake);
+		document.addEventListener("visibilitychange", wake);
+		return () => {
+			window.removeEventListener("focus", wake);
+			document.removeEventListener("visibilitychange", wake);
+		};
+	});
+
+	/**
+	 * Confirm, then ask your server to start. The confirm uses what the page
+	 * said on arrival; when your server says the page now holds changes you
+	 * made, it asks again with that line, and only a confirm that said so
+	 * sends your consent to replace them.
+	 */
+	async function rewritePage() {
+		if (rewriteStarting || rewriteRunning) return;
+		const slug = currentDateSlug;
+		const seq = rewriteSeq;
+		rewriteStarting = true;
+		try {
+			let withEdits = hasYourEdits;
+			for (;;) {
+				const ok = await confirmAction({
+					title: CONFIRM_TITLE,
+					body: confirmBody(withEdits, anchoredNoteCount(parsed.blocks, dayNotes)),
+					confirmLabel: CONFIRM_LABEL,
+					cancelLabel: CANCEL_LABEL,
+				});
+				if (!ok || seq !== rewriteSeq) return;
+				rewriteSending = true;
+				const before = lastStartedAt;
+				let refusal: StartRefusal | null = null;
+				try {
+					await rewriteDay(slug, { replaceEdits: withEdits });
+				} catch (e) {
+					refusal = e instanceof ApiError ? readRefusal(e.status, e.message) : readRefusal(null, null);
+				} finally {
+					rewriteSending = false;
+				}
+				if (seq !== rewriteSeq) return;
+				// However it came back, an answer to an ask sent before now can't
+				// say how this start went, nor replace the line it sets. From here
+				// a finish this page hadn't read before the start is news.
+				statusAsks.started();
+				startedAfter = before;
+				if (!refusal || refusal.kind === "running") {
+					watching = true;
+					rewriteLine = { kind: "running" };
+					scheduleRewriteAsk(slug);
+					return;
+				}
+				if (refusal.kind === "consent" && !withEdits) {
+					withEdits = true;
+					hasYourEdits = true;
+					continue;
+				}
+				if (refusal.kind === "ask") {
+					// No answer came back, so it may have started anyway: ask first.
+					// An answer with nothing running and no finish this page hadn't
+					// read means it didn't start; a running or new finish is as
+					// read. A server that doesn't answer leaves it unknown, and the
+					// line says so and keeps asking.
+					watching = false;
+					const answered = await askRewrite(slug);
+					if (seq !== rewriteSeq) return;
+					if (!answered) {
+						rewriteLine = { kind: "unknown" };
+						scheduleRewriteAsk(slug);
+					} else {
+						rewriteLine = afterUnansweredStart(rewriteLine);
+					}
+					return;
+				}
+				rewriteLine = { kind: "failed", code: refusal.kind === "failed" ? refusal.code : "failed" };
+				return;
+			}
+		} finally {
+			rewriteStarting = false;
+		}
+	}
+
+	/** The page as your server has it now, with the day it was asked for. */
+	async function fetchArticle(slug: string) {
+		const d = await getDayByDate(slug).catch(() => null);
+		return { slug, article: d?.article || null };
+	}
+
+	/** Show it: the new page goes on screen only when you ask, and only on its own day. */
+	const loadRewritten = makeLoader(fetchArticle, (r) => {
+		showingRewrite = false;
+		const line = rewriteLine;
+		if (!r || r.slug !== currentDateSlug || line.kind !== "done") return;
+		if (!r.article) {
+			rewriteLine = { ...line, loadFailed: true };
+			return;
+		}
+		const moved = movedNoteCount(parsed.blocks, parseDayArticle(r.article).blocks, dayNotes);
+		summaryText = r.article;
+		rewriteLine = { kind: "shown", beforeVersion: line.beforeVersion, moved };
+	});
+
+	function showRewritten() {
+		// Off while it loads, so a second failure is a new line the status
+		// region reads out again.
+		if (rewriteLine.kind === "done" && rewriteLine.loadFailed) rewriteLine = { ...rewriteLine, loadFailed: false };
+		showingRewrite = true;
+		void loadRewritten(currentDateSlug);
+	}
+
+	/** How the put-back went, said once the page your server has now is on screen. */
+	let putBackOutcome: RevertOutcome = { changed: true, saved: true, message: "" };
+	const loadPutBack = makeLoader(fetchArticle, (r) => {
+		puttingBack = false;
+		if (!r || r.slug !== currentDateSlug) return;
+		if (r.article) summaryText = r.article;
+		rewriteLine = { kind: "putBack", message: putBackCopy(putBackOutcome, !!r.article) };
+	});
+
+	/** Put the earlier page back: the version your server kept before the rewrite. */
+	async function putEarlierBack() {
+		const line = rewriteLine;
+		if (line.kind !== "shown" || line.beforeVersion === null || puttingBack) return;
+		const slug = currentDateSlug;
+		const seq = rewriteSeq;
+		puttingBack = true;
+		let outcome: RevertOutcome;
+		try {
+			outcome = await revertArticle("day", page.id, line.beforeVersion);
+		} catch {
+			if (seq !== rewriteSeq) return;
+			puttingBack = false;
+			rewriteLine = { kind: "putBackFailed" };
+			return;
+		}
+		if (seq !== rewriteSeq) return;
+		if (outcome.changed && !outcome.saved) {
+			// This page reads what your server has saved, which is still the
+			// rewrite, so the screen keeps it and the line says to check back.
+			puttingBack = false;
+			rewriteLine = { kind: "putBack", message: putBackCopy(outcome, false) };
+		} else {
+			// Also when nothing changed: the page on screen is the rewrite, and
+			// your server's page is already the earlier one.
+			putBackOutcome = outcome;
+			void loadPutBack(slug);
+		}
+		// Putting a version back counts as your edit, so the next rewrite's
+		// confirm should say so; your server is the one that knows.
+		getDayRewrite(slug)
+			.then((s) => {
+				if (seq === rewriteSeq) hasYourEdits = s.has_your_edits;
+			})
+			.catch(() => {});
+	}
+
+	function openHistory() {
+		windowShellStore.openTabFromRoute("/wiki/history");
+	}
+
 </script>
 
 {#snippet personGloss({ name, url }: { name: string; url: string })}<DayGloss {name} {url} date={currentDateSlug} onday={(slug) => navigateToDay(parseDateSlug(slug))} />{/snippet}
@@ -816,7 +1114,13 @@
 					<button type="button" class="bar-action" title="Write in the margin about the whole day" onclick={() => body?.writeAboutDay()}>Write a note</button>
 				{/if}
 				{#if showAutobiography}
-					<button type="button" class="bar-action" onclick={openDayArticle}>Edit</button>
+					<button
+						type="button"
+						class="bar-action"
+						disabled={rewriteRunning}
+						title={rewriteRunning ? "Your server is writing this page again." : undefined}
+						onclick={openDayArticle}
+					>Edit</button>
 				{/if}
 			</div>
 
@@ -839,6 +1143,31 @@
 				{#if view === "article"}
 					{#if showAutobiography}
 						{#snippet lead()}
+							<div role="status">
+								{#if rewriteLine.kind === "running"}
+									<p class="rewrite-line">Your server is writing this day's page again. You can keep reading, or leave and come back.</p>
+								{:else if rewriteLine.kind === "unknown"}
+									<p class="rewrite-line">{UNKNOWN}</p>
+								{:else if rewriteLine.kind === "stopped"}
+									<p class="rewrite-line">{STOPPED}</p>
+								{:else if rewriteLine.kind === "done"}
+									<p class="rewrite-line">Your server wrote this day's page again. <TextAction inline loading={showingRewrite} onclick={showRewritten}>Show it</TextAction></p>
+									{#if rewriteLine.loadFailed}<p class="rewrite-line">{SHOW_FAILED}</p>{/if}
+								{:else if rewriteLine.kind === "shown"}
+									{@const moved = movedNotesCopy(rewriteLine.moved)}
+									<p class="rewrite-line">
+										The earlier page is in <TextAction inline onclick={openHistory}>History</TextAction>.
+										{#if rewriteLine.beforeVersion !== null}<TextAction inline loading={puttingBack} onclick={putEarlierBack}>Put the earlier page back</TextAction>{/if}
+									</p>
+									{#if moved}<p class="rewrite-line">{moved}</p>{/if}
+								{:else if rewriteLine.kind === "putBack"}
+									<p class="rewrite-line">{rewriteLine.message}</p>
+								{:else if rewriteLine.kind === "putBackFailed"}
+									<p class="rewrite-line">Your server couldn't put the earlier page back. Try again from <TextAction inline onclick={openHistory}>History</TextAction>.</p>
+								{:else if rewriteLine.kind === "failed"}
+									<p class="rewrite-line">{failedCopy(rewriteLine.code)}</p>
+								{/if}
+							</div>
 							{#if parsed.abstract}
 								<div class="day-abstract" use:veiled={{ hiding: veil.hiding, phrases: abstractMarked.phrases }}>
 									<div class="markdown markdown--article"><p><DayInline markdown={abstractMarked.markdown} person={personGloss} /></p></div>
@@ -859,6 +1188,11 @@
 							{removing}
 							{removeFailed}
 						/>
+						{#if currentDateSlug < todaySlug && rewriteHasPage === true}
+							<p class="rewrite-foot">
+								<TextAction onclick={rewritePage} loading={rewriteSending || rewriteRunning} loadingLabel="Writing…">Rewrite this page</TextAction>
+							</p>
+						{/if}
 					{:else}
 						{#if currentDateSlug <= todaySlug}
 							<!-- No page yet, but the day still has your numbers and your notes. -->
@@ -1092,7 +1426,9 @@
 </div>
 
 <style>
-	/* ── the toolbar: Article | Data, Veil, Write a note, Edit ── */
+	/* ── the toolbar: Article | Data, Veil, Write a note, Edit. Rewrite this
+	   page sits at the foot of the article instead: one more verb here would
+	   overflow the bar on a phone. ── */
 	.day-bar {
 		display: flex;
 		align-items: center;
@@ -1121,9 +1457,14 @@
 		cursor: pointer;
 	}
 
-	.bar-action:hover,
+	.bar-action:hover:not(:disabled),
 	.bar-action.active {
 		color: var(--color-foreground);
+	}
+
+	.bar-action:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.segmented {
@@ -1199,6 +1540,21 @@
 		font-size: 1.375rem;
 		line-height: 1.45;
 		color: var(--color-foreground);
+	}
+
+	/* ── Rewrite this page: the verb at the foot, its news above the Abstract ── */
+	.rewrite-foot {
+		max-width: 40rem;
+		margin: 2rem 0 0;
+	}
+
+	.rewrite-line {
+		max-width: 40rem;
+		margin: 0 0 1rem;
+		font-family: var(--font-sans);
+		font-size: 0.875rem;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
 	}
 
 	/* ── the days on either side ── */

@@ -2,8 +2,7 @@
 //!
 //! Runs once per day (via cron trigger, with a SQL condition gating to the
 //! user's maintenance hour). Resolves sleep, scores novelty/autonomic/topic/
-//! entity signals on each wiki_event, then regenerates the day's autobiography
-//! via the LLM.
+//! entity signals on each wiki_event, then writes the day's page, once.
 //!
 //! All heavy lifting lives in `virtues-core` — this binary just glues the
 //! pieces together and owns the stdin/stdout JSON contract.
@@ -271,15 +270,18 @@ async fn main() -> Result<()> {
             .await
             .context("topic/entity novelty scoring failed")?;
 
-    // 7. Narrate the day — THE DAY SUMMARY (LLM, Standard slot). Reads the scored
-    //    EVENTS (not raw sources) plus the 14-day case file, and names the day's
-    //    standout from novelty_z. The whole chain only reaches here at the
-    //    maintenance hour on a completed day, so this always runs (gated internally
-    //    to days that earned a story).
-    let narrated = virtues::api::day_summary::narrate_day(&pool, date)
+    // 7. Write the day's page (`day_article::write_day`: a Lite scout, the
+    //    Standard writer, a Lite check). It reads the day's own record, not the
+    //    events, and writes a day once: a day already written, not over, held
+    //    by the owner's rewrite, or whose page is theirs or open comes back as
+    //    an outcome rather than an error, and the summary line says which.
+    let narration = virtues::api::day_summary::narrate_day(&pool, date)
         .await
-        .context("day narration failed")?
-        .is_some();
+        .context("day narration failed")?;
+    let narrated = matches!(
+        narration,
+        virtues::api::day_summary::NarrateOutcome::Written(_)
+    );
 
     // Stash the last processed date in config so subsequent cron runs can
     // short-circuit in a condition or observe progress. Also strip any
@@ -301,7 +303,8 @@ async fn main() -> Result<()> {
     let summary = format!(
         "{date}: audio_sessions={audio_sessions} events={events} gap_ops={gap_ops} annotated={annotated} \
          novelty={novelty_count} autonomic={autonomic_count} topic_entity={topic_entity_count} \
-         narrated={narrated}"
+         narrated={narrated} narration={}",
+        narration.label()
     );
     output(&summary, &config)
 }

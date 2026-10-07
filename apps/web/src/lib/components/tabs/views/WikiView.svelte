@@ -71,6 +71,7 @@
 		getNarrativeIdentity,
 		getLifeline,
 		listHistory,
+		editKey,
 		countOpenNotes,
 		type WikiPersonListItem,
 		type WikiPlaceListItem,
@@ -736,7 +737,7 @@
 							</p>
 						{:else}
 							<ul class="wc">
-								{#each recentEdits as e (e.route + e.version_number)}
+								{#each recentEdits as e (`${e.route}/${editKey(e)}`)}
 									<li>
 										<button class="wc-row" onclick={() => windowShellStore.openTabFromRoute(e.route)}>
 											<span class="wc-title">{e.title}</span>

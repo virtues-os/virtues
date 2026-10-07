@@ -189,6 +189,11 @@ pub fn routes() -> Router<AppState> {
             get(wiki_entity_record_facets_handler),
         )
         .route("/api/wiki/day/:date", get(wiki_get_day_handler))
+        // Wiki - Rewrite this page: start one, and read how it is going
+        .route(
+            "/api/wiki/day/:date/rewrite",
+            get(wiki_get_day_rewrite_handler).post(wiki_rewrite_day_handler),
+        )
         .route(
             "/api/wiki/stories",
             get(wiki_list_stories_handler).post(wiki_create_story_handler),
@@ -816,9 +821,12 @@ pub async fn wiki_write_year_article_handler(
 
 /// Put a named version of an article back.
 ///
-/// Rule 4 of the wiki's paradigm — every edit is a revision you can read AND
-/// revert — has been half true since the history feed shipped: the diff was
-/// readable and there was no way to undo it.
+/// Rule 4 of the wiki's paradigm: every edit is a revision you can read AND
+/// revert. Answers `{ changed, saved, message }`: `changed` is false when the
+/// page already says that version; `saved` is false when the page is put back
+/// but its save failed and waits for a retry; `message` is a sentence
+/// the app shows as it is. What changed, counted, goes on the version the
+/// revert cuts.
 pub async fn revert_article_handler(
     State(state): State<AppState>,
     Path((subject_type, subject_id)): Path<(String, String)>,
@@ -829,6 +837,7 @@ pub async fn revert_article_handler(
             "version_number is required".to_string(),
         ));
     };
+    use crate::api::wiki_editor::RevertOutcome;
     match crate::api::wiki_editor::revert_article(
         state.db.pool(),
         &state.yjs_state,
@@ -838,7 +847,25 @@ pub async fn revert_article_handler(
     )
     .await
     {
-        Ok(change) => success_message(&format!("Reverted to v{version} — {change}")),
+        Ok(RevertOutcome::Changed { saved: true, .. }) => Json(serde_json::json!({
+            "changed": true,
+            "saved": true,
+            "message": "Your server put that version back.",
+        }))
+        .into_response(),
+        Ok(RevertOutcome::Changed { saved: false, .. }) => Json(serde_json::json!({
+            "changed": true,
+            "saved": false,
+            "message": "Your server put that version back but couldn't save it yet. \
+                        It saves it again on its own, so check back in a minute.",
+        }))
+        .into_response(),
+        Ok(RevertOutcome::Unchanged) => Json(serde_json::json!({
+            "changed": false,
+            "saved": true,
+            "message": "The page already says this, so nothing changed.",
+        }))
+        .into_response(),
         Err(e) => error_response(e),
     }
 }
@@ -1010,6 +1037,143 @@ pub async fn wiki_get_day_handler(
 }
 
 
+
+/// A refusal the day page keys its copy on: `{ "error": code }`, the shape
+/// the client's `request()` builds its message from.
+fn day_rewrite_refusal(status: StatusCode, code: &str) -> Response {
+    (status, Json(serde_json::json!({ "error": code }))).into_response()
+}
+
+/// Where a day's Rewrite this page stands.
+///
+/// `state` is this server's memory of the day's latest rewrite since it
+/// started: `idle` when it has none, which is also what a rewrite a restart
+/// interrupted reads as. `has_page` and `has_your_edits` are read from the
+/// page on every ask.
+pub async fn wiki_get_day_rewrite_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    let Ok(date) = date.parse::<chrono::NaiveDate>() else {
+        return error_response(Error::InvalidInput(format!("Invalid date format: {date}")));
+    };
+    let page = match crate::api::day_summary::day_page(state.db.pool(), date).await {
+        Ok(page) => page,
+        Err(e) => return error_response(e),
+    };
+    let mut body = serde_json::json!({
+        "state": "idle",
+        "has_page": page.is_some(),
+        "has_your_edits": page.as_ref().is_some_and(|p| p.has_your_edits),
+    });
+    if let Some(status) = state.day_rewrites.status(date) {
+        use crate::api::day_rewrites::RewriteStatus;
+        body["state"] = serde_json::json!(status.state());
+        body["started_at"] = serde_json::json!(status.started_at());
+        match status {
+            RewriteStatus::Running { .. } => {}
+            RewriteStatus::Done {
+                finished_at,
+                before_version,
+                after_version,
+                ..
+            } => {
+                body["finished_at"] = serde_json::json!(finished_at);
+                body["before_version"] = serde_json::json!(before_version);
+                body["after_version"] = serde_json::json!(after_version);
+            }
+            RewriteStatus::Failed {
+                finished_at,
+                code,
+                message,
+                ..
+            } => {
+                body["finished_at"] = serde_json::json!(finished_at);
+                body["code"] = serde_json::json!(code);
+                body["message"] = serde_json::json!(message);
+            }
+        }
+    }
+    Json(body).into_response()
+}
+
+/// Rewrite this page: write a past day's page again, from its record.
+///
+/// What can be refused without a model call is refused here, with the code
+/// the page keys its copy on: `not_over` (422), `no_page` (404),
+/// `needs_consent` (409: the page may hold the owner's words and
+/// `replace_edits` is not true), `rewrite_in_progress` (409: a rewrite of
+/// this day is running, and the GET beside this reports it) and `busy` (409:
+/// another writer holds the day, such as the nightly narration, which the GET
+/// knows nothing about). Otherwise the day's lock moves into a task of its
+/// own and this answers 202 at once. The task outlives the request, runs the
+/// rewrite to its end (`REWRITE_TIME_LIMIT` bounds only the writer inside
+/// it), and records how it ended for the GET.
+pub async fn wiki_rewrite_day_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    use crate::api::day_summary::{self, RewriteOutcome};
+
+    let Ok(date) = date.parse::<chrono::NaiveDate>() else {
+        return error_response(Error::InvalidInput(format!("Invalid date format: {date}")));
+    };
+    let replace_edits = body
+        .get("replace_edits")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let pool = state.db.pool();
+
+    match day_summary::day_is_over(pool, date).await {
+        Ok(true) => {}
+        Ok(false) => return day_rewrite_refusal(StatusCode::UNPROCESSABLE_ENTITY, "not_over"),
+        Err(e) => return error_response(e),
+    }
+    match day_summary::day_page(pool, date).await {
+        Ok(None) => return day_rewrite_refusal(StatusCode::NOT_FOUND, "no_page"),
+        Ok(Some(page)) if page.has_your_edits && !replace_edits => {
+            return day_rewrite_refusal(StatusCode::CONFLICT, "needs_consent")
+        }
+        Ok(Some(_)) => {}
+        Err(e) => return error_response(e),
+    }
+    let lock = match day_summary::try_lock_day(pool, date).await {
+        Ok(Some(lock)) => lock,
+        Ok(None) => {
+            return day_rewrite_refusal(StatusCode::CONFLICT, state.day_rewrites.locked_out(date))
+        }
+        Err(e) => return error_response(e),
+    };
+    // Only the lock's holder gets here. The registry can still say running
+    // for a moment after a rewrite lets the day go and before it records how
+    // it ended; the GET then reports that ending.
+    let Some(guard) = state.day_rewrites.try_begin(date) else {
+        lock.release().await;
+        return day_rewrite_refusal(StatusCode::CONFLICT, "rewrite_in_progress");
+    };
+    let started_at = guard.started_at();
+
+    // The server's own YjsState, the one open editors are connected to.
+    let pool = pool.clone();
+    let yjs = state.yjs_state.clone();
+    tokio::spawn(async move {
+        let outcome = day_summary::rewrite_day_page(&pool, &yjs, date, replace_edits, lock).await;
+        match &outcome {
+            RewriteOutcome::Rewritten { .. } => {
+                tracing::info!(date = %date, ?outcome, "rewrite this page finished")
+            }
+            other => tracing::warn!(date = %date, outcome = ?other, "rewrite this page did not land"),
+        }
+        guard.finish(&outcome);
+    });
+
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({ "state": "running", "started_at": started_at })),
+    )
+        .into_response()
+}
 
 /// List days in a date range
 pub async fn wiki_list_days_handler(

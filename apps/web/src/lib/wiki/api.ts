@@ -5,7 +5,7 @@
  * Backend wiki pages are views of entities/narratives.
  */
 
-import { apiGet } from '$lib/api/client';
+import { apiGet, apiSend, deadline, request } from '$lib/api/client';
 import type { NoteAnchor } from './dayNotes';
 
 // ============================================================================
@@ -374,7 +374,15 @@ export async function countOpenNotes(fetchFn: FetchFn = fetch): Promise<number> 
 	return typeof j.open === 'number' ? j.open : 0;
 }
 
-/** One edit to some article, for the History room. */
+/**
+ * One edit to some article, for the History room. `version_number` holds the
+ * page as the edit left it; `before_version` holds it as it was before, which
+ * is what putting this edit back restores. Null on a page's first version.
+ *
+ * Two entries for one page can share `version_number`: an old chat edit's
+ * last version both ends one entry and starts the one read against the live
+ * page. They never share the pair, so `editKey` is an entry's identity.
+ */
 export interface HistoryEntry {
 	subject_type: string;
 	subject_id: string;
@@ -383,6 +391,7 @@ export interface HistoryEntry {
 	author: string;
 	at: string;
 	version_number: number;
+	before_version: number | null;
 }
 
 /** One line of a diff. `kind` is 'add' | 'del' | 'ctx'. */
@@ -391,13 +400,19 @@ export interface DiffLine {
 	text: string;
 }
 
-/** One edit to one article, with what changed. */
+/** One edit to one article, with what changed. Versions read as `HistoryEntry`'s do. */
 export interface ArticleRevision {
 	version_number: number;
+	before_version: number | null;
 	author: string;
 	at: string;
 	diff: DiffLine[];
 	is_current: boolean;
+}
+
+/** One edit's identity within its page: the versions it went from and to. */
+export function editKey(e: { before_version: number | null; version_number: number }): string {
+	return `${e.before_version ?? "first"}->${e.version_number}`;
 }
 
 /** Every recent edit to any article, newest first. */
@@ -615,19 +630,40 @@ export async function writeYearArticle(year: number, fetchFn: FetchFn = fetch): 
 	return res.json();
 }
 
-/** Put an article back to a named version. Adds a version; never rewinds. */
+/**
+ * How a put-back went. `changed` is false when the page already said that
+ * version. `saved` is false when the page says it now but your server
+ * couldn't save it yet; it saves it again on its own. `message` is your
+ * server's own line about it, which History shows as it is.
+ */
+export interface RevertOutcome {
+	changed: boolean;
+	saved: boolean;
+	message: string;
+}
+
+/**
+ * Put an article back to a named version. Adds a version; never rewinds.
+ * An older server sends only `message`, and that reads as changed and saved.
+ */
 export async function revertArticle(
 	subjectType: string,
 	subjectId: string,
 	versionNumber: number,
 	fetchFn: FetchFn = fetch
-): Promise<void> {
+): Promise<RevertOutcome> {
 	const res = await fetchFn(`/api/wiki/articles/${subjectType}/${subjectId}/revert`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ version_number: versionNumber })
 	});
 	if (!res.ok) throw new Error('Could not revert that');
+	const body = await res.json().catch(() => null);
+	return {
+		changed: body?.changed !== false,
+		saved: body?.saved !== false,
+		message: typeof body?.message === 'string' ? body.message : ''
+	};
 }
 
 /** How an article is maintained: always, auto, or never. */
@@ -785,6 +821,65 @@ export async function getDayByDate(
 	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}`);
 	if (!res.ok) return null;
 	return res.json();
+}
+
+/**
+ * Where a day's Rewrite this page stands. `state` is your server's memory of
+ * the day's latest rewrite since it started (`idle` when it has none);
+ * `has_page` and `has_your_edits` are read from the page on every ask.
+ */
+export interface DayRewriteStatus {
+	state: 'idle' | 'running' | 'done' | 'failed';
+	/**
+	 * Why a rewrite failed: not_enough, edited_while_writing, thin_draft,
+	 * not_saved, billing, failed, interrupted, not_over, no_page or
+	 * needs_consent.
+	 */
+	code?: string | null;
+	message?: string | null;
+	started_at?: string | null;
+	finished_at?: string | null;
+	/** The version that holds the page as it was before the rewrite. */
+	before_version?: number | null;
+	/** The version the rewrite wrote. */
+	after_version?: number | null;
+	has_page: boolean;
+	/**
+	 * The page may hold your own words: you edited it, put a version back, or
+	 * turned its upkeep off. A rewrite replaces them only when you say so.
+	 */
+	has_your_edits: boolean;
+}
+
+/**
+ * How long a status ask may take. A connection that died while a phone slept
+ * can leave a request unsettled for good, and the day page keeps one ask out
+ * at a time, so without a deadline it would never ask again.
+ */
+export const DAY_REWRITE_ASK_MS = 15_000;
+
+/** Where a day's rewrite stands. Rejects, like any failed ask, once `DAY_REWRITE_ASK_MS` passes. */
+export function getDayRewrite(date: string): Promise<DayRewriteStatus> {
+	return request<DayRewriteStatus>(`/wiki/day/${encodeURIComponent(date)}/rewrite`, {
+		signal: deadline(DAY_REWRITE_ASK_MS)
+	});
+}
+
+/**
+ * Ask your server to write a past day's page again. It answers at once and
+ * writes in the background; `getDayRewrite` says how it went. A refusal
+ * throws an `ApiError` whose message is the code: not_over (422), no_page
+ * (404), or one of three 409s: needs_consent, rewrite_in_progress (a rewrite
+ * of the day is running), or busy (another writer holds the day).
+ * `replaceEdits` is your consent to replace changes you made to the page.
+ */
+export function rewriteDay(
+	date: string,
+	{ replaceEdits }: { replaceEdits: boolean }
+): Promise<{ state: 'running'; started_at: string }> {
+	return apiSend('POST', `/wiki/day/${encodeURIComponent(date)}/rewrite`, {
+		replace_edits: replaceEdits
+	});
 }
 
 
