@@ -197,9 +197,19 @@ private func excludeVirtuesDirFromBackup() {
   }
 }
 
+// Tell Rust where the App Group container is, so it can write the upload
+// snapshot the Virtues widget reads (reach/src/widget.rs).
+@_silgen_name("virtues_set_shared_dir")
+private func virtues_set_shared_dir(_ path: UnsafePointer<CChar>)
+
 @_cdecl("init_plugin_reach")
 func initPlugin() -> Plugin {
   excludeVirtuesDirFromBackup()
+  if let shared = FileManager.default
+    .containerURL(forSecurityApplicationGroupIdentifier: ShareInbox.appGroup)
+  {
+    shared.path.withCString { virtues_set_shared_dir($0) }
+  }
   // Shares made from the share sheet while the app was closed leave on the
   // next foreground; see ShareInbox.swift.
   ShareInbox.observeForeground()
