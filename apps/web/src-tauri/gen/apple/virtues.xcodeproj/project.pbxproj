@@ -20,7 +20,33 @@
 		BE75E5B8A24F289273D108A8 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 920EAAB99475A11FBF56ADE7 /* Metal.framework */; };
 		E20FA273402C28549C13373B /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 08DB34A78AE65ACD8E0D5C86 /* WebKit.framework */; };
 		E400114C2BBE9757259CAC78 /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 51FFFB5E1671841B814C8630 /* assets */; };
+		2DC23AD890CC4320B0C85CBC /* VirtuesControls.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6ECBB685F9964F629F3A067A /* VirtuesControls.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		9BA0E27D32F44ED2B6B408C2 /* RecordingControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = B90D139F7C49401F98465221 /* RecordingControl.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		0E914C07C72C439895E03E90 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				2DC23AD890CC4320B0C85CBC /* VirtuesControls.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		98C2612728E34D09A4E053D4 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C1CFB78040CA8A9F55EEEBE8 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4F7C9E1478C74496974D8D53;
+			remoteInfo = VirtuesControls;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		03CF0FA136F5C80F3CE54BDE /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
@@ -42,6 +68,10 @@
 		E847B961CEF6B29C61943C29 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		F0560589AEF6041AD4326C47 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F44CA4173529BEC7ADB870F1 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+		6ECBB685F9964F629F3A067A /* VirtuesControls.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VirtuesControls.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B90D139F7C49401F98465221 /* RecordingControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingControl.swift; sourceTree = "<group>"; };
+		06EF93117A5B4E0FB6A96BD3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		E05B68B96B4D4ED4B1814299 /* VirtuesControls.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VirtuesControls.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -61,6 +91,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		8CC4748D7EB54AF6A1FE7283 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -68,6 +105,7 @@
 			isa = PBXGroup;
 			children = (
 				794F6F05F1DF6B27C52FA4E3 /* virtues_iOS.app */,
+				6ECBB685F9964F629F3A067A /* VirtuesControls.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -141,9 +179,20 @@
 				6C0108E144D86CEED84129EE /* Sources */,
 				E3E6340B8BD59B3D29312944 /* src */,
 				3DD775293D98D7D037C6F496 /* virtues_iOS */,
+				3F5C4B45C1194515A87449C8 /* VirtuesControls */,
 				6D8A82B0805B13052B057C47 /* Frameworks */,
 				03AD81E4CAF849CF466EC9C1 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		3F5C4B45C1194515A87449C8 /* VirtuesControls */ = {
+			isa = PBXGroup;
+			children = (
+				B90D139F7C49401F98465221 /* RecordingControl.swift */,
+				06EF93117A5B4E0FB6A96BD3 /* Info.plist */,
+				E05B68B96B4D4ED4B1814299 /* VirtuesControls.entitlements */,
+			);
+			path = VirtuesControls;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -157,10 +206,12 @@
 				648CD6298D4F53A45DFE6DF6 /* Sources */,
 				F5D4DD44D8C94C19108D9AA0 /* Resources */,
 				0E2A42DCF4B1F90487E4DBD7 /* Frameworks */,
+				0E914C07C72C439895E03E90 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				87A9FFFC18894741AA07390F /* PBXTargetDependency */,
 			);
 			name = virtues_iOS;
 			packageProductDependencies = (
@@ -168,6 +219,26 @@
 			productName = virtues_iOS;
 			productReference = 794F6F05F1DF6B27C52FA4E3 /* virtues_iOS.app */;
 			productType = "com.apple.product-type.application";
+		};
+		4F7C9E1478C74496974D8D53 /* VirtuesControls */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7428C7EAB37C439E90BEA34D /* Build configuration list for PBXNativeTarget "VirtuesControls" */;
+			buildPhases = (
+				556CF29531F84C7C85DDD2C0 /* Sources */,
+				8CC4748D7EB54AF6A1FE7283 /* Frameworks */,
+				2E42385B6C934AAD9DC04DDD /* Resources */,
+				CD16661164954999891510FF /* Stamp the app's version */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VirtuesControls;
+			packageProductDependencies = (
+			);
+			productName = VirtuesControls;
+			productReference = 6ECBB685F9964F629F3A067A /* VirtuesControls.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -195,6 +266,7 @@
 			projectRoot = "";
 			targets = (
 				AA756D4E583A5B6A5441129E /* virtues_iOS */,
+				4F7C9E1478C74496974D8D53 /* VirtuesControls */,
 			);
 		};
 /* End PBXProject section */
@@ -207,6 +279,13 @@
 				34438425C15BD237DACE49F5 /* Assets.xcassets in Resources */,
 				0472E3854D9A389BD2CB65E0 /* LaunchScreen.storyboard in Resources */,
 				E400114C2BBE9757259CAC78 /* assets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		2E42385B6C934AAD9DC04DDD /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -234,6 +313,28 @@
 			shellPath = /bin/sh;
 			shellScript = "pnpm tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}";
 		};
+		CD16661164954999891510FF /* Stamp the app's version */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/virtues_iOS/Info.plist",
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Stamp the app's version";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/version-stamp",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# App Store refuses an extension whose version differs from its app's, and Tauri\n# writes the version into the app's Info.plist only. Copy it onto the built\n# extension before signing.\nset -e\nAPP=\"${SRCROOT}/virtues_iOS/Info.plist\"\nOUT=\"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}\"\nV=$(/usr/libexec/PlistBuddy -c \"Print :CFBundleShortVersionString\" \"$APP\")\nB=$(/usr/libexec/PlistBuddy -c \"Print :CFBundleVersion\" \"$APP\")\n/usr/libexec/PlistBuddy -c \"Set :CFBundleShortVersionString $V\" -c \"Set :CFBundleVersion $B\" \"$OUT\"\ntouch \"${DERIVED_FILE_DIR}/version-stamp\"\n";
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -245,7 +346,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		556CF29531F84C7C85DDD2C0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9BA0E27D32F44ED2B6B408C2 /* RecordingControl.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		87A9FFFC18894741AA07390F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4F7C9E1478C74496974D8D53 /* VirtuesControls */;
+			targetProxy = 98C2612728E34D09A4E053D4 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		8B92369F124DC4D4A50FAA85 /* release */ = {
@@ -325,7 +442,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.4;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -419,7 +536,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.4;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -430,6 +547,66 @@
 				SWIFT_VERSION = 5.0;
 			};
 			name = debug;
+		};
+		F32786810B77479888869421 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				ARCHS = (
+					arm64,
+				);
+				CODE_SIGN_ENTITLEMENTS = VirtuesControls/VirtuesControls.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 0;
+				DEVELOPMENT_TEAM = "4YV9K677RY";
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				INFOPLIST_FILE = VirtuesControls/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.virtues.app.controls;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = debug;
+		};
+		C5747A06E26E4EBD8A35D0DF /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				ARCHS = (
+					arm64,
+				);
+				CODE_SIGN_ENTITLEMENTS = VirtuesControls/VirtuesControls.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 0;
+				DEVELOPMENT_TEAM = "4YV9K677RY";
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				INFOPLIST_FILE = VirtuesControls/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.virtues.app.controls;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = release;
 		};
 /* End XCBuildConfiguration section */
 
@@ -448,6 +625,15 @@
 			buildConfigurations = (
 				D5D36C19034195804B3940F0 /* debug */,
 				9BB8782233225D46C99477F5 /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		7428C7EAB37C439E90BEA34D /* Build configuration list for PBXNativeTarget "VirtuesControls" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F32786810B77479888869421 /* debug */,
+				C5747A06E26E4EBD8A35D0DF /* release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = debug;

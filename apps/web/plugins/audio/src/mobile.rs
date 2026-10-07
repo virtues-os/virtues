@@ -86,4 +86,12 @@ impl<R: Runtime> Audio<R> {
       .run_mobile_plugin("setPlaces", SetPlacesRequest { places })
       .map_err(Into::into)
   }
+
+  /// Start or end the Control Center override.
+  pub fn set_override(&self, mode: Option<String>, minutes: Option<u32>) -> crate::Result<AudioStatus> {
+    self
+      .0
+      .run_mobile_plugin("setOverride", SetOverrideRequest { mode, minutes })
+      .map_err(Into::into)
+  }
 }
