@@ -121,10 +121,8 @@
 	   use --font-serif for prose. See the @font-face note in app.css. */
 	--font-serif-ui: 'EB Garamond UI', ui-serif, Georgia, 'Times New Roman', serif;
 	/* Your own hand: the notes you write in a day page's margin, and nothing
-	   else. Machine text is never set in it. Bradley Hand (macOS, iOS) stands
-	   in until the face itself ships with the app.
-	   TODO(2026-10-06): bundle Nothing You Could Do (OFL) with an @font-face in
-	   app.css; until then Linux kiosks and Android fall through to cursive. */
+	   else. Machine text is never set in it. The face ships with the app (see
+	   app.css); the rest of the stack only covers the swap while it loads. */
 	--font-hand: 'Nothing You Could Do', 'Bradley Hand', 'Segoe Print', cursive;
 
 	/* Animation Tokens — only the three the app actually reads.
