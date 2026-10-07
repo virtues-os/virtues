@@ -31,6 +31,8 @@ use sqlx::{PgPool, Row};
 
 use crate::error::{Error, Result};
 use crate::maps::naming::{Naming, Tiles};
+#[cfg(test)]
+use crate::maps::naming::Candidate;
 
 /// A summary longer than this is cut to it (`build.py:573`).
 const SNIPPET_CHARS: usize = 104;
@@ -265,8 +267,11 @@ fn title(p: &Place, naming: &Naming, home: Option<&str>) -> PlaceTitle {
     if p.is_work {
         return t("Work", "work");
     }
+    // Slept at, with a hotel near: the person is asked whether it was the
+    // hotel, never told it was the restaurant next door.
+    let hotel_night = p.night_ms > OVERNIGHT_MS && naming.lodging.as_ref().is_some_and(|l| Some(&l.name) != naming.name.as_ref());
     match (&naming.name, &naming.city) {
-        (Some(n), _) if naming.tier == "confident" && p.rejected_match.as_deref() != Some(n) => t(n, "map"),
+        (Some(n), _) if naming.tier == "confident" && p.rejected_match.as_deref() != Some(n) && !hotel_night => t(n, "map"),
         (_, Some(c)) => t(c, "city"),
         _ => t("Unnamed place", "none"),
     }
@@ -836,6 +841,13 @@ mod tests {
         p.is_work = true;
         assert_eq!(title(&p, &clear, None).title, "Work");
         p.is_work = false;
+        // A night there, with a hotel 146 m off: the restaurant is no answer.
+        let mut slept = p.clone();
+        slept.night_ms = 10 * 3_600_000;
+        let hotel = Candidate { meters: 146.0, kind: "hotel".into(), category: "lodging", name: "Hotel Rowan".into(), lat: 0.0, lon: 0.0 };
+        let near_hotel = Naming { lodging: Some(hotel), ..clear.clone() };
+        assert_eq!(title(&slept, &near_hotel, None).title, "Riverton", "asked about the hotel instead");
+        assert_eq!(title(&p, &near_hotel, None).title, "Corner Cafe", "an afternoon there: the café");
         p.rejected_match = Some("Corner Cafe".into());
         assert_eq!(title(&p, &clear, None).title, "Riverton", "a rejected match steps aside");
         p.is_named = true;
