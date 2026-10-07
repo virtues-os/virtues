@@ -8,6 +8,8 @@
 #![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
 
 mod browser;
+#[cfg(target_os = "macos")]
+mod browser_host;
 use browser::browser_login;
 
 use serde::{Deserialize, Serialize};
@@ -1709,6 +1711,11 @@ fn main() {
             browser_login,
         ])
         .setup(|app| {
+            // The owner's browser, as the assistant's hands: a connection to
+            // the box that lives as long as the app (browser_host.rs).
+            #[cfg(target_os = "macos")]
+            browser_host::start(app.handle().clone(), is_paired);
+
             // Bind the default summon chord here rather than waiting for the
             // webview: the whole point is reaching the app from another app, and
             // that has to work while the window is closed — which is precisely

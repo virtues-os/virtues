@@ -143,6 +143,31 @@ const TOOLS: Record<string, Presentation> = {
 		},
 	},
 	read_asset: { noun: "a file", depth: 4, say: ["Opening a file", "Opened a file"] },
+	// The owner's browser, a window in the Mac app.
+	browser_open: {
+		noun: "your browser",
+		depth: 4,
+		say: (input, live) => {
+			let host = "";
+			try {
+				host = new URL(String(input.url ?? "")).hostname.replace(/^www\./, "");
+			} catch {
+				host = "";
+			}
+			const verb = live ? "Opening" : "Opened";
+			return host ? `${verb} ${host} in your browser` : `${verb} a page in your browser`;
+		},
+	},
+	browser_snapshot: { noun: "your browser", depth: 4, say: ["Reading the page", "Read the page"] },
+	browser_click: { noun: "your browser", depth: 4, say: ["Clicking", "Clicked"] },
+	browser_type: { noun: "your browser", depth: 4, say: ["Typing", "Typed"] },
+	browser_press: {
+		noun: "your browser",
+		depth: 4,
+		say: (input, live) => `${live ? "Pressing" : "Pressed"} ${String(input.key ?? "a key")}`,
+	},
+	browser_scroll: { noun: "your browser", depth: 4, say: ["Scrolling", "Scrolled"] },
+	browser_screenshot: { noun: "your browser", depth: 4, say: ["Looking at the page", "Looked at the page"] },
 	get_page_content: { noun: "a page", depth: 4, say: ["Reading a page", "Read a page"] },
 	create_page: { noun: "a new page", depth: 4, say: ["Writing a new page", "Wrote a new page"] },
 	edit_page: { noun: "a page", depth: 4, say: ["Editing a page", "Edited a page"] },

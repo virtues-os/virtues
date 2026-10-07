@@ -161,12 +161,23 @@ impl ChatMode {
     pub fn tools(&self) -> Vec<serde_json::Value> {
         use crate::tools::{get_tool_definitions_for_llm, tools_named};
         match self {
-            // Write/act tools confirm before running.
-            Self::Chat => get_tool_definitions_for_llm(),
+            // Write/act tools confirm before running. The owner's browser
+            // only while an app that has one is connected: a tool the model
+            // cannot use is one it will try anyway.
+            Self::Chat => {
+                let mut tools = get_tool_definitions_for_llm();
+                if crate::browser::connected() {
+                    tools.extend(tools_named(crate::browser::TOOLS));
+                }
+                tools
+            }
             // Everything chat has, plus `shell`; changes ask (`sudo_gate`).
             Self::Sudo => {
                 let mut tools = get_tool_definitions_for_llm();
                 tools.extend(tools_named(crate::tools::SUDO_ONLY_TOOLS));
+                if crate::browser::connected() {
+                    tools.extend(tools_named(crate::browser::TOOLS));
+                }
                 tools
             }
             // No other edit/act tools — see `DEEP_RESEARCH_TOOLS`.

@@ -77,6 +77,7 @@ pub fn get_tool_definitions_for_llm() -> Vec<serde_json::Value> {
         .into_iter()
         .filter(|tool| !tool.is_system)
         .filter(|tool| !SUDO_ONLY_TOOLS.contains(&tool.id.as_str()))
+        .filter(|tool| !crate::browser::TOOLS.contains(&tool.id.as_str()))
         .map(llm_definition)
         .collect()
 }
@@ -87,6 +88,8 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
     virtues_registry::tools::default_tools()
         .into_iter()
         .filter(|tool| !SUDO_ONLY_TOOLS.contains(&tool.id.as_str()))
+        // An applet runs with nobody watching; the browser is the owner's.
+        .filter(|tool| !crate::browser::TOOLS.contains(&tool.id.as_str()))
         .map(llm_definition)
         .collect()
 }
