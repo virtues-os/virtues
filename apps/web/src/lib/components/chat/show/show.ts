@@ -57,8 +57,10 @@ function round(v: number, step: number): number {
 	return Number(v.toFixed(digits));
 }
 
-const plain = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
-const whole = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+// Grouping from five digits, so a year or a count like 2026 reads 2026, not
+// 2,026, and 12,400 still groups.
+const plain = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2, useGrouping: "min2" });
+const whole = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0, useGrouping: "min2" });
 const compact = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
 
 /** A number as a person reads it: 7.25, 1,204, 3.4M. */
@@ -74,6 +76,7 @@ export function formatCell(v: unknown): string {
 	if (typeof v === "number") return formatNumber(v, { compactAbove: Infinity });
 	if (typeof v === "boolean") return v ? "Yes" : "No";
 	if (typeof v === "string") {
+		if (DATE.test(v)) return formatTime(parseTime(v)!, { withDate: true, withTime: false });
 		const t = TIMESTAMP.test(v) ? parseTime(v) : null;
 		if (t) return formatTime(t, { withDate: true });
 		return v;

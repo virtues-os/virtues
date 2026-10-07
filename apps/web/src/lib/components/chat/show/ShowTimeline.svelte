@@ -90,7 +90,7 @@
 			<span>{items.length} {items.length === 1 ? "item" : "items"}</span>
 		{/if}
 	</div>
-	{#if width > 0}
+	{#if width > 0 && items.length}
 		<svg {width} {height} role="img" aria-label="Timeline of {items.length} items">
 			{#each ticks as t}
 				<line class="grid" x1={x(t)} x2={x(t)} y1="0" y2={height - AXIS + 4} />

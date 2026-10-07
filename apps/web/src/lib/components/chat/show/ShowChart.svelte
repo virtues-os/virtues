@@ -37,7 +37,19 @@
 	const dates = $derived(isDateColumn(xs) || isTimeColumn(xs));
 	// A line over real times is spaced by time, so a missing week reads as a
 	// gap; anything else is spaced evenly.
-	const times = $derived(mark === "line" && dates ? xs.map((v) => parseTime(v)!.getTime()) : null);
+	// Only when every x is a time: a null x has no place on a time axis.
+	const times = $derived.by(() => {
+		if (mark !== "line" || !dates) return null;
+		const ts = xs.map((v) => parseTime(v)?.getTime());
+		return ts.every((t) => t !== undefined) ? (ts as number[]) : null;
+	});
+	const tLo = $derived(times ? Math.min(...times) : 0);
+	const tHi = $derived(times ? Math.max(...times) : 0);
+	/** Row indices in drawing order: by time on a time axis, whatever order
+	 *  the query returned them in. */
+	const order = $derived(
+		times ? rows.map((_, i) => i).sort((a, b) => times[a] - times[b]) : rows.map((_, i) => i),
+	);
 
 	const values = $derived(
 		series.flatMap((s) => rows.map((r) => r[s])).filter((v): v is number => typeof v === "number"),
@@ -59,9 +71,7 @@
 	const xAt = (i: number): number => {
 		if (mark === "bar") return PAD.left + band * (i + 0.5);
 		if (times) {
-			const lo = times[0];
-			const hi = times[times.length - 1];
-			return PAD.left + (hi === lo ? plotW / 2 : ((times[i] - lo) / (hi - lo)) * plotW);
+			return PAD.left + (tHi === tLo ? plotW / 2 : ((times[i] - tLo) / (tHi - tLo)) * plotW);
 		}
 		return PAD.left + (rows.length === 1 ? plotW / 2 : (i / (rows.length - 1)) * plotW);
 	};
@@ -90,8 +100,8 @@
 	function linePath(s: string): string {
 		let d = "";
 		let pen = false;
-		rows.forEach((r, i) => {
-			const v = r[s];
+		order.forEach((i) => {
+			const v = rows[i][s];
 			if (typeof v !== "number") {
 				pen = false;
 				return;
@@ -103,7 +113,15 @@
 	}
 
 	// A short date label is about 44px of 9.5px mono; give each one 52.
-	const labelled = $derived(labelIndices(rows.length, Math.max(2, Math.floor(plotW / 52))));
+	const LABEL_W = 52;
+	const labelled = $derived(
+		labelIndices(rows.length, Math.max(2, Math.floor(plotW / LABEL_W))).map((n) => order[n]),
+	);
+	/** A category name cut to the room a label has (about 6px a character). */
+	const fit = (text: string) => {
+		const room = Math.max(4, Math.floor(Math.max(LABEL_W, band) / 6) - 1);
+		return text.length > room ? `${text.slice(0, room - 1)}…` : text;
+	};
 
 	function onMove(e: PointerEvent) {
 		const box = (e.currentTarget as SVGElement).getBoundingClientRect();
@@ -163,8 +181,8 @@
 					class="tick"
 					x={xAt(i)}
 					y={HEIGHT - 6}
-					text-anchor={labelled.length > 1 && i === rows.length - 1 && mark === "line" ? "end" : i === 0 && mark === "line" ? "start" : "middle"}
-					>{formatX(xs[i], dates)}</text
+					text-anchor={mark !== "line" ? "middle" : i === labelled[labelled.length - 1] && labelled.length > 1 ? "end" : i === labelled[0] ? "start" : "middle"}
+					>{dates ? formatX(xs[i], dates) : fit(formatX(xs[i], dates))}</text
 				>
 			{/each}
 

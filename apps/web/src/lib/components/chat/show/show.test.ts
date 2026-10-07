@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
 	assignLanes,
 	columnLabel,
+	formatCell,
+	formatNumber,
 	hasValues,
 	isDateColumn,
 	isShowOutput,
@@ -89,5 +91,15 @@ describe("hasValues", () => {
 	it("treats null, missing and empty text as no value", () => {
 		expect(hasValues([{ a: null }, { a: "" }, {}], "a")).toBe(false);
 		expect(hasValues([{ a: null }, { a: 0 }], "a")).toBe(true);
+	});
+});
+
+describe("formatting", () => {
+	it("groups from five digits, so a year stays a year", () => {
+		expect(formatNumber(2026)).toBe("2026");
+		expect(formatNumber(12400)).toBe("12,400");
+	});
+	it("reads a bare date as a date", () => {
+		expect(formatCell("2026-09-08")).toBe(new Date(2026, 8, 8).toLocaleDateString(undefined, { month: "short", day: "numeric" }));
 	});
 });

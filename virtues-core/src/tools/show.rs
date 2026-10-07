@@ -225,6 +225,13 @@ fn shape(kind: Kind, columns: &[String], mut rows: Vec<Value>) -> Result<Map<Str
              naming the window you looked at, rather than showing an empty figure",
         ));
     }
+    // Each row is a JSON object, so two columns with one name are one value:
+    // `SELECT a.title, b.title` would draw the second twice.
+    if let Some(dup) = columns.iter().enumerate().find_map(|(i, c)| columns[..i].contains(c).then_some(c)) {
+        return Err(invalid(format!(
+            "two columns are both named \"{dup}\"; alias them apart (AS \"...\")"
+        )));
+    }
     let more = rows.len() > kind.max_rows();
     let mut out = Map::new();
     out.insert("kind".into(), json!(kind.name()));
@@ -336,8 +343,17 @@ fn shape(kind: Kind, columns: &[String], mut rows: Vec<Value>) -> Result<Map<Str
                 }
             }
             for row in &rows {
-                if !row["start"].is_string() {
-                    return Err(invalid("every timeline row needs a start time; filter out rows where it is null"));
+                match row["start"].as_str() {
+                    None => {
+                        return Err(invalid("every timeline row needs a start time; filter out rows where it is null"))
+                    }
+                    Some(s) if !is_time(s) => {
+                        return Err(invalid(format!(
+                            "start must be a timestamp or a date, and one row's is '{s}'. Select the column \
+                             itself rather than formatting it (no to_char)"
+                        )))
+                    }
+                    Some(_) => {}
                 }
             }
         }
@@ -348,6 +364,15 @@ fn shape(kind: Kind, columns: &[String], mut rows: Vec<Value>) -> Result<Map<Str
     out.insert("row_count".into(), json!(rows.len()));
     out.insert("rows".into(), Value::Array(rows));
     Ok(out)
+}
+
+/// Whether `s` is a time as `convert_rows_to_json` writes one: RFC 3339
+/// (`timestamptz`), `YYYY-MM-DD HH:MM:SS[.f]` (`timestamp`), or a date.
+fn is_time(s: &str) -> bool {
+    use chrono::{DateTime, NaiveDate, NaiveDateTime};
+    DateTime::parse_from_rfc3339(s).is_ok()
+        || NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f").is_ok()
+        || NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok()
 }
 
 /// Whether a row holds an RFC 3339 time with its zone, as `timestamptz` arrives.
@@ -502,6 +527,21 @@ mod tests {
     fn a_timeline_needs_a_start_on_every_row() {
         let rows = vec![json!({ "start": null, "label": "x" })];
         assert!(err(shape(Kind::Timeline, &cols(&["start", "label"]), rows)).contains("null"));
+    }
+
+    #[test]
+    fn a_timeline_start_must_be_a_time_not_a_label() {
+        let rows = vec![json!({ "start": "9:45 AM", "label": "Standup" })];
+        assert!(err(shape(Kind::Timeline, &cols(&["start", "label"]), rows)).contains("to_char"));
+        for ok in ["2026-10-06T14:45:00+00:00", "2026-10-06 09:45:00", "2026-10-06 09:45:00.5", "2026-10-06"] {
+            assert!(is_time(ok), "{ok}");
+        }
+    }
+
+    #[test]
+    fn two_columns_with_one_name_are_refused() {
+        let rows = vec![json!({ "title": "a" })];
+        assert!(err(shape(Kind::Table, &cols(&["title", "title"]), rows)).contains("both named"));
     }
 
     #[test]
