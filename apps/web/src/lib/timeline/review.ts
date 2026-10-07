@@ -40,6 +40,9 @@ export interface PlaceQuestion {
 	/** `home`: "Is this home?"; `work`: "Is this where you work?"; `place`:
 	 *  what the place was. */
 	ask: "home" | "work" | "place";
+	/** For `home` and `work`: the person set it elsewhere, and this place
+	 *  has led since. */
+	changed: boolean;
 	id: string;
 	latitude: number;
 	longitude: number;
@@ -80,14 +83,17 @@ export type Answer =
 	| { kind: "passing" }
 	| { kind: "not_this"; name: string }
 	| { kind: "home" | "not_home" | "work" | "not_work" }
+	| { kind: "home_here" | "work_here"; lat: number; lon: number }
 	| { kind: "reopen" };
 
 export function fetchReview(): Promise<PlaceReview> {
 	return apiGet<PlaceReview>("/timeline/places/review");
 }
 
-export function sendAnswer(id: string, a: Answer): Promise<void> {
-	return apiSend<void>("POST", `/timeline/places/${encodeURIComponent(id)}/answer`, a);
+/** Saves an answer; `place_id` is the place a tap on the map set Home or
+ *  Work on, when it wasn't the one asked about. */
+export function sendAnswer(id: string, a: Answer): Promise<{ place_id: string | null }> {
+	return apiSend<{ place_id: string | null }>("POST", `/timeline/places/${encodeURIComponent(id)}/answer`, a);
 }
 
 /** The question a place asks. */
@@ -106,6 +112,9 @@ export interface Ask {
 	shown: PlaceCandidate[];
 	/** How far out they lie, so the map frames them readably; 0 with none. */
 	reachM: number;
+	/** Home or Work: "No" asks the person to point to the right place on the
+	 *  map instead of answering. */
+	role?: "home" | "work";
 }
 
 /** "Mine / family" names the place Family (main.js:2169). */
@@ -136,8 +145,9 @@ export function askFor(q: PlaceQuestion): Ask {
 	const n = q.naming;
 	const cands = n.candidates.filter((c) => c.name !== q.rejected_match);
 	const named = (name: string, category: string | null = null): Answer => ({ kind: "name", name, category });
-	const yesNo = (text: string, yes: Answer, no: Answer): Ask => ({
+	const yesNo = (text: string, role: "home" | "work", yes: Answer, no: Answer): Ask => ({
 		text,
+		role,
 		chips: [
 			{ label: "Yes", answer: yes },
 			{ label: "No", answer: no },
@@ -147,8 +157,9 @@ export function askFor(q: PlaceQuestion): Ask {
 		shown: [],
 		reachM: 0,
 	});
-	if (q.ask === "home") return yesNo("Is this home?", { kind: "home" }, { kind: "not_home" });
-	if (q.ask === "work") return yesNo("Is this where you work?", { kind: "work" }, { kind: "not_work" });
+	if (q.ask === "home") return yesNo(q.changed ? "Is this your home now?" : "Is this home?", "home", { kind: "home" }, { kind: "not_home" });
+	if (q.ask === "work")
+		return yesNo(q.changed ? "Is this where you work now?" : "Is this where you work?", "work", { kind: "work" }, { kind: "not_work" });
 	if (cands.length > 1)
 		return {
 			text: "Which of these were you at?",
