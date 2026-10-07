@@ -35,7 +35,7 @@ const INDEXER_LOCK_KEY: i64 = 0x656d_6269_6478_3031;
 /// be adopted, and it is safe precisely because there is nothing to contradict.
 /// Bringup cannot do the sizing: it reads the width from the record this writes,
 /// so on a fresh box, or after a reindex, it finds none and leaves the columns at
-/// their old width (the migrations' 256 on a fresh box) until the next restart.
+/// their old width (the migrations' 256 on a fresh box).
 ///
 /// **Populated index** → the geometry is already decided, and the endpoint must
 /// still agree with it. A different width or a different model means every new
