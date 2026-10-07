@@ -25,6 +25,8 @@
 		onpick,
 		onseek,
 		onname,
+		onrole,
+		homeSet = false,
 		onmerge,
 	}: {
 		sections: InspectorSection[];
@@ -40,6 +42,11 @@
 		onseek: (t: number) => void;
 		/** Name an unnamed place; resolves false when the server refused. */
 		onname: (placeId: string, name: string) => Promise<boolean>;
+		/** Make a place Home, or where the person works; resolves false when
+		 *  the server refused. */
+		onrole?: (placeId: string, role: 'home' | 'work') => Promise<boolean>;
+		/** Home is already set somewhere: choosing it here replaces it. */
+		homeSet?: boolean;
 		/** Fold an unnamed place into a named one near it. */
 		onmerge: (placeId: string, into: NearbyPlace) => Promise<boolean>;
 	} = $props();
@@ -55,6 +62,7 @@
 
 	function startNaming(placeId: string) {
 		naming = placeId;
+		replacing = false;
 		draft = '';
 		nearby = [];
 		nameError = null;
@@ -82,6 +90,17 @@
 	}
 	function sameAs(placeId: string, into: NearbyPlace) {
 		if (!saving) void finish(onmerge(placeId, into));
+	}
+	/** Home asked to replace a Home set elsewhere: one more tap confirms. */
+	let replacing = $state(false);
+	function setRole(placeId: string, role: 'home' | 'work') {
+		if (!onrole || saving) return;
+		if (role === 'home' && homeSet && !replacing) {
+			replacing = true;
+			return;
+		}
+		replacing = false;
+		void finish(onrole(placeId, role));
 	}
 
 	let inspector = $state<HTMLElement | null>(null);
@@ -246,6 +265,14 @@
 										{#each nearby as p, k (p.id)}{#if k > 0}, {/if}<TextAction inline disabled={saving} onclick={() => sameAs(placeId, p)}>{p.name}</TextAction>{/each}?
 									</p>
 								{/if}
+								{#if onrole}
+									<p class="roles">
+										<TextAction inline disabled={saving} onclick={() => setRole(placeId, 'home')}>{replacing ? 'Replace your Home' : 'Home'}</TextAction>
+										·
+										<TextAction inline disabled={saving} onclick={() => setRole(placeId, 'work')}>Work</TextAction>
+										{#if replacing}<span class="replace-note">This replaces the Home you set.</span>{/if}
+									</p>
+								{/if}
 								<!-- svelte-ignore a11y_autofocus -->
 								<input
 									class="name-input"
@@ -262,8 +289,13 @@
 								{#if nameError}<p class="name-error">{nameError}</p>{/if}
 							</form>
 						{:else}
-							<span class="name-door" class:shown={i === curSection}>
-								<TextAction onclick={() => startNaming(placeId)}>Name this place</TextAction>
+							<span class="name-door" class:shown={i === curSection || sec.guessed}>
+								{#if sec.guessed}
+									<span class="guess">From the map ·</span>
+									<TextAction onclick={() => startNaming(placeId)}>Not right?</TextAction>
+								{:else}
+									<TextAction onclick={() => startNaming(placeId)}>Name this place</TextAction>
+								{/if}
 							</span>
 						{/if}
 					{/if}
@@ -560,10 +592,19 @@
 		gap: 8px;
 		padding: 0 16px 12px 32px;
 	}
-	.same {
+	.same,
+	.roles {
 		margin: 0;
 		font-size: 13px;
 		color: var(--color-foreground-muted);
+	}
+	.guess {
+		color: var(--color-foreground-muted);
+	}
+	.replace-note {
+		display: block;
+		margin-top: 4px;
+		font-size: 12px;
 	}
 	.name-input {
 		width: 100%;

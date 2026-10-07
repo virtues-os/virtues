@@ -44,6 +44,7 @@
 
 	let {
 		open = $bindable(false),
+		homeSet = $bindable(false),
 		dayPlaces = [],
 		room = 480,
 		onfocus,
@@ -52,6 +53,9 @@
 		onpoint,
 	}: {
 		open?: boolean;
+		/** Home is set somewhere, for the stay list's "Home" to confirm a
+		 *  replacement. */
+		homeSet?: boolean;
 		/** The places of the day on show, asked about first. */
 		dayPlaces?: string[];
 		/** The card's tallest, in px: down to a gap above the scrubber. */
@@ -101,9 +105,12 @@
 	const confirmed = $derived(review?.confirmed ?? []);
 	const suggestions = $derived([...new Set(ask?.other === 'person' ? (people ?? []) : (current?.naming.nearby ?? []))]);
 
-	async function load() {
+	/** The questions again, after an answer given somewhere else (a stay's
+	 *  own name field). */
+	export async function load() {
 		try {
 			review = await fetchReview();
+			homeSet = review.confirmed.some((c) => c.source === 'home');
 			failed = false;
 		} catch (e) {
 			console.warn('[Timeline] place review fetch failed', e);
@@ -323,12 +330,12 @@
 				<div class="pad"><p class="note">Loading your places…</p></div>
 			{:else if mode === 'confirmed'}
 				<div class="top">
-					<TextAction quiet onclick={() => (mode = 'questions')}>‹ Questions</TextAction>
+					<TextAction quiet onclick={() => (mode = 'questions')}>‹ Back</TextAction>
 					<IconButton icon="ri:close-line" label="Close" size="sm" onclick={toggle} />
 				</div>
 				<div class="pad">
-					<h3 class="q">{plural(confirmed.length, 'named place')}</h3>
-					<p class="sub">Mark one with ✕ only if it's wrong.</p>
+					<h3 class="q">Auto-selected names</h3>
+					<p class="sub">Virtues chose these without asking, or you set them. Mark one with ✕ if it's wrong.</p>
 					{#each confirmed as c (c.id)}
 						<div class="row" class:flagged={flagged === c.id}>
 							<div class="row-main">
@@ -430,8 +437,6 @@
 						{@const day = current.best_day}
 						<TextAction onclick={() => seeDay(day)}>See That Day</TextAction>
 					{/if}
-					<span class="spacer"></span>
-					<TextAction quiet onclick={() => (mode = 'confirmed')}>{confirmed.length} Named</TextAction>
 				</div>
 			{:else}
 				<div class="top">
@@ -439,11 +444,11 @@
 					<IconButton icon="ri:close-line" label="Close" size="sm" onclick={toggle} />
 				</div>
 				<div class="pad">
-					<h3 class="q">All set</h3>
-					<p class="sub">Nothing to sort out.</p>
+					<h3 class="q">All caught up</h3>
+					<p class="sub">Nothing left to ask about.</p>
 				</div>
 				<div class="foot">
-					<TextAction onclick={() => (mode = 'confirmed')}>Review {plural(confirmed.length, 'Named Place')}</TextAction>
+					<TextAction onclick={() => (mode = 'confirmed')}>View Auto-Selected Names</TextAction>
 				</div>
 			{/if}
 
@@ -675,9 +680,6 @@
 		padding: 8px 16px 12px;
 		border-top: 1px solid var(--color-border);
 		font-size: 13px;
-	}
-	.spacer {
-		flex: 1;
 	}
 
 	.undo {

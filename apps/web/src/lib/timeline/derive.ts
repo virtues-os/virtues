@@ -101,6 +101,7 @@ export function deriveDay(day: TimelineDay, sources: Sources): DerivedDay {
 				is_named: v.place_is_named,
 				place_name: v.place_name,
 				title: v.place_id ? day.place_titles[v.place_id]?.title : undefined,
+				title_source: v.place_id ? day.place_titles[v.place_id]?.source : undefined,
 			});
 		return { id: v.id, kind: "stay", started_at: v.started_at, ended_at: v.ended_at, timeline_place_id: placeId, metadata: {} };
 	});
