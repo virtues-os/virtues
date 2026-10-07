@@ -2020,6 +2020,7 @@ fn create_agent_stream(
             temporary,
             ghost_permissions: Some(ghost_permissions.clone()),
             sudo: mode.is_sudo(),
+            timezone: request.timezone.clone(),
         };
 
         let tools = mode.tools();

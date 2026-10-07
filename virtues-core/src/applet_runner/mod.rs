@@ -668,14 +668,9 @@ async fn eval_condition(db: &PgPool, condition: &str) -> Result<bool> {
         .execute(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("condition timeout set failed: {e}")))?;
-    sqlx::query(
-        "SELECT set_config('timezone', COALESCE(\
-             (SELECT home_timezone FROM app_user_profile LIMIT 1), \
-             current_setting('timezone')), true)",
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| Error::Database(format!("condition timezone set failed: {e}")))?;
+    crate::timezone::set_local_timezone(&mut *tx, None)
+        .await
+        .map_err(|e| Error::Database(format!("condition timezone set failed: {e}")))?;
 
     let sql = format!("SELECT (({}))::boolean AS result", condition);
     let result: Option<bool> = sqlx::query_scalar(&sql)
