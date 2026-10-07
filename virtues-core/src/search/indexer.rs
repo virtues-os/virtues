@@ -83,6 +83,11 @@ pub(crate) async fn check_index_geometry(pool: &PgPool, model: &str, dim: i32) -
 /// still agree with it (`ensure_same_geometry`). Refuse, and say what to do
 /// about it.
 ///
+/// Either way the columns are then held to the recorded width. A width recorded
+/// without its columns ever being sized (a resize that failed partway, or a box
+/// whose first embed predates this) would otherwise fail every insert until a
+/// restart. When the columns already match, this is four catalog reads.
+///
 /// This is what makes "bring your own model" true rather than merely claimed.
 pub(crate) async fn reconcile_index_geometry(pool: &PgPool, model: &str, dim: i32) -> Result<()> {
     match recorded_geometry(pool).await? {
@@ -114,11 +119,11 @@ pub(crate) async fn reconcile_index_geometry(pool: &PgPool, model: &str, dim: i3
             .execute(pool)
             .await?;
             tracing::info!(%model, dim, "search index geometry recorded");
-            crate::database::Database::from_pool(pool.clone())
-                .ensure_embedding_dims()
-                .await?;
         }
     }
+    crate::database::Database::from_pool(pool.clone())
+        .ensure_embedding_dims()
+        .await?;
     Ok(())
 }
 
@@ -1192,9 +1197,10 @@ pub(crate) mod geometry_tests {
     use super::*;
 
     /// Index one chunk with a `dim`-wide vector, through the indexer's own
-    /// statement and binding.
+    /// statement and binding, in one transaction as the indexer does.
     pub(crate) async fn insert_vector(pool: &PgPool, dim: usize) -> sqlx::Result<()> {
         let id = format!("content_bookmark:geo-{dim}:0");
+        let mut tx = pool.begin().await?;
         sqlx::query(
             "INSERT INTO search_embeddings
                (id, ontology, record_id, model, chunk_index, content, bm25_len, doc_hash, created_at)
@@ -1202,7 +1208,7 @@ pub(crate) mod geometry_tests {
         )
         .bind(&id)
         .bind(format!("geo-{dim}"))
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
         sqlx::query(
             "INSERT INTO search_vectors (embedding_id, embedding) VALUES ($1, $2) \
@@ -1210,9 +1216,9 @@ pub(crate) mod geometry_tests {
         )
         .bind(&id)
         .bind(Vector::from(vec![0.1f32; dim]))
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
-        Ok(())
+        tx.commit().await
     }
 
     /// A fresh box whose embedder is not 256-wide (every Dragon serves
@@ -1244,6 +1250,25 @@ pub(crate) mod geometry_tests {
                 .expect_err("another model, or another width");
             assert!(err.to_string().contains("virtues reindex"), "{err}");
         }
+    }
+
+    /// A width recorded but never applied to the columns: the state a released
+    /// build left behind when its first embed recorded 384 and the insert then
+    /// failed, or a resize that died partway. The next run has to finish it,
+    /// not wait for a restart.
+    #[sqlx::test]
+    async fn a_recorded_width_the_columns_lack_is_applied(pool: PgPool) {
+        sqlx::query("UPDATE search_index_meta SET model = 'm', dim = 384 WHERE singleton")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(insert_vector(&pool, 384).await.is_err(), "the columns are still 256");
+
+        reconcile_index_geometry(&pool, "m", 384).await.unwrap();
+        insert_vector(&pool, 384)
+            .await
+            .expect("the run after the failed one sizes the columns");
+        assert_eq!(column_types(&pool).await, ["halfvec(384)"; 3]);
     }
 
     /// The three columns that share the index's geometry.
