@@ -40,10 +40,14 @@ pub const TOOLS: &[&str] = &[
     "browser_press",
     "browser_scroll",
     "browser_screenshot",
+    "browser_handoff",
 ];
 
 const NOT_OPEN: &str = "No browser is connected. The browser lives in the Virtues app on a Mac, \
                         and the app has to be open for the assistant to use it.";
+
+/// How long `browser_handoff` waits for the owner to press Done.
+pub const HANDOFF_WAIT: Duration = Duration::from_secs(15 * 60);
 
 struct Host {
     id: u64,
@@ -97,7 +101,12 @@ pub async fn call(op: &str, args: Value, wait: Duration) -> Result<Value, String
 pub async fn run_tool(name: &str, args: Value) -> ToolResult {
     let op = name.trim_start_matches("browser_");
     // A page load can be slow; everything else is a step inside a loaded page.
-    let wait = if op == "open" { Duration::from_secs(45) } else { Duration::from_secs(25) };
+    // A handoff waits on the owner, who may need a slow SMS code.
+    let wait = match op {
+        "open" => Duration::from_secs(45),
+        "handoff" => HANDOFF_WAIT,
+        _ => Duration::from_secs(25),
+    };
     let mut answer = match call(op, args, wait).await {
         Ok(v) => v,
         Err(e) => return ToolResult::error(e),

@@ -11,6 +11,11 @@
 	 * There is one browser, shared by the owner and the assistant. The
 	 * assistant's browser_open, and "Log in to X", open this tab beside whatever
 	 * is in front (`browserPaneListener.ts`).
+	 *
+	 * The owner always sees who is driving. While the assistant acts, a bar
+	 * offers Take control and Stop and the page gets an accent frame; when it
+	 * hands the browser over (a sign-in, a code), the bar says what to do and
+	 * waits for Done. Its steps collect in a strip under the page.
 	 */
 	import { onDestroy, onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -18,7 +23,11 @@
 	import { browserLabel } from '$lib/tabs/registry';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
+	import { browserAgent } from '$lib/stores/browserAgent.svelte';
+	import { chatInstances } from '$lib/stores/chatInstances.svelte';
+	import { cancelChat } from '$lib/api/client';
 	import {
+		browserPaneAgent,
 		browserPaneBounds,
 		browserPaneGo,
 		browserPaneOpen,
@@ -35,6 +44,55 @@
 	let editing = $state(false);
 	let modalOpen = $state(false);
 	let slot = $state<HTMLDivElement | null>(null);
+	let strip = $state<HTMLDivElement | null>(null);
+
+	const STEPS_KEY = 'virtues.browser.steps';
+	let showSteps = $state(readShowSteps());
+	function readShowSteps(): boolean {
+		try {
+			return localStorage.getItem(STEPS_KEY) !== '0';
+		} catch {
+			return true;
+		}
+	}
+	function toggleSteps() {
+		showSteps = !showSteps;
+		try {
+			localStorage.setItem(STEPS_KEY, showSteps ? '1' : '0');
+		} catch {
+			// Remembering the choice is a convenience.
+		}
+	}
+
+	/** Stop the assistant: end the reply that is using the browser. A reply
+	 *  running from another device can't be stopped here, so take control
+	 *  instead, which refuses its next step. */
+	async function stopAssistant() {
+		const drivers = chatInstances.browserDrivers();
+		await browserPaneAgent('stop').catch(() => {});
+		if (drivers.length === 0) {
+			await browserPaneAgent('take').catch(() => {});
+			return;
+		}
+		for (const { conversationId, chat } of drivers) {
+			void chat.stop();
+			void cancelChat(conversationId).catch(() => {});
+		}
+	}
+
+	function hostOf(url: string) {
+		try {
+			return new URL(url).hostname.replace(/^www\./, '');
+		} catch {
+			return url;
+		}
+	}
+
+	// Keep the newest step in view.
+	$effect(() => {
+		void browserAgent.steps.length;
+		if (strip) strip.scrollLeft = strip.scrollWidth;
+	});
 
 	function routeFor(url: string) {
 		return `/browser?url=${encodeURIComponent(url)}`;
@@ -86,6 +144,12 @@
 		void modalOpen;
 		void mobileLayout.isMobile;
 		void available;
+		// The bar, frame and step strip move the page.
+		void browserAgent.driving;
+		void browserAgent.paused;
+		void browserAgent.handoff;
+		void showSteps;
+		void browserAgent.steps.length;
 		reportFor(250);
 	});
 
@@ -156,15 +220,75 @@
 			}}
 			disabled={!available}
 		/>
-	</div>
-
-	<div class="slot" bind:this={slot}>
-		{#if available === false}
-			<p class="note">The browser is in the Virtues app for Mac.</p>
-		{:else if !pageUrl}
-			<p class="note">Enter an address above to start browsing.</p>
+		{#if browserAgent.steps.length > 0}
+			<button
+				class="tool steps-toggle"
+				class:on={showSteps}
+				title={showSteps ? 'Hide your assistant\'s steps' : 'Show your assistant\'s steps'}
+				aria-label="Your assistant's steps"
+				aria-pressed={showSteps}
+				onclick={toggleSteps}
+			>
+				<Icon icon="ri:footprint-line" width="16" />
+				<span class="count">{browserAgent.steps.length}</span>
+			</button>
 		{/if}
 	</div>
+
+	{#if browserAgent.handoff}
+		<div class="agent-bar handoff" role="status">
+			<Icon icon="ri:hand" width="16" />
+			<span class="say"><strong>Your turn.</strong> {browserAgent.handoff}</span>
+			<button class="bar-btn" onclick={() => void browserPaneAgent('decline')}>I can't</button>
+			<button class="bar-btn primary" onclick={() => void browserPaneAgent('done')}>Done</button>
+		</div>
+	{:else if browserAgent.paused}
+		<div class="agent-bar paused" role="status">
+			<Icon icon="ri:user-line" width="16" />
+			<span class="say">You have control. Your assistant waits until you hand it back.</span>
+			<button class="bar-btn primary" onclick={() => void browserPaneAgent('resume')}>Hand back</button>
+		</div>
+	{:else if browserAgent.driving}
+		<div class="agent-bar driving" role="status">
+			<span class="pulse" aria-hidden="true"></span>
+			<span class="say">Your assistant is using the browser</span>
+			<button class="bar-btn" onclick={() => void browserPaneAgent('take')}>Take control</button>
+			<button class="bar-btn" onclick={() => void stopAssistant()}>Stop</button>
+		</div>
+	{/if}
+
+	<div
+		class="stage"
+		class:driving={browserAgent.driving && !browserAgent.paused && !browserAgent.handoff}
+		class:handoff={!!browserAgent.handoff}
+	>
+		<div class="slot" bind:this={slot}>
+			{#if available === false}
+				<p class="note">The browser is in the Virtues app for Mac.</p>
+			{:else if !pageUrl}
+				<p class="note">Enter an address above to start browsing.</p>
+			{/if}
+		</div>
+	</div>
+
+	{#if showSteps && browserAgent.steps.length > 0}
+		<div class="steps" bind:this={strip} aria-label="Your assistant's steps">
+			{#each browserAgent.steps as step (step.id)}
+				<figure class="step" class:failed={!step.ok} title={`${step.what}\n${step.url}`}>
+					{#if step.thumb}
+						<img src={step.thumb} alt="" loading="lazy" />
+					{:else}
+						<div class="blank"></div>
+					{/if}
+					<figcaption>
+						<span class="what">{step.what}</span>
+						<span class="where">{hostOf(step.url)}</span>
+					</figcaption>
+				</figure>
+			{/each}
+			<button class="clear" onclick={() => browserAgent.clearSteps()}>Clear</button>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -208,6 +332,89 @@
 		color: var(--text);
 		font-size: 13px;
 	}
+	.steps-toggle {
+		width: auto;
+		gap: 4px;
+		padding: 0 6px;
+	}
+	.steps-toggle.on {
+		color: var(--text);
+	}
+	.count {
+		font-size: 12px;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.agent-bar {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 12px;
+		font-size: 13px;
+		border-bottom: 1px solid var(--border);
+		color: var(--text);
+	}
+	.agent-bar.driving {
+		background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+	}
+	.agent-bar.handoff {
+		background: color-mix(in srgb, var(--warning) 14%, var(--surface));
+	}
+	.agent-bar.paused {
+		background: var(--surface-elevated, var(--surface));
+	}
+	.say {
+		flex: 1;
+		min-width: 0;
+	}
+	.pulse {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--primary);
+		animation: pulse 1.4s ease-in-out infinite;
+	}
+	@keyframes pulse {
+		50% {
+			opacity: 0.35;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.pulse {
+			animation: none;
+		}
+	}
+	.bar-btn {
+		height: 26px;
+		padding: 0 12px;
+		border-radius: 999px;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text);
+		font-size: 12px;
+		white-space: nowrap;
+	}
+	.bar-btn:hover {
+		background: var(--surface-hover, var(--surface-elevated));
+	}
+	.bar-btn.primary {
+		background: var(--primary);
+		border-color: var(--primary);
+		color: white;
+	}
+
+	/* The page is native and draws over .slot; the frame shows around it. */
+	.stage {
+		flex: 1;
+		min-height: 0;
+		display: flex;
+	}
+	.stage.driving {
+		border: 3px solid var(--primary);
+	}
+	.stage.handoff {
+		border: 3px solid var(--warning);
+	}
 	.slot {
 		position: relative;
 		flex: 1;
@@ -215,6 +422,61 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		background: var(--surface);
+	}
+
+	.steps {
+		display: flex;
+		gap: 8px;
+		padding: 8px;
+		overflow-x: auto;
+		border-top: 1px solid var(--border);
+		flex-shrink: 0;
+	}
+	.step {
+		flex: 0 0 132px;
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.step img,
+	.step .blank {
+		width: 132px;
+		height: 80px;
+		object-fit: cover;
+		object-position: top;
+		border: 1px solid var(--border);
+		background: var(--surface-elevated, var(--surface));
+	}
+	.step figcaption {
+		display: flex;
+		flex-direction: column;
+		font-size: 11px;
+		line-height: 1.3;
+	}
+	.what {
+		color: var(--text);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.where {
+		color: var(--text-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.step.failed .what {
+		color: var(--text-muted);
+		text-decoration: line-through;
+	}
+	.clear {
+		align-self: center;
+		flex-shrink: 0;
+		padding: 0 8px;
+		font-size: 12px;
+		color: var(--text-muted);
 	}
 	.note {
 		color: var(--text-muted);

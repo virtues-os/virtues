@@ -299,6 +299,10 @@ async fn execute_single(
         // A page load on the owner's Mac, which `browser::run_tool` waits up
         // to 45s for. Sit past it so the tool reports its own timeout.
         Duration::from_secs(50)
+    } else if tool_call.name == "browser_handoff" {
+        // Waits on the owner to finish a step (a sign-in, a code), up to
+        // `browser::HANDOFF_WAIT`. Sit past it so the tool reports its own.
+        crate::browser::HANDOFF_WAIT + Duration::from_secs(10)
     } else if tool_call.name == "code_interpreter" {
         // Its schema offers the model a timeout of up to 120s and defaults to
         // 60. Under the 30s default the DEFAULT was already unreachable: any

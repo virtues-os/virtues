@@ -403,6 +403,22 @@ class ChatInstanceStore {
         return this.instances.get(conversationId)?.chat;
     }
 
+    /** The chats on this device whose reply is running and has used the
+     *  owner's browser: the ones the Browser's Stop button stops. */
+    browserDrivers(): { conversationId: string; chat: Chat }[] {
+        const out: { conversationId: string; chat: Chat }[] = [];
+        for (const [conversationId, { chat }] of this.instances) {
+            if (chat.status !== 'submitted' && chat.status !== 'streaming') continue;
+            const last = chat.messages[chat.messages.length - 1];
+            if (last?.role !== 'assistant') continue;
+            const usesBrowser = last.parts.some((p: any) =>
+                String(p.type === 'dynamic-tool' ? p.toolName : p.type).replace(/^tool-/, '').startsWith('browser_')
+            );
+            if (usesBrowser) out.push({ conversationId, chat });
+        }
+        return out;
+    }
+
     /**
      * Check if an instance exists.
      */
