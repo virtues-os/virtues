@@ -120,6 +120,10 @@ file_list() {
 # 11 (serif-impossible) is per-BLOCK: it buffers a declaration block and reports
 # when the block closes, which still happens inside the file it belongs to, so a
 # split file list cannot lose or mix it either.
+#
+# The program is one single-quoted shell string, so an apostrophe anywhere in
+# it, comments included, ends the program early. Write a literal one as
+# "'"'"'", as the radius and off-grid regexes do.
 scan() {
     file_list | tr '\n' '\0' | xargs -0 awk -v color_exempt="$COLOR_EXEMPT" -v mono_exempt="$MONO_EXEMPT" -v mono_literal_exempt="$MONO_LITERAL_EXEMPT" '
     function emit_at(rule, ln, src,   s) {
@@ -298,7 +302,7 @@ scan() {
 
         # ── 11. A serif weight or slope that cannot exist ─────────────────
         # The serif ships ONE cut. `app.css` registers EB Garamond regular as
-        # 'EB Garamond' (300-400) and again as 'EB Garamond UI' with corrected
+        # "EB Garamond" (300-400) and again as "EB Garamond UI" with corrected
         # metrics, so the family reads as richer in the stylesheet than it is
         # on disk — and CSS font matching stays INSIDE the family for weight
         # and style, falling through to ui-serif/Georgia only for a missing
@@ -355,7 +359,7 @@ scan_motion() {
             /prefers-reduced-motion/ { guarded = 1; exit }
             !moves && /(^|[^a-zA-Z0-9-])(transition|animation)[a-z-]*[ \t]*:/ { moves = FNR; src = $0 }
             END { if (!guarded && moves) { gsub(/\t/, " ", src); sub(/^[ \t]+/, "", src); print moves "\t" src } }
-        ' "$f")
+        ' "$f") || return
         [ -n "$hit" ] || continue
         printf 'no-reduced-motion\t%s\t%s\n' "$f" "$hit"
     done < <(file_list)
@@ -363,7 +367,13 @@ scan_motion() {
 
 TMP=$(mktemp) || exit 1
 trap 'rm -f "$TMP"' EXIT
-{ scan; scan_motion; } | LC_ALL=C sort > "$TMP"
+# A scan that dies emits no records, and no records reads as zero debt: every
+# rule "went down" and the check passes. So a failed scan fails the lint.
+# pipefail (set above) carries awk's status out through xargs and sort.
+if ! { scan && scan_motion; } | LC_ALL=C sort > "$TMP"; then
+    echo "ERROR: design_lint: the scan itself failed (see the error above), so it counted nothing." >&2
+    exit 2
+fi
 
 count_of() { awk -F'\t' -v r="$1" '$1 == r { n++ } END { print n + 0 }' "$TMP"; }
 
