@@ -283,15 +283,6 @@ impl ToolExecutor {
         "sql_write",
         // Real money, per call.
         "generate_image",
-        // The owner's browser, with their logins in it. Asked once per chat
-        // for all of them (`entity_id` "browser" below), not per click.
-        "browser_open",
-        "browser_snapshot",
-        "browser_click",
-        "browser_type",
-        "browser_press",
-        "browser_scroll",
-        "browser_screenshot",
     ];
 
     /// If `tool_name` is gated and the user hasn't granted it for this chat, return a
@@ -350,9 +341,6 @@ impl ToolExecutor {
                         _ => "run",
                     };
                     (applet_id.to_string(), "action", title, verb)
-                }
-                None if tool_name.starts_with("browser_") => {
-                    ("browser".to_string(), "tool", "your browser".to_string(), "use")
                 }
                 None => {
                     let (title, verb) = match tool_name {
