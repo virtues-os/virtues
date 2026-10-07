@@ -429,6 +429,47 @@ export async function browserPaneGo(action: 'back' | 'forward' | 'reload'): Prom
 	await invoke('browser_pane_go', { action });
 }
 
+/** The Browser's bar while the assistant drives: take control, hand it back,
+ *  answer a handoff (`done` / `decline`), or stop. */
+export async function browserPaneAgent(
+	action: 'take' | 'resume' | 'done' | 'decline' | 'stop'
+): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	await invoke('browser_pane_agent', { action });
+}
+
+/** Who is driving the Browser: the assistant (`driving`), the owner after
+ *  taking over (`paused`), or the owner because the assistant asked
+ *  (`handoff`, what it asked for). */
+export interface BrowserAgentState {
+	driving: boolean;
+	paused: boolean;
+	handoff: string | null;
+}
+
+/** One step the assistant took in the Browser, with the page after it. */
+export interface BrowserStepEvent {
+	what: string;
+	ok: boolean;
+	url: string;
+	thumb: string | null;
+}
+
+/** Listen for the shell's reports on the assistant in the Browser. */
+export async function onBrowserAgent(
+	onState: (state: BrowserAgentState) => void,
+	onStep: (step: BrowserStepEvent) => void
+): Promise<() => void> {
+	if (!isTauri) return () => {};
+	const { listen } = await import('@tauri-apps/api/event');
+	const offs = await Promise.all([
+		listen<BrowserAgentState>('browser:agent', (e) => onState(e.payload)),
+		listen<BrowserStepEvent>('browser:step', (e) => onStep(e.payload))
+	]);
+	return () => offs.forEach((off) => off());
+}
+
 /** Listen for the shell's Browser events: `browser:open` (show this page in
  *  the pane, from the assistant or a login) and `browser:navigated`. */
 export async function onBrowserEvent(

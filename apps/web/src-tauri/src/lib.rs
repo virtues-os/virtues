@@ -67,9 +67,9 @@ pub mod web_bundle;
 /// | 10 | `browser_login` (desktop) — log in to a source in a window of the
 /// |   | app's own and hand back its cookie jar (`browser.rs`); the connect form
 /// |   | offers "Log in" only at 10 and keeps the paste fields below it |
-/// | 11 | `browser_pane_open` / `_bounds` / `_go` (desktop; the Mac implements
-/// |   | them): the Browser is a pane beside the app's view, and on the Mac
-/// |   | `browser_login` opens there instead of a window of its own |
+/// | 11 | `browser_pane_open` / `_bounds` / `_go` / `_agent` (desktop; the Mac
+/// |   | implements them): the Browser is a pane beside the app's view, and on
+/// |   | the Mac `browser_login` opens there instead of a window of its own |
 ///
 /// `bundle-contract.json` requires 9. No shell below it has ever run a box
 /// bundle (they all boot white), so requiring it strands no client: they keep

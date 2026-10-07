@@ -93,6 +93,7 @@ const APP_COMMANDS: &[&str] = &[
     "browser_pane_open",
     "browser_pane_bounds",
     "browser_pane_go",
+    "browser_pane_agent",
 ];
 
 fn main() {

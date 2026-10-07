@@ -105,7 +105,7 @@ tauri-plugin-audio = { path = "../plugins/audio" }
 objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSDictionary", "NSError", "NSData", "NSGeometry", "NSValue", "NSObject"] }
-objc2-app-kit = { version = "0.3", features = ["NSEvent", "NSResponder", "NSView", "NSWindow", "NSGraphicsContext", "NSImage", "NSImageRep", "NSBitmapImageRep"] }
+objc2-app-kit = { version = "0.3", features = ["block2", "NSEvent", "NSResponder", "NSView", "NSWindow", "NSGraphicsContext", "NSImage", "NSImageRep", "NSBitmapImageRep"] }
 objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKContentWorld", "WKFrameInfo", "WKSnapshotConfiguration", "WKPreferences", "WKWebViewConfiguration", "block2", "objc2-app-kit"] }
 tokio-tungstenite = "0.24"
 futures-util = "0.3"

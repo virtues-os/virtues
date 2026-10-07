@@ -168,6 +168,21 @@ pub async fn browser_pane_bounds(app: AppHandle, x: f64, y: f64, width: f64, hei
     }
 }
 
+/// The Browser tab's bar while the assistant drives: `take` control, `resume`,
+/// `done` or `decline` a handoff, or `stop`.
+#[tauri::command]
+pub async fn browser_pane_agent(app: AppHandle, action: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        return crate::browser_host::control(&app, &action);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, action);
+        Err(NO_PANE.into())
+    }
+}
+
 /// The Browser tab's toolbar: `back`, `forward` or `reload`.
 #[tauri::command]
 pub async fn browser_pane_go(app: AppHandle, action: String) -> Result<(), String> {

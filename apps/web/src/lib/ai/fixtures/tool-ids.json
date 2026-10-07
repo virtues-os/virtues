@@ -1,5 +1,6 @@
 [
   "browser_click",
+  "browser_handoff",
   "browser_open",
   "browser_press",
   "browser_screenshot",

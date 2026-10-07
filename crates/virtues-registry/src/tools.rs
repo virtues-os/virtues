@@ -163,7 +163,7 @@ fn browser_tools() -> Vec<ToolConfig> {
             "browser_type",
             "Type in browser",
             "Type into the page",
-            "Type text into the page. With `ref`, click that element first; without it, type where the focus is. `submit` presses Enter afterwards.",
+            "Type text into the page. With `ref`, click that element first; without it, type where the focus is. `submit` presses Enter afterwards. Never for passwords, card numbers or one-time codes: you don't have them, and the browser refuses those fields. Use browser_handoff and let the owner type them.",
             serde_json::json!({
                 "type": "object",
                 "required": ["text"],
@@ -213,6 +213,18 @@ fn browser_tools() -> Vec<ToolConfig> {
             "See the visible part of the page in the owner's browser as an image. Use it when the outline is not enough: charts, images, layout, or a page whose outline is empty.",
             none,
             46,
+        ),
+        tool(
+            "browser_handoff",
+            "Hand the browser to you",
+            "Ask you to do a step in the browser",
+            "Hand the browser to the owner for a step only they can do: signing in, a password, a two-factor or emailed code, a CAPTCHA, payment details, or a choice that is theirs to make. The browser comes forward with your `reason` and a Done button, and this call waits (up to 15 minutes) until they press it. Say exactly what to do in a few words, e.g. \"Sign in to your bank, then press Done.\" When it returns, take a fresh browser_snapshot: the page has likely changed.",
+            serde_json::json!({
+                "type": "object",
+                "required": ["reason"],
+                "properties": { "reason": { "type": "string", "description": "What the owner should do, in one short sentence" } }
+            }),
+            47,
         ),
     ]
 }

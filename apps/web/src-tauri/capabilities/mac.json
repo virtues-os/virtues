@@ -40,6 +40,7 @@
     "allow-browser-pane-open",
     "allow-browser-pane-bounds",
     "allow-browser-pane-go",
+    "allow-browser-pane-agent",
     "core:default",
     "reach:default",
     "core:window:allow-create",

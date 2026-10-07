@@ -168,6 +168,15 @@ const TOOLS: Record<string, Presentation> = {
 	},
 	browser_scroll: { noun: "your browser", depth: 4, say: ["Scrolling", "Scrolled"] },
 	browser_screenshot: { noun: "your browser", depth: 4, say: ["Looking at the page", "Looked at the page"] },
+	browser_handoff: {
+		noun: "your browser",
+		depth: 4,
+		say: (input, live) => {
+			const reason = String(input.reason ?? "").trim();
+			if (live) return reason ? `Waiting for you: ${reason}` : "Waiting for you in the browser";
+			return "You took a step in the browser";
+		},
+	},
 	get_page_content: { noun: "a page", depth: 4, say: ["Reading a page", "Read a page"] },
 	create_page: { noun: "a new page", depth: 4, say: ["Writing a new page", "Wrote a new page"] },
 	edit_page: { noun: "a page", depth: 4, say: ["Editing a page", "Edited a page"] },
