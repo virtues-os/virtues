@@ -43,3 +43,26 @@ pub async fn seed_demo_data(db: &Database) -> Result<()> {
     info!("✅ Demo data seeded successfully");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The seed is untyped SQL against a schema that drops and renames
+    /// columns, so nothing but running it says whether it still applies.
+    /// Migrations 0025 and 0027 broke it (`wiki_days.epigraph`,
+    /// `wiki_people.notes`, the entity counters, `wiki_orgs.start_date`) and
+    /// `make seed` failed for weeks with no test to say so. Twice, to hold it
+    /// to the idempotence the module promises.
+    #[sqlx::test]
+    async fn the_demo_seed_applies_to_the_migrated_schema(pool: sqlx::PgPool) {
+        let db = Database::from_pool(pool.clone());
+        seed_demo_data(&db).await.expect("demo seed");
+        seed_demo_data(&db).await.expect("demo seed, second run");
+        let people: i64 = sqlx::query_scalar("SELECT count(*) FROM wiki_people")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(people > 0, "the seed wrote no people");
+    }
+}
