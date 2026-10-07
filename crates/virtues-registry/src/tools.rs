@@ -103,8 +103,9 @@ pub fn default_tools() -> Vec<ToolConfig> {
 }
 
 /// The owner's browser, a window in the Mac app (virtues-core `browser.rs`).
-/// The core offers these only while that app is connected, and asks the owner
-/// once per chat before the first one runs.
+/// The core offers these only while that app is connected. They run without
+/// asking (the owner's call, 2026-10-07); the model is told to ask before
+/// anything irreversible.
 fn browser_tools() -> Vec<ToolConfig> {
     let tool = |id: &str, name: &str, description: &str, llm: &str, parameters: serde_json::Value, order: i32| ToolConfig {
         id: id.to_string(),
@@ -280,7 +281,7 @@ fn show_tool() -> ToolConfig {
                 "kind": {
                     "type": "string",
                     "enum": ["chart", "numbers", "table", "map", "timeline", "choices"],
-                    "description": "chart: first column is the x axis, then 1-3 numeric series; at most 200 rows. numbers: one row of 1-4 columns, each a figure. table: up to 8 columns; 50 rows show. map: lat, lon, and an optional label column. timeline: start, optional end, and label columns. choices: no sql, just options."
+                    "description": "chart: first column is the x axis, then 1-3 numeric series; under 200 rows. numbers: one row of 1-4 columns, each a figure. table: up to 8 columns; 50 rows show. map: lat, lon, and an optional label column. timeline: start, optional end, and label columns. choices: no sql, just options."
                 },
                 "title": { "type": "string", "description": "A few words naming what is shown" },
                 "sql": { "type": "string", "description": "Alias every column as the owner should read it: AS \"Hours asleep\"" },
