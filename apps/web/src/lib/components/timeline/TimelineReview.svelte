@@ -63,9 +63,10 @@
 		onday: (slug: string) => void;
 		/** An answer was saved or undone: the day's titles may have changed. */
 		onanswered: () => void;
-		/** The card waits for a tap on the map (Home or Work is elsewhere), or
-		 *  stops waiting. */
-		onpoint: (on: boolean) => void;
+		/** Home or Work is elsewhere: the view takes over with its own mode
+		 *  (a banner, a tap on the map) and hands the tap back to
+		 *  `savePointed`; `null` ends it. */
+		onpoint: (role: 'home' | 'work' | null) => void;
 	} = $props();
 
 	let review = $state<PlaceReview | null>(null);
@@ -84,10 +85,8 @@
 	let people = $state<string[] | null>(null);
 	/** The last answer, undoable for a few seconds: the places it touched. */
 	let undo = $state<{ ids: string[]; said: string } | null>(null);
-	/** "No" to Home or Work: the role being pointed to on the map, and the
-	 *  spot tapped. */
+	/** "No" to Home or Work: the role being pointed to on the map. */
 	let pointing = $state<'home' | 'work' | null>(null);
-	let tapped = $state<{ lat: number; lon: number } | null>(null);
 	let undoTimer = 0;
 	let card = $state<HTMLElement | null>(null);
 
@@ -121,9 +120,10 @@
 		});
 	});
 
-	// The map follows the question on show; anything else lets it go.
+	// The map follows the question on show; anything else lets it go,
+	// pointing to Home or Work elsewhere included.
 	$effect(() => {
-		const q = open && mode === 'questions' ? current : null;
+		const q = open && mode === 'questions' && !pointing ? current : null;
 		const right = card?.getBoundingClientRect().right ?? 0;
 		onfocus(q && ask ? { lat: q.latitude, lon: q.longitude, reachM: ask.reachM, shown: ask.shown, cardRight: right } : null);
 	});
@@ -155,9 +155,8 @@
 	}
 
 	function resetOther() {
-		if (pointing) onpoint(false);
+		if (pointing) onpoint(null);
 		pointing = null;
-		tapped = null;
 		otherOpen = false;
 		otherText = '';
 		picked = [];
@@ -239,25 +238,25 @@
 		if (!current || !ask) return;
 		if (ask.role && (a.kind === 'not_home' || a.kind === 'not_work')) {
 			pointing = ask.role;
-			tapped = null;
-			onpoint(true);
+			onpoint(pointing);
 			return;
 		}
 		void answer(current.id, a);
 	}
 
-	/** The spot tapped on the map while pointing. */
-	export function pointed(lat: number, lon: number) {
-		if (pointing) tapped = { lat, lon };
+	/** Home or Work is at the spot tapped on the map. */
+	export function savePointed(at: { lat: number; lon: number }) {
+		if (!current || !pointing) return;
+		void answer(current.id, { kind: pointing === 'home' ? 'home_here' : 'work_here', ...at });
 	}
 
-	function savePointed() {
-		if (!current || !pointing || !tapped) return;
-		void answer(current.id, { kind: pointing === 'home' ? 'home_here' : 'work_here', ...tapped });
+	/** Back to the question. */
+	export function cancelPointing() {
+		resetOther();
 	}
 
 	/** Skipped: not this place, and not asked again unless another takes over. */
-	function skipPointing() {
+	export function skipPointing() {
 		if (!current || !pointing) return;
 		void answer(current.id, { kind: pointing === 'home' ? 'not_home' : 'not_work' });
 	}
@@ -315,7 +314,7 @@
 		{#if review?.questions.length}<span class="badge">{review.questions.length}</span>{/if}
 	</button>
 
-	{#if open}
+	{#if open && !pointing}
 		<div class="card tile" role="dialog" aria-label="Help Virtues out" bind:this={card} style="max-height: {room}px">
 			{#if failed && !review}
 				<div class="pad"><p class="note">Error: your server couldn't load your places. Reload the page to try again.</p></div>
@@ -367,17 +366,6 @@
 					<IconButton icon="ri:close-line" label="Close" size="sm" onclick={toggle} />
 				</div>
 				<div class="pad">
-					{#if pointing}
-						<h3 class="q">{pointing === 'home' ? 'Tap your home on the map.' : 'Tap where you work on the map.'}</h3>
-						<p class="sub">{tapped ? 'Move it with another tap.' : 'Zoom or move the map to find it.'}</p>
-						<div class="buttons">
-							<button class="btn primary" type="button" disabled={!tapped || saving} onclick={savePointed}>Save Here</button>
-							<button class="btn" type="button" disabled={saving} onclick={() => resetOther()}>Back</button>
-						</div>
-						<div class="quiet">
-							<TextAction quiet disabled={saving} onclick={skipPointing}>Skip - don't ask again</TextAction>
-						</div>
-					{:else}
 					<h3 class="q">{ask.text}</h3>
 					{#if current.recall}<p class="sub">{current.recall}</p>{/if}
 
@@ -433,7 +421,6 @@
 					{#if saveFailed}<p class="note">Error: your server couldn't save that. Try again.</p>{/if}
 					{#if !current.naming.street_detail && ask.other}
 						<p class="note">Your server's map of this area doesn't list its places, so it can't suggest names here.</p>
-					{/if}
 					{/if}
 				</div>
 				<div class="foot">
