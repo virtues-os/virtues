@@ -34,6 +34,7 @@
 	import TimelineMonth from '$lib/components/timeline/TimelineMonth.svelte';
 	import TimelineReview from '$lib/components/timeline/TimelineReview.svelte';
 	import { focusZoom, type PlaceCandidate } from '$lib/timeline/review';
+	import Icon from '$lib/components/Icon.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import { laneData, NO_LANES, type Lanes, type RibbonKind } from '$lib/timeline/lanes';
@@ -696,29 +697,31 @@
 	 *  about (main.js:2209-2214): the place is the subject then. */
 	const TRACK_OPACITY = { 'track-run': [0.55, 0.1], 'track-bridge': [0.4, 0.08], 'track-drive': [0.85, 0.1] } as const;
 	let glow: Marker | null = null;
-	/** "Help Virtues out" waits for a tap on the map: Home or Work is elsewhere. */
-	let pointing = false;
+	/** Pointing to Home or Work on the map, after a "no" in "Help Virtues out":
+	 *  a mode of its own, a banner at the top and one pin that each tap moves. */
+	let pointing = $state<'home' | 'work' | null>(null);
+	let tapped = $state<{ lat: number; lon: number } | null>(null);
 	let tapMark: Marker | null = null;
 	let review = $state<ReturnType<typeof TimelineReview> | null>(null);
-	function setPointing(on: boolean) {
-		pointing = on;
+	function setPointing(role: 'home' | 'work' | null) {
+		pointing = role;
+		tapped = null;
 		const m = map;
-		if (m) m.getCanvas().style.cursor = on ? 'crosshair' : '';
-		if (!on) {
-			tapMark?.remove();
-			tapMark = null;
-		}
+		if (m) m.getCanvas().style.cursor = role ? 'crosshair' : '';
+		tapMark?.remove();
+		tapMark = null;
 	}
 	function tapAt(lat: number, lon: number) {
 		const m = map;
 		if (!m || !maplibre) return;
 		if (!tapMark) {
 			const el = document.createElement('div');
-			el.className = 'tl-glow tl-tap';
-			tapMark = new maplibre.Marker({ element: el, anchor: 'center' });
+			el.className = 'tl-tap';
+			el.append(Object.assign(document.createElement('span'), { className: 'tl-tap-pin' }));
+			tapMark = new maplibre.Marker({ element: el, anchor: 'bottom' });
 		}
 		tapMark.setLngLat([lon, lat]).addTo(m);
-		review?.pointed(lat, lon);
+		tapped = { lat, lon };
 	}
 	/** A place is being asked about: the map is on it, the day faded. */
 	let focusing = $state(false);
@@ -777,7 +780,10 @@
 	 *  Timeline is on screen, and never while typing. */
 	function onKey(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
-			if (reviewOpen) {
+			if (pointing) {
+				e.preventDefault();
+				review?.cancelPointing();
+			} else if (reviewOpen) {
 				e.preventDefault();
 				reviewOpen = false;
 			} else if (monthOpen) {
@@ -1244,7 +1250,7 @@
 
 <div
 	class="timeline"
-	class:focusing
+	class:focusing={focusing || !!pointing}
 	class:with-inspector={shownSections.length > 0}
 	class:narrow
 	bind:this={root}
@@ -1288,6 +1294,22 @@
 			/>
 		{/if}
 	</div>
+
+	{#if pointing}
+		<!-- Pointing to Home or Work: its own mode, top centre, in the accent. -->
+		<div class="pointing" role="dialog" aria-label={pointing === 'home' ? 'Tap your home' : 'Tap where you work'}>
+			<p class="pointing-text">
+				<Icon icon={pointing === 'home' ? 'ri:home-5-line' : 'ri:briefcase-4-line'} width="18" />
+				{pointing === 'home' ? 'Tap your home on the map' : 'Tap where you work on the map'}
+			</p>
+			<p class="pointing-sub">{tapped ? 'Tap again to move the pin.' : 'Zoom or move the map to find it.'}</p>
+			<div class="pointing-actions">
+				<button class="pointing-btn" type="button" onclick={() => review?.cancelPointing()}>Cancel</button>
+				<button class="pointing-btn save" type="button" disabled={!tapped} onclick={() => tapped && review?.savePointed(tapped)}>Save Here</button>
+			</div>
+			<button class="pointing-skip" type="button" onclick={() => review?.skipPointing()}>Skip - don't ask again</button>
+		</div>
+	{/if}
 
 	<TimelineInspector bind:this={inspector} sections={shownSections}
 		onname={namePlace}
@@ -1514,11 +1536,88 @@
 		border: 3px solid var(--color-background);
 		box-shadow: 0 0 0 6px color-mix(in srgb, var(--c-place) 30%, transparent); /* design-ok: the prototype's glow around the place asked about (index.html:321) */
 	}
-	/* The spot tapped as Home or Work: the glow pin in the accent. */
+	/* The spot tapped as Home or Work: a map pin in the accent, its point on
+	   the spot. MapLibre moves the marker by its own transform, so the pin's
+	   shape is drawn inside it. */
 	.timeline :global(.tl-tap) {
-		background: var(--color-primary);
+		padding-bottom: 8px;
 	}
-	/* The day's note speaks of the day, not of the place asked about. */
+	.timeline :global(.tl-tap-pin) {
+		display: block;
+		width: 22px;
+		height: 22px;
+		border: 3px solid var(--color-background);
+		border-radius: 50% 50% 50% 0;
+		background: var(--color-primary);
+		transform: rotate(-45deg);
+	}
+	/* Pointing to Home or Work: a banner of its own at the top centre, in the
+	   accent, so the mode can't be mistaken for the card. */
+	.pointing {
+		position: absolute;
+		top: 16px;
+		left: 50%;
+		z-index: 14;
+		transform: translateX(-50%);
+		width: min(360px, calc(100% - 32px));
+		padding: 12px 16px;
+		border-radius: var(--tile-radius);
+		background: var(--color-primary);
+		color: var(--color-background);
+		font-family: var(--font-sans);
+		text-align: center;
+	}
+	.pointing-text {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		margin: 0;
+		font-size: 16px;
+		font-weight: 600;
+	}
+	.pointing-sub {
+		margin: 4px 0 12px;
+		font-size: 13px;
+		opacity: 0.85;
+	}
+	.pointing-actions {
+		display: flex;
+		gap: 8px;
+	}
+	.pointing-btn {
+		flex: 1;
+		min-height: 36px;
+		border: 0;
+		border-radius: 12px;
+		background: color-mix(in srgb, var(--color-background) 18%, transparent);
+		color: var(--color-background);
+		font-family: var(--font-sans);
+		font-size: 15px;
+		font-weight: 500;
+		cursor: pointer;
+	}
+	.pointing-btn.save {
+		background: var(--color-background);
+		color: var(--color-primary);
+	}
+	.pointing-btn:disabled {
+		opacity: 0.45;
+		cursor: default;
+	}
+	.pointing-skip {
+		margin-top: 8px;
+		border: 0;
+		background: none;
+		color: var(--color-background);
+		font-family: var(--font-sans);
+		font-size: 12px;
+		text-decoration: underline;
+		opacity: 0.85;
+		cursor: pointer;
+	}
+	/* The day's note speaks of the day, not of the place asked about or
+	   pointed to. */
 	.timeline.focusing .note {
 		display: none;
 	}
