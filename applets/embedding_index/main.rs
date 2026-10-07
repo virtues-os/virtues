@@ -2,8 +2,9 @@
 //!
 //! Sweeps every searchable ontology (those with an `EmbeddingConfig` registered),
 //! finds records lacking an entry in `search_embeddings`, embeds the configured
-//! `embed_text_sql` via the local ORT embedder (nomic-embed-text-v1.5),
-//! and writes results into `search_embeddings` + `search_vectors` atomically.
+//! `embed_text_sql` through the box's embedding endpoint (see
+//! `virtues::search::embedder`), and writes results into `search_embeddings` +
+//! `search_vectors` atomically.
 //!
 //! All real work lives in [`virtues::search::run_embedding_job`]. This binary
 //! is the subprocess wrapper that gives the runner stdin/stdout contract.

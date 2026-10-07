@@ -1,8 +1,9 @@
 //! Background embedding indexer.
 //!
-//! Processes records from searchable ontologies, generates embeddings via
-//! the local model, and stores them in `search_embeddings` + `search_vectors`
-//! (pgvector `vector(1024)` with HNSW cosine index).
+//! Processes records from searchable ontologies, embeds them through the box's
+//! embedding endpoint (`embedder.rs`), and stores them in `search_embeddings` +
+//! `search_vectors` (pgvector `halfvec`, as wide as the model, with an HNSW
+//! cosine index).
 
 use anyhow::Result;
 use pgvector::Vector;
