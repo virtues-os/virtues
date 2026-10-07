@@ -21,7 +21,7 @@
 
 	function close() {
 		if (history.length > 1) history.back();
-		else void goto("/home");
+		else void goto("/chat");
 	}
 </script>
 

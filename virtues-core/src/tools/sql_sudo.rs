@@ -35,7 +35,14 @@ pub fn statement(arguments: &serde_json::Value) -> Result<String, ToolError> {
         .to_string())
 }
 
-pub async fn execute(pool: &PgPool, sql: &str, read_only: bool) -> Result<ToolResult, ToolError> {
+/// `timezone` is the owner's, as for `sql_query`; only the read-only
+/// transaction takes it (see below).
+pub async fn execute(
+    pool: &PgPool,
+    sql: &str,
+    read_only: bool,
+    timezone: Option<&str>,
+) -> Result<ToolResult, ToolError> {
     // What a read-only transaction would still let act.
     if read_only && super::sudo_gate::sql_acts_anyway(sql) {
         return Ok(super::sudo_gate::ask("sql", sql));
@@ -46,6 +53,14 @@ pub async fn execute(pool: &PgPool, sql: &str, read_only: bool) -> Result<ToolRe
             Err(e) => return Ok(failed(&e)),
         };
         if let Err(e) = sqlx::query("SET TRANSACTION READ ONLY").execute(&mut *tx).await {
+            return Ok(failed(&e));
+        }
+        // Dates in the owner's zone, as in chat's sql_query. An allowed
+        // statement runs outside a transaction (VACUUM, CREATE INDEX
+        // CONCURRENTLY refuse one), where SET LOCAL has nothing to bind to
+        // and a session SET would follow the connection back into the pool,
+        // so it keeps the server's zone.
+        if let Err(e) = crate::timezone::set_local_timezone(&mut *tx, timezone).await {
             return Ok(failed(&e));
         }
         let ran = run(&mut *tx, sql).await;
@@ -108,10 +123,10 @@ mod tests {
     use serde_json::json;
 
     async fn run_sql(pool: &PgPool, args: serde_json::Value, read_only: bool) -> ToolResult {
-        execute(pool, &statement(&args).unwrap(), read_only).await.unwrap()
+        execute(pool, &statement(&args).unwrap(), read_only, None).await.unwrap()
     }
 
-    #[sqlx::test(migrations = false)]
+    #[sqlx::test]
     async fn runs_ddl_writes_and_reads_once_allowed(pool: PgPool) {
         let r = run_sql(&pool, json!({ "sql": "CREATE TABLE t (n int)" }), false).await;
         assert!(r.data.get("status").is_none(), "{:?}", r.data);
@@ -124,7 +139,7 @@ mod tests {
         assert_eq!(r.data["status"], "error");
     }
 
-    #[sqlx::test(migrations = false)]
+    #[sqlx::test]
     async fn a_write_not_yet_allowed_asks_and_changes_nothing(pool: PgPool) {
         run_sql(&pool, json!({ "sql": "CREATE TABLE t (n int)" }), false).await;
         let sql = "INSERT INTO t VALUES (1)";
@@ -139,5 +154,16 @@ mod tests {
         assert_eq!(r.data["awaiting_owner"], true, "{:?}", r.data);
         let r = run_sql(&pool, json!({ "sql": "SELECT count(*) AS n FROM t" }), true).await;
         assert_eq!(r.data["rows"][0]["n"], 0);
+    }
+
+    #[sqlx::test]
+    async fn a_read_is_in_the_owners_zone(pool: PgPool) {
+        let sql = "SELECT current_setting('TimeZone') AS tz, \
+                   to_char('2026-10-07 11:00:00+00'::timestamptz, 'HH24:MI') AS label";
+        let r = execute(&pool, sql, true, Some("America/Chicago")).await.unwrap();
+        assert_eq!(r.data["rows"][0]["tz"], "America/Chicago", "{:?}", r.data);
+        assert_eq!(r.data["rows"][0]["label"], "06:00");
+        let r = execute(&pool, sql, true, Some("Not/AZone")).await.unwrap();
+        assert_eq!(r.data["rows"][0]["tz"], "UTC", "{:?}", r.data);
     }
 }

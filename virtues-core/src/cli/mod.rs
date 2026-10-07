@@ -553,10 +553,10 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             //   sessionize → DETECTIVE (Chat) → sleep → annotate → novelty →
             //   autonomic → topic/entity → DAY SUMMARY (Chat)
             //
-            // `--narrate-only` skips everything up to the narrative: it reads the
-            // day's EXISTING scored events and re-runs just `narrate_day`. For
-            // iterating on the narrate prompt without re-segmenting (no detective
-            // call) or re-scoring (no embedder / NPU).
+            // `--narrate-only` skips everything up to narration and runs just
+            // `narrate_day`, which reads the day's own record rather than its
+            // events: no detective call, no embedder, no NPU. It writes a day
+            // once, so a day already written prints why and stops.
             if !narrate_only {
                 println!("Rolling audio chunks into sessions...");
                 let sessions =
@@ -589,10 +589,13 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             }
 
             println!("Narrating {target_date} (day summary)...");
-            let Some(day) = crate::api::day_summary::narrate_day(pool, target_date).await? else {
-                println!();
-                println!("· Not enough of a day to write about — no narrative, and no LLM call.");
-                return Ok(());
+            let day = match crate::api::day_summary::narrate_day(pool, target_date).await? {
+                crate::api::day_summary::NarrateOutcome::Written(day) => day,
+                other => {
+                    println!();
+                    println!("· {}", narration_note(target_date, &other));
+                    return Ok(());
+                }
             };
 
             println!();
@@ -682,4 +685,41 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
     }
 
     Ok(())
+}
+
+/// What `day-summary` says when narration did not write the page.
+fn narration_note(
+    date: chrono::NaiveDate,
+    outcome: &crate::api::day_summary::NarrateOutcome,
+) -> String {
+    use crate::api::day_summary::{NarrateOutcome, SaveOutcome};
+    const REWRITE: &str = "\"Rewrite this page\", at the foot of the day page, writes it again.";
+    match outcome {
+        NarrateOutcome::Written(_) => format!("{date}'s page is written."),
+        NarrateOutcome::AlreadyWritten => {
+            format!("{date} already has its page, so nothing was written. {REWRITE}")
+        }
+        NarrateOutcome::NotOver => format!(
+            "{date} isn't over yet in its own timezone, so there is nothing to write. \
+             Pass --date for a day that is."
+        ),
+        NarrateOutcome::NotEnough => {
+            "Not enough of a day to write about: no page, and no model call.".to_string()
+        }
+        NarrateOutcome::Kept(SaveOutcome::KeptNever) => {
+            "Upkeep is off for this day's page, so narration left it as it is.".to_string()
+        }
+        NarrateOutcome::Kept(SaveOutcome::KeptYourEdits) => format!(
+            "This day's page has been edited by hand, so narration left it as it is. {REWRITE}"
+        ),
+        NarrateOutcome::Kept(_) => format!(
+            "This day's page has been opened in the editor, so narration left it as it is. {REWRITE}"
+        ),
+        NarrateOutcome::Busy => "Another writer is writing this day right now (the nightly \
+             run, or a rewrite). Try again when it finishes."
+            .to_string(),
+        NarrateOutcome::Empty => {
+            "The writer came back with an empty page, so nothing was saved.".to_string()
+        }
+    }
 }

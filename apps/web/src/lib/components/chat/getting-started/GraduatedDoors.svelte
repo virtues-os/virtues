@@ -3,7 +3,7 @@
 
 	`graduated_line` (getting_started.rs) already names the right things — the
 	story written down, the record being written from Google and this Mac, the
-	first page on Home — and it names them per branch, so the sentence is
+	first day's page — and it names them per branch, so the sentence is
 	already true for this particular box. What it could not do was let anyone
 	TOUCH them. Adam, having finished the walk: "the end of the chat was
 	uneventful and i didnt know where to go next as a user." The server line
@@ -22,11 +22,9 @@
 	  first_day        → the page itself, the promise's payoff
 	  no sources       → Settings, because the honest next act is connecting one
 	  interview done   → the document, in their own words
-	  always           → Home, which is where the record is read
 
-	Home is last and quiet on purpose. It is the default destination, and a
-	primary-weight button on it would read as "leave", when the sentence above
-	has just said this room stays.
+	There is no door back to a home page: home is a new chat, which the rail
+	and the tab bar already open.
 -->
 <script lang="ts">
 	import { goto } from "$app/navigation";
@@ -71,11 +69,6 @@
 				go: () => windowShellStore.navigate("/sources", { label: "Sources" }),
 			});
 		}
-		out.push({
-			label: "Home",
-			note: firstDay ? "Every morning, a page." : "Where you read the record.",
-			go: () => void goto("/home"),
-		});
 		return out;
 	});
 </script>

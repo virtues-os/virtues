@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { portal } from "$lib/actions/portal";
 	import Icon from "$lib/components/Icon.svelte";
 	import type { Snippet } from "svelte";
 
@@ -19,17 +20,6 @@
 		children,
 		footer,
 	}: Props = $props();
-
-	// Portal action - moves element to body
-	function portal(node: HTMLElement) {
-		document.body.appendChild(node);
-		
-		return {
-			destroy() {
-				node.remove();
-			}
-		};
-	}
 
 	/** Focus moves into the dialog as it opens, and back to whatever had it
 	 *  when it closes: otherwise it stays on the page behind the backdrop,

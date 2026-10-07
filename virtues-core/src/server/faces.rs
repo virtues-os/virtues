@@ -358,14 +358,9 @@ pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::resul
     // app_*, which face_reader can't read. Reading it after the role switch
     // would error and poison the whole transaction ("current transaction is
     // aborted"), failing every face query. The pool role can read it here.
-    sqlx::query(
-        "SELECT set_config('timezone', COALESCE(\
-             (SELECT home_timezone FROM app_user_profile LIMIT 1), \
-             current_setting('timezone')), true)",
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| e.to_string())?;
+    crate::timezone::set_local_timezone(&mut *tx, None)
+        .await
+        .map_err(|e| e.to_string())?;
     sqlx::query("SET LOCAL ROLE virtues_face_reader")
         .execute(&mut *tx)
         .await

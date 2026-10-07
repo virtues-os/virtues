@@ -18,6 +18,11 @@ false for every face below.
 | EB Garamond | `EBGaramond-Regular-latin.woff2`, `-latin-ext.woff2` | **one** (400) | `--font-serif`, `--font-serif-ui` |
 | Avenir | Regular / Medium / Bold `.woff2` | 400 / 500 / 700 | `--font-sans` |
 | IBM Plex Mono | Regular / Medium / SemiBold `.woff2` | 400 / 500 / 600 | `--font-mono` |
+| Nothing You Could Do | `NothingYouCouldDo-Regular-latin.woff2` | one (400) | `--font-hand` |
+
+`--font-hand` is the owner's own handwriting and is set on nothing else: the
+notes they write in a day page's margin. What the record or a model wrote is
+always typeset, so the face itself says who wrote the words.
 
 Every file is `woff2`. A face that arrives in any other format is converted
 before it lands here — on 2026-09-16 the serif fallback was still an

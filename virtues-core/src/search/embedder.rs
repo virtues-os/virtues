@@ -15,9 +15,10 @@
 //!
 //! In **manual inference mode** the endpoint is user-run rather than a
 //! sidecar we provisioned; the installer pins a fingerprint of the model at
-//! setup time (`VIRTUES_EMBED_FINGERPRINT`) and we re-check it at boot so a
-//! silently-swapped model can't corrupt the vector index (see
-//! `verify_fingerprint`).
+//! setup time (`VIRTUES_EMBED_FINGERPRINT`) and we re-check it every time the
+//! embedder is built (at first use, and again every few minutes in a running
+//! server) so a silently-swapped model can't corrupt the vector index (see
+//! `verify_fingerprint`, `get_embedder`).
 //!
 //! ## Model — there isn't one. There are three paths.
 //!
@@ -42,8 +43,9 @@
 //!
 //! **BYO (manual)** is any OpenAI-compatible endpoint. Stored width is the
 //! model's native dims (no truncation — most models aren't Matryoshka-trained),
-//! resolved from `VIRTUES_EMBED_DIMS`; the vector column is sized to match at
-//! bringup (`database::ensure_embedding_dims`). Prompt prefixes come from
+//! resolved from `VIRTUES_EMBED_DIMS`; the vector columns are sized to match by
+//! the first embed (`search::indexer`), and held there at every bringup
+//! (`database::ensure_embedding_dims`). Prompt prefixes come from
 //! `VIRTUES_EMBED_QUERY_PROMPT` / `_DOC_PROMPT`. A fingerprint is pinned at setup
 //! and re-checked at boot, so a silently-swapped model cannot corrupt the index.
 //!
@@ -54,7 +56,7 @@
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use std::sync::Arc;
-use tokio::sync::OnceCell;
+use tokio::sync::Mutex;
 
 // `SIDECAR_NATIVE_DIM = 768` and `SIDECAR_STORED_DIM = 256` lived here (named
 // `DRAGON_*`, which was doubly wrong — Dragon does not even use this path; it
@@ -91,21 +93,21 @@ pub fn requested_embed_dim() -> Option<usize> {
 /// The width the index is CURRENTLY built at — read from the database, never
 /// from a constant and never from the network.
 ///
-/// Bringup has to size the vector column before anything embeds, and it must do
-/// so on a box whose sidecar is not running (`virtues migrate`, most of the CLI).
+/// Bringup sizes the vector columns to it, and it must do so on a box whose
+/// sidecar is not running (`virtues migrate`, most of the CLI).
 /// So the geometry lives in `search_index_meta` and the embedder's job at runtime
 /// is to *verify* it, not to supply it.
 ///
 /// `None` means the index has never been built and has no geometry yet — which is
-/// the truth, and better than asserting a model we never ran.
-pub async fn index_dim(pool: &sqlx::PgPool) -> Option<usize> {
-    sqlx::query_scalar::<_, Option<i32>>("SELECT dim FROM search_index_meta WHERE singleton")
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()
-        .flatten()
-        .map(|d| d as usize)
+/// the truth, and better than asserting a model we never ran. A failed read is an
+/// error, not `None`: bringup takes `None` as "nothing to size yet".
+pub async fn index_dim(pool: &sqlx::PgPool) -> Result<Option<usize>> {
+    let dim: Option<Option<i32>> =
+        sqlx::query_scalar("SELECT dim FROM search_index_meta WHERE singleton")
+            .fetch_optional(pool)
+            .await
+            .context("reading the index's recorded width")?;
+    Ok(dim.flatten().map(|d| d as usize))
 }
 
 // EmbeddingGemma's prompt formats were consts HERE, and — worse — the DEFAULT for
@@ -390,7 +392,7 @@ impl HttpEmbedder {
         Ok(embedder)
     }
 
-    /// Boot-time model-identity check for manual inference mode: re-embed
+    /// Model-identity check for manual inference mode: re-embed
     /// the fixed probe strings and compare the quantized hash of the NATIVE
     /// (pre-truncation) vectors against the fingerprint the installer
     /// recorded at setup. A user swapping the model behind their endpoint
@@ -665,23 +667,39 @@ pub async fn probe_current_endpoint() -> Result<(String, usize)> {
     Ok((fingerprint_vectors(&vecs), dims))
 }
 
-static EMBEDDER: OnceCell<Arc<LocalEmbedder>> = OnceCell::const_new();
+/// How long a built embedder is trusted before the next caller builds it again.
+/// Building is what checks the endpoint: its width, the model it serves, and the
+/// pinned fingerprint. A server that built it once would never notice a model
+/// swapped behind it while it ran, and would search with the new model's vectors
+/// until it restarted.
+const REVERIFY_AFTER: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+static EMBEDDER: Mutex<Option<(Arc<LocalEmbedder>, std::time::Instant)>> = Mutex::const_new(None);
 
 pub async fn get_embedder() -> Result<Arc<LocalEmbedder>> {
-    let embedder = EMBEDDER
-        .get_or_try_init(|| async {
-            tracing::info!("Initializing embedding sidecar client...");
-            let start = std::time::Instant::now();
-            let embedder = LocalEmbedder::new().await?;
-            tracing::info!(
-                "Embedder ready in {:.1}s (backend={}, dim={})",
-                start.elapsed().as_secs_f64(),
-                embedder.backend_label(),
-                embedder.dimension()
-            );
-            Ok::<_, anyhow::Error>(Arc::new(embedder))
-        })
-        .await?;
-    Ok(embedder.clone())
+    let mut slot = EMBEDDER.lock().await;
+    if let Some((embedder, built)) = slot.as_ref() {
+        if built.elapsed() < REVERIFY_AFTER {
+            return Ok(embedder.clone());
+        }
+    }
+    let first = slot.is_none();
+    // A failed check leaves nothing cached, so every caller sees the failure until
+    // the endpoint passes again.
+    *slot = None;
+    let start = std::time::Instant::now();
+    let embedder = Arc::new(LocalEmbedder::new().await?);
+    if first {
+        tracing::info!(
+            "Embedder ready in {:.1}s (backend={}, dim={})",
+            start.elapsed().as_secs_f64(),
+            embedder.backend_label(),
+            embedder.dimension()
+        );
+    } else {
+        tracing::debug!(dim = embedder.dimension(), "embedder re-verified");
+    }
+    *slot = Some((embedder.clone(), std::time::Instant::now()));
+    Ok(embedder)
 }
 

@@ -5,7 +5,7 @@
  * Themes are applied via data-theme attribute on <html> and CSS custom properties.
  */
 
-import { getAssistantProfile, updateAssistantProfile } from '$lib/api/client';
+import { getAssistantProfile, updateUiPreferences } from '$lib/api/client';
 
 export type Theme =
 	| 'pemberley'
@@ -159,17 +159,7 @@ export async function setTheme(theme: Theme): Promise<void> {
 
 	// Persist to database
 	try {
-		const profile = await getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>().catch(
-			() => null
-		);
-		const existingPrefs = profile?.ui_preferences || {};
-
-		await updateAssistantProfile({
-			ui_preferences: {
-				...existingPrefs,
-				theme
-			}
-		});
+		await updateUiPreferences({ theme });
 	} catch (error) {
 		console.error('Failed to save theme to database:', error);
 	}

@@ -54,7 +54,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::set_notify,
       commands::set_quiet_hours,
       commands::set_schedule,
-      commands::set_places
+      commands::set_places,
+      commands::set_override
     ])
     .setup(|app, api| {
       #[cfg(mobile)]

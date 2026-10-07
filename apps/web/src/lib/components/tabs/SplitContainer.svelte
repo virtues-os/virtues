@@ -11,7 +11,8 @@
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import TabContent from "./TabContent.svelte";
 	import { mountedTabs, touch } from "$lib/tabs/keepAlive";
-	import { untrack } from "svelte";
+	import { onMount, untrack } from "svelte";
+	import { listenForBrowserOpen } from "./browserPaneListener";
 	import ChatView from "./views/ChatView.svelte";
 
 	let isResizing = $state(false);
@@ -147,6 +148,14 @@
 		});
 		rightDropItems = [];
 	}
+
+	// The assistant's browser_open, and "Log in to X", open the Browser beside
+	// the current view (Mac).
+	onMount(() => {
+		let off: (() => void) | undefined;
+		void listenForBrowserOpen().then((f) => (off = f));
+		return () => off?.();
+	});
 </script>
 
 <svelte:window on:mousemove={handleMouseMove} on:mouseup={handleMouseUp} />
@@ -425,11 +434,10 @@
 		right: -4px;
 	}
 
-	/* The grip: a neutral pill that always sits centred on the 1px line, so
-	   the seam reads as movable before the pointer finds it. The line itself
-	   never changes; the grip is the one thing that responds. It darkens and
-	   lengthens on approach and takes the accent only while held. Same object
-	   as the sidebar seam's grip. */
+	/* The grip: a pill centred on the 1px line, hidden until the pointer
+	   finds the seam. The line itself never changes; the grip is the one
+	   thing that responds. It fades in and lengthens on approach and takes
+	   the accent only while held. Same object as the sidebar seam's grip. */
 	.resize-grip {
 		display: none;
 	}
@@ -443,23 +451,26 @@
 		height: 32px;
 		transform: translate(-50%, -50%);
 		border-radius: 999px;
-		background: var(--color-border-strong);
+		background: var(--color-foreground-subtle);
+		opacity: 0;
 		pointer-events: none;
 		z-index: 1;
 		transition:
+			opacity 160ms var(--ease-premium),
 			height 160ms var(--ease-premium),
 			background-color 160ms var(--ease-premium);
 	}
 
 	.resize-handle.visible:hover .resize-grip,
 	.resize-handle.visible:focus-visible .resize-grip {
-		background: var(--color-foreground-subtle);
+		opacity: 1;
 		height: 40px;
 	}
 
 	/* Held: the accent says you have it. No easing — it follows the pointer. */
 	.resize-handle.dragging .resize-grip {
 		background: var(--color-primary);
+		opacity: 1;
 		height: 40px;
 		transition: none;
 	}

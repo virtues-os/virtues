@@ -161,12 +161,23 @@ impl ChatMode {
     pub fn tools(&self) -> Vec<serde_json::Value> {
         use crate::tools::{get_tool_definitions_for_llm, tools_named};
         match self {
-            // Write/act tools confirm before running.
-            Self::Chat => get_tool_definitions_for_llm(),
+            // Write/act tools confirm before running. The owner's browser
+            // only while an app that has one is connected: a tool the model
+            // cannot use is one it will try anyway.
+            Self::Chat => {
+                let mut tools = get_tool_definitions_for_llm();
+                if crate::browser::connected() {
+                    tools.extend(tools_named(crate::browser::TOOLS));
+                }
+                tools
+            }
             // Everything chat has, plus `shell`; changes ask (`sudo_gate`).
             Self::Sudo => {
                 let mut tools = get_tool_definitions_for_llm();
                 tools.extend(tools_named(crate::tools::SUDO_ONLY_TOOLS));
+                if crate::browser::connected() {
+                    tools.extend(tools_named(crate::browser::TOOLS));
+                }
                 tools
             }
             // No other edit/act tools — see `DEEP_RESEARCH_TOOLS`.
@@ -379,6 +390,9 @@ pub(crate) mod tests {
             ("search", &["semantic_search", "web_search"], 2_000),
             ("self", &["update_memory", "propose_narrative_identity_edit"], 1_400),
             ("sql_write", &["sql_write"], 600),
+            // Drawn inside the reply. The kinds and their column contracts are
+            // the description; trimming it means dropping a kind.
+            ("show", &["show"], 1_900),
             // The most-used tool, and its table block is generated from the
             // catalog (sql_catalog::prompt_block), so a new table or a longer
             // note lands here. Trimmed from 9.6k on 2026-09-29 with no column
@@ -394,8 +408,8 @@ pub(crate) mod tests {
         // (mode's wire name, total ceiling). Chat's is the sum of its group
         // ceilings; the rest sit just above their 2026-09-29 size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 19_400),
-            ("sudo", 19_600),
+            ("chat", 21_300),
+            ("sudo", 21_500),
             ("deep_research", 13_100),
             ("interview", 1_500),
             ("getting_started", 2_200),

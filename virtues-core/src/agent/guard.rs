@@ -111,7 +111,12 @@ impl RepeatGuard {
             }
         }
         let fp = fingerprint(&call.arguments);
-        if let Some(said) = ledger.and_then(|l| l.failed_args.get(&fp)) {
+        // A browser call answers about the page as it is now, so the same call
+        // after a browser_open is a different question: `browser_snapshot`
+        // fails before a page is open and succeeds after, with identical
+        // (empty) arguments. The consecutive-failure cap above still applies.
+        let stateful = crate::browser::TOOLS.contains(&call.name.as_str());
+        if let Some(said) = ledger.and_then(|l| l.failed_args.get(&fp)).filter(|_| !stateful) {
             return Some(format!(
                 "This exact {} call already failed this turn: {said} \
                  It will not answer differently. Change the call, or answer without it.",
@@ -222,6 +227,20 @@ mod tests {
         assert!(said.contains("already failed this turn"), "{said}");
         assert!(said.contains("column \"day\" does not exist"), "{said}");
         assert!(!said.contains("wiki_day_prose has:"), "column dump leaked: {said}");
+    }
+
+    #[test]
+    fn a_browser_call_that_failed_may_run_again() {
+        let mut g = RepeatGuard::new();
+        let before_open = call("1", "browser_snapshot", serde_json::json!({}));
+        g.record(
+            std::slice::from_ref(&before_open),
+            &[failed(&before_open, "The browser window is not open. Call browser_open with a URL first.")],
+        );
+        let after_open = call("2", "browser_snapshot", serde_json::json!({}));
+        let (run, refused) = g.admit(std::slice::from_ref(&after_open));
+        assert_eq!(run.len(), 1);
+        assert!(refused.is_empty());
     }
 
     #[test]

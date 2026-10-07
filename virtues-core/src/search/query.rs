@@ -425,6 +425,12 @@ impl SemanticSearchEngine {
         let limit = opts.limit.unwrap_or(10).clamp(1, 50);
         let recall_limit = (limit * 2).clamp(10, 20); // per-variant
         let embedder = get_embedder().await?;
+        super::indexer::check_index_geometry(
+            &self.pool,
+            &embedder.model_id(),
+            embedder.dimension() as i32,
+        )
+        .await?;
 
         // One phrasing — plain path, no fan-out, candidates keep fused z-scores.
         if queries.len() == 1 {

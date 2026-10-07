@@ -132,7 +132,7 @@
 
 	function handleNewTab() {
 		windowShellStore.openTab(
-			{ type: "home", label: "Home", route: "/home", icon: "ri:home-5-line" },
+			{ type: "chat", label: "New chat", route: "/chat", icon: "ri:chat-1-line" },
 			paneId,
 		);
 	}

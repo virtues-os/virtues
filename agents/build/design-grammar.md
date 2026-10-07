@@ -31,8 +31,6 @@ Every page has a sentence, written down before anything is drawn. Every object
 on the page either **advances** it or **proves** it. An object that does
 neither is cut, however handsome.
 
-- Home: *the record and the person in the room at the same time, with the day
-  still open.* The deck advances it; the novelty line proves it.
 - A day article: *yesterday, written down.* The autobiography advances it; the
   dayline and the sources prove it.
 - The Getting Started room: *your server is reading your life.* The four steps
@@ -42,28 +40,14 @@ The sentence may appear once, under the title, in the sans. It is the only
 prose the page writes for itself; a row or a step gets at most one line under
 its title. **Nothing is written to fill a slot** — a section with nothing to
 say does not render, and a measure that needs a week of history before it
-means anything stays silent for that week rather than scoring noise
-(`DayNovelty`).
+means anything stays silent for that week rather than scoring noise.
 
-## 2. Turns, not blocks
-
-Every other room is one-directional: the wiki is you reading the record, chat
-is you interrogating it, a day article is its account of you written
-overnight. Home is the only place both parties are present, so it is built as
-**turns of a meeting** rather than as a dashboard. In order, each one a
-component:
-
-| Turn | What it is | Where |
-|---|---|---|
-| speaks | one counted observation, no model involved | `home/DayNovelty.svelte` |
-| shows | today from the raw streams, scrubbable down to the rows | `home/DayDeck.svelte` + `home/DayGround.svelte` |
-| opens | the work you had in your hands last | the recents list in `HomeView` |
-| asks | the one thing only the owner can answer | `home/PlaceAsk.svelte` |
-| answers | the one line you choose to keep | the keep card in `HomeView` |
+## 2. Framed or unframed
 
 **A rule is the box talking; a card is you answering.** That is the only
-decoration the page has, and it is load-bearing — so a new block on this page
-has to pick a side before it picks a style.
+decoration a page has, and it is load-bearing — so a new block has to pick a
+side before it picks a style. (It was first written for the home page's turns
+of a meeting; that page is gone, see [Struck](#struck), and the rule stayed.)
 
 In the code the distinction is **framed or unframed**, and nothing else. The
 box's turns are unframed: a serif line at the page's measure, flush to the
@@ -88,10 +72,9 @@ and a prose one. And when a layout responds to width, **ask the container, not
 the viewport** — what runs out of space is the pane, and in split view a pane
 is nothing like the window.
 
-**Four page genres**, so a reader knows which grammar applies before styling
+**Three page genres**, so a reader knows which grammar applies before styling
 anything:
 
-- **The meeting** — Home. Turns, as above. One of a kind.
 - **The article** — the wiki's day, person, place, year. A centered title page
   (h1, meta, a 3rem hairline), one 48rem measure, `.section-title` sections
   that hide when empty, and rails either side for contents and notes. It reads;
@@ -139,14 +122,13 @@ EB Garamond declares ascent/descent 1.007/0.298, so centering its line box in
 a row leaves the letters off-center against the icon beside them; the UI
 registration sets the metrics so the cap band lands on the center line. The override is expressed in em, so
 it holds at 13.5px and at 46px alike. Prose keeps `--font-serif`: applying the
-correction there would move first-baseline position across the wiki, pages and
-Home.
+correction there would move first-baseline position across the wiki and pages.
 
 One scale:
 
 | Size | Face | Used for |
 |---|---|---|
-| 36 | serif | the page title (a dateline on Home) |
+| 36 | serif | the page title |
 | `--md-h2-size` (22) | serif | a step's heading; a section title |
 | 18 | serif | the box's line — the novelty caption, the ask, a list row, a card's question |
 | 17 · 16 | serif | what you are typing · what you kept |
@@ -359,10 +341,10 @@ switching a parent's props on that phase — made the two chase each other at
 twelve instances a second. The fix was to mount it once outside the `Page`
 shell in a `.host` that is `display: none` when settled, never unmounted.
 
-Getting Started left the page on 2026-09-13 and is a chat room now, so the
-second half of that pair is gone; `HomeView`'s `.host` is what remains. The
-rule outlives the example: phase is a thing a component reports, not a thing a
-parent remounts it to change.
+Getting Started left the page on 2026-09-13 and is a chat room now, and the
+home page is gone too, so neither half of that pair remains. The rule outlives
+the example: phase is a thing a component reports, not a thing a parent
+remounts it to change.
 
 ## 9. The checklist
 
@@ -398,6 +380,14 @@ gets switched off by the end of the week. Escape a line it is wrong about with
 
 Kept because the reasoning outlives the thing. Do not rebuild any of these
 without answering what killed it.
+
+**The home page** (`/home`, the Daily Office; removed 2026-10-06). A
+dateline, a novelty line, the day's streams as a deck with a map, recents, an
+ask and a keep card, built as turns of a meeting. Home and chat had become
+one place: the Home room's panel already held chats, projects, pages and
+applets, fresh sessions already landed on a new chat, and the page was a
+second front door nobody needed. The Home tile opens a new chat now. Today's
+streams live on the Timeline; a day's account is the wiki's day article.
 
 **The spread, and the frontispiece** (2026-09-04 → 2026-09-13). Every chapter
 page was to be a spread: the work on the left in one measure, and on the right
@@ -440,12 +430,6 @@ quiet.
 its blocks in. Doubled the ghosting.
 
 ## Worked examples
-
-**Home** (`tabs/views/HomeView.svelte`). The dateline as title, the weather and
-the clock under it; then the five turns of §2 in order — the novelty line, the
-deck with its ground map and the moment it opens when you click it, the
-recents, the ask, the keep. The two adjacent-page doors close the page below
-the work.
 
 **A day** (`wiki/DayPage.svelte`). A centered title page — h1, byline, a 3rem
 hairline — then the autobiography, the dayline, the timeline, the chats and the

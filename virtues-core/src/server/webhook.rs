@@ -46,6 +46,8 @@ pub struct AppState {
     pub ghost_permissions: crate::api::chat_permissions::GhostPermissions,
     /// Turns running right now, by chat id (VIR-323).
     pub live_turns: crate::api::live_turn::LiveTurns,
+    /// Each day's latest Rewrite this page, for the page to read how it went.
+    pub day_rewrites: crate::api::day_rewrites::DayRewrites,
 }
 
 impl axum::extract::FromRef<AppState> for sqlx::PgPool {
@@ -227,7 +229,24 @@ pub async fn webhook(
         yjs: state.yjs_state.clone(),
     };
 
-    match crate::applet_runner::run_applet(&deps, &applet_id, "webhook", Some(&body)).await {
+    // The run gets a task of its own, which the handler awaits. Run inline, it
+    // was part of this request's future, and a device that gave up on a slow
+    // request (one right after a restart, say) dropped it mid-run: the run row
+    // stayed `running`, nothing finished it, and the concurrency gate skipped
+    // that device's every delivery until the row aged past RUN_STALE_TTL_SECS.
+    // Spawned, it finishes and records its outcome whoever is still listening.
+    let run = {
+        let applet_id = applet_id.clone();
+        tokio::spawn(async move {
+            crate::applet_runner::run_applet(&deps, &applet_id, "webhook", Some(&body)).await
+        })
+    };
+    let outcome = match run.await {
+        Ok(outcome) => outcome,
+        Err(e) => Err(crate::error::Error::Other(format!("webhook run task failed: {e}"))),
+    };
+
+    match outcome {
         Ok(result) => match result.status {
             AppletRunStatus::Success => (
                 StatusCode::OK,

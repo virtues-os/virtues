@@ -66,8 +66,14 @@ export interface AudioStatus {
 	schedule?: MuteSchedule;
 	/** The plugin's cache of the box's muted places. Same absence rule. */
 	places?: MutedPlace[];
-	/** Why chunk writing is paused right now: "schedule" or "place". */
+	/** Why chunk writing is paused right now: "pause", "schedule" or "place". */
 	mutedBy?: string;
+	/** The override set from Control Center: "silence" (paused) or "record"
+	 * (recording through your hours or a place). The mic stays on either way,
+	 * so ending one needs no restart. Absent when there is none. */
+	override?: "silence" | "record";
+	/** When the override ends, epoch ms. Absent = until you end it. */
+	overrideUntil?: number;
 }
 
 export type StreamKey = "location" | "health" | "calendar" | "contacts" | "finance" | "audio";
@@ -76,6 +82,10 @@ export type StreamKey = "location" | "health" | "calendar" | "contacts" | "finan
 export function fmtClock(m: number): string {
 	const d = new Date(2000, 0, 1, Math.floor(m / 60) % 24, m % 60);
 	return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function clockAt(d: Date): string {
+	return fmtClock(d.getHours() * 60 + d.getMinutes());
 }
 
 export function minToTime(m: number): string {
@@ -187,6 +197,23 @@ export function audioState(a: AudioStatus | null, now = new Date()): AudioState 
 					explain: "To record, allow microphone access for Virtues in iPhone Settings.",
 				}
 			: null;
+	}
+	const until = a.overrideUntil ? clockAt(new Date(a.overrideUntil)) : null;
+	if (a.override === "silence" && a.enabled) {
+		return {
+			label: until ? `Paused until ${until}` : "Paused",
+			live: false,
+			explain: `${MIC_LIT} Virtues keeps nothing until ${until ?? "you resume"}.`,
+		};
+	}
+	if (a.override === "record" && a.enabled && a.recording) {
+		return {
+			label: until ? `Live until ${until}` : "Live",
+			live: true,
+			explain: until
+				? `Recording anyway until ${until}. After that, your hours and places apply again.`
+				: "Recording anyway until your hours or this place stop muting.",
+		};
 	}
 	if (a.mutedBy === "schedule") {
 		// Name an end only when this clock agrees the hours are muting now: the
