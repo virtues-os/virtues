@@ -393,6 +393,11 @@ pub struct ApiKeyCompleteRequest {
     /// Field values the form collected. `{"token": "..."}` for single-field;
     /// `{"key1": "...", "key2": "..."}` for multi-field connectors.
     pub fields: serde_json::Value,
+    /// Reconnecting: replace this credential's secrets rather than add a
+    /// second one, so its applets, history and name carry on and the broken
+    /// row does not linger beside a new one.
+    #[serde(default)]
+    pub credential_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -434,11 +439,39 @@ pub async fn apikey_complete_handler(
         }
     }
 
-    let credential_id =
-        match finalize_apikey_credential(pool, &source_id, &req.name, &req.fields).await {
+    let credential_id = match &req.credential_id {
+        Some(existing) => {
+            let owner: Option<String> =
+                match sqlx::query_scalar("SELECT source_id FROM credentials WHERE id = $1")
+                    .bind(existing)
+                    .fetch_optional(pool)
+                    .await
+                {
+                    Ok(owner) => owner,
+                    Err(e) => {
+                        tracing::error!(error = %e, "credential lookup failed");
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({ "error": "credential lookup failed" })),
+                        )
+                            .into_response();
+                    }
+                };
+            if owner.as_deref() != Some(source_id.as_str()) {
+                return not_found(format!("no {source_id} credential {existing}"));
+            }
+            if let Err(e) =
+                virtues_helpers::auth::vault::update_credential_secrets(pool, existing, &req.fields, None).await
+            {
+                return auth_error_response(e);
+            }
+            existing.clone()
+        }
+        None => match finalize_apikey_credential(pool, &source_id, &req.name, &req.fields).await {
             Ok(id) => id,
             Err(e) => return auth_error_response(e),
-        };
+        },
+    };
 
     // Reconcile so per-credential fan-out picks up (e.g. MCP server actions).
     if let Err(e) = reconcile_templates(pool).await {

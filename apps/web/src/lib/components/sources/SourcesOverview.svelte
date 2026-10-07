@@ -172,9 +172,9 @@
 		};
 	});
 
-	async function reconnect(sourceId: string) {
+	async function reconnect(sourceId: string, credentialId: string) {
 		const source = store.catalogById.get(sourceId);
-		if (source) await connectFlow.start(source);
+		if (source) await connectFlow.start(source, credentialId);
 	}
 
 	function openCatalog() {
@@ -284,7 +284,7 @@
 								variant="secondary"
 								size="sm"
 								class="shrink-0"
-								onclick={() => void reconnect(c.sourceId)}
+								onclick={() => void reconnect(c.sourceId, c.id)}
 							>
 								Reconnect
 							</Button>

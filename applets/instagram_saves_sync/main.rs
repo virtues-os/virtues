@@ -116,6 +116,12 @@ async fn main() -> Result<()> {
         // body as "no saves".
         let status = resp.status();
         if status.is_redirection() || status == reqwest::StatusCode::UNAUTHORIZED {
+            virtues_applets::needs_reconnect(
+                &pool,
+                &input,
+                "Instagram ended this session. Log in again to reconnect.",
+            )
+            .await;
             anyhow::bail!(
                 "instagram returned {status} — the session is invalid, or the request needs an \
                  x-ig-www-claim header this credential does not carry. Reconnect Instagram."
