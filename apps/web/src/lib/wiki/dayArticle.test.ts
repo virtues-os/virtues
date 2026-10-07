@@ -51,14 +51,16 @@ describe("parseDayArticle", () => {
 			{
 				markdown: "You crossed Fifth and Main.",
 				evidence: [{ kind: "ev", label: "Recording · 5:14 PM", ref: "data_communication_transcription:tr_a" }],
+				space: false,
 			},
 			{
 				markdown: "You got home.",
 				evidence: [{ kind: "ev", label: "Message · 7:40 PM", ref: "data_communication_message:msg_1" }],
+				space: true,
 			},
 		]);
 		const lead = a.blocks.find((b) => b.markdown === "A few of the questions:");
-		expect(lead?.sentences).toEqual([{ markdown: "A few of the questions:", evidence: [] }]);
+		expect(lead?.sentences).toEqual([{ markdown: "A few of the questions:", evidence: [], space: false }]);
 		expect(a.blocks.find((b) => b.kind === "table")?.sentences).toEqual([]);
 	});
 
@@ -75,8 +77,41 @@ describe("parseDayArticle", () => {
 			"data_communication_message:m1",
 			"data_communication_transcription:t1",
 		]);
-		expect(second).toEqual({ markdown: "Then home.", evidence: [] });
+		expect(second).toEqual({ markdown: "Then home.", evidence: [], space: true });
 		expect(a.blocks[0].notes.map((n) => n.kind)).toEqual(["ev", "ev", "cx"]);
+	});
+
+	it("splits off a sentence with no marker, so it never borrows the next one's evidence", () => {
+		const a = parseDayArticle(
+			"Lede.\n\nYou added this yourself. Mass at St. John was in Latin.[^ev-1]\n\n" +
+				"[^ev-1]: Recording · 1:02 PM · data_communication_transcription:t1",
+		);
+		const [mine, sourced] = a.blocks[0].sentences;
+		expect(mine).toEqual({ markdown: "You added this yourself.", evidence: [], space: false });
+		expect(sourced.markdown).toBe("Mass at St. John was in Latin.");
+		expect(sourced.evidence.map((n) => n.ref)).toEqual(["data_communication_transcription:t1"]);
+	});
+
+	it("never splits inside a link, a veil mark or an initial", () => {
+		const a = parseDayArticle(
+			"Lede.\n\nYou met [⟦David O. Okafor⟧](/person/p) at ⟦P.F. Chang's⟧ by Mt. Bonnell.[^ev-1] You ate. Nick called.[^ev-2]\n\n" +
+				"[^ev-1]: Message · 9:00 AM · data_communication_message:m1\n" +
+				"[^ev-2]: Message · 9:30 AM · data_communication_message:m2",
+		);
+		expect(a.blocks[0].sentences.map((s) => s.markdown)).toEqual([
+			"You met [⟦David O. Okafor⟧](/person/p) at ⟦P.F. Chang's⟧ by Mt. Bonnell.",
+			"You ate.",
+			"Nick called.",
+		]);
+		expect(a.blocks[0].sentences.map((s) => s.evidence.length)).toEqual([1, 0, 1]);
+	});
+
+	it("keeps the paragraph's own spacing around a marker", () => {
+		const a = parseDayArticle("Lede.\n\nShe said yes[^cx-1], then left.\n\n[^cx-1]: 5:00 PM");
+		expect(a.blocks[0].sentences.map((s) => [s.markdown, s.space])).toEqual([
+			["She said yes", false],
+			[", then left.", false],
+		]);
 	});
 
 	it("reads a page written before footnotes as a lede and a body", () => {

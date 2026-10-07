@@ -2080,6 +2080,17 @@ export function updateAssistantProfile<T = unknown>(patch: Record<string, unknow
 	return apiSend<T>('PUT', '/assistant-profile', patch);
 }
 
+/**
+ * Change some of your UI preferences, keeping the rest. The server replaces
+ * `ui_preferences` whole, so this reads them first; a failed read throws
+ * rather than writing, because writing the patch alone would erase every
+ * other preference.
+ */
+export async function updateUiPreferences(patch: Record<string, unknown>): Promise<void> {
+	const profile = await getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>();
+	await updateAssistantProfile({ ui_preferences: { ...(profile?.ui_preferences ?? {}), ...patch } });
+}
+
 // ── Billing / wallet ─────────────────────────────────────────────────────────
 export function getBillingLinkStatus<T = unknown>(): Promise<T> {
 	return apiGet<T>('/billing/link/status');

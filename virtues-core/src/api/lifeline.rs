@@ -623,6 +623,147 @@ pub async fn get_clock(
     Ok(Clock { from, to, columns, cells, peak, column_peak, timezone: tz.to_string() })
 }
 
+/// How many days before a day page its numbers are compared with.
+pub const BASELINE_DAYS: i64 = 30;
+/// The most numbers one day page shows.
+pub const MAX_PINNED: usize = 5;
+
+/// One of your numbers on a day page: the day's value and the days before it,
+/// so the page can say where the day sat against your own usual.
+#[derive(Debug, Serialize)]
+pub struct DayMeasure {
+    /// `lane:id`, the form a pin is stored in.
+    pub key: String,
+    pub label: String,
+    pub unit: String,
+    pub kind: String,
+    /// The day's value. `None` when the measure's table holds nothing at all
+    /// that day: nothing was collected, which is not the same as zero.
+    pub value: Option<f64>,
+    /// The `BASELINE_DAYS` days before, oldest first, `None` the same way.
+    pub before: Vec<Option<f64>>,
+}
+
+/// Every measure a day page can show, for the picker.
+#[derive(Debug, Serialize)]
+pub struct MeasureListing {
+    pub key: String,
+    pub lane: String,
+    pub label: String,
+    pub unit: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DayMeasures {
+    pub date: chrono::NaiveDate,
+    pub measures: Vec<DayMeasure>,
+    pub available: Vec<MeasureListing>,
+}
+
+/// The pinned measures (`lane:id`) for one day and the days before it. Each
+/// day is its own local day, in the timezone that day was lived in. Unknown
+/// keys are skipped, not an error: a pin can outlive a measure.
+pub async fn day_measures(
+    pool: &PgPool,
+    date: chrono::NaiveDate,
+    keys: &[String],
+) -> Result<DayMeasures> {
+    use virtues_registry::ontologies::{lane_measures, MeasureKind};
+
+    let all = lane_measures();
+    let picked: Vec<_> = keys
+        .iter()
+        .filter_map(|k| {
+            let (lane, id) = k.split_once(':')?;
+            all.iter().find(|m| m.lane == lane && m.id == id)
+        })
+        .take(MAX_PINNED)
+        .collect();
+
+    let mut starts = Vec::new();
+    let mut ends = Vec::new();
+    for back in (0..=BASELINE_DAYS).rev() {
+        let day = date - chrono::Duration::days(back);
+        let tz = crate::timezone::day_timezone(pool, day).await?;
+        let (start, end) = crate::api::day_summary::day_bounds(day, Some(&tz));
+        starts.push(start);
+        ends.push(end);
+    }
+
+    let mut measures = Vec::new();
+    for m in picked {
+        // Table, column, aggregate, filter and coverage are registry
+        // constants, never request input; the windows are bound.
+        //
+        // Collection starts at the measure's first row it can judge (the rule
+        // `Lane.first_seen` uses): a day before that is NULL, nothing was
+        // measured. After it, a day with no rows is a real zero for a total,
+        // because workouts and purchases are sparse by nature, and no reading
+        // for a rate. A day whose rows all fall outside `coverage` is NULL
+        // again: spend over unsigned rows is unknown, not $0. There is no
+        // trailing bound, so the days after the last purchase stay zeros.
+        let and = m.filter.map(|f| format!(" AND ({f})")).unwrap_or_default();
+        let judged = m.coverage.map(|c| format!(" AND ({c})")).unwrap_or_default();
+        let outside = m
+            .coverage
+            .map(|c| {
+                format!(
+                    "WHEN EXISTS (SELECT 1 FROM {t} WHERE {ts} >= w.s AND {ts} < w.e) \
+                     AND NOT EXISTS (SELECT 1 FROM {t} WHERE {ts} >= w.s AND {ts} < w.e AND ({c})) \
+                     THEN NULL ",
+                    t = m.table,
+                    ts = m.timestamp_column,
+                )
+            })
+            .unwrap_or_default();
+        let empty = match m.kind {
+            MeasureKind::Total => "0",
+            MeasureKind::Rate => "NULL",
+        };
+        let sql = format!(
+            "WITH f AS (SELECT min({ts}) AS first FROM {t} WHERE true{judged}) \
+             SELECT CASE WHEN f.first IS NULL OR w.e <= f.first THEN NULL \
+                    {outside}\
+                    ELSE COALESCE((SELECT ({agg})::float8 FROM {t} \
+                                   WHERE {ts} >= w.s AND {ts} < w.e{and}), {empty}) END \
+             FROM unnest($1::timestamptz[], $2::timestamptz[]) WITH ORDINALITY AS w(s, e, n) \
+             CROSS JOIN f \
+             ORDER BY w.n",
+            t = m.table,
+            ts = m.timestamp_column,
+            agg = m.agg,
+        );
+        let mut values: Vec<Option<f64>> = sqlx::query_scalar(&sql)
+            .bind(&starts)
+            .bind(&ends)
+            .fetch_all(pool)
+            .await?;
+        let value = values.pop().flatten();
+        measures.push(DayMeasure {
+            key: format!("{}:{}", m.lane, m.id),
+            label: m.label.to_string(),
+            unit: m.unit.to_string(),
+            kind: kind_str(m.kind).to_string(),
+            value,
+            before: values,
+        });
+    }
+
+    let available = all
+        .iter()
+        .map(|m| MeasureListing {
+            key: format!("{}:{}", m.lane, m.id),
+            lane: m.lane.to_string(),
+            label: m.label.to_string(),
+            unit: m.unit.to_string(),
+            kind: kind_str(m.kind).to_string(),
+        })
+        .collect();
+
+    Ok(DayMeasures { date, measures, available })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1039,5 +1180,111 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    /// A day page's numbers: the day, the days before it, and the difference
+    /// between a day nothing was collected (null) and a day of zero.
+    #[sqlx::test]
+    async fn day_measures_tell_nothing_collected_from_zero(pool: PgPool) {
+        for (id, at, from_me) in [
+            ("m1", "2026-09-23T15:00:00Z", true),
+            ("m2", "2026-09-23T16:00:00Z", true),
+            ("m3", "2026-09-22T15:00:00Z", true),
+            ("m4", "2026-09-22T16:00:00Z", false),
+            ("m5", "2026-09-18T15:00:00Z", false),
+        ] {
+            sqlx::query(
+                "INSERT INTO data_communication_message
+                    (id, message_id, channel, from_identifier, from_handle, occurred_at,
+                     source_stream_id, source_table, source_provider, metadata)
+                 VALUES ($1, $1, 'imessage', 'x', 'h', $2::timestamptz, $1, 'test', 'test',
+                         jsonb_build_object('is_from_me', $3::bool))",
+            )
+            .bind(id)
+            .bind(at)
+            .bind(from_me)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 9, 23).unwrap();
+        let keys = vec!["communication:sent".to_string(), "nowhere:nothing".to_string()];
+        let d = day_measures(&pool, date, &keys).await.unwrap();
+
+        assert_eq!(d.measures.len(), 1, "an unknown pin is skipped");
+        let sent = &d.measures[0];
+        assert_eq!(sent.key, "communication:sent");
+        assert_eq!(sent.value, Some(2.0));
+        assert_eq!(sent.before.len(), BASELINE_DAYS as usize);
+        assert_eq!(sent.before[29], Some(1.0), "the day before");
+        assert_eq!(sent.before[25], Some(0.0), "messages that day, none sent: a real zero");
+        assert_eq!(sent.before[27], Some(0.0), "no messages, after collection began: a real zero");
+        assert_eq!(sent.before[24], None, "before collection began: not a zero");
+        assert_eq!(sent.before[0], None, "nothing collected: not a zero");
+        assert!(d.available.iter().any(|m| m.key == "health:steps"));
+    }
+
+    /// Every measure's SQL, coverage included, runs through `day_measures`.
+    /// The registry crate cannot reach a database, so a typo in a predicate
+    /// would otherwise first show up as a 500 on a day page.
+    #[sqlx::test]
+    async fn every_measure_executes_for_a_day(pool: PgPool) {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 9, 23).unwrap();
+        for m in virtues_registry::ontologies::lane_measures() {
+            let key = format!("{}:{}", m.lane, m.id);
+            let d = day_measures(&pool, date, std::slice::from_ref(&key))
+                .await
+                .unwrap_or_else(|e| panic!("measure {key} failed: {e}"));
+            assert_eq!(d.measures.len(), 1, "{key} was not read");
+        }
+    }
+
+    /// A day whose only rows fall outside a measure's coverage was not
+    /// measured: spend over unsigned FinanceKit rows reads as nothing
+    /// recorded, not $0, and stays out of the usual. Collection starts at the
+    /// first row the measure can judge, so a quiet day after it is $0.
+    #[sqlx::test]
+    async fn rows_outside_coverage_read_as_not_measured(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO data_financial_account
+                 (id, account_name, account_type, source_stream_id, source_table, source_provider)
+             VALUES ('acct', 'Card', 'credit', 'acct', 'test', 'apple_finance')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO data_financial_transaction
+                 (id, account_id, transaction_id, amount, currency, occurred_at,
+                  source_stream_id, source_table, source_provider)
+             VALUES ('t1', 'acct', 't1', 4862, 'USD', '2026-09-23T15:00:00Z',
+                     't1', 'test', 'apple_finance')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 9, 23).unwrap();
+        let spend = ["financial:spend".to_string()];
+        let d = day_measures(&pool, date, &spend).await.unwrap();
+        assert_eq!(d.measures[0].value, None, "unknown direction is not $0");
+        assert!(d.measures[0].before.iter().all(Option::is_none), "nothing judged yet");
+
+        sqlx::query(
+            "INSERT INTO data_financial_transaction
+                 (id, account_id, transaction_id, amount, currency, occurred_at,
+                  source_stream_id, source_table, source_provider)
+             VALUES ('t0', 'acct', 't0', 1200, 'USD', '2026-09-20T15:00:00Z',
+                     't0', 'test', 'test')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let d = day_measures(&pool, date, &spend).await.unwrap();
+        let before = &d.measures[0].before;
+        assert_eq!(d.measures[0].value, None, "still unknown on the day itself");
+        assert_eq!(before[28], Some(0.0), "a quiet day after collection began is $0");
+        assert_eq!(before[26], None, "the day before collection began");
     }
 }

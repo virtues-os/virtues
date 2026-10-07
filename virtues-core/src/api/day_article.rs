@@ -26,8 +26,9 @@
 //! 5. **Names**: a person named on the page must be in the day's people or in
 //!    the day's record, or the sentence goes.
 //! 6. **Render** markdown: the Abstract first, sections after, evidence as
-//!    footnotes the page draws in its margin (`[^ev-N]`), section time spans as
-//!    context footnotes (`[^cx-N]`).
+//!    footnotes that close the sentence they support (`[^ev-N]`, opened in a
+//!    card when the sentence is clicked), section time spans as context
+//!    footnotes the page draws in its margin (`[^cx-N]`).
 //!
 //! The record of why, and what the spike measured, is
 //! `agents/plan/day-article-plan.md`.
@@ -95,9 +96,12 @@ pub(crate) struct DayInput {
     pub chunks: Vec<Chunk>,
     pub messages: Vec<Msg>,
     pub people: Vec<Person>,
-    /// What the writer reads besides the brief: the date, their identity, the
-    /// day's people, the pages just before, and what earlier pages say.
+    /// What the writer reads besides the brief: the date, who "you" is, their
+    /// identity, the day's people, the pages just before, and what earlier
+    /// pages say.
     pub writer_context: String,
+    /// The owner's names (full name first), so the check knows who "you" is.
+    pub owner: Vec<String>,
 }
 
 impl DayInput {
@@ -408,6 +412,12 @@ pub(crate) async fn assemble(
     // ── identity ──
     let identity = crate::api::wiki::get_narrative_identity(pool).await?.content;
 
+    // ── who "you" is ──
+    let owner = match &self_id {
+        Some(id) => owner_names(pool, id).await?,
+        None => Vec::new(),
+    };
+
     // ── the timeline: where the day went, as segmentation cut it ──
     let events: Vec<(DateTime<Utc>, DateTime<Utc>, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT e.started_at, e.ended_at, COALESCE(e.user_label, e.auto_label), e.event_summary \
@@ -432,6 +442,7 @@ pub(crate) async fn assemble(
 
     // ── what the writer reads besides the brief ──
     let mut w = format!("# {}\n\n", date.format("%A, %B %-d, %Y"));
+    w.push_str(&you_block(&owner));
     if !identity.trim().is_empty() {
         w.push_str(&format!("<identity>\n{}\n</identity>\n\n", identity.trim()));
     }
@@ -461,7 +472,42 @@ pub(crate) async fn assemble(
         p.push_str(&format!("\n({automated} automated texts left out.)\n"));
     }
 
-    Ok(DayInput { user_prompt: p, writer_context: w, chunks, messages, people })
+    Ok(DayInput { user_prompt: p, writer_context: w, chunks, messages, people, owner })
+}
+
+/// The owner's names: their person record's name, its first word, their
+/// nickname and aliases, in that order, without repeats.
+async fn owner_names(pool: &PgPool, self_id: &str) -> Result<Vec<String>> {
+    let row: Option<(String, Option<String>, serde_json::Value)> =
+        sqlx::query_as("SELECT name, nickname, aliases FROM wiki_people WHERE id = $1")
+            .bind(self_id)
+            .fetch_optional(pool)
+            .await?;
+    let Some((name, nickname, aliases)) = row else { return Ok(Vec::new()) };
+    let full = clean_name(&name);
+    let mut names = vec![full.clone()];
+    names.extend(full.split_whitespace().next().map(str::to_string));
+    names.extend(nickname.map(|n| clean_name(&n)));
+    if let Some(list) = aliases.as_array() {
+        names.extend(list.iter().filter_map(|a| a.as_str()).map(clean_name));
+    }
+    let mut seen = std::collections::HashSet::new();
+    names.retain(|n| !n.is_empty() && seen.insert(n.to_lowercase()));
+    Ok(names)
+}
+
+/// Who "you" is, for the scout and the writer. The page is in the second
+/// person, and the recordings never say which voice is the owner's, so the
+/// one fact that settles it is given outright: the owner's name. Someone who
+/// says it is someone else, speaking to or about them.
+pub(crate) fn you_block(names: &[String]) -> String {
+    let Some(full) = names.first() else { return String::new() };
+    let others: Vec<&str> = names[1..].iter().map(String::as_str).collect();
+    let called = if others.is_empty() { String::new() } else { format!(" (also {})", others.join(", ")) };
+    let first = names.get(1).unwrap_or(full);
+    format!(
+        "<you>\nThis is {full}'s day{called}, and the page calls them \"you\". They are one of the voices in the recordings and \"me\" in their messages. A speaker who says \"{first}\" is someone else, speaking to or about them: what that person says to or about {first} is said to or about you.\n</you>\n\n"
+    )
 }
 
 /// Earlier pages feed the writer as prose; their footnotes are page furniture.
@@ -828,7 +874,7 @@ const CHECK_PROMPT: &str = r#"You check one diary page, sentence by sentence, ag
 - "supported": everything the sentence claims is in its cited evidence or in the rest of that same conversation (paraphrase is fine; the owner is "you"; people are listed below).
   A sentence that puts a named person somewhere ("with Nick", "Nick came over") needs the evidence to show them taking part; a name only read aloud or mentioned in passing does not put them there. This applies to that claim alone, not to everything else the sentence says.
 - "unsupported": the sentence claims something its evidence does not contain (an invented detail, a descriptive word the evidence lacks, a relationship, a cause, a place, a person being present).
-- "wrong_person": the sentence says who said or did something, and the evidence does not show it was them. Transcripts mark every change of voice as [Speaker] with no name, so a sentence may say who spoke only when the evidence names them or they answer someone by name. A sentence that keeps it shared ("between you", "one of you") is not wrong_person.
+- "wrong_person": the sentence says who said or did something, and the evidence does not show it was them. Transcripts mark every change of voice as [Speaker] with no name, so a sentence may say who spoke only when the evidence names them or they answer someone by name. A sentence that keeps it shared ("between you", "one of you") is not wrong_person. A sentence that names the owner as someone else (they are always "you") is wrong_person.
 - "untagged": the item cites no evidence.
 Be strict about facts (invented details, relationships, causes, presence) and relaxed about wording ("your alarm was set for 6:30" supports "you set an alarm for 6:30").
 
@@ -902,12 +948,17 @@ async fn check_batch(
         numbered.push_str(&format!("#{}\nSENTENCE: {}\nEVIDENCE:\n{}\n\n", n + 1, text_of(k), evidence(k)));
     }
     let people: String = input.people.iter().map(|p| format!("- {}\n", p.name)).collect();
+    let owner = if input.owner.is_empty() {
+        String::new()
+    } else {
+        format!("\nTHE OWNER, always \"you\" on the page: {}\n", input.owner.join(", "))
+    };
     let raw = crate::virtues_api::completion::system_completion(
         pool,
         ModelSlot::Lite,
         "day_article_check",
         "",
-        &format!("{CHECK_PROMPT}{numbered}\nPEOPLE:\n{people}"),
+        &format!("{CHECK_PROMPT}{numbered}\nPEOPLE:\n{people}{owner}"),
         Thinking::Low,
         0.0,
     )
@@ -1010,9 +1061,9 @@ fn twelve_hour(hm: &str) -> String {
     format!("{h12}:{m} {ap}")
 }
 
-/// The finished page: Abstract, sections, tables, and the footnotes the page
-/// draws in its margin. Evidence footnotes are `ev-N`; the section time spans
-/// are `cx-N`.
+/// The finished page: Abstract, sections, tables, and their footnotes.
+/// Evidence footnotes (`ev-N`) close the sentence they support; the section
+/// time spans (`cx-N`) are drawn in the margin.
 pub(crate) fn render(items: &[Item], keep: &HashMap<usize, bool>, input: &DayInput, known: &BTreeSet<String>) -> String {
     let mut out = String::new();
     let mut notes: Vec<String> = Vec::new();
@@ -1129,9 +1180,9 @@ pub(crate) fn render(items: &[Item], keep: &HashMap<usize, bool>, input: &DayInp
     md
 }
 
-// ── The fact strip ─────────────────────────────────────────────────────────
+// ── The dateline's facts ───────────────────────────────────────────────────
 
-/// The day's facts for the strip under the Abstract. Deterministic only: an
+/// The day's facts for the dateline above its title. Deterministic only: an
 /// absent fact is `None` or empty, and the page omits it rather than guessing.
 #[derive(Debug, serde::Serialize)]
 pub struct DayFacts {
@@ -1141,8 +1192,8 @@ pub struct DayFacts {
     pub recorded_minutes: i64,
     /// Recorded stretches, merged, as `[start, end]` instants.
     pub coverage: Vec<[DateTime<Utc>; 2]>,
-    /// Conversations the owner started with Virtues that day.
-    pub chats: i64,
+    /// How long the day was: 1440 minutes, or 1380/1500 on a daylight-saving change.
+    pub day_minutes: i64,
 }
 
 /// Recorded spans closer than this are one stretch on the strip.
@@ -1151,6 +1202,8 @@ const COVERAGE_MERGE_MIN: i64 = 10;
 pub async fn day_facts(pool: &PgPool, date: NaiveDate) -> Result<DayFacts> {
     let day_tz = crate::timezone::day_timezone(pool, date).await?;
     let (start, end) = super::day_summary::day_boundaries_utc(date, Some(&day_tz));
+    let (day_start, day_end) = super::day_summary::day_bounds(date, Some(&day_tz));
+    let day_minutes = (day_end - day_start).num_minutes();
 
     let (high, low): (Option<f64>, Option<f64>) = sqlx::query_as(
         "SELECT max(temperature_c)::float8, min(temperature_c)::float8 FROM data_environment_weather \
@@ -1179,16 +1232,7 @@ pub async fn day_facts(pool: &PgPool, date: NaiveDate) -> Result<DayFacts> {
     }
     let recorded_minutes = coverage.iter().map(|[s, e]| (*e - *s).num_minutes()).sum();
 
-    let chats: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM app_chats WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz \
-         AND deleted_at IS NULL",
-    )
-    .bind(&start)
-    .bind(&end)
-    .fetch_one(pool)
-    .await?;
-
-    Ok(DayFacts { temperature_high_c: high, temperature_low_c: low, recorded_minutes, coverage, chats })
+    Ok(DayFacts { temperature_high_c: high, temperature_low_c: low, recorded_minutes, coverage, day_minutes })
 }
 
 // ── Similar days ───────────────────────────────────────────────────────────
@@ -1255,6 +1299,7 @@ mod tests {
             messages: vec![Msg { id: "msg_1".into(), hm: "19:40".into(), who: "you".into(), body: "home, walked the dog".into(), from_me: true }],
             people: vec![Person { id: "person_n".into(), name: "Nick".into() }],
             writer_context: String::new(),
+            owner: vec!["David Okafor".into(), "David".into()],
         }
     }
 
@@ -1357,5 +1402,15 @@ mod tests {
         assert_eq!(fold_photos("[Photo][Photo][Photo]"), "[3 photos]");
         assert!(is_reaction("Loved an image"));
         assert_eq!(clean_name("Nick 🌷"), "Nick");
+    }
+
+    /// The writer can only say "you" for the right voice if it knows the
+    /// owner's name: someone who says it is someone else.
+    #[test]
+    fn the_owner_is_named_for_the_writer() {
+        let b = you_block(&["David Okafor".into(), "David".into()]);
+        assert!(b.contains("This is David Okafor's day (also David)"), "{b}");
+        assert!(b.contains("A speaker who says \"David\" is someone else"), "{b}");
+        assert_eq!(you_block(&[]), "", "no owner on record: nothing to say");
     }
 }

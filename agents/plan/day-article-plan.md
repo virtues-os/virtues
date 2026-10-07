@@ -5,6 +5,11 @@ Status: **Partly built**, unreleased. Slices 1, 2 and 5 are on `wave`
 are open. Spiked end to end 2026-09-24 → 09-28. Supersedes the narration half
 of `api/day_summary.rs`; segmentation (the timeline) stays.
 
+**2026-10-06: the page was redesigned** from a specimen of the Sep 23 page the
+owner chose (evidence on click, glosses, your hand in the margin, your
+numbers). What is built is below under "The page"; the fact strip, the
+evidence margin cards and the Notes dropdown it replaced are gone.
+
 ## Why
 
 The day article was written from the segmenter's event summaries: transcript →
@@ -43,39 +48,47 @@ shape of what it reads and the prompt it reads it under.
 
 ## The page
 
-One page, two views of the same day: **Article | Record** (a segmented switch,
-not tabs). Toolbar: `Article | Record · Notes · Veil · Edit · ⋯`. History lives
-in `⋯`.
+One page, two views of the same day: **Article | Data** (a segmented switch,
+not tabs). Toolbar: `Article | Data · Veil · Note · Edit`.
 
 Article, top to bottom:
 
-1. Eyebrow: weekday. Title: the full date.
-2. **Abstract** — one to three plain sentences: who, what, the thread.
-3. **Fact strip** — one thin filled row: With · Weather · Recorded (8 of 24
-   hours, with a micro coverage bar) · Wrote (chats, pages). Deterministic only;
-   an absent fact is omitted, never "No data".
+1. **Dateline**: weekday · weather · "heard 8 of 24 hours" with the day's
+   clock as a bar (DayDateline). The one fixed statement of what the page can
+   know. Title: the full date.
+2. **Abstract**: one or two plain sentences: the day's one event and what made
+   it that day.
+3. **Your numbers** (DayNumbers): up to five lane measures you pin, the same
+   on every day, each with a tick against your own 30 days before and the
+   usual in words. A day with nothing the measure can judge reads "Not
+   recorded", never zero (`LaneMeasure.coverage`). Before you pin any, common
+   ones show if your record holds them. Pins live in the assistant profile's
+   `ui_preferences.day_measures`.
 4. Body: up to three sections, headings of 3–6 words naming a thing or a moment
    (never a bare proper noun). Tables are allowed where the day holds a list.
 5. At most one figure, only when earned (see Figures).
 6. Previous / next day as two cards, each with its Abstract.
 7. **Similar days.**
 
-Marginalia (right column, soft filled cards) come in exactly two kinds:
+Three ways the page answers "how do you know?", each with one job:
 
-| Kind | Form | Written by |
+| | Form | From |
 |---|---|---|
-| Evidence — opens Record with the item highlighted | `Kind · time ↗` | the writer's tags; shown on hover for sentences, always for blocks (a figure, a table) |
-| Context — plain facts, dates as links | "last came up Sep 19", "97° at 5 PM", section time spans | code, after the writer |
+| **Evidence on click** | Click a sentence (or a table, a photo): a card with the record's own words, a message as sent or the recording's turns nearest the sentence, and "Open in Data ↗" | the writer's `[^ev-N]` tags; no apparatus shows until asked |
+| **Glosses** | A person's name has a help cursor and a dotted line; hover or click for facts as of that day (earliest message on record, days with messages in the 31 before, last day before) | `/api/wiki/person/:id/gloss`, computed; only for resolved subjects |
+| **Section times** | Quiet text in the margin beside each heading | code, after the writer |
 
-Captions and tables carry no links. `↗` has one meaning. `←` exists only in
-Record, as the way back.
+**The margin is the owner's.** Handwriting on the page is only ever yours:
+a note written from a sentence's card sits beside it with a pen bracket over
+that sentence; "Note" in the toolbar writes about the whole day beside the
+Abstract. Notes are `wiki_notes` with an `anchor` (`{quote, sentence}`, 0046)
+and keep the sentence's words, so they find their place again after a
+rewrite, or sit beside the Abstract saying what they were about. Nothing
+reads a day's notes yet; feeding them to the writer is open.
 
-Notes are not marginalia: a note is an instruction queued for the AI editor,
-opened from the toolbar as a dropdown ("1 waiting"). Resolved notes move to
-History. (`NotesRail` already stores them.)
-
-Record: dayline, timeline, and the full data grid; arriving from a citation
-highlights that row and offers "← Back to the sentence".
+Data: dayline, timeline, and the full data grid; arriving from a citation
+shows the cited record's words and offers "← Back to the sentence", which
+returns to the sentence that was clicked.
 
 ## Markdown
 
@@ -178,26 +191,20 @@ or only when the day has a picturable moment.
 
 ## Frontend
 
-`DayPage.svelte` today stacks seven equal sections. Rebuild:
+Built (see "The page"): DayDateline, DayNumbers, DayArticleBody drawing
+paragraphs sentence by sentence (DayInline), DayEvidence, DayGloss, DayHand.
+Data holds `DaylineChart`, `EventTimeline` and the data grid; the event labels
+show only there (they are the weakest data on the page). Article and Data
+switch along the day's clock (View Transitions: the dateline's bar becomes the
+dayline), crossfading where unsupported and under reduced motion. The veil
+(hold `V`) hides names, the writer's marked spans, your notes, and the names
+and words in an evidence card.
 
-- Header, Abstract, fact strip, article body (sidenote renderer over the
-  existing `Markdown` component), figure block, prev/next, Similar days.
-- `Article | Record` segmented control; Record holds `DaylineChart`,
-  `EventTimeline` and the data grid that are on the page now. The event labels
-  show only in Record (they are the weakest data on the page).
-- Notes dropdown over `NotesRail`'s store.
-- Transition between views along the day's clock (View Transitions: section
-  time spans become timeline rows; the fact strip's coverage bar becomes the
-  dayline). Crossfade where unsupported and under reduced motion.
-- Veil (hold `V`): names from entity resolution plus spans the writer marks;
-  hidden text is not in the DOM while veiled; particles per paragraph canvas.
-  Day content only.
-
-New endpoints: the fact strip's facts and Similar days (nearest day embeddings)
-per date.
-
-**Later:** a small novelty-vs-order (chaos/order) mark for the day, likely in
-the fact strip.
+Open on the page: the handwriting face itself (`--font-hand` falls back to
+Bradley Hand, which only Apple systems have), custom measures described in a
+sentence and practices with a check-in (the specimen showed both), and the
+writer marking the exact words that support each sentence so the evidence
+card can highlight them.
 
 ## Slices
 

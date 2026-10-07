@@ -3,7 +3,8 @@
  *
  * The narrator (`virtues-core/src/api/day_article.rs`) writes one ordinary
  * markdown page: the Abstract as the first paragraph, sections under `## `,
- * and GFM footnotes the page draws in its margin instead of at the bottom.
+ * and GFM footnotes the page lifts out of the text instead of drawing them at
+ * the bottom.
  * Footnote labels carry their kind:
  *
  * - `[^ev-N]` evidence: `Kind · time · table:id`, closing the sentence it
@@ -18,7 +19,7 @@ export type NoteKind = "ev" | "cx";
 
 export interface MarginNote {
 	kind: NoteKind;
-	/** What the margin shows: "Message · 4:52 PM", "7:46–8:41 AM". */
+	/** The note's text: "Message · 4:52 PM" on an evidence card, "7:46–8:41 AM" in the margin. */
 	label: string;
 	/** `table:id` of the record an evidence note opens, when it has one. */
 	ref: string | null;
@@ -27,14 +28,17 @@ export interface MarginNote {
 export type BlockKind = "heading" | "paragraph" | "table" | "other";
 
 /**
- * One sentence of a paragraph and the evidence the writer tagged it with. The
- * writer closes each sentence with its markers, so a run of markers ends one
- * sentence; text after the last run is a sentence with no evidence.
+ * One sentence of a paragraph and the evidence that closes it. The writer ends
+ * each sentence it could source with a run of markers. A sentence without one
+ * (kept unsourced, or added by hand in the editor) is split off at its full
+ * stop and carries no evidence, so it never borrows the next sentence's.
  */
 export interface Sentence {
 	/** Inline markdown, markers removed, veil marks kept. */
 	markdown: string;
 	evidence: MarginNote[];
+	/** Whether whitespace came before it in the paragraph. */
+	space: boolean;
 }
 
 export interface ArticleBlock {
@@ -57,9 +61,37 @@ const MARK = /\[\^(ev|cx)-(\d+)\]/g;
 const MARK_RUN = /(?:\[\^(?:ev|cx)-\d+\])+/g;
 const REF = /^([a-z_]+:[A-Za-z0-9_\-]+)$/;
 
+/** A full stop, then the start of a new sentence. */
+const END = /(?<=[.!?]["”’)]?)\s+(?=[A-Z⟦[*"“])/;
+/** Stops that don't end a sentence: "St. John", "Mt. Bonnell", an initial ("David O. Okafor"). */
+const ABBR = /\b(?:Dr|Mr|Mrs|Ms|St|Mt|Ft|Jr|Sr|vs|e\.g|i\.e|[A-Z])\.$/;
+
+const count = (s: string, c: string) => s.split(c).length - 1;
+/** A link, veil mark or bold span still open, so a stop here is inside it. */
+const unclosed = (s: string) =>
+	count(s, "[") > count(s, "]") || count(s, "⟦") > count(s, "⟧") || count(s, "(") > count(s, ")") || count(s, "**") % 2 === 1;
+
+function splitSentences(chunk: string): string[] {
+	const parts: string[] = [];
+	for (const p of chunk.split(END)) {
+		const last = parts[parts.length - 1];
+		if (last !== undefined && (ABBR.test(last) || unclosed(last))) parts[parts.length - 1] += ` ${p}`;
+		else parts.push(p);
+	}
+	return parts;
+}
+
 function sentencesOf(raw: string, defs: Map<string, MarginNote>): Sentence[] {
 	const text = raw.replace(/\s*\n\s*/g, " ");
 	const out: Sentence[] = [];
+	// Everything up to a run of markers is one or more sentences; only the
+	// last of them is the one the markers close.
+	const push = (piece: string, evidence: MarginNote[]) => {
+		const parts = splitSentences(piece.trim());
+		parts.forEach((p, i) =>
+			out.push({ markdown: p, evidence: i === parts.length - 1 ? evidence : [], space: i > 0 || /^\s/.test(piece) }),
+		);
+	};
 	let from = 0;
 	for (const run of text.matchAll(MARK_RUN)) {
 		const evidence: MarginNote[] = [];
@@ -67,13 +99,13 @@ function sentencesOf(raw: string, defs: Map<string, MarginNote>): Sentence[] {
 			const note = defs.get(`${m[1]}-${m[2]}`);
 			if (note?.kind === "ev") evidence.push(note);
 		}
-		const words = text.slice(from, run.index).trim();
-		if (words) out.push({ markdown: words, evidence });
+		const piece = text.slice(from, run.index);
+		if (piece.trim()) push(piece, evidence);
 		else out.at(-1)?.evidence.push(...evidence);
 		from = (run.index ?? 0) + run[0].length;
 	}
-	const tail = text.slice(from).trim();
-	if (tail) out.push({ markdown: tail, evidence: [] });
+	const tail = text.slice(from);
+	if (tail.trim()) push(tail, []);
 	return out;
 }
 
