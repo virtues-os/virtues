@@ -473,7 +473,7 @@ impl ToolExecutor {
             {
                 let sql = super::sql_sudo::statement(&arguments)?;
                 let read_only = !self.sudo_granted(context, "sql", &sql).await;
-                super::sql_sudo::execute(&self._pool, &sql, read_only).await
+                super::sql_sudo::execute(&self._pool, &sql, read_only, context.timezone.as_deref()).await
             }
             "sql_query" => {
                 // A saved chat can keep a result as a file for code_interpreter.
