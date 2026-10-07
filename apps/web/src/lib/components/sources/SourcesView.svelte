@@ -108,6 +108,7 @@
 
 <ApiKeyConnectModal
 	source={pending.kind === 'api_key' ? pending.source : null}
+	credentialId={pending.kind === 'api_key' ? pending.credentialId : undefined}
 	open={pending.kind === 'api_key'}
 	onClose={() => connectFlow.close()}
 	onSuccess={finish}

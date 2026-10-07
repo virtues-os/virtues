@@ -955,16 +955,18 @@ export interface ApiKeyCompleteResponse {
 	credential_id: string;
 }
 
-/** POST /api/connect/:source_id/complete — encrypt + store a pasted token. */
+/** POST /api/connect/:source_id/complete — encrypt + store a pasted token.
+ *  With `credentialId`, replace that credential's secrets (reconnecting). */
 export function apikeyComplete(
 	source_id: string,
 	name: string,
-	fields: Record<string, string>
+	fields: Record<string, string>,
+	credentialId?: string
 ): Promise<ApiKeyCompleteResponse> {
 	return apiSend<ApiKeyCompleteResponse>(
 		'POST',
 		`/connect/${encodeURIComponent(source_id)}/complete`,
-		{ name, fields }
+		{ name, fields, credential_id: credentialId }
 	);
 }
 

@@ -25,12 +25,14 @@
 		 * list, so the form asks for exactly what the backend will validate.
 		 */
 		fields?: string[];
+		/** Reconnecting this credential: the new secrets replace its old ones. */
+		credentialId?: string;
 		open: boolean;
 		onClose: () => void;
 		onSuccess: (credentialId: string) => void;
 	}
 
-	let { source, fields: fieldsProp, open, onClose, onSuccess }: Props = $props();
+	let { source, fields: fieldsProp, credentialId, open, onClose, onSuccess }: Props = $props();
 
 	// `["token"]` is the last resort for a catalog entry that declares nothing,
 	// not the default — an empty form would collect no secret at all.
@@ -89,7 +91,12 @@
 			);
 			waitingForLogin = false;
 			submitting = true;
-			const { credential_id } = await apikeyComplete(source.id, source.name, fieldsFromJar(jar));
+			const { credential_id } = await apikeyComplete(
+				source.id,
+				source.name,
+				fieldsFromJar(jar),
+				credentialId
+			);
 			onSuccess(credential_id);
 		} catch (e) {
 			const why = e instanceof Error ? e.message : String(e);
@@ -124,7 +131,7 @@
 		submitting = true;
 		error = null;
 		try {
-			const { credential_id } = await apikeyComplete(source.id, trimmedName, values);
+			const { credential_id } = await apikeyComplete(source.id, trimmedName, values, credentialId);
 			onSuccess(credential_id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -134,7 +141,7 @@
 	}
 </script>
 
-<Modal {open} {onClose} title={source ? `Connect ${source.name}` : 'Connect source'}>
+<Modal {open} {onClose} title={source ? `${credentialId ? 'Reconnect' : 'Connect'} ${source.name}` : 'Connect source'}>
 	{#if source}
 		<div class="apikey-form">
 			{#if source.description}
