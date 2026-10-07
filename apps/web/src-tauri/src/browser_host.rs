@@ -41,9 +41,9 @@ const INJECTED: &str = include_str!("../vendor/playwright/injected.js");
 /// Safari's own user agent; a bare WKWebView omits `Version/… Safari/…`.
 const SAFARI_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 \
                          (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
-/// An outline longer than this is cut, with a note saying so. A long article
-/// is ~60k characters; past that the outline costs more context than it earns.
-const MAX_OUTLINE_CHARS: usize = 80_000;
+/// An outline longer than this is cut, with a note saying how to read the
+/// rest. About 10k tokens; Hacker News's front page alone is 44k characters.
+const MAX_OUTLINE_CHARS: usize = 40_000;
 
 // ─── The connection ─────────────────────────────────────────────────────────
 
@@ -140,7 +140,10 @@ async fn perform(app: &AppHandle, op: &str, args: &Value) -> Result<Value, Strin
     let arg = |k: &str| args.get(k).and_then(|v| v.as_str()).map(str::to_string);
     match op {
         "open" => open(app, &arg("url").ok_or("`url` is required")?).await,
-        "snapshot" => snapshot(&window(app)?).await,
+        "snapshot" => {
+            let depth = args.get("depth").and_then(|v| v.as_u64());
+            snapshot(&window(app)?, arg("ref"), depth).await
+        }
         "click" => click(&window(app)?, &arg("ref").ok_or("`ref` is required")?).await,
         "type" => {
             let win = window(app)?;
@@ -281,22 +284,33 @@ async fn ensure_agent(win: &WebviewWindow) -> Result<(), String> {
     eval(win, &bootstrap, true).await.map(|_| ())
 }
 
-async fn snapshot(win: &WebviewWindow) -> Result<Value, String> {
+async fn snapshot(win: &WebviewWindow, scope: Option<String>, depth: Option<u64>) -> Result<Value, String> {
     ensure_agent(win).await?;
-    let raw = eval(
-        win,
-        "return JSON.stringify({ url: location.href, title: document.title, \
-         outline: window.__virtuesAgent.ariaSnapshot(document.body, { mode: 'ai' }) })",
-        true,
-    )
-    .await?;
+    // A scoped read starts from the element a ref names in the last outline.
+    // Playwright keeps an element's ref across snapshots, so refs read here
+    // still work, and refs outside the scope keep working too.
+    let body = format!(
+        "const scope = {scope};\n\
+         const agent = window.__virtuesAgent;\n\
+         const root = scope ? agent._lastAriaSnapshotForQuery?.info?.get(scope)?.element : document.body;\n\
+         if (!root || !root.isConnected) return JSON.stringify({{ error: 'stale' }});\n\
+         const options = {{ mode: 'ai' }};\n\
+         if ({depth} > 0) options.depth = {depth};\n\
+         return JSON.stringify({{ url: location.href, title: document.title, outline: agent.ariaSnapshot(root, options) }});",
+        scope = serde_json::to_string(&scope).unwrap_or_else(|_| "null".into()),
+        depth = depth.unwrap_or(0),
+    );
+    let raw = eval(win, &body, true).await?;
+    if raw.contains("\"error\":\"stale\"") {
+        return Err("That ref is not on the page any more. Take a fresh browser_snapshot.".into());
+    }
     let mut v: Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     if let Some(outline) = v.get("outline").and_then(|o| o.as_str()).map(str::to_string) {
         if outline.len() > MAX_OUTLINE_CHARS {
             let cut: String = outline.chars().take(MAX_OUTLINE_CHARS).collect();
             v["outline"] = json!(cut);
             v["truncated"] = json!(format!(
-                "The outline was cut at {MAX_OUTLINE_CHARS} characters of {}. Scroll and snapshot again for the rest.",
+                "The outline was cut at {MAX_OUTLINE_CHARS} characters of {}. Snapshot with `depth` for an overview, then with `ref` to read one part.",
                 outline.len()
             ));
         }
