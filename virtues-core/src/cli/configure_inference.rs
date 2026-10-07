@@ -5,9 +5,10 @@
 //! model fingerprint no longer matches the one the index was built with — the
 //! runtime errors point here. This command is the exit: it re-probes the current
 //! endpoint (bypassing that guard), reports what changed, and — on confirmation
-//! — re-embeds. Re-embedding wipes the DERIVED vector index (never source data),
-//! re-pins the new fingerprint + dims, and resizes the vector columns, so the
-//! background indexer rebuilds from source with the new model.
+//! — re-embeds. Re-embedding wipes the DERIVED vector index and its recorded
+//! geometry (never source data) and re-pins the new fingerprint + dims, so after
+//! a restart the background indexer sizes the vector columns to the new model and
+//! rebuilds from source with it.
 //!
 //! Handled in `main.rs` (not `cli::run`) so it runs before the app builds the
 //! guarded embedder — which would itself fail on the very mismatch we're here to
@@ -87,28 +88,19 @@ pub async fn run(reembed: bool, yes: bool) -> Result<()> {
         }
     }
 
-    // 1. Wipe the derived vectors (mirror migration 0017's model-swap reset).
+    // 1. Wipe the derived index, its recorded geometry and the event scores.
+    // TODO(2026-10-07): rescore. This nulls every past day's event scores and
+    // nothing here or after the restart puts them back (see `reindex::wipe`).
     println!("→ wiping the derived vector index (source data untouched)…");
-    wipe_derived(db.pool()).await?;
+    super::reindex::wipe(db.pool()).await?;
 
-    // 2. Re-pin the new fingerprint + dims: the env file for the next boot, and
-    //    this process so the resize below sees the new width.
+    // 2. Re-pin the new fingerprint + dims in the env file, for the next boot.
+    //    No resize here: the wipe cleared the recorded width, so there is nothing
+    //    to size the columns to yet. The first embed after the restart records
+    //    the new width and sizes them (`search::indexer`).
     println!("→ pinning the new model fingerprint…");
     upsert_env(ENV_FILE, "VIRTUES_EMBED_FINGERPRINT", &new_fp)?;
     upsert_env(ENV_FILE, "VIRTUES_EMBED_DIMS", &new_dim.to_string())?;
-    std::env::set_var("VIRTUES_EMBED_FINGERPRINT", &new_fp);
-    std::env::set_var("VIRTUES_EMBED_DIMS", new_dim.to_string());
-
-    // 3. Resize the (now-empty) vector columns to the new width + rebuild index.
-    //    initialize() re-runs migrations (idempotent) then ensure_embedding_dims,
-    //    which resizes because the tables are empty after the wipe.
-    if Some(new_dim) != stored_dim {
-        println!("→ sizing the vector index to {new_dim} dims…");
-    }
-    crate::database::Database::new(&database_url)?
-        .initialize()
-        .await
-        .map_err(|e| Error::Other(format!("resize: {e}")))?;
 
     println!();
     println!("✓ Re-configured. Restart the box so the new model takes over and re-indexing begins:");
@@ -116,38 +108,9 @@ pub async fn run(reembed: bool, yes: bool) -> Result<()> {
     Ok(())
 }
 
-/// Truncate the derived embedding tables and reset every embedding-derived
-/// score, exactly as migration 0017 does on a model swap. Source rows are never
-/// touched — embeddings rebuild from them.
-async fn wipe_derived(pool: &PgPool) -> Result<()> {
-    for stmt in [
-        // CASCADE truncates search_vectors too (it FK-references search_embeddings).
-        "TRUNCATE search_embeddings CASCADE",
-        "TRUNCATE search_topic_cache",
-        // The geometry goes with the vectors. The indexer refuses to write vectors
-        // from a model the index was not built with — and adopting the new model is
-        // the entire point of this command, so the old geometry must not survive it.
-        "UPDATE search_index_meta SET n_docs = 0, sum_len = 0, \
-             model = NULL, dim = NULL",
-        // wiki_events carries its own embedding blob + derived novelty/autonomic
-        // scores; null them so each scoring pass recomputes with the new model.
-        "UPDATE wiki_events SET \
-             embedding = NULL, novelty_z = NULL, local_novelty_z = NULL, \
-             hr_z = NULL, autonomic_z = NULL, topic_novelty = NULL, \
-             entity_novelty = NULL",
-    ] {
-        sqlx::query(stmt)
-            .execute(pool)
-            .await
-            .map_err(|e| Error::Database(format!("wiping derived embeddings: {e}")))?;
-    }
-    Ok(())
-}
-
 /// Upsert a `KEY=value` line in the box env file, preserving everything else.
 /// Values here are a hex fingerprint and an integer — no quoting needed. On a
-/// dev machine (no env file) this is a no-op; the caller has already set the
-/// process env for the in-process resize.
+/// dev machine (no env file) this is a no-op.
 fn upsert_env(path: &str, key: &str, value: &str) -> Result<()> {
     let p = std::path::Path::new(path);
     if !p.exists() {

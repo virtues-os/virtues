@@ -86,6 +86,13 @@ from `yjs_snapshot`; `content_preview` holds a label ("Auto-saved before AI
 edit"), never prose. The History feed left the wiki rail but `/wiki/history`
 still exists and is linked from the wiki.
 
+**Reversed 2026-10-07.** Every writer, `page_editor.rs` included, now cuts its
+version AFTER the edit and credits whoever produced that state; a writer that
+changes a whole page keeps the state before it first, as an `auto` restore
+point (`pages::cut_restore_point`), which History reads as a diff base and not
+an entry. Rows on disk from before, the ones described "Auto-saved before AI
+edit", are still read the old way: the change out of one is the chat's.
+
 ## A drop is a one-way door
 
 Once a column is gone the previous binary cannot boot against the database,

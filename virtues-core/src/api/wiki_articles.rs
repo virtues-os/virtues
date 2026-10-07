@@ -24,8 +24,6 @@
 
 use sqlx::PgPool;
 
-// Only the tests build pages by hand now; `delete_article` purges through `api::trash`.
-#[cfg(test)]
 use crate::api::pages;
 use crate::error::{Error, Result};
 use crate::ids::{generate_id, PAGE_PREFIX, WIKI_ARTICLE_PREFIX};
@@ -51,8 +49,8 @@ pub struct Article {
 /// own pipelines, but a person, place or org gets one only when someone asks
 /// (`entity_article_gen::write_entity_article_now`), so most entities never
 /// have one.
-pub async fn get_article(
-    pool: &PgPool,
+pub async fn get_article<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     subject_type: &str,
     subject_id: &str,
 ) -> Result<Option<Article>> {
@@ -65,7 +63,7 @@ pub async fn get_article(
         subject_type,
         subject_id
     )
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await
     .map_err(|e| Error::Database(format!("Failed to load article: {}", e)))?;
 
@@ -143,12 +141,34 @@ pub async fn create_article(
     title: &str,
     content: &str,
 ) -> Result<Article> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| Error::Database(format!("Failed to begin transaction: {}", e)))?;
+    let article = create_article_in(&mut tx, subject_type, subject_id, title, content).await?;
+    tx.commit()
+        .await
+        .map_err(|e| Error::Database(format!("Failed to commit article: {}", e)))?;
+    Ok(article)
+}
+
+/// [`create_article`] inside the caller's transaction, for a writer whose
+/// article lands together with what it records about it: a day's narration
+/// also records the edition and stamps the day, and a page left without
+/// those would be written again, and paid for again.
+pub async fn create_article_in(
+    tx: &mut sqlx::PgConnection,
+    subject_type: &str,
+    subject_id: &str,
+    title: &str,
+    content: &str,
+) -> Result<Article> {
     if !crate::api::subjects::is_subject(subject_type) {
         return Err(Error::InvalidInput(format!(
             "Unknown subject type: {subject_type}"
         )));
     }
-    if let Some(existing) = get_article(pool, subject_type, subject_id).await? {
+    if let Some(existing) = get_article(&mut *tx, subject_type, subject_id).await? {
         return Ok(existing);
     }
 
@@ -157,12 +177,7 @@ pub async fn create_article(
     let page_id = generate_id(PAGE_PREFIX, &["article", subject_type, subject_id]);
     let article_id = generate_id(WIKI_ARTICLE_PREFIX, &[subject_type, subject_id]);
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| Error::Database(format!("Failed to begin transaction: {}", e)))?;
-
-    sqlx::query!(
+    let page = sqlx::query!(
         r#"
         INSERT INTO app_pages (id, title, content, kind)
         VALUES ($1, $2, $3, 'article')
@@ -175,6 +190,14 @@ pub async fn create_article(
     .execute(&mut *tx)
     .await
     .map_err(|e| Error::Database(format!("Failed to create article page: {}", e)))?;
+
+    // The first draft is the page's first version, so History has the text
+    // the first edit to it (the owner's or the editor's) is diffed against,
+    // and putting that version back undoes the edit. Only for a page this
+    // call made: a page already there keeps whatever it says.
+    if page.rows_affected() == 1 {
+        pages::keep_first_draft(&mut *tx, &page_id, content).await?;
+    }
 
     let row = sqlx::query!(
         r#"
@@ -190,10 +213,6 @@ pub async fn create_article(
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| Error::Database(format!("Failed to create article: {}", e)))?;
-
-    tx.commit()
-        .await
-        .map_err(|e| Error::Database(format!("Failed to commit article: {}", e)))?;
 
     Ok(Article {
         id: row.id,
@@ -370,7 +389,18 @@ pub async fn get_subject_backlinks(
 /// One edit in an article's history, with what actually changed.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ArticleRevision {
+    /// The version this edit produced. A page's last chat edit from before
+    /// the after-convention (`VersionKind::BeforeChatEdit`) produced no
+    /// version, so it carries the one it was made on, same as
+    /// `before_version`, and the entry for the change INTO that row carries
+    /// the same number. So `version_number` alone can repeat within a page;
+    /// the pair (`version_number`, `before_version`) never does, and is what
+    /// tells one entry from another.
     pub version_number: i64,
+    /// The version this edit started from: putting it back undoes the edit.
+    /// `None` only for an edit with nothing before it, which History never
+    /// shows (a page's first version is its baseline).
+    pub before_version: Option<i64>,
     /// Who made the edit this entry describes.
     pub author: String,
     pub at: chrono::DateTime<chrono::Utc>,
@@ -387,21 +417,92 @@ pub struct DiffLine {
     pub text: String,
 }
 
-/// An article's history: who changed it, when, and what changed.
+/// What `page_editor` wrote, labelled `'ai'`, on the snapshot it cut BEFORE
+/// applying a chat edit, until chat edits followed the after-convention.
+/// Rows with it are still on disk.
+const BEFORE_CHAT_EDIT: &str = "Auto-saved before AI edit";
+
+/// What one version row is, for reading History.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VersionKind {
+    /// The state after someone's edit: the change into it is an entry,
+    /// credited to its `created_by`. Every writer cuts these today
+    /// (`pages::create_version_from_snapshot`), and the browser's autosaves
+    /// always did.
+    Edit,
+    /// The state before a machine changed the whole page
+    /// (`pages::cut_restore_point`). Not an edit, so no entry of its own; the
+    /// next entry is diffed against it, so that entry's undo puts it back.
+    RestorePoint,
+    /// A chat edit's snapshot from before the convention: the page as it was
+    /// before the chat changed it. A restore point too, except that the
+    /// change OUT of it is the chat's, whoever cut the next row (usually an
+    /// open editor autosaving the chat's change as its own).
+    BeforeChatEdit,
+}
+
+fn version_kind(created_by: &str, description: Option<&str>) -> VersionKind {
+    if created_by == "ai" && description == Some(BEFORE_CHAT_EDIT) {
+        VersionKind::BeforeChatEdit
+    } else if pages::is_restore_point(created_by, description) {
+        VersionKind::RestorePoint
+    } else {
+        VersionKind::Edit
+    }
+}
+
+/// Who made the change from the previous row into this one, or `None` when
+/// that change is not an entry of its own.
 ///
-/// **The version table is off by one, and reading it naively gets authorship
-/// backwards.** A row is written as a snapshot taken *before* an edit, stamped
-/// with the editor about to write (`page_editor.rs` saves `created_by: "ai"`
-/// then applies the change). So `version[n].created_by` names the author of the
-/// NEXT state, not of the text stored in that row — and nothing is written
-/// after an edit, so the current text is in no version row at all.
+/// `previous` is the row before this one (`version_number`), with its number.
+/// Both readers decide every entry here, so they cannot disagree.
+fn credit(
+    previous: Option<(i64, VersionKind)>,
+    version_number: i64,
+    this: VersionKind,
+    created_by: &str,
+) -> Option<String> {
+    // Numbers are MAX + 1 and pruning is the only delete (`pages::create_version`),
+    // so a gap means the versions between were pruned. A diff across it would
+    // hand their edits (a machine's revisions, usually) to this row's author,
+    // so the row after a gap is a baseline, like a page's first.
+    let previous = previous
+        .filter(|(number, _)| number + 1 == version_number)
+        .map(|(_, kind)| kind);
+    match (previous, this) {
+        // A page's first version is its baseline. There is no earlier text to
+        // diff it against, and "wrote the whole page" is not an edit.
+        (None, _) => None,
+        (Some(VersionKind::BeforeChatEdit), _) => Some("ai".to_string()),
+        (Some(_), VersionKind::Edit) => Some(created_by.to_string()),
+        (Some(_), _) => None,
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct VersionRow {
+    version_number: i64,
+    created_by: String,
+    description: Option<String>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    yjs_snapshot: Option<Vec<u8>>,
+}
+
+/// An article's history: who changed it, when, and what changed. Newest first.
 ///
-/// That is recoverable rather than fatal, and this is where it gets recovered:
-/// the edit made by `version[n].created_by` turns `version[n]` into
-/// `version[n+1]`, or into the live page for the most recent one. Pair the rows
-/// that way and the feed reads correctly — "the record rewrote this on Tuesday,
-/// here is the diff" — without changing how versions are written, which would
-/// invalidate every row already on disk.
+/// A version's snapshot is the state AFTER the edit it records, and its
+/// `created_by` names who produced that state (`pages::create_version_from_snapshot`).
+/// So the entry for version n is the diff from the version before it to
+/// version n, credited to version n's author, and it carries `before_version`
+/// so History can undo exactly that change.
+///
+/// Three kinds of row are read differently (`VersionKind`): a page's first
+/// version is a baseline, not an edit; a restore point is a diff base, not an
+/// edit; and a chat edit's snapshot from before the convention is a diff base
+/// whose outgoing change is the chat's. A version after pruned ones is a
+/// baseline too (`credit`). An entry whose text is the same on both sides is
+/// no edit at all (an open editor autosaving a change it was sent) and is
+/// left out.
 pub async fn get_article_history(
     pool: &PgPool,
     subject_type: &str,
@@ -411,15 +512,11 @@ pub async fn get_article_history(
         return Ok(Vec::new());
     };
 
-    let rows = sqlx::query!(
-        r#"
-        SELECT version_number, created_by, created_at, yjs_snapshot
-        FROM app_page_versions
-        WHERE page_id = $1
-        ORDER BY version_number ASC
-        "#,
-        &article.page_id
+    let rows: Vec<VersionRow> = sqlx::query_as(
+        "SELECT version_number, created_by, description, created_at, yjs_snapshot \
+         FROM app_page_versions WHERE page_id = $1 ORDER BY version_number ASC",
     )
+    .bind(&article.page_id)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to load history: {}", e)))?;
@@ -432,8 +529,8 @@ pub async fn get_article_history(
     .await
     .map_err(|e| Error::Database(format!("Failed to load current text: {}", e)))?;
 
-    // Text lives in the Yjs snapshot, not in `content_preview` — that column
-    // holds a human label ("Auto-saved before AI edit"), never the prose.
+    // Text lives in the Yjs snapshot, not in `content_preview`, which holds
+    // only the first 500 characters (or, on old rows, a label).
     let texts: Vec<String> = rows
         .iter()
         .map(|r| {
@@ -443,19 +540,47 @@ pub async fn get_article_history(
                 .unwrap_or_default()
         })
         .collect();
+    let kinds: Vec<VersionKind> = rows
+        .iter()
+        .map(|r| version_kind(&r.created_by, r.description.as_deref()))
+        .collect();
 
-    let mut out = Vec::with_capacity(rows.len());
+    // (version it produced, index of the row it started from, text after, author, when)
+    let mut edits: Vec<(i64, usize, &str, String, chrono::DateTime<chrono::Utc>)> = Vec::new();
     for (i, row) in rows.iter().enumerate() {
-        let before = &texts[i];
-        let after = texts.get(i + 1).unwrap_or(&current);
-        out.push(ArticleRevision {
-            version_number: row.version_number,
-            author: row.created_by.clone(),
-            at: row.created_at,
-            diff: diff_lines(before, after),
-            is_current: i + 1 == rows.len(),
-        });
+        let Some(p) = i.checked_sub(1) else { continue };
+        let previous = Some((rows[p].version_number, kinds[p]));
+        let Some(author) = credit(previous, row.version_number, kinds[i], &row.created_by) else {
+            continue;
+        };
+        edits.push((row.version_number, p, texts[i].as_str(), author, row.created_at));
     }
+    if let Some(last) = rows.len().checked_sub(1) {
+        if kinds[last] == VersionKind::BeforeChatEdit {
+            edits.push((
+                rows[last].version_number,
+                last,
+                current.as_str(),
+                "ai".to_string(),
+                rows[last].created_at,
+            ));
+        }
+    }
+    edits.retain(|(_, before, after, _, _)| texts[*before] != *after);
+
+    let newest = edits.len().checked_sub(1);
+    let mut out: Vec<ArticleRevision> = edits
+        .into_iter()
+        .enumerate()
+        .map(|(k, (version_number, before, after, author, at))| ArticleRevision {
+            version_number,
+            before_version: Some(rows[before].version_number),
+            author,
+            at,
+            diff: diff_lines(&texts[before], after),
+            is_current: Some(k) == newest && after == current,
+        })
+        .collect();
     out.reverse(); // newest first
     Ok(out)
 }
@@ -469,7 +594,27 @@ pub struct HistoryEntry {
     pub title: String,
     pub author: String,
     pub at: chrono::DateTime<chrono::Utc>,
+    /// As `ArticleRevision::version_number`: it can repeat within a page, and
+    /// the pair (`version_number`, `before_version`) never does.
     pub version_number: i64,
+    /// The version this edit started from: putting it back undoes the edit.
+    pub before_version: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct FeedRow {
+    page_id: String,
+    version_number: i64,
+    created_by: String,
+    description: Option<String>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    before_version: Option<i64>,
+    before_created_by: Option<String>,
+    before_description: Option<String>,
+    is_last: bool,
+    subject_type: String,
+    subject_id: String,
+    title: String,
 }
 
 /// Every recent edit to any article, newest first — the room's front page.
@@ -478,41 +623,191 @@ pub struct HistoryEntry {
 /// switch is the consent, and this is where you see what that consent
 /// produced. Without it the machine edits prose in a room nobody visits.
 ///
-/// Authorship carries the same off-by-one as `get_article_history` and is
-/// resolved the same way — `created_by` names the author of the edit this row
-/// precedes, which is exactly what a feed wants to say.
+/// Read by exactly the rules of `get_article_history` (`credit`, the trailing
+/// chat edit, and no entry where nothing changed), so an entry here is an
+/// entry there with the same author and `before_version`.
+///
+/// Rows that are not entries (baselines, restore points, an open editor
+/// autosaving a change it was sent) come in no fixed proportion to the ones
+/// that are, so the rows are read a window at a time, newest first, until
+/// `limit` entries survive or the rows run out. The scan stops after ten
+/// rows per entry asked for, so a feed of almost nothing but baselines still
+/// answers quickly; only then can it return fewer than `limit` while older
+/// entries exist.
 pub async fn get_history_feed(pool: &PgPool, limit: i64) -> Result<Vec<HistoryEntry>> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT v.version_number, v.created_by, v.created_at,
-               a.subject_type, a.subject_id, p.title
-        FROM app_page_versions v
-        JOIN wiki_articles a ON a.page_id = v.page_id
-        JOIN app_pages p ON p.id = v.page_id
-        ORDER BY v.created_at DESC
-        LIMIT $1
-        "#,
-        limit.clamp(1, 200)
+    let limit = limit.clamp(1, 200);
+    let window = limit * 2 + 10;
+    let most_rows = limit * 10;
+
+    let mut entries = Vec::new();
+    let mut scanned = 0;
+    // The last row read, as (created_at, version_number, page_id): the next
+    // window starts below it.
+    let mut below: Option<(chrono::DateTime<chrono::Utc>, i64, String)> = None;
+    loop {
+        // `lag` and `lead` run over the whole of each page's versions before
+        // the window is cut, so a row at a window's edge still knows its
+        // neighbours.
+        let rows: Vec<FeedRow> = sqlx::query_as(
+            r#"
+            SELECT v.page_id, v.version_number, v.created_by, v.description, v.created_at,
+                   v.before_version, v.before_created_by, v.before_description, v.is_last,
+                   a.subject_type, a.subject_id, p.title
+            FROM (
+                SELECT page_id, version_number, created_by, description, created_at,
+                       lag(version_number) OVER w AS before_version,
+                       lag(created_by) OVER w AS before_created_by,
+                       lag(description) OVER w AS before_description,
+                       lead(version_number) OVER w IS NULL AS is_last
+                FROM app_page_versions
+                WHERE page_id IN (SELECT page_id FROM wiki_articles)
+                WINDOW w AS (PARTITION BY page_id ORDER BY version_number)
+            ) v
+            JOIN wiki_articles a ON a.page_id = v.page_id
+            JOIN app_pages p ON p.id = v.page_id
+            WHERE $1::timestamptz IS NULL
+               OR (v.created_at, v.version_number, v.page_id) < ($1, $2, $3)
+            ORDER BY v.created_at DESC, v.version_number DESC, v.page_id DESC
+            LIMIT $4
+            "#,
+        )
+        .bind(below.as_ref().map(|b| b.0))
+        .bind(below.as_ref().map(|b| b.1))
+        .bind(below.as_ref().map(|b| b.2.clone()))
+        .bind(window)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to load history feed: {}", e)))?;
+
+        scanned += rows.len() as i64;
+        entries.extend(feed_entries(pool, &rows).await?);
+        let Some(last) = rows.last() else { break };
+        if entries.len() as i64 >= limit || (rows.len() as i64) < window || scanned >= most_rows {
+            break;
+        }
+        below = Some((last.created_at, last.version_number, last.page_id.clone()));
+    }
+    entries.truncate(limit as usize);
+    Ok(entries)
+}
+
+/// The entries one window of feed rows holds, newest first.
+async fn feed_entries(pool: &PgPool, rows: &[FeedRow]) -> Result<Vec<HistoryEntry>> {
+    /// An entry before the no-change check. `after: None` is the live page.
+    struct Candidate<'r> {
+        row: &'r FeedRow,
+        author: String,
+        before: i64,
+        after: Option<i64>,
+    }
+    let mut candidates = Vec::new();
+    for row in rows {
+        let this = version_kind(&row.created_by, row.description.as_deref());
+        // A chat edit recorded before the convention is newer than the row it
+        // was made on, so it comes first in a newest-first list.
+        if row.is_last && this == VersionKind::BeforeChatEdit {
+            candidates.push(Candidate {
+                row,
+                author: "ai".into(),
+                before: row.version_number,
+                after: None,
+            });
+        }
+        let previous = row.before_version.zip(
+            row.before_created_by
+                .as_deref()
+                .map(|by| version_kind(by, row.before_description.as_deref())),
+        );
+        if let (Some((before, _)), Some(author)) = (
+            previous,
+            credit(previous, row.version_number, this, &row.created_by),
+        ) {
+            candidates.push(Candidate {
+                row,
+                author,
+                before,
+                after: Some(row.version_number),
+            });
+        }
+    }
+
+    // The texts the no-change check compares, read once each.
+    let mut wanted: Vec<(String, i64)> = Vec::new();
+    for c in &candidates {
+        wanted.push((c.row.page_id.clone(), c.before));
+        if let Some(after) = c.after {
+            wanted.push((c.row.page_id.clone(), after));
+        }
+    }
+    wanted.sort();
+    wanted.dedup();
+    let (page_ids, numbers): (Vec<String>, Vec<i64>) = wanted.into_iter().unzip();
+    let snapshots: Vec<(String, i64, Option<Vec<u8>>)> = sqlx::query_as(
+        "SELECT v.page_id, v.version_number, v.yjs_snapshot FROM app_page_versions v \
+         JOIN unnest($1::text[], $2::bigint[]) AS w(page_id, version_number) \
+           ON w.page_id = v.page_id AND w.version_number = v.version_number",
     )
+    .bind(&page_ids)
+    .bind(&numbers)
     .fetch_all(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to load history feed: {}", e)))?;
-
-    Ok(rows
+    .map_err(|e| Error::Database(format!("Failed to load history texts: {}", e)))?;
+    let texts: std::collections::HashMap<(String, i64), String> = snapshots
         .into_iter()
-        .map(|r| {
-            let prefix = match r.subject_type.as_str() {
+        .map(|(page_id, number, snapshot)| {
+            let text = snapshot
+                .as_deref()
+                .map(crate::server::yjs::extract_text_content)
+                .unwrap_or_default();
+            ((page_id, number), text)
+        })
+        .collect();
+
+    let live_pages: Vec<String> = candidates
+        .iter()
+        .filter(|c| c.after.is_none())
+        .map(|c| c.row.page_id.clone())
+        .collect();
+    let live: std::collections::HashMap<String, String> = if live_pages.is_empty() {
+        Default::default()
+    } else {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT id, content FROM app_pages WHERE id = ANY($1)",
+        )
+        .bind(&live_pages)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to load current texts: {}", e)))?
+        .into_iter()
+        .collect()
+    };
+
+    let empty = String::new();
+    Ok(candidates
+        .into_iter()
+        .filter(|c| {
+            let page = &c.row.page_id;
+            let before = texts.get(&(page.clone(), c.before)).unwrap_or(&empty);
+            let after = match c.after {
+                Some(n) => texts.get(&(page.clone(), n)).unwrap_or(&empty),
+                None => live.get(page).unwrap_or(&empty),
+            };
+            before != after
+        })
+        .map(|c| {
+            let prefix = match c.row.subject_type.as_str() {
                 "organization" => "org",
                 other => other,
             };
             HistoryEntry {
-                route: format!("/{prefix}/{}", r.subject_id),
-                subject_type: r.subject_type,
-                subject_id: r.subject_id,
-                title: r.title,
-                author: r.created_by,
-                at: r.created_at,
-                version_number: r.version_number,
+                route: format!("/{prefix}/{}", c.row.subject_id),
+                subject_type: c.row.subject_type.clone(),
+                subject_id: c.row.subject_id.clone(),
+                title: c.row.title.clone(),
+                author: c.author,
+                at: c.row.created_at,
+                version_number: c.row.version_number,
+                before_version: Some(c.before),
             }
         })
         .collect())
@@ -818,14 +1113,62 @@ mod tests {
         assert_eq!(links.len(), 1, "schema says organization, the route says org");
     }
 
-    /// Authorship is off by one in the table and must not be off by one in the
-    /// feed. A version row is a snapshot taken BEFORE an edit, stamped with the
-    /// editor about to write — so the diff for `created_by` is that row's text
-    /// against the NEXT row (or the live page, for the most recent).
+    /// A version of an article's page holding `text`, labelled the way its
+    /// writer labels it.
+    async fn version(
+        pool: &PgPool,
+        page_id: &str,
+        text: &str,
+        by: &str,
+        description: Option<&str>,
+    ) -> i64 {
+        let snapshot = crate::server::yjs::state_from_text(text);
+        pages::create_version_from_snapshot(pool, page_id, &snapshot, text, by, description)
+            .await
+            .unwrap()
+            .version_number
+    }
+
+    async fn set_live(pool: &PgPool, page_id: &str, text: &str) {
+        sqlx::query("UPDATE app_pages SET content = $2 WHERE id = $1")
+            .bind(page_id)
+            .bind(text)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    fn added(rev: &ArticleRevision) -> Vec<&str> {
+        rev.diff
+            .iter()
+            .filter(|l| l.kind == "add")
+            .map(|l| l.text.as_str())
+            .collect()
+    }
+
+    /// The article's history and the feed's entries for it must say the same
+    /// thing: History opens a feed entry by finding its revision.
+    async fn same_in_the_feed(pool: &PgPool, subject_id: &str, hist: &[ArticleRevision]) {
+        let feed: Vec<(i64, Option<i64>, String)> = get_history_feed(pool, 50)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.subject_id == subject_id)
+            .map(|e| (e.version_number, e.before_version, e.author))
+            .collect();
+        let article: Vec<(i64, Option<i64>, String)> = hist
+            .iter()
+            .map(|r| (r.version_number, r.before_version, r.author.clone()))
+            .collect();
+        assert_eq!(feed, article, "the feed and the article's history disagree");
+    }
+
+    /// A version's snapshot is the state AFTER the edit it records, and its
+    /// `created_by` names who produced that state. So the entry for a version
+    /// is the diff from the version before it, credited to that version's
+    /// author, and the page's first version is a baseline rather than an edit.
     #[sqlx::test]
     async fn history_pairs_each_author_with_the_edit_they_made(pool: PgPool) {
-        use base64::Engine as _;
-
         sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('p_1', 'Sarah')")
             .execute(&pool)
             .await
@@ -833,58 +1176,255 @@ mod tests {
         let a = create_article(&pool, "person", "p_1", "Sarah", "First line.\n")
             .await
             .unwrap();
-
-        // A snapshot of the ORIGINAL text, stamped with the editor about to
-        // change it — exactly what page_editor.rs writes before an AI edit.
-        let mut doc = yrs::Doc::new();
-        {
-            use yrs::{Text, Transact};
-            let text = doc.get_or_insert_text("content");
-            let mut txn = doc.transact_mut();
-            text.insert(&mut txn, 0, "First line.\n");
-        }
-        let snapshot = {
-            use yrs::{ReadTxn, Transact};
-            let txn = doc.transact();
-            txn.encode_state_as_update_v1(&yrs::StateVector::default())
-        };
-        pages::create_version(
+        let first = version(&pool, &a.page_id, "First line.\n", "auto", Some("Auto-saved (idle)")).await;
+        let theirs = version(
             &pool,
             &a.page_id,
-            pages::CreateVersionRequest {
-                snapshot: base64::engine::general_purpose::STANDARD.encode(&snapshot),
-                content_preview: "Auto-saved before AI edit".into(),
-                created_by: "ai".into(),
-                description: None,
-            },
+            "First line.\nYour line.\n",
+            "user",
+            Some("edited"),
         )
-        .await
-        .unwrap();
+        .await;
+        let machine = version(
+            &pool,
+            &a.page_id,
+            "First line.\nYour line.\nSecond line.\n",
+            "ai",
+            Some("added the second line"),
+        )
+        .await;
+        set_live(&pool, &a.page_id, "First line.\nYour line.\nSecond line.\n").await;
 
-        // …then the edit itself lands on the page.
-        sqlx::query("UPDATE app_pages SET content = $2 WHERE id = $1")
-            .bind(&a.page_id)
-            .bind("First line.\nSecond line.\n")
+        let hist = get_article_history(&pool, "person", "p_1").await.unwrap();
+        assert_eq!(hist.len(), 2, "the first version is a baseline, not an edit");
+
+        assert_eq!(hist[0].version_number, machine);
+        assert_eq!(hist[0].author, "ai");
+        assert_eq!(hist[0].before_version, Some(theirs));
+        assert_eq!(added(&hist[0]), vec!["Second line."], "what THIS author added");
+        assert!(hist[0].is_current);
+
+        assert_eq!(hist[1].version_number, theirs);
+        assert_eq!(hist[1].author, "user");
+        assert_eq!(hist[1].before_version, Some(first));
+        assert_eq!(added(&hist[1]), vec!["Your line."]);
+        assert!(!hist[1].is_current);
+
+        same_in_the_feed(&pool, "p_1", &hist).await;
+    }
+
+    /// A machine's whole-page change is one entry, credited to it, whose
+    /// undo is the restore point kept before it. Neither the restore point
+    /// nor an open editor autosaving the change it was sent is an entry,
+    /// including a restore point that holds text no earlier version did
+    /// (typing nobody autosaved).
+    #[sqlx::test]
+    async fn a_rewrite_is_one_entry_whose_undo_is_the_restore_point(pool: PgPool) {
+        sqlx::query("INSERT INTO wiki_days (id, date) VALUES ('day_1', '2026-03-03')")
             .execute(&pool)
             .await
             .unwrap();
+        let a = create_article(&pool, "day", "day_1", "3 March 2026", "The old page.\n")
+            .await
+            .unwrap();
+        version(&pool, &a.page_id, "The old page.\n", "ai", Some("Written")).await;
+        let kept = version(
+            &pool,
+            &a.page_id,
+            "The old page.\nUntracked typing.\n",
+            "auto",
+            Some(pages::RESTORE_POINT),
+        )
+        .await;
+        let rewrite = version(&pool, &a.page_id, "The new page.\n", "ai", Some("Rewritten")).await;
+        version(&pool, &a.page_id, "The new page.\n", "auto", Some("Auto-saved (idle)")).await;
+        set_live(&pool, &a.page_id, "The new page.\n").await;
+
+        let hist = get_article_history(&pool, "day", "day_1").await.unwrap();
+        assert_eq!(hist.len(), 1, "{hist:?}");
+        assert_eq!(hist[0].version_number, rewrite);
+        assert_eq!(hist[0].author, "ai");
+        assert_eq!(hist[0].before_version, Some(kept));
+        assert_eq!(added(&hist[0]), vec!["The new page."]);
+        assert!(hist[0].is_current);
+        assert!(hist.iter().all(|r| r.version_number != kept), "no entry for the restore point");
+
+        same_in_the_feed(&pool, "day_1", &hist).await;
+    }
+
+    /// Pruning leaves a gap in the version numbers. The version after it is
+    /// a baseline: diffing it against the version before the gap would hand
+    /// the pruned edits (the machine's, here) to its author.
+    #[sqlx::test]
+    async fn a_version_after_pruned_ones_is_a_baseline(pool: PgPool) {
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('p_1', 'Sarah')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let a = create_article(&pool, "person", "p_1", "Sarah", "First line.\n")
+            .await
+            .unwrap();
+        version(&pool, &a.page_id, "First line.\n", "user", Some("edited")).await;
+        let pruned = version(
+            &pool,
+            &a.page_id,
+            "First line.\nThe machine's line.\n",
+            "ai",
+            Some("added a line"),
+        )
+        .await;
+        version(
+            &pool,
+            &a.page_id,
+            "First line.\nThe machine's line.\nYour line.\n",
+            "user",
+            Some("edited"),
+        )
+        .await;
+        sqlx::query("DELETE FROM app_page_versions WHERE page_id = $1 AND version_number = $2")
+            .bind(&a.page_id)
+            .bind(pruned)
+            .execute(&pool)
+            .await
+            .unwrap();
+        set_live(&pool, &a.page_id, "First line.\nThe machine's line.\nYour line.\n").await;
 
         let hist = get_article_history(&pool, "person", "p_1").await.unwrap();
-        assert_eq!(hist.len(), 1);
-        assert_eq!(hist[0].author, "ai");
+        assert!(hist.is_empty(), "{hist:?}");
+        same_in_the_feed(&pool, "p_1", &hist).await;
+    }
+
+    /// Two chat edits in a row from before the convention left two legacy
+    /// rows and the live page. Both edits are entries, and they share a
+    /// `version_number`: the pair with `before_version` is what tells them
+    /// apart, in the article's history and in the feed alike.
+    #[sqlx::test]
+    async fn two_legacy_chat_edits_in_a_row_are_told_apart(pool: PgPool) {
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('p_1', 'Sarah')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let a = create_article(&pool, "person", "p_1", "Sarah", "Draft.\n")
+            .await
+            .unwrap();
+        version(&pool, &a.page_id, "Draft.\n", "auto", Some("Auto-saved (idle)")).await;
+        let before_first =
+            version(&pool, &a.page_id, "Draft.\nTyped.\n", "ai", Some(BEFORE_CHAT_EDIT)).await;
+        let before_second = version(
+            &pool,
+            &a.page_id,
+            "Draft.\nTyped.\nChat line.\n",
+            "ai",
+            Some(BEFORE_CHAT_EDIT),
+        )
+        .await;
+        set_live(&pool, &a.page_id, "Draft.\nTyped.\nChat line.\nAnother chat line.\n").await;
+
+        let hist = get_article_history(&pool, "person", "p_1").await.unwrap();
+        let pairs: Vec<(i64, Option<i64>)> =
+            hist.iter().map(|r| (r.version_number, r.before_version)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                (before_second, Some(before_second)),
+                (before_second, Some(before_first)),
+            ]
+        );
+        assert!(hist.iter().all(|r| r.author == "ai"));
+        assert_eq!(added(&hist[0]), vec!["Another chat line."]);
+        assert_eq!(added(&hist[1]), vec!["Chat line."]);
+
+        let feed: Vec<(i64, Option<i64>)> = get_history_feed(&pool, 50)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.version_number, e.before_version))
+            .collect();
+        let mut unique = feed.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), feed.len(), "no two feed entries share an identity: {feed:?}");
+        same_in_the_feed(&pool, "p_1", &hist).await;
+    }
+
+    /// Rows that are not entries can outnumber the ones that are by any
+    /// amount (an open editor autosaving the same text, again and again).
+    /// The feed reads on past them to fill its limit with older entries.
+    #[sqlx::test]
+    async fn the_feed_reads_past_rows_that_are_not_entries(pool: PgPool) {
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('p_1', 'Sarah'), ('p_2', 'Nick')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let older = create_article(&pool, "person", "p_1", "Sarah", "First line.\n")
+            .await
+            .unwrap();
+        version(&pool, &older.page_id, "First line.\n", "auto", Some("Auto-saved (idle)")).await;
+        let edit = version(&pool, &older.page_id, "First line.\nYour line.\n", "user", None).await;
+
+        let newer = create_article(&pool, "person", "p_2", "Nick", "Same.\n")
+            .await
+            .unwrap();
+        for _ in 0..24 {
+            version(&pool, &newer.page_id, "Same.\n", "auto", Some("Auto-saved (idle)")).await;
+        }
+
+        let feed = get_history_feed(&pool, 3).await.unwrap();
+        assert_eq!(feed.len(), 1, "{feed:?}");
+        assert_eq!(feed[0].subject_id, "p_1");
+        assert_eq!(feed[0].version_number, edit);
+    }
+
+    /// Before chat edits followed the convention, `page_editor` cut its
+    /// snapshot BEFORE the edit, labelled 'ai'. Those rows are diff bases,
+    /// and the change out of one is the chat's, even when the next row is an
+    /// open editor's autosave of it, and even when nothing was cut after it
+    /// at all (the edit is then in the live page only).
+    #[sqlx::test]
+    async fn a_chat_edit_from_before_the_convention_is_still_the_chats(pool: PgPool) {
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('p_1', 'Sarah')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let a = create_article(&pool, "person", "p_1", "Sarah", "Draft.\n")
+            .await
+            .unwrap();
+        version(&pool, &a.page_id, "Draft.\n", "auto", Some("Auto-saved (idle)")).await;
+        let before_first =
+            version(&pool, &a.page_id, "Draft.\nTyped.\n", "ai", Some(BEFORE_CHAT_EDIT)).await;
+        let autosaved = version(
+            &pool,
+            &a.page_id,
+            "Draft.\nTyped.\nChat line.\n",
+            "auto",
+            Some("Auto-saved (idle)"),
+        )
+        .await;
+        let before_second = version(
+            &pool,
+            &a.page_id,
+            "Draft.\nTyped.\nChat line.\n",
+            "ai",
+            Some(BEFORE_CHAT_EDIT),
+        )
+        .await;
+        set_live(&pool, &a.page_id, "Draft.\nTyped.\nChat line.\nAnother chat line.\n").await;
+
+        let hist = get_article_history(&pool, "person", "p_1").await.unwrap();
+        assert_eq!(hist.len(), 2, "{hist:?}");
+
+        assert_eq!(hist[0].author, "ai", "the edit after the last snapshot");
+        assert_eq!(hist[0].version_number, before_second);
+        assert_eq!(hist[0].before_version, Some(before_second));
+        assert_eq!(added(&hist[0]), vec!["Another chat line."]);
         assert!(hist[0].is_current);
 
-        let added: Vec<&str> = hist[0]
-            .diff
-            .iter()
-            .filter(|l| l.kind == "add")
-            .map(|l| l.text.as_str())
-            .collect();
-        assert_eq!(
-            added,
-            vec!["Second line."],
-            "the diff must show what THIS author added, not the state before them"
-        );
+        assert_eq!(hist[1].author, "ai", "not the autosave that caught it");
+        assert_eq!(hist[1].version_number, autosaved);
+        assert_eq!(hist[1].before_version, Some(before_first));
+        assert_eq!(added(&hist[1]), vec!["Chat line."]);
+
+        same_in_the_feed(&pool, "p_1", &hist).await;
     }
 
     /// A subject with no article has no history — not an error.

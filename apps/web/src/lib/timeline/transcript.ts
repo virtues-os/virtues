@@ -19,6 +19,16 @@ export function convLines(text: string | null): string[] {
 	return (raw[0].match(/[^.!?]+[.!?]+["'”]?|[^.!?]+$/g) ?? [raw[0]]).map((x) => x.trim()).filter(Boolean);
 }
 
+/** A chunk's turns, split at every "[Speaker]:" or "[Speaker 2]:" tag, whether
+ *  the tags start lines or run inline (most chunks are one line). Speakers are
+ *  unnamed, so the tags themselves are dropped. */
+export function speakerTurns(text: string | null): string[] {
+	return (text ?? "")
+		.split(/\s*\[Speaker(?: \d+)?\]:\s*/)
+		.map((t) => t.trim())
+		.filter(Boolean);
+}
+
 /** "[Speaker 1]: hello" reads as speaker "A" saying "hello". */
 export function parseLine(l: string): Line {
 	const m = l.match(/^\[([^\]]+)\]:\s*(.*)$/);

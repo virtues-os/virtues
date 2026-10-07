@@ -17,6 +17,10 @@
 > another change); census counting muted minutes (census.rs was likewise
 > claimed). Delete this file once the device gates pass; what survives is a
 > page under `docs/` for the phone's recording settings and a record.
+>
+> **2026-10-07:** a Control Center control that pauses (or records anyway)
+> for an hour or until you end it. Built and wired into the Xcode project;
+> the device gate is slice 5.
 
 ## The story, in one paragraph
 
@@ -284,6 +288,43 @@ as a jsonb bag; whether it is the right home is to be decided then, and an
 append-only column is fine if not), pushed by the phone on change and pulled
 on open. Not before slices 1–3 ship and are used.
 
+### Pause and record anyway, from Control Center
+
+A person who wants recording off for a while reaches for Control Center,
+not Settings. The control overrides the rules for a while and never stops
+the mic, for the reason the rest of this plan exists: a backgrounded app
+cannot turn the mic back on, so a control that really released it could
+switch it off but not on again. The orange dot stays lit, so the control
+says "Paused", never "Mic off"; the in-app Stop stays the real off. Enable
+clears any override, so turning recording on means following the rules.
+
+The toggle answers "is Virtues keeping audio right now?", and a tap flips it
+for the length chosen when the control was added: 1 hour (the default) or
+until you end it. Off from recording is a **silence** (pause). On while the
+hours or a place mute is a **record** ("record anyway"). The next tap goes
+back to the rules. Every override ends by itself: a silence at its time (or
+when you resume), a record at its time or when the rules stop muting,
+whichever is first, so recording anyway at a muted place cannot outlive the
+visit and quietly switch the place rule off.
+
+- **Recorder** (`Audio.swift`, MARK: Override): `manual` behind `policyLock`;
+  `gate(at:)` applies it ahead of the rules and clears it when it ends, which
+  the tap notices on its next buffer with no timer. It is read from the App
+  Group's defaults at launch, on a Darwin note the control posts, and on
+  every event-driven `ensureRecording` (not the watchdog). The recorder
+  mirrors back what the control's label needs: the in-app switch, and what
+  the rules say (`ruleMute`).
+- **Plugin:** `set_override {mode, minutes}` through the lockstep chain;
+  `override`/`overrideUntil` in `fullStatus()`/`AudioStatus`; `mutedBy` gains
+  `"pause"`, which the box already carries as any other reason.
+- **App:** the audio page reads "Paused until 3:40 PM" or "Live until 3:40 PM",
+  and its button becomes Resume or Mute again.
+- **Extension** (`gen/apple/VirtuesControls/`): one iOS 18 configurable
+  `ControlWidget` toggle; its `SetValueIntent` writes the override and posts
+  the note. Being a control, it can also go on the Lock Screen and the Action
+  button. A Home Screen widget (status plus 15 min / 1 hour / Resume) can
+  join the same extension later.
+
 ## Slices
 
 Each slice is a native iOS build. Verify on the review device before the
@@ -314,6 +355,19 @@ the tap has surprised us once.
    Gate: a day with a muted afternoon narrates "muted by place" and the
    coverage figure separates muted from silent from recorded.
 4. **Schedule on the box.** Deferred; see above.
+5. **Pause control.** Built and wired 2026-10-07: the App Group is
+   registered, `com.virtues.app` and `com.virtues.app.controls` carry it, the
+   app's entitlements have it, and `VirtuesControls` is a target embedded in
+   the app (edited in place, never `xcodegen generate`) with a build phase
+   that stamps the app's version onto it; `tools/verify-ios-archive.py`
+   checks that. Left: sign in to Xcode again so automatic signing can make
+   the new profiles, then a device build. Gate: add the control in Control
+   Center; pause from the lock screen with the app backgrounded and see
+   `[Audio] override none → silence until …` and a `pause` marker after five
+   minutes; let an hour run out and see recording resume with no tap; inside
+   your hours, tap to record anyway and see it end at the window's close;
+   pause, force-quit, relaunch, and confirm still paused; Stop in the app and
+   see the control read Off.
 
 ## Decisions
 

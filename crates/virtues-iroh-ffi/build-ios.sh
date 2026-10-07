@@ -28,7 +28,7 @@ SIM_X86=x86_64-apple-ios
 
 # Match the app's minimum so the linker doesn't warn about newer-versioned
 # objects. Keep in sync with IPHONEOS_DEPLOYMENT_TARGET in the Xcode project.
-export IPHONEOS_DEPLOYMENT_TARGET=18.0
+export IPHONEOS_DEPLOYMENT_TARGET=26.2
 
 echo "==> building staticlib for iOS targets (release)"
 for t in "$DEVICE" "$SIM_ARM" "$SIM_X86"; do

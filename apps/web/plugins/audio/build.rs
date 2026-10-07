@@ -12,6 +12,7 @@ const COMMANDS: &[&str] = &[
   "set_quiet_hours",
   "set_schedule",
   "set_places",
+  "set_override",
 ];
 
 fn main() {

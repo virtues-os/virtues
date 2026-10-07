@@ -224,10 +224,11 @@ virtues configure-inference
 ```
 
 It re-probes the endpoint, reports what changed, and - on your confirmation -
-clears the derived index, re-pins the fingerprint and dimensions, resizes the
-vector column, and lets indexing rebuild. **Your source data is never
-touched.** Embeddings are a cache; treat them as one. `virtues reindex`
-rebuilds the same index without the endpoint having changed.
+clears the derived index and re-pins the fingerprint and dimensions. Then
+restart the server: indexing sizes the vector columns to the new model and
+rebuilds. **Your source data is never touched.** Embeddings are a cache;
+treat them as one. `virtues reindex` rebuilds the same index without the
+endpoint having changed.
 
 Two caveats worth knowing. A quantization change reads as a different model,
 so re-quantizing the same weights currently costs you a re-embed you didn't

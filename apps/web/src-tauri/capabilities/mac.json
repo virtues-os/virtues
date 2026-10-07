@@ -36,6 +36,7 @@
     "allow-open-full-disk-access",
     "allow-open-accessibility-settings",
     "allow-set-summon-shortcut",
+    "allow-browser-login",
     "core:default",
     "reach:default",
     "core:window:allow-create",

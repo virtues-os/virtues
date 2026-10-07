@@ -15,7 +15,7 @@ type Pending =
 	| { kind: 'none' }
 	| { kind: 'pair'; deviceType: 'ios' | 'mac'; displayName: string }
 	| { kind: 'chat_import' }
-	| { kind: 'api_key'; source: SourceCatalogItem };
+	| { kind: 'api_key'; source: SourceCatalogItem; credentialId?: string };
 
 class ConnectFlowStore {
 	pending = $state<Pending>({ kind: 'none' });
@@ -23,7 +23,8 @@ class ConnectFlowStore {
 	/** Set when an OAuth dance was handed to the system browser (Tauri). */
 	awaitingExternal = $state(false);
 
-	async start(source: SourceCatalogItem): Promise<void> {
+	/** `credentialId`: reconnecting that credential rather than adding one. */
+	async start(source: SourceCatalogItem, credentialId?: string): Promise<void> {
 		this.error = null;
 		const intent = await connectIntent(source);
 		switch (intent.kind) {
@@ -38,7 +39,7 @@ class ConnectFlowStore {
 				this.pending = { kind: 'chat_import' };
 				return;
 			case 'api_key':
-				this.pending = { kind: 'api_key', source: intent.source };
+				this.pending = { kind: 'api_key', source: intent.source, credentialId };
 				return;
 			case 'oauth':
 				// Browser: we're navigating away and this store is about to be torn

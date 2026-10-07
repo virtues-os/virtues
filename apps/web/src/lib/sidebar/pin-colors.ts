@@ -68,8 +68,9 @@ export function pinColor(id: string): string {
  * the correction is perceptual rather than the sRGB smear that clamping HSL
  * would give (HSL calls a yellow and a navy the same lightness).
  *
- * Done in JS, not with `oklch(from …)` relative color, which needs Safari
- * 16.4 against declared floors of iOS 15 / macOS 10.15.
+ * Done in JS, not with `oklch(from …)` relative color, so that a color
+ * already inside the band comes back byte-identical instead of through a
+ * rounding trip (see `accentCss`).
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /**

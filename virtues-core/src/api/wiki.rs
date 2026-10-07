@@ -283,12 +283,14 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
     })
 }
 
-/// What a day page's gloss card says about a person, as of that day: when you
-/// first messaged, how often in the month before, and when last. Messages
-/// only, by the `sender`/`recipient` refs entity resolution writes; tapbacks
-/// and deleted messages don't count. Everything is relative to the page's
-/// day, read in that day's timezone, so an old page tells you what was true
-/// then rather than now.
+/// What a day page's gloss card says about a person, as of that day: the
+/// earliest message between you on record, how often in the month before, and
+/// when last. Messages only, by the refs entity resolution writes: a
+/// one-to-one thread counts in both directions (`sender` and `recipient`), a
+/// group chat only where they wrote (`sender`), because group membership isn't
+/// recorded. Tapbacks and deleted messages don't count. Everything is relative
+/// to the page's day, read in that day's timezone, so an old page tells you
+/// what was true then rather than now.
 #[derive(Debug, Serialize)]
 pub struct PersonGloss {
     pub id: String,

@@ -71,6 +71,26 @@ pub fn secret<'a>(input: &'a AppletInput, key: &str) -> Result<&'a str> {
         .with_context(|| format!("credentials missing secrets.{key}"))
 }
 
+/// Mark this run's credential as needing the owner to reconnect, with the
+/// sentence the Sources page shows beside its Reconnect button. For a session
+/// the site ended: retrying cannot fix it, and a run that just fails looks the
+/// same as an outage. Best effort; the caller still fails the run.
+pub async fn needs_reconnect(pool: &sqlx::PgPool, input: &AppletInput, why: &str) {
+    let Some(id) = input.credentials.as_ref().and_then(|c| c.get("id")).and_then(|v| v.as_str()) else {
+        return;
+    };
+    if let Err(e) = virtues_helpers::auth::vault::mark_credential_status(
+        pool,
+        id,
+        virtues_helpers::auth::vault::CredentialStatus::ReauthRequired,
+        Some(why),
+    )
+    .await
+    {
+        tracing::warn!(credential_id = id, error = %e, "could not mark the credential for reconnecting");
+    }
+}
+
 /// Read `config.<key>` as a string, if present.
 pub fn config_str<'a>(input: &'a AppletInput, key: &str) -> Option<&'a str> {
     input.config.get(key).and_then(|v| v.as_str())

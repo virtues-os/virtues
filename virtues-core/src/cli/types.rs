@@ -773,26 +773,26 @@ pub enum Commands {
         date: Option<String>,
     },
 
-    /// Generate the day summary (autobiography + 24h event timeline) for a date.
+    /// Generate the day's page and 24h event timeline for a date.
     ///
     /// Runs the full nightly chain locally, in production order: roll audio chunks
     /// into sessions → the DETECTIVE (`segment_day_events`, best model) fuses the
     /// dossier of clean rollups into a gapless timeline → scoring (sleep, annotate,
-    /// novelty, autonomic, topic) → the DAY SUMMARY (`narrate_day`, best model)
-    /// writes the autobiography and names the day's standout from the scores.
-    /// Writes to `wiki_days` (autobiography/epigraph/data_quality) and `wiki_events`
-    /// (clearing existing auto events first; manual events are preserved). Gaps are
-    /// backfilled as "Unknown" to guarantee 00:00–24:00 coverage.
+    /// novelty, autonomic, topic) → narration (`narrate_day`) writes the day's
+    /// page from its record. Writes `wiki_events` (clearing existing auto events
+    /// first; manual events are preserved) and the day's article page. Gaps are
+    /// backfilled as "Unknown" to guarantee 00:00–24:00 coverage. Narration writes
+    /// a day once and refuses a day that is not over; it says which.
     #[command(hide = true)]
     DaySummary {
         /// Date to summarize (YYYY-MM-DD). Defaults to today in the user's
         /// profile timezone (or local time if no timezone is set).
         #[arg(long)]
         date: Option<String>,
-        /// Re-run ONLY the narrative (`narrate_day`) against the day's existing
-        /// scored events — skip sessionize / detective / scoring. For iterating
-        /// on the narrate prompt without re-segmenting or re-embedding (no NPU /
-        /// embedder needed); the events must already exist for the day.
+        /// Run ONLY narration (`narrate_day`) — skip sessionize / detective /
+        /// scoring, so no NPU or embedder is needed. A day already written
+        /// reports so and is not written again; "Rewrite this page", at the
+        /// foot of the day page, is what writes it again.
         #[arg(long)]
         narrate_only: bool,
         /// Force a re-cut of the event timeline (the DETECTIVE) and print it, then

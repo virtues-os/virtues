@@ -46,6 +46,8 @@ pub struct AppState {
     pub ghost_permissions: crate::api::chat_permissions::GhostPermissions,
     /// Turns running right now, by chat id (VIR-323).
     pub live_turns: crate::api::live_turn::LiveTurns,
+    /// Each day's latest Rewrite this page, for the page to read how it went.
+    pub day_rewrites: crate::api::day_rewrites::DayRewrites,
 }
 
 impl axum::extract::FromRef<AppState> for sqlx::PgPool {

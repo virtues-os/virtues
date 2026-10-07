@@ -11,6 +11,7 @@
 //! two pens on one article safe.
 
 use crate::error::{Error, Result};
+use crate::server::yjs::TextWriteError;
 
 /// The rules that never vary, shared by every article. Compiled in, so the
 /// file that is reviewed is the text that runs.
@@ -798,8 +799,11 @@ pub async fn record_pass(
 /// not come back next hour to fail the same way; writing it again here would
 /// be harmless, but writing an empty one — which is all this function knows —
 /// would erase the very thing that stops the loop.
-pub async fn record_edition(
-    pool: &sqlx::PgPool,
+///
+/// Takes any executor, so a writer that records more than the edition can
+/// record it inside its own transaction (a day's rewrite does).
+pub async fn record_edition<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     article_id: &str,
     machine_text: &str,
 ) -> Result<()> {
@@ -811,7 +815,7 @@ pub async fn record_edition(
     )
     .bind(article_id)
     .bind(machine_text)
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(|e| Error::Database(format!("Failed to record edition: {e}")))?;
     Ok(())
@@ -838,11 +842,16 @@ pub async fn record_provenance(
 ///
 /// History is never rewound. Reverting to v12 leaves v12 where it is and adds
 /// v18 saying the same thing, so the act of reverting is itself in the record
-/// and can be undone in turn.
+/// and can be undone in turn. What the page said just before is kept first
+/// (`pages::cut_restore_point`), so a change nobody had versioned yet is not
+/// lost to the revert either.
 ///
 /// This deliberately does NOT run `check_edit`. That invariant protects the
 /// person from the machine; a revert is the person, and they are allowed to
-/// drop a sentence of their own if that is what going back means.
+/// drop a sentence of their own if that is what going back means. For the
+/// same reason it stamps `last_human_edit_at`: the text on the page is now the
+/// owner's choice, and a later rewrite of the page must ask before replacing
+/// it again.
 ///
 /// It also deliberately leaves `machine_text` alone, which looks like an
 /// omission and is the whole trick. `machine_text` means "what the editor last
@@ -852,13 +861,18 @@ pub async fn record_provenance(
 /// theirs, and sentences the editor wrote that the revert removed are not to
 /// be restored. Setting it to the reverted text would tell the editor it had
 /// authored every word of it, and it would feel free to rewrite them all.
+///
+/// A revert whose save fails is still a revert: the page and every open
+/// editor already say the version, its own version is cut, and the save loop
+/// retries the save. It comes back as `Changed { saved: false }`, never as
+/// an error, so nobody is told it did not happen.
 pub async fn revert_article(
     pool: &sqlx::PgPool,
     yjs: &crate::server::yjs::YjsState,
     subject_type: &str,
     subject_id: &str,
     version_number: i64,
-) -> Result<String> {
+) -> Result<RevertOutcome> {
     let article = crate::api::wiki_articles::get_article(pool, subject_type, subject_id)
         .await?
         .ok_or_else(|| Error::NotFound(format!("No article for {subject_type} {subject_id}")))?;
@@ -881,32 +895,64 @@ pub async fn revert_article(
         ));
     }
 
+    let _turn = yjs.write_turn(&article.page_id).await;
     let live = yjs
         .read_text(&article.page_id)
         .await
         .map_err(|e| Error::Other(format!("could not read the article: {e}")))?;
     if live == text {
-        return Ok("that version is already what the page says".into());
+        return Ok(RevertOutcome::Unchanged);
     }
 
-    let applied = yjs
-        .apply_text_diff(&article.page_id, &live, &text)
+    sqlx::query("UPDATE wiki_articles SET last_human_edit_at = now() WHERE id = $1")
+        .bind(&article.id)
+        .execute(pool)
         .await
-        .map_err(Error::Other)?;
+        .map_err(|e| Error::Database(format!("Failed to record the revert: {e}")))?;
+    crate::api::pages::cut_restore_point(pool, yjs, &article.page_id).await?;
 
-    let change = change_line(&live, &applied);
-    if let Ok(state) = yjs.encoded_state(&article.page_id).await {
-        let _ = crate::api::pages::create_version_from_snapshot(
-            pool,
-            &article.page_id,
-            &state,
-            &applied,
-            "user",
-            Some(&format!("reverted to v{version_number} — {change}")),
-        )
-        .await;
-    }
-    Ok(change)
+    // By line: putting a version back is a whole-page replacement.
+    let (written, saved) = match yjs.replace_text(&article.page_id, &live, &text).await {
+        Ok(written) => (written, true),
+        Err(TextWriteError::NotSaved { written, error }) => {
+            tracing::warn!(page = %article.page_id, error = %error, "revert applied but not saved yet");
+            (written, false)
+        }
+        Err(e) => return Err(Error::Other(e.to_string())),
+    };
+
+    let change = change_line(&live, &written.text);
+    crate::api::pages::cut_version(
+        pool,
+        &article.page_id,
+        &written,
+        "user",
+        Some(&format!("reverted to v{version_number} — {change}")),
+    )
+    .await;
+    Ok(RevertOutcome::Changed { change, saved })
+}
+
+/// What putting a version back did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RevertOutcome {
+    /// The page says the version now, in this process and every open
+    /// editor. `change` counts what changed. `saved` is false when the save
+    /// failed and waits in the save loop for a retry.
+    Changed { change: String, saved: bool },
+    /// The page already said the version, so nothing was done.
+    Unchanged,
+}
+
+/// What one revision by the editor did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Revision {
+    /// The line the agent reports: the editor's summary is on the version,
+    /// this is the mechanical count (`change_line`).
+    pub change: String,
+    /// False when the revision is on the page but its save failed and waits
+    /// in the save loop for a retry.
+    pub saved: bool,
 }
 
 /// The maintenance state of one article, as the editor needs it.
@@ -916,6 +962,7 @@ struct EditorArticle {
     page_id: String,
     maintenance: String,
     machine_text: Option<String>,
+    last_written_at: Option<chrono::DateTime<chrono::Utc>>,
     theirs: serde_json::Value,
     removed: serde_json::Value,
 }
@@ -944,15 +991,23 @@ impl EditorArticle {
 /// 1. Read the live document. If the person has edited it since the editor
 ///    last wrote, cut a `user` version first — otherwise their change would
 ///    sit invisibly inside the machine's next version — and fold what they did
-///    into `theirs` / `removed`.
+///    into `theirs` / `removed`. An article with no version yet gets the
+///    editor's last edition as its first (`pages::keep_first_draft`), so
+///    their version has the text it is diffed against.
 /// 2. Check the proposed text against those sets. A refusal returns the reason
 ///    rather than raising: the caller is an agent loop, and the reason is
 ///    something it can act on in the same turn.
-/// 3. Apply only what changed, through the CRDT, with the staleness guard.
+/// 3. Keep the page as it stands (`pages::cut_restore_point`), so the
+///    revision can be put back, and record the edition, so the next pass
+///    reads provenance against it. Either failing refuses the revision with
+///    nothing applied. Then apply only what changed, through the CRDT, with
+///    the staleness guard; a write that changes nothing puts the previous
+///    edition back.
 /// 4. Cut the machine's version, carrying the editor's own summary and a
 ///    mechanical count that cannot flatter itself.
 ///
-/// Returns the line the agent should report.
+/// Returns what the agent should report. A revision whose save failed is on
+/// the page all the same and is recorded as made, with `saved: false`.
 pub async fn revise_article(
     pool: &sqlx::PgPool,
     yjs: &crate::server::yjs::YjsState,
@@ -960,12 +1015,12 @@ pub async fn revise_article(
     subject_id: &str,
     new_text: &str,
     summary: &str,
-) -> Result<String> {
+) -> Result<Revision> {
     // The editor's own columns, read directly: `wiki_articles::get_article`
     // is a compile-time-checked macro over a shared struct, and widening that
     // for one caller would put maintenance state on every reader of articles.
     let article: EditorArticle = sqlx::query_as(
-        "SELECT id, page_id, maintenance, machine_text, theirs, removed \
+        "SELECT id, page_id, maintenance, machine_text, last_written_at, theirs, removed \
          FROM wiki_articles WHERE subject_type = $1 AND subject_id = $2",
     )
     .bind(subject_type)
@@ -975,6 +1030,7 @@ pub async fn revise_article(
     .map_err(|e| Error::Database(format!("Failed to load article: {e}")))?
     .ok_or_else(|| Error::NotFound(format!("No article for {subject_type} {subject_id}")))?;
 
+    let _turn = yjs.write_turn(&article.page_id).await;
     if article.maintenance == "never" {
         return Err(Error::InvalidInput(
             "the owner has turned maintenance off for this article".into(),
@@ -982,10 +1038,13 @@ pub async fn revise_article(
     }
     let (theirs_stored, removed_stored) = article.provenance_sets();
 
-    let live = yjs
-        .read_text(&article.page_id)
+    // The text and its state from one read, so the person's version below
+    // holds exactly the text their provenance is worked out from.
+    let current = yjs
+        .text_and_state(&article.page_id)
         .await
         .map_err(|e| Error::Other(format!("could not read the article: {e}")))?;
+    let live = current.text.as_str();
 
     // ── 1. What the person has done since the editor last wrote ──
     //
@@ -997,21 +1056,22 @@ pub async fn revise_article(
     // touching the article again. Absent is absent.
     let (theirs, removed) = match article.machine_text.as_deref() {
         Some(machine_text) => {
-            let (added, removed_now) = provenance(machine_text, &live);
-            fold_provenance(&theirs_stored, &removed_stored, &added, &removed_now, &live)
+            let (added, removed_now) = provenance(machine_text, live);
+            fold_provenance(&theirs_stored, &removed_stored, &added, &removed_now, live)
         }
         None => (theirs_stored.clone(), removed_stored.clone()),
     };
     let machine_text = article.machine_text.clone().unwrap_or_default();
     if !machine_text.is_empty() && live != machine_text {
+        // An article nothing versioned when it was created gets the
+        // editor's last edition, the draft their edit started from, as its
+        // first version (a no-op once the page has any), so History can
+        // show that edit and undo it.
+        crate::api::pages::keep_first_draft(pool, &article.page_id, &machine_text).await?;
         // Their edit becomes its own version, before the machine's, so the
         // history reads in the order the writing happened.
-        if let Ok(state) = yjs.encoded_state(&article.page_id).await {
-            let _ = crate::api::pages::create_version_from_snapshot(
-                pool, &article.page_id, &state, &live, "user", Some("edited"),
-            )
+        crate::api::pages::cut_version(pool, &article.page_id, &current, "user", Some("edited"))
             .await;
-        }
         record_provenance(pool, &article.id, &theirs, &removed).await?;
     }
 
@@ -1019,29 +1079,67 @@ pub async fn revise_article(
     check_edit(new_text, &theirs, &removed)?;
     check_links(pool, new_text).await?;
 
-    // ── 3. Only what changed ──
-    let applied = yjs
-        .apply_text_diff(&article.page_id, &live, new_text)
-        .await
-        .map_err(Error::Other)?;
+    // ── 3. The page as it stands, the edition, then only what changed ──
+    //
+    // The restore point is the latest version when one already holds the
+    // live text (the first draft, step 1's, or the last revision's). No
+    // copy, no revision.
+    crate::api::pages::cut_restore_point(pool, yjs, &article.page_id).await?;
+    // The edition is recorded before the page changes, and a database that
+    // refuses it refuses the revision: applied with `machine_text` still the
+    // previous edition, the next pass would credit the machine's own
+    // sentences to the person and refuse to touch them. No edition, no
+    // revision.
+    record_edition(pool, &article.id, new_text).await?;
+    let (written, saved) = match yjs.apply_text_diff(&article.page_id, live, new_text).await {
+        Ok(written) => (written, true),
+        // On the page and in every open editor already, and queued to save:
+        // an applied revision, whose edition is recorded above and whose
+        // version is cut below like any other.
+        Err(TextWriteError::NotSaved { written, error }) => {
+            tracing::warn!(page = %article.page_id, error = %error, "revision applied but not saved yet");
+            (written, false)
+        }
+        // Nothing changed on the page, so the edition recorded above is not
+        // one.
+        Err(e) => {
+            put_back_edition(pool, &article).await;
+            return Err(Error::Other(e.to_string()));
+        }
+    };
 
     // ── 4. The machine's version, with a summary that cannot flatter itself ──
-    let change = change_line(&live, &applied);
+    //
+    // The revision is on the page from here, so nothing below reports that it
+    // is not: a failure is logged.
+    let change = change_line(live, &written.text);
     let description = format!("{} — {}", summary.trim(), change);
-    if let Ok(state) = yjs.encoded_state(&article.page_id).await {
-        let _ = crate::api::pages::create_version_from_snapshot(
-            pool,
-            &article.page_id,
-            &state,
-            &applied,
-            "ai",
-            Some(&description),
-        )
+    crate::api::pages::cut_version(pool, &article.page_id, &written, "ai", Some(&description))
         .await;
+    if let Err(e) = record_provenance(pool, &article.id, &theirs, &removed).await {
+        tracing::error!(article = %article.id, error = %e, "revision applied but its provenance was not recorded");
     }
-    record_provenance(pool, &article.id, &theirs, &removed).await?;
-    record_edition(pool, &article.id, &applied).await?;
-    Ok(change)
+    Ok(Revision { change, saved })
+}
+
+/// Undo `revise_article`'s `record_edition` for a revision that changed
+/// nothing: the edition and its date go back to what the article said
+/// before. Best effort, because the refusal is what the caller reports; a
+/// failure is logged, and the next pass then reads the unapplied text as
+/// the editor's last edition.
+async fn put_back_edition(pool: &sqlx::PgPool, article: &EditorArticle) {
+    let put_back = sqlx::query(
+        "UPDATE wiki_articles SET machine_text = $2, last_written_at = $3 WHERE id = $1",
+    )
+    .bind(&article.id)
+    .bind(&article.machine_text)
+    .bind(article.last_written_at)
+    .execute(pool)
+    .await;
+    if let Err(e) = put_back {
+        tracing::error!(article = %article.id, error = %e,
+            "a revision that changed nothing left its edition recorded");
+    }
 }
 
 #[cfg(test)]
@@ -1379,7 +1477,7 @@ mod tests {
         let (yjs, _id, page_id) =
             article_fixture(&pool, "You met Zoe at the shop. She fixes bicycles.").await;
 
-        let change = revise_article(
+        let revision = revise_article(
             &pool,
             &yjs,
             "person",
@@ -1389,7 +1487,8 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(change.contains("+1 sentence"), "{change}");
+        assert!(revision.saved);
+        assert!(revision.change.contains("+1 sentence"), "{revision:?}");
 
         let live = yjs.read_text(&page_id).await.unwrap();
         assert!(live.contains("ride together on Sundays"));
@@ -1616,8 +1715,10 @@ mod tests {
     async fn reverting_adds_a_version_rather_than_rewinding_history(pool: sqlx::PgPool) {
         let (yjs, id, page_id) = article_fixture(&pool, "You met Zoe at the shop.").await;
         // Two editions, so there is an earlier one to go back to. A version's
-        // snapshot is the state AFTER the edit it records, so v1 is the first
-        // revision's result — not the empty page before it.
+        // snapshot is the state AFTER the edit it records, so the latest
+        // version once the first revision lands holds that revision's result,
+        // not the first draft before it (version 1, kept when the article was
+        // created).
         revise_article(
             &pool,
             &yjs,
@@ -1628,7 +1729,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let v1: i64 = sqlx::query_scalar(
+        let revised: i64 = sqlx::query_scalar(
             "SELECT max(version_number) FROM app_page_versions WHERE page_id = $1",
         )
         .bind(&page_id)
@@ -1646,13 +1747,33 @@ mod tests {
         .await
         .unwrap();
 
-        revert_article(&pool, &yjs, "person", "person_z", v1)
+        let outcome = revert_article(&pool, &yjs, "person", "person_z", revised)
             .await
             .unwrap();
+        assert!(
+            matches!(outcome, RevertOutcome::Changed { saved: true, .. }),
+            "the page changed: {outcome:?}"
+        );
 
         let live = yjs.read_text(&page_id).await.unwrap();
         assert!(!live.contains("Sundays"), "the later edit is undone: {live}");
         assert!(live.contains("fixes bicycles"), "and the earlier one is kept");
+
+        // Putting a version back is the owner's act: a later rewrite of the
+        // page has to ask before replacing it.
+        let stamped: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT last_human_edit_at FROM wiki_articles WHERE id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(stamped.is_some());
+
+        // The same version again changes nothing, and says so.
+        assert_eq!(
+            revert_article(&pool, &yjs, "person", "person_z", revised).await.unwrap(),
+            RevertOutcome::Unchanged
+        );
 
         let rows: Vec<(i64, String, Option<String>)> = sqlx::query_as(
             "SELECT version_number, created_by, description FROM app_page_versions \
@@ -1663,12 +1784,12 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            rows.iter().any(|(n, _, _)| *n == v1),
+            rows.iter().any(|(n, _, _)| *n == revised),
             "the version reverted TO is still there — history is never rewound"
         );
         let last = rows.last().unwrap();
         assert_eq!(last.1, "user", "a revert is the person's act, not the machine's");
-        assert!(last.2.as_deref().unwrap().contains(&format!("reverted to v{v1}")));
+        assert!(last.2.as_deref().unwrap().contains(&format!("reverted to v{revised}")));
 
         // The editor's idea of what IT last wrote is deliberately untouched, so
         // the next pass reads the revert correctly instead of claiming it.
@@ -1683,6 +1804,406 @@ mod tests {
             "machine_text still says what the EDITOR last wrote, so its next pass \
              reads the revert as the person's doing instead of claiming it"
         );
+    }
+
+    /// Text nobody has versioned yet (typing the browser had not autosaved)
+    /// is kept as a restore point before a revert replaces it, and History
+    /// reads the revert as one entry of the owner's, undone by putting that
+    /// restore point back.
+    #[sqlx::test]
+    async fn a_revert_keeps_what_the_page_said_first(pool: sqlx::PgPool) {
+        let (yjs, _id, page_id) = article_fixture(&pool, "You met Zoe at the shop.").await;
+        revise_article(
+            &pool,
+            &yjs,
+            "person",
+            "person_z",
+            "You met Zoe at the shop. She fixes bicycles.",
+            "added the shop",
+        )
+        .await
+        .unwrap();
+        let v1: i64 = sqlx::query_scalar(
+            "SELECT max(version_number) FROM app_page_versions WHERE page_id = $1",
+        )
+        .bind(&page_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        yjs.apply_text_diff(
+            &page_id,
+            "You met Zoe at the shop. She fixes bicycles.",
+            "You met Zoe at the shop. She fixes bicycles. Unsaved typing.",
+        )
+        .await
+        .unwrap();
+
+        revert_article(&pool, &yjs, "person", "person_z", v1)
+            .await
+            .unwrap();
+
+        let rows: Vec<(i64, String, Option<String>, Vec<u8>)> = sqlx::query_as(
+            "SELECT version_number, created_by, description, yjs_snapshot \
+             FROM app_page_versions WHERE page_id = $1 ORDER BY version_number",
+        )
+        .bind(&page_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let (kept, by, description, snapshot) = &rows[rows.len() - 2];
+        assert!(crate::api::pages::is_restore_point(by, description.as_deref()));
+        assert!(crate::server::yjs::extract_text_content(snapshot).contains("Unsaved typing."));
+
+        let hist = crate::api::wiki_articles::get_article_history(&pool, "person", "person_z")
+            .await
+            .unwrap();
+        assert_eq!(hist.len(), 2, "the revision and the revert: {hist:?}");
+        assert_eq!(hist[0].author, "user", "the revert is the owner's");
+        assert_eq!(hist[0].before_version, Some(*kept));
+        assert_eq!(hist[1].author, "ai", "the revision before it");
+        assert_eq!(hist[1].version_number, v1);
+        assert!(hist.iter().all(|r| r.version_number != *kept), "no entry for the restore point");
+    }
+
+    /// Every save of a page fails until `allow_page_saves`: the database
+    /// refuses the write while it still answers reads.
+    async fn refuse_page_saves(pool: &sqlx::PgPool) {
+        for stmt in [
+            "CREATE FUNCTION refuse_page_saves() RETURNS trigger LANGUAGE plpgsql \
+             AS $$ BEGIN RAISE EXCEPTION 'disk full'; END $$",
+            "CREATE TRIGGER refuse_page_saves BEFORE UPDATE ON app_pages \
+             FOR EACH ROW WHEN (NEW.yjs_state IS NOT NULL) EXECUTE FUNCTION refuse_page_saves()",
+        ] {
+            sqlx::query(stmt).execute(pool).await.unwrap();
+        }
+    }
+
+    async fn allow_page_saves(pool: &sqlx::PgPool) {
+        sqlx::query("DROP TRIGGER refuse_page_saves ON app_pages")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn stored_content(pool: &sqlx::PgPool, page_id: &str) -> String {
+        sqlx::query_scalar("SELECT content FROM app_pages WHERE id = $1")
+            .bind(page_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// An article's first draft is its first version, a restore point kept
+    /// when it is created, so its first revision is an entry in History,
+    /// credited to the editor, and putting it back restores the draft.
+    #[sqlx::test]
+    async fn an_articles_first_revision_is_in_history_and_can_be_put_back(pool: sqlx::PgPool) {
+        let draft = "You met Zoe at the shop.";
+        let (yjs, _id, page_id) = article_fixture(&pool, draft).await;
+        revise_article(
+            &pool,
+            &yjs,
+            "person",
+            "person_z",
+            "You met Zoe at the shop. She fixes bicycles.",
+            "added the shop",
+        )
+        .await
+        .unwrap();
+
+        let hist = crate::api::wiki_articles::get_article_history(&pool, "person", "person_z")
+            .await
+            .unwrap();
+        assert_eq!(hist.len(), 1, "{hist:?}");
+        assert_eq!(hist[0].author, "ai");
+        let kept = hist[0].before_version.expect("a version to put back");
+        let (by, description, snapshot): (String, Option<String>, Vec<u8>) = sqlx::query_as(
+            "SELECT created_by, description, yjs_snapshot FROM app_page_versions \
+             WHERE page_id = $1 AND version_number = $2",
+        )
+        .bind(&page_id)
+        .bind(kept)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(crate::api::pages::is_restore_point(&by, description.as_deref()));
+        assert_eq!(crate::server::yjs::extract_text_content(&snapshot), draft);
+
+        let feed: Vec<(i64, Option<i64>, String)> =
+            crate::api::wiki_articles::get_history_feed(&pool, 50)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|e| (e.version_number, e.before_version, e.author))
+                .collect();
+        assert_eq!(feed, vec![(hist[0].version_number, Some(kept), "ai".to_string())]);
+
+        revert_article(&pool, &yjs, "person", "person_z", kept).await.unwrap();
+        assert_eq!(yjs.read_text(&page_id).await.unwrap(), draft);
+    }
+
+    /// A revision whose save fails is on the page and in every open editor:
+    /// it is recorded as made (its version, and the edition the next pass
+    /// reads provenance against), reported with the save pending, and saved
+    /// by the loop once the database takes writes again.
+    #[sqlx::test]
+    async fn a_revision_that_could_not_be_saved_is_recorded_as_made(pool: sqlx::PgPool) {
+        let (yjs, id, page_id) = article_fixture(&pool, "You met Zoe at the shop.").await;
+        let revised = "You met Zoe at the shop. She fixes bicycles.";
+
+        refuse_page_saves(&pool).await;
+        let revision = revise_article(&pool, &yjs, "person", "person_z", revised, "added the shop")
+            .await
+            .unwrap();
+        assert!(!revision.saved);
+        assert!(revision.change.contains("+1 sentence"), "{revision:?}");
+
+        let machine: Option<String> =
+            sqlx::query_scalar("SELECT machine_text FROM wiki_articles WHERE id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(machine.as_deref(), Some(revised), "the next pass reads it as the editor's");
+        let (by, snapshot): (String, Vec<u8>) = sqlx::query_as(
+            "SELECT created_by, yjs_snapshot FROM app_page_versions \
+             WHERE page_id = $1 ORDER BY version_number DESC LIMIT 1",
+        )
+        .bind(&page_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(by, "ai");
+        assert_eq!(crate::server::yjs::extract_text_content(&snapshot), revised);
+        assert_eq!(yjs.read_text(&page_id).await.unwrap(), revised);
+
+        allow_page_saves(&pool).await;
+        yjs.flush_pending_saves().await;
+        assert_eq!(stored_content(&pool, &page_id).await, revised);
+    }
+
+    /// A revert whose save fails has still put the version back: it says so
+    /// (with the save pending) and cuts its own version, rather than
+    /// reporting a failure the next try would contradict.
+    #[sqlx::test]
+    async fn a_revert_that_could_not_be_saved_still_put_the_version_back(pool: sqlx::PgPool) {
+        let draft = "You met Zoe at the shop.";
+        let (yjs, _id, page_id) = article_fixture(&pool, draft).await;
+        revise_article(
+            &pool,
+            &yjs,
+            "person",
+            "person_z",
+            "You met Zoe at the shop. She fixes bicycles.",
+            "added the shop",
+        )
+        .await
+        .unwrap();
+        let kept: i64 = sqlx::query_scalar(
+            "SELECT min(version_number) FROM app_page_versions WHERE page_id = $1",
+        )
+        .bind(&page_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        refuse_page_saves(&pool).await;
+        let outcome = revert_article(&pool, &yjs, "person", "person_z", kept).await.unwrap();
+        let RevertOutcome::Changed { saved, .. } = outcome else {
+            panic!("expected the page to change, got {outcome:?}");
+        };
+        assert!(!saved);
+        assert_eq!(yjs.read_text(&page_id).await.unwrap(), draft);
+        let (by, snapshot): (String, Vec<u8>) = sqlx::query_as(
+            "SELECT created_by, yjs_snapshot FROM app_page_versions \
+             WHERE page_id = $1 ORDER BY version_number DESC LIMIT 1",
+        )
+        .bind(&page_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(by, "user", "the revert's own version");
+        assert_eq!(crate::server::yjs::extract_text_content(&snapshot), draft);
+
+        // Trying again finds the page already says it.
+        assert_eq!(
+            revert_article(&pool, &yjs, "person", "person_z", kept).await.unwrap(),
+            RevertOutcome::Unchanged
+        );
+
+        allow_page_saves(&pool).await;
+        yjs.flush_pending_saves().await;
+        assert_eq!(stored_content(&pool, &page_id).await, draft);
+    }
+
+    /// One version of a page, as (created_by, description, text).
+    async fn version_text(
+        pool: &sqlx::PgPool,
+        page_id: &str,
+        number: i64,
+    ) -> (String, Option<String>, String) {
+        let (by, description, snapshot): (String, Option<String>, Vec<u8>) = sqlx::query_as(
+            "SELECT created_by, description, yjs_snapshot FROM app_page_versions \
+             WHERE page_id = $1 AND version_number = $2",
+        )
+        .bind(page_id)
+        .bind(number)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (by, description, crate::server::yjs::extract_text_content(&snapshot))
+    }
+
+    /// The owner edits an article (typing nothing has versioned yet), then
+    /// the editor revises it. Their edit is an entry in History, diffed
+    /// against the first draft and undone by putting that draft back, and
+    /// the editor's revision is an entry after it.
+    async fn the_owners_first_edit_reads_as_theirs(
+        pool: &sqlx::PgPool,
+        yjs: &crate::server::yjs::YjsState,
+        page_id: &str,
+        draft: &str,
+    ) {
+        let typed = format!("{draft} She taught me to ride.");
+        yjs.apply_text_diff(page_id, draft, &typed).await.unwrap();
+        revise_article(
+            pool,
+            yjs,
+            "person",
+            "person_z",
+            &format!("{typed} She fixes bicycles."),
+            "added the shop",
+        )
+        .await
+        .unwrap();
+
+        let hist = crate::api::wiki_articles::get_article_history(pool, "person", "person_z")
+            .await
+            .unwrap();
+        let authors: Vec<&str> = hist.iter().map(|r| r.author.as_str()).collect();
+        assert_eq!(authors, vec!["ai", "user"], "{hist:?}");
+        assert_eq!(hist[0].before_version, Some(hist[1].version_number));
+        let before = hist[1].before_version.expect("a version that undoes their edit");
+        let (by, description, text) = version_text(pool, page_id, before).await;
+        assert!(crate::api::pages::is_restore_point(&by, description.as_deref()));
+        assert_eq!(text, draft);
+    }
+
+    /// An article's first draft is version 1 from the moment it exists.
+    #[sqlx::test]
+    async fn an_owners_edit_before_the_first_revision_is_in_history(pool: sqlx::PgPool) {
+        let draft = "You met Zoe at the shop.";
+        let (yjs, _id, page_id) = article_fixture(&pool, draft).await;
+        let (by, description, text) = version_text(&pool, &page_id, 1).await;
+        assert!(crate::api::pages::is_restore_point(&by, description.as_deref()));
+        assert_eq!(text, draft);
+
+        the_owners_first_edit_reads_as_theirs(&pool, &yjs, &page_id, draft).await;
+    }
+
+    /// An article created before its first draft was kept has no version:
+    /// the editor's last edition stands in for the draft when the owner's
+    /// edit is first versioned.
+    #[sqlx::test]
+    async fn an_owners_edit_to_an_article_nothing_versioned_is_in_history(pool: sqlx::PgPool) {
+        let draft = "You met Zoe at the shop.";
+        let (yjs, _id, page_id) = article_fixture(&pool, draft).await;
+        sqlx::query("DELETE FROM app_page_versions WHERE page_id = $1")
+            .bind(&page_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        the_owners_first_edit_reads_as_theirs(&pool, &yjs, &page_id, draft).await;
+    }
+
+    /// The edition is recorded before the page changes, so a database that
+    /// will not record it refuses the revision with nothing on the page.
+    #[sqlx::test]
+    async fn a_revision_whose_edition_cannot_be_recorded_is_not_made(pool: sqlx::PgPool) {
+        let draft = "You met Zoe at the shop.";
+        let (yjs, _id, page_id) = article_fixture(&pool, draft).await;
+        for stmt in [
+            "CREATE FUNCTION refuse_editions() RETURNS trigger LANGUAGE plpgsql \
+             AS $$ BEGIN RAISE EXCEPTION 'disk full'; END $$",
+            "CREATE TRIGGER refuse_editions BEFORE UPDATE ON wiki_articles FOR EACH ROW \
+             WHEN (NEW.machine_text IS DISTINCT FROM OLD.machine_text) \
+             EXECUTE FUNCTION refuse_editions()",
+        ] {
+            sqlx::query(stmt).execute(&pool).await.unwrap();
+        }
+
+        revise_article(
+            &pool,
+            &yjs,
+            "person",
+            "person_z",
+            "You met Zoe at the shop. She fixes bicycles.",
+            "added the shop",
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(yjs.read_text(&page_id).await.unwrap(), draft);
+        let latest: String = sqlx::query_scalar(
+            "SELECT created_by FROM app_page_versions \
+             WHERE page_id = $1 ORDER BY version_number DESC LIMIT 1",
+        )
+        .bind(&page_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_ne!(latest, "ai", "no version of a revision that was not made");
+    }
+
+    /// A revision the page refuses (it moved while the edition was being
+    /// recorded) puts the previous edition back.
+    #[sqlx::test]
+    async fn a_revision_the_page_refuses_puts_the_previous_edition_back(pool: sqlx::PgPool) {
+        let draft = "You met Zoe at the shop.";
+        let (yjs, id, page_id) = article_fixture(&pool, draft).await;
+        type Edition = (Option<String>, Option<chrono::DateTime<chrono::Utc>>);
+        let edition = |pool: sqlx::PgPool, id: String| async move {
+            sqlx::query_as::<_, Edition>(
+                "SELECT machine_text, last_written_at FROM wiki_articles WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        let was = edition(pool.clone(), id.clone()).await;
+
+        // Hold the edition's write partway, and type while it waits.
+        let mut hold = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM wiki_articles WHERE id = $1 FOR UPDATE")
+            .bind(&id)
+            .execute(&mut *hold)
+            .await
+            .unwrap();
+        let revision = tokio::spawn({
+            let (pool, yjs) = (pool.clone(), yjs.clone());
+            async move {
+                revise_article(
+                    &pool,
+                    &yjs,
+                    "person",
+                    "person_z",
+                    "You met Zoe at the shop. She fixes bicycles.",
+                    "added the shop",
+                )
+                .await
+            }
+        });
+        crate::api::pages::until_a_statement_waits(&pool, "%SET machine_text = $2, last_written_at = now()%")
+            .await;
+        let typed = format!("{draft} Typed.");
+        yjs.apply_text_diff(&page_id, draft, &typed).await.unwrap();
+        hold.rollback().await.unwrap();
+
+        let refused = revision.await.unwrap().unwrap_err().to_string();
+        assert!(refused.contains("changed while"), "{refused}");
+        assert_eq!(yjs.read_text(&page_id).await.unwrap(), typed);
+        assert_eq!(edition(pool.clone(), id.clone()).await, was);
     }
 
     #[sqlx::test]

@@ -185,8 +185,8 @@ which is the boundary that matters. `agent-key` is box-only.
    executor chat uses, and logs one `audit = "console_tool"` line with the
    tool and a hash of its arguments. That line is the audit, in the server's
    own journal. `applet on/off` is the app's switch, `PATCH /api/applets/:id`.
-   `page edit` saves the page at once (`YjsState::flush_page`) so a read
-   straight after sees it. A write needs the server running; the error says
+   `page edit` saves the page at once (`YjsState::apply_text_edit` saves a
+   machine edit without the debounce) so a read straight after sees it. A write needs the server running; the error says
    so. No caller field on `ToolContext` was needed: the door the call came
    through says who it is.
 4. **`agent-key`.** Built 2026-10-05; the spare-box test below is still to

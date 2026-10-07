@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="3300" height="2200">
+ <!--
+  The Virtues mark (∴) as a custom SF Symbol, for the Control Center control.
+  Geometry is icons/source/mark.svg: equilateral, dot-to-gap 0.40, lifted
+  3.35% of its height off the cap-height midline (a ∴ is bottom-heavy). The
+  bbox is 80 units tall at 100 pt, which matches waveform and flashlight at
+  the same point size. Weight changes only the dot radius (Ultralight 0.80x,
+  Black 1.22x of Regular) around fixed centers, so Xcode interpolates the
+  other weights and the M and L scales from these three sources.
+ -->
+ <g id="Notes">
+  <rect height="2200" id="artboard" style="fill:white;opacity:1" width="3300" x="0" y="0"/>
+  <line style="fill:none;stroke:black;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="292" y2="292"/>
+  <text style="stroke:none;fill:black;font-family:sans-serif;font-size:13;font-weight:bold;" transform="matrix(1 0 0 1 263 322)">Weight/Scale Variations</text>
+  <text style="stroke:none;fill:black;font-family:sans-serif;font-size:13;text-anchor:middle;" transform="matrix(1 0 0 1 559.711 322)">Ultralight</text>
+  <text style="stroke:none;fill:black;font-family:sans-serif;font-size:13;text-anchor:middle;" transform="matrix(1 0 0 1 1449.2 322)">Regular</text>
+  <text style="stroke:none;fill:black;font-family:sans-serif;font-size:13;text-anchor:middle;" transform="matrix(1 0 0 1 2339.2 322)">Black</text>
+  <text id="template-version" style="stroke:none;fill:black;font-family:sans-serif;font-size:13;text-anchor:end;" transform="matrix(1 0 0 1 3036 1933)">Template v.3.0</text>
+  <text style="stroke:none;fill:black;font-family:sans-serif;font-size:13;text-anchor:end;" transform="matrix(1 0 0 1 3036 1951)">Requires Xcode 13 or greater</text>
+  <text id="descriptive-name" style="stroke:none;fill:black;font-family:sans-serif;font-size:13;text-anchor:end;" transform="matrix(1 0 0 1 3036 1969)">Generated from virtues.mark</text>
+  <text style="stroke:none;fill:black;font-family:sans-serif;font-size:13;text-anchor:end;" transform="matrix(1 0 0 1 3036 1987)">Typeset at 100 points</text>
+  <text style="stroke:none;fill:black;font-family:sans-serif;font-size:13;" transform="matrix(1 0 0 1 263 726)">Small</text>
+  <text style="stroke:none;fill:black;font-family:sans-serif;font-size:13;" transform="matrix(1 0 0 1 263 1156)">Medium</text>
+  <text style="stroke:none;fill:black;font-family:sans-serif;font-size:13;" transform="matrix(1 0 0 1 263 1586)">Large</text>
+ </g>
+ <g id="Guides">
+  <line id="Baseline-S" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="696" y2="696"/>
+  <line id="Capline-S" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="625.541" y2="625.541"/>
+  <line id="Baseline-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1126" y2="1126"/>
+  <line id="Capline-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1055.54" y2="1055.54"/>
+  <line id="Baseline-L" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1556" y2="1556"/>
+  <line id="Capline-L" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1485.54" y2="1485.54"/>
+  <line id="left-margin-Ultralight-S" style="fill:none;stroke:#00AEEF;stroke-width:0.5;opacity:1.0;" x1="559.711" x2="559.711" y1="600.785" y2="720.121"/>
+  <line id="right-margin-Ultralight-S" style="fill:none;stroke:#00AEEF;stroke-width:0.5;opacity:1.0;" x1="655.132" x2="655.132" y1="600.785" y2="720.121"/>
+  <line id="left-margin-Regular-S" style="fill:none;stroke:#00AEEF;stroke-width:0.5;opacity:1.0;" x1="1449.2" x2="1449.2" y1="600.785" y2="720.121"/>
+  <line id="right-margin-Regular-S" style="fill:none;stroke:#00AEEF;stroke-width:0.5;opacity:1.0;" x1="1549.667" x2="1549.667" y1="600.785" y2="720.121"/>
+  <line id="left-margin-Black-S" style="fill:none;stroke:#00AEEF;stroke-width:0.5;opacity:1.0;" x1="2339.2" x2="2339.2" y1="600.785" y2="720.121"/>
+  <line id="right-margin-Black-S" style="fill:none;stroke:#00AEEF;stroke-width:0.5;opacity:1.0;" x1="2445.216" x2="2445.216" y1="600.785" y2="720.121"/>
+ </g>
+ <g id="Symbols">
+  <g id="Ultralight-S" transform="matrix(1 0 0 1 559.711 696)">
+   <path d="M57.8013 -65.2961C57.8013 -59.7232 53.2835 -55.2054 47.7106 -55.2054C42.1376 -55.2054 37.6199 -59.7232 37.6199 -65.2961C37.6199 -70.8691 42.1376 -75.3868 47.7106 -75.3868C53.2835 -75.3868 57.8013 -70.8691 57.8013 -65.2961ZM26.1814 -10.5229C26.1814 -4.9499 21.6637 -0.4322 16.0907 -0.4322C10.5178 -0.4322 6 -4.9499 6 -10.5229C6 -16.0958 10.5178 -20.6136 16.0907 -20.6136C21.6637 -20.6136 26.1814 -16.0958 26.1814 -10.5229ZM89.4212 -10.5229C89.4212 -4.9499 84.9034 -0.4322 79.3305 -0.4322C73.7575 -0.4322 69.2397 -4.9499 69.2397 -10.5229C69.2397 -16.0958 73.7575 -20.6136 79.3305 -20.6136C84.9034 -20.6136 89.4212 -16.0958 89.4212 -10.5229Z"/>
+  </g>
+  <g id="Regular-S" transform="matrix(1 0 0 1 1449.2 696)">
+   <path d="M62.8467 -65.2961C62.8467 -58.3299 57.1994 -52.6827 50.2333 -52.6827C43.2671 -52.6827 37.6199 -58.3299 37.6199 -65.2961C37.6199 -72.2623 43.2671 -77.9095 50.2333 -77.9095C57.1994 -77.9095 62.8467 -72.2623 62.8467 -65.2961ZM31.2268 -10.5229C31.2268 -3.5567 25.5796 2.0905 18.6134 2.0905C11.6472 2.0905 6 -3.5567 6 -10.5229C6 -17.4891 11.6472 -23.1363 18.6134 -23.1363C25.5796 -23.1363 31.2268 -17.4891 31.2268 -10.5229ZM94.4665 -10.5229C94.4665 -3.5567 88.8193 2.0905 81.8531 2.0905C74.8869 2.0905 69.2397 -3.5567 69.2397 -10.5229C69.2397 -17.4891 74.8869 -23.1363 81.8531 -23.1363C88.8193 -23.1363 94.4665 -17.4891 94.4665 -10.5229Z"/>
+  </g>
+  <g id="Black-S" transform="matrix(1 0 0 1 2339.2 696)">
+   <path d="M68.3965 -65.2961C68.3965 -56.7974 61.507 -49.9078 53.0082 -49.9078C44.5095 -49.9078 37.6199 -56.7974 37.6199 -65.2961C37.6199 -73.7949 44.5095 -80.6844 53.0082 -80.6844C61.507 -80.6844 68.3965 -73.7949 68.3965 -65.2961ZM36.7767 -10.5229C36.7767 -2.0241 29.8871 4.8654 21.3883 4.8654C12.8896 4.8654 6 -2.0241 6 -10.5229C6 -19.0216 12.8896 -25.9112 21.3883 -25.9112C29.8871 -25.9112 36.7767 -19.0216 36.7767 -10.5229ZM100.0164 -10.5229C100.0164 -2.0241 93.1268 4.8654 84.6281 4.8654C76.1293 4.8654 69.2397 -2.0241 69.2397 -10.5229C69.2397 -19.0216 76.1293 -25.9112 84.6281 -25.9112C93.1268 -25.9112 100.0164 -19.0216 100.0164 -10.5229Z"/>
+  </g>
+ </g>
+</svg>

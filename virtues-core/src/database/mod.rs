@@ -112,9 +112,9 @@ impl Database {
             self.run_migrations().await?;
         }
 
-        // Size the vector columns to the configured embedding model. Migrations
-        // create them at the Dragon default (256); a manual endpoint with
-        // different native dims needs a resize before anything is indexed.
+        // Size the vector columns to the width the index was built at. A box
+        // that has never embedded has no recorded width; its first embed sizes
+        // them (`search::indexer`).
         self.ensure_embedding_dims().await?;
 
         Ok(())
@@ -128,10 +128,11 @@ impl Database {
     /// database remembers; the embedder's job at runtime is to *verify* that memory
     /// (see `search::indexer`), not to supply it.
     ///
-    /// No recorded width means the index has never been built — leave the column at
-    /// its migration default and let the first embed record the truth. Refuses to
-    /// resize a populated index: that is a re-embed, and `virtues reindex` owns it.
-    async fn ensure_embedding_dims(&self) -> Result<()> {
+    /// No recorded width means the index has never been built — leave the columns at
+    /// their migration default. The first embed records the truth and calls this
+    /// again before writing a vector. Refuses to resize a populated index: that is a
+    /// re-embed, and `virtues reindex` owns it.
+    pub(crate) async fn ensure_embedding_dims(&self) -> Result<()> {
         let Some(target) = crate::search::embedder::index_dim(&self.pool).await else {
             // Never embedded. Nothing to match yet.
             return Ok(());
@@ -153,30 +154,45 @@ impl Database {
         // reindex.
         let current_type = self.vector_column_type("search_vectors", "embedding").await?;
         let current = current_type.as_deref().and_then(parse_vector_dim);
-        let is_halfvec = current_type
-            .as_deref()
-            .map(|t| t.trim_start().starts_with("halfvec"))
-            .unwrap_or(false);
-        // The early return has to prove ALL THREE columns are right, not just
-        // this one. `search_vectors`, `search_topic_cache` and
+        // The early return has to prove ALL THREE columns are right, and the
+        // index with them. `search_vectors`, `search_topic_cache` and
         // `app_projects.centroid` share one embedding geometry and are resized
-        // together below — but the loop is not a transaction, so a failure
-        // partway leaves some converted and some not. Guarding on
+        // together below, between dropping the HNSW index and rebuilding it —
+        // but the loop is not a transaction, so a failure partway leaves some
+        // converted and some not, or no index at all. Guarding on
         // `search_vectors` alone meant every later boot took this return and
         // never looked at the others again, which is precisely how the centroid
         // dimension drifted before (see 0060's header: "Every centroid write
         // failed the dimension check").
-        let centroid_ok = self
-            .vector_column_type("app_projects", "centroid")
-            .await?
-            .as_deref()
-            .is_some_and(|t| t.trim_start().starts_with("halfvec") && parse_vector_dim(t) == Some(target));
-        if is_halfvec && current == Some(target) && centroid_ok {
+        //
+        // The converse binds too: every column checked here must be resized
+        // below. A guard demanding a column the loop never touches can never
+        // pass, so every boot drops and rebuilds the index.
+        let at_target = |ty: Option<&str>| {
+            ty.is_some_and(|t| {
+                t.trim_start().starts_with("halfvec") && parse_vector_dim(t) == Some(target)
+            })
+        };
+        let topic_type = self.vector_column_type("search_topic_cache", "embedding").await?;
+        let centroid_type = self.vector_column_type("app_projects", "centroid").await?;
+        let index_built: bool =
+            sqlx::query_scalar("SELECT to_regclass('search_vectors_hnsw') IS NOT NULL")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| Error::Database(format!("looking for search_vectors_hnsw: {e}")))?;
+        if at_target(current_type.as_deref())
+            && at_target(topic_type.as_deref())
+            && at_target(centroid_type.as_deref())
+            && index_built
+        {
             return Ok(());
         }
 
         // Only a WIDTH change drops the vectors' meaning and forces a re-embed;
         // a same-width vector→halfvec cast preserves them. Guard on the former.
+        // Centroids are not counted: `virtues reindex` does not wipe them, so a
+        // stored one would refuse a resize that reindex could never clear. The
+        // loop NULLs any of the wrong width instead.
         let dim_changed = current != Some(target);
         if dim_changed {
             let populated: i64 = sqlx::query_scalar(
@@ -212,6 +228,18 @@ impl Database {
             format!(
                 "ALTER TABLE search_topic_cache ALTER COLUMN embedding \
                  TYPE halfvec({target}) USING embedding::halfvec({target})"
+            ),
+            // Nothing reads or writes `app_projects.centroid` since the magnet
+            // went, but the guard above holds it to this geometry, so it is
+            // resized with the rest. A stored centroid of another width cannot
+            // be cast to this one; with no reader, NULLing it loses nothing.
+            format!(
+                "UPDATE app_projects SET centroid = NULL \
+                 WHERE centroid IS NOT NULL AND vector_dims(centroid) <> {target}"
+            ),
+            format!(
+                "ALTER TABLE app_projects ALTER COLUMN centroid \
+                 TYPE halfvec({target}) USING centroid::halfvec({target})"
             ),
             // Build parameters stated, not inherited. Omitting `WITH` gets
             // pgvector's defaults (m=16, ef_construction=64) by accident rather
@@ -448,6 +476,72 @@ mod tests {
         assert_eq!(parse_vector_dim("halfvec(3072)"), Some(3072));
         assert_eq!(parse_vector_dim("vector"), None);
         assert_eq!(parse_vector_dim("text"), None);
+    }
+
+    async fn hnsw_oid(pool: &PgPool) -> Option<i64> {
+        sqlx::query_scalar("SELECT to_regclass('search_vectors_hnsw')::oid::bigint")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// A 384-d index (every Dragon runs gte-small) over the migrations' 256-d
+    /// columns, with a centroid left behind at the old width by the magnet.
+    async fn box_at_384(pool: &PgPool) -> Database {
+        for stmt in [
+            "UPDATE search_index_meta SET model = 'm', dim = 384 WHERE singleton",
+            "INSERT INTO app_projects (id, name, centroid) \
+             VALUES ('p_1', 'P', array_fill(0.1::real, ARRAY[256])::vector::halfvec)",
+        ] {
+            sqlx::query(stmt).execute(pool).await.unwrap();
+        }
+        Database::from_pool(pool.clone())
+    }
+
+    /// A box whose index is not 256-wide must reach the early return on its
+    /// second boot. When the resize stopped touching `app_projects.centroid`
+    /// but the guard still required it, the guard never passed, and every boot
+    /// dropped and rebuilt the HNSW index.
+    #[sqlx::test]
+    async fn resize_settles_after_one_boot(pool: PgPool) {
+        let db = box_at_384(&pool).await;
+
+        db.ensure_embedding_dims().await.unwrap();
+        let built = hnsw_oid(&pool).await;
+        assert!(built.is_some(), "the resize builds the index");
+
+        db.ensure_embedding_dims().await.unwrap();
+        assert_eq!(hnsw_oid(&pool).await, built, "second boot rebuilt the index");
+
+        for (table, col) in [
+            ("search_vectors", "embedding"),
+            ("search_topic_cache", "embedding"),
+            ("app_projects", "centroid"),
+        ] {
+            assert_eq!(
+                db.vector_column_type(table, col).await.unwrap().as_deref(),
+                Some("halfvec(384)"),
+                "{table}.{col}"
+            );
+        }
+        let centroids: i64 = sqlx::query_scalar("SELECT count(centroid) FROM app_projects")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(centroids, 0, "a 256-d centroid cannot live in a 384-d column");
+    }
+
+    /// The index is dropped before the columns are resized and built after, so
+    /// a boot that dies in between leaves every column right and no index. The
+    /// guard checks for the index too, and the next boot builds it.
+    #[sqlx::test]
+    async fn missing_index_is_rebuilt(pool: PgPool) {
+        let db = box_at_384(&pool).await;
+        db.ensure_embedding_dims().await.unwrap();
+
+        sqlx::query("DROP INDEX search_vectors_hnsw").execute(&pool).await.unwrap();
+        db.ensure_embedding_dims().await.unwrap();
+        assert!(hnsw_oid(&pool).await.is_some());
     }
 
     // Tests go through the pure `normalize_from`, never the env: set_var/
