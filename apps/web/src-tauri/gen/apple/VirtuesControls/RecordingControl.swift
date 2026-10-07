@@ -20,7 +20,8 @@ import WidgetKit
 /// This extension runs in its own process. It writes the override into the App
 /// Group's defaults and posts a Darwin note; the recorder re-reads on that note
 /// and mirrors back what the label needs (MARK: Override in the audio plugin's
-/// Audio.swift).
+/// Audio.swift). The Home Screen and Lock Screen widget beside it is in
+/// RecordingWidget.swift.
 enum RecordingShared {
   /// These must match `AudioRecorder` in Audio.swift, and the group must match
   /// both entitlements files.
@@ -29,14 +30,51 @@ enum RecordingShared {
   static let overrideUntilKey = "virtues.audio.overrideUntil"
   static let enabledKey = "virtues.audio.enabled"
   static let ruleKey = "virtues.audio.ruleMute"
+  static let heartbeatKey = "virtues.audio.heartbeat"
+  static let carPlayKey = "virtues.audio.carplay"
+  static let stretchesKey = "virtues.audio.stretches"
   static let overrideChangedNote = "com.virtues.audio.override-changed"
   static let kind = "com.virtues.app.recording"
+  static let widgetKind = "com.virtues.app.recording-widget"
+}
+
+/// Writes an override where the recorder reads it, tells the recorder, and
+/// redraws both surfaces. The control's and the widget's intents both come
+/// through here, so they cannot disagree about the format.
+enum OverrideStore {
+  static func set(_ mode: String, minutes: Int?) {
+    guard let d = UserDefaults(suiteName: RecordingShared.appGroup) else { return }
+    if let m = minutes {
+      d.set(Date().addingTimeInterval(Double(m) * 60).timeIntervalSince1970,
+            forKey: RecordingShared.overrideUntilKey)
+    } else {
+      d.removeObject(forKey: RecordingShared.overrideUntilKey)
+    }
+    d.set(mode, forKey: RecordingShared.overrideModeKey)
+    changed()
+  }
+
+  static func clear() {
+    guard let d = UserDefaults(suiteName: RecordingShared.appGroup) else { return }
+    d.removeObject(forKey: RecordingShared.overrideModeKey)
+    d.removeObject(forKey: RecordingShared.overrideUntilKey)
+    changed()
+  }
+
+  private static func changed() {
+    CFNotificationCenterPostNotification(
+      CFNotificationCenterGetDarwinNotifyCenter(),
+      CFNotificationName(RecordingShared.overrideChangedNote as CFString), nil, nil, true)
+    WidgetCenter.shared.reloadTimelines(ofKind: RecordingShared.widgetKind)
+    ControlCenter.shared.reloadControls(ofKind: RecordingShared.kind)
+  }
 }
 
 @main
 struct VirtuesControls: WidgetBundle {
   var body: some Widget {
     RecordingControl()
+    RecordingWidget()
   }
 }
 
@@ -70,6 +108,10 @@ struct RecordingState {
   /// What your hours and places say: "schedule", "place", or nil to record.
   let rule: String?
   let length: OverrideLength
+  /// The recorder's last good buffer, written at most once a minute.
+  var heartbeat: Date? = nil
+  /// Paused while a CarPlay route is up (the session is released for the car).
+  var carPlay = false
 
   /// The toggle's On: Virtues is keeping audio right now.
   var keeping: Bool {
@@ -91,9 +133,12 @@ struct RecordingState {
     // has cleared a finished override does not show it as running.
     if let u = until, now >= u { mode = nil }
     if mode == "record", rule == nil { mode = nil }
+    let beat = (d?.object(forKey: RecordingShared.heartbeatKey) as? NSNumber)
+      .map { Date(timeIntervalSince1970: $0.doubleValue) }
     return RecordingState(
       enabled: d?.bool(forKey: RecordingShared.enabledKey) ?? false,
-      override: mode, until: mode == nil ? nil : until, rule: rule, length: length)
+      override: mode, until: mode == nil ? nil : until, rule: rule, length: length,
+      heartbeat: beat, carPlay: d?.bool(forKey: RecordingShared.carPlayKey) ?? false)
   }
 }
 
@@ -173,40 +218,20 @@ struct SetRecordingIntent: SetValueIntent {
     let s = RecordingState.read(length: length)
     // Recording is off in the app: there is nothing to pause or record. The
     // control reloads after this and reads Off again.
-    guard s.enabled, let d = UserDefaults(suiteName: RecordingShared.appGroup) else {
-      return .result()
-    }
+    guard s.enabled else { return .result() }
     if value {
       if s.override == "silence" {
-        clear(d)
+        OverrideStore.clear()
       } else if s.rule != nil {
-        set(d, mode: "record")
+        OverrideStore.set("record", minutes: length.minutes)
       }
     } else {
       if s.override == "record" {
-        clear(d)
+        OverrideStore.clear()
       } else {
-        set(d, mode: "silence")
+        OverrideStore.set("silence", minutes: length.minutes)
       }
     }
-    CFNotificationCenterPostNotification(
-      CFNotificationCenterGetDarwinNotifyCenter(),
-      CFNotificationName(RecordingShared.overrideChangedNote as CFString), nil, nil, true)
     return .result()
-  }
-
-  private func set(_ d: UserDefaults, mode: String) {
-    if let m = length.minutes {
-      d.set(Date().addingTimeInterval(Double(m) * 60).timeIntervalSince1970,
-            forKey: RecordingShared.overrideUntilKey)
-    } else {
-      d.removeObject(forKey: RecordingShared.overrideUntilKey)
-    }
-    d.set(mode, forKey: RecordingShared.overrideModeKey)
-  }
-
-  private func clear(_ d: UserDefaults) {
-    d.removeObject(forKey: RecordingShared.overrideModeKey)
-    d.removeObject(forKey: RecordingShared.overrideUntilKey)
   }
 }

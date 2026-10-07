@@ -75,7 +75,7 @@
 	import ChapterLifelineLive from "$lib/components/chat/interview/ChapterLifelineLive.svelte";
 	import { CitationPanel } from "$lib/components/citations";
 	import { buildCitationContextFromParts } from "$lib/citations";
-	import type { Citation } from "$lib/types/Citation";
+	import type { Citation, CitationContext } from "$lib/types/Citation";
 	import UserMessage from "$lib/components/UserMessage.svelte";
 	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
 	import { toolStatus } from "$lib/components/chat/state/toolPresentation";
@@ -120,6 +120,7 @@
 	import InterviewClosedCard from "$lib/components/chat/interview/InterviewClosedCard.svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
+	import Show from "$lib/components/chat/show/Show.svelte";
 	import AppletProposalCard from '$lib/components/chat/AppletProposalCard.svelte';
 	import CompactionCheckpoint from "$lib/components/chat/CompactionCheckpoint.svelte";
 	import ContextViewPanel from "$lib/components/chat/ContextViewPanel.svelte";
@@ -1647,6 +1648,41 @@
 		}
 	}
 
+	/**
+	 * A reply button from a `show` call: its words go as the owner's next
+	 * message. Not through the composer, whose draft and staged files are the
+	 * person's and stay where they are.
+	 */
+	async function sendChoice(text: string): Promise<boolean> {
+		// The same recovery the composer makes: the next message clears an error.
+		if (chat.status === "error") chat.clearError();
+		if (chat.status !== "ready" || turnPhase.working) return false;
+		danglingTurn = false;
+		chatInstances.clearSubagents(conversationId);
+		isAwaitingResponse = true;
+		turnPhase.beginSend();
+		await tick();
+		scrollToBottom("smooth");
+		try {
+			await chat.sendMessage({ text });
+			setTimeout(turnWritten, 2000);
+			return true;
+		} catch (error) {
+			console.error("[sendChoice] Error:", error);
+			return false;
+		} finally {
+			isAwaitingResponse = false;
+			turnPhase.endSend();
+		}
+	}
+
+	/** The rows a `show` figure was drawn from, in the citation panel. */
+	function openToolRows(context: CitationContext, ref: string) {
+		const callId = ref.match(/^\/chat\/[^/]+\/tool\/([^/?#]+)$/)?.[1];
+		const citation = callId ? context.byToolCallId.get(callId) : undefined;
+		if (citation) openCitationPanel(citation);
+	}
+
 	// Track C: drain the queue when the assistant goes idle.
 	$effect(() => {
 		if (
@@ -2034,6 +2070,16 @@
 													updated={out.status === "updated"}
 												/>
 											{/if}
+											{:else if part.type === "tool-show" && (part as any).state !== "output-error"}
+												<!-- Drawn in the reply where the model called it. A failed
+												     one falls through to the error branch below. -->
+												<Show
+													part={part as any}
+													active={isLastMessage && !isStreaming}
+													working={isStreaming}
+													onChoose={sendChoice}
+													onOpenRows={(ref) => openToolRows(citationContext, ref)}
+												/>
 											{:else if part.type === "tool-code_interpreter"}
 												{@const toolPart = part as any}
 												{@const status = toolStatus(toolPart, isStreaming)}

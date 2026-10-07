@@ -322,8 +322,20 @@ visit and quietly switch the place rule off.
 - **Extension** (`gen/apple/VirtuesControls/`): one iOS 18 configurable
   `ControlWidget` toggle; its `SetValueIntent` writes the override and posts
   the note. Being a control, it can also go on the Lock Screen and the Action
-  button. A Home Screen widget (status plus 15 min / 1 hour / Resume) can
-  join the same extension later.
+  button.
+- **Widget** (same extension, `RecordingWidget.swift`): a log line, not a
+  dashboard. One EB Garamond sentence ("Recording since 7:02", "No word since
+  3:40"), times instead of counts ("Up to date through 3:38"; a stream hours
+  behind is named instead), today as a strip of kept / muted / gap with a now
+  mark, a live countdown while paused, and one action as plain text. Lock
+  Screen: the sentence, and a ring for the share of today kept or muted by
+  choice. It reads three things the app writes into the App Group: the
+  recorder's heartbeat and today's stretches (Audio.swift, MARK: Today's
+  stretches), and `uploads.json` from the reach plugin (`reach/src/widget.rs`).
+  A recorder that dies cannot report it, so every timeline carries a "No word
+  since" entry 45 minutes past the heartbeat. "Can't reach your server" needs
+  30 minutes with no answer at all: a box that answers "skipped" (busy with an
+  earlier batch) is reachable.
 
 ## Slices
 
@@ -367,7 +379,10 @@ the tap has surprised us once.
    minutes; let an hour run out and see recording resume with no tap; inside
    your hours, tap to record anyway and see it end at the window's close;
    pause, force-quit, relaunch, and confirm still paused; Stop in the app and
-   see the control read Off.
+   see the control read Off. Widget: add each size; pause from it and see
+   the countdown tick; force-quit the app and see "No word since" 45 minutes
+   later; turn on Airplane Mode for 30 minutes and see "Can't reach your
+   server".
 
 ## Decisions
 

@@ -51,7 +51,10 @@ pub extern "C" fn virtues_enqueue(stream: *const c_char, record_json: *const c_c
       .unwrap_or(false);
   if silent {
     return match outbox::enqueue_deferred(stream, record, 30 * 60) {
-      Ok(()) => 0,
+      Ok(()) => {
+        crate::widget::publish(false);
+        0
+      }
       Err(e) => enqueue_err_code(&e),
     };
   }
@@ -63,9 +66,27 @@ pub extern "C" fn virtues_enqueue(stream: *const c_char, record_json: *const c_c
       if stream == "microphone" {
         crate::nudge_drain();
       }
+      crate::widget::publish(false);
       0
     }
     Err(e) => enqueue_err_code(&e),
+  }
+}
+
+/// Hand Rust the App Group container, where the widget reads the upload
+/// snapshot (`widget.rs`). Called once from Swift at plugin init; a build
+/// without the group never calls it and the snapshot is simply not written.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated C string for the call's duration.
+#[no_mangle]
+pub extern "C" fn virtues_set_shared_dir(path: *const c_char) {
+  if path.is_null() {
+    return;
+  }
+  if let Ok(p) = unsafe { CStr::from_ptr(path) }.to_str() {
+    crate::widget::set_shared_dir(std::path::PathBuf::from(p));
+    crate::widget::publish(true);
   }
 }
 
@@ -255,7 +276,9 @@ pub(crate) fn keep_symbols() {
   let app_bg: extern "C" fn(i32) = virtues_app_background;
   let radio: extern "C" fn(i32) = virtues_radio_constrained;
   let push: extern "C" fn(*const c_char) -> i32 = virtues_report_push_address;
+  let shared: extern "C" fn(*const c_char) = virtues_set_shared_dir;
   std::hint::black_box(enqueue as *const ());
+  std::hint::black_box(shared as *const ());
   std::hint::black_box(drain as *const ());
   std::hint::black_box(recover as *const ());
   std::hint::black_box(app_bg as *const ());

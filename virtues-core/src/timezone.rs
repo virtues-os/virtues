@@ -130,6 +130,39 @@ pub async fn home_timezone_or_utc(pool: &PgPool, date: NaiveDate) -> String {
     .unwrap_or_else(|| "UTC".to_string())
 }
 
+/// Set the transaction's `TimeZone` to the owner's, so SQL someone else wrote
+/// reads dates the way the owner does: a bare `'2026-10-06'`, `::date`,
+/// `date_trunc('day', …)` and `to_char(…)` mean the owner's day and clock, not
+/// UTC's. Returns the zone it set.
+///
+/// `preferred` is the zone the caller already knows the owner is in (a chat's
+/// client clock); else `home_timezone`; else UTC. Each is checked against
+/// Postgres's own `pg_timezone_names` first, because `set_config` with a name
+/// it does not know raises, and a raise aborts the transaction the caller's
+/// query was about to run in.
+///
+/// Call it before any `SET LOCAL ROLE`: the profile is an `app_*` table, which
+/// the reader roles cannot see. `is_local`, so it reverts with the transaction
+/// and never reaches the next borrower of a pooled connection.
+pub async fn set_local_timezone(
+    conn: &mut sqlx::PgConnection,
+    preferred: Option<&str>,
+) -> Result<String, sqlx::Error> {
+    // One scan of pg_timezone_names (it reads the zone files, ~15ms), not one
+    // per candidate.
+    sqlx::query_scalar(
+        "SELECT set_config('TimeZone', COALESCE(( \
+             SELECT name FROM pg_timezone_names \
+              WHERE name = $1 \
+                 OR name = (SELECT home_timezone FROM app_user_profile LIMIT 1) \
+              ORDER BY name = $1 DESC NULLS LAST \
+              LIMIT 1), 'UTC'), true)",
+    )
+    .bind(preferred)
+    .fetch_one(conn)
+    .await
+}
+
 /// `date`'s local midnight to the next local midnight, in [`day_timezone`].
 pub async fn day_window(
     pool: &PgPool,
