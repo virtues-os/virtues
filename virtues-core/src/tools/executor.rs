@@ -82,6 +82,10 @@ pub struct ToolContext {
     /// asks before it runs, and `shell` runs at all. Set only by the chat
     /// handler — applet runs and subagents build their context without it.
     pub sudo: bool,
+    /// The IANA zone the owner's client is in, the one the prompt's clock is
+    /// written in. SQL tools read dates in it. `None` (an applet run, a
+    /// worker) falls back to `home_timezone`.
+    pub timezone: Option<String>,
 }
 
 impl Default for ToolContext {
@@ -99,6 +103,7 @@ impl Default for ToolContext {
             temporary: false,
             ghost_permissions: None,
             sudo: false,
+            timezone: None,
         }
     }
 }
@@ -473,7 +478,7 @@ impl ToolExecutor {
             "sql_query" => {
                 // A saved chat can keep a result as a file for code_interpreter.
                 let chat_id = context.chat_id.as_deref().filter(|_| !context.temporary);
-                self.sql_query.execute(arguments, chat_id).await
+                self.sql_query.execute(arguments, chat_id, context.timezone.as_deref()).await
             }
             "sql_write" => super::sql_write::execute(&self._pool, arguments).await,
             // The tool lists already keep it out of every other mode; this is
@@ -524,7 +529,7 @@ impl ToolExecutor {
                 publish::publish(&self._pool, &req).await
             }
             "read_asset" => self.execute_read_asset(arguments).await,
-            "show" => super::show::execute(&self.sql_query, arguments).await,
+            "show" => super::show::execute(&self.sql_query, arguments, context.timezone.as_deref()).await,
             name if crate::browser::TOOLS.contains(&name) => {
                 Ok(crate::browser::run_tool(name, arguments).await)
             }
