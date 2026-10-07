@@ -98,15 +98,15 @@ pub fn requested_embed_dim() -> Option<usize> {
 /// is to *verify* it, not to supply it.
 ///
 /// `None` means the index has never been built and has no geometry yet — which is
-/// the truth, and better than asserting a model we never ran.
-pub async fn index_dim(pool: &sqlx::PgPool) -> Option<usize> {
-    sqlx::query_scalar::<_, Option<i32>>("SELECT dim FROM search_index_meta WHERE singleton")
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()
-        .flatten()
-        .map(|d| d as usize)
+/// the truth, and better than asserting a model we never ran. A failed read is an
+/// error, not `None`: bringup takes `None` as "nothing to size yet".
+pub async fn index_dim(pool: &sqlx::PgPool) -> Result<Option<usize>> {
+    let dim: Option<Option<i32>> =
+        sqlx::query_scalar("SELECT dim FROM search_index_meta WHERE singleton")
+            .fetch_optional(pool)
+            .await
+            .context("reading the index's recorded width")?;
+    Ok(dim.flatten().map(|d| d as usize))
 }
 
 // EmbeddingGemma's prompt formats were consts HERE, and — worse — the DEFAULT for

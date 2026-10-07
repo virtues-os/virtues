@@ -133,7 +133,10 @@ impl Database {
     /// again before writing a vector. Refuses to resize a populated index: that is a
     /// re-embed, and `virtues reindex` owns it.
     pub(crate) async fn ensure_embedding_dims(&self) -> Result<()> {
-        let Some(target) = crate::search::embedder::index_dim(&self.pool).await else {
+        let Some(target) = crate::search::embedder::index_dim(&self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("{e:#}")))?
+        else {
             // Never embedded. Nothing to match yet.
             return Ok(());
         };

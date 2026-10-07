@@ -75,6 +75,22 @@ pub(crate) async fn estimate(pool: &PgPool) -> Result<Option<String>> {
 /// the wipe clears it. The re-embed's first step records the current model's
 /// width and sizes the columns to it, before any vector is written.
 pub(crate) async fn rebuild(pool: &PgPool) -> Result<(u64, u32, u32)> {
+    // 0. Take the indexer lock, and keep it until the re-embed is done. If the
+    //    box's own indexer ran between the wipe and the re-embed, the re-embed
+    //    would skip and report nothing embedded, and its indexer could record
+    //    the geometry first.
+    let lock = crate::search::indexer::IndexerLock::try_acquire(pool)
+        .await
+        .map_err(|e| Error::Database(format!("taking the indexer lock: {e:#}")))?
+        .ok_or_else(|| {
+            Error::Other(
+                "the box's indexer is running right now. Nothing was wiped. Wait for it \
+                 to finish and run this again, or stop the server first \
+                 (sudo systemctl stop virtues)."
+                    .into(),
+            )
+        })?;
+
     // 1. Wipe the derived index, its recorded geometry and the event scores
     //    (source untouched).
     println!("→ wiping the derived index (vectors + BM25)…");
@@ -83,9 +99,10 @@ pub(crate) async fn rebuild(pool: &PgPool) -> Result<(u64, u32, u32)> {
     // 2. Re-embed from source, inline, to completion (drains the backlog; caps
     //    at the indexer's internal ceiling, after which a restart continues it).
     println!("→ re-embedding from source (this can take a while)…");
-    let embedded = crate::search::indexer::run_embedding_job(pool)
+    let embedded = crate::search::indexer::drain(pool, &lock)
         .await
         .map_err(|e| Error::Other(format!("re-embed: {e}")))?;
+    drop(lock);
 
     // 3. Put the event scores back. The wipe nulled `wiki_events.embedding` and
     //    every score standing on it, and the nightly cron rescores only the day
@@ -167,5 +184,24 @@ mod tests {
             .await
             .expect("the re-embed writes at the new model's width");
         assert_eq!(column_types(&pool).await, ["halfvec(768)"; 3]);
+    }
+
+    /// With the box's indexer mid-run, a rebuild refuses before it wipes
+    /// anything, rather than wiping and then finding its re-embed locked out.
+    #[sqlx::test]
+    async fn rebuild_refuses_while_the_indexer_runs(pool: PgPool) {
+        insert_vector(&pool, 256).await.unwrap();
+        let _indexer = crate::search::indexer::IndexerLock::try_acquire(&pool)
+            .await
+            .unwrap()
+            .expect("nothing else holds the lock in a fresh database");
+
+        let err = rebuild(&pool).await.expect_err("the indexer holds the lock");
+        assert!(err.to_string().contains("indexer is running"), "{err}");
+        let chunks: i64 = sqlx::query_scalar("SELECT count(*) FROM search_embeddings")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(chunks, 1, "nothing was wiped");
     }
 }
