@@ -10,7 +10,8 @@
     "externalBin": [],
     "resources": [],
     "iOS": {
-      "developmentTeam": "4YV9K677RY"
+      "developmentTeam": "4YV9K677RY",
+      "minimumSystemVersion": "16.4"
     }
   },
   "app": {
