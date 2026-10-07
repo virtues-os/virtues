@@ -8,13 +8,22 @@
 	A click parks the playhead and takes the map there (`onpick`). The inspector
 	follows the playhead (main.js:1607-1615): the latest-begun section holding
 	it is where you are, the latest-begun row holding it is what's happening.
+
+	"Help Virtues out" lives here too, where the day is read: a stay whose
+	place Virtues can't name carries its question under it, and the places on
+	other days are one row at the top, "N places to name on other days ·
+	Review", opening them one at a time in this column (ReviewCard).
 -->
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { InspectorPick as Pick, InspectorRow, InspectorSection } from '$lib/timeline/inspector';
 	import { lineAt, lineTime, rowLines } from '$lib/timeline/transcript';
 	import TextAction from '$lib/components/TextAction.svelte';
+	import ReviewAsk from '$lib/components/timeline/ReviewAsk.svelte';
+	import ReviewCard from '$lib/components/timeline/ReviewCard.svelte';
 	import { getNearbyPlaces, type NearbyPlace } from '$lib/wiki/api';
+	import { askFor, type PlaceCandidate } from '$lib/timeline/review';
+	import type { ReviewState } from '$lib/timeline/reviewState.svelte';
 
 	let {
 		sections,
@@ -28,6 +37,11 @@
 		onrole,
 		homeSet = false,
 		onmerge,
+		review,
+		dayPlaces = [],
+		onday,
+		onfocus,
+		onnames,
 	}: {
 		sections: InspectorSection[];
 		zone: string;
@@ -47,6 +61,18 @@
 		onrole?: (placeId: string, role: 'home' | 'work') => Promise<boolean>;
 		/** Home is already set somewhere: choosing it here replaces it. */
 		homeSet?: boolean;
+		/** "Help Virtues out": the questions, the answers and Undo. */
+		review?: ReviewState;
+		/** The places of the day on show; the questions about the rest are
+		 *  the ones Review asks. */
+		dayPlaces?: string[];
+		/** Review's "See That Day". */
+		onday?: (slug: string) => void;
+		/** Review's place and the named places it offers, for the map. */
+		onfocus?: (at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null) => void;
+		/** The named places the question under the current stay offers,
+		 *  labelled on the map. */
+		onnames?: (shown: PlaceCandidate[]) => void;
 		/** Fold an unnamed place into a named one near it. */
 		onmerge: (placeId: string, into: NearbyPlace) => Promise<boolean>;
 	} = $props();
@@ -121,6 +147,29 @@
 	// Sections and rows are in start order, so the last one holding the
 	// playhead is the latest begun; the highlight never climbs back up.
 	const curSection = $derived(sections.findLastIndex(holds));
+
+	// "Help Virtues out": Review over the other days' places, or the day's
+	// questions under their stays (each place asked under its first stay).
+	let reviewing = $state(false);
+	const elsewhere = $derived(review ? review.elsewhere(dayPlaces) : []);
+	const askedAt = $derived.by(() => {
+		const first = new Map<string, number>();
+		sections.forEach((s, i) => {
+			if (s.kind === 'place' && s.placeId && review?.byPlace.has(s.placeId) && !first.has(s.placeId)) first.set(s.placeId, i);
+		});
+		return first;
+	});
+	// The question under the current stay labels the places it offers.
+	$effect(() => {
+		const id = sections[curSection]?.placeId;
+		const q = !reviewing && id ? review?.byPlace.get(id) : undefined;
+		onnames?.(q ? askFor(q).shown : []);
+	});
+	// Another day on show: back to its list.
+	$effect(() => {
+		void dayPlaces;
+		untrack(() => (reviewing = false));
+	});
 	const curRow = $derived(
 		sections
 			.flatMap((s) => s.rows)
@@ -236,10 +285,22 @@
 	});
 </script>
 
-{#if sections.length}
+{#if sections.length || reviewing || elsewhere.length}
 	<section class="inspector" bind:this={inspector} aria-label="The day, stay by stay">
+		{#if reviewing && review}
+			<div class="scroll">
+				<ReviewCard {review} questions={elsewhere} onback={() => (reviewing = false)} onday={(d) => onday?.(d)} onfocus={(at) => onfocus?.(at)} />
+			</div>
+		{:else}
+		{#if elsewhere.length}
+			<div class="others">
+				<span>{elsewhere.length} {elsewhere.length === 1 ? 'place' : 'places'} to name on other days</span>
+				<TextAction onclick={() => (reviewing = true)}>Review</TextAction>
+			</div>
+		{/if}
 		<div class="scroll" bind:this={scroller}>
 			{#each sections as sec, i (sec.kind + sec.s)}
+				{@const asked = review && sec.placeId && askedAt.get(sec.placeId) === i ? review.byPlace.get(sec.placeId) : undefined}
 				<div class="group" class:bare={!sec.rows.length} class:cur={i === curSection}>
 					<button class="sec" onclick={() => pickSection(i, sec)}>
 						<span class="hd">
@@ -255,7 +316,11 @@
 							<span class="note">From Health on your iPhone</span>
 						{/if}
 					</button>
-					{#if sec.kind === 'place' && !sec.named && sec.placeId && !sec.placeId.startsWith('visit:')}
+					{#if asked && review && !review.pointing}
+						<div class="inline-ask"><ReviewAsk q={asked} {review} compact /></div>
+					{:else if review?.undo && review.undo.at === sec.placeId}
+						<p class="saved">{review.undo.said} · <TextAction inline onclick={() => void review.undoLast()}>Undo</TextAction></p>
+					{:else if sec.kind === 'place' && !sec.named && sec.placeId && !sec.placeId.startsWith('visit:') && !(review && review.byPlace.has(sec.placeId))}
 						{@const placeId = sec.placeId}
 						{#if naming === placeId}
 							<form class="name-form" onsubmit={(e) => (e.preventDefault(), saveName(placeId))}>
@@ -330,6 +395,7 @@
 				</div>
 			{/each}
 		</div>
+		{/if}
 	</section>
 {/if}
 
@@ -591,6 +657,28 @@
 		flex-direction: column;
 		gap: 8px;
 		padding: 0 16px 12px 32px;
+	}
+	/* "Help Virtues out" in the list: the other days' row, a question under
+	   its stay, and an answer's Undo where the question was. */
+	.others {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 12px 16px;
+		border-bottom: 1px solid var(--color-border);
+		background: color-mix(in srgb, var(--color-primary) 6%, transparent);
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+	.inline-ask {
+		padding: 0 16px 12px 32px;
+	}
+	.saved {
+		margin: 0;
+		padding: 0 16px 12px 32px;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
 	}
 	.same,
 	.roles {

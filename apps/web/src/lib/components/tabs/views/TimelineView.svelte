@@ -32,7 +32,7 @@
 	import TimelineInspector from '$lib/components/timeline/TimelineInspector.svelte';
 	import TimelineScrubber from '$lib/components/timeline/TimelineScrubber.svelte';
 	import TimelineMonth from '$lib/components/timeline/TimelineMonth.svelte';
-	import TimelineReview from '$lib/components/timeline/TimelineReview.svelte';
+	import { ReviewState } from '$lib/timeline/reviewState.svelte';
 	import { focusZoom, sendAnswer, type PlaceCandidate } from '$lib/timeline/review';
 	import Icon from '$lib/components/Icon.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
@@ -120,7 +120,6 @@
 	/** The pane's own width (split view, a small window), which decides where
 	 *  the top cards go. */
 	let paneW = $state(0);
-	let paneH = $state(0);
 	/** The date card and its month float on the map; its measures place
 	 *  everything else. */
 	let dateWrap = $state<HTMLElement | null>(null);
@@ -128,16 +127,9 @@
 	let cardH = $state(0);
 	let scrubH = $state(0);
 	let monthOpen = $state(false);
-	/** "Help Virtues out" is open; it and the month take turns under the date card. */
-	let reviewOpen = $state(false);
-	/** The day's places, which "Help Virtues out" asks about first. */
+	/** The day's places: "Help Virtues out" asks about them under their stays,
+	 *  and Review about the rest. */
 	let dayPlaces = $state<string[]>([]);
-	$effect(() => {
-		if (monthOpen) untrack(() => (reviewOpen = false));
-	});
-	$effect(() => {
-		if (reviewOpen) untrack(() => (monthOpen = false));
-	});
 	/** The bottom of the date card, for the map's framing and clear area. */
 	const topChrome = $derived(16 + cardH);
 	/** A pane too narrow for the list beside the map (a phone, a split view)
@@ -697,33 +689,37 @@
 	 *  about (main.js:2209-2214): the place is the subject then. */
 	const TRACK_OPACITY = { 'track-run': [0.55, 0.1], 'track-bridge': [0.4, 0.08], 'track-drive': [0.85, 0.1] } as const;
 	let glow: Marker | null = null;
-	/** Pointing to Home or Work on the map, after a "no" in "Help Virtues out":
-	 *  a mode of its own, a banner at the top and one pin that each tap moves. */
-	let pointing = $state<'home' | 'work' | null>(null);
-	let tapped = $state<{ lat: number; lon: number } | null>(null);
-	let tapMark: Marker | null = null;
-	let review = $state<ReturnType<typeof TimelineReview> | null>(null);
-	/** Home is set somewhere (from the review), for the stay list. */
-	let homeSet = $state(false);
+	/** "Help Virtues out": the questions, answers and Undo, shared by the
+	 *  day's list and its Review. An answer re-reads the day's titles. */
+	const review = new ReviewState(() => void refreshTitles());
+	onMount(() => void review.load());
 	/** A stay's name field made its place Home or Work. */
 	async function setRole(placeId: string, role: 'home' | 'work'): Promise<boolean> {
 		try {
 			await sendAnswer(placeId, { kind: role });
-			await Promise.all([refreshTitles(), review?.load()]);
+			await Promise.all([refreshTitles(), review.load()]);
 			return true;
 		} catch (e) {
 			console.warn('[Timeline] setting Home or Work failed', e);
 			return false;
 		}
 	}
-	function setPointing(role: 'home' | 'work' | null) {
-		pointing = role;
-		tapped = null;
-		const m = map;
-		if (m) m.getCanvas().style.cursor = role ? 'crosshair' : '';
-		tapMark?.remove();
-		tapMark = null;
-	}
+	/** Pointing to Home or Work on the map, after a "no": a mode of its own,
+	 *  a banner at the top and one pin that each tap moves. */
+	const pointing = $derived(review.pointing?.role ?? null);
+	let tapped = $state<{ lat: number; lon: number } | null>(null);
+	let tapMark: Marker | null = null;
+	$effect(() => {
+		const role = pointing;
+		untrack(() => {
+			tapped = null;
+			tapMark?.remove();
+			tapMark = null;
+			const m = map;
+			if (m) m.getCanvas().style.cursor = role ? 'crosshair' : '';
+			if (role) focusPlace(null);
+		});
+	});
 	function tapAt(lat: number, lon: number) {
 		const m = map;
 		if (!m || !maplibre) return;
@@ -741,7 +737,7 @@
 	/** Take the map to the place "Help Virtues out" is asking about, framed so
 	 *  the named places it offers read, under a glowing pin, with the day's
 	 *  path and marks faded (main.js:2209-2221); `null` gives the day back. */
-	function focusPlace(at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[]; cardRight: number } | null) {
+	function focusPlace(at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null) {
 		const m = map;
 		if (!m || !maplibre || !m.getLayer('track-run')) return;
 		glow?.remove();
@@ -757,15 +753,17 @@
 		const el = document.createElement('div');
 		el.className = 'tl-glow';
 		glow = new maplibre.Marker({ element: el, anchor: 'center' }).setLngLat([at.lon, at.lat]).addTo(m);
-		// Centred in the map left clear of the card, the inspector and the
-		// scrubber.
-		const pad = fitPad(m);
-		const cardEdge = at.cardRight - m.getContainer().getBoundingClientRect().left + 16;
-		m.easeTo({
-			center: [at.lon, at.lat],
-			zoom: focusZoom(at.lat, at.reachM, m.getZoom()),
-			padding: { ...pad, left: Math.max(pad.left, cardEdge) },
-			duration: 820,
+		// Centred in the map left clear of the inspector and the scrubber.
+		m.easeTo({ center: [at.lon, at.lat], zoom: focusZoom(at.lat, at.reachM, m.getZoom()), padding: fitPad(m), duration: 820 });
+	}
+
+	/** The named places a question under the current stay offers, labelled
+	 *  on the map without moving it (main.js:916-924). */
+	function showNames(shown: PlaceCandidate[]) {
+		const names = map?.getSource('review-names') as GeoJSONSource | undefined;
+		names?.setData({
+			type: 'FeatureCollection',
+			features: shown.map((c) => ({ type: 'Feature', properties: { name: c.name }, geometry: { type: 'Point', coordinates: [c.lon, c.lat] } })),
 		});
 	}
 
@@ -795,10 +793,7 @@
 		if (e.key === 'Escape') {
 			if (pointing) {
 				e.preventDefault();
-				review?.cancelPointing();
-			} else if (reviewOpen) {
-				e.preventDefault();
-				reviewOpen = false;
+				review.cancelPointing();
 			} else if (monthOpen) {
 				e.preventDefault();
 				monthOpen = false;
@@ -1268,7 +1263,6 @@
 	class:narrow
 	bind:this={root}
 	bind:clientWidth={paneW}
-	bind:clientHeight={paneH}
 	style="{colourVars()}; --top-chrome: {topChrome}px; --scrub-h: {scrubH}px; --inspector-top: {inspectorLow ? topChrome + 12 : 16}px"
 >
 	<div class="timeline-map" bind:this={container}></div>
@@ -1286,17 +1280,6 @@
 			</div>
 			<button class="date-title" type="button" title="Back to the whole day" onclick={resetView}>{title}</button>
 		</div>
-		<TimelineReview
-			bind:this={review}
-			bind:open={reviewOpen}
-			bind:homeSet
-			onpoint={setPointing}
-			{dayPlaces}
-			room={Math.max(240, paneH - topChrome - 56 - scrubH - 36)}
-			onfocus={focusPlace}
-			onday={(slug) => (date = slug)}
-			onanswered={() => void refreshTitles()}
-		/>
 		{#if monthOpen}
 			<TimelineMonth
 				{date}
@@ -1318,17 +1301,22 @@
 			</p>
 			<p class="pointing-sub">{tapped ? 'Tap again to move the pin.' : 'Zoom or move the map to find it.'}</p>
 			<div class="pointing-actions">
-				<button class="pointing-btn" type="button" onclick={() => review?.cancelPointing()}>Cancel</button>
-				<button class="pointing-btn save" type="button" disabled={!tapped} onclick={() => tapped && review?.savePointed(tapped)}>Save Here</button>
+				<button class="pointing-btn" type="button" onclick={() => review.cancelPointing()}>Cancel</button>
+				<button class="pointing-btn save" type="button" disabled={!tapped} onclick={() => tapped && review.savePointed(tapped)}>Save Here</button>
 			</div>
-			<button class="pointing-skip" type="button" onclick={() => review?.skipPointing()}>Skip - don't ask again</button>
+			<button class="pointing-skip" type="button" onclick={() => review.skipPointing()}>Skip - don't ask again</button>
 		</div>
 	{/if}
 
 	<TimelineInspector bind:this={inspector} sections={shownSections}
 		onname={namePlace}
 		onrole={setRole}
-		{homeSet}
+		homeSet={review.homeSet}
+		{review}
+		{dayPlaces}
+		onday={(slug) => (date = slug)}
+		onfocus={focusPlace}
+		onnames={showNames}
 		onmerge={mergeInto}
 		{zone}
 		{playT}
