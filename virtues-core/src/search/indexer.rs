@@ -100,29 +100,45 @@ pub(crate) async fn reconcile_index_geometry(pool: &PgPool, model: &str, dim: i3
     Ok(())
 }
 
-/// Run one cycle of the embedding indexer.
+/// The indexer's single-flight lock. Whoever holds it is the only writer of the
+/// index: a 15-min cron tick landing mid-drain must no-op cleanly, not start a
+/// second indexer against the same tables, and `virtues reindex` must not have
+/// the box's indexer write between its wipe and its re-embed.
+///
+/// A session advisory lock on a connection detached from the pool. Dropping this
+/// drops the connection, which closes it and releases the lock on every exit
+/// path (including `?` early returns).
+pub(crate) struct IndexerLock(#[allow(dead_code)] sqlx::PgConnection);
+
+impl IndexerLock {
+    /// The lock, or `None` if another run holds it.
+    pub(crate) async fn try_acquire(pool: &PgPool) -> Result<Option<Self>> {
+        let mut conn = pool.acquire().await?.detach();
+        let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(INDEXER_LOCK_KEY)
+            .fetch_one(&mut conn)
+            .await?;
+        Ok(acquired.then_some(Self(conn)))
+    }
+}
+
+/// Run one cycle of the embedding indexer, unless another run is already going.
+pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
+    let Some(lock) = IndexerLock::try_acquire(pool).await? else {
+        tracing::info!("Embedding indexer: another run holds the advisory lock; skipping");
+        return Ok(0);
+    };
+    drain(pool, &lock).await
+}
+
+/// Index everything not yet indexed, for a caller holding the indexer lock.
 ///
 /// Drain semantics: for each searchable ontology we loop batches back-to-back
 /// until a short batch signals the backlog is empty (or [`MAX_DRAIN_DURATION`]
 /// trips). One invocation therefore drains an entire onboarding backlog in
 /// hours instead of trickling `BATCH_SIZE` records per 15-minute cron tick.
 /// No sleep between batches — the embed sidecar is the natural rate limiter.
-pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
-    // Single-flight guard: a 15-min cron tick landing mid-drain must no-op
-    // cleanly, not start a second indexer against the same tables. Session
-    // advisory lock on a connection detached from the pool — dropping the
-    // detached connection closes it, which releases the lock on every exit
-    // path (including `?` early returns).
-    let mut lock_conn = pool.acquire().await?.detach();
-    let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
-        .bind(INDEXER_LOCK_KEY)
-        .fetch_one(&mut lock_conn)
-        .await?;
-    if !acquired {
-        tracing::info!("Embedding indexer: another run holds the advisory lock; skipping");
-        return Ok(0);
-    }
-
+pub(crate) async fn drain(pool: &PgPool, _lock: &IndexerLock) -> Result<u64> {
     let embedder = get_embedder().await?;
 
     // Before writing a single vector: is this the model the index was built with?
@@ -314,13 +330,6 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
     } else {
         tracing::debug!("Embedding indexer: no new records to embed");
     }
-
-    // Explicit unlock is belt-and-braces; closing the detached connection
-    // (dropped below) releases the session lock regardless.
-    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
-        .bind(INDEXER_LOCK_KEY)
-        .execute(&mut lock_conn)
-        .await;
 
     Ok(total_embedded)
 }

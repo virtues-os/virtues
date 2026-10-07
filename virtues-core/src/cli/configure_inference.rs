@@ -33,7 +33,9 @@ pub async fn run(reembed: bool, yes: bool) -> Result<()> {
     // constant, not the env. The index is the thing that remembers. `None` means
     // it has never been built, so there is no width to disagree with.
     let db = crate::database::Database::new(&database_url)?;
-    let stored_dim = crate::search::embedder::index_dim(db.pool()).await;
+    let stored_dim = crate::search::embedder::index_dim(db.pool())
+        .await
+        .map_err(|e| Error::Database(format!("{e:#}")))?;
     let dim_label = stored_dim.map(|d| d.to_string()).unwrap_or_else(|| "—".into());
 
     println!("→ probing the configured embedding endpoint…");
