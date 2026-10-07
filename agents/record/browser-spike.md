@@ -120,9 +120,32 @@ Whatever the cause, the shipped shape must have all three fixes:
 - Shared memory left in `/dev/shm`, where the cgroup is charged for it.
 - The user agent set at launch.
 
+## The live view failed the owner's eye test
+
+Later the same day the owner opened the live view to log in to X. It ran
+`dragon2` (on office Wi-Fi) → Tailscale's DERP relay in Dallas → a Mac. The
+verdict: about 2 fps, blurry, unusable. Nothing about the box can fix it:
+
+- The source renders at 1× in software.
+- Frames are JPEG at quality 60.
+- CDP screencast tops out at a few frames per second. Steel left it for
+  WebRTC H.264 for exactly this reason.
+- On a relayed path every frame and every click crosses the internet twice.
+
+Clicks did land, but X's "Continue with Apple" and "Continue with Google" open
+popup tabs that a single-tab stream never shows. A live view has to follow
+`Target.targetCreated` popups or OAuth looks dead.
+
+**Outcome: the browser the owner sees runs on the owner's device.** That is
+where Claude's desktop browser, Atlas, Comet and Dia run it. The box engine
+above remains the option for unattended browsing that nobody watches, such as
+an applet. **Do not rebuild a streamed tab as the owner's browser.**
+
 ## What it suggests
 
-These are directions for a plan, not decisions.
+These are directions for a plan, not decisions. The live-tab and source-login
+items below are superseded by the verdict above; the box engine stands only
+for unattended work.
 
 - **One engine, on the box.** A pinned Chrome for Testing arm64 build, fetched
   and hash-checked by the installer, runs as a sidecar in the shape of the door
