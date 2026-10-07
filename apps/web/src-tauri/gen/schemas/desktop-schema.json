@@ -567,6 +567,24 @@
           "markdownDescription": "Enables the browser_login command without any pre-configured scope."
         },
         {
+          "description": "Enables the browser_pane_bounds command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-pane-bounds",
+          "markdownDescription": "Enables the browser_pane_bounds command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_pane_go command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-pane-go",
+          "markdownDescription": "Enables the browser_pane_go command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_pane_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-pane-open",
+          "markdownDescription": "Enables the browser_pane_open command without any pre-configured scope."
+        },
+        {
           "description": "Enables the bundle_boot_ok command without any pre-configured scope.",
           "type": "string",
           "const": "allow-bundle-boot-ok",
@@ -739,6 +757,24 @@
           "type": "string",
           "const": "deny-browser-login",
           "markdownDescription": "Denies the browser_login command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_pane_bounds command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-pane-bounds",
+          "markdownDescription": "Denies the browser_pane_bounds command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_pane_go command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-pane-go",
+          "markdownDescription": "Denies the browser_pane_go command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_pane_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-pane-open",
+          "markdownDescription": "Denies the browser_pane_open command without any pre-configured scope."
         },
         {
           "description": "Denies the bundle_boot_ok command without any pre-configured scope.",

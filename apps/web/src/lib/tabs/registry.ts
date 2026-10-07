@@ -9,6 +9,16 @@
 
 import { eager, type ViewLoader } from './lazy';
 import type { TabType, ParsedRoute } from './types';
+
+/** A Browser tab is named for the site it shows. */
+export function browserLabel(url: string | null): string {
+	if (!url) return 'Browser';
+	try {
+		return new URL(url).hostname.replace(/^www\./, '') || 'Browser';
+	} catch {
+		return 'Browser';
+	}
+}
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
 import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 
@@ -16,6 +26,7 @@ import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 // tab of that kind opens. Chat and home stay eager — a session opens on them.
 import ChatViewEager from '$lib/components/tabs/views/ChatView.svelte';
 const ChatView: ViewLoader = eager(ChatViewEager);
+const BrowserView: ViewLoader = () => import('$lib/components/tabs/views/BrowserView.svelte');
 const HistoryView: ViewLoader = () => import('$lib/components/tabs/views/HistoryView.svelte');
 const WikiView: ViewLoader = () => import('$lib/components/tabs/views/WikiView.svelte');
 const WikiDetailView: ViewLoader = () => import('$lib/components/tabs/views/WikiDetailView.svelte');
@@ -130,6 +141,21 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	// ========================================================================
 	// CHAT HISTORY: /chat-history
 	// ========================================================================
+	// The in-app browser (Mac). One native view; the tab is where it shows.
+	browser: {
+		match: (path) => path === '/browser',
+		parse: (_path, params) => ({
+			type: 'browser',
+			label: browserLabel(params.get('url')),
+			icon: 'ri:global-line',
+		}),
+		serialize: () => 'browser',
+		deserialize: () => '/browser',
+		icon: 'ri:global-line',
+		defaultLabel: 'Browser',
+		component: BrowserView,
+	},
+
 	'chat-history': {
 		match: (path) => path === '/chat-history',
 		parse: () => ({
@@ -878,6 +904,7 @@ export function parseRoute(route: string): ParsedRoute {
 	// Note: Order matters for overlapping patterns
 	const orderedTypes: TabType[] = [
 		// Specific patterns first
+		'browser', // /browser?url=…
 		'source', // Source list and detail views
 		'applets', // Applets list page (must come before singular 'applet')
 		'applet-view', // Applet full-page face (must come before 'applet')

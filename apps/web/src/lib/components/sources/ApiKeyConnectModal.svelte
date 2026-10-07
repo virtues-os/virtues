@@ -15,7 +15,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import { Button, Input } from '$lib';
 	import { apikeyComplete, type SourceCatalogItem } from '$lib/api/client';
-	import { browserLogin, canBrowserLogin, type JarCookie } from '$lib/tauri/bridge';
+	import { browserLogin, canBrowserLogin, canBrowserPane, type JarCookie } from '$lib/tauri/bridge';
 
 	interface Props {
 		source: SourceCatalogItem | null;
@@ -49,6 +49,9 @@
 	/** Showing the paste fields rather than the login button. */
 	let pasting = $state(false);
 	let waitingForLogin = $state(false);
+	/** The login opens in the Browser pane beside the app (Mac), not a window.
+	 *  This modal steps aside while it does: a modal would cover the pane. */
+	let inPane = $state(false);
 
 	$effect(() => {
 		if (open && source) {
@@ -63,6 +66,7 @@
 				void canBrowserLogin().then((ok) => {
 					if (source?.id === forSource) loginAvailable = ok;
 				});
+				void canBrowserPane().then((ok) => (inPane = ok));
 			}
 		}
 	});
@@ -141,7 +145,7 @@
 	}
 </script>
 
-<Modal {open} {onClose} title={source ? `${credentialId ? 'Reconnect' : 'Connect'} ${source.name}` : 'Connect source'}>
+<Modal open={open && !(waitingForLogin && inPane)} {onClose} title={source ? `${credentialId ? 'Reconnect' : 'Connect'} ${source.name}` : 'Connect source'}>
 	{#if source}
 		<div class="apikey-form">
 			{#if source.description}
@@ -150,8 +154,8 @@
 
 			{#if loginAvailable && !pasting}
 				<p class="muted">
-					Log in to {source.name} in a window here. Your server keeps the session in its
-					vault, and nothing is copied by hand.
+					Log in to {source.name} {inPane ? 'in the browser beside this view' : 'in a window here'}.
+					Your server keeps the session in its vault, and nothing is copied by hand.
 				</p>
 				{#if waitingForLogin}
 					<p class="muted">Finish logging in in the window that opened.</p>

@@ -11,7 +11,8 @@
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import TabContent from "./TabContent.svelte";
 	import { mountedTabs, touch } from "$lib/tabs/keepAlive";
-	import { untrack } from "svelte";
+	import { onMount, untrack } from "svelte";
+	import { listenForBrowserOpen } from "./browserPaneListener";
 	import ChatView from "./views/ChatView.svelte";
 
 	let isResizing = $state(false);
@@ -147,6 +148,14 @@
 		});
 		rightDropItems = [];
 	}
+
+	// The assistant's browser_open, and "Log in to X", open the Browser beside
+	// the current view (Mac).
+	onMount(() => {
+		let off: (() => void) | undefined;
+		void listenForBrowserOpen().then((f) => (off = f));
+		return () => off?.();
+	});
 </script>
 
 <svelte:window on:mousemove={handleMouseMove} on:mouseup={handleMouseUp} />
