@@ -295,6 +295,10 @@ async fn execute_single(
         Duration::from_secs(240)
     } else if tool_call.name == "generate_image" {
         Duration::from_secs(120)
+    } else if tool_call.name == "browser_open" {
+        // A page load on the owner's Mac, which `browser::run_tool` waits up
+        // to 45s for. Sit past it so the tool reports its own timeout.
+        Duration::from_secs(50)
     } else if tool_call.name == "code_interpreter" {
         // Its schema offers the model a timeout of up to 120s and defaults to
         // 60. Under the 30s default the DEFAULT was already unreachable: any

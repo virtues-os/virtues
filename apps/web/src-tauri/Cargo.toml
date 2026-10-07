@@ -68,7 +68,7 @@ tauri-plugin-single-instance = "2"
 # unlike anything that watches modifiers on their own. See `summon` in main.rs.
 tauri-plugin-global-shortcut = "2"
 # The login window's wait loop (browser.rs).
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "sync"] }
 dirs = "5"
 # Updater endpoints are typed as Url; needed to swap channels at runtime.
 url = "2"
@@ -96,6 +96,20 @@ tauri-plugin-eventkit = { path = "../plugins/eventkit" }
 tauri-plugin-contacts = { path = "../plugins/contacts" }
 tauri-plugin-finance = { path = "../plugins/finance" }
 tauri-plugin-audio = { path = "../plugins/audio" }
+
+# macOS-only: the owner's browser as the assistant's hands (browser_host.rs).
+# wry already links these; this crate names the pieces it calls itself — the
+# webview's JS in an isolated world, AppKit events into the view, snapshots —
+# plus a websocket client for the box's `/ws/browser`.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSDictionary", "NSError", "NSData", "NSGeometry", "NSValue", "NSObject"] }
+objc2-app-kit = { version = "0.3", features = ["NSEvent", "NSResponder", "NSView", "NSWindow", "NSGraphicsContext", "NSImage", "NSImageRep", "NSBitmapImageRep"] }
+objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKContentWorld", "WKFrameInfo", "WKSnapshotConfiguration", "WKPreferences", "WKWebViewConfiguration", "block2", "objc2-app-kit"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+base64 = "0.22"
 
 # Mobile-only: the in-process reach plugin (pair + iroh loopback). This is the
 # whole Android app — reach + the webview — and the one plugin that must build
