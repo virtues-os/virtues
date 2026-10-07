@@ -424,16 +424,21 @@ public final class AudioRecorder: NSObject {
   // Group's defaults. The control writes it and posts `overrideChangedNote`;
   // this process re-reads on that note, and again on every event-driven
   // ensureRecording, so a note posted while we were suspended lands on the
-  // next wake. The recorder mirrors back what the control needs to label
-  // itself: whether recording is on in the app, and what the rules say.
+  // next wake. The recorder mirrors back what the control and the widget
+  // need to label themselves: whether recording is on in the app, what the
+  // rules say, a CarPlay pause, and a heartbeat (the last good buffer, at
+  // most once a minute) the widget uses to notice a recorder that died.
   // These names must match VirtuesControls/RecordingControl.swift.
   static let appGroup = "group.com.virtues.app"
   static let overrideModeKey = "virtues.audio.override"  // "silence" | "record"
   static let overrideUntilKey = "virtues.audio.overrideUntil"  // epoch s; absent = open
   static let enabledMirrorKey = "virtues.audio.enabled"
   static let ruleMirrorKey = "virtues.audio.ruleMute"  // "schedule" | "place" | absent
+  static let heartbeatKey = "virtues.audio.heartbeat"  // epoch s of the last good buffer
+  static let carPlayKey = "virtues.audio.carplay"  // true while paused for CarPlay
   static let overrideChangedNote = "com.virtues.audio.override-changed"
   static let controlKind = "com.virtues.app.recording"
+  static let widgetKind = "com.virtues.app.recording-widget"
 
   struct Override: Equatable {
     let mode: String
@@ -533,10 +538,61 @@ public final class AudioRecorder: NSObject {
     reloadControl()
   }
 
+  /// Redraw the control and the widget after a state change. Only on
+  /// changes: a background reload spends the widget's daily refresh budget,
+  /// and the heartbeat needs none (the widget re-reads it on its own clock).
   private func reloadControl() {
+    WidgetCenter.shared.reloadTimelines(ofKind: Self.widgetKind)
     if #available(iOS 18.0, *) {
       ControlCenter.shared.reloadControls(ofKind: Self.controlKind)
     }
+  }
+
+  // MARK: - Today's stretches (the widget's strip)
+  //
+  // The widget draws today as a strip: kept, muted, and the gaps between. The
+  // tap extends the current stretch on every buffer and starts a new one when
+  // the state flips or buffers stopped for longer than `stretchJoin`; that
+  // pause is what the strip shows as missing. Written to the App Group as
+  // [[start, end, kind]] (epoch s; 1 kept, 2 muted) at every flip and at most
+  // once a minute between, and 36 hours are kept so a relaunch carries on the
+  // same day.
+  static let stretchesKey = "virtues.audio.stretches"
+  private let stretchJoin: TimeInterval = 90
+  /// Tap thread only, after `loadStretches` at init.
+  private var stretches: [[Double]] = []
+  private var stretchesPersistAt: Date?
+
+  private func noteStretch(kept: Bool, at now: Date) {
+    let t = now.timeIntervalSince1970
+    let kind: Double = kept ? 1 : 2
+    var flipped = false
+    if let last = stretches.last, last[2] == kind, t - last[1] < stretchJoin {
+      stretches[stretches.count - 1][1] = t
+    } else {
+      stretches.append([t, t, kind])
+      flipped = true
+    }
+    guard flipped || stretchesPersistAt.map({ now.timeIntervalSince($0) > 60 }) ?? true else {
+      return
+    }
+    stretchesPersistAt = now
+    stretches.removeAll { $0[1] < t - 36 * 3600 }
+    if let data = try? JSONSerialization.data(withJSONObject: stretches),
+       let str = String(data: data, encoding: .utf8) {
+      groupDefaults?.set(str, forKey: Self.stretchesKey)
+    }
+    // A flip is a change the strip should show now; the minute ticks between
+    // flips wait for the widget's own refresh.
+    if flipped { DispatchQueue.main.async { [weak self] in self?.reloadControl() } }
+  }
+
+  private func loadStretches() {
+    guard let str = groupDefaults?.string(forKey: Self.stretchesKey),
+          let data = str.data(using: .utf8),
+          let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[Double]]
+    else { return }
+    stretches = arr.filter { $0.count == 3 }
   }
 
   private func observeOverrideNote() {
@@ -731,6 +787,7 @@ public final class AudioRecorder: NSObject {
     // plugin's own list starts empty; hand it ours again.
     pushRegions(places)
     reloadOverride(source: "launch")
+    loadStretches()
     mirrorEnabled()
     observeOverrideNote()
     let nc = NotificationCenter.default
@@ -1104,6 +1161,8 @@ public final class AudioRecorder: NSObject {
     carPlayPaused = true
     NSLog("[Audio] CarPlay route (%@) — releasing the session until the car disconnects", reason)
     virtues_location_audio_state(0)
+    groupDefaults?.set(true, forKey: Self.carPlayKey)
+    reloadControl()
   }
 
   /// Stop the graph and DEACTIVATE — the one place this class ever calls
@@ -1157,6 +1216,8 @@ public final class AudioRecorder: NSObject {
       guard let self = self else { return }
       self.carPlayPaused = false
       self.interruptionHoldUntil = nil
+      self.groupDefaults?.set(false, forKey: Self.carPlayKey)
+      self.reloadControl()
       NSLog("[Audio] CarPlay route gone — attempting resume")
       // Flag read ON q, next to the start, so a Stop that lands between a
       // main-thread read and the enqueue cannot leave a timer running for a
@@ -1270,6 +1331,7 @@ public final class AudioRecorder: NSObject {
       lastGoodPersistAt = now
       cachedLastGood = now.timeIntervalSince1970
       UserDefaults.standard.set(now.timeIntervalSince1970, forKey: lastGoodKey)
+      groupDefaults?.set(now.timeIntervalSince1970, forKey: Self.heartbeatKey)
     }
     if nudgeFired {
       nudgeFired = false
@@ -1281,7 +1343,9 @@ public final class AudioRecorder: NSObject {
     // keeps the watchdog quiet, the gap nudge silent, and location in its cheap
     // mode. On window entry the partial chunk finalizes once (outFile goes nil);
     // on exit the next buffer reopens a chunk and capture resumes seamlessly.
-    if let why = muteReason(at: now) {
+    let why = muteReason(at: now)
+    noteStretch(kept: why == nil, at: now)
+    if let why = why {
       if let f = outFile {
         if sampleCount > 0 {
           rotate(restart: false)

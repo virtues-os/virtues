@@ -358,6 +358,26 @@ pub fn stats(stream: &str) -> Result<OutboxStats> {
     Ok(OutboxStats { queued, failing, oldest })
 }
 
+/// Queue health for every stream that has rows, in one query (the iOS
+/// widget's snapshot). A stream with nothing queued is absent.
+pub fn stats_all() -> Result<Vec<(String, OutboxStats)>> {
+    let conn = conn()?;
+    let mut stmt = conn.prepare(
+        "SELECT stream,
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN attempts > 0 THEN 1 ELSE 0 END), 0),
+                COALESCE(MIN(created_at), 0)
+         FROM outbox GROUP BY stream",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            OutboxStats { queued: r.get(1)?, failing: r.get(2)?, oldest: r.get(3)? },
+        ))
+    })?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
 /// The most recent `n` records for a stream (newest first) — device-screen log.
 pub fn recent(stream: &str, n: usize) -> Result<Vec<Value>> {
     let conn = conn()?;
@@ -396,4 +416,41 @@ fn now() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// One test owns the process-global DB path: `stats_all` must agree with
+    /// per-stream `stats`, count a nacked row as failing, and drop a stream
+    /// once its rows are acked.
+    #[test]
+    fn stats_all_matches_per_stream_stats() {
+        let dir = std::env::temp_dir().join(format!("outbox-stats-all-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        init(dir.join("outbox.sqlite"), "device-test", "ios_ingest").unwrap();
+
+        enqueue("location", json!({"id": "l1"})).unwrap();
+        enqueue("location", json!({"id": "l2"})).unwrap();
+        enqueue("healthkit", json!({"id": "h1"})).unwrap();
+        let claimed = claim_batch("healthkit", 1 << 20, 10).unwrap();
+        nack(&claimed.ids).unwrap();
+
+        let all: std::collections::BTreeMap<_, _> = stats_all().unwrap().into_iter().collect();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all["location"].queued, 2);
+        assert_eq!(all["location"].failing, 0);
+        assert_eq!(all["healthkit"].queued, 1);
+        assert_eq!(all["healthkit"].failing, 1);
+        assert_eq!(all["location"].oldest, stats("location").unwrap().oldest);
+
+        let loc = claim_batch("location", 1 << 20, 10).unwrap();
+        ack(&loc.ids).unwrap();
+        let all: std::collections::BTreeMap<_, _> = stats_all().unwrap().into_iter().collect();
+        assert!(!all.contains_key("location"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
