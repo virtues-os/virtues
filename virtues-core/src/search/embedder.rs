@@ -15,9 +15,10 @@
 //!
 //! In **manual inference mode** the endpoint is user-run rather than a
 //! sidecar we provisioned; the installer pins a fingerprint of the model at
-//! setup time (`VIRTUES_EMBED_FINGERPRINT`) and we re-check it at boot so a
-//! silently-swapped model can't corrupt the vector index (see
-//! `verify_fingerprint`).
+//! setup time (`VIRTUES_EMBED_FINGERPRINT`) and we re-check it every time the
+//! embedder is built (at first use, and again every few minutes in a running
+//! server) so a silently-swapped model can't corrupt the vector index (see
+//! `verify_fingerprint`, `get_embedder`).
 //!
 //! ## Model — there isn't one. There are three paths.
 //!
@@ -55,7 +56,7 @@
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use std::sync::Arc;
-use tokio::sync::OnceCell;
+use tokio::sync::Mutex;
 
 // `SIDECAR_NATIVE_DIM = 768` and `SIDECAR_STORED_DIM = 256` lived here (named
 // `DRAGON_*`, which was doubly wrong — Dragon does not even use this path; it
@@ -391,7 +392,7 @@ impl HttpEmbedder {
         Ok(embedder)
     }
 
-    /// Boot-time model-identity check for manual inference mode: re-embed
+    /// Model-identity check for manual inference mode: re-embed
     /// the fixed probe strings and compare the quantized hash of the NATIVE
     /// (pre-truncation) vectors against the fingerprint the installer
     /// recorded at setup. A user swapping the model behind their endpoint
@@ -666,23 +667,39 @@ pub async fn probe_current_endpoint() -> Result<(String, usize)> {
     Ok((fingerprint_vectors(&vecs), dims))
 }
 
-static EMBEDDER: OnceCell<Arc<LocalEmbedder>> = OnceCell::const_new();
+/// How long a built embedder is trusted before the next caller builds it again.
+/// Building is what checks the endpoint: its width, the model it serves, and the
+/// pinned fingerprint. A server that built it once would never notice a model
+/// swapped behind it while it ran, and would search with the new model's vectors
+/// until it restarted.
+const REVERIFY_AFTER: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+static EMBEDDER: Mutex<Option<(Arc<LocalEmbedder>, std::time::Instant)>> = Mutex::const_new(None);
 
 pub async fn get_embedder() -> Result<Arc<LocalEmbedder>> {
-    let embedder = EMBEDDER
-        .get_or_try_init(|| async {
-            tracing::info!("Initializing embedding sidecar client...");
-            let start = std::time::Instant::now();
-            let embedder = LocalEmbedder::new().await?;
-            tracing::info!(
-                "Embedder ready in {:.1}s (backend={}, dim={})",
-                start.elapsed().as_secs_f64(),
-                embedder.backend_label(),
-                embedder.dimension()
-            );
-            Ok::<_, anyhow::Error>(Arc::new(embedder))
-        })
-        .await?;
-    Ok(embedder.clone())
+    let mut slot = EMBEDDER.lock().await;
+    if let Some((embedder, built)) = slot.as_ref() {
+        if built.elapsed() < REVERIFY_AFTER {
+            return Ok(embedder.clone());
+        }
+    }
+    let first = slot.is_none();
+    // A failed check leaves nothing cached, so every caller sees the failure until
+    // the endpoint passes again.
+    *slot = None;
+    let start = std::time::Instant::now();
+    let embedder = Arc::new(LocalEmbedder::new().await?);
+    if first {
+        tracing::info!(
+            "Embedder ready in {:.1}s (backend={}, dim={})",
+            start.elapsed().as_secs_f64(),
+            embedder.backend_label(),
+            embedder.dimension()
+        );
+    } else {
+        tracing::debug!(dim = embedder.dimension(), "embedder re-verified");
+    }
+    *slot = Some((embedder.clone(), std::time::Instant::now()));
+    Ok(embedder)
 }
 
