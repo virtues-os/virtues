@@ -1,7 +1,11 @@
 //! The owner's browser, driven by the assistant on their box.
 //!
-//! A window of the app's own ("Browser") holds a WKWebView with a persistent
-//! cookie jar apart from the app's UI and from Safari. While the app runs it
+//! The Browser is a WKWebView inside the app's main window, beside whatever the
+//! owner is looking at: the UI opens a Browser tab in its right pane and reports
+//! where that pane sits, and the shell places this native view over it (a native
+//! view draws above the page, so it hides whenever the tab is not on screen). It
+//! has a persistent cookie jar apart from the app's UI and from Safari: logins
+//! the owner makes in it, including "Log in to X", stay in it. While the app runs it
 //! keeps a websocket open to the box's `/ws/browser`; each message is one
 //! `browser_*` tool call from the assistant, performed here and answered.
 //!
@@ -32,7 +36,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSDictionary, NSError, NSNumber, NSPoint, NSProcessInfo, NSString};
 use objc2_web_kit::{WKContentWorld, WKInactiveSchedulingPolicy, WKSnapshotConfiguration, WKWebView};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Webview, WebviewBuilder, WebviewUrl};
 use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -142,11 +146,11 @@ async fn perform(app: &AppHandle, op: &str, args: &Value) -> Result<Value, Strin
         "open" => open(app, &arg("url").ok_or("`url` is required")?).await,
         "snapshot" => {
             let depth = args.get("depth").and_then(|v| v.as_u64());
-            snapshot(&window(app)?, arg("ref"), depth).await
+            snapshot(&pane(app)?, arg("ref"), depth).await
         }
-        "click" => click(&window(app)?, &arg("ref").ok_or("`ref` is required")?).await,
+        "click" => click(&pane(app)?, &arg("ref").ok_or("`ref` is required")?).await,
         "type" => {
-            let win = window(app)?;
+            let win = pane(app)?;
             if let Some(r) = arg("ref") {
                 click(&win, &r).await?;
             }
@@ -164,7 +168,7 @@ async fn perform(app: &AppHandle, op: &str, args: &Value) -> Result<Value, Strin
             Ok(json!({ "typed": true, "url": current_url(&win) }))
         }
         "press" => {
-            let win = window(app)?;
+            let win = pane(app)?;
             press(&win, &arg("key").ok_or("`key` is required")?).await?;
             tokio::time::sleep(Duration::from_millis(500)).await;
             Ok(json!({ "pressed": true, "url": current_url(&win) }))
@@ -172,30 +176,30 @@ async fn perform(app: &AppHandle, op: &str, args: &Value) -> Result<Value, Strin
         "scroll" => {
             let up = arg("direction").as_deref() == Some("up");
             let px = args.get("pixels").and_then(|v| v.as_f64()).unwrap_or(800.0).clamp(100.0, 4000.0);
-            scroll(&window(app)?, if up { -px } else { px }).await
+            scroll(&pane(app)?, if up { -px } else { px }).await
         }
-        "screenshot" => screenshot(&window(app)?).await,
+        "screenshot" => screenshot(&pane(app)?).await,
         // Development only: run a script body in the page and return its
         // string. Never reachable from a release build, so never from a model.
         #[cfg(debug_assertions)]
         "eval" => {
             let js = arg("js").ok_or("`js` is required")?;
             let agent = arg("world").as_deref() == Some("agent");
-            Ok(json!({ "value": eval(&window(app)?, &js, agent).await? }))
+            Ok(json!({ "value": eval(&pane(app)?, &js, agent).await? }))
         }
         other => Err(format!("unknown browser operation `{other}`")),
     }
 }
 
-// ─── The window ─────────────────────────────────────────────────────────────
+// ─── The pane ───────────────────────────────────────────────────────────────
 
-fn window(app: &AppHandle) -> Result<WebviewWindow, String> {
-    app.get_webview_window(LABEL)
-        .ok_or_else(|| "The browser window is not open. Call browser_open with a URL first.".into())
+fn pane(app: &AppHandle) -> Result<Webview, String> {
+    app.get_webview(LABEL)
+        .ok_or_else(|| "The browser is not open. Call browser_open with a URL first.".into())
 }
 
-fn current_url(win: &WebviewWindow) -> String {
-    win.url().map(|u| u.to_string()).unwrap_or_default()
+fn current_url(view: &Webview) -> String {
+    view.url().map(|u| u.to_string()).unwrap_or_default()
 }
 
 /// A cookie jar of the browser's own, apart from the app's UI. A dev profile
@@ -210,49 +214,120 @@ fn store_id() -> [u8; 16] {
     id
 }
 
-async fn open(app: &AppHandle, url: &str) -> Result<Value, String> {
+fn parse_page(url: &str) -> Result<tauri::Url, String> {
     let target: tauri::Url = url.parse().map_err(|_| format!("`{url}` is not a URL"))?;
     if !matches!(target.scheme(), "https" | "http") {
         return Err("Only http and https pages can be opened.".into());
     }
-    let win = match app.get_webview_window(LABEL) {
-        Some(win) => {
-            // Mark the current document so the new one can be told apart.
-            let _ = eval(&win, "window.__virtuesNav = 1; return '1'", false).await;
-            win.navigate(target.clone()).map_err(|e| e.to_string())?;
-            win
+    Ok(target)
+}
+
+/// Show `target` in the pane, creating it the first time. `announce` asks the
+/// UI to open the Browser tab beside the current view; the UI's own Browser
+/// tab passes false, since it is already the one asking.
+pub async fn show(app: &AppHandle, target: &tauri::Url, announce: bool) -> Result<Webview, String> {
+    let view = match app.get_webview(LABEL) {
+        Some(view) => {
+            if view.url().ok().as_ref() != Some(target) {
+                // Mark the current document so the new one can be told apart.
+                let _ = eval(&view, "window.__virtuesNav = 1; return '1'", false).await;
+                view.navigate(target.clone()).map_err(|e| e.to_string())?;
+            }
+            view
         }
-        None => {
-            let win = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External(target.clone()))
-                .title("Browser")
-                .inner_size(1200.0, 860.0)
-                // Shown, but not focused: the assistant opening a page must not
-                // pull the owner out of whatever they are doing.
-                .focused(false)
-                .user_agent(SAFARI_UA)
-                .data_store_identifier(store_id())
-                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Allow)
-                .build()
-                .map_err(|e| format!("could not open the browser window: {e}"))?;
-            on_main(&win, |wk, _| unsafe {
-                wk.configuration()
-                    .preferences()
-                    .setInactiveSchedulingPolicy(WKInactiveSchedulingPolicy::None);
-                // A covered window is "hidden" to WebKit, which stops rendering
-                // it, and with rendering go IntersectionObservers: a feed that
-                // loads more as you scroll never loads while the assistant
-                // scrolls it behind the owner's other windows. WebKit SPI, under
-                // the macos-private-api flag this app already ships with.
-                let sel = objc2::sel!(_setWindowOcclusionDetectionEnabled:);
-                let can: bool = msg_send![wk, respondsToSelector: sel];
-                if can {
-                    let _: () = msg_send![wk, _setWindowOcclusionDetectionEnabled: false];
-                }
-            })
-            .await?;
-            win
-        }
+        None => create(app, target).await?,
     };
+    if announce {
+        let _ = app.emit_to("main", "browser:open", json!({ "url": target.as_str() }));
+    }
+    Ok(view)
+}
+
+async fn create(app: &AppHandle, target: &tauri::Url) -> Result<Webview, String> {
+    let main = app
+        .get_window("main")
+        .ok_or("The app's window is closed, so the browser has nowhere to open.")?;
+    let builder = WebviewBuilder::new(LABEL, WebviewUrl::External(target.clone()))
+        .user_agent(SAFARI_UA)
+        .data_store_identifier(store_id())
+        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Allow)
+        .on_page_load(|view, payload| {
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                let _ = view
+                    .app_handle()
+                    .emit_to("main", "browser:navigated", json!({ "url": payload.url().as_str() }));
+            }
+        });
+    // Created hidden at no size: the UI reports where the pane is once its
+    // Browser tab has laid out (`set_bounds`).
+    let view = main
+        .add_child(builder, LogicalPosition::new(0.0, 0.0), LogicalSize::new(1.0, 1.0))
+        .map_err(|e| format!("could not open the browser: {e}"))?;
+    let _ = view.hide();
+    on_main(&view, |wk, _| unsafe {
+        wk.configuration()
+            .preferences()
+            .setInactiveSchedulingPolicy(WKInactiveSchedulingPolicy::None);
+        // A covered window is "hidden" to WebKit, and X's timeline does not
+        // load more for a hidden page: the assistant scrolling it behind the
+        // owner's other windows reached six posts and stopped. WebKit SPI,
+        // under the macos-private-api flag this app already ships with.
+        let sel = objc2::sel!(_setWindowOcclusionDetectionEnabled:);
+        let can: bool = msg_send![wk, respondsToSelector: sel];
+        if can {
+            let _: () = msg_send![wk, _setWindowOcclusionDetectionEnabled: false];
+        }
+    })
+    .await?;
+    Ok(view)
+}
+
+/// Where the UI's Browser pane is, in the main window's logical points, or
+/// that it is not on screen.
+pub fn set_bounds(app: &AppHandle, x: f64, y: f64, width: f64, height: f64, visible: bool) -> Result<(), String> {
+    let Some(view) = app.get_webview(LABEL) else { return Ok(()) };
+    if !visible || width < 1.0 || height < 1.0 {
+        return view.hide().map_err(|e| e.to_string());
+    }
+    view.set_position(LogicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+    view.set_size(LogicalSize::new(width, height)).map_err(|e| e.to_string())?;
+    view.show().map_err(|e| e.to_string())
+}
+
+/// Back, forward or reload, from the Browser tab's toolbar.
+pub async fn go(app: &AppHandle, action: &str) -> Result<(), String> {
+    let view = pane(app)?;
+    match action {
+        "back" => eval(&view, "history.back(); return ''", false).await.map(|_| ()),
+        "forward" => eval(&view, "history.forward(); return ''", false).await.map(|_| ()),
+        "reload" => view.reload().map_err(|e| e.to_string()),
+        other => Err(format!("unknown browser action `{other}`")),
+    }
+}
+
+/// Open a source's login page in the pane and resolve with the site's cookies
+/// once every name in `cookies` is set. The session stays in the browser's jar,
+/// so the assistant browsing that site afterwards is logged in too.
+pub async fn login(app: &AppHandle, url: &str, cookies: &[String], timeout: Duration) -> Result<Vec<(String, String)>, String> {
+    let page = parse_page(url)?;
+    let view = show(app, &page, true).await?;
+    let started = std::time::Instant::now();
+    loop {
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        if started.elapsed() > timeout {
+            return Err("timeout".into());
+        }
+        let Ok(jar) = view.cookies_for_url(page.clone()) else { continue };
+        let has = |name: &str| jar.iter().any(|c| c.name() == name && !c.value().is_empty());
+        if cookies.iter().all(|n| has(n)) {
+            return Ok(jar.iter().map(|c| (c.name().to_string(), c.value().to_string())).collect());
+        }
+    }
+}
+
+async fn open(app: &AppHandle, url: &str) -> Result<Value, String> {
+    let target = parse_page(url)?;
+    let win = show(app, &target, true).await?;
 
     // Wait for the new document to finish loading. A same-document navigation
     // never replaces the marker, so give up waiting on it after a while and
@@ -281,7 +356,7 @@ async fn open(app: &AppHandle, url: &str) -> Result<Value, String> {
 
 // ─── Reading ────────────────────────────────────────────────────────────────
 
-async fn ensure_agent(win: &WebviewWindow) -> Result<(), String> {
+async fn ensure_agent(win: &Webview) -> Result<(), String> {
     if eval(win, "return window.__virtuesAgent ? '1' : ''", true).await? == "1" {
         return Ok(());
     }
@@ -294,7 +369,7 @@ async fn ensure_agent(win: &WebviewWindow) -> Result<(), String> {
     eval(win, &bootstrap, true).await.map(|_| ())
 }
 
-async fn snapshot(win: &WebviewWindow, scope: Option<String>, depth: Option<u64>) -> Result<Value, String> {
+async fn snapshot(win: &Webview, scope: Option<String>, depth: Option<u64>) -> Result<Value, String> {
     ensure_agent(win).await?;
     // A scoped read starts from the element a ref names in the last outline.
     // Playwright keeps an element's ref across snapshots, so refs read here
@@ -330,7 +405,7 @@ async fn snapshot(win: &WebviewWindow, scope: Option<String>, depth: Option<u64>
 
 // ─── Acting ─────────────────────────────────────────────────────────────────
 
-async fn click(win: &WebviewWindow, r#ref: &str) -> Result<Value, String> {
+async fn click(win: &Webview, r#ref: &str) -> Result<Value, String> {
     ensure_agent(win).await?;
     // Resolve the ref in the latest outline, bring it into view, and find the
     // point that really lands on it. A ref from an older outline on a page that
@@ -435,7 +510,7 @@ fn key(name: &str) -> Option<(&'static str, u16, bool)> {
     })
 }
 
-async fn press(win: &WebviewWindow, name: &str) -> Result<(), String> {
+async fn press(win: &Webview, name: &str) -> Result<(), String> {
     let (chars, code, function) = key(name).ok_or_else(|| format!("unknown key `{name}`"))?;
     on_main(win, move |wk, _| {
         let flags = if function {
@@ -464,7 +539,7 @@ async fn press(win: &WebviewWindow, name: &str) -> Result<(), String> {
 
 /// Scroll whatever scrolls at the middle of the viewport: the page itself on
 /// most sites, a pane in app-like ones.
-async fn scroll(win: &WebviewWindow, dy: f64) -> Result<Value, String> {
+async fn scroll(win: &Webview, dy: f64) -> Result<Value, String> {
     let body = format!(
         "const dy = {dy};\n\
          let el = document.elementFromPoint(innerWidth / 2, innerHeight / 2);\n\
@@ -479,7 +554,7 @@ async fn scroll(win: &WebviewWindow, dy: f64) -> Result<Value, String> {
     serde_json::from_str(&eval(win, &body, false).await?).map_err(|e| e.to_string())
 }
 
-async fn screenshot(win: &WebviewWindow) -> Result<Value, String> {
+async fn screenshot(win: &Webview) -> Result<Value, String> {
     let (tx, rx) = oneshot::channel::<Result<String, String>>();
     let tx = std::sync::Mutex::new(Some(tx));
     on_main(win, move |wk, mtm| unsafe {
@@ -553,7 +628,7 @@ fn js_error(error: &NSError) -> String {
 }
 
 /// Run `f` against the window's WKWebView on the main thread.
-async fn on_main<F>(win: &WebviewWindow, f: F) -> Result<(), String>
+async fn on_main<F>(win: &Webview, f: F) -> Result<(), String>
 where
     F: FnOnce(&WKWebView, MainThreadMarker) + Send + 'static,
 {
@@ -586,7 +661,7 @@ fn agent_world_on_main(mtm: MainThreadMarker) -> Retained<WKContentWorld> {
 
 /// Evaluate an async function body in the page, in the agent's isolated world
 /// or the page's own, and return the string it returns.
-async fn eval(win: &WebviewWindow, body: &str, agent_world: bool) -> Result<String, String> {
+async fn eval(win: &Webview, body: &str, agent_world: bool) -> Result<String, String> {
     let (tx, rx) = oneshot::channel::<Result<String, String>>();
     let tx = std::sync::Mutex::new(Some(tx));
     let body = body.to_string();

@@ -37,6 +37,7 @@ export type TabType =
 	// The Timeline: one day on a map
 	| 'timeline' // Timeline: /timeline
 	// System namespace
+	| 'browser' // The in-app browser, beside the current view (Mac): /browser?url=…
 	| 'virtues'; // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal}
 
 /**

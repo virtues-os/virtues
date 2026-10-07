@@ -54,7 +54,7 @@ semver = "1"
 # the tauri desktop features (tray-icon, macos-private-api) that don't build on
 # mobile. These are referenced only from main.rs (the desktop bin).
 [target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "unstable"] }
 tauri-plugin-shell = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
