@@ -1653,8 +1653,10 @@
 	 * message. Not through the composer, whose draft and staged files are the
 	 * person's and stay where they are.
 	 */
-	async function sendChoice(text: string) {
-		if (chat.status !== "ready" || turnPhase.working) return;
+	async function sendChoice(text: string): Promise<boolean> {
+		// The same recovery the composer makes: the next message clears an error.
+		if (chat.status === "error") chat.clearError();
+		if (chat.status !== "ready" || turnPhase.working) return false;
 		danglingTurn = false;
 		chatInstances.clearSubagents(conversationId);
 		isAwaitingResponse = true;
@@ -1664,8 +1666,10 @@
 		try {
 			await chat.sendMessage({ text });
 			setTimeout(turnWritten, 2000);
+			return true;
 		} catch (error) {
 			console.error("[sendChoice] Error:", error);
+			return false;
 		} finally {
 			isAwaitingResponse = false;
 			turnPhase.endSend();
@@ -2072,6 +2076,7 @@
 												<Show
 													part={part as any}
 													active={isLastMessage && !isStreaming}
+													working={isStreaming}
 													onChoose={sendChoice}
 													onOpenRows={(ref) => openToolRows(citationContext, ref)}
 												/>

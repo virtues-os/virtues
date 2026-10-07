@@ -22,14 +22,19 @@
 		part: { state?: string; input?: Record<string, unknown>; output?: unknown };
 		/** The newest turn, finished: its reply buttons can be pressed. */
 		active: boolean;
-		onChoose?: (text: string) => void;
+		/** The turn is still running, so a call without a result is in progress. */
+		working: boolean;
+		/** Send a reply button's words; false when the chat could not take them. */
+		onChoose?: (text: string) => Promise<boolean>;
 		/** Open the rows a figure was drawn from, where the chat can. */
 		onOpenRows?: (ref: string) => void;
 	}
-	let { part, active, onChoose, onOpenRows }: Props = $props();
+	let { part, active, working, onChoose, onOpenRows }: Props = $props();
 
 	const out = $derived(part.state === "output-available" && isShowOutput(part.output) ? (part.output as ShowOutput) : null);
-	const drawing = $derived(part.state === "input-streaming" || part.state === "input-available");
+	// A call the turn ended without answering (stopped, cut off) draws
+	// nothing, rather than a shimmer that never resolves.
+	const drawing = $derived(working && (part.state === "input-streaming" || part.state === "input-available"));
 	const title = $derived(out ? out.title : typeof part.input?.title === "string" ? part.input.title : null);
 	const columns = $derived(out?.columns ?? []);
 	const rows = $derived(out?.rows ?? []);

@@ -11,16 +11,18 @@
 	interface Props {
 		options: string[];
 		active: boolean;
-		onChoose?: (text: string) => void;
+		onChoose?: (text: string) => Promise<boolean>;
 	}
 	let { options, active, onChoose }: Props = $props();
 
 	let chosen = $state<string | null>(null);
 
-	function choose(text: string) {
-		if (!active || chosen) return;
+	async function choose(text: string) {
+		if (!active || chosen || !onChoose) return;
+		// Held while it sends, so a second tap cannot send twice; let go if
+		// the chat could not take it, so the buttons still work.
 		chosen = text;
-		onChoose?.(text);
+		if (!(await onChoose(text))) chosen = null;
 	}
 </script>
 
