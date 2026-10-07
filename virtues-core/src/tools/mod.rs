@@ -33,6 +33,7 @@ pub(crate) mod sudo_gate;
 pub(crate) mod publish;
 mod page_editor;
 mod semantic_search;
+mod show;
 pub mod applet_schema;
 pub mod applet_setup;
 pub mod applet_management;

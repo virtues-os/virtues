@@ -13,6 +13,7 @@
  */
 
 import type { Component } from 'svelte';
+import { deadline } from '$lib/api/client';
 
 // biome-ignore lint/suspicious/noExplicitAny: view props vary by tab type
 export type View = Component<any>;
@@ -94,7 +95,7 @@ export async function reloadForStaleChunk(): Promise<boolean> {
 	try {
 		const res = await fetch('/_app/version.json', {
 			cache: 'no-store',
-			signal: AbortSignal.timeout(5000),
+			signal: deadline(5000),
 		});
 		if (!res.ok) return false;
 	} catch {

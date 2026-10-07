@@ -67,8 +67,11 @@ Article, top to bottom:
 4. Body: up to three sections, headings of 3–6 words naming a thing or a moment
    (never a bare proper noun). Tables are allowed where the day holds a list.
 5. At most one figure, only when earned (see Figures).
-6. Previous / next day as two cards, each with its Abstract.
-7. **Similar days.**
+6. **Rewrite this page**, a quiet action at the foot of a past day that has
+   a page (see "Rewrite this page" below). Not in the toolbar, which a phone
+   cannot widen.
+7. Previous / next day as two cards, each with its Abstract.
+8. **Similar days.**
 
 Three ways the page answers "how do you know?", each with one job:
 
@@ -127,14 +130,63 @@ The article stays one ordinary markdown page, editable in the Pages editor.
 5. **Marginalia** (code): tags → evidence footnotes; section time spans,
    last-came-up / first-came-up for places and people, weather at the hour →
    context footnotes.
-6. **Save**: the existing `save_day_article` guards (maintenance off, human
-   edit, open in the editor) stay exactly as they are.
+6. **Save**: `save_day_article` writes through the pool, so it writes only a
+   page nobody has written in and nobody has opened: it keeps a page whose
+   upkeep is off, one with a human edit, and one with a CRDT (opened in the
+   editor, however long ago), and says which (`SaveOutcome`). Narration
+   checks the same guards before the writer runs, so a refusal costs no model
+   call, and writes a day once (`NarrateOutcome`). A page it writes lands in
+   one transaction with its edition (`machine_text`) and the day's
+   `narrated_at`, so a failure leaves no written page for the queue to pay
+   for again.
 
-Order: the catch-up queue narrates **oldest first**, and a day re-narrates when
-the day before it is rewritten, so continuity flows forward. A backfill of the
-last three weeks runs once, oldest first, then the novelty index re-embeds all
-of it together (the embedding detects the writer's voice; a mixed corpus would
-light up every new day as novel).
+Order: the catch-up queue narrates **oldest first**, so continuity flows
+forward on the first pass. The intended follow-on, a day re-narrating when the
+day before it is rewritten, is **not built**: a rewritten day's next three
+pages keep what they read of the old one. A backfill of the last three weeks
+runs once, oldest first, then the novelty index re-embeds all of it together
+(the embedding detects the writer's voice; a mixed corpus would light up every
+new day as novel).
+
+## Rewrite this page
+
+Built on `wave` 2026-10-07: the server door and the day page's action
+(`DayPage.svelte`, `lib/wiki/dayRewrite.ts`). The owner's way to write a past day's page again, from the same record and the
+same writer (`day_summary::rewrite_day_page`), when the page is wrong or the
+writer has improved.
+
+- **One writer per day.** Narration and the rewrite both take a session
+  advisory lock on the date, on a connection detached from the pool
+  (`try_lock_day`). It saves money, not pages; the guards above and the
+  CRDT's staleness check still do that.
+- **The request answers at once.** `POST /api/wiki/day/:date/rewrite` refuses
+  what needs no model call (`not_over` 422, `no_page` 404, `needs_consent`
+  409, `rewrite_in_progress` 409 while a rewrite of the day runs, `busy` 409
+  while another writer such as narration holds it), takes the lock, and hands
+  it to a task; `GET` on the same path reads how it went from an in-memory
+  board (`DayRewrites`). A restart forgets the board, and an interrupted
+  rewrite is not resumed, because resuming would pay again.
+- **Time limit on the writer only.** Its model calls get 20 minutes
+  (`REWRITE_TIME_LIMIT`). Once a draft exists the write runs to the end,
+  because one stopped partway could leave the page changed in open editors
+  but not saved, versioned or recorded.
+- **Consent.** A page that may hold the owner's words (a human edit or a
+  version put back, upkeep off, text that is no longer what the server last
+  wrote, or, on a page from before narration recorded its edition, any
+  version at all) is rewritten only when they agree to replace them.
+- **Through the CRDT, undoable.** The draft must have an Abstract and a
+  section. The page is read again, kept as a restore point (fail closed), and
+  replaced by line through the server's own `YjsState`, so open editors
+  receive it; any change since the rewrite began refuses it. The rewrite's
+  version is credited to the record, and History shows one entry whose undo
+  puts the old page back.
+- **Bookkeeping**, in one transaction: the edition (`machine_text`), the
+  owner's edit stamp cleared unless an edit landed after the write, and
+  `narrated_at` restamped, which, with the wiki editor on, earns the year
+  and chapter one revision each at their next interval. Upkeep is not
+  changed. A draft that is on the page but not saved yet is a rewrite made:
+  it is versioned and recorded, and the save queue lands it.
+- Notes are untouched; a note whose sentence went sits beside the Abstract.
 
 ## Figures
 

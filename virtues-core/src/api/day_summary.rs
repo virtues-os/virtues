@@ -4,7 +4,7 @@
 //! builds a text prompt, calls an LLM via virtues-api, and saves the result
 //! as the day's ARTICLE PAGE with structured timeline events.
 
-use chrono::{NaiveDate, TimeZone};
+use chrono::{Datelike, NaiveDate, TimeZone};
 use chrono_tz::Tz;
 use sqlx::PgPool;
 use virtues_registry::models::ModelSlot;
@@ -114,6 +114,29 @@ pub fn day_bounds(
 pub fn day_boundaries_utc(date: NaiveDate, timezone: Option<&str>) -> (String, String) {
     let (start, end) = day_bounds(date, timezone);
     (start.to_rfc3339(), end.to_rfc3339())
+}
+
+/// Whether `date` is over in `timezone` (an IANA name; UTC when it does not
+/// parse): it is before today there. Nothing cuts or writes a day that is not.
+///
+/// The day's OWN zone, not raw UTC. On a US box the UTC clock rolls to
+/// tomorrow at about 6-7pm local, so a raw-UTC check calls the current,
+/// still-in-progress day over; it did, cutting a day during that day's own
+/// evening. It also refuses genuinely future dates, which calendars reach
+/// years ahead.
+pub fn day_over_in(date: NaiveDate, timezone: &str) -> bool {
+    let today = timezone
+        .parse::<Tz>()
+        .map(|tz| chrono::Utc::now().with_timezone(&tz).date_naive())
+        .unwrap_or_else(|_| chrono::Utc::now().date_naive());
+    date < today
+}
+
+/// [`day_over_in`], in the zone every reader of the day uses
+/// ([`crate::timezone::day_timezone`]). For a caller that has not resolved it.
+pub async fn day_is_over(pool: &PgPool, date: NaiveDate) -> Result<bool> {
+    let tz = crate::timezone::day_timezone(pool, date).await?;
+    Ok(day_over_in(date, &tz))
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -351,6 +374,7 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
     // 2. Compute date boundaries in the day's own zone.
     let day_tz = crate::timezone::day_timezone(pool, date).await?;
     let (start_str, end_str) = day_boundaries_utc(date, Some(&day_tz));
+    let is_over = day_over_in(date, &day_tz);
     let timezone: Option<String> = Some(day_tz);
 
     // 2b. Is this a day that HAPPENED, or a day you wore a watch?
@@ -378,18 +402,8 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
         return Ok(0);
     }
 
-    // Never narrate a day that has not happened — checked in the day's OWN timezone,
-    // not raw UTC. On a US box the UTC clock rolls to tomorrow at ~6–7pm local, so a
-    // raw-UTC check calls the current, still-in-progress day "over" — it did exactly
-    // that, running July 15 while it was still July 15 evening in Austin. Resolve
-    // "today" in the day's timezone so the gate tracks the owner's clock. (Also still
-    // rejects genuinely future dates — 146 calendar events on the box run out to 2029.)
-    let today_in_tz = timezone
-        .as_deref()
-        .and_then(|s| s.parse::<Tz>().ok())
-        .map(|tz| chrono::Utc::now().with_timezone(&tz).date_naive())
-        .unwrap_or_else(|| chrono::Utc::now().date_naive());
-    if date >= today_in_tz {
+    // Never cut a day that has not happened, in the day's own timezone.
+    if !is_over {
         tracing::info!(date = %date, "day is not over in the owner's timezone — nothing to summarise yet");
         return Ok(0);
     }
@@ -528,191 +542,709 @@ fn fingerprint_sources(sources: &[DaySource]) -> String {
     format!("{:x}", sha2::Digest::finalize(h))
 }
 
-/// NIGHTLY. Write the day's page.
+// ── One writer per day ───────────────────────────────────────────────────────
+
+/// The first half of every day-write advisory lock key: ASCII "dayw". The
+/// two-int key space (`pg_try_advisory_lock(int4, int4)`) is apart from the
+/// one-bigint space the indexer and `sqlx migrate` lock in, so a day cannot
+/// collide with either.
+const DAY_WRITE_LOCK_CLASS: i32 = 0x6461_7977;
+
+/// Proof that this process is the one writing a day's page: a session
+/// advisory lock, keyed on the date, on a connection of its own.
+///
+/// Both writers take it, the nightly narration and the owner's Rewrite this
+/// page, so a day costs one set of model calls at a time. It saves money, not
+/// pages: the guards in [`save_day_article`] and the staleness check in
+/// `YjsState::replace_text` keep either writer from overwriting the other on
+/// their own, and stay.
+///
+/// A session lock on a connection taken OUT of the pool. A write holds it
+/// across three model calls of up to 300 s each, which is too long to pin one
+/// of the core pool's five connections inside a transaction; and a session
+/// lock on a connection that went back to the pool would stay with whoever
+/// got that connection next. Dropping this closes the connection, which
+/// releases the lock on every exit path, a panic or a killed applet included
+/// (the indexer's single-flight guard does the same).
+pub struct DayWriteLock(sqlx::PgConnection);
+
+impl DayWriteLock {
+    /// Let the day go now and close the connection cleanly. Dropping the lock
+    /// releases it too, by closing the connection without a goodbye.
+    pub async fn release(mut self) {
+        if let Err(e) = sqlx::query("SELECT pg_advisory_unlock_all()")
+            .execute(&mut self.0)
+            .await
+        {
+            tracing::debug!(error = %e, "could not unlock the day; closing the connection releases it");
+        }
+        if let Err(e) = sqlx::Connection::close(self.0).await {
+            tracing::debug!(error = %e, "the day lock's connection did not close cleanly");
+        }
+    }
+}
+
+/// Take `date` for writing, or `None` when another writer has it.
+pub async fn try_lock_day(pool: &PgPool, date: NaiveDate) -> Result<Option<DayWriteLock>> {
+    let mut conn = pool.acquire().await?.detach();
+    let taken: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1::int4, $2::int4)")
+        .bind(DAY_WRITE_LOCK_CLASS)
+        .bind(date.num_days_from_ce())
+        .fetch_one(&mut conn)
+        .await?;
+    if taken {
+        return Ok(Some(DayWriteLock(conn)));
+    }
+    if let Err(e) = sqlx::Connection::close(conn).await {
+        tracing::debug!(error = %e, "the refused day lock's connection did not close cleanly");
+    }
+    Ok(None)
+}
+
+// ── Writing the day's page ───────────────────────────────────────────────────
+
+/// What [`narrate_day`] did.
+#[derive(Debug)]
+pub enum NarrateOutcome {
+    /// The page is the new draft.
+    Written(WikiDay),
+    /// The day already has its page. Narration writes a day once; the
+    /// owner's Rewrite this page ([`rewrite_day_page`]) writes it again.
+    AlreadyWritten,
+    /// The day is not over where it was lived.
+    NotOver,
+    /// Too little of the day to write from. No model call was made.
+    NotEnough,
+    /// The day has a page narration may not write over: [`SaveOutcome`]'s
+    /// `KeptNever`, `KeptYourEdits` or `KeptOpened`.
+    Kept(SaveOutcome),
+    /// Another writer holds the day right now. Nothing was stamped, so the
+    /// queue offers it again.
+    Busy,
+    /// The writer came back with nothing. Not stamped, so the queue retries
+    /// within the day's attempt budget.
+    Empty,
+}
+
+impl NarrateOutcome {
+    /// One word for a run's summary line.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Written(_) => "written",
+            Self::AlreadyWritten => "already_written",
+            Self::NotOver => "not_over",
+            Self::NotEnough => "not_enough",
+            Self::Kept(kept) => kept.label(),
+            Self::Busy => "busy",
+            Self::Empty => "empty",
+        }
+    }
+}
+
+/// NIGHTLY. Write the day's page, once.
 ///
 /// Reads the day itself, not the segmenter's summaries of it: the writer, its
 /// check and the markdown it produces live in [`crate::api::day_article`].
 /// Segmentation still runs first and still owns the timeline; the article no
 /// longer stands on it.
 ///
-/// Returns `None` when the day did not earn a page.
-pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDay>> {
-    // ALREADY WRITTEN, AND NOTHING ASKED FOR A REWRITE.
-    //
-    // `narrated_at` is the marker the queue itself keys on, so honouring it
-    // here makes a repeat call free rather than merely redundant. Deliberately
-    // NOT a content fingerprint: the caller that knows a day changed clears
-    // `narrated_at`. `WikiDay` does not carry it, so read it directly rather
-    // than widening a struct that a dozen surfaces deserialize.
-    let already: Option<Option<chrono::DateTime<chrono::Utc>>> =
-        sqlx::query_scalar("SELECT narrated_at FROM wiki_days WHERE date = $1")
-            .bind(date)
-            .fetch_optional(pool)
-            .await?;
-    if already.flatten().is_some() {
-        tracing::debug!(date = %date, "already narrated — nothing asked for a rewrite");
-        return Ok(None);
-    }
-
-    let day_tz = crate::timezone::day_timezone(pool, date).await?;
-    let tz: Option<Tz> = day_tz.parse().ok();
-    let (start_str, end_str) = day_boundaries_utc(date, Some(&day_tz));
-
-    let Some(diary) =
-        crate::api::day_article::write_day(pool, date, tz.as_ref(), &start_str, &end_str).await?
-    else {
-        return Ok(None);
+/// In this order, so that every refusal costs no model call: the day's lock
+/// ([`try_lock_day`]; held elsewhere is `Busy` and stamps nothing), then
+/// `narrated_at`, then whether the day is over, then whether its existing
+/// page is one narration may write over. `narrated_at` is stamped when the
+/// page is written (in the write's own transaction, `save_day_article`) and
+/// when it is kept (the day has its page either way, and Rewrite this page is
+/// the way to write it again), never for `NotEnough`, `Empty` or `Busy`,
+/// which the queue offers again.
+pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<NarrateOutcome> {
+    let Some(lock) = try_lock_day(pool, date).await? else {
+        tracing::info!(date = %date, "another writer holds this day - leaving it to them");
+        return Ok(NarrateOutcome::Busy);
     };
 
-    // The only field narration has ever really set. `epigraph` and
-    // `data_quality` went with the prompt that forbids them, and
-    // `last_edited_by` was a freeze flag that no longer decides anything —
-    // the article is edited, and its history says who wrote each version.
-    let day = crate::api::wiki_days::get_or_create_day(pool, date).await?;
-    sqlx::query("UPDATE wiki_days SET start_timezone = $1, updated_at = now() WHERE id = $2")
-        .bind(&day_tz)
-        .bind(&day.id)
-        .execute(pool)
-        .await?;
+    // Everything below runs holding the lock; it is released on the way out,
+    // and closing its connection releases it on any other exit.
+    let outcome: Result<NarrateOutcome> = async {
+        // ALREADY WRITTEN. Nothing clears `narrated_at`: a day is narrated
+        // once, and written again only when the owner asks. Read under the
+        // lock, so a rewrite that finished a moment ago is seen. `WikiDay`
+        // does not carry it, so read it directly rather than widening a
+        // struct that a dozen surfaces deserialize.
+        let row: Option<(String, Option<chrono::DateTime<chrono::Utc>>)> =
+            sqlx::query_as("SELECT id, narrated_at FROM wiki_days WHERE date = $1")
+                .bind(date)
+                .fetch_optional(pool)
+                .await?;
+        if row.as_ref().is_some_and(|(_, at)| at.is_some()) {
+            tracing::debug!(date = %date, "already narrated");
+            return Ok(NarrateOutcome::AlreadyWritten);
+        }
 
-    save_day_article(pool, &day.id, date, &diary).await?;
+        let day_tz = crate::timezone::day_timezone(pool, date).await?;
+        if !day_over_in(date, &day_tz) {
+            tracing::info!(date = %date, "day is not over in its own timezone - nothing to write yet");
+            return Ok(NarrateOutcome::NotOver);
+        }
 
+        // The same guards `save_day_article` applies, asked first, so a page
+        // narration would refuse costs nothing to refuse.
+        if let Some((day_id, _)) = &row {
+            if let Some(kept) = kept_by(pool, day_id).await? {
+                stamp_narrated(pool, date).await?;
+                return Ok(NarrateOutcome::Kept(kept));
+            }
+        }
+
+        let tz: Option<Tz> = day_tz.parse().ok();
+        let (start_str, end_str) = day_boundaries_utc(date, Some(&day_tz));
+
+        let Some(diary) =
+            crate::api::day_article::write_day(pool, date, tz.as_ref(), &start_str, &end_str)
+                .await?
+        else {
+            return Ok(NarrateOutcome::NotEnough);
+        };
+
+        // The only field narration has ever really set. `epigraph` and
+        // `data_quality` went with the prompt that forbids them, and
+        // `last_edited_by` was a freeze flag that no longer decides anything —
+        // the article is edited, and its history says who wrote each version.
+        let day = crate::api::wiki_days::get_or_create_day(pool, date).await?;
+        sqlx::query("UPDATE wiki_days SET start_timezone = $1, updated_at = now() WHERE id = $2")
+            .bind(&day_tz)
+            .bind(&day.id)
+            .execute(pool)
+            .await?;
+
+        match save_day_article(pool, &day.id, date, &diary).await? {
+            SaveOutcome::Empty => Ok(NarrateOutcome::Empty),
+            // Stamped by the save, in the write's own transaction.
+            SaveOutcome::Created | SaveOutcome::Replaced => {
+                // Re-fetch: `day` was read before the article landed, so its
+                // `article` field predates the write — returning it as-is
+                // showed callers (the CLI, the API response) yesterday's prose
+                // under a "narrated" banner.
+                let day = crate::api::wiki_days::get_or_create_day(pool, date).await?;
+                Ok(NarrateOutcome::Written(day))
+            }
+            kept => {
+                stamp_narrated(pool, date).await?;
+                Ok(NarrateOutcome::Kept(kept))
+            }
+        }
+    }
+    .await;
+    lock.release().await;
+    outcome
+}
+
+async fn stamp_narrated<'e>(executor: impl sqlx::PgExecutor<'e>, date: NaiveDate) -> Result<()> {
     sqlx::query("UPDATE wiki_days SET narrated_at = now() WHERE date = $1")
         .bind(date)
-        .execute(pool)
+        .execute(executor)
         .await?;
+    Ok(())
+}
 
-    // Re-fetch: `day` was read before the article landed, so its `article`
-    // field predates the write — returning it as-is showed callers (the CLI,
-    // the API response) yesterday's prose under a "narrated" banner.
-    let day = crate::api::wiki_days::get_or_create_day(pool, date).await?;
-    Ok(Some(day))
+/// What [`save_day_article`] did with a draft.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveOutcome {
+    /// The day had no page; this is its first.
+    Created,
+    /// The page held only a previous draft, and now holds this one.
+    Replaced,
+    /// The owner turned the page's upkeep off.
+    KeptNever,
+    /// Someone has written in the page (`last_human_edit_at`).
+    KeptYourEdits,
+    /// The page has been opened in the editor, so it has a CRDT that a write
+    /// through the pool would fork.
+    KeptOpened,
+    /// The draft was empty, so nothing was saved.
+    Empty,
+}
+
+impl SaveOutcome {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Replaced => "replaced",
+            Self::KeptNever => "kept_never",
+            Self::KeptYourEdits => "kept_your_edits",
+            Self::KeptOpened => "kept_opened",
+            Self::Empty => "empty",
+        }
+    }
+}
+
+/// Why narration must leave the day's existing page alone, or `None` when
+/// it may write (including when the day has no page yet).
+async fn kept_by(pool: &PgPool, day_id: &str) -> Result<Option<SaveOutcome>> {
+    let row: Option<(String, bool, bool)> = sqlx::query_as(
+        "SELECT a.maintenance, a.last_human_edit_at IS NOT NULL, p.yjs_state IS NOT NULL \
+         FROM wiki_articles a \
+         JOIN app_pages p ON p.id = a.page_id \
+         WHERE a.subject_type = 'day' AND a.subject_id = $1",
+    )
+    .bind(day_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(match row {
+        None => None,
+        Some((maintenance, _, _)) if maintenance == "never" => Some(SaveOutcome::KeptNever),
+        Some((_, true, _)) => Some(SaveOutcome::KeptYourEdits),
+        Some((_, _, true)) => Some(SaveOutcome::KeptOpened),
+        Some(_) => None,
+    })
 }
 
 /// Land the narration in the day's article page — the one prose store.
 ///
-/// A day article's maintenance is the nightly narration. It is written unless
-/// the person has turned maintenance off for that page, which is now a setting
-/// they choose rather than a flag their first edit trips: touching one
-/// sentence is not a decision to take over a page, and it used to cost them
-/// the record's maintenance forever.
+/// **Narration is a FIRST DRAFT, written through the pool, and that is only
+/// safe on a page nobody has written in and nobody has opened.** It replaces
+/// the whole of `content`, so it leaves alone:
 ///
-/// Even for a kept article, a pool-side rewrite has to reckon with the CRDT:
-/// an UPDATE of `content` alone would be clobbered by the next debounced save.
+/// - a page whose upkeep the owner turned off (`maintenance = 'never'`);
+/// - a page someone has written in. `last_human_edit_at` is stamped on every
+///   editor update that changes the text and on every version put back, and
+///   a day carrying one is never re-drafted: the alternative loses the
+///   owner's own words, and only later evidence is recoverable;
+/// - a page that has been opened in the editor (`yjs_state IS NOT NULL`,
+///   which the first sync of an open tab sets). Its text lives in a CRDT that
+///   open tabs and each browser's IndexedDB copy share. A pool write has to
+///   null `yjs_state` so the server reseeds, and a reseeded doc is a new
+///   lineage: an open tab saves its old doc back over it, and an IndexedDB
+///   copy merges in as a second copy of the text. The owner's Rewrite this
+///   page ([`rewrite_day_page`]) is the write that goes through the CRDT.
 ///
-/// This used to be answered by writing only `WHERE yjs_state IS NULL` and
-/// stamping `dirty_at` otherwise, deferring to "a server-side (Yjs-aware)
-/// writer" that was never built. Nothing reads `dirty_at`, so the real
-/// behaviour was: **once a day's page had been opened in the editor, that day
-/// never received narration again** — silently, for the life of the box. A
-/// re-cut day kept its first draft forever.
+/// So the write itself is `WHERE yjs_state IS NULL`, which also settles a page
+/// opened between the check and the write. A kept page is not retried: the
+/// day has its page, and `narrate_day` stamps it.
 ///
-/// The protocol that makes the pool write safe already exists in the other
-/// direction: an external writer sets `yjs_state = NULL`, and
-/// `DocCache::get_or_create` treats that as "rewritten outside the CRDT",
-/// evicts the cached doc and reseeds it from `content`
-/// ([server/yjs.rs] — added after a cached doc was observed resurrecting
-/// stale prose over a narration). So narration uses it: content and
-/// `yjs_state = NULL` together, and the next reader gets a doc seeded from
-/// the new prose.
+/// What it writes is recorded as the edition (`machine_text`), as every
+/// first-draft writer does, so a later difference between the page and that
+/// text says somebody changed it.
 ///
-/// **Narration is a FIRST DRAFT, and a draft is only safe on a page nobody has
-/// written on.** This overwrites the whole document — content replaced,
-/// `yjs_state` nulled — so anything the person typed into a day article would
-/// go with it.
-///
-/// That used to be impossible rather than guarded: `claim_article_on_user_edit`
-/// flipped `auto_update` off on the first doc update that changed the text, so
-/// a still-maintained article had by definition never been touched. Removing
-/// the claim flip removed that guarantee, and the day did not get the
-/// replacement the other rungs got — the editor diffs its output against the
-/// live text and the server refuses any edit that loses a sentence the person
-/// wrote, but the day is excluded from that door while its narrator stays
-/// one-shot. So the guarantee is restored here, from evidence rather than a
-/// flag: `last_human_edit_at` is stamped by `note_human_edit` on every doc
-/// update that changes the text, and a day carrying one is never re-drafted.
-///
-/// A day they have written on needs REVISION, not a new draft, and revision is
-/// what the day rung still owes — see `agents/record/article-resolution.md`.
-/// Until then this stops, which loses them later evidence; the alternative
-/// loses them their own words, and only one of those is recoverable.
-///
-/// The one remaining race is a page open *right now* whose in-memory doc
-/// would save over us before any reader re-seeds it. `updated_at` is the
-/// proxy for that: a page touched in the last 15 minutes is left alone and
-/// picked up on a later run (narration is hourly), which also self-heals.
+/// A page it writes (`Created`, `Replaced`) lands in one transaction with
+/// its edition and the day's `narrated_at` stamp. Apart, a failure after the
+/// write would leave a written page that nothing records: the next run would
+/// pay for the day again, and a page whose edition is stale reads as holding
+/// the owner's edits.
 async fn save_day_article(
     pool: &PgPool,
     day_id: &str,
     date: NaiveDate,
     prose: &str,
-) -> Result<()> {
+) -> Result<SaveOutcome> {
     if prose.trim().is_empty() {
-        return Ok(());
+        return Ok(SaveOutcome::Empty);
     }
 
     let existing = crate::api::wiki_articles::get_article(pool, "day", day_id).await?;
     let Some(article) = existing else {
         // Title matches 0083's backfill: "3 March 2026". `%-d` drops the
-        // zero-padding, as `FMDD` did in the migration's to_char.
+        // zero-padding, as `FMDD` did in the migration's to_char. A day
+        // article is maintained from birth, which is the column's DEFAULT.
         let title = date.format("%-d %B %Y").to_string();
+        let mut tx = pool.begin().await?;
         let created =
-            crate::api::wiki_articles::create_article(pool, "day", day_id, &title, prose).await?;
-        // A day article is maintained from birth — narration IS its
-        // maintenance — which is the DEFAULT for the column, so there is
-        // nothing to set. Entity articles are opt-in and say so themselves.
-        let _ = created;
-        return Ok(());
+            crate::api::wiki_articles::create_article_in(&mut tx, "day", day_id, &title, prose)
+                .await?;
+        crate::api::wiki_editor::record_edition(&mut *tx, &created.id, prose).await?;
+        stamp_narrated(&mut *tx, date).await?;
+        tx.commit().await?;
+        return Ok(SaveOutcome::Created);
     };
 
-    let (maintenance, last_human_edit_at): (String, Option<chrono::DateTime<chrono::Utc>>) =
-        sqlx::query_as("SELECT maintenance, last_human_edit_at FROM wiki_articles WHERE id = $1")
-            .bind(&article.id)
-            .fetch_one(pool)
-            .await?;
-    if maintenance == "never" {
+    if let Some(kept) = kept_by(pool, day_id).await? {
         tracing::info!(
             date = %date,
             page_id = %article.page_id,
-            "the owner has turned maintenance off for this day - narration files nothing"
+            kept = kept.label(),
+            "narration leaves this day's page as it is"
         );
-        return Ok(());
-    }
-    if last_human_edit_at.is_some() {
-        tracing::info!(
-            date = %date,
-            page_id = %article.page_id,
-            "this day has been edited by hand — a first draft would overwrite it, and \
-             narration has no way to edit around their sentences yet"
-        );
-        return Ok(());
+        return Ok(kept);
     }
 
+    let mut tx = pool.begin().await?;
     let updated = sqlx::query(
-        "UPDATE app_pages SET content = $1, yjs_state = NULL, updated_at = now() \
-         WHERE id = $2 \
-           AND (yjs_state IS NULL OR updated_at < now() - interval '15 minutes')",
+        "UPDATE app_pages SET content = $1, updated_at = now() \
+         WHERE id = $2 AND yjs_state IS NULL",
     )
     .bind(prose)
     .bind(&article.page_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
-
-    if updated.rows_affected() > 0 {
-        sqlx::query(
-            "UPDATE wiki_articles SET last_written_at = now() WHERE id = $1",
-        )
-        .bind(&article.id)
-        .execute(pool)
-        .await?;
-    } else {
+    if updated.rows_affected() == 0 {
         tracing::info!(
             date = %date,
             page_id = %article.page_id,
-            "kept day article was touched in the last 15 minutes — someone may have it \
-             open; leaving it and trying again on a later run"
+            "this day's page was opened while it was being written - leaving it"
         );
+        return Ok(SaveOutcome::KeptOpened);
     }
+    crate::api::wiki_editor::record_edition(&mut *tx, &article.id, prose).await?;
+    stamp_narrated(&mut *tx, date).await?;
+    tx.commit().await?;
+    Ok(SaveOutcome::Replaced)
+}
+
+// ── Rewrite this page ────────────────────────────────────────────────────────
+
+/// How long a rewrite's writer (`day_article::write_day`) may take to come
+/// back with a draft. Its three model calls at their 300 s ceiling come to
+/// fifteen minutes; a writer that retries an empty answer can take longer,
+/// and one still going at twenty is given up on, with the page as it was.
+///
+/// It covers the writer only. Once a draft exists, the write to the page runs
+/// to the end: stopped partway, the page could be changed in memory and in
+/// open editors yet not saved, versioned or recorded.
+pub const REWRITE_TIME_LIMIT: std::time::Duration = std::time::Duration::from_secs(20 * 60);
+
+/// A day's page, as the owner's rewrite needs it.
+#[derive(Debug, Clone)]
+pub struct DayPage {
+    pub date: NaiveDate,
+    pub day_id: String,
+    pub article_id: String,
+    pub page_id: String,
+    /// The page may hold the owner's own words: they edited it or put a
+    /// version back (`last_human_edit_at`), they turned its upkeep off, or
+    /// its text is no longer what the server last wrote (`machine_text`). A
+    /// rewrite replaces those only with their consent.
+    ///
+    /// A page with no `machine_text` was written before narration recorded
+    /// its edition, so its text cannot be compared. If it has any version
+    /// besides a restore point (which only keeps what the page said before a
+    /// machine changed it, the first draft included), a chat edit, a version
+    /// put back or a browser save has touched it, and none of those is sure
+    /// to have left a stamp, so it counts. Asking when there was nothing to
+    /// replace costs one line in the confirm; not asking costs the owner's
+    /// change.
+    pub has_your_edits: bool,
+}
+
+/// The day's page, or `None` when the day has none.
+pub async fn day_page(pool: &PgPool, date: NaiveDate) -> Result<Option<DayPage>> {
+    let row: Option<(String, String, String, bool)> = sqlx::query_as(
+        "SELECT d.id, a.id, a.page_id, \
+                (a.last_human_edit_at IS NOT NULL \
+                 OR a.maintenance = 'never' \
+                 OR (a.machine_text IS NOT NULL AND p.content <> a.machine_text) \
+                 OR (a.machine_text IS NULL \
+                     AND EXISTS (SELECT 1 FROM app_page_versions v \
+                                 WHERE v.page_id = a.page_id \
+                                   AND (v.created_by <> 'auto' OR v.description IS DISTINCT FROM $2)))) \
+         FROM wiki_days d \
+         JOIN wiki_articles a ON a.subject_type = 'day' AND a.subject_id = d.id \
+         JOIN app_pages p ON p.id = a.page_id \
+         WHERE d.date = $1",
+    )
+    .bind(date)
+    .bind(crate::api::pages::RESTORE_POINT)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(day_id, article_id, page_id, has_your_edits)| DayPage {
+        date,
+        day_id,
+        article_id,
+        page_id,
+        has_your_edits,
+    }))
+}
+
+/// What [`rewrite_day_page`] did. Every outcome but `Rewritten` and
+/// `NotSaved` leaves the page exactly as it was.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RewriteOutcome {
+    /// The page is the new draft. `before_version` holds the page as it was,
+    /// so putting it back undoes the rewrite; `after_version` is the version
+    /// the rewrite cut, `None` when cutting it failed.
+    Rewritten {
+        before_version: i64,
+        after_version: Option<i64>,
+    },
+    NotOver,
+    NoPage,
+    /// The page may hold the owner's words and they did not say to replace
+    /// them.
+    NeedsConsent,
+    NotEnough,
+    /// The new draft lacks an Abstract or a section.
+    ThinDraft,
+    /// The page changed while the server was writing.
+    EditedWhileWriting,
+    /// The new page is in the editor's doc and went out to open editors, but
+    /// saving it failed; the save queue retries it. Its version and its
+    /// edition are recorded as for `Rewritten`.
+    NotSaved,
+    /// Billing refused a model call.
+    Billing,
+    Failed(String),
+}
+
+impl RewriteOutcome {
+    /// The code the page keys its copy on; `None` for a rewrite that landed.
+    pub fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::Rewritten { .. } => None,
+            Self::NotOver => Some("not_over"),
+            Self::NoPage => Some("no_page"),
+            Self::NeedsConsent => Some("needs_consent"),
+            Self::NotEnough => Some("not_enough"),
+            Self::ThinDraft => Some("thin_draft"),
+            Self::EditedWhileWriting => Some("edited_while_writing"),
+            Self::NotSaved => Some("not_saved"),
+            Self::Billing => Some("billing"),
+            Self::Failed(_) => Some("failed"),
+        }
+    }
+}
+
+/// The owner's Rewrite this page: write a past day's page again, through the
+/// CRDT, with the page as it was kept first.
+///
+/// The one door that writes a day that already has its page. It needs the
+/// day's lock (the type says so: the caller took it before answering the
+/// page, so a second request is refused there rather than here), reads the
+/// day the way [`narrate_day`] does, and writes through `yjs`, which must be
+/// the server's own `YjsState`, the one open editors are connected to: a
+/// write anywhere else would miss them, and their next save would put the
+/// old page back.
+///
+/// It re-reads nothing it does not need to: no segmentation, no scoring, and
+/// the day's window is the one narration locked (`start_timezone`).
+///
+/// A rewrite restamps `narrated_at`, which, with the wiki editor on, earns
+/// the enclosing year and chapter one revision each at their next interval
+/// (their evidence fingerprints include `max(narrated_at)`).
+pub async fn rewrite_day_page(
+    pool: &PgPool,
+    yjs: &crate::server::yjs::YjsState,
+    date: NaiveDate,
+    replace_edits: bool,
+    lock: DayWriteLock,
+) -> RewriteOutcome {
+    let outcome: Result<RewriteOutcome> = async {
+        let day_tz = crate::timezone::day_timezone(pool, date).await?;
+        if !day_over_in(date, &day_tz) {
+            return Ok(RewriteOutcome::NotOver);
+        }
+        let Some(page) = day_page(pool, date).await? else {
+            return Ok(RewriteOutcome::NoPage);
+        };
+        if page.has_your_edits && !replace_edits {
+            return Ok(RewriteOutcome::NeedsConsent);
+        }
+
+        let before = yjs
+            .read_text(&page.page_id)
+            .await
+            .map_err(|e| crate::Error::Other(format!("could not read the page: {e}")))?;
+
+        let tz: Option<Tz> = day_tz.parse().ok();
+        let (start_str, end_str) = day_boundaries_utc(date, Some(&day_tz));
+        let draft = match draft_within(
+            REWRITE_TIME_LIMIT,
+            crate::api::day_article::write_day(pool, date, tz.as_ref(), &start_str, &end_str),
+        )
+        .await
+        {
+            Ok(draft) => draft,
+            Err(ended) => return Ok(ended),
+        };
+
+        // No time limit from here on (see `REWRITE_TIME_LIMIT`).
+        Ok(apply_day_rewrite(pool, yjs, &page, &day_tz, &before, &draft, page.has_your_edits).await)
+    }
+    .await;
+    lock.release().await;
+    outcome.unwrap_or_else(|e: crate::Error| RewriteOutcome::Failed(e.to_string()))
+}
+
+/// The writer's half of a rewrite: its draft, or how the rewrite ends without
+/// one. `limit` bounds this half only (see `REWRITE_TIME_LIMIT`).
+async fn draft_within(
+    limit: std::time::Duration,
+    write: impl std::future::Future<Output = Result<Option<String>>>,
+) -> std::result::Result<String, RewriteOutcome> {
+    match tokio::time::timeout(limit, write).await {
+        Ok(Ok(Some(draft))) => Ok(draft),
+        Ok(Ok(None)) => Err(RewriteOutcome::NotEnough),
+        Ok(Err(e)) if crate::virtues_api::client::is_payment_refusal(&e) => {
+            tracing::warn!(error = %e, "billing stopped the rewrite");
+            Err(RewriteOutcome::Billing)
+        }
+        Ok(Err(e)) => Err(RewriteOutcome::Failed(e.to_string())),
+        Err(_) => Err(RewriteOutcome::Failed(format!(
+            "the writer had no draft after {limit:?}, so the rewrite stopped"
+        ))),
+    }
+}
+
+/// The version description a rewrite's own version carries.
+fn rewrite_description(before: &str, after: &str) -> String {
+    format!(
+        "rewrote the day's page at your request — {}",
+        crate::api::wiki_editor::change_line(before, after)
+    )
+}
+
+/// Whether a draft is a whole day page: an Abstract (the first paragraph, as
+/// [`crate::api::day_memory::abstract_of`] and the app both read it) and at
+/// least one section. The writer's check drops every sentence it did not
+/// keep, and `render` every heading left with nothing under it, so a draft
+/// can come back as an Abstract alone, or nearly empty.
+fn is_whole_page(draft: &str) -> bool {
+    let lede = crate::api::day_memory::abstract_of(draft);
+    let has_abstract =
+        !lede.is_empty() && !lede.starts_with('#') && !lede.starts_with('|') && !lede.starts_with("[^");
+    has_abstract && draft.lines().any(|l| l.starts_with("## "))
+}
+
+/// Everything a rewrite does once it has a draft: no model call, so a test
+/// can hand it the draft.
+///
+/// `before` is the text the rewrite read before it started writing, and
+/// `had_your_edits` whether the page carried the owner's edits then (a
+/// rewrite that went ahead with them had their consent). In order:
+///
+/// 1. A thin draft is refused.
+/// 2. The page is read again. If it moved, or the owner's edits appeared
+///    while the server was writing, nothing is cut and nothing changes.
+/// 3. The page as it is now is kept (`pages::cut_restore_point`). If that
+///    cannot be saved, nothing changes: a rewrite nobody can undo is not one
+///    to make.
+/// 4. The draft replaces the page by line, refused if the page moved since 2.
+///    A draft that is on the page but could not be saved yet (`NotSaved`)
+///    is a rewrite made: 5 and 6 still run, and the save queue lands it.
+/// 5. The rewrite's own version is cut from what the write left, credited
+///    to the server (`'ai'`).
+/// 6. The edition is recorded, the owner's edit stamp cleared unless a newer
+///    edit landed after the write, and the day restamped, together.
+///
+/// Upkeep (`maintenance`) is not changed: a rewrite asked for once is not a
+/// decision about every night after.
+pub async fn apply_day_rewrite(
+    pool: &PgPool,
+    yjs: &crate::server::yjs::YjsState,
+    page: &DayPage,
+    day_tz: &str,
+    before: &str,
+    draft: &str,
+    had_your_edits: bool,
+) -> RewriteOutcome {
+    use crate::server::yjs::TextWriteError;
+
+    if !is_whole_page(draft) {
+        tracing::warn!(date = %page.date, chars = draft.len(), "the rewrite's draft is too thin to replace the page");
+        return RewriteOutcome::ThinDraft;
+    }
+
+    let _turn = yjs.write_turn(&page.page_id).await;
+    let live = match yjs.read_text(&page.page_id).await {
+        Ok(text) => text,
+        Err(e) => return RewriteOutcome::Failed(format!("could not read the page: {e}")),
+    };
+    if live != before {
+        return RewriteOutcome::EditedWhileWriting;
+    }
+    if !had_your_edits {
+        match day_page(pool, page.date).await {
+            Ok(Some(now)) if now.has_your_edits => return RewriteOutcome::EditedWhileWriting,
+            Ok(Some(_)) => {}
+            Ok(None) => return RewriteOutcome::NoPage,
+            Err(e) => return RewriteOutcome::Failed(e.to_string()),
+        }
+    }
+
+    let before_version = match crate::api::pages::cut_restore_point(pool, yjs, &page.page_id).await {
+        Ok(kept) => kept.version_number,
+        Err(e) => {
+            tracing::error!(date = %page.date, error = %e, "could not keep the page before rewriting it - leaving it as it is");
+            return RewriteOutcome::Failed(format!("could not keep the page before rewriting it: {e}"));
+        }
+    };
+
+    // The database's clock, the one `last_human_edit_at` is stamped by: an
+    // edit stamped after this landed on the new page and is kept.
+    let applied_at: chrono::DateTime<chrono::Utc> =
+        match sqlx::query_scalar("SELECT clock_timestamp()").fetch_one(pool).await {
+            Ok(t) => t,
+            Err(e) => return RewriteOutcome::Failed(e.to_string()),
+        };
+
+    let (written, saved) = match yjs.replace_text(&page.page_id, before, draft).await {
+        Ok(written) => (written, true),
+        Err(TextWriteError::Stale) => return RewriteOutcome::EditedWhileWriting,
+        // The doc holds exactly the draft, the save queue has its state, and
+        // the doc stays the page's until that save lands, so the version and
+        // the edition below record what the page will hold.
+        Err(TextWriteError::NotSaved { written, error }) => {
+            tracing::error!(date = %page.date, error = %error, "the rewrite is on the page but not saved yet");
+            (written, false)
+        }
+        Err(TextWriteError::Other(e)) => return RewriteOutcome::Failed(e),
+    };
+    let applied = written.text.as_str();
+
+    // From here the page has changed, so nothing below may report that it
+    // did not: a failure costs History its entry or the metadata its update,
+    // and is logged.
+    let after_version = crate::api::pages::cut_version(
+        pool,
+        &page.page_id,
+        &written,
+        "ai",
+        Some(&rewrite_description(before, applied)),
+    )
+    .await;
+
+    if let Err(e) = record_rewrite(pool, page, day_tz, applied, applied_at).await {
+        tracing::error!(date = %page.date, error = %e, "the page is rewritten, but its article and day were not updated");
+    }
+
+    if !saved {
+        return RewriteOutcome::NotSaved;
+    }
+    tracing::info!(date = %page.date, before_version, ?after_version, "day page rewritten");
+    RewriteOutcome::Rewritten {
+        before_version,
+        after_version,
+    }
+}
+
+/// A rewrite's bookkeeping, in one transaction with no network wait inside:
+/// the edition (what `wiki_editor::record_edition` records), the owner's edit
+/// stamp cleared unless an edit landed after `applied_at`, and the day
+/// restamped.
+async fn record_rewrite(
+    pool: &PgPool,
+    page: &DayPage,
+    day_tz: &str,
+    applied: &str,
+    applied_at: chrono::DateTime<chrono::Utc>,
+) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    crate::api::wiki_editor::record_edition(&mut *tx, &page.article_id, applied).await?;
+    sqlx::query(
+        "UPDATE wiki_articles SET last_human_edit_at = NULL \
+         WHERE id = $1 AND (last_human_edit_at IS NULL OR last_human_edit_at <= $2)",
+    )
+    .bind(&page.article_id)
+    .bind(applied_at)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE wiki_days SET narrated_at = now(), \
+         start_timezone = COALESCE(start_timezone, $2), updated_at = now() \
+         WHERE id = $1",
+    )
+    .bind(&page.day_id)
+    .bind(day_tz)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -2621,16 +3153,17 @@ mod dossier_tests {
     /// build time — and it did: after the 2026-08-17 renames, the events query
     /// here still selected `start_time`, so `narrate_day` errored every night
     /// and no day was ever narrated (the door's "a page will be waiting for
-    /// you" was silently false). An empty day exercises both statements — the
-    /// events SELECT and the `narrated_at` read — and must come back `None`
-    /// (below MIN_EVENTS_TO_NARRATE), never `Err`.
+    /// you" was silently false). An empty past day exercises the lock, the
+    /// `narrated_at` read, the page guards and every query the writer
+    /// assembles from, and must come back `NotEnough` before any model call,
+    /// never `Err`.
     #[sqlx::test]
     async fn narrate_day_sql_matches_schema(pool: sqlx::PgPool) {
         let date = chrono::NaiveDate::from_ymd_opt(2026, 8, 25).unwrap();
         let out = narrate_day(&pool, date)
             .await
             .expect("narration must not die on its own SQL");
-        assert!(out.is_none(), "an empty day earns no story");
+        assert!(matches!(out, NarrateOutcome::NotEnough), "an empty day earns no story: {out:?}");
     }
 
     /// The heart-rate snapshot decodes. `ROUND(AVG(bpm))` over an integer
@@ -2674,22 +3207,66 @@ mod dossier_tests {
         );
     }
 
-    /// A day whose page has been opened in the editor must still receive
-    /// narration.
-    ///
-    /// THE FAILURE CLASS: **a maintenance write that defers to a queue nobody
-    /// consumes is not deferred, it is dropped.** This write was guarded
-    /// `WHERE yjs_state IS NULL` and stamped `dirty_at` otherwise, deferring
-    /// to a Yjs-aware writer that was never built — and nothing reads
-    /// `dirty_at`. So opening a day page once froze that day's article at its
-    /// first draft for the life of the box, and re-cutting the day changed
-    /// nothing. Invisible from outside: the page still holds plausible prose,
-    /// just never the current prose.
-    #[sqlx::test]
-    async fn narration_lands_on_a_day_page_that_has_been_opened(pool: PgPool) {
-        let date = chrono::NaiveDate::from_ymd_opt(2026, 8, 26).unwrap();
-        let day = get_or_create_day(&pool, date).await.unwrap();
+    /// Give a page a CRDT, the state a page is in once the editor has opened
+    /// it.
+    async fn open_in_editor(pool: &PgPool, page_id: &str) {
+        sqlx::query("UPDATE app_pages SET yjs_state = '\\x010203'::bytea WHERE id = $1")
+            .bind(page_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
 
+    async fn page_row(pool: &PgPool, page_id: &str) -> (String, Option<Vec<u8>>) {
+        sqlx::query_as("SELECT content, yjs_state FROM app_pages WHERE id = $1")
+            .bind(page_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// A page nobody has opened takes each new draft, and the draft is
+    /// recorded as what the server last wrote, so a later difference between
+    /// the two says somebody changed the page.
+    #[sqlx::test]
+    async fn a_page_nobody_opened_takes_the_new_draft(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 24).unwrap();
+        let day = get_or_create_day(&pool, date).await.unwrap();
+        let first = save_day_article(&pool, &day.id, date, "First draft.").await.unwrap();
+        assert_eq!(first, SaveOutcome::Created);
+        let second = save_day_article(&pool, &day.id, date, "Second draft, after the re-cut.")
+            .await
+            .unwrap();
+        assert_eq!(second, SaveOutcome::Replaced);
+
+        let page = day_page(&pool, date).await.unwrap().expect("the day has its page");
+        assert_eq!(page_row(&pool, &page.page_id).await.0, "Second draft, after the re-cut.");
+        let machine: Option<String> =
+            sqlx::query_scalar("SELECT machine_text FROM wiki_articles WHERE id = $1")
+                .bind(&page.article_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(machine.as_deref(), Some("Second draft, after the re-cut."));
+        assert!(!page.has_your_edits, "a page only the server wrote holds none of theirs");
+        assert!(article_state(&pool, &page).await.2.is_some(), "and the day has its stamp");
+    }
+
+    /// A page that has been opened in the editor is never written through
+    /// the pool, whenever it was opened.
+    ///
+    /// THE FAILURE CLASS: **a pool write over a page with a CRDT forks it.**
+    /// The write has to null `yjs_state` so the server reseeds the doc, and a
+    /// reseeded doc is a new lineage. An editor tab still open holds the old
+    /// doc and saves it straight back over the draft; a browser whose
+    /// IndexedDB holds the old lineage merges it in, and the page carries two
+    /// copies of its text. Opening a page once is enough to make it so, so
+    /// the page is kept, and the owner's Rewrite this page is the write that
+    /// goes through the CRDT.
+    #[sqlx::test]
+    async fn an_opened_page_is_never_written_through_the_pool(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 26).unwrap();
+        let day = get_or_create_day(&pool, date).await.unwrap();
         save_day_article(&pool, &day.id, date, "First draft.")
             .await
             .unwrap();
@@ -2698,99 +3275,72 @@ mod dossier_tests {
             .unwrap()
             .expect("the first narration creates the article");
 
-        // Someone opens the page: a CRDT exists for it from then on, and
-        // nothing ever sets it back to NULL. Backdated so this is not the
-        // "being edited right now" case, which is the next test.
-        // `app_pages` carries a BEFORE UPDATE trigger that stamps
-        // `updated_at = now()`, which is what makes that column mean "last
-        // written by anything" in production — and what stops a plain UPDATE
-        // here from backdating it. Suspend it for the one statement.
-        for stmt in [
-            "ALTER TABLE app_pages DISABLE TRIGGER set_updated_at",
-            "UPDATE app_pages SET yjs_state = '\\x010203'::bytea, \
-             updated_at = now() - interval '1 hour' WHERE id = $1",
-            "ALTER TABLE app_pages ENABLE TRIGGER set_updated_at",
-        ] {
-            let q = sqlx::query(stmt);
-            let q = if stmt.contains("$1") {
-                q.bind(&article.page_id)
-            } else {
-                q
-            };
-            q.execute(&pool).await.unwrap();
-        }
-
-        save_day_article(&pool, &day.id, date, "Second draft, after the re-cut.")
+        open_in_editor(&pool, &article.page_id).await;
+        let kept = save_day_article(&pool, &day.id, date, "Second draft, after the re-cut.")
             .await
             .unwrap();
+        assert_eq!(kept, SaveOutcome::KeptOpened);
 
-        let (content, state): (String, Option<Vec<u8>>) =
-            sqlx::query_as("SELECT content, yjs_state FROM app_pages WHERE id = $1")
-                .bind(&article.page_id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(
-            content, "Second draft, after the re-cut.",
-            "an opened page must still receive narration"
-        );
-        assert!(
-            state.is_none(),
-            "the CRDT must be cleared, so the next reader reseeds from the new \
-             prose instead of resurrecting the old doc over it"
-        );
+        let (content, state) = page_row(&pool, &article.page_id).await;
+        assert_eq!(content, "First draft.", "an opened page keeps its text");
+        assert!(state.is_some(), "and its CRDT, which open editors share");
     }
 
-    /// The one page narration leaves alone: one someone may have open at this
-    /// moment, whose in-memory doc would save over the write before any reader
-    /// re-seeds it. Not skipped forever — narration runs hourly and the page
-    /// stops being fresh.
+    /// A page narration writes lands with its edition and the day's stamp,
+    /// or not at all.
+    ///
+    /// THE FAILURE CLASS: **a written page that nothing records.** Written
+    /// apart, a failure after the page landed left the day unstamped, so the
+    /// queue paid for the day again and wrote over the page; and a page whose
+    /// edition was not recorded reads as holding the owner's edits. Here the
+    /// stamp is refused, and neither a first page nor a replacement may land
+    /// without it.
     #[sqlx::test]
-    async fn narration_waits_for_a_page_touched_a_moment_ago(pool: PgPool) {
-        let date = chrono::NaiveDate::from_ymd_opt(2026, 8, 27).unwrap();
-        let day = get_or_create_day(&pool, date).await.unwrap();
-        save_day_article(&pool, &day.id, date, "First draft.")
+    async fn a_page_lands_with_its_edition_and_stamp_or_not_at_all(pool: PgPool) {
+        let first = NaiveDate::from_ymd_opt(2026, 8, 27).unwrap();
+        let first_day = get_or_create_day(&pool, first).await.unwrap();
+        let again = NaiveDate::from_ymd_opt(2026, 8, 30).unwrap();
+        let again_day = get_or_create_day(&pool, again).await.unwrap();
+        save_day_article(&pool, &again_day.id, again, "First draft.")
             .await
             .unwrap();
-        let article = crate::api::wiki_articles::get_article(&pool, "day", &day.id)
-            .await
-            .unwrap()
-            .unwrap();
+        let page = day_page(&pool, again).await.unwrap().unwrap();
 
-        sqlx::query("UPDATE app_pages SET yjs_state = $1, updated_at = now() WHERE id = $2")
-            .bind(vec![1u8, 2, 3])
-            .bind(&article.page_id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        for stmt in [
+            "CREATE FUNCTION refuse_stamps() RETURNS trigger LANGUAGE plpgsql \
+             AS $$ BEGIN RAISE EXCEPTION 'no stamps'; END $$",
+            "CREATE TRIGGER refuse_stamps BEFORE UPDATE ON wiki_days FOR EACH ROW \
+             WHEN (NEW.narrated_at IS DISTINCT FROM OLD.narrated_at) \
+             EXECUTE FUNCTION refuse_stamps()",
+        ] {
+            sqlx::query(stmt).execute(&pool).await.unwrap();
+        }
 
-        save_day_article(&pool, &day.id, date, "Second draft.")
-            .await
-            .unwrap();
-
-        let content: String = sqlx::query_scalar("SELECT content FROM app_pages WHERE id = $1")
-            .bind(&article.page_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(
-            content, "First draft.",
-            "a page touched seconds ago is left for a later run"
+        assert!(save_day_article(&pool, &first_day.id, first, "A first page.").await.is_err());
+        assert!(
+            crate::api::wiki_articles::get_article(&pool, "day", &first_day.id)
+                .await
+                .unwrap()
+                .is_none(),
+            "no page without its stamp"
         );
+
+        assert!(save_day_article(&pool, &again_day.id, again, "Second draft.").await.is_err());
+        assert_eq!(page_row(&pool, &page.page_id).await.0, "First draft.");
+        let (machine, _, _) = article_state(&pool, &page).await;
+        assert_eq!(machine.as_deref(), Some("First draft."), "nor an edition for a page not written");
     }
 
     /// The day article someone has written in is never re-drafted over.
     ///
-    /// This is the guarantee the one-pen rule used to provide structurally: a
-    /// still-maintained article had by definition never been edited, so
-    /// overwriting it wholesale was safe. Ownership no longer flips, and the
-    /// day is excluded from the editor that diffs its output against the live
-    /// text — so without this gate a person who fixed one sentence in a day
-    /// article lost it on the next nightly pass, with nothing in the UI to say
-    /// a thing had happened.
+    /// Without this a person who fixed one sentence in a day article lost it
+    /// on the next nightly pass, with nothing in the UI to say a thing had
+    /// happened: narration is a first draft of the whole page, and the day
+    /// is excluded from the editor that diffs its output against the live
+    /// text.
     #[sqlx::test]
     async fn a_day_someone_has_written_in_is_not_redrafted_over(pool: PgPool) {
-        let date = chrono::NaiveDate::from_ymd_opt(2026, 8, 28).unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 28).unwrap();
         let day = get_or_create_day(&pool, date).await.unwrap();
         save_day_article(&pool, &day.id, date, "First draft.")
             .await
@@ -2800,38 +3350,581 @@ mod dossier_tests {
             .unwrap()
             .unwrap();
 
-        // They open it and change a sentence. `note_human_edit` stamps the
-        // article; the page keeps their text. Backdated past the 15-minute
-        // "someone may have it open" window so THAT guard is not what is being
-        // tested here — see `narration_waits_for_a_page_touched_a_moment_ago`.
+        // They change a sentence. `note_human_edit` stamps the article; the
+        // page keeps their text.
         sqlx::query("UPDATE wiki_articles SET last_human_edit_at = now() WHERE id = $1")
             .bind(&article.id)
             .execute(&pool)
             .await
             .unwrap();
-        for stmt in [
-            "ALTER TABLE app_pages DISABLE TRIGGER set_updated_at",
-            "UPDATE app_pages SET content = 'First draft. I was actually at the coast.', \
-             updated_at = now() - interval '1 hour' WHERE id = $1",
-            "ALTER TABLE app_pages ENABLE TRIGGER set_updated_at",
-        ] {
-            let q = sqlx::query(stmt);
-            let q = if stmt.contains("$1") { q.bind(&article.page_id) } else { q };
-            q.execute(&pool).await.unwrap();
-        }
-
-        save_day_article(&pool, &day.id, date, "A completely different second draft.")
-            .await
-            .unwrap();
-
-        let content: String = sqlx::query_scalar("SELECT content FROM app_pages WHERE id = $1")
+        sqlx::query("UPDATE app_pages SET content = $2 WHERE id = $1")
             .bind(&article.page_id)
-            .fetch_one(&pool)
+            .bind("First draft. I was actually at the coast.")
+            .execute(&pool)
             .await
             .unwrap();
+
+        let kept = save_day_article(&pool, &day.id, date, "A completely different second draft.")
+            .await
+            .unwrap();
+        assert_eq!(kept, SaveOutcome::KeptYourEdits);
+
         assert_eq!(
-            content, "First draft. I was actually at the coast.",
+            page_row(&pool, &article.page_id).await.0,
+            "First draft. I was actually at the coast.",
             "their correction must survive the next night's narration"
         );
+    }
+
+    /// Every refusal narration can make before writing costs no model call,
+    /// and only a day that has its page is stamped.
+    #[sqlx::test]
+    async fn narration_refuses_before_any_model_call(pool: PgPool) {
+        let stamped = |date: NaiveDate| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+                    "SELECT narrated_at FROM wiki_days WHERE date = $1",
+                )
+                .bind(date)
+                .fetch_optional(&pool)
+                .await
+                .unwrap()
+                .flatten()
+                .is_some()
+            }
+        };
+
+        // Written once already.
+        let written = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        get_or_create_day(&pool, written).await.unwrap();
+        sqlx::query("UPDATE wiki_days SET narrated_at = now() WHERE date = $1")
+            .bind(written)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let out = narrate_day(&pool, written).await.unwrap();
+        assert!(matches!(out, NarrateOutcome::AlreadyWritten), "{out:?}");
+
+        // Not over anywhere yet.
+        let ahead = chrono::Utc::now().date_naive() + chrono::Duration::days(2);
+        let out = narrate_day(&pool, ahead).await.unwrap();
+        assert!(matches!(out, NarrateOutcome::NotOver), "{out:?}");
+        assert!(!stamped(ahead).await);
+
+        // Another writer holds the day: nothing happens and nothing is
+        // stamped, so the queue offers it again.
+        let held = NaiveDate::from_ymd_opt(2026, 8, 21).unwrap();
+        let lock = try_lock_day(&pool, held).await.unwrap().expect("a free day");
+        let out = narrate_day(&pool, held).await.unwrap();
+        assert!(matches!(out, NarrateOutcome::Busy), "{out:?}");
+        assert!(!stamped(held).await);
+        lock.release().await;
+
+        // A page that has been opened, on a day with no stamp (a page an
+        // older server wrote, say), is kept before the writer runs (a day
+        // with no record would otherwise come back NotEnough), and the day is
+        // stamped: it has its page.
+        let opened = NaiveDate::from_ymd_opt(2026, 8, 22).unwrap();
+        let day = get_or_create_day(&pool, opened).await.unwrap();
+        save_day_article(&pool, &day.id, opened, "First draft.")
+            .await
+            .unwrap();
+        sqlx::query("UPDATE wiki_days SET narrated_at = NULL WHERE id = $1")
+            .bind(&day.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let page = day_page(&pool, opened).await.unwrap().unwrap();
+        open_in_editor(&pool, &page.page_id).await;
+        let out = narrate_day(&pool, opened).await.unwrap();
+        assert!(matches!(out, NarrateOutcome::Kept(SaveOutcome::KeptOpened)), "{out:?}");
+        assert!(stamped(opened).await);
+    }
+
+    /// A day has one writer at a time, across connections, and a writer that
+    /// goes away without a word lets the day go.
+    #[sqlx::test]
+    async fn a_day_has_one_writer_at_a_time(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 29).unwrap();
+        let first = try_lock_day(&pool, date).await.unwrap().expect("a free day");
+        assert!(
+            try_lock_day(&pool, date).await.unwrap().is_none(),
+            "a second writer is refused while the first holds the day"
+        );
+        let other = try_lock_day(&pool, date.succ_opt().unwrap())
+            .await
+            .unwrap()
+            .expect("another day is its own");
+
+        // Dropped, not released: closing the connection is what lets go, so
+        // allow the server a moment to notice.
+        drop(first);
+        let mut again = None;
+        for _ in 0..50 {
+            again = try_lock_day(&pool, date).await.unwrap();
+            if again.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let again = again.expect("dropping the lock lets the day go");
+        again.release().await;
+        let last = try_lock_day(&pool, date)
+            .await
+            .unwrap()
+            .expect("releasing it lets the day go at once");
+        last.release().await;
+        other.release().await;
+    }
+
+    // ── Rewrite this page ────────────────────────────────────────────────────
+
+    const OLD_PAGE: &str = "You met Nick at the market.\n\n## The market\n\nThe stall ran out of figs by noon.\n";
+    const NEW_PAGE: &str = "You walked to the harbour with David Okafor.\n\n## The harbour\n\nThe ferry left late, and you waited on the wall.\n";
+
+    /// A past day whose page the server wrote and nobody opened: the state
+    /// the nightly narration leaves a day in.
+    async fn rewritable_day(
+        pool: &PgPool,
+        date: NaiveDate,
+    ) -> (crate::server::yjs::YjsState, DayPage) {
+        let day = get_or_create_day(pool, date).await.unwrap();
+        let saved = save_day_article(pool, &day.id, date, OLD_PAGE).await.unwrap();
+        assert_eq!(saved, SaveOutcome::Created);
+        sqlx::query(
+            "UPDATE wiki_days SET narrated_at = now() - interval '30 days', \
+             start_timezone = 'UTC' WHERE id = $1",
+        )
+        .bind(&day.id)
+        .execute(pool)
+        .await
+        .unwrap();
+        let page = day_page(pool, date).await.unwrap().expect("the day has its page");
+        (crate::server::yjs::YjsState::new(pool.clone()), page)
+    }
+
+    async fn version_count(pool: &PgPool, page_id: &str) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM app_page_versions WHERE page_id = $1")
+            .bind(page_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn article_state(
+        pool: &PgPool,
+        page: &DayPage,
+    ) -> (
+        Option<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    ) {
+        sqlx::query_as(
+            "SELECT a.machine_text, a.last_human_edit_at, d.narrated_at \
+             FROM wiki_articles a JOIN wiki_days d ON d.id = a.subject_id WHERE a.id = $1",
+        )
+        .bind(&page.article_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    #[test]
+    fn a_whole_page_has_an_abstract_and_a_section() {
+        assert!(is_whole_page(OLD_PAGE));
+        assert!(is_whole_page(
+            "A day by the sea.[^ev-1]\n\n## The beach[^cx-1]\n\nYou swam.\n\n[^ev-1]: Transcript · tr_a\n[^cx-1]: 9:00 AM"
+        ));
+        assert!(!is_whole_page("A day by the sea, and nothing under it.\n"), "an Abstract alone");
+        assert!(!is_whole_page("## The beach\n\nYou swam.\n"), "a section with no Abstract");
+        assert!(!is_whole_page("\n"), "what a draft whose every sentence went comes back as");
+    }
+
+    /// The time limit ends a writer that never answers, as a rewrite that
+    /// changed nothing (no draft, so nothing was written), and passes a draft
+    /// or an empty day through untouched. It is the only limit on a rewrite:
+    /// `rewrite_day_page` hands the draft to `apply_day_rewrite` outside it,
+    /// and the server's task awaits the rewrite with none of its own.
+    #[tokio::test]
+    async fn only_the_writer_is_timed() {
+        let limit = std::time::Duration::from_millis(20);
+        let hung = draft_within(limit, std::future::pending::<Result<Option<String>>>()).await;
+        assert!(matches!(hung, Err(RewriteOutcome::Failed(_))), "{hung:?}");
+
+        let drafted = draft_within(limit, async { Ok(Some(NEW_PAGE.to_string())) }).await;
+        assert_eq!(drafted, Ok(NEW_PAGE.to_string()));
+        let empty = draft_within(limit, async { Ok(None) }).await;
+        assert_eq!(empty, Err(RewriteOutcome::NotEnough));
+        let broke = draft_within(limit, async { Err(crate::Error::Other("scout fell over".into())) }).await;
+        assert_eq!(broke, Err(RewriteOutcome::Failed("scout fell over".into())));
+    }
+
+    /// The rewrite replaces the page, keeps the old one where putting it back
+    /// undoes the rewrite, credits the change to the server, and leaves the
+    /// owner's notes alone.
+    #[sqlx::test]
+    async fn a_rewrite_replaces_the_page_and_keeps_the_old_one(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
+        let (yjs, page) = rewritable_day(&pool, date).await;
+        let note = crate::api::wiki_notes::create_note(
+            &pool,
+            "day",
+            &page.day_id,
+            "memo",
+            "Figs again next week.",
+            Some(&serde_json::json!({"quote": "The stall ran out of figs by noon.", "sentence": 0})),
+        )
+        .await
+        .unwrap();
+
+        let before = yjs.read_text(&page.page_id).await.unwrap();
+        assert_eq!(before, OLD_PAGE);
+        let out = apply_day_rewrite(&pool, &yjs, &page, "UTC", &before, NEW_PAGE, false).await;
+        let RewriteOutcome::Rewritten {
+            before_version,
+            after_version,
+        } = out
+        else {
+            panic!("{out:?}");
+        };
+        let after_version = after_version.expect("the rewrite's own version");
+
+        assert_eq!(yjs.read_text(&page.page_id).await.unwrap(), NEW_PAGE);
+        assert_eq!(
+            page_row(&pool, &page.page_id).await.0,
+            NEW_PAGE,
+            "saved at once, so the day page reads the new text"
+        );
+
+        // The page as it was, kept as a restore point.
+        let (by, description, snapshot): (String, Option<String>, Vec<u8>) = sqlx::query_as(
+            "SELECT created_by, description, yjs_snapshot FROM app_page_versions \
+             WHERE page_id = $1 AND version_number = $2",
+        )
+        .bind(&page.page_id)
+        .bind(before_version)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(crate::api::pages::is_restore_point(&by, description.as_deref()));
+        assert_eq!(crate::server::yjs::extract_text_content(&snapshot), OLD_PAGE);
+
+        let by: String = sqlx::query_scalar(
+            "SELECT created_by FROM app_page_versions WHERE page_id = $1 AND version_number = $2",
+        )
+        .bind(&page.page_id)
+        .bind(after_version)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(by, "ai", "the change is the server's");
+
+        // History shows the rewrite once, the server's, and its undo is the
+        // restore point.
+        let history = crate::api::wiki_articles::get_article_history(&pool, "day", &page.day_id)
+            .await
+            .unwrap();
+        assert_eq!(history.len(), 1, "{history:?}");
+        assert_eq!(history[0].author, "ai");
+        assert_eq!(history[0].version_number, after_version);
+        assert_eq!(history[0].before_version, Some(before_version));
+        assert!(history[0].is_current);
+
+        // The edition is recorded and the day restamped.
+        let (machine, human, narrated) = article_state(&pool, &page).await;
+        assert_eq!(machine.as_deref(), Some(NEW_PAGE));
+        assert!(human.is_none());
+        assert!(narrated.unwrap() > chrono::Utc::now() - chrono::Duration::minutes(5));
+
+        // The note is untouched: the page places it by its own words.
+        let notes = crate::api::wiki_notes::list_notes(&pool, "day", &page.day_id, true)
+            .await
+            .unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].id, note.id);
+        assert_eq!(notes[0].body, note.body);
+        assert_eq!(notes[0].anchor, note.anchor);
+
+        // Putting the restore point back undoes the rewrite, and the page then
+        // holds the owner's choice: the next rewrite asks first.
+        let reverted =
+            crate::api::wiki_editor::revert_article(&pool, &yjs, "day", &page.day_id, before_version)
+                .await
+                .unwrap();
+        assert!(
+            matches!(reverted, crate::api::wiki_editor::RevertOutcome::Changed { saved: true, .. }),
+            "the page says something else now: {reverted:?}"
+        );
+        assert_eq!(yjs.read_text(&page.page_id).await.unwrap(), OLD_PAGE);
+        assert!(day_page(&pool, date).await.unwrap().unwrap().has_your_edits);
+    }
+
+    /// A rewrite whose save fails is a rewrite made: the page reads the new
+    /// text, its version and edition hold the new text, and the save lands
+    /// once the database takes writes again.
+    ///
+    /// THE FAILURE CLASS: **a write that is on the page but not saved, then
+    /// read back from the database.** A day page nobody opened has no CRDT
+    /// state saved (`yjs_state IS NULL`), the same as a page rewritten
+    /// outside the editor. Taken for one, the next read rebuilds the doc from
+    /// the old text, the rewrite's version holds the OLD page, and the first
+    /// editor to open it saves the old page over the new one.
+    #[sqlx::test]
+    async fn a_rewrite_that_could_not_be_saved_yet_is_kept(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 9, 13).unwrap();
+        let (yjs, page) = rewritable_day(&pool, date).await;
+        let before = yjs.read_text(&page.page_id).await.unwrap();
+        assert!(page_row(&pool, &page.page_id).await.1.is_none(), "a page nobody opened");
+
+        // The database answers reads and refuses page saves.
+        for stmt in [
+            "CREATE FUNCTION refuse_page_saves() RETURNS trigger LANGUAGE plpgsql \
+             AS $$ BEGIN RAISE EXCEPTION 'disk full'; END $$",
+            "CREATE TRIGGER refuse_page_saves BEFORE UPDATE ON app_pages FOR EACH ROW \
+             WHEN (NEW.yjs_state IS NOT NULL) EXECUTE FUNCTION refuse_page_saves()",
+        ] {
+            sqlx::query(stmt).execute(&pool).await.unwrap();
+        }
+
+        let out = apply_day_rewrite(&pool, &yjs, &page, "UTC", &before, NEW_PAGE, false).await;
+        assert_eq!(out, RewriteOutcome::NotSaved);
+        assert_eq!(page_row(&pool, &page.page_id).await.0, OLD_PAGE, "not saved yet");
+        assert_eq!(
+            yjs.read_text(&page.page_id).await.unwrap(),
+            NEW_PAGE,
+            "a read while the save waits gets the new page"
+        );
+
+        let after: Vec<u8> = sqlx::query_scalar(
+            "SELECT yjs_snapshot FROM app_page_versions \
+             WHERE page_id = $1 AND created_by = 'ai' ORDER BY version_number DESC LIMIT 1",
+        )
+        .bind(&page.page_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(crate::server::yjs::extract_text_content(&after), NEW_PAGE);
+        let (machine, _, narrated) = article_state(&pool, &page).await;
+        assert_eq!(machine.as_deref(), Some(NEW_PAGE));
+        assert!(narrated.unwrap() > chrono::Utc::now() - chrono::Duration::minutes(5));
+
+        sqlx::query("DROP TRIGGER refuse_page_saves ON app_pages")
+            .execute(&pool)
+            .await
+            .unwrap();
+        yjs.flush_pending_saves().await;
+        let (content, state) = page_row(&pool, &page.page_id).await;
+        assert_eq!(content, NEW_PAGE, "the queued save lands");
+        assert_eq!(crate::server::yjs::extract_text_content(&state.unwrap()), NEW_PAGE);
+        assert_eq!(yjs.read_text(&page.page_id).await.unwrap(), NEW_PAGE);
+    }
+
+    /// FAIL CLOSED: a rewrite that cannot keep the page as it was does not
+    /// replace it.
+    #[sqlx::test]
+    async fn a_rewrite_that_cannot_keep_the_old_page_changes_nothing(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 9, 2).unwrap();
+        let (yjs, page) = rewritable_day(&pool, date).await;
+        // A page no version holds (narrated before its first draft was kept
+        // as one), so the rewrite has a restore point to cut.
+        sqlx::query("DELETE FROM app_page_versions WHERE page_id = $1")
+            .bind(&page.page_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let was = article_state(&pool, &page).await;
+        let versions = version_count(&pool, &page.page_id).await;
+        for stmt in [
+            "CREATE FUNCTION refuse_versions() RETURNS trigger LANGUAGE plpgsql \
+             AS $$ BEGIN RAISE EXCEPTION 'no versions'; END $$",
+            "CREATE TRIGGER refuse_versions BEFORE INSERT ON app_page_versions \
+             FOR EACH ROW EXECUTE FUNCTION refuse_versions()",
+        ] {
+            sqlx::query(stmt).execute(&pool).await.unwrap();
+        }
+
+        let before = yjs.read_text(&page.page_id).await.unwrap();
+        let out = apply_day_rewrite(&pool, &yjs, &page, "UTC", &before, NEW_PAGE, false).await;
+        assert!(matches!(out, RewriteOutcome::Failed(_)), "{out:?}");
+
+        assert_eq!(yjs.read_text(&page.page_id).await.unwrap(), OLD_PAGE);
+        assert_eq!(page_row(&pool, &page.page_id).await.0, OLD_PAGE);
+        assert_eq!(version_count(&pool, &page.page_id).await, versions);
+        assert_eq!(article_state(&pool, &page).await, was, "nothing about the day moved");
+    }
+
+    /// A page that changed while the server was writing is left as it is,
+    /// with nothing cut.
+    #[sqlx::test]
+    async fn a_page_that_changed_while_writing_is_left_as_it_is(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 9, 3).unwrap();
+        let (yjs, page) = rewritable_day(&pool, date).await;
+        let before = yjs.read_text(&page.page_id).await.unwrap();
+        let versions = version_count(&pool, &page.page_id).await;
+
+        // Someone adds a line while the writer works.
+        let typed = format!("{OLD_PAGE}\nYou bought the last of the pears.\n");
+        yjs.replace_text(&page.page_id, &before, &typed).await.unwrap();
+
+        let out = apply_day_rewrite(&pool, &yjs, &page, "UTC", &before, NEW_PAGE, false).await;
+        assert_eq!(out, RewriteOutcome::EditedWhileWriting);
+        assert_eq!(yjs.read_text(&page.page_id).await.unwrap(), typed);
+        assert_eq!(version_count(&pool, &page.page_id).await, versions);
+
+        // The text can come back to what it was and the edit still count: the
+        // owner's stamp landed while the server was writing, and they had not
+        // agreed to a rewrite over their words.
+        let date = NaiveDate::from_ymd_opt(2026, 9, 4).unwrap();
+        let (yjs, page) = rewritable_day(&pool, date).await;
+        let before = yjs.read_text(&page.page_id).await.unwrap();
+        sqlx::query("UPDATE wiki_articles SET last_human_edit_at = now() WHERE id = $1")
+            .bind(&page.article_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let out = apply_day_rewrite(&pool, &yjs, &page, "UTC", &before, NEW_PAGE, false).await;
+        assert_eq!(out, RewriteOutcome::EditedWhileWriting);
+        assert_eq!(yjs.read_text(&page.page_id).await.unwrap(), OLD_PAGE);
+    }
+
+    /// A draft too thin to stand for the day is refused, page untouched.
+    #[sqlx::test]
+    async fn a_thin_draft_is_refused(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
+        let (yjs, page) = rewritable_day(&pool, date).await;
+        let before = yjs.read_text(&page.page_id).await.unwrap();
+        let versions = version_count(&pool, &page.page_id).await;
+        let out = apply_day_rewrite(
+            &pool,
+            &yjs,
+            &page,
+            "UTC",
+            &before,
+            "A day by the sea, and nothing under it.\n",
+            false,
+        )
+        .await;
+        assert_eq!(out, RewriteOutcome::ThinDraft);
+        assert_eq!(yjs.read_text(&page.page_id).await.unwrap(), OLD_PAGE);
+        assert_eq!(version_count(&pool, &page.page_id).await, versions);
+    }
+
+    /// With their consent the rewrite replaces the owner's words, and clears
+    /// their stamp, unless an edit landed after the write: that one is on the
+    /// new page, and the next rewrite asks again.
+    #[sqlx::test]
+    async fn the_owners_stamp_is_cleared_only_when_nothing_newer_landed(pool: PgPool) {
+        for (date, stamp, kept) in [
+            (NaiveDate::from_ymd_opt(2026, 9, 6).unwrap(), "now() - interval '1 day'", false),
+            // Stands in for an edit typed on the new page a moment after the
+            // write, which the rewrite must not erase.
+            (NaiveDate::from_ymd_opt(2026, 9, 7).unwrap(), "now() + interval '1 hour'", true),
+        ] {
+            let (yjs, page) = rewritable_day(&pool, date).await;
+            sqlx::query(&format!(
+                "UPDATE wiki_articles SET last_human_edit_at = {stamp} WHERE id = $1"
+            ))
+            .bind(&page.article_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+            let page = day_page(&pool, date).await.unwrap().unwrap();
+            assert!(page.has_your_edits);
+
+            let before = yjs.read_text(&page.page_id).await.unwrap();
+            let out = apply_day_rewrite(&pool, &yjs, &page, "UTC", &before, NEW_PAGE, true).await;
+            assert!(matches!(out, RewriteOutcome::Rewritten { .. }), "{out:?}");
+            let (_, human, _) = article_state(&pool, &page).await;
+            assert_eq!(human.is_some(), kept, "{stamp}");
+        }
+    }
+
+    /// What counts as the owner's words on a day page.
+    #[sqlx::test]
+    async fn what_counts_as_your_edits(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 9, 8).unwrap();
+        let (_yjs, page) = rewritable_day(&pool, date).await;
+        assert!(!page.has_your_edits);
+
+        // Text that is no longer what the server wrote: a chat edit, say,
+        // which stamps nothing.
+        sqlx::query("UPDATE app_pages SET content = content || 'You also swam.' WHERE id = $1")
+            .bind(&page.page_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(day_page(&pool, date).await.unwrap().unwrap().has_your_edits);
+
+        // Upkeep turned off.
+        let date = NaiveDate::from_ymd_opt(2026, 9, 9).unwrap();
+        let (_yjs, page) = rewritable_day(&pool, date).await;
+        sqlx::query("UPDATE wiki_articles SET maintenance = 'never' WHERE id = $1")
+            .bind(&page.article_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(day_page(&pool, date).await.unwrap().unwrap().has_your_edits);
+
+        // A page from before narration recorded its edition. Untouched, it
+        // holds only the server's words; once anything has versioned it (a
+        // chat edit, a version put back, a browser save, none sure to leave
+        // a stamp), it may hold theirs.
+        let date = NaiveDate::from_ymd_opt(2026, 9, 12).unwrap();
+        let (yjs, page) = rewritable_day(&pool, date).await;
+        sqlx::query("UPDATE wiki_articles SET machine_text = NULL WHERE id = $1")
+            .bind(&page.article_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(!day_page(&pool, date).await.unwrap().unwrap().has_your_edits);
+        let written = yjs
+            .apply_text_edit(&page.page_id, "figs", "pears")
+            .await
+            .expect("a chat edit")
+            .after
+            .expect("saved");
+        crate::api::pages::cut_version(&pool, &page.page_id, &written, "ai", None)
+            .await
+            .expect("its version");
+        let now = day_page(&pool, date).await.unwrap().unwrap();
+        assert!(now.has_your_edits, "a chat edit stamps nothing, and still counts");
+    }
+
+    /// Every refusal the rewrite can make before writing costs no model
+    /// call; with consent, a day with nothing in its record goes as far as
+    /// the writer, which finds too little and calls nothing.
+    #[sqlx::test]
+    async fn a_rewrite_is_refused_before_any_model_call(pool: PgPool) {
+        let yjs = crate::server::yjs::YjsState::new(pool.clone());
+
+        let bare = NaiveDate::from_ymd_opt(2026, 9, 10).unwrap();
+        get_or_create_day(&pool, bare).await.unwrap();
+        let lock = try_lock_day(&pool, bare).await.unwrap().unwrap();
+        assert_eq!(rewrite_day_page(&pool, &yjs, bare, false, lock).await, RewriteOutcome::NoPage);
+
+        let ahead = chrono::Utc::now().date_naive() + chrono::Duration::days(2);
+        let lock = try_lock_day(&pool, ahead).await.unwrap().unwrap();
+        assert_eq!(rewrite_day_page(&pool, &yjs, ahead, true, lock).await, RewriteOutcome::NotOver);
+
+        let date = NaiveDate::from_ymd_opt(2026, 9, 11).unwrap();
+        let (yjs, page) = rewritable_day(&pool, date).await;
+        sqlx::query("UPDATE wiki_articles SET last_human_edit_at = now() WHERE id = $1")
+            .bind(&page.article_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let lock = try_lock_day(&pool, date).await.unwrap().unwrap();
+        assert_eq!(
+            rewrite_day_page(&pool, &yjs, date, false, lock).await,
+            RewriteOutcome::NeedsConsent
+        );
+
+        let lock = try_lock_day(&pool, date).await.unwrap().expect("the rewrite let the day go");
+        assert_eq!(
+            rewrite_day_page(&pool, &yjs, date, true, lock).await,
+            RewriteOutcome::NotEnough
+        );
+        assert_eq!(yjs.read_text(&page.page_id).await.unwrap(), OLD_PAGE);
     }
 }

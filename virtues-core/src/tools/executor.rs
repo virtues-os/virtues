@@ -278,6 +278,15 @@ impl ToolExecutor {
         "sql_write",
         // Real money, per call.
         "generate_image",
+        // The owner's browser, with their logins in it. Asked once per chat
+        // for all of them (`entity_id` "browser" below), not per click.
+        "browser_open",
+        "browser_snapshot",
+        "browser_click",
+        "browser_type",
+        "browser_press",
+        "browser_scroll",
+        "browser_screenshot",
     ];
 
     /// If `tool_name` is gated and the user hasn't granted it for this chat, return a
@@ -336,6 +345,9 @@ impl ToolExecutor {
                         _ => "run",
                     };
                     (applet_id.to_string(), "action", title, verb)
+                }
+                None if tool_name.starts_with("browser_") => {
+                    ("browser".to_string(), "tool", "your browser".to_string(), "use")
                 }
                 None => {
                     let (title, verb) = match tool_name {
@@ -512,6 +524,10 @@ impl ToolExecutor {
                 publish::publish(&self._pool, &req).await
             }
             "read_asset" => self.execute_read_asset(arguments).await,
+            "show" => super::show::execute(&self.sql_query, arguments).await,
+            name if crate::browser::TOOLS.contains(&name) => {
+                Ok(crate::browser::run_tool(name, arguments).await)
+            }
             "code_interpreter" => self.execute_code_interpreter(arguments, context).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
             "dispatch_subagents" => {
@@ -553,9 +569,19 @@ impl ToolExecutor {
                 )
                 .await
                 {
-                    Ok(change) => Ok(ToolResult::success(serde_json::json!({
+                    Ok(revision) if revision.saved => Ok(ToolResult::success(serde_json::json!({
                         "applied": true,
-                        "change": change,
+                        "saved": true,
+                        "change": revision.change,
+                    }))),
+                    // Made, and versioned: only the save is pending. Sending
+                    // the same revision again would be a second edit.
+                    Ok(revision) => Ok(ToolResult::success(serde_json::json!({
+                        "applied": true,
+                        "saved": false,
+                        "change": revision.change,
+                        "note": "the revision is on the page, but the server couldn't save it yet \
+                                 and saves it again on its own; do not send it again",
                     }))),
                     // A refusal is not an error to raise at the person: it is a
                     // sentence for the agent to act on in this same turn.

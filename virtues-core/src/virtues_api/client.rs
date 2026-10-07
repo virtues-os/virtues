@@ -299,6 +299,23 @@ pub fn payment_required_message(body: &Value, feature: &str) -> String {
     format!("{msg} [{code}]")
 }
 
+/// Whether `error` is a metered call's 402, as [`payment_required_message`]
+/// words it: an `Error::ExternalApi` whose sentence ends in the gateway's
+/// code in brackets. For a caller that reports "billing stopped this"
+/// differently from any other failure. Read here, beside the one function
+/// that writes the shape.
+pub fn is_payment_refusal(error: &crate::error::Error) -> bool {
+    let crate::error::Error::ExternalApi(message) = error else {
+        return false;
+    };
+    message
+        .strip_suffix(']')
+        .and_then(|m| m.rsplit_once(" ["))
+        .is_some_and(|(_, code)| {
+            !code.is_empty() && code.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        })
+}
+
 /// Convert an `AutoTopupOutcome` non-Funded variant into the same 402
 /// error shape virtues-api would have returned. Lets iOS handle every
 /// error via one contract regardless of whether the box did recovery.
@@ -1290,5 +1307,35 @@ mod byo_fork_tests {
         let resp = normalize_upstream_error(ApiResponse { status: 400, body: body.clone() });
         assert_eq!(resp.status, 400);
         assert_eq!(resp.body, body);
+    }
+}
+
+#[cfg(test)]
+mod payment_refusal_tests {
+    use super::*;
+    use crate::error::Error;
+
+    #[test]
+    fn every_402_reads_as_a_payment_refusal() {
+        for code in ["wallet_empty", "monthly_cap_reached", "card_declined", "call_too_expensive", "something_new"] {
+            let msg = payment_required_message(&json!({"error": {"code": code}}), "day_article");
+            assert!(is_payment_refusal(&Error::ExternalApi(msg.clone())), "{msg}");
+        }
+        let unknown = payment_required_message(&json!({}), "day_article");
+        assert!(is_payment_refusal(&Error::ExternalApi(unknown)));
+    }
+
+    #[test]
+    fn other_failures_are_not_payment_refusals() {
+        for msg in [
+            "Rate limited. Please try again later.",
+            "virtues-api error 500: [1,2]",
+            "virtues-api error 503: [\"down\"]",
+            "empty completion from some-model (day_article)",
+            "day_article: some-model ran out of room before it finished (finish_reason=length, 12 chars arrived)",
+        ] {
+            assert!(!is_payment_refusal(&Error::ExternalApi(msg.to_string())), "{msg}");
+        }
+        assert!(!is_payment_refusal(&Error::Network("[wallet_empty]".to_string())));
     }
 }

@@ -49,6 +49,17 @@ export class ApiError extends Error {
 type QueryValue = string | number | boolean | null | undefined;
 
 /**
+ * A signal that aborts after `ms`, as `AbortSignal.timeout` does. That one is
+ * missing before Safari 16, and the app still runs on iOS 15 and older macOS.
+ */
+export function deadline(ms: number): AbortSignal {
+	if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+	const c = new AbortController();
+	setTimeout(() => c.abort(new DOMException('The operation timed out.', 'TimeoutError')), ms);
+	return c.signal;
+}
+
+/**
  * Core fetch wrapper for JSON endpoints under `/api`. Serializes an optional
  * query object, throws {@link ApiError} (with status) on non-2xx, and returns
  * the parsed JSON body (or `undefined` for empty/204 responses).

@@ -7,11 +7,12 @@
 //!
 //! When YjsState is available, edits go through the Yjs layer for real-time sync.
 //!
-//! Edits are applied as clean text. A version snapshot is saved before each
-//! AI edit so the user can undo via version history.
+//! Edits are applied as clean text. Each one keeps a restore point of the page
+//! before it (when no version already holds that text) and cuts a version
+//! credited to 'ai' after it, so the user can undo it from version history.
+//! Typing that lands between the restore point and the edit is versioned as
+//! the owner's first, so History credits the chat with its own change alone.
 
-use base64::engine::general_purpose::STANDARD as BASE64;
-use base64::Engine;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -24,7 +25,14 @@ static DELETION_RE: OnceLock<Regex> = OnceLock::new();
 use super::executor::{ToolContext, ToolError, ToolResult};
 use crate::api::pages;
 use crate::ids;
-use crate::server::yjs::YjsState;
+use crate::server::yjs::{TextWriteError, YjsState};
+
+/// The description on the owner's typing when it is versioned just before a
+/// chat edit lands on it: an ordinary autosave (`'auto'`), so History reads
+/// it as theirs. Not a restore point (`pages::RESTORE_POINT`), and not the
+/// label chat edits once put on the page before them (`wiki_articles`'
+/// `BEFORE_CHAT_EDIT`), which History reads as the chat's.
+const TYPED_BEFORE_CHAT_EDIT: &str = "Auto-saved (before a chat edit)";
 
 // ============================================================================
 // Argument structs for each tool
@@ -211,7 +219,8 @@ impl PageEditorTool {
     /// Empty 'find' string means replace entire document.
     ///
     /// Edits are applied immediately via Yjs for real-time sync to connected clients.
-    /// A version snapshot is saved before each edit for undo via version history.
+    /// A restore point is kept before each edit and an 'ai' version cut after it,
+    /// for undo via version history.
     ///
     /// Permission checking: If chat_id is provided in context, checks that the page has
     /// been granted edit permission for this chat. If not, returns permission_needed: true.
@@ -247,24 +256,57 @@ impl PageEditorTool {
         // Skip content edit when both find and replace are empty (title-only change)
         let has_content_edit = !args.find.is_empty() || !replace_content.is_empty();
 
+        // False when the edit is on the page but its save is still pending.
+        let mut saved = true;
+
         // Apply the edit through Yjs if available, otherwise fall back to database
         // With Y.Text, the document IS markdown — no plain text conversion needed
         if has_content_edit && self.yjs_state.is_some() {
             let yjs_state = self.yjs_state.as_ref().unwrap();
-            // Auto-snapshot before AI edit for undo via version history
-            if let Ok(snapshot_bytes) = yjs_state.get_document_snapshot(&page_id).await {
-                let _ = pages::create_version(self.pool.as_ref(), &page_id, pages::CreateVersionRequest {
-                    snapshot: BASE64.encode(&snapshot_bytes),
-                    content_preview: "Auto-saved before AI edit".to_string(),
-                    created_by: "ai".to_string(),
-                    description: Some("Auto-saved before AI edit".to_string()),
-                }).await;
-            }
+            let pool = self.pool.as_ref();
+            // Another machine write to this page waits until this one's
+            // versions are cut, so neither reads the other as the owner's typing.
+            let _turn = yjs_state.write_turn(&page_id).await;
 
-            // Apply through Yjs for real-time sync (direct markdown find/replace)
-            yjs_state.apply_text_edit(&page_id, &args.find, &replace_content)
+            // The page as it stands, kept first: a version is the state AFTER
+            // the edit it records, so without this the text before a chat edit
+            // (a whole-page replacement included) would be in no version, and
+            // the edit could not be undone. No copy, no edit.
+            let kept = pages::cut_restore_point(pool, yjs_state, &page_id)
                 .await
-                .map_err(|e| ToolError::ExecutionFailed(e))?;
+                .map_err(|e| {
+                    ToolError::ExecutionFailed(format!(
+                        "could not keep a copy of the page before editing it, so the edit was not made: {e}"
+                    ))
+                })?;
+
+            // Apply through Yjs for real-time sync (direct markdown find/replace).
+            // An edit whose save failed is applied all the same: it is versioned
+            // and reported as made, so nobody makes it a second time.
+            let edit = yjs_state
+                .apply_text_edit(&page_id, &args.find, &replace_content)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+            let written = match edit.after {
+                Ok(written) => written,
+                Err(TextWriteError::NotSaved { written, error }) => {
+                    tracing::warn!(page = %page_id, error = %error, "chat edit applied but not saved yet");
+                    saved = false;
+                    written
+                }
+                Err(e) => return Err(ToolError::ExecutionFailed(e.to_string())),
+            };
+
+            // Typing that landed after the copy above and before the edit is
+            // the owner's, and in no version yet: kept as their own, so
+            // History credits the chat's version below with the chat's
+            // change alone.
+            if edit.before.text != kept.text {
+                pages::cut_version(pool, &page_id, &edit.before, "auto", Some(TYPED_BEFORE_CHAT_EDIT))
+                    .await;
+            }
+            // The chat's own version, credited to it.
+            pages::cut_version(pool, &page_id, &written, "ai", Some("Edited from a chat")).await;
         } else if has_content_edit {
             // Fallback: direct database update (no real-time sync)
             tracing::warn!("YjsState not available, falling back to direct database update");
@@ -304,7 +346,11 @@ impl PageEditorTool {
                 .map_err(|e| ToolError::ExecutionFailed(format!("Failed to update page: {}", e)))?;
         }
 
-        // Update title if provided
+        // Update title if provided. After a content edit, a title that could
+        // not be changed is reported beside the edit, not as the call's
+        // failure: the edit is on the page, and a failure would invite it a
+        // second time.
+        let mut title_error = None;
         if let Some(ref new_title) = args.title {
             let update_req = pages::UpdatePageRequest {
                 title: Some(new_title.clone()),
@@ -314,10 +360,18 @@ impl PageEditorTool {
                 cover_url: None,
                 tags: None,
             };
-            pages::update_page(self.pool.as_ref(), &page_id, update_req)
-                .await
-                .map_err(|e| ToolError::ExecutionFailed(format!("Failed to update title: {}", e)))?;
+            match pages::update_page(self.pool.as_ref(), &page_id, update_req).await {
+                Ok(_) => {}
+                Err(e) if has_content_edit => {
+                    tracing::warn!(page = %page_id, error = %e, "chat edit applied but the title did not change");
+                    title_error = Some(e.to_string());
+                }
+                Err(e) => {
+                    return Err(ToolError::ExecutionFailed(format!("Failed to update title: {}", e)))
+                }
+            }
         }
+        let title_changed = args.title.is_some() && title_error.is_none();
 
         let edit_id = ids::generate_id("edit", &[&page_id, &chrono::Utc::now().to_rfc3339()]);
 
@@ -328,15 +382,32 @@ impl PageEditorTool {
             replace: replace_content.clone(),
         };
 
-        let message = match (&args.title, has_content_edit) {
-            (Some(t), true) => format!("Title changed to '{}' and content edit applied.", t),
+        let mut message = match (&args.title, has_content_edit) {
+            (Some(t), true) if title_changed => {
+                format!("Title changed to '{}' and content edit applied.", t)
+            }
+            (Some(_), true) => "The content edit is on the page.".to_string(),
             (Some(t), false) => format!("Title changed to '{}'.", t),
             (None, _) => "Edit applied successfully.".to_string(),
         };
+        if !saved {
+            message.push_str(
+                " The edit is on the page, but the server couldn't save it yet and saves \
+                 it again on its own.",
+            );
+        }
+        if let Some(e) = &title_error {
+            message.push_str(&format!(" The title did not change: {e}."));
+        }
+        if !saved || title_error.is_some() {
+            message.push_str(" Do not make this edit again.");
+        }
 
         Ok(ToolResult::success(serde_json::json!({
             "edit": result,
             "applied": true,
+            "saved": saved,
+            "title_changed": title_changed,
             "message": message,
         })))
     }
@@ -345,5 +416,320 @@ impl PageEditorTool {
 impl std::fmt::Debug for PageEditorTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PageEditorTool").finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::yjs::extract_text_content;
+
+    /// Two chat edits to one page at once take turns: neither reads the
+    /// other's change as the owner's typing, so no version credits a chat's
+    /// words to the owner.
+    #[sqlx::test]
+    async fn two_chat_edits_at_once_take_turns(pool: PgPool) {
+        let page = pages::create_page(
+            &pool,
+            pages::CreatePageRequest {
+                title: "Notes".into(),
+                content: "Coffee.\nTea.\n".into(),
+                project_id: None,
+                icon: None,
+                icon_color: None,
+                cover_url: None,
+                tags: None,
+            },
+        )
+        .await
+        .unwrap();
+        let yjs = YjsState::new(pool.clone());
+        let tool = PageEditorTool::new(Arc::new(pool.clone()), Some(yjs.clone()));
+        let context = ToolContext::default();
+
+        let (a, b) = tokio::join!(
+            tool.edit_page(serde_json::json!({ "page_id": page.id, "find": "Coffee.", "replace": "Black coffee." }), &context),
+            tool.edit_page(serde_json::json!({ "page_id": page.id, "find": "Tea.", "replace": "Green tea." }), &context),
+        );
+        a.unwrap();
+        b.unwrap();
+
+        let typed: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM app_page_versions WHERE page_id = $1 AND description = $2",
+        )
+        .bind(&page.id)
+        .bind(TYPED_BEFORE_CHAT_EDIT)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(typed, 0, "a chat edit was versioned as the owner's typing");
+        assert_eq!(yjs.read_text(&page.id).await.unwrap(), "Black coffee.\nGreen tea.\n");
+    }
+
+    /// A chat edit is undoable and credited: the page before it is kept as a
+    /// restore point, and the result is a version labelled 'ai'. When the page
+    /// already says what the latest version holds, nothing new is kept first.
+    #[sqlx::test]
+    async fn a_chat_edit_is_kept_before_and_credited_after(pool: PgPool) {
+        let page = pages::create_page(
+            &pool,
+            pages::CreatePageRequest {
+                title: "Notes".into(),
+                content: "Your own line.\n".into(),
+                project_id: None,
+                icon: None,
+                icon_color: None,
+                cover_url: None,
+                tags: None,
+            },
+        )
+        .await
+        .unwrap();
+        let yjs = YjsState::new(pool.clone());
+        let tool = PageEditorTool::new(Arc::new(pool.clone()), Some(yjs.clone()));
+        let context = ToolContext::default();
+
+        tool.edit_page(
+            serde_json::json!({ "page_id": page.id, "find": "", "replace": "The chat's whole page.\n" }),
+            &context,
+        )
+        .await
+        .unwrap();
+        tool.edit_page(
+            serde_json::json!({ "page_id": page.id, "find": "whole", "replace": "entire" }),
+            &context,
+        )
+        .await
+        .unwrap();
+
+        let rows: Vec<(String, Option<String>, Vec<u8>)> = sqlx::query_as(
+            "SELECT created_by, description, yjs_snapshot FROM app_page_versions \
+             WHERE page_id = $1 ORDER BY version_number",
+        )
+        .bind(&page.id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let read: Vec<(bool, &str, String)> = rows
+            .iter()
+            .map(|(by, description, snapshot)| {
+                (
+                    pages::is_restore_point(by, description.as_deref()),
+                    by.as_str(),
+                    extract_text_content(snapshot),
+                )
+            })
+            .collect();
+        assert_eq!(
+            read,
+            vec![
+                (true, "auto", "Your own line.\n".to_string()),
+                (false, "ai", "The chat's whole page.\n".to_string()),
+                (false, "ai", "The chat's entire page.\n".to_string()),
+            ]
+        );
+    }
+
+    /// An edit whose save fails is still an edit: the tool reports it as
+    /// made (with the save pending), History has its version, and the save
+    /// loop lands it later. Reporting a failure would invite the same edit
+    /// twice.
+    #[sqlx::test]
+    async fn a_chat_edit_that_could_not_be_saved_is_still_made_once(pool: PgPool) {
+        let page = pages::create_page(
+            &pool,
+            pages::CreatePageRequest {
+                title: "Notes".into(),
+                content: "Coffee.\n".into(),
+                project_id: None,
+                icon: None,
+                icon_color: None,
+                cover_url: None,
+                tags: None,
+            },
+        )
+        .await
+        .unwrap();
+        let yjs = YjsState::new(pool.clone());
+        let tool = PageEditorTool::new(Arc::new(pool.clone()), Some(yjs.clone()));
+        for stmt in [
+            "CREATE FUNCTION refuse_page_saves() RETURNS trigger LANGUAGE plpgsql \
+             AS $$ BEGIN RAISE EXCEPTION 'disk full'; END $$",
+            "CREATE TRIGGER refuse_page_saves BEFORE UPDATE ON app_pages \
+             FOR EACH ROW WHEN (NEW.yjs_state IS NOT NULL) EXECUTE FUNCTION refuse_page_saves()",
+        ] {
+            sqlx::query(stmt).execute(&pool).await.unwrap();
+        }
+
+        let result = tool
+            .edit_page(
+                serde_json::json!({ "page_id": page.id, "find": "Coffee.", "replace": "Coffee. Tea." }),
+                &ToolContext::default(),
+            )
+            .await
+            .unwrap();
+        assert!(result.success);
+        assert_eq!(result.data["applied"], true);
+        assert_eq!(result.data["saved"], false);
+        assert!(result.data["message"].as_str().unwrap().contains("Do not make this edit again"));
+
+        let latest: (String, Vec<u8>) = sqlx::query_as(
+            "SELECT created_by, yjs_snapshot FROM app_page_versions \
+             WHERE page_id = $1 ORDER BY version_number DESC LIMIT 1",
+        )
+        .bind(&page.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(latest.0, "ai");
+        assert_eq!(extract_text_content(&latest.1), "Coffee. Tea.\n");
+
+        sqlx::query("DROP TRIGGER refuse_page_saves ON app_pages")
+            .execute(&pool)
+            .await
+            .unwrap();
+        yjs.flush_pending_saves().await;
+        let content: String = sqlx::query_scalar("SELECT content FROM app_pages WHERE id = $1")
+            .bind(&page.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(content, "Coffee. Tea.\n");
+    }
+
+    async fn notes_page(pool: &PgPool, content: &str) -> String {
+        pages::create_page(
+            pool,
+            pages::CreatePageRequest {
+                title: "Notes".into(),
+                content: content.into(),
+                project_id: None,
+                icon: None,
+                icon_color: None,
+                cover_url: None,
+                tags: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    /// The page's versions, oldest first, as (created_by, description, text).
+    async fn versions(pool: &PgPool, page_id: &str) -> Vec<(String, Option<String>, String)> {
+        let rows: Vec<(String, Option<String>, Vec<u8>)> = sqlx::query_as(
+            "SELECT created_by, description, yjs_snapshot FROM app_page_versions \
+             WHERE page_id = $1 ORDER BY version_number",
+        )
+        .bind(page_id)
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        rows.into_iter()
+            .map(|(by, description, snapshot)| (by, description, extract_text_content(&snapshot)))
+            .collect()
+    }
+
+    /// A content edit that is on the page is reported as made when the
+    /// title beside it cannot be changed: a failure would invite the edit a
+    /// second time.
+    #[sqlx::test]
+    async fn a_title_that_could_not_change_does_not_undo_the_report_of_the_edit(pool: PgPool) {
+        let page_id = notes_page(&pool, "Coffee.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let tool = PageEditorTool::new(Arc::new(pool.clone()), Some(yjs.clone()));
+        for stmt in [
+            "CREATE FUNCTION refuse_titles() RETURNS trigger LANGUAGE plpgsql \
+             AS $$ BEGIN RAISE EXCEPTION 'lock timeout'; END $$",
+            "CREATE TRIGGER refuse_titles BEFORE UPDATE ON app_pages \
+             FOR EACH ROW WHEN (NEW.title IS DISTINCT FROM OLD.title) EXECUTE FUNCTION refuse_titles()",
+        ] {
+            sqlx::query(stmt).execute(&pool).await.unwrap();
+        }
+
+        let result = tool
+            .edit_page(
+                serde_json::json!({
+                    "page_id": page_id, "find": "Coffee.", "replace": "Coffee. Tea.", "title": "Drinks",
+                }),
+                &ToolContext::default(),
+            )
+            .await
+            .expect("the edit is reported, not failed");
+        assert!(result.success);
+        assert_eq!(result.data["applied"], true);
+        assert_eq!(result.data["saved"], true);
+        assert_eq!(result.data["title_changed"], false);
+        let message = result.data["message"].as_str().unwrap();
+        assert!(message.contains("content edit is on the page"), "{message}");
+        assert!(message.contains("title did not change"), "{message}");
+        assert!(message.contains("Do not make this edit again"), "{message}");
+
+        let (content, title): (String, String) =
+            sqlx::query_as("SELECT content, title FROM app_pages WHERE id = $1")
+                .bind(&page_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(content, "Coffee. Tea.\n");
+        assert_eq!(title, "Notes");
+
+        // Without a content edit, a title that cannot change is the call's
+        // failure: nothing was made.
+        let refused = tool
+            .edit_page(
+                serde_json::json!({ "page_id": page_id, "find": "", "replace": "", "title": "Drinks" }),
+                &ToolContext::default(),
+            )
+            .await;
+        assert!(refused.is_err());
+    }
+
+    /// The owner types after the chat's copy of the page is kept and before
+    /// its edit lands. That typing is versioned as theirs, before the chat's
+    /// version, so History does not credit it to the chat.
+    #[sqlx::test]
+    async fn typing_that_lands_before_a_chat_edit_is_the_owners(pool: PgPool) {
+        let page_id = notes_page(&pool, "Your own line.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let tool = PageEditorTool::new(Arc::new(pool.clone()), Some(yjs.clone()));
+
+        // Hold the chat's copy partway: it has read the page, and its
+        // version waits on this lock.
+        let mut hold = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE app_page_versions IN SHARE MODE")
+            .execute(&mut *hold)
+            .await
+            .unwrap();
+        let edit = tokio::spawn({
+            let (tool, page_id) = (tool.clone(), page_id.clone());
+            async move {
+                tool.edit_page(
+                    serde_json::json!({ "page_id": page_id, "find": "Your own line.", "replace": "Your line, edited." }),
+                    &ToolContext::default(),
+                )
+                .await
+            }
+        });
+        pages::until_a_statement_waits(&pool, "%INSERT INTO app_page_versions%").await;
+
+        yjs.apply_text_diff(&page_id, "Your own line.\n", "Your own line.\nTyped.\n")
+            .await
+            .unwrap();
+        hold.rollback().await.unwrap();
+        edit.await.unwrap().expect("the chat edit");
+
+        assert_eq!(
+            versions(&pool, &page_id).await,
+            vec![
+                ("auto".to_string(), Some(pages::RESTORE_POINT.to_string()), "Your own line.\n".to_string()),
+                (
+                    "auto".to_string(),
+                    Some(TYPED_BEFORE_CHAT_EDIT.to_string()),
+                    "Your own line.\nTyped.\n".to_string()
+                ),
+                ("ai".to_string(), Some("Edited from a chat".to_string()), "Your line, edited.\nTyped.\n".to_string()),
+            ]
+        );
     }
 }

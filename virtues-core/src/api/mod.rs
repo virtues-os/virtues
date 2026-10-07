@@ -32,6 +32,7 @@ pub mod credentials;
 pub mod image_gen;
 pub mod day_article;
 pub mod day_memory;
+pub mod day_rewrites;
 pub mod day_summary;
 pub mod developer;
 pub mod drive;
