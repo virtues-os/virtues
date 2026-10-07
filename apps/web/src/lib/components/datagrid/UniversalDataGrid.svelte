@@ -1670,14 +1670,13 @@
 		/* Pinned: past a screenful of rows, a header that scrolls away turns
 		   every column into a guess. It needs an opaque fill to cover the rows
 		   sliding under it — but the fill should be the PAGE's colour, so the
-		   header reads as clear and only its rule shows.
-		   It was --color-background (#FDFCF9) inside a card painted --surface
-		   (#FFFFFF), which drew a cream band across the top of every table for
-		   no reason anyone chose. */
+		   header reads as clear and only its rule shows. That is `--color-page`,
+		   what the main card paints; on Oxford it is ivory and `--surface` is
+		   white, so a surface fill drew a white band across every table. */
 		position: sticky;
 		top: 0;
 		z-index: 2;
-		background: var(--color-surface);
+		background: var(--color-page);
 	}
 
 	td.numeric { text-align: right; font-variant-numeric: tabular-nums; }
