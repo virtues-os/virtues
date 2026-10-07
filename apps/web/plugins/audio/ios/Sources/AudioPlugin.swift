@@ -30,6 +30,12 @@ class AudioPlugin: Plugin {
     // JSON null just as well; absent keeps the common payload identical to
     // what shipped before the field existed.
     if let reason = r.pausedReason() { status["pausedReason"] = reason }
+    // The Control Center override, absent when there is none. A missing
+    // `overrideUntil` means open-ended.
+    if let o = r.overrideStatus() {
+      status["override"] = o.mode
+      if let u = o.untilMs { status["overrideUntil"] = u }
+    }
     return status
   }
 
@@ -43,6 +49,15 @@ class AudioPlugin: Plugin {
   /// Toggle off / pause: finalize the current chunk and stop.
   @objc public func disable(_ invoke: Invoke) throws {
     AudioRecorder.shared.disable()
+    invoke.resolve(AudioPlugin.fullStatus())
+  }
+
+  /// Start or end the override the Control Center control sets: "silence"
+  /// or "record", for `minutes` (absent = open-ended); no mode ends it.
+  /// Mute-don't-release, like the schedule.
+  @objc public func setOverride(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(OverrideArgs.self)
+    AudioRecorder.shared.setOverride(mode: args.mode, minutes: args.minutes)
     invoke.resolve(AudioPlugin.fullStatus())
   }
 
@@ -114,6 +129,11 @@ struct PlaceArg: Decodable {
   var json: [String: Any] {
     ["id": id, "name": name ?? "", "lat": lat, "lon": lon, "radiusM": radiusM ?? 100]
   }
+}
+
+struct OverrideArgs: Decodable {
+  let mode: String?
+  let minutes: Int?
 }
 
 struct NotifyArgs: Decodable {

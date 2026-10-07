@@ -12,6 +12,7 @@ Default permissions for the audio plugin
 - `allow-set-quiet-hours`
 - `allow-set-schedule`
 - `allow-set-places`
+- `allow-set-override`
 
 ## Permission Table
 
@@ -122,6 +123,32 @@ Enables the set_notify command without any pre-configured scope.
 <td>
 
 Denies the set_notify command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`audio:allow-set-override`
+
+</td>
+<td>
+
+Enables the set_override command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`audio:deny-set-override`
+
+</td>
+<td>
+
+Denies the set_override command without any pre-configured scope.
 
 </td>
 </tr>

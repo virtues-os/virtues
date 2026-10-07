@@ -93,6 +93,27 @@ describe("audioState", () => {
 		expect(s?.label).toBe("Idle · not recording");
 	});
 
+	it("puts a pause ahead of the hours, and Stop ahead of a pause", () => {
+		const paused: AudioStatus = {
+			...base,
+			override: "silence",
+			mutedBy: "pause",
+			schedule: sched({ mon: [NIGHT] }),
+		};
+		expect(audioState(paused, at(0, 23))).toMatchObject({ label: "Paused", live: false });
+		expect(audioState({ ...paused, enabled: false, recording: false })?.label).toBe("Stopped");
+	});
+
+	it("names when a pause or a record-anyway ends", () => {
+		const end = at(0, 15, 40).getTime();
+		expect(audioState({ ...base, override: "silence", overrideUntil: end })?.label).toMatch(
+			/^Paused until 3:40/,
+		);
+		const rec = audioState({ ...base, override: "record", overrideUntil: end });
+		expect(rec).toMatchObject({ live: true });
+		expect(rec?.label).toMatch(/^Live until 3:40/);
+	});
+
 	it("tells a stopped mic from a denied one", () => {
 		expect(audioState({ ...base, enabled: false, recording: false })?.label).toBe("Stopped");
 		expect(audioState({ ...base, authorized: false, mic: "denied", recording: false })?.label).toBe(
