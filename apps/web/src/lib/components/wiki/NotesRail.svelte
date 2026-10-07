@@ -24,13 +24,9 @@
 	interface Props {
 		subjectType: string;
 		subjectId: string;
-		/** Just the notes and the field, for a dropdown that supplies its own frame. */
-		bare?: boolean;
-		/** Told the open-note count whenever it changes, for a trigger's label. */
-		oncount?: (count: number) => void;
 	}
 
-	let { subjectType, subjectId, bare = false, oncount }: Props = $props();
+	let { subjectType, subjectId }: Props = $props();
 
 	let notes = $state<WikiNote[]>([]);
 	let loaded = $state(false);
@@ -45,7 +41,6 @@
 			notes = [];
 		} finally {
 			loaded = true;
-			oncount?.(notes.length);
 		}
 	}
 
@@ -88,7 +83,7 @@
 {#snippet body()}
 			{#if notes.length === 0}
 				<p class="quiet empty">
-					No notes yet. Leave one for the editor: a correction, or
+					No notes yet. Leave one for later: a correction, or
 					something this page should say.
 				</p>
 			{/if}
@@ -142,15 +137,11 @@
 {/snippet}
 
 {#if loaded}
-	{#if bare}
-		{@render body()}
-	{:else}
-		<section class="section" id="notes">
-			<WikiCollapsibleSection title="Notes" count={notes.length} defaultOpen={notes.length > 0}>
-				{@render body()}
-			</WikiCollapsibleSection>
-		</section>
-	{/if}
+	<section class="section" id="notes">
+		<WikiCollapsibleSection title="Notes" count={notes.length} defaultOpen={notes.length > 0}>
+			{@render body()}
+		</WikiCollapsibleSection>
+	</section>
 {/if}
 
 <style>

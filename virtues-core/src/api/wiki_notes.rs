@@ -29,22 +29,33 @@ use sqlx::PgPool;
 use crate::error::{Error, Result};
 
 /// A note in the margin of some subject.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct Note {
     pub id: i64,
     pub subject_type: String,
     pub subject_id: String,
     /// One of the 0033 kinds. `correction` disputes what the article says;
     /// `observation` is about the subject and the article lacks it. That
-    /// distinction is what an *accept* branches on — edit the sentence, or
-    /// append a paragraph — and it is why quote anchors are unnecessary.
+    /// distinction is what an *accept* branches on: edit the sentence, or
+    /// append a paragraph.
     pub kind: String,
     pub body: String,
     pub author: String,
     pub source_refs: serde_json::Value,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub resolution: Option<String>,
+    /// The passage the note sits beside, when it was written on one:
+    /// `{"quote": "<the sentence>", "sentence": <its index in the paragraph>}`.
+    /// A day page draws the note in its margin, bracketing that passage.
+    pub anchor: Option<serde_json::Value>,
 }
+
+/// The columns every note read returns, in `Note`'s order.
+const NOTE_COLUMNS: &str =
+    "id, subject_type, subject_id, kind, body, author, source_refs, created_at, resolution, anchor";
+
+/// The longest passage an anchor may quote. A sentence, not a page.
+const MAX_ANCHOR_QUOTE: usize = 2000;
 
 /// Notes on a subject. Open ones by default — a resolved note is history, and
 /// the rail is a working surface.
@@ -54,37 +65,21 @@ pub async fn list_notes(
     subject_id: &str,
     include_resolved: bool,
 ) -> Result<Vec<Note>> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT id, subject_type, subject_id, kind, body, author, source_refs,
-               created_at, resolution
-        FROM wiki_notes
-        WHERE subject_type = $1 AND subject_id = $2
-          AND ($3 OR resolved_at IS NULL)
-        ORDER BY created_at DESC
-        "#,
-        subject_type,
-        subject_id,
-        include_resolved
-    )
+    // Runtime-checked: `anchor` (0046) postdates what a dev box's database
+    // may have applied, and a compile-time query would break every local
+    // build until it had.
+    sqlx::query_as::<_, Note>(&format!(
+        "SELECT {NOTE_COLUMNS} FROM wiki_notes
+         WHERE subject_type = $1 AND subject_id = $2
+           AND ($3 OR resolved_at IS NULL)
+         ORDER BY created_at DESC"
+    ))
+    .bind(subject_type)
+    .bind(subject_id)
+    .bind(include_resolved)
     .fetch_all(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to list notes: {}", e)))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| Note {
-            id: r.id,
-            subject_type: r.subject_type,
-            subject_id: r.subject_id,
-            kind: r.kind,
-            body: r.body,
-            author: r.author,
-            source_refs: r.source_refs,
-            created_at: r.created_at,
-            resolution: r.resolution,
-        })
-        .collect())
+    .map_err(|e| Error::Database(format!("Failed to list notes: {}", e)))
 }
 
 /// How many notes are open across the whole record — the Overview's
@@ -114,7 +109,7 @@ pub async fn count_open(pool: &PgPool, subject_type: &str, subject_id: &str) -> 
     .map_err(|e| Error::Database(format!("Failed to count notes: {}", e)))
 }
 
-/// Leave a note yourself.
+/// Leave a note yourself, optionally beside a passage (`anchor`).
 ///
 /// Human notes need no citation — you were there. The CHECK enforces that only
 /// for `author = 'ai'`, which is the asymmetry the covenant is built on.
@@ -124,39 +119,38 @@ pub async fn create_note(
     subject_id: &str,
     kind: &str,
     body: &str,
+    anchor: Option<&serde_json::Value>,
 ) -> Result<Note> {
     let body = body.trim();
     if body.is_empty() {
         return Err(Error::InvalidInput("A note needs a body".into()));
     }
+    if let Some(a) = anchor {
+        let quote = a.get("quote").and_then(|q| q.as_str());
+        let sentence_ok = a.get("sentence").is_none_or(|n| n.is_null() || n.as_u64().is_some());
+        match quote {
+            Some(q) if !q.trim().is_empty() && q.len() <= MAX_ANCHOR_QUOTE && sentence_ok => {}
+            _ => {
+                return Err(Error::InvalidInput(
+                    "A note's anchor needs the passage's words (`quote`) and, at most, its sentence number".into(),
+                ))
+            }
+        }
+    }
 
-    let r = sqlx::query!(
-        r#"
-        INSERT INTO wiki_notes (subject_type, subject_id, kind, body, author)
-        VALUES ($1, $2, $3, $4, 'human')
-        RETURNING id, subject_type, subject_id, kind, body, author, source_refs,
-                  created_at, resolution
-        "#,
-        subject_type,
-        subject_id,
-        kind,
-        body
-    )
+    sqlx::query_as::<_, Note>(&format!(
+        "INSERT INTO wiki_notes (subject_type, subject_id, kind, body, author, anchor)
+         VALUES ($1, $2, $3, $4, 'human', $5)
+         RETURNING {NOTE_COLUMNS}"
+    ))
+    .bind(subject_type)
+    .bind(subject_id)
+    .bind(kind)
+    .bind(body)
+    .bind(anchor)
     .fetch_one(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to create note: {}", e)))?;
-
-    Ok(Note {
-        id: r.id,
-        subject_type: r.subject_type,
-        subject_id: r.subject_id,
-        kind: r.kind,
-        body: r.body,
-        author: r.author,
-        source_refs: r.source_refs,
-        created_at: r.created_at,
-        resolution: r.resolution,
-    })
+    .map_err(|e| Error::Database(format!("Failed to create note: {}", e)))
 }
 
 /// Close a note.
@@ -297,17 +291,44 @@ mod tests {
     /// A human was there; they do not have to cite themselves.
     #[sqlx::test]
     async fn a_human_note_needs_no_citation(pool: PgPool) {
-        let n = create_note(&pool, "person", "p_1", "memo", "Ask about the move.")
+        let n = create_note(&pool, "person", "p_1", "memo", "Ask about the move.", None)
             .await
             .unwrap();
         assert_eq!(n.author, "human");
         assert_eq!(count_open(&pool, "person", "p_1").await.unwrap(), 1);
     }
 
+    /// A note written beside a sentence keeps that sentence, so the page can
+    /// draw it there; a note with no passage is still a plain note.
+    #[sqlx::test]
+    async fn a_note_can_sit_beside_a_passage(pool: PgPool) {
+        let anchor = serde_json::json!({ "quote": "You walked in for three.", "sentence": 0 });
+        let n = create_note(&pool, "day", "day_t1", "memo", "it was four", Some(&anchor))
+            .await
+            .unwrap();
+        assert_eq!(n.anchor.as_ref(), Some(&anchor));
+
+        let listed = list_notes(&pool, "day", "day_t1", false).await.unwrap();
+        assert_eq!(listed[0].anchor.as_ref(), Some(&anchor));
+
+        let plain = create_note(&pool, "day", "day_t1", "memo", "a plain note", None).await.unwrap();
+        assert!(plain.anchor.is_none());
+
+        for bad in [
+            serde_json::json!({ "sentence": 1 }),
+            serde_json::json!({ "quote": "   " }),
+            serde_json::json!({ "quote": "ok", "sentence": "two" }),
+            serde_json::json!("just a string"),
+        ] {
+            let r = create_note(&pool, "day", "day_t1", "memo", "x", Some(&bad)).await;
+            assert!(matches!(r, Err(Error::InvalidInput(_))), "{bad} should be refused");
+        }
+    }
+
     /// Resolution is an event with an author, and it happens once.
     #[sqlx::test]
     async fn resolving_closes_a_note_exactly_once(pool: PgPool) {
-        let n = create_note(&pool, "person", "p_1", "memo", "Ask about the move.")
+        let n = create_note(&pool, "person", "p_1", "memo", "Ask about the move.", None)
             .await
             .unwrap();
 
@@ -417,7 +438,7 @@ mod tests {
     /// `resolved_at` and `resolution` cannot disagree.
     #[sqlx::test]
     async fn resolution_columns_stay_in_step(pool: PgPool) {
-        let n = create_note(&pool, "person", "p_1", "memo", "x").await.unwrap();
+        let n = create_note(&pool, "person", "p_1", "memo", "x", None).await.unwrap();
         let half = sqlx::query("UPDATE wiki_notes SET resolved_at = now() WHERE id = $1")
             .bind(n.id)
             .execute(&pool)

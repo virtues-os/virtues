@@ -6,6 +6,7 @@
  */
 
 import { apiGet } from '$lib/api/client';
+import type { NoteAnchor } from './dayNotes';
 
 // ============================================================================
 // API Response Types (match Rust backend types)
@@ -272,6 +273,8 @@ export interface WikiNote {
 	source_refs: unknown;
 	created_at: string;
 	resolution: string | null;
+	/** The passage the note sits beside, when it was written on one. */
+	anchor?: NoteAnchor | null;
 }
 
 /** Open notes on a subject. */
@@ -290,13 +293,13 @@ export async function createNote(
 	subjectType: string,
 	subjectId: string,
 	body: string,
-	kind = 'memo',
+	opts: { kind?: string; anchor?: NoteAnchor } = {},
 	fetchFn: FetchFn = fetch
 ): Promise<WikiNote> {
 	const res = await fetchFn(`/api/wiki/notes/${subjectType}/${subjectId}`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ body, kind })
+		body: JSON.stringify({ body, kind: opts.kind ?? 'memo', anchor: opts.anchor ?? null })
 	});
 	if (!res.ok) throw new Error('Could not save that note');
 	return res.json();
@@ -1164,7 +1167,7 @@ export interface DayChatApi {
  * In-app chats are navigable; external chats are display-only.
  * @param date - The date in YYYY-MM-DD format
  */
-/** The strip under a day's Abstract. Deterministic facts only; absent is null. */
+/** The dateline above a day's title. Deterministic facts only; absent is null. */
 export interface DayFactsApi {
 	temperature_high_c: number | null;
 	temperature_low_c: number | null;
@@ -1172,8 +1175,8 @@ export interface DayFactsApi {
 	recorded_minutes: number;
 	/** Recorded stretches, merged, as [start, end] ISO instants. */
 	coverage: [string, string][];
-	/** Conversations the owner started with Virtues that day. */
-	chats: number;
+	/** How long the day was in minutes; a server older than this field leaves it out. */
+	day_minutes?: number;
 }
 
 export async function getDayFacts(date: string, fetchFn: FetchFn = fetch): Promise<DayFactsApi | null> {
@@ -1199,6 +1202,37 @@ export interface PersonGlossApi {
 
 export function getPersonGloss(id: string, date: string): Promise<PersonGlossApi> {
 	return apiGet<PersonGlossApi>(`/wiki/person/${encodeURIComponent(id)}/gloss`, { date });
+}
+
+/** One of your numbers on a day page: the day's value and the days before it. */
+export interface DayMeasureApi {
+	/** `lane:id`, the form a pin is stored in. */
+	key: string;
+	label: string;
+	unit: string;
+	kind: 'total' | 'rate';
+	/** Null when nothing was collected that day, which is not zero. */
+	value: number | null;
+	/** The 30 days before, oldest first; null the same way. */
+	before: (number | null)[];
+}
+
+export interface MeasureListingApi {
+	key: string;
+	lane: string;
+	label: string;
+	unit: string;
+	kind: 'total' | 'rate';
+}
+
+export interface DayMeasuresApi {
+	date: string;
+	measures: DayMeasureApi[];
+	available: MeasureListingApi[];
+}
+
+export function getDayMeasures(date: string, keys: string[]): Promise<DayMeasuresApi> {
+	return apiGet<DayMeasuresApi>(`/wiki/day/${encodeURIComponent(date)}/measures`, { keys: keys.join(',') });
 }
 
 /** A day whose page reads like this one's. */

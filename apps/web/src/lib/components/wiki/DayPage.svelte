@@ -2,11 +2,13 @@
 	DayPage.svelte
 
 	One day, two views of it (agents/plan/day-article-plan.md):
-	- Article: the weekday and date, the Abstract, the fact strip, and the body
-	  with its margin (DayArticleBody), then the days on either side.
-	- Record: the evidence — the dayline, the timeline, your chats, and every
-	  record of the day. A citation in the article opens Record on its item.
-	Notes for the editor open from the toolbar; Edit opens the article page.
+	- Article: the dateline (weekday, weather, the hours heard) and the date,
+	  the Abstract and your numbers, and the body with your notes in its margin
+	  (DayArticleBody), then the days on either side.
+	- Data: the evidence: the dayline, the timeline, your chats, and every
+	  record of the day. A sentence's source opens Data on its record.
+	Write a note writes in the margin about the whole day (nothing reads day
+	notes yet); Edit opens the article page.
 -->
 
 <script lang="ts">
@@ -22,6 +24,10 @@
 		getDayFacts,
 		getDayByDate,
 		getSimilarDays,
+		listNotes,
+		createNote,
+		resolveNote,
+		type WikiNote,
 		type SimilarDayApi,
 		getArticle,
 		type DayFactsApi,
@@ -38,17 +44,18 @@
 	import EventTimeline from "./EventTimeline.svelte";
 	import DaylineChart from "./DaylineChart.svelte";
 	import DayDatePicker from "./DayDatePicker.svelte";
-	import NotesRail from "./NotesRail.svelte";
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import DayArticleBody from "./DayArticleBody.svelte";
-	import DayFactStrip from "./DayFactStrip.svelte";
+	import DayDateline from "./DayDateline.svelte";
+	import DayNumbers from "./DayNumbers.svelte";
 	import DayInline from "./DayInline.svelte";
-	import { getRecord } from "$lib/api/client";
+	import { getRecord, getAssistantProfile, updateUiPreferences } from "$lib/api/client";
+	import { messageBody, nearTurns } from "$lib/wiki/recordWords";
+	import type { NoteAnchor } from "$lib/wiki/dayNotes";
 	import DayGloss from "./DayGloss.svelte";
 	import { parseDayArticle, abstractOf, veilMarks } from "$lib/wiki/dayArticle";
 	import { veiled } from "$lib/actions/veil";
 	import { veil } from "$lib/stores/veil.svelte";
-	import { Popover } from "$lib/floating";
 
 	import Icon from "$lib/components/Icon.svelte";
 	import Button from "$lib/components/Button.svelte";
@@ -504,8 +511,8 @@
 	let citedRef = $state<string | null>(null);
 
 	/**
-	 * Switch views along the day's clock: the date stays where it is, the fact
-	 * strip's coverage bar grows into the dayline, and the rest crossfades.
+	 * Switch views along the day's clock: the date stays where it is, the
+	 * dateline's heard-hours bar grows into the dayline, and the rest crossfades.
 	 * Reduced motion, or a browser without view transitions, switches at once.
 	 */
 	type Transition = { finished: Promise<void>; skipTransition: () => void };
@@ -552,9 +559,13 @@
 		return done;
 	}
 
-	function openCitation(ref: string) {
+	/** Where the citation came from: the sentence's paragraph block and index. */
+	let citedAt = $state<{ block: number; sentence: number } | null>(null);
+
+	function openCitation(ref: string, at: { block: number; sentence: number } | null) {
 		void switchView(() => {
 			citedRef = ref;
+			citedAt = at;
 			view = "record";
 		});
 		scrollContainerEl?.scrollTo({ top: 0 });
@@ -578,19 +589,27 @@
 	/** Back to the article, and to the sentence the citation came from. */
 	function backToArticle() {
 		const ref = citedRef;
+		const at = citedAt;
 		void switchView(() => {
 			view = "article";
 			citedRef = null;
+			citedAt = null;
 		}).then(() => {
 			if (!ref) return;
-			const sentence = scrollContainerEl?.querySelector<HTMLElement>(`[data-refs~="${CSS.escape(ref)}"]`);
+			// The sentence that was clicked, by its place; several sentences in
+			// one scene often cite the same recording, so the ref alone is not
+			// enough. A table or photo has no place, so it goes by its ref.
+			const sentence =
+				(at && scrollContainerEl?.querySelector<HTMLElement>(`[data-block="${at.block}"] .s[data-s="${at.sentence}"]`)) ||
+				scrollContainerEl?.querySelector<HTMLElement>(`[data-refs~="${CSS.escape(ref)}"]`);
 			if (!sentence) return;
 			sentence.scrollIntoView({ block: "center" });
 			sentence.classList.remove("flash");
 			void sentence.offsetWidth;
 			sentence.classList.add("flash");
 			setTimeout(() => sentence.classList.remove("flash"), 1700);
-			sentence.focus({ preventScroll: true });
+			// Focus goes to the sentence's keyboard control, the next element.
+			(sentence.nextElementSibling as HTMLElement | null)?.focus({ preventScroll: true });
 		});
 	}
 
@@ -603,11 +622,15 @@
 
 	/**
 	 * A cited record the day's list doesn't carry (a recording chunk is never
-	 * a day source), fetched whole so the card can still show its words.
+	 * a day source), fetched whole so the card can still show its words: the
+	 * same words the evidence card showed (lib/wiki/recordWords.ts).
 	 */
-	let citedRecord = $state<{ ref: string; time: string; kind: string; text: string } | null>(null);
+	let citedRecord = $state<{ ref: string; time: string; kind: string; lines: string[] } | null>(null);
+	let citedFailed = $state<string | null>(null);
 	$effect(() => {
 		const ref = citedRef;
+		const at = citedAt;
+		citedFailed = null;
 		if (!ref || citedRow) {
 			citedRecord = null;
 			return;
@@ -617,34 +640,31 @@
 			.then((r) => {
 				if (citedRef !== ref) return;
 				const row = r.row as Record<string, unknown>;
-				const at = String(row[r.timestamp_column] ?? "");
-				const raw = String(row.body ?? row.text ?? "").replace(/\[Speaker(?: \d+)?\]:\s*/g, "").trim();
+				const when = String(row[r.timestamp_column] ?? "");
+				const sentence = at ? (parsed.blocks[at.block]?.sentences[at.sentence]?.markdown ?? "") : "";
+				const lines =
+					table === "data_communication_transcription"
+						? nearTurns(String(row.text ?? ""), sentence, 6).turns.map((t) => t.text)
+						: [messageBody(row, 1200)].filter(Boolean);
 				citedRecord = {
 					ref,
-					time: at ? new Date(at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: rowTz }) : "",
+					time: when ? new Date(when).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: rowTz }) : "",
 					kind: r.display_name,
-					text: raw.length > 600 ? `${raw.slice(0, 600)}…` : raw,
+					lines,
 				};
 			})
 			.catch(() => {
-				if (citedRef === ref) citedRecord = null;
+				if (citedRef !== ref) return;
+				citedRecord = null;
+				citedFailed = ref;
 			});
 	});
 
 	const parsed = $derived(parseDayArticle(summaryText));
 	const abstractMarked = $derived(veilMarks(parsed.abstract));
 
-	/** "With": the people the Abstract links, in its order. */
-	const abstractPeople = $derived.by(() => {
-		const out: { name: string; href: string }[] = [];
-		for (const m of abstractMarked.markdown.matchAll(/\[([^\]]+)\]\((\/person\/[^)]+)\)/g)) {
-			if (!out.some((p) => p.href === m[2])) out.push({ name: m[1], href: m[2] });
-		}
-		return out;
-	});
-
 	// ─────────────────────────────────────────────────────────────────────────
-	// The fact strip and the days on either side
+	// The dateline's facts, your numbers, your notes, and the days on either side
 	// ─────────────────────────────────────────────────────────────────────────
 	let facts = $state<DayFactsApi | null>(null);
 	const loadFacts = makeLoader((slug) => getDayFacts(slug), (r) => (facts = r));
@@ -688,18 +708,80 @@
 		if (browser && page?.date) loadSimilar(currentDateSlug);
 	});
 
-	/** The chaos/order mark: each scored part of the day at its midpoint. */
-	const noveltyPoints = $derived(
-		dayEvents
-			.filter((e) => !e.isUnknown && !e.isSleep && !e.userHidden && e.noveltyZ != null)
-			.map((e) => ({
-				at: new Date((e.startTime.getTime() + e.endTime.getTime()) / 2).toISOString(),
-				z: e.noveltyZ as number,
-			})),
-	);
+	/** Your pinned numbers (`lane:id`), the same on every day: undefined while
+	 *  loading, null before you've chosen any, [] when you chose none. */
+	let pins = $state<string[] | null | undefined>(undefined);
+	let pinsFailed = $state(false);
+	$effect(() => {
+		if (!browser) return;
+		getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>()
+			.then((p) => {
+				const saved = p?.ui_preferences?.day_measures;
+				pins = Array.isArray(saved) ? saved.filter((k): k is string => typeof k === "string") : null;
+			})
+			// Unreadable: show the starters; a later save reads the profile again.
+			.catch(() => (pins = null));
+	});
 
-	let notesOpen = $state(false);
-	let noteCount = $state(0);
+	/** Saves run one after another, so the last change you made is the one kept. */
+	let pinSave: Promise<void> = Promise.resolve();
+	function savePins(next: string[]) {
+		const prev = pins;
+		pins = next;
+		pinsFailed = false;
+		pinSave = pinSave
+			.then(() => updateUiPreferences({ day_measures: next }))
+			.catch(() => {
+				pins = prev;
+				pinsFailed = true;
+			});
+	}
+
+	/** Your open notes on this day, drawn in the margin. */
+	let dayNotes = $state<WikiNote[]>([]);
+	const loadNotes = makeLoader((_slug) => listNotes("day", page.id), (r) => (dayNotes = r ?? []));
+	$effect(() => {
+		if (browser && page?.id) loadNotes(currentDateSlug);
+	});
+
+	async function writeNote(body: string, anchor: NoteAnchor | null): Promise<WikiNote> {
+		const n = await createNote("day", page.id, body, { anchor: anchor ?? undefined });
+		dayNotes = [n, ...dayNotes];
+		return n;
+	}
+
+	/** Removing waits a few seconds, with an Undo, before the note is dismissed. */
+	const UNDO_MS = 5000;
+	let removing = $state<number[]>([]);
+	let removeFailed = $state<number[]>([]);
+	const removeTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+	function removeNote(id: number) {
+		removeFailed = removeFailed.filter((x) => x !== id);
+		removing = [...removing, id];
+		removeTimers.set(
+			id,
+			setTimeout(async () => {
+				removeTimers.delete(id);
+				try {
+					await resolveNote(id, "dismissed");
+					dayNotes = dayNotes.filter((n) => n.id !== id);
+				} catch {
+					removeFailed = [...removeFailed, id];
+				} finally {
+					removing = removing.filter((x) => x !== id);
+				}
+			}, UNDO_MS),
+		);
+	}
+
+	function undoRemove(id: number) {
+		clearTimeout(removeTimers.get(id));
+		removeTimers.delete(id);
+		removing = removing.filter((x) => x !== id);
+	}
+
+	let body: { writeAboutDay: () => void } | null = $state(null);
 
 </script>
 
@@ -727,20 +809,9 @@
 				>
 					{veil.on ? "Veiled · hold V" : "Veil"}
 				</button>
-				<Popover bind:open={notesOpen} placement="bottom-end">
-					{#snippet trigger({ toggle })}
-						<button type="button" class="bar-action" class:active={notesOpen} onclick={toggle}>
-							Notes{noteCount ? ` ${noteCount}` : ""}
-						</button>
-					{/snippet}
-					{#snippet children()}
-						<div class="notes-popover">
-							<p class="notes-title">Notes for the editor</p>
-							<NotesRail subjectType="day" subjectId={page.id} bare oncount={(n) => (noteCount = n)} />
-							<p class="notes-hint">The editor works through these the next time it revises this page.</p>
-						</div>
-					{/snippet}
-				</Popover>
+				{#if view === "article" && currentDateSlug <= todaySlug}
+					<button type="button" class="bar-action" title="Write in the margin about the whole day" onclick={() => body?.writeAboutDay()}>Write a note</button>
+				{/if}
 				{#if showAutobiography}
 					<button type="button" class="bar-action" onclick={openDayArticle}>Edit</button>
 				{/if}
@@ -748,7 +819,7 @@
 
 			<div class="day-content">
 				<header class="day-header">
-					<p class="day-eyebrow">{dayOfWeek}</p>
+					<div class="day-eyebrow"><DayDateline weekday={dayOfWeek} {facts} timezone={page.start_timezone} clock={view === "article"} /></div>
 					<h1 class="day-title">
 						<DayDatePicker
 							pageDate={date}
@@ -764,15 +835,43 @@
 
 				{#if view === "article"}
 					{#if showAutobiography}
-						{#if parsed.abstract}
-							<div class="day-abstract" use:veiled={{ hiding: veil.hiding, phrases: abstractMarked.phrases }}>
-								<div class="markdown markdown--article"><p><DayInline markdown={abstractMarked.markdown} person={personGloss} /></p></div>
-							</div>
-						{/if}
-						<DayFactStrip {facts} people={abstractPeople} timezone={page.start_timezone} novelty={noveltyPoints} />
-						<DayArticleBody blocks={parsed.blocks} oncite={openCitation} person={personGloss} />
+						{#snippet lead()}
+							{#if parsed.abstract}
+								<div class="day-abstract" use:veiled={{ hiding: veil.hiding, phrases: abstractMarked.phrases }}>
+									<div class="markdown markdown--article"><p><DayInline markdown={abstractMarked.markdown} person={personGloss} /></p></div>
+								</div>
+							{/if}
+							<DayNumbers date={currentDateSlug} {pins} onchange={savePins} saveFailed={pinsFailed} />
+						{/snippet}
+						<DayArticleBody
+							bind:this={body}
+							blocks={parsed.blocks}
+							{lead}
+							notes={dayNotes}
+							oncite={openCitation}
+							person={personGloss}
+							onwrite={writeNote}
+							onremove={removeNote}
+							onundo={undoRemove}
+							{removing}
+							{removeFailed}
+						/>
 					{:else}
-						<DayFactStrip {facts} people={[]} timezone={page.start_timezone} novelty={noveltyPoints} />
+						{#if currentDateSlug <= todaySlug}
+							<!-- No page yet, but the day still has your numbers and your notes. -->
+							{#snippet numbersLead()}<DayNumbers date={currentDateSlug} {pins} onchange={savePins} saveFailed={pinsFailed} />{/snippet}
+							<DayArticleBody
+								bind:this={body}
+								blocks={[]}
+								lead={numbersLead}
+								notes={dayNotes}
+								onwrite={writeNote}
+								onremove={removeNote}
+								onundo={undoRemove}
+								{removing}
+								{removeFailed}
+							/>
+						{/if}
 						<div class="empty-state">
 							{#if currentDateSlug > todaySlug}
 								<p class="empty-state-text">This day hasn't happened yet.</p>
@@ -825,12 +924,14 @@
 									<span class="cited-label">{citedRow.label}</span>
 								</p>
 								{#if citedRow.preview}<p class="cited-preview">{citedRow.preview}</p>{/if}
-							{:else if citedRecord}
+							{:else if citedRecord && citedRecord.ref === citedRef}
 								<p class="cited-row">
 									<span class="cited-time">{citedRecord.time}</span>
 									<span>{citedRecord.kind}</span>
 								</p>
-								{#if citedRecord.text}<p class="cited-preview">{citedRecord.text}</p>{/if}
+								{#each citedRecord.lines as line, i (i)}<p class="cited-preview">{line}</p>{/each}
+							{:else if citedFailed === citedRef}
+								<p class="cited-preview">Couldn't load this record. Check that your server is running, then go back and open it again.</p>
 							{:else}
 								<p class="cited-preview">Loading the record…</p>
 							{/if}
@@ -988,7 +1089,7 @@
 </div>
 
 <style>
-	/* ── the toolbar: Article | Record, Notes, Edit ── */
+	/* ── the toolbar: Article | Data, Veil, Write a note, Edit ── */
 	.day-bar {
 		display: flex;
 		align-items: center;
@@ -1046,23 +1147,6 @@
 		border-color: var(--color-border);
 	}
 
-	.notes-popover {
-		width: 20rem;
-		padding: 0.875rem 1rem;
-	}
-
-	.notes-title {
-		margin: 0 0 0.5rem;
-		font-family: var(--font-serif);
-		font-size: 1.0625rem;
-	}
-
-	.notes-hint {
-		margin: 0.5rem 0 0;
-		font-size: 0.6875rem;
-		color: var(--color-foreground-subtle);
-	}
-
 	/* ── Article ↔ Record: the same day, along its clock ── */
 	.day-title {
 		view-transition-name: day-title;
@@ -1084,9 +1168,6 @@
 	/* ── the page head ── */
 	.day-eyebrow {
 		margin: 0;
-		font-family: var(--font-sans);
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
 	}
 
 	.day-abstract {

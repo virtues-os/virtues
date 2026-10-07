@@ -242,7 +242,7 @@ pub fn routes() -> Router<AppState> {
             "/api/wiki/day/:date/chats",
             get(wiki_get_day_chats_handler),
         )
-        // Wiki - Day facts (the strip under the day's Abstract)
+        // Wiki - Day facts (the weather and the heard hours above the title)
         .route(
             "/api/wiki/day/:date/facts",
             get(wiki_get_day_facts_handler),
@@ -251,6 +251,11 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/wiki/day/:date/similar",
             get(wiki_get_similar_days_handler),
+        )
+        // Wiki - Your numbers for a day, against the days before it
+        .route(
+            "/api/wiki/day/:date/measures",
+            get(wiki_get_day_measures_handler),
         )
         // Wiki - Day Streams (dynamic ontology queries)
         .route(
@@ -564,6 +569,8 @@ pub async fn open_notes_count_handler(State(state): State<AppState>) -> Response
 pub struct CreateNoteBody {
     pub body: String,
     pub kind: Option<String>,
+    /// The passage the note sits beside: `{"quote": "...", "sentence": n}`.
+    pub anchor: Option<serde_json::Value>,
 }
 
 /// Leave a note on a subject.
@@ -579,6 +586,7 @@ pub async fn create_note_handler(
             &subject_id,
             b.kind.as_deref().unwrap_or("memo"),
             &b.body,
+            b.anchor.as_ref(),
         )
         .await,
     )
@@ -1308,6 +1316,32 @@ pub async fn wiki_get_day_facts_handler(
 ) -> Response {
     match date.parse::<chrono::NaiveDate>() {
         Ok(parsed_date) => api_response(crate::api::day_article::day_facts(state.db.pool(), parsed_date).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct DayMeasuresQuery {
+    /// Comma-separated `lane:id` measures, in the order to show them.
+    pub keys: Option<String>,
+}
+
+/// Your numbers for a day page: each pinned measure for the day and the days
+/// before it, plus every measure a day can pin.
+pub async fn wiki_get_day_measures_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    Query(q): Query<DayMeasuresQuery>,
+) -> Response {
+    let keys: Vec<String> = q
+        .keys
+        .unwrap_or_default()
+        .split(',')
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+        .collect();
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => api_response(crate::api::lifeline::day_measures(state.db.pool(), parsed_date, &keys).await),
         Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
     }
 }
