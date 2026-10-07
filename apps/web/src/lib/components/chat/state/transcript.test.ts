@@ -6,6 +6,27 @@ const tool = (name: string) => ({ type: `tool-${name}`, toolCallId: name });
 const reasoning = (t: string) => ({ type: "reasoning", text: t });
 
 describe("splitTurn", () => {
+	it("keeps the words before a show call in the reply, and the call out of the thinking block", () => {
+		const parts = [
+			text("Checking"),
+			tool("sql_query"),
+			text("Your sleep, by week:"),
+			{ type: "tool-show", toolCallId: "s1", state: "output-available" },
+			text("The dip is the week of the move."),
+		];
+		for (const streaming of [true, false]) {
+			const t = splitTurn(parts, streaming);
+			expect(t.bodyFromIndex).toBe(2);
+			expect(t.narration).toEqual(["Checking"]);
+			expect(t.toolParts.map((p) => p.type)).toEqual(["tool-sql_query"]);
+		}
+	});
+
+	it("lists a failed show call with the working-out", () => {
+		const parts = [{ type: "tool-show", toolCallId: "s1", state: "output-error" }, text("Here.")];
+		expect(splitTurn(parts, false).toolParts).toHaveLength(1);
+	});
+
 	it("keeps a plain reply in the body with nothing to think about", () => {
 		const t = splitTurn([text("Hello")], false);
 		expect(t.bodyFromIndex).toBe(0);

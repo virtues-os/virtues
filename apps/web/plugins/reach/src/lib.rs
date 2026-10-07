@@ -25,6 +25,7 @@ mod ffi;
 mod models;
 mod stats;
 mod upload;
+mod widget;
 
 pub use error::{Error, Result};
 use models::ReachStatus;
@@ -221,6 +222,8 @@ pub(crate) async fn ensure_client(rec: &PairedBox) -> Option<Arc<VirtuesIrohClie
     }
     Err(e) => {
       tracing::warn!(error = %format!("{e:#}"), "reach client build failed");
+      stats::note_unreachable();
+      widget::publish(true);
       None
     }
   }
@@ -1228,6 +1231,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       // Bring the outbox up before any collector enqueues (incl. a cold
       // background relaunch, where setup() runs first).
       init_outbox(&state.store);
+      // The widget's first snapshot: Swift handed over the shared folder at
+      // plugin registration above, before the outbox could answer.
+      widget::publish(true);
       app.manage(state);
       Ok(())
     })

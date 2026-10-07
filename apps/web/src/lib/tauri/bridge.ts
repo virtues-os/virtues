@@ -392,6 +392,95 @@ export async function browserLogin(
 	return invoke<JarCookie[]>('browser_login', { sourceId, url, cookies, title });
 }
 
+/** The surface that added the Browser pane (lib.rs `COMMAND_SURFACE_VERSION`). */
+export const BROWSER_PANE_SURFACE = 11;
+
+/** Whether this shell can show the Browser as a pane beside the app's view. */
+export async function canBrowserPane(): Promise<boolean> {
+	if (!isMacOS || isIOS) return false;
+	return shellSupports(BROWSER_PANE_SURFACE);
+}
+
+/** Show `url` in the Browser pane. */
+export async function browserPaneOpen(url: string): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	await invoke('browser_pane_open', { url });
+}
+
+/**
+ * Where the Browser pane sits in the window, in CSS pixels of this page, or
+ * `null` when it is not on screen. The native view follows it: it draws above
+ * the page, so it must hide whenever the pane does.
+ */
+export async function browserPaneBounds(
+	rect: { x: number; y: number; width: number; height: number } | null
+): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	const r = rect ?? { x: 0, y: 0, width: 0, height: 0 };
+	await invoke('browser_pane_bounds', { ...r, visible: rect !== null });
+}
+
+/** The Browser toolbar. */
+export async function browserPaneGo(action: 'back' | 'forward' | 'reload'): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	await invoke('browser_pane_go', { action });
+}
+
+/** The Browser's bar while the assistant drives: take control, hand it back,
+ *  answer a handoff (`done` / `decline`), or stop. */
+export async function browserPaneAgent(
+	action: 'take' | 'resume' | 'done' | 'decline' | 'stop'
+): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	await invoke('browser_pane_agent', { action });
+}
+
+/** Who is driving the Browser: the assistant (`driving`), the owner after
+ *  taking over (`paused`), or the owner because the assistant asked
+ *  (`handoff`, what it asked for). */
+export interface BrowserAgentState {
+	driving: boolean;
+	paused: boolean;
+	handoff: string | null;
+}
+
+/** One step the assistant took in the Browser, with the page after it. */
+export interface BrowserStepEvent {
+	what: string;
+	ok: boolean;
+	url: string;
+	thumb: string | null;
+}
+
+/** Listen for the shell's reports on the assistant in the Browser. */
+export async function onBrowserAgent(
+	onState: (state: BrowserAgentState) => void,
+	onStep: (step: BrowserStepEvent) => void
+): Promise<() => void> {
+	if (!isTauri) return () => {};
+	const { listen } = await import('@tauri-apps/api/event');
+	const offs = await Promise.all([
+		listen<BrowserAgentState>('browser:agent', (e) => onState(e.payload)),
+		listen<BrowserStepEvent>('browser:step', (e) => onStep(e.payload))
+	]);
+	return () => offs.forEach((off) => off());
+}
+
+/** Listen for the shell's Browser events: `browser:open` (show this page in
+ *  the pane, from the assistant or a login) and `browser:navigated`. */
+export async function onBrowserEvent(
+	name: 'browser:open' | 'browser:navigated',
+	handler: (url: string) => void
+): Promise<() => void> {
+	if (!isTauri) return () => {};
+	const { listen } = await import('@tauri-apps/api/event');
+	return listen<{ url: string }>(name, (e) => handler(e.payload.url));
+}
+
 /**
  * Collector daemon status
  */

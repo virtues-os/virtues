@@ -55,12 +55,24 @@ pub async fn drain(client: &VirtuesIrohClient, rec: &PairedBox) -> Result<usize>
                 Ok(true) => {
                     outbox::ack(&batch.ids)?;
                     total += batch.ids.len();
-                    crate::stats::bump(|s| s.records += batch.ids.len() as u64);
+                    crate::stats::note_contact();
+                    crate::stats::bump(|s| {
+                        s.records += batch.ids.len() as u64;
+                        s.delivered.insert(stream.clone(), crate::stats::now_secs());
+                    });
                 }
-                // Delivered but not durable, or transport error — release the
-                // claim + back off, leave the rows for the next drain.
-                Ok(false) | Err(_) => {
+                // The box answered but did not ingest durably (most often
+                // "skipped": an earlier batch is still running) — release the
+                // claim + back off. Reachable all the same.
+                Ok(false) => {
                     outbox::nack(&batch.ids)?;
+                    crate::stats::note_contact();
+                    break;
+                }
+                // No answer — release the claim + back off.
+                Err(_) => {
+                    outbox::nack(&batch.ids)?;
+                    crate::stats::note_unreachable();
                     break;
                 }
             }
@@ -70,6 +82,7 @@ pub async fn drain(client: &VirtuesIrohClient, rec: &PairedBox) -> Result<usize>
         s.drains += 1;
         s.last_drain_at = Some(crate::stats::now_secs());
     });
+    crate::widget::publish(true);
     Ok(total)
 }
 

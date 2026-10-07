@@ -102,7 +102,7 @@
 	 * THE MARK AS A HINGE. ∴ is equilateral, so a third of a turn about its
 	 * centroid lands exactly on itself: the dots trade places, the eye reads a
 	 * turn, and the resting frame is the logo unchanged. The mark turns
-	 * whenever the sidebar moves — click, ⌘S, or a room's second press — one
+	 * whenever the sidebar moves — click, ⌘B, or a room's second press — one
 	 * way to open and the other to close, because the hinge is the thing that
 	 * moved, not the thing that was pressed.
 	 *
@@ -155,7 +155,7 @@
 		class="rail-mark rail-mark-btn"
 		aria-label={panelOpen ? 'Hide the sidebar' : 'Show the sidebar'}
 		aria-expanded={panelOpen}
-		title={panelOpen ? 'Hide the sidebar (⌘S)' : 'Show the sidebar (⌘S)'}
+		title={panelOpen ? 'Hide the sidebar (⌘B)' : 'Show the sidebar (⌘B)'}
 		onclick={toggleSidebar}
 	>
 		<!-- Drawn, not typed. A typed ∴ glyph is text-weight — a 21px glyph

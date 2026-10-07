@@ -299,6 +299,10 @@ async fn execute_single(
         // A page load on the owner's Mac, which `browser::run_tool` waits up
         // to 45s for. Sit past it so the tool reports its own timeout.
         Duration::from_secs(50)
+    } else if tool_call.name == "browser_handoff" {
+        // Waits on the owner to finish a step (a sign-in, a code), up to
+        // `browser::HANDOFF_WAIT`. Sit past it so the tool reports its own.
+        crate::browser::HANDOFF_WAIT + Duration::from_secs(10)
     } else if tool_call.name == "code_interpreter" {
         // Its schema offers the model a timeout of up to 120s and defaults to
         // 60. Under the 30s default the DEFAULT was already unreachable: any
@@ -368,7 +372,8 @@ async fn execute_single(
 /// figure was computed from. Set here rather than in the tool because the
 /// tool never learns its own call id.
 fn attach_query_ref(tool_call: &ToolCall, context: &ToolContext, result: &mut ToolResult) {
-    if tool_call.name != "sql_query" || !result.success {
+    // `show` draws rows from a query; its figure cites them the same way.
+    if !matches!(tool_call.name.as_str(), "sql_query" | "show") || !result.success {
         return;
     }
     let Some(chat_id) = context.chat_id.as_deref() else { return };
@@ -489,13 +494,17 @@ mod query_ref_tests {
         ToolCall { id: "call_9".into(), name: name.into(), arguments: serde_json::json!({}) }
     }
 
-    /// Rows from sql_query get the query's own ref; anything else is left
+    /// Rows from sql_query or show get the query's own ref; anything else is left
     /// alone — a failure, another tool, a result with no rows, a run with no
     /// chat to point into.
     #[test]
     fn only_a_successful_sql_result_with_rows_gets_the_query_ref() {
         let mut r = ToolResult::success(serde_json::json!({"rows": [{"n": 3}]}));
         attach_query_ref(&call("sql_query"), &ctx(Some("chat_1")), &mut r);
+        assert_eq!(r.data["ref"], "/chat/chat_1/tool/call_9");
+
+        let mut r = ToolResult::success(serde_json::json!({"kind": "chart", "rows": [{"n": 3}]}));
+        attach_query_ref(&call("show"), &ctx(Some("chat_1")), &mut r);
         assert_eq!(r.data["ref"], "/chat/chat_1/tool/call_9");
 
         let mut r = ToolResult::success(serde_json::json!({"rows": [{"n": 3}]}));
