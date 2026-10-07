@@ -91,9 +91,12 @@
 			},
 			{
 				id: "sidebar.toggle",
-				keys: "mod+s",
+				keys: "mod+b",
 				label: "Show or hide the sidebar",
 				group: "Window",
+				// ⌘B is bold in the composer and the pages editor. Inside a text
+				// field the editor keeps it; everywhere else it moves the sidebar.
+				allowInInput: false,
 				run: toggleCollapse,
 			},
 			{
@@ -207,8 +210,11 @@
 	// to [MIN, MAX], so it can't tell us the user has dragged well past the
 	// floor — which is exactly the gesture that should close the sidebar.
 	let dragIntent = 0;
+	// Under this much travel, a press on the seam is a click.
+	const CLICK_SLOP_PX = 3;
 
 	function onResizeStart(e: PointerEvent) {
+		hideTip();
 		resizing = true;
 		dragStartX = e.clientX;
 		dragStartWidth = sidebarState.width;
@@ -240,11 +246,40 @@
 		}
 		// Decided on release, not mid-drag: collapsing while the pointer is still
 		// down would yank the handle out from under it and drop the capture.
-		if (dragIntent < SIDEBAR_COLLAPSE_AT) {
+		// A press that barely moved is a click, and the tooltip promises a click
+		// hides the sidebar.
+		const clicked = Math.abs(e.clientX - dragStartX) < CLICK_SLOP_PX;
+		if (clicked || dragIntent < SIDEBAR_COLLAPSE_AT) {
 			sidebarState.width = dragStartWidth;
 			sidebarState.collapsed = true;
 		}
 	}
+
+	// ── The seam's tooltip ────────────────────────────────────
+	// Rendered outside the aside: the aside's clip-path would cut it off.
+	// Fixed-positioned beside the grip, which sits at the seam's middle.
+	const TIP_DELAY_MS = 500;
+	let tipAt = $state<{ left: number; top: number } | null>(null);
+	let tipTimer: ReturnType<typeof setTimeout> | undefined;
+
+	function showTipSoon(e: PointerEvent) {
+		if (resizing) return;
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		clearTimeout(tipTimer);
+		tipTimer = setTimeout(() => {
+			tipAt = { left: rect.right + 8, top: rect.top + rect.height / 2 };
+		}, TIP_DELAY_MS);
+	}
+
+	function hideTip() {
+		clearTimeout(tipTimer);
+		tipAt = null;
+	}
+
+	// Collapsing unmounts the seam before pointerleave can fire.
+	$effect(() => {
+		if (isCollapsed) hideTip();
+	});
 
 	// design.md: any drag affordance needs a keyboard path, because HTML5 drag
 	// events don't fire on touch at all.
@@ -259,6 +294,9 @@
 		} else if (e.key === "Home") {
 			e.preventDefault();
 			sidebarState.resetWidth();
+		} else if (e.key === "Enter") {
+			e.preventDefault();
+			sidebarState.collapsed = true;
 		}
 	}
 
@@ -303,26 +341,42 @@
 	{#if !isCollapsed}
 		<!-- The seam is the handle. It sits over the panel's right border — the
 		     same line that divides the panel from the pane — so the thing you
-		     grab is the thing you see. -->
+		     grab is the thing you see. Click hides, drag resizes. -->
 		<div
 			class="sidebar-resizer"
 			class:dragging={resizing}
 			role="separator"
 			aria-orientation="vertical"
 			aria-label="Resize the sidebar"
+			aria-describedby={tipAt ? "sidebar-seam-tip" : undefined}
 			aria-valuenow={panelWidth}
 			aria-valuemin={SIDEBAR_MIN_WIDTH}
 			aria-valuemax={SIDEBAR_MAX_WIDTH}
 			tabindex="0"
+			onpointerenter={showTipSoon}
+			onpointerleave={hideTip}
 			onpointerdown={onResizeStart}
 			onpointermove={onResizeMove}
 			onpointerup={onResizeEnd}
 			onpointercancel={onResizeEnd}
 			onkeydown={onResizeKey}
-			ondblclick={() => sidebarState.resetWidth()}
 		><span class="sidebar-resizer-grip" aria-hidden="true"></span></div>
 	{/if}
 </aside>
+
+{#if tipAt && !isCollapsed}
+	<div
+		id="sidebar-seam-tip"
+		class="seam-tip"
+		role="tooltip"
+		style="left: {tipAt.left}px; top: {tipAt.top}px"
+	>
+		<span class="seam-tip-action">
+			Hide sidebar <kbd>{shortcuts.format("mod+b")}</kbd>
+		</span>
+		<span class="seam-tip-hint">Drag to resize</span>
+	</div>
+{/if}
 
 
 <style>
@@ -356,10 +410,10 @@
 		background: transparent;
 	}
 
-	/* The grip: a neutral pill that always sits centred on the panel's right
-	   border, so the seam reads as movable before the pointer finds it. The
+	/* The grip: a pill centred on the panel's right border, hidden until the
+	   pointer finds the seam, so the resting panel is just a clean line. The
 	   border itself never changes; the grip is the one thing that responds.
-	   It darkens and lengthens on approach and takes the accent only while
+	   It fades in and lengthens on approach and takes the accent only while
 	   held. The border's centre is 0.5px in from the right edge; the 4px pill
 	   is centred there, overhanging by 1.5px (the aside's clip allows it). */
 	.sidebar-resizer-grip {
@@ -370,30 +424,77 @@
 		height: 32px;
 		transform: translateY(-50%);
 		border-radius: 999px;
-		background: var(--color-border-strong);
+		background: var(--color-foreground-subtle);
+		opacity: 0;
 		pointer-events: none;
 		z-index: 1;
 		transition:
+			opacity 160ms var(--ease-premium),
 			height 160ms var(--ease-premium),
 			background-color 160ms var(--ease-premium);
 	}
 
 	.sidebar-resizer:hover .sidebar-resizer-grip,
 	.sidebar-resizer:focus-visible .sidebar-resizer-grip {
-		background: var(--color-foreground-subtle);
+		opacity: 1;
 		height: 40px;
 	}
 
 	/* Held: the accent says you have it. No easing — it follows the pointer. */
 	.sidebar-resizer.dragging .sidebar-resizer-grip {
 		background: var(--color-primary);
+		opacity: 1;
 		height: 40px;
 		transition: none;
+	}
+
+	/* Beside the grip, vertically centred on it. A hairline card on the
+	   surface, like every other card — no shadow. */
+	.seam-tip {
+		position: fixed;
+		z-index: 1000;
+		transform: translateY(-50%);
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 8px 12px;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface-elevated);
+		color: var(--color-foreground);
+		font-size: 13px;
+		line-height: 1.3;
+		white-space: nowrap;
+		pointer-events: none;
+		animation: seam-tip-in 120ms var(--ease-premium);
+	}
+
+	.seam-tip-action {
+		display: flex;
+		align-items: baseline;
+		gap: 12px;
+	}
+
+	.seam-tip kbd {
+		font-family: inherit;
+		color: var(--color-foreground-subtle);
+	}
+
+	.seam-tip-hint {
+		color: var(--color-foreground-subtle);
+	}
+
+	@keyframes seam-tip-in {
+		from { opacity: 0; }
+		to { opacity: 1; }
 	}
 
 	@media (prefers-reduced-motion: reduce) {
 		.sidebar-resizer-grip {
 			transition: none;
+		}
+		.seam-tip {
+			animation: none;
 		}
 	}
 
