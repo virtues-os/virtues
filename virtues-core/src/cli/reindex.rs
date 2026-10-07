@@ -22,19 +22,11 @@ pub async fn run(yes: bool) -> Result<()> {
     let database_url = crate::database::normalize_database_url()?;
     let db = crate::database::Database::new(&database_url)?;
 
-    let chunks: i64 = sqlx::query_scalar("SELECT count(*) FROM search_embeddings")
-        .fetch_one(db.pool())
-        .await
-        .unwrap_or(0);
-
     println!("Rebuild the search index from source with the current model.");
     println!("This wipes the derived vector + BM25 index — your source data is untouched;");
     println!("embeddings are a cache — and re-embeds everything.");
-    if chunks > 0 {
-        // Rough estimate at the ingest floor (~50 windows/s CPU; the NPU is far
-        // faster). Only an order-of-magnitude hint.
-        let secs = (chunks as f64 / 50.0).ceil() as i64;
-        println!("~{chunks} chunks to re-embed (rough estimate: {}).", human_dur(secs));
+    if let Some(line) = estimate(db.pool()).await? {
+        println!("{line}");
     }
     println!();
 
@@ -50,59 +42,68 @@ pub async fn run(yes: bool) -> Result<()> {
         }
     }
 
-    // 1. Wipe the derived index and its recorded geometry (source untouched).
-    println!("→ wiping the derived index (vectors + BM25)…");
-    wipe(db.pool()).await?;
-
-    // 2. Migrations (idempotent). This cannot size the vector columns: bringup
-    //    sizes them to the recorded width, and the wipe just cleared it.
-    println!("→ ensuring schema…");
-    db.initialize()
-        .await
-        .map_err(|e| Error::Other(format!("schema: {e}")))?;
-
-    // 3. Re-embed from source, inline, to completion (drains the backlog; caps
-    //    at the indexer's internal ceiling, after which a restart continues it).
-    //    Its first step records the current model's width and sizes the vector
-    //    columns to it, before any vector is written.
-    println!("→ re-embedding from source (this can take a while)…");
-    let embedded = crate::search::indexer::run_embedding_job(db.pool())
-        .await
-        .map_err(|e| Error::Other(format!("re-embed: {e}")))?;
-
-    // 4. Put the event scores back.
-    //
-    // The wipe above nulls `wiki_events.embedding` and every score standing on it
-    // — novelty, autonomic, topic, entity — and it is right to: a new model puts
-    // vectors in a different geometry, where the old numbers mean nothing.
-    //
-    // But it used to stop there. The nightly cron scores exactly ONE day, the one
-    // it runs for, so a reindex quietly destroyed the scores of every PAST day and
-    // nothing ever restored them: 82 of 83 days on the dev box, gone, with no
-    // error and no mention. The same shape as the bug that made this pipeline
-    // useless for months — one step destroying what another produced, silently.
-    //
-    // Whatever invalidates scores restores them.
-    println!("→ rescoring events (novelty, autonomic, topic, entity)…");
-    let (days, scored) = crate::dayline::rescore_all_days(db.pool())
-        .await
-        .map_err(|e| Error::Other(format!("rescore: {e}")))?;
+    let (embedded, days, scored) = rebuild(db.pool()).await?;
 
     println!();
     println!("✓ Reindex complete — {embedded} records embedded, {scored} events rescored across {days} days.");
     Ok(())
 }
 
+/// How long a re-embed of the current index will take, as a line to print, or
+/// `None` for an empty index. Rough: the ingest floor is ~50 windows/s on CPU,
+/// and the NPU is far faster. Only an order-of-magnitude hint.
+pub(crate) async fn estimate(pool: &PgPool) -> Result<Option<String>> {
+    let chunks: i64 = sqlx::query_scalar("SELECT count(*) FROM search_embeddings")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| Error::Database(format!("counting indexed chunks: {e}")))?;
+    if chunks == 0 {
+        return Ok(None);
+    }
+    let secs = (chunks as f64 / 50.0).ceil() as i64;
+    Ok(Some(format!("~{chunks} chunks to re-embed (rough estimate: {}).", human_dur(secs))))
+}
+
+/// Rebuild everything the embedding model produced, with the model the endpoint
+/// serves now: wipe it, re-embed from source, and rescore every day's events.
+/// Returns (records embedded, days rescored, events scored).
+///
+/// This is the only way to wipe. `wipe` stays private to this file, because a
+/// wipe without the rescore leaves every past day unscored for good.
+///
+/// No `initialize()`: bringup sizes the vector columns to the recorded width, and
+/// the wipe clears it. The re-embed's first step records the current model's
+/// width and sizes the columns to it, before any vector is written.
+pub(crate) async fn rebuild(pool: &PgPool) -> Result<(u64, u32, u32)> {
+    // 1. Wipe the derived index, its recorded geometry and the event scores
+    //    (source untouched).
+    println!("→ wiping the derived index (vectors + BM25)…");
+    wipe(pool).await?;
+
+    // 2. Re-embed from source, inline, to completion (drains the backlog; caps
+    //    at the indexer's internal ceiling, after which a restart continues it).
+    println!("→ re-embedding from source (this can take a while)…");
+    let embedded = crate::search::indexer::run_embedding_job(pool)
+        .await
+        .map_err(|e| Error::Other(format!("re-embed: {e}")))?;
+
+    // 3. Put the event scores back. The wipe nulled `wiki_events.embedding` and
+    //    every score standing on it, and the nightly cron rescores only the day
+    //    it runs for, so without this every past day stays unscored for good.
+    //    Whatever invalidates scores restores them (`dayline::rescore_all_days`).
+    println!("→ rescoring events (novelty, autonomic, topic, entity)…");
+    let (days, scored) = crate::dayline::rescore_all_days(pool)
+        .await
+        .map_err(|e| Error::Other(format!("rescore: {e}")))?;
+
+    Ok((embedded, days, scored))
+}
+
 /// Forget everything the embedding model produced, so the next model starts from
 /// nothing: the derived index, its recorded geometry, and every event score that
 /// stands on an event embedding. Source rows are never touched — embeddings
-/// rebuild from them. `configure-inference` calls this too; a model swap is the
-/// same wipe whichever command asks for it.
-///
-/// It nulls every past day's event scores, and the nightly cron rescores only the
-/// day it runs for. So the caller has to put them back
-/// (`dayline::rescore_all_days`), as `run` does.
-pub(crate) async fn wipe(pool: &PgPool) -> Result<()> {
+/// rebuild from them. Called only by `rebuild`, which puts the scores back.
+async fn wipe(pool: &PgPool) -> Result<()> {
     for stmt in [
         // CASCADE clears `search_vectors` and `search_bm25_postings`, which both
         // FK-reference `search_embeddings`.
@@ -137,5 +138,34 @@ fn human_dur(secs: i64) -> String {
         format!("~{}m", (secs + 59) / 60)
     } else {
         format!("~{:.1}h", secs as f64 / 3600.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::search::indexer::geometry_tests::{column_types, insert_vector};
+    use crate::search::indexer::reconcile_index_geometry;
+
+    /// A rebuild with a model of another width. The wipe clears the recorded
+    /// width, so bringup has nothing to size the columns to, and the re-embed
+    /// writes into the old width unless its first step resizes. `rebuild` needs
+    /// a live endpoint, so this runs its two database halves directly.
+    #[sqlx::test]
+    async fn a_new_width_is_sized_after_the_wipe(pool: PgPool) {
+        // A box that has been running at 384: recorded, and sized by a boot.
+        reconcile_index_geometry(&pool, "m", 384).await.unwrap();
+        crate::database::Database::from_pool(pool.clone())
+            .ensure_embedding_dims()
+            .await
+            .unwrap();
+        insert_vector(&pool, 384).await.unwrap();
+
+        wipe(&pool).await.unwrap();
+        reconcile_index_geometry(&pool, "n", 768).await.unwrap();
+        insert_vector(&pool, 768)
+            .await
+            .expect("the re-embed writes at the new model's width");
+        assert_eq!(column_types(&pool).await, ["halfvec(768)"; 3]);
     }
 }

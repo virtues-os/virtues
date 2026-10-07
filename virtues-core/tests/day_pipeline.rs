@@ -322,6 +322,41 @@ fn whatever_nulls_the_scores_must_rescore() {
          scores ONE day, so every past day stays at zero forever — silently, which \
          is exactly how this pipeline lost months of work the first time."
     );
+
+    // ...and nothing else can null them without that rescore. The wipe is private
+    // to reindex.rs, reachable only through `rebuild`, and no other source file
+    // nulls the scores on its own.
+    assert!(
+        !code.lines().any(|l| l.trim_start().starts_with("pub") && l.contains("fn wipe(")),
+        "reindex's wipe is public — a caller can now null every event score without \
+         the rescore `rebuild` does after it"
+    );
+    let mut elsewhere = Vec::new();
+    find_score_nulling(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut elsewhere);
+    elsewhere.retain(|p| !p.ends_with("src/cli/reindex.rs"));
+    assert!(
+        elsewhere.is_empty(),
+        "{elsewhere:?} null event scores outside `reindex::rebuild`, the only path \
+         that rescores every day afterwards"
+    );
+}
+
+/// Every `.rs` file under `dir` whose code (comments aside) nulls `novelty_z`.
+fn find_score_nulling(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("read src dir") {
+        let path = entry.expect("dir entry").path();
+        if path.is_dir() {
+            find_score_nulling(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            let src = std::fs::read_to_string(&path).expect("read source file");
+            if src
+                .lines()
+                .any(|l| !l.trim_start().starts_with("//") && l.contains("novelty_z = NULL"))
+            {
+                out.push(path);
+            }
+        }
+    }
 }
 
 /// Segmenting a day and narrating it are different jobs, kept as two SEPARATE

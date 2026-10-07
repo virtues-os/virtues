@@ -44,7 +44,7 @@ const INDEXER_LOCK_KEY: i64 = 0x656d_6269_6478_3031;
 /// and say what to do about it.
 ///
 /// This is what makes "bring your own model" true rather than merely claimed.
-async fn reconcile_index_geometry(pool: &PgPool, model: &str, dim: i32) -> Result<()> {
+pub(crate) async fn reconcile_index_geometry(pool: &PgPool, model: &str, dim: i32) -> Result<()> {
     let recorded: Option<(Option<String>, Option<i32>)> =
         sqlx::query_as("SELECT model, dim FROM search_index_meta WHERE singleton")
             .fetch_optional(pool)
@@ -1157,10 +1157,12 @@ mod date_tests {
 
 /// The index's geometry, against the real schema the migrations leave behind.
 #[cfg(test)]
-mod geometry_tests {
+pub(crate) mod geometry_tests {
     use super::*;
 
-    async fn insert_vector(pool: &PgPool, dim: usize) -> sqlx::Result<()> {
+    /// Index one chunk with a `dim`-wide vector, through the indexer's own
+    /// statement and binding.
+    pub(crate) async fn insert_vector(pool: &PgPool, dim: usize) -> sqlx::Result<()> {
         let id = format!("content_bookmark:geo-{dim}:0");
         sqlx::query(
             "INSERT INTO search_embeddings
@@ -1171,7 +1173,6 @@ mod geometry_tests {
         .bind(format!("geo-{dim}"))
         .execute(pool)
         .await?;
-        // The indexer's own statement and binding.
         sqlx::query(
             "INSERT INTO search_vectors (embedding_id, embedding) VALUES ($1, $2) \
              ON CONFLICT (embedding_id) DO UPDATE SET embedding = EXCLUDED.embedding",
@@ -1197,30 +1198,8 @@ mod geometry_tests {
         assert_eq!(column_types(&pool).await, ["halfvec(384)"; 3]);
     }
 
-    /// `virtues reindex` to a model of another width. The wipe clears the
-    /// recorded width, so the `initialize()` after it has nothing to size the
-    /// columns to, and the re-embed that follows writes into the old width
-    /// unless its first step resizes.
-    #[sqlx::test]
-    async fn reindex_to_a_new_width_resizes(pool: PgPool) {
-        // A box that has been running at 384: recorded, and sized by a boot.
-        reconcile_index_geometry(&pool, "m", 384).await.unwrap();
-        crate::database::Database::from_pool(pool.clone())
-            .ensure_embedding_dims()
-            .await
-            .unwrap();
-        insert_vector(&pool, 384).await.unwrap();
-
-        crate::cli::reindex::wipe(&pool).await.unwrap();
-        reconcile_index_geometry(&pool, "n", 768).await.unwrap();
-        insert_vector(&pool, 768)
-            .await
-            .expect("the re-embed writes at the new model's width");
-        assert_eq!(column_types(&pool).await, ["halfvec(768)"; 3]);
-    }
-
     /// The three columns that share the index's geometry.
-    async fn column_types(pool: &PgPool) -> Vec<String> {
+    pub(crate) async fn column_types(pool: &PgPool) -> Vec<String> {
         sqlx::query_scalar(
             "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a \
              WHERE (a.attrelid, a.attname) IN (('search_vectors'::regclass, 'embedding'), \
