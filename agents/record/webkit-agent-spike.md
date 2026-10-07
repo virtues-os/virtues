@@ -120,9 +120,16 @@ They used their password instead.
   at six posts with no spinner. The same session's cookies then synced **89**
   bookmarks through `x_bookmarks_sync` on a dev box. So X's next-page loader
   never fired under background wheel input, and that was misread as the end of
-  the list. Likely suspects: an `IntersectionObserver` or scroll handler that
-  ignores a background window, or wheel events that scroll without the scroll
-  events X listens for. Untested either way.
+  the list.
+  **Cause and fix, found the same day.** WebKit treats a fully covered
+  window as hidden, and X's loader does not fetch for a hidden page. With the
+  spike window in front, the same scrolling reached 24 posts. Covered, with
+  WebKit's `_setWindowOcclusionDetectionEnabled:NO` (SPI, under Tauri's
+  `macos-private-api` flag), the page stays `visible` and also reached 24.
+  The owner's frontmost app never changed. A plain `IntersectionObserver`
+  test feed loaded fine even while hidden, so the gate is X's own visibility
+  check, not the observer. The Mac app's Browser window disables occlusion
+  detection (`browser_host.rs`).
 
 ## The handoff, end to end
 

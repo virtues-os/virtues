@@ -245,6 +245,16 @@ async fn open(app: &AppHandle, url: &str) -> Result<Value, String> {
                 if can {
                     prefs.setInactiveSchedulingPolicy(WKInactiveSchedulingPolicy::None);
                 }
+                // A covered window is "hidden" to WebKit, which stops rendering
+                // it, and with rendering go IntersectionObservers: a feed that
+                // loads more as you scroll never loads while the assistant
+                // scrolls it behind the owner's other windows. WebKit SPI, under
+                // the macos-private-api flag this app already ships with.
+                let sel = objc2::sel!(_setWindowOcclusionDetectionEnabled:);
+                let can: bool = msg_send![wk, respondsToSelector: sel];
+                if can {
+                    let _: () = msg_send![wk, _setWindowOcclusionDetectionEnabled: false];
+                }
             })
             .await?;
             win
