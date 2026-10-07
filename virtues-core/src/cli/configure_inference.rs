@@ -5,16 +5,14 @@
 //! model fingerprint no longer matches the one the index was built with — the
 //! runtime errors point here. This command is the exit: it re-probes the current
 //! endpoint (bypassing that guard), reports what changed, and — on confirmation
-//! — re-embeds. Re-embedding wipes the DERIVED vector index and its recorded
-//! geometry (never source data) and re-pins the new fingerprint + dims, so after
-//! a restart the background indexer sizes the vector columns to the new model and
-//! rebuilds from source with it.
+//! — re-embeds. Re-embedding re-pins the new fingerprint + dims, then rebuilds
+//! exactly as `virtues reindex` does (`reindex::rebuild`): wipes the DERIVED
+//! index (never source data), re-embeds from source with the new model, and
+//! rescores every day's events. A restart then puts the new model behind search.
 //!
 //! Handled in `main.rs` (not `cli::run`) so it runs before the app builds the
 //! guarded embedder — which would itself fail on the very mismatch we're here to
 //! fix.
-
-use sqlx::PgPool;
 
 use crate::error::{Error, Result};
 
@@ -34,10 +32,8 @@ pub async fn run(reembed: bool, yes: bool) -> Result<()> {
     // The width the index was actually BUILT at, read from the database — not a
     // constant, not the env. The index is the thing that remembers. `None` means
     // it has never been built, so there is no width to disagree with.
-    let pool = PgPool::connect(&database_url)
-        .await
-        .map_err(|e| Error::Database(format!("connecting: {e}")))?;
-    let stored_dim = crate::search::embedder::index_dim(&pool).await;
+    let db = crate::database::Database::new(&database_url)?;
+    let stored_dim = crate::search::embedder::index_dim(db.pool()).await;
     let dim_label = stored_dim.map(|d| d.to_string()).unwrap_or_else(|| "—".into());
 
     println!("→ probing the configured embedding endpoint…");
@@ -62,16 +58,8 @@ pub async fn run(reembed: bool, yes: bool) -> Result<()> {
     println!("   means wiping the vector index and re-embedding from source with the new");
     println!("   model. (Prompt prefixes aren't changed; if the new model needs different");
     println!("   ones, re-run the installer or set VIRTUES_EMBED_QUERY_PROMPT / _DOC_PROMPT.)");
-
-    let db = crate::database::Database::new(&database_url)?;
-    let chunks: i64 = sqlx::query_scalar("SELECT count(*) FROM search_embeddings")
-        .fetch_one(db.pool())
-        .await
-        .unwrap_or(0);
-    if chunks > 0 {
-        // Rough estimate at the ingest floor (≥50 windows/s from the R&D bench).
-        let secs = (chunks as f64 / 50.0).ceil() as i64;
-        println!("   ~{chunks} chunks to re-embed (rough estimate: {}).", human_dur(secs));
+    if let Some(line) = super::reindex::estimate(db.pool()).await? {
+        println!("   {line}");
     }
     println!();
 
@@ -88,22 +76,26 @@ pub async fn run(reembed: bool, yes: bool) -> Result<()> {
         }
     }
 
-    // 1. Wipe the derived index, its recorded geometry and the event scores.
-    // TODO(2026-10-07): rescore. This nulls every past day's event scores and
-    // nothing here or after the restart puts them back (see `reindex::wipe`).
-    println!("→ wiping the derived vector index (source data untouched)…");
-    super::reindex::wipe(db.pool()).await?;
-
-    // 2. Re-pin the new fingerprint + dims in the env file, for the next boot.
-    //    No resize here: the wipe cleared the recorded width, so there is nothing
-    //    to size the columns to yet. The first embed after the restart records
-    //    the new width and sizes them (`search::indexer`).
+    // 1. Re-pin the new fingerprint + dims: in the env file for the next boot, and
+    //    in this process so the re-embed below runs exactly as the next boot will.
+    //    The embedder reads both at construction and refuses a model whose
+    //    fingerprint is not the pinned one. Pinned before the wipe, so a failed
+    //    write leaves the index untouched.
     println!("→ pinning the new model fingerprint…");
     upsert_env(ENV_FILE, "VIRTUES_EMBED_FINGERPRINT", &new_fp)?;
     upsert_env(ENV_FILE, "VIRTUES_EMBED_DIMS", &new_dim.to_string())?;
+    std::env::set_var("VIRTUES_EMBED_FINGERPRINT", &new_fp);
+    std::env::set_var("VIRTUES_EMBED_DIMS", new_dim.to_string());
+
+    // 2. Wipe, re-embed with the new model, and rescore every day's events.
+    let (embedded, days, scored) = super::reindex::rebuild(db.pool()).await?;
 
     println!();
-    println!("✓ Re-configured. Restart the box so the new model takes over and re-indexing begins:");
+    println!(
+        "✓ Re-configured — {embedded} records embedded with the new model, {scored} events \
+         rescored across {days} days."
+    );
+    println!("Restart the box so the server serves search with the new model:");
     println!("    sudo systemctl restart virtues");
     Ok(())
 }
@@ -144,14 +136,4 @@ fn upsert_env(path: &str, key: &str, value: &str) -> Result<()> {
 
 fn short(fp: &str) -> &str {
     &fp[..fp.len().min(12)]
-}
-
-fn human_dur(secs: i64) -> String {
-    if secs < 90 {
-        format!("~{secs}s")
-    } else if secs < 5400 {
-        format!("~{}m", (secs + 59) / 60)
-    } else {
-        format!("~{:.1}h", secs as f64 / 3600.0)
-    }
 }
