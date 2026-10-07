@@ -235,16 +235,9 @@ async fn open(app: &AppHandle, url: &str) -> Result<Value, String> {
                 .build()
                 .map_err(|e| format!("could not open the browser window: {e}"))?;
             on_main(&win, |wk, _| unsafe {
-                // macOS 14+. The app supports 13.3, where the selector does not
-                // exist and calling it would crash; there a covered page is
-                // throttled, and nothing here waits on a frame, so it is slower
-                // rather than stuck.
-                let prefs = wk.configuration().preferences();
-                let sel = objc2::sel!(setInactiveSchedulingPolicy:);
-                let can: bool = msg_send![&*prefs, respondsToSelector: sel];
-                if can {
-                    prefs.setInactiveSchedulingPolicy(WKInactiveSchedulingPolicy::None);
-                }
+                wk.configuration()
+                    .preferences()
+                    .setInactiveSchedulingPolicy(WKInactiveSchedulingPolicy::None);
                 // A covered window is "hidden" to WebKit, which stops rendering
                 // it, and with rendering go IntersectionObservers: a feed that
                 // loads more as you scroll never loads while the assistant
