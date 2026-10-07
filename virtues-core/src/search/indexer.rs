@@ -28,6 +28,48 @@ const MAX_DRAIN_DURATION: std::time::Duration = std::time::Duration::from_secs(2
 /// cron tick and double-index.
 const INDEXER_LOCK_KEY: i64 = 0x656d_6269_6478_3031;
 
+/// The geometry the index was built in, as (model, width), or `None` if nothing
+/// has recorded one: a fresh box, or the first run after a reindex.
+async fn recorded_geometry(pool: &PgPool) -> Result<Option<(String, i32)>> {
+    let recorded: Option<(Option<String>, Option<i32>)> =
+        sqlx::query_as("SELECT model, dim FROM search_index_meta WHERE singleton")
+            .fetch_optional(pool)
+            .await?;
+    Ok(match recorded {
+        Some((Some(model), Some(dim))) => Some((model, dim)),
+        _ => None,
+    })
+}
+
+/// Refuse an embedder that is not the one the index was built with. A different
+/// width or a different model puts its vectors in a space the stored ones do not
+/// share: cosine between them means nothing, so written vectors would rot the
+/// index and query vectors would rank it at random, with no error anywhere.
+fn ensure_same_geometry(built: &(String, i32), model: &str, dim: i32) -> Result<()> {
+    let (prev_model, prev_dim) = built;
+    if *prev_dim == dim && prev_model == model {
+        return Ok(());
+    }
+    Err(anyhow::anyhow!(
+        "the search index was built with {prev_model} at {prev_dim}-d, but the \
+         embedding endpoint now serves {model} at {dim}-d.\n\n\
+         Vectors from two models live in different geometries — the distance \
+         between them is meaningless, so mixing them would quietly rot every \
+         search result rather than fail loudly.\n\n\
+         Run `virtues reindex` to rebuild the index with the new model \
+         (your source data is untouched — embeddings are a cache)."
+    ))
+}
+
+/// Before searching: is the embedder the one the index was built with? An index
+/// with no recorded geometry has nothing to disagree with.
+pub(crate) async fn check_index_geometry(pool: &PgPool, model: &str, dim: i32) -> Result<()> {
+    match recorded_geometry(pool).await? {
+        Some(built) => ensure_same_geometry(&built, model, dim),
+        None => Ok(()),
+    }
+}
+
 /// Establish, or verify, the geometry the index lives in.
 ///
 /// **Empty index** → it has no geometry yet. Record what the endpoint is actually
@@ -38,37 +80,17 @@ const INDEXER_LOCK_KEY: i64 = 0x656d_6269_6478_3031;
 /// their old width (the migrations' 256 on a fresh box).
 ///
 /// **Populated index** → the geometry is already decided, and the endpoint must
-/// still agree with it. A different width or a different model means every new
-/// vector would land in a space the existing ones do not share; cosine between
-/// them means nothing, and search would degrade with no error anywhere. Refuse,
-/// and say what to do about it.
+/// still agree with it (`ensure_same_geometry`). Refuse, and say what to do
+/// about it.
 ///
 /// This is what makes "bring your own model" true rather than merely claimed.
 pub(crate) async fn reconcile_index_geometry(pool: &PgPool, model: &str, dim: i32) -> Result<()> {
-    let recorded: Option<(Option<String>, Option<i32>)> =
-        sqlx::query_as("SELECT model, dim FROM search_index_meta WHERE singleton")
-            .fetch_optional(pool)
-            .await?;
-
-    match recorded {
+    match recorded_geometry(pool).await? {
         // Geometry established. It must not move under us.
-        Some((Some(prev_model), Some(prev_dim))) => {
-            if prev_dim != dim || prev_model != model {
-                return Err(anyhow::anyhow!(
-                    "the search index was built with {prev_model} at {prev_dim}-d, but the \
-                     embedding endpoint now serves {model} at {dim}-d.\n\n\
-                     Vectors from two models live in different geometries — the distance \
-                     between them is meaningless, so mixing them would quietly rot every \
-                     search result rather than fail loudly.\n\n\
-                     Run `virtues reindex` to rebuild the index with the new model \
-                     (your source data is untouched — embeddings are a cache)."
-                )
-                .into());
-            }
-        }
+        Some(built) => ensure_same_geometry(&built, model, dim)?,
         // No geometry yet: a fresh box, or the first run after a reindex. Adopt the
         // endpoint we actually have, and record the truth about it.
-        _ => {
+        None => {
             let empty: i64 = sqlx::query_scalar("SELECT count(*) FROM search_vectors")
                 .fetch_one(pool)
                 .await?;
@@ -1205,6 +1227,23 @@ pub(crate) mod geometry_tests {
             .await
             .expect("the first vector lands in the index it just recorded");
         assert_eq!(column_types(&pool).await, ["halfvec(384)"; 3]);
+    }
+
+    /// Search refuses an embedder the index was not built with: another model at
+    /// the same width ranks the index at random without a single error. An index
+    /// with no recorded geometry has nothing to disagree with.
+    #[sqlx::test]
+    async fn search_refuses_another_models_geometry(pool: PgPool) {
+        check_index_geometry(&pool, "m", 384).await.expect("nothing recorded yet");
+
+        reconcile_index_geometry(&pool, "m", 384).await.unwrap();
+        check_index_geometry(&pool, "m", 384).await.expect("the model it was built with");
+        for (model, dim) in [("n", 384), ("m", 768)] {
+            let err = check_index_geometry(&pool, model, dim)
+                .await
+                .expect_err("another model, or another width");
+            assert!(err.to_string().contains("virtues reindex"), "{err}");
+        }
     }
 
     /// The three columns that share the index's geometry.
