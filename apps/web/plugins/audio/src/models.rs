@@ -10,6 +10,14 @@ pub struct SetNotifyRequest {
   pub enabled: bool,
 }
 
+/// Start or end the Control Center override (mute-don't-release). `mode` is
+/// "silence" or "record"; None ends the override. `minutes` None = open-ended.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SetOverrideRequest {
+  pub mode: Option<String>,
+  pub minutes: Option<u32>,
+}
+
 /// Quiet-hours window, minutes since local midnight; -1/-1 = off. The window
 /// mutes chunk writing while the capture graph stays armed (mute-don't-release).
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -92,8 +100,16 @@ pub struct AudioStatus {
   /// The cached muted places. Same absence rule as `schedule`.
   #[serde(default)]
   pub places: Option<Vec<MutedPlace>>,
-  /// Why chunk writing is paused right now: "schedule" or "place". Absent
-  /// when recording normally.
+  /// Why chunk writing is paused right now: "pause", "schedule" or "place".
+  /// Absent when recording normally.
   #[serde(default)]
   pub muted_by: Option<String>,
+  /// The Control Center override in force: "silence" (paused) or "record"
+  /// (recording through the schedule or a place). The mic stays on either
+  /// way. Absent when there is none, and on a build that predates it.
+  #[serde(default, rename = "override")]
+  pub override_mode: Option<String>,
+  /// When the override ends, in epoch milliseconds. Absent = open-ended.
+  #[serde(default)]
+  pub override_until: Option<f64>,
 }

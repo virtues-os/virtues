@@ -44,4 +44,7 @@ impl<R: Runtime> Audio<R> {
   pub fn set_places(&self, _places: Vec<MutedPlace>) -> crate::Result<AudioStatus> {
     Ok(unavailable())
   }
+  pub fn set_override(&self, _mode: Option<String>, _minutes: Option<u32>) -> crate::Result<AudioStatus> {
+    Ok(unavailable())
+  }
 }

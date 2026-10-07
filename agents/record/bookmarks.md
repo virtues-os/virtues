@@ -140,7 +140,8 @@ one image instead of twenty minutes of video, and a timestamp link back.
    2026-08-07: an unread count nobody clears, existing mainly to host a prompt.
    The note is simply present on the detail view, which leads with it and
    separates the owner's words from the model's under a hairline. Resurfacing
-   belongs in the Daily Office.
+   was meant for the home page, which was removed on 2026-10-06; it has no
+   surface yet.
 
 "Why" left the vocabulary the same day. It is interrogative, presumes one
 reason, and does not describe what people write — todos, pointers, fragments.

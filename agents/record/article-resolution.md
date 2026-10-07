@@ -149,7 +149,7 @@ broken article is an hourly oscillator.
 
 | subject | brief | first version | maintained |
 |---|---|---|---|
-| **day** | its own released narrate prompt | nightly, one-shot | **no** — see below |
+| **day** | its own released narrate prompt | nightly, one-shot | **no**, but rewritten when the owner asks — see below |
 | **year** | `year.md` | editor, agentic | yes |
 | **story** | `story.md` | the person's own sentence, never the model's | yes, on request |
 | **chapter** | `chapter.md` | seeded from the interview | yes |
@@ -169,6 +169,15 @@ first draft stays exactly as it is. Whether the day's *revision* becomes just
 another article is the attention plan's call, not this one — but it is the
 largest remaining seam, because until it happens "one editor for every
 subject" is true of six kinds out of seven.
+
+What the day does have (2026-10-07) is the owner's **Rewrite this page**, at
+the foot of a past day's page: a whole new first draft, written only when they
+ask (`day_summary::rewrite_day_page`). It is not revision — nothing edits
+around their sentences — so it asks first when the page may hold their words,
+keeps the page as it was as a restore point, writes through the CRDT so open
+editors receive it, and shows in History as one entry by the record whose undo
+puts the old page back. Its restamped `narrated_at` earns the day's year and
+chapter one revision each at their next interval, when the wiki editor is on.
 
 **The self is still keyed `narrative_identity`, not the self person row.** The
 plan called for re-pointing it; chat reads it on every turn, so that is a

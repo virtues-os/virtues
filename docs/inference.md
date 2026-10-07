@@ -224,8 +224,9 @@ virtues configure-inference
 ```
 
 It re-probes the endpoint, reports what changed, and - on your confirmation -
-clears the derived index, re-pins the fingerprint and dimensions, resizes the
-vector column, and lets indexing rebuild. **Your source data is never
+re-pins the fingerprint and dimensions, rebuilds the derived index from your
+source data with the new model, and rescores every day's events. Then restart
+the server so search uses the new model. **Your source data is never
 touched.** Embeddings are a cache; treat them as one. `virtues reindex`
 rebuilds the same index without the endpoint having changed.
 

@@ -82,6 +82,10 @@ pub struct ToolContext {
     /// asks before it runs, and `shell` runs at all. Set only by the chat
     /// handler — applet runs and subagents build their context without it.
     pub sudo: bool,
+    /// The IANA zone the owner's client is in, the one the prompt's clock is
+    /// written in. SQL tools read dates in it. `None` (an applet run, a
+    /// worker) falls back to `home_timezone`.
+    pub timezone: Option<String>,
 }
 
 impl Default for ToolContext {
@@ -99,6 +103,7 @@ impl Default for ToolContext {
             temporary: false,
             ghost_permissions: None,
             sudo: false,
+            timezone: None,
         }
     }
 }
@@ -456,12 +461,12 @@ impl ToolExecutor {
             {
                 let sql = super::sql_sudo::statement(&arguments)?;
                 let read_only = !self.sudo_granted(context, "sql", &sql).await;
-                super::sql_sudo::execute(&self._pool, &sql, read_only).await
+                super::sql_sudo::execute(&self._pool, &sql, read_only, context.timezone.as_deref()).await
             }
             "sql_query" => {
                 // A saved chat can keep a result as a file for code_interpreter.
                 let chat_id = context.chat_id.as_deref().filter(|_| !context.temporary);
-                self.sql_query.execute(arguments, chat_id).await
+                self.sql_query.execute(arguments, chat_id, context.timezone.as_deref()).await
             }
             "sql_write" => super::sql_write::execute(&self._pool, arguments).await,
             // The tool lists already keep it out of every other mode; this is
@@ -512,6 +517,10 @@ impl ToolExecutor {
                 publish::publish(&self._pool, &req).await
             }
             "read_asset" => self.execute_read_asset(arguments).await,
+            "show" => super::show::execute(&self.sql_query, arguments, context.timezone.as_deref()).await,
+            name if crate::browser::TOOLS.contains(&name) => {
+                Ok(crate::browser::run_tool(name, arguments).await)
+            }
             "code_interpreter" => self.execute_code_interpreter(arguments, context).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
             "dispatch_subagents" => {
@@ -553,9 +562,19 @@ impl ToolExecutor {
                 )
                 .await
                 {
-                    Ok(change) => Ok(ToolResult::success(serde_json::json!({
+                    Ok(revision) if revision.saved => Ok(ToolResult::success(serde_json::json!({
                         "applied": true,
-                        "change": change,
+                        "saved": true,
+                        "change": revision.change,
+                    }))),
+                    // Made, and versioned: only the save is pending. Sending
+                    // the same revision again would be a second edit.
+                    Ok(revision) => Ok(ToolResult::success(serde_json::json!({
+                        "applied": true,
+                        "saved": false,
+                        "change": revision.change,
+                        "note": "the revision is on the page, but the server couldn't save it yet \
+                                 and saves it again on its own; do not send it again",
                     }))),
                     // A refusal is not an error to raise at the person: it is a
                     // sentence for the agent to act on in this same turn.

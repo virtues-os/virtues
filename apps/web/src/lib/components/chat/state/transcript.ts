@@ -65,6 +65,9 @@ export function stopReason(meta: MessageMeta | undefined): StopReason | null {
 	return null;
 }
 
+/** The part type of a `show` call: something drawn inside the reply. */
+export const SHOW_PART = "tool-show";
+
 /** An assistant turn split into what the thinking block shows and where the reply starts. */
 export interface SplitTurn {
 	/** Tool calls, for the thinking block. */
@@ -105,17 +108,23 @@ export interface SplitTurn {
  * is over, the last thing it said stands as the reply. While it is still
  * streaming it does not: there is no reply yet, and the line the model wrote
  * is already showing as the status label.
+ *
+ * A `show` call is not working-out: it is part of the reply, drawn where it
+ * was called, so the words before it are the reply's opening and it never
+ * moves them into the thinking block. Only a failed one is listed there,
+ * with the other calls the model recovered from.
  */
 export function splitTurn(parts: any[], isStreaming: boolean): SplitTurn {
 	const isText = (p: any) => p.type === "text" && !!p.text?.trim();
+	const isWork = (p: any) => p.type.startsWith("tool-") && p.type !== SHOW_PART;
 	let lastTool = -1;
 	let lastText = -1;
 	parts.forEach((p, i) => {
-		if (p.type.startsWith("tool-")) lastTool = i;
+		if (isWork(p)) lastTool = i;
 		if (isText(p)) lastText = i;
 	});
 	const bodyFromIndex = isStreaming || lastText > lastTool ? lastTool + 1 : lastText;
-	const toolParts = parts.filter((p) => p.type.startsWith("tool-"));
+	const toolParts = parts.filter((p) => isWork(p) || (p.type === SHOW_PART && p.state === "output-error"));
 	const reasoning = parts
 		.filter((p) => p.type === "reasoning")
 		.map((p) => p.text || "")
@@ -126,7 +135,7 @@ export function splitTurn(parts: any[], isStreaming: boolean): SplitTurn {
 		.filter((i) => isText(parts[i]) && i < bodyFromIndex);
 	const narration = narrationAt.map((i) => parts[i].text.trim());
 	const lastSaid = narrationAt.at(-1) ?? -1;
-	const callsSince = parts.filter((p, i) => i > lastSaid && p.type.startsWith("tool-")).length;
+	const callsSince = parts.filter((p, i) => i > lastSaid && isWork(p)).length;
 	const intent = lastSaid >= 0 && callsSince === 1 ? narration[narration.length - 1] : "";
 	return {
 		toolParts,

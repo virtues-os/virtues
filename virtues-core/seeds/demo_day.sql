@@ -122,20 +122,12 @@ INSERT INTO data_location_visit (
 
 -- Primary day: Feb 13 (the detailed one)
 INSERT INTO wiki_days (
-    id, date, start_timezone, epigraph
+    id, date, start_timezone
 ) VALUES
 (
-    'day_2026-02-13', '2026-02-13', 'America/Chicago',
-    'The Trader Joe''s detour'
+    'day_2026-02-13', '2026-02-13', 'America/Chicago'
 ) ON CONFLICT DO NOTHING;
 
--- Data quality for primary demo day
-UPDATE wiki_days SET data_quality = '{"coverage":{"who":4,"whom":3,"what":5,"when":5,"where":5,"why":2,"how":4},"overall":4,"note":"Strong location, financial, and biometric coverage anchored by a single specific anomaly. Lower signal on motivation and broader social context."}' WHERE date = '2026-02-13';
-
--- Readiness scores (0-100, computed from overnight HRV/RHR/sleep)
-UPDATE wiki_days SET readiness_score = 68, readiness_details = '{"hrv":62,"rhr":72,"sleep_duration":78,"deep_rem":55,"consistency":70}' WHERE date = '2026-02-13';
-UPDATE wiki_days SET readiness_score = 82, readiness_details = '{"hrv":85,"rhr":80,"sleep_duration":90,"deep_rem":75,"consistency":78}' WHERE date = '2026-02-12';
-UPDATE wiki_days SET readiness_score = 59, readiness_details = '{"hrv":50,"rhr":65,"sleep_duration":72,"deep_rem":42,"consistency":60}' WHERE date = '2026-02-14';
 
 -- Adjacent day: Feb 12 (routine Thursday — for cross-day comparison)
 INSERT INTO wiki_days (
@@ -1127,79 +1119,61 @@ INSERT INTO data_location_point (
 -- Mara Vance — design team lead, close colleague
 INSERT INTO wiki_people (
     id, name, emails, phones,
-    relationship_category, notes,
-    first_seen, last_seen, seen_count
+    relationship_category
 ) VALUES (
     'person_demo_maya', 'Mara Vance',
     '["mara.vance@example.com"]', '[]',
-    'colleague',
-    'Design team lead. Sharp eye for UX patterns, always pushing for better onboarding flows. Lunch buddy — we hit Tatsu-ya at least once a week.',
-    '2025-06-15', '2026-02-13', 215
+    'colleague'
 ) ON CONFLICT DO NOTHING;
 
 -- David Okafor — design team, frontend-leaning
 INSERT INTO wiki_people (
     id, name, emails, phones,
-    relationship_category, notes,
-    first_seen, last_seen, seen_count
+    relationship_category
 ) VALUES (
     'person_demo_david', 'David Okafor',
     '["david.okafor@example.com"]', '[]',
-    'colleague',
-    'Design engineer on the team. Great at bridging design and code. Always first to flag form validation issues.',
-    '2025-06-15', '2026-02-13', 180
+    'colleague'
 ) ON CONFLICT DO NOTHING;
 
 -- Cora Delgado — realtor
 INSERT INTO wiki_people (
     id, name, emails, phones,
-    relationship_category, notes,
-    first_seen, last_seen, seen_count
+    relationship_category
 ) VALUES (
     'person_demo_rachel', 'Cora Delgado',
     '["cora.delgado@example.com"]', '["512-555-0147"]',
-    'professional',
-    'Realtor helping with the house search. Found the Bouldin Creek place on Selden. Responsive and knows the Austin market well.',
-    '2026-01-08', '2026-02-13', 24
+    'professional'
 ) ON CONFLICT DO NOTHING;
 
 -- Nell Kovac — close friend
 INSERT INTO wiki_people (
     id, name, emails, phones,
-    relationship_category, nickname, notes,
-    first_seen, last_seen, seen_count
+    relationship_category, nickname
 ) VALUES (
     'person_demo_jess', 'Nell Kovac',
     '["nell.kovac@example.com"]', '["512-555-0233"]',
-    'friend', 'Nell',
-    'One of my closest friends in Austin. Lives on South Lamar. Always down for game night — her Catan strategy is ruthless.',
-    '2024-03-20', '2026-02-13', 340
+    'friend', 'Nell'
 ) ON CONFLICT DO NOTHING;
 
 -- Priya Haddad — close friend
 INSERT INTO wiki_people (
     id, name, emails, phones,
-    relationship_category, notes,
-    first_seen, last_seen, seen_count
+    relationship_category
 ) VALUES (
     'person_demo_priya', 'Priya Haddad',
     '["priya.haddad@example.com"]', '["512-555-0891"]',
-    'friend',
-    'Part of the game night crew with Nell. Works in data science at a climate tech startup. Always brings good wine.',
-    '2024-09-10', '2026-02-13', 145
+    'friend'
 ) ON CONFLICT DO NOTHING;
 
 -- Mom
 INSERT INTO wiki_people (
     id, name, phones,
-    relationship_category, nickname, notes,
-    first_seen, last_seen, seen_count
+    relationship_category, nickname
 ) VALUES (
     'person_demo_mom', 'Rosa',
     '["512-555-0012"]',
-    'family', 'Mom',
-    'Weekly calls, usually Friday evenings. Dad''s knee surgery coming up in March.',
-    '1990-01-01', '2026-02-14', 9999
+    'family', 'Mom'
 ) ON CONFLICT DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -1209,38 +1183,32 @@ INSERT INTO wiki_people (
 -- Home — Mueller, East Austin
 INSERT INTO wiki_places (
     id, name, category, address,
-    latitude, longitude, radius_m,
-    seen_count, first_seen, last_seen
+    latitude, longitude, radius_m
 ) VALUES (
     'place_demo_home', 'Home', 'home',
     'Mueller, Austin, TX',
-    30.2851, -97.5885, 50.0,
-    365, '2025-02-01', '2026-02-14'
+    30.2851, -97.5885, 50.0
 ) ON CONFLICT DO NOTHING;
 
 -- Office — Downtown Austin
 INSERT INTO wiki_places (
     id, name, category, address,
-    latitude, longitude, radius_m,
-    seen_count, first_seen, last_seen
+    latitude, longitude, radius_m
 ) VALUES (
     'place_demo_office', 'Office', 'workplace',
     'Downtown Austin, TX',
-    30.2534, -97.6261, 80.0,
-    220, '2025-06-15', '2026-02-14'
+    30.2534, -97.6261, 80.0
 ) ON CONFLICT DO NOTHING;
 
 -- Ramen Tatsu-ya
 INSERT INTO wiki_places (
     id, name, category, address,
     latitude, longitude, radius_m,
-    seen_count, first_seen, last_seen,
     content
 ) VALUES (
     'place_demo_ramen', 'Ramen Tatsu-ya', 'restaurant',
     '8557 Vesper Blvd, Austin, TX 78758',
     30.2562, -97.6230, 40.0,
-    18, '2025-07-02', '2026-02-13',
     'Go-to lunch spot with Mara. The original Tatsu-ya miso is unbeatable.'
 ) ON CONFLICT DO NOTHING;
 
@@ -1248,13 +1216,11 @@ INSERT INTO wiki_places (
 INSERT INTO wiki_places (
     id, name, category, address,
     latitude, longitude, radius_m,
-    seen_count, first_seen, last_seen,
     content
 ) VALUES (
     'place_demo_jos', 'Jo''s Coffee', 'cafe',
     '1300 Kestrel Ave, Austin, TX 78704',
     30.2372, -97.6320, 30.0,
-    12, '2025-04-18', '2026-02-13',
     'South Congress classic. Good people-watching spot.'
 ) ON CONFLICT DO NOTHING;
 
@@ -1262,51 +1228,43 @@ INSERT INTO wiki_places (
 INSERT INTO wiki_places (
     id, name, category, address,
     latitude, longitude, radius_m,
-    seen_count, first_seen, last_seen,
     content
 ) VALUES (
     'place_demo_house', '1847 Selden St', 'residential',
     '1847 Selden St, Austin, TX 78704',
     30.2342, -97.6410, 30.0,
-    1, '2026-02-13', '2026-02-13',
     'Bouldin Creek bungalow. Original tile in the kitchen, big backyard. Back on market Feb 13. Cora showed it — sunlight was perfect in the afternoon.'
 ) ON CONFLICT DO NOTHING;
 
 -- Nell's Place — South Lamar
 INSERT INTO wiki_places (
     id, name, category, address,
-    latitude, longitude, radius_m,
-    seen_count, first_seen, last_seen
+    latitude, longitude, radius_m
 ) VALUES (
     'place_demo_jess', 'Nell''s Place', 'residential',
     'South Lamar, Austin, TX',
-    30.2382, -97.6375, 40.0,
-    28, '2024-04-10', '2026-02-13'
+    30.2382, -97.6375, 40.0
 ) ON CONFLICT DO NOTHING;
 
 -- Lady Bird Lake
 INSERT INTO wiki_places (
     id, name, category, address,
-    latitude, longitude, radius_m,
-    seen_count, first_seen, last_seen
+    latitude, longitude, radius_m
 ) VALUES (
     'place_demo_ladybird', 'Lady Bird Lake', 'park',
     'Lady Bird Lake, Austin, TX',
-    30.2477, -97.6310, 500.0,
-    35, '2024-06-01', '2026-02-14'
+    30.2477, -97.6310, 500.0
 ) ON CONFLICT DO NOTHING;
 
 -- Mueller trails
 INSERT INTO wiki_places (
     id, name, category, address,
     latitude, longitude, radius_m,
-    seen_count, first_seen, last_seen,
     content
 ) VALUES (
     'place_demo_mueller_trails', 'Mueller Trails', 'park',
     'Mueller, Austin, TX',
     30.2892, -97.5850, 300.0,
-    48, '2025-02-15', '2026-02-13',
     'Regular running route. ~5K loop from home. Good mix of paved and gravel.'
 ) ON CONFLICT DO NOTHING;
 
@@ -1318,26 +1276,22 @@ INSERT INTO wiki_places (
 INSERT INTO wiki_orgs (
     id, name, organization_type,
     relationship_type, role_title,
-    start_date, seen_count,
-    first_seen, last_seen,
+    started_at,
     content
 ) VALUES (
     'org_demo_employer', 'Canopy', 'company',
     'employee', 'Senior UX Designer',
-    '2025-06-15', 220,
-    '2025-06-15', '2026-02-14',
+    '2025-06-15',
     'B2B SaaS product. Small design team — Mara (lead), David, and me. Currently deep in a navigation redesign.'
 ) ON CONFLICT DO NOTHING;
 
 -- Delgado Realty — Cora's agency
 INSERT INTO wiki_orgs (
     id, name, organization_type,
-    relationship_type,
-    seen_count, first_seen, last_seen
+    relationship_type
 ) VALUES (
     'org_demo_realty', 'Delgado Realty', 'company',
-    'client',
-    24, '2026-01-08', '2026-02-13'
+    'client'
 ) ON CONFLICT DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────

@@ -49,6 +49,17 @@ export class ApiError extends Error {
 type QueryValue = string | number | boolean | null | undefined;
 
 /**
+ * A signal that aborts after `ms`, as `AbortSignal.timeout` does. That one is
+ * missing before Safari 16, and the app still runs on iOS 15 and older macOS.
+ */
+export function deadline(ms: number): AbortSignal {
+	if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+	const c = new AbortController();
+	setTimeout(() => c.abort(new DOMException('The operation timed out.', 'TimeoutError')), ms);
+	return c.signal;
+}
+
+/**
  * Core fetch wrapper for JSON endpoints under `/api`. Serializes an optional
  * query object, throws {@link ApiError} (with status) on non-2xx, and returns
  * the parsed JSON body (or `undefined` for empty/204 responses).
@@ -756,6 +767,17 @@ export interface SourceCatalogItem {
 	provides?: string[];
 	/** The life-domains those fall in (`health`, `financial`, …). */
 	domains?: string[];
+	/** Connect by logging in instead of pasting: the app opens `url`, and once
+	 *  every cookie in `cookies` is set it fills the fields from the cookie jar.
+	 *  `jar_field` set: that one field gets the whole jar as a Cookie header.
+	 *  Absent from boxes older than the field. */
+	login?: SourceLogin | null;
+}
+
+export interface SourceLogin {
+	url: string;
+	cookies: string[];
+	jar_field?: string | null;
 }
 
 /**
@@ -944,16 +966,18 @@ export interface ApiKeyCompleteResponse {
 	credential_id: string;
 }
 
-/** POST /api/connect/:source_id/complete — encrypt + store a pasted token. */
+/** POST /api/connect/:source_id/complete — encrypt + store a pasted token.
+ *  With `credentialId`, replace that credential's secrets (reconnecting). */
 export function apikeyComplete(
 	source_id: string,
 	name: string,
-	fields: Record<string, string>
+	fields: Record<string, string>,
+	credentialId?: string
 ): Promise<ApiKeyCompleteResponse> {
 	return apiSend<ApiKeyCompleteResponse>(
 		'POST',
 		`/connect/${encodeURIComponent(source_id)}/complete`,
-		{ name, fields }
+		{ name, fields, credential_id: credentialId }
 	);
 }
 
@@ -1893,22 +1917,6 @@ export function searchRefs(query: string): Promise<RefSearchResponse> {
 	return apiGet<RefSearchResponse>('/pages/search/refs', { q: query });
 }
 
-// Page Sharing
-export interface PageShare {
-	id: string;
-	page_id: string;
-	token: string;
-	created_at: string;
-}
-
-export interface SharedPage {
-	title: string;
-	content: string;
-	icon: string | null;
-	cover_url: string | null;
-	share_token: string;
-}
-
 /**
  * Append a markdown block to a page THROUGH Yjs (researcher-plan D4).
  *
@@ -1920,23 +1928,6 @@ export function appendToPage(pageId: string, markdown: string): Promise<{ conten
 	return apiSend<{ content: string }>('POST', `/pages/${encodeURIComponent(pageId)}/append`, {
 		markdown,
 	});
-}
-
-export function createPageShare(pageId: string): Promise<PageShare> {
-	return apiSend<PageShare>('POST', `/pages/${pageId}/share`);
-}
-
-export async function getPageShare(pageId: string): Promise<PageShare | null> {
-	return (await apiGet<PageShare | null>(`/pages/${pageId}/share`)) ?? null;
-}
-
-export async function deletePageShare(pageId: string): Promise<void> {
-	await apiSend('DELETE', `/pages/${pageId}/share`);
-}
-
-/** Throws {@link ApiError}; the public viewer keys "no longer shared" off a 404. */
-export function getSharedPage(token: string): Promise<SharedPage> {
-	return apiGet<SharedPage>(`/s/${token}`);
 }
 
 // ============================================================================
@@ -2111,6 +2102,17 @@ export function getAssistantProfile<T = unknown>(): Promise<T> {
 }
 export function updateAssistantProfile<T = unknown>(patch: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('PUT', '/assistant-profile', patch);
+}
+
+/**
+ * Change some of your UI preferences, keeping the rest. The server replaces
+ * `ui_preferences` whole, so this reads them first; a failed read throws
+ * rather than writing, because writing the patch alone would erase every
+ * other preference.
+ */
+export async function updateUiPreferences(patch: Record<string, unknown>): Promise<void> {
+	const profile = await getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>();
+	await updateAssistantProfile({ ui_preferences: { ...(profile?.ui_preferences ?? {}), ...patch } });
 }
 
 // ── Billing / wallet ─────────────────────────────────────────────────────────
@@ -2321,10 +2323,17 @@ export function searchUnsplash<T = unknown>(body: Record<string, unknown>): Prom
 // Publications — pages the owner shared through the door (api::publications)
 // ============================================================================
 
+/** What a link shares: an applet's face or a page. */
+export type ShareProducer = { kind: 'applet' | 'page' | 'chat'; id: string };
+
+function producerParams(p: ShareProducer): Record<string, string> {
+	return { [`${p.kind}_id`]: p.id };
+}
+
 /** One shared link. `link` is null until the door has started, and after revoke. */
 export interface Publication {
 	id: string;
-	producer_kind: 'applet';
+	producer_kind: 'applet' | 'page' | 'chat';
 	producer_id: string;
 	title: string;
 	size_bytes: number;
@@ -2358,6 +2367,13 @@ export interface SharePreview {
 	image_count: number;
 	links: string[];
 	looks_private: string[];
+	/** People, places and things a page names; only the names leave. */
+	names: string[];
+	/** Images from other sites, left out of the shared copy. */
+	images_left_out: number;
+	/** A chat: messages that go, and attachments that stay on the server. */
+	message_count: number;
+	attachments_left_out: number;
 	/** The page reads data, so it can be shared as a snapshot or live. */
 	reads_data: boolean;
 	queries: SharedQuery[];
@@ -2367,8 +2383,8 @@ export function listPublications(): Promise<Publication[]> {
 	return apiGet<Publication[]>('/publications');
 }
 
-export function previewPublication(appletId: string): Promise<SharePreview> {
-	return apiGet<SharePreview>('/publications/preview', { applet_id: appletId });
+export function previewPublication(producer: ShareProducer): Promise<SharePreview> {
+	return apiGet<SharePreview>('/publications/preview', producerParams(producer));
 }
 
 /**
@@ -2377,12 +2393,12 @@ export function previewPublication(appletId: string): Promise<SharePreview> {
  * carrying a snapshot.
  */
 export function createPublication(
-	appletId: string,
+	producer: ShareProducer,
 	expiresInDays?: number,
 	live = false
 ): Promise<Publication> {
 	return apiSend<Publication>('POST', '/publications', {
-		applet_id: appletId,
+		...producerParams(producer),
 		expires_in_days: expiresInDays,
 		live
 	});

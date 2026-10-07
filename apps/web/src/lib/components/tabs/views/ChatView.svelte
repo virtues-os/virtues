@@ -5,6 +5,7 @@
 	import { toast } from "svelte-sonner";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
+	import ShareSheet from "$lib/components/applets/ShareSheet.svelte";
 	import { getInitializationPromise } from "$lib/stores/models.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import StoppedNotice from "$lib/components/StoppedNotice.svelte";
@@ -74,7 +75,7 @@
 	import ChapterLifelineLive from "$lib/components/chat/interview/ChapterLifelineLive.svelte";
 	import { CitationPanel } from "$lib/components/citations";
 	import { buildCitationContextFromParts } from "$lib/citations";
-	import type { Citation } from "$lib/types/Citation";
+	import type { Citation, CitationContext } from "$lib/types/Citation";
 	import UserMessage from "$lib/components/UserMessage.svelte";
 	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
 	import { toolStatus } from "$lib/components/chat/state/toolPresentation";
@@ -119,6 +120,7 @@
 	import InterviewClosedCard from "$lib/components/chat/interview/InterviewClosedCard.svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
+	import Show from "$lib/components/chat/show/Show.svelte";
 	import AppletProposalCard from '$lib/components/chat/AppletProposalCard.svelte';
 	import CompactionCheckpoint from "$lib/components/chat/CompactionCheckpoint.svelte";
 	import ContextViewPanel from "$lib/components/chat/ContextViewPanel.svelte";
@@ -1227,6 +1229,9 @@
 	// whether the chat is kept at all.
 	const showChatMenu = $derived(!inRoom);
 
+	// The Share modal (api::publications): the conversation's words, read-only.
+	let sharing = $state(false);
+
 	async function deleteThisChat() {
 		// Read before the delete: the title comes off the session row that is
 		// about to go, and Undo has to put back the tab this closes.
@@ -1284,6 +1289,17 @@
 		// way. A temporary chat has nowhere to be filed.
 		if (!isGhost) {
 			items.push(...projectMenuItems(targetForTab(tab)).map((i) => ({ ...i, dividerBefore: false })));
+		}
+		if (canManageChat && conversationId) {
+			items.push({
+				id: "share",
+				label: "Share chat…",
+				description: "A read-only link to the conversation",
+				icon: "ri:share-forward-line",
+				action: () => {
+					sharing = true;
+				},
+			});
 		}
 		items.push({
 			id: "pin",
@@ -1516,7 +1532,7 @@
 		// never sees it. Any other slash text sends.
 		if (messageToSend === SKIP_COMMAND) {
 			input = "";
-			void goto("/home");
+			void goto("/chat");
 			return;
 		}
 
@@ -1632,6 +1648,41 @@
 		}
 	}
 
+	/**
+	 * A reply button from a `show` call: its words go as the owner's next
+	 * message. Not through the composer, whose draft and staged files are the
+	 * person's and stay where they are.
+	 */
+	async function sendChoice(text: string): Promise<boolean> {
+		// The same recovery the composer makes: the next message clears an error.
+		if (chat.status === "error") chat.clearError();
+		if (chat.status !== "ready" || turnPhase.working) return false;
+		danglingTurn = false;
+		chatInstances.clearSubagents(conversationId);
+		isAwaitingResponse = true;
+		turnPhase.beginSend();
+		await tick();
+		scrollToBottom("smooth");
+		try {
+			await chat.sendMessage({ text });
+			setTimeout(turnWritten, 2000);
+			return true;
+		} catch (error) {
+			console.error("[sendChoice] Error:", error);
+			return false;
+		} finally {
+			isAwaitingResponse = false;
+			turnPhase.endSend();
+		}
+	}
+
+	/** The rows a `show` figure was drawn from, in the citation panel. */
+	function openToolRows(context: CitationContext, ref: string) {
+		const callId = ref.match(/^\/chat\/[^/]+\/tool\/([^/?#]+)$/)?.[1];
+		const citation = callId ? context.byToolCallId.get(callId) : undefined;
+		if (citation) openCitationPanel(citation);
+	}
+
 	// Track C: drain the queue when the assistant goes idle.
 	$effect(() => {
 		if (
@@ -1689,6 +1740,14 @@
 		return () => mobileLayout.setChatChrome(null);
 	});
 </script>
+
+{#if conversationId && canManageChat}
+	<ShareSheet
+		open={sharing}
+		producer={{ kind: "chat", id: conversationId }}
+		onClose={() => (sharing = false)}
+	/>
+{/if}
 
 {#if lightbox}
 	<MediaLightbox
@@ -2011,6 +2070,16 @@
 													updated={out.status === "updated"}
 												/>
 											{/if}
+											{:else if part.type === "tool-show" && (part as any).state !== "output-error"}
+												<!-- Drawn in the reply where the model called it. A failed
+												     one falls through to the error branch below. -->
+												<Show
+													part={part as any}
+													active={isLastMessage && !isStreaming}
+													working={isStreaming}
+													onChoose={sendChoice}
+													onOpenRows={(ref) => openToolRows(citationContext, ref)}
+												/>
 											{:else if part.type === "tool-code_interpreter"}
 												{@const toolPart = part as any}
 												{@const status = toolStatus(toolPart, isStreaming)}
@@ -2301,12 +2370,17 @@
 							<button
 								type="button"
 								class="jump-to-end"
+								class:working={turnPhase.working}
 								onclick={() => scrollToBottom("smooth")}
-								aria-label="Scroll to latest"
+								aria-label={turnPhase.working ? "Scroll to latest (responding)" : "Scroll to latest"}
 								title="Scroll to latest"
 								transition:fade={{ duration: 150 }}
 							>
-								<Icon icon="ri:arrow-down-line" width="16" />
+								{#if turnPhase.working}
+									<span class="jump-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+								{:else}
+									<Icon icon="ri:arrow-down-line" width="16" />
+								{/if}
 							</button>
 						{/if}
 						{#if isGhost && !isEmpty}
@@ -2761,12 +2835,13 @@
 		will-change: bottom, transform;
 	}
 
-	/* Rides the composer's top edge, so it climbs with a growing draft. */
+	/* Rides the composer's top edge, so it climbs with a growing draft;
+	   centered over the pill. */
 	.jump-to-end {
 		position: absolute;
 		bottom: calc(100% + 0.5rem);
-		/* Flush with the pill's right edge (the wrapper's side padding). */
-		right: 2rem;
+		left: 50%;
+		margin-left: -1.125rem;
 		display: grid;
 		place-items: center;
 		width: 2.25rem;
@@ -2780,6 +2855,53 @@
 			color 0.15s ease,
 			border-color 0.15s ease,
 			translate 0.15s ease;
+	}
+
+	/* While a turn is working the arrow becomes the reply's pulse: three
+	   dots in a travelling wave, so the reader scrolled up can see the
+	   answer is still arriving below. */
+	.jump-to-end.working {
+		width: 2.75rem;
+		height: 2.75rem;
+		margin-left: -1.375rem;
+	}
+
+	.jump-dots {
+		display: flex;
+		gap: 0.25rem;
+	}
+
+	.jump-dots i {
+		width: 0.3125rem;
+		height: 0.3125rem;
+		border-radius: 999px;
+		background: var(--color-primary);
+		opacity: 0.45;
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.jump-dots i {
+			animation: jump-dot-wave 1.2s ease-in-out infinite;
+		}
+		.jump-dots i:nth-child(2) {
+			animation-delay: 0.15s;
+		}
+		.jump-dots i:nth-child(3) {
+			animation-delay: 0.3s;
+		}
+	}
+
+	@keyframes jump-dot-wave {
+		0%,
+		60%,
+		100% {
+			opacity: 0.45;
+			transform: translateY(0);
+		}
+		30% {
+			opacity: 1;
+			transform: translateY(-2px);
+		}
 	}
 
 	.jump-to-end:hover {

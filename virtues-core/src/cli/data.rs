@@ -477,6 +477,14 @@ impl Verbs {
                 if ui::tty() {
                     ui::ok(&format!("edited {id}"));
                 }
+                // Made, but not saved yet: a read of the page shows the old
+                // text until the save lands. The server's sentence says so
+                // and that the edit must not be run again, on stderr even
+                // when piped, so a script sees it. Still a success: running
+                // it again would make the edit twice.
+                if data["saved"] == json!(false) {
+                    note(&cell(&data["message"]));
+                }
                 Ok(())
             }
             PageCmd::Get { id, out } => {

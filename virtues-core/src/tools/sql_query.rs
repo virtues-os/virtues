@@ -65,10 +65,13 @@ impl SqlQueryTool {
     /// Execute SQL query tool
     /// `chat_id` is the saved chat a `save_as` result goes into, or None
     /// where there is none to keep it (a ghost chat, an applet run).
+    /// `timezone` is the owner's zone the query's dates are read in; None
+    /// means `home_timezone` (see `crate::timezone::set_local_timezone`).
     pub async fn execute(
         &self,
         arguments: serde_json::Value,
         chat_id: Option<&str>,
+        timezone: Option<&str>,
     ) -> Result<ToolResult, ToolError> {
         let args: SqlQueryArgs = serde_json::from_value(arguments)
             .map_err(|e| ToolError::InvalidParameters(format!("Invalid arguments: {}", e)))?;
@@ -90,7 +93,7 @@ impl SqlQueryTool {
                 })?;
                 let Some(name) = args.save_as else {
                     let limit = args.limit.unwrap_or(50).min(200);
-                    return self.execute_query(&sql, limit, None).await;
+                    return self.execute_query(&sql, limit, None, timezone).await;
                 };
                 let name = saved_file_name(&name)?;
                 let chat_id = chat_id.ok_or_else(|| {
@@ -103,7 +106,7 @@ impl SqlQueryTool {
                 let ws = crate::api::code_env::Workspace::for_chat(chat_id)
                     .map_err(ToolError::ExecutionFailed)?;
                 let limit = args.limit.unwrap_or(MAX_SAVED_ROWS).min(MAX_SAVED_ROWS);
-                self.execute_query(&sql, limit, Some((&ws.dir.join(&name), &name))).await
+                self.execute_query(&sql, limit, Some((&ws.dir.join(&name), &name)), timezone).await
             }
             _ => Err(ToolError::InvalidParameters(format!(
                 "Unknown operation: '{}'. Use: query, list_tables, get_schema",
@@ -424,6 +427,7 @@ impl SqlQueryTool {
         sql: &str,
         limit: u32,
         save: Option<(&std::path::Path, &str)>,
+        timezone: Option<&str>,
     ) -> Result<ToolResult, ToolError> {
         let sql_lower = sql.trim().to_lowercase();
 
@@ -481,6 +485,17 @@ impl SqlQueryTool {
 
         sqlx::query("SET TRANSACTION READ ONLY")
             .execute(&mut *tx)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
+
+        // The owner's zone, so a model's `'2026-10-06'`, `::date` and
+        // `to_char(…, 'HH12:MI AM')` mean their day and their clock, as the
+        // prompt's clock does. Left at the server's UTC, a day's window slid
+        // by the offset and a chart labelled a 6 AM point "11:00 AM". JSON
+        // output is unaffected: `convert_rows_to_json` writes timestamptz as
+        // RFC 3339 UTC either way. Before the role drop, which hides the
+        // profile it falls back to.
+        crate::timezone::set_local_timezone(&mut *tx, timezone)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
 
@@ -1156,7 +1171,7 @@ mod tests {
         );
 
         let tool = SqlQueryTool::new(Arc::new(pool.clone()));
-        let result = tool.execute_query(sql, 100, None).await;
+        let result = tool.execute_query(sql, 100, None, None).await;
 
         assert!(
             result.is_err(),
@@ -1182,8 +1197,46 @@ mod tests {
     #[sqlx::test]
     async fn plain_select_still_succeeds(pool: sqlx::PgPool) {
         let tool = SqlQueryTool::new(Arc::new(pool));
-        let result = tool.execute_query("SELECT 1 AS n", 10, None).await;
+        let result = tool.execute_query("SELECT 1 AS n", 10, None, None).await;
         assert!(result.is_ok(), "a plain SELECT must still run: {result:?}");
+    }
+
+    /// A query's dates are the owner's: a bare day literal starts at their
+    /// midnight and `to_char` labels their clock. A zone Postgres does not
+    /// know falls back to `home_timezone`, then to UTC, rather than aborting
+    /// the query.
+    #[sqlx::test]
+    async fn dates_are_read_in_the_owners_zone(pool: sqlx::PgPool) {
+        let tool = SqlQueryTool::new(Arc::new(pool.clone()));
+        let sql = "SELECT current_setting('TimeZone') AS tz, \
+                   to_char('2026-10-07 11:00:00+00'::timestamptz, 'HH24:MI') AS label, \
+                   '2026-10-07'::timestamptz = '2026-10-07 05:00:00+00' AS local_midnight";
+        let run = |tz: Option<&'static str>| {
+            let tool = &tool;
+            async move {
+                let out = tool.execute_query(sql, 10, None, tz).await.expect("query runs");
+                out.data["rows"][0].clone()
+            }
+        };
+
+        let row = run(Some("America/Chicago")).await;
+        assert_eq!(row["tz"], "America/Chicago");
+        assert_eq!(row["label"], "06:00", "an 11:00 UTC point is 6 AM in Chicago");
+        assert_eq!(row["local_midnight"], true, "a bare day starts at the owner's midnight");
+
+        // No zone known anywhere: UTC.
+        assert_eq!(run(Some("Not/AZone")).await["tz"], "UTC");
+        assert_eq!(run(None).await["tz"], "UTC");
+
+        // An unknown or absent client zone falls back to the home zone.
+        sqlx::query("UPDATE app_user_profile SET home_timezone = 'Europe/Berlin'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(run(Some("Not/AZone")).await["tz"], "Europe/Berlin");
+        assert_eq!(run(None).await["tz"], "Europe/Berlin");
+        // And the client's zone, when it is one, wins over home.
+        assert_eq!(run(Some("America/Chicago")).await["tz"], "America/Chicago");
     }
 
     #[test]

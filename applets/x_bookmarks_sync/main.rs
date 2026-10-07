@@ -121,9 +121,17 @@ async fn main() -> Result<()> {
             )
             .send()
             .await
-            .context("x bookmarks request failed")?
+            .context("x bookmarks request failed")?;
+        // 401/403 is the session gone (logged out, expired, or revoked by X):
+        // only the owner logging in again fixes it, so say so where they look.
+        // Other failures, a rotated query id among them, stay plain errors.
+        if matches!(resp.status().as_u16(), 401 | 403) {
+            virtues_applets::needs_reconnect(&pool, &input, "X ended this session. Log in again to reconnect.").await;
+            anyhow::bail!("x returned {} — the session has ended; the owner must reconnect X", resp.status());
+        }
+        let resp = resp
             .error_for_status()
-            .context("x returned non-2xx (session expired, or the query id rotated)")?;
+            .context("x returned non-2xx (the query id may have rotated)")?;
 
         let body: Value = resp.json().await.context("x response was not JSON")?;
         lake::archive_cloud(&pool, &storage, "x", ACTION, "bookmarks", &[body.clone()]).await?;

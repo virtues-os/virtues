@@ -5,6 +5,9 @@
  * Backend wiki pages are views of entities/narratives.
  */
 
+import { apiGet, apiSend, deadline, request } from '$lib/api/client';
+import type { NoteAnchor } from './dayNotes';
+
 // ============================================================================
 // API Response Types (match Rust backend types)
 // ============================================================================
@@ -234,81 +237,6 @@ export async function getLifeline(
 	return res.json();
 }
 
-/**
- * Time of day against date — the day-clock raster.
- *
- * `cells` is flat and row-major by column: `cells[col * 24 + hour]`. 28,800
- * numbers as objects would be a quarter-megabyte of punctuation.
- */
-export interface Clock {
-	from: string;
-	to: string;
-	columns: number;
-	cells: number[];
-	peak: number;
-	/** Busiest cell per column, for normalising a day against its own shape. */
-	column_peak: number[];
-	timezone: string;
-}
-
-/**
- * The day-clock.
- *
- * One timezone for the whole raster, deliberately: rendering each record in the
- * zone it was recorded in would straighten the sleep band back out and destroy
- * the most legible thing on the chart. Fixed to one zone, a fortnight abroad is
- * a visible dislocation.
- */
-export async function getClock(
-	from: string,
-	to: string,
-	columns: number,
-	tz: string,
-	fetchFn: FetchFn = fetch
-): Promise<Clock | null> {
-	const p = new URLSearchParams({ from, to, buckets: String(columns), tz });
-	const res = await fetchFn(`/api/wiki/lifeline/clock?${p}`);
-	if (!res.ok) return null;
-	return res.json();
-}
-
-/** One row inside a window, rendered by its ontology's own declarations. */
-export interface LifelineRecord {
-	id: string;
-	ontology: string;
-	lane: string;
-	kind: string;
-	label: string | null;
-	preview: string | null;
-	at: string;
-}
-
-export interface LifelineFeed {
-	records: LifelineRecord[];
-	has_more: boolean;
-}
-
-/**
- * The records inside a window.
- *
- * The reason to draw a timeline is that a range on it can hand back the rows —
- * a panel of sums is the answer chat already gives badly.
- */
-export async function getFeed(
-	from: string,
-	to: string,
-	opts: { lanes?: string[]; limit?: number; offset?: number } = {},
-	fetchFn: FetchFn = fetch
-): Promise<LifelineFeed | null> {
-	const p = new URLSearchParams({ from, to });
-	if (opts.lanes?.length) p.set('lanes', opts.lanes.join(','));
-	if (opts.limit) p.set('limit', String(opts.limit));
-	if (opts.offset) p.set('offset', String(opts.offset));
-	const res = await fetchFn(`/api/wiki/lifeline/feed?${p}`);
-	if (!res.ok) return null;
-	return res.json();
-}
-
 /** Create a person by hand — the record only ever discovered them before. */
 export async function createPerson(name: string, fetchFn: FetchFn = fetch): Promise<{ id: string; route: string }> {
 	const res = await fetchFn('/api/entities/people', {
@@ -345,6 +273,8 @@ export interface WikiNote {
 	source_refs: unknown;
 	created_at: string;
 	resolution: string | null;
+	/** The passage the note sits beside, when it was written on one. */
+	anchor?: NoteAnchor | null;
 }
 
 /** Open notes on a subject. */
@@ -363,13 +293,13 @@ export async function createNote(
 	subjectType: string,
 	subjectId: string,
 	body: string,
-	kind = 'memo',
+	opts: { kind?: string; anchor?: NoteAnchor } = {},
 	fetchFn: FetchFn = fetch
 ): Promise<WikiNote> {
 	const res = await fetchFn(`/api/wiki/notes/${subjectType}/${subjectId}`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ body, kind })
+		body: JSON.stringify({ body, kind: opts.kind ?? 'memo', anchor: opts.anchor ?? null })
 	});
 	if (!res.ok) throw new Error('Could not save that note');
 	return res.json();
@@ -444,7 +374,15 @@ export async function countOpenNotes(fetchFn: FetchFn = fetch): Promise<number> 
 	return typeof j.open === 'number' ? j.open : 0;
 }
 
-/** One edit to some article, for the History room. */
+/**
+ * One edit to some article, for the History room. `version_number` holds the
+ * page as the edit left it; `before_version` holds it as it was before, which
+ * is what putting this edit back restores. Null on a page's first version.
+ *
+ * Two entries for one page can share `version_number`: an old chat edit's
+ * last version both ends one entry and starts the one read against the live
+ * page. They never share the pair, so `editKey` is an entry's identity.
+ */
 export interface HistoryEntry {
 	subject_type: string;
 	subject_id: string;
@@ -453,6 +391,7 @@ export interface HistoryEntry {
 	author: string;
 	at: string;
 	version_number: number;
+	before_version: number | null;
 }
 
 /** One line of a diff. `kind` is 'add' | 'del' | 'ctx'. */
@@ -461,13 +400,19 @@ export interface DiffLine {
 	text: string;
 }
 
-/** One edit to one article, with what changed. */
+/** One edit to one article, with what changed. Versions read as `HistoryEntry`'s do. */
 export interface ArticleRevision {
 	version_number: number;
+	before_version: number | null;
 	author: string;
 	at: string;
 	diff: DiffLine[];
 	is_current: boolean;
+}
+
+/** One edit's identity within its page: the versions it went from and to. */
+export function editKey(e: { before_version: number | null; version_number: number }): string {
+	return `${e.before_version ?? "first"}->${e.version_number}`;
 }
 
 /** Every recent edit to any article, newest first. */
@@ -685,19 +630,40 @@ export async function writeYearArticle(year: number, fetchFn: FetchFn = fetch): 
 	return res.json();
 }
 
-/** Put an article back to a named version. Adds a version; never rewinds. */
+/**
+ * How a put-back went. `changed` is false when the page already said that
+ * version. `saved` is false when the page says it now but your server
+ * couldn't save it yet; it saves it again on its own. `message` is your
+ * server's own line about it, which History shows as it is.
+ */
+export interface RevertOutcome {
+	changed: boolean;
+	saved: boolean;
+	message: string;
+}
+
+/**
+ * Put an article back to a named version. Adds a version; never rewinds.
+ * An older server sends only `message`, and that reads as changed and saved.
+ */
 export async function revertArticle(
 	subjectType: string,
 	subjectId: string,
 	versionNumber: number,
 	fetchFn: FetchFn = fetch
-): Promise<void> {
+): Promise<RevertOutcome> {
 	const res = await fetchFn(`/api/wiki/articles/${subjectType}/${subjectId}/revert`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ version_number: versionNumber })
 	});
 	if (!res.ok) throw new Error('Could not revert that');
+	const body = await res.json().catch(() => null);
+	return {
+		changed: body?.changed !== false,
+		saved: body?.saved !== false,
+		message: typeof body?.message === 'string' ? body.message : ''
+	};
 }
 
 /** How an article is maintained: always, auto, or never. */
@@ -855,6 +821,65 @@ export async function getDayByDate(
 	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}`);
 	if (!res.ok) return null;
 	return res.json();
+}
+
+/**
+ * Where a day's Rewrite this page stands. `state` is your server's memory of
+ * the day's latest rewrite since it started (`idle` when it has none);
+ * `has_page` and `has_your_edits` are read from the page on every ask.
+ */
+export interface DayRewriteStatus {
+	state: 'idle' | 'running' | 'done' | 'failed';
+	/**
+	 * Why a rewrite failed: not_enough, edited_while_writing, thin_draft,
+	 * not_saved, billing, failed, interrupted, not_over, no_page or
+	 * needs_consent.
+	 */
+	code?: string | null;
+	message?: string | null;
+	started_at?: string | null;
+	finished_at?: string | null;
+	/** The version that holds the page as it was before the rewrite. */
+	before_version?: number | null;
+	/** The version the rewrite wrote. */
+	after_version?: number | null;
+	has_page: boolean;
+	/**
+	 * The page may hold your own words: you edited it, put a version back, or
+	 * turned its upkeep off. A rewrite replaces them only when you say so.
+	 */
+	has_your_edits: boolean;
+}
+
+/**
+ * How long a status ask may take. A connection that died while a phone slept
+ * can leave a request unsettled for good, and the day page keeps one ask out
+ * at a time, so without a deadline it would never ask again.
+ */
+export const DAY_REWRITE_ASK_MS = 15_000;
+
+/** Where a day's rewrite stands. Rejects, like any failed ask, once `DAY_REWRITE_ASK_MS` passes. */
+export function getDayRewrite(date: string): Promise<DayRewriteStatus> {
+	return request<DayRewriteStatus>(`/wiki/day/${encodeURIComponent(date)}/rewrite`, {
+		signal: deadline(DAY_REWRITE_ASK_MS)
+	});
+}
+
+/**
+ * Ask your server to write a past day's page again. It answers at once and
+ * writes in the background; `getDayRewrite` says how it went. A refusal
+ * throws an `ApiError` whose message is the code: not_over (422), no_page
+ * (404), or one of three 409s: needs_consent, rewrite_in_progress (a rewrite
+ * of the day is running), or busy (another writer holds the day).
+ * `replaceEdits` is your consent to replace changes you made to the page.
+ */
+export function rewriteDay(
+	date: string,
+	{ replaceEdits }: { replaceEdits: boolean }
+): Promise<{ state: 'running'; started_at: string }> {
+	return apiSend('POST', `/wiki/day/${encodeURIComponent(date)}/rewrite`, {
+		replace_edits: replaceEdits
+	});
 }
 
 
@@ -1237,7 +1262,7 @@ export interface DayChatApi {
  * In-app chats are navigable; external chats are display-only.
  * @param date - The date in YYYY-MM-DD format
  */
-/** The strip under a day's Abstract. Deterministic facts only; absent is null. */
+/** The dateline above a day's title. Deterministic facts only; absent is null. */
 export interface DayFactsApi {
 	temperature_high_c: number | null;
 	temperature_low_c: number | null;
@@ -1245,14 +1270,64 @@ export interface DayFactsApi {
 	recorded_minutes: number;
 	/** Recorded stretches, merged, as [start, end] ISO instants. */
 	coverage: [string, string][];
-	/** Conversations the owner started with Virtues that day. */
-	chats: number;
+	/** How long the day was in minutes; a server older than this field leaves it out. */
+	day_minutes?: number;
 }
 
 export async function getDayFacts(date: string, fetchFn: FetchFn = fetch): Promise<DayFactsApi | null> {
 	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/facts`);
 	if (!res.ok) return null;
 	return res.json();
+}
+
+/** A person as of one day: the facts behind a day page's gloss card. */
+export interface PersonGlossApi {
+	id: string;
+	date: string;
+	first_message_on: string | null;
+	/** Whether that first message was in a group thread. */
+	first_message_in_group: boolean | null;
+	last_message_before_on: string | null;
+	/** The days just before `date` that `days_in_window` counts over. */
+	window_days: number;
+	days_in_window: number;
+	direct_messages_in_window: number;
+	group_messages_in_window: number;
+}
+
+export function getPersonGloss(id: string, date: string): Promise<PersonGlossApi> {
+	return apiGet<PersonGlossApi>(`/wiki/person/${encodeURIComponent(id)}/gloss`, { date });
+}
+
+/** One of your numbers on a day page: the day's value and the days before it. */
+export interface DayMeasureApi {
+	/** `lane:id`, the form a pin is stored in. */
+	key: string;
+	label: string;
+	unit: string;
+	kind: 'total' | 'rate';
+	/** Null when nothing was collected that day, which is not zero. */
+	value: number | null;
+	/** The 30 days before, oldest first; null the same way. */
+	before: (number | null)[];
+}
+
+export interface MeasureListingApi {
+	key: string;
+	lane: string;
+	label: string;
+	unit: string;
+	kind: 'total' | 'rate';
+}
+
+export interface DayMeasuresApi {
+	date: string;
+	measures: DayMeasureApi[];
+	available: MeasureListingApi[];
+}
+
+export function getDayMeasures(date: string, keys: string[]): Promise<DayMeasuresApi> {
+	return apiGet<DayMeasuresApi>(`/wiki/day/${encodeURIComponent(date)}/measures`, { keys: keys.join(',') });
 }
 
 /** A day whose page reads like this one's. */
@@ -1292,107 +1367,8 @@ export async function getDayTimeline(
 }
 
 // ============================================================================
-// Today Streams — the three raw record streams, as spans, before synthesis
+// Unnamed-place backlog
 // ============================================================================
-
-export interface TodayLocationSpan {
-	id: string;
-	start_time: string;
-	end_time: string;
-	place_name: string | null;
-	place_category: string | null;
-	duration_minutes: number | null;
-}
-
-export interface TodayCalendarSpan {
-	id: string;
-	start_time: string;
-	end_time: string;
-	title: string;
-	is_all_day: boolean;
-	is_sacred: boolean;
-	location_name: string | null;
-	calendar_name: string | null;
-}
-
-export interface TodayAudioSpan {
-	id: string;
-	start_time: string;
-	end_time: string;
-	/** the box flagged this ~5-min chunk as silence */
-	is_silent: boolean;
-}
-
-export interface TodayStreamsView {
-	date: string;
-	timezone: string;
-	location: TodayLocationSpan[];
-	calendar: TodayCalendarSpan[];
-	audio: TodayAudioSpan[];
-}
-
-/**
- * Get the three raw record streams (location, calendar, audio) for a day, as
- * spans — the "day before synthesis" homepage view. Passes the viewing device's
- * IANA zone so an in-progress "today" is anchored to where the owner is.
- * @param date - The date in YYYY-MM-DD format
- */
-export async function getTodayStreams(
-	date: string,
-	fetchFn: FetchFn = fetch,
-): Promise<TodayStreamsView | null> {
-	const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-	const qs = tz ? `?tz=${encodeURIComponent(tz)}` : "";
-	const res = await fetchFn(`/api/today/${encodeURIComponent(date)}/streams${qs}`);
-	if (!res.ok) return null;
-	return res.json();
-}
-
-// ============================================================================
-// Home-page loops — weather, upcoming calendar, unnamed-place backlog
-// ============================================================================
-
-export interface WeatherNow {
-	temperature_c: number | null;
-	apparent_c: number | null;
-	humidity_pct: number | null;
-	wind_kph: number | null;
-	is_day: boolean | null;
-	weather_code: number | null;
-	condition: string;
-	temp_max_c: number | null;
-	temp_min_c: number | null;
-	sunrise: string | null;
-	sunset: string | null;
-	valid_time: string;
-}
-
-/** Current weather for the masthead. Null until the weather_sync cron runs. */
-export async function getWeatherNow(fetchFn: FetchFn = fetch): Promise<WeatherNow | null> {
-	const res = await fetchFn("/api/weather/current");
-	if (!res.ok) return null;
-	return res.json();
-}
-
-export interface UpcomingEvent {
-	id: string;
-	title: string;
-	start_time: string;
-	end_time: string;
-	is_all_day: boolean;
-	location_name: string | null;
-	is_sacred: boolean;
-}
-
-/** The next few calendar events (holidays/birthdays filtered out). */
-export async function getCalendarUpcoming(
-	limit = 5,
-	fetchFn: FetchFn = fetch,
-): Promise<UpcomingEvent[]> {
-	const res = await fetchFn(`/api/calendar/upcoming?limit=${limit}`);
-	if (!res.ok) return [];
-	return res.json();
-}
 
 export interface UnnamedPlace {
 	id: string;

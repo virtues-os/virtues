@@ -7,6 +7,11 @@
 // than #[cfg]-gating ~20 definitions. Revisit when desktop collectors land.
 #![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
 
+mod browser;
+#[cfg(target_os = "macos")]
+mod browser_host;
+use browser::{browser_login, browser_pane_agent, browser_pane_bounds, browser_pane_go, browser_pane_open};
+
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_reach::ReachExt;
@@ -1703,8 +1708,18 @@ fn main() {
             open_full_disk_access,
             open_accessibility_settings,
             set_summon_shortcut,
+            browser_login,
+            browser_pane_open,
+            browser_pane_bounds,
+            browser_pane_go,
+            browser_pane_agent,
         ])
         .setup(|app| {
+            // The owner's browser, as the assistant's hands: a connection to
+            // the box that lives as long as the app (browser_host.rs).
+            #[cfg(target_os = "macos")]
+            browser_host::start(app.handle().clone(), is_paired);
+
             // Bind the default summon chord here rather than waiting for the
             // webview: the whole point is reaching the app from another app, and
             // that has to work while the window is closed — which is precisely

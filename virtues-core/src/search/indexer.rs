@@ -1,8 +1,9 @@
 //! Background embedding indexer.
 //!
-//! Processes records from searchable ontologies, generates embeddings via
-//! the local model, and stores them in `search_embeddings` + `search_vectors`
-//! (pgvector `vector(1024)` with HNSW cosine index).
+//! Processes records from searchable ontologies, embeds them through the box's
+//! embedding endpoint (`embedder.rs`), and stores them in `search_embeddings` +
+//! `search_vectors` (pgvector `halfvec`, as wide as the model, with an HNSW
+//! cosine index).
 
 use anyhow::Result;
 use pgvector::Vector;
@@ -27,50 +28,74 @@ const MAX_DRAIN_DURATION: std::time::Duration = std::time::Duration::from_secs(2
 /// cron tick and double-index.
 const INDEXER_LOCK_KEY: i64 = 0x656d_6269_6478_3031;
 
-/// Establish, or verify, the geometry the index lives in.
-///
-/// **Empty index** → it has no geometry yet. Record what the endpoint is actually
-/// serving and size the vector column to it. This is the only moment a model may
-/// be adopted, and it is safe precisely because there is nothing to contradict.
-///
-/// **Populated index** → the geometry is already decided, and the endpoint must
-/// still agree with it. A different width or a different model means every new
-/// vector would land in a space the existing ones do not share; cosine between
-/// them means nothing, and search would degrade with no error anywhere. Refuse,
-/// and say what to do about it.
-///
-/// This is what makes "bring your own model" true rather than merely claimed.
-async fn reconcile_index_geometry(
-    pool: &PgPool,
-    embedder: &std::sync::Arc<super::embedder::LocalEmbedder>,
-) -> Result<()> {
-    let model = embedder.model_id();
-    let dim = embedder.dimension() as i32;
-
+/// The geometry the index was built in, as (model, width), or `None` if nothing
+/// has recorded one: a fresh box, or the first run after a reindex.
+async fn recorded_geometry(pool: &PgPool) -> Result<Option<(String, i32)>> {
     let recorded: Option<(Option<String>, Option<i32>)> =
         sqlx::query_as("SELECT model, dim FROM search_index_meta WHERE singleton")
             .fetch_optional(pool)
             .await?;
+    Ok(match recorded {
+        Some((Some(model), Some(dim))) => Some((model, dim)),
+        _ => None,
+    })
+}
 
-    match recorded {
+/// Refuse an embedder that is not the one the index was built with. A different
+/// width or a different model puts its vectors in a space the stored ones do not
+/// share: cosine between them means nothing, so written vectors would rot the
+/// index and query vectors would rank it at random, with no error anywhere.
+fn ensure_same_geometry(built: &(String, i32), model: &str, dim: i32) -> Result<()> {
+    let (prev_model, prev_dim) = built;
+    if *prev_dim == dim && prev_model == model {
+        return Ok(());
+    }
+    Err(anyhow::anyhow!(
+        "the search index was built with {prev_model} at {prev_dim}-d, but the \
+         embedding endpoint now serves {model} at {dim}-d.\n\n\
+         Vectors from two models live in different geometries — the distance \
+         between them is meaningless, so mixing them would quietly rot every \
+         search result rather than fail loudly.\n\n\
+         Run `virtues reindex` to rebuild the index with the new model \
+         (your source data is untouched — embeddings are a cache)."
+    ))
+}
+
+/// Before searching: is the embedder the one the index was built with? An index
+/// with no recorded geometry has nothing to disagree with.
+pub(crate) async fn check_index_geometry(pool: &PgPool, model: &str, dim: i32) -> Result<()> {
+    match recorded_geometry(pool).await? {
+        Some(built) => ensure_same_geometry(&built, model, dim),
+        None => Ok(()),
+    }
+}
+
+/// Establish, or verify, the geometry the index lives in.
+///
+/// **Empty index** → it has no geometry yet. Record what the endpoint is actually
+/// serving and size the vector columns to it. This is the only moment a model may
+/// be adopted, and it is safe precisely because there is nothing to contradict.
+/// Bringup cannot do the sizing: it reads the width from the record this writes,
+/// so on a fresh box, or after a reindex, it finds none and leaves the columns at
+/// their old width (the migrations' 256 on a fresh box).
+///
+/// **Populated index** → the geometry is already decided, and the endpoint must
+/// still agree with it (`ensure_same_geometry`). Refuse, and say what to do
+/// about it.
+///
+/// Either way the columns are then held to the recorded width. A width recorded
+/// without its columns ever being sized (a resize that failed partway, or a box
+/// whose first embed predates this) would otherwise fail every insert until a
+/// restart. When the columns already match, this is four catalog reads.
+///
+/// This is what makes "bring your own model" true rather than merely claimed.
+pub(crate) async fn reconcile_index_geometry(pool: &PgPool, model: &str, dim: i32) -> Result<()> {
+    match recorded_geometry(pool).await? {
         // Geometry established. It must not move under us.
-        Some((Some(prev_model), Some(prev_dim))) => {
-            if prev_dim != dim || prev_model != model {
-                return Err(anyhow::anyhow!(
-                    "the search index was built with {prev_model} at {prev_dim}-d, but the \
-                     embedding endpoint now serves {model} at {dim}-d.\n\n\
-                     Vectors from two models live in different geometries — the distance \
-                     between them is meaningless, so mixing them would quietly rot every \
-                     search result rather than fail loudly.\n\n\
-                     Run `virtues reindex` to rebuild the index with the new model \
-                     (your source data is untouched — embeddings are a cache)."
-                )
-                .into());
-            }
-        }
+        Some(built) => ensure_same_geometry(&built, model, dim)?,
         // No geometry yet: a fresh box, or the first run after a reindex. Adopt the
         // endpoint we actually have, and record the truth about it.
-        _ => {
+        None => {
             let empty: i64 = sqlx::query_scalar("SELECT count(*) FROM search_vectors")
                 .fetch_one(pool)
                 .await?;
@@ -89,39 +114,58 @@ async fn reconcile_index_geometry(
                  ON CONFLICT (singleton) DO UPDATE SET \
                    model = EXCLUDED.model, dim = EXCLUDED.dim",
             )
-            .bind(&model)
+            .bind(model)
             .bind(dim)
             .execute(pool)
             .await?;
             tracing::info!(%model, dim, "search index geometry recorded");
         }
     }
+    crate::database::Database::from_pool(pool.clone())
+        .ensure_embedding_dims()
+        .await?;
     Ok(())
 }
 
-/// Run one cycle of the embedding indexer.
+/// The indexer's single-flight lock. Whoever holds it is the only writer of the
+/// index: a 15-min cron tick landing mid-drain must no-op cleanly, not start a
+/// second indexer against the same tables, and `virtues reindex` must not have
+/// the box's indexer write between its wipe and its re-embed.
+///
+/// A session advisory lock on a connection detached from the pool. Dropping this
+/// drops the connection, which closes it and releases the lock on every exit
+/// path (including `?` early returns).
+pub(crate) struct IndexerLock(#[allow(dead_code)] sqlx::PgConnection);
+
+impl IndexerLock {
+    /// The lock, or `None` if another run holds it.
+    pub(crate) async fn try_acquire(pool: &PgPool) -> Result<Option<Self>> {
+        let mut conn = pool.acquire().await?.detach();
+        let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(INDEXER_LOCK_KEY)
+            .fetch_one(&mut conn)
+            .await?;
+        Ok(acquired.then_some(Self(conn)))
+    }
+}
+
+/// Run one cycle of the embedding indexer, unless another run is already going.
+pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
+    let Some(lock) = IndexerLock::try_acquire(pool).await? else {
+        tracing::info!("Embedding indexer: another run holds the advisory lock; skipping");
+        return Ok(0);
+    };
+    drain(pool, &lock).await
+}
+
+/// Index everything not yet indexed, for a caller holding the indexer lock.
 ///
 /// Drain semantics: for each searchable ontology we loop batches back-to-back
 /// until a short batch signals the backlog is empty (or [`MAX_DRAIN_DURATION`]
 /// trips). One invocation therefore drains an entire onboarding backlog in
 /// hours instead of trickling `BATCH_SIZE` records per 15-minute cron tick.
 /// No sleep between batches — the embed sidecar is the natural rate limiter.
-pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
-    // Single-flight guard: a 15-min cron tick landing mid-drain must no-op
-    // cleanly, not start a second indexer against the same tables. Session
-    // advisory lock on a connection detached from the pool — dropping the
-    // detached connection closes it, which releases the lock on every exit
-    // path (including `?` early returns).
-    let mut lock_conn = pool.acquire().await?.detach();
-    let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
-        .bind(INDEXER_LOCK_KEY)
-        .fetch_one(&mut lock_conn)
-        .await?;
-    if !acquired {
-        tracing::info!("Embedding indexer: another run holds the advisory lock; skipping");
-        return Ok(0);
-    }
-
+pub(crate) async fn drain(pool: &PgPool, _lock: &IndexerLock) -> Result<u64> {
     let embedder = get_embedder().await?;
 
     // Before writing a single vector: is this the model the index was built with?
@@ -131,7 +175,7 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
     // between them is noise, and nothing anywhere errors. The old code could not
     // even ask: `search_embeddings.model` was the literal 'embeddinggemma', written
     // by this function and read by nobody.
-    reconcile_index_geometry(pool, &embedder).await?;
+    reconcile_index_geometry(pool, &embedder.model_id(), embedder.dimension() as i32).await?;
 
     let searchable = virtues_registry::ontologies::registered_ontologies()
         .into_iter()
@@ -313,13 +357,6 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
     } else {
         tracing::debug!("Embedding indexer: no new records to embed");
     }
-
-    // Explicit unlock is belt-and-braces; closing the detached connection
-    // (dropped below) releases the session lock regardless.
-    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
-        .bind(INDEXER_LOCK_KEY)
-        .execute(&mut lock_conn)
-        .await;
 
     Ok(total_embedded)
 }
@@ -1151,5 +1188,100 @@ mod date_tests {
             "a day's article is dated at noon on that day",
         );
         assert_eq!(occurred_at(&pool, "page-person").await, None, "a person is not dated");
+    }
+}
+
+/// The index's geometry, against the real schema the migrations leave behind.
+#[cfg(test)]
+pub(crate) mod geometry_tests {
+    use super::*;
+
+    /// Index one chunk with a `dim`-wide vector, through the indexer's own
+    /// statement and binding, in one transaction as the indexer does.
+    pub(crate) async fn insert_vector(pool: &PgPool, dim: usize) -> sqlx::Result<()> {
+        let id = format!("content_bookmark:geo-{dim}:0");
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO search_embeddings
+               (id, ontology, record_id, model, chunk_index, content, bm25_len, doc_hash, created_at)
+             VALUES ($1, 'content_bookmark', $2, 'm', 0, 'text', 1, 'hash', now())",
+        )
+        .bind(&id)
+        .bind(format!("geo-{dim}"))
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO search_vectors (embedding_id, embedding) VALUES ($1, $2) \
+             ON CONFLICT (embedding_id) DO UPDATE SET embedding = EXCLUDED.embedding",
+        )
+        .bind(&id)
+        .bind(Vector::from(vec![0.1f32; dim]))
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await
+    }
+
+    /// A fresh box whose embedder is not 256-wide (every Dragon serves
+    /// gte-small at 384). The migrations create the columns at 256, and
+    /// bringup cannot size them because nothing has recorded a width yet. The
+    /// first embed is the first moment anything knows the width, so it has to
+    /// size them there, before writing a vector.
+    #[sqlx::test]
+    async fn first_embed_sizes_the_columns(pool: PgPool) {
+        reconcile_index_geometry(&pool, "m", 384).await.unwrap();
+        insert_vector(&pool, 384)
+            .await
+            .expect("the first vector lands in the index it just recorded");
+        assert_eq!(column_types(&pool).await, ["halfvec(384)"; 3]);
+    }
+
+    /// Search refuses an embedder the index was not built with: another model at
+    /// the same width ranks the index at random without a single error. An index
+    /// with no recorded geometry has nothing to disagree with.
+    #[sqlx::test]
+    async fn search_refuses_another_models_geometry(pool: PgPool) {
+        check_index_geometry(&pool, "m", 384).await.expect("nothing recorded yet");
+
+        reconcile_index_geometry(&pool, "m", 384).await.unwrap();
+        check_index_geometry(&pool, "m", 384).await.expect("the model it was built with");
+        for (model, dim) in [("n", 384), ("m", 768)] {
+            let err = check_index_geometry(&pool, model, dim)
+                .await
+                .expect_err("another model, or another width");
+            assert!(err.to_string().contains("virtues reindex"), "{err}");
+        }
+    }
+
+    /// A width recorded but never applied to the columns: the state a released
+    /// build left behind when its first embed recorded 384 and the insert then
+    /// failed, or a resize that died partway. The next run has to finish it,
+    /// not wait for a restart.
+    #[sqlx::test]
+    async fn a_recorded_width_the_columns_lack_is_applied(pool: PgPool) {
+        sqlx::query("UPDATE search_index_meta SET model = 'm', dim = 384 WHERE singleton")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(insert_vector(&pool, 384).await.is_err(), "the columns are still 256");
+
+        reconcile_index_geometry(&pool, "m", 384).await.unwrap();
+        insert_vector(&pool, 384)
+            .await
+            .expect("the run after the failed one sizes the columns");
+        assert_eq!(column_types(&pool).await, ["halfvec(384)"; 3]);
+    }
+
+    /// The three columns that share the index's geometry.
+    pub(crate) async fn column_types(pool: &PgPool) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a \
+             WHERE (a.attrelid, a.attname) IN (('search_vectors'::regclass, 'embedding'), \
+                   ('search_topic_cache'::regclass, 'embedding'), \
+                   ('app_projects'::regclass, 'centroid')) \
+             ORDER BY a.attrelid::regclass::text",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
     }
 }

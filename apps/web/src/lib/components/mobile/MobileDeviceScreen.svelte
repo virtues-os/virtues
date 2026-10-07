@@ -402,6 +402,20 @@
 		}
 	}
 
+	/// End the Control Center override: back to your hours and places. The
+	/// mic never stopped, so this needs no restart.
+	async function endOverride() {
+		togglingAudio = true;
+		error = null;
+		try {
+			audio = await invoke<AudioStatus>("plugin:audio|set_override", { mode: null });
+		} catch (e) {
+			error = String(e);
+		} finally {
+			togglingAudio = false;
+		}
+	}
+
 	function audioAction() {
 		if (!audio?.authorized) audioConsentOpen = !audioConsentOpen;
 		else void toggleAudio();
@@ -621,6 +635,10 @@
 					? null
 					: { label: enablingFinance ? "Enabling…" : "Enable", onclick: enableFinance, disabled: enablingFinance };
 			case "audio":
+				if (audio?.override && audio.enabled) {
+					const label = audio.override === "silence" ? "Resume" : "Mute again";
+					return { label: togglingAudio ? "…" : label, onclick: endOverride, disabled: togglingAudio };
+				}
 				return {
 					label: togglingAudio ? "…" : audioOn ? "Stop" : audio?.authorized ? "Resume" : "Enable",
 					onclick: audioAction,
