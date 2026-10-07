@@ -93,25 +93,28 @@ pub async fn run(yes: bool) -> Result<()> {
     Ok(())
 }
 
-/// Truncate the derived index tables (source rows untouched — embeddings rebuild
-/// from them) and reset the BM25 corpus stats. `TRUNCATE ... CASCADE` on
-/// `search_embeddings` also clears `search_vectors` and `search_bm25_postings`
-/// (both FK-reference it). The single-row `search_index_meta` isn't FK'd, so it
-/// is reset explicitly — guarded with `to_regclass` in case reindex runs before
-/// the BM25 migration has ever been applied on this box.
+/// Forget everything the embedding model produced, so the next model starts from
+/// nothing: the derived index, its recorded geometry, and every event score that
+/// stands on an event embedding. Source rows are never touched — embeddings
+/// rebuild from them. `configure-inference` calls this too; a model swap is the
+/// same wipe whichever command asks for it.
+///
+/// It nulls every past day's event scores, and the nightly cron rescores only the
+/// day it runs for. So the caller has to put them back
+/// (`dayline::rescore_all_days`), as `run` does.
 pub(crate) async fn wipe(pool: &PgPool) -> Result<()> {
     for stmt in [
+        // CASCADE clears `search_vectors` and `search_bm25_postings`, which both
+        // FK-reference `search_embeddings`.
         "TRUNCATE search_embeddings CASCADE",
         "TRUNCATE search_topic_cache",
         // Corpus stats AND geometry. Clearing the geometry is what makes a model
         // swap possible at all: the indexer refuses to write vectors from a model
-        // the index was not built with, and `reindex` is precisely the act of
-        // saying "build it with this one instead". Leave the geometry behind and
-        // the wipe would be blocked by the very guard it exists to clear.
-        "DO $$ BEGIN IF to_regclass('search_index_meta') IS NOT NULL THEN \
-             UPDATE search_index_meta SET n_docs = 0, sum_len = 0, \
-                 model = NULL, dim = NULL; \
-           END IF; END $$",
+        // the index was not built with, and a wipe is precisely the act of saying
+        // "build it with this one instead". Leave the geometry behind and the wipe
+        // would be blocked by the very guard it exists to clear.
+        "UPDATE search_index_meta SET n_docs = 0, sum_len = 0, \
+             model = NULL, dim = NULL",
         // wiki_events carries its own embedding blob + derived scores; null them
         // so each scoring pass recomputes with the current model.
         "UPDATE wiki_events SET \
