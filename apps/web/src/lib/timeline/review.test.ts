@@ -4,6 +4,7 @@ import { askFor, focusZoom, homeOf, pickAnswer, type PlaceCandidate, type PlaceQ
 const cand = (name: string, meters: number, category = "dining"): PlaceCandidate => ({ name, meters, kind: "cafe", category, lat: 30, lon: -97 });
 const question = (over: Partial<Omit<PlaceQuestion, "naming">> & { naming?: Partial<PlaceQuestion["naming"]> } = {}): PlaceQuestion => ({
 	ask: "place",
+	changed: false,
 	id: "p",
 	latitude: 30,
 	longitude: -97,
@@ -38,7 +39,10 @@ describe("the place questions", () => {
 			["No", { kind: "not_home" }],
 		]);
 		expect(h.other).toBeNull();
+		expect(h.role).toBe("home");
 		expect(askFor(question({ ask: "work" })).text).toBe("Is this where you work?");
+		// A place that has led since Home was set elsewhere.
+		expect(askFor(question({ ask: "home", changed: true })).text).toBe("Is this your home now?");
 	});
 
 	it("asks which of several close places, any number picked together", () => {

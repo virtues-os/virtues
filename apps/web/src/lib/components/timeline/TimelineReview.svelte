@@ -10,7 +10,9 @@
 	the most time otherwise is where the person works (asked, never assumed),
 	then the rest, the most time first: which of several close places (any
 	number picked together), whether it was a named place just out of reach,
-	whose home after a night there, else what it was. Each place question
+	whose home after a night there, else what it was. "No" to Home or Work
+	asks the person to tap the right place on the map instead, or skip; either
+	way it isn't asked again unless another place takes over. Each place question
 	offers Other and Just passing through. An answer can be undone for a few
 	seconds after. Places already named are listed under "N named", where a
 	wrong one is marked and corrected.
@@ -46,6 +48,7 @@
 		onfocus,
 		onday,
 		onanswered,
+		onpoint,
 	}: {
 		open?: boolean;
 		/** The places of the day on show, asked about first. */
@@ -60,6 +63,9 @@
 		onday: (slug: string) => void;
 		/** An answer was saved or undone: the day's titles may have changed. */
 		onanswered: () => void;
+		/** The card waits for a tap on the map (Home or Work is elsewhere), or
+		 *  stops waiting. */
+		onpoint: (on: boolean) => void;
 	} = $props();
 
 	let review = $state<PlaceReview | null>(null);
@@ -76,8 +82,12 @@
 	/** A named place marked wrong, whose right name is being typed. */
 	let flagged = $state<string | null>(null);
 	let people = $state<string[] | null>(null);
-	/** The last answer, undoable for a few seconds. */
-	let undo = $state<{ id: string; said: string } | null>(null);
+	/** The last answer, undoable for a few seconds: the places it touched. */
+	let undo = $state<{ ids: string[]; said: string } | null>(null);
+	/** "No" to Home or Work: the role being pointed to on the map, and the
+	 *  spot tapped. */
+	let pointing = $state<'home' | 'work' | null>(null);
+	let tapped = $state<{ lat: number; lon: number } | null>(null);
 	let undoTimer = 0;
 	let card = $state<HTMLElement | null>(null);
 
@@ -118,6 +128,11 @@
 		onfocus(q && ask ? { lat: q.latitude, lon: q.longitude, reachM: ask.reachM, shown: ask.shown, cardRight: right } : null);
 	});
 
+	// Closed some other way (Esc, the month): stop waiting for a tap.
+	$effect(() => {
+		if (!open) untrack(() => pointing && resetOther());
+	});
+
 	// "Whose home" suggests the people Virtues knows, fetched the first time.
 	$effect(() => {
 		if (ask?.other !== 'person' || people) return;
@@ -140,6 +155,9 @@
 	}
 
 	function resetOther() {
+		if (pointing) onpoint(false);
+		pointing = null;
+		tapped = null;
 		otherOpen = false;
 		otherText = '';
 		picked = [];
@@ -169,6 +187,10 @@
 				return 'Saved: not where you work';
 			case 'not_this':
 				return `Saved: not ${a.name}`;
+			case 'home_here':
+				return 'Saved as Home';
+			case 'work_here':
+				return 'Saved as where you work';
 			default:
 				return 'Saved';
 		}
@@ -179,13 +201,13 @@
 		saving = true;
 		saveFailed = false;
 		try {
-			await sendAnswer(id, a);
+			const done = await sendAnswer(id, a);
 			await load();
 			resetOther();
 			// The answered place leaves the list; the next one takes its place.
 			idx = Math.min(at, Math.max(0, questions.length - 1));
 			clearTimeout(undoTimer);
-			undo = a.kind === 'reopen' ? null : { id, said: said(a) };
+			undo = a.kind === 'reopen' ? null : { ids: [id, ...(done.place_id ? [done.place_id] : [])], said: said(a) };
 			undoTimer = window.setTimeout(() => (undo = null), 8000);
 			onanswered();
 		} catch (e) {
@@ -203,12 +225,41 @@
 		if (!u) return;
 		undo = null;
 		clearTimeout(undoTimer);
-		await answer(u.id, { kind: 'reopen' });
-		const i = questions.findIndex((q) => q.id === u.id);
+		for (const id of [...u.ids].reverse()) await answer(id, { kind: 'reopen' });
+		undo = null;
+		const i = questions.findIndex((q) => q.id === u.ids[0]);
 		if (i >= 0) {
 			idx = i;
 			mode = 'questions';
 		}
+	}
+
+	/** A button's answer: "No" to Home or Work points to the map instead. */
+	function choose(a: Answer) {
+		if (!current || !ask) return;
+		if (ask.role && (a.kind === 'not_home' || a.kind === 'not_work')) {
+			pointing = ask.role;
+			tapped = null;
+			onpoint(true);
+			return;
+		}
+		void answer(current.id, a);
+	}
+
+	/** The spot tapped on the map while pointing. */
+	export function pointed(lat: number, lon: number) {
+		if (pointing) tapped = { lat, lon };
+	}
+
+	function savePointed() {
+		if (!current || !pointing || !tapped) return;
+		void answer(current.id, { kind: pointing === 'home' ? 'home_here' : 'work_here', ...tapped });
+	}
+
+	/** Skipped: not this place, and not asked again unless another takes over. */
+	function skipPointing() {
+		if (!current || !pointing) return;
+		void answer(current.id, { kind: pointing === 'home' ? 'not_home' : 'not_work' });
 	}
 
 	function togglePick(name: string) {
@@ -316,6 +367,17 @@
 					<IconButton icon="ri:close-line" label="Close" size="sm" onclick={toggle} />
 				</div>
 				<div class="pad">
+					{#if pointing}
+						<h3 class="q">{pointing === 'home' ? 'Tap your home on the map.' : 'Tap where you work on the map.'}</h3>
+						<p class="sub">{tapped ? 'Move it with another tap.' : 'Zoom or move the map to find it.'}</p>
+						<div class="buttons">
+							<button class="btn primary" type="button" disabled={!tapped || saving} onclick={savePointed}>Save Here</button>
+							<button class="btn" type="button" disabled={saving} onclick={() => resetOther()}>Back</button>
+						</div>
+						<div class="quiet">
+							<TextAction quiet disabled={saving} onclick={skipPointing}>Skip - don't ask again</TextAction>
+						</div>
+					{:else}
 					<h3 class="q">{ask.text}</h3>
 					{#if current.recall}<p class="sub">{current.recall}</p>{/if}
 
@@ -337,7 +399,7 @@
 						<div class="buttons" class:grid={ask.chips.length > 2}>
 							{#each ask.chips as c, i (c.label)}
 								{@const icon = iconOf(c.answer)}
-								<button class="btn" class:primary={i === 0 && ask.chips.length <= 2} type="button" disabled={saving} onclick={() => void answer(current.id, c.answer)}>
+								<button class="btn" class:primary={i === 0 && ask.chips.length <= 2} type="button" disabled={saving} onclick={() => choose(c.answer)}>
 									{#if icon}<Icon {icon} width="16" />{/if}{c.label}
 								</button>
 							{/each}
@@ -371,6 +433,7 @@
 					{#if saveFailed}<p class="note">Error: your server couldn't save that. Try again.</p>{/if}
 					{#if !current.naming.street_detail && ask.other}
 						<p class="note">Your server's map of this area doesn't list its places, so it can't suggest names here.</p>
+					{/if}
 					{/if}
 				</div>
 				<div class="foot">

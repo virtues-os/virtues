@@ -333,7 +333,9 @@
 			m.on('moveend', syncStreets);
 			// A click on the map itself (not a bubble, a chip or a card) lets go
 			// of a picked drive or stay.
-			m.on('click', () => {
+			m.on('click', (e) => {
+				// Pointing to Home or Work: the tap is the answer, and nothing else.
+				if (pointing) return tapAt(e.lngLat.lat, e.lngLat.lng);
 				if (picked) unpick();
 			});
 			maplibre = ml;
@@ -694,6 +696,30 @@
 	 *  about (main.js:2209-2214): the place is the subject then. */
 	const TRACK_OPACITY = { 'track-run': [0.55, 0.1], 'track-bridge': [0.4, 0.08], 'track-drive': [0.85, 0.1] } as const;
 	let glow: Marker | null = null;
+	/** "Help Virtues out" waits for a tap on the map: Home or Work is elsewhere. */
+	let pointing = false;
+	let tapMark: Marker | null = null;
+	let review = $state<ReturnType<typeof TimelineReview> | null>(null);
+	function setPointing(on: boolean) {
+		pointing = on;
+		const m = map;
+		if (m) m.getCanvas().style.cursor = on ? 'crosshair' : '';
+		if (!on) {
+			tapMark?.remove();
+			tapMark = null;
+		}
+	}
+	function tapAt(lat: number, lon: number) {
+		const m = map;
+		if (!m || !maplibre) return;
+		if (!tapMark) {
+			const el = document.createElement('div');
+			el.className = 'tl-glow tl-tap';
+			tapMark = new maplibre.Marker({ element: el, anchor: 'center' });
+		}
+		tapMark.setLngLat([lon, lat]).addTo(m);
+		review?.pointed(lat, lon);
+	}
 	/** A place is being asked about: the map is on it, the day faded. */
 	let focusing = $state(false);
 	/** Take the map to the place "Help Virtues out" is asking about, framed so
@@ -1242,7 +1268,9 @@
 			<button class="date-title" type="button" title="Back to the whole day" onclick={resetView}>{title}</button>
 		</div>
 		<TimelineReview
+			bind:this={review}
 			bind:open={reviewOpen}
+			onpoint={setPointing}
 			{dayPlaces}
 			room={Math.max(240, paneH - topChrome - 56 - scrubH - 36)}
 			onfocus={focusPlace}
@@ -1485,6 +1513,10 @@
 		background: var(--c-place);
 		border: 3px solid var(--color-background);
 		box-shadow: 0 0 0 6px color-mix(in srgb, var(--c-place) 30%, transparent); /* design-ok: the prototype's glow around the place asked about (index.html:321) */
+	}
+	/* The spot tapped as Home or Work: the glow pin in the accent. */
+	.timeline :global(.tl-tap) {
+		background: var(--color-primary);
 	}
 	/* The day's note speaks of the day, not of the place asked about. */
 	.timeline.focusing .note {
