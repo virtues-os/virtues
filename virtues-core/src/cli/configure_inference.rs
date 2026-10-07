@@ -88,9 +88,11 @@ pub async fn run(reembed: bool, yes: bool) -> Result<()> {
         }
     }
 
-    // 1. Wipe the derived vectors (mirror migration 0017's model-swap reset).
+    // 1. Wipe the derived index, its recorded geometry and the event scores.
+    // TODO(2026-10-07): rescore. This nulls every past day's event scores and
+    // nothing here or after the restart puts them back (see `reindex::wipe`).
     println!("→ wiping the derived vector index (source data untouched)…");
-    wipe_derived(db.pool()).await?;
+    super::reindex::wipe(db.pool()).await?;
 
     // 2. Re-pin the new fingerprint + dims in the env file, for the next boot.
     //    No resize here: the wipe cleared the recorded width, so there is nothing
@@ -103,34 +105,6 @@ pub async fn run(reembed: bool, yes: bool) -> Result<()> {
     println!();
     println!("✓ Re-configured. Restart the box so the new model takes over and re-indexing begins:");
     println!("    sudo systemctl restart virtues");
-    Ok(())
-}
-
-/// Truncate the derived embedding tables and reset every embedding-derived
-/// score, exactly as migration 0017 does on a model swap. Source rows are never
-/// touched — embeddings rebuild from them.
-async fn wipe_derived(pool: &PgPool) -> Result<()> {
-    for stmt in [
-        // CASCADE truncates search_vectors too (it FK-references search_embeddings).
-        "TRUNCATE search_embeddings CASCADE",
-        "TRUNCATE search_topic_cache",
-        // The geometry goes with the vectors. The indexer refuses to write vectors
-        // from a model the index was not built with — and adopting the new model is
-        // the entire point of this command, so the old geometry must not survive it.
-        "UPDATE search_index_meta SET n_docs = 0, sum_len = 0, \
-             model = NULL, dim = NULL",
-        // wiki_events carries its own embedding blob + derived novelty/autonomic
-        // scores; null them so each scoring pass recomputes with the new model.
-        "UPDATE wiki_events SET \
-             embedding = NULL, novelty_z = NULL, local_novelty_z = NULL, \
-             hr_z = NULL, autonomic_z = NULL, topic_novelty = NULL, \
-             entity_novelty = NULL",
-    ] {
-        sqlx::query(stmt)
-            .execute(pool)
-            .await
-            .map_err(|e| Error::Database(format!("wiping derived embeddings: {e}")))?;
-    }
     Ok(())
 }
 
