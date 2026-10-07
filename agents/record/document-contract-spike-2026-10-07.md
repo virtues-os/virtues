@@ -206,3 +206,28 @@ server/   cargo test           20 unit tests
 web/      vitest run            conformance (70 cases), version skew, string attrs
           vite                  the editor, proxied to the server
 ```
+
+## Corrections (2026-10-07, same day)
+
+A read-only audit of this record against the code found these statements
+wrong as written. The measurements of the spike itself are unaffected.
+
+- **"About 11 server files write page text."** Most of those only pass a
+  `YjsState` handle along. The writers are `tools/page_editor.rs`
+  (`apply_text_edit`), `api/wiki_editor.rs` (`replace_text`,
+  `apply_text_diff`), `api/day_summary.rs` (`replace_text`),
+  `YjsState::append_markdown` behind `POST /api/pages/:id/append` (the PDF
+  pane, writing user pages), and `api/pages.rs`'s version snapshots. Others
+  write `content` without Yjs: `api::pages::create_page` (the model's
+  `create_page`, the CLI, an applet), `PUT /api/pages/:id`, and `edit_page`'s
+  fallback.
+- **"About 18 server files read `app_pages.content`; they need nothing."**
+  Publishing does not read `content`: `api/publish_page.rs` decodes
+  `yjs_state` as Y.Text and would publish a tree page blank. `pins` reads
+  titles, not `content`.
+- **"Today's find/replace gets optimistic concurrency for free."** Except
+  an empty `find`, which replaces the whole page with no check.
+- **"Bold inline code occurs 333 times in 76 docs."** That is the
+  converter's count of bold-and-code clash notes across the working tree's
+  `docs/` and `agents/` at the time, not a count of the `` **`x`** `` form,
+  which appears 71 times in 28 tracked docs.
