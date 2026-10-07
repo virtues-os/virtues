@@ -258,10 +258,12 @@ async fn create(app: &AppHandle, target: &tauri::Url) -> Result<Webview, String>
                     .emit_to("main", "browser:navigated", json!({ "url": payload.url().as_str() }));
             }
         });
-    // Created hidden at no size: the UI reports where the pane is once its
-    // Browser tab has laid out (`set_bounds`).
+    // Created hidden, at the size of a laptop browser window: the UI reports
+    // where the pane is once its Browser tab lays out (`set_bounds`), and until
+    // then (or while that tab is off screen) the assistant still needs a page
+    // laid out at a real width. Created at 1x1, every click missed.
     let view = main
-        .add_child(builder, LogicalPosition::new(0.0, 0.0), LogicalSize::new(1.0, 1.0))
+        .add_child(builder, LogicalPosition::new(0.0, 0.0), LogicalSize::new(1100.0, 800.0))
         .map_err(|e| format!("could not open the browser: {e}"))?;
     let _ = view.hide();
     on_main(&view, |wk, _| unsafe {
@@ -421,7 +423,8 @@ async fn click(win: &Webview, r#ref: &str) -> Result<Value, String> {
          const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;\n\
          const hit = document.elementFromPoint(x, y);\n\
          const lands = !!hit && (hit === e || e.contains(hit) || hit.contains(e));\n\
-         return JSON.stringify({{ x, y, lands, viewport: innerHeight, name: (e.getAttribute('aria-label') || e.innerText || '').trim().slice(0, 60) }});",
+         const said = n => {{ const t = n.closest('[role=dialog],dialog,[aria-modal=true]') || n; const name = (t.getAttribute('aria-label') || t.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 80); return (t.getAttribute('role') || t.tagName.toLowerCase()) + (name ? ' \"' + name + '\"' : ''); }};\n\
+         return JSON.stringify({{ x, y, lands, viewport: innerHeight, width: innerWidth, covering: hit && !lands ? said(hit) : null, name: (e.getAttribute('aria-label') || e.innerText || '').trim().slice(0, 60) }});",
         ref_json = serde_json::to_string(r#ref).unwrap_or_default()
     );
     let at: Value = serde_json::from_str(&eval(win, &body, true).await?).map_err(|e| e.to_string())?;
@@ -432,9 +435,11 @@ async fn click(win: &Webview, r#ref: &str) -> Result<Value, String> {
         ));
     }
     if at["lands"] != true {
+        let covering = at["covering"].as_str().unwrap_or("something");
         return Err(format!(
-            "Something covers `{}` (a dialog or banner, perhaps). Take a fresh browser_snapshot.",
-            r#ref
+            "`{}` is covered by {covering} at the point it would be clicked (page {}x{}). \
+             Close or dismiss that first, or take a fresh browser_snapshot and pick another ref.",
+            r#ref, at["width"], at["viewport"]
         ));
     }
     let (x, y) = (at["x"].as_f64().unwrap_or(0.0), at["y"].as_f64().unwrap_or(0.0));
