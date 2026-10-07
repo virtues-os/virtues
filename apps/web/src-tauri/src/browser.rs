@@ -40,6 +40,23 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const SAFARI_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 \
                          (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
 
+/// The cookies a request to `page` carries, from every cookie in a webview's
+/// store. Tauri's `cookies_for_url` keeps only cookies whose domain equals the
+/// page's host exactly, so Instagram's `.instagram.com` session never matched
+/// its login page on www.instagram.com and the login waited forever. A cookie
+/// for a parent domain belongs to its subdomains, as in any browser.
+pub(crate) fn jar_for(all: Vec<tauri::webview::Cookie<'static>>, page: &tauri::Url) -> Vec<tauri::webview::Cookie<'static>> {
+    let host = page.host_str().unwrap_or("").to_ascii_lowercase();
+    all.into_iter()
+        .filter(|c| {
+            let domain = c.domain().unwrap_or("").trim_start_matches('.').to_ascii_lowercase();
+            let on_host = !domain.is_empty() && (host == domain || host.ends_with(&format!(".{domain}")));
+            let path_ok = page.path().starts_with(c.path().unwrap_or("/"));
+            on_host && path_ok && (page.scheme() == "https" || !c.secure().unwrap_or(false))
+        })
+        .collect()
+}
+
 #[derive(Serialize)]
 pub struct JarCookie {
     name: String,
@@ -108,9 +125,9 @@ pub async fn browser_login(
                 return Err("timeout".into());
             }
             // Read on this async task, never a sync command: WebView2 deadlocks
-            // otherwise (tauri docs for `cookies_for_url`).
-            let jar = match win.cookies_for_url(page.clone()) {
-                Ok(jar) => jar,
+            // otherwise (tauri docs for `cookies`).
+            let jar = match win.cookies() {
+                Ok(all) => jar_for(all, &page),
                 Err(_) => continue,
             };
             let has = |name: &str| jar.iter().any(|c| c.name() == name && !c.value().is_empty());
@@ -194,5 +211,39 @@ pub async fn browser_pane_go(app: AppHandle, action: String) -> Result<(), Strin
     {
         let _ = (app, action);
         Err(NO_PANE.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::jar_for;
+    use tauri::webview::Cookie;
+
+    fn cookie(name: &str, domain: &str, secure: bool) -> Cookie<'static> {
+        Cookie::build((name.to_string(), "v".to_string())).domain(domain.to_string()).path("/").secure(secure).build()
+    }
+
+    #[test]
+    fn a_parent_domain_cookie_belongs_to_its_subdomain() {
+        let page: tauri::Url = "https://www.instagram.com/accounts/login/".parse().unwrap();
+        let all = vec![
+            cookie("sessionid", ".instagram.com", true),
+            cookie("csrftoken", "instagram.com", true),
+            cookie("mid", "www.instagram.com", false),
+            cookie("auth_token", ".x.com", true),
+            cookie("evil", ".notinstagram.com", false),
+        ];
+        let names: Vec<String> = jar_for(all, &page).iter().map(|c| c.name().to_string()).collect();
+        assert_eq!(names, ["sessionid", "csrftoken", "mid"]);
+    }
+
+    #[test]
+    fn a_secure_cookie_stays_off_plain_http() {
+        let page: tauri::Url = "http://x.com/".parse().unwrap();
+        let names: Vec<String> = jar_for(vec![cookie("auth_token", ".x.com", true), cookie("lang", "x.com", false)], &page)
+            .iter()
+            .map(|c| c.name().to_string())
+            .collect();
+        assert_eq!(names, ["lang"]);
     }
 }

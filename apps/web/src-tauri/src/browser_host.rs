@@ -603,7 +603,8 @@ pub async fn login(app: &AppHandle, url: &str, cookies: &[String], timeout: Dura
         if started.elapsed() > timeout {
             return Err("timeout".into());
         }
-        let Ok(jar) = view.cookies_for_url(page.clone()) else { continue };
+        let Ok(all) = view.cookies() else { continue };
+        let jar = crate::browser::jar_for(all, &page);
         let has = |name: &str| jar.iter().any(|c| c.name() == name && !c.value().is_empty());
         if cookies.iter().all(|n| has(n)) {
             return Ok(jar.iter().map(|c| (c.name().to_string(), c.value().to_string())).collect());
