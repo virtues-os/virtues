@@ -67,6 +67,8 @@ tauri-plugin-single-instance = "2"
 # RegisterEventHotKey on macOS, which needs no Accessibility permission —
 # unlike anything that watches modifiers on their own. See `summon` in main.rs.
 tauri-plugin-global-shortcut = "2"
+# The login window's wait loop (browser.rs).
+tokio = { version = "1", features = ["time"] }
 dirs = "5"
 # Updater endpoints are typed as Url; needed to swap channels at runtime.
 url = "2"

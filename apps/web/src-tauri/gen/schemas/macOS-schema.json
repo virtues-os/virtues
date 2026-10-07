@@ -561,6 +561,12 @@
           "markdownDescription": "Enables the apply_update_cmd command without any pre-configured scope."
         },
         {
+          "description": "Enables the browser_login command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-login",
+          "markdownDescription": "Enables the browser_login command without any pre-configured scope."
+        },
+        {
           "description": "Enables the bundle_boot_ok command without any pre-configured scope.",
           "type": "string",
           "const": "allow-bundle-boot-ok",
@@ -727,6 +733,12 @@
           "type": "string",
           "const": "deny-apply-update-cmd",
           "markdownDescription": "Denies the apply_update_cmd command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_login command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-login",
+          "markdownDescription": "Denies the browser_login command without any pre-configured scope."
         },
         {
           "description": "Denies the bundle_boot_ok command without any pre-configured scope.",

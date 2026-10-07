@@ -93,6 +93,9 @@ display_name = "X"
 icon = "ri:twitter-x-fill"
 description = "Sync the posts you bookmark on X. Uses your session cookies (auth_token and ct0), read-only."
 auth = { kind = "api_key", fields = ["auth_token", "ct0"] }
+# Logging in inside the app's browser window fills both fields from its cookie
+# jar (agents/record/webkit-agent-spike.md). Pasting them stays the fallback.
+login = { url = "https://x.com/i/flow/login", cookies = ["auth_token", "ct0"] }
 
 # Session cookies, like X: Instagram has no read API for your own saved posts,
 # so this replays the same authenticated call the web app makes for its Saved
@@ -111,6 +114,9 @@ display_name = "Instagram"
 icon = "ri:instagram-line"
 description = "Sync the posts you save on Instagram. Uses your session cookies, read-only."
 auth = { kind = "api_key", fields = ["cookies"] }
+# The whole jar is the credential, so a login hands over every instagram.com
+# cookie once the two that mean "logged in" exist.
+login = { url = "https://www.instagram.com/accounts/login/", cookies = ["sessionid", "csrftoken"], jar_field = "cookies" }
 
 # One-time import (NOT a living/cron'd source): the user uploads an export file
 # which is parsed box-side and ingested once. Modeled as a source so it gets a

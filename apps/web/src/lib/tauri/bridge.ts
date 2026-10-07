@@ -5,7 +5,7 @@
  * All functions are no-ops when running in a browser (non-Tauri environment).
  */
 
-import { isIOS, isMacOS, isTauri } from '$lib/utils/platform';
+import { isIOS, isLinux, isMacOS, isTauri, isWindows } from '$lib/utils/platform';
 
 // Lazy load Tauri API to avoid errors in browser environment
 async function getInvoke() {
@@ -355,6 +355,41 @@ export async function openExternal(url: string): Promise<void> {
 		console.error('[tauri] openExternal failed; falling back to window.open', e);
 		window.open(url, '_blank', 'noopener');
 	}
+}
+
+/** The surface that added `browser_login` (lib.rs `COMMAND_SURFACE_VERSION`). */
+export const BROWSER_LOGIN_SURFACE = 10;
+
+/**
+ * Whether this shell can log in to a source in a window of its own. Desktop
+ * only: the phone's shell shares the surface number but not the command.
+ */
+export async function canBrowserLogin(): Promise<boolean> {
+	const desktop = (isMacOS && !isIOS) || isWindows || isLinux;
+	if (!desktop) return false;
+	return shellSupports(BROWSER_LOGIN_SURFACE);
+}
+
+export interface JarCookie {
+	name: string;
+	value: string;
+}
+
+/**
+ * Open a source's login page in a window of the app's own and resolve with the
+ * site's cookies once every name in `cookies` is set. The window is incognito
+ * and closes itself on success. Rejects with `'closed'` when the person closes
+ * it first, `'timeout'` after 15 minutes, `'already open'` on a second call.
+ */
+export async function browserLogin(
+	sourceId: string,
+	url: string,
+	cookies: string[],
+	title: string
+): Promise<JarCookie[]> {
+	const invoke = await getInvoke();
+	if (!invoke) throw new Error('not in the app');
+	return invoke<JarCookie[]>('browser_login', { sourceId, url, cookies, title });
 }
 
 /**
