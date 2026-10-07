@@ -783,6 +783,9 @@
 
 	let body: { writeAboutDay: () => void } | null = $state(null);
 
+	/** No hover and a coarse pointer: a phone or tablet, where "hold V" means nothing. */
+	const touchOnly = browser && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+
 </script>
 
 {#snippet personGloss({ name, url }: { name: string; url: string })}<DayGloss {name} {url} date={currentDateSlug} onday={(slug) => navigateToDay(parseDateSlug(slug))} />{/snippet}
@@ -792,7 +795,7 @@
 		<article class="day-article wiki-article" bind:this={scrollContainerEl}>
 			<div class="day-bar" role="toolbar" aria-label="Day">
 				{#if view === "record" && citedRef}
-					<button type="button" class="bar-action back" onclick={backToArticle}>← Back to the sentence</button>
+					<button type="button" class="bar-action back" aria-label="Back to the sentence" onclick={backToArticle}>← Back<span class="bar-more">{" to the sentence"}</span></button>
 				{/if}
 				<span class="bar-gap"></span>
 				<div class="segmented" role="group" aria-label="View">
@@ -804,10 +807,10 @@
 					class="bar-action"
 					class:active={veil.on}
 					aria-pressed={veil.on}
-					title={veil.on ? "You've hidden names and hard passages. Hold V to read them." : "Hide names and hard passages on day pages"}
+					title={veil.on ? (touchOnly ? "You've hidden names and hard passages. Touch and hold one to read it." : "You've hidden names and hard passages. Hold V to read them.") : "Hide names and hard passages on day pages"}
 					onclick={() => veil.toggle()}
 				>
-					{veil.on ? "Veiled · hold V" : "Veil"}
+					{veil.on ? "Veiled" : "Veil"}{#if veil.on && !touchOnly}<span class="bar-more">{" · hold V"}</span>{/if}
 				</button>
 				{#if view === "article" && currentDateSlug <= todaySlug}
 					<button type="button" class="bar-action" title="Write in the margin about the whole day" onclick={() => body?.writeAboutDay()}>Write a note</button>
@@ -1103,6 +1106,11 @@
 		flex: 1;
 	}
 
+	.bar-action,
+	.seg {
+		white-space: nowrap;
+	}
+
 	.bar-action {
 		border: none;
 		background: none;
@@ -1145,6 +1153,17 @@
 		background: var(--color-background);
 		color: var(--color-foreground);
 		border-color: var(--color-border);
+	}
+
+	/* A phone: every action stays, with the words that don't fit cut short. */
+	@media (max-width: 420px) {
+		.day-bar {
+			gap: 0.75rem;
+		}
+
+		.bar-more {
+			display: none;
+		}
 	}
 
 	/* ── Article ↔ Record: the same day, along its clock ── */
