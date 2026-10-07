@@ -7,6 +7,9 @@
 // than #[cfg]-gating ~20 definitions. Revisit when desktop collectors land.
 #![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
 
+mod browser;
+use browser::browser_login;
+
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_reach::ReachExt;
@@ -1703,6 +1706,7 @@ fn main() {
             open_full_disk_access,
             open_accessibility_settings,
             set_summon_shortcut,
+            browser_login,
         ])
         .setup(|app| {
             // Bind the default summon chord here rather than waiting for the

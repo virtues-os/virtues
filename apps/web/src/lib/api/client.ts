@@ -756,6 +756,17 @@ export interface SourceCatalogItem {
 	provides?: string[];
 	/** The life-domains those fall in (`health`, `financial`, …). */
 	domains?: string[];
+	/** Connect by logging in instead of pasting: the app opens `url`, and once
+	 *  every cookie in `cookies` is set it fills the fields from the cookie jar.
+	 *  `jar_field` set: that one field gets the whole jar as a Cookie header.
+	 *  Absent from boxes older than the field. */
+	login?: SourceLogin | null;
+}
+
+export interface SourceLogin {
+	url: string;
+	cookies: string[];
+	jar_field?: string | null;
 }
 
 /**

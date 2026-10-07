@@ -709,6 +709,10 @@ pub struct SourceCatalogItem {
     /// The life-domains those ontologies fall in (`health`, `financial`, …),
     /// which is the coarser grain worth showing in a table cell.
     pub domains: Vec<String>,
+    /// How to connect by logging in instead of pasting (see `SourceLogin`).
+    /// The app offers it where it can open a browser window; everywhere else
+    /// the form falls back to the fields.
+    pub login: Option<crate::applet_templates::SourceLogin>,
 }
 
 /// GET /api/sources — catalog tiles for the Sources UI.
@@ -751,6 +755,7 @@ pub async fn list_sources_handler(State(state): State<AppState>) -> Response {
             },
             repo: s.repo.clone(),
             repo_ref: s.repo_ref.clone(),
+            login: s.login.clone(),
             provides: written
                 .iter()
                 .map(|n| {

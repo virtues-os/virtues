@@ -87,6 +87,8 @@ const APP_COMMANDS: &[&str] = &[
     "open_accessibility_settings",
     // Window chrome (desktop).
     "set_summon_shortcut",
+    // Logging in to a source in a window of its own (desktop, browser.rs).
+    "browser_login",
 ];
 
 fn main() {
