@@ -1,12 +1,12 @@
 # Uncomment the next line to define a global platform for your project
 
 target 'virtues_iOS' do
-platform :ios, '16.4'
+platform :ios, '26.2'
   # Pods for virtues_iOS
 end
 
 target 'virtues_macOS' do
-platform :osx, '13.3'
+platform :osx, '26.2'
   # Pods for virtues_macOS
 end
 
