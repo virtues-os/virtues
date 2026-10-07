@@ -124,22 +124,26 @@ struct RecordingControl: ControlWidget {
   }
 }
 
+/// Always the ∴ mark (a custom symbol in this extension's asset catalog);
+/// iOS tints it when the toggle is on, and the words say which state.
 struct RecordingLabel: View {
   let state: RecordingState
 
   var body: some View {
-    if !state.enabled {
-      Label("Off", systemImage: "mic.slash")
-    } else if state.override == "silence" {
-      Label { untilText("Paused") } icon: { Image(systemName: "pause.fill") }
-    } else if state.override == "record" {
-      Label { untilText("Recording") } icon: { Image(systemName: "waveform") }
-    } else if state.rule == "schedule" {
-      Label("Muted by your hours", systemImage: "moon.zzz")
-    } else if state.rule == "place" {
-      Label("Muted at this place", systemImage: "mappin.slash")
-    } else {
-      Label("Recording", systemImage: "waveform")
+    Label { text } icon: { Image("virtues.mark") }
+  }
+
+  private var text: Text {
+    if !state.enabled { return Text("Off") }
+    switch state.override {
+    case "silence": return untilText("Paused")
+    case "record": return untilText("Recording")
+    default: break
+    }
+    switch state.rule {
+    case "schedule": return Text("Muted by your hours")
+    case "place": return Text("Muted at this place")
+    default: return Text("Recording")
     }
   }
 
