@@ -55,7 +55,7 @@ path for long text.
 | Lexical playground | click into the rich-text editor and type | pass |
 | X login page | snapshot reads cleanly | pass |
 | X, logged in | read the bookmarks list | pass |
-| X, logged in | wheel-scroll to the end of the list | pass |
+| X, logged in | wheel-scroll the bookmarks list | **fail**: see below |
 | X, logged in | type a query into X's React search box and press Enter | pass |
 
 Nothing was posted or liked.
@@ -115,6 +115,23 @@ They used their password instead.
   `webViewInput` only where native events are unavailable: iOS, which this
   spike did not test.
 
+- **Infinite scroll did not load more.** Six wheel events moved X's bookmarks
+  page 6,500 px to its bottom, and no further posts loaded. The page stopped
+  at six posts with no spinner. The same session's cookies then synced **89**
+  bookmarks through `x_bookmarks_sync` on a dev box. So X's next-page loader
+  never fired under background wheel input, and that was misread as the end of
+  the list. Likely suspects: an `IntersectionObserver` or scroll handler that
+  ignores a background window, or wheel events that scroll without the scroll
+  events X listens for. Untested either way.
+
+## The handoff, end to end
+
+The spike app read `auth_token`/`ct0` from its cookie jar and POSTed them to a
+dev core's `/api/connect/x/complete` (201, 84 ms). The values went app → box
+and never reached a terminal. Reconciling created the per-credential X
+Bookmarks applet, and one manual run wrote 89 rows to `data_content_bookmark`.
+Logging in inside the app replaces the developer-tools paste for X.
+
 ## Not tested
 
 - iOS (no public way to synthesize touches).
@@ -124,8 +141,6 @@ They used their password instead.
 - `alert`/`confirm` dialogs, which need `WKUIDelegate` answers.
 - Downloads.
 - Bot detection that profiles input timing.
-- A list long enough to page: the owner's X bookmarks ended at six, so loading
-  more was not exercised.
 - The port into Tauri itself. wry's `with_webview` gives the `WKWebView`; from
   there it is objc2 calls for the content world, `takeSnapshot`, the
   `NSEvent`s and the cookie store.
