@@ -176,7 +176,7 @@ pub async fn browser_pane_open(app: AppHandle, url: String) -> Result<(), String
 pub async fn browser_pane_bounds(app: AppHandle, x: f64, y: f64, width: f64, height: f64, visible: bool) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        return crate::browser_host::set_bounds(&app, x, y, width, height, visible);
+        return crate::browser_host::set_bounds(&app, x, y, width, height, visible).await;
     }
     #[cfg(not(target_os = "macos"))]
     {
