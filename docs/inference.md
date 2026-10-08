@@ -71,9 +71,17 @@ flags.
 
 ```bash
 llama-server --embedding --pooling mean \
-  -m embeddinggemma-300m-qat-Q8_0.gguf \
+  -m embeddinggemma-2-Q8_0.gguf \
   --host 127.0.0.1 --port 18181 \
   -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0
+```
+
+EmbeddingGemma 2 needs a recent llama.cpp. An older build refuses the model
+file, so check yours first; the build number it prints should be at least
+the one we run:
+
+```bash
+llama-server --version   # build 11507 or later
 ```
 
 **The reranker**, on port 18182:
@@ -130,7 +138,7 @@ wants a prefix on its inputs:
 
 | Embedding model | Dims | Prompt prefixes |
 |---|---|---|
-| **EmbeddingGemma-300M** *(what we ship)* | 768, truncatable to 256 | `task: search result \| query: ` / `title: none \| text: ` |
+| **EmbeddingGemma 2** *(what we ship)* | 768, truncatable to 256 | `task: search result \| query: ` / `title: none \| text: ` |
 | gte-small | 384 | none |
 | bge-small-en-v1.5 | 384 | query only: `Represent this sentence for searching relevant passages: ` |
 | e5-small-v2 | 384 | `query: ` / `passage: ` |
@@ -147,7 +155,7 @@ GGUF builds of all of these are on Hugging Face; search the model name plus
 together, and these are the exact builds we run:
 
 ```bash
-curl -fLO https://huggingface.co/ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/resolve/main/embeddinggemma-300m-qat-Q8_0.gguf
+curl -fLO https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/bfcd298762cc34d0357ece5ebdd31791a3a374d8/embeddinggemma-2-Q8_0.gguf
 curl -fLO https://huggingface.co/keisuke-miyako/gte-reranker-modernbert-base-gguf-q8_0/resolve/main/gte-reranker-modernbert-base-Q8_0.gguf
 ```
 
@@ -167,8 +175,9 @@ pgvector's index supports. Above that you must truncate.
 
 **Truncation is only safe for models trained for it.** Setting
 `VIRTUES_EMBED_DIMS` slices vectors to a narrower width - a third of the
-storage and a faster index for very little quality on a Matryoshka-trained
-model like EmbeddingGemma or nomic. On a model that was *not* trained that
+storage and a faster index on a Matryoshka-trained model like EmbeddingGemma
+or nomic, at a real cost: on our own search tests, EmbeddingGemma cut to 256
+found noticeably less than at its full 768, which is why we store all 768. On a model that was *not* trained that
 way it destroys the vector. It is opt-in per model, never a default, and
 asking for a width wider than the model emits is an error rather than
 something we pad.

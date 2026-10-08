@@ -24,8 +24,8 @@ pub struct InstallConfig {
     /// `.github/workflows/models-release.yml` workflow populates that tag
     /// from vetted upstream GGUFs, with `.sha256` sidecars.
     pub models_base: String,
-    /// GGUF file names the inference sidecars load. EmbeddingGemma-300M
-    /// (QAT Q8_0, 768-dim native → Matryoshka-256) for embedding;
+    /// GGUF file names the inference sidecars load. EmbeddingGemma 2
+    /// (Q8_0, stored at its native 768 dims) for embedding;
     /// gte-reranker-modernbert-base (Q8_0, stateless) for the reranker.
     /// Must stay in sync with virtues-core's `inference_report::{EMBED_GGUF,
     /// RERANK_GGUF}` — the sidecar `-m` path and the runtime's dim/pooling
@@ -74,7 +74,7 @@ impl InstallConfig {
                         .unwrap_or_else(|_| "virtues".to_string()),
                 )
             }),
-            embed_gguf: "embeddinggemma-300m-qat-Q8_0.gguf".to_string(),
+            embed_gguf: "embeddinggemma-2-Q8_0.gguf".to_string(),
             rerank_gguf: "gte-reranker-modernbert-base-Q8_0.gguf".to_string(),
             qnn_embed_bin: "gte_v68_vtcm2.bin".to_string(),
             qnn_rerank_bin: "cb256_v68_vtcm2.bin".to_string(),
