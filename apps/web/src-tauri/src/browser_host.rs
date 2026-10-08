@@ -571,14 +571,41 @@ async fn create(app: &AppHandle, target: &tauri::Url) -> Result<Webview, String>
 
 /// Where the UI's Browser pane is, in the main window's logical points, or
 /// that it is not on screen.
-pub fn set_bounds(app: &AppHandle, x: f64, y: f64, width: f64, height: f64, visible: bool) -> Result<(), String> {
+pub async fn set_bounds(app: &AppHandle, x: f64, y: f64, width: f64, height: f64, visible: bool) -> Result<(), String> {
     let Some(view) = app.get_webview(LABEL) else { return Ok(()) };
     if !visible || width < 1.0 || height < 1.0 {
         return view.hide().map_err(|e| e.to_string());
     }
-    view.set_position(LogicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+    // The UI measures from the top of its page, which starts below the title
+    // bar; the pane is placed from the top of the window's content, which runs
+    // under it. Without this the page sat one title bar too high, over the
+    // Browser tab's own address bar.
+    let below_title = title_bar_height(&view).await;
+    view.set_position(LogicalPosition::new(x, y + below_title)).map_err(|e| e.to_string())?;
     view.set_size(LogicalSize::new(width, height)).map_err(|e| e.to_string())?;
     view.show().map_err(|e| e.to_string())
+}
+
+/// How far the window's title bar reaches into its content area, in points:
+/// zero in full screen, where there is none.
+async fn title_bar_height(view: &Webview) -> f64 {
+    let (tx, rx) = oneshot::channel::<f64>();
+    let ran = on_main(view, move |wk, _| {
+        let height = wk
+            .window()
+            .and_then(|w| {
+                let content = w.contentView()?.frame();
+                let layout = w.contentLayoutRect();
+                Some(content.size.height - (layout.origin.y + layout.size.height))
+            })
+            .unwrap_or(0.0);
+        let _ = tx.send(height.clamp(0.0, 200.0));
+    })
+    .await;
+    if ran.is_err() {
+        return 0.0;
+    }
+    rx.await.unwrap_or(0.0)
 }
 
 /// Back, forward or reload, from the Browser tab's toolbar.
