@@ -97,6 +97,8 @@ export interface InspectorSection {
 	named: boolean;
 	/** A stay only: its title is the map's guess, offered for correction. */
 	guessed?: boolean;
+	/** A trip only: fast enough that only a plane goes that fast. */
+	flight?: boolean;
 	/** A stay only: where its title came from (`home`, `work`, `map`,
 	 *  `city`, `none`). */
 	source?: string;
@@ -216,6 +218,7 @@ export function buildInspector(w: DerivedWindow, start: number, end: number, voi
 					...base,
 					kind: "transit",
 					title: movementTitle(Number(s.metadata.path_meters ?? 0), Number(s.metadata.peak_kmh ?? 0), s.e - s.s),
+					flight: Number(s.metadata.peak_kmh ?? 0) >= FLIGHT_KMH,
 					dur: fmtDur(ce - cs),
 				};
 			case "sleep": {

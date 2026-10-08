@@ -907,7 +907,8 @@
 			const at = anchorAt(dayTrack, r.s, r.e);
 			if (!at) continue;
 			const km = trackMetres(dayTrack, r.s, r.e) / 1000;
-			out.push({ s: r.s, e: r.e, kind: r.kind, title: r.title, lng: at.lng, lat: at.lat, km, moving: km > 0.5 });
+			const flight = sections.some((x) => x.kind === 'transit' && x.flight && x.s <= r.s && r.s < x.e);
+			out.push({ s: r.s, e: r.e, kind: r.kind, title: r.title, lng: at.lng, lat: at.lat, km, moving: km > 0.5, flight });
 		}
 		return out;
 	}
@@ -1256,7 +1257,7 @@
 		const place = p.kind === 'place' ? placeCoords.get(placeId) : undefined;
 		if (place) {
 			bubbles?.fold();
-			flyIn(m, place);
+			frameStay(m, place, p.s, p.e);
 			pick({ kind: 'place', s: p.s, e: p.e, at: place, asked: review.byPlace.has(placeId) });
 			return;
 		}
@@ -1275,6 +1276,20 @@
 		inspectorFocus = 'row';
 		park(s);
 		if (openRow) inspector?.expand(s);
+		// Above the ground, where a conversation happened says nothing: a
+		// moment on a flight frames the flight, as picking the flight does
+		// (the owner's call, 2026-10-08).
+		const flight = sections.find((x) => x.kind === 'transit' && x.flight && x.s <= s && s < x.e);
+		const m = map;
+		const ml = maplibre;
+		const path = flight ? dayTrack.filter((f) => f.t >= flight.s && f.t < flight.e) : [];
+		if (m && ml && path.length >= 2) {
+			bubbles?.fold();
+			const b = new ml.LngLatBounds();
+			for (const f of path) b.extend([f.lng, f.lat]);
+			m.fitBounds(b, { padding: fitPad(m), maxZoom: 15, duration: 650 });
+			return;
+		}
 		bubbles?.reveal(s);
 	}
 
@@ -1285,6 +1300,22 @@
 		const c = m.getContainer();
 		const offset: [number, number] = [(lim.l + lim.r) / 2 - c.clientWidth / 2, (lim.t + lim.b) / 2 - c.clientHeight / 2];
 		m.easeTo({ center: at, zoom: Math.max(m.getZoom(), 16), offset, duration: 650 });
+	}
+
+	/** A picked stay frames its own stretch of path, as close as it takes to
+	 *  show the walking inside it (a terminal, a bar's floor) up to zoom 18.5;
+	 *  a stay that barely moved, or whose path spreads wider than streets,
+	 *  flies in to street level as before (the owner's call, 2026-10-08). */
+	const STAY_MAX_ZOOM = 18.5;
+	function frameStay(m: MlMap, place: [number, number], s: number, e: number) {
+		const ml = maplibre;
+		const path = dayTrack.filter((f) => f.t >= s && f.t < e);
+		if (!ml || path.length < 2) return flyIn(m, place);
+		const b = new ml.LngLatBounds(place, place);
+		for (const f of path) b.extend([f.lng, f.lat]);
+		const cam = m.cameraForBounds(b, { padding: fitPad(m), maxZoom: STAY_MAX_ZOOM });
+		if (!cam || (cam.zoom ?? 0) < 16) return flyIn(m, place);
+		m.fitBounds(b, { padding: fitPad(m), maxZoom: STAY_MAX_ZOOM, duration: 650 });
 	}
 
 	/** A stay or a drive picked from the inspector stays marked while the playhead
