@@ -341,7 +341,11 @@
 			});
 			for (const id of PATH_HIT) {
 				m.on('mouseenter', id, () => !pointing && (m.getCanvas().style.cursor = 'pointer'));
-				m.on('mouseleave', id, () => !pointing && (m.getCanvas().style.cursor = ''));
+				m.on('mouseleave', id, () => {
+					if (!pointing) m.getCanvas().style.cursor = '';
+					hoverPath(m, null);
+				});
+				m.on('mousemove', id, (e) => hoverPath(m, e.point));
 			}
 			maplibre = ml;
 			// MapLibre only follows the window's size. A hidden tab stays mounted
@@ -377,6 +381,16 @@
 					source: 'track-drive',
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
 					paint: { 'line-color': ink.move, 'line-width': 3, 'line-opacity': 0.85 },
+				});
+				// The stretch a click would pick, under the pointer: that stay's or
+				// drive's piece of the path at twice the weight, in its own colour.
+				m.addSource('hover-run', { type: 'geojson', data: lines([]) });
+				m.addLayer({
+					id: 'hover-run',
+					type: 'line',
+					source: 'hover-run',
+					layout: { 'line-join': 'round', 'line-cap': 'round' },
+					paint: { 'line-color': ink.track, 'line-width': 6, 'line-opacity': 1 },
 				});
 				// What a click on the path finds: the drawn path is 3 px, too thin
 				// to aim at, so an unseen 18 px band over it takes the click. A
@@ -1163,6 +1177,25 @@
 	/** A click on a stretch of the scrubber's Location lane: the playhead is
 	 *  already where the click landed; the map goes to the stretch holding it,
 	 *  as a pick in the inspector would take it (the owner's call). */
+	/** The stay or drive under the pointer on the map: its stretch of path
+	 *  drawn heavier, and its row in the list lit as on hover, so you see what
+	 *  a click will pick. */
+	let hovered = $state<{ kind: 'place' | 'transit'; s: number } | null>(null);
+	let hoverFrame = 0;
+	function hoverPath(m: MlMap, at: { x: number; y: number } | null) {
+		cancelAnimationFrame(hoverFrame);
+		hoverFrame = requestAnimationFrame(() => {
+			const sec = at && !pointing && !focusing ? sectionAt(m, at) : null;
+			const next = sec && !(picked && picked.s === sec.s) ? { kind: sec.kind as 'place' | 'transit', s: sec.s } : null;
+			if (next?.s === hovered?.s && next?.kind === hovered?.kind) return;
+			hovered = next;
+			const src = m.getSource('hover-run') as GeoJSONSource | undefined;
+			if (!src) return;
+			if (!sec || !next) return src.setData(lines([]));
+			m.setPaintProperty('hover-run', 'line-color', next.kind === 'transit' ? ink.move : ink.track);
+			src.setData(lines(splitTrack(dayTrack.filter((f) => f.t >= sec.s && f.t < sec.e)).runs));
+		});
+	}
 	/** The layers a click on the day's path lands on. */
 	const PATH_HIT = ['track-hit', 'drive-hit'];
 	/** The stay or drive a click on the path belongs to: the time of the
@@ -1439,6 +1472,7 @@
 		homeSet={review.homeSet}
 		{review}
 		{selected}
+		{hovered}
 		onfocus={focusPlace}
 		onmerge={mergeInto}
 		{zone}
