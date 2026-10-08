@@ -327,6 +327,10 @@
 			m.scrollZoom.setWheelZoomRate(PINCH_RATE.wheel);
 			container.addEventListener('wheel', onWheel, { passive: false, capture: true });
 			m.on('move', syncAway);
+			// A drag or a pinch by hand stops following until the next scrub or play.
+			m.on('movestart', (e) => {
+				if ((e as { originalEvent?: Event }).originalEvent) following = false;
+			});
 			m.on('moveend', syncStreets);
 			// A click on the day's path picks the stay or drive it belongs to, as
 			// its row in the list does (the owner's call, 2026-10-08; the
@@ -589,6 +593,8 @@
 		// Across a crossing the week's lanes already drawn stay, rather than
 		// shrinking to the one day until the week reloads.
 		const across = crossing;
+		// A day opens framed whole; following carries on only across a crossing.
+		if (!across) following = false;
 		crossing = false;
 		if (!(across && lanes.a <= week.s && lanes.b >= week.e)) lanes = laneData(derived, voice, lw, startMs, endMs);
 		midnights = Array.from({ length: 15 }, (_, i) => midnightIn(stepDay(slug, i - 7), bounds.zone));
@@ -695,6 +701,7 @@
 	/** How fast a pinch (or a wheel with Ctrl) zooms the map. */
 	const PINCH_RATE = { trackpad: 1 / 80, wheel: 1 / 360 };
 	function onWheel(e: WheelEvent) {
+		following = false;
 		if (e.ctrlKey || e.metaKey) return;
 		if ((e.target as HTMLElement | null)?.closest?.('.tl-card')) return;
 		e.preventDefault();
@@ -724,6 +731,7 @@
 	}
 	/** Glide back to the day's frame; an opened knot folds into its chip. */
 	function resetView() {
+		following = false;
 		const m = map;
 		if (!m) return;
 		bubbles?.fold();
@@ -865,6 +873,55 @@
 		} catch (e) {
 			console.warn('[Timeline] titles after an answer unavailable', e);
 		}
+	}
+
+	/** The map follows the scrub (patch item 9, the owner's idea): while you
+	 *  scrub, play or step with the keys, the camera keeps your pin centred in
+	 *  the clear map and zooms with your pace, close in while walking around
+	 *  a place, far out on a drive or a flight. The zoom comes from how far
+	 *  the path covers in the five minutes either side of the playhead, eases
+	 *  toward it, and only retargets on a clear change of pace. In a stretch
+	 *  with no location the map shows the whole day, and picks the pin up
+	 *  again where the record resumes. A pan or pinch by hand, a pick, or
+	 *  "Show the whole day" stops following until the next scrub or play. */
+	let following = false;
+	let followTarget: number | null = null;
+	let followGap = false;
+	let followRaf = 0;
+	const FOLLOW_WINDOW = 5 * MIN;
+	const FOLLOW_MAX_ZOOM = 18;
+	const FOLLOW_EASE = 0.15;
+	function paceZoom(m: MlMap, t: number): number {
+		const near = dayTrack.filter((f) => Math.abs(f.t - t) <= FOLLOW_WINDOW);
+		const ml = maplibre;
+		if (!ml || near.length < 2) return FOLLOW_MAX_ZOOM;
+		const b = new ml.LngLatBounds();
+		for (const f of near) b.extend([f.lng, f.lat]);
+		const cam = m.cameraForBounds(b, { padding: fitPad(m), maxZoom: FOLLOW_MAX_ZOOM });
+		return Math.max(3, Math.min(FOLLOW_MAX_ZOOM, cam?.zoom ?? FOLLOW_MAX_ZOOM));
+	}
+	function followTick(m: MlMap) {
+		cancelAnimationFrame(followRaf);
+		const at = positionAt(dayTrack, playT);
+		if (!at) {
+			if (!followGap) {
+				followGap = true;
+				followTarget = null;
+				frameDay(m, 650);
+			}
+			return;
+		}
+		followGap = false;
+		const target = paceZoom(m, playT);
+		if (followTarget === null || Math.abs(target - followTarget) > 0.75) followTarget = target;
+		const z = m.getZoom();
+		const zoom = Math.abs(followTarget - z) < 0.02 ? followTarget : z + (followTarget - z) * FOLLOW_EASE;
+		const lim = clearArea(m);
+		const c = m.getContainer();
+		const offset: [number, number] = [(lim.l + lim.r) / 2 - c.clientWidth / 2, (lim.t + lim.b) / 2 - c.clientHeight / 2];
+		m.easeTo({ center: [at.lng, at.lat], zoom, offset, duration: 0 });
+		// The zoom settles on its own once the playhead rests.
+		if (zoom !== followTarget) followRaf = requestAnimationFrame(() => following && followTick(m));
 	}
 
 	/** The keys (main.js:792-802, 1205): Esc is Reset view; ← → nudge the
@@ -1025,6 +1082,7 @@
 	function scrubSeek(t: number) {
 		cancelAnim();
 		inspectorFocus = 'row';
+		following = true;
 		park(t);
 	}
 
@@ -1036,6 +1094,7 @@
 	function swipe(t: number) {
 		cancelAnim();
 		inspectorFocus = 'row';
+		following = true;
 		if (viewStart <= dayStart && viewEnd >= dayEnd) {
 			park(t);
 			return;
@@ -1062,8 +1121,9 @@
 			loopTs = null;
 			return;
 		}
-		// Play is a touch too.
+		// Play is a touch too, and the map follows it.
 		armed = true;
+		following = true;
 		inspectorFocus = 'row';
 		if (playT >= dayEnd - 2 * MIN) playT = dayStart;
 		loopRaf = requestAnimationFrame(loop);
@@ -1103,6 +1163,7 @@
 	 *  minute or an hour inside the day; a day or a week crosses to that day,
 	 *  keeping the time of day and the tier, never past today. */
 	function nudge(dir: 1 | -1) {
+		following = true;
 		const t = tier;
 		if (t === 'min' || t === 'hour') {
 			inspectorFocus = 'row';
@@ -1152,6 +1213,7 @@
 	function syncPlayhead() {
 		const m = map;
 		if (!m) return;
+		if (following) followTick(m);
 		if (picked && !(picked.s <= playT && playT < picked.e)) unpick();
 		const at = positionAt(dayTrack, playT);
 		// A picked stay's pulse is where you were; the pin waits until the
@@ -1220,6 +1282,7 @@
 	}
 
 	function reveal(p: InspectorPick, parkIt = true) {
+		following = false;
 		const m = map;
 		const ml = maplibre;
 		if (!m || !ml) return;
@@ -1273,6 +1336,7 @@
 	 *  there), and the map flies in to it, or opens the chip holding it (the
 	 *  owner's call; the prototype only panned a bubble into view). */
 	function pickMoment(s: number, openRow: boolean) {
+		following = false;
 		inspectorFocus = 'row';
 		park(s);
 		if (openRow) inspector?.expand(s);
