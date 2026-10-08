@@ -95,6 +95,8 @@ export interface MapMoment {
 	/** Track covered while it ran, km. */
 	km: number;
 	moving: boolean;
+	/** It happened on a flight: the caption says so. */
+	flight?: boolean;
 }
 
 export interface BubbleHost {
@@ -134,7 +136,7 @@ function labelHtml(m: MapMoment, time: (ms: number) => string): HTMLElement {
 	lbl.append(title, when);
 	if (m.moving && m.kind !== "walk") {
 		const far = document.createElement("i");
-		far.textContent = `Moving · ${fmtDistance(m.km * 1000)}`;
+		far.textContent = `${m.flight ? "Flight" : "Moving"} · ${fmtDistance(m.km * 1000)}`;
 		lbl.append(far);
 	}
 	return lbl;
