@@ -42,6 +42,7 @@
 		homeSet = false,
 		onmerge,
 		review,
+		selected = null,
 		onfocus,
 	}: {
 		sections: InspectorSection[];
@@ -64,6 +65,9 @@
 		homeSet?: boolean;
 		/** "Help Virtues out": the questions, the answers and Undo. */
 		review?: ReviewState;
+		/** The stay or drive picked, from the list or the map: the list shows
+		 *  it selected until it's let go. */
+		selected?: { kind: 'place' | 'transit'; s: number } | null;
 		/** The card's place and the named places it offers, for the map. */
 		onfocus?: (at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null) => void;
 		/** Fold an unnamed place into a named one near it. */
@@ -295,7 +299,7 @@
 		<div class="scroll" bind:this={scroller}>
 			{#each sections as sec, i (sec.kind + sec.s)}
 				{@const asked = review && sec.placeId && askedAt.get(sec.placeId) === i ? review.byPlace.get(sec.placeId) : undefined}
-				<div class="group" class:bare={!sec.rows.length} class:cur={i === curSection}>
+				<div class="group" class:bare={!sec.rows.length} class:cur={i === curSection} class:sel={selected?.s === sec.s && selected.kind === sec.kind} class:asking={!!asked}>
 					<button class="sec" onclick={() => pickSection(i, sec)}>
 						<span class="hd">
 							<i class="dot {sec.kind}"></i>
@@ -493,6 +497,32 @@
 	.sec:hover,
 	.row:hover {
 		background: var(--hover-bg);
+	}
+	/* Selected, as a Mac list selects: a rounded fill in the accent, stronger
+	   than the hover's grey, over the stay and its question line; the
+	   playhead's edge steps aside for it. */
+	.group.sel > .sec,
+	.group.sel > .ask-line,
+	.group.sel:has(> .sec:hover, > .ask-line:hover) > :is(.sec, .ask-line) {
+		margin: 0 8px;
+		background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface));
+	}
+	.group.sel > .sec {
+		width: calc(100% - 16px);
+		padding-left: 8px;
+		padding-right: 32px;
+		border-radius: 12px;
+	}
+	.group.sel.asking > .sec {
+		border-radius: 12px 12px 0 0;
+	}
+	.group.sel > .ask-line {
+		padding-left: 24px;
+		padding-right: 32px;
+		border-radius: 0 0 12px 12px;
+	}
+	.group.sel::before {
+		display: none;
 	}
 	/* A stay and its question line light together, wherever the pointer is. */
 	.group:has(> .sec:hover, > .ask-line:hover) > :is(.sec, .ask-line) {
