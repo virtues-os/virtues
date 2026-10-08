@@ -315,7 +315,7 @@
 							<span class="note">{line}</span>
 						{/each}
 						{#if secOpen && i === curSection && curRow === null && sec.kind === 'sleep'}
-							<span class="note">From Health on your iPhone</span>
+							<span class="note">{sec.src === 'estimated' ? 'Estimated from your usual time in bed' : 'From Health on your iPhone'}</span>
 						{/if}
 					</button>
 					{#if asked && review && !review.pointing}
@@ -726,6 +726,11 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 8px;
+	}
+	/* A long question wraps; its buttons stay side by side. */
+	.ask-actions {
+		flex: 0 0 auto;
+		flex-wrap: nowrap;
 	}
 	.ask-line {
 		display: flex;
