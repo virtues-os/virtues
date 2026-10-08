@@ -90,6 +90,15 @@
 
 	const latestId = $derived(browserAgent.steps.at(-1)?.id ?? null);
 
+	// The row comes back when the assistant starts driving, hidden or not:
+	// hiding it is for the task you watched, not the next one.
+	let wasDriving = false;
+	$effect(() => {
+		const driving = browserAgent.driving;
+		if (driving && !wasDriving) showSteps = true;
+		wasDriving = driving;
+	});
+
 	// A new step comes into view.
 	$effect(() => {
 		void latestId;
