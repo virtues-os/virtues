@@ -10,7 +10,7 @@
 -->
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
-	import TextAction from '$lib/components/TextAction.svelte';
+	import Pill from '$lib/components/timeline/Pill.svelte';
 	import { listPeople } from '$lib/wiki/api';
 	import { askFor, homeOf, pickAnswer, weekly, type Answer, type PlaceQuestion } from '$lib/timeline/review';
 	import type { ReviewState } from '$lib/timeline/reviewState.svelte';
@@ -97,16 +97,19 @@
 				</li>
 			{/each}
 		</ul>
-		<button class="btn primary wide" type="button" disabled={!picked.length || review.saving} onclick={savePicks}>
-			{picked.length > 1 ? `Save These ${picked.length}` : 'Save'}
-		</button>
+		<div class="save">
+			<Pill filled size="card" wide disabled={!picked.length || review.saving} onclick={savePicks}>
+				{picked.length > 1 ? `Save These ${picked.length}` : 'Save'}
+			</Pill>
+		</div>
 	{:else}
 		<div class="buttons" class:grid={ask.chips.length > 2}>
 			{#each ask.chips as c, i (c.label)}
 				{@const icon = iconOf(c.answer)}
-				<button class="btn" class:primary={i === 0 && ask.chips.length <= 2} type="button" disabled={review.saving} onclick={() => choose(c.answer)}>
+				<!-- The likely answer is filled, as the prototype's card fills it. -->
+				<Pill size="card" wide filled={i === 0 && ask.chips.length <= 2} disabled={review.saving} onclick={() => choose(c.answer)}>
 					{#if icon}<Icon {icon} width="16" />{/if}{c.label}
-				</button>
+				</Pill>
 			{/each}
 		</div>
 	{/if}
@@ -123,15 +126,15 @@
 					aria-label={ask.other === 'person' ? 'Whose place?' : 'What was it?'}
 					onkeydown={(e) => e.key === 'Enter' && submitOther()}
 				/>
-				<button class="btn primary" type="button" disabled={!otherText.trim() || review.saving} onclick={submitOther}>Save</button>
+				<Pill filled size="card" disabled={!otherText.trim() || review.saving} onclick={submitOther}>Save</Pill>
 			</div>
 			<datalist id="tl-ask-suggest-{q.id}">
 				{#each suggestions as s (s)}<option value={s}></option>{/each}
 			</datalist>
 		{/if}
 		<div class="quiet">
-			{#if !otherOpen}<TextAction onclick={() => void openOther()}>Other…</TextAction>{/if}
-			<TextAction quiet disabled={review.saving} onclick={() => void review.answer(q.id, { kind: 'passing' })}>Just Passing Through</TextAction>
+			{#if !otherOpen}<Pill onclick={() => void openOther()}>Other…</Pill>{/if}
+			<Pill disabled={review.saving} onclick={() => void review.answer(q.id, { kind: 'passing' })}>Just Passing Through</Pill>
 		</div>
 	{/if}
 
@@ -156,7 +159,7 @@
 		color: var(--color-foreground-muted);
 	}
 
-	/* Apple's alert buttons: equal widths, the likely answer filled. */
+	/* Apple's alert buttons: equal widths, the likely answer filled (Pill). */
 	.buttons {
 		display: flex;
 		gap: 8px;
@@ -166,39 +169,7 @@
 		display: grid;
 		grid-template-columns: 1fr 1fr;
 	}
-	.btn {
-		flex: 1;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 6px;
-		min-height: 36px;
-		padding: 8px 12px;
-		border: 0;
-		border-radius: 12px;
-		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
-		color: var(--color-foreground);
-		font-family: var(--font-sans);
-		font-size: 15px;
-		font-weight: 500;
-		cursor: pointer;
-	}
-	.btn:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-foreground) 11%, transparent);
-	}
-	.btn.primary {
-		background: var(--color-primary);
-		color: var(--color-background);
-	}
-	.btn.primary:hover:not(:disabled) {
-		background: var(--color-primary-hover);
-	}
-	.btn:disabled {
-		opacity: 0.4;
-		cursor: default;
-	}
-	.btn.wide {
-		width: 100%;
+	.save {
 		margin-top: 12px;
 	}
 
@@ -254,9 +225,9 @@
 	}
 	.quiet {
 		display: flex;
-		gap: 16px;
+		flex-wrap: wrap;
+		gap: 8px;
 		margin-top: 12px;
-		font-size: 13px;
 	}
 	.note {
 		margin: 12px 0 0;
