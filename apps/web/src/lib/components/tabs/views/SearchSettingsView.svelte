@@ -51,6 +51,12 @@
 
 	const showAccelerator = $derived(!!status?.accelerator && dismissed !== status.accelerator);
 
+	const changePercent = $derived.by(() => {
+		const c = status?.model_change;
+		if (!c || c.total === 0) return 0;
+		return Math.min(99, Math.floor((c.done / c.total) * 100));
+	});
+
 	function host(url: string): string {
 		try {
 			return new URL(url).host;
@@ -107,6 +113,12 @@
 			<dd>
 				{status.index_model ?? 'Nothing indexed yet'}
 				{#if status.index_dims}<span class="dim"> · {status.index_dims} dimensions</span>{/if}
+				{#if status.model_change}
+					<span class="note">
+						Moving to {status.model_change.model}: {changePercent}% of the index is rebuilt. Search
+						keeps using the current model until the rebuild finishes.
+					</span>
+				{/if}
 			</dd>
 
 			<dt>Status</dt>

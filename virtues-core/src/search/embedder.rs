@@ -84,10 +84,63 @@ const DEFAULT_URL: &str = "http://127.0.0.1:18181";
 /// `SIDECAR_STORED_DIM`, no per-board constant, no "Dragon does 256". A width is
 /// a property of a model, and the model is asked, not assumed.
 pub fn requested_embed_dim() -> Option<usize> {
-    std::env::var("VIRTUES_EMBED_DIMS")
-        .ok()
-        .and_then(|s| s.trim().parse::<usize>().ok())
-        .filter(|d| *d > 0)
+    EndpointConfig::current().dims
+}
+
+/// Everything that says which embedding server to use and how to talk to it.
+///
+/// Read through `box_env::var`, so a running server follows the box env file
+/// when it changes (a finished model change promotes the next endpoint there)
+/// instead of keeping the environment it started with.
+///
+/// Two of these can exist at once. `VIRTUES_EMBED_*` is the server search uses;
+/// `VIRTUES_EMBED_NEXT_*` is one the index is being rebuilt for in the
+/// background (`search::next_index`), which replaces it when the rebuild is done.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct EndpointConfig {
+    pub base_url: String,
+    /// Routing key sent as `model` (see `HttpEmbedder::model`).
+    pub model: String,
+    pub fingerprint: Option<String>,
+    pub query_prompt: String,
+    pub doc_prompt: String,
+    /// Truncate to this width (Matryoshka); `None` stores the native width.
+    pub dims: Option<usize>,
+}
+
+/// The settings an endpoint is made of, by suffix: `VIRTUES_EMBED_<suffix>` for
+/// the current one, `VIRTUES_EMBED_NEXT_<suffix>` for the next.
+pub(crate) const ENDPOINT_KEYS: [&str; 6] =
+    ["URL", "MODEL", "FINGERPRINT", "QUERY_PROMPT", "DOC_PROMPT", "DIMS"];
+
+impl EndpointConfig {
+    fn load(prefix: &str, default_url: Option<&str>) -> Option<Self> {
+        let get = |suffix: &str| crate::box_env::var(&format!("{prefix}_{suffix}"));
+        let base_url = get("URL").or_else(|| default_url.map(str::to_string))?;
+        Some(Self {
+            base_url: base_url.trim().trim_end_matches('/').to_string(),
+            model: get("MODEL").map(|s| s.trim().to_string()).unwrap_or_else(|| "default".to_string()),
+            fingerprint: get("FINGERPRINT").map(|s| s.trim().to_string()),
+            // Prefixes: a property of the model, so there is NO default. An unset
+            // var means no prefix — correct for symmetric models, and the only
+            // safe assumption about a model we have not been told about. Setting
+            // the wrong prefix is not a missed optimisation; it is noise prepended
+            // to every vector in the index.
+            query_prompt: get("QUERY_PROMPT").unwrap_or_default(),
+            doc_prompt: get("DOC_PROMPT").unwrap_or_default(),
+            dims: get("DIMS").and_then(|s| s.trim().parse::<usize>().ok()).filter(|d| *d > 0),
+        })
+    }
+
+    /// The server search uses. Without a URL, the sidecar's loopback default.
+    pub fn current() -> Self {
+        Self::load("VIRTUES_EMBED", Some(DEFAULT_URL)).expect("a default URL always loads")
+    }
+
+    /// The server the index is being rebuilt for, if a model change is under way.
+    pub fn next() -> Option<Self> {
+        Self::load("VIRTUES_EMBED_NEXT", None)
+    }
 }
 
 /// The width the index is CURRENTLY built at — read from the database, never
@@ -247,8 +300,9 @@ struct HttpEmbedder {
 }
 
 impl HttpEmbedder {
-    async fn new() -> Result<Self> {
-        let base_url = resolve_base_url();
+    async fn connect(cfg: EndpointConfig) -> Result<Self> {
+        let EndpointConfig { base_url, model, fingerprint: pinned, query_prompt, doc_prompt, dims } =
+            cfg;
         // reqwest is `rustls-tls-no-provider`; building any client (even for
         // loopback HTTP) panics "No provider set" unless the process default
         // provider was installed first. main.rs does it for the server, but
@@ -299,22 +353,6 @@ impl HttpEmbedder {
             );
         }
 
-        let pinned = std::env::var("VIRTUES_EMBED_FINGERPRINT")
-            .ok()
-            .filter(|s| !s.trim().is_empty());
-        let model = std::env::var("VIRTUES_EMBED_MODEL")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|| "default".to_string());
-        // Prefixes: a property of the model, so there is NO default. An unset var
-        // means no prefix — correct for symmetric models, and the only safe
-        // assumption about a model we have not been told about. Setting the wrong
-        // prefix is not a missed optimisation; it is noise prepended to every
-        // vector in the index.
-        let query_prompt = std::env::var("VIRTUES_EMBED_QUERY_PROMPT").unwrap_or_default();
-        let doc_prompt = std::env::var("VIRTUES_EMBED_DOC_PROMPT").unwrap_or_default();
-
         // What the endpoint is actually SERVING, as opposed to the routing key we
         // send it. Best-effort: if it will not say, record that it would not say.
         let served_model = probe_served_model(&client, &base_url)
@@ -349,7 +387,7 @@ impl HttpEmbedder {
         // Truncation is opt-in and must be honest: asking for a width WIDER than
         // the model emits is a configuration error, not something to paper over
         // with zero-padding.
-        let stored_dim = match requested_embed_dim() {
+        let stored_dim = match dims {
             Some(d) if d > native_dim => {
                 return Err(anyhow!(
                     "VIRTUES_EMBED_DIMS={d} but {served_model} emits only {native_dim} \
@@ -556,7 +594,12 @@ pub struct LocalEmbedder {
 
 impl LocalEmbedder {
     pub async fn new() -> Result<Self> {
-        let http = HttpEmbedder::new().await?;
+        Self::connect(EndpointConfig::current()).await
+    }
+
+    /// An embedder for a specific endpoint — the next one during a model change.
+    pub(crate) async fn connect(cfg: EndpointConfig) -> Result<Self> {
+        let http = HttpEmbedder::connect(cfg).await?;
         let stored_dim = http.stored_dim;
         Ok(Self { inner: Arc::new(http), stored_dim })
     }
@@ -616,12 +659,10 @@ impl Embedder for LocalEmbedder {
 // `validate_native_dim` lived here. It rejected any vector that wasn't 768-d,
 // with the message "check the sidecar's GGUF is EmbeddingGemma-300M" — a single
 // function that made "bring your own model" false. The width is now PROBED at
-// startup and checked against itself; see `HttpEmbedder::new`.
+// startup and checked against itself; see `HttpEmbedder::connect`.
 
 pub(crate) fn resolve_base_url() -> String {
-    std::env::var("VIRTUES_EMBED_URL")
-        .map(|s| s.trim_end_matches('/').to_string())
-        .unwrap_or_else(|_| DEFAULT_URL.to_string())
+    EndpointConfig::current().base_url
 }
 
 /// Probe the currently-configured embedding endpoint WITHOUT the boot-time
@@ -630,12 +671,8 @@ pub(crate) fn resolve_base_url() -> String {
 /// can't go through the normal constructor. Returns the freshly-computed
 /// fingerprint and the endpoint's native dims.
 pub async fn probe_current_endpoint() -> Result<(String, usize)> {
-    let model = std::env::var("VIRTUES_EMBED_MODEL")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "default".to_string());
-    let vecs = probe_vectors(&resolve_base_url(), &model).await?;
+    let cfg = EndpointConfig::current();
+    let vecs = probe_vectors(&cfg.base_url, &cfg.model).await?;
     let dims = vecs[0].len();
     Ok((fingerprint_vectors(&vecs), dims))
 }
@@ -710,5 +747,34 @@ pub async fn get_embedder() -> Result<Arc<LocalEmbedder>> {
     }
     *slot = Some((embedder.clone(), std::time::Instant::now()));
     Ok(embedder)
+}
+
+/// Drop the cached embedder, so the next caller builds one from the current
+/// configuration. A finished model change calls this the moment the new index
+/// is live.
+pub(crate) async fn invalidate_embedder() {
+    *EMBEDDER.lock().await = None;
+}
+
+/// The embedder, checked against the model the index was built with — what
+/// every search path needs before it embeds a query.
+///
+/// A mismatch can mean this process holds an embedder from before a model
+/// change finished (the cache lives five minutes), so it rebuilds once from the
+/// current configuration before giving up. A mismatch that survives the rebuild
+/// is a real one, and the error says what to do.
+pub async fn searchable_embedder(pool: &sqlx::PgPool) -> Result<Arc<LocalEmbedder>> {
+    let embedder = get_embedder().await?;
+    if matches_index(pool, &embedder).await.is_ok() {
+        return Ok(embedder);
+    }
+    invalidate_embedder().await;
+    let embedder = get_embedder().await?;
+    matches_index(pool, &embedder).await?;
+    Ok(embedder)
+}
+
+async fn matches_index(pool: &sqlx::PgPool, e: &LocalEmbedder) -> Result<()> {
+    super::indexer::check_index_geometry(pool, &e.model_id(), e.dimension() as i32).await
 }
 

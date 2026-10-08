@@ -184,15 +184,18 @@ fn install_file(path: &str, body: &str) -> Result<()> {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// Inference sidecars — llama-server hosting the embed + rerank GGUFs
+// Inference sidecar — llama-server hosting the embedding GGUF
 // ────────────────────────────────────────────────────────────────────────
 
-/// Embedding sidecar (:18181) and rerank sidecar (:18182): two llama-server
-/// units, one model each. The binary comes out of the release tarball
-/// (download.rs put it at `cfg.llama_binary_path()`); the GGUFs come from
-/// the pinned models release, SHA-verified. v0.1.0 ran Ollama here — it
-/// had no rerank endpoint, and its `curl | sh` installer + mutable model
-/// registry were the opposite of an appliance's pin-everything posture.
+/// The embedding sidecar (:18181): llama-server serving one model. The binary
+/// comes out of the release tarball (download.rs put it at
+/// `cfg.llama_binary_path()`); the GGUF comes from the pinned models release,
+/// SHA-verified.
+///
+/// No reranker: both small rerankers we shipped ranked results worse than
+/// search without them (see `search::query::rerank_gap_threshold` in core), so
+/// search doesn't call one unless the owner opts in with their own server.
+/// `virtues upgrade` retires the one older installs ran.
 pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
     let bin = cfg.llama_binary_path();
     if !bin.exists() {
@@ -202,14 +205,12 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
         ));
     }
 
-    // Fetch both GGUFs (skips any already on disk — they're SHA-verified
-    // at download time and immutable afterwards).
+    // Fetch the GGUF (skipped when already on disk — it's SHA-verified at
+    // download time and immutable afterwards).
     let models_dir = cfg.models_dir();
     fs::create_dir_all(&models_dir)
         .with_context(|| format!("creating {}", models_dir.display()))?;
-    for gguf in [&cfg.embed_gguf, &cfg.rerank_gguf] {
-        crate::download::fetch_model(cfg, gguf).await?;
-    }
+    crate::download::fetch_model(cfg, &cfg.embed_gguf).await?;
     // The sidecars run as `virtues` (created earlier in the flow); the
     // GGUFs only need to be readable, but keep ownership uniform.
     let mut cmd = Command::new("chown");
@@ -226,22 +227,17 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
         groups => format!("SupplementaryGroups={}\n", groups.join(" ")),
     };
 
-    // Write + (re)start one unit per model. restart rather than just
-    // enable --now so an installer re-run picks up unit/binary changes.
-    for (unit, template, gguf) in [
-        ("virtues-embed", EMBED_UNIT_TEMPLATE, &cfg.embed_gguf),
-        ("virtues-rerank", RERANK_UNIT_TEMPLATE, &cfg.rerank_gguf),
-    ] {
-        let body = template
-            .replace("__SUPP_GROUPS__", &supp_groups)
-            .replace("__BIN__", &bin.display().to_string())
-            .replace("__MODEL__", &models_dir.join(gguf).display().to_string());
-        fs::write(format!("/etc/systemd/system/{unit}.service"), body)
-            .with_context(|| format!("writing {unit}.service"))?;
-    }
-    systemctl(&["daemon-reload"], "Install inference sidecar units").await?;
-    systemctl(&["enable", "virtues-embed", "virtues-rerank"], "Enable inference sidecars").await?;
-    systemctl(&["restart", "virtues-embed", "virtues-rerank"], "Start inference sidecars").await
+    // Write + (re)start the unit. restart rather than just enable --now so an
+    // installer re-run picks up unit/binary changes.
+    let body = EMBED_UNIT_TEMPLATE
+        .replace("__SUPP_GROUPS__", &supp_groups)
+        .replace("__BIN__", &bin.display().to_string())
+        .replace("__MODEL__", &models_dir.join(&cfg.embed_gguf).display().to_string());
+    fs::write("/etc/systemd/system/virtues-embed.service", body)
+        .context("writing virtues-embed.service")?;
+    systemctl(&["daemon-reload"], "Install the inference sidecar unit").await?;
+    systemctl(&["enable", "virtues-embed"], "Enable the inference sidecar").await?;
+    systemctl(&["restart", "virtues-embed"], "Start the inference sidecar").await
 }
 
 /// libpdfium — native PDF text extraction for the `document_extraction`
@@ -528,24 +524,18 @@ async fn gpu_access_groups() -> Vec<&'static str> {
 /// (the GGUF is mmap'd read-only; PrivateTmp covers scratch).
 ///
 /// Flags:
-/// - **embed → `-ngl 0` (CPU), rerank → `-ngl 99` (GPU).** The two workloads
-///   want opposite hardware: EmbeddingGemma's activations can't run fp16, so
-///   fp16 GPU paths force fp32 and are *slower than CPU* (and CPU is fine
-///   for background embedding). gte-modernbert reranking is markedly faster
-///   on the Dragon image's GPU. `-ngl 99` is a no-op on a CPU-only build and
-///   needs the GPU `SupplementaryGroups=` below or backend init silently
-///   falls back to CPU.
-///   `--pooling mean` (EmbeddingGemma) / `--pooling rank` (cross-encoder).
-/// - `-c/-b/-ub 2048` right-sizes context. Both models do longer, but our
-///   chunks are ≤512 tok and rerank docs are capped at ~256, so 2048 is ample
-///   and 8K would just bloat KV + compute buffers (~0.5 GB) for unused reach.
+/// - **`-ngl 0` (CPU).** EmbeddingGemma's activations can't run fp16, so fp16
+///   GPU paths force fp32 and are *slower than CPU* (and CPU is fine for
+///   background embedding). `--pooling mean` is EmbeddingGemma's pooling.
+/// - `-c/-b/-ub 2048` right-sizes context. The model does longer, but our
+///   chunks are ≤512 tok, so 2048 is ample and 8K would just bloat KV +
+///   compute buffers (~0.5 GB) for unused reach.
 /// - `-np 1`: single-tenant box; 1 slot vs the auto-4 saves ~0.9 GB of
 ///   per-slot buffers (the bigger memory win). Concurrent requests queue,
 ///   which is fine here.
 /// - `--cache-ram 0`: disables the prompt cache (an up-to-8 GB reservation)
-///   — useless for embed/rerank where every input is unique.
-/// Together these cut each sidecar from ~2.5 GB RSS to ~1 GB, which is what
-/// leaves the Dragon's unified memory pool room for `-ngl 99` to fit.
+///   — useless for embedding, where every input is unique.
+/// Together these cut the sidecar from ~2.5 GB RSS to ~1 GB.
 /// `__SUPP_GROUPS__` is replaced at install time with a `SupplementaryGroups=`
 /// line for whatever GPU groups exist (see `gpu_access_groups`), or removed
 /// entirely on a CPU-only host — an undefined supplementary group would make
@@ -565,37 +555,6 @@ Type=simple
 User=virtues
 Group=virtues
 __SUPP_GROUPS__ExecStart=__BIN__ --embedding --pooling mean -m __MODEL__ --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0
-Restart=on-failure
-RestartSec=5
-
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
-ProtectKernelTunables=true
-ProtectControlGroups=true
-RestrictSUIDSGID=true
-LockPersonality=true
-SystemCallArchitectures=native
-CapabilityBoundingSet=
-
-[Install]
-WantedBy=multi-user.target
-"#;
-
-const RERANK_UNIT_TEMPLATE: &str = r#"[Unit]
-Description=Virtues rerank sidecar (llama-server, gte-reranker-modernbert-base)
-Documentation=https://virtues.com/docs
-After=network.target
-# See EMBED_UNIT_TEMPLATE / QNN_UNIT_TEMPLATE — cap the restart loop.
-StartLimitIntervalSec=300
-StartLimitBurst=5
-
-[Service]
-Type=simple
-User=virtues
-Group=virtues
-__SUPP_GROUPS__ExecStart=__BIN__ --rerank --pooling rank -m __MODEL__ --host 127.0.0.1 --port 18182 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 99
 Restart=on-failure
 RestartSec=5
 
@@ -1154,7 +1113,6 @@ fn inference_env_keys(
             let mut keys = vec![
                 ("VIRTUES_INFERENCE", "bundled".to_string()),
                 ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
-                ("VIRTUES_RERANK_URL", "http://127.0.0.1:18182".to_string()),
                 ("VIRTUES_EMBED_QUERY_PROMPT", quote_env_value(GEMMA_QUERY_PROMPT)),
                 ("VIRTUES_EMBED_DOC_PROMPT", quote_env_value(GEMMA_DOC_PROMPT)),
             ];
@@ -2344,13 +2302,13 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
             }
         }
     } else if let InferenceMode::Bundled = mode {
-        // Inference sidecars responding. /health returns 200 only once the
+        // The inference sidecar responding. /health returns 200 only once the
         // model is loaded, so this also catches a bad/missing GGUF. Model load
         // can take a few seconds after `systemctl start` — retry briefly.
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(3))
             .build()?;
-        for (port, unit) in [(18181u16, "virtues-embed"), (18182, "virtues-rerank")] {
+        for (port, unit) in [(18181u16, "virtues-embed")] {
             let url = format!("http://127.0.0.1:{port}/health");
             let mut up = false;
             for _ in 0..10 {
@@ -2370,15 +2328,13 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
             }
         }
 
-        // GGUFs on disk.
-        for gguf in [&cfg.embed_gguf, &cfg.rerank_gguf] {
-            let p = cfg.models_dir().join(gguf);
-            if p.is_file() {
-                ui::ok(&format!("Model present: {gguf}"));
-            } else {
-                ui::warn(&format!("Model missing: {} — re-run the installer", p.display()));
-                issues += 1;
-            }
+        // The GGUF on disk.
+        let p = cfg.models_dir().join(&cfg.embed_gguf);
+        if p.is_file() {
+            ui::ok(&format!("Model present: {}", cfg.embed_gguf));
+        } else {
+            ui::warn(&format!("Model missing: {} — re-run the installer", p.display()));
+            issues += 1;
         }
     } else {
         ui::skip("Manual inference — endpoints validated earlier, no local sidecars to probe");
@@ -2430,7 +2386,7 @@ pub fn write_install_manifest(
 ) -> Result<()> {
     let (profile, sidecars): (&str, Vec<&str>) = match mode {
         InferenceMode::Dragon => ("dragon", vec!["virtues-qnnd"]),
-        InferenceMode::Bundled => ("bundled", vec!["virtues-embed", "virtues-rerank"]),
+        InferenceMode::Bundled => ("bundled", vec!["virtues-embed"]),
         InferenceMode::Manual { .. } => ("manual", vec![]),
     };
 

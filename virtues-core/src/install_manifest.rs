@@ -159,21 +159,23 @@ pub fn appliance() -> bool {
     }
 }
 
-/// Inference sidecar units, for stop/start around an upgrade.
+/// Inference sidecar units installed right now, for stop/start around an
+/// upgrade and for uninstall.
 ///
-/// Falls back to probing the unit directory for boxes installed before the
-/// manifest carried them — the same fallback `cli::upgrade` had inline.
+/// The manifest says what the installer set up, but upgrades change it since:
+/// the reranker is retired on the recommended setup, and a search model change
+/// runs `virtues-embed-next` until it finishes (`cli::model_set`). So the list
+/// is the manifest's units plus that one, kept to those whose unit file exists.
+/// Boxes installed before the manifest carried them get the probe alone.
 pub fn sidecar_units() -> Vec<String> {
-    if let Some(m) = get().as_ref() {
-        if !m.sidecars.is_empty() {
-            return m.sidecars.clone();
-        }
-    }
-    ["virtues-embed", "virtues-rerank", "virtues-qnnd"]
-        .into_iter()
-        .filter(|u| Path::new(&format!("/etc/systemd/system/{u}.service")).exists())
-        .map(str::to_string)
-        .collect()
+    let probe = ["virtues-embed", "virtues-rerank", "virtues-qnnd"].map(str::to_string);
+    let mut units: Vec<String> = match get().as_ref() {
+        Some(m) if !m.sidecars.is_empty() => m.sidecars.clone(),
+        _ => probe.to_vec(),
+    };
+    units.push("virtues-embed-next".to_string());
+    units.retain(|u| Path::new(&format!("/etc/systemd/system/{u}.service")).exists());
+    units
 }
 
 #[cfg(test)]

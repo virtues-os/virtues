@@ -701,15 +701,16 @@ fn capture_after<'a>(haystack: &'a str, needle: &str) -> Option<&'a str> {
 
 // ─── Sidecar liveness ───────────────────────────────────────────────────────
 
-/// TCP-probe the two llama-server sidecars (embed :18181, rerank :18182). A
-/// successful connect within the timeout means the sidecar is listening.
+/// TCP-probe the inference sidecars (embed :18181, and rerank :18182 when
+/// search uses one). A successful connect within the timeout means the sidecar
+/// is listening.
 async fn collect_services() -> Vec<ServiceInfo> {
-    const PROBES: &[(&str, &str)] = &[
-        ("embedding", "127.0.0.1:18181"),
-        ("rerank", "127.0.0.1:18182"),
-    ];
-    let mut out = Vec::with_capacity(PROBES.len());
-    for (name, addr) in PROBES {
+    let mut probes = vec![("embedding", "127.0.0.1:18181")];
+    if crate::search::query::reranker_enabled() {
+        probes.push(("rerank", "127.0.0.1:18182"));
+    }
+    let mut out = Vec::with_capacity(probes.len());
+    for (name, addr) in &probes {
         let up = tokio::time::timeout(
             Duration::from_millis(250),
             tokio::net::TcpStream::connect(*addr),

@@ -56,7 +56,7 @@ pub async fn run() -> Result<()> {
         }
     }
 
-    // Port conflicts. These three are the ones a working Virtues install
+    // Port conflicts. These are the ones a working Virtues install
     // listens on; on a fresh box they should be free. If they're held,
     // either an old Virtues is still running (idempotent re-run, fine) or
     // an unrelated service is squatting on a port we need.
@@ -64,7 +64,6 @@ pub async fn run() -> Result<()> {
         (5432u16, "postgres"),
         (8000, "virtues"),
         (18181, "virtues-embed"),
-        (18182, "virtues-rerank"),
     ] {
         if port_in_use(port) {
             ui::warn(&format!("Port {port} ({name}) in use — re-run on existing install?"));

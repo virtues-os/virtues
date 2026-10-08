@@ -21,7 +21,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::bm25;
-use super::embedder::get_embedder;
 use super::reranker::get_reranker;
 
 /// A single semantic search result. `score` is always normalized to [0, 1]
@@ -154,6 +153,13 @@ fn truncate_for_rerank(text: &str) -> String {
     } else {
         text.chars().take(MAX_RERANK_CHARS).collect()
     }
+}
+
+/// Whether search calls a reranker at all. Off unless the owner opts in with
+/// `VIRTUES_RERANK_GAP`, so liveness checks (`virtues doctor`, system status)
+/// leave an absent reranker alone.
+pub fn reranker_enabled() -> bool {
+    rerank_gap_threshold() > 0.0
 }
 
 /// Conditional-rerank trigger: rerank only when the top-1/top-2 margin is a
@@ -438,13 +444,7 @@ impl SemanticSearchEngine {
         };
         let limit = opts.limit.unwrap_or(10).clamp(1, 50);
         let recall_limit = (limit * 2).clamp(10, 20); // per-variant
-        let embedder = get_embedder().await?;
-        super::indexer::check_index_geometry(
-            &self.pool,
-            &embedder.model_id(),
-            embedder.dimension() as i32,
-        )
-        .await?;
+        let embedder = super::embedder::searchable_embedder(&self.pool).await?;
 
         // One phrasing — plain path, no fan-out, candidates keep fused z-scores.
         if queries.len() == 1 {
