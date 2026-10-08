@@ -1,0 +1,13 @@
+[package]
+name = "yrs18-fixtures"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone: not a member of the repo's workspace.
+[workspace]
+
+[dependencies]
+yrs = "=0.18.8"
+yrs28 = { package = "yrs", version = "=0.28.0" }
+hex = "0.4"

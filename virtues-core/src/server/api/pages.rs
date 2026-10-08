@@ -8,7 +8,7 @@ use axum::{
     Json,
     Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::{api_response, error_response, success_message};
 use crate::server::AppState;
@@ -82,9 +82,31 @@ pub async fn list_pages_handler(
     api_response(crate::api::pages::list_pages(state.db.pool(), query.limit, query.offset).await)
 }
 
+/// A page, with the document contract it is written under.
+#[derive(Serialize)]
+struct PageWithContract {
+    #[serde(flatten)]
+    page: crate::api::pages::Page,
+    /// What the page's socket binds a client at (`YjsState::page_contract`):
+    /// the editor shows the copy of the page it kept only when it reads this
+    /// contract. Null when the page's document could not be read.
+    contract: Option<u32>,
+}
+
 /// GET /api/pages/:id - Get a single page
 pub async fn get_page_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    api_response(crate::api::pages::get_page(state.db.pool(), &id).await)
+    let page = match crate::api::pages::get_page(state.db.pool(), &id).await {
+        Ok(page) => page,
+        Err(e) => return error_response(e),
+    };
+    let contract = match state.yjs_state.page_contract(&id).await {
+        Ok(contract) => Some(contract),
+        Err(error) => {
+            tracing::warn!(page_id = %id, %error, "could not read the page's document contract");
+            None
+        }
+    };
+    Json(PageWithContract { page, contract }).into_response()
 }
 
 /// GET /api/records/:ontology/:record_id - fetch one raw life-graph record.

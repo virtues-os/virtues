@@ -15,22 +15,32 @@
 //! 2. Maintain yrs::Doc per page (cached in memory with TTL)
 //! 3. Debounced materialization to content column
 //! 4. Placeholder hooks for future embedding updates
+//! 5. The document contract (`crates/virtues-document`) on the socket: a
+//!    client says the contract it reads (`?contract=N`, 0 when absent) and is
+//!    bound only at or above the page's (`bind`); an update to a page written
+//!    as a Yjs tree is checked against the contract before it is applied or
+//!    relayed (`admit_update`), and a refused client is closed with a code
+//!    y-websocket does not reconnect on.
 
 use axum::{
     extract::{
-        ws::{Message, WebSocket},
-        Path, State, WebSocketUpgrade,
+        ws::{CloseFrame, Message, WebSocket},
+        Path, Query, State, WebSocketUpgrade,
     },
     response::Response,
 };
 use moka::sync::Cache;
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, watch, RwLock};
 use tokio::time::Instant;
-use yrs::{updates::decoder::Decode, updates::encoder::Encode, Doc, GetString, ReadTxn, StateVector, Text, Transact, Update, WriteTxn};
+use yrs::{
+    updates::decoder::Decode, updates::encoder::Encode, Doc, GetString, OffsetKind, Options, ReadTxn,
+    StateVector, Text, Transact, WriteTxn,
+};
 
 // y-websocket message types
 const MSG_SYNC: u8 = 0;
@@ -40,6 +50,15 @@ const MSG_AWARENESS: u8 = 1;
 const MSG_SYNC_STEP1: u8 = 0;
 const MSG_SYNC_STEP2: u8 = 1;
 const MSG_SYNC_UPDATE: u8 = 2;
+
+// Close codes. y-websocket stops reconnecting on any code from 4400 to 4499
+// (it reads them as HTTP 4xx: the server decided, and retrying cannot help),
+// so a refused client stays off instead of resending what was refused.
+/// The page is written under a newer contract than the client reads, or was
+/// raised past it while the client was bound (HTTP 426, Upgrade Required).
+const CLOSE_CONTRACT: u16 = 4426;
+/// The client sent an update outside the contract (HTTP 422).
+const CLOSE_REFUSED: u16 = 4422;
 
 /// Cached document state with broadcast channel for multi-client sync
 pub struct PageDoc {
@@ -56,11 +75,20 @@ pub struct PageDoc {
     /// The largest `changes` count a state saved to the database included.
     /// Below `changes`, the doc holds edits the database does not have yet.
     saved: u64,
+    /// The document contract version the doc is written under: the stamp in
+    /// its `meta` (`virtues_document::stamped_version`), or 0 for a page that
+    /// is markdown in a Y.Text. Read from the stamp when the doc is built:
+    /// only the server writes `meta`, since `admit_update` refuses a
+    /// client's update that writes it, on a page of either kind. Kept here,
+    /// not read from the doc on each use, so every socket bound to the doc
+    /// watches the one value `raise_contract` moves.
+    contract: watch::Sender<u32>,
 }
 
 impl PageDoc {
     fn new(doc: Doc, built_at: chrono::DateTime<chrono::Utc>) -> Self {
         let (broadcast_tx, _) = broadcast::channel(256);
+        let stamped = virtues_document::stamped_version(&doc.transact()).unwrap_or(0);
         Self {
             doc,
             broadcast_tx,
@@ -68,7 +96,48 @@ impl PageDoc {
             built_at,
             changes: 0,
             saved: 0,
+            contract: watch::Sender::new(stamped),
         }
+    }
+
+    /// The contract version the doc is written under; 0 for a markdown page.
+    pub fn contract(&self) -> u32 {
+        *self.contract.borrow()
+    }
+
+    /// Stamp this server's contract version into the doc, when the doc is
+    /// below it, and tell every socket bound to it: one bound below the new
+    /// version closes, since its client deletes what its schema cannot read.
+    /// The stamp goes to the other clients like any edit. Returns the change
+    /// count of the stamped state, for the save, or `None` when the doc was
+    /// already at the version.
+    fn raise_contract(&mut self) -> Option<u64> {
+        let version = virtues_document::contract().version;
+        if self.contract() >= version {
+            return None;
+        }
+        let before = self.doc.transact().state_vector();
+        virtues_document::stamp_version(virtues_document::contract(), &mut self.doc.transact_mut());
+        let update = self.doc.transact().encode_diff_v1(&before);
+        self.contract.send_replace(version);
+        let _ = self.broadcast_tx.send(encode_sync_update(&update));
+        Some(self.record_change())
+    }
+
+    /// Repair what a merge of clients' edits left outside the contract
+    /// (`virtues_document::repair`: an emptied list, a block id used twice),
+    /// in a transaction of the server's own that is relayed like any edit.
+    /// Returns whether it changed the doc.
+    fn repair(&mut self) -> bool {
+        let update = {
+            let mut txn = self.doc.transact_mut();
+            if virtues_document::repair(&mut txn) == 0 {
+                return false;
+            }
+            txn.encode_update_v1()
+        };
+        let _ = self.broadcast_tx.send(encode_sync_update(&update));
+        true
     }
 
     /// Count a change just applied, and return the count the doc's state now
@@ -91,11 +160,8 @@ impl PageDoc {
     fn written(&self) -> Written {
         let txn = self.doc.transact();
         Written {
-            text: txn
-                .get_text("content")
-                .map(|t| t.get_string(&txn))
-                .unwrap_or_default(),
-            state: txn.encode_state_as_update_v1(&StateVector::default()),
+            text: content_of(&txn),
+            state: virtues_document::encode_state(&txn, &StateVector::default()),
         }
     }
 }
@@ -295,20 +361,7 @@ impl DocCache {
         };
 
         let doc = match yjs_state {
-            Some(state) => {
-                let doc = Doc::new();
-                // Apply existing Yjs state (catch_unwind: yrs can panic on corrupt data)
-                if let Ok(update) = Update::decode_v1(&state) {
-                    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        let mut txn = doc.transact_mut();
-                        txn.apply_update(update);
-                    }));
-                    if result.is_err() {
-                        tracing::error!("yrs panic in get_or_create for page {}, starting with empty doc", page_id);
-                    }
-                }
-                doc
-            }
+            Some(state) => doc_from_state(page_id, &state),
             // No Yjs state yet: the page's markdown is the doc's text.
             None => doc_from_text(&content),
         };
@@ -345,10 +398,96 @@ impl Default for DocCache {
     }
 }
 
+/// A new, empty doc. Every doc the server builds comes from here.
+///
+/// Text offsets count UTF-8 bytes (`OffsetKind::Bytes`), because every
+/// offset the server hands to a `content` text is measured on a Rust `str`:
+/// `str::find` and `str::len` in `apply_text_edit`, `text_ops` for the
+/// diffing writes. Counted in any other unit, an edit after a non-ASCII
+/// character would land in the wrong place. Set here rather than left to
+/// yrs's default so the unit is stated where it is relied on.
+///
+/// Browser editors count UTF-16 code units in their own docs. The unit is a
+/// property of each replica's API, not of the updates they exchange, so the
+/// two never need to agree.
+///
+/// The client id is 32 bits (`virtues_document::client_id`, which says why).
+pub(crate) fn new_doc() -> Doc {
+    Doc::with_options(Options {
+        client_id: virtues_document::client_id(),
+        offset_kind: OffsetKind::Bytes,
+        ..Options::default()
+    })
+}
+
+/// Why a v1 update did not apply to a doc (`apply_v1`).
+#[derive(Debug)]
+pub(crate) enum ApplyError {
+    /// The bytes are not a v1 update. The doc is untouched.
+    Decode(String),
+    /// yrs refused the update, or panicked applying it. The doc holds
+    /// whatever applied before the failure.
+    Apply(String),
+}
+
+impl std::fmt::Display for ApplyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Decode(e) => write!(f, "not a v1 update: {e}"),
+            Self::Apply(e) => f.write_str(e),
+        }
+    }
+}
+
+/// Decode a v1 update and apply it to `doc` in one transaction. Returns
+/// whether that transaction deleted anything: only what this update
+/// deleted, not text it deletes again.
+///
+/// Decoded through `virtues_document::decode_update`, which refuses values
+/// nested deep enough to overflow the stack while yrs decodes them: that
+/// would abort the process, where `catch_unwind` catches only a panic.
+/// yrs returns an error for some malformed updates and still panics on
+/// others; both come back as `ApplyError::Apply`.
+fn apply_v1(doc: &Doc, bytes: &[u8]) -> Result<bool, ApplyError> {
+    let update = virtues_document::decode_update(bytes)
+        .map_err(|e| ApplyError::Decode(e.to_string()))?;
+    let applied = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let mut txn = doc.transact_mut();
+        txn.apply_update(update)?;
+        Ok::<_, yrs::error::UpdateError>(!txn.delete_set().is_empty())
+    }));
+    match applied {
+        Ok(Ok(deleted)) => Ok(deleted),
+        Ok(Err(e)) => Err(ApplyError::Apply(e.to_string())),
+        Err(_) => Err(ApplyError::Apply("yrs panicked applying the update".into())),
+    }
+}
+
+/// The doc's `content` text as `txn` sees it, or empty when it has none.
+fn content_of<T: ReadTxn>(txn: &T) -> String {
+    txn.get_text("content")
+        .map(|t| t.get_string(txn))
+        .unwrap_or_default()
+}
+
+/// A page's doc from its saved state (`app_pages.yjs_state`). A state that
+/// does not load is logged, and the doc holds what applied of it.
+fn doc_from_state(page_id: &str, state: &[u8]) -> Doc {
+    let doc = new_doc();
+    if let Err(error) = apply_v1(&doc, state) {
+        tracing::error!(
+            page_id,
+            %error,
+            "the page's saved state did not load; its doc holds what applied before the failure"
+        );
+    }
+    doc
+}
+
 /// A doc whose text is `text`: what a page with no saved CRDT state is
 /// loaded as. The one way to build a page's doc from its markdown.
 fn doc_from_text(text: &str) -> Doc {
-    let doc = Doc::new();
+    let doc = new_doc();
     {
         let mut txn = doc.transact_mut();
         let content = txn.get_or_insert_text("content");
@@ -584,35 +723,33 @@ impl Default for SaveQueue {
 /// that says something new has a higher change count than the states before
 /// it, which is what lets the save queue keep the newest (`queue_save`).
 fn apply_yjs_update(doc: &mut PageDoc, data: &[u8]) -> Option<(Vec<u8>, bool, u64)> {
-    if let Ok(update) = Update::decode_v1(data) {
-        let sv_before = doc.doc.transact().state_vector();
-        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            let mut txn = doc.doc.transact_mut();
-            txn.apply_update(update);
-            // Only what this update deleted; text it deletes again is not here.
-            !txn.delete_set().is_empty()
-        }));
-        let Ok(deleted) = result else {
-            tracing::error!("yrs panic in apply_yjs_update, dropping update");
+    let sv_before = doc.doc.transact().state_vector();
+    let deleted = match apply_v1(&doc.doc, data) {
+        Ok(deleted) => deleted,
+        Err(ApplyError::Decode(_)) => return None,
+        Err(ApplyError::Apply(error)) => {
+            tracing::error!(%error, "an editor's update did not apply; dropping it");
             return None;
-        };
-        doc.last_update = Instant::now();
+        }
+    };
+    doc.last_update = Instant::now();
 
-        // Broadcast to other clients (wrapped as y-websocket update message)
-        let broadcast_msg = encode_sync_update(data);
-        let _ = doc.broadcast_tx.send(broadcast_msg);
+    // Broadcast to other clients (wrapped as y-websocket update message)
+    let broadcast_msg = encode_sync_update(data);
+    let _ = doc.broadcast_tx.send(broadcast_msg);
 
-        // Get current state for debounced save
-        let (state, changed) = {
-            let txn = doc.doc.transact();
-            let changed = deleted || txn.state_vector() != sv_before;
-            (txn.encode_state_as_update_v1(&yrs::StateVector::default()), changed)
-        };
-        let generation = if changed { doc.record_change() } else { doc.changes };
-        Some((state, changed, generation))
-    } else {
-        None
-    }
+    // Edits each inside the contract can merge into a tree page that is
+    // not (`admit_update` takes them); the server puts it right at once.
+    let repaired = doc.contract() > 0 && doc.repair();
+
+    // Get current state for debounced save
+    let (state, changed) = {
+        let txn = doc.doc.transact();
+        let changed = deleted || repaired || txn.state_vector() != sv_before;
+        (virtues_document::encode_state(&txn, &StateVector::default()), changed)
+    };
+    let generation = if changed { doc.record_change() } else { doc.changes };
+    Some((state, changed, generation))
 }
 
 /// A doc update arriving over the WebSocket is, by definition, a human edit —
@@ -647,7 +784,6 @@ async fn note_human_edit(pool: &PgPool, page_id: &str) {
 // lib0 VarInt Encoding (used by y-websocket protocol)
 // ============================================================================
 
-/// Write a variable-length unsigned integer (lib0 format)
 /// Insert a markdown block at the END of a doc's `content` text.
 ///
 /// Separated from the async append path so the block-separation rules and the
@@ -673,6 +809,7 @@ fn append_block_to_doc(doc: &Doc, markdown: &str) {
     // txn commits on drop
 }
 
+/// Write a variable-length unsigned integer (lib0 format)
 fn write_var_uint(buf: &mut Vec<u8>, mut value: usize) {
     while value > 0x7f {
         buf.push((value as u8) | 0x80);
@@ -776,25 +913,25 @@ fn extract_sync_payload(data: &[u8]) -> Option<&[u8]> {
     Some(payload)
 }
 
-/// Extract text content from Yjs state bytes (Y.Text)
-pub fn extract_text_content(yjs_state: &[u8]) -> String {
-    let doc = Doc::new();
-    if let Ok(update) = Update::decode_v1(yjs_state) {
-        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            let mut txn = doc.transact_mut();
-            txn.apply_update(update);
-        }));
-        if result.is_err() {
-            tracing::error!("yrs panic in extract_text_content, returning empty string");
-            return String::new();
-        }
-    }
+/// The `content` text of a saved doc state (`app_pages.yjs_state`,
+/// `app_page_versions.yjs_snapshot`), or why it could not be read.
+pub(crate) fn text_of_state(yjs_state: &[u8]) -> Result<String, ApplyError> {
+    let doc = new_doc();
+    apply_v1(&doc, yjs_state)?;
+    let text = content_of(&doc.transact());
+    Ok(text)
+}
 
-    let txn = doc.transact();
-    if let Some(text) = txn.get_text("content") {
-        text.get_string(&txn)
-    } else {
-        String::new()
+/// The `content` text of a saved doc state. Empty when the bytes are not a
+/// state or the state does not apply.
+pub fn extract_text_content(yjs_state: &[u8]) -> String {
+    match text_of_state(yjs_state) {
+        Ok(text) => text,
+        Err(ApplyError::Decode(_)) => String::new(),
+        Err(ApplyError::Apply(error)) => {
+            tracing::error!(%error, "a saved page state did not apply; reading it as empty");
+            String::new()
+        }
     }
 }
 
@@ -874,9 +1011,9 @@ enum Granularity {
 /// The edits that turn `old` into `new`, as (byte offset into `old`, bytes
 /// to delete, text to insert), in ascending offset order.
 ///
-/// Offsets are BYTES because yrs 0.18 is `OffsetKind::Bytes`. Applied
-/// last-first, every edit lands at an offset that nothing before it in the
-/// text has moved.
+/// Offsets are BYTES, the unit every server doc counts in (`new_doc`).
+/// Applied last-first, every edit lands at an offset that nothing before it
+/// in the text has moved.
 fn text_ops(old: &str, new: &str, granularity: Granularity) -> Vec<(u32, u32, String)> {
     use similar::{ChangeTag, TextDiff};
 
@@ -1002,6 +1139,36 @@ impl YjsState {
         }
     }
 
+    /// The document contract the page is written under, as its socket binds
+    /// it (`PageDoc::contract`): 0 for a markdown page. The editor reads it
+    /// before it shows the copy of the page it kept on the device, which may
+    /// be from before the page was raised.
+    pub async fn page_contract(&self, page_id: &str) -> anyhow::Result<u32> {
+        let page_doc = self.doc_cache.get_or_create(page_id, &self.pool).await?;
+        let contract = page_doc.read().await.contract();
+        Ok(contract)
+    }
+
+    /// Raise the page's document to this server's contract version
+    /// (`PageDoc::raise_contract`): stamped, saved at once, and every socket
+    /// bound below the new version closed. Nothing happens when the page is
+    /// already at it.
+    pub async fn raise_contract(&self, page_id: &str) -> Result<(), TextWriteError> {
+        let page_doc = self
+            .doc_cache
+            .get_or_create(page_id, &self.pool)
+            .await
+            .map_err(|e| TextWriteError::Other(format!("Failed to get page document: {e}")))?;
+        let raised = {
+            let mut doc = page_doc.write().await;
+            doc.raise_contract().map(|generation| (doc.written(), generation))
+        };
+        if let Some((written, generation)) = raised {
+            self.persist_now(page_id, &page_doc, written, generation).await?;
+        }
+        Ok(())
+    }
+
     /// Save a machine edit now, ignoring the debounce, and hand back what was
     /// written: as `Ok`, or inside `NotSaved` when the save failed.
     ///
@@ -1093,7 +1260,7 @@ impl YjsState {
                     let current = text.get_string(&txn);
 
                     if let Some(byte_offset) = current.find(find) {
-                        // yrs 0.18 defaults to OffsetKind::Bytes
+                        // Bytes, the unit the doc counts in (`new_doc`).
                         let start = byte_offset as u32;
                         let len = find.len() as u32;
 
@@ -1135,11 +1302,8 @@ impl YjsState {
             .await
             .map_err(|e| format!("Failed to get page document: {e}"))?;
         let doc = page_doc.read().await;
-        let txn = doc.doc.transact();
-        Ok(txn
-            .get_text("content")
-            .map(|t| t.get_string(&txn))
-            .unwrap_or_default())
+        let text = content_of(&doc.doc.transact());
+        Ok(text)
     }
 
     /// The page's markdown and the doc's full state, read under one lock so
@@ -1290,27 +1454,102 @@ impl YjsState {
             .map_err(|e| format!("Failed to get page document: {}", e))?;
 
         let doc = page_doc.read().await;
-        let txn = doc.doc.transact();
+        let text = content_of(&doc.doc.transact());
+        Ok(text)
+    }
+}
 
-        if let Some(text) = txn.get_text("content") {
-            Ok(text.get_string(&txn))
-        } else {
-            Ok(String::new())
-        }
+/// How a socket is bound to a page's doc, from the client's contract version
+/// (`?contract=N`; a client that sends none is 0, which is every client that
+/// binds a page's Y.Text) and the document's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Binding {
+    /// The client reads everything the doc can hold, and the server can check
+    /// everything the client writes.
+    ReadWrite,
+    /// The client is newer than this server: it reads the doc, but what it
+    /// writes could hold what this server cannot check, so it is not applied.
+    ReadOnly,
+}
+
+/// Bind a client at `client` to a doc at `document`, or why not. A client
+/// below the document's version is refused, because Tiptap's binding deletes
+/// from the shared document every node its schema cannot read
+/// (`apps/web/src/lib/document/skew.test.ts`).
+fn bind(client: u32, document: u32) -> Result<Binding, String> {
+    if client < document {
+        return Err(format!(
+            "this page needs a newer version of the app (contract {document}; the app reads {client})"
+        ));
+    }
+    if client > virtues_document::contract().version {
+        return Ok(Binding::ReadOnly);
+    }
+    Ok(Binding::ReadWrite)
+}
+
+/// The client's contract version from the socket's query (`?contract=N`).
+/// Absent or unreadable is 0: the oldest client, refused by every tree page.
+fn client_contract(params: &HashMap<String, String>) -> u32 {
+    params
+        .get("contract")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Whether an update from a client may be applied to `doc`, and if not, why.
+/// A tree page's update is checked against the contract on a copy of the doc
+/// first (`virtues_document::check_update`): once applied it would be
+/// broadcast, and a stale peer would act on it before any later check.
+///
+/// A markdown page (contract 0) has no contract to check its text against,
+/// but its `meta` is the server's all the same: the stamp there decides the
+/// page's contract when it is next loaded (`PageDoc::new`), so a client that
+/// wrote one would shut every other client out. An update that does not
+/// decode or apply is left to `apply_yjs_update`, which drops it, as it
+/// always has on a markdown page.
+fn admit_update(doc: &PageDoc, update: &[u8]) -> Result<(), String> {
+    if doc.contract() == 0 {
+        // The check only reads the doc, so a panic inside it leaves nothing
+        // half done.
+        let writes = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            virtues_document::changes_meta(&doc.doc, update)
+        }));
+        return match writes {
+            Ok(Ok(true)) => Err("the update writes `meta`, which only the server writes".into()),
+            _ => Ok(()),
+        };
+    }
+    let problems = virtues_document::check_update(&doc.doc, update)
+        .map_err(|e| format!("the update does not apply: {e}"))?;
+    match problems.first() {
+        None => Ok(()),
+        Some(first) => Err(format!(
+            "the update is outside the document contract: {} ({}){}",
+            first.message,
+            first.at,
+            match problems.len() {
+                1 => String::new(),
+                n => format!(", and {} more", n - 1),
+            }
+        )),
     }
 }
 
 /// Apply an editor's update to the page's doc, record the human edit, and
-/// queue the save.
+/// queue the save. An update a tree page's contract refuses is not applied
+/// or relayed, and comes back as the reason, for the socket to close on.
 async fn take_client_update(
     state: &YjsState,
     page_id: &str,
     page_doc: &Arc<RwLock<PageDoc>>,
     update: &[u8],
-) {
+) -> Result<(), String> {
     let mut doc = page_doc.write().await;
+    // Checked under the same lock it is applied under: nothing lands between.
+    admit_update(&doc, update)?;
     let Some((full_state, changed, generation)) = apply_yjs_update(&mut doc, update) else {
-        return;
+        return Ok(());
     };
     drop(doc);
     // Every changing update, not once per cached doc.
@@ -1326,20 +1565,43 @@ async fn take_client_update(
         .save_queue
         .queue_save(page_id.to_string(), page_doc, full_state, generation)
         .await;
+    Ok(())
 }
 
-/// WebSocket upgrade handler for Yjs sync
+/// Close a socket with a code and a reason. A close frame's reason holds at
+/// most 123 bytes.
+async fn close_with(socket: &mut WebSocket, code: u16, reason: &str) {
+    let mut end = reason.len().min(123);
+    while !reason.is_char_boundary(end) {
+        end -= 1;
+    }
+    let frame = CloseFrame {
+        code,
+        reason: reason[..end].to_string().into(),
+    };
+    let _ = socket.send(Message::Close(Some(frame))).await;
+}
+
+/// WebSocket upgrade handler for Yjs sync. The client says which document
+/// contract it reads as `?contract=N` (`apps/web/src/lib/yjs/document.ts`).
 pub async fn yjs_websocket_handler(
     ws: WebSocketUpgrade,
     Path(page_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
     State(state): State<YjsState>,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_yjs_connection(socket, page_id, state))
+    let contract = client_contract(&params);
+    ws.on_upgrade(move |socket| handle_yjs_connection(socket, page_id, contract, state))
 }
 
 /// Handle a single WebSocket connection for Yjs sync
 /// Implements the y-websocket protocol
-async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: YjsState) {
+async fn handle_yjs_connection(
+    mut socket: WebSocket,
+    page_id: String,
+    client: u32,
+    state: YjsState,
+) {
     tracing::debug!("WebSocket connection opened for page {}", page_id);
 
     // Get or create the document
@@ -1352,10 +1614,20 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
         }
     };
 
-    // Subscribe to broadcasts from other clients
-    let mut broadcast_rx = {
+    // Subscribe to broadcasts from other clients, and to the doc's contract,
+    // both before binding: a raise between the two is still seen.
+    let (mut broadcast_rx, mut contract_rx) = {
         let doc = page_doc.read().await;
-        doc.broadcast_tx.subscribe()
+        (doc.broadcast_tx.subscribe(), doc.contract.subscribe())
+    };
+    let document = *contract_rx.borrow_and_update();
+    let binding = match bind(client, document) {
+        Ok(binding) => binding,
+        Err(reason) => {
+            tracing::info!(page_id, client, %reason, "refusing a client below the page's contract");
+            close_with(&mut socket, CLOSE_CONTRACT, &reason).await;
+            return;
+        }
     };
 
     loop {
@@ -1405,7 +1677,7 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                                             };
                                             
                                             // Encode updates the client is missing
-                                            let update = txn.encode_state_as_update_v1(&client_sv);
+                                            let update = virtues_document::encode_state(&txn, &client_sv);
                                             encode_sync_step2(&update)
                                         };
                                         
@@ -1435,7 +1707,10 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                                                 continue;
                                             }
                                         };
-                                        take_client_update(&state, &page_id, &page_doc, update_bytes).await;
+                                        if let Err(reason) = take_update(binding, &state, &page_id, &page_doc, update_bytes).await {
+                                            close_with(&mut socket, CLOSE_REFUSED, &reason).await;
+                                            break;
+                                        }
                                     }
                                     MSG_SYNC_UPDATE => {
                                         // Client is sending an incremental update
@@ -1447,7 +1722,10 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                                                 continue;
                                             }
                                         };
-                                        take_client_update(&state, &page_id, &page_doc, update_bytes).await;
+                                        if let Err(reason) = take_update(binding, &state, &page_id, &page_doc, update_bytes).await {
+                                            close_with(&mut socket, CLOSE_REFUSED, &reason).await;
+                                            break;
+                                        }
                                     }
                                     _ => {
                                         tracing::warn!("Unknown sync type: {}", sync_type);
@@ -1476,6 +1754,15 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                     break;
                 }
             }
+            // The server raised the doc's contract.
+            Ok(()) = contract_rx.changed() => {
+                let document = *contract_rx.borrow_and_update();
+                if let Err(reason) = bind(client, document) {
+                    tracing::info!(page_id, client, document, "closing a client below the page's raised contract");
+                    close_with(&mut socket, CLOSE_CONTRACT, &reason).await;
+                    break;
+                }
+            }
             else => break,
         }
     }
@@ -1483,11 +1770,35 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
     tracing::debug!("WebSocket connection closed for page {}", page_id);
 }
 
+/// A client's update, as its binding allows: a read-only client's is not
+/// applied. Refused comes back as the reason.
+async fn take_update(
+    binding: Binding,
+    state: &YjsState,
+    page_id: &str,
+    page_doc: &Arc<RwLock<PageDoc>>,
+    update: &[u8],
+) -> Result<(), String> {
+    match binding {
+        Binding::ReadWrite => {
+            let taken = take_client_update(state, page_id, page_doc, update).await;
+            if let Err(reason) = &taken {
+                tracing::warn!(page_id, %reason, "refused an editor's update");
+            }
+            taken
+        }
+        Binding::ReadOnly => {
+            tracing::debug!(page_id, "dropped an update from a client newer than this server");
+            Ok(())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::pages;
-    use yrs::{Doc, Transact};
+    use yrs::Update;
 
     /// Helper: create a Y.Text doc with markdown content
     fn setup_doc(content: &str) -> Doc {
@@ -1496,8 +1807,7 @@ mod tests {
 
     /// Helper: read Y.Text content from a doc
     fn read_content(doc: &Doc) -> String {
-        let txn = doc.transact();
-        txn.get_text("content").unwrap().get_string(&txn)
+        content_of(&doc.transact())
     }
 
     // ── the claim signal: only a CHANGING update counts as an edit ──────────
@@ -1519,11 +1829,11 @@ mod tests {
         let mut page = page_doc(server);
 
         // A second client that has synced the same state.
-        let client = Doc::new();
+        let client = new_doc();
         {
             let state = page.doc.transact().encode_state_as_update_v1(&yrs::StateVector::default());
             let mut txn = client.transact_mut();
-            txn.apply_update(Update::decode_v1(&state).unwrap());
+            txn.apply_update(Update::decode_v1(&state).unwrap()).unwrap();
         }
 
         // Replaying the shared state back at the server: applies, changes nothing.
@@ -1554,11 +1864,11 @@ mod tests {
     #[test]
     fn a_deletion_alone_is_a_change() {
         let mut page = page_doc(setup_doc("Keep this. Cut this."));
-        let client = Doc::new();
+        let client = new_doc();
         {
             let state = page.doc.transact().encode_state_as_update_v1(&yrs::StateVector::default());
             let mut txn = client.transact_mut();
-            txn.apply_update(Update::decode_v1(&state).unwrap());
+            txn.apply_update(Update::decode_v1(&state).unwrap()).unwrap();
         }
         let sv = client.transact().state_vector();
         {
@@ -1623,12 +1933,12 @@ mod tests {
         let server = setup_doc("Existing note.");
 
         // An editor connects and syncs the current state.
-        let client = Doc::new();
+        let client = new_doc();
         {
             let sv = client.transact().state_vector();
             let update = server.transact().encode_state_as_update_v1(&sv);
             let mut txn = client.transact_mut();
-            txn.apply_update(Update::decode_v1(&update).unwrap());
+            txn.apply_update(Update::decode_v1(&update).unwrap()).unwrap();
         }
         assert_eq!(read_content(&client), "Existing note.");
 
@@ -1646,13 +1956,13 @@ mod tests {
             let sv = client.transact().state_vector();
             let update = server.transact().encode_state_as_update_v1(&sv);
             let mut txn = client.transact_mut();
-            txn.apply_update(Update::decode_v1(&update).unwrap());
+            txn.apply_update(Update::decode_v1(&update).unwrap()).unwrap();
         }
         {
             let sv = server.transact().state_vector();
             let update = client.transact().encode_state_as_update_v1(&sv);
             let mut txn = server.transact_mut();
-            txn.apply_update(Update::decode_v1(&update).unwrap());
+            txn.apply_update(Update::decode_v1(&update).unwrap()).unwrap();
         }
 
         let merged = read_content(&server);
@@ -1800,6 +2110,9 @@ mod tests {
                 "## Abstract\nA long day.\n\n## Morning\nCoffee 🌍 first, then the train.\n\n## Evening\nHome.\n",
             ),
             ("one\ntwo\nthree\n", "three\ntwo\none"),
+            (MIXED, MIXED_REVISED),
+            ("\u{1F44B}\u{1F3FD}", "\u{1F44B}\u{1F3FF}"),
+            ("東京の朝", "東京の朝、大阪の夜"),
         ];
         for (old, new) in cases {
             for g in [Granularity::Words, Granularity::Lines] {
@@ -1857,8 +2170,7 @@ mod tests {
     }
 
     fn held_text(doc: &PageDoc) -> String {
-        let txn = doc.doc.transact();
-        txn.get_text("content").unwrap().get_string(&txn)
+        content_of(&doc.doc.transact())
     }
 
     /// An open editor's socket takes its doc once and holds it. When moka
@@ -1962,11 +2274,11 @@ mod tests {
 
     /// What an open editor sends after its owner types `typed` at the end.
     async fn typed_in_an_editor(doc: &Arc<RwLock<PageDoc>>, typed: &str) -> Vec<u8> {
-        let client = Doc::new();
+        let client = new_doc();
         {
             let state = doc.read().await.written().state;
             let mut txn = client.transact_mut();
-            txn.apply_update(Update::decode_v1(&state).unwrap());
+            txn.apply_update(Update::decode_v1(&state).unwrap()).unwrap();
         }
         let sv = client.transact().state_vector();
         {
@@ -2016,7 +2328,7 @@ mod tests {
         let editor = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
 
         let typed = typed_in_an_editor(&editor, "More.\n").await;
-        take_client_update(&yjs, &page_id, &editor, &typed).await;
+        take_client_update(&yjs, &page_id, &editor, &typed).await.unwrap();
 
         let edit = yjs
             .apply_text_edit(&page_id, "Your line.", "Your own line.")
@@ -2087,12 +2399,12 @@ mod tests {
         // Opening the page: the client answers with an update that changes
         // nothing, and the socket queues the state anyway.
         let nothing = editor.read().await.written().state;
-        take_client_update(&yjs, &page_id, &editor, &nothing).await;
+        take_client_update(&yjs, &page_id, &editor, &nothing).await.unwrap();
         let other = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
         assert!(Arc::ptr_eq(&editor, &other), "an open page is not a rewrite");
 
         let typed = typed_in_an_editor(&editor, "Your line.\n").await;
-        take_client_update(&yjs, &page_id, &editor, &typed).await;
+        take_client_update(&yjs, &page_id, &editor, &typed).await.unwrap();
         assert_eq!(yjs.read_text(&page_id).await.unwrap(), "Old prose.\nYour line.\n");
         let other = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
         assert!(Arc::ptr_eq(&editor, &other), "nor is typing that has not saved yet");
@@ -2264,5 +2576,807 @@ mod tests {
         allow_page_saves(&pool).await;
         run_the_save_loop(&yjs).await;
         assert_eq!(stored(&pool, &page_id).await.0, "The draft.\n");
+    }
+
+    // ── offsets: server writes count bytes, through non-ASCII text ──────────
+
+    /// Characters of two, three and four bytes, an emoji with a skin tone
+    /// (two chars, one glyph) and ZWJ sequences (several chars joined by
+    /// U+200D): the family, the rainbow flag.
+    const MIXED: &str = "Café crème at São Paulo.\n東京の朝は静かだ。\n\
+        Wave \u{1F44B}\u{1F3FD} then \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466} \
+        and \u{1F3F3}\u{FE0F}\u{200D}\u{1F308} end.\n";
+
+    /// `MIXED` revised word by word on every line, around and inside the
+    /// multi-byte runs.
+    const MIXED_REVISED: &str = "Café crème brûlée at São Paulo, with Zoë.\n東京の朝は静かだ。 大阪も。\n\
+        Wave \u{1F44B}\u{1F3FF} then \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F466} \
+        and \u{1F3F3}\u{FE0F}\u{200D}\u{1F308} end, \u{1F9D1}\u{1F3FD}\u{200D}\u{1F4BB}.\n";
+
+    /// Every doc the server writes into writes under a 32-bit client id, so
+    /// a box rolled back to yrs 0.18 reads its edits as the right writer's.
+    #[test]
+    fn every_server_doc_writes_under_a_32_bit_client_id() {
+        let docs = [
+            new_doc(),
+            doc_from_text(MIXED),
+            doc_from_state("p", &state_from_text(MIXED)),
+        ];
+        for doc in docs {
+            assert!(doc.client_id().get() <= u64::from(u32::MAX));
+        }
+        for _ in 0..100 {
+            assert!(new_doc().client_id().get() <= u64::from(u32::MAX));
+        }
+    }
+
+    #[test]
+    fn every_server_doc_counts_text_in_bytes() {
+        assert_eq!(new_doc().offset_kind(), OffsetKind::Bytes);
+        for doc in [doc_from_text(MIXED), doc_from_state("p", &state_from_text(MIXED))] {
+            assert_eq!(doc.offset_kind(), OffsetKind::Bytes);
+            let txn = doc.transact();
+            assert_eq!(txn.get_text("content").unwrap().len(&txn), MIXED.len() as u32);
+        }
+    }
+
+    /// `apply_text_edit` finds by `str::find` and edits at that byte offset,
+    /// so a match after, or inside, multi-byte text lands exactly.
+    #[sqlx::test]
+    async fn a_find_replace_lands_exactly_in_non_ascii_text(pool: PgPool) {
+        let page_id = saved_page(&pool, MIXED).await;
+        let yjs = YjsState::new(pool.clone());
+        let cases = [
+            ("crème", "brûlée"),
+            ("静か", "賑やか"),
+            ("\u{1F44B}\u{1F3FD}", "\u{1F44B}\u{1F3FF}"),
+            // Inside the family: the last two people and their joiner.
+            ("\u{1F467}\u{200D}\u{1F466}", "\u{1F466}"),
+            ("end", "fin"),
+        ];
+        let mut expected = MIXED.to_string();
+        for (find, replace) in cases {
+            expected = expected.replacen(find, replace, 1);
+            let edit = yjs.apply_text_edit(&page_id, find, replace).await.unwrap();
+            assert_eq!(edit.after.unwrap().text, expected, "{find:?} -> {replace:?}");
+        }
+        assert_eq!(
+            expected,
+            "Café brûlée at São Paulo.\n東京の朝は賑やかだ。\n\
+             Wave \u{1F44B}\u{1F3FF} then \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F466} \
+             and \u{1F3F3}\u{FE0F}\u{200D}\u{1F308} fin.\n"
+        );
+        assert_eq!(yjs.read_text(&page_id).await.unwrap(), expected);
+        assert_eq!(stored(&pool, &page_id).await.0, expected);
+
+        // An empty find replaces the whole page, by the doc's byte length.
+        let whole = "全部 新しい \u{1F469}\u{1F3FE}\u{200D}\u{1F680}\n";
+        let edit = yjs.apply_text_edit(&page_id, "", whole).await.unwrap();
+        assert_eq!(edit.before.text, expected);
+        assert_eq!(edit.after.unwrap().text, whole);
+        assert_eq!(stored(&pool, &page_id).await.0, whole);
+    }
+
+    #[sqlx::test]
+    async fn a_word_diff_lands_exactly_in_non_ascii_text(pool: PgPool) {
+        let page_id = saved_page(&pool, MIXED).await;
+        let yjs = YjsState::new(pool.clone());
+        let written = yjs.apply_text_diff(&page_id, MIXED, MIXED_REVISED).await.unwrap();
+        assert_eq!(written.text, MIXED_REVISED);
+        assert_eq!(extract_text_content(&written.state), MIXED_REVISED);
+        assert_eq!(stored(&pool, &page_id).await.0, MIXED_REVISED);
+    }
+
+    #[sqlx::test]
+    async fn a_line_replace_lands_exactly_in_non_ascii_text(pool: PgPool) {
+        let page_id = saved_page(&pool, MIXED_REVISED).await;
+        let yjs = YjsState::new(pool.clone());
+        let written = yjs.replace_text(&page_id, MIXED_REVISED, MIXED).await.unwrap();
+        assert_eq!(written.text, MIXED);
+        assert_eq!(extract_text_content(&written.state), MIXED);
+        assert_eq!(stored(&pool, &page_id).await.0, MIXED);
+    }
+
+    // ── saved states the server did not write on 0.28 ───────────────────────
+
+    /// A saved page state, and the text it holds, from a fixture directory:
+    /// `<name>.bin` and `<name>.txt`.
+    macro_rules! fixture {
+        ($dir:literal, $name:literal) => {
+            (
+                $name,
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/",
+                    $dir,
+                    "/",
+                    $name,
+                    ".bin"
+                )) as &[u8],
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/",
+                    $dir,
+                    "/",
+                    $name,
+                    ".txt"
+                )),
+            )
+        };
+    }
+
+    /// A state the server saved on yrs 0.18. Written once by a throwaway
+    /// program against yrs =0.18.8 making the server's own calls from two
+    /// yrs replicas (client ids 1 and 2): a Y.Text named "content", edited by
+    /// byte offset, saved as `encode_state_as_update_v1` of the whole doc.
+    /// That is every `app_pages.yjs_state` a box saved on 0.18, and every
+    /// `app_page_versions.yjs_snapshot` the server cut there.
+    macro_rules! legacy {
+        ($name:literal) => {
+            fixture!("yjs-0-18", $name)
+        };
+    }
+
+    /// A state the browser wrote, with apps/web's Yjs 13.6
+    /// (`tests/fixtures/yjs-13/generate.mjs`): typed key by key at UTF-16
+    /// positions, which is where Yjs splits its items. A version the browser
+    /// saves (`lib/yjs/versions.ts`) is stored in
+    /// `app_page_versions.yjs_snapshot` exactly so, and the items an editor
+    /// writes reach `app_pages.yjs_state` through the server's doc.
+    macro_rules! browser {
+        ($name:literal) => {
+            fixture!("yjs-13", $name)
+        };
+    }
+
+    /// From yrs 0.18 (both replicas yrs): `ascii`, a page as first saved;
+    /// `non-ascii`, `MIXED`'s kinds of text plus Korean, edited by both
+    /// replicas around and inside them; `history`, 300 edits from the two
+    /// synced every few steps, with deletions, then an insert in the middle
+    /// from one and a deletion at the start from the other; `empty`, a page
+    /// saved with nothing on it; `emptied`, one whose text was all deleted.
+    ///
+    /// From the browser: `typed`, a version snapshot of a page typed key by
+    /// key around emoji, ZWJ sequences and CJK, then a skin tone deleted and
+    /// a word inserted inside a CJK run; `split-surrogate`, half an emoji's
+    /// surrogate pair deleted, which Yjs writes as U+FFFD; `concurrent`, two
+    /// editors' 400 edits around the same text, synced every few steps.
+    const SAVED_STATES: [(&str, &[u8], &str); 8] = [
+        legacy!("ascii"),
+        legacy!("non-ascii"),
+        legacy!("history"),
+        legacy!("empty"),
+        legacy!("emptied"),
+        browser!("typed"),
+        browser!("split-surrogate"),
+        browser!("concurrent"),
+    ];
+
+    #[test]
+    fn saved_states_read_the_same_text() {
+        for (name, state, text) in SAVED_STATES {
+            assert_eq!(text_of_state(state).unwrap(), text, "{name}: read");
+            assert_eq!(extract_text_content(state), text, "{name}: materialized");
+            assert_eq!(pages::yjs_state_to_markdown(state), text, "{name}: shared");
+            let doc = doc_from_state(name, state);
+            assert_eq!(read_content(&doc), text, "{name}: loaded");
+            let saved_again = doc.transact().encode_state_as_update_v1(&StateVector::default());
+            assert_eq!(extract_text_content(&saved_again), text, "{name}: saved again");
+        }
+    }
+
+    /// The server's byte-offset writes land exactly on text another writer
+    /// put there: yrs 0.18 by bytes, the browser by UTF-16 units.
+    #[test]
+    fn saved_states_take_byte_offset_writes() {
+        let revisions = [
+            (
+                legacy!("non-ascii"),
+                vec![("賑やか", "静か"), ("\u{1F389} ", ""), ("世の界", "世界")],
+            ),
+            (
+                browser!("typed"),
+                vec![
+                    ("東京駅", "東京"),
+                    ("\u{1F44B} then", "\u{1F44B}\u{1F3FF} then"),
+                    ("\u{200D}\u{1F467}\u{200D}\u{1F466}", "\u{200D}\u{1F466}"),
+                ],
+            ),
+            (browser!("split-surrogate"), vec![("\u{FFFD}", "\u{1F44B}")]),
+        ];
+        for ((name, state, text), edits) in revisions {
+            let mut new = text.to_string();
+            for (find, replace) in edits {
+                assert!(new.contains(find), "{name}: {find:?}");
+                new = new.replacen(find, replace, 1);
+            }
+            new.push_str("Fin \u{1F44B}\u{1F3FD}.\n");
+            for granularity in [Granularity::Words, Granularity::Lines] {
+                let doc = doc_from_state(name, state);
+                {
+                    let mut txn = doc.transact_mut();
+                    let content = txn.get_or_insert_text("content");
+                    apply_text_ops(&mut txn, &content, text_ops(text, &new, granularity));
+                }
+                assert_eq!(read_content(&doc), new, "{name}: {granularity:?}");
+            }
+        }
+    }
+
+    /// An update another writer encoded applies to a doc loaded here, as an
+    /// update over the socket does: one yrs 0.18 encoded (an insert in the
+    /// middle, a deletion, a non-ASCII append), and one an editor in the
+    /// browser sends after typing on a page (the same three).
+    #[test]
+    fn updates_other_writers_encoded_apply_here() {
+        for ((_, base, _), (name, update, after)) in [
+            (legacy!("ascii"), legacy!("incremental")),
+            (browser!("typed"), browser!("update")),
+        ] {
+            let mut page = page_doc(doc_from_state(name, base));
+
+            let (state, changed, generation) =
+                apply_yjs_update(&mut page, update).expect("applies");
+            assert!(changed, "{name}");
+            assert_eq!(generation, 1, "{name}");
+            assert_eq!(read_content(&page.doc), after, "{name}");
+            assert_eq!(extract_text_content(&state), after, "{name}");
+
+            let (_, changed, _) = apply_yjs_update(&mut page, update).expect("applies");
+            assert!(!changed, "{name}: the same update again changes nothing");
+        }
+    }
+
+    /// A page whose saved state yrs 0.18 wrote loads through the cache, takes
+    /// a server edit, and saves a state and text that agree.
+    #[sqlx::test]
+    async fn a_page_saved_by_yrs_0_18_loads_edits_and_saves(pool: PgPool) {
+        let (_, state, text) = legacy!("non-ascii");
+        let page_id = unsaved_page(&pool, "").await;
+        sqlx::query("UPDATE app_pages SET yjs_state = $1, content = $2 WHERE id = $3")
+            .bind(state)
+            .bind(text)
+            .bind(&page_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let yjs = YjsState::new(pool.clone());
+        assert_eq!(yjs.read_text(&page_id).await.unwrap(), text);
+
+        let edit = yjs.apply_text_edit(&page_id, "\u{1F389} ", "").await.unwrap();
+        let expected = text.replacen("\u{1F389} ", "", 1);
+        assert_eq!(edit.before.text, text);
+        assert_eq!(edit.after.unwrap().text, expected);
+        assert_eq!(stored(&pool, &page_id).await, (expected.clone(), true));
+        let saved: Vec<u8> = sqlx::query_scalar("SELECT yjs_state FROM app_pages WHERE id = $1")
+            .bind(&page_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(extract_text_content(&saved), expected);
+    }
+
+    // ── the contract guard on the page socket ──────────────────────────────
+
+    #[test]
+    fn a_client_binds_at_or_above_the_documents_contract() {
+        let server = virtues_document::contract().version;
+        assert_eq!(bind(0, 0), Ok(Binding::ReadWrite));
+        assert_eq!(bind(server, 0), Ok(Binding::ReadWrite));
+        assert_eq!(bind(server, server), Ok(Binding::ReadWrite));
+        assert!(bind(0, server).is_err(), "every shipped client, on a tree page");
+        assert_eq!(bind(server + 1, server), Ok(Binding::ReadOnly));
+
+        let params = |q: &[(&str, &str)]| -> HashMap<String, String> {
+            q.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        };
+        assert_eq!(client_contract(&params(&[])), 0);
+        assert_eq!(client_contract(&params(&[("contract", "1")])), 1);
+        assert_eq!(client_contract(&params(&[("contract", "one")])), 0);
+        assert_eq!(client_contract(&params(&[("contract", "-1")])), 0);
+    }
+
+    /// A page stored as a Yjs tree under the current contract, as the
+    /// converter will write one.
+    async fn tree_page(pool: &PgPool, html: &str) -> String {
+        let page_id = unsaved_page(pool, "").await;
+        let o = virtues_document::parse_html(html, "doc");
+        assert!(o.errors.is_empty(), "{:?}", o.errors);
+        let doc = virtues_document::doc_from_nodes(o.nodes);
+        let state = doc.transact().encode_state_as_update_v1(&StateVector::default());
+        sqlx::query("UPDATE app_pages SET yjs_state = $1 WHERE id = $2")
+            .bind(&state)
+            .bind(&page_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        page_id
+    }
+
+    /// The page socket alone, served on a free port.
+    async fn serve(yjs: YjsState) -> std::net::SocketAddr {
+        let app = axum::Router::new()
+            .route("/ws/yjs/:page_id", axum::routing::get(yjs_websocket_handler))
+            .with_state(yjs);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        addr
+    }
+
+    type Socket = tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >;
+
+    /// A client, its own doc, and the socket it syncs that doc over, as
+    /// y-websocket does.
+    struct Client {
+        socket: Socket,
+        doc: Doc,
+    }
+
+    /// What a socket said next: the server's state for the client, or the
+    /// code it closed with.
+    #[derive(Debug, PartialEq)]
+    enum Heard {
+        Synced,
+        Update,
+        Closed(u16),
+    }
+
+    impl Client {
+        async fn connect(addr: std::net::SocketAddr, page_id: &str, contract: Option<u32>) -> Self {
+            let query = contract.map(|c| format!("?contract={c}")).unwrap_or_default();
+            let (socket, _) =
+                tokio_tungstenite::connect_async(format!("ws://{addr}/ws/yjs/{page_id}{query}"))
+                    .await
+                    .unwrap();
+            let mut client = Client {
+                socket,
+                doc: new_doc(),
+            };
+            let sv = client.doc.transact().state_vector().encode_v1();
+            client.send(encode_sync_step1(&sv)).await;
+            client
+        }
+
+        async fn send(&mut self, message: Vec<u8>) {
+            use futures::SinkExt;
+            // A socket the server already closed refuses the send; what it
+            // said is read next.
+            let _ = self
+                .socket
+                .send(tokio_tungstenite::tungstenite::Message::Binary(message))
+                .await;
+        }
+
+        /// The next thing the server says, applying any state it sends.
+        async fn hear(&mut self) -> Heard {
+            use futures::StreamExt;
+            use tokio_tungstenite::tungstenite::Message as Ws;
+            loop {
+                let next = tokio::time::timeout(Duration::from_secs(5), self.socket.next())
+                    .await
+                    .expect("the server answers");
+                match next {
+                    Some(Ok(Ws::Binary(data))) => {
+                        let Some((MSG_SYNC, payload)) = parse_message(&data) else {
+                            continue;
+                        };
+                        let Some((kind, rest)) = parse_sync_message(payload) else {
+                            continue;
+                        };
+                        if kind == MSG_SYNC_STEP1 {
+                            continue;
+                        }
+                        let update = extract_sync_payload(rest).unwrap();
+                        apply_v1(&self.doc, update).unwrap();
+                        return if kind == MSG_SYNC_STEP2 {
+                            Heard::Synced
+                        } else {
+                            Heard::Update
+                        };
+                    }
+                    Some(Ok(Ws::Close(frame))) => {
+                        return Heard::Closed(frame.map(|f| u16::from(f.code)).unwrap_or(0));
+                    }
+                    Some(Ok(_)) => continue,
+                    Some(Err(_)) | None => return Heard::Closed(0),
+                }
+            }
+        }
+
+        /// How the socket ends, past the updates still on their way to it:
+        /// the server relays every edit to every socket on the page, its
+        /// sender's included.
+        async fn close(&mut self) -> Heard {
+            loop {
+                match self.hear().await {
+                    Heard::Update => continue,
+                    heard => return heard,
+                }
+            }
+        }
+
+        /// Make an edit in this client's doc and send it, as an editor does.
+        async fn edit(&mut self, edit: impl FnOnce(&mut yrs::TransactionMut)) {
+            let before = self.doc.transact().state_vector();
+            edit(&mut self.doc.transact_mut());
+            let update = self.doc.transact().encode_diff_v1(&before);
+            self.send(encode_sync_update(&update)).await;
+        }
+    }
+
+    /// The text of the first paragraph of a tree doc.
+    fn first_paragraph(doc: &Doc) -> String {
+        virtues_document::read_doc(&doc.transact())
+            .first()
+            .map(|n| n.text_content())
+            .unwrap_or_default()
+    }
+
+    /// Type at the start of a tree doc's first paragraph.
+    fn type_into_first_paragraph(txn: &mut yrs::TransactionMut, typed: &str) {
+        use yrs::{XmlFragment, XmlOut};
+        let frag = txn.get_or_insert_xml_fragment("doc");
+        let Some(XmlOut::Element(p)) = frag.get(txn, 0) else {
+            panic!("a paragraph")
+        };
+        let Some(XmlOut::Text(t)) = p.get(txn, 0) else {
+            panic!("its text")
+        };
+        t.insert(txn, 0, typed);
+    }
+
+    #[sqlx::test]
+    async fn a_client_below_a_tree_pages_contract_is_refused(pool: PgPool) {
+        let page_id = tree_page(&pool, "<p>Hello</p>").await;
+        let yjs = YjsState::new(pool.clone());
+        let addr = serve(yjs.clone()).await;
+
+        // Every app that binds the Y.Text, which sends no version.
+        let mut old = Client::connect(addr, &page_id, None).await;
+        assert_eq!(old.hear().await, Heard::Closed(CLOSE_CONTRACT));
+        let mut zero = Client::connect(addr, &page_id, Some(0)).await;
+        assert_eq!(zero.hear().await, Heard::Closed(CLOSE_CONTRACT));
+
+        let version = virtues_document::contract().version;
+        let mut current = Client::connect(addr, &page_id, Some(version)).await;
+        assert_eq!(current.hear().await, Heard::Synced);
+        assert_eq!(first_paragraph(&current.doc), "Hello");
+    }
+
+    #[sqlx::test]
+    async fn an_update_outside_the_contract_is_refused_before_anyone_sees_it(pool: PgPool) {
+        let page_id = tree_page(&pool, "<p>Hello</p>").await;
+        let yjs = YjsState::new(pool.clone());
+        let addr = serve(yjs.clone()).await;
+        let version = virtues_document::contract().version;
+
+        let mut writer = Client::connect(addr, &page_id, Some(version)).await;
+        let mut watcher = Client::connect(addr, &page_id, Some(version)).await;
+        assert_eq!(writer.hear().await, Heard::Synced);
+        assert_eq!(watcher.hear().await, Heard::Synced);
+
+        // A keystroke is taken and relayed.
+        writer.edit(|txn| type_into_first_paragraph(txn, "Oh, ")).await;
+        assert_eq!(watcher.hear().await, Heard::Update);
+        assert_eq!(first_paragraph(&watcher.doc), "Oh, Hello");
+
+        // An old copy's Y.Text pushed into the tree page is not.
+        writer
+            .edit(|txn| {
+                let text = txn.get_or_insert_text("content");
+                text.insert(txn, 0, "# typed into the void");
+            })
+            .await;
+        assert_eq!(writer.close().await, Heard::Closed(CLOSE_REFUSED));
+        // Nor is the stamp lowered, which would let old clients back in.
+        let mut lowerer = Client::connect(addr, &page_id, Some(version)).await;
+        assert_eq!(lowerer.hear().await, Heard::Synced);
+        lowerer
+            .edit(|txn| {
+                let meta = txn.get_or_insert_map("meta");
+                yrs::Map::insert(&meta, txn, "contract", yrs::Any::from(0i64));
+            })
+            .await;
+        assert_eq!(lowerer.close().await, Heard::Closed(CLOSE_REFUSED));
+
+        let held = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+        let held = held.read().await;
+        assert_eq!(first_paragraph(&held.doc), "Oh, Hello");
+        assert_eq!(content_of(&held.doc.transact()), "", "no Y.Text reached the doc");
+        assert_eq!(held.contract(), version);
+        assert_eq!(virtues_document::validate_doc(&held.doc.transact()), []);
+        drop(held);
+        // The other client heard neither.
+        let quiet = tokio::time::timeout(Duration::from_millis(200), watcher.hear()).await;
+        assert!(quiet.is_err(), "nothing relayed: {quiet:?}");
+    }
+
+    #[sqlx::test]
+    async fn a_client_newer_than_the_server_reads_but_does_not_write(pool: PgPool) {
+        let page_id = tree_page(&pool, "<p>Hello</p>").await;
+        let yjs = YjsState::new(pool.clone());
+        let addr = serve(yjs.clone()).await;
+        let newer = virtues_document::contract().version + 1;
+
+        let mut client = Client::connect(addr, &page_id, Some(newer)).await;
+        assert_eq!(client.hear().await, Heard::Synced);
+        assert_eq!(first_paragraph(&client.doc), "Hello");
+        client.edit(|txn| type_into_first_paragraph(txn, "Oh, ")).await;
+        // Give the server the time to have applied it, had it.
+        let _ = tokio::time::timeout(Duration::from_millis(200), client.hear()).await;
+
+        let held = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+        assert_eq!(first_paragraph(&held.read().await.doc), "Hello");
+    }
+
+    #[sqlx::test]
+    async fn raising_a_pages_contract_closes_the_clients_below_it(pool: PgPool) {
+        let page_id = saved_page(&pool, "Some notes.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let addr = serve(yjs.clone()).await;
+        let version = virtues_document::contract().version;
+
+        // A markdown page binds the Y.Text editors, and takes their edits.
+        let mut old = Client::connect(addr, &page_id, None).await;
+        let mut current = Client::connect(addr, &page_id, Some(version)).await;
+        assert_eq!(old.hear().await, Heard::Synced);
+        assert_eq!(current.hear().await, Heard::Synced);
+        old.edit(|txn| {
+            let text = txn.get_or_insert_text("content");
+            text.insert(txn, 0, "More. ");
+        })
+        .await;
+        assert_eq!(current.hear().await, Heard::Update);
+        assert_eq!(content_of(&current.doc.transact()), "More. Some notes.\n");
+
+        yjs.raise_contract(&page_id).await.unwrap();
+        // The old editor is closed...
+        assert_eq!(old.close().await, Heard::Closed(CLOSE_CONTRACT));
+        // ...the current one stays, and is sent the stamp.
+        assert_eq!(current.hear().await, Heard::Update);
+        assert_eq!(
+            virtues_document::stamped_version(&current.doc.transact()),
+            Some(version)
+        );
+        // The stamp is saved with the page, and binds the next load.
+        let saved: Vec<u8> = sqlx::query_scalar("SELECT yjs_state FROM app_pages WHERE id = $1")
+            .bind(&page_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            virtues_document::stamped_version(&doc_from_state(&page_id, &saved).transact()),
+            Some(version)
+        );
+        let mut late = Client::connect(addr, &page_id, Some(0)).await;
+        assert_eq!(late.hear().await, Heard::Closed(CLOSE_CONTRACT));
+    }
+    /// Hear what the server sends until it goes quiet. Returns how the socket
+    /// closed, if it did.
+    async fn settle(client: &mut Client) -> Option<Heard> {
+        loop {
+            match tokio::time::timeout(Duration::from_millis(300), client.hear()).await {
+                Err(_) => return None,
+                Ok(Heard::Closed(code)) => return Some(Heard::Closed(code)),
+                Ok(_) => continue,
+            }
+        }
+    }
+
+    /// Delete the `item`th child of the page's `block`th block.
+    fn delete_child(txn: &mut yrs::TransactionMut, block: u32, item: u32) {
+        use yrs::{XmlFragment, XmlOut};
+        let frag = txn.get_or_insert_xml_fragment("doc");
+        let Some(XmlOut::Element(el)) = frag.get(txn, block) else {
+            panic!("a block")
+        };
+        el.remove_range(txn, item, 1);
+    }
+
+    fn page_html(doc: &Doc) -> String {
+        virtues_document::to_html(&virtues_document::read_doc(&doc.transact()), false)
+    }
+
+    /// A laptop and a phone each delete one of a list's two items, each a
+    /// valid edit on its own device. Their merge leaves the list empty; the
+    /// device whose edit arrives second can never send another, so it is
+    /// not refused. The server repairs the list away and every device
+    /// follows.
+    #[sqlx::test]
+    async fn edits_that_merge_into_an_empty_list_are_taken_and_repaired(pool: PgPool) {
+        let page_id = tree_page(
+            &pool,
+            r#"<p>Groceries</p><ul data-type="taskList"><li data-type="taskItem"><p>milk</p></li><li data-type="taskItem"><p>eggs</p></li></ul>"#,
+        )
+        .await;
+        let yjs = YjsState::new(pool.clone());
+        let addr = serve(yjs.clone()).await;
+        let version = virtues_document::contract().version;
+
+        let mut laptop = Client::connect(addr, &page_id, Some(version)).await;
+        let mut phone = Client::connect(addr, &page_id, Some(version)).await;
+        assert_eq!(laptop.hear().await, Heard::Synced);
+        assert_eq!(phone.hear().await, Heard::Synced);
+
+        // Both edit before hearing the other.
+        laptop.edit(|txn| delete_child(txn, 1, 0)).await;
+        phone.edit(|txn| delete_child(txn, 1, 1)).await;
+        assert_eq!(settle(&mut laptop).await, None, "the laptop stays connected");
+        assert_eq!(settle(&mut phone).await, None, "the phone stays connected");
+
+        let held = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+        let held = held.read().await;
+        assert_eq!(virtues_document::validate_doc(&held.doc.transact()), []);
+        assert_eq!(page_html(&held.doc), "<p>Groceries</p>");
+        drop(held);
+        assert_eq!(page_html(&laptop.doc), "<p>Groceries</p>");
+        assert_eq!(page_html(&phone.doc), "<p>Groceries</p>");
+    }
+
+    /// A markdown page has no `meta`, and its clients may not write one: the
+    /// stamp would decide, when the page is next loaded, that every shipped
+    /// client is too old for it.
+    #[sqlx::test]
+    async fn a_markdown_page_refuses_a_stamp_a_client_writes(pool: PgPool) {
+        let page_id = saved_page(&pool, "Some notes.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let addr = serve(yjs.clone()).await;
+
+        let mut client = Client::connect(addr, &page_id, None).await;
+        assert_eq!(client.hear().await, Heard::Synced);
+        client
+            .edit(|txn| {
+                let text = txn.get_or_insert_text("content");
+                text.insert(txn, 0, "More. ");
+            })
+            .await;
+        assert_eq!(settle(&mut client).await, None, "a text edit is taken");
+        client
+            .edit(|txn| {
+                let meta = txn.get_or_insert_map("meta");
+                yrs::Map::insert(&meta, txn, "contract", yrs::Any::from(1i64));
+            })
+            .await;
+        assert_eq!(client.close().await, Heard::Closed(CLOSE_REFUSED));
+
+        // Typing and the stamp in one transaction, as one update: refused
+        // all the same, though yrs could not place the stamp in a document
+        // without the text the typing went into.
+        let mut client = Client::connect(addr, &page_id, None).await;
+        assert_eq!(client.hear().await, Heard::Synced);
+        client
+            .edit(|txn| {
+                let text = txn.get_or_insert_text("content");
+                text.insert(txn, 4, "x");
+                let meta = txn.get_or_insert_map("meta");
+                yrs::Map::insert(&meta, txn, "contract", yrs::Any::from(2i64));
+            })
+            .await;
+        assert_eq!(client.close().await, Heard::Closed(CLOSE_REFUSED));
+
+        let held = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+        let held = held.read().await;
+        assert_eq!(content_of(&held.doc.transact()), "More. Some notes.\n");
+        assert_eq!(virtues_document::stamped_version(&held.doc.transact()), None);
+        // What a load of this doc's state would bind the page as.
+        let state = held.doc.transact().encode_state_as_update_v1(&StateVector::default());
+        assert_eq!(page_doc(doc_from_state(&page_id, &state)).contract(), 0);
+        assert_eq!(yjs.page_contract(&page_id).await.unwrap(), 0);
+    }
+
+    /// An item of JSON content, which Yjs does not write: `pending` puts it
+    /// after an item no page has (client 9, clock 5), so yrs would hold it
+    /// back; otherwise it goes straight under the root `content`.
+    fn json_item_update(pending: bool) -> Vec<u8> {
+        let mut u = vec![1, 1, 7, 0];
+        if pending {
+            u.extend([0x80 | 2, 9, 5]);
+        } else {
+            u.push(2);
+            u.push(1);
+            u.push(7);
+            u.extend_from_slice(b"content");
+        }
+        u.extend([0, 1, b'1']); // a count of 0, then one string, as yrs reads it
+        u.push(0); // no deletions
+        u
+    }
+
+    /// yrs reads JSON content and cannot encode it again: held back, it
+    /// makes every later encode of the doc panic, every save and every sync;
+    /// in place, the saved state does not load. Such an update is dropped,
+    /// or refused on a tree page, and the page keeps taking edits and saving.
+    #[sqlx::test]
+    async fn an_update_holding_what_yrs_cannot_encode_again_is_turned_away(pool: PgPool) {
+        let page_id = saved_page(&pool, "Some notes.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let doc = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+        for pending in [true, false] {
+            let update = json_item_update(pending);
+            assert!(Update::decode_v1(&update).is_ok(), "yrs reads it");
+            assert_eq!(take_client_update(&yjs, &page_id, &doc, &update).await, Ok(()));
+            assert_eq!(doc.read().await.written().text, "Some notes.\n");
+        }
+        let typed = typed_in_an_editor(&doc, " More.").await;
+        take_client_update(&yjs, &page_id, &doc, &typed).await.unwrap();
+        let written = doc.read().await.written();
+        assert_eq!(written.text, "Some notes.\n More.");
+        assert_eq!(read_content(&doc_from_state(&page_id, &written.state)), written.text);
+
+        let tree_id = tree_page(&pool, "<p>Hello</p>").await;
+        let tree = yjs.doc_cache.get_or_create(&tree_id, &pool).await.unwrap();
+        for pending in [true, false] {
+            let refused = take_client_update(&yjs, &tree_id, &tree, &json_item_update(pending))
+                .await
+                .unwrap_err();
+            assert!(refused.contains("JSON content"), "{refused}");
+        }
+        let state = tree.read().await.written().state;
+        let back = doc_from_state(&tree_id, &state);
+        assert_eq!(first_paragraph(&back), "Hello");
+    }
+
+    /// An update setting `key` in the root map `root` to a number inside
+    /// `depth` arrays, built by hand: yrs's own encoder recurses once per
+    /// level too.
+    fn nested_value_update(root: &str, key: &str, depth: usize) -> Vec<u8> {
+        fn var(out: &mut Vec<u8>, mut n: u64) {
+            while n >= 0x80 {
+                out.push((n as u8 & 0x7f) | 0x80);
+                n >>= 7;
+            }
+            out.push(n as u8);
+        }
+        fn string(out: &mut Vec<u8>, s: &str) {
+            var(out, s.len() as u64);
+            out.extend_from_slice(s.as_bytes());
+        }
+        let mut u = vec![];
+        var(&mut u, 1); // one client
+        var(&mut u, 1); // one item
+        var(&mut u, 1_234_567); // its client
+        var(&mut u, 0); // its clock
+        u.push(0x20 | 8); // a keyed entry holding values
+        var(&mut u, 1); // under a root, by name
+        string(&mut u, root);
+        string(&mut u, key);
+        var(&mut u, 1); // one value
+        for _ in 0..depth {
+            u.extend([117, 1]); // an array of one
+        }
+        u.extend([125, 0]); // the number 0
+        var(&mut u, 0); // no deletions
+        u
+    }
+
+    /// yrs decodes a value by recursing once per level, so a few hundred
+    /// kilobytes of nesting would overflow a tokio worker's stack, which
+    /// aborts the process. Such an update is dropped on a markdown page and
+    /// refused on a tree page, on a worker-sized stack.
+    #[test]
+    fn an_update_nesting_values_past_the_limit_is_dropped_not_a_crash() {
+        std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(|| {
+                let shallow = nested_value_update("notes", "k", 3);
+                let deep = nested_value_update("notes", "k", 100_000);
+
+                let mut markdown = page_doc(doc_from_text("x"));
+                assert!(apply_yjs_update(&mut markdown, &shallow).is_some());
+                assert_eq!(admit_update(&markdown, &deep), Ok(()));
+                assert!(apply_yjs_update(&mut markdown, &deep).is_none());
+                assert_eq!(read_content(&markdown.doc), "x");
+
+                let o = virtues_document::parse_html("<p>x</p>", "doc");
+                let tree = page_doc(virtues_document::doc_from_nodes(o.nodes));
+                let refused = admit_update(&tree, &deep).unwrap_err();
+                assert!(refused.contains("nests more than"), "{refused}");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

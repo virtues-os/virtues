@@ -66,6 +66,12 @@
 		tags: string | null;
 		created_at: string;
 		updated_at: string;
+		/**
+		 * The document contract the page is written under; null when the
+		 * server could not read it. A box from before the contract does not
+		 * send it, and every page on such a box is markdown.
+		 */
+		contract?: number | null;
 	}
 
 	let pageData = $state<PageData | null>(null);
@@ -97,6 +103,9 @@
 	// Unsubscribe handles for Yjs store subscriptions
 	let unsubSynced: (() => void) | null = null;
 	let unsubConnected: (() => void) | null = null;
+	let unsubRefused: (() => void) | null = null;
+	// Why the server will not sync this page with this editor, once it says so.
+	let refusedReason = $state<string | null>(null);
 	// Track sync/connection state reactively (subscribed from Yjs stores)
 	let isSynced = $state(false);
 	let isConnected = $state(false);
@@ -299,6 +308,7 @@
 		// Unsubscribe from Yjs stores
 		unsubSynced?.();
 		unsubConnected?.();
+		unsubRefused?.();
 		// Clean up Yjs document on component destroy
 		if (yjsDoc) {
 			yjsDoc.destroy();
@@ -349,6 +359,7 @@
 		}
 		isSynced = false;
 		isConnected = false;
+		refusedReason = null;
 
 		// Reset references for the new page (refetched on next panel open)
 		backlinks = [];
@@ -375,10 +386,11 @@
 			// Unsubscribe from previous doc stores
 			unsubSynced?.();
 			unsubConnected?.();
+			unsubRefused?.();
 
 			// Create Yjs document for real-time sync
 			// This connects via WebSocket to /ws/yjs/{pageId}
-			yjsDoc = createYjsDocument(pageId);
+			yjsDoc = createYjsDocument(pageId, data.contract === undefined ? 0 : data.contract);
 
 			// Grace period: suppress "Offline" during initial connection
 			connectionGracePeriod = true;
@@ -388,10 +400,12 @@
 			}, 1500);
 
 			// Sync fallback: if neither IndexedDB nor WebSocket sync within 4s,
-			// force-show the editor so the user never gets a permanent black screen.
+			// force-show the editor so the user never gets a permanent black screen,
+			// on a page the server said this editor reads: the local copy of any
+			// other may be from before the page was rewritten as a tree.
 			if (syncFallbackRef) clearTimeout(syncFallbackRef);
 			syncFallbackRef = setTimeout(() => {
-				if (!isSynced) {
+				if (!isSynced && !refusedReason && yjsDoc?.contractConfirmed) {
 					console.warn("[PageContent] Sync timeout — force-showing editor");
 					isSynced = true;
 				}
@@ -405,6 +419,9 @@
 					clearTimeout(syncFallbackRef);
 					syncFallbackRef = null;
 				}
+			});
+			unsubRefused = yjsDoc.refused.subscribe((reason) => {
+				refusedReason = reason;
 			});
 			unsubConnected = yjsDoc.isConnected.subscribe((connected) => {
 				isConnected = connected;
@@ -719,7 +736,10 @@
 
 					<!-- Editor area: overlay pattern to avoid destroying CodeMirror -->
 					<div class="page-editor-area" bind:this={editorContainerEl}>
-						{#if !yjsDoc || !isSynced}
+						{#if refusedReason}
+							<p class="editor-refused" role="alert">{refusedReason}</p>
+						{/if}
+						{#if (!yjsDoc || !isSynced) && !refusedReason}
 							<div class="editor-loading">
 								<Icon
 									icon="ri:loader-4-line"
@@ -912,6 +932,13 @@
 		align-items: center;
 		gap: 8px;
 		padding: 2rem 0;
+		color: var(--color-foreground-muted);
+		font-size: 13px;
+	}
+
+	.editor-refused {
+		margin: 0;
+		padding: 1rem 0;
 		color: var(--color-foreground-muted);
 		font-size: 13px;
 	}
