@@ -368,6 +368,7 @@ async fn record(app: &AppHandle, op: &str, args: &Value, out: &Result<Value, Str
         "main",
         "browser:step",
         json!({
+            "op": op,
             "what": describe(op, args, out),
             "ok": out.is_ok(),
             "url": current_url(&view),
@@ -398,7 +399,7 @@ fn describe(op: &str, args: &Value, out: &Result<Value, String>) -> String {
             "press" => format!("Couldn't press {}", arg("key")),
             "scroll" => "Couldn't scroll".into(),
             "screenshot" => "Couldn't look at the page".into(),
-            "handoff" => "Asked for your help; not done".into(),
+            "handoff" => "Your turn: not done".into(),
             _ => format!("Couldn't {op}"),
         };
     }
@@ -416,7 +417,7 @@ fn describe(op: &str, args: &Value, out: &Result<Value, String>) -> String {
         "press" => format!("Pressed {}", arg("key")),
         "scroll" => format!("Scrolled {}", if arg("direction") == "up" { "up" } else { "down" }),
         "screenshot" => "Looked at the page".into(),
-        "handoff" => format!("You: {}", short(arg("reason"), 60)),
+        "handoff" => format!("Your turn: {}", short(arg("reason"), 60)),
         _ => op.to_string(),
     }
 }
