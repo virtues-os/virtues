@@ -163,11 +163,57 @@ pub async fn set_local_timezone(
     .await
 }
 
-/// `date`'s local midnight to the next local midnight, in [`day_timezone`].
+/// `date`'s local midnight in [`day_timezone`], to where the next day begins:
+/// the next date's midnight in *its* zone. A day that ends in another zone
+/// than it began in (a flight across zones) ends where the next one starts,
+/// so no hour falls between two days and none is counted on both.
 pub async fn day_window(
     pool: &PgPool,
     date: NaiveDate,
 ) -> crate::error::Result<(DateTime<Utc>, DateTime<Utc>)> {
     let tz = day_timezone(pool, date).await?;
-    Ok(crate::api::day_summary::day_bounds(date, Some(&tz)))
+    let (start, same_zone_end) = crate::api::day_summary::day_bounds(date, Some(&tz));
+    let Some(next) = date.succ_opt() else {
+        return Ok((start, same_zone_end));
+    };
+    let next_tz = day_timezone(pool, next).await?;
+    let (end, _) = crate::api::day_summary::day_bounds(next, Some(&next_tz));
+    // Past the date line a day could close before it opens; it keeps its own
+    // midnight then.
+    Ok((start, if end > start { end } else { same_zone_end }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn lock(pool: &PgPool, date: &str, tz: &str) {
+        sqlx::query("INSERT INTO wiki_days (id, date, start_timezone) VALUES ($1, $2::date, $3)")
+            .bind(format!("day_{date}"))
+            .bind(date)
+            .bind(tz)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    fn utc(s: &str) -> DateTime<Utc> {
+        s.parse().unwrap()
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_day_ends_where_the_next_begins(pool: PgPool) {
+        // Woke up in Chicago (UTC-5 in June), the next day in Mexico City
+        // (UTC-6): the first day runs 25 hours, to Mexico City's midnight.
+        lock(&pool, "2026-06-10", "America/Chicago").await;
+        lock(&pool, "2026-06-11", "America/Mexico_City").await;
+        lock(&pool, "2026-06-12", "America/Chicago").await;
+        let d = |s: &str| s.parse::<NaiveDate>().unwrap();
+        let (a, b) = day_window(&pool, d("2026-06-10")).await.unwrap();
+        assert_eq!((a, b), (utc("2026-06-10T05:00:00Z"), utc("2026-06-11T06:00:00Z")));
+        // Flying back: the next day starts at Chicago's midnight, an hour
+        // earlier, and this one ends there; nothing is counted twice.
+        let (c, e) = day_window(&pool, d("2026-06-11")).await.unwrap();
+        assert_eq!((c, e), (b, utc("2026-06-12T05:00:00Z")));
+    }
 }
