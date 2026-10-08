@@ -320,16 +320,29 @@
 			m.keyboard.disable();
 			m.dragRotate.disable();
 			m.touchZoomRotate.disableRotation();
+			// A pinch zooms a quarter faster than MapLibre's default (the
+			// owner's call, 2026-10-08: "a bit more aggressive"): the trackpad's
+			// 1/100 per delta becomes 1/80, a wheel's 1/450 becomes 1/360.
+			m.scrollZoom.setZoomRate(PINCH_RATE.trackpad);
+			m.scrollZoom.setWheelZoomRate(PINCH_RATE.wheel);
 			container.addEventListener('wheel', onWheel, { passive: false, capture: true });
 			m.on('move', syncAway);
 			m.on('moveend', syncStreets);
-			// A click on the map itself (not a bubble, a chip or a card) lets go
-			// of a picked drive or stay.
+			// A click on the day's path picks the stay or drive it belongs to, as
+			// its row in the list does (the owner's call, 2026-10-08; the
+			// prototype's path took no clicks). A click on the map anywhere else
+			// (not a bubble, a chip or a card) lets go of a picked drive or stay.
 			m.on('click', (e) => {
 				// Pointing to Home or Work: the tap is the answer, and nothing else.
 				if (pointing) return tapAt(e.lngLat.lat, e.lngLat.lng);
+				const sec = m.queryRenderedFeatures(e.point, { layers: PATH_HIT }).length ? sectionAt(m, e.point) : null;
+				if (sec) return reveal({ kind: sec.kind, s: sec.s, e: sec.e });
 				if (picked) unpick();
 			});
+			for (const id of PATH_HIT) {
+				m.on('mouseenter', id, () => !pointing && (m.getCanvas().style.cursor = 'pointer'));
+				m.on('mouseleave', id, () => !pointing && (m.getCanvas().style.cursor = ''));
+			}
 			maplibre = ml;
 			// MapLibre only follows the window's size. A hidden tab stays mounted
 			// and split view narrows it, so follow the container instead.
@@ -365,6 +378,18 @@
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
 					paint: { 'line-color': ink.move, 'line-width': 3, 'line-opacity': 0.85 },
 				});
+				// What a click on the path finds: the drawn path is 3 px, too thin
+				// to aim at, so an unseen 18 px band over it takes the click. A
+				// hole's dashed bridge is no one's, so it takes none.
+				for (const [id, source] of [['track-hit', 'track-run'], ['drive-hit', 'track-drive']]) {
+					m.addLayer({
+						id,
+						type: 'line',
+						source,
+						layout: { 'line-join': 'round', 'line-cap': 'round' },
+						paint: { 'line-color': ink.track, 'line-width': 18, 'line-opacity': 0 },
+					});
+				}
 				// The lit stretch: the stretch of path the playhead is moving along,
 				// in the accent at the path's own weight, over a path otherwise ink
 				// all day - the accent means now, so only what you're looking at
@@ -653,6 +678,8 @@
 	/** Two fingers pan the map the way they move; a pinch (the browser sends
 	 *  it as a wheel with ctrl) is left to MapLibre, which zooms about the
 	 *  cursor; over a place card the card's list scrolls (main.js:988-992). */
+	/** How fast a pinch (or a wheel with Ctrl) zooms the map. */
+	const PINCH_RATE = { trackpad: 1 / 80, wheel: 1 / 360 };
 	function onWheel(e: WheelEvent) {
 		if (e.ctrlKey || e.metaKey) return;
 		if ((e.target as HTMLElement | null)?.closest?.('.tl-card')) return;
@@ -1136,6 +1163,23 @@
 	/** A click on a stretch of the scrubber's Location lane: the playhead is
 	 *  already where the click landed; the map goes to the stretch holding it,
 	 *  as a pick in the inspector would take it (the owner's call). */
+	/** The layers a click on the day's path lands on. */
+	const PATH_HIT = ['track-hit', 'drive-hit'];
+	/** The stay or drive a click on the path belongs to: the time of the
+	 *  path's nearest point to it, and the section holding that time. */
+	function sectionAt(m: MlMap, at: { x: number; y: number }): InspectorSection | null {
+		let best: Fix | null = null;
+		let bestD = Infinity;
+		for (const f of dayTrack) {
+			const p = m.project([f.lng, f.lat]);
+			const d = Math.hypot(p.x - at.x, p.y - at.y);
+			if (d < bestD) [best, bestD] = [f, d];
+		}
+		if (!best) return null;
+		const t = best.t;
+		return sections.find((s) => (s.kind === 'place' || s.kind === 'transit') && s.s <= t && t < s.e) ?? null;
+	}
+
 	function revealAt(kind: RibbonKind, t: number) {
 		const sec = sections.find((s) => s.kind === kind && s.s <= t && t < s.e);
 		if (sec) reveal({ kind: sec.kind, s: sec.s, e: sec.e }, false);
@@ -1149,9 +1193,12 @@
 			pickMoment(p.s, false);
 			return;
 		}
-		// A second click on the picked drive or stay lets go of it.
+		// A second click on the picked drive or stay undoes the first: it
+		// lets go of it and the map goes back to the whole day (the owner's
+		// call, 2026-10-08).
 		if (picked && picked.s === p.s && picked.kind === (p.kind === 'transit' ? 'transit' : 'place')) {
 			unpick();
+			resetView();
 			return;
 		}
 		const i = sections.findIndex((s) => s.kind === p.kind && s.s === p.s);
@@ -1211,6 +1258,9 @@
 	 *  is inside it: a stay's place wears a ring, a drive's lit stretch a halo.
 	 *  Any other pick, a scrub, or the playhead leaving it clears the mark. */
 	let picked: { kind: 'place' | 'transit'; s: number; e: number } | null = null;
+	/** The picked stay or drive, for the list's selection; kept apart from
+	 *  `picked`, which the playhead's own code reads and clears. */
+	let selected = $state<{ kind: 'place' | 'transit'; s: number } | null>(null);
 	let pulse: Marker | null = null;
 	function pick(p: { kind: 'place' | 'transit'; s: number; e: number; at?: [number, number]; asked?: boolean }) {
 		unpick();
@@ -1218,6 +1268,7 @@
 		const ml = maplibre;
 		if (!m || !ml) return;
 		picked = { kind: p.kind, s: p.s, e: p.e };
+		selected = { kind: p.kind, s: p.s };
 		if (p.at) {
 			const el = document.createElement('div');
 			el.className = 'tl-pulse';
@@ -1244,6 +1295,7 @@
 	}
 	function unpick() {
 		picked = null;
+		selected = null;
 		const m = map;
 		if (pulse) {
 			pulse.remove();
@@ -1386,6 +1438,7 @@
 		onrole={setRole}
 		homeSet={review.homeSet}
 		{review}
+		{selected}
 		onfocus={focusPlace}
 		onmerge={mergeInto}
 		{zone}
