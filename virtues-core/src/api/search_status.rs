@@ -18,6 +18,9 @@ pub struct SearchStatus {
     pub index_model: Option<String>,
     /// Stored vector width.
     pub index_dims: Option<i32>,
+    /// A move to another model under way: the index for it is built in the
+    /// background while search keeps using the current one (search::next_index).
+    pub model_change: Option<crate::search::next_index::NextStatus>,
     /// Records with at least one searchable chunk, and the chunks themselves.
     pub records_searchable: i64,
     pub chunks: i64,
@@ -35,8 +38,7 @@ pub struct SearchStatus {
 }
 
 pub async fn status(pool: &PgPool) -> Result<SearchStatus> {
-    let mode = std::env::var("VIRTUES_INFERENCE").unwrap_or_else(|_| "unknown".to_string());
-    let embed_url = crate::search::embedder::resolve_base_url();
+    let mode = crate::box_env::var("VIRTUES_INFERENCE").unwrap_or_else(|| "unknown".to_string());
 
     let meta: Option<(Option<String>, Option<i32>)> =
         sqlx::query_as("SELECT model, dim FROM search_index_meta WHERE singleton")
@@ -46,6 +48,9 @@ pub async fn status(pool: &PgPool) -> Result<SearchStatus> {
     // absent-ok: no row means the index has never been built; the query error
     // itself is already propagated by `?` above.
     let (index_model, index_dims) = meta.unwrap_or((None, None));
+    let model_change = crate::search::next_index::status(pool)
+        .await
+        .map_err(|e| Error::Database(format!("reading the model change: {e:#}")))?;
 
     let (records_searchable, chunks, last_indexed_at): (i64, i64, Option<chrono::DateTime<chrono::Utc>>) =
         sqlx::query_as(
@@ -56,12 +61,11 @@ pub async fn status(pool: &PgPool) -> Result<SearchStatus> {
         .await
         .map_err(|e| Error::Database(format!("counting the search index: {e}")))?;
 
-    // absent-ok: an unset model name is "default", as the embedder sends it.
-    let model = std::env::var("VIRTUES_EMBED_MODEL").unwrap_or_else(|_| "default".to_string());
+    let cfg = crate::search::embedder::EndpointConfig::current();
     let started = std::time::Instant::now();
     let probe = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        crate::search::embedder::probe_vectors(&embed_url, &model),
+        crate::search::embedder::probe_vectors(&cfg.base_url, &cfg.model),
     )
     .await;
     let (reachable, probe_ms, probe_error) = match probe {
@@ -70,13 +74,10 @@ pub async fn status(pool: &PgPool) -> Result<SearchStatus> {
         Err(_) => (false, None, Some("no answer within 5 seconds".to_string())),
     };
 
-    let rerank_on = std::env::var("VIRTUES_RERANK_GAP")
-        .ok()
-        .and_then(|s| s.trim().parse::<f64>().ok())
-        .is_some_and(|g| g > 0.0);
+    let rerank_on = crate::search::query::reranker_enabled();
 
     // Only worth showing while search isn't already on the owner's server.
-    let env = |k: &str| std::env::var(k).ok().filter(|s| !s.trim().is_empty());
+    let env = crate::box_env::var;
     let (accelerator, accelerator_guide) = if mode == "manual" {
         (None, None)
     } else {
@@ -85,9 +86,10 @@ pub async fn status(pool: &PgPool) -> Result<SearchStatus> {
 
     Ok(SearchStatus {
         mode,
-        embed_url,
+        embed_url: cfg.base_url,
         index_model,
         index_dims,
+        model_change,
         records_searchable,
         chunks,
         last_indexed_at,

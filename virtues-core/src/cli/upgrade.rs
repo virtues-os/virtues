@@ -24,7 +24,7 @@ use sha2::{Digest, Sha256};
 use super::{slots, ui};
 
 const BINARY_PATH: &str = "/usr/local/bin/virtues";
-const RELEASE_REPO: &str = "virtues-os/virtues";
+pub(super) const RELEASE_REPO: &str = "virtues-os/virtues";
 const USER_AGENT: &str = concat!("virtues-upgrade/", env!("CARGO_PKG_VERSION"));
 
 pub async fn run(
@@ -470,6 +470,10 @@ async fn activate(
     // hostname-rename sudoers grant from older installs. Best-effort.
     remove_stale_setup_sudoers();
 
+    // A search model change that finished since the last upgrade moves onto the
+    // usual sidecar while the server is down. Never fails the upgrade.
+    super::model_set::settle_finished_change(false).await;
+
     ui::step("starting virtues.service…");
     match service_start("virtues") {
         Ok(true) => {}
@@ -505,7 +509,9 @@ async fn activate(
         ));
     }
 
-    for unit in &sidecars {
+    // A unit retired since the list was taken (a finished model change's
+    // temporary sidecar) is gone, not failed.
+    for unit in sidecars.iter().filter(|u| Path::new(&format!("/etc/systemd/system/{u}.service")).exists()) {
         if let Ok(false) | Err(_) = service_start(unit) {
             ui::warn(&format!(
                 "{unit} did not start — search/embeddings degraded; check `systemctl status {unit}`"
@@ -539,46 +545,13 @@ async fn activate(
     // Keep current + one previous; delete older slots.
     layout.prune(slots::KEEP_SLOTS - 1);
 
-    // Model-set drift check. `virtues upgrade` swaps binaries but does NOT
-    // fetch model GGUFs or rewrite the sidecar `-m`/pooling in the unit files —
-    // those are provisioned by the installer. So a release that changes the
-    // model set (e.g. swapping the embedder or reranker) leaves the box serving the OLD
-    // models against a runtime that expects the new ones (embeds get rejected
-    // at the native-dim check). Detect it and tell the user exactly how to
-    // reconcile, instead of degrading search silently.
-    //
-    // Only meaningful on a box that actually runs the local AI sidecars — a
-    // DIY/AI-less box (no embed unit) legitimately has no GGUFs, so skip it
-    // there rather than nag on every upgrade. And resolve the models dir from
-    // the box env file first: `sudo virtues upgrade` doesn't inherit the
-    // systemd EnvironmentFile, so without this a custom DATA_DIR box would
-    // probe the wrong (default) path and always report "missing".
-    if Path::new("/etc/systemd/system/virtues-embed.service").exists() {
-        if let Some(dir) = read_box_env_var("VIRTUES_MODELS_DIR") {
-            std::env::set_var("VIRTUES_MODELS_DIR", dir);
-        }
-        let report = crate::inference_report::resolution_report();
-        let missing = report.missing();
-        if !missing.is_empty() {
-            println!();
-            ui::warn("this release expects models not present on the box:");
-            for f in &missing {
-                ui::skip(f);
-            }
-            println!("     `virtues upgrade` doesn't migrate the model set — the sidecars are");
-            println!("     still on the old GGUFs, so search/embeddings will fail until you");
-            println!("     re-run the installer (fetches the new models + rewrites the units):");
-            println!();
-            println!(
-                "       {}",
-                console::style(format!(
-                    "curl -sSL https://virtues.com/sh | sudo VIRTUES_VERSION={target_tag} sh"
-                ))
-                .cyan()
-            );
-            println!();
-        }
-    }
+    // `virtues upgrade` swaps binaries; the model files and sidecar units are
+    // provisioned separately. On the recommended setup the release's models
+    // follow it: retire the reranker, and start a background move to a new
+    // embedding model if this release recommends one (`model_set`). Never
+    // fails the upgrade. A box on its own server keeps its owner's models, and
+    // a Dragon's NPU models change only with the installer.
+    super::model_set::start_recommended_change().await;
 
     println!();
     ui::ok(&format!(
@@ -1085,23 +1058,6 @@ fn canonical(p: &Path) -> PathBuf {
     p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
 }
 
-/// Read a single `KEY=value` from the box env file (`/var/lib/virtues/virtues.env`).
-/// `sudo virtues upgrade` doesn't inherit the systemd EnvironmentFile, so this is
-/// how the upgrade path recovers box-specific settings (e.g. a custom models dir).
-pub(crate) fn read_box_env_var(key: &str) -> Option<String> {
-    let contents = fs::read_to_string("/var/lib/virtues/virtues.env").ok()?;
-    for line in contents.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix(key).and_then(|r| r.strip_prefix('=')) {
-            let val = rest.trim().trim_matches('"');
-            if !val.is_empty() {
-                return Some(val.to_string());
-            }
-        }
-    }
-    None
-}
-
 /// Resolved on-box install destinations for the shipped data dirs. (Binaries
 /// are not among them: they install into release slots, see `slot_*`.) The
 /// dirs follow the env vars the installer writes into the box env file,
@@ -1439,7 +1395,7 @@ fn build_client(force_ipv4: bool) -> Result<reqwest::Client, crate::Error> {
 
 /// GET a URL, falling back to IPv4 if the default attempt can't connect/times
 /// out (the IPv6-black-hole symptom). Returns the response after `error_for_status`.
-async fn send_get(url: &str) -> Result<reqwest::Response, crate::Error> {
+pub(super) async fn send_get(url: &str) -> Result<reqwest::Response, crate::Error> {
     let resp = match build_client(false)?.get(url).send().await {
         Ok(r) => r,
         Err(e) if e.is_connect() || e.is_timeout() => {
@@ -1890,7 +1846,7 @@ fn free_bytes(_path: &Path) -> Option<u64> {
 /// confusing half-written failure into a clear refusal, and blocking a
 /// legitimate upgrade because `statvfs` didn't answer would be a worse bug than
 /// the one it prevents.
-fn ensure_space(path: &Path, need: u64, what: &str) -> Result<(), crate::Error> {
+pub(super) fn ensure_space(path: &Path, need: u64, what: &str) -> Result<(), crate::Error> {
     let Some(free) = free_bytes(path) else { return Ok(()) };
     if free >= need {
         return Ok(());

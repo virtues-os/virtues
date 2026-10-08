@@ -56,8 +56,8 @@ microSD card produce very different servers, and that difference is worth
 knowing up front.
 [What to run it on](/docs/setup/requirements) has the full picture.
 
-It checks whether ports `5432`, `8000`, `18181`, and `18182` are already
-bound - Postgres, the server itself, and the two inference endpoints. A
+It checks whether ports `5432`, `8000`, and `18181` are already bound -
+Postgres, the server itself, and the embedding endpoint. A
 warning there usually means you're reinstalling over an existing server, which
 is fine.
 

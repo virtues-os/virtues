@@ -17,8 +17,6 @@
 
 use crate::error::{Error, Result};
 
-const ENV_FILE: &str = "/var/lib/virtues/virtues.env";
-
 pub async fn run(reembed: bool, yes: bool) -> Result<()> {
     let database_url = crate::database::normalize_database_url()?;
 
@@ -87,10 +85,13 @@ pub async fn run(reembed: bool, yes: bool) -> Result<()> {
     //    fingerprint is not the pinned one. Pinned before the wipe, so a failed
     //    write leaves the index untouched.
     println!("→ pinning the new model fingerprint…");
-    upsert_env(ENV_FILE, "VIRTUES_EMBED_FINGERPRINT", &new_fp)?;
-    upsert_env(ENV_FILE, "VIRTUES_EMBED_DIMS", &new_dim.to_string())?;
-    std::env::set_var("VIRTUES_EMBED_FINGERPRINT", &new_fp);
-    std::env::set_var("VIRTUES_EMBED_DIMS", new_dim.to_string());
+    pin(
+        &[
+            ("VIRTUES_EMBED_FINGERPRINT", new_fp.clone()),
+            ("VIRTUES_EMBED_DIMS", new_dim.to_string()),
+        ],
+        &[],
+    )?;
 
     // 2. Wipe, re-embed with the new model, and rescore every day's events.
     let (embedded, days, scored) = super::reindex::rebuild(db.pool()).await?;
@@ -208,14 +209,8 @@ pub async fn switch(
     if let Some(u) = &rerank_url {
         set.push(("VIRTUES_RERANK_URL", u.clone()));
     }
-    for (k, v) in &set {
-        upsert_env(ENV_FILE, k, v)?;
-        std::env::set_var(k, v);
-    }
-    if !same_model {
-        remove_env(ENV_FILE, "VIRTUES_EMBED_DIMS")?;
-        std::env::remove_var("VIRTUES_EMBED_DIMS");
-    }
+    let unset: &[&str] = if same_model { &[] } else { &["VIRTUES_EMBED_DIMS"] };
+    pin(&set, unset)?;
 
     if rebuild {
         let (embedded, days, scored) = super::reindex::rebuild(db.pool()).await?;
@@ -229,7 +224,7 @@ pub async fn switch(
     println!("    sudo systemctl restart virtues");
     if was_bundled {
         println!("The CPU engine Virtues installed is no longer used. To free its memory:");
-        println!("    sudo systemctl disable --now virtues-embed virtues-rerank");
+        println!("    sudo systemctl disable --now virtues-embed");
     }
     Ok(())
 }
@@ -292,55 +287,20 @@ async fn ensure_local(url: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
-fn remove_env(path: &str, key: &str) -> Result<()> {
-    let p = std::path::Path::new(path);
-    if !p.exists() {
-        return Ok(());
+/// Write settings to the box env file for the next boot, and to this process
+/// so what runs next here (a rebuild) sees them too. On a dev machine (no env
+/// file) only this process changes.
+fn pin(set: &[(&str, String)], unset: &[&str]) -> Result<()> {
+    let path = crate::box_env::path();
+    if !crate::box_env::edit(&path, set, unset)? {
+        println!("  (no {} — set these in your environment for the next run)", path.display());
     }
-    let contents =
-        std::fs::read_to_string(p).map_err(|e| Error::Other(format!("read {path}: {e}")))?;
-    let prefix = format!("{key}=");
-    let mut body: String = contents
-        .lines()
-        .filter(|l| !l.trim_start().starts_with(&prefix))
-        .collect::<Vec<_>>()
-        .join("\n");
-    body.push('\n');
-    std::fs::write(p, body).map_err(|e| Error::Other(format!("write {path}: {e}")))?;
-    Ok(())
-}
-
-/// Upsert a `KEY=value` line in the box env file, preserving everything else.
-/// Values written here (a hex fingerprint, an integer, a URL, a model name) need
-/// no quoting. On a dev machine (no env file) this is a no-op.
-fn upsert_env(path: &str, key: &str, value: &str) -> Result<()> {
-    let p = std::path::Path::new(path);
-    if !p.exists() {
-        println!("  (no {path} — set {key} in your environment for the next run)");
-        return Ok(());
+    for (k, v) in set {
+        std::env::set_var(k, v);
     }
-    let contents =
-        std::fs::read_to_string(p).map_err(|e| Error::Other(format!("read {path}: {e}")))?;
-    let prefix = format!("{key}=");
-    let line = format!("{key}={value}");
-    let mut found = false;
-    let mut out: Vec<String> = contents
-        .lines()
-        .map(|l| {
-            if l.trim_start().starts_with(&prefix) {
-                found = true;
-                line.clone()
-            } else {
-                l.to_string()
-            }
-        })
-        .collect();
-    if !found {
-        out.push(line);
+    for k in unset {
+        std::env::remove_var(k);
     }
-    let mut body = out.join("\n");
-    body.push('\n');
-    std::fs::write(p, body).map_err(|e| Error::Other(format!("write {path}: {e}")))?;
     Ok(())
 }
 

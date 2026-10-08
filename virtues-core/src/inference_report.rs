@@ -1,9 +1,10 @@
 //! Inference resolution report.
 //!
-//! v0.1.1 routes all local ML through two llama-server sidecars that the
-//! installer ships and pins (embedding on :18181, rerank on :18182 — see
-//! `search/embedder.rs` / `search/reranker.rs`). Two callers (`virtues
-//! doctor` and `setup`'s status banner) consume this report shape.
+//! On the recommended setup, local ML runs in llama-server sidecars the
+//! installer ships and pins: embedding on :18181, and on older installs a
+//! reranker on :18182, which upgrades retire (see `search/embedder.rs`,
+//! `search/reranker.rs`, `cli/model_set.rs`). `virtues doctor`, `upgrade`,
+//! `deploy` and box status consume this report shape.
 
 use std::path::PathBuf;
 
@@ -59,6 +60,18 @@ impl ResolutionReport {
 ///   workload is overhead/layer-bound at this size, not bandwidth-bound).
 pub const EMBED_GGUF: &str = "embeddinggemma-2-Q8_0.gguf";
 pub const RERANK_GGUF: &str = "gte-reranker-modernbert-base-Q8_0.gguf";
+
+/// The recommended embedder's checksum, pinned in the binary so `virtues
+/// upgrade` (`cli::model_set`) verifies the download against what this release
+/// was built with, not against a sidecar file on the same host.
+pub const EMBED_GGUF_SHA256: &str =
+    "2188ac1deca4b77dffefd603c2776a9d76d9d74ec01841392982ebb840b09135";
+
+/// The recommended embedder's prompt prefixes. Facts about the model, written
+/// into the box env alongside it when an upgrade moves a box to it; never a
+/// fallback for another endpoint. Must match the installer's GEMMA_*_PROMPT.
+pub const EMBED_QUERY_PROMPT: &str = "task: search result | query: ";
+pub const EMBED_DOC_PROMPT: &str = "title: none | text: ";
 
 /// The Dragon NPU path's QAIRT context binaries (Hexagon v68) — gte-small embed
 /// + answerai-colbert@256 rerank, served by `virtues-qnnd` behind the same
@@ -146,26 +159,28 @@ pub fn resolution_report() -> ResolutionReport {
     // Whether the sidecar runs CUDA or CPU is decided by which llama-server
     // binary CI built for this arch (the appliance-vs-DIY seam) — outside
     // this process. The sidecar's own logs are the source of truth.
-    let models = vec![
-        ModelEntry {
-            name: "embed",
-            repo: "embeddinggemma-2 @ :18181",
-            gguf_file: EMBED_GGUF,
-            source: source_for(EMBED_GGUF),
-        },
-        ModelEntry {
+    let mut models = vec![ModelEntry {
+        name: "embed",
+        repo: "embeddinggemma-2 @ :18181",
+        gguf_file: EMBED_GGUF,
+        source: source_for(EMBED_GGUF),
+    }];
+    // Only boxes that still run it: upgrades retire the reranker unless the
+    // owner opted in (`cli::model_set`), and new installs don't set it up.
+    if std::path::Path::new("/etc/systemd/system/virtues-rerank.service").exists() {
+        models.push(ModelEntry {
             name: "rerank",
             repo: "gte-reranker-modernbert-base @ :18182",
             gguf_file: RERANK_GGUF,
             source: source_for(RERANK_GGUF),
-        },
-    ];
+        });
+    }
     ResolutionReport {
         // The qualifier belongs to this path only — CUDA vs CPU is decided by
         // which llama-server binary CI built. The QNN path's accelerator string
         // is self-describing, so doctor prints `accelerator` verbatim.
         accelerator: "llama-server (GPU or CPU per sidecar build)".to_string(),
-        precision: "Q8_0 (QAT) embed / Q8_0 rerank".to_string(),
+        precision: "Q8_0".to_string(),
         models_dir: Some(dir),
         models,
     }

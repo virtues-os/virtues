@@ -113,9 +113,8 @@ rule; a paired device reaches the server by key, over paths described in
 reach `github.com` for the release and `apt.postgresql.org` for PostgreSQL,
 and it probes both before touching anything.
 
-Locally it binds four ports: `8000` for the server, `5432` for PostgreSQL,
-and `18181`/`18182` for the embedding and rerank endpoints when those run on
-the same machine. The installer warns if something already holds them.
+Locally it binds three ports: `8000` for the server, `5432` for PostgreSQL,
+and `18181` for the embedding endpoint when that runs on the same machine. The installer warns if something already holds them.
 
 ## What we actually test
 

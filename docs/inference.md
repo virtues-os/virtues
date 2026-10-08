@@ -1,7 +1,7 @@
 ---
 title: Setting up inference
 description: Run Virtues search on your own embedding server - the contracts it must speak, the llama.cpp commands that serve it, which models work, and how to point Virtues at it.
-updated: 2026-09-03
+updated: 2026-10-08
 ---
 
 Search over your own life needs a small model running near your data: an
@@ -51,12 +51,15 @@ path is that you own the endpoint and we validate it at the door.
 The installer offers three answers:
 
 - **Our hardware** - detected from the device tree. Inference is built in.
-- **Bring your own endpoint** *(recommended for everything else)* - you run
-  the servers; the installer probes them, records what it found, and pins it.
-- **Quick trial** - a bundled CPU-only model server with our two models
-  and no configuration. Honestly slow, explicitly not a deployment. It
-  exists so you can watch the product move in five minutes; stand up real
-  endpoints before you load real data.
+- **This machine's CPU** *(the default)* - Virtues runs the embedding model
+  we recommend, on the CPU, and keeps it current. When a release recommends a
+  different model, the update downloads it and rebuilds your index for it in
+  the background; search keeps working on the old model until the new index is
+  ready, then switches.
+- **Your own server** - you run the server and choose the model; the
+  installer probes it, records what it found, and pins it. Updates never
+  change your model: it's yours to keep running and to upgrade when you
+  decide to.
 
 Headless installs skip the picker with `VIRTUES_INFERENCE=manual` (plus
 `VIRTUES_EMBED_URL`, optionally `VIRTUES_RERANK_URL`) or
@@ -87,7 +90,8 @@ the one we run:
 llama-server --version   # build 11507 or later
 ```
 
-**The reranker**, on port 18182:
+**A reranker**, on port 18182, only if you turn reranking on (see
+[What Virtues consumes](#what-virtues-consumes)):
 
 ```bash
 llama-server --rerank --pooling rank \
@@ -116,9 +120,8 @@ What the flags are doing, since these are the ones that matter:
   roughly 2.5 GB resident to about 1 GB.
 
 If you want the servers to survive a reboot, run each as a systemd unit. The
-two units Virtues writes on the bundled path - `virtues-embed.service` and
-`virtues-rerank.service`, both in `/etc/systemd/system/` - are a fair
-template: loopback-only, unprivileged, `ProtectSystem=strict`,
+one Virtues writes when search runs on the CPU, `virtues-embed.service` in
+`/etc/systemd/system/`, is a fair template: loopback-only, unprivileged, `ProtectSystem=strict`,
 `Restart=on-failure` with a start limit so a permanently broken server ends
 up visibly `failed` rather than restarting forever.
 
@@ -147,15 +150,15 @@ wants a prefix on its inputs:
 | e5-small-v2 | 384 | `query: ` / `passage: ` |
 | nomic-embed-text-v1.5 | 768, truncatable | `search_query: ` / `search_document: ` |
 
-| Reranker | Note |
+| Reranker (optional) | Note |
 |---|---|
-| **gte-reranker-modernbert-base** *(what we ship)* | Cross-encoder, served by llama.cpp directly |
+| gte-reranker-modernbert-base | Cross-encoder, served by llama.cpp directly |
 | bge-reranker-v2-m3 | Multilingual, larger |
 | jina-reranker-v2 | Multilingual |
 
 GGUF builds of all of these are on Hugging Face; search the model name plus
-`gguf`. Quantized to Q8_0, the pair we ship is about half a gigabyte
-together, and these are the exact builds we run:
+`gguf`. Quantized to Q8_0, the embedder we ship is about 300 MB. These are
+the exact builds we've run:
 
 ```bash
 curl -fLO https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/bfcd298762cc34d0357ece5ebdd31791a3a374d8/embeddinggemma-2-Q8_0.gguf
@@ -321,9 +324,17 @@ comes with the command that diagnoses it.
 
 ## Changing your mind later
 
-Moving from the bundled trial to your own endpoints, or from one model to
-another, is the same short path: start the new servers, edit the URLs in
-`/var/lib/virtues/virtues.env`, run `virtues configure-inference`, and let it
-re-embed. Nothing about the decision is baked in at install time except which
-services the installer provisioned, and on the bundled path those are two
-ordinary systemd units you can stop and disable.
+To move search from the CPU to your own server, start the server and run
+`virtues configure-inference --embed-url <URL>`. It keeps your index when
+the new server runs the same model, and rebuilds it when the model differs.
+Nothing about the decision is baked in at install time except which services
+the installer provisioned, and on the CPU path that is one ordinary systemd
+unit you can stop and disable.
+
+On the CPU path, Virtues changes models for you. An update that recommends a
+new model starts it beside the current one (`virtues-embed-next.service`,
+on port 18183), and the indexer builds the new index from the text already
+stored while search keeps answering from the old one. Settings → Search
+shows how far along it is. When every chunk has a new vector, the two
+indexes swap in a moment, and the next update moves the new model onto the
+usual service and removes the old one.

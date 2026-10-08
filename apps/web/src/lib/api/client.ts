@@ -300,6 +300,9 @@ export interface SearchStatus {
 	embed_url: string;
 	index_model: string | null;
 	index_dims: number | null;
+	/** A move to another model, built in the background while search keeps
+	 *  using the current one. `done` of `total` chunks have new vectors. */
+	model_change: { model: string; done: number; total: number } | null;
 	records_searchable: number;
 	chunks: number;
 	last_indexed_at: string | null;

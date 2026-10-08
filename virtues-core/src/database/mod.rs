@@ -271,16 +271,7 @@ impl Database {
                 "ALTER TABLE app_projects ALTER COLUMN centroid \
                  TYPE halfvec({target}) USING centroid::halfvec({target})"
             ),
-            // Build parameters stated, not inherited. Omitting `WITH` gets
-            // pgvector's defaults (m=16, ef_construction=64) by accident rather
-            // than by decision. ef_construction=128 roughly doubles build time
-            // for materially better recall at the same query cost — the right
-            // trade for an index rebuilt rarely (a reindex) and queried
-            // constantly.
-            "CREATE INDEX search_vectors_hnsw ON search_vectors \
-             USING hnsw (embedding halfvec_cosine_ops) \
-             WITH (m = 16, ef_construction = 128)"
-                .to_string(),
+            hnsw_index_sql("search_vectors_hnsw", "search_vectors"),
         ] {
             sqlx::query(&stmt)
                 .execute(&self.pool)
@@ -644,4 +635,18 @@ impl MigrationCheck {
     pub fn is_divergent(&self) -> bool {
         !self.missing.is_empty() || !self.drifted.is_empty()
     }
+}
+
+/// The search vectors' HNSW index. Build parameters stated, not inherited.
+/// Omitting `WITH` gets pgvector's defaults (m=16, ef_construction=64) by
+/// accident rather than by decision. ef_construction=128 roughly doubles build
+/// time for materially better recall at the same query cost — the right trade
+/// for an index rebuilt rarely (a reindex, a model change) and queried
+/// constantly. Cosine ops (`<=>`), matching what query.rs uses.
+pub(crate) fn hnsw_index_sql(index: &str, table: &str) -> String {
+    format!(
+        "CREATE INDEX IF NOT EXISTS {index} ON {table} \
+         USING hnsw (embedding halfvec_cosine_ops) \
+         WITH (m = 16, ef_construction = 128)"
+    )
 }

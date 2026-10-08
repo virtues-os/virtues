@@ -105,6 +105,10 @@ pub async fn run() -> Result<(), crate::Error> {
         Ok(Prepared::UpToDate) => {
             save(&record);
             super::ui::ok("already on the newest build for this channel");
+            // No release tonight, but a search model change may have finished
+            // or still need starting (a failed download is retried here).
+            super::model_set::settle_finished_change(true).await;
+            super::model_set::start_recommended_change().await;
             return Ok(());
         }
         Ok(Prepared::Already { slot_id }) | Ok(Prepared::Staged { slot_id }) => slot_id,
