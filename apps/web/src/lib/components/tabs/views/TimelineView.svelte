@@ -606,9 +606,12 @@
 			armed = true;
 			setView(week.s, week.e);
 		} else {
-			// A stepped-to day opens whole, at midnight, untouched (main.js:1387);
-			// a nudge lands at its time of day, in its tier.
-			playT = startMs;
+			// A stepped-to day opens whole and untouched, its playhead at wake-up:
+			// the end of the night it woke from (recorded or estimated), else
+			// the first stay or drive after midnight (the owner's call,
+			// 2026-10-08; the prototype opened at midnight, main.js:1387). A
+			// nudge lands at its time of day, in its tier.
+			playT = wakeOf(sections, startMs, endMs);
 			armed = false;
 			setView(startMs, endMs);
 			const nudged = pendingNudge;
@@ -1004,6 +1007,16 @@
 		ensureVisible();
 		syncPlayhead();
 	}
+	/** When the day began for the person: the end of the night they woke
+	 *  from inside the day, else the start of its first stay or drive after
+	 *  midnight, else midnight. */
+	function wakeOf(secs: InspectorSection[], startMs: number, endMs: number): number {
+		const woke = secs.filter((x) => x.kind === 'sleep' && x.e > startMs && x.e < endMs).sort((a, b) => a.e - b.e)[0];
+		if (woke) return woke.e;
+		const first = secs.find((x) => (x.kind === 'place' || x.kind === 'transit') && x.s > startMs && x.s < endMs);
+		return first?.s ?? startMs;
+	}
+
 	/** Load the day holding `t`, keeping the playhead and the week. */
 	function follow(t: number) {
 		const slug = new Date(t).toLocaleDateString('en-CA', { timeZone: zone });
