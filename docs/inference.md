@@ -1,19 +1,20 @@
 ---
 title: Setting up inference
-description: Virtues searches your record with two local models - an embedder and a reranker - that you run yourself. The contracts they must speak, the llama.cpp commands that serve them, which models work, and how to point the server at them.
+description: Run Virtues search on your own embedding server - the contracts it must speak, the llama.cpp commands that serve it, which models work, and how to point Virtues at it.
 updated: 2026-09-03
 ---
 
-Search over your own life needs two small models running near your data: an
-**embedder**, which turns everything in your record into vectors, and a
-**reranker**, which re-scores the candidates a search turns up. Neither is
-the model that writes - that one is remote, and this page has nothing to do
-with it.
+Search over your own life needs a small model running near your data: an
+**embedder**, which turns everything in your record into vectors. A
+**reranker**, which re-scores the candidates a search turns up, is optional
+and off by default. Neither is the model that writes - that one is remote,
+and this page has nothing to do with it.
 
-Skip this page if you're on hardware we build - both are set up for you. On
-your own machine they are **yours to run**, and standing them up is worth
-doing *before* you install, because the installer asks for their URLs and
-refuses to guess.
+You may not need this page. On hardware we build, search is set up for you.
+On your own machine, the installer runs search on its CPU unless you choose
+otherwise. This page is for running your own server instead: on a GPU or NPU
+([the short version](/docs/setup/accelerators)), on another machine, or with
+a different model.
 
 ## What Virtues consumes
 
@@ -197,9 +198,11 @@ curl -sSL https://virtues.com/sh | sudo sh
 ```
 
 The first thing it asks - before it touches a package, a service, or a disk -
-is how you want inference. Choose bring-your-own and give it the two URLs
-(`http://localhost:18181` and `http://localhost:18182` for the recipes
-above; the rerank prompt takes an empty answer). It then probes what you gave
+is how search should run. Choose **On a server I've already set up** (or **On
+my own server**) and give it the URLs (`http://localhost:18181` and
+`http://localhost:18182` for the recipes above; the rerank prompt takes an
+empty answer). Already installed? Point the running server at yours with
+`virtues configure-inference --embed-url <URL>` instead. It then probes what you gave
 it and prints what it found: the vector width, a latency verdict, and whether
 the reranker answered.
 

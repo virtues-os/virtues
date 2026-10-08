@@ -563,8 +563,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Recover after a manual endpoint's model changed. Runs BEFORE the app
     // builds the guarded embedder — which would itself fail on the very
     // fingerprint mismatch this command exists to fix.
-    if let Some(Commands::ConfigureInference { reembed, yes }) = &cli.command {
-        match virtues::cli::configure_inference::run(*reembed, *yes).await {
+    if let Some(Commands::ConfigureInference { embed_url, rerank_url, embed_model, reembed, yes }) =
+        &cli.command
+    {
+        let result = match embed_url {
+            Some(url) => {
+                virtues::cli::configure_inference::switch(
+                    url,
+                    rerank_url.as_deref(),
+                    embed_model.as_deref(),
+                    *reembed || *yes,
+                )
+                .await
+            }
+            None => virtues::cli::configure_inference::run(*reembed, *yes).await,
+        };
+        match result {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: configure-inference failed: {e}");
