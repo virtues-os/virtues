@@ -87,7 +87,12 @@ impl Database {
         &self.pool
     }
 
-    /// Initialize database (run migrations, etc.)
+    /// Bring the schema up to this build: wait for Postgres, run migrations, size
+    /// the vector columns. Only the schema's owners call this — the server, and
+    /// the setup and maintenance verbs (`init`, `bringup`, `migrate`, `reset`,
+    /// `seed`, `subscribe`, `account-login`). Any other command calls
+    /// [`Database::connect`] or neither, so it never changes the schema under a
+    /// running server.
     ///
     /// Waits up to 30s for Postgres to accept connections before failing — on
     /// a fresh box, PG can be in WAL recovery for several seconds after
@@ -117,6 +122,28 @@ impl Database {
         // them (`search::indexer`).
         self.ensure_embedding_dims().await?;
 
+        Ok(())
+    }
+
+    /// Connect for a command that uses the database but does not own its schema:
+    /// wait for Postgres, then refuse if this build expects migrations the
+    /// database has not had, rather than apply them behind the server's back.
+    /// `VIRTUES_SKIP_MIGRATIONS=1` (an externally-managed snapshot, as in
+    /// [`Database::initialize`]) skips the check.
+    pub async fn connect(&self) -> Result<()> {
+        self.wait_for_postgres(std::time::Duration::from_secs(30)).await?;
+        if std::env::var("VIRTUES_SKIP_MIGRATIONS").as_deref() == Ok("1") {
+            return Ok(());
+        }
+        let pending = self.migration_check().await?.pending;
+        if let (Some(first), Some(last)) = (pending.first(), pending.last()) {
+            return Err(Error::Database(format!(
+                "this database is {} migration(s) behind this build ({first}..{last} \
+                 pending). Run `virtues migrate` first. (For a snapshot you only read, \
+                 set VIRTUES_SKIP_MIGRATIONS=1.)",
+                pending.len()
+            )));
+        }
         Ok(())
     }
 
@@ -365,7 +392,9 @@ impl Database {
             .collect();
 
         // A fresh DB (no _sqlx_migrations table yet) has nothing applied —
-        // every embedded migration is pending, no divergence possible.
+        // every embedded migration is pending, no divergence possible. Any
+        // other failure is an error: read as "nothing applied", it would call
+        // every migration pending.
         let applied: Vec<(i64, Vec<u8>)> = match sqlx::query_as(
             "SELECT version, checksum FROM _sqlx_migrations ORDER BY version",
         )
@@ -373,7 +402,8 @@ impl Database {
         .await
         {
             Ok(rows) => rows,
-            Err(_) => Vec::new(),
+            Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("42P01") => Vec::new(),
+            Err(e) => return Err(Error::Database(format!("reading applied migrations: {e}"))),
         };
 
         let mut check = MigrationCheck::default();
@@ -545,6 +575,23 @@ mod tests {
         sqlx::query("DROP INDEX search_vectors_hnsw").execute(&pool).await.unwrap();
         db.ensure_embedding_dims().await.unwrap();
         assert!(hnsw_oid(&pool).await.is_some());
+    }
+
+    /// A command that does not own the schema connects to a migrated database,
+    /// and refuses one this build would migrate, naming the fix.
+    #[sqlx::test]
+    async fn connect_refuses_a_database_behind_this_build(pool: PgPool) {
+        let db = Database::from_pool(pool.clone());
+        db.connect().await.expect("the test database is fully migrated");
+
+        let latest = embedded_migration_max().expect("this build ships migrations");
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version = $1")
+            .bind(latest)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let err = db.connect().await.expect_err("one migration is pending");
+        assert!(err.to_string().contains("virtues migrate"), "{err}");
     }
 
     // Tests go through the pure `normalize_from`, never the env: set_var/
