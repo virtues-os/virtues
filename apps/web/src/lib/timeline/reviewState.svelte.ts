@@ -4,7 +4,7 @@
  * and its Undo, and pointing to Home or Work on the map. The questions
  * themselves are review.ts's; this holds what the person has done with them.
  */
-import { fetchReview, sendAnswer, type Answer, type PlaceQuestion, type PlaceReview } from "./review";
+import { fetchReview, sendAnswer, type Answer, type PlaceReview } from "./review";
 
 /** How long an answer can be undone. */
 const UNDO_MS = 8000;
@@ -65,11 +65,6 @@ export class ReviewState {
 			console.warn("[Timeline] place review fetch failed", e);
 			this.failed = true;
 		}
-	}
-
-	/** The questions about places not on the day on show. */
-	elsewhere(dayPlaces: string[]): PlaceQuestion[] {
-		return this.questions.filter((q) => !dayPlaces.includes(q.id));
 	}
 
 	async answer(id: string, a: Answer): Promise<boolean> {

@@ -10,16 +10,20 @@
 	it is where you are, the latest-begun row holding it is what's happening.
 
 	"Help Virtues out" lives here too, where the day is read: a stay whose
-	place Virtues can't name carries its question under it, and the places on
-	other days are one row at the top, "N places to name on other days ·
-	Review", opening them one at a time in this column (ReviewCard).
+	place Virtues can't name is "Unknown · <city>", its question one line
+	under it. A yes-or-no question answers there, "Were you at Sandy's?
+	Yes  No…": "No…" opens the prototype's card (ReviewCard) in this column in
+	place of the list, for the other answers (on Home or Work it goes
+	straight to tapping the map); any other question has one way in,
+	"Which of 7 places nearby?  Choose"; the tile over the map steps through the other
+	days' questions and opens the same card on each.
 -->
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { InspectorPick as Pick, InspectorRow, InspectorSection } from '$lib/timeline/inspector';
 	import { lineAt, lineTime, rowLines } from '$lib/timeline/transcript';
 	import TextAction from '$lib/components/TextAction.svelte';
-	import ReviewAsk from '$lib/components/timeline/ReviewAsk.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 	import ReviewCard from '$lib/components/timeline/ReviewCard.svelte';
 	import { getNearbyPlaces, type NearbyPlace } from '$lib/wiki/api';
 	import { askFor, type PlaceCandidate } from '$lib/timeline/review';
@@ -38,10 +42,7 @@
 		homeSet = false,
 		onmerge,
 		review,
-		dayPlaces = [],
-		onday,
 		onfocus,
-		onnames,
 	}: {
 		sections: InspectorSection[];
 		zone: string;
@@ -63,16 +64,8 @@
 		homeSet?: boolean;
 		/** "Help Virtues out": the questions, the answers and Undo. */
 		review?: ReviewState;
-		/** The places of the day on show; the questions about the rest are
-		 *  the ones Review asks. */
-		dayPlaces?: string[];
-		/** Review's "See That Day". */
-		onday?: (slug: string) => void;
-		/** Review's place and the named places it offers, for the map. */
+		/** The card's place and the named places it offers, for the map. */
 		onfocus?: (at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null) => void;
-		/** The named places the question under the current stay offers,
-		 *  labelled on the map. */
-		onnames?: (shown: PlaceCandidate[]) => void;
 		/** Fold an unnamed place into a named one near it. */
 		onmerge: (placeId: string, into: NearbyPlace) => Promise<boolean>;
 	} = $props();
@@ -148,10 +141,11 @@
 	// playhead is the latest begun; the highlight never climbs back up.
 	const curSection = $derived(sections.findLastIndex(holds));
 
-	// "Help Virtues out": Review over the other days' places, or the day's
-	// questions under their stays (each place asked under its first stay).
-	let reviewing = $state(false);
-	const elsewhere = $derived(review ? review.elsewhere(dayPlaces) : []);
+	// "Help Virtues out": each place's question under its first stay, and
+	// the card open in place of the list, on one place's question or on the
+	// names Virtues chose.
+	let card = $state<{ id: string } | 'names' | null>(null);
+	const cardQ = $derived(card && card !== 'names' ? (review?.byPlace.get(card.id) ?? null) : null);
 	const askedAt = $derived.by(() => {
 		const first = new Map<string, number>();
 		sections.forEach((s, i) => {
@@ -159,17 +153,23 @@
 		});
 		return first;
 	});
-	// The question under the current stay labels the places it offers.
+	// Answered (or another day on show without it): back to the list, where
+	// the stay has its new name and Undo.
 	$effect(() => {
-		const id = sections[curSection]?.placeId;
-		const q = !reviewing && id ? review?.byPlace.get(id) : undefined;
-		onnames?.(q ? askFor(q).shown : []);
+		void sections;
+		if (card && card !== 'names' && (!cardQ || !sections.some((x) => x.placeId === (card as { id: string }).id))) untrack(() => (card = null));
 	});
-	// Another day on show: back to its list.
-	$effect(() => {
-		void dayPlaces;
-		untrack(() => (reviewing = false));
-	});
+	/** Open the card on a place's question, its first stay picked. */
+	export function ask(id: string) {
+		const i = sections.findIndex((x) => x.placeId === id);
+		if (i < 0 || !review?.byPlace.has(id)) return;
+		if (i !== curSection) pickSection(i, sections[i]);
+		card = { id };
+	}
+	/** Open the card on the names Virtues chose without asking. */
+	export function names() {
+		card = 'names';
+	}
 	const curRow = $derived(
 		sections
 			.flatMap((s) => s.rows)
@@ -285,19 +285,13 @@
 	});
 </script>
 
-{#if sections.length || reviewing || elsewhere.length}
+{#if sections.length || card}
 	<section class="inspector" bind:this={inspector} aria-label="The day, stay by stay">
-		{#if reviewing && review}
+		{#if review && (card === 'names' || cardQ)}
 			<div class="scroll">
-				<ReviewCard {review} questions={elsewhere} onback={() => (reviewing = false)} onday={(d) => onday?.(d)} onfocus={(at) => onfocus?.(at)} />
+				<ReviewCard {review} q={cardQ} onback={() => (card = null)} onfocus={(at) => onfocus?.(at)} />
 			</div>
 		{:else}
-		{#if elsewhere.length}
-			<div class="others">
-				<span>{elsewhere.length} {elsewhere.length === 1 ? 'place' : 'places'} to name on other days</span>
-				<TextAction onclick={() => (reviewing = true)}>Review</TextAction>
-			</div>
-		{/if}
 		<div class="scroll" bind:this={scroller}>
 			{#each sections as sec, i (sec.kind + sec.s)}
 				{@const asked = review && sec.placeId && askedAt.get(sec.placeId) === i ? review.byPlace.get(sec.placeId) : undefined}
@@ -317,13 +311,30 @@
 						{/if}
 					</button>
 					{#if asked && review && !review.pointing}
-						<div class="inline-ask"><ReviewAsk q={asked} {review} compact /></div>
+						{@const id = asked.id}
+						{@const a = askFor(asked)}
+						{@const yes = a.yes}
+						<p class="ask-line">
+							<span>{a.line}</span>
+							{#if yes}
+								<span class="ask-actions">
+									<TextAction disabled={review.saving} onclick={() => void review.answer(id, yes)}>Yes</TextAction>
+									<TextAction onclick={() => (a.role ? review.startPointing(id, a.role) : ask(id))}>No…</TextAction>
+								</span>
+							{:else}
+								<TextAction onclick={() => ask(id)}>Choose</TextAction>
+							{/if}
+						</p>
 					{:else if review?.undo && review.undo.at === sec.placeId}
-						<p class="saved">{review.undo.said} · <TextAction inline onclick={() => void review.undoLast()}>Undo</TextAction></p>
-					{:else if sec.kind === 'place' && !sec.named && sec.placeId && !sec.placeId.startsWith('visit:') && !(review && review.byPlace.has(sec.placeId))}
+						<p class="ask-line">
+							<span>{review.undo.said}</span>
+							<TextAction onclick={() => void review.undoLast()}>Undo</TextAction>
+						</p>
+					{:else if sec.kind === 'place' && !sec.named && sec.source !== 'home' && sec.source !== 'work' && sec.placeId && !sec.placeId.startsWith('visit:') && !(review && review.byPlace.has(sec.placeId))}
 						{@const placeId = sec.placeId}
 						{#if naming === placeId}
 							<form class="name-form" onsubmit={(e) => (e.preventDefault(), saveName(placeId))}>
+								{#if sec.guessed}<p class="same">Named from the map</p>{/if}
 								{#if nearby.length}
 									<p class="same">
 										Same as
@@ -354,14 +365,18 @@
 								{#if nameError}<p class="name-error">{nameError}</p>{/if}
 							</form>
 						{:else}
-							<span class="name-door" class:shown={i === curSection || sec.guessed}>
-								{#if sec.guessed}
-									<span class="guess">From the map ·</span>
-									<TextAction onclick={() => startNaming(placeId)}>Not right?</TextAction>
-								{:else}
+							{#if sec.guessed}
+								<!-- A name the map chose: no line under it, only Reminders'
+								     ⓘ on the row pointed at or selected, which opens the
+								     name field to correct it. -->
+								<button class="info" class:shown={i === curSection} type="button" aria-label="About this name" title="Named from the map" onclick={() => startNaming(placeId)}>
+									<Icon icon="ri:information-line" width="18" />
+								</button>
+							{:else}
+								<span class="name-door" class:shown={i === curSection}>
 									<TextAction onclick={() => startNaming(placeId)}>Name this place</TextAction>
-								{/if}
-							</span>
+								</span>
+							{/if}
 						{/if}
 					{/if}
 					{#each sec.rows as row (row.kind + row.s)}
@@ -452,7 +467,9 @@
 		top: -1px;
 		z-index: 2;
 		background: var(--color-surface);
-		padding: 16px 16px 8px;
+		/* The right edge keeps room for a map-named stay's ⓘ, and so lines
+		   its duration up with the rows', which end in a chevron. */
+		padding: 16px 40px 8px 16px;
 	}
 	/* A hairline only while rows are passing beneath it. */
 	.sec:global(.stuck) {
@@ -658,26 +675,23 @@
 		gap: 8px;
 		padding: 0 16px 12px 32px;
 	}
-	/* "Help Virtues out" in the list: the other days' row, a question under
-	   its stay, and an answer's Undo where the question was. */
-	.others {
+	/* "Help Virtues out" in the list: a question as its stay's second line,
+	   in the type of "From the map · Not right?", with one way in; an
+	   answer's Undo takes the same line. */
+	.ask-actions {
+		display: flex;
+		gap: 16px;
+	}
+	.ask-line {
 		display: flex;
 		align-items: baseline;
 		justify-content: space-between;
 		gap: 12px;
-		padding: 12px 16px;
-		border-bottom: 1px solid var(--color-border);
-		background: color-mix(in srgb, var(--color-primary) 6%, transparent);
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
-	.inline-ask {
-		padding: 0 16px 12px 32px;
-	}
-	.saved {
 		margin: 0;
-		padding: 0 16px 12px 32px;
+		/* "Answer" ends where the durations above it do. */
+		padding: 0 40px 8px 32px;
 		font-size: 13px;
+		line-height: 1.3;
 		color: var(--color-foreground-muted);
 	}
 	.same,
@@ -686,8 +700,30 @@
 		font-size: 13px;
 		color: var(--color-foreground-muted);
 	}
-	.guess {
-		color: var(--color-foreground-muted);
+	/* Reminders' ⓘ: at the end of the stay's header, shown on the row
+	   pointed at or selected; the header keeps room for it. */
+	.info {
+		position: absolute;
+		top: 16px;
+		right: 12px;
+		z-index: 3;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		padding: 0;
+		border: 0;
+		border-radius: 50%;
+		background: none;
+		color: var(--color-primary);
+		cursor: pointer;
+		opacity: 0;
+	}
+	.info.shown,
+	.group:hover .info,
+	.info:focus-visible {
+		opacity: 1;
 	}
 	.replace-note {
 		display: block;

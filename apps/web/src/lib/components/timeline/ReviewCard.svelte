@@ -1,13 +1,12 @@
 <!--
-	ReviewCard.svelte - "Help Virtues out"'s Review: the places on other days,
-	asked one at a time inside the day's list, as Photos asks "Is this Sam?"
-	(dayback/src/main.js:2113-2201). Home and Work first, then the most time.
-	The map goes to each place while it's asked about. When nothing is left,
-	"All caught up", and the names Virtues chose without asking, where a wrong
-	one is marked and corrected.
+	ReviewCard.svelte - "Help Virtues out"'s card, the prototype's
+	(dayback/src/main.js:2113-2201), opened in the day's list in place of the
+	list: one place's question, from "Answer" on its stay, while the map goes
+	to the place with the named places it offers; or the names Virtues chose
+	without asking, where a wrong one is marked and corrected. "‹ Back to the
+	Day" returns to the list, and so does an answer.
 -->
 <script lang="ts">
-	import IconButton from '$lib/components/IconButton.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import ReviewAsk from '$lib/components/timeline/ReviewAsk.svelte';
 	import { askFor, type ConfirmedPlace, type PlaceCandidate, type PlaceQuestion } from '$lib/timeline/review';
@@ -15,34 +14,27 @@
 
 	let {
 		review,
-		questions,
+		q = null,
 		onback,
-		onday,
 		onfocus,
 	}: {
 		review: ReviewState;
-		/** The places to ask about, in order. */
-		questions: PlaceQuestion[];
+		/** The place asked about; `null` lists the names Virtues chose. */
+		q?: PlaceQuestion | null;
 		/** Back to the day's list. */
 		onback: () => void;
-		/** "See That Day": open that day. */
-		onday: (slug: string) => void;
 		/** The place being asked about and the named places it offers, for
 		 *  the map; `null` lets go. */
 		onfocus: (at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null) => void;
 	} = $props();
 
-	let idx = $state(0);
-	let mode = $state<'questions' | 'names'>('questions');
 	/** A named place marked wrong, whose right name is being typed. */
 	let flagged = $state<string | null>(null);
-	const at = $derived(Math.max(0, Math.min(idx, questions.length - 1)));
-	const current = $derived(questions[at] ?? null);
 
 	$effect(() => {
-		const q = mode === 'questions' && !review.pointing ? current : null;
-		const ask = q ? askFor(q) : null;
-		onfocus(q && ask ? { lat: q.latitude, lon: q.longitude, reachM: ask.reachM, shown: ask.shown } : null);
+		const at = q && !review.pointing ? q : null;
+		const ask = at ? askFor(at) : null;
+		onfocus(at && ask ? { lat: at.latitude, lon: at.longitude, reachM: ask.reachM, shown: ask.shown } : null);
 		return () => onfocus(null);
 	});
 
@@ -66,19 +58,14 @@
 
 <div class="card">
 	<div class="top">
-		<TextAction quiet onclick={() => (mode === 'names' ? (mode = 'questions') : onback())}>
-			{mode === 'names' ? '‹ Back' : '‹ Back to the Day'}
-		</TextAction>
-		{#if mode === 'questions' && current}
-			<span class="nav">
-				<IconButton icon="ri:arrow-left-s-line" label="Previous place" size="xs" disabled={at <= 0} onclick={() => (idx = at - 1)} />
-				<span class="counter">{at + 1} of {questions.length}</span>
-				<IconButton icon="ri:arrow-right-s-line" label="Next place" size="xs" disabled={at >= questions.length - 1} onclick={() => (idx = at + 1)} />
-			</span>
-		{/if}
+		<TextAction quiet onclick={onback}>‹ Back to the Day</TextAction>
 	</div>
 
-	{#if mode === 'names'}
+	{#if q}
+		<div class="pad">
+			<ReviewAsk {q} {review} />
+		</div>
+	{:else}
 		<div class="pad">
 			<h3 class="title">Auto-selected names</h3>
 			<p class="sub">Virtues chose these without asking, or you set them. Mark one with ✕ if it's wrong.</p>
@@ -101,27 +88,12 @@
 				</div>
 			{/each}
 		</div>
-	{:else if current}
-		<div class="pad">
-			<ReviewAsk q={current} {review} />
-		</div>
-		{#if current.best_day}
-			{@const day = current.best_day}
-			<div class="foot"><TextAction onclick={() => onday(day)}>See That Day</TextAction></div>
+		{#if review.undo}
+			<div class="undo" role="status">
+				<span>{review.undo.said}</span>
+				<TextAction onclick={() => void review.undoLast()}>Undo</TextAction>
+			</div>
 		{/if}
-	{:else}
-		<div class="pad">
-			<h3 class="title">All caught up</h3>
-			<p class="sub">Nothing left to ask about.</p>
-		</div>
-		<div class="foot"><TextAction onclick={() => (mode = 'names')}>View Auto-Selected Names</TextAction></div>
-	{/if}
-
-	{#if review.undo}
-		<div class="undo" role="status">
-			<span>{review.undo.said}</span>
-			<TextAction onclick={() => void review.undoLast()}>Undo</TextAction>
-		</div>
 	{/if}
 </div>
 
@@ -133,22 +105,10 @@
 	.top {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
-		gap: 8px;
 		min-height: 44px;
 		padding: 8px 12px 8px 16px;
 		border-bottom: 1px solid var(--color-border);
 		font-size: 13px;
-	}
-	.nav {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-	}
-	.counter {
-		font-size: 12px;
-		color: var(--color-foreground-muted);
-		font-variant-numeric: tabular-nums;
 	}
 	.pad {
 		padding: 16px;
@@ -165,7 +125,6 @@
 		line-height: 1.35;
 		color: var(--color-foreground-muted);
 	}
-	.foot,
 	.undo {
 		display: flex;
 		align-items: baseline;
