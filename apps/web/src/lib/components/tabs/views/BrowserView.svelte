@@ -101,6 +101,25 @@
 		if (trail) requestAnimationFrame(() => trail && (trail.scrollTop = trail.scrollHeight));
 	});
 
+	/** Steps as rows: a run of the same step on the same page is one row with
+	 *  a count, and the site shows only where it changes. */
+	const rows = $derived.by(() => {
+		const out: { step: (typeof browserAgent.steps)[number]; times: number; site: string | null }[] = [];
+		let lastHost = '';
+		for (const step of browserAgent.steps) {
+			const prev = out.at(-1);
+			if (prev && prev.step.what === step.what && prev.step.url === step.url && prev.step.ok === step.ok) {
+				prev.step = step;
+				prev.times += 1;
+				continue;
+			}
+			const host = hostOf(step.url);
+			out.push({ step, times: 1, site: host !== lastHost && step.op !== 'open' ? host : null });
+			lastHost = host;
+		}
+		return out;
+	});
+
 	const GLYPHS: Record<string, string> = {
 		open: 'ri:global-line',
 		snapshot: 'ri:file-text-line',
@@ -317,14 +336,14 @@
 				</button>
 			</header>
 			<ol class="trail" bind:this={trail}>
-				{#each browserAgent.steps as step (step.id)}
+				{#each rows as { step, times, site } (step.id)}
 					{@const open = step.id === openId}
 					<li class="step" class:open class:failed={!step.ok} class:live={step.id === latestId && browserAgent.driving}>
 						<button class="row" onclick={() => (chosen = open ? -1 : step.id)} aria-expanded={open}>
 							<span class="glyph"><Icon icon={step.ok ? glyph(step.op) : 'ri:error-warning-line'} width="13" /></span>
 							<span class="text">
-								<span class="what">{step.what}</span>
-								<span class="meta">{hostOf(step.url)} · {ago(step.at)}</span>
+								<span class="what">{step.what}{#if times > 1}<span class="times"> ×{times}</span>{/if}</span>
+								<span class="meta">{site ? `${site} · ` : ''}{ago(step.at)}</span>
 							</span>
 						</button>
 						{#if open && step.thumb}
@@ -594,6 +613,10 @@
 	}
 	.step.failed .what {
 		color: var(--text-muted);
+	}
+	.times {
+		color: var(--text-muted);
+		font-variant-numeric: tabular-nums;
 	}
 	.meta {
 		font-size: 11px;
