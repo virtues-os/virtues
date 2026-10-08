@@ -2,7 +2,8 @@
 //! server: a tile is protobuf layers, a layer names its features' tag keys
 //! and values, and a feature's geometry is move / line / close commands on a
 //! cursor. Place names read the `pois` and `places` layers' points
-//! (`naming`).
+//! (`naming`); the open-water test reads the `water` layer's polygons
+//! (`water`).
 
 use std::collections::HashMap;
 
@@ -76,6 +77,31 @@ fn read_layer<'a>(buf: &'a [u8], want: &str) -> Option<Option<Layer<'a>>> {
     Some(Some(Layer { extent: extent as f64, features }))
 }
 
+/// One polygon, as its rings in tile units.
+pub(super) type Polygon = Vec<Vec<(f64, f64)>>;
+
+/// A polygon's rings from its geometry commands.
+pub(super) fn rings(geometry: &[u32]) -> Polygon {
+    let mut out = Vec::new();
+    let mut ring: Vec<(f64, f64)> = Vec::new();
+    walk(geometry, |cmd, x, y| {
+        if cmd == 1 && !ring.is_empty() {
+            out.push(std::mem::take(&mut ring));
+        }
+        if cmd == 7 {
+            if !ring.is_empty() {
+                out.push(std::mem::take(&mut ring));
+            }
+        } else {
+            ring.push((x, y));
+        }
+    });
+    if !ring.is_empty() {
+        out.push(ring);
+    }
+    out
+}
+
 /// A point feature's points, in tile units.
 pub(super) fn points(geometry: &[u32]) -> Vec<(f64, f64)> {
     let mut out = Vec::new();
@@ -122,6 +148,15 @@ pub(super) fn to_lat_lon(z: u8, x: u32, y: u32, extent: f64, px: f64, py: f64) -
     let lon = gx / n * 360.0 - 180.0;
     let lat = (std::f64::consts::PI * (1.0 - 2.0 * gy / n)).sinh().atan().to_degrees();
     (lat, lon)
+}
+
+/// A coordinate in tile units of tile `z/x/y`, `(px, py)`.
+pub(super) fn to_tile(z: u8, x: u32, y: u32, extent: f64, lat: f64, lon: f64) -> (f64, f64) {
+    let n = f64::from(1u32 << z);
+    let px = ((lon + 180.0) / 360.0 * n - f64::from(x)) * extent;
+    let merc = lat.to_radians().tan().asinh();
+    let py = ((1.0 - merc / std::f64::consts::PI) / 2.0 * n - f64::from(y)) * extent;
+    (px, py)
 }
 
 /// A value's string, or `None` inside for a number or a bool.

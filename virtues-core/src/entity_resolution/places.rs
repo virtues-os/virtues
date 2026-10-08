@@ -112,7 +112,7 @@ async fn resolve_location_visits(db: &Database, window: TimeWindow) -> Result<us
 
     tracing::debug!(point_count = points.len(), "Fetched location points");
 
-    let visits = detect_stays(&points)?;
+    let visits = ashore(detect_stays(&points)?).await;
 
     tracing::debug!(ref_count = visits.len(), "Completed clustering");
 
@@ -578,6 +578,22 @@ fn detect_stays(points: &[LocationPoint]) -> Result<Vec<Visit>> {
 
 /// Whether `next` resumes `prev`: it starts within `SPLIT_STAY_GAP_MINUTES` of
 /// `prev` ending, and at the same spot.
+/// The stays not on open water. A stop on a lake, a river or the sea (a
+/// boat, a ferry's wait) is no stay: its time joins the travel around it,
+/// and no place is made in the water (`maps::water`, the box's own map).
+async fn ashore(stays: Vec<Visit>) -> Vec<Visit> {
+    let mut water = crate::maps::water::Water::default();
+    let mut kept = Vec::with_capacity(stays.len());
+    for stay in stays {
+        if water.covers(stay.centroid_lat, stay.centroid_lon).await {
+            tracing::debug!(start = %stay.start_time, "a stay on open water is dropped");
+        } else {
+            kept.push(stay);
+        }
+    }
+    kept
+}
+
 fn is_split(prev: &Visit, next: &Visit) -> bool {
     next.start_time - prev.end_time <= chrono::Duration::minutes(SPLIT_STAY_GAP_MINUTES)
         && haversine_distance(prev.centroid_lat, prev.centroid_lon, next.centroid_lat, next.centroid_lon)
@@ -1046,7 +1062,7 @@ pub async fn rebuild_visits(db: &Database) -> Result<usize> {
         DateTime::from_timestamp(0, 0).unwrap_or_default(),
         Utc::now() + chrono::Duration::days(1),
     );
-    let stays = detect_stays(&fetch_location_points(db, everything).await?)?;
+    let stays = ashore(detect_stays(&fetch_location_points(db, everything).await?)?).await;
 
     let mut tx = pool.begin().await?;
     let stored: Vec<StoredVisit> = sqlx::query_as::<_, (String, DateTime<Utc>, DateTime<Utc>, f64, f64)>(
