@@ -280,7 +280,7 @@ fn print_byo_guide() {
     println!();
     println!("  {}", style("Known-good models (embedding dim in parens):").bold());
     println!("    embed :  gte-small (384) · bge-small-en-v1.5 (384) · e5-small-v2 (384)");
-    println!("             embeddinggemma-300m (768) · nomic-embed-text-v1.5 (768)");
+    println!("             embeddinggemma-2 (768) · nomic-embed-text-v1.5 (768)");
     println!("    rerank:  gte-reranker-modernbert-base · bge-reranker-v2-m3 · jina-reranker-v2");
     println!();
     println!("  {}", style("Start commands (we'll ask only for the URLs):").bold());

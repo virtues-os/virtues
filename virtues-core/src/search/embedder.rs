@@ -34,12 +34,12 @@
 //! probe/fingerprint/dim guards as every other endpoint.
 //!
 //! **Sidecar (default DIY/dev)** is the HTTP path below, and the installer's
-//! current GGUF is EmbeddingGemma-300M (QAT Q8_0) — a Gemma-3-lineage
-//! bidirectional encoder, mean-pooled, 768-d native, Matryoshka-truncated to 256
-//! and renormalized for a 4× lighter HNSW index. Run it on CPU: its activations
-//! want bf16/fp32, so fp16 GPU paths force fp32 and end up slower. **This is a
-//! default, not a commitment** — swap the GGUF and the only thing that must
-//! follow is the stored width.
+//! current GGUF is EmbeddingGemma 2 (Q8_0) — a Gemma-4-lineage bidirectional
+//! encoder, mean-pooled, stored at its native 768-d (truncating to 256 gave up
+//! half its recall gain on the personal-data eval). Run it on CPU: its
+//! activations want bf16/fp32, so fp16 GPU paths force fp32 and end up slower.
+//! **This is a default, not a commitment** — swap the GGUF and the only thing
+//! that must follow is the stored width.
 //!
 //! **BYO (manual)** is any OpenAI-compatible endpoint. Stored width is the
 //! model's native dims (no truncation — most models aren't Matryoshka-trained),

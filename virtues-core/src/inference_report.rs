@@ -51,14 +51,13 @@ impl ResolutionReport {
 }
 
 /// The GGUFs the installer provisions.
-/// - Embed: EmbeddingGemma-300M, QAT Q8_0 (quantization-aware-trained →
-///   robust quant; on-device-designed, mean pooling, 768-dim native that we
-///   Matryoshka-truncate to 256). NOTE: its activations require bf16/fp32,
-///   not fp16 — run it on CPU (fp16 GPU paths force fp32 and end up slower
-///   than CPU); see embedder.rs.
+/// - Embed: EmbeddingGemma 2 (text tower), Q8_0 — mean pooling, 768-dim stored
+///   at native width (256 kept only half its recall gain on the personal-data
+///   eval). Q8_0 matches the fp32 reference at cosine 0.9998. Its activations
+///   require bf16/fp32, not fp16 — run it on CPU; see embedder.rs.
 /// - Rerank: gte-reranker-modernbert-base, Q8_0 (Q4 doesn't help — the
 ///   workload is overhead/layer-bound at this size, not bandwidth-bound).
-pub const EMBED_GGUF: &str = "embeddinggemma-300m-qat-Q8_0.gguf";
+pub const EMBED_GGUF: &str = "embeddinggemma-2-Q8_0.gguf";
 pub const RERANK_GGUF: &str = "gte-reranker-modernbert-base-Q8_0.gguf";
 
 /// The Dragon NPU path's QAIRT context binaries (Hexagon v68) — gte-small embed
@@ -150,7 +149,7 @@ pub fn resolution_report() -> ResolutionReport {
     let models = vec![
         ModelEntry {
             name: "embed",
-            repo: "embeddinggemma-300m @ :18181",
+            repo: "embeddinggemma-2 @ :18181",
             gguf_file: EMBED_GGUF,
             source: source_for(EMBED_GGUF),
         },

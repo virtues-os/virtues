@@ -279,7 +279,7 @@ contracts. These are the invocations our own systemd units use:
 
 ```bash
 # embedder — CPU is the right answer here (fp32 activations)
-llama-server --embedding --pooling mean -m embeddinggemma-300m-qat-Q8_0.gguf \
+llama-server --embedding --pooling mean -m embeddinggemma-2-Q8_0.gguf \
   --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0
 
 # reranker — the half that wants a GPU; drop -ngl for CPU
@@ -288,7 +288,7 @@ llama-server --rerank --pooling rank -m gte-reranker-modernbert-base-Q8_0.gguf \
 ```
 
 `-np 1` and `--cache-ram 0` take each server from ~2.5 GB resident to ~1 GB.
-Known-good embedders: **embeddinggemma-300m** (768, Matryoshka to 256),
+Known-good embedders: **embeddinggemma-2** (768; needs llama.cpp b11507+),
 gte-small (384), bge-small-en-v1.5 (384), e5-small-v2 (384),
 nomic-embed-text-v1.5 (768). Known-good rerankers:
 **gte-reranker-modernbert-base**, bge-reranker-v2-m3, jina-reranker-v2.
