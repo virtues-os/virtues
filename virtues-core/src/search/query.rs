@@ -9,8 +9,9 @@
 //!   3. Fusion — z-score normalize both arms over the candidate union and blend
 //!      with a query-adaptive weight α: rare-term/entity queries lean lexical,
 //!      paraphrase queries stay dense.
-//!   4. Dedupe to one chunk per record, then a *conditional* cross-encoder /
-//!      ColBERT rerank — only when the fused top-1/top-2 margin is tight.
+//!   4. Dedupe to one chunk per record. A cross-encoder / ColBERT rerank of
+//!      close calls is available but OFF by default — see
+//!      `rerank_gap_threshold` for why.
 
 use anyhow::Result;
 use pgvector::Vector;
@@ -167,11 +168,24 @@ fn truncate_for_rerank(text: &str) -> String {
 /// reranked unconditionally and the trigger only ever fired on the
 /// single-query path. A ratio of the span means the same thing in both.
 ///
-/// Tunable via `VIRTUES_RERANK_GAP` pending real-data calibration — NOTE the
-/// unit change: this is now a fraction in [0, 1], not z-units. A value above 1
-/// is meaningless in the new unit and almost certainly a calibration from the
-/// old one (1.5 was the documented default), so it clamps to 1.0 — "always
-/// rerank", the conservative direction — and says so, rather than being
+/// **Default 0.0: never rerank.** A margin is never below 0, so the reranker is
+/// not called unless `VIRTUES_RERANK_GAP` opts in. Both rerankers we ship made
+/// the final order WORSE than the fused ranking they were handed, in every
+/// configuration measured on 2026-10-08 (this pipeline replicated, nDCG@10):
+///
+/// | first stage                | fused | + gte-reranker | + ColBERT-small |
+/// |----------------------------|-------|----------------|-----------------|
+/// | personal, EmbeddingGemma 2 | 0.764 | 0.670          | 0.679           |
+/// | personal, gte-small        | 0.671 | 0.645          | 0.625           |
+/// | SciFact, EmbeddingGemma 2  | 0.843 | 0.776          | 0.765           |
+///
+/// with the old 0.4 trigger firing on 85% of personal queries. The embedders
+/// out-rank these small rerankers, so handing them the order throws quality
+/// away. A better reranker should earn its way back on the same eval.
+///
+/// The unit is a fraction in [0, 1], not z-units. A value above 1 is almost
+/// certainly a calibration from the old unit (1.5 was the documented default),
+/// so it clamps to 1.0 — "always rerank" — and says so, rather than being
 /// silently reinterpreted.
 fn rerank_gap_threshold() -> f64 {
     match std::env::var("VIRTUES_RERANK_GAP")
@@ -187,7 +201,7 @@ fn rerank_gap_threshold() -> f64 {
             );
             1.0
         }
-        _ => 0.4,
+        _ => 0.0,
     }
 }
 
