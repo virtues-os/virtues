@@ -15,7 +15,7 @@
 	 * The owner always sees who is driving. While the assistant acts, a bar
 	 * offers Take control and Stop and the page gets an accent frame; when it
 	 * hands the browser over (a sign-in, a code), the bar says what to do and
-	 * waits for Done. Its steps collect in an Activity column beside the page.
+	 * waits for Done. Its steps collect in an Activity row under the page.
 	 */
 	import { onDestroy, onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -88,24 +88,18 @@
 		}
 	}
 
-	/** The step showing its picture: the one you chose (-1 for none), else
-	 *  the newest. */
-	let chosen = $state<number | null>(null);
 	const latestId = $derived(browserAgent.steps.at(-1)?.id ?? null);
-	const openId = $derived(chosen === null ? latestId : chosen);
 
-	// A new step takes over the picture, and comes into view.
+	// A new step comes into view.
 	$effect(() => {
 		void latestId;
-		chosen = null;
-		if (trail) requestAnimationFrame(() => trail && (trail.scrollTop = trail.scrollHeight));
+		if (trail) requestAnimationFrame(() => trail && (trail.scrollLeft = trail.scrollWidth));
 	});
 
-	/** Steps as rows: a run of the same step on the same page is one row with
-	 *  a count, and the site shows only where it changes. */
+	/** Steps as chips: a run of the same step on the same page is one chip
+	 *  with a count. */
 	const rows = $derived.by(() => {
-		const out: { step: (typeof browserAgent.steps)[number]; times: number; site: string | null }[] = [];
-		let lastHost = '';
+		const out: { step: (typeof browserAgent.steps)[number]; times: number }[] = [];
 		for (const step of browserAgent.steps) {
 			const prev = out.at(-1);
 			if (prev && prev.step.what === step.what && prev.step.url === step.url && prev.step.ok === step.ok) {
@@ -113,9 +107,7 @@
 				prev.times += 1;
 				continue;
 			}
-			const host = hostOf(step.url);
-			out.push({ step, times: 1, site: host !== lastHost && step.op !== 'open' ? host : null });
-			lastHost = host;
+			out.push({ step, times: 1 });
 		}
 		return out;
 	});
@@ -326,35 +318,31 @@
 		</div>
 	</div>
 
+	</div>
+
 	{#if showSteps && browserAgent.steps.length > 0}
-		<aside class="activity" aria-label="Activity">
-			<header>
-				<span class="title">Activity</span>
-				<button class="link" onclick={() => browserAgent.clearSteps()}>Clear</button>
-				<button class="close" title="Hide activity" aria-label="Hide activity" onclick={toggleSteps}>
-					<Icon icon="ri:close-line" width="14" />
-				</button>
-			</header>
+		<div class="activity" aria-label="Activity">
 			<ol class="trail" bind:this={trail}>
-				{#each rows as { step, times, site } (step.id)}
-					{@const open = step.id === openId}
-					<li class="step" class:open class:failed={!step.ok} class:live={step.id === latestId && browserAgent.driving}>
-						<button class="row" onclick={() => (chosen = open ? -1 : step.id)} aria-expanded={open}>
+				{#each rows as { step, times } (step.id)}
+					<li
+						class="chip"
+						class:failed={!step.ok}
+						class:live={step.id === latestId && browserAgent.driving}
+						title={`${step.what}${times > 1 ? ` ×${times}` : ''} · ${hostOf(step.url)} · ${ago(step.at)}`}
+					>
+						{#if step.ok && step.thumb}
+							<img src={step.thumb} alt="" />
+						{:else}
 							<span class="glyph"><Icon icon={step.ok ? glyph(step.op) : 'ri:error-warning-line'} width="13" /></span>
-							<span class="text">
-								<span class="what">{step.what}{#if times > 1}<span class="times"> ×{times}</span>{/if}</span>
-								<span class="meta">{site ? `${site} · ` : ''}{ago(step.at)}</span>
-							</span>
-						</button>
-						{#if open && step.thumb}
-							<img class="shot" src={step.thumb} alt={`The page after: ${step.what}`} />
 						{/if}
+						<span class="what">{step.what}</span>
+						{#if times > 1}<span class="times">×{times}</span>{/if}
 					</li>
 				{/each}
 			</ol>
-		</aside>
+			<button class="link" onclick={() => browserAgent.clearSteps()}>Clear</button>
+		</div>
 	{/if}
-	</div>
 </div>
 
 <style>
@@ -495,145 +483,84 @@
 		flex: 1;
 		min-height: 0;
 		display: flex;
-		container-type: inline-size;
-	}
-	/* A narrow pane keeps most of its width for the page. */
-	@container (max-width: 640px) {
-		.activity {
-			width: 208px;
-		}
 	}
 
 	.activity {
-		width: 264px;
-		flex-shrink: 0;
-		display: flex;
-		flex-direction: column;
-		min-height: 0;
-		border-left: 1px solid var(--border);
-		background: var(--surface);
-	}
-	.activity header {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		padding: 12px 12px 8px 16px;
+		padding: 8px 12px;
+		border-top: 1px solid var(--border);
+		flex-shrink: 0;
 	}
-	.title {
+	.trail {
 		flex: 1;
+		min-width: 0;
+		display: flex;
+		gap: 8px;
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+	.chip {
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		height: 32px;
+		max-width: 240px;
+		padding-right: 12px;
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		overflow: hidden;
+		background: var(--surface);
+	}
+	.chip img {
+		width: 44px;
+		height: 100%;
+		object-fit: cover;
+		object-position: top left;
+		border-right: 1px solid var(--border);
+	}
+	.chip .glyph {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 100%;
+		color: var(--text-muted);
+	}
+	.chip.failed .glyph {
+		color: var(--warning);
+	}
+	.chip.live {
+		border-color: var(--primary);
+	}
+	.what {
 		font-size: 12px;
-		font-weight: 600;
 		color: var(--text);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.chip:not(:last-child) .what,
+	.chip.failed .what {
+		color: var(--text-muted);
+	}
+	.times {
+		font-size: 12px;
+		color: var(--text-muted);
+		font-variant-numeric: tabular-nums;
 	}
 	.link {
+		flex-shrink: 0;
 		font-size: 12px;
 		color: var(--text-muted);
 	}
 	.link:hover {
 		color: var(--text);
-	}
-	.close {
-		display: inline-flex;
-		color: var(--text-muted);
-	}
-	.close:hover {
-		color: var(--text);
-	}
-
-	.trail {
-		list-style: none;
-		margin: 0;
-		padding: 0 12px 16px 8px;
-		overflow-y: auto;
-		flex: 1;
-		min-height: 0;
-	}
-	.step {
-		position: relative;
-	}
-	/* The thread between glyphs. */
-	.step:not(:last-child)::before {
-		content: '';
-		position: absolute;
-		left: 16px;
-		top: 28px;
-		bottom: -4px;
-		width: 1px;
-		background: var(--border);
-	}
-	.row {
-		display: flex;
-		align-items: flex-start;
-		gap: 8px;
-		width: 100%;
-		padding: 4px;
-		border-radius: 12px;
-		text-align: left;
-	}
-	.row:hover {
-		background: var(--surface-elevated, var(--surface));
-	}
-	.glyph {
-		flex-shrink: 0;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		border-radius: 50%;
-		border: 1px solid var(--border);
-		background: var(--surface);
-		color: var(--text-muted);
-	}
-	.step.open .glyph {
-		color: var(--text);
-		border-color: var(--border-strong, var(--border));
-	}
-	.step.live .glyph {
-		color: var(--primary);
-		border-color: var(--primary);
-	}
-	.step.failed .glyph {
-		color: var(--warning);
-	}
-	.text {
-		display: flex;
-		flex-direction: column;
-		min-width: 0;
-		padding-top: 4px;
-	}
-	.what {
-		font-size: 13px;
-		line-height: 1.35;
-		color: var(--text);
-		overflow-wrap: anywhere;
-	}
-	.step:not(.open) .what {
-		color: var(--text-muted);
-	}
-	.step.failed .what {
-		color: var(--text-muted);
-	}
-	.times {
-		color: var(--text-muted);
-		font-variant-numeric: tabular-nums;
-	}
-	.meta {
-		font-size: 11px;
-		color: var(--text-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.shot {
-		display: block;
-		width: calc(100% - 36px);
-		margin: 4px 0 8px 36px;
-		aspect-ratio: 16 / 10;
-		object-fit: cover;
-		object-position: top;
-		border-radius: 12px;
-		border: 1px solid var(--border);
 	}
 	.note {
 		color: var(--text-muted);
