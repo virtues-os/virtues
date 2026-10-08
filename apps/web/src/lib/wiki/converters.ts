@@ -1,6 +1,6 @@
 /**
- * The one converter left: a day's EVENT, from the wire into the shape four
- * chart components read.
+ * The one converter left: a day's EVENT, from the wire into the shape the day
+ * page's Data view reads.
  *
  * There were five. The other four turned a person, place, organization and day
  * into "page types" whose distinctive contributions were camelCase renames and
@@ -40,6 +40,7 @@ export function apiToDayEvent(api: TemporalEventApi): DayEvent {
 		userLocation: api.user_location || undefined,
 		userNotes: api.user_notes || undefined,
 		noveltyZ: api.novelty_z ?? null,
+		localNoveltyZ: api.local_novelty_z ?? null,
 		autonomicZ: api.autonomic_z ?? null,
 		avgHr: api.avg_hr ?? null,
 		hrZ: api.hr_z ?? null,

@@ -2,9 +2,8 @@
 	DayDatePicker.svelte
 
 	The day page's date is its own way to another day: click it and a month
-	opens under it. The page has no toolbar row above the article, so this and
-	the previous / next cards at the foot of the page are how you move between
-	days.
+	opens under it. This and the days named at the foot of the page are how
+	you move between days.
 -->
 <script lang="ts">
 	import type { Snippet } from "svelte";
@@ -115,7 +114,7 @@
 	.calendar {
 		width: 15rem;
 		padding: 0.625rem;
-		background: var(--color-background);
+		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: 12px;
 		font-family: var(--font-sans);

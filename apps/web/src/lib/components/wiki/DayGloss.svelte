@@ -2,12 +2,14 @@
 	DayGloss.svelte
 
 	A person's name in a day article, glossed: hover it (or click, or press
-	Enter) for a small card of facts about them as of this day. The earliest
-	message between you on record, on how many of the days before this one
+	Enter) for a small card of facts about them as of this day. How you know
+	them, when you wrote it down; on how many of the 31 days before this one
 	there were messages (one-to-one in either direction; group chats only
-	where they wrote), and the last day before it, which opens that day.
-	Facts are computed from the record, never written by the narrator
-	(`/api/wiki/person/:id/gloss`).
+	where they wrote), as a dot a day; how many; the earliest message between
+	you on record; and the last day before it, which opens that day. Facts are
+	computed from the record, never written by the narrator
+	(`/api/wiki/person/:id/gloss`). Its anatomy is the evidence card's
+	(DayEvidence): a kicker line, the body, one row of actions.
 
 	It keeps the quiet ref look and the `ref-link` class, so the veil hides
 	the name like any other.
@@ -114,13 +116,16 @@
 		});
 	}
 
-	/** "a year before this day" when the earliest message on record fell on this date in an earlier year. */
-	function anniversary(slug: string): string | null {
-		const d = parseDateSlug(slug);
-		const years = page.getFullYear() - d.getFullYear();
-		if (years < 1 || d.getMonth() !== page.getMonth() || d.getDate() !== page.getDate()) return null;
-		return years === 1 ? "a year before this day" : `${years} years before this day`;
+	/** On how many of the days before there were messages, in words. */
+	function lede(g: PersonGlossApi): string {
+		const n = g.days_in_window;
+		const days = `the ${g.window_days} days before`;
+		if (n === 0) return `No messages in ${days}`;
+		const on = n === g.window_days ? `Messages on all ${days}` : `Messages on ${n} of ${days}`;
+		return g.direct_messages_in_window === 0 ? `${on}, all from them in group chats` : on;
 	}
+
+	const firstName = $derived(name.split(/\s+/)[0] || name);
 
 	function openPerson() {
 		open = false;
@@ -155,44 +160,51 @@
 				onpointerenter={() => clearTimeout(hideTimer)}
 				onpointerleave={(e) => onleave(e)}
 			>
-				<div class="kick">Person</div>
+				<p class="kick"><span class="kind">Person</span><span>· as of {day(date)}</span></p>
 				{#if veil.hiding}
-					<div class="quiet">Veiled. Hold V to read.</div>
+					<p class="quiet">Veiled. Hold V to read.</p>
 				{:else}
-					<div class="name">{name}</div>
+					<p class="name">{name}</p>
+					{#if gloss?.relationship}<p class="rel">{gloss.relationship}</p>{/if}
 					{#if missing}
-						<div class="quiet">{name} isn't in your wiki anymore.</div>
+						<p class="quiet">{name} isn't in your wiki anymore.</p>
 					{:else if failed}
-						<div class="quiet">Couldn't load your messages with them. Close this card and open it again to retry.</div>
+						<p class="quiet">Couldn't load your messages with them. Close this card and open it again to retry.</p>
 					{:else if !gloss}
-						<div class="quiet">Loading…</div>
+						<p class="quiet">Loading…</p>
 					{:else if !gloss.first_message_on}
-						<div class="quiet">No messages with them before this day.</div>
+						<p class="quiet">No messages with them before this day.</p>
 					{:else}
+						<p class="lede">{lede(gloss)}</p>
+						{#if gloss.days?.length}
+							<div class="dots" aria-hidden="true">
+								{#each gloss.days as on, i (i)}<i class:on></i>{/each}
+							</div>
+						{/if}
 						<dl>
-							<dt>First message on record</dt>
-							<dd>{day(gloss.first_message_on)}{gloss.first_message_in_group ? ", in a group chat" : ""}</dd>
-							{#if anniversary(gloss.first_message_on)}
-								<dt></dt>
-								<dd>{anniversary(gloss.first_message_on)}</dd>
-							{/if}
-							<dt>Messages</dt>
-							<dd>
-								{#if gloss.days_in_window === 0}None in the {gloss.window_days} days before{:else}On {gloss.days_in_window} of the {gloss.window_days} days before{#if gloss.direct_messages_in_window && gloss.group_messages_in_window}, {gloss.direct_messages_in_window} one-to-one and {gloss.group_messages_in_window} from them in group chats{:else if gloss.group_messages_in_window}, all from them in group chats{/if}{/if}
-							</dd>
+							<div class="fact">
+								<dt>Messages that month</dt>
+								<dd>{(gloss.direct_messages_in_window + gloss.group_messages_in_window).toLocaleString("en-US")}</dd>
+							</div>
+							<div class="fact">
+								<dt>First on record</dt>
+								<dd>{day(gloss.first_message_on)}{gloss.first_message_in_group ? ", in a group" : ""}</dd>
+							</div>
 							{#if gloss.last_message_before_on}
-								<dt>Last before this day</dt>
-								<dd>
-									{#if onday}
-										<button type="button" class="link" onclick={() => onday?.(gloss!.last_message_before_on!)}>{day(gloss.last_message_before_on)} →</button>
-									{:else}
-										{day(gloss.last_message_before_on)}
-									{/if}
-								</dd>
+								<div class="fact">
+									<dt>Last before this day</dt>
+									<dd>
+										{#if onday}
+											<button type="button" class="link" onclick={() => onday?.(gloss!.last_message_before_on!)}>{day(gloss.last_message_before_on)} →</button>
+										{:else}
+											{day(gloss.last_message_before_on)}
+										{/if}
+									</dd>
+								</div>
 							{/if}
 						</dl>
 					{/if}
-					{#if !missing}<div class="foot"><button type="button" class="link" onclick={openPerson}>Open {name} →</button></div>{/if}
+					{#if !missing}<div class="acts"><button type="button" class="link" onclick={openPerson}>Open {firstName}</button></div>{/if}
 				{/if}
 			</div>
 		</FloatingContent>
@@ -207,10 +219,11 @@
 	}
 
 	.gloss-card {
-		width: min(18rem, calc(100vw - 32px));
-		padding: 0.75rem 0.875rem;
+		width: min(20rem, calc(100vw - 32px));
+		padding: 0.8rem 0.95rem 0.7rem;
 		font-family: var(--font-sans);
 		font-size: 0.8125rem;
+		line-height: 1.45;
 		color: var(--color-foreground-muted);
 	}
 
@@ -219,27 +232,66 @@
 	}
 
 	.kick {
-		margin: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0 0.35rem;
+		margin: 0 0 0.45rem;
 		font-size: 0.75rem;
 		color: var(--color-foreground-subtle);
 	}
 
+	.kick .kind {
+		font-weight: 500;
+		color: var(--color-foreground-muted);
+	}
+
 	.name {
-		margin: 0.125rem 0 0.5rem;
+		margin: 0;
 		font-family: var(--font-serif);
-		font-size: 1.125rem;
+		font-size: 1.375rem;
+		line-height: 1.2;
 		color: var(--color-foreground);
 	}
 
-	dl {
+	.rel {
+		margin: 0;
+		color: var(--color-foreground-muted);
+	}
+
+	.lede {
+		margin: 0.6rem 0 0;
+	}
+
+	/* A dot a day, oldest first; a filled one had messages. */
+	.dots {
 		display: grid;
-		grid-template-columns: auto 1fr;
-		gap: 0.3rem 0.75rem;
+		grid-template-columns: repeat(31, 1fr);
+		gap: 2px;
+		margin: 0.35rem 0 0.4rem;
+	}
+
+	.dots i {
+		aspect-ratio: 1;
+		border-radius: 50%;
+		background: var(--color-border-strong);
+	}
+
+	.dots i.on {
+		background: var(--color-foreground-muted);
+	}
+
+	dl {
 		margin: 0;
 	}
 
+	.fact {
+		display: flex;
+		justify-content: space-between;
+		gap: 0.75rem;
+		padding: 0.18rem 0;
+	}
+
 	dt {
-		font-size: 0.75rem;
 		color: var(--color-foreground-subtle);
 	}
 
@@ -250,14 +302,15 @@
 	}
 
 	.quiet {
-		margin: 0.25rem 0 0;
+		margin: 0.375rem 0 0;
 		color: var(--color-foreground-subtle);
 	}
 
-	.foot {
-		margin: 0.75rem 0 0;
-		padding-top: 0.625rem;
+	.acts {
+		margin-top: 0.6rem;
+		padding-top: 0.55rem;
 		border-top: 1px solid var(--color-border-subtle);
+		font-size: 0.75rem;
 	}
 
 	.link {

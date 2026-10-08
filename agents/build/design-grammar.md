@@ -431,10 +431,13 @@ its blocks in. Doubled the ghosting.
 
 ## Worked examples
 
-**A day** (`wiki/DayPage.svelte`). A centered title page — h1, byline, a 3rem
-hairline — then the autobiography, the dayline, the timeline, the chats and the
-sources, each a `.section` that does not render when it is empty. Contents and
-notes ride in rails; there is no frontispiece and there is no right-hand card.
+**A day** (`wiki/DayPage.svelte`). Two views, Article and Data. The Article
+is the date as its title with the year and weather under it, the Abstract,
+your numbers, then the writer's sections with a margin beside them that holds
+section times, what the record computes, and your notes. Data is the day line,
+Places, the event timeline and the day's records, each a `.section` that does
+not render when it is empty. There is no frontispiece and there is no
+right-hand card.
 
 **The Getting Started room** (`chat/getting-started/`). A seeded chat whose
 steps are derived from the record rather than stored. The cover mask, then the

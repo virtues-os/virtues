@@ -449,7 +449,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             return Ok(());
         }
 
-        Commands::DaySummary { date, narrate_only, segment_only } => {
+        Commands::DaySummary { date, narrate_only, segment_only, from, to } => {
             // `--narrate-only` / `--segment-only` read an already-migrated DB (e.g.
             // a box snapshot) and only re-run one stage — skip migrations so a
             // snapshot whose `_sqlx_migrations` checksums differ from this branch
@@ -460,6 +460,53 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             }
 
             let pool = virtues.database.pool();
+
+            // `--segment-only --from --to`: re-cut a backlog, oldest first, then
+            // score what was re-cut. Scoring waits for every cut because each
+            // day's novelty is measured against the days before it.
+            if let (Some(from), Some(to)) = (from.as_deref(), to.as_deref()) {
+                let parse = |s: &str, flag: &str| {
+                    s.parse::<chrono::NaiveDate>()
+                        .map_err(|e| format!("Invalid --{flag} '{s}': {e}"))
+                };
+                let days = crate::api::day_summary::days_between(parse(from, "from")?, parse(to, "to")?)?;
+                println!("Re-cutting {} day(s), {from} to {to}, oldest first...", days.len());
+                let mut cut = Vec::new();
+                let mut failed = 0usize;
+                for d in &days {
+                    match crate::api::day_summary::recut_day(pool, *d).await {
+                        Ok(r) if r.events > 0 => {
+                            println!("  {d}  {} events ({} gap ops)", r.events, r.gap_ops);
+                            cut.push(*d);
+                        }
+                        Ok(_) => println!(
+                            "  {d}  not cut: too little recorded, or the day isn't over (no model call)"
+                        ),
+                        Err(e) => {
+                            failed += 1;
+                            eprintln!("  {d}  could not be cut, its old events stand: {e}");
+                        }
+                    }
+                }
+
+                println!("Scoring {} re-cut day(s) (annotate, novelty, autonomic, topic)...", cut.len());
+                let mut unscored = 0usize;
+                for d in &cut {
+                    match crate::dayline::rescore_day(pool, *d).await {
+                        Ok(n) => println!("  {d}  {n} events scored"),
+                        Err(e) => {
+                            unscored += 1;
+                            eprintln!("  {d}  could not be scored: {e}");
+                        }
+                    }
+                }
+                println!(
+                    "Re-cut {} of {} day(s); {failed} failed to cut, {unscored} failed to score.",
+                    cut.len(),
+                    days.len()
+                );
+                return Ok(());
+            }
 
             // Resolve target date: explicit --date, or "today" in the user's profile tz.
             let target_date: chrono::NaiveDate = match date {
@@ -493,19 +540,11 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // inspecting how the detective segments a day, and its run-to-run
             // variance, in isolation.
             if segment_only {
-                sqlx::query("UPDATE wiki_days SET sources_fingerprint = NULL WHERE date = $1")
-                    .bind(target_date)
-                    .execute(pool)
-                    .await?;
-                println!("Rolling audio chunks into sessions...");
-                let sessions = crate::sessionize::audio::sessionize_day(pool, target_date).await?;
-                println!("  {sessions} audio sessions");
-                println!("Segmenting {target_date} into events (detective, forced re-cut)...");
-                let n = crate::api::day_summary::segment_day_events(pool, target_date).await?;
-                println!("  {n} events");
-                crate::dayline::sleep::resolve_sleep_events(pool, target_date).await;
-                let gap_ops = crate::dayline::gaps::classify_day_gaps(pool, target_date).await?;
-                println!("  {gap_ops} gap ops (slivers absorbed / transit labelled)");
+                println!("Re-cutting {target_date} (audio sessions, detective, sleep, gaps)...");
+                let r = crate::api::day_summary::recut_day(pool, target_date).await?;
+                println!("  {} audio sessions", r.sessions);
+                println!("  {} events", r.events);
+                println!("  {} gap ops (slivers absorbed / transit labelled)", r.gap_ops);
 
                 let day_id: Option<String> =
                     sqlx::query_scalar("SELECT id FROM wiki_days WHERE date = $1")
@@ -693,7 +732,7 @@ fn narration_note(
     outcome: &crate::api::day_summary::NarrateOutcome,
 ) -> String {
     use crate::api::day_summary::{NarrateOutcome, SaveOutcome};
-    const REWRITE: &str = "\"Rewrite this page\", at the foot of the day page, writes it again.";
+    const REWRITE: &str = "\"Rewrite this page\", in the day page's ⋯ menu, writes it again.";
     match outcome {
         NarrateOutcome::Written(_) => format!("{date}'s page is written."),
         NarrateOutcome::AlreadyWritten => {
