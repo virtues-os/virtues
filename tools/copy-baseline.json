@@ -1,8 +1,8 @@
 {
-  "banned-word": 4,
+  "banned-word": 3,
   "dev-word": 16,
   "em-dash": 0,
-  "exclamation": 1,
+  "exclamation": 0,
   "passive-no-actor": 2,
   "software-subject": 0,
   "we-in-prose": 1,
