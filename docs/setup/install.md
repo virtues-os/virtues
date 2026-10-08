@@ -18,9 +18,9 @@ Before installing, read these two pages first:
 
 1. [What to run it on](/docs/setup/requirements) for details on minimum
    specs and supported OS.
-2. [Setting up inference](/docs/inference) to configure your embedding and
-   rerank models. The installer asks for their URLs before it does anything
-   else.
+2. [Faster search on a GPU or NPU](/docs/setup/accelerators), if the machine
+   has one. Search runs on the CPU unless you set one up, and the installer
+   tells you when it finds one.
 
 ## Read it before you run it
 

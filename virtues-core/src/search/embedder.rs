@@ -134,7 +134,7 @@ const FINGERPRINT_PROBES: [&str; 2] =
 /// stable across float formatting / minor backend jitter while still
 /// changing on any real model swap. MUST match
 /// `tools/virtues-installer/src/mode.rs::fingerprint_vectors`.
-fn fingerprint_vectors(vectors: &[Vec<f32>]) -> String {
+pub(crate) fn fingerprint_vectors(vectors: &[Vec<f32>]) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     for v in vectors {
@@ -630,13 +630,23 @@ pub(crate) fn resolve_base_url() -> String {
 /// can't go through the normal constructor. Returns the freshly-computed
 /// fingerprint and the endpoint's native dims.
 pub async fn probe_current_endpoint() -> Result<(String, usize)> {
-    crate::http_client::ensure_crypto_provider();
-    let base_url = resolve_base_url();
     let model = std::env::var("VIRTUES_EMBED_MODEL")
         .ok()
         .filter(|s| !s.trim().is_empty())
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "default".to_string());
+    let vecs = probe_vectors(&resolve_base_url(), &model).await?;
+    let dims = vecs[0].len();
+    Ok((fingerprint_vectors(&vecs), dims))
+}
+
+/// The fingerprint probes' NATIVE vectors from any endpoint, in probe order.
+/// `configure-inference --embed-url` compares two endpoints with these: the
+/// same model served by a different build (CPU → GPU) differs by float noise,
+/// which changes the exact fingerprint but not the geometry.
+pub async fn probe_vectors(base_url: &str, model: &str) -> Result<Vec<Vec<f32>>> {
+    crate::http_client::ensure_crypto_provider();
+    let base_url = base_url.trim_end_matches('/');
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
@@ -660,11 +670,10 @@ pub async fn probe_current_endpoint() -> Result<(String, usize)> {
     let mut rows = body.data;
     rows.sort_by_key(|r| r.index);
     let vecs: Vec<Vec<f32>> = rows.into_iter().map(|r| r.embedding).collect();
-    let dims = vecs.first().map(|v| v.len()).unwrap_or(0);
-    if dims == 0 {
+    if vecs.first().map(|v| v.len()).unwrap_or(0) == 0 {
         return Err(anyhow!("endpoint returned empty vectors"));
     }
-    Ok((fingerprint_vectors(&vecs), dims))
+    Ok(vecs)
 }
 
 /// How long a built embedder is trusted before the next caller builds it again.
