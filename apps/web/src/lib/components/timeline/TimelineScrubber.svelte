@@ -170,9 +170,8 @@
 			.filter((f) => f !== null),
 	);
 
-	// Location: told apart by form, never by hue (design-grammar §5). A stay
-	// is a full block, a trip a thin line through the lane's middle, a signal
-	// gap a dashed outline with nothing in it; a held span is faint.
+	// Location (main.js:1319-1333): blue at a place, orange on the move, grey
+	// in a signal gap; a held span faint in the colour it holds.
 	const ribbonRects = $derived(
 		ribbon
 			.map((r) => {
@@ -224,12 +223,10 @@
 				.filter((x) => x !== null),
 		};
 	});
-	/** Steps by pace, by weight of ink alone: the bin at the playhead is the
-	 *  only one in the accent, since the accent means now. */
 	const ZONE: Record<string, string> = {
-		still: 'color-mix(in srgb, var(--c-body) 55%, transparent)',
+		still: 'color-mix(in srgb, var(--c-body) 46%, var(--color-foreground-muted))',
 		walking: 'var(--c-body)',
-		active: 'var(--color-foreground)',
+		active: 'color-mix(in srgb, var(--c-body) 70%, var(--c-sel))',
 	};
 
 	// Calendar: each timed event a chip with a left cap, the prototype's form
@@ -267,7 +264,7 @@
 		return { x: cx - pw / 2, y: cy - 27 / 2, w: pw, cy, gx, tx: gx + 23 };
 	}
 	const CONNECT = {
-		calendar: { label: 'Connect Google Calendar', href: '/sources/google', name: 'Google' },
+		calendar: { label: 'Connect Google Calendar', href: '/sources/google', name: 'Google', colour: 'var(--c-calendar)' },
 	} as const;
 
 	const playX = $derived(SX(playT));
@@ -442,19 +439,17 @@
 				{#if lane.id === 'where'}
 					{#each ribbonRects as rr, k (k)}
 						{@const on = live(rr.r.s, rr.r.e)}
-						{@const thin = rr.r.kind === 'transit' && !rr.r.held}
-						{@const gap = rr.r.kind === 'gap' && !rr.r.held}
 						<rect
 							data-rib={rr.r.held ? undefined : k}
-							class:rib-gap={gap}
 							x={rr.a}
-							y={thin ? y + rowH / 2 - 2 : y + 2}
+							y={y + 2}
 							width={Math.max(rr.w, 1)}
-							height={thin ? 4 : rowH - 4}
-							rx={thin ? 2 : 5}
-							fill={gap ? 'transparent' : on ? 'var(--c-sel)' : rr.colour}
-							fill-opacity={on ? 0.85 : rr.r.held ? 0.1 : thin ? 0.9 : 0.5}
+							height={rowH - 4}
+							rx="5"
+							fill={rr.colour}
+							fill-opacity={on ? 0.9 : rr.r.held ? 0.1 : rr.r.kind === 'gap' ? 0.16 : 0.5}
 						/>
+						{#if on}<rect x={rr.a} y={y + 2} width="3" height={rowH - 4} fill={rr.colour} />{/if}
 						{#if rr.label}<text class="seg-label" x={rr.a + 9} y={y + 2 + (rowH - 4) / 2 + 3.7}>{rr.label}</text>{/if}
 					{/each}
 				{:else if lane.id === 'voice'}
@@ -477,7 +472,7 @@
 					{/each}
 					<line class="axis" x1={x0} y1={bodyBars.base + 0.5} x2={x1} y2={bodyBars.base + 0.5} />
 					{#each bodyBars.list as b (b.t)}
-						<rect x={b.x} y={b.y} width={b.w} height={b.h} rx="1.2" fill={armed && Math.abs(playT - b.t) < 7.5 * MIN ? 'var(--c-sel)' : ZONE[b.zone]} />
+						<rect x={b.x} y={b.y} width={b.w} height={b.h} rx="1.2" fill={ZONE[b.zone]} fill-opacity={armed && Math.abs(playT - b.t) < 7.5 * MIN ? 1 : 0.9} />
 					{/each}
 				{:else if lane.id === 'calendar' && hasCalendar === true}
 					{#each eventChips as ec (ec.key)}
@@ -491,7 +486,7 @@
 				{:else if lane.id === 'calendar' && hasCalendar === false}
 					{@const c = CONNECT[lane.id]}
 					{@const p = pill(i, c.label)}
-					<g class="connect" data-connect={lane.id} role="link" aria-label={c.label}>
+					<g class="connect" data-connect={lane.id} style="--cc: {c.colour}" role="link" aria-label={c.label}>
 						<rect x={p.x} y={p.y} width={p.w} height="27" rx="13.5" />
 						<rect class="glyph" x={p.gx} y={p.cy - 5.5} width="13" height="12" rx="2.5" />
 						<line class="glyph" x1={p.gx} y1={p.cy - 2} x2={p.gx + 13} y2={p.cy - 2} />
@@ -518,8 +513,8 @@
 </section>
 
 <style>
-	/* The card along the bottom, beside the inspector and never under it: the
-	   page's surface in a hairline, like every card over the map. */
+	/* The card along the bottom: beside the inspector, never under it (index.html:
+	   812, 844). */
 	.scrub {
 		position: absolute;
 		left: 16px;
@@ -528,7 +523,9 @@
 		z-index: 10;
 		display: flex;
 		flex-direction: column;
-		padding: 4px 16px 12px;
+		/* design-ok: the Dayback prototype's scrubber padding (owner's call, 2026-09-30) */
+		padding: 5px 15px 12px;
+		/* The Timeline's one material: the surface in a hairline. */
 		border-radius: var(--tile-radius);
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
@@ -547,12 +544,14 @@
 		display: flex;
 		justify-content: flex-end;
 		height: 16px;
-		margin: 0 4px 4px 0;
+		/* design-ok: the Dayback prototype's chevron row (owner's call, 2026-09-30) */
+		margin: -1px 4px 2px 0;
 	}
 	.grab {
 		border: 0;
 		background: none;
-		padding: 0 8px;
+		/* design-ok: the Dayback prototype's chevron (owner's call, 2026-09-30) */
+		padding: 2px 7px;
 		cursor: pointer;
 		line-height: 0;
 		color: var(--color-foreground-subtle);
@@ -580,7 +579,10 @@
 			transition: none;
 		}
 	}
-	/* Play and the spans at the left, the clock in the middle. */
+	/* Play and the spans at the left, the clock in the middle, over the
+	   middle of the day (the owner's call; the prototype kept the middle for
+	   its day stepper, which the date card now holds, and the clock at the
+	   right). */
 	.ctl {
 		display: grid;
 		grid-template-columns: 1fr auto 1fr;
@@ -591,18 +593,19 @@
 		justify-self: start;
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		/* design-ok: the Dayback prototype's play-to-spans gap (owner's call, 2026-10-08: match the prototype) */
+		gap: 10px;
 	}
 	.play {
-		width: 28px;
-		height: 28px;
+		width: 27px;
+		height: 27px;
 		border: 0;
 		border-radius: 50%;
 		background: var(--color-foreground);
 		color: var(--color-background);
 		font-size: 11px;
 		line-height: 1;
-		/* design-ok: optical centring of the play glyph */
+		/* design-ok: optical centring of the play glyph (prototype) */
 		padding: 0 0 0 2px;
 		cursor: pointer;
 		display: inline-flex;
@@ -610,43 +613,45 @@
 		justify-content: center;
 	}
 	.play:hover {
-		background: color-mix(in srgb, var(--color-foreground) 80%, var(--color-background));
+		opacity: 0.6;
 	}
-	/* The spans: words in the sans, the one picked in the accent - it is the
-	   scale you are on now. */
 	.tiers {
 		display: inline-flex;
-		gap: 4px;
+		/* design-ok: the Dayback prototype's segmented control (owner's call, 2026-09-30) */
+		padding: 2px;
+		/* design-ok: the Dayback prototype's segmented control (owner's call, 2026-10-08: match the prototype) */
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
 	}
 	.tiers button {
 		border: 0;
 		background: none;
-		padding: 4px 8px;
+		/* design-ok: the Dayback prototype's segment (owner's call, 2026-09-30) */
+		padding: 5px 10px;
 		border-radius: 6px;
 		font-family: var(--font-sans);
-		font-size: 13px;
-		font-weight: 500;
+		font-size: 11px;
+		font-weight: 600;
+		letter-spacing: 0.02em;
+		text-transform: uppercase;
 		color: var(--color-foreground-muted);
 		cursor: pointer;
 	}
 	.tiers button:hover {
-		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
 	.tiers button.on {
-		color: var(--color-primary);
+		background: var(--color-foreground);
+		color: var(--color-background);
 	}
 	.clock {
 		justify-self: center;
-		/* design-ok: a clock time (design-grammar §4) */
-		font-family: var(--font-mono);
-		font-size: 12px;
+		font-size: 14px;
 		font-variant-numeric: tabular-nums;
 		white-space: nowrap;
 	}
 	.clock b {
-		font-weight: 400;
-		color: var(--color-foreground);
+		font-weight: 700;
 	}
 	.svgbox {
 		width: 100%;
@@ -657,54 +662,50 @@
 		touch-action: none;
 		user-select: none;
 	}
-	/* The chart's own labels, set as Home's deck sets them: mono, small,
-	   subtle, inside the SVG only (design-grammar §4). */
 	.tick {
-		stroke: var(--color-foreground);
-		stroke-opacity: 0.2;
+		stroke: var(--color-foreground-muted);
 		stroke-width: 1;
 	}
 	.tick-label {
-		/* design-ok: the chart's own hour ticks, inside the SVG (design-grammar §4) */
-		font-family: var(--font-mono);
-		/* design-ok: the chart's own hour ticks, inside the SVG (design-grammar §4) */
-		font-size: 9px;
-		letter-spacing: 0.06em;
-		fill: var(--color-foreground-subtle);
+		font-family: var(--font-sans);
+		/* design-ok: the Dayback prototype's ruler labels, drawn in SVG under the lanes (owner's call, 2026-09-30) */
+		font-size: 10.5px;
+		font-weight: 590;
+		letter-spacing: 0.01em;
+		fill: color-mix(in srgb, var(--color-foreground) 74%, var(--color-background));
 	}
 	.tally {
-		stroke: var(--color-foreground);
-		stroke-opacity: 0.12;
+		stroke: color-mix(in srgb, var(--color-foreground) 15%, transparent);
 	}
 	/* The day on screen, on the Week span: a pale column under every lane. */
 	.day-band {
 		fill: var(--color-foreground);
-		fill-opacity: 0.06;
+		fill-opacity: 0.07;
 		pointer-events: none;
 	}
-	/* A folded night: one quiet fill, whisper seams, a label. */
+	/* A folded night: one quiet fill, whisper seams, a label (main.js:1281-1287). */
 	.fold {
 		fill: var(--c-rest);
+		fill-opacity: 0.1;
 	}
 	.fold.est {
-		fill-opacity: 0.7;
+		fill-opacity: 0.07;
 	}
 	.seam {
-		stroke: var(--c-rest-ink);
-		stroke-opacity: 0.4;
+		stroke: var(--c-rest);
+		stroke-opacity: 0.26;
 		stroke-dasharray: 2 4;
 	}
 	.fold-label {
 		text-anchor: middle;
 		dominant-baseline: middle;
-		/* design-ok: the chart's own label, inside the SVG (design-grammar §4) */
-		font-family: var(--font-mono);
-		/* design-ok: the chart's own label, inside the SVG (design-grammar §4) */
-		font-size: 9px;
-		letter-spacing: 0.04em;
+		font-family: var(--font-sans);
+		font-size: 11px;
+		font-weight: 600;
+		letter-spacing: 0.01em;
 		fill: var(--c-rest-ink);
 		paint-order: stroke;
-		stroke: var(--color-surface);
+		stroke: var(--color-background);
 		stroke-width: 3px;
 		stroke-linejoin: round;
 	}
@@ -713,33 +714,34 @@
 		fill-opacity: 0.035;
 	}
 	.lane-label {
-		/* design-ok: the chart's own lane names, inside the SVG (design-grammar §4) */
-		font-family: var(--font-mono);
-		/* design-ok: the chart's own lane names, inside the SVG (design-grammar §4) */
-		font-size: 9.5px;
-		letter-spacing: 0.04em;
-		fill: var(--color-foreground-subtle);
+		font-family: var(--font-sans);
+		font-size: 12px;
+		font-weight: 600;
+		letter-spacing: 0.01em;
+		fill: color-mix(in srgb, var(--color-foreground) 74%, var(--color-background));
 	}
 	.seg-label {
 		font-family: var(--font-sans);
 		font-size: 11px;
-		font-weight: 500;
+		font-weight: 600;
+		letter-spacing: -0.005em;
 		fill: var(--color-foreground);
 		paint-order: stroke;
-		stroke: var(--color-surface);
+		stroke: var(--color-background);
 		stroke-width: 2.6px;
 		stroke-linejoin: round;
 		pointer-events: none;
 	}
 	.mic-off {
 		stroke: var(--c-voice);
-		stroke-opacity: 0.5;
+		stroke-opacity: 0.46;
 		stroke-width: 1;
 		stroke-dasharray: 2 4;
 		pointer-events: none;
 	}
 	.mic-on {
 		stroke: var(--c-voice);
+		stroke-opacity: 0.55;
 		stroke-width: 1.6;
 		stroke-linecap: round;
 		pointer-events: none;
@@ -750,10 +752,13 @@
 	.chip:hover,
 	.event:hover {
 		stroke: var(--color-foreground);
-		stroke-opacity: 0.3;
+		stroke-opacity: 0.26;
 		stroke-width: 1;
 	}
-	.wave,
+	.wave {
+		fill: var(--c-voice);
+		pointer-events: none;
+	}
 	.wave-edge {
 		fill: var(--c-voice);
 		pointer-events: none;
@@ -761,49 +766,43 @@
 	.rest {
 		fill: var(--c-rest);
 	}
-	.rib-gap {
-		stroke: var(--c-gap);
-		stroke-width: 1;
-		stroke-dasharray: 3 3;
-	}
 	.axis {
 		stroke: var(--color-foreground);
 		stroke-opacity: 0.09;
 	}
-	/* A calendar event: hollow, as an intention is not a trace - the outline
-	   and a cap, never a fill of its own. */
 	.event {
 		fill: var(--c-calendar);
 		stroke: var(--c-calendar);
-		stroke-opacity: 0.6;
+		stroke-opacity: 0.5;
 	}
 	.event-cap {
 		fill: var(--c-calendar);
+		fill-opacity: 0.9;
 		pointer-events: none;
 	}
 	/* An invitation you haven't answered: there, but faded. */
 	.unanswered {
 		opacity: 0.45;
 	}
-	/* Not connected: a quiet dashed pill whose words are a link, so they take
-	   the accent - they are pressable. */
+	/* Not connected: a dashed pill in the lane's colour (main.js:1376-1378). */
 	.connect {
 		cursor: pointer;
 	}
 	.connect > rect:first-child {
-		fill: none;
-		stroke: var(--color-foreground);
-		stroke-opacity: 0.25;
+		fill: var(--cc);
+		fill-opacity: 0.07;
+		stroke: var(--cc);
+		stroke-opacity: 0.34;
 		stroke-width: 1;
-		stroke-dasharray: 4 4;
+		stroke-dasharray: 5 4;
 	}
 	.connect:hover > rect:first-child {
-		fill: var(--color-foreground);
-		fill-opacity: 0.05;
+		fill-opacity: 0.13;
+		stroke-opacity: 0.55;
 	}
 	.connect .glyph {
 		fill: none;
-		stroke: var(--color-primary);
+		stroke: var(--cc);
 		stroke-width: 1.3;
 		stroke-linecap: round;
 		stroke-linejoin: round;
@@ -811,30 +810,32 @@
 	}
 	.connect text {
 		font-family: var(--font-sans);
-		font-size: 12px;
-		font-weight: 500;
-		fill: var(--color-primary);
+		/* design-ok: the Dayback prototype's connect pill (owner's call, 2026-09-30) */
+		font-size: 11.5px;
+		font-weight: 600;
+		letter-spacing: 0.01em;
+		fill: var(--cc);
 		pointer-events: none;
 	}
-	/* The playhead is now, so it is the accent. */
 	.playhead {
-		stroke: var(--c-sel);
-		stroke-width: 1.5;
+		stroke: var(--color-foreground);
+		stroke-width: 1.25;
 		pointer-events: none;
 	}
 	.playhead-head {
-		fill: var(--c-sel);
+		fill: var(--color-foreground);
 		pointer-events: none;
 	}
-	/* The hover peek: title, time, who - lighter than the inspector, and it
-	   never takes the click. */
+	/* The hover peek: title, time, who - lighter than the inspector, and it never
+	   takes the click (index.html:908-911). */
 	.peek {
 		position: absolute;
 		z-index: 12;
 		/* Its own width, not what is left of the card to its right. */
 		width: max-content;
-		max-width: 288px;
-		padding: 12px 16px;
+		max-width: 290px;
+		/* design-ok: the Dayback prototype's peek padding (owner's call, 2026-09-30) */
+		padding: 11px 14px;
 		border-radius: 12px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
@@ -844,15 +845,22 @@
 		margin: 0;
 	}
 	.peek-title {
-		font-family: var(--font-serif);
-		font-size: 18px;
+		font-size: 14px;
+		font-weight: 600;
+		letter-spacing: -0.01em;
 		line-height: 1.25;
 	}
-	.peek-meta,
-	.peek-who {
-		margin-top: 4px !important;
-		font-size: 13px;
+	.peek-meta {
+		font-size: 12px;
 		color: var(--color-foreground-muted);
+		margin-top: 4px !important;
 		font-variant-numeric: tabular-nums;
+	}
+	.peek-who {
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+		/* design-ok: the Dayback prototype's peek spacing (owner's call, 2026-09-30) */
+		margin-top: 6px !important;
+		line-height: 1.4;
 	}
 </style>
