@@ -50,7 +50,7 @@ const MAX_QUIET_GAP_MINUTES: i64 = 45;
 /// Stamped into every visit's metadata. Visits written by an older stay
 /// detector carry a lower number (or none), and `rebuild_visits` recomputes
 /// them all from the stored fixes. Bump it whenever the detector changes.
-const TIMELINE_VERSION: i64 = 3;
+const TIMELINE_VERSION: i64 = 4;
 const MAX_HORIZONTAL_ACCURACY: f64 = 100.0; // Filter low-quality points
 const DEFAULT_PLACE_RADIUS_METERS: f64 = 100.0; // Default radius for new places
 
@@ -112,7 +112,7 @@ async fn resolve_location_visits(db: &Database, window: TimeWindow) -> Result<us
 
     tracing::debug!(point_count = points.len(), "Fetched location points");
 
-    let visits = ashore(detect_stays(&points)?).await;
+    let visits = ashore(at_two_places(detect_stays(&points)?).await?).await;
 
     tracing::debug!(ref_count = visits.len(), "Completed clustering");
 
@@ -594,6 +594,135 @@ async fn ashore(stays: Vec<Visit>) -> Vec<Visit> {
     kept
 }
 
+/// A stay at two places next door is two stays: an evening at two bars on
+/// one street, or a hotel, a restaurant beside it, and the hotel again. A
+/// stay splits where the phone moved between two tight groups of fixes:
+/// their centres at least `TWO_PLACES_APART_METERS` apart, each group at
+/// least `TWO_PLACES_MIN_MINUTES` long with `TWO_PLACES_MIN_FIXES` fixes, and
+/// each tight (its fixes' median distance from its centre under half the
+/// distance between the centres). Neighbouring parts closer than that are
+/// one place again, and so are parts whose nearest named place on the box's
+/// map is the same: one property with a court, a bar and a food truck is one
+/// stay, however far apart its corners (the owner's call, 2026-10-08: "not
+/// a tuned number"). Where the record is too thin to tell, the stay stays
+/// whole.
+const TWO_PLACES_APART_METERS: f64 = 40.0;
+const TWO_PLACES_MIN_MINUTES: i64 = 20;
+const TWO_PLACES_MIN_FIXES: usize = 10;
+
+async fn at_two_places(stays: Vec<Visit>) -> Result<Vec<Visit>> {
+    let mut tiles = crate::maps::naming::Tiles::default();
+    let mut out = Vec::with_capacity(stays.len());
+    for stay in stays {
+        let parts = two_place_parts(stay.points.clone());
+        if parts.len() == 1 {
+            out.push(stay);
+            continue;
+        }
+        let mut places: Vec<(Option<String>, Vec<LocationPoint>)> = Vec::new();
+        for part in parts {
+            let (lat, lon) = centre(&part);
+            let named = nearest_named(&mut tiles, lat, lon).await;
+            match places.last_mut() {
+                Some((prev, points)) if named.is_some() && *prev == named => points.extend(part),
+                _ => places.push((named, part)),
+            }
+        }
+        if places.len() == 1 {
+            out.push(stay);
+            continue;
+        }
+        for (_, part) in places {
+            out.push(create_visit_from_cluster(part)?);
+        }
+    }
+    Ok(out)
+}
+
+/// The nearest named place on the box's map within 60 m of a spot, the reach
+/// at which the map names a stay; `None` where it lists none that close. A
+/// place farther off is no evidence the person was at it: around a León
+/// hotel the map lists no restaurant, and the hotel 146 m away would have
+/// joined a dinner next door to the evening there (the owner's call,
+/// 2026-10-08).
+async fn nearest_named(tiles: &mut crate::maps::naming::Tiles, lat: f64, lon: f64) -> Option<String> {
+    tiles.name(lat, lon).await.candidates.into_iter().next().map(|c| c.name)
+}
+
+/// A stay's fixes in their places by distance alone: cut where the phone
+/// moved, neighbouring parts nearer than `TWO_PLACES_APART_METERS` joined.
+fn two_place_parts(points: Vec<LocationPoint>) -> Vec<Vec<LocationPoint>> {
+    let mut parts: Vec<Vec<LocationPoint>> = Vec::new();
+    for part in split_points(points) {
+        match parts.last_mut() {
+            Some(prev) if meters_between(centre(prev), centre(&part)) < TWO_PLACES_APART_METERS => prev.extend(part),
+            _ => parts.push(part),
+        }
+    }
+    parts
+}
+
+/// A stay's fixes cut at the best split into two places, each half cut again
+/// the same way; one piece when no cut qualifies.
+fn split_points(points: Vec<LocationPoint>) -> Vec<Vec<LocationPoint>> {
+    let long_enough = |ps: &[LocationPoint]| {
+        ps.len() >= TWO_PLACES_MIN_FIXES
+            && (ps[ps.len() - 1].timestamp - ps[0].timestamp).num_minutes() >= TWO_PLACES_MIN_MINUTES
+    };
+    let mut best: Option<(f64, usize)> = None;
+    for k in TWO_PLACES_MIN_FIXES..=points.len().saturating_sub(TWO_PLACES_MIN_FIXES) {
+        let (a, b) = points.split_at(k);
+        if !long_enough(a) || !long_enough(b) {
+            continue;
+        }
+        let (ca, cb) = (centre(a), centre(b));
+        let apart = meters_between(ca, cb);
+        let (sa, sb) = (spread(a, ca), spread(b, cb));
+        if apart < TWO_PLACES_APART_METERS || apart < 2.0 * sa.max(sb) {
+            continue;
+        }
+        // The cleanest cut: every fix as near its own group's centre as it
+        // can be, so neither group mixes in the other place.
+        let cost: f64 = a.iter().map(|p| haversine_distance(ca.0, ca.1, p.latitude, p.longitude)).sum::<f64>()
+            + b.iter().map(|p| haversine_distance(cb.0, cb.1, p.latitude, p.longitude)).sum::<f64>();
+        if best.is_none_or(|(c, _)| cost < c) {
+            best = Some((cost, k));
+        }
+    }
+    match best {
+        Some((_, k)) => {
+            let mut points = points;
+            let after = points.split_off(k);
+            let mut out = split_points(points);
+            out.extend(split_points(after));
+            out
+        }
+        None => vec![points],
+    }
+}
+
+/// The median fix of a group, `(lat, lon)`.
+fn centre(points: &[LocationPoint]) -> (f64, f64) {
+    (
+        median_of(points.iter().map(|p| p.latitude).collect()),
+        median_of(points.iter().map(|p| p.longitude).collect()),
+    )
+}
+
+/// How tight a group is: its fixes' median distance from `c`.
+fn spread(points: &[LocationPoint], c: (f64, f64)) -> f64 {
+    median_of(points.iter().map(|p| haversine_distance(c.0, c.1, p.latitude, p.longitude)).collect())
+}
+
+fn median_of(mut v: Vec<f64>) -> f64 {
+    v.sort_by(f64::total_cmp);
+    v[v.len() / 2]
+}
+
+fn meters_between(a: (f64, f64), b: (f64, f64)) -> f64 {
+    haversine_distance(a.0, a.1, b.0, b.1)
+}
+
 fn is_split(prev: &Visit, next: &Visit) -> bool {
     next.start_time - prev.end_time <= chrono::Duration::minutes(SPLIT_STAY_GAP_MINUTES)
         && haversine_distance(prev.centroid_lat, prev.centroid_lon, next.centroid_lat, next.centroid_lon)
@@ -1036,6 +1165,19 @@ fn plan_visit_rebuild(
     VisitRebuild { keep, delete }
 }
 
+/// A new stay's id, keyed on its first fix. A stay split at two places
+/// starts its first half on the very fix the stored stay it came from was
+/// keyed on, and that stored row can be kept for the other half (the one it
+/// overlaps more); the id is then keyed on the first and last fixes, which
+/// no other stay holds.
+fn new_visit_id(first: &str, last: &str, kept: &std::collections::HashSet<String>) -> String {
+    let id = Uuid::new_v5(&Uuid::NAMESPACE_OID, format!("visit:{first}").as_bytes()).to_string();
+    if !kept.contains(&id) {
+        return id;
+    }
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, format!("visit:{first}:{last}").as_bytes()).to_string()
+}
+
 /// Recompute every stored visit from the stored fixes, once per detector
 /// version.
 ///
@@ -1062,7 +1204,7 @@ pub async fn rebuild_visits(db: &Database) -> Result<usize> {
         DateTime::from_timestamp(0, 0).unwrap_or_default(),
         Utc::now() + chrono::Duration::days(1),
     );
-    let stays = ashore(detect_stays(&fetch_location_points(db, everything).await?)?).await;
+    let stays = ashore(at_two_places(detect_stays(&fetch_location_points(db, everything).await?)?).await?).await;
 
     let mut tx = pool.begin().await?;
     let stored: Vec<StoredVisit> = sqlx::query_as::<_, (String, DateTime<Utc>, DateTime<Utc>, f64, f64)>(
@@ -1100,6 +1242,7 @@ pub async fn rebuild_visits(db: &Database) -> Result<usize> {
     .execute(&mut *tx)
     .await?;
 
+    let kept_ids: std::collections::HashSet<String> = kept.iter().cloned().collect();
     for (stay, keep) in stays.iter().zip(&plan.keep) {
         let first_point = stay.points[0].id.to_string();
         let metadata = serde_json::json!({
@@ -1136,8 +1279,8 @@ pub async fn rebuild_visits(db: &Database) -> Result<usize> {
                 )
                 // Keyed on the first fix, not `generate_visit_id`: a kept row
                 // may already hold the (centroid, start) id this stay would
-                // derive, while no two stays share a fix.
-                .bind(Uuid::new_v5(&Uuid::NAMESPACE_OID, format!("visit:{first_point}").as_bytes()).to_string())
+                // derive, while no two stays share a fix. See `new_visit_id`.
+                .bind(new_visit_id(&first_point, &stay.points[stay.points.len() - 1].id.to_string(), &kept_ids))
                 .bind(stay.centroid_lat)
                 .bind(stay.centroid_lon)
                 .bind(stay.start_time)
@@ -1467,6 +1610,41 @@ mod tests {
     const HERE: (f64, f64) = (30.0, -97.0);
     const NEAR: (f64, f64) = (30.0005, -97.0); // ≈ 55 m
     const FAR: (f64, f64) = (30.0027, -97.0);
+
+    /// A split stay's first half starts on the fix its stored stay was keyed
+    /// on; with that row kept for the other half, the new id differs.
+    #[test]
+    fn a_new_stay_never_takes_a_kept_id() {
+        let none = std::collections::HashSet::new();
+        let plain = new_visit_id("fix-a", "fix-z", &none);
+        let kept: std::collections::HashSet<String> = [plain.clone()].into();
+        let other = new_visit_id("fix-a", "fix-z", &kept);
+        assert_ne!(plain, other);
+        assert_eq!(new_visit_id("fix-b", "fix-z", &kept), new_visit_id("fix-b", "fix-z", &none));
+    }
+
+    /// Two bars 60 m apart, half an hour at each: two stays, cut where the
+    /// phone moved. A stay that only jitters on one spot stays whole, and so
+    /// does one whose second place lasted under 20 minutes.
+    #[test]
+    fn a_stay_at_two_places_next_door_is_two_stays() {
+        const NEXT_DOOR: (f64, f64) = (30.00054, -97.0); // ≈ 60 m from HERE
+        let wobble = |m: i64, at: (f64, f64)| point(m, at.0 + (m % 3) as f64 * 0.00004, at.1);
+        let mut points: Vec<LocationPoint> = (0..30).map(|m| wobble(m, HERE)).collect();
+        points.extend((30..60).map(|m| wobble(m, NEXT_DOOR)));
+        let parts = |ps: &[LocationPoint]| two_place_parts(detect_stays(ps).unwrap().remove(0).points);
+        let two = parts(&points);
+        assert_eq!(two.len(), 2);
+        let span = |p: &Vec<LocationPoint>| (p[0].timestamp, p[p.len() - 1].timestamp);
+        assert_eq!((span(&two[0]), span(&two[1])), ((at(0), at(29)), (at(30), at(59))));
+
+        let still: Vec<LocationPoint> = (0..60).map(|m| wobble(m, HERE)).collect();
+        assert_eq!(parts(&still).len(), 1);
+
+        let mut brief: Vec<LocationPoint> = (0..50).map(|m| wobble(m, HERE)).collect();
+        brief.extend((50..60).map(|m| wobble(m, NEXT_DOOR)));
+        assert_eq!(parts(&brief).len(), 1);
+    }
 
     /// A still phone reports once every ~15 minutes. Those quiet stretches
     /// are the stay, not departures between a dozen ten-minute fragments.
