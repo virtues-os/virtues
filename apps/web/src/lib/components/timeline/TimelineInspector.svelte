@@ -43,6 +43,7 @@
 		onmerge,
 		review,
 		selected = null,
+		hovered = null,
 		onfocus,
 	}: {
 		sections: InspectorSection[];
@@ -68,6 +69,9 @@
 		/** The stay or drive picked, from the list or the map: the list shows
 		 *  it selected until it's let go. */
 		selected?: { kind: 'place' | 'transit'; s: number } | null;
+		/** The stay or drive under the pointer on the map: its row lights as
+		 *  on hover. */
+		hovered?: { kind: 'place' | 'transit'; s: number } | null;
 		/** The card's place and the named places it offers, for the map. */
 		onfocus?: (at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null) => void;
 		/** Fold an unnamed place into a named one near it. */
@@ -299,7 +303,7 @@
 		<div class="scroll" bind:this={scroller}>
 			{#each sections as sec, i (sec.kind + sec.s)}
 				{@const asked = review && sec.placeId && askedAt.get(sec.placeId) === i ? review.byPlace.get(sec.placeId) : undefined}
-				<div class="group" class:bare={!sec.rows.length} class:cur={i === curSection} class:sel={selected?.s === sec.s && selected.kind === sec.kind} class:asking={!!asked}>
+				<div class="group" class:bare={!sec.rows.length} class:cur={i === curSection} class:sel={selected?.s === sec.s && selected.kind === sec.kind} class:hov={hovered?.s === sec.s && hovered.kind === sec.kind} class:asking={!!asked}>
 					<button class="sec" onclick={() => pickSection(i, sec)}>
 						<span class="hd">
 							<i class="dot {sec.kind}"></i>
@@ -524,7 +528,9 @@
 	.group.sel::before {
 		display: none;
 	}
-	/* A stay and its question line light together, wherever the pointer is. */
+	/* A stay and its question line light together, wherever the pointer is:
+	   on the row, or on its stretch of path on the map. */
+	.group.hov > :is(.sec, .ask-line),
 	.group:has(> .sec:hover, > .ask-line:hover) > :is(.sec, .ask-line) {
 		background: var(--hover-bg);
 	}
