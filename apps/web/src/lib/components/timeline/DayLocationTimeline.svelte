@@ -1,9 +1,12 @@
 <script lang="ts">
 	import type { TimelineDayLocationChunk } from "$lib/wiki/api";
+	import { clockLabel, dayWindow, localInstant } from "$lib/wiki/dayLine";
 
 	interface Props {
 		visits: TimelineDayLocationChunk[];
 		dayDate: string; // YYYY-MM-DD
+		/** The day's own zone; its midnights bound the strip. Null is the browser's. */
+		timezone?: string | null;
 		height?: number;
 		/** Bound: epoch ms of cursor position, null when not hovering. */
 		hoverTimeMs?: number | null;
@@ -12,6 +15,7 @@
 	let {
 		visits,
 		dayDate,
+		timezone = null,
 		height = 28,
 		hoverTimeMs = $bindable(null),
 	}: Props = $props();
@@ -28,12 +32,11 @@
 		return () => ro.disconnect();
 	});
 
-	// Day boundaries: 00:00 → 24:00 of dayDate, in epoch ms (local time).
-	const dayStartMs = $derived.by(() => {
-		const [y, m, d] = dayDate.split("-").map(Number);
-		return new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
-	});
-	const dayEndMs = $derived(dayStartMs + 24 * 60 * 60 * 1000);
+	// The day's midnights in its own zone, so a 23- or 25-hour day is drawn
+	// as long as it was.
+	const win = $derived(dayWindow(dayDate, timezone));
+	const dayStartMs = $derived(win.startMs);
+	const dayEndMs = $derived(win.endMs);
 	const dayDurationMs = $derived(dayEndMs - dayStartMs);
 
 	// Subtle place band — one muted segment per visit, no colors, no labels.
@@ -59,15 +62,15 @@
 
 	// Hour ticks (12-hour labels)
 	const TICK_HOURS = [
-		{ hour: 6, label: "6am" },
-		{ hour: 12, label: "12pm" },
-		{ hour: 18, label: "6pm" },
+		{ hour: 6, label: "6 AM" },
+		{ hour: 12, label: "12 PM" },
+		{ hour: 18, label: "6 PM" },
 	];
 	const ticks = $derived(
 		TICK_HOURS.map((t) => ({
 			hour: t.hour,
 			label: t.label,
-			x: containerWidth * (t.hour / 24),
+			x: (containerWidth * (localInstant(dayDate, t.hour, timezone) - dayStartMs)) / dayDurationMs,
 		})),
 	);
 
@@ -75,11 +78,7 @@
 	let hoverX = $state<number | null>(null);
 
 	function fmtTime(ms: number): string {
-		return new Date(ms).toLocaleTimeString([], {
-			hour: "numeric",
-			minute: "2-digit",
-			hour12: true,
-		});
+		return clockLabel(ms, timezone);
 	}
 
 	// If the cursor is inside a visit window, show the place name in the tooltip.

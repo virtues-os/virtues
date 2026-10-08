@@ -36,6 +36,9 @@ pub struct TemporalEvent {
     pub is_user_edited: Option<bool>,
     // Dayline fields
     pub novelty_z: Option<f64>,
+    /// Off-pattern for its kind (`dayline::novelty`'s LOF channel). The day
+    /// line reads this before `novelty_z`.
+    pub local_novelty_z: Option<f64>,
     pub avg_hr: Option<f64>,
     pub autonomic_z: Option<f64>,
     pub hr_z: Option<f64>,
@@ -112,7 +115,7 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
             id, day_id, started_at, ended_at,
             auto_label, auto_location, user_label, user_location, user_notes,
             source_ontologies, is_unknown, is_transit, is_user_added, is_user_edited,
-            novelty_z, avg_hr, autonomic_z, hr_z,
+            novelty_z, local_novelty_z, avg_hr, autonomic_z, hr_z,
             topics, event_summary, agent_action,
             is_sleep, user_hidden,
             entities, topic_novelty, entity_novelty,
@@ -126,6 +129,26 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get day events: {}", e)))?;
+
+    // The owner is never a subject of their own event. `entities` still lists
+    // them on a day annotated before `dayline::annotate` left them out, so
+    // the read drops them as well.
+    let self_id: Option<String> =
+        sqlx::query_scalar("SELECT self_person_id FROM app_user_profile LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to read the owner's person id: {e}")))?
+            .flatten();
+    let without_owner = |v: serde_json::Value| match (v, self_id.as_deref()) {
+        (serde_json::Value::Array(ids), Some(me)) => {
+            serde_json::Value::Array(ids.into_iter().filter(|id| id.as_str() != Some(me)).collect())
+        }
+        (serde_json::Value::Object(mut map), Some(me)) => {
+            map.remove(me);
+            serde_json::Value::Object(map)
+        }
+        (v, _) => v,
+    };
 
     // Fetch entity timestamps for the day: for each event's window, the earliest
     // timestamp each entity appears in wiki_refs.
@@ -148,11 +171,13 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
             WHERE occurred_at IS NOT NULL
               AND occurred_at >= $1
               AND occurred_at < $2
+              AND entity_id IS DISTINCT FROM $3
             GROUP BY entity_id
             "#,
         )
         .bind(*start)
         .bind(*end)
+        .bind(self_id.as_deref())
         .fetch_all(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to load entity refs for day events: {}", e)))?;
@@ -182,6 +207,9 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
         {
             wanted.extend(map.keys().cloned());
         }
+    }
+    if let Some(me) = &self_id {
+        wanted.remove(me);
     }
 
     let mut names: HashMap<String, String> = HashMap::new();
@@ -259,6 +287,7 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
                 is_user_added: row.try_get::<Option<bool>, _>("is_user_added").ok().flatten(),
                 is_user_edited: row.try_get::<Option<bool>, _>("is_user_edited").ok().flatten(),
                 novelty_z: row.try_get::<Option<f64>, _>("novelty_z").ok().flatten(),
+                local_novelty_z: row.try_get::<Option<f64>, _>("local_novelty_z").ok().flatten(),
                 avg_hr: row.try_get::<Option<f64>, _>("avg_hr").ok().flatten(),
                 autonomic_z: row.try_get::<Option<f64>, _>("autonomic_z").ok().flatten(),
                 hr_z: row.try_get::<Option<f64>, _>("hr_z").ok().flatten(),
@@ -267,9 +296,13 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
                 agent_action: row.try_get::<Option<String>, _>("agent_action").ok().flatten(),
                 is_sleep: row.try_get::<Option<bool>, _>("is_sleep").ok().flatten(),
                 user_hidden: row.try_get::<Option<bool>, _>("user_hidden").ok().flatten(),
-                entities: row.try_get::<Option<serde_json::Value>, _>("entities").ok().flatten(),
+                entities: row.try_get::<Option<serde_json::Value>, _>("entities").ok().flatten().map(without_owner),
                 topic_novelty: row.try_get::<Option<serde_json::Value>, _>("topic_novelty").ok().flatten(),
-                entity_novelty: row.try_get::<Option<serde_json::Value>, _>("entity_novelty").ok().flatten(),
+                entity_novelty: row
+                    .try_get::<Option<serde_json::Value>, _>("entity_novelty")
+                    .ok()
+                    .flatten()
+                    .map(without_owner),
                 entity_names,
                 entity_timestamps,
                 created_at,
@@ -397,6 +430,7 @@ pub async fn create_temporal_event<'e>(
         is_user_added: req.is_user_added,
         is_user_edited,
         novelty_z: None,
+        local_novelty_z: None,
         avg_hr: None,
         autonomic_z: None,
         hr_z: None,
@@ -467,6 +501,7 @@ pub async fn update_temporal_event(
         is_user_added: Some(row.is_user_added),
         is_user_edited: Some(row.is_user_edited),
         novelty_z: None,
+        local_novelty_z: None,
         avg_hr: None,
         autonomic_z: None,
         hr_z: None,
@@ -542,4 +577,56 @@ pub async fn delete_auto_events_for_day<'e>(
     .map_err(|e| Error::Database(format!("Failed to delete auto events: {}", e)))?;
 
     Ok(result.rows_affected())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A day annotated before the owner was left out of `entities` still
+    /// lists them; the day page drew them as a companion in their own event.
+    #[sqlx::test]
+    async fn a_day_never_lists_the_owner_among_its_events_subjects(pool: PgPool) {
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('person_me', 'David Okafor'), ('person_nick', 'Nick')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE app_user_profile SET self_person_id = 'person_me'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO wiki_days (id, date) VALUES ('day_2026-10-04', '2026-10-04')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO wiki_events (id, day_id, started_at, ended_at, entities, entity_novelty) \
+             VALUES ('event_lunch', 'day_2026-10-04', '2026-10-04T15:00:00Z', '2026-10-04T16:00:00Z', \
+                     '[\"person_me\", \"person_nick\"]', '{\"person_me\": 1.5, \"person_nick\": 2.0}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (i, who) in ["person_me", "person_nick"].iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at) \
+                 VALUES ($1, 'person', $2, 'data_communication_message', $3, 'sender', '2026-10-04T15:10:00Z')",
+            )
+            .bind(format!("ref_{i}"))
+            .bind(who)
+            .bind(format!("src_{i}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let events = get_day_events(&pool, "day_2026-10-04".into()).await.unwrap();
+        assert_eq!(events.len(), 1);
+        let e = &events[0];
+        assert_eq!(e.entities, Some(serde_json::json!(["person_nick"])));
+        assert_eq!(e.entity_names, Some(serde_json::json!({ "person_nick": "Nick" })));
+        assert_eq!(e.entity_novelty, Some(serde_json::json!({ "person_nick": 2.0 })));
+        let at = e.entity_timestamps.as_ref().and_then(|t| t.as_object()).unwrap();
+        assert_eq!(at.keys().collect::<Vec<_>>(), ["person_nick"]);
+    }
 }

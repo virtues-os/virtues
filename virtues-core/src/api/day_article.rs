@@ -25,7 +25,12 @@
 //!    never repaired: repair and strictness turned pages into inventories.
 //! 5. **Names**: a person named on the page must be in the day's people or in
 //!    the day's record, or the sentence goes.
-//! 6. **Render** markdown: the Abstract first, sections after, evidence as
+//! 6. **Figures**: the writer may end with one quote or exchange from a light
+//!    moment; code keeps it only if the record holds it word for word, or as
+//!    messages in a row from one thread. Code adds the day's route when the
+//!    day travelled. Each is a fenced `figure` block at the end of the section
+//!    that holds its time.
+//! 7. **Render** markdown: the Abstract first, sections after, evidence as
 //!    footnotes that close the sentence they support (`[^ev-N]`, opened in a
 //!    card when the sentence is clicked), section time spans as context
 //!    footnotes the page draws in its margin (`[^cx-N]`).
@@ -79,6 +84,8 @@ pub(crate) struct Chunk {
 #[derive(Debug, Clone)]
 pub(crate) struct Msg {
     pub id: String,
+    /// Its thread, so an exchange set as a figure is proven to be one conversation.
+    pub thread: String,
     pub hm: String,
     pub who: String,
     pub body: String,
@@ -329,7 +336,14 @@ pub(crate) async fn assemble(
             if m.from_me {
                 your_words.push_str(&format!("[msg {t}] to {}: {body}\n", if names.is_empty() { "unknown".into() } else { names.join(", ") }));
             }
-            messages.push(Msg { id: m.id.clone(), hm: t.clone(), who: m.who.clone(), body: body.clone(), from_me: m.from_me });
+            messages.push(Msg {
+                id: m.id.clone(),
+                thread: thread.clone(),
+                hm: t.clone(),
+                who: m.who.clone(),
+                body: body.clone(),
+                from_me: m.from_me,
+            });
             lines.push((t, m.who.clone(), body, m.from_me));
         }
         let sent = lines.iter().filter(|l| l.3).count();
@@ -477,7 +491,7 @@ pub(crate) async fn assemble(
 
 /// The owner's names: their person record's name, its first word, their
 /// nickname and aliases, in that order, without repeats.
-async fn owner_names(pool: &PgPool, self_id: &str) -> Result<Vec<String>> {
+pub(crate) async fn owner_names(pool: &PgPool, self_id: &str) -> Result<Vec<String>> {
     let row: Option<(String, Option<String>, serde_json::Value)> =
         sqlx::query_as("SELECT name, nickname, aliases FROM wiki_people WHERE id = $1")
             .bind(self_id)
@@ -510,9 +524,25 @@ pub(crate) fn you_block(names: &[String]) -> String {
     )
 }
 
-/// Earlier pages feed the writer as prose; their footnotes are page furniture.
+/// Earlier pages feed the writer as prose; their footnotes and figures are
+/// page furniture.
 fn strip_footnotes(md: &str) -> String {
-    let body: Vec<&str> = md.lines().filter(|l| !l.trim_start().starts_with("[^")).collect();
+    let mut in_figure = false;
+    let body: Vec<&str> = md
+        .lines()
+        .filter(|l| {
+            let t = l.trim();
+            if in_figure {
+                in_figure = t != "```";
+                return false;
+            }
+            if t == FIGURE_FENCE {
+                in_figure = true;
+                return false;
+            }
+            !t.starts_with("[^")
+        })
+        .collect();
     let joined = body.join("\n");
     let re = regex::Regex::new(r"\[\^[a-z]{2}-\d+\]").expect("static regex");
     re.replace_all(&joined, "").to_string()
@@ -607,7 +637,7 @@ End every sentence with the time of the passage it rests on in square brackets: 
 - A plan is not an event. Never join two things as cause and effect unless the passages do.
 
 HARD CONVERSATIONS
-They belong on the page, with discretion: a door back into the moment, not its contents. Name what it turned on in a word or two and how it moved. No body parts, procedures, ages, or third parties named inside it. Feelings someone said aloud are evidence; others are not yours to assign. Paraphrase other people; never quote them.
+They belong on the page, with discretion: a door back into the moment, not its contents. Name what it turned on in a word or two and how it moved. No body parts, procedures, ages, or third parties named inside it. Feelings someone said aloud are evidence; others are not yours to assign. Paraphrase other people; never quote them, and never take the figure from one.
 
 Other people's private lives stay off the page unless they were the moment: someone's family, health, money, marriage or past, and drugs or drinking beyond a plain mention of a night out. The page is about this person's day, and it will be read with others nearby.
 
@@ -619,12 +649,20 @@ Second person, past tense. Plain and warm, a friend who was there and paying att
 
 <identity> is their own account of who they are. It shapes your judgment and never appears on the page.
 
+THE FIGURE
+The page may carry one figure, set apart from the prose: the day in its own words. Take it from a light moment (something funny, warm or plainly theirs), never from a hard conversation. Their own words are best. Leave it out when nothing light stands out. It is one line at the very end, in one of two forms:
+- A quote, under 25 words, copied exactly as one passage has them, cited by that passage's time: `Quote: "<the words, exactly>" [17:59]`. From a recording you may leave out fillers ("um", "uh", "like") and false starts; every word you keep is one they said, in their order.
+- An exchange, two to four messages in a row from one thread, cited by their times: `Exchange: [msg 21:44] [msg 21:45]`
+A quote that differs from its passage by a word is dropped, and so is an exchange from more than one thread.
+
 OUTPUT
 Exactly this, and nothing else:
 
 Abstract: <one or two sentences, each tagged>
 
 <sections>
+
+<the figure line, if any>
 "#;
 
 // ── The brief ─────────────────────────────────────────────────────────────
@@ -758,15 +796,24 @@ pub(crate) async fn write_day(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>, s
         0.7,
     )
     .await?;
-    let items = split_items(&draft);
+    let (prose, chosen) = take_figure(&draft);
+    let items = split_items(&prose);
     let verdicts = check(pool, &items, &input).await?;
     let names = known_names(&input);
-    let md = render(&items, &verdicts, &input, &names);
+    let mut figures: Vec<Figure> = chosen.as_ref().and_then(|f| verify_figure(f, &input)).into_iter().collect();
+    if chosen.is_some() && figures.is_empty() {
+        tracing::debug!(figure = ?chosen, "day article figure did not match the record - dropped");
+    }
+    if let Some(t) = route_moment(&day_fixes(pool, start, end).await?) {
+        figures.push(Figure::route(hm(&t, tz)));
+    }
+    let md = render(&items, &verdicts, &input, &names, &figures);
     tracing::info!(
         date = %date,
         moments = brief.moments.len(),
         sentences = items.iter().filter(|i| matches!(i, Item::Sentence { .. })).count(),
         kept = verdicts.values().filter(|v| **v).count(),
+        figures = figures.len(),
         "day article written"
     );
     Ok(Some(md))
@@ -865,6 +912,358 @@ pub(crate) fn split_items(draft: &str) -> Vec<Item> {
 fn untagged(text: &str) -> String {
     let t = tag_re().replace_all(text, "");
     regex::Regex::new(r"\s+([.,;:!?])").expect("static regex").replace_all(t.trim(), "$1").to_string()
+}
+
+// ── The figure ─────────────────────────────────────────────────────────────
+
+/// The fence a figure's block opens with. Its body is `key: value` lines,
+/// which the page reads to draw the figure.
+pub(crate) const FIGURE_FENCE: &str = "```figure";
+/// A quote shorter than this is a word, not a voice; longer is a passage.
+const QUOTE_MIN_WORDS: usize = 3;
+const QUOTE_MAX_WORDS: usize = 35;
+/// An exchange is a few messages in a row.
+const EXCHANGE_MIN: usize = 2;
+const EXCHANGE_MAX: usize = 4;
+
+/// The figure the writer chose, as it wrote it on the last line of its output.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum FigureDraft {
+    Quote { text: String, tags: Vec<String> },
+    Exchange { tags: Vec<String> },
+}
+
+/// A figure the page carries: the local time that places it in a section, and
+/// its block's fields in order.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Figure {
+    pub at: String,
+    pub fields: Vec<(&'static str, String)>,
+}
+
+impl Figure {
+    /// The day's route, placed at its longest movement.
+    fn route(at: String) -> Self {
+        Figure { at, fields: vec![("kind", "route".into())] }
+    }
+
+    fn markdown(&self) -> String {
+        figure_block(self.fields.iter().map(|(k, v)| (*k, v.as_str())))
+    }
+}
+
+/// A fenced `figure` block, each field on one line (a value's line breaks
+/// would end its field).
+pub(crate) fn figure_block<'a>(fields: impl IntoIterator<Item = (&'a str, &'a str)>) -> String {
+    let mut s = format!("{FIGURE_FENCE}\n");
+    for (k, v) in fields {
+        s.push_str(&format!("{k}: {}\n", v.split_whitespace().collect::<Vec<_>>().join(" ")));
+    }
+    s.push_str("```");
+    s
+}
+
+/// The draft without its figure line, and the figure that line names. Every
+/// figure line leaves the prose whether it reads or not: it is never a
+/// sentence. The first one that reads is the figure.
+pub(crate) fn take_figure(draft: &str) -> (String, Option<FigureDraft>) {
+    let re = tag_re();
+    let emphasis = |c: char| c == '*' || c == '_';
+    let mut prose = Vec::new();
+    let mut figure = None;
+    for line in draft.lines() {
+        let t = line.trim().trim_start_matches(emphasis);
+        let read = if let Some(rest) = t.strip_prefix("Quote:") {
+            Some(read_quote(rest.trim_start_matches(emphasis), &re))
+        } else if let Some(rest) = t.strip_prefix("Exchange:") {
+            Some(read_exchange(rest, &re))
+        } else {
+            None
+        };
+        match read {
+            Some(f) => figure = figure.or(f),
+            None => prose.push(line),
+        }
+    }
+    (prose.join("\n"), figure)
+}
+
+/// `"<words>" [17:59]`: the words, and the passage's time from the last tag.
+fn read_quote(rest: &str, re: &regex::Regex) -> Option<FigureDraft> {
+    let m = re.find_iter(rest).last()?;
+    let tags = re.captures(m.as_str()).map(|c| parse_tags(&c[1]))?;
+    let text = rest[..m.start()].trim();
+    let text = text.strip_prefix(|c: char| c == '"' || c == '“').unwrap_or(text);
+    let text = text.strip_suffix(|c: char| c == '"' || c == '”').unwrap_or(text).trim();
+    (!text.is_empty() && !tags.is_empty()).then(|| FigureDraft::Quote { text: text.to_string(), tags })
+}
+
+/// `[msg 21:44] [msg 21:45]`: message times only, each once.
+fn read_exchange(rest: &str, re: &regex::Regex) -> Option<FigureDraft> {
+    let mut tags: Vec<String> = Vec::new();
+    for t in re.captures_iter(rest).flat_map(|c| parse_tags(&c[1])) {
+        if !tags.contains(&t) {
+            tags.push(t);
+        }
+    }
+    (!tags.is_empty() && tags.iter().all(|t| t.starts_with("msg "))).then_some(FigureDraft::Exchange { tags })
+}
+
+/// What "exactly as the passage has it" compares: the words with the
+/// writer's veil marks dropped, curly quotes straightened, and every run of
+/// space made one.
+fn verbatim(s: &str) -> String {
+    let s: String = s
+        .chars()
+        .filter(|c| !matches!(c, '⟦' | '⟧'))
+        .map(|c| match c {
+            '‘' | '’' | 'ʼ' => '\'',
+            '“' | '”' => '"',
+            c => c,
+        })
+        .collect();
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Spoken words a quote may leave out: they carry no meaning of the
+/// speaker's, only the sound of talking.
+const FILLERS: &[&str] = &["um", "uh", "uhm", "er", "erm", "ah", "like"];
+/// How many spoken words one quote may leave out in all.
+const MAX_LEFT_OUT: usize = 8;
+
+/// Whether `quote` is what a recording said, cleaned the way a transcript
+/// is for print: its words appear in the passage in order, one run, with
+/// only fillers ("um", "like") and false starts left out between them. A
+/// false start is a word the speaker repeats within a few words ("it's a,
+/// it's like a modern take"). Every word the quote keeps was said, in that
+/// order, in one voice's turn; nothing is reworded.
+fn said_cleanly(quote: &str, passage: &str) -> bool {
+    let turn_mark = regex::Regex::new(r"\[[^\]]*\]:").expect("static regex");
+    let said = turn_mark.split(passage).any(|turn| said_in_turn(quote, turn));
+    said
+}
+
+fn said_in_turn(quote: &str, passage: &str) -> bool {
+    let tokens = |s: &str| -> Vec<String> {
+        s.to_lowercase()
+            .replace(['’', '‘', 'ʼ'], "'")
+            .split(|c: char| !(c.is_alphanumeric() || c == '\''))
+            .filter(|w| !w.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let q = tokens(quote);
+    let p = tokens(passage);
+    if q.is_empty() {
+        return false;
+    }
+    (0..p.len()).filter(|&start| p[start] == q[0]).any(|start| {
+        let (mut i, mut j, mut left_out) = (start, 0, 0);
+        while j < q.len() && i < p.len() {
+            if p[i] == q[j] {
+                j += 1;
+            } else {
+                let repeated = p[i.saturating_sub(3)..i].contains(&p[i]);
+                if !(FILLERS.contains(&p[i].as_str()) || repeated) || left_out == MAX_LEFT_OUT {
+                    return false;
+                }
+                left_out += 1;
+            }
+            i += 1;
+        }
+        j == q.len()
+    })
+}
+
+/// The figure, proven against the record and ready for the page, or `None`
+/// when the record does not bear it out: a quote stands word for word in a
+/// passage it cites, an exchange is messages in a row from one thread.
+pub(crate) fn verify_figure(draft: &FigureDraft, input: &DayInput) -> Option<Figure> {
+    match draft {
+        FigureDraft::Quote { text, tags } => verify_quote(text, tags, input),
+        FigureDraft::Exchange { tags } => verify_exchange(tags, input),
+    }
+}
+
+fn verify_quote(text: &str, tags: &[String], input: &DayInput) -> Option<Figure> {
+    let words = verbatim(text);
+    if !(QUOTE_MIN_WORDS..=QUOTE_MAX_WORDS).contains(&words.split_whitespace().count()) {
+        return None;
+    }
+    let quote = |at: &str, who: String, r: String| Figure {
+        at: at.to_string(),
+        fields: vec![
+            ("kind", "quote".into()),
+            ("text", text.to_string()),
+            ("who", who),
+            ("ref", r),
+            ("time", twelve_hour(at)),
+        ],
+    };
+    for tag in tags {
+        if let Some(t) = tag.strip_prefix("msg ") {
+            if let Some(m) = input.messages.iter().find(|m| m.hm == t && verbatim(&m.body).contains(&words)) {
+                let who = if m.from_me {
+                    "You".to_string()
+                } else if input.people.iter().any(|p| p.name == m.who) {
+                    m.who.clone()
+                } else {
+                    // A sender the wiki has no name for is a number or a handle.
+                    "In a message".to_string()
+                };
+                return Some(quote(t, who, format!("data_communication_message:{}", m.id)));
+            }
+        } else if let Some(c) =
+            input.chunks.iter().find(|c| c.hm == *tag && (verbatim(&c.text).contains(&words) || said_cleanly(&words, &c.text)))
+        {
+            // The recordings never say which voice is the owner's.
+            return Some(quote(&c.hm, "In a recording".into(), format!("data_communication_transcription:{}", c.id)));
+        }
+    }
+    None
+}
+
+fn verify_exchange(tags: &[String], input: &DayInput) -> Option<Figure> {
+    let times: Vec<&str> = tags.iter().filter_map(|t| t.strip_prefix("msg ")).collect();
+    if !(EXCHANGE_MIN..=EXCHANGE_MAX).contains(&times.len()) {
+        return None;
+    }
+    // The thread with a message at every cited time.
+    let thread = input
+        .messages
+        .iter()
+        .filter(|m| m.hm == times[0] && !m.thread.is_empty())
+        .map(|m| m.thread.as_str())
+        .find(|th| times.iter().all(|t| input.messages.iter().any(|m| m.thread == *th && m.hm == *t)))?;
+    let in_thread: Vec<&Msg> = input.messages.iter().filter(|m| m.thread == thread).collect();
+    let picked: Vec<usize> = (0..in_thread.len()).filter(|&i| times.contains(&in_thread[i].hm.as_str())).collect();
+    let (first, last) = (*picked.first()?, *picked.last()?);
+    // In a row: no message of the thread between them is left out.
+    if !(EXCHANGE_MIN..=EXCHANGE_MAX).contains(&picked.len()) || last - first + 1 != picked.len() {
+        return None;
+    }
+    let refs: Vec<String> = picked.iter().map(|&i| format!("data_communication_message:{}", in_thread[i].id)).collect();
+    Some(Figure { at: in_thread[first].hm.clone(), fields: vec![("kind", "thread".into()), ("refs", refs.join(", "))] })
+}
+
+// ── The route ──────────────────────────────────────────────────────────────
+
+/// A day that moved this far in all has a route worth drawing...
+const ROUTE_MIN_TOTAL_M: f64 = 20_000.0;
+/// ...and so does one whose fixes lie this far apart: a flight, a long drive.
+const ROUTE_MIN_SPAN_M: f64 = 200_000.0;
+/// A fix the phone rates at or worse than this is a cell tower's guess, not
+/// GPS: the Timeline's rule (`apps/web/src/lib/timeline/track.ts`).
+const GPS_ACCURACY_MAX_M: f64 = 100.0;
+/// A fix this far from both its neighbours, while they sit together, is a
+/// spike: the Timeline's rule too.
+const SPIKE_M: f64 = 300.0;
+/// Distance counts in hops of at least this, so a still phone's jitter adds
+/// nothing.
+const HOP_M: f64 = 200.0;
+/// Hops further apart in time than this are two movements with a stay between.
+const MOVEMENT_GAP_MIN: i64 = 10;
+/// A hop slower than this, in metres a second, is a phone waking up somewhere
+/// new rather than travel.
+const MOVING_MIN_MPS: f64 = 0.5;
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Fix {
+    pub at: DateTime<Utc>,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+fn metres(a: &Fix, b: &Fix) -> f64 {
+    crate::geo::haversine_distance(a.lat, a.lon, b.lat, b.lon)
+}
+
+/// The day's GPS fixes, in time order.
+async fn day_fixes(pool: &PgPool, start: &str, end: &str) -> Result<Vec<Fix>> {
+    let rows: Vec<(DateTime<Utc>, f64, f64)> = sqlx::query_as(
+        "SELECT occurred_at, latitude, longitude FROM data_location_point \
+         WHERE occurred_at >= $1::timestamptz AND occurred_at < $2::timestamptz \
+           AND deleted_at_source IS NULL AND NOT is_archived \
+           AND (horizontal_accuracy IS NULL OR horizontal_accuracy < $3) \
+         ORDER BY occurred_at",
+    )
+    .bind(start)
+    .bind(end)
+    .bind(GPS_ACCURACY_MAX_M)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|(at, lat, lon)| Fix { at, lat, lon }).collect())
+}
+
+/// The middle of the day's longest movement, when the day went far enough to
+/// draw: 20 km in all, or fixes 200 km apart. `None` otherwise.
+pub(crate) fn route_moment(fixes: &[Fix]) -> Option<DateTime<Utc>> {
+    let fixes: Vec<Fix> = fixes
+        .iter()
+        .enumerate()
+        .filter(|&(i, f)| match (i.checked_sub(1).map(|j| &fixes[j]), fixes.get(i + 1)) {
+            (Some(p), Some(n)) => !(metres(p, f) > SPIKE_M && metres(f, n) > SPIKE_M && metres(p, n) < SPIKE_M),
+            _ => true,
+        })
+        .map(|(_, f)| *f)
+        .collect();
+    let first = *fixes.first()?;
+
+    // How far apart the fixes lie: the farthest from the first, then the
+    // farthest from that.
+    let farthest = |from: &Fix| fixes.iter().copied().max_by(|a, b| metres(from, a).total_cmp(&metres(from, b)));
+    let a = farthest(&first)?;
+    let span = farthest(&a).map_or(0.0, |b| metres(&a, &b));
+
+    // Hops from an anchor to the first fix HOP_M away. A hop starts at the
+    // last fix before it, so a stay is never inside the hop that leaves it.
+    let mut hops: Vec<(f64, DateTime<Utc>, DateTime<Utc>)> = Vec::new();
+    let mut anchor = first;
+    for w in fixes.windows(2) {
+        let m = metres(&anchor, &w[1]);
+        if m >= HOP_M {
+            hops.push((m, w[0].at, w[1].at));
+            anchor = w[1];
+        }
+    }
+    let total: f64 = hops.iter().map(|h| h.0).sum();
+    if total < ROUTE_MIN_TOTAL_M && span < ROUTE_MIN_SPAN_M {
+        return None;
+    }
+
+    // Movements: moving hops with no stay between them.
+    let mut moves: Vec<(f64, DateTime<Utc>, DateTime<Utc>)> = Vec::new();
+    let mut open = false;
+    for &(m, from, to) in &hops {
+        let secs = (to - from).num_seconds().max(1) as f64;
+        if m / secs < MOVING_MIN_MPS {
+            open = false;
+            continue;
+        }
+        match moves.last_mut() {
+            Some(mv) if open && (from - mv.2).num_minutes() <= MOVEMENT_GAP_MIN => {
+                mv.0 += m;
+                mv.2 = to;
+            }
+            _ => moves.push((m, from, to)),
+        }
+        open = true;
+    }
+    let longest = |v: &[(f64, DateTime<Utc>, DateTime<Utc>)]| v.iter().copied().max_by(|a, b| a.0.total_cmp(&b.0));
+    let (_, s, e) = longest(&moves).or_else(|| longest(&hops))?;
+    Some(s + (e - s) / 2)
+}
+
+/// The section a moment belongs to: the one whose span holds it, else the
+/// last to begin before it, else the first. `None` when there are none.
+/// Sections are `(heading item, (first time, last time))`, times "HH:MM".
+fn section_for(at: &str, sections: &[(usize, (String, String))]) -> Option<usize> {
+    sections
+        .iter()
+        .find(|(_, (a, b))| a.as_str() <= at && at <= b.as_str())
+        .or_else(|| sections.iter().filter(|(_, (a, _))| a.as_str() <= at).last())
+        .or(sections.first())
+        .map(|(k, _)| *k)
 }
 
 // ── The check ──────────────────────────────────────────────────────────────
@@ -1061,10 +1460,17 @@ fn twelve_hour(hm: &str) -> String {
     format!("{h12}:{m} {ap}")
 }
 
-/// The finished page: Abstract, sections, tables, and their footnotes.
-/// Evidence footnotes (`ev-N`) close the sentence they support; the section
-/// time spans (`cx-N`) are drawn in the margin.
-pub(crate) fn render(items: &[Item], keep: &HashMap<usize, bool>, input: &DayInput, known: &BTreeSet<String>) -> String {
+/// The finished page: Abstract, sections, tables, figures, and their
+/// footnotes. Evidence footnotes (`ev-N`) close the sentence they support;
+/// the section time spans (`cx-N`) are drawn in the margin; each figure closes
+/// the section that holds its time.
+pub(crate) fn render(
+    items: &[Item],
+    keep: &HashMap<usize, bool>,
+    input: &DayInput,
+    known: &BTreeSet<String>,
+    figures: &[Figure],
+) -> String {
     let mut out = String::new();
     let mut notes: Vec<String> = Vec::new();
     let mut ev_n = 0usize;
@@ -1072,24 +1478,47 @@ pub(crate) fn render(items: &[Item], keep: &HashMap<usize, bool>, input: &DayInp
     let mut para: Option<usize> = None;
     let mut current = String::new();
 
-    // Section time spans from the kept sentences' transcript tags.
+    // Section time spans from the kept sentences' transcript tags, and the
+    // wider bounds, messages included, that place a figure.
     let mut heading_spans: HashMap<usize, (String, String)> = HashMap::new();
+    let mut bounds: Vec<(usize, (String, String))> = Vec::new();
     let mut open: Option<usize> = None;
+    let widen = |span: &mut (String, String), t: &str| {
+        if t < span.0.as_str() { span.0 = t.to_string(); }
+        if t > span.1.as_str() { span.1 = t.to_string(); }
+    };
     for (k, item) in items.iter().enumerate() {
         match item {
             Item::Heading(_) => open = Some(k),
             Item::Sentence { tags, .. } | Item::Table { tags, .. } if keep.get(&k).copied().unwrap_or(matches!(item, Item::Table { .. })) => {
                 if let Some(h) = open {
                     for t in tags.iter().filter(|t| t.len() == 5 && t.as_bytes()[2] == b':') {
-                        let e = heading_spans.entry(h).or_insert((t.clone(), t.clone()));
-                        if *t < e.0 { e.0 = t.clone(); }
-                        if *t > e.1 { e.1 = t.clone(); }
+                        widen(heading_spans.entry(h).or_insert((t.clone(), t.clone())), t);
+                    }
+                    for t in tags.iter().map(|t| t.strip_prefix("msg ").unwrap_or(t)).filter(|t| t.len() == 5 && t.as_bytes()[2] == b':') {
+                        match bounds.last_mut() {
+                            Some((at, span)) if *at == h => widen(span, t),
+                            _ => bounds.push((h, (t.to_string(), t.to_string()))),
+                        }
                     }
                 }
             }
             _ => {}
         }
     }
+    let mut placed: HashMap<Option<usize>, Vec<&Figure>> = HashMap::new();
+    for f in figures {
+        placed.entry(section_for(&f.at, &bounds)).or_default().push(f);
+    }
+    for v in placed.values_mut() {
+        v.sort_by(|a, b| a.at.cmp(&b.at));
+    }
+    let close_section = |out: &mut String, section: Option<usize>| {
+        for f in placed.get(&section).into_iter().flatten() {
+            out.push_str(&f.markdown());
+            out.push_str("\n\n");
+        }
+    };
 
     let flush = |out: &mut String, current: &mut String| {
         if !current.trim().is_empty() {
@@ -1099,6 +1528,7 @@ pub(crate) fn render(items: &[Item], keep: &HashMap<usize, bool>, input: &DayInp
         current.clear();
     };
 
+    let mut section: Option<usize> = None;
     for (k, item) in items.iter().enumerate() {
         match item {
             // The Abstract's kept sentences make one paragraph, without
@@ -1117,6 +1547,10 @@ pub(crate) fn render(items: &[Item], keep: &HashMap<usize, bool>, input: &DayInp
             }
             Item::Heading(h) => {
                 flush(&mut out, &mut current);
+                if section.is_some() {
+                    close_section(&mut out, section);
+                }
+                section = Some(k);
                 para = None;
                 match heading_spans.get(&k) {
                     Some((a, b)) => {
@@ -1162,6 +1596,11 @@ pub(crate) fn render(items: &[Item], keep: &HashMap<usize, bool>, input: &DayInp
         }
     }
     flush(&mut out, &mut current);
+    close_section(&mut out, section);
+    if section.is_some() {
+        // Sections whose sentences cite no time leave their figures unplaced.
+        close_section(&mut out, None);
+    }
     // A heading whose every sentence was deleted is a heading over nothing.
     let lines: Vec<&str> = out.lines().collect();
     let mut cleaned = Vec::new();
@@ -1286,7 +1725,7 @@ pub async fn similar_days(pool: &PgPool, date: NaiveDate, limit: i64) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+    use chrono::{TimeZone, Timelike};
 
     fn input() -> DayInput {
         let t = |h, m| Utc.with_ymd_and_hms(2026, 1, 7, h, m, 0).unwrap();
@@ -1296,7 +1735,13 @@ mod tests {
                 Chunk { id: "tr_a".into(), start: t(17, 14), end: t(17, 19), hm: "17:14".into(), text: "[Speaker 1]: cross Fifth and Main, Nick".into() },
                 Chunk { id: "tr_b".into(), start: t(17, 39), end: t(17, 44), hm: "17:39".into(), text: "[Speaker 2]: the most romantic thing?".into() },
             ],
-            messages: vec![Msg { id: "msg_1".into(), hm: "19:40".into(), who: "you".into(), body: "home, walked the dog".into(), from_me: true }],
+            messages: vec![
+                msg("msg_1", "th_dad", "19:40", "you", "home, walked the dog", true),
+                msg("msg_2", "th_nick", "21:44", "Nick", "Did you get home safe?", false),
+                msg("msg_3", "th_nick", "21:45", "you", "Yes, thank you", true),
+                msg("msg_4", "th_nick", "21:47", "Nick", "Good. Sleep well", false),
+                msg("msg_5", "th_group", "21:45", "Ana Ruiz", "who has the keys", false),
+            ],
             people: vec![Person { id: "person_n".into(), name: "Nick".into() }],
             writer_context: String::new(),
             owner: vec!["David Okafor".into(), "David".into()],
@@ -1319,7 +1764,7 @@ mod tests {
         let items = split_items("Abstract: A walk. [17:14]\n\n## The walk home\n\nYou crossed Fifth and Main. [17:14] You got home. [msg 19:40]");
         let keep: HashMap<usize, bool> = (0..items.len()).map(|k| (k, true)).collect();
         let inp = input();
-        let md = render(&items, &keep, &inp, &known_names(&inp));
+        let md = render(&items, &keep, &inp, &known_names(&inp), &[]);
         assert!(md.starts_with("A walk.\n\n## The walk home[^cx-1]"), "{md}");
         assert!(md.contains("You crossed Fifth and Main.[^ev-1] You got home.[^ev-2]"), "{md}");
         assert!(md.contains("[^ev-1]: Recording · 5:14 PM · data_communication_transcription:tr_a"), "{md}");
@@ -1333,7 +1778,7 @@ mod tests {
         let mut keep: HashMap<usize, bool> = (0..items.len()).map(|k| (k, true)).collect();
         keep.insert(2, false); // "You bought a hat." failed its check
         let inp = input();
-        let md = render(&items, &keep, &inp, &known_names(&inp));
+        let md = render(&items, &keep, &inp, &known_names(&inp), &[]);
         assert!(!md.contains("The shop"), "{md}");
         assert!(!md.contains("hat"), "{md}");
         assert!(md.contains("## The walk"), "{md}");
@@ -1356,7 +1801,7 @@ mod tests {
         assert!(matches!(&items[1], Item::Abstract(a) if a.contains("Margaret")));
         let keep: HashMap<usize, bool> = (0..items.len()).map(|k| (k, true)).collect();
         let inp = input();
-        let md = render(&items, &keep, &inp, &known_names(&inp));
+        let md = render(&items, &keep, &inp, &known_names(&inp), &[]);
         assert!(md.starts_with("You walked home with [Nick](/person/person_n). It rained.\n\n## The walk"), "{md}");
     }
 
@@ -1397,6 +1842,186 @@ mod tests {
         assert!(g.starts_with("- Nothing was recorded before 07:46."));
     }
 
+    fn msg(id: &str, thread: &str, hm: &str, who: &str, body: &str, from_me: bool) -> Msg {
+        Msg { id: id.into(), thread: thread.into(), hm: hm.into(), who: who.into(), body: body.into(), from_me }
+    }
+
+    fn field<'a>(f: &'a Figure, key: &str) -> &'a str {
+        f.fields.iter().find(|(k, _)| *k == key).map(|(_, v)| v.as_str()).unwrap_or("")
+    }
+
+    fn quote(text: &str, tag: &str) -> FigureDraft {
+        FigureDraft::Quote { text: text.into(), tags: vec![tag.into()] }
+    }
+
+    fn exchange(tags: &[&str]) -> FigureDraft {
+        FigureDraft::Exchange { tags: tags.iter().map(|t| t.to_string()).collect() }
+    }
+
+    /// The input with one recorded conversation at the table.
+    fn with_table_talk() -> DayInput {
+        let t = |h, m| Utc.with_ymd_and_hms(2026, 1, 7, h, m, 0).unwrap();
+        let mut inp = input();
+        inp.chunks.push(Chunk {
+            id: "tr_c".into(),
+            start: t(13, 17),
+            end: t(13, 22),
+            hm: "13:17".into(),
+            text: "[Speaker]: We've all been to the Vatican.  How have you not\ngone? [Speaker]: Not yet.".into(),
+        });
+        inp
+    }
+
+    #[test]
+    fn the_figure_line_leaves_the_prose() {
+        let (prose, fig) = take_figure("Abstract: A walk. [17:14]\n\n## The walk\n\nYou crossed. [17:14]\n\nQuote: “We’ve all been to the Vatican.” [13:17]");
+        assert!(!prose.contains("Quote") && prose.ends_with("You crossed. [17:14]\n"), "{prose}");
+        assert_eq!(fig, Some(quote("We’ve all been to the Vatican.", "13:17")));
+        let (_, ex) = take_figure("Abstract: A walk. [17:14]\n\n**Exchange:** [msg 21:44] [msg 21:45, msg 21:44]");
+        assert_eq!(ex, Some(exchange(&["msg 21:44", "msg 21:45"])), "each time once, in order");
+        // A figure line that doesn't read still leaves the prose, and is no figure.
+        let (prose, none) = take_figure("Abstract: A walk. [17:14]\n\nExchange: [17:14] [msg 19:40]");
+        assert_eq!(none, None);
+        assert!(!prose.contains("Exchange"), "{prose}");
+    }
+
+    #[test]
+    fn a_quote_is_kept_only_word_for_word() {
+        let inp = with_table_talk();
+        // Curly quotes, the writer's veil marks and the record's line break are not words.
+        let f = verify_figure(&quote("We’ve all been to the ⟦Vatican⟧. How have you not gone?", "13:17"), &inp).expect("verbatim");
+        assert_eq!(f.at, "13:17");
+        assert_eq!(field(&f, "text"), "We’ve all been to the ⟦Vatican⟧. How have you not gone?");
+        assert_eq!(field(&f, "who"), "In a recording");
+        assert_eq!(field(&f, "ref"), "data_communication_transcription:tr_c");
+        assert_eq!(field(&f, "time"), "1:17 PM");
+        // One word changed.
+        assert!(verify_figure(&quote("We've all been to Rome. How have you not gone?", "13:17"), &inp).is_none());
+        // The right words, cited to the wrong passage.
+        assert!(verify_figure(&quote("We've all been to the Vatican.", "17:14"), &inp).is_none());
+        // Across a change of voice: the record never said it in one breath.
+        assert!(verify_figure(&quote("How have you not gone? Not yet.", "13:17"), &inp).is_none());
+        // Too short to be a voice.
+        assert!(verify_figure(&quote("Not yet.", "13:17"), &inp).is_none());
+    }
+
+    #[test]
+    fn a_quoted_message_says_who_sent_it() {
+        let inp = input();
+        let you = verify_figure(&quote("Yes, thank you", "msg 21:45"), &inp).expect("your message");
+        assert_eq!((field(&you, "who"), field(&you, "ref")), ("You", "data_communication_message:msg_3"));
+        let nick = verify_figure(&quote("Did you get home safe?", "msg 21:44"), &inp).expect("Nick's message");
+        assert_eq!(field(&nick, "who"), "Nick");
+        // A sender the day's people don't name is not named.
+        let other = verify_figure(&quote("who has the keys", "msg 21:45"), &inp).expect("the group's message");
+        assert_eq!((field(&other, "who"), field(&other, "ref")), ("In a message", "data_communication_message:msg_5"));
+    }
+
+    #[test]
+    fn an_exchange_is_messages_in_a_row_from_one_thread() {
+        let inp = input();
+        let f = verify_figure(&exchange(&["msg 21:44", "msg 21:45"]), &inp).expect("one thread, in a row");
+        assert_eq!(f.at, "21:44");
+        assert_eq!(field(&f, "kind"), "thread");
+        assert_eq!(field(&f, "refs"), "data_communication_message:msg_2, data_communication_message:msg_3");
+        // 21:45 has a message in the group too; only Nick's thread holds both times.
+        let f = verify_figure(&exchange(&["msg 21:45", "msg 21:44"]), &inp).expect("the thread with both");
+        assert_eq!(field(&f, "refs"), "data_communication_message:msg_2, data_communication_message:msg_3");
+        // No one thread holds 19:40 and 21:45.
+        assert!(verify_figure(&exchange(&["msg 19:40", "msg 21:45"]), &inp).is_none(), "cross-thread");
+        // 21:44 and 21:47 leave out the reply between them.
+        assert!(verify_figure(&exchange(&["msg 21:44", "msg 21:47"]), &inp).is_none(), "not in a row");
+        assert!(verify_figure(&exchange(&["msg 21:44"]), &inp).is_none(), "one message is no exchange");
+    }
+
+    #[test]
+    fn figures_close_the_section_that_holds_their_time() {
+        let draft = "Abstract: A day. [17:14]\n\n## The corner\n\nYou crossed Fifth and Main. [17:14]\n\n## Home\n\nYou got home. [msg 19:40] Nick asked how it went. [msg 21:44]\n\nQuote: \"Did you get home safe?\" [msg 21:44]";
+        let (prose, chosen) = take_figure(draft);
+        let items = split_items(&prose);
+        let keep: HashMap<usize, bool> = (0..items.len()).map(|k| (k, true)).collect();
+        let inp = input();
+        let quote = verify_figure(&chosen.expect("a figure"), &inp).expect("verbatim");
+        let md = render(&items, &keep, &inp, &known_names(&inp), &[quote, Figure::route("17:30".into())]);
+        let at = |s: &str| md.find(s).unwrap_or_else(|| panic!("{s} missing: {md}"));
+        // 17:30 is after the corner's last time and before home began: the corner holds it.
+        assert!(at("## The corner") < at("kind: route") && at("kind: route") < at("## Home"), "{md}");
+        assert!(at("## Home") < at("kind: quote") && at("kind: quote") < at("[^ev-1]:"), "{md}");
+        assert!(
+            md.contains("Nick asked how it went.[^ev-3]\n\n```figure\nkind: quote\ntext: Did you get home safe?\nwho: Nick\nref: data_communication_message:msg_2\ntime: 9:44 PM\n```\n\n[^cx-1]: 5:14 PM\n[^ev-1]:"),
+            "{md}"
+        );
+        assert!(md.contains("You crossed Fifth and Main.[^ev-1]\n\n```figure\nkind: route\n```\n\n## Home"), "{md}");
+    }
+
+    #[test]
+    fn a_page_without_sections_ends_its_body_with_the_figure() {
+        let items = split_items("Abstract: A walk. [17:14]\n\nYou walked the dog. [msg 19:40]");
+        let keep: HashMap<usize, bool> = (0..items.len()).map(|k| (k, true)).collect();
+        let inp = input();
+        let md = render(&items, &keep, &inp, &known_names(&inp), &[Figure::route("12:00".into())]);
+        assert!(md.contains("You walked the dog.[^ev-1]\n\n```figure\nkind: route\n```\n\n[^ev-1]: Message"), "{md}");
+    }
+
+    #[test]
+    fn earlier_pages_reach_the_writer_without_their_figures() {
+        let page = "A day.\n\n## Home\n\nYou got home.[^ev-1]\n\n```figure\nkind: quote\ntext: Did you get home safe?\n```\n\nMore.\n\n[^ev-1]: Message · 9:44 PM";
+        let s = strip_footnotes(page);
+        assert!(!s.contains("figure") && !s.contains("safe") && !s.contains("[^"), "{s}");
+        assert!(s.contains("You got home.") && s.contains("More."), "{s}");
+    }
+
+    fn fix(h: u32, m: u32, lat: f64, lon: f64) -> Fix {
+        Fix { at: Utc.with_ymd_and_hms(2026, 1, 7, h, m, 0).unwrap(), lat, lon }
+    }
+
+    /// A still phone, one fix every three minutes from midnight, jittering
+    /// some 20 m around one spot.
+    fn home_day() -> Vec<Fix> {
+        (0..480u32).map(|i| fix(i * 3 / 60, i * 3 % 60, 41.9 + 0.0001 * ((i % 5) as f64 - 2.0), -87.63)).collect()
+    }
+
+    #[test]
+    fn a_day_at_home_has_no_route() {
+        assert_eq!(route_moment(&home_day()), None);
+        assert_eq!(route_moment(&[]), None);
+        // Spikes out and back (bad fixes the phone rated as good) are no trips,
+        // though ten of them would add 40 km.
+        let mut spiky = home_day();
+        for k in 0..10 {
+            spiky[40 * k + 20].lat += 0.02;
+        }
+        assert_eq!(route_moment(&spiky), None);
+    }
+
+    #[test]
+    fn a_drive_across_town_is_a_route_and_a_short_one_is_not() {
+        let drive = |km: u32| {
+            let mut day: Vec<Fix> = home_day().into_iter().filter(|f| f.at.hour() < 14).collect();
+            // One kilometre a minute, north from home, from 14:00.
+            day.extend((1..=km).map(|k| fix(14 + k / 60, k % 60, 41.9 + 0.009 * k as f64, -87.63)));
+            day
+        };
+        assert_eq!(route_moment(&drive(8)), None, "8 km in all");
+        let mid = route_moment(&drive(25)).expect("25 km");
+        // From the last fix at home (13:57) to the last on the road (14:25).
+        assert_eq!((mid.hour(), mid.minute()), (14, 11), "the middle of the drive: {mid}");
+    }
+
+    #[test]
+    fn a_flight_puts_the_route_in_the_middle_of_the_long_move() {
+        let mut day: Vec<Fix> = home_day().into_iter().filter(|f| f.at.hour() < 10).collect();
+        // A 3 km walk in the morning, then the afternoon at the airport.
+        day.extend((1..=20).map(|k| fix(10, 2 * k, 41.9 + 0.0013 * k as f64, -87.63)));
+        day.extend((0..=16).map(|k| fix(17 + 5 * k / 60, 5 * k % 60, 39.861, -104.673)));
+        // Nothing in the air; the phone wakes up a long way off, then drives home.
+        day.push(fix(20, 45, 42.365, -71.010));
+        day.extend((1..=15u32).map(|k| fix(20 + (45 + k) / 60, (45 + k) % 60, 42.365 + 0.009 * k as f64, -71.010)));
+        let mid = route_moment(&day).expect("a flight");
+        // From the last fix at the airport (18:20) to the end of the drive (21:00).
+        assert_eq!((mid.hour(), mid.minute()), (19, 40), "{mid}");
+    }
+
     #[test]
     fn folds_photos_and_skips_reactions() {
         assert_eq!(fold_photos("[Photo][Photo][Photo]"), "[3 photos]");
@@ -1413,4 +2038,16 @@ mod tests {
         assert!(b.contains("A speaker who says \"David\" is someone else"), "{b}");
         assert_eq!(you_block(&[]), "", "no owner on record: nothing to say");
     }
+
+    #[test]
+    fn a_spoken_quote_may_drop_fillers_and_false_starts_but_nothing_else() {
+        let said = "[Speaker]: It's, I like it a lot because it's a, it's like a modern take on like the Catholic schoolgirl.";
+        assert!(said_cleanly("I like it a lot because it's a modern take on the Catholic schoolgirl.", said));
+        // A word nobody said, or the words out of order, is not a quote.
+        assert!(!said_cleanly("I love it because it's a modern take on the Catholic schoolgirl.", said));
+        assert!(!said_cleanly("A modern take on the schoolgirl, I like it a lot.", said));
+        // Leaving out a word that carried meaning is rewording.
+        assert!(!said_cleanly("I like it because it's a modern take on the Catholic schoolgirl.", said));
+    }
+
 }

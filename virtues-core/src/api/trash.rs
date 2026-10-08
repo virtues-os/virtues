@@ -29,8 +29,7 @@
 //! The sweep every listing must carry — `deleted_at IS NULL` — is spelled out
 //! in: `chats::list_chats` / `get_chat`, `pages::{list_pages, get_page,
 //! get_backlinks, search_entities}`, `projects::{list_projects, get_project,
-//! add_project_item}`, `circumstances` (threads), `wiki_streams::get_day_chats`,
-//! `day_summary`'s dossier, and the registry's `embed_where` / `extra_where`
+//! add_project_item}`, `circumstances` (threads), `day_summary`'s dossier, and the registry's `embed_where` / `extra_where`
 //! for `app_chat` and `app_page`. `sqlx::query` is untyped: a listing that
 //! forgets the predicate shows deleted rows and nothing warns.
 

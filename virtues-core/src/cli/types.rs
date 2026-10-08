@@ -791,16 +791,26 @@ pub enum Commands {
         date: Option<String>,
         /// Run ONLY narration (`narrate_day`) — skip sessionize / detective /
         /// scoring, so no NPU or embedder is needed. A day already written
-        /// reports so and is not written again; "Rewrite this page", at the
-        /// foot of the day page, is what writes it again.
+        /// reports so and is not written again; "Rewrite this page", in the
+        /// day page's ⋯ menu, is what writes it again.
         #[arg(long)]
         narrate_only: bool,
         /// Force a re-cut of the event timeline (the DETECTIVE) and print it, then
         /// stop — no scoring, no narrative, no embedder. Clears the day's sources
         /// fingerprint so segmentation actually re-runs even if sources are
         /// unchanged. For inspecting detective output / variance in isolation.
+        /// With --from and --to, re-cuts a backlog instead and then scores it.
         #[arg(long, conflicts_with = "narrate_only")]
         segment_only: bool,
+        /// With --segment-only: the first day of a backlog to re-cut
+        /// (YYYY-MM-DD). Every day from --from to --to, oldest first, is re-cut
+        /// (one Standard call for each day with enough to cut), then each re-cut
+        /// day is annotated and scored again, which needs the embedder.
+        #[arg(long, requires_all = ["segment_only", "to"], conflicts_with = "date")]
+        from: Option<String>,
+        /// With --segment-only: the last day of the backlog, included.
+        #[arg(long, requires_all = ["segment_only", "from"], conflicts_with = "date")]
+        to: Option<String>,
     },
 
     /// Run entity resolution (places + people) over the last N hours.

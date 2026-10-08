@@ -48,15 +48,22 @@ pub async fn rescore_all_days(pool: &PgPool) -> Result<(u32, u32)> {
 
     let mut scored = 0u32;
     for date in &dates {
-        // Annotation first: it writes `avg_hr`, which autonomic scoring baselines
-        // against. Reverse them and the baseline is empty by construction — which
-        // is exactly how autonomic scoring returned Ok(0) for every user, every
-        // day, for months.
-        annotate::annotate_events_for_day(pool, *date).await?;
-        scored += novelty::compute_novelty_for_day(pool, *date).await?;
-        autonomic_scoring::compute_autonomic_for_day(pool, *date).await?;
-        topic_entity_novelty::compute_topic_entity_novelty(pool, *date).await?;
+        scored += rescore_day(pool, *date).await?;
     }
 
     Ok((dates.len() as u32, scored))
+}
+
+/// Annotate and score one day's events. Returns how many got a novelty score.
+///
+/// Annotation first: it writes `avg_hr`, which autonomic scoring baselines
+/// against. Reverse them and the baseline is empty by construction — which
+/// is exactly how autonomic scoring returned Ok(0) for every user, every day,
+/// for months. Novelty before topic/entity, which stand on its embedding.
+pub async fn rescore_day(pool: &PgPool, date: chrono::NaiveDate) -> Result<u32> {
+    annotate::annotate_events_for_day(pool, date).await?;
+    let scored = novelty::compute_novelty_for_day(pool, date).await?;
+    autonomic_scoring::compute_autonomic_for_day(pool, date).await?;
+    topic_entity_novelty::compute_topic_entity_novelty(pool, date).await?;
+    Ok(scored)
 }

@@ -3,8 +3,8 @@
 
 	Single-column narrative layout. Time in the left margin.
 	Continuous vertical line with dots at each event.
-	Events collapsed by default; the most novel event auto-expands.
-	Click event title to toggle expand/collapse.
+	Events collapsed by default; the one most unlike the owner's usual opens
+	on its own. Click event title to toggle expand/collapse.
 -->
 
 <script lang="ts">
@@ -14,6 +14,8 @@
 		getEventDisplayLabel,
 		getEventDisplayLocation,
 	} from "$lib/wiki/types";
+	import { mostUnlikeUsual } from "$lib/wiki/dayLine";
+	import { realPlaceName } from "$lib/wiki/placeName";
 
 	interface Props {
 		events: DayEvent[];
@@ -31,28 +33,19 @@
 			.sort((a, b) => a.startTime.getTime() - b.startTime.getTime()),
 	);
 
-	// ── Most novel event (auto-expand) ──────────────────────────────
-	const mostNovelId = $derived(() => {
-		let best: { id: string; z: number } | null = null;
-		for (const e of sortedEvents) {
-			if (e.isUnknown) continue;
-			const z = e.noveltyZ ?? -Infinity;
-			if (z >= 1.0 && (!best || z > best.z)) {
-				best = { id: e.id, z };
-			}
-		}
-		return best?.id ?? null;
-	});
+	// ── Most unlike your usual (auto-expand) ────────────────────────
+	// The same score the day line draws, so the two never name different events.
+	const mostUnlikeId = $derived(mostUnlikeUsual(sortedEvents));
 
 	// ── Expand/collapse state ───────────────────────────────────────
 	let expandedIds = $state<Set<string>>(new Set());
 	let initialized = $state(false);
 
-	// Re-initialize when the most novel event changes (new day loaded)
+	// Re-initialize when that event changes (new day loaded)
 	$effect(() => {
-		const novelId = mostNovelId();
-		if (novelId) {
-			expandedIds = new Set([novelId]);
+		const unlikeId = mostUnlikeId;
+		if (unlikeId) {
+			expandedIds = new Set([unlikeId]);
 		} else {
 			expandedIds = new Set();
 		}
@@ -106,34 +99,32 @@
 		return m > 0 ? `${h}h ${m}m` : `${h}h`;
 	}
 
-	function isMostNovel(event: DayEvent): boolean {
-		return event.id === mostNovelId();
+	function isMostUnlike(event: DayEvent): boolean {
+		return event.id === mostUnlikeId;
+	}
+
+	/** Where the event was, when the place has a real name. */
+	function place(event: DayEvent): string | null {
+		return realPlaceName(getEventDisplayLocation(event));
 	}
 
 	/**
-	 * Who and where an event involved, as links.
+	 * Who an event involved, as links: people only. The place has its own
+	 * spot on the meta line, and the owner is never listed in their own day
+	 * (the server leaves them out of `entities` and `entityNames`).
 	 *
-	 * `wiki_events.entities` has held these ids since segmentation started
-	 * writing them — on a real day, most events have some — and nothing has
-	 * ever drawn them. They sit HERE rather than in a list at the foot of the
-	 * day page: "who was at the standup" is part of what the event was, while
-	 * a roster of everyone who appeared in a day is a cast list, and the wiki
-	 * is not organized around people.
+	 * They sit HERE rather than in a list at the foot of the day page: "who
+	 * was at the standup" is part of what the event was, while a roster of
+	 * everyone who appeared in a day is a cast list.
 	 *
-	 * Order follows `entities`, which is the order segmentation found them.
-	 * An id with no name resolved no longer exists and is skipped rather than
-	 * printed raw.
+	 * Order follows `entities`, as the server stored them; it ranks no one.
+	 * An id with no name resolved is skipped rather than printed raw.
 	 */
 	function cast(event: DayEvent): Array<{ id: string; name: string; href: string | null }> {
-		// The place already named on the meta line above is not repeated here.
-		// "Design standup · 45m · Office" followed by "… · Office · …" reads as
-		// two different facts and is one.
-		const shown = getEventDisplayLocation(event)?.trim().toLowerCase();
-		return event.entities
+		const people = new Set(event.entities.filter((id) => id.startsWith("person_")));
+		return [...people]
 			.map((id) => ({ id, name: event.entityNames[id], href: subjectHref(id) }))
-			.filter((e): e is { id: string; name: string; href: string | null } =>
-				Boolean(e.name) && e.name.trim().toLowerCase() !== shown
-			);
+			.filter((e): e is { id: string; name: string; href: string | null } => Boolean(e.name));
 	}
 </script>
 
@@ -141,9 +132,9 @@
 	{#each sortedEvents as event}
 		{@const isUnknown = event.isUnknown ?? false}
 		{@const isHovered = hoveredEventId === event.id}
-		{@const isNovel = isMostNovel(event)}
+		{@const isNovel = isMostUnlike(event)}
 		{@const isExpanded = expandedIds.has(event.id)}
-		{@const location = getEventDisplayLocation(event)}
+		{@const location = place(event)}
 		{@const hasDetail = !!event.eventSummary}
 
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -167,7 +158,7 @@
 			<div class="content">
 				{#if isUnknown}
 					<span class="unknown-text">
-						{formatDuration(event.durationMinutes)} · insufficient data
+						{formatDuration(event.durationMinutes)} · Not recorded
 					</span>
 				{:else}
 					<div class="event-row">
@@ -191,7 +182,7 @@
 							</div>
 						{/if}
 						{#if isNovel}
-							<span class="novelty-badge">Most Novel</span>
+							<span class="novelty-badge">Most unlike your usual</span>
 						{/if}
 					</div>
 
@@ -210,7 +201,7 @@
 							<p class="event-summary">{event.eventSummary ?? ''}</p>
 							<div class="event-meta">
 								<span class="meta-text">
-									{formatTime(event.startTime)} – {formatTime(event.endTime)}{#if event.topics.length > 0} · {event.topics.join(', ')}{/if}
+									{formatTime(event.startTime)} – {formatTime(event.endTime)}
 								</span>
 							</div>
 						</div>
@@ -374,8 +365,9 @@
 		line-height: 1.4;
 	}
 
+	/* The day line marks the same event in the same colour. */
 	.dot.novel {
-		background: var(--color-primary);
+		background: var(--color-secondary);
 		width: 8px;
 		height: 8px;
 	}
@@ -383,8 +375,9 @@
 	.novelty-badge {
 		font-size: 0.625rem;
 		font-weight: 500;
-		color: var(--color-primary);
-		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+		white-space: nowrap;
+		color: var(--color-secondary);
+		background: color-mix(in srgb, var(--color-secondary) 8%, transparent);
 		padding: 0.0625rem 0.5rem;
 		border-radius: var(--radius-full);
 	}

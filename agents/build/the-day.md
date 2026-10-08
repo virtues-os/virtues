@@ -14,12 +14,16 @@ The day page answers four questions about a single day. Each question has a diff
 |---|----------|-------|-------------|--------|
 | Q1 | **Coverage** — How complete is today's data? | Today, static | LLM-assessed data quality rating | Planned (replaces W6H weights) |
 | Q2 | **Entropy** — How ordered or chaotic was this day? | Today vs 12-week history | Per-event novelty (`novelty_z` + `local_novelty_z` on `wiki_events`, local embeddings) plus a live rhythm strip for the day in progress. | Built (per-event + live rhythm). The old cross-day `chaos_score` was cut. |
-| Q3 | **Narrative Shape** — What happened throughout the day? | Today, temporal (event-time) | LLM-identified events with labels, times, locations | Built. Timeline bar + table. |
+| Q3 | **Narrative Shape** — What happened throughout the day? | Today, temporal (event-time) | LLM-identified events with labels, times, locations | Built. The day line + the event timeline, in Data. |
 | Q4 | **Alignment** — Is this day's shape conducive to who I want to become? | Today vs aspiration | Narrative identity document + comparison mechanism | Not built. See "Why Alignment Is Hard" below. |
 
 ---
 
 ## Page Layout (top to bottom)
+
+This is the layout the page was designed from; the page as built differs
+(Article and Data views, `DayPage.svelte`). §4 and §10 describe what is
+built.
 
 ### 1. Navigation Bar (sticky)
 
@@ -37,21 +41,41 @@ The day page answers four questions about a single day. Each question has a diff
 - **Cost**: ~$0.04/image via DALL-E 3 or Midjourney API through Virtues Bridge. One per user per night = ~$1.20/month/user
 - Nightly queue: scheduler fires after day summary, picks highest-novelty entity/noun, generates image, stores blob
 - Can be turned off in settings. User can also customize the generation prompt
+- **Decided 2026-10-07: no header picture.** A painting at the head of the
+  page was tried in a specimen and rejected. What is built instead is a
+  picture about once a week, of a public place or a generic setting a page
+  names, set into its section as a figure, in the owner's chosen style
+  (`api/day_picture.rs`).
 
 ### 3. Day Header
 
 - Serif title: "Friday, February 13, 2026"
 - Subtitle: relative badge ("Today", "Yesterday", "3 days ago") + timezone
 
-### 4. Dayline Chart Container (one instrument, multiple lenses)
+### 4. The day line (built, in Data)
 
-- **Pill selector tabs** above a single chart area:
-  - **Dayline** (default): 3D ribbon chart — "What was the shape of my day?" The signature view.
-  - **Energy**: Body battery hourly curve — simple area chart, no 3D. "When did I have gas in the tank?"
-  - **Entropy**: Routine vs novelty — "How chaotic vs. ordered was today?"
-  - **Topology**: Fragmentation, context-switching, topic density — "Where was my focus?"
-  - **Dimensions**: Radar chart of user-defined axes — "Who was I today?" User enters 3-5 word descriptions per axis (3-8 axes). System measures orthogonality/polarity in embedding space and gives feedback.
-- **Thin horizontal minibar** at the base of the chart: the compressed timeline bar (current DayTimeline bar chart). Hover syncs with the chart above and the vertical timeline below via `hoveredEventId`.
+One instrument with no modes: no pills, no Sleep or Autonomic view, no
+"heard N of 24 hours" bar. It is the first section of the day page's Data
+view, headed "The day line" (`DaylineChart.svelte`, `lib/wiki/dayLine.ts`).
+
+- **The day's own clock** across, local midnight to local midnight: a
+  daylight-saving day is 23 or 25 hours wide, and an event that ends at
+  midnight ends at the right edge. On today, a line marks now.
+- **Each known event is a block** from its start to its end, as tall as it
+  was unlike the owner's usual: above the line when unlike, below when more
+  usual than usual, clamped at ±3. The score is `local_novelty_z`, else
+  `novelty_z` (`usualScore`). Unknown stretches stay empty; an event nobody
+  scored is an outline on the line.
+- **Hover** gives the label, the times, and "Unlike your usual" (z ≥ 1),
+  "Like your usual", "Your server hasn't scored this", or "Most unlike your
+  usual" for the event furthest out, the one the event timeline below opens
+  and badges.
+- **Coverage lanes** under it, one thin lane per stream (Audio, Location,
+  Messages, Health, Screen), filled where that stream recorded something,
+  from the day's lifeline lanes. What was heard is read here.
+- Sleep, heart rate and `autonomic_z` are not drawn.
+
+Dimensions (a radar of user-defined axes) and a topology view are not built.
 
 ### 5. Autobiography (system voice)
 
@@ -111,7 +135,7 @@ The autobiography is the **meaning layer** — synthesis, not chronology. Event 
 - **Transit events**: Small/compressed rects, muted styling
 - **Unknown/insufficient data**: Dashed-outline rects at same proportional height, "+" button to add an event
 - **"Now" marker**: Horizontal line at current time for today's page. Below it: empty dashed space (the future of today)
-- Hover on a rect → detail panel updates on the right, map pans to that location, dayline chart highlights that point
+- Hover on a rect → detail panel updates on the right, map pans to that location
 
 #### Right column (~65% width): Detail panel for selected/hovered event
 
@@ -145,13 +169,12 @@ The autobiography is the **meaning layer** — synthesis, not chronology. Event 
 - Chips: "People: Maya Chen, Jess" — clickable to entity pages
 - Places shown on map already; only people and organizations here
 
-### 10. Metadata (collapsed reference section)
+### 10. Data ontologies (built, in Data)
 
-- **Data quality**: LLM-assessed rating (`rich`, `good`, `partial`, `sparse`) with one-sentence note
-- **W6H completeness**: Fun afterthought — the day summary LLM decides how complete the day feels across experiential dimensions. Not a core metric, just color commentary.
-- **Ontologies**: collapsed accordion — "Sources (47)"
-- **One unified table** when expanded: all ontology records interleaved chronologically
-- Each row: timestamp, source-type icon as the row marker (tiny calendar, message, pin, etc.), label, preview text
+- The last section of Data: every record of the day in **one table**, all
+  ontologies interleaved chronologically, with a chip per ontology (and its
+  count) to filter it
+- There is no Metadata section: no data-quality rating and no W6H on the page
 
 ---
 
@@ -159,7 +182,7 @@ The autobiography is the **meaning layer** — synthesis, not chronology. Event 
 
 When viewing today before the nightly summary has run:
 
-- Dayline chart shows **partial curve** — data points up to now, dotted continuation to right edge
+- The day line marks now with a line and draws the events so far; nothing is projected past now
 - In place of the autobiography: *"It's 2:47 PM. You've visited 3 places, exchanged 14 messages, and spent 45 minutes in motion. Your day is still being written."*
 - Computed from available source data on page load (not live-updating)
 - Timeline shows events so far with the "now" marker
@@ -229,10 +252,10 @@ See the **Dayline Scoring** section below for the full novelty signal specificat
 
 **Why a timeline, not an arc**: There's no single "Y axis" for a day's narrative. Salience? Heart rate? Productivity? Energy? Moral weight? Too many competing dimensions. The honest representation is a flat timeline with labeled events — the X axis IS the shape.
 
-**Implementation**: LLM identifies 8-16 events during virtues-api summary generation. Stored in `wiki_events` with `auto_label`, `start_time`, `end_time`, `auto_location`. Displayed as:
+**Implementation**: LLM identifies 8-16 events during virtues-api summary generation. Stored in `wiki_events` with `auto_label`, `start_time`, `end_time`, `auto_location`. Displayed in the day page's Data view as:
 
-- **Timeline bar**: Horizontal bar spanning 00:00-24:00 with colored segments per event
-- **Timeline table**: Time, event label, location, duration
+- **The day line**: the day's clock with each event as a block, as tall as it was unlike the owner's usual (see §4)
+- **The event timeline**: time, label, duration, the event's people and its place when the place has a real name; an unknown stretch reads "Not recorded"
 
 ---
 
@@ -259,10 +282,14 @@ See the **Dayline Scoring** section below for the full novelty signal specificat
 
 ## Dayline Scoring: Novelty + Autonomic
 
-> The dayline chart shows two per-event z-scored signals on the same +/-3 sigma scale:
+> Two per-event z-scored signals on the same +/-3 sigma scale:
 > **Novelty** (Novel up / Routine down) and **Autonomic** (Stress up / Recovery down).
 > Together they reveal when your body's response to a moment diverges from your baseline —
 > something no wearable can do alone.
+>
+> The day line draws novelty only (`local_novelty_z`, else `novelty_z`; §4).
+> `autonomic_z` is still computed (`dayline/autonomic_scoring.rs`), and no
+> view draws it.
 
 ### The Core Insight
 
@@ -280,7 +307,7 @@ The dayline has all three. The embedding space IS the activity classifier. "Desi
 
 ### The Three Questions (Dayline)
 
-The dayline chart answers three questions about each day, read left to right:
+The scoring was designed to answer three questions about each day. The day line draws Q1 only; Q0 and Q2 are not on the page.
 
 **Q0: "How did I sleep, and how ready am I?"**
 Sleep architecture (phases, depth, fragmentation) and morning readiness score. The foundation — where the day begins. This is DATA, not a scored signal.
@@ -366,7 +393,7 @@ Same formula applies independently for HRV. Both hr_z and hrv_z are stored separ
 
 ### The Demand vs Supply Narrative
 
-The two lines on the chart tell a demand-vs-supply story:
+Read together, the two signals tell a demand-vs-supply story. The day line does not draw the autonomic signal, so this reading is not on the page:
 
 - **Novelty line** (dark) = how semantically unusual is this moment? (Novel up / Routine down)
 - **Autonomic line** (blue) = how is your body responding compared to baseline for this type of moment? (Stress up / Recovery down)
@@ -378,7 +405,7 @@ The two lines on the chart tell a demand-vs-supply story:
 | **Low** | **High** | **Routine situation, body activated. Hidden stress. Something's off.** |
 | Low | Low | Normal day, normal body. Autopilot. |
 
-The **low novelty + high autonomic stress** case is the killer insight no wearable can surface. "You were doing your usual commute but your HR was 2 sigma above your commute baseline. What was different?" Maybe anxiety, poor sleep, a stressful text. The chart flags it. The user reflects.
+The **low novelty + high autonomic stress** case is the killer insight no wearable can surface. "You were doing your usual commute but your HR was 2 sigma above your commute baseline. What was different?" Maybe anxiety, poor sleep, a stressful text. Nothing on the page flags it yet.
 
 When the autonomic line crosses below the novelty line — **strain** (the moment demands more than your body is equipped for). When autonomic is below novelty — **surplus** (you have capacity for what's happening).
 
@@ -449,7 +476,7 @@ We explored and rejected the battery/drain model (Garmin Body Battery style). Th
 
 ## Cold Start
 
-- **Days 1-3:** Insufficient baseline. No autonomic z-scores computed. Chart shows novelty only.
+- **Days 1-3:** Insufficient baseline. No autonomic z-scores computed.
 - **Days 4-14:** Building baseline. Autonomic scores computed but flagged as "calibrating" (low confidence due to small sample size).
 - **Day 14+:** Fully personalized. Require N>=5 similar events (combined weight above threshold) to compute autonomic z-score for an event. Events with no similar history fall back to showing no autonomic signal (honest > fabricated).
 
@@ -478,7 +505,7 @@ Both scoring methods operate in spacetime — but weight the dimensions differen
 
 **Autonomic** emphasizes **both space AND time** equally. The composite kernel weights by embedding similarity (space) AND recency (time). The question is spatiotemporal: "how does my body respond to events LIKE this, RECENTLY?"
 
-This duality — spatial novelty vs spatiotemporal autonomic response — is core to the personal OS. Every signal in a person's life has both a "what" dimension (semantic content) and a "when" dimension (temporal context). The dayline chart encodes both.
+This duality — spatial novelty vs spatiotemporal autonomic response — is core to the personal OS. Every signal in a person's life has both a "what" dimension (semantic content) and a "when" dimension (temporal context). The day line draws the novelty side only.
 
 ---
 
@@ -557,7 +584,7 @@ Both HR and HRV are needed for the full picture.
 
 ### Naming Decision
 
-We use **"Autonomic"** as the line name with **"Stress / Recovery"** as the axis labels.
+No view draws the autonomic signal at present. If one does, it uses **"Autonomic"** as the line name with **"Stress / Recovery"** as the axis labels.
 
 - **"Autonomic"** — scientifically precise (we ARE measuring the autonomic nervous system), entering common vocabulary alongside terms like serotonin and cortisol
 - **"Stress" (+Y)** — physiologically honest. Exercise, caffeine, mental load are all stressors. One syllable, instant recognition. Tooltip: "Sympathetic activation"
@@ -592,10 +619,8 @@ UI hover explanation: *"The autonomic line shows how your body is responding com
 - Produces `autonomic_z` per event, clamped to +/-3 sigma
 
 ### Chart (DaylineChart.svelte)
-- Second line on same +/-3 sigma chart (blue/primary color, lower opacity)
-- Novelty line = dark, event-driven, spiky
-- Autonomic line = blue, event-driven, spiky (NOT monotonic — per-event, not a drain curve)
-- Visual treatment for "surprise divergence" moments (low novelty + high autonomic stress)
+- One signal: each event a block by `local_novelty_z`, else `novelty_z`, clamped to +/-3 sigma, with coverage lanes under it (§4)
+- The autonomic line is not drawn, and neither is any treatment for "surprise divergence" moments
 
 ### Seed Data (for demo/testing)
 - Add realistic avg_hr values to demo day events + baseline events
@@ -622,13 +647,13 @@ virtues-api LLM call (generate_day_summary)
 
 - Reduce from current large serif h2 to smaller, lighter text
 - Most sections don't need explicit headers — the content is self-evident
-- Dayline chart: no header (visually obvious)
+- The day line: headed "The day line" in Data, in sentence case like Data's other sections (Places, Event timeline, Data ontologies)
 - Autobiography: no header (it's the opening paragraph)
 - Journal: no header (distinct left-border styling identifies it)
-- Timeline: no header or very small "Timeline" label
-- Map: no header or very small "Movement" label
+- Timeline: "Event timeline", in Data
+- Map: "Places", in Data, only when the day has location
 - Entities: inline, no header
-- Metadata: **keep header** — "Sources (47)" as collapsed accordion label
+- Records: "Data ontologies", the last section of Data. There is no Metadata section
 
 ---
 
@@ -662,10 +687,10 @@ The impulse to decompose human acts into these questions is ancient. The *septem
 | `virtues-core/src/api/wiki.rs` | Day data API: sources, events, day CRUD |
 | `virtues-core/src/api/day_summary.rs` | virtues-api LLM call, event parsing |
 | `virtues-core/src/dayline/autonomic_scoring.rs` | Context-gated HR/HRV autonomic scoring |
-| `apps/web/src/lib/components/wiki/DayPage.svelte` | Main day page component |
-| `apps/web/src/lib/components/wiki/DayTimeline.svelte` | Timeline bar + table |
-| `apps/web/src/lib/components/wiki/DayToolbar.svelte` | Toolbar with metrics, generate button |
-| `apps/web/src/lib/components/wiki/ContextVector.svelte` | Coverage accordion |
+| `apps/web/src/lib/components/wiki/DayPage.svelte` | Main day page component: Article and Data |
+| `apps/web/src/lib/components/wiki/DaylineChart.svelte` | The day line (§4); its geometry is `apps/web/src/lib/wiki/dayLine.ts` |
+| `apps/web/src/lib/components/wiki/EventTimeline.svelte` | The event timeline |
+| `apps/web/src/lib/components/wiki/DayPlaces.svelte` | Places: the stops strip and the map |
 | `apps/web/src/lib/wiki/types/day.ts` | Frontend types: DayPage, DayEvent |
 | `apps/web/src/lib/wiki/api.ts` | API client: getDaySources, getDayEvents |
 

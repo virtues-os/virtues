@@ -623,9 +623,14 @@ impl ToolExecutor {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| ToolError::InvalidParameters("prompt is required".into()))?;
 
-        let png = crate::api::image_gen::generate_image_via_gateway(&self._pool, prompt)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Image generation failed: {e}")))?;
+        let png = crate::api::image_gen::generate_image_via_gateway(
+            &self._pool,
+            prompt,
+            "generate_image",
+            crate::virtues_api::client::Purpose::User,
+        )
+        .await
+        .map_err(|e| ToolError::ExecutionFailed(format!("Image generation failed: {e}")))?;
 
         let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png);
 

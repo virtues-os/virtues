@@ -202,6 +202,14 @@ fn spawn_background(client: &Virtues, yjs_state: &yjs::YjsState) {
     // covers and drop the ones it no longer does. See `crate::maps::sync`.
     crate::maps::sync::spawn(pool.clone());
 
+    // The day's picture: daily, paint one day of the last week when the
+    // week's pages hold no picture yet. See `crate::api::day_picture`.
+    crate::api::day_picture::spawn(
+        pool.clone(),
+        yjs_state.clone(),
+        crate::api::drive::DriveConfig::new(client.storage.clone()),
+    );
+
     // Setup access point. An appliance arrives with no network and a display
     // its owner cannot type on, so the box raises its own wifi and the phone
     // does the typing. Up while unclaimed, down once a device pairs — NOT down

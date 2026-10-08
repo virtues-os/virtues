@@ -237,6 +237,13 @@ pub struct LaneMeasure {
     /// direction is unknown, not $0. `None` means every row can be judged.
     /// `filter` must imply it.
     pub coverage: Option<&'static str>,
+    /// What a day with no rows at all means, once collection has begun.
+    /// `true` where rows are sparse by nature (purchases, workouts, messages):
+    /// a day without any is a real zero. `false` where every lived day leaves
+    /// rows while the collector runs (a night's sleep, a day's steps, the
+    /// day's audio): a day without any was not recorded, and nobody sleeps
+    /// zero hours. A rate is never zero.
+    pub empty_is_zero: bool,
     pub kind: MeasureKind,
 }
 
@@ -283,47 +290,54 @@ pub fn lane_measures() -> &'static [LaneMeasure] {
         // ── health ──────────────────────────────────────────────────────────
         LaneMeasure { id: "heart_rate", lane: "health", table: "data_health_heart_rate",
             timestamp_column: "occurred_at", label: "heart rate", unit: "bpm",
-            agg: "avg(bpm)", filter: Some("bpm > 0"), coverage: None, kind: Rate },
+            agg: "avg(bpm)", filter: Some("bpm > 0"), coverage: None, empty_is_zero: false, kind: Rate },
         LaneMeasure { id: "hrv", lane: "health", table: "data_health_hrv",
             timestamp_column: "occurred_at", label: "HRV", unit: "ms",
-            agg: "avg(hrv_ms)", filter: Some("hrv_ms > 0"), coverage: None, kind: Rate },
+            agg: "avg(hrv_ms)", filter: Some("hrv_ms > 0"), coverage: None, empty_is_zero: false, kind: Rate },
         LaneMeasure { id: "sleep", lane: "health", table: "data_health_sleep",
             timestamp_column: "started_at", label: "sleep", unit: "h",
-            agg: "sum(duration_minutes) / 60.0", filter: None, coverage: None, kind: Total },
+            agg: "sum(duration_minutes) / 60.0", filter: None, coverage: None, empty_is_zero: false, kind: Total },
         LaneMeasure { id: "steps", lane: "health", table: "data_health_steps",
             timestamp_column: "occurred_at", label: "steps", unit: "",
-            agg: "sum(step_count)", filter: None, coverage: None, kind: Total },
+            agg: "sum(step_count)", filter: None, coverage: None, empty_is_zero: false, kind: Total },
         LaneMeasure { id: "workouts", lane: "health", table: "data_health_workout",
             timestamp_column: "started_at", label: "workouts", unit: "",
-            agg: "count(*)", filter: None, coverage: None, kind: Total },
+            agg: "count(*)", filter: None, coverage: None, empty_is_zero: true, kind: Total },
         // ── location ────────────────────────────────────────────────────────
         LaneMeasure { id: "visits", lane: "location", table: "data_location_visit",
             timestamp_column: "started_at", label: "visits", unit: "",
-            agg: "count(*)", filter: None, coverage: None, kind: Total },
+            agg: "count(*)", filter: None, coverage: None, empty_is_zero: true, kind: Total },
         LaneMeasure { id: "time_out", lane: "location", table: "data_location_visit",
             timestamp_column: "started_at", label: "time out", unit: "h",
-            agg: "sum(duration_minutes) / 60.0", filter: None, coverage: None, kind: Total },
+            agg: "sum(duration_minutes) / 60.0", filter: None, coverage: None, empty_is_zero: true, kind: Total },
         LaneMeasure { id: "places", lane: "location", table: "data_location_visit",
             timestamp_column: "started_at", label: "distinct places", unit: "",
             agg: "count(DISTINCT place_name)", filter: Some("place_name IS NOT NULL"),
-            coverage: None, kind: Total },
+            coverage: None, empty_is_zero: true, kind: Total },
         // ── communication ───────────────────────────────────────────────────
         LaneMeasure { id: "sent", lane: "communication", table: "data_communication_message",
             timestamp_column: "occurred_at", label: "messages sent", unit: "",
-            agg: "count(*)", filter: Some("metadata->>'is_from_me' = 'true'"), coverage: None, kind: Total },
+            agg: "count(*)", filter: Some("metadata->>'is_from_me' = 'true'"), coverage: None,
+            empty_is_zero: true, kind: Total },
         LaneMeasure { id: "received", lane: "communication", table: "data_communication_message",
             timestamp_column: "occurred_at", label: "messages received", unit: "",
-            agg: "count(*)", filter: Some("metadata->>'is_from_me' = 'false'"), coverage: None, kind: Total },
+            agg: "count(*)", filter: Some("metadata->>'is_from_me' = 'false'"), coverage: None,
+            empty_is_zero: true, kind: Total },
         // Senders only. Counting both directions added the owner (every sent
         // row's '' handle) to any day they wrote back.
         LaneMeasure { id: "people", lane: "communication", table: "data_communication_message",
             timestamp_column: "occurred_at", label: "people who messaged you", unit: "",
             agg: "count(DISTINCT from_handle)",
             filter: Some("from_handle <> '' AND metadata->>'is_from_me' = 'false'"),
-            coverage: None, kind: Total },
+            coverage: None, empty_is_zero: true, kind: Total },
+        // A recorded chunk with nothing said is kept as a row with empty text,
+        // so only a chunk holding something other than spaces and punctuation
+        // is speech. A day of silent chunks is a real zero; a day with no
+        // chunks at all is a day the microphone was not recording.
         LaneMeasure { id: "talk", lane: "communication", table: "data_communication_transcription",
             timestamp_column: "started_at", label: "speech heard", unit: "min",
-            agg: "sum(duration_seconds) / 60.0", filter: None, coverage: None, kind: Total },
+            agg: "sum(duration_seconds) / 60.0", filter: Some("text ~ '[^[:space:][:punct:]]'"),
+            coverage: None, empty_is_zero: false, kind: Total },
         // ── financial ───────────────────────────────────────────────────────
         // Purchases: money that left for someone else. Not a transfer between
         // your own accounts, and not a card or loan payment — a card payment
@@ -338,7 +352,7 @@ pub fn lane_measures() -> &'static [LaneMeasure] {
                 WHEN 'apple_finance' THEN transaction_type IS NOT NULL \
                     AND transaction_type NOT IN ('billPayment', 'transfer', 'withdrawal', 'atm', 'loan') \
                 ELSE true END"),
-            coverage: Some(HAS_DIRECTION), kind: Total },
+            coverage: Some(HAS_DIRECTION), empty_is_zero: true, kind: Total },
         // Earnings: what the provider itself calls income. Money arriving is
         // mostly not that — a refund, a transfer in, the card side of a card
         // payment, Apple's Daily Cash deposits — so this names what counts
@@ -350,21 +364,22 @@ pub fn lane_measures() -> &'static [LaneMeasure] {
                 WHEN 'plaid' THEN merchant_category = 'INCOME' \
                 WHEN 'apple_finance' THEN transaction_type IN ('directDeposit', 'interest', 'dividend') \
                 ELSE true END"),
-            coverage: Some(HAS_DIRECTION), kind: Total },
+            coverage: Some(HAS_DIRECTION), empty_is_zero: true, kind: Total },
         LaneMeasure { id: "transactions", lane: "financial", table: "data_financial_transaction",
             timestamp_column: "occurred_at", label: "transactions", unit: "",
-            agg: "count(*)", filter: None, coverage: None, kind: Total },
+            agg: "count(*)", filter: None, coverage: None, empty_is_zero: true, kind: Total },
         // ── activity ────────────────────────────────────────────────────────
         LaneMeasure { id: "screen", lane: "activity", table: "data_activity_app_session",
             timestamp_column: "started_at", label: "screen time", unit: "h",
             agg: "sum(EXTRACT(EPOCH FROM (ended_at - started_at))) / 3600.0",
-            filter: Some("ended_at IS NOT NULL"), coverage: None, kind: Total },
+            filter: Some("ended_at IS NOT NULL"), coverage: None, empty_is_zero: true, kind: Total },
         LaneMeasure { id: "apps", lane: "activity", table: "data_activity_app_session",
             timestamp_column: "started_at", label: "distinct apps", unit: "",
-            agg: "count(DISTINCT app_name)", filter: Some("app_name IS NOT NULL"), coverage: None, kind: Total },
+            agg: "count(DISTINCT app_name)", filter: Some("app_name IS NOT NULL"), coverage: None,
+            empty_is_zero: true, kind: Total },
         LaneMeasure { id: "browsing", lane: "activity", table: "data_activity_web_browsing",
             timestamp_column: "occurred_at", label: "pages visited", unit: "",
-            agg: "count(*)", filter: None, coverage: None, kind: Total },
+            agg: "count(*)", filter: None, coverage: None, empty_is_zero: true, kind: Total },
     ];
     M
 }

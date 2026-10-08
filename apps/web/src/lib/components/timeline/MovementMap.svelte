@@ -9,6 +9,9 @@
 		lng: number;
 		label?: string;
 		timeMs?: number;
+		/** The track reached this point across a silence: the line to it is
+		 *  dashed, because nothing recorded the way between. */
+		bridge?: boolean;
 	};
 
 	interface Props {
@@ -73,16 +76,32 @@
 		const latlngs: [number, number][] = [];
 
 		if (hasTrack) {
-			for (const p of track) latlngs.push([p.lat, p.lng]);
-			const poly = L.polyline(latlngs, {
-				color: "var(--color-primary)",
-				weight: 2,
-				opacity: 0.9,
-			}).addTo(layer);
+			// Solid runs of recorded track, and a dashed line into each point
+			// that arrived across a silence.
+			let run: [number, number][] = [];
+			const drawRun = () => {
+				if (run.length >= 2)
+					L.polyline(run, { color: "var(--color-primary)", weight: 2, opacity: 0.9 }).addTo(layer);
+			};
+			track.forEach((p, i) => {
+				const here: [number, number] = [p.lat, p.lng];
+				latlngs.push(here);
+				if (p.bridge && i > 0) {
+					drawRun();
+					const prev = track[i - 1];
+					L.polyline([[prev.lat, prev.lng], here], {
+						color: "var(--color-primary)",
+						weight: 1.5,
+						opacity: 0.7,
+						dashArray: "3 5",
+					}).addTo(layer);
+					run = [here];
+				} else run.push(here);
+			});
+			drawRun();
 
-			// Fit to polyline bounds
 			try {
-				map.fitBounds(poly.getBounds(), { padding: [16, 16] });
+				map.fitBounds(L.latLngBounds(latlngs), { padding: [16, 16] });
 			} catch {
 				// ignore
 			}

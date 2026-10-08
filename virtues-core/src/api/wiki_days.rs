@@ -41,22 +41,8 @@ pub struct WikiDay {
     pub new_entity_count: i64,
     /// Count of topics first seen on this day
     pub new_topic_count: i64,
-    /// Sleep cycles with autonomic scores, computed at query time from
-    /// data_health_sleep stages + heart rate data. Not stored.
-    pub sleep_cycles: Vec<ScoredSleepCycle>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-}
-
-/// A single sleep cycle with autonomic scoring, derived from sleep stage
-/// boundaries and heart rate data during the cycle window.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScoredSleepCycle {
-    pub start_time: String,
-    pub end_time: String,
-    pub dominant_stage: String,
-    pub avg_hr: Option<f64>,
-    pub autonomic_z: Option<f64>,
 }
 
 // ============================================================================
@@ -103,9 +89,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
 
     if let Some(row) = existing {
         let (ne, nt) = get_day_novelty_counts(pool, &date_str).await?;
-        let mut day = wiki_day_from_row_with_counts(&row, date, ne, nt)?;
-        day.sleep_cycles = compute_sleep_cycles(pool, date).await?;
-        return Ok(day);
+        return wiki_day_from_row_with_counts(&row, date, ne, nt);
     }
 
     // Create new day
@@ -148,172 +132,8 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
         article: row.try_get("article").ok().flatten(),
         new_entity_count,
         new_topic_count,
-        sleep_cycles: vec![], // populated after construction
         created_at: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),
         updated_at: row.try_get("updated_at").unwrap_or_else(|_| Utc::now()),
-    })
-}
-
-/// Compute scored sleep cycles for a day from sleep stage data + heart rate readings.
-/// Derives cycle boundaries by splitting sleep_stages at "awake" entries,
-/// then computes avg HR per cycle and z-scores against a 14-day sleep HR baseline.
-///
-/// The night is the one the day's sleep event shows: the one it woke up from
-/// (`dayline::sleep::night_for_day`), with all of its records joined.
-async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Result<Vec<ScoredSleepCycle>> {
-    Ok({
-        let stages = match crate::dayline::sleep::night_for_day(pool, date).await? {
-            Some(night) if !night.stages.is_empty() => night.stages,
-            _ => return Ok(vec![]),
-        };
-
-        // Group consecutive non-awake stages into cycles
-        let mut cycles: Vec<(String, String, String)> = vec![]; // (start, end, dominant_stage)
-        let mut cycle_start: Option<String> = None;
-        let mut cycle_end: Option<String> = None;
-        let mut stage_durations: std::collections::HashMap<String, i64> =
-            std::collections::HashMap::new();
-
-        for stage in &stages {
-            let stage_name = stage["stage"].as_str().unwrap_or("unknown");
-            let start = stage["start"].as_str().unwrap_or("");
-            let end = stage["end"].as_str().unwrap_or("");
-
-            if stage_name == "awake" {
-                // Close current cycle if we have one
-                if let (Some(cs), Some(ce)) = (&cycle_start, &cycle_end) {
-                    let dominant = stage_durations
-                        .iter()
-                        .max_by_key(|(_, v)| *v)
-                        .map(|(k, _)| k.clone())
-                        .unwrap_or_else(|| "core".to_string());
-                    cycles.push((cs.clone(), ce.clone(), dominant));
-                    cycle_start = None;
-                    cycle_end = None;
-                    stage_durations.clear();
-                }
-            } else {
-                if cycle_start.is_none() {
-                    cycle_start = Some(start.to_string());
-                }
-                cycle_end = Some(end.to_string());
-
-                // Estimate duration in minutes for dominant stage calculation
-                if let (Ok(s), Ok(e)) = (
-                    DateTime::parse_from_rfc3339(start),
-                    DateTime::parse_from_rfc3339(end),
-                ) {
-                    let mins = (e - s).num_minutes();
-                    let key = stage_name.replace("asleep_", "");
-                    *stage_durations.entry(key).or_insert(0) += mins;
-                }
-            }
-        }
-        // Close final cycle
-        if let (Some(cs), Some(ce)) = (&cycle_start, &cycle_end) {
-            let dominant = stage_durations
-                .iter()
-                .max_by_key(|(_, v)| *v)
-                .map(|(k, _)| k.clone())
-                .unwrap_or_else(|| "core".to_string());
-            cycles.push((cs.clone(), ce.clone(), dominant));
-        }
-
-        if cycles.is_empty() {
-            return Ok(vec![]);
-        }
-
-        // 3. Get 14-day sleep HR baseline: one average per joined night, so a
-        //    night HealthKit split into three records counts once, and a
-        //    two-minute fragment is not a night of its own.
-        let (day_start, day_end) = crate::timezone::day_window(pool, date).await?;
-        let nights = crate::dayline::sleep::nights_ending_between(
-            pool,
-            day_start - chrono::Duration::days(14),
-            day_end,
-        )
-        .await?;
-        let mut baseline_hrs: Vec<f64> = Vec::with_capacity(nights.len());
-        for night in &nights {
-            let avg: Option<f64> = sqlx::query_scalar(
-                r#"SELECT AVG(CAST(bpm AS REAL))::float8
-               FROM data_health_heart_rate
-               WHERE occurred_at >= $1 AND occurred_at < $2"#,
-            )
-            .bind(night.start)
-            .bind(night.end)
-            .fetch_one(pool)
-            .await?;
-            baseline_hrs.extend(avg);
-        }
-
-        let (baseline_mean, baseline_std) = if baseline_hrs.len() >= 2 {
-            let mean = baseline_hrs.iter().sum::<f64>() / baseline_hrs.len() as f64;
-            let variance = baseline_hrs.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
-                / baseline_hrs.len() as f64;
-            let std = variance.sqrt().max(1.0); // floor at 1 bpm to avoid div-by-zero
-            (mean, std)
-        } else {
-            (0.0, 0.0) // insufficient baseline
-        };
-
-        // 4. Score each cycle
-        let mut scored: Vec<ScoredSleepCycle> = vec![];
-        for (start, end, dominant) in &cycles {
-            // The bounds arrive as RFC3339 TEXT from the stage JSON, and
-            // `occurred_at` is a timestamptz. Binding the strings asks Postgres
-            // for `timestamp with time zone >= text`, which it refuses — and
-            // because `sqlx::query` is untyped, that shipped as a runtime error
-            // instead of a compile one. Every day that HAS sleep cycles failed
-            // here, so day_summary_eod could not narrate it and retried the
-            // same day every hour, forever.
-            let window = match (
-                DateTime::parse_from_rfc3339(start),
-                DateTime::parse_from_rfc3339(end),
-            ) {
-                (Ok(s), Ok(e)) => Some((s.with_timezone(&Utc), e.with_timezone(&Utc))),
-                // Unparseable bounds cost this cycle its heart rate, not its
-                // row: the cycle itself is real and still worth reporting.
-                _ => None,
-            };
-
-            // Get avg HR during this cycle window
-            let avg_hr: Option<f64> = match window {
-                Some((from, to)) => sqlx::query_scalar(
-                    r#"SELECT AVG(CAST(bpm AS REAL))
-               FROM data_health_heart_rate
-               WHERE occurred_at >= $1 AND occurred_at < $2"#,
-                )
-                .bind(from)
-                .bind(to)
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| {
-                    Error::Database(format!("Failed to read sleep-cycle heart rate: {e}"))
-                })?
-                .flatten(),
-                None => None,
-            };
-
-            let autonomic_z = match (avg_hr, baseline_std > 0.0) {
-                (Some(hr), true) => {
-                    // For sleep: lower HR = better recovery = more negative z
-                    let z = (hr - baseline_mean) / baseline_std;
-                    Some(z.clamp(-3.0, 3.0))
-                }
-                _ => None,
-            };
-
-            scored.push(ScoredSleepCycle {
-                start_time: start.clone(),
-                end_time: end.clone(),
-                dominant_stage: dominant.clone(),
-                avg_hr,
-                autonomic_z,
-            });
-        }
-
-        scored
     })
 }
 
