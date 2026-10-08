@@ -1150,13 +1150,22 @@ fn inference_env_keys(
         //   PROMPTS       Gemma is asymmetric; queries and documents take
         //                 different prefixes. The right prefix is a property of
         //                 the model, so it is named alongside the model.
-        InferenceMode::Bundled => vec![
-            ("VIRTUES_INFERENCE", "bundled".to_string()),
-            ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
-            ("VIRTUES_RERANK_URL", "http://127.0.0.1:18182".to_string()),
-            ("VIRTUES_EMBED_QUERY_PROMPT", quote_env_value(GEMMA_QUERY_PROMPT)),
-            ("VIRTUES_EMBED_DOC_PROMPT", quote_env_value(GEMMA_DOC_PROMPT)),
-        ],
+        InferenceMode::Bundled => {
+            let mut keys = vec![
+                ("VIRTUES_INFERENCE", "bundled".to_string()),
+                ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
+                ("VIRTUES_RERANK_URL", "http://127.0.0.1:18182".to_string()),
+                ("VIRTUES_EMBED_QUERY_PROMPT", quote_env_value(GEMMA_QUERY_PROMPT)),
+                ("VIRTUES_EMBED_DOC_PROMPT", quote_env_value(GEMMA_DOC_PROMPT)),
+            ];
+            // An accelerator search isn't using yet: Settings → Search keeps
+            // pointing at its guide after install (api::search_status).
+            if let Some(a) = crate::accel::detect().first() {
+                keys.push(("VIRTUES_ACCELERATOR", quote_env_value(&a.label)));
+                keys.push(("VIRTUES_ACCELERATOR_GUIDE", a.kind.guide_url().to_string()));
+            }
+            keys
+        }
         InferenceMode::Manual { embed_url, embed_model, rerank_url, .. } => {
             let mut keys = vec![
                 ("VIRTUES_INFERENCE", "manual".to_string()),

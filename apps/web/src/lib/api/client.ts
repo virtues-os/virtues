@@ -294,6 +294,27 @@ export function searchLocal(
 	});
 }
 
+/** Settings → Search. Mirrors `api::search_status::SearchStatus`. */
+export interface SearchStatus {
+	mode: 'dragon' | 'bundled' | 'manual' | 'unknown' | string;
+	embed_url: string;
+	index_model: string | null;
+	index_dims: number | null;
+	records_searchable: number;
+	chunks: number;
+	last_indexed_at: string | null;
+	reachable: boolean;
+	probe_ms: number | null;
+	probe_error: string | null;
+	rerank_on: boolean;
+	accelerator: string | null;
+	accelerator_guide: string | null;
+}
+
+export function getSearchStatus(): Promise<SearchStatus> {
+	return apiGet<SearchStatus>('/search/status');
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Box updates (Settings → Box)
 // ─────────────────────────────────────────────────────────────────────────────
