@@ -92,7 +92,9 @@ the device checks pass. Until then tree pages exist only behind a flag.
     is every shipped client, for every tree page) and answers one above its
     own read-only;
   - the server validates an update against the contract **before** applying
-    and broadcasting it, and drops the connection that sent an invalid one;
+    and broadcasting it, and drops the connection that sent one no merge of
+    valid edits can make; a shape a merge can make (two devices emptying a
+    list from both ends) is taken and repaired by the server;
   - raising a document's contract disconnects sockets below it;
   - the IndexedDB fast path does not bind a tree page until the server has
     confirmed the contract.
