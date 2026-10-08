@@ -23,13 +23,14 @@
 	import { deriveDay, joinDays, type Sources } from '$lib/timeline/derive';
 	import { getStreamHealth } from '$lib/api/client';
 	import { mergePlace, updatePlace, type NearbyPlace } from '$lib/wiki/api';
-	import type { DerivedWindow, VoiceWindow } from '$lib/timeline/inspector';
+	import type { DerivedPlace, DerivedWindow, VoiceWindow } from '$lib/timeline/inspector';
 	import type { LaneWindow } from '$lib/timeline/lanes';
 	import { cleanTrack, dropSpikes, flagHoles, splitTrack, toFixes, type Fix, type Line } from '$lib/timeline/track';
 	import { buildInspector, placeTitle, type InspectorPick, type InspectorSection } from '$lib/timeline/inspector';
 	import { anchorAt, positionAt, trackMetres } from '$lib/timeline/anchor';
 	import { Bubbles, type Area, type MapMoment } from '$lib/timeline/bubbles';
 	import TimelineInspector from '$lib/components/timeline/TimelineInspector.svelte';
+	import ReviewTile from '$lib/components/timeline/ReviewTile.svelte';
 	import TimelineScrubber from '$lib/components/timeline/TimelineScrubber.svelte';
 	import TimelineMonth from '$lib/components/timeline/TimelineMonth.svelte';
 	import { ReviewState } from '$lib/timeline/reviewState.svelte';
@@ -127,9 +128,6 @@
 	let cardH = $state(0);
 	let scrubH = $state(0);
 	let monthOpen = $state(false);
-	/** The day's places: "Help Virtues out" asks about them under their stays,
-	 *  and Review about the rest. */
-	let dayPlaces = $state<string[]>([]);
 	/** The bottom of the date card, for the map's framing and clear area. */
 	const topChrome = $derived(16 + cardH);
 	/** A pane too narrow for the list beside the map (a phone, a split view)
@@ -140,7 +138,7 @@
 	let note = $state<{ title: string; lines: string[] } | null>(null);
 	let map: MlMap | null = null;
 	/** The map's paint, read off the theme (colours.ts). */
-	let ink = browser ? mapInk() : { track: '', move: '', now: '', label: '', halo: '' };
+	let ink = browser ? mapInk() : { track: '', move: '', movePicked: '', label: '', halo: '' };
 	/** A theme switch repaints the day's own layers. */
 	function paintInk() {
 		ink = mapInk();
@@ -148,11 +146,12 @@
 		if (!m?.getLayer('track-run')) return;
 		for (const id of ['track-run', 'track-bridge']) m.setPaintProperty(id, 'line-color', ink.track);
 		m.setPaintProperty('track-drive', 'line-color', ink.move);
-		m.setPaintProperty('review-dots', 'circle-color', ink.track);
+		m.setPaintProperty('review-dots', 'circle-color', ink.label);
 		m.setPaintProperty('review-dots', 'circle-stroke-color', ink.halo);
 		m.setPaintProperty('review-names', 'text-color', ink.label);
 		m.setPaintProperty('review-names', 'text-halo-color', ink.halo);
-		for (const id of ['lit-glow', 'lit-run', 'lit-bridge']) m.setPaintProperty(id, 'line-color', ink.now);
+		m.setPaintProperty('lit-glow', 'line-color', ink.movePicked);
+		for (const id of ['lit-run', 'lit-bridge']) m.setPaintProperty(id, 'line-color', picked?.kind === 'transit' ? ink.movePicked : ink.move);
 	}
 	let maplibre: typeof import('maplibre-gl') | null = null;
 	let resizer: ResizeObserver | null = null;
@@ -380,14 +379,14 @@
 					type: 'line',
 					source: 'lit-run',
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
-					paint: { 'line-color': ink.now, 'line-width': 22, 'line-blur': 10, 'line-opacity': 0 },
+					paint: { 'line-color': ink.movePicked, 'line-width': 22, 'line-blur': 10, 'line-opacity': 0 },
 				});
 				m.addLayer({
 					id: 'lit-run',
 					type: 'line',
 					source: 'lit-run',
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
-					paint: { 'line-color': ink.now, 'line-width': 3, 'line-opacity': 0.95 },
+					paint: { 'line-color': ink.move, 'line-width': 3, 'line-opacity': 0.95 },
 				});
 				m.addLayer({
 					id: 'lit-bridge',
@@ -395,7 +394,7 @@
 					source: 'lit-bridge',
 					layout: { 'line-join': 'round', 'line-cap': 'butt' },
 					paint: {
-						'line-color': ink.now,
+						'line-color': ink.move,
 						'line-width': 1.5,
 						'line-opacity': 0.9,
 						'line-dasharray': [2, 2.5],
@@ -409,7 +408,9 @@
 					id: 'review-dots',
 					type: 'circle',
 					source: 'review-names',
-					paint: { 'circle-radius': 4, 'circle-color': ink.track, 'circle-stroke-width': 1.5, 'circle-stroke-color': ink.halo },
+					// A named place offered, in the label's ink: a mark on the map,
+					// never a second "you were here" beside the pin.
+					paint: { 'circle-radius': 3, 'circle-color': ink.label, 'circle-stroke-width': 1.5, 'circle-stroke-color': ink.halo },
 				});
 				m.addLayer({
 					id: 'review-names',
@@ -526,7 +527,7 @@
 		const bounds = { startMs: Date.parse(day.started_at), endMs: Date.parse(day.ended_at), zone: day.zone };
 		const { derived, voice, lanes: lw } = deriveDay(day, sources);
 		loaded = { derived, voice, lw, startMs: Date.parse(day.started_at), endMs: Date.parse(day.ended_at) };
-		dayPlaces = derived.places.map((p) => p.id);
+		markAsked(derived.places);
 		const window = { points: day.points, before: day.last_point_before };
 		if (mine !== asked) return;
 		const { startMs, endMs } = bounds;
@@ -605,6 +606,9 @@
 			frameDay(m, 0);
 			bubbles?.build(mapMoments());
 			syncPlayhead();
+			// A card opened while the day loaded (the tile's step to another
+			// day): the place it asks about, not the whole day.
+			if (focused) focusPlace(focused);
 			return;
 		}
 		bubbles?.clear();
@@ -693,6 +697,51 @@
 	 *  day's list and its Review. An answer re-reads the day's titles. */
 	const review = new ReviewState(() => void refreshTitles());
 	onMount(() => void review.load());
+	/** The places "Help Virtues out" asks about: titled "Unknown" while only
+	 *  their city names them. */
+	function markAsked(places: DerivedPlace[]) {
+		for (const p of places) p.asked = review.byPlace.has(p.id);
+	}
+	$effect(() => {
+		void review.byPlace;
+		untrack(() => {
+			if (!loaded) return;
+			markAsked(loaded.derived.places);
+			redrawPlaces();
+		});
+	});
+
+	/** The tile's steps between days: the questions that have a day to open,
+	 *  in Review's order (Home and Work, then the most time first). */
+	const steps = $derived(review.questions.filter((q) => q.best_day));
+	let stepAt = $state<number | null>(null);
+	/** A question whose day is loading: its card opens once the day is in. */
+	let pendingAsk = $state<string | null>(null);
+	function stepTo(i: number) {
+		const q = steps[i];
+		if (!q?.best_day) return;
+		stepAt = i;
+		if (q.best_day === date) inspector?.ask(q.id);
+		else {
+			pendingAsk = q.id;
+			date = q.best_day;
+		}
+	}
+	$effect(() => {
+		const id = pendingAsk;
+		if (!id || !sections.some((x) => x.placeId === id)) return;
+		untrack(() => {
+			pendingAsk = null;
+			inspector?.ask(id);
+		});
+	});
+	// An answer shortens the list: the step stays on the next one in line.
+	$effect(() => {
+		const n = steps.length;
+		untrack(() => {
+			if (stepAt !== null && stepAt >= n) stepAt = n ? n - 1 : null;
+		});
+	});
 	/** A stay's name field made its place Home or Work. */
 	async function setRole(placeId: string, role: 'home' | 'work'): Promise<boolean> {
 		try {
@@ -737,7 +786,9 @@
 	/** Take the map to the place "Help Virtues out" is asking about, framed so
 	 *  the named places it offers read, under a glowing pin, with the day's
 	 *  path and marks faded (main.js:2209-2221); `null` gives the day back. */
+	let focused: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null = null;
 	function focusPlace(at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null) {
+		focused = at;
 		const m = map;
 		if (!m || !maplibre || !m.getLayer('track-run')) return;
 		glow?.remove();
@@ -755,16 +806,6 @@
 		glow = new maplibre.Marker({ element: el, anchor: 'center' }).setLngLat([at.lon, at.lat]).addTo(m);
 		// Centred in the map left clear of the inspector and the scrubber.
 		m.easeTo({ center: [at.lon, at.lat], zoom: focusZoom(at.lat, at.reachM, m.getZoom()), padding: fitPad(m), duration: 820 });
-	}
-
-	/** The named places a question under the current stay offers, labelled
-	 *  on the map without moving it (main.js:916-924). */
-	function showNames(shown: PlaceCandidate[]) {
-		const names = map?.getSource('review-names') as GeoJSONSource | undefined;
-		names?.setData({
-			type: 'FeatureCollection',
-			features: shown.map((c) => ({ type: 'Feature', properties: { name: c.name }, geometry: { type: 'Point', coordinates: [c.lon, c.lat] } })),
-		});
 	}
 
 	/** After an answer, the day's titles again: a place just named, or one no
@@ -1071,7 +1112,9 @@
 		if (!m) return;
 		if (picked && !(picked.s <= playT && playT < picked.e)) unpick();
 		const at = positionAt(dayTrack, playT);
-		if (at && pin) pin.setLngLat([at.lng, at.lat]).addTo(m);
+		// A picked stay's pulse is where you were; the pin waits until the
+		// playhead leaves it, so one mark says "here".
+		if (at && pin && !pulse) pin.setLngLat([at.lng, at.lat]).addTo(m);
 		else pin?.remove();
 		bubbles?.sync(playT);
 		const drive = sections.find((s) => s.kind === 'transit' && s.s <= playT && playT < s.e);
@@ -1129,11 +1172,12 @@
 		// A stay flies in to its place, close enough to read the streets around
 		// it, and its place pulses while it stays picked (the owner's call; the
 		// prototype only pans a stay onto the map, main.js:1101).
-		const place = p.kind === 'place' ? placeCoords.get(sections[i]?.placeId ?? '') : undefined;
+		const placeId = sections[i]?.placeId ?? '';
+		const place = p.kind === 'place' ? placeCoords.get(placeId) : undefined;
 		if (place) {
 			bubbles?.fold();
 			flyIn(m, place);
-			pick({ kind: 'place', s: p.s, e: p.e, at: place });
+			pick({ kind: 'place', s: p.s, e: p.e, at: place, asked: review.byPlace.has(placeId) });
 			return;
 		}
 		const keys = sections[i]?.rows.map((r) => r.s) ?? [];
@@ -1168,7 +1212,7 @@
 	 *  Any other pick, a scrub, or the playhead leaving it clears the mark. */
 	let picked: { kind: 'place' | 'transit'; s: number; e: number } | null = null;
 	let pulse: Marker | null = null;
-	function pick(p: { kind: 'place' | 'transit'; s: number; e: number; at?: [number, number] }) {
+	function pick(p: { kind: 'place' | 'transit'; s: number; e: number; at?: [number, number]; asked?: boolean }) {
 		unpick();
 		const m = map;
 		const ml = maplibre;
@@ -1177,26 +1221,43 @@
 		if (p.at) {
 			const el = document.createElement('div');
 			el.className = 'tl-pulse';
+			// A stay Virtues has a question about: a "?" on its pin, and no
+			// names around it until its card is open.
+			if (p.asked) {
+				el.classList.add('asked');
+				el.textContent = '?';
+			}
 			pulse = new ml.Marker({ element: el, anchor: 'center' }).setLngLat(p.at).addTo(m);
+			pin?.remove();
 			return;
 		}
 		if (!m.getLayer('lit-glow')) return;
 		// The picked drive stands out from a drive the playhead merely passes
 		// through: twice the path's weight, over a still halo. Nothing on the
 		// page breathes but Home's now-marker (design-grammar §7).
+		// The picked drive turns the brighter orange (PROTOTYPE-RULES 9.21, 9.27).
 		m.setPaintProperty('lit-run', 'line-width', 6);
 		m.setPaintProperty('lit-bridge', 'line-width', 2.5);
+		m.setPaintProperty('lit-run', 'line-color', ink.movePicked);
+		m.setPaintProperty('lit-bridge', 'line-color', ink.movePicked);
 		m.setPaintProperty('lit-glow', 'line-opacity', 0.3);
 	}
 	function unpick() {
 		picked = null;
-		pulse?.remove();
-		pulse = null;
 		const m = map;
+		if (pulse) {
+			pulse.remove();
+			pulse = null;
+			// The pin comes back where the playhead is.
+			const at = positionAt(dayTrack, playT);
+			if (at && pin && m) pin.setLngLat([at.lng, at.lat]).addTo(m);
+		}
 		if (!m?.getLayer('lit-glow')) return;
 		m.setPaintProperty('lit-glow', 'line-opacity', 0);
 		m.setPaintProperty('lit-run', 'line-width', 3);
 		m.setPaintProperty('lit-bridge', 'line-width', 1.5);
+		m.setPaintProperty('lit-run', 'line-color', ink.move);
+		m.setPaintProperty('lit-bridge', 'line-color', ink.move);
 	}
 
 	/** The clear map (`v4ClearArea`, main.js:1042-1044): not under the top
@@ -1280,6 +1341,18 @@
 			</div>
 			<button class="date-title" type="button" title="Back to the whole day" onclick={resetView}>{title}</button>
 		</div>
+		{#if review.review && !monthOpen}
+			<ReviewTile
+				count={steps.length}
+				at={stepAt}
+				onstep={stepTo}
+				onnames={() => inspector?.names()}
+				onclose={() => {
+					stepAt = null;
+					pendingAsk = null;
+				}}
+			/>
+		{/if}
 		{#if monthOpen}
 			<TimelineMonth
 				{date}
@@ -1313,10 +1386,7 @@
 		onrole={setRole}
 		homeSet={review.homeSet}
 		{review}
-		{dayPlaces}
-		onday={(slug) => (date = slug)}
 		onfocus={focusPlace}
-		onnames={showNames}
 		onmerge={mergeInto}
 		{zone}
 		{playT}
@@ -1721,6 +1791,18 @@
 		outline: 6px solid color-mix(in srgb, var(--c-sel) 22%, transparent);
 		pointer-events: none;
 		z-index: 3;
+	}
+	.timeline :global(.tl-pulse.asked) {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		color: var(--c-ring);
+		font-family: var(--font-sans);
+		font-size: 13px;
+		font-weight: 600;
+		line-height: 1;
 	}
 	/* A knot of moments folded into a count chip; never set transform here,
 	   MapLibre positions the marker with it. */

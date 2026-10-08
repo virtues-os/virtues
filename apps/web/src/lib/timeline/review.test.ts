@@ -39,8 +39,10 @@ describe("the place questions", () => {
 		expect(h.text).toBe("Is this home?");
 		expect(h.chips.map((c) => [c.label, c.answer])).toEqual([
 			["Yes", { kind: "home" }],
-			["No", { kind: "not_home" }],
+			["No…", { kind: "not_home" }],
 		]);
+		expect(h.line).toBe("Is this home?");
+		expect(h.yes).toEqual({ kind: "home" });
 		expect(h.other).toBeNull();
 		expect(h.role).toBe("home");
 		expect(askFor(question({ ask: "work" })).text).toBe("Is this where you work?");
@@ -53,6 +55,9 @@ describe("the place questions", () => {
 	it("asks which of several close places, any number picked together", () => {
 		const a = askFor(question({ naming: { tier: "ambiguous", candidates: [cand("Maple Diner", 20), cand("Pine Grill", 30)] } }));
 		expect(a.text).toBe("Which of these were you at?");
+		// In the day's list the question is one line: the count, not the names.
+		expect(a.line).toBe("Which of 2 places nearby?");
+		expect(a.yes).toBeUndefined();
 		expect(a.picks.map((c) => c.name)).toEqual(["Maple Diner", "Pine Grill"]);
 		expect(a.chips).toEqual([]);
 		expect(a.shown).toHaveLength(2);
@@ -64,6 +69,8 @@ describe("the place questions", () => {
 	it("offers a named place just out of reach by name", () => {
 		const a = askFor(question({ naming: { hint: cand("Country Club", 140, "outdoors") } }));
 		expect(a.text).toBe("Were you at Country Club?");
+		// A yes-or-no question answers "Yes" from the list's line.
+		expect(a.yes).toEqual({ kind: "name", name: "Country Club", category: "outdoors" });
 		expect(a.chips).toEqual([{ label: "Yes, that’s it", answer: { kind: "name", name: "Country Club", category: "outdoors" } }]);
 		expect(a.other).toBe("place");
 	});
@@ -71,6 +78,7 @@ describe("the place questions", () => {
 	it("after a night, asks whose home, offering a nearby place too", () => {
 		const a = askFor(question({ overnight: true }));
 		expect(a.text).toBe("Looks like you stayed at a home. Whose place?");
+		expect(a.line).toBe("Whose place was this?");
 		expect(a.chips.map((c) => c.label)).toEqual(["Mine / family"]);
 		expect(a.other).toBe("person");
 		const b = askFor(question({ overnight: true, naming: { hint: cand("Hotel Rowan", 120, "lodging") } }));
@@ -91,6 +99,7 @@ describe("the place questions", () => {
 	it("asks what it was when nothing is near, and never re-offers a rejected match", () => {
 		const a = askFor(question());
 		expect(a.text).toBe("Virtues couldn’t name this spot. What was it?");
+		expect(a.line).toBe("What was this spot?");
 		expect(a.chips.map((c) => c.label)).toEqual(["park", "office", "shop", "outdoors"]);
 		expect(a.chips[0].answer).toEqual({ kind: "name", name: "park", category: null });
 		const b = askFor(question({ rejected_match: "Riverside", naming: { tier: "confident", name: "Riverside", candidates: [cand("Riverside", 5), cand("Blue Door", 40)] } }));

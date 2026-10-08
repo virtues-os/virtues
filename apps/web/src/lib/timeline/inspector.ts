@@ -37,6 +37,8 @@ export interface DerivedPlace {
 	title?: string;
 	/** Where that title came from: `map` is the map's guess, never confirmed. */
 	title_source?: string;
+	/** "Help Virtues out" has a question about it. */
+	asked?: boolean;
 }
 
 /** One transcription window, as `/api/timeline/voice` serves it. */
@@ -95,6 +97,9 @@ export interface InspectorSection {
 	named: boolean;
 	/** A stay only: its title is the map's guess, offered for correction. */
 	guessed?: boolean;
+	/** A stay only: where its title came from (`home`, `work`, `map`,
+	 *  `city`, `none`). */
+	source?: string;
 	rows: InspectorRow[];
 	/** A stay's audio note: "no audio" or "silent", only when clear-cut. */
 	atag: "no audio" | "silent" | null;
@@ -113,11 +118,18 @@ export function fmtDur(ms: number): string {
 	return r ? `${h}h ${r}m` : `${h}h`;
 }
 
+/** A place asked about that only its city names: "Unknown · Austin", so
+ *  the stay reads at a glance as one that needs the person. */
+function unknown(p: DerivedPlace | undefined): boolean {
+	return !!p?.asked && !p.is_named && (p.title_source === "city" || p.title_source === "none");
+}
+
 /** A place's title: the name the person gave it, else the box's title for
- *  it (Home or Work, the map's match, its city), else "Unnamed place". The
- *  wiki names a place nobody named "Location <lat>, <lon>"; that is no title
- *  to show. */
+ *  it (Home or Work, the map's match, its city), else "Unnamed place"; a
+ *  place asked about with only its city is "Unknown · <city>". The wiki names a place
+ *  nobody named "Location <lat>, <lon>"; that is no title to show. */
 export function placeTitle(p: DerivedPlace | undefined): string {
+	if (unknown(p)) return p?.title_source === "city" && p.title ? `Unknown · ${p.title}` : "Unknown";
 	return p?.is_named && p.place_name ? p.place_name : (p?.title ?? "Unnamed place");
 }
 
@@ -195,6 +207,7 @@ export function buildInspector(w: DerivedWindow, start: number, end: number, voi
 					title: placeTitle(place),
 					named: !!place?.is_named,
 					guessed: !place?.is_named && place?.title_source === "map",
+					source: place?.title_source,
 					dur: fmtDur(ce - cs),
 				};
 			}

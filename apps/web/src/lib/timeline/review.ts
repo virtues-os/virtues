@@ -104,6 +104,11 @@ export function sendAnswer(id: string, a: Answer): Promise<{ place_id: string | 
 /** The question a place asks. */
 export interface Ask {
 	text: string;
+	/** The question as one line under its stay in the day's list. */
+	line: string;
+	/** A yes-or-no question's "Yes", answered from the list's line; any
+	 *  other question is chosen in its card. */
+	yes?: Answer;
 	/** One-tap answers. */
 	chips: { label: string; answer: Answer }[];
 	/** "Which of these were you at?": the places to pick from, more than one
@@ -157,12 +162,15 @@ export function askFor(q: PlaceQuestion): Ask {
 	const n = q.naming;
 	const cands = n.candidates.filter((c) => c.name !== q.rejected_match);
 	const named = (name: string, category: string | null = null): Answer => ({ kind: "name", name, category });
+	// "No…" leads on, to pointing to the place on the map.
 	const yesNo = (text: string, role: "home" | "work", yes: Answer, no: Answer): Ask => ({
 		text,
+		line: text,
+		yes,
 		role,
 		chips: [
 			{ label: "Yes", answer: yes },
-			{ label: "No", answer: no },
+			{ label: "No…", answer: no },
 		],
 		picks: [],
 		other: null,
@@ -177,6 +185,8 @@ export function askFor(q: PlaceQuestion): Ask {
 	if (q.overnight && hotel)
 		return {
 			text: `Were you at ${hotel.name}?`,
+			line: `Were you at ${hotel.name}?`,
+			yes: named(hotel.name, hotel.category),
 			chips: [{ label: "Yes, that’s it", answer: named(hotel.name, hotel.category) }],
 			picks: [],
 			other: "person",
@@ -186,6 +196,7 @@ export function askFor(q: PlaceQuestion): Ask {
 	if (cands.length > 1)
 		return {
 			text: "Which of these were you at?",
+			line: `Which of ${cands.length} places nearby?`,
 			chips: [],
 			picks: cands,
 			other: "place",
@@ -199,12 +210,15 @@ export function askFor(q: PlaceQuestion): Ask {
 			? {
 					...base,
 					text: `Were you at ${near.name}, or someone’s home?`,
+					line: `Were you at ${near.name}, or someone’s home?`,
 					chips: [{ label: near.name, answer: named(near.name, near.category) }],
 					other: "person",
 				}
 			: {
 					...base,
 					text: `Were you at ${near.name}?`,
+					line: `Were you at ${near.name}?`,
+					yes: named(near.name, near.category),
 					chips: [{ label: "Yes, that’s it", answer: named(near.name, near.category) }],
 					other: "place",
 				};
@@ -214,6 +228,7 @@ export function askFor(q: PlaceQuestion): Ask {
 	if (q.overnight && !n.street_detail)
 		return {
 			text: "Where did you stay that night?",
+			line: "Where did you stay that night?",
 			chips: [{ label: "Mine / family", answer: named(FAMILY) }],
 			picks: [],
 			other: "place",
@@ -223,6 +238,7 @@ export function askFor(q: PlaceQuestion): Ask {
 	if (q.overnight)
 		return {
 			text: "Looks like you stayed at a home. Whose place?",
+			line: "Whose place was this?",
 			chips: [{ label: "Mine / family", answer: named(FAMILY) }],
 			picks: [],
 			other: "person",
@@ -231,6 +247,7 @@ export function askFor(q: PlaceQuestion): Ask {
 		};
 	return {
 		text: "Virtues couldn’t name this spot. What was it?",
+		line: "What was this spot?",
 		chips: KINDS.map((k) => ({ label: k, answer: named(k) })),
 		picks: [],
 		other: "place",

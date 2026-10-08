@@ -21,6 +21,10 @@ const PAINT: Record<string, string> = {
 	"--c-place": "#4C86D6",
 	/** Moving: a drive's ribbon and row. */
 	"--c-move": "#E6A04E",
+	/** A drive picked from the inspector: the move colour at full strength
+	 *  (Apple's system orange), so the pick stands out from a drive the
+	 *  playhead merely passes (PROTOTYPE-RULES 9.21, 9.27). */
+	"--c-move-picked": "#FF9500",
 	/** The Voice lane's waveform and a conversation's row. */
 	"--c-voice": "#9174BE",
 	/** In Bed: the night band, and its ink. */
@@ -55,13 +59,14 @@ export function colourVars(): string {
 export interface MapInk {
 	/** The day's path: location, so a stay's hue. */
 	track: string;
-	/** A drive's stretch of the path: moving's hue. */
+	/** A drive's stretch of the path, and the lit stretch at the playhead:
+	 *  moving's hue (PROTOTYPE-RULES 9.17). */
 	move: string;
+	/** A picked drive: the move colour at full strength. */
+	movePicked: string;
 	/** A label drawn on the map, and the halo that keeps it legible. */
 	label: string;
 	halo: string;
-	/** The stretch of path at the playhead, and a picked drive. */
-	now: string;
 }
 
 export function mapInk(el: Element = document.documentElement): MapInk {
@@ -71,7 +76,7 @@ export function mapInk(el: Element = document.documentElement): MapInk {
 	return {
 		track: PAINT["--c-place"],
 		move: PAINT["--c-move"],
-		now: read("--color-primary", "#335"),
+		movePicked: PAINT["--c-move-picked"],
 		label: read("--color-foreground", "#333"),
 		halo: read("--color-background", "#fff"),
 	};
