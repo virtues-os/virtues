@@ -15,7 +15,7 @@
 	 * The owner always sees who is driving. While the assistant acts, a bar
 	 * offers Take control and Stop and the page gets an accent frame; when it
 	 * hands the browser over (a sign-in, a code), the bar says what to do and
-	 * waits for Done. Its steps collect in a strip under the page.
+	 * waits for Done. Its steps collect in an Activity column beside the page.
 	 */
 	import { onDestroy, onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -44,7 +44,7 @@
 	let editing = $state(false);
 	let modalOpen = $state(false);
 	let slot = $state<HTMLDivElement | null>(null);
-	let strip = $state<HTMLDivElement | null>(null);
+	let trail = $state<HTMLOListElement | null>(null);
 
 	const STEPS_KEY = 'virtues.browser.steps';
 	let showSteps = $state(readShowSteps());
@@ -88,11 +88,46 @@
 		}
 	}
 
-	// Keep the newest step in view.
+	/** The step showing its picture: the one you chose (-1 for none), else
+	 *  the newest. */
+	let chosen = $state<number | null>(null);
+	const latestId = $derived(browserAgent.steps.at(-1)?.id ?? null);
+	const openId = $derived(chosen === null ? latestId : chosen);
+
+	// A new step takes over the picture, and comes into view.
 	$effect(() => {
-		void browserAgent.steps.length;
-		if (strip) strip.scrollLeft = strip.scrollWidth;
+		void latestId;
+		chosen = null;
+		if (trail) requestAnimationFrame(() => trail && (trail.scrollTop = trail.scrollHeight));
 	});
+
+	const GLYPHS: Record<string, string> = {
+		open: 'ri:global-line',
+		snapshot: 'ri:file-text-line',
+		click: 'ri:cursor-line',
+		type: 'ri:keyboard-line',
+		press: 'ri:corner-down-left-line',
+		scroll: 'ri:arrow-up-down-line',
+		screenshot: 'ri:eye-line',
+		handoff: 'ri:hand'
+	};
+	function glyph(op: string | undefined) {
+		return GLYPHS[op ?? ''] ?? 'ri:checkbox-blank-circle-line';
+	}
+
+	// Minutes tick over without a new step.
+	let now = $state(Date.now());
+	$effect(() => {
+		const timer = setInterval(() => (now = Date.now()), 30_000);
+		return () => clearInterval(timer);
+	});
+	function ago(at: number) {
+		const s = Math.max(0, Math.round((now - at) / 1000));
+		if (s < 45) return 'just now';
+		const m = Math.round(s / 60);
+		if (m < 60) return `${m} min ago`;
+		return new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+	}
 
 	function routeFor(url: string) {
 		return `/browser?url=${encodeURIComponent(url)}`;
@@ -144,7 +179,7 @@
 		void modalOpen;
 		void mobileLayout.isMobile;
 		void available;
-		// The bar, frame and step strip move the page.
+		// The bar, frame and Activity column move the page.
 		void browserAgent.driving;
 		void browserAgent.paused;
 		void browserAgent.handoff;
@@ -224,12 +259,12 @@
 			<button
 				class="tool steps-toggle"
 				class:on={showSteps}
-				title={showSteps ? 'Hide your assistant\'s steps' : 'Show your assistant\'s steps'}
-				aria-label="Your assistant's steps"
+				title={showSteps ? 'Hide activity' : 'Show what your assistant did'}
+				aria-label="Activity"
 				aria-pressed={showSteps}
 				onclick={toggleSteps}
 			>
-				<Icon icon="ri:footprint-line" width="16" />
+				<Icon icon="ri:history-line" width="16" />
 				<span class="count">{browserAgent.steps.length}</span>
 			</button>
 		{/if}
@@ -257,6 +292,7 @@
 		</div>
 	{/if}
 
+	<div class="body">
 	<div
 		class="stage"
 		class:driving={browserAgent.driving && !browserAgent.paused && !browserAgent.handoff}
@@ -272,23 +308,34 @@
 	</div>
 
 	{#if showSteps && browserAgent.steps.length > 0}
-		<div class="steps" bind:this={strip} aria-label="Your assistant's steps">
-			{#each browserAgent.steps as step (step.id)}
-				<figure class="step" class:failed={!step.ok} title={`${step.what}\n${step.url}`}>
-					{#if step.thumb}
-						<img src={step.thumb} alt="" loading="lazy" />
-					{:else}
-						<div class="blank"></div>
-					{/if}
-					<figcaption>
-						<span class="what">{step.what}</span>
-						<span class="where">{hostOf(step.url)}</span>
-					</figcaption>
-				</figure>
-			{/each}
-			<button class="clear" onclick={() => browserAgent.clearSteps()}>Clear</button>
-		</div>
+		<aside class="activity" aria-label="Activity">
+			<header>
+				<span class="title">Activity</span>
+				<button class="link" onclick={() => browserAgent.clearSteps()}>Clear</button>
+				<button class="close" title="Hide activity" aria-label="Hide activity" onclick={toggleSteps}>
+					<Icon icon="ri:close-line" width="14" />
+				</button>
+			</header>
+			<ol class="trail" bind:this={trail}>
+				{#each browserAgent.steps as step (step.id)}
+					{@const open = step.id === openId}
+					<li class="step" class:open class:failed={!step.ok} class:live={step.id === latestId && browserAgent.driving}>
+						<button class="row" onclick={() => (chosen = open ? -1 : step.id)} aria-expanded={open}>
+							<span class="glyph"><Icon icon={step.ok ? glyph(step.op) : 'ri:error-warning-line'} width="13" /></span>
+							<span class="text">
+								<span class="what">{step.what}</span>
+								<span class="meta">{hostOf(step.url)} · {ago(step.at)}</span>
+							</span>
+						</button>
+						{#if open && step.thumb}
+							<img class="shot" src={step.thumb} alt={`The page after: ${step.what}`} />
+						{/if}
+					</li>
+				{/each}
+			</ol>
+		</aside>
 	{/if}
+	</div>
 </div>
 
 <style>
@@ -425,58 +472,145 @@
 		background: var(--surface);
 	}
 
-	.steps {
+	.body {
+		flex: 1;
+		min-height: 0;
 		display: flex;
-		gap: 8px;
-		padding: 8px;
-		overflow-x: auto;
-		border-top: 1px solid var(--border);
+		container-type: inline-size;
+	}
+	/* A narrow pane keeps most of its width for the page. */
+	@container (max-width: 640px) {
+		.activity {
+			width: 208px;
+		}
+	}
+
+	.activity {
+		width: 264px;
 		flex-shrink: 0;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+		border-left: 1px solid var(--border);
+		background: var(--surface);
+	}
+	.activity header {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 12px 12px 8px 16px;
+	}
+	.title {
+		flex: 1;
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--text);
+	}
+	.link {
+		font-size: 12px;
+		color: var(--text-muted);
+	}
+	.link:hover {
+		color: var(--text);
+	}
+	.close {
+		display: inline-flex;
+		color: var(--text-muted);
+	}
+	.close:hover {
+		color: var(--text);
+	}
+
+	.trail {
+		list-style: none;
+		margin: 0;
+		padding: 0 12px 16px 8px;
+		overflow-y: auto;
+		flex: 1;
+		min-height: 0;
 	}
 	.step {
-		flex: 0 0 132px;
-		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
+		position: relative;
 	}
-	.step img,
-	.step .blank {
-		width: 132px;
-		height: 80px;
-		object-fit: cover;
-		object-position: top;
-		border: 1px solid var(--border);
+	/* The thread between glyphs. */
+	.step:not(:last-child)::before {
+		content: '';
+		position: absolute;
+		left: 16px;
+		top: 28px;
+		bottom: -4px;
+		width: 1px;
+		background: var(--border);
+	}
+	.row {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		width: 100%;
+		padding: 4px;
+		border-radius: 12px;
+		text-align: left;
+	}
+	.row:hover {
 		background: var(--surface-elevated, var(--surface));
 	}
-	.step figcaption {
+	.glyph {
+		flex-shrink: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		border-radius: 50%;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text-muted);
+	}
+	.step.open .glyph {
+		color: var(--text);
+		border-color: var(--border-strong, var(--border));
+	}
+	.step.live .glyph {
+		color: var(--primary);
+		border-color: var(--primary);
+	}
+	.step.failed .glyph {
+		color: var(--warning);
+	}
+	.text {
 		display: flex;
 		flex-direction: column;
-		font-size: 11px;
-		line-height: 1.3;
+		min-width: 0;
+		padding-top: 4px;
 	}
 	.what {
+		font-size: 13px;
+		line-height: 1.35;
 		color: var(--text);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		overflow-wrap: anywhere;
 	}
-	.where {
+	.step:not(.open) .what {
 		color: var(--text-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 	.step.failed .what {
 		color: var(--text-muted);
-		text-decoration: line-through;
 	}
-	.clear {
-		align-self: center;
-		flex-shrink: 0;
-		padding: 0 8px;
-		font-size: 12px;
+	.meta {
+		font-size: 11px;
 		color: var(--text-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.shot {
+		display: block;
+		width: calc(100% - 36px);
+		margin: 4px 0 8px 36px;
+		aspect-ratio: 16 / 10;
+		object-fit: cover;
+		object-position: top;
+		border-radius: 12px;
+		border: 1px solid var(--border);
 	}
 	.note {
 		color: var(--text-muted);
