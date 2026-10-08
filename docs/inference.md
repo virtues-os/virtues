@@ -25,9 +25,11 @@ Two HTTP contracts:
 | `POST /v1/rerank` | No | Precision on the results of a search |
 
 Without an embedder there is no semantic search and no indexing at all.
-Without a reranker search still works, ranked by vector similarity and
-lexical fusion alone, at slightly lower precision - a real option, not a
-degraded mode to be ashamed of.
+The reranker is optional, and search doesn't call it unless you turn it on.
+On our own search tests, the small rerankers we ship ranked results worse
+than the embedder and keyword match they followed, so search ranks by those
+two alone. To try a reranker anyway, set `VIRTUES_RERANK_GAP` (a value from
+0 to 1; 1 reranks every search).
 
 Both endpoints must be on **your own machine, your LAN, or your VPN**. The
 installer refuses a public address: loopback, RFC1918, link-local, CGNAT
