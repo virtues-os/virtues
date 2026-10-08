@@ -68,7 +68,7 @@
 		font-family: var(--font-sans);
 		font-size: 13px;
 		font-weight: 500;
-		color: var(--color-foreground-muted);
+		color: var(--color-foreground);
 	}
 	.label {
 		display: inline-flex;

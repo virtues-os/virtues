@@ -12,7 +12,7 @@
 	"Help Virtues out" lives here too, where the day is read: a stay whose
 	place Virtues can't name is "Unknown · <city>", its question one line
 	under it. A yes-or-no question answers there, "Were you at Sandy's?
-	Yes  No…": "No…" opens the prototype's card (ReviewCard) in this column in
+	Yes  No": "No" opens the prototype's card (ReviewCard) in this column in
 	place of the list, for the other answers (on Home or Work it goes
 	straight to tapping the map); any other question has one way in,
 	"Which of 7 places nearby?  Choose"; the tile over the map steps through the other
@@ -22,7 +22,7 @@
 	import { untrack } from 'svelte';
 	import type { InspectorPick as Pick, InspectorRow, InspectorSection } from '$lib/timeline/inspector';
 	import { lineAt, lineTime, rowLines } from '$lib/timeline/transcript';
-	import TextAction from '$lib/components/TextAction.svelte';
+	import Pill from '$lib/components/timeline/Pill.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import ReviewCard from '$lib/components/timeline/ReviewCard.svelte';
 	import { getNearbyPlaces, type NearbyPlace } from '$lib/wiki/api';
@@ -314,40 +314,43 @@
 						{@const id = asked.id}
 						{@const a = askFor(asked)}
 						{@const yes = a.yes}
-						<p class="ask-line">
+						<!-- The stay and its question are one thing to point at: the line
+						     selects the stay as its header does (the header button is
+						     the keyboard's way in), and the hover takes both. -->
+						<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+						<div class="ask-line" onclick={(e) => !(e.target as HTMLElement).closest('button') && pickSection(i, sec)}>
 							<span>{a.line}</span>
 							{#if yes}
 								<span class="ask-actions">
-									<TextAction disabled={review.saving} onclick={() => void review.answer(id, yes)}>Yes</TextAction>
-									<TextAction onclick={() => (a.role ? review.startPointing(id, a.role) : ask(id))}>No…</TextAction>
+									<Pill filled disabled={review.saving} onclick={() => void review.answer(id, yes)}>Yes</Pill>
+									<Pill onclick={() => (a.role ? review.startPointing(id, a.role) : ask(id))}>No</Pill>
 								</span>
 							{:else}
-								<TextAction onclick={() => ask(id)}>Choose</TextAction>
+								<Pill onclick={() => ask(id)}>Choose</Pill>
 							{/if}
-						</p>
+						</div>
 					{:else if review?.undo && review.undo.at === sec.placeId}
-						<p class="ask-line">
+						<div class="ask-line">
 							<span>{review.undo.said}</span>
-							<TextAction onclick={() => void review.undoLast()}>Undo</TextAction>
-						</p>
+							<Pill onclick={() => void review.undoLast()}>Undo</Pill>
+						</div>
 					{:else if sec.kind === 'place' && !sec.named && sec.source !== 'home' && sec.source !== 'work' && sec.placeId && !sec.placeId.startsWith('visit:') && !(review && review.byPlace.has(sec.placeId))}
 						{@const placeId = sec.placeId}
 						{#if naming === placeId}
 							<form class="name-form" onsubmit={(e) => (e.preventDefault(), saveName(placeId))}>
 								{#if sec.guessed}<p class="same">Named from the map</p>{/if}
 								{#if nearby.length}
-									<p class="same">
-										Same as
-										{#each nearby as p, k (p.id)}{#if k > 0}, {/if}<TextAction inline disabled={saving} onclick={() => sameAs(placeId, p)}>{p.name}</TextAction>{/each}?
-									</p>
+									<p class="same">Same as</p>
+									<span class="pills">
+										{#each nearby as p (p.id)}<Pill disabled={saving} onclick={() => sameAs(placeId, p)}>{p.name}</Pill>{/each}
+									</span>
 								{/if}
 								{#if onrole}
-									<p class="roles">
-										<TextAction inline disabled={saving} onclick={() => setRole(placeId, 'home')}>{replacing ? 'Replace your Home' : 'Home'}</TextAction>
-										·
-										<TextAction inline disabled={saving} onclick={() => setRole(placeId, 'work')}>Work</TextAction>
-										{#if replacing}<span class="replace-note">This replaces the Home you set.</span>{/if}
-									</p>
+									<span class="pills">
+										<Pill disabled={saving} onclick={() => setRole(placeId, 'home')}>{replacing ? 'Replace your Home' : 'Home'}</Pill>
+										<Pill disabled={saving} onclick={() => setRole(placeId, 'work')}>Work</Pill>
+									</span>
+									{#if replacing}<p class="same">This replaces the Home you set.</p>{/if}
 								{/if}
 								<!-- svelte-ignore a11y_autofocus -->
 								<input
@@ -358,9 +361,9 @@
 									autofocus
 									onkeydown={(e) => e.key === 'Escape' && stopNaming()}
 								/>
-								<span class="name-actions">
-									<TextAction type="submit" disabled={!draft.trim()} loading={saving}>Save the name</TextAction>
-									<TextAction quiet onclick={stopNaming}>Cancel</TextAction>
+								<span class="pills">
+									<Pill filled type="submit" disabled={!draft.trim() || saving}>Save the Name</Pill>
+									<Pill quiet onclick={stopNaming}>Cancel</Pill>
 								</span>
 								{#if nameError}<p class="name-error">{nameError}</p>{/if}
 							</form>
@@ -374,7 +377,7 @@
 								</button>
 							{:else}
 								<span class="name-door" class:shown={i === curSection}>
-									<TextAction onclick={() => startNaming(placeId)}>Name this place</TextAction>
+									<Pill onclick={() => startNaming(placeId)}>Name This Place</Pill>
 								</span>
 							{/if}
 						{/if}
@@ -489,6 +492,10 @@
 	}
 	.sec:hover,
 	.row:hover {
+		background: var(--hover-bg);
+	}
+	/* A stay and its question line light together, wherever the pointer is. */
+	.group:has(> .sec:hover, > .ask-line:hover) > :is(.sec, .ask-line) {
 		background: var(--hover-bg);
 	}
 	/* Where the playhead is: an edge in the accent, which means now. */
@@ -678,24 +685,26 @@
 	/* "Help Virtues out" in the list: a question as its stay's second line,
 	   in the type of "From the map · Not right?", with one way in; an
 	   answer's Undo takes the same line. */
-	.ask-actions {
+	.ask-actions,
+	.pills {
 		display: flex;
-		gap: 16px;
+		flex-wrap: wrap;
+		gap: 8px;
 	}
 	.ask-line {
 		display: flex;
-		align-items: baseline;
+		align-items: center;
 		justify-content: space-between;
 		gap: 12px;
 		margin: 0;
-		/* "Answer" ends where the durations above it do. */
+		/* The buttons end where the durations above them do. */
 		padding: 0 40px 8px 32px;
 		font-size: 13px;
 		line-height: 1.3;
 		color: var(--color-foreground-muted);
+		cursor: pointer;
 	}
-	.same,
-	.roles {
+	.same {
 		margin: 0;
 		font-size: 13px;
 		color: var(--color-foreground-muted);
@@ -725,11 +734,6 @@
 	.info:focus-visible {
 		opacity: 1;
 	}
-	.replace-note {
-		display: block;
-		margin-top: 4px;
-		font-size: 12px;
-	}
 	.name-input {
 		width: 100%;
 		padding: 8px 12px;
@@ -743,11 +747,6 @@
 	.name-input:focus {
 		outline: none;
 		border-color: var(--color-primary);
-	}
-	.name-actions {
-		display: flex;
-		gap: 16px;
-		font-size: 14px;
 	}
 	.name-error {
 		margin: 0;

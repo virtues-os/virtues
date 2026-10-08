@@ -37,7 +37,7 @@
 	import { focusZoom, sendAnswer, type PlaceCandidate } from '$lib/timeline/review';
 	import Icon from '$lib/components/Icon.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
-	import TextAction from '$lib/components/TextAction.svelte';
+	import Pill from '$lib/components/timeline/Pill.svelte';
 	import { laneData, NO_LANES, type Lanes, type RibbonKind } from '$lib/timeline/lanes';
 	import { buildFolds, clampView, HOUR, MIN, midnightIn, tierOf, tierView, unwarp, warp, weekOf, mondayOf, zoneOffset, type Tier } from '$lib/timeline/scale';
 	import { colourVars, mapInk } from '$lib/timeline/colours';
@@ -691,7 +691,7 @@
 	}
 	/** The day's path at its own weights, and faded while a place is asked
 	 *  about (main.js:2209-2214): the place is the subject then. */
-	const TRACK_OPACITY = { 'track-run': [0.55, 0.1], 'track-bridge': [0.4, 0.08], 'track-drive': [0.85, 0.1] } as const;
+	const TRACK_OPACITY = { 'track-run': [0.55, 0.1], 'track-bridge': [0.4, 0.08], 'track-drive': [0.85, 0.1], 'lit-run': [0.95, 0.1], 'lit-bridge': [0.9, 0.08] } as const;
 	let glow: Marker | null = null;
 	/** "Help Virtues out": the questions, answers and Undo, shared by the
 	 *  day's list and its Review. An answer re-reads the day's titles. */
@@ -1337,7 +1337,7 @@
 				<IconButton icon="ri:arrow-left-s-line" label="Previous day" size="sm" onclick={() => (date = stepDay(date, -1))} />
 				<IconButton icon="ri:arrow-right-s-line" label="Next day" size="sm" disabled={date >= today} onclick={() => (date = stepDay(date, 1))} />
 				<IconButton icon="ri:calendar-line" label="Show the month" size="sm" pressed={monthOpen} onclick={() => (monthOpen = !monthOpen)} />
-				{#if date !== today}<span class="date-today"><TextAction onclick={() => (date = today)}>Today</TextAction></span>{/if}
+				{#if date !== today}<span class="date-today"><Pill quiet onclick={() => (date = today)}>Today</Pill></span>{/if}
 			</div>
 			<button class="date-title" type="button" title="Back to the whole day" onclick={resetView}>{title}</button>
 		</div>
@@ -1377,7 +1377,7 @@
 				<button class="pointing-btn" type="button" onclick={() => review.cancelPointing()}>Cancel</button>
 				<button class="pointing-btn save" type="button" disabled={!tapped} onclick={() => tapped && review.savePointed(tapped)}>Save Here</button>
 			</div>
-			<button class="pointing-skip" type="button" onclick={() => review.skipPointing()}>Skip - don't ask again</button>
+			<button class="pointing-btn skip" type="button" onclick={() => review.skipPointing()}>Skip - don't ask again</button>
 		</div>
 	{/if}
 
@@ -1515,8 +1515,7 @@
 		min-height: 24px;
 	}
 	.date-today {
-		margin-left: 8px;
-		font-size: 13px;
+		margin-left: 4px;
 	}
 	.date-title {
 		display: block;
@@ -1548,7 +1547,8 @@
 		font-family: var(--font-sans);
 		font-size: 14px;
 		font-weight: 500;
-		color: var(--color-primary);
+		/* Virtues' secondary button: the foreground's ink on the surface. */
+		color: var(--color-foreground);
 		cursor: pointer;
 	}
 	.timeline:not(.with-inspector) .reset {
@@ -1659,11 +1659,13 @@
 		display: flex;
 		gap: 8px;
 	}
+	/* Pills, as everywhere in the Timeline (Pill.svelte), drawn on the
+	   banner's blue: Save Here filled white, Cancel and Skip quiet. */
 	.pointing-btn {
 		flex: 1;
-		min-height: 36px;
+		min-height: 32px;
 		border: 0;
-		border-radius: 12px;
+		border-radius: 999px;
 		background: color-mix(in srgb, var(--color-background) 18%, transparent);
 		color: var(--color-background);
 		font-family: var(--font-sans);
@@ -1679,16 +1681,15 @@
 		opacity: 0.45;
 		cursor: default;
 	}
-	.pointing-skip {
+	.pointing-btn.skip {
+		min-height: 28px;
 		margin-top: 8px;
-		border: 0;
+		padding: 0 12px;
 		background: none;
-		color: var(--color-background);
-		font-family: var(--font-sans);
 		font-size: 12px;
-		text-decoration: underline;
-		opacity: 0.85;
-		cursor: pointer;
+	}
+	.pointing-btn.skip:hover {
+		background: color-mix(in srgb, var(--color-background) 18%, transparent);
 	}
 	/* The day's note speaks of the day, not of the place asked about or
 	   pointed to. */
@@ -1700,6 +1701,12 @@
 	.timeline.focusing :global(.tl-pin),
 	.timeline.focusing :global(.tl-bubble) {
 		filter: opacity(0.22);
+	}
+	/* A faded mark is a mark; a faded caption is a ghost over the place
+	   being asked about. Captions and knot cards wait until the card closes. */
+	.timeline.focusing :global(.tl-bubble-label),
+	.timeline.focusing :global(.tl-card) {
+		display: none;
 	}
 	.timeline :global(.tl-pin) {
 		width: 16px;

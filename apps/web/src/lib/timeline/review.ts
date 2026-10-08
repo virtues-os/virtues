@@ -162,7 +162,6 @@ export function askFor(q: PlaceQuestion): Ask {
 	const n = q.naming;
 	const cands = n.candidates.filter((c) => c.name !== q.rejected_match);
 	const named = (name: string, category: string | null = null): Answer => ({ kind: "name", name, category });
-	// "No…" leads on, to pointing to the place on the map.
 	const yesNo = (text: string, role: "home" | "work", yes: Answer, no: Answer): Ask => ({
 		text,
 		line: text,
@@ -170,7 +169,7 @@ export function askFor(q: PlaceQuestion): Ask {
 		role,
 		chips: [
 			{ label: "Yes", answer: yes },
-			{ label: "No…", answer: no },
+			{ label: "No", answer: no },
 		],
 		picks: [],
 		other: null,

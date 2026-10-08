@@ -39,7 +39,7 @@ describe("the place questions", () => {
 		expect(h.text).toBe("Is this home?");
 		expect(h.chips.map((c) => [c.label, c.answer])).toEqual([
 			["Yes", { kind: "home" }],
-			["No…", { kind: "not_home" }],
+			["No", { kind: "not_home" }],
 		]);
 		expect(h.line).toBe("Is this home?");
 		expect(h.yes).toEqual({ kind: "home" });

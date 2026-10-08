@@ -7,7 +7,7 @@
 	Day" returns to the list, and so does an answer.
 -->
 <script lang="ts">
-	import TextAction from '$lib/components/TextAction.svelte';
+	import Pill from '$lib/components/timeline/Pill.svelte';
 	import ReviewAsk from '$lib/components/timeline/ReviewAsk.svelte';
 	import { askFor, type ConfirmedPlace, type PlaceCandidate, type PlaceQuestion } from '$lib/timeline/review';
 	import type { ReviewState } from '$lib/timeline/reviewState.svelte';
@@ -58,7 +58,7 @@
 
 <div class="card">
 	<div class="top">
-		<TextAction quiet onclick={onback}>‹ Back to the Day</TextAction>
+		<Pill quiet onclick={onback}>‹ Back to the Day</Pill>
 	</div>
 
 	{#if q}
@@ -91,7 +91,7 @@
 		{#if review.undo}
 			<div class="undo" role="status">
 				<span>{review.undo.said}</span>
-				<TextAction onclick={() => void review.undoLast()}>Undo</TextAction>
+				<Pill onclick={() => void review.undoLast()}>Undo</Pill>
 			</div>
 		{/if}
 	{/if}
@@ -127,7 +127,7 @@
 	}
 	.undo {
 		display: flex;
-		align-items: baseline;
+		align-items: center;
 		justify-content: space-between;
 		gap: 12px;
 		padding: 8px 16px 12px;
