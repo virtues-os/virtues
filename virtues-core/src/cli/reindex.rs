@@ -21,6 +21,7 @@ use crate::error::{Error, Result};
 pub async fn run(yes: bool) -> Result<()> {
     let database_url = crate::database::normalize_database_url()?;
     let db = crate::database::Database::new(&database_url)?;
+    db.connect().await?;
 
     println!("Rebuild the search index from source with the current model.");
     println!("This wipes the derived vector + BM25 index — your source data is untouched;");

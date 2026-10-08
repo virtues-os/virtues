@@ -95,7 +95,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         }
 
         Commands::Volumes { cmd } => {
-            virtues.database.initialize().await?;
+            virtues.database.connect().await?;
             let pool = virtues.database.pool();
             match cmd {
                 types::VolumesCmd::Ls => volumes::list(&pool).await?,
@@ -336,8 +336,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         }
 
         Commands::ComputeNovelty => {
-            println!("Running migrations...");
-            virtues.database.initialize().await?;
+            virtues.database.connect().await?;
             println!("Computing novelty scores for all days...");
 
             let pool = virtues.database.pool();
@@ -399,8 +398,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         }
 
         Commands::AnnotateEvents => {
-            println!("Running migrations...");
-            virtues.database.initialize().await?;
+            virtues.database.connect().await?;
             println!("Annotating events (avg_hr, entities, source_ontologies)...");
 
             let pool = virtues.database.pool();
@@ -422,7 +420,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         }
 
         Commands::SessionizeAudio { date } => {
-            virtues.database.initialize().await?;
+            virtues.database.connect().await?;
             let pool = virtues.database.pool();
 
             let dates: Vec<chrono::NaiveDate> = if let Some(d) = date {
@@ -450,14 +448,10 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         }
 
         Commands::DaySummary { date, narrate_only, segment_only, from, to } => {
-            // `--narrate-only` / `--segment-only` read an already-migrated DB (e.g.
-            // a box snapshot) and only re-run one stage — skip migrations so a
-            // snapshot whose `_sqlx_migrations` checksums differ from this branch
-            // still runs.
-            if !narrate_only && !segment_only {
-                println!("Running migrations...");
-                virtues.database.initialize().await?;
-            }
+            // Connects, never migrates. A box snapshot whose `_sqlx_migrations`
+            // checksums differ from this branch still runs: only a pending
+            // migration refuses, and VIRTUES_SKIP_MIGRATIONS=1 skips even that.
+            virtues.database.connect().await?;
 
             let pool = virtues.database.pool();
 
@@ -684,8 +678,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         }
 
         Commands::ComputeAutonomic => {
-            println!("Running migrations...");
-            virtues.database.initialize().await?;
+            virtues.database.connect().await?;
             println!("Computing autonomic scores for all days...");
 
             let pool = virtues.database.pool();
