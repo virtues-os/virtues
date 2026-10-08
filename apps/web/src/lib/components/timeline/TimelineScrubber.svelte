@@ -177,7 +177,18 @@
 			.map((r) => {
 				const sp = span(r.s, r.e);
 				if (!sp) return null;
-				const colour = r.held ? (r.kind === 'place' ? 'var(--c-place)' : 'var(--c-move)') : r.kind === 'gap' ? 'var(--c-gap)' : r.kind === 'transit' ? 'var(--c-move)' : 'var(--c-place)';
+				const colour =
+					r.kind === 'sleep'
+						? 'var(--c-rest)'
+						: r.held
+							? r.kind === 'place'
+								? 'var(--c-place)'
+								: 'var(--c-move)'
+							: r.kind === 'gap'
+								? 'var(--c-gap)'
+								: r.kind === 'transit'
+									? 'var(--c-move)'
+									: 'var(--c-place)';
 				const label = expanded && r.kind === 'place' && !r.held && sp.w > 34 ? fitWords(r.title, Math.floor((sp.w - 16) / 6)) : '';
 				return { ...sp, r, colour, label };
 			})
