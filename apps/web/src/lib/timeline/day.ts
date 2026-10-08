@@ -46,6 +46,9 @@ export interface TimelineDay {
 	last_point_before: TimelineDayPoint | null;
 	/** Nights overlapping the day, each joined from all of its records. */
 	nights: { started_at: string; ended_at: string; asleep_minutes: number }[];
+	/** Nights Apple Health didn't record: the person's usual night, to be cut
+	 *  where the day's record shows them awake or elsewhere. */
+	estimated_nights?: { started_at: string; ended_at: string; from_nights: number }[];
 	/** speaker_mode: 0 ambient, 1 one voice, 2 a conversation, 3 a group.
 	 *  title: the transcriber's heading for its longest stretch of speech. */
 	sessions: {

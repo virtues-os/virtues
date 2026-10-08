@@ -104,7 +104,7 @@ export interface InspectorSection {
 	/** A stay's audio note: "no audio" or "silent", only when clear-cut. */
 	atag: "no audio" | "silent" | null;
 	/** In Bed only: where the night came from. */
-	src: "healthkit" | "quiet_hours" | null;
+	src: "healthkit" | "quiet_hours" | "estimated" | null;
 }
 
 const HOUR = 3_600_000;
@@ -220,8 +220,9 @@ export function buildInspector(w: DerivedWindow, start: number, end: number, voi
 				};
 			case "sleep": {
 				// A night keeps its full length, though the day only shows its part.
-				const src = s.metadata.source === "healthkit" ? "healthkit" : "quiet_hours";
-				return { ...base, kind: "sleep", title: "In Bed", dur: fmtDur(s.e - s.s), src };
+				const src = s.metadata.source === "healthkit" ? "healthkit" : s.metadata.source === "estimated" ? "estimated" : "quiet_hours";
+				// An estimate says so in its length: "~7h 30m".
+				return { ...base, kind: "sleep", title: "In Bed", dur: `${src === "estimated" ? "~" : ""}${fmtDur(s.e - s.s)}`, src };
 			}
 			case "unknown": {
 				// Says only what the record knows: no location, and what the

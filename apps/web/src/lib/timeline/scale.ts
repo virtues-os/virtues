@@ -25,8 +25,8 @@ export type Tier = "week" | "day" | "hour" | "min";
 /** The folds: every detected night, plus 01:00-06:00 on a date none of them
  *  touches before 09:00, merged where they overlap (main.js:100-111).
  *  `midnights` are the local midnights of the dates in view. */
-export function buildFolds(nights: { s: number; e: number }[], midnights: number[]): Fold[] {
-	const all: Fold[] = nights.map((n) => ({ a: n.s, b: n.e, est: false }));
+export function buildFolds(nights: { s: number; e: number; est?: boolean }[], midnights: number[]): Fold[] {
+	const all: Fold[] = nights.map((n) => ({ a: n.s, b: n.e, est: !!n.est }));
 	for (const md of midnights) {
 		if (!nights.some((n) => n.s < md + 9 * HOUR && n.e > md)) all.push({ a: md + HOUR, b: md + 6 * HOUR, est: true });
 	}

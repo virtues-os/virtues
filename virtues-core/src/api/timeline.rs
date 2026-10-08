@@ -34,6 +34,9 @@ pub struct TimelineDay {
     /// Nights overlapping the day: the one it woke from and the one it went
     /// to bed in.
     pub nights: Vec<NightSpan>,
+    /// Nights Apple Health didn't record, estimated from the person's usual
+    /// night; the client cuts each where the day's record shows them awake.
+    pub estimated_nights: Vec<EstimatedNight>,
     pub sessions: Vec<AudioSession>,
     pub steps: Vec<StepBin>,
     /// A busy 10 minutes for this person: the 92nd percentile of their step
@@ -67,6 +70,15 @@ pub struct NightSpan {
     pub started_at: DateTime<Utc>,
     pub ended_at: DateTime<Utc>,
     pub asleep_minutes: i64,
+}
+
+/// A night estimated from the person's usual night (`dayline::sleep::UsualNight`).
+#[derive(Debug, Serialize)]
+pub struct EstimatedNight {
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
+    /// How many recorded nights the usual night was taken from.
+    pub from_nights: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -175,7 +187,23 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
         .into_iter()
         .filter(|n| n.start < end)
         .map(|n| NightSpan { started_at: n.start, ended_at: n.end, asleep_minutes: n.asleep_minutes })
-        .collect();
+        .collect::<Vec<_>>();
+
+    // The night this day woke from and the one it went to bed into, where
+    // Apple Health recorded neither: the usual night, never in the future.
+    let tz: chrono_tz::Tz = zone.parse().unwrap_or(chrono_tz::UTC);
+    let now = Utc::now();
+    let estimated_nights = match crate::dayline::sleep::usual_night_before(pool, start, tz).await? {
+        Some(u) => [Some(date), date.succ_opt()]
+            .into_iter()
+            .flatten()
+            .filter_map(|d| u.ending_on(d, tz))
+            .filter(|(s, e)| *e <= now && *s < end && *e > start)
+            .filter(|(s, e)| !nights.iter().any(|n| n.started_at < *e && n.ended_at > *s))
+            .map(|(s, e)| EstimatedNight { started_at: s, ended_at: e, from_nights: u.nights })
+            .collect(),
+        None => Vec::new(),
+    };
 
     let sessions = sqlx::query(
         "SELECT s.id, s.started_at, s.ended_at, s.speaker_mode, s.content, t.title \
@@ -277,6 +305,7 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
         points,
         last_point_before,
         nights,
+        estimated_nights,
         sessions,
         steps,
         // absent-ok: no step was ever counted, so any scale draws nothing.

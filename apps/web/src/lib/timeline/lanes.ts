@@ -179,7 +179,7 @@ export interface Lanes {
 	a: number;
 	b: number;
 	ribbon: RibbonSpan[];
-	nights: { s: number; e: number }[];
+	nights: { s: number; e: number; est?: boolean }[];
 	/** Every window the mic recorded. */
 	voice: { s: number; e: number }[];
 	conversations: ScrubConversation[];
@@ -235,7 +235,7 @@ export function laneData(derived: DerivedWindow | null, voice: VoiceWindow[], lw
 		ribbon: ribbon(
 			sections.flatMap((x) => (x.kind === "sleep" ? [] : [{ s: x.s, e: x.e, kind: x.kind, title: x.title }])),
 		),
-		nights: sections.filter((x) => x.kind === "sleep").map((x) => ({ s: x.s, e: x.e })),
+		nights: sections.filter((x) => x.kind === "sleep").map((x) => ({ s: x.s, e: x.e, ...(x.src === "estimated" ? { est: true } : {}) })),
 		voice: windows.map((w) => ({ s: w.s, e: w.e })),
 		conversations,
 		steps: (lw?.steps ?? []).map((x) => ({ t: t(x.occurred_at), v: x.step_count })),

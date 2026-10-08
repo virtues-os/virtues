@@ -5,7 +5,8 @@
 //! wiki_event per day from it. Called as a deterministic pre-step in the EOD
 //! maintenance flow.
 
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, NaiveDate, TimeZone, Timelike, Utc};
+use chrono_tz::Tz;
 use serde_json::Value;
 use sqlx::PgPool;
 
@@ -103,6 +104,67 @@ pub async fn nights_ending_between(
         .into_iter()
         .filter(|n| n.end >= from && n.end < to)
         .collect())
+}
+
+/// A recorded night shorter than this is a nap, and doesn't shape the usual
+/// night.
+const USUAL_NIGHT_MIN_HOURS: i64 = 3;
+/// How far back the recorded nights that shape the usual night go.
+const USUAL_NIGHT_LOOKBACK_DAYS: i64 = 60;
+/// With fewer recorded nights than this, nothing is estimated.
+const USUAL_NIGHT_MIN_NIGHTS: usize = 7;
+
+/// A person's usual night, from the nights Apple Health recorded: the median
+/// bedtime and wake-up as wall-clock minutes after local noon, so a night
+/// across midnight is one span (22:30 is 630, 06:00 is 1080). Measured on 37
+/// recorded nights, the median band landed within 30 minutes of the recorded
+/// bedtime on 22 and of the recorded wake-up on 35; the longest silence on
+/// the mic, the prototype's rule, woke the person about 3 hours late.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UsualNight {
+    pub bed: i64,
+    pub wake: i64,
+    /// How many recorded nights it was taken from.
+    pub nights: usize,
+}
+
+fn since_noon(t: DateTime<Utc>, tz: Tz) -> i64 {
+    let l = t.with_timezone(&tz);
+    (i64::from(l.hour()) * 60 + i64::from(l.minute()) + 720) % 1440
+}
+
+fn median(mut v: Vec<i64>) -> i64 {
+    v.sort_unstable();
+    v[v.len() / 2]
+}
+
+/// The usual night of `nights`, read in `tz`; `None` with too few full nights.
+pub fn usual_night(nights: &[Night], tz: Tz) -> Option<UsualNight> {
+    let full: Vec<&Night> = nights
+        .iter()
+        .filter(|n| n.end - n.start >= Duration::hours(USUAL_NIGHT_MIN_HOURS))
+        .collect();
+    if full.len() < USUAL_NIGHT_MIN_NIGHTS {
+        return None;
+    }
+    let bed = median(full.iter().map(|n| since_noon(n.start, tz)).collect());
+    let wake = median(full.iter().map(|n| since_noon(n.end, tz)).collect());
+    (wake > bed).then_some(UsualNight { bed, wake, nights: full.len() })
+}
+
+impl UsualNight {
+    /// The usual night that ends on the morning of `date`, in `tz`.
+    pub fn ending_on(&self, date: NaiveDate, tz: Tz) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+        let noon = date.pred_opt()?.and_hms_opt(12, 0, 0)?;
+        let at = |m: i64| tz.from_local_datetime(&(noon + Duration::minutes(m))).earliest().map(|t| t.with_timezone(&Utc));
+        Some((at(self.bed)?, at(self.wake)?))
+    }
+}
+
+/// The usual night of the nights recorded in the 60 days before `before`.
+pub async fn usual_night_before(pool: &PgPool, before: DateTime<Utc>, tz: Tz) -> Result<Option<UsualNight>> {
+    let nights = nights_ending_between(pool, before - Duration::days(USUAL_NIGHT_LOOKBACK_DAYS), before).await?;
+    Ok(usual_night(&nights, tz))
 }
 
 /// The night `date` woke up from: of the nights ending inside the day, the
@@ -319,6 +381,29 @@ mod tests {
             .and_hms_opt(hh, mm, 0)
             .unwrap()
             .and_utc()
+    }
+
+    fn night(start: DateTime<Utc>, end: DateTime<Utc>) -> Night {
+        Night { start, end, asleep_minutes: (end - start).num_minutes(), stages: vec![] }
+    }
+
+    #[test]
+    fn the_usual_night_is_the_median_bedtime_and_wake_up() {
+        // Bed 22:00-23:00 and up 05:30-06:30 in UTC, over eight nights, with
+        // a nap that doesn't count.
+        let mut ns: Vec<Night> = (1..=8)
+            .map(|d| night(at(22, (d * 7 % 60) as u32, d), at(6, (d * 5 % 30) as u32, d + 1) - Duration::minutes(15)))
+            .collect();
+        ns.push(night(at(14, 0, 9), at(15, 0, 9)));
+        let u = usual_night(&ns, chrono_tz::UTC).expect("eight full nights");
+        assert_eq!(u.nights, 8);
+        assert!((600..=660).contains(&u.bed), "bed {}", u.bed);
+        assert!((1050..=1110).contains(&u.wake), "wake {}", u.wake);
+        // It ends on the morning asked for, and begins the evening before.
+        let (s, e) = u.ending_on(NaiveDate::from_ymd_opt(2026, 1, 20).unwrap(), chrono_tz::UTC).unwrap();
+        assert_eq!((s.date_naive().to_string(), e.date_naive().to_string()), ("2026-01-19".to_string(), "2026-01-20".to_string()));
+        // Too few nights estimate nothing.
+        assert!(usual_night(&ns[..5], chrono_tz::UTC).is_none());
     }
 
     fn rec(start: DateTime<Utc>, end: DateTime<Utc>) -> SleepRecord {
