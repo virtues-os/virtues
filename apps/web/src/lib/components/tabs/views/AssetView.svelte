@@ -243,7 +243,7 @@
 		padding: 16px;
 	}
 	.asset-body.framed {
-		background: var(--color-surface-sunken, #000);
+		background: var(--color-surface-elevated);
 		padding: 0;
 	}
 	/* Text/CSV panes own their scroll and padding — fill the body edge-to-edge. */
