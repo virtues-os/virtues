@@ -99,32 +99,28 @@ pub async fn run_agent_loop(
     };
     let mut llm_messages = build_context_for_llm(&messages, None, 0, Some(&system_prompt), None);
 
-    // Providers (Bedrock, zai) require the first non-system message to be a
-    // user message. Two ways that breaks here: a folder applet with no linked
-    // chat has an empty history (system prompt only), and a compacted chat's
-    // post-checkpoint tail can begin with an assistant turn. Insert a
-    // synthetic kickoff turn right after the system message when needed.
-    let first_non_system = llm_messages
-        .iter()
-        .position(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"));
-    let needs_kickoff = match first_non_system {
-        None => true, // system-only (or empty) conversation
-        Some(i) => llm_messages[i].get("role").and_then(|r| r.as_str()) != Some("user"),
-    };
-    if needs_kickoff {
-        let at = first_non_system.unwrap_or(llm_messages.len());
-        llm_messages.insert(
-            at,
-            serde_json::json!({
-                "role": "user",
-                // When a person sent something, THAT is the turn. The synthetic
-                // instruction is for wakes nobody asked for — a clock, a poll.
-                // Handing the applet "Run your action instruction now." while
-                // the user's actual words sat in a side channel would make the
-                // message a footnote to a prompt about itself.
-                "content": message.unwrap_or("Run your action instruction now."),
-            }),
-        );
+    add_wake_turn(&mut llm_messages, message);
+    // The person's words go into the chat too, so the conversation shows
+    // what was said.
+    if let (Some(text), Some(cid)) = (message, &chat_id) {
+        let said = ChatMessage {
+            id: None,
+            role: "user".to_string(),
+            content: text.to_string(),
+            timestamp: Timestamp::now(),
+            model: None,
+            provider: None,
+            agent_id: None,
+            tool_calls: None,
+            reasoning: None,
+            intent: None,
+            subject: None,
+            reasoning_details: None,
+            parts: None,
+        };
+        if let Err(e) = append_message(pool, cid.clone(), said).await {
+            tracing::warn!(applet_id, error = %e, "failed to post the message to the applet's chat");
+        }
     }
 
     // 4. Get tools and model
@@ -332,6 +328,31 @@ pub async fn run_agent_loop(
 // Helpers
 // ============================================================================
 
+/// What a wake nobody asked for (a clock, a poll) runs on.
+const RUN_INSTRUCTION: &str = "Run your action instruction now.";
+
+/// Ends the conversation on this wake's own turn, after whatever the chat
+/// already holds: the person's message when they sent one, the instruction
+/// otherwise. Without a turn of its own a run on a chat-linked applet ended on
+/// the applet's last reply, which the model reads as text to continue, and a
+/// message sent to it was never read at all.
+///
+/// Providers (Bedrock, zai) also require the first non-system message to be a
+/// user message, and a compacted chat's post-checkpoint tail can begin with
+/// an assistant turn, so that case opens with the instruction.
+fn add_wake_turn(llm_messages: &mut Vec<serde_json::Value>, message: Option<&str>) {
+    let role = |m: &serde_json::Value| m.get("role").and_then(|r| r.as_str()).map(str::to_owned);
+    if let Some(i) = llm_messages.iter().position(|m| role(m).as_deref() != Some("system")) {
+        if role(&llm_messages[i]).as_deref() != Some("user") {
+            llm_messages.insert(i, serde_json::json!({ "role": "user", "content": RUN_INSTRUCTION }));
+        }
+    }
+    llm_messages.push(serde_json::json!({
+        "role": "user",
+        "content": message.unwrap_or(RUN_INSTRUCTION),
+    }));
+}
+
 /// Load chat messages for context building.
 async fn load_chat_messages(pool: &PgPool, chat_id: &str) -> Result<Vec<ChatMessage>> {
     let rows = sqlx::query_as::<_, (
@@ -429,4 +450,61 @@ async fn build_applet_system_prompt(
     }
 
     prompt
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    fn roles_and_text(m: &[Value]) -> Vec<(String, String)> {
+        m.iter()
+            .map(|x| (x["role"].as_str().unwrap().to_string(), x["content"].as_str().unwrap_or("").to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn a_message_is_the_last_turn_after_the_chat_history() {
+        let mut m = vec![
+            json!({"role": "system", "content": "s"}),
+            json!({"role": "user", "content": "I had eggs"}),
+            json!({"role": "assistant", "content": "Logged."}),
+        ];
+        add_wake_turn(&mut m, Some("And toast"));
+        assert_eq!(roles_and_text(&m).last().unwrap(), &("user".to_string(), "And toast".to_string()));
+        assert_eq!(m.len(), 4, "nothing else is added when the history already opens with the person");
+    }
+
+    #[test]
+    fn a_scheduled_wake_on_a_chat_ends_on_the_instruction_not_the_last_reply() {
+        let mut m = vec![
+            json!({"role": "system", "content": "s"}),
+            json!({"role": "user", "content": "Make it weekly"}),
+            json!({"role": "assistant", "content": "Done."}),
+        ];
+        add_wake_turn(&mut m, None);
+        assert_eq!(roles_and_text(&m).last().unwrap(), &("user".to_string(), RUN_INSTRUCTION.to_string()));
+    }
+
+    #[test]
+    fn an_empty_history_gets_one_turn() {
+        let mut m = vec![json!({"role": "system", "content": "s"})];
+        add_wake_turn(&mut m, None);
+        assert_eq!(
+            roles_and_text(&m),
+            vec![("system".into(), "s".into()), ("user".into(), RUN_INSTRUCTION.into())]
+        );
+    }
+
+    #[test]
+    fn a_tail_that_opens_on_an_assistant_turn_is_opened_by_the_instruction() {
+        let mut m = vec![
+            json!({"role": "system", "content": "s"}),
+            json!({"role": "assistant", "content": "Earlier reply"}),
+        ];
+        add_wake_turn(&mut m, Some("Hello"));
+        let r = roles_and_text(&m);
+        assert_eq!(r[1].0, "user", "providers need the first non-system turn to be the user's");
+        assert_eq!(r.last().unwrap(), &("user".to_string(), "Hello".to_string()));
+    }
 }
