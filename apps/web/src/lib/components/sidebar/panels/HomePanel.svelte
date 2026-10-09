@@ -731,7 +731,6 @@
 	<button
 		type="button"
 		class="panel-row panel-door"
-		class:active={activeRoute === '/applets'}
 		aria-expanded={myApplets.length > 0 ? !folded('applets') : undefined}
 		onclick={openApplets}
 	>
