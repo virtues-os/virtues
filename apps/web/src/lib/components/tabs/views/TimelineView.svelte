@@ -85,22 +85,26 @@
 	/** How long to wait before asking an unreachable box for its map again. */
 	const MAP_RETRY_MS = 5000;
 	let mapRetry = 0;
-	/** The day's own sources and layers, drawn over the basemap. */
-	const OWN = ['track-run', 'track-bridge', 'track-drive', 'lit-glow', 'lit-run', 'lit-bridge', 'review-dots', 'review-names'];
-	/** A theme switch swaps the basemap and carries the day's track across, so
-	 *  nothing reloads. */
+	/** The basemap the map is drawn on: every source and layer not in it is
+	 *  the day's own. */
+	let base: StyleSpecification | null = null;
+	/** A theme switch swaps the basemap and carries the day's own sources and
+	 *  layers across, so nothing reloads. */
 	async function restyle() {
 		const m = map;
 		if (!m) return;
 		const night = dark;
 		const next = await baseStyle(night);
 		if (map !== m || dark !== night) return;
+		const was = base;
+		base = next;
 		m.setStyle(next, {
 			transformStyle: (prev, fresh) => {
-				if (!prev) return fresh;
+				if (!prev || !was) return fresh;
 				const sources = { ...fresh.sources };
-				for (const id of OWN) if (prev.sources[id]) sources[id] = prev.sources[id];
-				return { ...fresh, sources, layers: [...fresh.layers, ...prev.layers.filter((l) => OWN.includes(l.id))] };
+				for (const [id, src] of Object.entries(prev.sources)) if (!(id in was.sources)) sources[id] = src;
+				const baseLayers = new Set(was.layers.map((l) => l.id));
+				return { ...fresh, sources, layers: [...fresh.layers, ...prev.layers.filter((l) => !baseLayers.has(l.id))] };
 			},
 		});
 	}
@@ -302,6 +306,7 @@
 			if (cancelled || !container) return;
 			const style = await baseStyle(dark);
 			if (cancelled || !container) return;
+			base = style;
 			const m = new ml.Map({
 				container,
 				style,
