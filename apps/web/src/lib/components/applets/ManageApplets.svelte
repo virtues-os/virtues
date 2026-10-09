@@ -6,7 +6,6 @@
 	 */
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
-	import TextAction from '$lib/components/TextAction.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import MenuItem from '$lib/components/MenuItem.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
@@ -216,25 +215,25 @@
 	// cells. Origin and Lifecycle stay as hidden columns so their filters and
 	// search keep working.
 	const columns: Column<Applet>[] = [
-		{ key: 'name', label: 'Name', width: '26%', minWidth: '160px' },
+		{ key: 'name', label: 'Name', width: '30%', minWidth: '200px' },
 		{
 			key: 'config',
 			label: 'Goes to',
-			width: '18%',
+			width: '22%',
 			minWidth: '130px',
 			getValue: (a) => appletDestination(a)
 		},
 		{
 			key: 'schedule',
 			label: 'Runs',
-			width: '24%',
+			width: '16%',
 			minWidth: '130px',
 			getValue: (a) => runsLabel(a)
 		},
 		{
 			key: 'pulse',
 			label: 'Last 7 days',
-			width: '120px',
+			width: '128px',
 			// Sorting by this column puts the least reliable applets first.
 			getValue: (a) => -reliabilityScore(daysOf(a))
 		},
@@ -307,7 +306,10 @@
 
 <section class="applets-panel">
 	{#if fromList}
-		<TextAction quiet onclick={back}>Back to Applets</TextAction>
+		<button type="button" class="backlink" onclick={back}>
+			<Icon icon="ri:arrow-left-line" width="14" />
+			Back to Applets
+		</button>
 	{/if}
 	<header class="section-header">
 		<div>
@@ -352,6 +354,11 @@
 		</div>
 	</header>
 
+	{#if runDaysErr}
+		<!-- Said once for the table, not in every row. -->
+		<p class="days-note">Your server couldn't send the last 7 days, so that column is empty.</p>
+	{/if}
+	<div class="table-card">
 	<UniversalDataGrid
 		items={ordered}
 		{columns}
@@ -372,10 +379,15 @@
 		{#snippet tableRow(a)}
 			{@const outcome = outcomeOf(a)}
 			<td>
-				<span class="name" class:muted={!a.enabled || a.archived_at}>{a.name}</span>
+				<span class="name-cell">
+					<span class="tile" aria-hidden="true"><AtlasIcon name={appletGlyph(a)} size={14} bare /></span>
+					<span class="name" class:muted={!a.enabled || a.archived_at}>{a.name}</span>
+				</span>
 			</td>
 			<td>
-				<!-- Where its work goes, as a way there: the applet's page. -->
+				<!-- Where its work goes, as a way there: the applet's page. An
+				     applet that doesn't say gets nothing rather than a dash. -->
+				{#if appletDestination(a) !== '-'}
 				<button
 					type="button"
 					class="goes"
@@ -389,14 +401,13 @@
 					<AtlasIcon name={appletGlyph(a)} size={14} bare />
 					<span class="goes-text">{appletDestination(a)}</span>
 				</button>
+				{/if}
 			</td>
 			<td>
 				<span class="runs" class:muted={!a.enabled || a.archived_at}>{runsLabel(a)}</span>
 			</td>
 			<td class="week-cell">
-				{#if runDaysErr}
-					<span class="muted" title={runDaysErr}>Unavailable</span>
-				{:else if !a.enabled || a.archived_at}
+				{#if runDaysErr || !a.enabled || a.archived_at}
 					<span class="muted">-</span>
 				{:else}
 					<button
@@ -447,6 +458,7 @@
 			</td>
 		{/snippet}
 	</UniversalDataGrid>
+	</div>
 
 	{#if finished.length > 0}
 		<div class="finished-row">
@@ -507,6 +519,53 @@
 		font-family: var(--font-serif, ui-serif, Georgia, serif);
 		font-size: 1rem;
 		color: var(--color-foreground);
+	}
+	.backlink {
+		align-self: flex-start;
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+	}
+	.backlink:hover {
+		color: var(--color-foreground);
+	}
+	/* The table sits on a card, as the prototype draws it: a list of things
+	   you can act on, not a run of hairlines across the page. */
+	.days-note {
+		margin: 0;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+	.table-card {
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
+		background: var(--color-surface);
+		overflow: hidden;
+		padding: 0 16px 8px;
+	}
+	.name-cell {
+		display: inline-flex;
+		align-items: center;
+		gap: 12px;
+		min-width: 0;
+	}
+	.tile {
+		width: 28px;
+		height: 28px;
+		flex: none;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 6px;
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		color: var(--color-foreground-muted);
 	}
 	/* Rows tall enough for the Retry button they can carry. */
 	td {
