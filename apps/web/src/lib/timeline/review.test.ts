@@ -65,13 +65,22 @@ describe("the place questions", () => {
 		expect(pickAnswer([cand("Blue Door", 10), cand("Corner Park", 20, "outdoors")])).toEqual({ kind: "name", name: "Blue Door, Corner Park", category: null });
 	});
 
-	it("offers a named place just out of reach by name", () => {
-		const a = askFor(question({ naming: { hint: cand("Country Club", 140, "outdoors") } }));
-		expect(a.text).toBe("Were you at Country Club?");
-		// A yes-or-no question answers "Yes" from the list's line.
-		expect(a.yes).toEqual({ kind: "name", name: "Country Club", category: "outdoors" });
-		expect(a.chips).toEqual([{ label: "Yes, that’s it", answer: { kind: "name", name: "Country Club", category: "outdoors" } }]);
+	it("asks about one named place within reach by name, with a No that sets it aside", () => {
+		const a = askFor(question({ naming: { candidates: [cand("Blue Door", 40)] } }));
+		expect(a.text).toBe("Were you at Blue Door?");
+		// A yes-or-no question answers from the list's line.
+		expect(a.yes).toEqual({ kind: "name", name: "Blue Door", category: "dining" });
+		expect(a.no).toEqual({ kind: "not_this", name: "Blue Door" });
+		expect(a.chips.map((c) => c.label)).toEqual(["Yes, that’s it", "No"]);
 		expect(a.other).toBe("place");
+	});
+
+	it("offers a named place further out only as a suggestion, never by name", () => {
+		const a = askFor(question({ naming: { hint: cand("Country Club", 140, "outdoors"), nearby: ["Country Club", "Pine Grill"] } }));
+		expect(a.text).toBe("Virtues couldn’t name this spot. What was it?");
+		expect(a.yes).toBeUndefined();
+		expect(a.chips.map((c) => c.label)).toEqual(["Country Club", "Pine Grill"]);
+		expect(a.chips[0].answer).toEqual({ kind: "name", name: "Country Club", category: "outdoors" });
 	});
 
 	it("after a night, asks whose home, offering a nearby place too", () => {
@@ -80,14 +89,17 @@ describe("the place questions", () => {
 		expect(a.line).toBe("Whose place was this?");
 		expect(a.chips.map((c) => c.label)).toEqual(["Mine / family"]);
 		expect(a.other).toBe("person");
-		const b = askFor(question({ overnight: true, naming: { hint: cand("Hotel Rowan", 120, "lodging") } }));
-		expect(b.text).toBe("Were you at Hotel Rowan, or someone’s home?");
+		const b = askFor(question({ overnight: true, naming: { candidates: [cand("Blue Door", 40)] } }));
+		expect(b.text).toBe("Were you at Blue Door, or someone’s home?");
 		expect(b.other).toBe("person");
 		expect(homeOf(" Sam ")).toBe("Sam’s place");
 		// A night beside a hotel asks about the hotel, even with a nearer place.
 		const h = askFor(question({ overnight: true, naming: { tier: "ambiguous", candidates: [cand("Maple Diner", 20), cand("Pine Grill", 30)], lodging: cand("Hotel Rowan", 90, "lodging") } }));
 		expect(h.text).toBe("Were you at Hotel Rowan?");
 		expect(h.chips[0].answer).toEqual({ kind: "name", name: "Hotel Rowan", category: "lodging" });
+		// A hotel the map doesn't list is typed as a place, never as a person's home.
+		expect(h.no).toEqual({ kind: "not_this", name: "Hotel Rowan" });
+		expect(h.other).toBe("place");
 		expect(askFor(question({ naming: { lodging: cand("Hotel Rowan", 90, "lodging") } })).text).not.toContain("Hotel Rowan");
 		// Where the box holds no list of places, a night there is no evidence of a home.
 		const c = askFor(question({ overnight: true, naming: { street_detail: false } }));

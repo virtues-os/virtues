@@ -107,6 +107,9 @@ export interface Ask {
 	/** A yes-or-no question's "Yes", answered from the list's line; any
 	 *  other question is chosen in its card. */
 	yes?: Answer;
+	/** Its "No": the guess set aside for good, so the place is asked about
+	 *  without it. */
+	no?: Answer;
 	/** One-tap answers. */
 	chips: { label: string; answer: Answer }[];
 	/** "Which of these were you at?": the places to pick from, more than one
@@ -177,19 +180,25 @@ export function askFor(q: PlaceQuestion): Ask {
 	if (q.ask === "home") return yesNo(q.changed ? "Is this your home now?" : "Is this home?", "home", { kind: "home" }, { kind: "not_home" });
 	if (q.ask === "work")
 		return yesNo(q.changed ? "Is this where you work now?" : "Is this where you work?", "work", { kind: "work" }, { kind: "not_work" });
-	// A night beside a hotel: was it the hotel?
+	/** "Were you at X?": Yes names the place after X; No sets X aside. */
+	const guess = (c: PlaceCandidate) => ({
+		text: `Were you at ${c.name}?`,
+		line: `Were you at ${c.name}?`,
+		yes: named(c.name, c.category),
+		no: { kind: "not_this", name: c.name } as Answer,
+		chips: [
+			{ label: "Yes, that’s it", answer: named(c.name, c.category) },
+			{ label: "No", answer: { kind: "not_this", name: c.name } as Answer },
+		],
+		picks: [],
+		other: "place" as const,
+		shown: [c],
+		reachM: c.meters,
+	});
+	// A night beside a hotel: was it the hotel? If not, the hotel the person
+	// stayed at may be one the map doesn't list: Other takes its name.
 	const hotel = n.lodging && n.lodging.name !== q.rejected_match ? n.lodging : null;
-	if (q.overnight && hotel)
-		return {
-			text: `Were you at ${hotel.name}?`,
-			line: `Were you at ${hotel.name}?`,
-			yes: named(hotel.name, hotel.category),
-			chips: [{ label: "Yes, that’s it", answer: named(hotel.name, hotel.category) }],
-			picks: [],
-			other: "person",
-			shown: [hotel],
-			reachM: hotel.meters,
-		};
+	if (q.overnight && hotel) return guess(hotel);
 	if (cands.length > 1)
 		return {
 			text: "Which of these were you at?",
@@ -200,26 +209,23 @@ export function askFor(q: PlaceQuestion): Ask {
 			shown: cands,
 			reachM: Math.max(...cands.map((c) => c.meters)),
 		};
-	const near = cands[0] ?? (n.hint && n.hint.name !== q.rejected_match ? n.hint : null);
-	if (near) {
-		const base = { picks: [], shown: [near], reachM: near.meters };
-		return q.overnight
-			? {
-					...base,
-					text: `Were you at ${near.name}, or someone’s home?`,
-					line: `Were you at ${near.name}, or someone’s home?`,
-					chips: [{ label: near.name, answer: named(near.name, near.category) }],
-					other: "person",
-				}
-			: {
-					...base,
-					text: `Were you at ${near.name}?`,
-					line: `Were you at ${near.name}?`,
-					yes: named(near.name, near.category),
-					chips: [{ label: "Yes, that’s it", answer: named(near.name, near.category) }],
-					other: "place",
-				};
-	}
+	// One named place within reach: asked about by name. A named place
+	// further out (60-250 m) is never asked about by name: too often it was
+	// a neighbour (a car dealership beside a stay, a park beside a pool), so
+	// it is only one of the suggestions below (the owner's call, 2026-10-09).
+	const near = cands[0] ?? null;
+	if (near && q.overnight)
+		return {
+			text: `Were you at ${near.name}, or someone’s home?`,
+			line: `Were you at ${near.name}, or someone’s home?`,
+			chips: [{ label: near.name, answer: named(near.name, near.category) }],
+			picks: [],
+			other: "person",
+			shown: [near],
+			reachM: near.meters,
+		};
+	if (near) return guess(near);
+	const hint = n.hint && n.hint.name !== q.rejected_match ? n.hint : null;
 	// Without the map's places here, nothing named nearby means nothing seen,
 	// not nothing there: a night may have been a hotel as well as a home.
 	if (q.overnight && !n.street_detail)
@@ -242,14 +248,19 @@ export function askFor(q: PlaceQuestion): Ask {
 			shown: [],
 			reachM: 0,
 		};
+	// The named places around, nearest first, as one-tap answers; with none,
+	// the kinds of place.
+	const around = [...new Set([...(hint ? [hint.name] : []), ...n.nearby])].filter((x) => x !== q.rejected_match).slice(0, 3);
 	return {
 		text: "Virtues couldn’t name this spot. What was it?",
 		line: "What was this spot?",
-		chips: KINDS.map((k) => ({ label: k, answer: named(k) })),
+		chips: around.length
+			? around.map((x) => ({ label: x, answer: named(x, x === hint?.name ? hint.category : null) }))
+			: KINDS.map((k) => ({ label: k, answer: named(k) })),
 		picks: [],
 		other: "place",
-		shown: [],
-		reachM: 0,
+		shown: hint ? [hint] : [],
+		reachM: hint ? hint.meters : 0,
 	};
 }
 
