@@ -287,6 +287,16 @@
 
 	// Same grace the scheduler and the table use.
 	const OVERDUE_GRACE_MS = 60 * 60 * 1000;
+	// The run the problem line already describes isn't listed again below it.
+	const recentRuns = $derived(log.filter((e) => e !== failedNow).slice(0, 7));
+
+	// Where its work goes, under the name, when that says something the page
+	// doesn't: an applet whose work is its conversation already has the
+	// Conversation button.
+	const showsDestination = $derived(
+		action ? appletDestination(action) !== '-' && appletGlyph(action) !== 'chats' : false
+	);
+
 	const overdue = $derived(
 		Boolean(
 			action?.next_due_at &&
@@ -357,7 +367,7 @@
 					<div class="title-block">
 						<h1 class="title">{action.name}</h1>
 						<p class="status">
-							{status}{#if appletDestination(action) !== '-'}<span class="goes" aria-label="goes to">
+							{status}{#if showsDestination}<span class="goes" aria-label="goes to">
 									<Icon icon="ri:arrow-right-line" width="12" />
 									{appletDestination(action)}</span
 								>{/if}
@@ -398,7 +408,6 @@
 								{#if chatId}
 									<Button variant="secondary" size="sm" onclick={openConversation}>Ask why</Button>
 								{/if}
-								<Button variant="ghost" size="sm" onclick={() => go('history')}>See the error</Button>
 						</div>
 					</div>
 				{:else if overdue}
@@ -409,7 +418,6 @@
 								{#if canRunNow}
 									<Button variant="secondary" size="sm" onclick={runNow} disabled={busy}>Run now</Button>
 								{/if}
-								<Button variant="ghost" size="sm" onclick={() => go('history')}>See run history</Button>
 						</div>
 					</div>
 				{/if}
@@ -458,13 +466,13 @@
 							{/each}
 						</nav>
 					</div>
-				{:else if log.length > 0}
+				{:else if recentRuns.length > 0}
 					<!-- No page to show yet (or it makes something else): what its
 					     last runs did, one line each, failures included. -->
 					<section class="recent">
 						<h2 class="list-head">Recent runs</h2>
 						<ul class="recent-list" role="list">
-							{#each log.slice(0, 7) as e (e.run_id ?? e.last_at)}
+							{#each recentRuns as e (e.run_id ?? e.last_at)}
 								<li class="recent-item">
 									<DayDot state={e.status === 'error' ? 'failed' : e.status === 'budget_exceeded' ? 'stopped' : e.status === 'success' ? 'ran' : 'quiet'} />
 									<span class="recent-when">{e.last_at ? dayLabel(e.last_at) : ''}</span>
