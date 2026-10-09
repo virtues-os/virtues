@@ -129,13 +129,17 @@ export function limitsOf(config: Record<string, unknown> | null | undefined): st
 }
 
 /**
- * The Atlas glyph for where an applet's work goes, as far as the server can
- * tell today: a live view (its face), its conversation, or the server itself
- * for built-in and source applets. Anything else draws the applets star until
- * applets declare where their work goes.
+ * The Atlas glyph for where an applet's work goes. What the applet declares
+ * (`config.delivers.kind`) comes first; otherwise what the server can see: a
+ * live view (its face), its conversation, or the server itself for built-in
+ * and source applets. Anything else draws the applets star.
  */
+const DELIVERS_GLYPH: Record<string, string> = { page: 'pages', chat: 'chats', dashboard: 'dashboard' };
+
 export function appletGlyph(a: Pick<Applet, 'origin' | 'has_face' | 'config'>): string {
 	if (a.origin === 'system' || a.origin === 'source') return 'settings';
+	const delivers = (a.config?.delivers as { kind?: unknown } | undefined)?.kind;
+	if (typeof delivers === 'string' && DELIVERS_GLYPH[delivers]) return DELIVERS_GLYPH[delivers];
 	if (a.has_face) return 'dashboard';
 	if (typeof a.config?.chat_id === 'string' && a.config.chat_id) return 'chats';
 	return 'applets';
