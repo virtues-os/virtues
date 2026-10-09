@@ -963,6 +963,11 @@ fn setup_applet_tool() -> ToolConfig {
                 "until": { "type": "string" },
                 "schema_sql": { "type": "string" },
                 "face_html": { "type": "string" },
+                "delivers": {
+                    "type": "string",
+                    "enum": ["page", "chat", "dashboard"],
+                    "description": "What each run makes; with page, a run that writes no page is recorded as failed"
+                },
                 "limits": {
                     "type": "object",
                     "properties": {
