@@ -62,4 +62,10 @@ describe('appletGlyph', () => {
 		expect(appletGlyph(a({ config: { chat_id: 'chat_1' } }))).toBe('chats');
 		expect(appletGlyph(a({}))).toBe('applets');
 	});
+
+	it('takes what the applet says it makes first', () => {
+		expect(appletGlyph(a({ config: { delivers: { kind: 'page' }, chat_id: 'chat_1' } }))).toBe('pages');
+		expect(appletGlyph(a({ config: { delivers: { kind: 'dashboard' } } }))).toBe('dashboard');
+		expect(appletGlyph(a({ config: { delivers: { kind: 'text' } } }))).toBe('applets');
+	});
 });
