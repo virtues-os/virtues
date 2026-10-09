@@ -144,3 +144,16 @@ export function appletGlyph(a: Pick<Applet, 'origin' | 'has_face' | 'config'>): 
 	if (typeof a.config?.chat_id === 'string' && a.config.chat_id) return 'chats';
 	return 'applets';
 }
+
+/**
+ * Where an applet's work goes, in words, for the table's "Goes to" column.
+ * The same reading as `appletGlyph`, so the icon and the words agree.
+ */
+export function appletDestination(a: Pick<Applet, 'origin' | 'has_face' | 'config'>): string {
+	const glyph = appletGlyph(a);
+	const title = (a.config?.delivers as { title?: unknown } | undefined)?.title;
+	if (glyph === 'pages') return typeof title === 'string' && title ? title : 'Pages';
+	return (
+		{ settings: 'This server', dashboard: 'Its dashboard', chats: 'Its conversation' } as Record<string, string>
+	)[glyph] ?? '-';
+}
