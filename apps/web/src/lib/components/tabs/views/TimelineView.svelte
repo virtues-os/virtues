@@ -26,6 +26,7 @@
 	import type { DerivedPlace, DerivedWindow, VoiceWindow } from '$lib/timeline/inspector';
 	import type { LaneWindow } from '$lib/timeline/lanes';
 	import { cleanTrack, dropSpikes, flagHoles, splitTrack, toFixes, type Fix, type Line } from '$lib/timeline/track';
+	import { wheelSource } from '$lib/timeline/wheel';
 	import { buildInspector, placeTitle, type InspectorPick, type InspectorSection } from '$lib/timeline/inspector';
 	import { anchorAt, positionAt, trackMetres } from '$lib/timeline/anchor';
 	import { Bubbles, type Area, type MapMoment } from '$lib/timeline/bubbles';
@@ -317,9 +318,9 @@
 			});
 			map = m;
 			// The prototype's gestures (dayback/src/main.js:988-993, 1870-1875): a
-			// pinch is the only zoom, two fingers pan, nothing rotates, and no
+			// pinch zooms, two fingers pan, nothing rotates, and no
 			// double-click, drag-box or keyboard zoom (the keys belong to the
-			// playhead).
+			// playhead). A mouse's wheel zooms (onWheel).
 			m.doubleClickZoom.disable();
 			m.boxZoom.disable();
 			m.keyboard.disable();
@@ -710,9 +711,13 @@
 	 *  cursor; over a place card the card's list scrolls (main.js:988-992). */
 	/** How fast a pinch (or a wheel with Ctrl) zooms the map. */
 	const PINCH_RATE = { trackpad: 1 / 80, wheel: 1 / 360 };
+	/** Two fingers pan; a mouse's wheel, with no pinch to zoom by, zooms
+	 *  (MapLibre's scroll zoom, about the pointer). */
+	const wheelFrom = wheelSource();
 	function onWheel(e: WheelEvent) {
 		following = false;
 		if (e.ctrlKey || e.metaKey) return;
+		if (wheelFrom(e) === 'mouse') return;
 		if ((e.target as HTMLElement | null)?.closest?.('.tl-card')) return;
 		e.preventDefault();
 		e.stopPropagation();
