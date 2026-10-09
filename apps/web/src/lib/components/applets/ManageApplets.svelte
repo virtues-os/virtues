@@ -20,7 +20,8 @@
 	} from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
-	import { describeSchedule, relativeTime } from '$lib/applets/palette';
+	import { appletDestination, appletGlyph, describeSchedule, relativeTime } from '$lib/applets/palette';
+	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { appletDays, DAY_LABEL, indexRunDays, lastDays, reliabilityScore, type DayState } from '$lib/applets/days';
 	import DayDot from './DayDot.svelte';
 	import Popover from '$lib/floating/primitives/Popover.svelte';
@@ -215,7 +216,14 @@
 	// cells. Origin and Lifecycle stay as hidden columns so their filters and
 	// search keep working.
 	const columns: Column<Applet>[] = [
-		{ key: 'name', label: 'Name', width: '30%', minWidth: '160px' },
+		{ key: 'name', label: 'Name', width: '26%', minWidth: '160px' },
+		{
+			key: 'config',
+			label: 'Goes to',
+			width: '18%',
+			minWidth: '130px',
+			getValue: (a) => appletDestination(a)
+		},
 		{
 			key: 'schedule',
 			label: 'Runs',
@@ -367,6 +375,12 @@
 				<span class="name" class:muted={!a.enabled || a.archived_at}>{a.name}</span>
 			</td>
 			<td>
+				<span class="goes" class:muted={!a.enabled || a.archived_at}>
+					<AtlasIcon name={appletGlyph(a)} size={14} bare />
+					{appletDestination(a)}
+				</span>
+			</td>
+			<td>
 				<span class="runs" class:muted={!a.enabled || a.archived_at}>{runsLabel(a)}</span>
 			</td>
 			<td class="week-cell">
@@ -483,6 +497,13 @@
 		font-family: var(--font-serif, ui-serif, Georgia, serif);
 		font-size: 1rem;
 		color: var(--color-foreground);
+	}
+	.goes {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
 	}
 	.runs {
 		font-size: 0.8125rem;

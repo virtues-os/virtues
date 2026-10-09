@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { appletGlyph, describeSchedule, limitsOf, relativeTime } from './palette';
+import { appletDestination, appletGlyph, describeSchedule, limitsOf, relativeTime } from './palette';
 
 describe('describeSchedule', () => {
 	it('reads daily and interval schedules as before', () => {
@@ -67,5 +67,21 @@ describe('appletGlyph', () => {
 		expect(appletGlyph(a({ config: { delivers: { kind: 'page' }, chat_id: 'chat_1' } }))).toBe('pages');
 		expect(appletGlyph(a({ config: { delivers: { kind: 'dashboard' } } }))).toBe('dashboard');
 		expect(appletGlyph(a({ config: { delivers: { kind: 'text' } } }))).toBe('applets');
+	});
+});
+
+describe('appletDestination', () => {
+	const a = (over: Record<string, unknown>) =>
+		({ origin: 'user', has_face: false, config: {}, ...over }) as Parameters<typeof appletDestination>[0];
+
+	it('says where the work goes in the words the icon means', () => {
+		expect(appletDestination(a({ config: { delivers: { kind: 'page', title: 'Morning Examen pages' } } }))).toBe(
+			'Morning Examen pages'
+		);
+		expect(appletDestination(a({ config: { delivers: { kind: 'page' } } }))).toBe('Pages');
+		expect(appletDestination(a({ origin: 'system' }))).toBe('This server');
+		expect(appletDestination(a({ has_face: true }))).toBe('Its dashboard');
+		expect(appletDestination(a({ config: { chat_id: 'c' } }))).toBe('Its conversation');
+		expect(appletDestination(a({}))).toBe('-');
 	});
 });
