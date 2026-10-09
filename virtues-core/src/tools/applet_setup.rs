@@ -80,6 +80,10 @@ pub(crate) struct Draft {
     schema_sql: Option<String>,
     face_html: Option<String>,
     limits: Option<serde_json::Value>,
+    /// What each run makes: "page", "chat" or "dashboard". Written to
+    /// `config.delivers`, where a page applet's run that writes no page is
+    /// recorded as failed (agent::applet_runner).
+    delivers: Option<String>,
     triggers: Vec<String>,
 }
 
@@ -115,6 +119,7 @@ impl Draft {
             schema_sql: opt_str(arguments, "schema_sql"),
             face_html: opt_str(arguments, "face_html"),
             limits: arguments.get("limits").cloned().filter(|v| v.is_object()),
+            delivers: opt_str(arguments, "delivers"),
             triggers,
         })
     }
@@ -123,7 +128,7 @@ impl Draft {
 /// The check: every finding a draft has, each naming its fix. Validates
 /// BEFORE anything touches disk, and is the whole of what `check_only` runs.
 pub(crate) async fn check(pool: &PgPool, draft: &Draft) -> Vec<serde_json::Value> {
-    let Draft { name, agent, schedule, condition, until, schema_sql, face_html, limits, triggers, .. } =
+    let Draft { name, agent, schedule, condition, until, schema_sql, face_html, limits, delivers, triggers, .. } =
         draft;
     let mut findings: Vec<serde_json::Value> = Vec::new();
 
@@ -219,6 +224,9 @@ pub(crate) async fn check(pool: &PgPool, draft: &Draft) -> Vec<serde_json::Value
     // on the gate and does nothing. So an unknown key is a finding, not a
     // silently-ignored field. (This is how `timeout` came to be advertised
     // for months while only `timeout_s` was ever read.)
+    if let Some(f) = check_delivers(delivers.as_deref()) {
+        findings.push(f);
+    }
     for f in check_limits(limits.as_ref()) {
         findings.push(f);
     }
@@ -258,7 +266,7 @@ pub async fn execute(
         })));
     }
 
-    let Draft { name, description, agent, schedule, condition, until, schema_sql, face_html, limits, triggers } =
+    let Draft { name, description, agent, schedule, condition, until, schema_sql, face_html, limits, delivers, triggers } =
         draft;
     let name = name.as_str();
     let description = description.as_str();
@@ -318,6 +326,11 @@ pub async fn execute(
         if let Ok(v) = toml_from_json(lim) {
             config.insert("limits".into(), v);
         }
+    }
+    if let Some(kind) = &delivers {
+        let mut d = toml::value::Table::new();
+        d.insert("kind".into(), toml::Value::String(kind.clone()));
+        config.insert("delivers".into(), toml::Value::Table(d));
     }
 
     let manifest = ManifestOut {
@@ -570,6 +583,21 @@ async fn check_prompt_tables(pool: &PgPool, prompt: &str) -> Vec<serde_json::Val
         .collect()
 }
 
+/// What an applet can say it makes. Only `page` is checked after a run; the
+/// others name the destination for the Applets page.
+const DELIVERS_KINDS: &[&str] = &["page", "chat", "dashboard"];
+
+fn check_delivers(delivers: Option<&str>) -> Option<serde_json::Value> {
+    let kind = delivers?;
+    (!DELIVERS_KINDS.contains(&kind)).then(|| {
+        finding(
+            "delivers",
+            &format!("unknown `delivers` kind `{kind}`"),
+            Some(&format!("one of: {}", DELIVERS_KINDS.join(", "))),
+        )
+    })
+}
+
 /// Validate the `limits` object: known keys, right types, sane values.
 fn check_limits(limits: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
     let mut out = Vec::new();
@@ -792,6 +820,15 @@ mod tests {
         assert!(AGENTS_MD.contains("\n## For builtin (Rust) applet development"));
         assert!(wants_guide(&serde_json::json!({ "guide": true })));
         assert!(!wants_guide(&serde_json::json!({ "name": "x", "description": "y" })));
+    }
+
+    #[test]
+    fn delivers_takes_only_the_kinds_the_box_knows() {
+        assert!(check_delivers(None).is_none());
+        assert!(check_delivers(Some("page")).is_none());
+        assert!(check_delivers(Some("dashboard")).is_none());
+        let f = check_delivers(Some("text")).expect("an unknown kind is a finding");
+        assert!(f["suggestion"].as_str().unwrap().contains("page, chat, dashboard"));
     }
 
     /// A typo in a table name is the failure the authoring contract calls out
