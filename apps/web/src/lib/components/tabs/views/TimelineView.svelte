@@ -417,9 +417,9 @@
 					});
 				}
 				// The lit stretch: the stretch of path the playhead is moving along,
-				// in the accent at the path's own weight, over a path otherwise ink
-				// all day - the accent means now, so only what you're looking at
-				// takes it. A drive picked from the inspector grows heavier over a
+				// in moving's orange at the path's own weight, over a path otherwise
+				// ink all day, so only what you're looking at takes the colour. A
+				// drive picked from the inspector turns a brighter orange over a
 				// soft halo (pick, below).
 				m.addSource('lit-run', { type: 'geojson', data: lines([]) });
 				m.addSource('lit-bridge', { type: 'geojson', data: lines([]) });

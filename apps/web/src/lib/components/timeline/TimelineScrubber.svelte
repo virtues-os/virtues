@@ -164,7 +164,7 @@
 				if (!sp) return null;
 				const dur = Math.max(1, Math.round((f.b - f.a) / HOUR));
 				const est = f.est ? '~' : '';
-				const label = sp.w <= 26 ? '' : sp.w > 88 ? `☾ Sleep · ${est}${dur}h` : sp.w > 46 ? `☾ ${est}${dur}h` : '☾';
+				const label = sp.w <= 26 ? '' : sp.w > 96 ? `☾ In Bed · ${est}${dur}h` : sp.w > 46 ? `☾ ${est}${dur}h` : '☾';
 				return { ...sp, est: f.est, label };
 			})
 			.filter((f) => f !== null),
