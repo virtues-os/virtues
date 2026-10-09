@@ -1,599 +1,320 @@
 <script lang="ts">
-	import Icon from '$lib/components/Icon.svelte';
+	/**
+	 * The Applets page in Home: the applets you made, each one row, the ones
+	 * that need you first.
+	 *
+	 * A row says when the applet runs and when it last did, or what went wrong
+	 * and the button that fixes it. Clicking it opens the applet's home, which
+	 * leads with what it made. Applets that have a conversation carry a chat
+	 * button that opens it beside the list, so the list stays in view.
+	 *
+	 * The table of every applet, with its days and runs, is Settings > Applets
+	 * (`ManageApplets.svelte`): checking applets is rarer than using them.
+	 * Built-in applets are listed there, and here only when one needs you.
+	 */
 	import Button from '$lib/components/Button.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
-	import MenuItem from '$lib/components/MenuItem.svelte';
-	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
-	import type { FilterDef } from '$lib/components/datagrid/types';
-	import { listApplets, adminReconcile, type Applet } from '$lib/api/client';
+	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
+	import { runApplet, type Applet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { describeSchedule, relativeTime } from '$lib/applets/palette';
-	import { formatMicrosPrecise } from '$lib/utils/currency';
-	import AppletCard from './AppletCard.svelte';
+	import { appletsStore } from '$lib/stores/applets.svelte';
+	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
+	import { pinMenuItem } from '$lib/pins/pinAction';
+	import { appletGlyph, describeSchedule, relativeTime } from '$lib/applets/palette';
+	import { needsYou } from '$lib/applets/days';
 	import GitImportModal from './GitImportModal.svelte';
-	import Popover from '$lib/floating/primitives/Popover.svelte';
-	import { contextMenu } from '$lib/stores/contextMenu.svelte';
+	import NewAppletSheet from './NewAppletSheet.svelte';
 
-	let applets = $state<Applet[]>([]);
-	let loading = $state(true);
-	let err = $state<string | null>(null);
-	let newMenuOpen = $state(false);
-	let moreMenuOpen = $state(false);
+	let newSheetOpen = $state(false);
 	let gitImportOpen = $state(false);
-	let reconciling = $state(false);
-	let reconcileMsg = $state<string | null>(null);
-	// Built-in (system) applets are plumbing — inspectable on demand, hidden
-	// by default so they don't crowd out yours. A filter, not a wall.
-	let showSystem = $state(false);
-	// Finished applets (lifecycle complete) are out of the way, not gone. They
-	// used to be filtered out with no way back: no archived filter, no history
-	// route since the phase-1 collapse, and the detail page's "Finished" branch
-	// reachable only by typing the URL. So a one-shot reminder fired, archived
-	// itself, and took its own output out of the interface — while the MODEL
-	// could still list it (`list_applets` has include_archived) and the person
-	// could not.
-	let showFinished = $state(false);
-
-	const finished = $derived(applets.filter((a) => a.archived_at));
-	const living = $derived(applets.filter((a) => !a.archived_at));
-
-	// Hide on `origin`, not `owner`. Every source fan-out row is owner='system'
-	// — that field is reconcile's write-authority, not provenance — so hiding
-	// by owner filed the Gmail sync you connected on purpose with the embedding
-	// indexer you have never thought about. `origin === 'system'` is the actual
-	// plumbing; a source's applets are yours and stay visible.
-	const systemCount = $derived(living.filter((a) => a.origin === 'system').length);
-	const pool = $derived(showFinished ? [...living, ...finished] : living);
-	const visible = $derived(showSystem ? pool : pool.filter((a) => a.origin !== 'system'));
-
-	// Needs-attention strip. Two signals now; credential-expired joins when
-	// credential surfacing lands.
-	//
-	// `budget_exceeded` is deliberately NOT here: a run stopped at a ceiling
-	// its owner set is working as configured, and filing it beside genuine
-	// breakage teaches people to ignore the strip.
-	//
-	// An hour is the grace, matching the scheduler's own ceiling — long enough
-	// that a busy box isn't accused, short enough that a daily applet which
-	// silently stopped firing is caught the same morning.
-	const OVERDUE_GRACE_MS = 60 * 60 * 1000;
-
-	type Attention = { applet: Applet; why: string };
-
-	const needsAttention = $derived.by((): Attention[] => {
-		const out: Attention[] = [];
-		for (const a of living) {
-			if (!a.enabled) continue;
-			if (a.last_run?.status === 'error') {
-				out.push({ applet: a, why: 'last run failed' });
-				continue;
-			}
-			// Silent non-execution: the slot passed and nothing ran. This is
-			// the failure the strip could not see before — an unschedulable
-			// cron, a job that never registered, a box that was off. It looks
-			// identical to health in every other view.
-			if (a.next_due_at) {
-				const late = Date.now() - new Date(a.next_due_at).getTime();
-				if (late > OVERDUE_GRACE_MS) {
-					out.push({ applet: a, why: `expected ${relativeTime(a.next_due_at)}` });
-				}
-			}
-		}
-		return out;
-	});
-
-	function startChatFlow() {
-		newMenuOpen = false;
-		windowShellStore.openTabFromRoute('/chat');
-	}
-
-	function startGitImportFlow() {
-		newMenuOpen = false;
-		gitImportOpen = true;
-	}
-
-	async function reconcile() {
-		reconciling = true;
-		reconcileMsg = null;
-		try {
-			const out = await adminReconcile();
-			reconcileMsg = `${out.upserted} upserted`;
-			await load();
-		} catch (e) {
-			err = e instanceof Error ? e.message : String(e);
-		} finally {
-			reconciling = false;
-		}
-	}
-
-	async function load() {
-		loading = true;
-		err = null;
-		try {
-			// One request. This used to fan out two more per applet — about
-			// fifty on a page — for the pulse and the last output, both of
-			// which the list query now carries.
-			applets = await listApplets();
-		} catch (e) {
-			err = e instanceof Error ? e.message : String(e);
-		} finally {
-			loading = false;
-		}
-	}
+	let retrying = $state<string | null>(null);
+	let err = $state<string | null>(null);
 
 	$effect(() => {
-		void load();
+		void appletsStore.load();
 	});
 
-	function openView(a: Applet) {
-		windowShellStore.openTabFromRoute(`/applet/${a.id}/view`);
+	// Yours, plus any other applet only while it needs you (a backup with no
+	// drive, a source whose sign-in lapsed).
+	const shown = $derived([
+		...appletsStore.mine,
+		...appletsStore.list.filter(
+			(a) => !appletsStore.mine.includes(a) && !a.archived_at && needsYou(a)
+		)
+	]);
+	const problems = $derived(shown.filter((a) => needsYou(a)));
+	const rest = $derived(
+		shown
+			.filter((a) => !needsYou(a))
+			.sort((a, b) => Number(!a.enabled) - Number(!b.enabled) || a.name.localeCompare(b.name))
+	);
+
+	function chatOf(a: Applet): string | null {
+		const id = a.config?.chat_id;
+		return typeof id === 'string' && id ? id : null;
 	}
 
-	function openDetail(a: Applet) {
-		windowShellStore.openAside({
-			type: 'applet',
-			label: a.name,
-			route: `/applet/${a.id}`,
-			icon: 'ri:flashlight-line'
-		});
-	}
+	// The same grace the scheduler uses before a run counts as late.
+	const OVERDUE_GRACE_MS = 60 * 60 * 1000;
 
-	// Default open: wherever you can actually use the thing.
-	//
-	// An applet you can talk to opens its detail page, because that is where
-	// the composer lives — a tracker has a face AND takes messages, and
-	// sending it to the full-page face landed you somewhere you could look at
-	// it but not say anything to it. A face you can only look at still opens
-	// full-page. Everything else opens its settings.
-	function openCard(a: Applet) {
-		if (a.triggers?.includes('message')) openDetail(a);
-		else if (a.has_face) openView(a);
-		else openDetail(a);
-	}
-
-	// Right-click: pick view (if it has one) or settings explicitly.
-	function rowContextMenu(a: Applet, e: MouseEvent) {
-		e.preventDefault();
-		const items = [];
-		if (a.has_face) {
-			items.push({
-				id: 'view',
-				label: 'Open view',
-				icon: 'ri:layout-2-line',
-				applet: () => openView(a)
-			});
+	function line(a: Applet): { text: string; problem: boolean } {
+		if (a.enabled && !a.archived_at && a.last_run?.status === 'error') {
+			return { text: `Last run failed ${relativeTime(a.last_run.started_at)}`, problem: true };
 		}
-		items.push({
-			id: 'detail',
-			label: 'Settings & runs',
-			icon: 'ri:settings-3-line',
-			applet: () => openDetail(a)
-		});
+		if (
+			a.enabled &&
+			a.next_due_at &&
+			Date.now() - new Date(a.next_due_at).getTime() > OVERDUE_GRACE_MS
+		) {
+			return { text: `Was due ${relativeTime(a.next_due_at)} and hasn't run`, problem: true };
+		}
+		if (!a.enabled) return { text: 'Off', problem: false };
+		const runs = describeSchedule(a.schedule);
+		const last = a.last_run?.started_at;
+		return { text: last ? `${runs} · last ran ${relativeTime(last)}` : runs, problem: false };
+	}
+
+	// "Run now" is refused unless the applet lists the manual trigger.
+	const canRetry = (a: Applet) => a.enabled && !a.archived_at && a.triggers.includes('manual');
+
+	function openHome(a: Applet) {
+		windowShellStore.openTabFromRoute(`/applet/${a.id}`, { label: a.name, focusExisting: true });
+	}
+
+	function openConversation(a: Applet) {
+		const chat = chatOf(a);
+		if (!chat) return;
+		windowShellStore.openAside({ type: 'chat', label: a.name, route: `/chat/${chat}`, icon: 'atlas:applets' });
+	}
+
+	function openManage() {
+		windowShellStore.openTabFromRoute('/virtues/applets', { label: 'Settings' });
+	}
+
+	async function retry(a: Applet) {
+		retrying = a.id;
+		err = null;
+		try {
+			await runApplet(a.id);
+			await appletsStore.load();
+		} catch (e) {
+			err = e instanceof Error ? e.message : String(e);
+		} finally {
+			retrying = null;
+		}
+	}
+
+	function rowMenu(a: Applet, e: MouseEvent) {
+		e.preventDefault();
+		const items: ContextMenuItem[] = [
+			{ id: 'home', label: 'Open applet', icon: 'atlas:applets', action: () => openHome(a) }
+		];
+		if (chatOf(a)) {
+			items.push({ id: 'chat', label: 'Open conversation', icon: 'ri:chat-3-line', action: () => openConversation(a) });
+		}
+		if (canRetry(a)) {
+			items.push({ id: 'run', label: 'Run now', icon: 'ri:play-line', action: () => void retry(a) });
+		}
+		items.push(pinMenuItem({ url: `/applet/${a.id}`, label: a.name, icon: 'atlas:applets' }));
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
-
-	function lastRunStatus(applet: Applet): string {
-		const lr = applet.last_run;
-		if (!lr) return '—';
-		return lr.status ?? '—';
-	}
-
-	function lifecycleLabel(a: Applet): string {
-		if (!a.until) return 'forever';
-		return a.until.toLowerCase() === 'once' ? 'once' : 'until';
-	}
-
-	// What made this applet, in the user's terms. "Source" is the one that was
-	// unsayable before: those rows are owner='system' and read as built-in, but
-	// they exist because the user connected something.
-	const ORIGIN_LABEL: Record<string, string> = {
-		source: 'Source',
-		ai: 'AI-authored',
-		user: 'You',
-		system: 'Built-in'
-	};
-
-	const columns: Column<Applet>[] = [
-		{ key: 'name', label: 'Name', width: '22%', minWidth: '140px' },
-		{
-			// The row's whole informational payload. Without it the table is six
-			// columns of machine vocabulary and a name the reader could already
-			// guess — Origin and Lifecycle badges answering questions nobody
-			// asked, while "what is this thing for" went unanswered.
-			key: 'description',
-			label: 'What it does',
-			width: '32%',
-			minWidth: '200px',
-			getValue: (a) => a.description ?? '—'
-		},
-		// Origin and Lifecycle are filters, not columns. As columns they were
-		// two badges of provenance and bookkeeping answering questions nobody
-		// walks up to this page with, in the space where "what is this for"
-		// belonged. Both remain in the filter bar and in search.
-		{
-			key: 'origin',
-			label: 'Origin',
-			hidden: true,
-			getValue: (a) => ORIGIN_LABEL[a.origin] ?? a.origin
-		},
-		{
-			key: 'until',
-			label: 'Lifecycle',
-			hidden: true,
-			getValue: (a) => lifecycleLabel(a)
-		},
-		{
-			key: 'schedule',
-			label: 'Schedule',
-			getValue: (a) => describeSchedule(a.schedule)
-		},
-		{
-			key: 'id',
-			label: 'Last run',
-			getValue: (a) => a.last_run?.started_at ? relativeTime(a.last_run.started_at) : '—'
-		},
-		{
-			key: 'next_due_at',
-			label: 'Next run',
-			// The scheduler's own answer, not a re-derivation from the cron
-			// string — so a row that stopped firing reads as overdue here
-			// rather than confidently predicting a run that will never come.
-			getValue: (a) => (a.next_due_at ? relativeTime(a.next_due_at) : '—')
-		},
-		// Two facts, two columns. One column headed "Status", keyed on `enabled`
-		// and rendering the last RUN's status, answered neither question: an
-		// applet you had switched off still showed "Success" from whenever it
-		// last ran, and whether it was on at all could only be discovered
-		// through a filter.
-		{
-			key: 'enabled',
-			label: 'On',
-			format: 'badge',
-			getValue: (a) => (a.archived_at ? 'finished' : a.enabled ? 'on' : 'off'),
-			badgeColors: { on: 'badge-success', off: 'badge-muted', finished: 'badge-info' }
-		},
-		// Cost is not a per-row fact for most of this table — every sync, every
-		// indexer, every ingest is deterministic and spends nothing, so the
-		// column reads "—" on the large majority of rows by design. It earns
-		// its width on the few that do spend: an AI-authored applet on an
-		// hourly schedule is the one thing here that can quietly run up a bill,
-		// and this is where you would find out. `null` is unknown, not free
-		// (see `spend_week_micros`), so both render "—" rather than "$0.00"
-		// claiming something the box could not confirm.
-		{
-			key: 'spend_week_micros',
-			label: 'Cost / week',
-			getValue: (a) =>
-				a.spend_week_micros ? formatMicrosPrecise(a.spend_week_micros) : '—'
-		},
-		{
-			key: 'last_run',
-			label: 'Last result',
-			format: 'badge',
-			getValue: (a) => lastRunStatus(a),
-			badgeColors: {
-				success: 'badge-success',
-				error: 'badge-error',
-				skipped: 'badge-muted',
-				running: 'badge-warning',
-				budget_exceeded: 'badge-warning',
-				'—': 'badge-muted'
-			}
-		}
-	];
-
-	const filters: FilterDef<Applet>[] = [
-		{
-			id: 'origin',
-			kind: 'multi',
-			label: 'Origin',
-			options: [
-				{ value: 'source', label: ORIGIN_LABEL.source },
-				{ value: 'ai', label: ORIGIN_LABEL.ai },
-				{ value: 'user', label: ORIGIN_LABEL.user },
-				{ value: 'system', label: ORIGIN_LABEL.system }
-			],
-			predicate: (a, v) => Array.isArray(v) && v.includes(a.origin)
-		},
-		{
-			id: 'enabled',
-			kind: 'enum',
-			label: 'Status',
-			options: [
-				{ value: 'true', label: 'On', badgeColor: 'badge-success' },
-				{ value: 'false', label: 'Off', badgeColor: 'badge-muted' },
-				{ value: 'finished', label: 'Finished', badgeColor: 'badge-info' }
-			],
-			predicate: (a, v) =>
-				v === 'finished' ? Boolean(a.archived_at) : !a.archived_at && String(a.enabled) === v
-		},
-		{
-			id: 'schedule_type',
-			kind: 'multi',
-			label: 'Trigger',
-			options: [
-				{ value: 'cron', label: 'Scheduled', badgeColor: 'badge-info' },
-				{ value: 'manual', label: 'Manual', badgeColor: 'badge-muted' }
-			],
-			predicate: (a, v) => {
-				const t = a.schedule ? 'cron' : 'manual';
-				return Array.isArray(v) && v.includes(t);
-			}
-		},
-		{
-			id: 'last_run_status',
-			kind: 'enum',
-			label: 'Last run',
-			options: [
-				{ value: 'success', label: 'Success', badgeColor: 'badge-success' },
-				{ value: 'error', label: 'Error', badgeColor: 'badge-error' },
-				{ value: 'running', label: 'Running', badgeColor: 'badge-warning' },
-				{ value: 'skipped', label: 'Skipped', badgeColor: 'badge-muted' },
-				{ value: 'budget_exceeded', label: 'Over budget', badgeColor: 'badge-warning' }
-			],
-			predicate: (a, v) => (a.last_run?.status ?? null) === v
-		}
-	];
 </script>
+
+{#snippet row(a: Applet)}
+	{@const l = line(a)}
+	<li class="row">
+		<button type="button" class="open" onclick={() => openHome(a)} oncontextmenu={(e) => rowMenu(a, e)}>
+			<span class="glyph" aria-hidden="true"><AtlasIcon name={appletGlyph(a)} size={24} bare /></span>
+			<span class="body">
+				<span class="name">{a.name}</span>
+				<span class="line" class:problem={l.problem}>{l.text}</span>
+			</span>
+		</button>
+		{#if l.problem && canRetry(a)}
+			<Button variant="secondary" size="sm" disabled={retrying === a.id} onclick={() => retry(a)}>
+				{retrying === a.id ? 'Retrying…' : 'Retry'}
+			</Button>
+		{/if}
+		{#if chatOf(a)}
+			<IconButton
+				icon="ri:chat-3-line"
+				label={`Open the conversation with ${a.name}`}
+				variant="secondary"
+				onclick={() => openConversation(a)}
+			/>
+		{/if}
+	</li>
+{/snippet}
 
 <section class="applets-panel">
 	<header class="section-header">
 		<div>
 			<h2>Applets</h2>
-			<p class="subtitle">
-				Things that run for you. Ask in chat - "remind me on the 25th,"
-				"a dashboard of my heart rate," "write my examen each morning", and it becomes an applet: scheduled, triggered, or always on.
-			</p>
+			<p class="subtitle">Ask Virtues to do something for you, on a schedule or when something happens.</p>
 		</div>
-		<div class="header-applets">
-			{#if reconcileMsg}
-				<span class="reconcile-msg">{reconcileMsg}</span>
-			{/if}
-			<button
-				type="button"
-				class="show-system-btn"
-				class:active={showSystem}
-				onclick={() => (showSystem = !showSystem)}
-				title="Built-in applets keep the server running (syncs, indexing). Inspectable, just not in the way."
-			>
-				{showSystem ? 'Hide' : 'Show'} built-in ({systemCount})
-			</button>
-			{#if finished.length > 0}
-				<button
-					type="button"
-					class="show-system-btn"
-					class:active={showFinished}
-					onclick={() => (showFinished = !showFinished)}
-					title="Applets whose lifecycle completed - a one-off reminder that fired, or an `until` condition that came true. Their work and their run history are still here."
-				>
-					{showFinished ? 'Hide' : 'Show'} finished ({finished.length})
-				</button>
-			{/if}
-			<!-- Reconcile is an operator verb — "re-read manifests from disk" is
-			     a sentence about the box's internals, and it sat at the top of a
-			     consumer page next to New as though it were a thing you do. It
-			     lives behind the overflow now: reachable, not offered. -->
-			<Popover bind:open={moreMenuOpen} placement="bottom-end" offset={4}>
-				{#snippet trigger({ toggle })}
-					<IconButton
-						icon="ri:more-2-fill"
-						label="More"
-						size="md"
-						variant="secondary"
-						expanded={moreMenuOpen}
-						haspopup="menu"
-						onclick={toggle}
-					/>
-				{/snippet}
-				{#snippet children()}
-					<div class="new-menu" role="menu">
-						<MenuItem
-							icon="ri:refresh-line"
-							label="Re-read from disk"
-							description="Pick up applet folders that changed outside the app"
-							loading={reconciling}
-							onclick={() => {
-								moreMenuOpen = false;
-								void reconcile();
-							}}
-						/>
-					</div>
-				{/snippet}
-			</Popover>
-			<Popover bind:open={newMenuOpen} placement="bottom-end" offset={4}>
-				{#snippet trigger({ toggle })}
-					<Button variant="primary" size="sm" icon="ri:add-line" onclick={toggle}>
-						New
-					</Button>
-				{/snippet}
-				{#snippet children()}
-					<div class="new-menu" role="menu">
-						<MenuItem
-							icon="ri:chat-smile-2-line"
-							label="From chat"
-							description="Describe it in plain language"
-							onclick={startChatFlow}
-						/>
-						<MenuItem
-							icon="ri:git-repository-line"
-							label="From Git"
-							description="Import applets from a repo"
-							onclick={startGitImportFlow}
-						/>
-					</div>
-				{/snippet}
-			</Popover>
+		<div class="header-actions">
+			<Button variant="secondary" size="sm" onclick={openManage}>Manage applets</Button>
+			<Button variant="primary" size="sm" icon="ri:add-line" onclick={() => (newSheetOpen = true)}>
+				New applet
+			</Button>
 		</div>
 	</header>
 
-	{#if needsAttention.length > 0}
-		<div class="attention-strip" role="alert">
-			<Icon icon="ri:error-warning-line" width="16" />
-			<span class="attention-label">
-				{needsAttention.length === 1
-					? '1 applet needs attention'
-					: `${needsAttention.length} applets need attention`}
-			</span>
-			<div class="attention-items">
-				{#each needsAttention as item (item.applet.id)}
-					<button
-						type="button"
-						class="attention-item"
-						onclick={() => openCard(item.applet)}
-					>
-						{item.applet.name}
-						<span class="attention-why">{item.why}</span>
-					</button>
-				{/each}
-			</div>
-		</div>
+	{#if err}
+		<p class="error-msg">{err}</p>
 	{/if}
 
-	<!-- The card IS the row the plan specifies: glyph, name, plain-English
-	     line, last activity, run-pulse. Defaulting to the table hid every one
-	     of those behind a view toggle most people never find, and showed a
-	     spreadsheet of cron strings instead. Anyone who prefers the table
-	     still has it — dataGridPrefs remembers the choice per entity type. -->
-	<UniversalDataGrid
-		items={visible}
-		{columns}
-		{filters}
-		entityType="applets"
-		defaultViewMode="grid"
-		gridMinWidth="340px"
-		{loading}
-		error={err}
-		emptyIcon="ri:flashlight-line"
-		emptyMessage="Nothing runs for you yet. Ask in chat - “write my examen each morning,” “remind me on the 25th,” “a dashboard of my heart rate”, and it becomes an applet."
-		searchPlaceholder="Search applets…"
-		pageSize={50}
-		onItemClick={openCard}
-		onItemContextMenu={rowContextMenu}
-	>
-		{#snippet card(applet)}
-			<AppletCard
-				{applet}
-				lastRun={applet.last_run}
-				lastSuccessSummary={applet.last_success_summary}
-				pulse={applet.pulse ?? []}
-			/>
-		{/snippet}
-	</UniversalDataGrid>
+	{#if !appletsStore.loaded && !appletsStore.error}
+		<p class="note">Loading…</p>
+	{:else if appletsStore.error && shown.length === 0}
+		<p class="error-msg">Your server couldn't list your applets: {appletsStore.error}</p>
+	{:else if shown.length === 0}
+		<p class="note">
+			Nothing runs for you yet. Ask in chat - "write my examen each morning," "remind me on the 25th" - and it
+			becomes an applet.
+		</p>
+	{:else}
+		{#if problems.length > 0}
+			<h3 class="group">Needs you</h3>
+			<ul class="rows" role="list">
+				{#each problems as a (a.id)}{@render row(a)}{/each}
+			</ul>
+		{/if}
+		{#if rest.length > 0}
+			<h3 class="group">{problems.length > 0 ? 'Everything else' : 'Your applets'}</h3>
+			<ul class="rows" role="list">
+				{#each rest as a (a.id)}{@render row(a)}{/each}
+			</ul>
+		{/if}
+	{/if}
 </section>
 
-<GitImportModal
-	open={gitImportOpen}
-	onClose={() => (gitImportOpen = false)}
-	onImported={load}
+<NewAppletSheet
+	open={newSheetOpen}
+	onClose={() => (newSheetOpen = false)}
+	onImport={() => {
+		newSheetOpen = false;
+		gitImportOpen = true;
+	}}
 />
+
+<GitImportModal open={gitImportOpen} onClose={() => (gitImportOpen = false)} onImported={() => appletsStore.load()} />
 
 <style>
 	.applets-panel {
 		display: flex;
 		flex-direction: column;
-		gap: 0.75rem;
+		gap: 12px;
 	}
 	.section-header {
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
-		gap: 1rem;
+		gap: 16px;
 		flex-wrap: wrap;
+		margin-bottom: 16px;
 	}
 	/* Matches PageHeading's level-1 title and its description, so a hand-rolled
-	   header still reads as a page title. That component dropped its own 500
-	   for the same reason this one does — the serif ships one cut, so the weight
-	   resolved back to the regular and returned silently — and took the size up
-	   to the scale's 36 (agents/build/design-grammar.md §4) to carry the rank
-	   that the weight never did. Both numbers follow it, or the two page titles
-	   stop matching. */
+	   header still reads as a page title (agents/build/design-grammar.md §4). */
 	.section-header h2 {
 		margin: 0;
-		font-family: var(--font-serif, ui-serif, Georgia, serif);
+		font-family: var(--font-serif);
 		font-size: 36px;
 		line-height: 1.15;
 		font-weight: 400;
 	}
 	.subtitle {
-		margin: 0.5rem 0 0;
-		font-size: 0.875rem;
-		color: var(--color-foreground-subtle, #9ca3af);
+		margin: 8px 0 0;
+		font-size: 15px;
+		color: var(--color-foreground-muted);
 	}
-	.header-applets {
+	.header-actions {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
+		gap: 8px;
 	}
-	.new-menu {
+	.group {
+		margin: 16px 0 0;
+		font-family: var(--font-sans);
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--color-foreground-muted);
+	}
+	.rows {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
+		gap: 4px 32px;
+	}
+	.row {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		min-height: 72px;
+		padding: 0 8px;
+		border-radius: 12px;
+	}
+	.row:hover {
+		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+	}
+	.open {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		padding: 12px 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		color: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+	.glyph {
+		width: 48px;
+		height: 48px;
+		flex: none;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 12px;
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		color: var(--color-foreground-muted);
+	}
+	.body {
 		display: flex;
 		flex-direction: column;
-		min-width: 240px;
-		padding: 0.25rem;
-		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 8px;
-		background: var(--color-surface, #fff);
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
+		gap: 4px;
+		min-width: 0;
 	}
-	.reconcile-msg {
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle, #9ca3af);
+	.name,
+	.line {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
-
-	.show-system-btn {
-		padding: 0.375rem 0.625rem;
-		font-size: 0.8125rem;
-		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 6px;
-		background: transparent;
-		color: var(--color-foreground-subtle, #6b7280);
-		cursor: pointer;
+	.name {
+		font-size: 16px;
+		color: var(--color-foreground);
 	}
-	.show-system-btn:hover,
-	.show-system-btn.active {
-		color: var(--color-foreground, #111827);
-		background: var(--color-surface-elevated, #f3f4f6);
+	.line {
+		font-size: 14px;
+		color: var(--color-foreground-muted);
 	}
-
-	/* Theme tokens only — --color-error/-subtle are defined per theme
-	   (light and dark); no hardcoded fallbacks that break dark themes. */
-	.attention-strip {
-		display: flex;
-		align-items: center;
-		gap: 0.625rem;
-		flex-wrap: wrap;
-		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--color-error-subtle);
-		border-radius: 8px;
-		background: var(--color-error-subtle);
+	.line.problem {
 		color: var(--color-error);
-		font-size: 0.8125rem;
 	}
-	.attention-label {
-		font-weight: 500;
+	.note {
+		margin: 0;
+		font-size: 15px;
+		color: var(--color-foreground-muted);
 	}
-	.attention-items {
-		display: flex;
-		align-items: center;
-		gap: 0.375rem;
-		flex-wrap: wrap;
-	}
-	.attention-item {
-		display: inline-flex;
-		align-items: baseline;
-		gap: 0.375rem;
-		padding: 0.125rem 0.5rem;
-		border: 1px solid var(--color-border);
-		border-radius: 999px;
-		background: var(--color-surface);
+	.error-msg {
+		margin: 0;
+		font-size: 14px;
 		color: var(--color-error);
-		font-size: 0.75rem;
-		cursor: pointer;
-	}
-	.attention-item:hover {
-		background: var(--hover-bg);
-	}
-	.attention-why {
-		color: var(--color-foreground-subtle);
-		font-size: 0.6875rem;
 	}
 </style>

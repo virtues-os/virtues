@@ -19,6 +19,10 @@
 			'<rect x="2" y="2.5" width="12" height="3" rx="1"/><rect x="3" y="5.5" width="10" height="8" rx="1.2"/><path d="M6.5 9h3"/>',
 		applets:
 			'<path d="M8 2.2 9.6 6.4 13.8 8 9.6 9.6 8 13.8 6.4 9.6 2.2 8 6.4 6.4z"/>',
+		// An applet's live view (its face): panes of a dashboard, uneven so it
+		// reads as readings laid out, not as a grid of apps.
+		dashboard:
+			'<rect x="2.6" y="2.6" width="4.6" height="4.6" rx="1"/><rect x="8.8" y="2.6" width="4.6" height="6.6" rx="1"/><rect x="2.6" y="8.8" width="4.6" height="4.6" rx="1"/><rect x="8.8" y="10.8" width="4.6" height="2.6" rx="1"/>',
 		search: '<circle cx="7.1" cy="7.1" r="4.3"/><path d="M10.4 10.4 13.5 13.5"/>',
 		// The chats bubble, empty and waiting — a plus where the conversation
 		// dots would be. Drawn for the phone drawer's "New chat" door.

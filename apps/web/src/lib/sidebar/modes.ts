@@ -129,6 +129,17 @@ export const SETTINGS_MODE: SidebarMode = {
 			href: '/virtues/shared',
 			group: 'Server',
 		},
+		// Every applet on the server, built-in ones included: when each runs and
+		// how its runs went. The Applets page in Home is where you use them;
+		// this is where you check them.
+		{
+			id: 'applets',
+			label: 'Applets',
+			icon: 'atlas:applets',
+			glyph: 'applets',
+			href: '/virtues/applets',
+			group: 'Server',
+		},
 		// The screen on the server: what it shows, its hours, other screens.
 		{
 			id: 'display',

@@ -21,6 +21,7 @@
 	               /virtues/devices/this   — the machine you're on (local panel)
 	               /virtues/devices/:id    — another device, as the box knows it
 	  Shared links /virtues/shared         — every link shared through the door
+	  Applets      /virtues/applets        — every applet, built-in ones included
 	  Display      /virtues/display        — the screen on the box, and what it shows
 	  Developer    /virtues/developer      — SQL · Terminal
 
@@ -58,6 +59,7 @@
 	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
 	import SharedLinksView from '$lib/components/tabs/views/SharedLinksView.svelte';
+	import ManageApplets from '$lib/components/applets/ManageApplets.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -174,6 +176,7 @@
 		| 'system'
 		| 'devices'
 		| 'shared'
+		| 'applets'
 		| 'display'
 		| 'developer';
 
@@ -183,6 +186,7 @@
 		'system',
 		'devices',
 		'shared',
+		'applets',
 		'display',
 		'developer',
 	];
@@ -225,6 +229,14 @@
 			<DisplayView />
 		{:else if section === 'shared'}
 			<SharedLinksView />
+		{:else if section === 'applets'}
+			<!-- Padding on the scroller, the 72rem measure inside it: the same
+			     box model as the Applets page in Home, so the two line up. -->
+			<div class="applets-settings">
+				<div class="measure">
+					<ManageApplets {tab} />
+				</div>
+			</div>
 		{:else if section === 'devices'}
 			{#if !sub}
 				<DevicesView {tab} {active} />
@@ -272,5 +284,15 @@
 		flex: 1;
 		overflow-y: auto;
 		min-height: 0;
+	}
+
+	.applets-settings {
+		padding: 48px;
+	}
+
+	.measure {
+		max-width: 72rem;
+		width: 100%;
+		margin: 0 auto;
 	}
 </style>

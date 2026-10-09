@@ -116,6 +116,10 @@
 		 * knows which form a given item's content calls for.
 		 */
 		wallTile?: Snippet<[T, RowMeta]>;
+		/** Limit the views on offer. A list whose rows carry controls (buttons,
+		 *  a run-history strip) passes ['table'], which also hides the view
+		 *  toggle; a stored preference for another view falls back to the table. */
+		viewModes?: ViewMode[];
 		/** Grid-level actions (add, import…) rendered beside the view controls,
 		 *  so a consumer doesn't need its own header row above the toolbar. */
 		toolbarActions?: Snippet;
@@ -172,6 +176,7 @@
 		tableRow,
 		card,
 		wallTile,
+		viewModes,
 		toolbarActions,
 		selectable = false,
 		bulkActions,
@@ -555,7 +560,7 @@
 
 	/** Wall is offered only where a tile renderer was supplied. */
 	const availableModes = $derived<ViewMode[]>(
-		wallTile ? ['table', 'grid', 'wall'] : ['table', 'grid']
+		viewModes ?? (wallTile ? ['table', 'grid', 'wall'] : ['table', 'grid'])
 	);
 
 	/**
@@ -974,7 +979,7 @@
 						{/snippet}
 					</Popover>
 				{/if}
-				{#if !pinnedMobileTable}
+				{#if !pinnedMobileTable && availableModes.length > 1}
 					<button
 						class="ctrl-btn"
 						onclick={toggleViewMode}
