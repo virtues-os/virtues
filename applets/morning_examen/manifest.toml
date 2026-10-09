@@ -142,3 +142,9 @@ log stays readable; the page is the artifact.
 [config.limits]
 max_llm_cost = 0.10
 
+# What it makes. A run that ends without writing the page is recorded as a
+# failure, not a success, whatever the model said on its way out.
+[config.delivers]
+kind = "page"
+title = "Morning Examen pages"
+

@@ -1364,6 +1364,10 @@ async fn upsert_row(
                 ELSE app_applets.agent
             END,
             agent_shipped  = EXCLUDED.agent,
+            -- The same rule for config: a key the manifest adds that the row
+            -- has never had arrives (what the applet makes, a new ceiling);
+            -- every key the row already holds stays as it is.
+            config         = EXCLUDED.config || app_applets.config,
             device_id      = EXCLUDED.device_id,
             updated_at     = now()
         "#
@@ -2069,6 +2073,33 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
             "their edit stands, and `agent_shipped` still says what we ship — \
              which is what lets the page offer a diff rather than a surprise"
         );
+    }
+
+    /// A key the manifest adds reaches a box that seeded before it existed,
+    /// and a key the row already holds is never touched.
+    #[sqlx::test]
+    async fn a_new_config_key_reaches_an_old_row_and_a_held_one_stays(pool: sqlx::PgPool) {
+        reconcile_templates(&pool).await.expect("reconcile");
+
+        // A box seeded before `delivers` existed, whose owner raised the limit
+        // and whose chat is linked.
+        sqlx::query(
+            "UPDATE app_applets SET config = '{\"limits\": {\"max_llm_cost\": 0.5}, \"chat_id\": \"chat_x\"}'::jsonb \
+             WHERE id = 'applet_morning_examen'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        reconcile_templates(&pool).await.expect("reconcile");
+
+        let config: serde_json::Value =
+            sqlx::query_scalar("SELECT config FROM app_applets WHERE id = 'applet_morning_examen'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(config["delivers"]["kind"], "page", "the new key arrives");
+        assert_eq!(config["limits"]["max_llm_cost"], 0.5, "their limit stands");
+        assert_eq!(config["chat_id"], "chat_x", "the box's own keys stay");
     }
 
     /// The sentence is reconcile's to own, like `name` — editing a shipped
