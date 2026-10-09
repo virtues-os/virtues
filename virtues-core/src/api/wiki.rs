@@ -295,6 +295,9 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
 pub struct PersonGloss {
     pub id: String,
     pub date: NaiveDate,
+    /// How you know them, when you wrote it down: the bond in your own words,
+    /// else the relationship on their record.
+    pub relationship: Option<String>,
     pub first_message_on: Option<NaiveDate>,
     /// Whether that first message was in a group thread.
     pub first_message_in_group: Option<bool>,
@@ -302,56 +305,61 @@ pub struct PersonGloss {
     /// The window `days_in_window` counts over: the days just before `date`.
     pub window_days: i64,
     pub days_in_window: i64,
+    /// One per day of the window, oldest first: whether there was a message.
+    pub days: Vec<bool>,
     pub direct_messages_in_window: i64,
     pub group_messages_in_window: i64,
 }
 
 pub const PERSON_GLOSS_WINDOW_DAYS: i64 = 31;
 
+/// The messages that count as contact with a person: their refs on messages,
+/// in either direction, not deleted and not a tapback. The gloss and the
+/// day's firsts read the same set, so "first message" means one thing.
+const PERSON_MESSAGE_REFS: &str = "r.entity_type = 'person'
+          AND r.source_table = 'data_communication_message'
+          AND r.role IN ('sender', 'recipient')
+          AND m.deleted_at_source IS NULL
+          AND m.metadata->>'reaction_type' IS NULL";
+
 pub async fn person_gloss(pool: &PgPool, id: &str, date: NaiveDate) -> Result<PersonGloss> {
-    sqlx::query_scalar::<_, i32>("SELECT 1 FROM wiki_people WHERE id = $1")
-        .bind(id)
-        .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| Error::NotFound(format!("Person not found: {}", id)))?;
+    let relationship: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT COALESCE(NULLIF(btrim(bond), ''), NULLIF(btrim(relationship_category), ''))
+         FROM wiki_people WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| Error::NotFound(format!("Person not found: {}", id)))?;
 
     let tz = crate::timezone::day_timezone(pool, date).await?;
     let (day_start, day_end) = crate::api::day_summary::day_bounds(date, Some(&tz));
-    let (window_start, _) = crate::api::day_summary::day_bounds(
-        date - chrono::Duration::days(PERSON_GLOSS_WINDOW_DAYS),
-        Some(&tz),
-    );
+    let window_first = date - chrono::Duration::days(PERSON_GLOSS_WINDOW_DAYS);
+    let (window_start, _) = crate::api::day_summary::day_bounds(window_first, Some(&tz));
 
     // An aggregate always returns its one row, so fetch_one: a failure here
     // is a broken query, never "no messages".
-    let (first_on, first_in_group, last_before_on, days, direct, group): (
+    let (first_on, first_in_group, last_before_on, direct, group): (
         Option<NaiveDate>,
         Option<bool>,
         Option<NaiveDate>,
         i64,
         i64,
-        i64,
-    ) = sqlx::query_as(
+    ) = sqlx::query_as(&format!(
         r#"
         SELECT
           (min(r.occurred_at) AT TIME ZONE $5::text)::date,
           (array_agg(m.is_group_message ORDER BY r.occurred_at))[1],
           (max(r.occurred_at) FILTER (WHERE r.occurred_at < $2) AT TIME ZONE $5::text)::date,
-          count(DISTINCT (r.occurred_at AT TIME ZONE $5::text)::date)
-                FILTER (WHERE r.occurred_at >= $3 AND r.occurred_at < $2),
           count(*) FILTER (WHERE r.occurred_at >= $3 AND r.occurred_at < $2 AND NOT m.is_group_message),
           count(*) FILTER (WHERE r.occurred_at >= $3 AND r.occurred_at < $2 AND m.is_group_message)
         FROM wiki_refs r
         JOIN data_communication_message m ON m.id = r.source_id
         WHERE r.entity_id = $1
-          AND r.entity_type = 'person'
-          AND r.source_table = 'data_communication_message'
-          AND r.role IN ('sender', 'recipient')
+          AND {PERSON_MESSAGE_REFS}
           AND r.occurred_at < $4
-          AND m.deleted_at_source IS NULL
-          AND m.metadata->>'reaction_type' IS NULL
-        "#,
-    )
+        "#
+    ))
     .bind(id)
     .bind(day_start)
     .bind(window_start)
@@ -360,16 +368,142 @@ pub async fn person_gloss(pool: &PgPool, id: &str, date: NaiveDate) -> Result<Pe
     .fetch_one(pool)
     .await?;
 
+    let on: Vec<NaiveDate> = sqlx::query_scalar(&format!(
+        r#"
+        SELECT DISTINCT (r.occurred_at AT TIME ZONE $4::text)::date
+        FROM wiki_refs r
+        JOIN data_communication_message m ON m.id = r.source_id
+        WHERE r.entity_id = $1
+          AND {PERSON_MESSAGE_REFS}
+          AND r.occurred_at >= $2 AND r.occurred_at < $3
+        "#
+    ))
+    .bind(id)
+    .bind(window_start)
+    .bind(day_start)
+    .bind(&tz)
+    .fetch_all(pool)
+    .await?;
+    let days: Vec<bool> = (0..PERSON_GLOSS_WINDOW_DAYS)
+        .map(|i| on.contains(&(window_first + chrono::Duration::days(i))))
+        .collect();
+
     Ok(PersonGloss {
         id: id.to_string(),
         date,
+        relationship,
         first_message_on: first_on,
         first_message_in_group: first_in_group,
         last_message_before_on: last_before_on,
         window_days: PERSON_GLOSS_WINDOW_DAYS,
-        days_in_window: days,
+        days_in_window: days.iter().filter(|d| **d).count() as i64,
+        days,
         direct_messages_in_window: direct,
         group_messages_in_window: group,
+    })
+}
+
+/// How long the record of a kind must run before a day for something new in
+/// it to be a first: on the record's first days, everything is new.
+pub const FIRSTS_AFTER_DAYS: i64 = 14;
+
+/// A place whose earliest visit on record falls on the day.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct FirstPlace {
+    /// Only a name someone gave it: a coordinate stub reads as no name.
+    pub name: Option<String>,
+    pub at: DateTime<Utc>,
+}
+
+/// A person whose earliest message on record falls on the day, and who wrote.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct FirstPerson {
+    pub id: String,
+    pub name: String,
+    /// Their first message that day.
+    pub at: DateTime<Utc>,
+}
+
+/// What a day holds for the first time in the record, for the day page's
+/// margin. Each kind counts only once its record has run
+/// [`FIRSTS_AFTER_DAYS`] before the day.
+#[derive(Debug, Serialize)]
+pub struct DayFirsts {
+    pub places: Vec<FirstPlace>,
+    pub people: Vec<FirstPerson>,
+}
+
+pub async fn day_firsts(pool: &PgPool, date: NaiveDate) -> Result<DayFirsts> {
+    let tz = crate::timezone::day_timezone(pool, date).await?;
+    let (day_start, day_end) = crate::api::day_summary::day_bounds(date, Some(&tz));
+    let began_by = day_start - chrono::Duration::days(FIRSTS_AFTER_DAYS);
+
+    // A visit can carry more than one place ref; the newest is the one
+    // resolution meant (as on the timeline), so one visit is one place.
+    let places: Vec<(Option<String>, DateTime<Utc>)> = sqlx::query_as(
+        r#"
+        WITH visit_place AS (
+            SELECT DISTINCT ON (r.source_id) r.source_id AS visit_id, r.entity_id AS place_id
+            FROM wiki_refs r
+            WHERE r.entity_type = 'place' AND r.source_table = 'data_location_visit'
+            ORDER BY r.source_id, r.created_at DESC
+        ), earliest AS (
+            SELECT vp.place_id, min(v.started_at) AS at
+            FROM visit_place vp
+            JOIN data_location_visit v ON v.id = vp.visit_id
+            WHERE v.deleted_at_source IS NULL AND NOT v.is_archived
+            GROUP BY vp.place_id
+        )
+        SELECT CASE WHEN p.is_named AND p.name <> 'Unknown' THEN p.name END, e.at
+        FROM earliest e
+        JOIN wiki_places p ON p.id = e.place_id
+        WHERE e.at >= $1 AND e.at < $2
+          AND (SELECT min(started_at) FROM data_location_visit
+               WHERE deleted_at_source IS NULL AND NOT is_archived) <= $3
+        ORDER BY e.at
+        "#,
+    )
+    .bind(day_start)
+    .bind(day_end)
+    .bind(began_by)
+    .fetch_all(pool)
+    .await?;
+
+    // People with a message on the day and none before it. "First message
+    // from" is only true of someone who wrote that day, so they must have.
+    // The owner is never new to their own record.
+    let people: Vec<(String, String, DateTime<Utc>)> = sqlx::query_as(&format!(
+        r#"
+        SELECT p.id, p.name, min(r.occurred_at) FILTER (WHERE r.role = 'sender') AS at
+        FROM wiki_refs r
+        JOIN data_communication_message m ON m.id = r.source_id
+        JOIN wiki_people p ON p.id = r.entity_id
+        WHERE {PERSON_MESSAGE_REFS}
+          AND r.occurred_at >= $1 AND r.occurred_at < $2
+          AND p.id IS DISTINCT FROM (SELECT self_person_id FROM app_user_profile LIMIT 1)
+          AND (SELECT min(occurred_at) FROM data_communication_message
+               WHERE deleted_at_source IS NULL) <= $3
+          AND NOT EXISTS (
+              SELECT 1 FROM wiki_refs r
+              JOIN data_communication_message m ON m.id = r.source_id
+              WHERE r.entity_id = p.id
+                AND {PERSON_MESSAGE_REFS}
+                AND r.occurred_at < $1
+          )
+        GROUP BY p.id, p.name
+        HAVING count(*) FILTER (WHERE r.role = 'sender') > 0
+        ORDER BY at
+        "#
+    ))
+    .bind(day_start)
+    .bind(day_end)
+    .bind(began_by)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(DayFirsts {
+        places: places.into_iter().map(|(name, at)| FirstPlace { name, at }).collect(),
+        people: people.into_iter().map(|(id, name, at)| FirstPerson { id, name, at }).collect(),
     })
 }
 
@@ -1195,8 +1329,153 @@ mod tests {
         assert_eq!(g.days_in_window, 2, "Sep 10 and Sep 22; the tapback and the deleted message don't count");
         assert_eq!(g.direct_messages_in_window, 3);
         assert_eq!(g.group_messages_in_window, 0);
+        assert_eq!(g.relationship, None, "nothing written down is no relationship");
+
+        // Oldest first: Aug 23 is the first dot, Sep 22 (the day before) the last.
+        assert_eq!(g.days.len(), PERSON_GLOSS_WINDOW_DAYS as usize);
+        let on: Vec<usize> = g.days.iter().enumerate().filter(|(_, d)| **d).map(|(i, _)| i).collect();
+        assert_eq!(on, vec![18, 30], "Sep 10 and Sep 22");
 
         let missing = person_gloss(&pool, "person_nobody", date).await;
         assert!(matches!(missing, Err(Error::NotFound(_))));
+    }
+
+    /// The bond is the owner's own words and wins; a category stands in when
+    /// there is no bond; blank is nothing.
+    #[sqlx::test]
+    async fn person_gloss_says_how_you_know_them(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO wiki_people (id, name, bond, relationship_category) VALUES
+               ('person_b', 'Nick', 'My oldest friend', 'friend'),
+               ('person_c', 'David Okafor', '  ', 'colleague'),
+               ('person_n', 'Nobody', NULL, '')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 9, 23).unwrap();
+        let b = person_gloss(&pool, "person_b", date).await.unwrap();
+        assert_eq!(b.relationship.as_deref(), Some("My oldest friend"));
+        let c = person_gloss(&pool, "person_c", date).await.unwrap();
+        assert_eq!(c.relationship.as_deref(), Some("colleague"));
+        let n = person_gloss(&pool, "person_n", date).await.unwrap();
+        assert_eq!(n.relationship, None);
+    }
+
+    async fn place(pool: &PgPool, id: &str, name: &str, is_named: bool) {
+        sqlx::query("INSERT INTO wiki_places (id, name, latitude, longitude, is_named) VALUES ($1, $2, 41.9, -87.6, $3)")
+            .bind(id)
+            .bind(name)
+            .bind(is_named)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn visit(pool: &PgPool, id: &str, place_id: &str, at: &str) {
+        sqlx::query(
+            "INSERT INTO data_location_visit
+                 (id, latitude, longitude, started_at, ended_at, source_stream_id, source_table, source_provider)
+             VALUES ($1, 41.9, -87.6, $2::timestamptz, $2::timestamptz + interval '1 hour', $1, 'location_point', 'ios')",
+        )
+        .bind(id)
+        .bind(at)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
+             VALUES ($1, 'place', $2, 'data_location_visit', $3, 'location', $4::timestamptz)",
+        )
+        .bind(format!("ref_{id}"))
+        .bind(place_id)
+        .bind(id)
+        .bind(at)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// A place is new on the day of its earliest visit, named only when
+    /// someone named it; a place visited before is not new.
+    #[sqlx::test]
+    async fn day_firsts_finds_places_visited_for_the_first_time(pool: PgPool) {
+        place(&pool, "place_home", "Home", true).await;
+        place(&pool, "place_church", "St. Paul's Cathedral", true).await;
+        place(&pool, "place_stub", "Location 41.9, -87.6", false).await;
+        place(&pool, "place_unknown", "Unknown", true).await;
+        place(&pool, "place_gone", "Gone", true).await;
+        place(&pool, "place_early", "The early cafe", true).await;
+        visit(&pool, "v_home_early", "place_home", "2026-09-01T15:00:00Z").await;
+        visit(&pool, "v_early", "place_early", "2026-09-08T15:00:00Z").await;
+        visit(&pool, "v_home_day", "place_home", "2026-10-04T13:00:00Z").await;
+        visit(&pool, "v_church", "place_church", "2026-10-04T16:00:00Z").await;
+        visit(&pool, "v_church_again", "place_church", "2026-10-04T19:00:00Z").await;
+        visit(&pool, "v_stub", "place_stub", "2026-10-04T17:30:00Z").await;
+        visit(&pool, "v_unknown", "place_unknown", "2026-10-04T18:00:00Z").await;
+        visit(&pool, "v_gone", "place_gone", "2026-10-04T18:30:00Z").await;
+        sqlx::query("UPDATE data_location_visit SET deleted_at_source = now() WHERE id = 'v_gone'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let day = NaiveDate::from_ymd_opt(2026, 10, 4).unwrap();
+        let f = day_firsts(&pool, day).await.unwrap();
+        let names: Vec<Option<&str>> = f.places.iter().map(|p| p.name.as_deref()).collect();
+        assert_eq!(names, vec![Some("St. Paul's Cathedral"), None, None], "the stub and Unknown read as unnamed; Home isn't new");
+        assert_eq!(f.places[0].at.to_rfc3339(), "2026-10-04T16:00:00+00:00", "the first visit that day");
+
+        // Two weeks of record is the floor: a week in, a new place isn't news.
+        let early = day_firsts(&pool, NaiveDate::from_ymd_opt(2026, 9, 8).unwrap()).await.unwrap();
+        assert!(early.places.is_empty());
+    }
+
+    /// A person is new on the day of their earliest message, and only if they
+    /// wrote that day: a message you sent first is not one "from" them.
+    #[sqlx::test]
+    async fn day_firsts_finds_people_messaging_for_the_first_time(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO wiki_people (id, name) VALUES
+               ('person_t1', 'Nick'), ('person_old', 'David Okafor'), ('person_quiet', 'Quiet'),
+               ('person_early', 'Early')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        message(&pool, "m_old", "2026-09-01T15:00:00Z", false, "{}", "sender").await;
+        sqlx::query("UPDATE wiki_refs SET entity_id = 'person_old' WHERE id = 'ref_m_old'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        message(&pool, "m_new_to", "2026-10-04T14:00:00Z", false, "{}", "recipient").await;
+        message(&pool, "m_new_from", "2026-10-04T15:00:00Z", false, "{}", "sender").await;
+        message(&pool, "m_new_later", "2026-10-04T18:00:00Z", false, "{}", "sender").await;
+        // Someone you wrote to who never wrote back.
+        message(&pool, "m_quiet", "2026-10-04T16:00:00Z", false, "{}", "recipient").await;
+        sqlx::query("UPDATE wiki_refs SET entity_id = 'person_quiet' WHERE id = 'ref_m_quiet'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Someone known before writes again: not new.
+        message(&pool, "m_old_again", "2026-10-04T17:00:00Z", false, "{}", "sender").await;
+        sqlx::query("UPDATE wiki_refs SET entity_id = 'person_old' WHERE id = 'ref_m_old_again'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let day = NaiveDate::from_ymd_opt(2026, 10, 4).unwrap();
+        let f = day_firsts(&pool, day).await.unwrap();
+        assert_eq!(f.people.len(), 1, "{:?}", f.people);
+        assert_eq!(f.people[0].id, "person_t1");
+        assert_eq!(f.people[0].name, "Nick");
+        assert_eq!(f.people[0].at.to_rfc3339(), "2026-10-04T15:00:00+00:00", "their first message, not yours");
+
+        message(&pool, "m_early", "2026-09-08T15:00:00Z", false, "{}", "sender").await;
+        sqlx::query("UPDATE wiki_refs SET entity_id = 'person_early' WHERE id = 'ref_m_early'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let early = day_firsts(&pool, NaiveDate::from_ymd_opt(2026, 9, 8).unwrap()).await.unwrap();
+        assert!(early.people.is_empty(), "a week of record is too little to call anyone new");
     }
 }

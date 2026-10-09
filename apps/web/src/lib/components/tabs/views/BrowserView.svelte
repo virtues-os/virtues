@@ -15,7 +15,7 @@
 	 * The owner always sees who is driving. While the assistant acts, a bar
 	 * offers Take control and Stop and the page gets an accent frame; when it
 	 * hands the browser over (a sign-in, a code), the bar says what to do and
-	 * waits for Done. Its steps collect in a strip under the page.
+	 * waits for Done. Its steps collect in an Activity row under the page.
 	 */
 	import { onDestroy, onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -44,7 +44,7 @@
 	let editing = $state(false);
 	let modalOpen = $state(false);
 	let slot = $state<HTMLDivElement | null>(null);
-	let strip = $state<HTMLDivElement | null>(null);
+	let trail = $state<HTMLOListElement | null>(null);
 
 	const STEPS_KEY = 'virtues.browser.steps';
 	let showSteps = $state(readShowSteps());
@@ -88,11 +88,66 @@
 		}
 	}
 
-	// Keep the newest step in view.
+	const latestId = $derived(browserAgent.steps.at(-1)?.id ?? null);
+
+	// The row comes back when the assistant starts driving, hidden or not:
+	// hiding it is for the task you watched, not the next one.
+	let wasDriving = false;
 	$effect(() => {
-		void browserAgent.steps.length;
-		if (strip) strip.scrollLeft = strip.scrollWidth;
+		const driving = browserAgent.driving;
+		if (driving && !wasDriving) showSteps = true;
+		wasDriving = driving;
 	});
+
+	// A new step comes into view.
+	$effect(() => {
+		void latestId;
+		if (trail) requestAnimationFrame(() => trail && (trail.scrollLeft = trail.scrollWidth));
+	});
+
+	/** Steps as chips: a run of the same step on the same page is one chip
+	 *  with a count. */
+	const rows = $derived.by(() => {
+		const out: { step: (typeof browserAgent.steps)[number]; times: number }[] = [];
+		for (const step of browserAgent.steps) {
+			const prev = out.at(-1);
+			if (prev && prev.step.what === step.what && prev.step.url === step.url && prev.step.ok === step.ok) {
+				prev.step = step;
+				prev.times += 1;
+				continue;
+			}
+			out.push({ step, times: 1 });
+		}
+		return out;
+	});
+
+	const GLYPHS: Record<string, string> = {
+		open: 'ri:global-line',
+		snapshot: 'ri:file-text-line',
+		click: 'ri:cursor-line',
+		type: 'ri:keyboard-line',
+		press: 'ri:corner-down-left-line',
+		scroll: 'ri:arrow-up-down-line',
+		screenshot: 'ri:eye-line',
+		handoff: 'ri:hand'
+	};
+	function glyph(op: string | undefined) {
+		return GLYPHS[op ?? ''] ?? 'ri:checkbox-blank-circle-line';
+	}
+
+	// Minutes tick over without a new step.
+	let now = $state(Date.now());
+	$effect(() => {
+		const timer = setInterval(() => (now = Date.now()), 30_000);
+		return () => clearInterval(timer);
+	});
+	function ago(at: number) {
+		const s = Math.max(0, Math.round((now - at) / 1000));
+		if (s < 45) return 'just now';
+		const m = Math.round(s / 60);
+		if (m < 60) return `${m} min ago`;
+		return new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+	}
 
 	function routeFor(url: string) {
 		return `/browser?url=${encodeURIComponent(url)}`;
@@ -144,7 +199,7 @@
 		void modalOpen;
 		void mobileLayout.isMobile;
 		void available;
-		// The bar, frame and step strip move the page.
+		// The bar, frame and Activity column move the page.
 		void browserAgent.driving;
 		void browserAgent.paused;
 		void browserAgent.handoff;
@@ -224,12 +279,12 @@
 			<button
 				class="tool steps-toggle"
 				class:on={showSteps}
-				title={showSteps ? 'Hide your assistant\'s steps' : 'Show your assistant\'s steps'}
-				aria-label="Your assistant's steps"
+				title={showSteps ? 'Hide activity' : 'Show what your assistant did'}
+				aria-label="Activity"
 				aria-pressed={showSteps}
 				onclick={toggleSteps}
 			>
-				<Icon icon="ri:footprint-line" width="16" />
+				<Icon icon="ri:history-line" width="16" />
 				<span class="count">{browserAgent.steps.length}</span>
 			</button>
 		{/if}
@@ -257,6 +312,7 @@
 		</div>
 	{/if}
 
+	<div class="body">
 	<div
 		class="stage"
 		class:driving={browserAgent.driving && !browserAgent.paused && !browserAgent.handoff}
@@ -271,22 +327,29 @@
 		</div>
 	</div>
 
+	</div>
+
 	{#if showSteps && browserAgent.steps.length > 0}
-		<div class="steps" bind:this={strip} aria-label="Your assistant's steps">
-			{#each browserAgent.steps as step (step.id)}
-				<figure class="step" class:failed={!step.ok} title={`${step.what}\n${step.url}`}>
-					{#if step.thumb}
-						<img src={step.thumb} alt="" loading="lazy" />
-					{:else}
-						<div class="blank"></div>
-					{/if}
-					<figcaption>
+		<div class="activity" aria-label="Activity">
+			<ol class="trail" bind:this={trail}>
+				{#each rows as { step, times } (step.id)}
+					<li
+						class="chip"
+						class:failed={!step.ok}
+						class:live={step.id === latestId && browserAgent.driving}
+						title={`${step.what}${times > 1 ? ` ×${times}` : ''} · ${hostOf(step.url)} · ${ago(step.at)}`}
+					>
+						{#if step.ok && step.thumb}
+							<img src={step.thumb} alt="" />
+						{:else}
+							<span class="glyph"><Icon icon={step.ok ? glyph(step.op) : 'ri:error-warning-line'} width="13" /></span>
+						{/if}
 						<span class="what">{step.what}</span>
-						<span class="where">{hostOf(step.url)}</span>
-					</figcaption>
-				</figure>
-			{/each}
-			<button class="clear" onclick={() => browserAgent.clearSteps()}>Clear</button>
+						{#if times > 1}<span class="times">×{times}</span>{/if}
+					</li>
+				{/each}
+			</ol>
+			<button class="link" onclick={() => browserAgent.clearSteps()}>Clear</button>
 		</div>
 	{/if}
 </div>
@@ -425,58 +488,88 @@
 		background: var(--surface);
 	}
 
-	.steps {
+	.body {
+		flex: 1;
+		min-height: 0;
 		display: flex;
+	}
+
+	.activity {
+		display: flex;
+		align-items: center;
 		gap: 8px;
-		padding: 8px;
-		overflow-x: auto;
+		padding: 8px 12px;
 		border-top: 1px solid var(--border);
 		flex-shrink: 0;
 	}
-	.step {
-		flex: 0 0 132px;
+	.trail {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		gap: 8px;
+		list-style: none;
 		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
+		padding: 0;
+		overflow-x: auto;
+		scrollbar-width: none;
 	}
-	.step img,
-	.step .blank {
-		width: 132px;
-		height: 80px;
-		object-fit: cover;
-		object-position: top;
+	.chip {
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		height: 32px;
+		max-width: 240px;
+		padding-right: 12px;
 		border: 1px solid var(--border);
-		background: var(--surface-elevated, var(--surface));
+		border-radius: 999px;
+		overflow: hidden;
+		background: var(--surface);
 	}
-	.step figcaption {
-		display: flex;
-		flex-direction: column;
-		font-size: 11px;
-		line-height: 1.3;
+	.chip img {
+		width: 44px;
+		height: 100%;
+		object-fit: cover;
+		object-position: top left;
+		border-right: 1px solid var(--border);
+	}
+	.chip .glyph {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 100%;
+		color: var(--text-muted);
+	}
+	.chip.failed .glyph {
+		color: var(--warning);
+	}
+	.chip.live {
+		border-color: var(--primary);
 	}
 	.what {
+		font-size: 12px;
 		color: var(--text);
+		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
-	.where {
+	.chip:not(:last-child) .what,
+	.chip.failed .what {
 		color: var(--text-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
-	.step.failed .what {
-		color: var(--text-muted);
-		text-decoration: line-through;
-	}
-	.clear {
-		align-self: center;
-		flex-shrink: 0;
-		padding: 0 8px;
+	.times {
 		font-size: 12px;
 		color: var(--text-muted);
+		font-variant-numeric: tabular-nums;
+	}
+	.link {
+		flex-shrink: 0;
+		font-size: 12px;
+		color: var(--text-muted);
+	}
+	.link:hover {
+		color: var(--text);
 	}
 	.note {
 		color: var(--text-muted);

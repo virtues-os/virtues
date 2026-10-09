@@ -32,7 +32,7 @@ const LEGACY_PREFIX: &str = "data/lake/ios_microphone/";
 pub async fn run(dry_run: bool) -> Result<()> {
     let database_url = crate::database::normalize_database_url()?;
     let db = crate::database::Database::new(&database_url)?;
-    db.initialize().await?;
+    db.connect().await?;
     let pool = db.pool();
 
     let storage_root = crate::storage::lake::lake_root();

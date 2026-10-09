@@ -368,6 +368,7 @@ async fn record(app: &AppHandle, op: &str, args: &Value, out: &Result<Value, Str
         "main",
         "browser:step",
         json!({
+            "op": op,
             "what": describe(op, args, out),
             "ok": out.is_ok(),
             "url": current_url(&view),
@@ -398,7 +399,7 @@ fn describe(op: &str, args: &Value, out: &Result<Value, String>) -> String {
             "press" => format!("Couldn't press {}", arg("key")),
             "scroll" => "Couldn't scroll".into(),
             "screenshot" => "Couldn't look at the page".into(),
-            "handoff" => "Asked for your help; not done".into(),
+            "handoff" => "Your turn: not done".into(),
             _ => format!("Couldn't {op}"),
         };
     }
@@ -416,7 +417,7 @@ fn describe(op: &str, args: &Value, out: &Result<Value, String>) -> String {
         "press" => format!("Pressed {}", arg("key")),
         "scroll" => format!("Scrolled {}", if arg("direction") == "up" { "up" } else { "down" }),
         "screenshot" => "Looked at the page".into(),
-        "handoff" => format!("You: {}", short(arg("reason"), 60)),
+        "handoff" => format!("Your turn: {}", short(arg("reason"), 60)),
         _ => op.to_string(),
     }
 }
@@ -570,14 +571,41 @@ async fn create(app: &AppHandle, target: &tauri::Url) -> Result<Webview, String>
 
 /// Where the UI's Browser pane is, in the main window's logical points, or
 /// that it is not on screen.
-pub fn set_bounds(app: &AppHandle, x: f64, y: f64, width: f64, height: f64, visible: bool) -> Result<(), String> {
+pub async fn set_bounds(app: &AppHandle, x: f64, y: f64, width: f64, height: f64, visible: bool) -> Result<(), String> {
     let Some(view) = app.get_webview(LABEL) else { return Ok(()) };
     if !visible || width < 1.0 || height < 1.0 {
         return view.hide().map_err(|e| e.to_string());
     }
-    view.set_position(LogicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+    // The UI measures from the top of its page, which starts below the title
+    // bar; the pane is placed from the top of the window's content, which runs
+    // under it. Without this the page sat one title bar too high, over the
+    // Browser tab's own address bar.
+    let below_title = title_bar_height(&view).await;
+    view.set_position(LogicalPosition::new(x, y + below_title)).map_err(|e| e.to_string())?;
     view.set_size(LogicalSize::new(width, height)).map_err(|e| e.to_string())?;
     view.show().map_err(|e| e.to_string())
+}
+
+/// How far the window's title bar reaches into its content area, in points:
+/// zero in full screen, where there is none.
+async fn title_bar_height(view: &Webview) -> f64 {
+    let (tx, rx) = oneshot::channel::<f64>();
+    let ran = on_main(view, move |wk, _| {
+        let height = wk
+            .window()
+            .and_then(|w| {
+                let content = w.contentView()?.frame();
+                let layout = w.contentLayoutRect();
+                Some(content.size.height - (layout.origin.y + layout.size.height))
+            })
+            .unwrap_or(0.0);
+        let _ = tx.send(height.clamp(0.0, 200.0));
+    })
+    .await;
+    if ran.is_err() {
+        return 0.0;
+    }
+    rx.await.unwrap_or(0.0)
 }
 
 /// Back, forward or reload, from the Browser tab's toolbar.
@@ -603,7 +631,8 @@ pub async fn login(app: &AppHandle, url: &str, cookies: &[String], timeout: Dura
         if started.elapsed() > timeout {
             return Err("timeout".into());
         }
-        let Ok(jar) = view.cookies_for_url(page.clone()) else { continue };
+        let Ok(all) = view.cookies() else { continue };
+        let jar = crate::browser::jar_for(all, &page);
         let has = |name: &str| jar.iter().any(|c| c.name() == name && !c.value().is_empty());
         if cookies.iter().all(|n| has(n)) {
             return Ok(jar.iter().map(|c| (c.name().to_string(), c.value().to_string())).collect());

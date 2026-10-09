@@ -31,16 +31,14 @@ const THEME_STORAGE_KEY = 'virtues-theme';
 const THEME_BG_STORAGE_KEY = 'virtues-theme-bg';
 
 /**
- * Resolved `--surface`, which is what a COLD START actually ends up looking at.
+ * Resolved `--page`, which is what a COLD START actually ends up looking at.
  *
- * `body` is `--background`, so that is what the pre-paint script used to paint —
- * and for one theme in two it is the wrong answer. Both shells cover the window
- * in `--surface`: the phone's `.viewport` and the desktop pane both take
- * `var(--color-surface)`. On Pemberley the two tokens are the same white and
- * nothing shows; on Oxford they are #FDFCF9 and #FFFFFF, so every cold launch
- * painted a warm field for ~270ms and then went white under it (measured on a
- * real launch, 2026-09-14). Painting what the app is ABOUT to look like rather
- * than what `body` technically is removes the step.
+ * Both shells cover the window in the page: the phone's `.viewport` and the
+ * desktop's main card both take `var(--color-page)`. Painting anything else
+ * first (`body`'s `--background`, or `--surface`, which differ from the page on
+ * some themes) shows one colour for ~270ms and then steps to another under it
+ * (measured on a real launch, 2026-09-14). The key keeps its name because
+ * app.html and the Mac app's connect.html read it.
  */
 const THEME_SURFACE_STORAGE_KEY = 'virtues-theme-surface';
 
@@ -129,9 +127,9 @@ export function applyTheme(theme: Theme): void {
 	if (bg) {
 		localStorage.setItem(THEME_BG_STORAGE_KEY, bg);
 	}
-	const surface = styles.getPropertyValue('--surface').trim();
-	if (surface) {
-		localStorage.setItem(THEME_SURFACE_STORAGE_KEY, surface);
+	const page = styles.getPropertyValue('--page').trim();
+	if (page) {
+		localStorage.setItem(THEME_SURFACE_STORAGE_KEY, page);
 	}
 
 	// Hand the background back to the stylesheet. The bootstrap sets it as an
