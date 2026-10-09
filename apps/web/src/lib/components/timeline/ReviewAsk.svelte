@@ -103,11 +103,12 @@
 			</Pill>
 		</div>
 	{:else}
-		<div class="buttons" class:grid={ask.chips.length > 2}>
+		<div class="buttons" class:grid={ask.chips.length > 3} class:stack={!ask.yes && ask.chips.length <= 3}>
 			{#each ask.chips as c, i (c.label)}
 				{@const icon = iconOf(c.answer)}
-				<!-- The likely answer is filled, as the prototype's card fills it. -->
-				<Pill size="card" wide filled={i === 0 && ask.chips.length <= 2} disabled={review.saving} onclick={() => choose(c.answer)}>
+				<!-- A guess's Yes is filled, as the prototype's card fills it; a
+				     suggestion is only one of the answers, so it isn't. -->
+				<Pill size="card" wide filled={!!ask.yes && i === 0} disabled={review.saving} onclick={() => choose(c.answer)}>
 					{#if icon}<Icon {icon} width="16" />{/if}{c.label}
 				</Pill>
 			{/each}
@@ -168,6 +169,10 @@
 	.buttons.grid {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
+	}
+	/* Named places, one to a row: a long name keeps the card's width. */
+	.buttons.stack {
+		flex-direction: column;
 	}
 	.save {
 		margin-top: 12px;

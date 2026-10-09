@@ -334,7 +334,7 @@
 							{#if yes}
 								<span class="ask-actions">
 									<Pill filled disabled={review.saving} onclick={() => void review.answer(id, yes)}>Yes</Pill>
-									<Pill onclick={() => (a.role ? review.startPointing(id, a.role) : ask(id, i))}>No</Pill>
+									<Pill disabled={review.saving} onclick={() => (a.role ? review.startPointing(id, a.role) : a.no ? void review.answer(id, a.no) : ask(id, i))}>No</Pill>
 								</span>
 							{:else}
 								<Pill onclick={() => ask(id, i)}>Choose</Pill>
