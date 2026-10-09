@@ -149,7 +149,7 @@ pub fn select(index: &Index, presence: &Presence) -> Vec<IndexFile> {
         .cloned()
         .collect();
 
-    // Home: squares with a week or more, places lived in first, then by score.
+    // Home: squares with HOME_MIN_DAYS or more, places lived in first, then by score.
     let mut home: Vec<(&(u32, u32), &SquareDays)> =
         presence.iter().filter(|(_, d)| d.days() >= HOME_MIN_DAYS).collect();
     home.sort_by(|a, b| {
