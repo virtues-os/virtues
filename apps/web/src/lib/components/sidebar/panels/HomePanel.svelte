@@ -59,6 +59,7 @@
 	import { pinsStore } from '$lib/stores/pins.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { needsYou } from '$lib/applets/days';
+	import { appletGlyph } from '$lib/applets/palette';
 	import type { Applet } from '$lib/api/client';
 	import { chatActivity } from '$lib/stores/chatActivity.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -730,6 +731,7 @@
 	<button
 		type="button"
 		class="panel-row panel-door"
+		class:active={activeRoute === '/applets'}
 		aria-expanded={myApplets.length > 0 ? !folded('applets') : undefined}
 		onclick={openApplets}
 	>
@@ -745,13 +747,13 @@
 	</button>
 	{#if myApplets.length > 0}
 		<div class="sidebar-expandable fold" class:expanded={!folded('applets')} style={foldStyle(visibleApplets.length)}>
-			<div class="sidebar-expandable-inner">
+			<div class="sidebar-expandable-inner applets-nest">
 				{#each visibleApplets as a (a.id)}
 					{@render appletRow(a)}
 				{/each}
 				{#if myApplets.length > APPLETS_SHOWN}
 					<button type="button" class="panel-row panel-more nested" onclick={() => (appletsExpanded = !appletsExpanded)}>
-						{appletsExpanded ? 'Show less' : 'Show all'}
+						{appletsExpanded ? 'Show fewer' : `Show all (${myApplets.length})`}
 					</button>
 				{/if}
 			</div>
@@ -891,6 +893,7 @@
 		}}
 		oncontextmenu={(e) => showMenu(e, appletMenu(a))}
 	>
+		<span class="applet-tile" aria-hidden="true"><AtlasIcon name={appletGlyph(a)} size={12} bare /></span>
 		<span class="panel-row-text">{a.name}</span>
 		{#if needsYou(a)}
 			<span class="row-problem" role="img" aria-label="Needs you"></span>
@@ -1443,10 +1446,27 @@
 		box-sizing: border-box;
 	}
 
-	/* Your applets sit under their door, set in from it so they read as its
-	   contents rather than as more doors. */
+	/* Your applets sit under their door, set in from it on a guide line so they
+	   read as its contents rather than as more doors. */
+	.applets-nest {
+		margin-left: 19px;
+		border-left: 1px solid var(--color-border);
+	}
 	.panel-row.nested {
-		padding-left: 36px;
+		padding-left: 12px;
+	}
+	/* The applet's kind, the same glyph as its row on the Applets page, on a
+	   small tile so it doesn't read as one of the doors' bare icons. */
+	.applet-tile {
+		width: 20px;
+		height: 20px;
+		flex: none;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 6px;
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		color: var(--color-foreground-muted);
 	}
 
 	/* Problems only: an applet that failed or didn't run when it was due. */

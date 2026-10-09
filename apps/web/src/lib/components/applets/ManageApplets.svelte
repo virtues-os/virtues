@@ -311,7 +311,7 @@
 	{/if}
 	<header class="section-header">
 		<div>
-			<h2>Applets</h2>
+			<h2>{fromList ? 'Manage applets' : 'Applets'}</h2>
 			<p class="subtitle">
 				Every applet on this server, built-in ones included, with when it runs and how its runs went.
 			</p>
@@ -375,10 +375,20 @@
 				<span class="name" class:muted={!a.enabled || a.archived_at}>{a.name}</span>
 			</td>
 			<td>
-				<span class="goes" class:muted={!a.enabled || a.archived_at}>
+				<!-- Where its work goes, as a way there: the applet's page. -->
+				<button
+					type="button"
+					class="goes"
+					class:muted={!a.enabled || a.archived_at}
+					title={`Open ${a.name}`}
+					onclick={(e) => {
+						e.stopPropagation();
+						openHome(a);
+					}}
+				>
 					<AtlasIcon name={appletGlyph(a)} size={14} bare />
-					{appletDestination(a)}
-				</span>
+					<span class="goes-text">{appletDestination(a)}</span>
+				</button>
 			</td>
 			<td>
 				<span class="runs" class:muted={!a.enabled || a.archived_at}>{runsLabel(a)}</span>
@@ -498,12 +508,32 @@
 		font-size: 1rem;
 		color: var(--color-foreground);
 	}
+	/* Rows tall enough for the Retry button they can carry. */
+	td {
+		height: 48px;
+	}
 	.goes {
 		display: inline-flex;
 		align-items: center;
 		gap: 8px;
-		font-size: 0.8125rem;
+		max-width: 100%;
+		padding: 4px 12px;
+		border: 1px solid var(--color-border);
+		border-radius: 999px;
+		background: none;
+		font: inherit;
+		font-size: 13px;
 		color: var(--color-foreground-muted);
+		cursor: pointer;
+	}
+	.goes:hover {
+		color: var(--color-foreground);
+		border-color: var(--color-border-strong);
+	}
+	.goes-text {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.runs {
 		font-size: 0.8125rem;

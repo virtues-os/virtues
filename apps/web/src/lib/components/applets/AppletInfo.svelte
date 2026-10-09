@@ -12,7 +12,8 @@
 		type Applet,
 		type AppletData
 	} from '$lib/api/client';
-	import { describeSchedule, limitsOf, relativeTime } from '$lib/applets/palette';
+	import { appletDestination, appletGlyph, describeSchedule, limitsOf, relativeTime } from '$lib/applets/palette';
+	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
 	import {
 		appletDays,
@@ -49,7 +50,10 @@
 
 	const week = lastDays(7);
 	const states = $derived(appletDays(action, index, week));
-	const summary = $derived(recentSummary(states, countRuns(index, action.id, week)));
+	const counts = $derived(countRuns(index, action.id, week));
+	const summary = $derived(recentSummary(states, counts));
+	// Red only for what needs you: a failure, or today's missed run.
+	const weekProblem = $derived((counts.get('error') ?? 0) > 0 || states.at(-1) === 'missed');
 	const isSystem = $derived(action.owner === 'system');
 
 	// Same grace the scheduler and the table use, so they agree on "late".
@@ -121,10 +125,6 @@
 </script>
 
 <div class="info">
-	{#if action.description}
-		<p class="desc">{action.description}</p>
-	{/if}
-
 	<section>
 		<h3 class="group-head">Run history</h3>
 		<Card list>
@@ -132,12 +132,16 @@
 				{#if daysErr}
 					<span class="row-label">Your server couldn't read the last 7 days</span>
 				{:else}
-					<span class="dots">
-						{#each states as state, i (week[i])}
-							<DayDot {state} size="md" title={`${week[i]}: ${DAY_LABEL[state]}`} />
-						{/each}
+					<span class="history-body">
+						<span class="dots">
+							{#each states as state, i (week[i])}
+								<DayDot {state} size="md" title={`${week[i]}: ${DAY_LABEL[state]}`} />
+							{/each}
+						</span>
+						<span class="summary" class:problem={weekProblem}>
+							{summary}
+						</span>
 					</span>
-					<span class="row-label">{summary}</span>
 				{/if}
 				<Icon icon="ri:arrow-right-s-line" width="16" />
 			</button>
@@ -171,6 +175,16 @@
 				{describeSchedule(action.schedule)}{#if nextRun}<span class="sub">{nextRun}</span>{/if}
 			</span>
 		</div>
+		<div class="row">
+			<span class="row-label">Goes to</span>
+			<span class="row-value goes">
+				<AtlasIcon name={appletGlyph(action)} size={14} bare />
+				{appletDestination(action)}
+			</span>
+		</div>
+	</Card>
+
+	<Card list>
 		<div class="row">
 			<span class="row-label">Cost</span>
 			<span class="row-value">
@@ -235,12 +249,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 16px;
-	}
-	.desc {
-		margin: 0;
-		font-size: 15px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
 	}
 	.group-head {
 		margin: 0 0 8px;
@@ -344,6 +352,27 @@
 
 	.delete-row {
 		display: flex;
+		justify-content: center;
+	}
+	.history-body {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 8px 0;
+	}
+	.summary {
+		font-size: 14px;
+		color: var(--color-foreground-muted);
+	}
+	.summary.problem {
+		color: var(--color-error);
+	}
+	.goes {
+		flex-direction: row;
+		align-items: center;
+		gap: 8px;
 	}
 	.error-msg {
 		margin: 0;

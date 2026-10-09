@@ -157,3 +157,9 @@ export function appletDestination(a: Pick<Applet, 'origin' | 'has_face' | 'confi
 		{ settings: 'This server', dashboard: 'Its dashboard', chats: 'Its conversation' } as Record<string, string>
 	)[glyph] ?? '-';
 }
+
+/** A run error's first line: the reason, without the trace under it. */
+export function errorHeadline(error: string, max = 160): string {
+	const line = error.split('\n')[0].trim();
+	return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
