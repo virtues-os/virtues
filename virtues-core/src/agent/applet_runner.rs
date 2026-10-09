@@ -183,9 +183,23 @@ pub async fn run_agent_loop(
     let mut cost_micros: i64 = 0;
     let mut budget_stopped: Option<String> = None;
     let mut error: Option<String> = None;
+    // What the applet says it makes (`config.delivers`), and whether this run
+    // made it. Tool results name only the call's id, so the name is kept
+    // from the call's start.
+    let delivers = delivers_kind(&action.config);
+    let mut tool_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut wrote_page = false;
 
     while let Some(event) = stream.next().await {
         match event {
+            crate::agent::AgentEvent::ToolCallStart { id, name, .. } => {
+                tool_names.insert(id, name);
+            }
+            crate::agent::AgentEvent::ToolCallResult { id, result, success, .. } => {
+                if tool_names.get(&id).is_some_and(|name| wrote_a_page(name, success, &result)) {
+                    wrote_page = true;
+                }
+            }
             crate::agent::AgentEvent::TextDelta { content } => {
                 assistant_content.push_str(&content);
             }
@@ -277,6 +291,15 @@ pub async fn run_agent_loop(
         }
     }
 
+    // A run that finished without making what the applet makes failed, even
+    // when the model ended politely. Without this, a run whose query broke
+    // and which then said "I couldn't create today's page" was recorded as a
+    // success. A run already failed or stopped at its ceiling keeps that
+    // reason.
+    if error.is_none() && budget_stopped.is_none() {
+        error = missing_delivery(delivers, wrote_page);
+    }
+
     // 8. Save assistant message (only if chat is linked)
     if !assistant_content.is_empty() {
         if let Some(cid) = &chat_id {
@@ -327,6 +350,28 @@ pub async fn run_agent_loop(
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/// What an applet says it makes, from `config.delivers.kind` ("page",
+/// "chat", "dashboard"). Absent when it doesn't say, which most don't yet.
+fn delivers_kind(config: &serde_json::Value) -> Option<&str> {
+    config.get("delivers")?.get("kind")?.as_str()
+}
+
+/// The tools that write a page. `edit_page` asked to edit with no page bound
+/// answers `needs_binding` and succeeds without writing anything.
+const PAGE_WRITE_TOOLS: &[&str] = &["create_page", "edit_page", "revise_article"];
+
+fn wrote_a_page(tool: &str, success: bool, result: &serde_json::Value) -> bool {
+    success && PAGE_WRITE_TOOLS.contains(&tool) && result.get("needs_binding").is_none()
+}
+
+/// Why a finished run failed to make what its applet makes, if it did.
+/// Only a page can be checked today: the other kinds have no tool whose
+/// success says the work arrived.
+fn missing_delivery(delivers: Option<&str>, wrote_page: bool) -> Option<String> {
+    (delivers == Some("page") && !wrote_page)
+        .then(|| "The run ended without writing its page.".to_string())
+}
 
 /// What a wake nobody asked for (a clock, a poll) runs on.
 const RUN_INSTRUCTION: &str = "Run your action instruction now.";
@@ -461,6 +506,29 @@ mod tests {
         m.iter()
             .map(|x| (x["role"].as_str().unwrap().to_string(), x["content"].as_str().unwrap_or("").to_string()))
             .collect()
+    }
+
+    #[test]
+    fn a_page_applet_that_wrote_no_page_failed() {
+        let page = json!({ "delivers": { "kind": "page" } });
+        assert_eq!(delivers_kind(&page), Some("page"));
+        assert_eq!(delivers_kind(&json!({})), None);
+        assert!(missing_delivery(Some("page"), false).is_some());
+        assert!(missing_delivery(Some("page"), true).is_none());
+        assert!(missing_delivery(None, false).is_none(), "an applet that says nothing is not checked");
+        assert!(missing_delivery(Some("chat"), false).is_none(), "only a page can be checked today");
+    }
+
+    #[test]
+    fn only_a_successful_page_write_counts() {
+        assert!(wrote_a_page("create_page", true, &json!({ "page_id": "page_1" })));
+        assert!(wrote_a_page("revise_article", true, &json!({})));
+        assert!(!wrote_a_page("create_page", false, &json!({})), "a failed write");
+        assert!(!wrote_a_page("sql_query", true, &json!({})), "not a page tool");
+        assert!(
+            !wrote_a_page("edit_page", true, &json!({ "needs_binding": true })),
+            "no page was bound, so nothing was written"
+        );
     }
 
     #[test]
