@@ -47,6 +47,7 @@
 	import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
 	import { setup } from '$lib/components/setup/setup.svelte';
 	import { roomForRoute, roomsInGroup, type Room } from '$lib/sidebar/rooms';
+	import { appletsStore } from '$lib/stores/applets.svelte';
 
 	const setupRooms = roomsInGroup('setup');
 	const primary = roomsInGroup('primary');
@@ -186,7 +187,11 @@
 			class:setup={room.group === 'setup'}
 			aria-label={room.label}
 			aria-pressed={isSelected(room)}
-			title={room.group === 'setup' ? `${room.label} · ${setupCount} done · ${room.chord}` : `${room.label} · ${room.chord}`}
+			title={room.group === 'setup'
+				? `${room.label} · ${setupCount} done · ${room.chord}`
+				: room.id === 'home' && appletsStore.problems > 0
+					? `${room.label} · ${appletsStore.problems} ${appletsStore.problems === 1 ? 'applet needs' : 'applets need'} you · ${room.chord}`
+					: `${room.label} · ${room.chord}`}
 			onclick={() => activate(room)}
 		>
 			<span class="rail-tile">
@@ -194,6 +199,11 @@
 					<SetupRing size={20} />
 				{:else}
 					<AtlasIcon name={room.icon} size={20} stroke={1.0} bare />
+				{/if}
+				<!-- Applets live in Home, so an applet that needs you marks Home.
+				     The one dot on the rail, and only while something is broken. -->
+				{#if room.id === 'home' && appletsStore.problems > 0}
+					<span class="rail-problem" aria-hidden="true"></span>
 				{/if}
 			</span>
 			<span class="rail-label">{room.label}</span>
@@ -360,6 +370,17 @@
 	.rail-tile {
 		display: grid;
 		place-items: center;
+		position: relative;
+	}
+
+	.rail-problem {
+		position: absolute;
+		top: 4px;
+		right: 4px;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--color-error);
 	}
 
 	.rail-label {
