@@ -11,5 +11,5 @@
  * guards existed only so one `{#if}` chain in WikiContent could dispatch. That
  * chain now switches on a `kind` set beside the fetch that decides it.
  */
-export type { DayEvent, ScoredSleepCycle } from "./day";
+export type { DayEvent } from "./day";
 export { getEventDisplayLabel, getEventDisplayLocation } from "./day";

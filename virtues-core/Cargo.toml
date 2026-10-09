@@ -118,8 +118,8 @@ rustls-native-certs = "0.8"
 # Financial integrations
 plaid = "9.0.1"
 
-# Image processing (day illustration alpha-keying + cropping)
-image = { version = "0.25", default-features = false, features = ["png"] }
+# Image processing (the day's picture: decode the model's PNG, resize, JPEG)
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 # Environment
 dotenv = "0.15"

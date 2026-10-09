@@ -11,9 +11,14 @@
  *   supports. Clicking the sentence shows that record's words.
  * - `[^cx-N]` context: a plain fact, e.g. a section's time span.
  *
+ * A fenced block whose info string is `figure` is a figure (a quote, an
+ * exchange, the day's route): `key: value` lines the page draws as one.
+ *
  * A page written before the narrator had footnotes parses the same way, with
  * no notes: its first paragraph is still the lede.
  */
+
+import { zoneOffset } from "$lib/timeline/scale";
 
 export type NoteKind = "ev" | "cx";
 
@@ -25,7 +30,7 @@ export interface MarginNote {
 	ref: string | null;
 }
 
-export type BlockKind = "heading" | "paragraph" | "table" | "other";
+export type BlockKind = "heading" | "paragraph" | "table" | "figure" | "other";
 
 /**
  * One sentence of a paragraph and the evidence that closes it. The writer ends
@@ -48,6 +53,8 @@ export interface ArticleBlock {
 	notes: MarginNote[];
 	/** A paragraph's sentences, in order. Empty for every other kind. */
 	sentences: Sentence[];
+	/** A figure's `key: value` lines, keys lowercase. Only on a figure. */
+	fields?: Record<string, string>;
 }
 
 export interface DayArticle {
@@ -118,7 +125,60 @@ function parseDefinition(kind: NoteKind, body: string): MarginNote {
 	return { kind, label: body.trim(), ref: null };
 }
 
+const FIGURE = /^```figure[ \t]*\n([\s\S]*?)\n?```$/;
+
+/** A figure's lines as fields: the first `:` splits key from value. */
+function figureFields(block: string): Record<string, string> | null {
+	const m = block.match(FIGURE);
+	if (!m) return null;
+	const fields: Record<string, string> = {};
+	for (const line of m[1].split("\n")) {
+		const at = line.indexOf(":");
+		const key = line.slice(0, at).trim().toLowerCase();
+		if (at > 0 && key) fields[key] = line.slice(at + 1).trim();
+	}
+	return fields;
+}
+
+/** The records a figure stands on, as `table:id`: a thread's `refs`, any other's `ref`. */
+export function figureRefs(fields: Record<string, string>): string[] {
+	return ((fields.kind === "thread" ? fields.refs : fields.ref) ?? "")
+		.split(",")
+		.map((r) => r.trim())
+		.filter((r) => r.includes(":"));
+}
+
+/**
+ * A paragraph that only says what wasn't recorded ("Nothing was recorded
+ * between 7:41 and 12:39.") is the margin's to say: its gap mark is computed
+ * from the day's coverage, so the paragraph goes.
+ */
+const PROSE_TIME = String.raw`\d{1,2}(?::\d{2})?(?:\s*[ap]\.?\s?m\.?)?`;
+const GAP_PARAGRAPH = new RegExp(
+	String.raw`^Nothing was recorded (?:between ${PROSE_TIME} and ${PROSE_TIME}|before ${PROSE_TIME}|after ${PROSE_TIME})\.?$`,
+	"i",
+);
+
+/** Blank lines part blocks, except inside a fence, which stays one block. */
+function splitBlocks(text: string): string[] {
+	const out: string[] = [];
+	let lines: string[] = [];
+	let fenced = false;
+	for (const line of text.split("\n")) {
+		if (/^\s*```/.test(line)) fenced = !fenced;
+		if (!fenced && !line.trim()) {
+			if (lines.length) out.push(lines.join("\n").trim());
+			lines = [];
+		} else {
+			lines.push(line);
+		}
+	}
+	if (lines.length) out.push(lines.join("\n").trim());
+	return out.filter(Boolean);
+}
+
 function kindOf(block: string): BlockKind {
+	if (FIGURE.test(block)) return "figure";
 	if (/^#{1,6}\s/.test(block)) return "heading";
 	if (block.split("\n").every((l) => l.trim().startsWith("|"))) return "table";
 	if (/^(```|>|-\s|\*\s|\d+\.\s|!\[)/.test(block)) return "other";
@@ -134,11 +194,7 @@ export function parseDayArticle(markdown: string): DayArticle {
 		else body.push(line);
 	}
 
-	const raw = body
-		.join("\n")
-		.split(/\n\s*\n/)
-		.map((b) => b.trim())
-		.filter(Boolean);
+	const raw = splitBlocks(body.join("\n"));
 
 	const blocks: ArticleBlock[] = [];
 	for (const b of raw) {
@@ -155,6 +211,11 @@ export function parseDayArticle(markdown: string): DayArticle {
 		}
 		const markdownText = text.replace(/\n\s*$/g, "");
 		const kind = kindOf(markdownText);
+		if (kind === "paragraph" && GAP_PARAGRAPH.test(markdownText)) continue;
+		if (kind === "figure") {
+			blocks.push({ kind, markdown: markdownText, notes, sentences: [], fields: figureFields(markdownText) ?? {} });
+			continue;
+		}
 		blocks.push({ kind, markdown: markdownText, notes, sentences: kind === "paragraph" ? sentencesOf(b, defs) : [] });
 	}
 
@@ -180,4 +241,148 @@ export function veilMarks(markdown: string): { markdown: string; phrases: string
 export function abstractOf(markdown: string | null | undefined): string {
 	if (!markdown) return "";
 	return veilMarks(parseDayArticle(markdown).abstract).markdown.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+}
+
+// ── The margin's computed marks ──────────────────────────────────────────
+
+/** A silence shorter than this gets no mark. */
+export const GAP_MIN_MINUTES = 30;
+/** No more than this many "new" marks on a page. */
+export const FIRSTS_PER_PAGE = 3;
+
+const MINUTE = 60_000;
+
+/** The instant a YYYY-MM-DD day starts in `zone`, exact on a daylight-saving change. */
+export function dayStartIn(slug: string, zone: string): number {
+	const [y, m, d] = slug.split("-").map(Number);
+	const wall = Date.UTC(y, m - 1, d);
+	return wall - zoneOffset(wall - zoneOffset(wall, zone), zone);
+}
+
+/** Minutes on the day's clock at an instant: 0 at its midnight, 1440 at the next. */
+export function clockMinutes(t: number, zone: string, dayEnd: number): number {
+	if (t >= dayEnd) return 24 * 60;
+	const local = Math.floor((t + zoneOffset(t, zone)) / MINUTE);
+	return ((local % 1440) + 1440) % 1440;
+}
+
+/** "12:25–10:22 AM", or "11:20 AM–1:05 PM" across noon, on the day's clock. */
+export function timeRange(start: number, end: number, zone: string): string {
+	const fmt = (t: number) =>
+		new Date(t).toLocaleTimeString("en-US", { timeZone: zone, hour: "numeric", minute: "2-digit" }).replace(/\s+/g, " ");
+	const [a, b] = [fmt(start), fmt(end)];
+	const [time, half] = a.split(" ");
+	return half === b.split(" ")[1] ? `${time}–${b}` : `${a}–${b}`;
+}
+
+/**
+ * The silences in a day's recording: every stretch of at least
+ * `GAP_MIN_MINUTES` between `start` and `end` (or now, on a day still going)
+ * that no recorded span covers. No coverage at all is not a mark: the day had
+ * no recording to have gaps in.
+ */
+export function recordingGaps(
+	coverage: [string, string][] | null,
+	start: number,
+	end: number,
+	now = Date.now(),
+): { start: number; end: number }[] {
+	if (!coverage?.length) return [];
+	const until = Math.min(end, now);
+	const spans = coverage.map(([s, e]) => [Date.parse(s), Date.parse(e)] as const).sort((x, y) => x[0] - y[0]);
+	const out: { start: number; end: number }[] = [];
+	let at = start;
+	for (const [s, e] of spans) {
+		const to = Math.min(s, until);
+		if (to - at >= GAP_MIN_MINUTES * MINUTE) out.push({ start: at, end: to });
+		at = Math.max(at, e);
+	}
+	if (until - at >= GAP_MIN_MINUTES * MINUTE) out.push({ start: at, end: until });
+	return out;
+}
+
+/** What the margin says beside a paragraph, besides your notes. */
+export type MarginMark =
+	| { kind: "gap"; spans: string[] }
+	/** `title` is what's new when it has a name; `veil` is what the veil hides. */
+	| { kind: "first"; title: string | null; line: string; veil: string[] };
+
+/** A first, ready to place: its moment on the day's clock, and how much it matters. */
+export interface FirstMark {
+	at: number;
+	title: string | null;
+	line: string;
+	veil: string[];
+	/** Lower places first when the page has more than it can show. */
+	rank: number;
+}
+
+const CLOCK = /\b(\d{1,2}):(\d{2})\s*([AP])\.?M\b/i;
+
+/** The minutes on the day's clock of a paragraph's evidence, in reading order. */
+function evidenceMinutes(block: ArticleBlock): number[] {
+	return block.sentences.flatMap((s) =>
+		s.evidence.flatMap((n) => {
+			const m = n.label.match(CLOCK);
+			if (!m) return [];
+			const h = (Number(m[1]) % 12) + (m[3].toUpperCase() === "P" ? 12 : 0);
+			return [h * 60 + Number(m[2])];
+		}),
+	);
+}
+
+/**
+ * Where each computed mark goes, by block index: only beside paragraphs.
+ *
+ * A gap goes beside the first paragraph whose first evidence is at or after
+ * the gap's end (before all the evidence, the first paragraph; after it, the
+ * last), and gaps that land on one paragraph share one mark. A first goes
+ * beside the paragraph whose evidence spans its moment, else the next one
+ * after it; one to a paragraph, `FIRSTS_PER_PAGE` to a page, lowest rank
+ * first. A first with no name (a place nobody named) shows once a section:
+ * beside the paragraph that tells the visit it adds something, and a second
+ * "First visit in your record" under one heading only repeats the first.
+ * Times are minutes on the day's clock.
+ */
+export function placeMarks(
+	blocks: ArticleBlock[],
+	gaps: { end: number; label: string }[],
+	firsts: FirstMark[],
+): Map<number, MarginMark[]> {
+	const out = new Map<number, MarginMark[]>();
+	const paragraphs = blocks.flatMap((b, i) => (b.kind === "paragraph" ? [{ i, times: evidenceMinutes(b) }] : []));
+	if (!paragraphs.length) return out;
+	const timed = paragraphs
+		.filter((p) => p.times.length)
+		.map((p) => ({ i: p.i, first: p.times[0], lo: Math.min(...p.times), hi: Math.max(...p.times) }));
+	const earliest = Math.min(...timed.map((p) => p.lo));
+	const firstParagraph = paragraphs[0].i;
+	const lastParagraph = paragraphs[paragraphs.length - 1].i;
+	const add = (i: number, mark: MarginMark) => out.set(i, [...(out.get(i) ?? []), mark]);
+
+	for (const g of gaps) {
+		const home = g.end <= earliest ? firstParagraph : (timed.find((p) => p.first >= g.end)?.i ?? lastParagraph);
+		const there = out.get(home)?.find((m) => m.kind === "gap");
+		if (there?.kind === "gap") there.spans.push(g.label);
+		else add(home, { kind: "gap", spans: [g.label] });
+	}
+
+	const sectionOf = (i: number) => blocks.slice(0, i).filter((b) => b.kind === "heading").length;
+	let shown = 0;
+	const taken = new Set<number>();
+	const unnamedIn = new Set<number>();
+	for (const f of [...firsts].sort((a, b) => a.rank - b.rank || a.at - b.at)) {
+		if (shown >= FIRSTS_PER_PAGE) break;
+		const home =
+			timed.find((p) => p.lo <= f.at && f.at <= p.hi)?.i ?? timed.find((p) => p.lo >= f.at)?.i ?? lastParagraph;
+		if (taken.has(home)) continue;
+		if (f.title === null) {
+			if (unnamedIn.has(sectionOf(home))) continue;
+			unnamedIn.add(sectionOf(home));
+		}
+		taken.add(home);
+		shown += 1;
+		add(home, { kind: "first", title: f.title, line: f.line, veil: f.veil });
+	}
+	return out;
 }

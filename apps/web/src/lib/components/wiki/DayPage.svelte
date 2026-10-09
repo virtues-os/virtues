@@ -2,17 +2,17 @@
 	DayPage.svelte
 
 	One day, two views of it (agents/plan/day-article-plan.md):
-	- Article: the dateline (weekday, weather, the hours heard) and the date,
-	  the Abstract and your numbers, and the body with your notes in its margin
-	  (DayArticleBody), then the days on either side.
-	- Data: the evidence: the dayline, the timeline, your chats, and every
-	  record of the day. A sentence's source opens Data on its record.
+	- Article: the date, the year and the weather under it, the Abstract and
+	  your numbers, and the body with its margin (DayArticleBody), then the
+	  days on either side.
+	- Data: the evidence: the day line, the places, the event timeline, and
+	  every record of the day. A sentence's source opens Data on its record.
 	Write a note writes in the margin about the whole day (nothing reads day
-	notes yet); Edit opens the article page. Rewrite this page, at the foot of
-	a past day's article, asks your server to write the page again from the
-	day's record; it keeps the current page in History, asks before replacing
-	changes you made, and says how it went in a line above the Abstract
-	(lib/wiki/dayRewrite.ts).
+	notes yet); Edit opens the article page. The ⋯ menu holds the rest.
+	Rewrite this page, there on a past day with a page, asks your server to
+	write the page again from the day's record; it keeps the current page in
+	History, asks before replacing changes you made, and says how it went in
+	a line above the Abstract (lib/wiki/dayRewrite.ts).
 -->
 
 <script lang="ts">
@@ -24,7 +24,6 @@
 		getDaySources,
 		getDayEvents,
 		getDayTimeline,
-		getDayChats,
 		getDayFacts,
 		getDayByDate,
 		getSimilarDays,
@@ -36,12 +35,13 @@
 		getArticle,
 		getDayRewrite,
 		rewriteDay,
+		paintDay,
+		type DayPictureStyle,
 		revertArticle,
 		type DayRewriteStatus,
 		type RevertOutcome,
 		type DayFactsApi,
 		type DaySourceApi,
-		type DayChatApi,
 		type TimelineDayLocationChunk,
 		type WikiDayApi,
 	} from "$lib/wiki/api";
@@ -52,10 +52,10 @@
 	import TextAction from "$lib/components/TextAction.svelte";
 	import EventTimeline from "./EventTimeline.svelte";
 	import DaylineChart from "./DaylineChart.svelte";
+	import DayPlaces from "./DayPlaces.svelte";
 	import DayDatePicker from "./DayDatePicker.svelte";
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import DayArticleBody from "./DayArticleBody.svelte";
-	import DayDateline from "./DayDateline.svelte";
 	import DayNumbers from "./DayNumbers.svelte";
 	import DayInline from "./DayInline.svelte";
 	import { ApiError, getRecord, getAssistantProfile, updateUiPreferences } from "$lib/api/client";
@@ -89,9 +89,11 @@
 	} from "$lib/wiki/dayRewrite";
 	import { veiled } from "$lib/actions/veil";
 	import { veil } from "$lib/stores/veil.svelte";
+	import { Popover } from "$lib/floating";
 
-	import Icon from "$lib/components/Icon.svelte";
 	import Button from "$lib/components/Button.svelte";
+	import IconButton from "$lib/components/IconButton.svelte";
+	import MenuItem from "$lib/components/MenuItem.svelte";
 
 	interface Props {
 		/** The wire shape. See PersonPage for why the converter is gone. */
@@ -104,19 +106,9 @@
 	// on a bare `YYYY-MM-DD` is UTC midnight, which is the previous day for
 	// everyone west of Greenwich, and this one feeds the chart's axis.
 	const date = $derived(parseDateSlug(page.date));
-	const dayOfWeek = $derived(
-		["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][
-			date.getDay()
-		]
-	);
-	const sleepCycles = $derived(
-		(page.sleep_cycles ?? []).map((c) => ({
-			startTime: new Date(c.start_time),
-			endTime: new Date(c.end_time),
-			dominantStage: c.dominant_stage,
-			avgHr: c.avg_hr,
-			autonomicZ: c.autonomic_z,
-		}))
+	/** The title: "Saturday, March 14". The year sits on the line under it. */
+	const titleLabel = $derived(
+		date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }),
 	);
 
 	// Shared hover state for chart ↔ timeline sync
@@ -124,32 +116,6 @@
 
 	// Timeline component ref for expand/collapse all
 	let timelineRef = $state<{ toggleAll: () => void; allExpanded: boolean } | null>(null);
-
-	function formatDate(date: Date, dayOfWeek: string): string {
-		return `${dayOfWeek}, ${date.toLocaleDateString("en-US", {
-			month: "long",
-			day: "numeric",
-			year: "numeric",
-		})}`;
-	}
-
-	function formatTimezoneDisplay(startTz: string | null): string | null {
-		if (!startTz) return null;
-		const parts = startTz.split("/");
-		return parts[parts.length - 1].replace(/_/g, " ");
-	}
-
-	// Timezone display — fallback to browser timezone for ungenerated days
-	function getBrowserTimezone(): string | null {
-		if (!browser) return null;
-		const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-		const parts = tz.split("/");
-		return parts[parts.length - 1].replace(/_/g, " ");
-	}
-
-	const timezoneDisplay = $derived(
-		formatTimezoneDisplay(page.start_timezone) ?? getBrowserTimezone(),
-	);
 
 	// Render timestamps in the SAME zone the server windowed this day in: the
 	// locked per-day start_timezone, else the viewing device's zone (which is
@@ -402,11 +368,6 @@
 	// ─────────────────────────────────────────────────────────────────────────
 	let dayEvents = $state<DayEvent[]>([]);
 
-	// The prior day's trailing sleep. The detective cuts every timeline at
-	// midnight, so an 11pm–6:30am night is split across two days' events —
-	// the sleep chart needs the evening half to draw the night whole.
-	let priorSleepEvents = $state<DayEvent[]>([]);
-
 	const loadEvents = makeLoader(
 		(slug) => getDayEvents(slug),
 		(result) => {
@@ -415,66 +376,8 @@
 	);
 
 	$effect(() => {
-		if (browser && page?.date) {
-			loadEvents(currentDateSlug);
-			const prev = new Date(`${currentDateSlug}T12:00:00`);
-			prev.setDate(prev.getDate() - 1);
-			// Only sleep that touches this day's midnight — the evening half of
-			// tonight's split night. The prior day's own overnight block would
-			// otherwise stretch the sleep chart across thirty hours.
-			const midnight = new Date(`${currentDateSlug}T00:00:00`).getTime();
-			getDayEvents(getLocalDateSlug(prev))
-				.then((evs) => {
-					priorSleepEvents = (evs ?? [])
-						.map(apiToDayEvent)
-						.filter(
-							(e) =>
-								e.isSleep &&
-								!e.userHidden &&
-								e.endTime.getTime() >= midnight - 10 * 60_000
-						);
-				})
-				.catch(() => (priorSleepEvents = []));
-		}
+		if (browser && page?.date) loadEvents(currentDateSlug);
 	});
-
-	// ─────────────────────────────────────────────────────────────────────────
-	// AI Chats (in-app Virtues + external imported conversations)
-	// ─────────────────────────────────────────────────────────────────────────
-	let dayChats = $state<DayChatApi[]>([]);
-
-	const loadChats = makeLoader(
-		(slug) => getDayChats(slug),
-		(result) => {
-			dayChats = result ?? [];
-		},
-	);
-
-	$effect(() => {
-		if (browser && page?.date) loadChats(currentDateSlug);
-	});
-
-	function formatChatTime(iso: string): string {
-		return new Date(iso).toLocaleTimeString("en-US", {
-			hour: "numeric",
-			minute: "2-digit",
-			hour12: true,
-			timeZone: rowTz,
-		});
-	}
-
-	function providerLabel(provider: string | null): string {
-		if (!provider) return "External";
-		const normalized = provider.toLowerCase();
-		if (normalized === "chatgpt" || normalized === "openai") return "ChatGPT";
-		if (normalized === "claude" || normalized === "anthropic") return "Claude";
-		if (normalized === "gemini" || normalized === "google") return "Gemini";
-		return provider.charAt(0).toUpperCase() + provider.slice(1);
-	}
-
-	function openChat(chatId: string) {
-		windowShellStore.openTabFromRoute(`/chat/${chatId}`);
-	}
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// The day's prose (read-only here)
@@ -514,89 +417,26 @@
 	const showTimeline = $derived(
 		dayEvents.filter((e) => !e.isUnknown).length > 0,
 	);
-	const showMovement = $derived(hasLocationData);
-	// An "Entities" section stood here and could never draw: the converter
-	// hardcoded the list empty and the server never sent one on a day at all,
-	// so a day full of people rendered none while the Metadata block below
-	// reported how many were new. The section is gone rather than left as a
-	// stub; listing a day's entities is a thing to BUILD, from `wiki_refs`,
-	// not a thing to leave half-wired.
+	// No entities section: listing a day's entities is a thing to build from
+	// `wiki_refs`, not a stub to draw from a list nothing fills.
 	const showSources = $derived(dataSources.length > 0);
-	const showChats = $derived(dayChats.length > 0);
 
-	const hasAnyContent = $derived(
-		showAutobiography ||
-			showTimeline ||
-			showMovement ||
-			showSources ||
-			showChats,
-	);
+	const hasAnyContent = $derived(showAutobiography || showTimeline || hasLocationData || showSources);
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// Article | Record
+	// Article | Data
 	// ─────────────────────────────────────────────────────────────────────────
 	let view = $state<"article" | "record">("article");
-	/** The record a citation opened Record on, `table:id`. */
+	/** The record a citation opened Data on, `table:id`. */
 	let citedRef = $state<string | null>(null);
-
-	/**
-	 * Switch views along the day's clock: the date stays where it is, the
-	 * dateline's heard-hours bar grows into the dayline, and the rest crossfades.
-	 * Reduced motion, or a browser without view transitions, switches at once.
-	 */
-	type Transition = { finished: Promise<void>; skipTransition: () => void };
-	let pendingTransition: Transition | null = null;
-
-	/** Resolves once the new view is on the page. */
-	async function switchView(change: () => void): Promise<void> {
-		const doc = document as Document & {
-			startViewTransition?: (cb: () => Promise<void>) => Transition;
-		};
-		const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-		// A switch while one is still animating lands at once: the first one
-		// is skipped, never queued behind.
-		if (!doc.startViewTransition || still || pendingTransition) {
-			pendingTransition?.skipTransition();
-			pendingTransition = null;
-			change();
-			await tick();
-			return;
-		}
-		let ran = false;
-		let landed!: () => void;
-		const done = new Promise<void>((resolve) => (landed = resolve));
-		const run = async () => {
-			if (ran) return;
-			ran = true;
-			change();
-			await tick();
-			landed();
-		};
-		try {
-			const t = doc.startViewTransition(run);
-			pendingTransition = t;
-			void t.finished.finally(() => {
-				if (pendingTransition === t) pendingTransition = null;
-			});
-			// The update waits for a frame; a page that is not drawing (a
-			// hidden pane) would never get one, so the switch happens anyway.
-			setTimeout(() => void run(), 300);
-		} catch {
-			// Two day pages side by side share transition names; switch plainly.
-			await run();
-		}
-		return done;
-	}
 
 	/** Where the citation came from: the sentence's paragraph block and index. */
 	let citedAt = $state<{ block: number; sentence: number } | null>(null);
 
 	function openCitation(ref: string, at: { block: number; sentence: number } | null) {
-		void switchView(() => {
-			citedRef = ref;
-			citedAt = at;
-			view = "record";
-		});
+		citedRef = ref;
+		citedAt = at;
+		view = "record";
 		scrollContainerEl?.scrollTo({ top: 0 });
 	}
 
@@ -612,34 +452,32 @@
 	}
 
 	function showRecord() {
-		void switchView(() => (view = "record"));
+		view = "record";
 	}
 
 	/** Back to the article, and to the sentence the citation came from. */
-	function backToArticle() {
+	async function backToArticle() {
 		const ref = citedRef;
 		const at = citedAt;
-		void switchView(() => {
-			view = "article";
-			citedRef = null;
-			citedAt = null;
-		}).then(() => {
-			if (!ref) return;
-			// The sentence that was clicked, by its place; several sentences in
-			// one scene often cite the same recording, so the ref alone is not
-			// enough. A table or photo has no place, so it goes by its ref.
-			const sentence =
-				(at && scrollContainerEl?.querySelector<HTMLElement>(`[data-block="${at.block}"] .s[data-s="${at.sentence}"]`)) ||
-				scrollContainerEl?.querySelector<HTMLElement>(`[data-refs~="${CSS.escape(ref)}"]`);
-			if (!sentence) return;
-			sentence.scrollIntoView({ block: "center" });
-			sentence.classList.remove("flash");
-			void sentence.offsetWidth;
-			sentence.classList.add("flash");
-			setTimeout(() => sentence.classList.remove("flash"), 1700);
-			// Focus goes to the sentence's keyboard control, the next element.
-			(sentence.nextElementSibling as HTMLElement | null)?.focus({ preventScroll: true });
-		});
+		view = "article";
+		citedRef = null;
+		citedAt = null;
+		if (!ref) return;
+		await tick();
+		// The sentence that was clicked, by its place; several sentences in
+		// one scene often cite the same recording, so the ref alone is not
+		// enough. A table or photo has no place, so it goes by its ref.
+		const sentence =
+			(at && scrollContainerEl?.querySelector<HTMLElement>(`[data-block="${at.block}"] .s[data-s="${at.sentence}"]`)) ||
+			scrollContainerEl?.querySelector<HTMLElement>(`[data-refs~="${CSS.escape(ref)}"]`);
+		if (!sentence) return;
+		sentence.scrollIntoView({ block: "center" });
+		sentence.classList.remove("flash");
+		void sentence.offsetWidth;
+		sentence.classList.add("flash");
+		setTimeout(() => sentence.classList.remove("flash"), 1700);
+		// Focus goes to the sentence's keyboard control, the next element.
+		(sentence.nextElementSibling as HTMLElement | null)?.focus({ preventScroll: true });
 	}
 
 	/** The cited record's row in the day's sources, when the sources carry it. */
@@ -690,16 +528,34 @@
 	});
 
 	const parsed = $derived(parseDayArticle(summaryText));
-	const abstractMarked = $derived(veilMarks(parsed.abstract));
+
+	/**
+	 * The Abstract with its first word set apart, for the semibold lead. An
+	 * Abstract that opens on anything but a plain word (a link, a veiled
+	 * passage, emphasis) keeps its drop cap and has no lead word.
+	 */
+	const abstractLead = $derived.by(() => {
+		const m = /^([\p{L}\p{N}][\p{L}\p{N}'’-]*)(.*)$/su.exec(parsed.abstract);
+		return { word: m?.[1] ?? "", ...veilMarks(m ? m[2] : parsed.abstract) };
+	});
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// The dateline's facts, your numbers, your notes, and the days on either side
+	// The day's facts, your numbers, your notes, and the days on either side
 	// ─────────────────────────────────────────────────────────────────────────
+	/** The weather and the recorded stretches; the margin marks its silences from the latter. */
 	let facts = $state<DayFactsApi | null>(null);
 	const loadFacts = makeLoader((slug) => getDayFacts(slug), (r) => (facts = r));
 	$effect(() => {
 		if (browser && page?.date) loadFacts(currentDateSlug);
 	});
+
+	const fahrenheit = (c: number) => Math.round((c * 9) / 5 + 32);
+	/** "73° / 51°" under the title; left out, never "no data", when the day has none. */
+	const weather = $derived(
+		facts?.temperature_high_c != null && facts?.temperature_low_c != null
+			? `${fahrenheit(facts.temperature_high_c)}° / ${fahrenheit(facts.temperature_low_c)}°`
+			: null,
+	);
 
 	function shiftSlug(slug: string, days: number): string {
 		const d = new Date(`${slug}T12:00:00`);
@@ -741,12 +597,16 @@
 	 *  loading, null before you've chosen any, [] when you chose none. */
 	let pins = $state<string[] | null | undefined>(undefined);
 	let pinsFailed = $state(false);
+	/** How your days' pictures are made, the same on every day: oil until you choose. */
+	let pictures = $state<DayPictureStyle | "off">("oil");
 	$effect(() => {
 		if (!browser) return;
 		getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>()
 			.then((p) => {
 				const saved = p?.ui_preferences?.day_measures;
 				pins = Array.isArray(saved) ? saved.filter((k): k is string => typeof k === "string") : null;
+				const style = p?.ui_preferences?.day_pictures;
+				pictures = PICTURE_CHOICES.some((c) => c.value === style) ? (style as DayPictureStyle | "off") : "oil";
 			})
 			// Unreadable: show the starters; a later save reads the profile again.
 			.catch(() => (pins = null));
@@ -1084,6 +944,118 @@
 		windowShellStore.openTabFromRoute("/wiki/history");
 	}
 
+	// ─────────────────────────────────────────────────────────────────────────
+	// The ⋯ menu
+	// ─────────────────────────────────────────────────────────────────────────
+	let menuOpen = $state(false);
+	/** How the last Copy link went, said in its row until the menu closes. */
+	let linkCopy = $state<"idle" | "copied" | "failed">("idle");
+	$effect(() => {
+		if (!menuOpen) linkCopy = "idle";
+	});
+
+	const canRewrite = $derived(currentDateSlug < todaySlug && rewriteHasPage === true);
+
+	async function copyLink() {
+		try {
+			await navigator.clipboard.writeText(`${window.location.origin}${subjectHref(`day_${currentDateSlug}`)}`);
+			linkCopy = "copied";
+		} catch {
+			// No clipboard: an insecure origin (a box over plain http) or a refused permission.
+			linkCopy = "failed";
+		}
+	}
+
+	// Paint this day, and how your days' pictures are made (api/day_picture.rs).
+	/** The choices, in the menu's order; "off" is no pictures. */
+	const PICTURE_CHOICES: { value: DayPictureStyle | "off"; label: string }[] = [
+		{ value: "oil", label: "Oil" },
+		{ value: "watercolor", label: "Watercolor" },
+		{ value: "pencil", label: "Pencil" },
+		{ value: "gouache", label: "Gouache" },
+		{ value: "off", label: "Off" },
+	];
+	const PAINT_COPY: Record<string, string> = {
+		nothing_to_paint: "Nothing on this page is a place your server can paint without guessing.",
+		busy: "Your server is writing this day's page right now. Try painting it in a few minutes.",
+		billing: "Billing stopped your server before it could paint this day, so the page hasn't changed. Check Billing, then try again.",
+		failed: "Your server couldn't paint this day, so the page hasn't changed. Try again later.",
+		update: "Your server needs an update before it can paint days.",
+	};
+
+	/** The day your server is painting, while it is; one at a time. */
+	let paintingDay = $state<string | null>(null);
+	const painting = $derived(paintingDay === currentDateSlug);
+	/** How the last painting that changed nothing ended, on its own day. */
+	let paintLine = $state<{ day: string; text: string } | null>(null);
+	/** A server older than the picture route answers 404; the item stays gone until the page reloads. */
+	let paintMissing = $state(false);
+	const canPaint = $derived(canRewrite && pictures !== "off" && !paintMissing);
+
+	/** Paint this day in your style; a picture that lands brings the page as your server has it now. */
+	async function paintThisDay() {
+		if (paintingDay || pictures === "off") return;
+		const slug = currentDateSlug;
+		paintingDay = slug;
+		paintLine = null;
+		try {
+			const r = await paintDay(slug, pictures);
+			if (r.painted) {
+				const a = await fetchArticle(slug);
+				if (a.slug === currentDateSlug && a.article) summaryText = a.article;
+			} else {
+				paintLine = { day: slug, text: PAINT_COPY[r.reason ?? "failed"] ?? PAINT_COPY.failed };
+			}
+		} catch (e) {
+			if (e instanceof ApiError && e.status === 404) {
+				paintMissing = true;
+				paintLine = { day: slug, text: PAINT_COPY.update };
+			} else {
+				paintLine = { day: slug, text: PAINT_COPY.failed };
+			}
+		} finally {
+			paintingDay = null;
+		}
+	}
+
+	/** Saved on the same queue as your numbers, so neither save overwrites the other. */
+	function choosePictures(next: DayPictureStyle | "off") {
+		const prev = pictures;
+		if (next === prev) return;
+		pictures = next;
+		pinSave = pinSave
+			.then(() => updateUiPreferences({ day_pictures: next }))
+			.catch(() => {
+				pictures = prev;
+			});
+	}
+
+	/**
+	 * The menu's keys: focus starts on the first row, ↑ and ↓ move between
+	 * rows, and Escape (which the popover handles) hands focus back to ⋯.
+	 */
+	function menuKeys(node: HTMLElement) {
+		const rows = () => [
+			...node.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled), [role="menuitemradio"]:not(:disabled)'),
+		];
+		const trigger = node.closest(".day-more")?.querySelector<HTMLElement>('[aria-haspopup="menu"]');
+		rows()[0]?.focus();
+		const onkey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") {
+				trigger?.focus();
+				return;
+			}
+			if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+			e.preventDefault();
+			const list = rows();
+			const at = list.indexOf(document.activeElement as HTMLButtonElement);
+			const next = e.key === "ArrowDown" ? at + 1 : at - 1;
+			list[(next + list.length) % list.length]?.focus();
+		};
+		node.addEventListener("keydown", onkey);
+		return { destroy: () => node.removeEventListener("keydown", onkey) };
+	}
+
 </script>
 
 {#snippet personGloss({ name, url }: { name: string; url: string })}<DayGloss {name} {url} date={currentDateSlug} onday={(slug) => navigateToDay(parseDateSlug(slug))} />{/snippet}
@@ -1100,16 +1072,6 @@
 					<button type="button" class="seg" class:active={view === "article"} aria-pressed={view === "article"} onclick={backToArticle}>Article</button>
 					<button type="button" class="seg" class:active={view === "record"} aria-pressed={view === "record"} onclick={showRecord}>Data</button>
 				</div>
-				<button
-					type="button"
-					class="bar-action"
-					class:active={veil.on}
-					aria-pressed={veil.on}
-					title={veil.on ? (touchOnly ? "You've hidden names and hard passages. Touch and hold one to read it." : "You've hidden names and hard passages. Hold V to read them.") : "Hide names and hard passages on day pages"}
-					onclick={() => veil.toggle()}
-				>
-					{veil.on ? "Veiled" : "Veil"}{#if veil.on && !touchOnly}<span class="bar-more">{" · hold V"}</span>{/if}
-				</button>
 				{#if view === "article" && currentDateSlug <= todaySlug}
 					<button type="button" class="bar-action" title="Write in the margin about the whole day" onclick={() => body?.writeAboutDay()}>Write a note</button>
 				{/if}
@@ -1122,11 +1084,86 @@
 						onclick={openDayArticle}
 					>Edit</button>
 				{/if}
+				<div class="day-more">
+					<Popover bind:open={menuOpen} placement="bottom-end" offset={4}>
+						{#snippet trigger({ toggle })}
+							<IconButton icon="ri:more-fill" label="More" haspopup="menu" expanded={menuOpen} onclick={toggle} />
+						{/snippet}
+						{#snippet children({ close })}
+							<div class="day-menu" role="menu" aria-label="More" use:menuKeys>
+								{#if canRewrite}
+									<MenuItem
+										label={rewriteSending || rewriteRunning ? "Writing this page…" : "Rewrite this page…"}
+										loading={rewriteSending || rewriteRunning}
+										onclick={() => {
+											close();
+											void rewritePage();
+										}}
+									/>
+								{/if}
+								{#if canPaint}
+									<MenuItem
+										label={painting ? "Painting…" : "Paint this day"}
+										loading={painting}
+										disabled={(paintingDay !== null && !painting) || rewriteRunning}
+										onclick={() => {
+											close();
+											void paintThisDay();
+										}}
+									/>
+								{/if}
+								<MenuItem
+									label="History"
+									onclick={() => {
+										close();
+										openHistory();
+									}}
+								/>
+								<MenuItem
+									label="Open in Timeline"
+									onclick={() => {
+										close();
+										openInTimeline();
+									}}
+								/>
+								<MenuItem
+									label={linkCopy === "copied" ? "Link copied" : linkCopy === "failed" ? "Couldn't copy the link" : "Copy link"}
+									onclick={copyLink}
+								/>
+								<div class="menu-rule" role="separator"></div>
+								<MenuItem
+									label={veil.on ? "Show names" : "Hide names"}
+									shortcut={veil.on && !touchOnly ? "Hold V" : undefined}
+									onclick={() => {
+										close();
+										veil.toggle();
+									}}
+								/>
+								<div class="menu-rule" role="separator"></div>
+								<div class="menu-pictures" role="group" aria-label="Pictures">
+									<span class="menu-label" aria-hidden="true">Pictures</span>
+									<div class="picture-choices">
+										{#each PICTURE_CHOICES as choice (choice.value)}
+											<button
+												type="button"
+												role="menuitemradio"
+												aria-checked={pictures === choice.value}
+												class="picture-choice"
+												class:on={pictures === choice.value}
+												onclick={() => choosePictures(choice.value)}>{choice.label}</button
+											>
+										{/each}
+									</div>
+									<span class="menu-hint">About one a week, of a place from your pages</span>
+								</div>
+							</div>
+						{/snippet}
+					</Popover>
+				</div>
 			</div>
 
 			<div class="day-content">
 				<header class="day-header">
-					<div class="day-eyebrow"><DayDateline weekday={dayOfWeek} {facts} timezone={page.start_timezone} clock={view === "article"} /></div>
 					<h1 class="day-title">
 						<DayDatePicker
 							pageDate={date}
@@ -1135,9 +1172,13 @@
 							onNavigateDay={navigateToDay}
 							title={relativeDateLabel() ?? "Go to another day"}
 						>
-							{#snippet label()}{date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}{/snippet}
+							{#snippet label()}{titleLabel}{/snippet}
 						</DayDatePicker>
 					</h1>
+					<p class="dateline">
+						<span>{date.getFullYear()}</span>
+						{#if weather}<span class="dot" aria-hidden="true">·</span><span title="High and low, from a weather model">{weather}</span>{/if}
+					</p>
 				</header>
 
 				{#if view === "article"}
@@ -1167,10 +1208,15 @@
 								{:else if rewriteLine.kind === "failed"}
 									<p class="rewrite-line">{failedCopy(rewriteLine.code)}</p>
 								{/if}
+								{#if painting}
+									<p class="rewrite-line">Your server is painting a picture for this page. It takes about twenty seconds.</p>
+								{:else if paintLine?.day === currentDateSlug}
+									<p class="rewrite-line">{paintLine.text}</p>
+								{/if}
 							</div>
 							{#if parsed.abstract}
-								<div class="day-abstract" use:veiled={{ hiding: veil.hiding, phrases: abstractMarked.phrases }}>
-									<div class="markdown markdown--article"><p><DayInline markdown={abstractMarked.markdown} person={personGloss} /></p></div>
+								<div class="day-abstract" use:veiled={{ hiding: veil.hiding, phrases: abstractLead.phrases }}>
+									<div class="markdown markdown--article"><p class="abstract">{#if abstractLead.word}<strong class="lead-word">{abstractLead.word}</strong>{/if}<DayInline markdown={abstractLead.markdown} person={personGloss} /></p></div>
 								</div>
 							{/if}
 							<DayNumbers date={currentDateSlug} {pins} onchange={savePins} saveFailed={pinsFailed} />
@@ -1179,6 +1225,9 @@
 							bind:this={body}
 							blocks={parsed.blocks}
 							{lead}
+							date={currentDateSlug}
+							timezone={page.start_timezone}
+							coverage={facts?.coverage ?? null}
 							notes={dayNotes}
 							oncite={openCitation}
 							person={personGloss}
@@ -1188,11 +1237,6 @@
 							{removing}
 							{removeFailed}
 						/>
-						{#if currentDateSlug < todaySlug && rewriteHasPage === true}
-							<p class="rewrite-foot">
-								<TextAction onclick={rewritePage} loading={rewriteSending || rewriteRunning} loadingLabel="Writing…">Rewrite this page</TextAction>
-							</p>
-						{/if}
 					{:else}
 						{#if currentDateSlug <= todaySlug}
 							<!-- No page yet, but the day still has your numbers and your notes. -->
@@ -1201,6 +1245,9 @@
 								bind:this={body}
 								blocks={[]}
 								lead={numbersLead}
+								date={currentDateSlug}
+								timezone={page.start_timezone}
+								coverage={facts?.coverage ?? null}
 								notes={dayNotes}
 								onwrite={writeNote}
 								onremove={removeNote}
@@ -1223,17 +1270,17 @@
 					{#if prevDay || nextDay}
 						<nav class="adjacent" aria-label="Adjacent days">
 							{#if prevDay}
-								<button type="button" class="adjacent-card" onclick={() => navigateToDay(prevDay!.date)}>
+								<button type="button" class="adjacent-day" onclick={() => navigateToDay(prevDay!.date)}>
 									<span class="adjacent-when">← {neighborLabel(prevDay)}</span>
-									{#if prevDay.abstract}<span class="adjacent-abstract" use:veiled={{ hiding: veil.hiding, whole: true }}>{prevDay.abstract}</span>{/if}
+									{#if prevDay.abstract}<span class="adjacent-abstract" use:veiled={{ hiding: veil.hiding, whole: true }}>{prevDay.abstract}</span>{:else}<span class="adjacent-none">No page yet</span>{/if}
 								</button>
 							{:else}
 								<span></span>
 							{/if}
 							{#if nextDay}
-								<button type="button" class="adjacent-card adjacent-next" onclick={() => navigateToDay(nextDay!.date)}>
+								<button type="button" class="adjacent-day adjacent-next" onclick={() => navigateToDay(nextDay!.date)}>
 									<span class="adjacent-when">{neighborLabel(nextDay)} →</span>
-									{#if nextDay.abstract}<span class="adjacent-abstract" use:veiled={{ hiding: veil.hiding, whole: true }}>{nextDay.abstract}</span>{/if}
+									{#if nextDay.abstract}<span class="adjacent-abstract" use:veiled={{ hiding: veil.hiding, whole: true }}>{nextDay.abstract}</span>{:else}<span class="adjacent-none">No page yet</span>{/if}
 								</button>
 							{/if}
 						</nav>
@@ -1275,149 +1322,76 @@
 						</section>
 					{/if}
 
-<p class="to-timeline">
-					<TextAction onclick={openInTimeline}>Open this day in the Timeline</TextAction>
-				</p>
+					<section class="section" id="dayline">
+						<h2 class="section-title">The day line</h2>
+						<DaylineChart events={dayEvents} timezone={page.start_timezone} pageDate={date} dayDateSlug={currentDateSlug} />
+					</section>
 
-				<!-- Dayline chart: visual bridge between narrative and timeline -->
-				<section class="section" id="dayline">
-					<h2 class="section-title">The Dayline</h2>
-					<DaylineChart events={dayEvents} {priorSleepEvents} timezone={page.start_timezone} pageDate={date} sleepCycles={sleepCycles} {movementStops} {movementTrack} {dedupedMarkers} dayDateSlug={currentDateSlug} {hasLocationData} />
-				</section>
-
-				{#if hasAnyContent}
-					<!-- Event Timeline -->
-					{#if showTimeline}
-						<section class="section" id="timeline">
-							<div class="section-header-row">
-								<h2 class="section-title">Event Timeline</h2>
-								<div class="section-actions">
-								<Button variant="ghost" size="sm" onclick={() => timelineRef?.toggleAll()}>
-									{timelineRef?.allExpanded ? 'Collapse all' : 'Expand all'}
-								</Button>
-							</div>
-							</div>
-							<EventTimeline bind:this={timelineRef} events={dayEvents} timezone={page.start_timezone} {hoveredEventId} onhover={(id) => hoveredEventId = id} pageDate={date} />
+					{#if hasLocationData}
+						<section class="section" id="places">
+							<h2 class="section-title">Places</h2>
+							<DayPlaces {movementStops} {movementTrack} {dedupedMarkers} {hasLocationData} timezone={page.start_timezone} pageDate={date} />
 						</section>
 					{/if}
 
+					{#if hasAnyContent}
+						{#if showTimeline}
+							<section class="section" id="timeline">
+								<div class="section-header-row">
+									<h2 class="section-title">Event timeline</h2>
+									<div class="section-actions">
+										<Button variant="ghost" size="sm" onclick={() => timelineRef?.toggleAll()}>
+											{timelineRef?.allExpanded ? "Collapse all" : "Expand all"}
+										</Button>
+									</div>
+								</div>
+								<EventTimeline bind:this={timelineRef} events={dayEvents} timezone={page.start_timezone} {hoveredEventId} onhover={(id) => (hoveredEventId = id)} pageDate={date} />
+							</section>
+						{/if}
 
-					<!-- Movement is now in the Dayline chart's "Location" pill -->
-
-					<!-- AI Chats: conversations from this day -->
-					{#if showChats}
-						<section class="section" id="chats">
-							<h2 class="section-title">AI Chats</h2>
-							<div class="chat-list">
-								{#each dayChats as chat (chat.id)}
-									{#if chat.source === "virtues"}
+						<!-- Every record of the day, in one chronological table -->
+						<section class="section" id="ontologies">
+							<h2 class="section-title">Data ontologies</h2>
+							{#if sourceTypeChips.length > 0}
+								<div class="source-filters" role="group" aria-label="Filter data points by ontology">
+									{#each sourceTypeChips as chip (chip.name)}
 										<button
-											class="chat-item"
 											type="button"
-											onclick={() => openChat(chat.id)}
+											class="source-chip"
+											class:active={activeSourceTypes.has(chip.type)}
+											aria-pressed={activeSourceTypes.has(chip.type)}
+											onclick={() => toggleSourceChip(chip)}
 										>
-											<span class="chat-icon"><Icon icon="ri:message-3-line" width="14" /></span>
-											<div class="chat-item-content">
-												<span class="chat-item-title">{chat.title}</span>
-												<span class="chat-item-meta">
-													<span class="chat-badge chat-badge-virtues">Virtues</span>
-													· {chat.message_count} message{chat.message_count === 1 ? "" : "s"}
-													· {formatChatTime(chat.started_at)}
-												</span>
-											</div>
+											{chip.name}
+											<span class="source-chip-count">{chip.count}</span>
 										</button>
-									{:else}
-										<div class="chat-item chat-item-static">
-											<span class="chat-icon"><Icon icon="ri:message-3-line" width="14" /></span>
-											<div class="chat-item-content">
-												<span class="chat-item-title">{chat.title}</span>
-												<span class="chat-item-meta">
-													<span class="chat-badge">{providerLabel(chat.provider)}</span>
-													· {chat.message_count} message{chat.message_count === 1 ? "" : "s"}
-													· {formatChatTime(chat.started_at)}
-												</span>
-											</div>
-										</div>
-									{/if}
-								{/each}
+									{/each}
+								</div>
+							{/if}
+							<div class="sources-table-wrapper">
+								<UniversalDataGrid
+									items={visibleSourceRows}
+									columns={sourceColumns}
+									entityType="day-sources"
+									loading={sourcesLoading}
+									emptyIcon="ri:database-2-line"
+									emptyMessage={sourcesEmptyMessage}
+									loadingMessage="Loading sources..."
+									searchPlaceholder="Filter sources..."
+									pageSize={8}
+								/>
 							</div>
 						</section>
-					{/if}
-
-					<!-- Ontologies: one chronological table of every data point -->
-					<section class="section" id="ontologies">
-						<h2 class="section-title">Data Ontologies</h2>
-						{#if sourceTypeChips.length > 0}
-							<div class="source-filters" role="group" aria-label="Filter data points by ontology">
-								{#each sourceTypeChips as chip (chip.name)}
-									<button
-										type="button"
-										class="source-chip"
-										class:active={activeSourceTypes.has(chip.type)}
-										aria-pressed={activeSourceTypes.has(chip.type)}
-										onclick={() => toggleSourceChip(chip)}
-									>
-										{chip.name}
-										<span class="source-chip-count">{chip.count}</span>
-									</button>
-								{/each}
-							</div>
-						{/if}
-						<div class="sources-table-wrapper">
-							<UniversalDataGrid
-								items={visibleSourceRows}
-								columns={sourceColumns}
-								entityType="day-sources"
-								loading={sourcesLoading}
-								emptyIcon="ri:database-2-line"
-								emptyMessage={sourcesEmptyMessage}
-								loadingMessage="Loading sources..."
-								searchPlaceholder="Filter sources..."
-								pageSize={8}
-							/>
-						</div>
-					</section>
-
-					<!-- Metadata: audit trail + ambient day context -->
-					<section class="section" id="metadata">
-						<h2 class="section-title">Metadata</h2>
-						<dl class="metadata-grid">
-							{#if page.start_timezone}
-								<dt>Timezone</dt>
-								<dd>{timezoneDisplay}</dd>
-							{/if}
-							{#if page.created_at}
-								<dt>Created</dt>
-								<dd>{new Date(page.created_at).toLocaleString()}</dd>
-							{/if}
-							<!-- "Last updated" moved to the byline under the title —
-							     it is the one line a reader wants before the prose,
-							     not after the sources table. -->
-							<dt>Events</dt>
-							<dd>{dayEvents.length}</dd>
-							<dt>Sources</dt>
-							<dd>{dataSources.length}</dd>
-							<dt>New entities</dt>
-							<dd>{page.new_entity_count}</dd>
-							<dt>New topics</dt>
-							<dd>{page.new_topic_count}</dd>
-							<dt>Page ID</dt>
-							<dd class="metadata-mono">{page.id}</dd>
-						</dl>
-					</section>
 					{:else}
-					<!-- Empty state: context-aware -->
-					<div class="empty-state">
-						{#if currentDateSlug > todaySlug}
-							<p class="empty-state-text">This day hasn't happened yet.</p>
-						{:else if currentDateSlug === todaySlug}
-							<p class="empty-state-text">Your day is still in progress.</p>
-						{:else if dataSources.length > 0}
-							<p class="empty-state-text">{dataSources.length} sources recorded. Events will be generated automatically.</p>
-						{:else}
-							<p class="empty-state-text">No source data recorded for this day.</p>
-						{/if}
-					</div>
+						<div class="empty-state">
+							{#if currentDateSlug > todaySlug}
+								<p class="empty-state-text">This day hasn't happened yet.</p>
+							{:else if currentDateSlug === todaySlug}
+								<p class="empty-state-text">Your day is still in progress.</p>
+							{:else}
+								<p class="empty-state-text">Your record holds nothing from this day.</p>
+							{/if}
+						</div>
 					{/if}
 				{/if}
 			</div>
@@ -1426,16 +1400,17 @@
 </div>
 
 <style>
-	/* ── the toolbar: Article | Data, Veil, Write a note, Edit. Rewrite this
-	   page sits at the foot of the article instead: one more verb here would
-	   overflow the bar on a phone. ── */
+	/* ── the toolbar: Article | Data, Write a note, Edit, and ⋯ for the rest.
+	   Four controls fit a phone's width; anything more goes in the menu. ── */
 	.day-bar {
 		display: flex;
 		align-items: center;
 		gap: 1.125rem;
 		max-width: 53.5rem;
-		height: 2.5rem;
+		height: 3.25rem;
 		margin: 0 auto;
+		font-family: var(--font-sans);
+		font-size: 0.8125rem;
 	}
 
 	.bar-gap {
@@ -1451,14 +1426,12 @@
 		border: none;
 		background: none;
 		padding: 0.25rem 0;
-		font-family: var(--font-sans);
-		font-size: 0.78125rem;
-		color: var(--color-foreground-subtle);
+		font: inherit;
+		color: var(--color-foreground-muted);
 		cursor: pointer;
 	}
 
-	.bar-action:hover:not(:disabled),
-	.bar-action.active {
+	.bar-action:hover:not(:disabled) {
 		color: var(--color-foreground);
 	}
 
@@ -1469,7 +1442,6 @@
 
 	.segmented {
 		display: flex;
-		gap: 2px;
 		padding: 2px;
 		background: var(--color-surface-elevated);
 		border-radius: 6px;
@@ -1480,8 +1452,7 @@
 		border: 1px solid transparent;
 		background: transparent;
 		color: var(--color-foreground-subtle);
-		font-family: var(--font-sans);
-		font-size: 0.75rem;
+		font: inherit;
 		border-radius: 6px;
 		cursor: pointer;
 	}
@@ -1490,10 +1461,74 @@
 		color: var(--color-foreground);
 	}
 
+	/* White on the page, edged by a hairline: no shadows in the pane. */
 	.seg.active {
-		background: var(--color-background);
+		background: var(--color-surface);
 		color: var(--color-foreground);
 		border-color: var(--color-border);
+	}
+
+	.day-more {
+		display: flex;
+	}
+
+	.day-menu {
+		display: flex;
+		flex-direction: column;
+		min-width: 15rem;
+		padding: 6px;
+	}
+
+	.menu-rule {
+		height: 1px;
+		margin: 6px;
+		background: var(--color-border);
+	}
+
+	/* Pictures: one row of choices under its label, the way the rows above read. */
+	.menu-pictures {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 4px 8px 8px;
+		font-family: var(--font-sans);
+	}
+
+	.menu-label,
+	.menu-hint {
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+	}
+
+	.picture-choices {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+
+	.picture-choice {
+		padding: 4px 8px;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: transparent;
+		color: var(--color-foreground);
+		font: inherit;
+		font-size: 13px;
+		cursor: pointer;
+	}
+
+	.picture-choice:hover {
+		background: var(--hover-bg);
+	}
+
+	.picture-choice.on {
+		border-color: var(--color-foreground-muted);
+		background: var(--active-bg);
+	}
+
+	.picture-choice:focus-visible {
+		outline: 2px solid var(--color-border-focus);
+		outline-offset: 2px;
 	}
 
 	/* A phone: every action stays, with the words that don't fit cut short. */
@@ -1507,47 +1542,63 @@
 		}
 	}
 
-	/* ── Article ↔ Record: the same day, along its clock ── */
-	.day-title {
-		view-transition-name: day-title;
+	/* ── the page head: the date, then the year and the weather ── */
+	.dateline {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.45rem;
+		margin: 0;
+		font-family: var(--font-sans);
+		font-size: 0.8125rem;
+		color: var(--color-foreground-subtle);
 	}
 
-	.day-eyebrow {
-		view-transition-name: day-eyebrow;
+	.dateline .dot {
+		color: var(--color-foreground-disabled);
 	}
 
-	#dayline {
-		view-transition-name: day-clock;
+	/* ── the Abstract: body size, its first letter a two-line drop cap and the
+	   rest of its first word the one semibold on the page ── */
+	.day-abstract {
+		max-width: 40rem;
+		margin-bottom: 1.4rem;
 	}
 
-	:global(::view-transition-group(*)) {
-		animation-duration: 350ms;
-		animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
-	}
-
-	/* ── the page head ── */
-	.day-eyebrow {
+	.abstract {
 		margin: 0;
 	}
 
-	.day-abstract {
-		max-width: 40rem;
-		margin-bottom: 1.375rem;
+	/* No color of its own: the cap inherits from the element holding the
+	   letter, so a veiled phrase's transparent ink hides it too. */
+	.abstract::first-letter {
+		-webkit-initial-letter: 2;
+		initial-letter: 2;
+		/* A cap sitting tight against the lines it spans reads as crowded;
+		   this is a little more than a word space at body size. */
+		margin-right: 0.35rem;
+		font-family: var(--font-serif);
+		font-weight: 400;
 	}
 
-	/* The Abstract is the line read first and most: a size above the body. */
-	.day-abstract :global(.markdown p) {
-		font-size: 1.375rem;
-		line-height: 1.45;
-		color: var(--color-foreground);
+	@supports not ((initial-letter: 2) or (-webkit-initial-letter: 2)) {
+		.abstract::first-letter {
+			float: left;
+			font-size: 3.55em;
+			line-height: 0.8;
+			padding: 0.07em 0.35rem 0 0;
+		}
 	}
 
-	/* ── Rewrite this page: the verb at the foot, its news above the Abstract ── */
-	.rewrite-foot {
-		max-width: 40rem;
-		margin: 2rem 0 0;
+	/* The semibold cut is its own family (app.css), so no other bold serif
+	   can reach it. A letter the cut lacks falls to the regular, never a
+	   synthesized bold. */
+	.lead-word {
+		font-family: var(--font-serif-lead);
+		font-weight: 600;
+		font-synthesis-weight: none;
 	}
 
+	/* ── Rewrite this page: its news, above the Abstract ── */
 	.rewrite-line {
 		max-width: 40rem;
 		margin: 0 0 1rem;
@@ -1557,24 +1608,25 @@
 		color: var(--color-foreground-muted);
 	}
 
-	/* ── the days on either side ── */
+	/* ── the days on either side: plain text under a rule ── */
 	.adjacent {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 0.75rem;
+		gap: 2rem;
 		max-width: 40rem;
-		margin-top: 2.5rem;
+		margin-top: 3rem;
+		padding-top: 1.4rem;
+		border-top: 1px solid var(--color-border);
 	}
 
-	.adjacent-card {
+	.adjacent-day {
 		display: flex;
 		flex-direction: column;
-		gap: 0.25rem;
+		gap: 0.3rem;
 		border: none;
+		background: none;
+		padding: 0;
 		text-align: left;
-		background: var(--color-surface-elevated);
-		border-radius: 12px;
-		padding: 0.875rem 1rem;
 		cursor: pointer;
 	}
 
@@ -1582,22 +1634,42 @@
 		text-align: right;
 	}
 
-	.adjacent-when {
+	.adjacent-when,
+	.adjacent-none {
 		font-family: var(--font-sans);
-		font-size: 0.6875rem;
+		font-size: 0.8125rem;
 		color: var(--color-foreground-subtle);
 	}
 
 	.adjacent-abstract {
 		font-family: var(--font-serif);
 		font-size: 1rem;
-		line-height: 1.4;
-		color: var(--color-foreground);
+		line-height: 1.45;
+		color: var(--color-foreground-muted);
 		display: -webkit-box;
 		-webkit-line-clamp: 3;
 		line-clamp: 3;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
+	}
+
+	.adjacent-day:hover .adjacent-when {
+		color: var(--color-foreground);
+	}
+
+	.adjacent-day:hover .adjacent-abstract {
+		color: var(--color-foreground);
+	}
+
+	@media (max-width: 560px) {
+		.adjacent {
+			grid-template-columns: minmax(0, 1fr);
+			gap: 1.25rem;
+		}
+
+		.adjacent-next {
+			text-align: left;
+		}
 	}
 
 	/* ── Similar days ── */
@@ -1722,54 +1794,25 @@
 		padding-bottom: 4rem;
 	}
 
-	/* Header: title-page layout — h1, meta, rule, all centered */
 	.day-header {
-		margin-bottom: 1.25rem;
 		max-width: 40rem;
+		margin: 0.25rem 0 1.6rem;
 	}
-
-
 
 	.day-title {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 2.625rem;
+		font-family: var(--font-serif);
+		font-size: 2.75rem;
 		font-weight: 400;
 		color: var(--color-foreground);
-		margin: 0;
-		line-height: 1.2;
+		margin: 0 0 0.4rem;
+		line-height: 1.1;
 		letter-spacing: -0.01em;
-	}
-
-
-
-
-
-
-
-	:global(.spin-icon) {
-		animation: spin 1s linear infinite;
-	}
-
-	@keyframes spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
 	}
 
 	/* Sections */
 	.section {
 		position: relative;
 		margin-bottom: 3.5rem;
-	}
-
-	/* The day on the map: a quiet verb above the Dayline, since the Timeline
-	   is where the same day is read in space. */
-	.to-timeline {
-		margin: 0 0 24px;
-		font-size: 14px;
 	}
 
 	.section-title {
@@ -1801,38 +1844,6 @@
 		flex-shrink: 0;
 	}
 
-	/* Footer sections */
-	.footer-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-
-	.footer-link {
-		display: block;
-		padding: 0.375rem 0;
-		color: var(--color-primary);
-		text-decoration: none;
-	}
-
-	.link-text {
-		display: inline;
-		position: relative;
-		background-image: linear-gradient(
-			to top,
-			color-mix(in srgb, var(--color-primary) 15%, transparent),
-			color-mix(in srgb, var(--color-primary) 15%, transparent)
-		);
-		background-repeat: no-repeat;
-		background-size: 100% 0%;
-		background-position: 0 100%;
-		transition: background-size 0.2s ease;
-	}
-
-	.footer-link:hover .link-text {
-		background-size: 100% 100%;
-	}
-
 	/* Empty state */
 	.empty-state {
 		display: flex;
@@ -1847,85 +1858,6 @@
 		font-size: 0.9375rem;
 		color: var(--color-foreground-subtle);
 		margin: 0;
-	}
-
-	/* AI Chat list */
-	.chat-list {
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
-	}
-
-	.chat-item {
-		all: unset;
-		display: flex;
-		align-items: flex-start;
-		gap: 0.625rem;
-		padding: 0.5rem 0.625rem;
-		border-radius: 6px;
-		cursor: pointer;
-		transition: background 0.12s ease;
-	}
-
-	.chat-item:hover {
-		background: color-mix(in srgb, var(--wash-ink) 4%, transparent);
-	}
-
-	.chat-item-static {
-		cursor: default;
-	}
-
-	.chat-item-static:hover {
-		background: transparent;
-	}
-
-	.chat-badge {
-		display: inline-block;
-		font-size: 0.6875rem;
-		font-weight: 500;
-		padding: 1px 6px;
-		border-radius: var(--radius-full);
-		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
-		color: var(--color-foreground-muted);
-		margin-right: 0.25rem;
-	}
-
-	.chat-badge-virtues {
-		background: color-mix(in srgb, var(--color-primary) 14%, transparent);
-		color: var(--color-primary);
-	}
-
-	.chat-icon {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 1.5rem;
-		height: 1.5rem;
-		border-radius: 5px;
-		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
-		color: var(--color-foreground-muted);
-		flex-shrink: 0;
-		margin-top: 1px;
-	}
-
-	.chat-item-content {
-		display: flex;
-		flex-direction: column;
-		gap: 0.125rem;
-		min-width: 0;
-	}
-
-	.chat-item-title {
-		font-size: 0.875rem;
-		font-weight: 450;
-		color: var(--color-foreground);
-		line-height: 1.35;
-	}
-
-	.chat-item-meta {
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
-		line-height: 1.3;
 	}
 
 	/* Sources table */
@@ -1990,30 +1922,6 @@
 		opacity: 0.75;
 	}
 
-	/* Metadata grid */
-	.metadata-grid {
-		display: grid;
-		grid-template-columns: max-content 1fr;
-		gap: 0.375rem 1.5rem;
-		font-size: 0.8125rem;
-		margin: 0;
-	}
-	.metadata-grid dt {
-		color: var(--color-foreground-subtle);
-		font-weight: 400;
-	}
-	.metadata-grid dd {
-		color: var(--color-foreground-muted);
-		margin: 0;
-	}
-	.metadata-dim {
-		color: var(--color-foreground-subtle);
-	}
-	.metadata-mono {
-		font-family: var(--font-mono, "SF Mono", Menlo, monospace);
-		font-size: 0.75rem;
-	}
-
 	/* Responsive */
 	@media (max-width: 900px) {
 		.day-page-layout {
@@ -2023,13 +1931,16 @@
 		.day-article {
 			padding: 1rem;
 		}
+	}
 
+	@media (max-width: 560px) {
 		.day-title {
-			font-size: 1.75rem;
+			font-size: 2.25rem;
 		}
-
-		.day-header {
-			gap: 1rem;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.source-chip {
+			transition: none;
 		}
 	}
 </style>

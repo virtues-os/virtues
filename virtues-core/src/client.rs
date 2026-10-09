@@ -25,13 +25,6 @@ impl Virtues {
         VirtuesBuilder::default()
     }
 
-    /// Initialize the client and verify connections
-    pub async fn initialize(&self) -> Result<()> {
-        self.database.initialize().await?;
-        self.storage.initialize().await?;
-        Ok(())
-    }
-
     /// Get the status of all components
     pub async fn status(&self) -> Result<Status> {
         let db_status = self.database.health_check().await?;

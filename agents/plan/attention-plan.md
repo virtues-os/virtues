@@ -1,7 +1,7 @@
 # Attention, and the Tense of a Record
 
-**Status:** Open. What is left is surfacing coverage, re-pointing the novelty
-badge, deterministic anticipation refs, and revision on new refs. See "Next".
+**Status:** Open. What is left is surfacing coverage, composing the novelty
+input, deterministic anticipation refs, and revision on new refs. See "Next".
 
 How the life wiki learns which parts of a day mattered, without being allowed to
 guess how anyone felt.
@@ -231,7 +231,7 @@ matters for **novelty** — and that is where it does harm.
 | path | input | serves |
 |---|---|---|
 | search index — `EmbeddingConfig.embed_text_sql` | `label` + `event_summary` + `user_notes`, NULL for unknown/hidden | retrieval |
-| novelty — `embed_input_for_event` (`dayline/embedding_ops.rs`) | `summary.trim()` — the entire function body | the "Most Novel" badge |
+| novelty — `embed_input_for_event` (`dayline/embedding_ops.rs`) | `summary.trim()` — the entire function body | the day line and its "Most unlike your usual" badge |
 
 The *weaker* input feeds the *stronger* claim. Two faults:
 
@@ -241,11 +241,12 @@ The *weaker* input feeds the *stronger* claim. Two faults:
   summary spanning many topics embeds *between* those regions and is therefore
   far from any single-topic mean. Multi-topic → high z.
 
-**The fix for the geometry already exists and is unread.** `local_novelty_z` /
-`lof_raw` is a Local Outlier Factor — density-relative, no centroid, "off-pattern
-for its *kind*". It is computed every night and read by nobody, while the badge
-(`EventTimeline.svelte`, highest `noveltyZ` ≥ 1.0, shown only in the Record
-view) uses the global score.
+**The fix for the geometry is wired.** `local_novelty_z` / `lof_raw` is a Local
+Outlier Factor — density-relative, no centroid, "off-pattern for its *kind*".
+The day page reads it first: `usualScore` (`lib/wiki/dayLine.ts`) takes
+`local_novelty_z`, else `novelty_z`, for the day line's heights and for the
+event timeline's "Most unlike your usual" badge (the highest at 1.0 or
+above, in Data).
 
 **The fix for the input is to compose.** Prose stays as it is; the vector is
 built from the event's *evidence* — label, entities, source ontologies,
@@ -317,9 +318,9 @@ In dependency order:
 
 1. **Surface `wiki_events.confidence` as coverage** — add to the event SELECTs
    and render it in the Record view. Pure surfacing, zero risk.
-2. **Fix the "Most Novel" badge; do not delete it.** Rename it to what it
-   measures ("Most Unusual" / "Off-pattern") and point it at `local_novelty_z`.
-   Importance, when it exists, becomes a *second* badge.
+2. **The badge is fixed, not deleted**: it reads "Most unlike your usual"
+   and takes `local_novelty_z`, else `novelty_z`. Importance, when it
+   exists, becomes a *second* badge.
 3. **Compose the novelty embed input from evidence** (`embed_input_for_event`),
    prose unchanged. Re-embed the corpus together afterwards.
 4. **Correction surfacing.** `UpdateTemporalEventRequest` carries only
