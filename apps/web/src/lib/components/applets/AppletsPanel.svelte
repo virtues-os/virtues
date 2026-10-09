@@ -13,6 +13,7 @@
 	 * Built-in applets are listed there, and here only when one needs you.
 	 */
 	import Button from '$lib/components/Button.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { runApplet, type Applet } from '$lib/api/client';
@@ -49,6 +50,18 @@
 			.filter((a) => !needsYou(a))
 			.sort((a, b) => Number(!a.enabled) - Number(!b.enabled) || a.name.localeCompare(b.name))
 	);
+
+	// Built-in applets keep the server running; a source's applets came with
+	// something you connected. Folded at the bottom, so they're one click away
+	// without the list opening on a dozen syncs. One that needs you is already
+	// under Needs you above.
+	const builtIn = $derived(
+		appletsStore.list
+			.filter((a) => (a.origin === 'system' || a.origin === 'source') && !a.archived_at && !needsYou(a))
+			.sort((a, b) => a.name.localeCompare(b.name))
+	);
+	let builtInOpen = $state(false);
+	const ORIGIN_TAG: Record<string, string> = { system: 'Built-in', source: 'Source' };
 
 	function chatOf(a: Applet): string | null {
 		const id = a.config?.chat_id;
@@ -135,7 +148,10 @@
 		<button type="button" class="open" onclick={() => openHome(a)} oncontextmenu={(e) => rowMenu(a, e)}>
 			<span class="glyph" aria-hidden="true"><AtlasIcon name={appletGlyph(a)} size={24} bare /></span>
 			<span class="body">
-				<span class="name">{a.name}</span>
+				<span class="name-line">
+					<span class="name">{a.name}</span>
+					{#if ORIGIN_TAG[a.origin]}<span class="origin-tag">{ORIGIN_TAG[a.origin]}</span>{/if}
+				</span>
 				<span class="line" class:problem={l.problem}>{l.text}</span>
 			</span>
 		</button>
@@ -200,6 +216,23 @@
 			<h3 class="group">{problems.length > 0 ? 'Everything else' : 'Your applets'}</h3>
 			<ul class="rows" role="list">
 				{#each rest as a (a.id)}{@render row(a)}{/each}
+			</ul>
+		{/if}
+	{/if}
+
+	{#if appletsStore.loaded && builtIn.length > 0}
+		<button
+			type="button"
+			class="fold-head"
+			aria-expanded={builtInOpen}
+			onclick={() => (builtInOpen = !builtInOpen)}
+		>
+			<span>Built-in and sources ({builtIn.length})</span>
+			<Icon icon={builtInOpen ? 'ri:arrow-down-s-line' : 'ri:arrow-right-s-line'} width="16" />
+		</button>
+		{#if builtInOpen}
+			<ul class="rows" role="list">
+				{#each builtIn as a (a.id)}{@render row(a)}{/each}
 			</ul>
 		{/if}
 	{/if}
@@ -313,6 +346,7 @@
 		text-overflow: ellipsis;
 	}
 	.name {
+		min-width: 0;
 		font-size: 16px;
 		color: var(--color-foreground);
 	}
@@ -330,6 +364,39 @@
 		height: 40px;
 		border-radius: 999px;
 		flex: none;
+	}
+	.fold-head {
+		align-self: flex-start;
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		margin-top: 24px;
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+	}
+	.fold-head:hover {
+		color: var(--color-foreground);
+	}
+	.name-line {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+	.origin-tag {
+		flex: none;
+		padding: 0 8px;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		font-size: 12px;
+		line-height: 20px;
+		color: var(--color-foreground-muted);
 	}
 	.load-failed {
 		display: flex;
