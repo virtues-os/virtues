@@ -18,6 +18,7 @@
 	import { runApplet, type Applet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
+	import { chatSessions } from '$lib/stores/chatSessions.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { pinMenuItem } from '$lib/pins/pinAction';
 	import { appletGlyph, describeSchedule, errorHeadline, relativeTime } from '$lib/applets/palette';
@@ -107,6 +108,11 @@
 		}
 	}
 
+	function tryAgain() {
+		void appletsStore.load();
+		void chatSessions.load();
+	}
+
 	function rowMenu(a: Applet, e: MouseEvent) {
 		e.preventDefault();
 		const items: ContextMenuItem[] = [
@@ -171,7 +177,13 @@
 	{#if !appletsStore.loaded && !appletsStore.error}
 		<p class="note">Loading…</p>
 	{:else if appletsStore.error && shown.length === 0}
-		<p class="error-msg">Your server couldn't list your applets: {appletsStore.error}</p>
+		<!-- What failed and one thing to do. If the server itself is down, the
+		     app's "Can't reach your server" bar says so and offers the fix;
+		     Try again re-runs the check that raises it. -->
+		<div class="load-failed">
+			<p class="error-msg" title={appletsStore.error}>Your server couldn't send your applets.</p>
+			<Button variant="secondary" size="sm" onclick={tryAgain}>Try again</Button>
+		</div>
 	{:else if shown.length === 0}
 		<p class="note">
 			Nothing runs for you yet. Ask in chat - "write my examen each morning," "remind me on the 25th" - and it
@@ -318,6 +330,11 @@
 		height: 40px;
 		border-radius: 999px;
 		flex: none;
+	}
+	.load-failed {
+		display: flex;
+		align-items: center;
+		gap: 12px;
 	}
 	.note {
 		margin: 0;

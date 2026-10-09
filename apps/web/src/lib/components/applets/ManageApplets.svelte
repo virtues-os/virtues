@@ -118,7 +118,9 @@
 		err = null;
 		runDaysErr = null;
 		const [, days] = await Promise.allSettled([appletsStore.load(), getRunsByDay(30)]);
-		err = appletsStore.error;
+		// The table says what failed in words; the raw reason ("Bad Gateway")
+		// is no help to the person reading it.
+		err = appletsStore.error ? "Your server couldn't send your applets. Reload the page to try again." : null;
 		if (days.status === 'fulfilled') runDays = days.value;
 		else runDaysErr = days.reason instanceof Error ? days.reason.message : String(days.reason);
 		loading = false;
@@ -382,6 +384,12 @@
 				<span class="name-cell">
 					<span class="tile" aria-hidden="true"><AtlasIcon name={appletGlyph(a)} size={14} bare /></span>
 					<span class="name" class:muted={!a.enabled || a.archived_at}>{a.name}</span>
+					<!-- Built-in applets keep the server running; a source's applets
+					     came with something you connected. Said in words, not only
+					     by the icon. -->
+					{#if a.origin === 'system' || a.origin === 'source'}
+						<span class="origin-tag">{ORIGIN_LABEL[a.origin]}</span>
+					{/if}
 				</span>
 			</td>
 			<td>
@@ -555,6 +563,15 @@
 		align-items: center;
 		gap: 12px;
 		min-width: 0;
+	}
+	.origin-tag {
+		flex: none;
+		padding: 0 8px;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		font-size: 12px;
+		line-height: 20px;
+		color: var(--color-foreground-muted);
 	}
 	.tile {
 		width: 28px;
