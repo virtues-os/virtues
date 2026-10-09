@@ -92,11 +92,21 @@
     },
     "config": {
       "type": "object",
-      "description": "Free-form config that flows into app_applets.config JSON. Read by the box: [config.limits] max_llm_cost / max_llm_cost_per_day / max_runs_per_day / max_runs_per_hour / timeout_s, and `model` for a slot override. Anything else is carried but never read.",
+      "description": "Free-form config that flows into app_applets.config JSON. Read by the box: [config.limits] max_llm_cost / max_llm_cost_per_day / max_runs_per_day / max_runs_per_hour / timeout_s, `model` for a slot override, and [config.delivers] kind / title for what the applet makes. Anything else is carried but never read.",
       "properties": {
         "image_url": {
           "type": "string",
           "description": "Optional path/URL for the TemplateCard hero illustration (e.g. /templates/morning-examen.png)."
+        },
+        "delivers": {
+          "type": "object",
+          "description": "What the applet makes and where it goes. With kind = \"page\", a run that ends without writing a page is recorded as failed.",
+          "properties": {
+            "kind": { "type": "string", "enum": ["page", "chat", "dashboard"] },
+            "title": { "type": "string", "description": "What the work is called, e.g. \"Morning Examen pages\"." }
+          },
+          "required": ["kind"],
+          "additionalProperties": false
         }
       },
       "additionalProperties": true
