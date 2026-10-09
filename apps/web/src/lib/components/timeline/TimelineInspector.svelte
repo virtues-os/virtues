@@ -156,27 +156,21 @@
 		return c !== null && sections[c] && holds(sections[c]) ? c : sections.findLastIndex(holds);
 	});
 
-	// "Help Virtues out": each place's question under its first stay, and
-	// the card open in place of the list, on one place's question or on the
-	// names Virtues chose.
+	// "Help Virtues out": each place's question under every stay there that
+	// day (one answer names them all), and the card open in place of the
+	// list, on one place's question or on the names Virtues chose.
 	let card = $state<{ id: string } | 'names' | null>(null);
 	const cardQ = $derived(card && card !== 'names' ? (review?.byPlace.get(card.id) ?? null) : null);
-	const askedAt = $derived.by(() => {
-		const first = new Map<string, number>();
-		sections.forEach((s, i) => {
-			if (s.kind === 'place' && s.placeId && review?.byPlace.has(s.placeId) && !first.has(s.placeId)) first.set(s.placeId, i);
-		});
-		return first;
-	});
 	// Answered (or another day on show without it): back to the list, where
 	// the stay has its new name and Undo.
 	$effect(() => {
 		void sections;
 		if (card && card !== 'names' && (!cardQ || !sections.some((x) => x.placeId === (card as { id: string }).id))) untrack(() => (card = null));
 	});
-	/** Open the card on a place's question, its first stay picked. */
-	export function ask(id: string) {
-		const i = sections.findIndex((x) => x.placeId === id);
+	/** Open the card on a place's question, with stay `at` picked, else the
+	 *  place's first stay that day. */
+	export function ask(id: string, at?: number) {
+		const i = at ?? sections.findIndex((x) => x.placeId === id);
 		if (i < 0 || !review?.byPlace.has(id)) return;
 		if (i !== curSection) pickSection(i, sections[i]);
 		card = { id };
@@ -311,7 +305,7 @@
 		{:else}
 		<div class="scroll" bind:this={scroller}>
 			{#each sections as sec, i (sec.kind + sec.s)}
-				{@const asked = review && sec.placeId && askedAt.get(sec.placeId) === i ? review.byPlace.get(sec.placeId) : undefined}
+				{@const asked = sec.kind === 'place' && sec.placeId ? review?.byPlace.get(sec.placeId) : undefined}
 				<div class="group" class:bare={!sec.rows.length} class:cur={i === curSection} class:sel={selected?.s === sec.s && selected.kind === sec.kind} class:hov={hovered?.s === sec.s && hovered.kind === sec.kind} class:asking={!!asked}>
 					<button class="sec" onclick={() => pickSection(i, sec)}>
 						<span class="hd">
@@ -340,10 +334,10 @@
 							{#if yes}
 								<span class="ask-actions">
 									<Pill filled disabled={review.saving} onclick={() => void review.answer(id, yes)}>Yes</Pill>
-									<Pill onclick={() => (a.role ? review.startPointing(id, a.role) : ask(id))}>No</Pill>
+									<Pill onclick={() => (a.role ? review.startPointing(id, a.role) : ask(id, i))}>No</Pill>
 								</span>
 							{:else}
-								<Pill onclick={() => ask(id)}>Choose</Pill>
+								<Pill onclick={() => ask(id, i)}>Choose</Pill>
 							{/if}
 						</div>
 					{:else if review?.undo && review.undo.at === sec.placeId}
