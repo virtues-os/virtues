@@ -31,8 +31,8 @@ pub enum ChatMode {
     /// capped searches. Also what an unknown wire string means — a client
     /// ahead of this box gets ordinary chat.
     Chat,
-    /// The owner's bypass: everything chat has plus `shell`. Reads run;
-    /// changes ask. See `tools::sudo_gate`.
+    /// The owner's bypass: everything chat has plus `shell`, run without
+    /// asking; a delete asks. See `tools::sudo_gate`.
     Sudo,
     /// Read-only research tools + fan-out + `create_page` for the report.
     DeepResearch,
@@ -171,7 +171,7 @@ impl ChatMode {
                 }
                 tools
             }
-            // Everything chat has, plus `shell`; changes ask (`sudo_gate`).
+            // Everything chat has, plus `shell`; deletes ask (`sudo_gate`).
             Self::Sudo => {
                 let mut tools = get_tool_definitions_for_llm();
                 tools.extend(tools_named(crate::tools::SUDO_ONLY_TOOLS));

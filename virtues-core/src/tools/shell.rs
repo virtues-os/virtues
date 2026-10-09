@@ -8,8 +8,8 @@
 //! - the executor refuses it unless the turn's context says sudo, so a model
 //!   naming it in any other mode — or an applet run, or a subagent, none of
 //!   which can carry that flag — gets a refusal, not a shell
-//! - a command that changes something waits for the owner to allow it
-//!   (`sudo_gate`); until then `psql` runs read-only
+//! - a command that deletes data waits for the owner to allow it
+//!   (`sudo_gate`); everything else runs
 //!
 //! Non-interactive by construction: stdin is closed, so a command that waits
 //! for input reads EOF instead of hanging until the timeout.
@@ -37,8 +37,7 @@ pub const MAX_TIMEOUT_SECS: u64 = 600;
 const HEAD_BYTES: usize = 12 * 1024;
 const TAIL_BYTES: usize = 12 * 1024;
 
-/// `read_only`: run with `psql` held to read-only transactions (`sudo_gate`).
-pub async fn execute(arguments: serde_json::Value, read_only: bool) -> Result<ToolResult, ToolError> {
+pub async fn execute(arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
     let command = arguments
         .get("command")
         .and_then(|v| v.as_str())
@@ -78,9 +77,6 @@ pub async fn execute(arguments: serde_json::Value, read_only: bool) -> Result<To
         .stderr(Stdio::piped())
         .process_group(0)
         .kill_on_drop(true);
-    if read_only {
-        cmd.env("PGOPTIONS", super::sudo_gate::READ_ONLY_PGOPTIONS);
-    }
 
     let started = Instant::now();
     let mut child = match cmd.spawn() {
@@ -214,7 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn runs_a_command_and_reports_its_exit() {
-        let r = execute(json!({ "command": "echo hi; echo oops >&2; exit 3" }), false).await.unwrap();
+        let r = execute(json!({ "command": "echo hi; echo oops >&2; exit 3" })).await.unwrap();
         assert!(r.success);
         assert_eq!(r.data["exit_code"], 3);
         assert_eq!(r.data["stdout"], "hi\n");
@@ -223,14 +219,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_timeout_kills_the_command_and_says_so() {
-        let r = execute(json!({ "command": "sleep 30", "timeout_seconds": 1 }), false).await.unwrap();
+        let r = execute(json!({ "command": "sleep 30", "timeout_seconds": 1 })).await.unwrap();
         assert_eq!(r.data["timed_out"], true);
         assert!(r.data["duration_ms"].as_u64().unwrap() < 5_000);
     }
 
     #[tokio::test]
     async fn stdin_is_closed_so_a_prompt_does_not_hang() {
-        let r = execute(json!({ "command": "read x; echo got:$x", "timeout_seconds": 5 }), false)
+        let r = execute(json!({ "command": "read x; echo got:$x", "timeout_seconds": 5 }))
             .await
             .unwrap();
         assert_eq!(r.data["stdout"], "got:\n");
@@ -243,23 +239,15 @@ mod tests {
         let marker = std::env::temp_dir().join(format!("shell-stop-{}", std::process::id()));
         let _ = std::fs::remove_file(&marker);
         let cmd = format!("sleep 1 && touch {}", marker.display());
-        let run = execute(json!({ "command": cmd }), false);
+        let run = execute(json!({ "command": cmd }));
         assert!(tokio::time::timeout(Duration::from_millis(200), run).await.is_err());
         tokio::time::sleep(Duration::from_millis(1500)).await;
         assert!(!marker.exists(), "the command outlived its dropped call");
     }
 
     #[tokio::test]
-    async fn read_only_holds_psql_to_read_only_transactions() {
-        let r = execute(json!({ "command": "echo \"$PGOPTIONS\"" }), true).await.unwrap();
-        assert_eq!(r.data["stdout"], format!("{}\n", super::super::sudo_gate::READ_ONLY_PGOPTIONS));
-        let r = execute(json!({ "command": "echo \"[$PGOPTIONS]\"" }), false).await.unwrap();
-        assert_eq!(r.data["stdout"], "[]\n");
-    }
-
-    #[tokio::test]
     async fn long_output_keeps_both_ends() {
-        let r = execute(json!({ "command": "echo START; head -c 100000 /dev/zero | tr '\\0' x; echo; echo END" }), false)
+        let r = execute(json!({ "command": "echo START; head -c 100000 /dev/zero | tr '\\0' x; echo; echo END" }))
             .await
             .unwrap();
         let out = r.data["stdout"].as_str().unwrap();

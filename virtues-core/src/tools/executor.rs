@@ -306,11 +306,13 @@ impl ToolExecutor {
         if tool_name == "setup_applet" && super::applet_setup::wants_check_only(arguments) {
             return Ok(None);
         }
-        // Sudo sends `sql_write` to `sql_sudo`, whose read-only transaction
-        // is the finer gate: a statement that changes nothing runs, and one
-        // that does asks for itself (`sudo_gate`). The other gated tools ask
-        // in sudo as they do in chat.
-        if tool_name == "sql_write" && context.sudo && context.applet_id.is_none() {
+        // Sudo is the owner's bypass: these run, and a delete in SQL or the
+        // shell asks for itself (`sudo_gate`). Deleting an applet and
+        // spending money still ask.
+        if context.sudo
+            && context.applet_id.is_none()
+            && !matches!(tool_name, "delete_applet" | "generate_image")
+        {
             return Ok(None);
         }
         // Only interactive chat is gated. Autonomous action runs set `applet_id` (and may carry a
@@ -460,8 +462,10 @@ impl ToolExecutor {
                         == "query" =>
             {
                 let sql = super::sql_sudo::statement(&arguments)?;
-                let read_only = !self.sudo_granted(context, "sql", &sql).await;
-                super::sql_sudo::execute(&self._pool, &sql, read_only, context.timezone.as_deref()).await
+                if super::sudo_gate::sql_destroys(&sql) && !self.sudo_granted(context, "sql", &sql).await {
+                    return Ok(super::sudo_gate::ask("sql", &sql));
+                }
+                super::sql_sudo::execute(&self._pool, &sql, context.timezone.as_deref()).await
             }
             "sql_query" => {
                 // A saved chat can keep a result as a file for code_interpreter.
@@ -475,26 +479,10 @@ impl ToolExecutor {
                 use super::sudo_gate;
                 let command =
                     arguments.get("command").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
-                // An empty command: the shell's own error says so.
-                if command.is_empty() || self.sudo_granted(context, "shell", &command).await {
-                    return super::shell::execute(arguments, false).await;
-                }
-                if !sudo_gate::shell_is_read(&command) {
+                if sudo_gate::shell_destroys(&command) && !self.sudo_granted(context, "shell", &command).await {
                     return Ok(sudo_gate::ask("shell", &command));
                 }
-                // A read, as far as the line shows; psql inside it is held
-                // read-only, and a write it tried becomes the same question.
-                // Only a failed command: a read that prints a log line
-                // mentioning the refusal is not one.
-                let result = super::shell::execute(arguments, true).await?;
-                let failed = result.data.get("exit_code").and_then(|v| v.as_i64()) != Some(0);
-                let said = |k: &str| {
-                    result.data.get(k).and_then(|v| v.as_str()).is_some_and(sudo_gate::is_read_only_refusal)
-                };
-                if failed && (said("stderr") || said("stdout")) {
-                    return Ok(sudo_gate::ask("shell", &command));
-                }
-                Ok(result)
+                super::shell::execute(arguments).await
             }
             "shell" => Err(ToolError::ExecutionFailed(
                 "shell runs only in sudo mode, which the owner turns on in the chat".into(),
