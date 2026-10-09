@@ -583,6 +583,21 @@ export function getAppletLog(id: string, limit = 50): Promise<AppletLogEntry[]> 
 	return apiGet<AppletLogEntry[]>(`/applets/${encodeURIComponent(id)}/log`, { limit });
 }
 
+/** One applet's runs on one day (in the box's timezone), counted by outcome. */
+export interface RunDay {
+	applet_id: string;
+	/** `YYYY-MM-DD`, the box-local day the runs started on. */
+	day: string;
+	status: AppletRun['status'];
+	runs: number;
+}
+
+/** Every applet's run counts per day for the last `days` days, in one request.
+ *  Drives the Applets list's "Last 7 days" column and each applet's history. */
+export function getRunsByDay(days = 30): Promise<RunDay[]> {
+	return apiGet<RunDay[]>('/runs/by-day', { days });
+}
+
 /** Say something to an applet — the `message` wake. Returns once the run row
  *  exists; the agent turn continues detached. */
 export function messageApplet(id: string, message: string): Promise<{ run_id: string | null; status: string }> {
