@@ -753,9 +753,6 @@
 		if (dayFixes.length) frameDay(m, 650);
 		else if (home) m.easeTo({ center: home.c, zoom: home.z, duration: 650 });
 	}
-	/** The day's path at its own weights, and faded while a place is asked
-	 *  about (main.js:2209-2214): the place is the subject then. */
-	const TRACK_OPACITY = { 'track-run': [0.55, 0.1], 'track-bridge': [0.4, 0.08], 'track-drive': [0.85, 0.1], 'lit-run': [0.95, 0.1], 'lit-bridge': [0.9, 0.08] } as const;
 	let glow: Marker | null = null;
 	/** "Help Virtues out": the questions, answers and Undo, shared by the
 	 *  day's list and its Review. An answer re-reads the day's titles. */
@@ -845,11 +842,14 @@
 		tapMark.setLngLat([lon, lat]).addTo(m);
 		tapped = { lat, lon };
 	}
-	/** A place is being asked about: the map is on it, the day faded. */
+	/** A place is being asked about: the map is on it, the day's marks dimmed. */
 	let focusing = $state(false);
-	/** Take the map to the place "Help Virtues out" is asking about, framed so
-	 *  the named places it offers read, under a glowing pin, with the day's
-	 *  path and marks faded (main.js:2209-2221); `null` gives the day back. */
+	/** Take the map to the place "Help Virtues out" is asking about, under a
+	 *  glowing pin, with the day's marks dimmed (main.js:2209-2221); `null`
+	 *  gives the day back. The map frames the stay picked for the question on
+	 *  its own path, as a pick does, and the path keeps its weight: the
+	 *  prototype faded it and framed the named places around, which left the
+	 *  stay small and its path a ghost (the owner's call, 2026-10-09). */
 	let focused: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null = null;
 	function focusPlace(at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null) {
 		focused = at;
@@ -859,7 +859,6 @@
 		glow = null;
 		const names = m.getSource('review-names') as GeoJSONSource | undefined;
 		focusing = !!at;
-		for (const [id, [day, faded]] of Object.entries(TRACK_OPACITY)) m.setPaintProperty(id, 'line-opacity', at ? faded : day);
 		names?.setData({
 			type: 'FeatureCollection',
 			features: (at?.shown ?? []).map((c) => ({ type: 'Feature', properties: { name: c.name }, geometry: { type: 'Point', coordinates: [c.lon, c.lat] } })),
@@ -868,8 +867,8 @@
 		const el = document.createElement('div');
 		el.className = 'tl-glow';
 		glow = new maplibre.Marker({ element: el, anchor: 'center' }).setLngLat([at.lon, at.lat]).addTo(m);
-		// Centred in the map left clear of the inspector and the scrubber.
-		m.easeTo({ center: [at.lon, at.lat], zoom: focusZoom(at.lat, at.reachM, m.getZoom()), padding: fitPad(m), duration: 820 });
+		if (picked?.kind === 'place') frameStay(m, [at.lon, at.lat], picked.s, picked.e);
+		else m.easeTo({ center: [at.lon, at.lat], zoom: focusZoom(at.lat, 0, m.getZoom()), padding: fitPad(m), duration: 820 });
 	}
 
 	/** After an answer, the day's titles again: a place just named, or one no
@@ -1906,7 +1905,8 @@
 	/* The day's own marks step back while a place is asked about. MapLibre
 	   writes a marker's opacity inline, so a filter fades them instead. */
 	.timeline.focusing :global(.tl-pin),
-	.timeline.focusing :global(.tl-bubble) {
+	.timeline.focusing :global(.tl-bubble),
+	.timeline.focusing :global(.tl-knot) {
 		filter: opacity(0.22);
 	}
 	/* A faded mark is a mark; a faded caption is a ghost over the place
