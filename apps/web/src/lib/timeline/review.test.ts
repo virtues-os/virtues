@@ -14,7 +14,6 @@ const question = (over: Partial<Omit<PlaceQuestion, "naming">> & { naming?: Part
 	rejected_match: null,
 	title: "Riverton",
 	recall: "",
-	snippet: null,
 	best_day: null,
 	hours_a_week: 0,
 	nights_a_week: 0,

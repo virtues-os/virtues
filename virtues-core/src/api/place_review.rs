@@ -34,8 +34,6 @@ use crate::maps::naming::{Naming, Tiles};
 #[cfg(test)]
 use crate::maps::naming::Candidate;
 
-/// A summary longer than this is cut to it (`build.py:573`).
-const SNIPPET_CHARS: usize = 104;
 /// Slept at this long, a place is someone's home: the question is whose
 /// (`build.py:579`, `resid`).
 const OVERNIGHT_MS: i64 = 60 * 60_000;
@@ -322,8 +320,6 @@ pub struct Question {
     /// When the person was there, in words: "the weekend of Jul 25-26,
     /// mostly overnight".
     pub recall: String,
-    /// A line from a conversation there, to jog the memory.
-    pub snippet: Option<String>,
     /// The day with the most time there: "See that full day".
     pub best_day: Option<NaiveDate>,
     /// A typical week there, from the first stay to the last (a week at the
@@ -407,7 +403,6 @@ pub async fn review(pool: &PgPool) -> Result<Review> {
                     rejected_match: p.rejected_match.clone(),
                     title: t.title,
                     recall,
-                    snippet: snippet(pool, &p.stays).await?,
                     best_day,
                     hours_a_week,
                     nights_a_week,
@@ -422,37 +417,6 @@ pub async fn review(pool: &PgPool) -> Result<Review> {
         _ => 2,
     });
     Ok(Review { questions, confirmed })
-}
-
-/// One line from a conversation begun at the place: the most confident of
-/// two or more voices, else the most confident of any (`build.py:563-574`).
-async fn snippet(pool: &PgPool, stays: &[(DateTime<Utc>, DateTime<Utc>)]) -> Result<Option<String>> {
-    let (starts, ends): (Vec<_>, Vec<_>) = stays.iter().copied().unzip();
-    let row = sqlx::query(
-        "SELECT t.summary, t.title FROM data_communication_transcription t \
-         WHERE t.deleted_at_source IS NULL AND NOT COALESCE(t.is_archived, false) \
-           AND EXISTS (SELECT 1 FROM unnest($1::timestamptz[], $2::timestamptz[]) w(s, e) \
-                       WHERE t.started_at >= w.s AND t.started_at < w.e) \
-         ORDER BY (COALESCE(t.speaker_count, 0) >= 2) DESC, t.confidence DESC NULLS LAST LIMIT 1",
-    )
-    .bind(&starts)
-    .bind(&ends)
-    .fetch_optional(pool)
-    .await?;
-    Ok(row.and_then(|r| {
-        let summary: Option<String> = r.try_get("summary").ok()?;
-        let title: Option<String> = r.try_get("title").ok()?;
-        let text = summary.filter(|s| !s.trim().is_empty()).or(title)?;
-        Some(cut(&text.split_whitespace().collect::<Vec<_>>().join(" ")))
-    }))
-}
-
-fn cut(s: &str) -> String {
-    if s.chars().count() <= SNIPPET_CHARS {
-        return s.to_string();
-    }
-    let head: String = s.chars().take(SNIPPET_CHARS).collect();
-    format!("{}…", head.trim_end())
 }
 
 const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -864,13 +828,6 @@ mod tests {
         let home = lived("bed", 10, 0, now);
         assert_eq!(per_week(&home).1, 7.0, "10 nights over 10 days: every night");
         assert_eq!(per_week(&lived("one", 1, 0, now)), (10.0, 1.0), "less than a week counts as one");
-    }
-
-    #[test]
-    fn a_long_snippet_is_cut_on_a_character() {
-        assert_eq!(cut("short"), "short");
-        let c = cut(&"word ".repeat(40));
-        assert!(c.ends_with('…') && c.chars().count() <= SNIPPET_CHARS + 1);
     }
 
     /// A place in the open sea (no map, so no match) with one stay.

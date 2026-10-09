@@ -59,8 +59,6 @@ export interface PlaceQuestion {
 	title: string;
 	/** When the person was there, in words. */
 	recall: string;
-	/** A line from a conversation there. */
-	snippet: string | null;
 	/** The day with the most time there, YYYY-MM-DD. */
 	best_day: string | null;
 	/** A typical week there, from the first stay to the last. */
