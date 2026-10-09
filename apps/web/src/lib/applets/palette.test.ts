@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { appletDestination, appletGlyph, describeSchedule, limitsOf, relativeTime } from './palette';
+import { appletDestination, appletGlyph, describeSchedule, errorHeadline, limitsOf, relativeTime } from './palette';
 
 describe('describeSchedule', () => {
 	it('reads daily and interval schedules as before', () => {
@@ -83,5 +83,12 @@ describe('appletDestination', () => {
 		expect(appletDestination(a({ has_face: true }))).toBe('Its dashboard');
 		expect(appletDestination(a({ config: { chat_id: 'c' } }))).toBe('Its conversation');
 		expect(appletDestination(a({}))).toBe('-');
+	});
+});
+
+describe('errorHeadline', () => {
+	it('keeps the reason and drops the trace', () => {
+		expect(errorHeadline('Gmail is disconnected.\n  at sync (gmail.rs:42)')).toBe('Gmail is disconnected.');
+		expect(errorHeadline('x'.repeat(200), 10)).toBe('xxxxxxxxx…');
 	});
 });

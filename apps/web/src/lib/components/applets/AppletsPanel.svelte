@@ -20,7 +20,7 @@
 	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { pinMenuItem } from '$lib/pins/pinAction';
-	import { appletGlyph, describeSchedule, relativeTime } from '$lib/applets/palette';
+	import { appletGlyph, describeSchedule, errorHeadline, relativeTime } from '$lib/applets/palette';
 	import { needsYou } from '$lib/applets/days';
 	import GitImportModal from './GitImportModal.svelte';
 	import NewAppletSheet from './NewAppletSheet.svelte';
@@ -59,7 +59,10 @@
 
 	function line(a: Applet): { text: string; problem: boolean } {
 		if (a.enabled && !a.archived_at && a.last_run?.status === 'error') {
-			return { text: `Last run failed ${relativeTime(a.last_run.started_at)}`, problem: true };
+			// The reason when the run gave one ("Gmail is disconnected"), which
+			// says more than when it happened.
+			const reason = a.last_run.error ? errorHeadline(a.last_run.error, 120) : null;
+			return { text: reason ?? `Last run failed ${relativeTime(a.last_run.started_at)}`, problem: true };
 		}
 		if (
 			a.enabled &&
@@ -140,6 +143,7 @@
 				icon="ri:chat-3-line"
 				label={`Open the conversation with ${a.name}`}
 				variant="secondary"
+				class="chat-btn"
 				onclick={() => openConversation(a)}
 			/>
 		{/if}
@@ -245,7 +249,7 @@
 		margin: 0;
 		padding: 0;
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr));
 		gap: 4px 32px;
 	}
 	.row {
@@ -306,6 +310,14 @@
 	}
 	.line.problem {
 		color: var(--color-error);
+	}
+	/* The conversation is its own action on the row, so it reads as a round
+	   button beside the row rather than a glyph inside it (a pill, §6). */
+	.row :global(.v-iconbtn.chat-btn) {
+		width: 40px;
+		height: 40px;
+		border-radius: 999px;
+		flex: none;
 	}
 	.note {
 		margin: 0;

@@ -1,7 +1,6 @@
 <script lang="ts">
 	import Button from '$lib/components/Button.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
-	import TextAction from '$lib/components/TextAction.svelte';
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import ShareSheet from '$lib/components/applets/ShareSheet.svelte';
 	import DayDot from '$lib/components/applets/DayDot.svelte';
@@ -22,7 +21,9 @@
 		type AppletLogEntry,
 		type RunDay
 	} from '$lib/api/client';
-	import { describeSchedule, relativeTime } from '$lib/applets/palette';
+	import { appletDestination, appletGlyph, describeSchedule, errorHeadline, relativeTime } from '$lib/applets/palette';
+	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 	import { indexRunDays } from '$lib/applets/days';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
 	import { explainRunError } from '$lib/sources/run-errors';
@@ -238,8 +239,7 @@
 		if (!action) return '';
 		if (action.archived_at) return `Finished ${new Date(action.archived_at).toLocaleDateString()}`;
 		if (!action.enabled) return 'Off';
-		const runs = describeSchedule(action.schedule);
-		return lastEntry?.last_at ? `${runs} · Last ran ${relativeTime(lastEntry.last_at)}` : runs;
+		return describeSchedule(action.schedule);
 	});
 
 	function openMore(e: MouseEvent) {
@@ -284,9 +284,15 @@
 		<div class="measure">
 			{#if panel === 'home'}
 				<header class="head">
+					<span class="glyph" aria-hidden="true"><AtlasIcon name={appletGlyph(action)} size={20} bare /></span>
 					<div class="title-block">
 						<h1 class="title">{action.name}</h1>
-						<p class="status">{status}</p>
+						<p class="status">
+							{status}{#if appletDestination(action) !== '-'}<span class="goes" aria-label="goes to">
+									<Icon icon="ri:arrow-right-line" width="12" />
+									{appletDestination(action)}</span
+								>{/if}
+						</p>
 					</div>
 					<div class="head-actions">
 						{#if chatId}
@@ -308,33 +314,29 @@
 					     page's ordinary buttons. -->
 					<div class="problem">
 						<DayDot state="failed" size="md" />
-						<div class="problem-text">
-							<p>
-								The last run failed {relativeTime(failedNow.last_at)}.
-								{#if failure}{failure.title}. {failure.remedy}{/if}
-							</p>
-							<div class="problem-actions">
+						<p class="problem-text">
+							The last run failed {relativeTime(failedNow.last_at)}.
+							{#if failure}{failure.title}. {failure.remedy}{:else if failedNow.error}{errorHeadline(failedNow.error)}{/if}
+						</p>
+						<div class="problem-actions">
 								{#if canRunNow}
 									<Button variant="secondary" size="sm" onclick={runNow} disabled={busy}>Retry</Button>
 								{/if}
 								{#if chatId}
 									<Button variant="secondary" size="sm" onclick={openConversation}>Ask why</Button>
 								{/if}
-								<TextAction onclick={() => go('history')}>See the error</TextAction>
-							</div>
+								<Button variant="ghost" size="sm" onclick={() => go('history')}>See the error</Button>
 						</div>
 					</div>
 				{:else if overdue}
 					<div class="problem">
 						<DayDot state="missed" size="md" />
-						<div class="problem-text">
-							<p>It was due {relativeTime(action.next_due_at)} and hasn't run.</p>
-							<div class="problem-actions">
+						<p class="problem-text">It was due {relativeTime(action.next_due_at)} and hasn't run.</p>
+						<div class="problem-actions">
 								{#if canRunNow}
 									<Button variant="secondary" size="sm" onclick={runNow} disabled={busy}>Run now</Button>
 								{/if}
-								<TextAction onclick={() => go('history')}>See run history</TextAction>
-							</div>
+								<Button variant="ghost" size="sm" onclick={() => go('history')}>See run history</Button>
 						</div>
 					</div>
 				{/if}
@@ -388,12 +390,22 @@
 					</form>
 				{/if}
 			{:else}
+				<div class="narrow">
 				<header class="head sub">
-					<TextAction quiet onclick={() => go(PARENT[panel])}>
-						Back to {PARENT[panel] === 'home' ? action.name : 'Info'}
-					</TextAction>
-					<h1 class="title">{PANEL_TITLE[panel]}</h1>
-					<p class="status">{action.name}{panel === 'history' ? ` · ${describeSchedule(action.schedule)}` : ''}</p>
+					<button type="button" class="backlink" onclick={() => go(PARENT[panel])}>
+						<Icon icon="ri:arrow-left-line" width="14" />
+						{PARENT[panel] === 'home' ? action.name : 'Info'}
+					</button>
+					<!-- Info is the applet itself, so it takes the applet's name;
+					     the two pages under it say what they are. -->
+					<h1 class="title">{panel === 'info' ? action.name : PANEL_TITLE[panel]}</h1>
+					<p class="status">
+						{panel === 'info'
+							? (action.description ?? describeSchedule(action.schedule))
+							: panel === 'history'
+								? `${action.name} · ${describeSchedule(action.schedule)}`
+								: action.name}
+					</p>
 				</header>
 
 				{#if panel === 'info'}
@@ -419,6 +431,7 @@
 				{:else}
 					<AppletSettings bind:action onRenamed={(name) => windowShellStore.updateTab(tab.id, { label: name })} />
 				{/if}
+				</div>
 			{/if}
 		</div>
 	{/if}
@@ -451,10 +464,57 @@
 
 	.head {
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		gap: 16px;
+		padding-bottom: 16px;
+		border-bottom: 1px solid var(--color-border);
+	}
+	.glyph {
+		width: 40px;
+		height: 40px;
+		flex: none;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 12px;
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		color: var(--color-foreground-muted);
+	}
+	.goes {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		margin-left: 8px;
+	}
+	/* Info and the pages under it are one narrow column, like a sheet laid
+	   on the applet's page. */
+	.narrow {
+		width: 100%;
+		max-width: 560px;
+		margin: 0 auto;
+		display: flex;
+		flex-direction: column;
+		gap: 24px;
+	}
+	.backlink {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 16px;
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+	}
+	.backlink:hover {
+		color: var(--color-foreground);
 	}
 	.head.sub {
+		padding-bottom: 0;
+		border-bottom: 0;
 		flex-direction: column;
 		gap: 4px;
 		align-items: flex-start;
@@ -482,25 +542,28 @@
 		flex: none;
 	}
 
+	/* A status surface: a neutral wash, one mark, one sentence, and the
+	   page's ordinary buttons as the fix (design-grammar §5). */
 	.problem {
 		display: flex;
-		align-items: flex-start;
-		gap: 12px;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 8px 12px;
+		padding: 12px 16px;
+		border-radius: 12px;
+		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
 	}
-	.problem :global(.day-dot) {
-		margin-top: 4px;
-	}
-	.problem-text p {
+	.problem-text {
+		flex: 1;
+		min-width: 240px;
 		margin: 0;
 		font-size: 15px;
 		line-height: 1.5;
 	}
 	.problem-actions {
 		display: flex;
-		flex-wrap: wrap;
 		align-items: center;
-		gap: 8px 16px;
-		margin-top: 8px;
+		gap: 8px;
 	}
 
 	.latest {

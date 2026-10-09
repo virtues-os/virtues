@@ -58,6 +58,12 @@
 	const weekday = (today.getDay() + 6) % 7;
 	const shown = lastDays(28 + weekday + 1, today);
 	const trailing = 6 - weekday;
+	// The rest of this week, so the calendar ends on a Sunday like a calendar.
+	const future = Array.from({ length: trailing }, (_, i) => {
+		const d = new Date(today);
+		d.setDate(d.getDate() + i + 1);
+		return d.getDate();
+	});
 
 	const states = $derived(appletDays(action, index, shown));
 	const frequent = $derived(busiestDay(index, action.id) > 1);
@@ -129,6 +135,12 @@
 		budget_exceeded: 'Stopped at its spending limit'
 	};
 
+	// What needs looking at, then the newest of the rest. The log already
+	// folds identical runs into one entry with a count.
+	const isProblem = (e: AppletLogEntry) => e.status === 'error' || e.status === 'budget_exceeded';
+	const problems = $derived(log.filter(isProblem));
+	const latest = $derived(log.filter((e) => !isProblem(e)).slice(0, 5));
+
 	// Only the newest run can be retried: retrying an older failure would
 	// run the applet now, which is what Retry on the newest one does anyway.
 	const newestFailed = $derived(log[0]?.status === 'error' ? log[0] : null);
@@ -137,6 +149,63 @@
 	// THIS machine's settings, so it appears only in the native app.
 	const canFix = isTauri;
 </script>
+
+{#snippet runItem(e: AppletLogEntry)}
+		{@const why = e.error ? explainRunError(e.error, collectorDenied) : null}
+		<li class="run">
+			<div class="run-top">
+				<DayDot state={entryState(e)} />
+				<span class="run-status">{STATUS_WORD[e.status]}</span>
+				{#if e.occurrences > 1}
+					<!-- The applet repeated itself. A poll that finds nothing
+					     still records a run, so saying it once with a count is
+					     shorter and more honest than 600 identical lines. -->
+					<span class="run-meta">{e.occurrences} times</span>
+				{:else if e.trigger}
+					<span class="run-meta">{STARTED_BY[e.trigger]}</span>
+				{/if}
+				{#if e.cost_micros}
+					<span class="run-meta" title="What these runs spent with the model">
+						{formatMicrosPrecise(e.cost_micros)}
+					</span>
+				{/if}
+				<span class="run-time">{relativeTime(e.last_at)}</span>
+			</div>
+			{#if e.message}
+				<p class="run-said">{e.message}</p>
+			{/if}
+			{#if e.summary}
+				<p class="run-text">{e.summary}</p>
+			{/if}
+			{#if e.error}
+				<!-- A permission failure is a checkbox in System Settings,
+				     not a stack trace: name the condition and the fix, and
+				     keep the OS's sentence beneath it as evidence. -->
+				{#if why}
+					<p class="run-text"><Icon icon="ri:lock-line" width="12" /> {why.title}. {why.remedy}</p>
+					{#if canFix && why.open}
+						<Button variant="secondary" size="sm" onclick={() => why.open?.()}>
+							Open {why.label} on this computer
+						</Button>
+					{/if}
+				{/if}
+				<pre class="run-error">{e.error}</pre>
+			{/if}
+			{#if e.occurrences > 1 && e.first_at}
+				<p class="run-span">{relativeTime(e.first_at)} to {relativeTime(e.last_at)}</p>
+			{/if}
+			{#if e === newestFailed && (onRetry || onAsk)}
+				<div class="run-actions">
+					{#if onRetry}
+						<Button variant="secondary" size="sm" onclick={onRetry} disabled={busy}>Retry</Button>
+					{/if}
+					{#if onAsk}
+						<Button variant="secondary" size="sm" onclick={onAsk}>Ask why in its conversation</Button>
+					{/if}
+				</div>
+			{/if}
+		</li>
+{/snippet}
 
 <div class="history">
 	{#if daysErr}
@@ -147,15 +216,21 @@
 				<span class="cal-head" aria-hidden="true">{d}</span>
 			{/each}
 			{#each shown as key, i (key)}
-				<span class="cal-cell" title={`${dayName(key)}: ${DAY_LABEL[states[i]]}`}>
-					<span class="cal-date">{dateOf(key).getDate()}</span>
-					<DayDot state={states[i]} size="md" />
+				<span class="cal-cell {states[i]}" title={`${dayName(key)}: ${DAY_LABEL[states[i]]}`}>
+					{dateOf(key).getDate()}
 				</span>
 			{/each}
-			{#each Array(trailing) as _, i (i)}
-				<span class="cal-cell future" aria-hidden="true"></span>
+			{#each future as d (d)}
+				<span class="cal-cell future" aria-hidden="true">{d}</span>
 			{/each}
 		</div>
+		<p class="legend">
+			<span><span class="key ran"></span>Ran</span>
+			<span><span class="key failed"></span>Failed</span>
+			<span><span class="key stopped"></span>Stopped at its limit</span>
+			<span><span class="key missed"></span>Didn't run when due</span>
+			<span><span class="key none"></span>No run</span>
+		</p>
 	{:else}
 		<div class="strips">
 			{#each recentDays as key (key)}
@@ -176,67 +251,18 @@
 		</div>
 	{/if}
 
-	<h3 class="runs-head">Runs</h3>
-	{#if log.length === 0}
-		<p class="note">No runs yet.</p>
+	<h3 class="runs-head">Problems</h3>
+	{#if problems.length === 0}
+		<p class="note">{log.length === 0 ? 'No runs yet.' : 'None in its recent runs.'}</p>
 	{:else}
 		<ul class="runs" role="list">
-			{#each log as e (e.run_id ?? e.last_at)}
-				{@const why = e.error ? explainRunError(e.error, collectorDenied) : null}
-				<li class="run">
-					<div class="run-top">
-						<DayDot state={entryState(e)} />
-						<span class="run-status">{STATUS_WORD[e.status]}</span>
-						{#if e.occurrences > 1}
-							<!-- The applet repeated itself. A poll that finds nothing
-							     still records a run, so saying it once with a count is
-							     shorter and more honest than 600 identical lines. -->
-							<span class="run-meta">{e.occurrences} times</span>
-						{:else if e.trigger}
-							<span class="run-meta">{STARTED_BY[e.trigger]}</span>
-						{/if}
-						{#if e.cost_micros}
-							<span class="run-meta" title="What these runs spent with the model">
-								{formatMicrosPrecise(e.cost_micros)}
-							</span>
-						{/if}
-						<span class="run-time">{relativeTime(e.last_at)}</span>
-					</div>
-					{#if e.message}
-						<p class="run-said">{e.message}</p>
-					{/if}
-					{#if e.summary}
-						<p class="run-text">{e.summary}</p>
-					{/if}
-					{#if e.error}
-						<!-- A permission failure is a checkbox in System Settings,
-						     not a stack trace: name the condition and the fix, and
-						     keep the OS's sentence beneath it as evidence. -->
-						{#if why}
-							<p class="run-text"><Icon icon="ri:lock-line" width="12" /> {why.title}. {why.remedy}</p>
-							{#if canFix && why.open}
-								<Button variant="secondary" size="sm" onclick={() => why.open?.()}>
-									Open {why.label} on this computer
-								</Button>
-							{/if}
-						{/if}
-						<pre class="run-error">{e.error}</pre>
-					{/if}
-					{#if e.occurrences > 1 && e.first_at}
-						<p class="run-span">{relativeTime(e.first_at)} to {relativeTime(e.last_at)}</p>
-					{/if}
-					{#if e === newestFailed && (onRetry || onAsk)}
-						<div class="run-actions">
-							{#if onRetry}
-								<Button variant="secondary" size="sm" onclick={onRetry} disabled={busy}>Retry</Button>
-							{/if}
-							{#if onAsk}
-								<Button variant="secondary" size="sm" onclick={onAsk}>Ask why in its conversation</Button>
-							{/if}
-						</div>
-					{/if}
-				</li>
-			{/each}
+			{#each problems as e (e.run_id ?? e.last_at)}{@render runItem(e)}{/each}
+		</ul>
+	{/if}
+	{#if latest.length > 0}
+		<h3 class="runs-head">Latest runs</h3>
+		<ul class="runs" role="list">
+			{#each latest as e (e.run_id ?? e.last_at)}{@render runItem(e)}{/each}
 		</ul>
 	{/if}
 </div>
@@ -256,25 +282,88 @@
 	.cal {
 		display: grid;
 		grid-template-columns: repeat(7, 40px);
-		gap: 4px;
+		gap: 8px;
 	}
 	.cal-head {
 		font-size: 12px;
 		text-align: center;
 		color: var(--color-foreground-subtle);
 	}
+	/* A date tile per day, filled with how the day went: the prototype's
+	   calendar, on the theme's state tokens. */
 	.cal-cell {
 		display: flex;
-		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		height: 32px;
+		border-radius: 6px;
+		box-sizing: border-box;
+		font-size: 13px;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground-muted);
+		border: 1px solid var(--color-border);
+	}
+	.cal-cell.ran,
+	.cal-cell.failed,
+	.cal-cell.stopped {
+		border-color: transparent;
+		color: var(--color-background);
+		font-weight: 500;
+	}
+	.cal-cell.ran {
+		background: var(--color-success);
+	}
+	.cal-cell.failed {
+		background: var(--color-error);
+	}
+	.cal-cell.stopped {
+		background: var(--color-warning);
+	}
+	.cal-cell.quiet {
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		border-color: transparent;
+	}
+	.cal-cell.missed {
+		border: 2px solid var(--color-error);
+		color: var(--color-error);
+	}
+	.cal-cell.future {
+		border-color: transparent;
+		color: var(--color-foreground-subtle);
+	}
+	.legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px 16px;
+		margin: 0;
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+	}
+	.legend > span {
+		display: inline-flex;
 		align-items: center;
 		gap: 4px;
-		height: 40px;
-		justify-content: center;
 	}
-	.cal-date {
-		font-size: 12px;
-		font-variant-numeric: tabular-nums;
-		color: var(--color-foreground-subtle);
+	.key {
+		width: 14px;
+		height: 14px;
+		border-radius: 6px;
+		box-sizing: border-box;
+	}
+	.key.ran {
+		background: var(--color-success);
+	}
+	.key.failed {
+		background: var(--color-error);
+	}
+	.key.stopped {
+		background: var(--color-warning);
+	}
+	.key.missed {
+		border: 2px solid var(--color-error);
+	}
+	.key.none {
+		border: 1px solid var(--color-border-strong);
 	}
 
 	.strips {
@@ -308,8 +397,9 @@
 	.runs-head {
 		margin: 8px 0 0;
 		font-family: var(--font-sans);
-		font-size: 14px;
-		font-weight: 600;
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--color-foreground-muted);
 	}
 	.runs {
 		list-style: none;
