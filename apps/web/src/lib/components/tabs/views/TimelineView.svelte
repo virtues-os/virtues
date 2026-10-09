@@ -393,13 +393,15 @@
 				});
 				// The stretch a click would pick, under the pointer: that stay's or
 				// drive's piece of the path at twice the weight, in its own colour.
+				// The colour changes at once: MapLibre's default 300 ms fade would
+				// draw a stay in the last drive's orange as it comes in.
 				m.addSource('hover-run', { type: 'geojson', data: lines([]) });
 				m.addLayer({
 					id: 'hover-run',
 					type: 'line',
 					source: 'hover-run',
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
-					paint: { 'line-color': ink.track, 'line-width': 6, 'line-opacity': 1 },
+					paint: { 'line-color': ink.track, 'line-color-transition': { duration: 0, delay: 0 }, 'line-width': 6, 'line-opacity': 1 },
 				});
 				// What a click on the path finds: the drawn path is 3 px, too thin
 				// to aim at, so an unseen 18 px band over it takes the click. A
