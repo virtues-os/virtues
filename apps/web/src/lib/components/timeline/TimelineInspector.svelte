@@ -146,8 +146,15 @@
 		new Date(ms).toLocaleTimeString('en-US', { timeZone: zone, hour: 'numeric', minute: '2-digit' });
 	const holds = (x: { s: number; e: number }) => x.s <= playT && playT < x.e;
 	// Sections and rows are in start order, so the last one holding the
-	// playhead is the latest begun; the highlight never climbs back up.
-	const curSection = $derived(sections.findLastIndex(holds));
+	// playhead is the latest begun; the highlight never climbs back up. A
+	// section the person clicked stays the live one while the playhead is
+	// inside it: In Bed and the stay that starts the same minute both hold
+	// it, and the click says which one they meant.
+	let chosen = $state<number | null>(null);
+	const curSection = $derived.by(() => {
+		const c = chosen;
+		return c !== null && sections[c] && holds(sections[c]) ? c : sections.findLastIndex(holds);
+	});
 
 	// "Help Virtues out": each place's question under its first stay, and
 	// the card open in place of the list, on one place's question or on the
@@ -199,6 +206,7 @@
 			open = null;
 			secOpen = false;
 			lastSec = -2;
+			chosen = null;
 		});
 	});
 	$effect(() => {
@@ -213,6 +221,7 @@
 
 	function pickSection(i: number, sec: InspectorSection) {
 		if (i === curSection) secOpen = !secOpen;
+		chosen = i;
 		open = null;
 		onpick({ kind: sec.kind, s: sec.s, e: sec.e });
 	}
