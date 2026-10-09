@@ -39,24 +39,20 @@
 	 */
 	let { tab }: { tab: Tab; active: boolean } = $props();
 
-	type Panel = 'home' | 'info' | 'history' | 'details';
+	// The applet's page carries its Info; Run history and Technical details
+	// open under it, and their Back returns to it.
+	type Panel = 'home' | 'history' | 'details';
 	const PANEL_TITLE: Record<Exclude<Panel, 'home'>, string> = {
-		info: 'Info',
 		history: 'Run history',
 		details: 'Technical details'
-	};
-	// Where each panel's Back goes: one level up, not wherever you came from.
-	const PARENT: Record<Exclude<Panel, 'home'>, Panel> = {
-		info: 'home',
-		history: 'info',
-		details: 'info'
 	};
 
 	const url = $derived(new URL(tab.route, 'http://localhost'));
 	const appletId = $derived(url.pathname.match(/^\/(?:applet|action)\/(applet_[^/]+)$/)?.[1] ?? null);
 	const panel = $derived.by((): Panel => {
 		const p = url.searchParams.get('panel');
-		return p === 'info' || p === 'history' || p === 'details' ? p : 'home';
+		// `?panel=info` was Info's own panel; it is the page now.
+		return p === 'history' || p === 'details' ? p : 'home';
 	});
 
 	function go(p: Panel) {
@@ -115,23 +111,6 @@
 		return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 	}
 
-	const STATUS_WORD: Record<AppletLogEntry['status'], string> = {
-		success: 'Ran',
-		error: 'Failed',
-		running: 'Running',
-		skipped: 'Skipped',
-		cancelled: 'Cancelled',
-		budget_exceeded: 'Stopped at its spending limit'
-	};
-
-	/** One run in a line: what it said, or why it failed. */
-	function runLine(e: AppletLogEntry): string {
-		const what =
-			e.status === 'error'
-				? `Failed${e.error ? `: ${errorHeadline(e.error, 120)}` : ''}`
-				: (e.summary ?? STATUS_WORD[e.status]);
-		return e.occurrences > 1 ? `${what} (${e.occurrences} times)` : what;
-	}
 
 	$effect(() => {
 		if (appletId) void load(appletId);
@@ -287,9 +266,6 @@
 
 	// Same grace the scheduler and the table use.
 	const OVERDUE_GRACE_MS = 60 * 60 * 1000;
-	// The run the problem line already describes isn't listed again below it.
-	const recentRuns = $derived(log.filter((e) => e !== failedNow).slice(0, 7));
-
 	// Where its work goes, under the name, when that says something the page
 	// doesn't: an applet whose work is its conversation already has the
 	// Conversation button.
@@ -379,7 +355,6 @@
 								Conversation
 							</Button>
 						{/if}
-						<IconButton icon="ri:information-line" label="Info" variant="secondary" onclick={() => go('info')} />
 						<IconButton icon="ri:more-line" label="More" variant="secondary" haspopup="menu" onclick={openMore} />
 					</div>
 				</header>
@@ -466,25 +441,6 @@
 							{/each}
 						</nav>
 					</div>
-				{:else if recentRuns.length > 0}
-					<!-- No page to show yet (or it makes something else): what its
-					     last runs did, one line each, failures included. -->
-					<section class="recent">
-						<h2 class="list-head">Recent runs</h2>
-						<ul class="recent-list" role="list">
-							{#each recentRuns as e (e.run_id ?? e.last_at)}
-								<li class="recent-item">
-									<DayDot state={e.status === 'error' ? 'failed' : e.status === 'budget_exceeded' ? 'stopped' : e.status === 'success' ? 'ran' : 'quiet'} />
-									<span class="recent-when">{e.last_at ? dayLabel(e.last_at) : ''}</span>
-									<span class="recent-what" class:failed={e.status === 'error'}>{runLine(e)}</span>
-								</li>
-							{/each}
-						</ul>
-					</section>
-				{:else if !failedNow}
-					<p class="empty">
-						{action.enabled ? "Nothing yet. What it makes shows here after it runs." : "It's off, so it hasn't made anything yet."}
-					</p>
 				{/if}
 
 				{#if canMessage}
@@ -506,26 +462,10 @@
 						</Button>
 					</form>
 				{/if}
-			{:else}
-				<div class="narrow">
-				<header class="head sub">
-					<button type="button" class="backlink" onclick={() => go(PARENT[panel])}>
-						<Icon icon="ri:arrow-left-line" width="14" />
-						{PARENT[panel] === 'home' ? action.name : 'Info'}
-					</button>
-					<!-- Info is the applet itself, so it takes the applet's name;
-					     the two pages under it say what they are. -->
-					<h1 class="title">{panel === 'info' ? action.name : PANEL_TITLE[panel]}</h1>
-					<p class="status">
-						{panel === 'info'
-							? (action.description ?? describeSchedule(action.schedule))
-							: panel === 'history'
-								? `${action.name} · ${describeSchedule(action.schedule)}`
-								: action.name}
-					</p>
-				</header>
 
-				{#if panel === 'info'}
+				<!-- Its Info, on its page: how its week went, the switch, when it
+				     runs, where its work goes, what it costs. -->
+				<section class="info-section" aria-label={`About ${action.name}`}>
 					<AppletInfo
 						bind:action
 						{index}
@@ -534,7 +474,21 @@
 						onTechnical={() => go('details')}
 						onDeleted={() => windowShellStore.closeTab(tab.id)}
 					/>
-				{:else if panel === 'history'}
+				</section>
+			{:else}
+				<div class="narrow">
+				<header class="head sub">
+					<button type="button" class="backlink" onclick={() => go('home')}>
+						<Icon icon="ri:arrow-left-line" width="14" />
+						{action.name}
+					</button>
+					<h1 class="title">{PANEL_TITLE[panel]}</h1>
+					<p class="status">
+						{panel === 'history' ? `${action.name} · ${describeSchedule(action.schedule)}` : action.name}
+					</p>
+				</header>
+
+				{#if panel === 'history'}
 					<RunHistory
 						{action}
 						{log}
@@ -766,32 +720,9 @@
 		color: var(--color-foreground-muted);
 	}
 
-	/* What its last runs did, one line each. */
-	.recent-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-	.recent-item {
-		display: grid;
-		grid-template-columns: 8px 120px minmax(0, 1fr);
-		align-items: center;
-		gap: 12px;
-		min-height: 40px;
-		border-bottom: 1px solid var(--color-border);
-		font-size: 14px;
-	}
-	.recent-when {
-		color: var(--color-foreground-muted);
-		font-variant-numeric: tabular-nums;
-	}
-	.recent-what {
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.recent-what.failed {
-		color: var(--color-error);
+	/* Info sits at a reading width under what the applet made. */
+	.info-section {
+		max-width: 640px;
 	}
 	.empty {
 		margin: 0;
