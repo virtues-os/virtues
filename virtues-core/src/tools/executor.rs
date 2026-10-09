@@ -565,6 +565,7 @@ impl ToolExecutor {
                     Ok(revision) if revision.saved => Ok(ToolResult::success(serde_json::json!({
                         "applied": true,
                         "saved": true,
+                        "page_id": revision.page_id,
                         "change": revision.change,
                     }))),
                     // Made, and versioned: only the save is pending. Sending
@@ -572,6 +573,7 @@ impl ToolExecutor {
                     Ok(revision) => Ok(ToolResult::success(serde_json::json!({
                         "applied": true,
                         "saved": false,
+                        "page_id": revision.page_id,
                         "change": revision.change,
                         "note": "the revision is on the page, but the server couldn't save it yet \
                                  and saves it again on its own; do not send it again",

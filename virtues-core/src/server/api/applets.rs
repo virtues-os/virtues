@@ -75,6 +75,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/applets/:id/runs", get(list_applet_runs_handler))
         .route("/api/applets/:id/log", get(applet_log_handler))
+        .route("/api/applets/:id/pages", get(applet_pages_handler))
         .route("/api/runs", get(list_runs_handler))
         .route("/api/runs/by-day", get(runs_by_day_handler))
         // Credentials API
@@ -432,6 +433,15 @@ fn run_status_response(
         })),
     )
         .into_response()
+}
+
+/// GET /api/applets/:id/pages — the pages this applet's runs wrote, newest
+/// first, for its page to show what it made.
+pub async fn applet_pages_handler(
+    State(state): State<AppState>,
+    Path(applet_id): Path<String>,
+) -> Result<Json<Vec<crate::scheduler::applets::AppletPage>>, Error> {
+    Ok(Json(crate::scheduler::applets::applet_pages(state.db.pool(), &applet_id, 30).await?))
 }
 
 /// GET /api/applets/:id/log — the run log with identical outcomes collapsed.
