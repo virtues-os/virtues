@@ -939,6 +939,52 @@ pub async fn collapsed_log(db: &PgPool, applet_id: &str, limit: i64) -> Result<V
         .collect()
 }
 
+/// One applet's runs on one local day, counted by outcome.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RunDay {
+    pub applet_id: String,
+    /// The calendar day the runs started on, in the timezone passed in.
+    pub day: chrono::NaiveDate,
+    pub status: String,
+    pub runs: i64,
+}
+
+/// How many runs each applet had on each of the last `days` days, split by
+/// outcome. The Applets page draws one dot per applet per day from this, so
+/// an hourly applet and a weekly one sit on the same time axis.
+///
+/// Days are counted in `tz` because schedules fire on that clock: a run at
+/// 23:30 local time belongs to the day it ran on there, not to the UTC date.
+pub async fn runs_by_day(db: &PgPool, tz: &str, days: i32) -> Result<Vec<RunDay>> {
+    let rows = sqlx::query(
+        r#"SELECT applet_id,
+                  (started_at AT TIME ZONE $1)::date AS day,
+                  status,
+                  count(*) AS runs
+             FROM app_applet_runs
+            WHERE applet_id IS NOT NULL
+              AND started_at >= (date_trunc('day', now() AT TIME ZONE $1)
+                                 - make_interval(days => $2 - 1)) AT TIME ZONE $1
+            GROUP BY applet_id, day, status
+            ORDER BY applet_id, day, status"#,
+    )
+    .bind(tz)
+    .bind(days)
+    .fetch_all(db)
+    .await?;
+
+    rows.iter()
+        .map(|r| {
+            Ok(RunDay {
+                applet_id: r.try_get("applet_id")?,
+                day: r.try_get("day")?,
+                status: r.try_get("status")?,
+                runs: r.try_get("runs")?,
+            })
+        })
+        .collect()
+}
+
 /// Record what the user said on a `message` run.
 pub async fn set_run_message(db: &PgPool, run_id: &str, message: &str) -> Result<()> {
     sqlx::query("UPDATE app_applet_runs SET message = $1 WHERE id = $2")
@@ -1180,6 +1226,70 @@ mod tests {
         let log = collapsed_log(&pool, "applet_varied", 50).await.unwrap();
         assert_eq!(log.len(), 3, "three different things said, three lines");
         assert!(log.iter().all(|e| e.occurrences == 1));
+    }
+
+    /// A run at local noon, `days_ago` days back, so the test never lands on
+    /// a day boundary whatever time it runs.
+    async fn seed_run_on_day(pool: &PgPool, id: &str, applet: &str, status: &str, days_ago: i32) {
+        sqlx::query(
+            "INSERT INTO app_applet_runs (id, applet_id, status, trigger, started_at) \
+             VALUES ($1, $2, $3, 'cron', \
+                     (date_trunc('day', now() AT TIME ZONE 'UTC') + interval '12 hours' \
+                      - make_interval(days => $4)) AT TIME ZONE 'UTC')",
+        )
+        .bind(id)
+        .bind(applet)
+        .bind(status)
+        .bind(days_ago)
+        .execute(pool)
+        .await
+        .expect("seed run on day");
+    }
+
+    /// Runs are counted per day and per outcome, and only inside the window.
+    #[sqlx::test]
+    async fn runs_by_day_counts_each_outcome_per_day(pool: PgPool) {
+        applet_row(&pool, "applet_daily").await;
+        for i in 0..3 {
+            seed_run_on_day(&pool, &format!("run_ok_{i}"), "applet_daily", "success", 0).await;
+        }
+        seed_run_on_day(&pool, "run_err", "applet_daily", "error", 0).await;
+        seed_run_on_day(&pool, "run_old_ok", "applet_daily", "success", 2).await;
+        seed_run_on_day(&pool, "run_too_old", "applet_daily", "success", 40).await;
+
+        let days = runs_by_day(&pool, "UTC", 30).await.unwrap();
+        let today = chrono::Utc::now().date_naive();
+        let count = |day: chrono::NaiveDate, status: &str| {
+            days.iter()
+                .find(|d| d.day == day && d.status == status)
+                .map(|d| d.runs)
+        };
+
+        assert_eq!(count(today, "success"), Some(3));
+        assert_eq!(count(today, "error"), Some(1), "a failure keeps its own count");
+        assert_eq!(count(today - chrono::Duration::days(2), "success"), Some(1));
+        assert_eq!(days.len(), 3, "the run from 40 days ago is outside the window");
+    }
+
+    /// The same run lands on different days in different timezones. 23:30 UTC
+    /// is still yesterday in UTC but already the next morning in Tokyo.
+    #[sqlx::test]
+    async fn runs_by_day_counts_days_in_the_given_timezone(pool: PgPool) {
+        applet_row(&pool, "applet_tz").await;
+        sqlx::query(
+            "INSERT INTO app_applet_runs (id, applet_id, status, trigger, started_at) \
+             VALUES ('run_late', 'applet_tz', 'success', 'cron', \
+                     (date_trunc('day', now() AT TIME ZONE 'UTC') - interval '30 minutes') AT TIME ZONE 'UTC')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed late run");
+
+        let utc = runs_by_day(&pool, "UTC", 30).await.unwrap();
+        let tokyo = runs_by_day(&pool, "Asia/Tokyo", 30).await.unwrap();
+        assert_eq!(utc.len(), 1);
+        assert_eq!(tokyo.len(), 1);
+        assert_eq!(tokyo[0].day - utc[0].day, chrono::Duration::days(1));
     }
 
     /// Turning a finished applet back on un-finishes it. Without this the row

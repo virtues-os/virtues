@@ -76,6 +76,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/applets/:id/runs", get(list_applet_runs_handler))
         .route("/api/applets/:id/log", get(applet_log_handler))
         .route("/api/runs", get(list_runs_handler))
+        .route("/api/runs/by-day", get(runs_by_day_handler))
         // Credentials API
         .route("/api/credentials", get(list_credentials_handler))
         .route(
@@ -664,6 +665,27 @@ pub async fn list_runs_handler(
     )
     .await?;
     Ok(Json(runs))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RunsByDayQuery {
+    pub days: Option<i32>,
+}
+
+/// GET /api/runs/by-day?days=30 - each applet's run count per local day, split
+/// by outcome. Feeds the Applets page's "Last 7 days" column and run history.
+pub async fn runs_by_day_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<RunsByDayQuery>,
+) -> Result<Json<Vec<crate::scheduler::applets::RunDay>>, Error> {
+    let days = q.days.unwrap_or(30).clamp(1, 90);
+    // Schedules fire on the box's own clock, so days are counted on it too.
+    // A box that can't read its timezone counts in UTC rather than failing the
+    // whole page; the days then match the UTC dates the runs carry.
+    let tz = crate::timezone::system_timezone().unwrap_or_else(|| "UTC".to_string());
+    Ok(Json(
+        crate::scheduler::applets::runs_by_day(state.db.pool(), &tz, days).await?,
+    ))
 }
 
 // ============================================================================
