@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Button from '$lib/components/Button.svelte';
+	import Markdown from '$lib/components/Markdown.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import ShareSheet from '$lib/components/applets/ShareSheet.svelte';
@@ -15,6 +16,9 @@
 		getApplet,
 		getAppletLog,
 		getRunsByDay,
+		getAppletPages,
+		getPage,
+		type AppletPage,
 		runApplet,
 		messageApplet,
 		type Applet,
@@ -72,6 +76,63 @@
 
 	const index = $derived(indexRunDays(runDays));
 
+	// The pages its runs wrote, newest first, and the one open.
+	let pages = $state<AppletPage[]>([]);
+	let selectedId = $state<string | null>(null);
+	let pageContent = $state<string | null>(null);
+	const selectedPage = $derived(pages.find((p) => p.page_id === selectedId) ?? pages[0] ?? null);
+	$effect(() => {
+		const id = selectedPage?.page_id;
+		if (!id) return;
+		pageContent = null;
+		getPage(id)
+			.then((p) => {
+				if (selectedPage?.page_id === id) pageContent = p.content;
+			})
+			.catch(() => {
+				if (selectedPage?.page_id === id) pageContent = '';
+			});
+	});
+
+	function openPage(id: string) {
+		windowShellStore.openTabFromRoute(`/page/${id}`, { focusExisting: true });
+	}
+
+	/** "Today at 7:00", "Yesterday at 7:00", "Mon 5 Oct at 7:00". */
+	function when(iso: string): string {
+		const d = new Date(iso);
+		const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+		return `${dayLabel(iso)} at ${time}`;
+	}
+
+	function dayLabel(iso: string): string {
+		const d = new Date(iso);
+		const today = new Date();
+		const yesterday = new Date(today);
+		yesterday.setDate(today.getDate() - 1);
+		if (d.toDateString() === today.toDateString()) return 'Today';
+		if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+		return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+	}
+
+	const STATUS_WORD: Record<AppletLogEntry['status'], string> = {
+		success: 'Ran',
+		error: 'Failed',
+		running: 'Running',
+		skipped: 'Skipped',
+		cancelled: 'Cancelled',
+		budget_exceeded: 'Stopped at its spending limit'
+	};
+
+	/** One run in a line: what it said, or why it failed. */
+	function runLine(e: AppletLogEntry): string {
+		const what =
+			e.status === 'error'
+				? `Failed${e.error ? `: ${errorHeadline(e.error, 120)}` : ''}`
+				: (e.summary ?? STATUS_WORD[e.status]);
+		return e.occurrences > 1 ? `${what} (${e.occurrences} times)` : what;
+	}
+
 	$effect(() => {
 		if (appletId) void load(appletId);
 	});
@@ -85,8 +146,9 @@
 			const a = await getApplet(id);
 			action = a;
 			windowShellStore.updateTab(tab.id, { label: a.name });
-			const [l, d] = await Promise.allSettled([getAppletLog(id), getRunsByDay(35)]);
+			const [l, d, p] = await Promise.allSettled([getAppletLog(id), getRunsByDay(35), getAppletPages(id)]);
 			log = l.status === 'fulfilled' ? l.value : [];
+			pages = p.status === 'fulfilled' ? p.value : [];
 			if (d.status === 'fulfilled') {
 				runDays = d.value.filter((r) => r.applet_id === id);
 				daysErr = null;
@@ -219,7 +281,6 @@
 
 	// The newest run that said something, for the home's body when the applet
 	// has no face. The log is newest first.
-	const latest = $derived(log.find((e) => e.status === 'success' && (e.summary || e.message)) ?? null);
 	const lastEntry = $derived(log[0] ?? null);
 	const failedNow = $derived(lastEntry?.status === 'error' ? lastEntry : null);
 	const failure = $derived(failedNow?.error ? explainRunError(failedNow.error, collectorDenied) : null);
@@ -233,6 +294,14 @@
 				!action.archived_at &&
 				Date.now() - new Date(action.next_due_at).getTime() > OVERDUE_GRACE_MS
 		)
+	);
+
+	// When it runs next, so a failure reads as "today failed, tomorrow is
+	// scheduled" rather than as a dead end.
+	const nextRun = $derived(
+		action?.next_due_at && action.enabled && !action.archived_at && !overdue
+			? `Next run ${relativeTime(action.next_due_at)}`
+			: null
 	);
 
 	const status = $derived.by(() => {
@@ -305,6 +374,10 @@
 					</div>
 				</header>
 
+				{#if action.description}
+					<p class="desc">{action.description}</p>
+				{/if}
+
 				{#if err}
 					<p class="error-msg">{err}</p>
 				{/if}
@@ -341,6 +414,10 @@
 					</div>
 				{/if}
 
+				{#if nextRun}
+					<p class="next">{nextRun}</p>
+				{/if}
+
 				<!-- The face IS the home when there is one. -->
 				{#if action.has_face}
 					<FaceFrame appletId={action.id} height="460px" />
@@ -349,20 +426,52 @@
 						producer={{ kind: 'applet', id: action.id }}
 						onClose={() => (sharing = false)}
 					/>
-				{:else if latest}
-					<section class="latest">
-						<h2 class="latest-head">Latest, {relativeTime(latest.last_at)}</h2>
-						{#if latest.message}
-							<p class="said">{latest.message}</p>
-						{/if}
-						{#if latest.summary}
-							<p class="latest-text">{latest.summary}</p>
-						{/if}
-					</section>
-				{:else if action.last_success_summary}
-					<section class="latest">
-						<h2 class="latest-head">Latest</h2>
-						<p class="latest-text">{action.last_success_summary}</p>
+				{:else if pages.length > 0}
+					<!-- What it made: the newest page open, every page beside it. -->
+					<div class="pages">
+						<article class="page">
+							{#if selectedPage}
+								<h2 class="page-title">{selectedPage.title}</h2>
+								<p class="page-by">
+									Written by {action.name}, {when(selectedPage.written_at)}
+									<Button variant="ghost" size="sm" onclick={() => openPage(selectedPage.page_id)}>Open page</Button>
+								</p>
+								{#if pageContent === null}
+									<p class="empty">Loading…</p>
+								{:else}
+									<div class="page-body"><Markdown content={pageContent} variant="article" /></div>
+								{/if}
+							{/if}
+						</article>
+						<nav class="page-list" aria-label={`Pages ${action.name} wrote`}>
+							<h2 class="list-head">All pages</h2>
+							{#each pages as p (p.page_id)}
+								<button
+									type="button"
+									class="page-item"
+									aria-current={p.page_id === selectedPage?.page_id}
+									onclick={() => (selectedId = p.page_id)}
+								>
+									<span class="page-item-title">{p.title}</span>
+									<span class="page-item-when">{when(p.written_at)}</span>
+								</button>
+							{/each}
+						</nav>
+					</div>
+				{:else if log.length > 0}
+					<!-- No page to show yet (or it makes something else): what its
+					     last runs did, one line each, failures included. -->
+					<section class="recent">
+						<h2 class="list-head">Recent runs</h2>
+						<ul class="recent-list" role="list">
+							{#each log.slice(0, 7) as e (e.run_id ?? e.last_at)}
+								<li class="recent-item">
+									<DayDot state={e.status === 'error' ? 'failed' : e.status === 'budget_exceeded' ? 'stopped' : e.status === 'success' ? 'ran' : 'quiet'} />
+									<span class="recent-when">{e.last_at ? dayLabel(e.last_at) : ''}</span>
+									<span class="recent-what" class:failed={e.status === 'error'}>{runLine(e)}</span>
+								</li>
+							{/each}
+						</ul>
 					</section>
 				{:else if !failedNow}
 					<p class="empty">
@@ -566,32 +675,115 @@
 		gap: 8px;
 	}
 
-	.latest {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
+	.desc {
+		margin: -8px 0 0;
+		max-width: 40em;
+		font-size: 15px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
 	}
-	.latest-head {
-		margin: 0;
+	.next {
+		margin: -8px 0 0;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+	.list-head {
+		margin: 0 0 8px;
 		font-family: var(--font-sans);
 		font-size: 13px;
 		font-weight: 500;
 		color: var(--color-foreground-muted);
 	}
-	.latest-text {
-		margin: 0;
-		max-width: 40em;
-		font-family: var(--font-serif);
-		font-size: 18px;
-		line-height: 1.5;
-		white-space: pre-wrap;
+
+	/* The page it made, with every page it made beside it. */
+	.pages {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 240px;
+		gap: 32px;
+		align-items: start;
 	}
-	.said {
+	@container (max-width: 720px) {
+		.pages {
+			grid-template-columns: 1fr;
+		}
+	}
+	.page-title {
 		margin: 0;
-		padding-left: 8px;
-		border-left: 2px solid var(--color-border);
-		font-size: 14px;
+		font-family: var(--font-serif);
+		font-weight: 400;
+		font-size: 36px;
+		line-height: 1.15;
+	}
+	.page-by {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin: 8px 0 16px;
+		font-size: 13px;
 		color: var(--color-foreground-muted);
+	}
+	.page-body {
+		max-width: 40em;
+	}
+	.page-list {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.page-item {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 8px 12px;
+		border: 0;
+		border-radius: 6px;
+		background: none;
+		text-align: left;
+		font: inherit;
+		cursor: pointer;
+		color: var(--color-foreground);
+	}
+	.page-item:hover {
+		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+	}
+	.page-item[aria-current='true'] {
+		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+	}
+	.page-item-title {
+		font-family: var(--font-serif);
+		font-size: 16px;
+	}
+	.page-item-when {
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+	}
+
+	/* What its last runs did, one line each. */
+	.recent-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.recent-item {
+		display: grid;
+		grid-template-columns: 8px 120px minmax(0, 1fr);
+		align-items: center;
+		gap: 12px;
+		min-height: 40px;
+		border-bottom: 1px solid var(--color-border);
+		font-size: 14px;
+	}
+	.recent-when {
+		color: var(--color-foreground-muted);
+		font-variant-numeric: tabular-nums;
+	}
+	.recent-what {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.recent-what.failed {
+		color: var(--color-error);
 	}
 	.empty {
 		margin: 0;
