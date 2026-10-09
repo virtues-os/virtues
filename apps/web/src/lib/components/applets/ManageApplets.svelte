@@ -159,13 +159,13 @@
 		windowShellStore.openAside({ type: 'chat', label: a.name, route: `/chat/${chat}`, icon: 'atlas:applets' });
 	}
 
-	// This page is for checking applets, so a row opens the applet's Info
-	// beside the table: Run history and Technical details are one step on.
+	// A row opens the applet's page beside the table, which carries its Info;
+	// Run history and Technical details are one step on.
 	function openRow(a: Applet) {
 		windowShellStore.openAside({
 			type: 'applet',
 			label: a.name,
-			route: `/applet/${a.id}?panel=info`,
+			route: `/applet/${a.id}`,
 			icon: 'atlas:applets'
 		});
 	}
