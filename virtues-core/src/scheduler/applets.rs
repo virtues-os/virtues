@@ -985,6 +985,61 @@ pub async fn runs_by_day(db: &PgPool, tz: &str, days: i32) -> Result<Vec<RunDay>
         .collect()
 }
 
+/// Record that a run wrote a page. Writing the same page twice in one run is
+/// one record.
+pub async fn record_page_output(db: &PgPool, run_id: &str, page_id: &str) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO app_applet_run_outputs (run_id, kind, ref_id) VALUES ($1, 'page', $2) \
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(run_id)
+    .bind(page_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// A page an applet wrote, with the last time one of its runs wrote it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AppletPage {
+    pub page_id: String,
+    pub title: String,
+    pub written_at: chrono::DateTime<chrono::Utc>,
+    pub run_id: String,
+}
+
+/// The pages an applet's runs wrote, most recently written first. A page
+/// deleted since is left out; the run that wrote it keeps its history.
+pub async fn applet_pages(db: &PgPool, applet_id: &str, limit: i64) -> Result<Vec<AppletPage>> {
+    let rows = sqlx::query(
+        r#"SELECT DISTINCT ON (o.ref_id)
+                  o.ref_id AS page_id, p.title, r.started_at AS written_at, r.id AS run_id
+             FROM app_applet_run_outputs o
+             JOIN app_applet_runs r ON r.id = o.run_id
+             JOIN app_pages p ON p.id = o.ref_id AND p.deleted_at IS NULL
+            WHERE o.kind = 'page' AND r.applet_id = $1
+            ORDER BY o.ref_id, r.started_at DESC"#,
+    )
+    .bind(applet_id)
+    .fetch_all(db)
+    .await?;
+
+    let mut pages = rows
+        .iter()
+        .map(|r| {
+            Ok(AppletPage {
+                page_id: r.try_get("page_id")?,
+                title: r.try_get("title")?,
+                written_at: r.try_get("written_at")?,
+                run_id: r.try_get("run_id")?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    pages.sort_by(|a, b| b.written_at.cmp(&a.written_at));
+    pages.truncate(limit.max(0) as usize);
+    Ok(pages)
+}
+
 /// Record what the user said on a `message` run.
 pub async fn set_run_message(db: &PgPool, run_id: &str, message: &str) -> Result<()> {
     sqlx::query("UPDATE app_applet_runs SET message = $1 WHERE id = $2")
@@ -1244,6 +1299,42 @@ mod tests {
         .execute(pool)
         .await
         .expect("seed run on day");
+    }
+
+    async fn page_row(pool: &PgPool, id: &str, title: &str) {
+        sqlx::query("INSERT INTO app_pages (id, title) VALUES ($1, $2)")
+            .bind(id)
+            .bind(title)
+            .execute(pool)
+            .await
+            .expect("seed page");
+    }
+
+    /// An applet's pages come back newest first, once each, and a deleted
+    /// page drops out while its run stays.
+    #[sqlx::test]
+    async fn applet_pages_lists_what_its_runs_wrote(pool: PgPool) {
+        applet_row(&pool, "applet_journal").await;
+        seed_run_on_day(&pool, "run_old", "applet_journal", "success", 2).await;
+        seed_run_on_day(&pool, "run_new", "applet_journal", "success", 0).await;
+        page_row(&pool, "page_a", "Monday").await;
+        page_row(&pool, "page_b", "Wednesday").await;
+        page_row(&pool, "page_gone", "Deleted").await;
+        record_page_output(&pool, "run_old", "page_a").await.unwrap();
+        record_page_output(&pool, "run_old", "page_a").await.unwrap(); // twice in one run
+        record_page_output(&pool, "run_old", "page_gone").await.unwrap();
+        record_page_output(&pool, "run_new", "page_b").await.unwrap();
+        record_page_output(&pool, "run_new", "page_a").await.unwrap(); // rewritten later
+        sqlx::query("UPDATE app_pages SET deleted_at = now() WHERE id = 'page_gone'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let pages = applet_pages(&pool, "applet_journal", 10).await.unwrap();
+        let ids: Vec<&str> = pages.iter().map(|p| p.page_id.as_str()).collect();
+        assert_eq!(ids.len(), 2, "each page once, the deleted one gone: {ids:?}");
+        assert!(pages.iter().all(|p| p.run_id == "run_new"), "credited to the latest run that wrote it");
+        assert!(applet_pages(&pool, "applet_other", 10).await.unwrap().is_empty());
     }
 
     /// Runs are counted per day and per outcome, and only inside the window.

@@ -196,8 +196,15 @@ pub async fn run_agent_loop(
                 tool_names.insert(id, name);
             }
             crate::agent::AgentEvent::ToolCallResult { id, result, success, .. } => {
-                if tool_names.get(&id).is_some_and(|name| wrote_a_page(name, success, &result)) {
+                let written = tool_names.get(&id).and_then(|name| page_written(name, success, &result));
+                if let Some(page_id) = written {
                     wrote_page = true;
+                    // What the run made, so the applet's page can show it.
+                    // A record we failed to write must not fail the run that
+                    // wrote the page.
+                    if let Err(e) = crate::scheduler::applets::record_page_output(pool, run_id, page_id).await {
+                        tracing::warn!(applet_id, page_id, error = %e, "failed to record the page a run wrote");
+                    }
                 }
             }
             crate::agent::AgentEvent::TextDelta { content } => {
@@ -361,8 +368,13 @@ fn delivers_kind(config: &serde_json::Value) -> Option<&str> {
 /// answers `needs_binding` and succeeds without writing anything.
 const PAGE_WRITE_TOOLS: &[&str] = &["create_page", "edit_page", "revise_article"];
 
-fn wrote_a_page(tool: &str, success: bool, result: &serde_json::Value) -> bool {
-    success && PAGE_WRITE_TOOLS.contains(&tool) && result.get("needs_binding").is_none()
+/// The page a tool call wrote, if it wrote one. Every page tool answers with
+/// the `page_id` it acted on.
+fn page_written<'a>(tool: &str, success: bool, result: &'a serde_json::Value) -> Option<&'a str> {
+    if !success || !PAGE_WRITE_TOOLS.contains(&tool) || result.get("needs_binding").is_some() {
+        return None;
+    }
+    result.get("page_id")?.as_str()
 }
 
 /// Why a finished run failed to make what its applet makes, if it did.
@@ -521,12 +533,13 @@ mod tests {
 
     #[test]
     fn only_a_successful_page_write_counts() {
-        assert!(wrote_a_page("create_page", true, &json!({ "page_id": "page_1" })));
-        assert!(wrote_a_page("revise_article", true, &json!({})));
-        assert!(!wrote_a_page("create_page", false, &json!({})), "a failed write");
-        assert!(!wrote_a_page("sql_query", true, &json!({})), "not a page tool");
-        assert!(
-            !wrote_a_page("edit_page", true, &json!({ "needs_binding": true })),
+        assert_eq!(page_written("create_page", true, &json!({ "page_id": "page_1" })), Some("page_1"));
+        assert_eq!(page_written("revise_article", true, &json!({ "page_id": "page_2" })), Some("page_2"));
+        assert_eq!(page_written("create_page", false, &json!({ "page_id": "page_1" })), None, "a failed write");
+        assert_eq!(page_written("sql_query", true, &json!({ "page_id": "x" })), None, "not a page tool");
+        assert_eq!(
+            page_written("edit_page", true, &json!({ "needs_binding": true })),
+            None,
             "no page was bound, so nothing was written"
         );
     }

@@ -579,6 +579,19 @@ export interface AppletLogEntry {
 	cost_micros: number;
 }
 
+/** A page an applet's runs wrote, with the last time one of them did. */
+export interface AppletPage {
+	page_id: string;
+	title: string;
+	written_at: string;
+	run_id: string;
+}
+
+/** The pages an applet wrote, most recently written first. */
+export function getAppletPages(id: string): Promise<AppletPage[]> {
+	return apiGet<AppletPage[]>(`/applets/${encodeURIComponent(id)}/pages`);
+}
+
 export function getAppletLog(id: string, limit = 50): Promise<AppletLogEntry[]> {
 	return apiGet<AppletLogEntry[]>(`/applets/${encodeURIComponent(id)}/log`, { limit });
 }
