@@ -34,6 +34,7 @@
 //! ```
 
 pub mod applet_runner;
+mod cache_watch;
 pub mod caps;
 pub mod executor;
 pub mod guard;
@@ -226,6 +227,7 @@ impl AgentLoop {
                 }
 
                 tracing::info!(step, "Agent loop step");
+                let signature = cache_watch::sign(&model, &tools, &messages);
                 let (stream_handle, mut events) = turn::spawn_step(
                     &llm_config,
                     &model,
@@ -280,7 +282,7 @@ impl AgentLoop {
                         break;
                     }
                 };
-                turn.record_usage(&result, &model, context.chat_id.as_deref());
+                turn.record_usage(&result, &model, context.chat_id.as_deref(), signature);
 
                 // Before the completion check, so a final step's thinking is
                 // stored too.
