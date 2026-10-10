@@ -563,10 +563,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Recover after a manual endpoint's model changed. Runs BEFORE the app
     // builds the guarded embedder — which would itself fail on the very
     // fingerprint mismatch this command exists to fix.
-    if let Some(Commands::ConfigureInference { embed_url, rerank_url, embed_model, reembed, yes }) =
-        &cli.command
+    if let Some(Commands::ConfigureInference {
+        embed_url,
+        rerank_url,
+        embed_model,
+        reembed,
+        yes,
+        recommended,
+    }) = &cli.command
     {
         let result = match embed_url {
+            _ if *recommended => virtues::cli::model_set::use_recommended().await,
             Some(url) => {
                 virtues::cli::configure_inference::switch(
                     url,
@@ -1008,6 +1015,11 @@ fn maybe_reexec_as_service_user() {
     ];
     let Some(cmd) = std::env::args().nth(1) else { return };
     if !DB_COMMANDS.contains(&cmd.as_str()) {
+        return;
+    }
+    // `configure-inference --recommended` writes and starts a systemd unit and
+    // opens no database, so it keeps root (`cli::model_set::use_recommended`).
+    if cmd == "configure-inference" && std::env::args().any(|a| a == "--recommended") {
         return;
     }
     if !std::path::Path::new("/var/lib/virtues/virtues.env").exists() {

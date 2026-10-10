@@ -3,7 +3,8 @@
 	 * Settings → Search: where search runs, whether it's answering, and how much
 	 * of the record it covers. Read-only on purpose. Moving search to another
 	 * server re-checks the model and can rebuild the index, so it lives in one
-	 * command (`virtues configure-inference --embed-url`), which this page names.
+	 * command (`virtues configure-inference --embed-url`, or `--recommended` to
+	 * come back), which this page names.
 	 *
 	 * When the installer found a GPU or NPU that search isn't using, the page
 	 * keeps pointing at its guide until the owner dismisses it.
@@ -164,6 +165,16 @@
 				<button type="button" class="link" onclick={() => openExternal(GUIDE)}>
 					Read the guide for GPUs and NPUs
 				</button>
+			</section>
+		{:else if status.mode === 'manual'}
+			<section class="own">
+				<h3>Go back to the recommended setup</h3>
+				<p>
+					Your server runs the model you chose, and updates leave it alone. To have Virtues run
+					its recommended model on this server's CPU and keep it current, run this on the server.
+					Search keeps using your server until the index is rebuilt for the new model.
+				</p>
+				<pre><code>sudo virtues configure-inference --recommended</code></pre>
 			</section>
 		{/if}
 	{/if}

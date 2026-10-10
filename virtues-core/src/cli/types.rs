@@ -787,6 +787,11 @@ pub enum Commands {
         /// Skip confirmation prompts (scripts/CI).
         #[arg(long)]
         yes: bool,
+        /// Go back to the recommended setup: Virtues runs the embedding model
+        /// it recommends on this machine's CPU and keeps it current. Search
+        /// keeps using your server until the index is rebuilt. Needs sudo.
+        #[arg(long, conflicts_with_all = ["embed_url", "rerank_url", "embed_model"])]
+        recommended: bool,
     },
 
     /// Adopt orphaned media into the lake: recordings written before the lake

@@ -209,8 +209,21 @@ pub async fn switch(
     if let Some(u) = &rerank_url {
         set.push(("VIRTUES_RERANK_URL", u.clone()));
     }
-    let unset: &[&str] = if same_model { &[] } else { &["VIRTUES_EMBED_DIMS"] };
-    pin(&set, unset)?;
+    // A move to the recommended model may be under way (an update started it).
+    // Your own server replaces that decision, so call it off: without the next
+    // endpoint, the indexer drops the partial build (`search::next_index`).
+    let mut unset: Vec<&str> = vec![
+        "VIRTUES_EMBED_NEXT_URL",
+        "VIRTUES_EMBED_NEXT_MODEL",
+        "VIRTUES_EMBED_NEXT_FINGERPRINT",
+        "VIRTUES_EMBED_NEXT_QUERY_PROMPT",
+        "VIRTUES_EMBED_NEXT_DOC_PROMPT",
+        "VIRTUES_EMBED_NEXT_DIMS",
+    ];
+    if !same_model {
+        unset.push("VIRTUES_EMBED_DIMS");
+    }
+    pin(&set, &unset)?;
 
     if rebuild {
         let (embedded, days, scored) = super::reindex::rebuild(db.pool()).await?;
@@ -225,7 +238,12 @@ pub async fn switch(
     if was_bundled {
         println!("The CPU engine Virtues installed is no longer used. To free its memory:");
         println!("    sudo systemctl disable --now virtues-embed");
+        if std::path::Path::new("/etc/systemd/system/virtues-embed-next.service").exists() {
+            println!("    sudo systemctl disable --now virtues-embed-next");
+        }
     }
+    println!("To go back to the recommended setup later:");
+    println!("    sudo virtues configure-inference --recommended");
     Ok(())
 }
 

@@ -14,7 +14,7 @@ pub mod image_check;
 pub mod diag;
 pub mod doctor;
 pub mod lake_adopt;
-pub(crate) mod model_set;
+pub mod model_set;
 pub mod link;
 pub mod reindex;
 pub mod report_crash;
