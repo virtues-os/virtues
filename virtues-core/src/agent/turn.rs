@@ -65,17 +65,30 @@ impl TurnState {
     /// Count a model call against the budget, and log it: one line per call,
     /// because the usage table sums a chat's calls into one row and cannot
     /// say which call cost what. Counts and ids only, never content.
-    pub fn record_usage(&mut self, result: &LlmStreamResult, model: &str, chat_id: Option<&str>) {
+    ///
+    /// `reusable_tokens` is the most the cache could have served (see
+    /// `cache_watch`); `cache_read_tokens` well under it is the provider's
+    /// miss, and a non-empty `diverged_at` is ours.
+    pub fn record_usage(
+        &mut self,
+        result: &LlmStreamResult,
+        model: &str,
+        chat_id: Option<&str>,
+        signature: super::cache_watch::Signature,
+    ) {
         let Some(usage) = result.usage.as_ref() else { return };
         if let Some(cost) = usage.cost_micros {
             self.spent_micros += cost;
         }
+        let reading = chat_id.map(|chat| super::cache_watch::record(chat, signature, usage.prompt_tokens));
         tracing::info!(
             step = self.step,
             model = %model,
             chat_id = chat_id.unwrap_or(""),
             prompt_tokens = usage.prompt_tokens,
             cache_read_tokens = usage.cache_read_tokens.unwrap_or(0),
+            reusable_tokens = reading.as_ref().map_or(0, |r| r.reusable_tokens),
+            diverged_at = reading.as_ref().map_or("", |r| r.diverged_at.as_str()),
             completion_tokens = usage.completion_tokens,
             reasoning_tokens = usage.reasoning_tokens.unwrap_or(0),
             cost_micros = usage.cost_micros.unwrap_or(0),
@@ -365,10 +378,10 @@ mod tests {
         let mut turn = TurnState::new(&budget);
         turn.step = 1;
         assert_eq!(turn.last_step(20, &budget), None);
-        turn.record_usage(&usage(Some(600)), "m", None);
-        turn.record_usage(&usage(None), "m", None); // a BYO call is free here
+        turn.record_usage(&usage(Some(600)), "m", None, super::super::cache_watch::sign("m", &[], &[]));
+        turn.record_usage(&usage(None), "m", None, super::super::cache_watch::sign("m", &[], &[])); // a BYO call is free here
         assert_eq!(turn.last_step(20, &budget), None);
-        turn.record_usage(&usage(Some(400)), "m", None);
+        turn.record_usage(&usage(Some(400)), "m", None, super::super::cache_watch::sign("m", &[], &[]));
         assert_eq!(turn.last_step(20, &budget), Some(FinishReason::BudgetExceeded));
     }
 

@@ -2519,6 +2519,31 @@ mod tests {
     /// future edit to the block list is a deliberate, test-visible act — the
     /// reorder slice (rules last, per the formula doc) flips this assertion
     /// on purpose, and nothing reorders by accident.
+    /// A chat's system prompt holds still while the record moves under it.
+    /// A page edited between turns reorders "Live threads", and grok serves
+    /// nothing from cache past a changed byte, so the present is held for the
+    /// chat. Without a chat nothing is held and the edit shows at once.
+    #[sqlx::test]
+    async fn a_chats_system_prompt_holds_still_while_the_record_moves(pool: PgPool) {
+        let chat = Some("chat_prompt_holds_still");
+        let zone = Some("America/Chicago");
+        let (first, _, _) =
+            build_system_prompt_blocks(&pool, chat, None, zone, &ChatMode::Chat, None, "Ari", "Adam").await;
+        sqlx::query("INSERT INTO app_pages (id, title) VALUES ('page_moved', 'Edited between turns')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let (next, _, _) =
+            build_system_prompt_blocks(&pool, chat, None, zone, &ChatMode::Chat, None, "Ari", "Adam").await;
+        assert_eq!(first, next, "the next turn's system prompt is byte-identical");
+
+        let (unheld, _, _) =
+            build_system_prompt_blocks(&pool, None, None, zone, &ChatMode::Chat, None, "Ari", "Adam").await;
+        assert!(unheld.contains("Edited between turns"), "the edit is in the record:\n{unheld}");
+        assert!(!unheld.contains("Now:"), "the clock is not in the prompt");
+    }
+
     /// A skill's body is in the tail, never the cached prefix: the prefix
     /// must be the same whatever the chat is doing, or switching skills
     /// rewrites the cache. And ordinary chat carries no skill block at all.

@@ -156,7 +156,7 @@ pub async fn assemble(blocks: Vec<Block<'_>>) -> (String, String, Vec<RenderedBl
 /// 9,472. That block moves with every ingest and its clock moved every quarter
 /// hour, so on the main box 57% of turns in the same quarter hour, and 88% of
 /// those that crossed one, started from nothing.
-const HELD_FOR: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+const HELD_FOR: chrono::TimeDelta = chrono::TimeDelta::hours(1);
 
 struct Held {
     zone: Option<String>,
@@ -165,10 +165,10 @@ struct Held {
     body: Option<String>,
 }
 
-type HeldKey = (String, &'static str);
+type HeldMap = Mutex<HashMap<(String, &'static str), Held>>;
 
-fn held() -> &'static Mutex<HashMap<HeldKey, Held>> {
-    static HELD: OnceLock<Mutex<HashMap<HeldKey, Held>>> = OnceLock::new();
+fn held() -> &'static HeldMap {
+    static HELD: OnceLock<HeldMap> = OnceLock::new();
     HELD.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -187,10 +187,11 @@ where
     F: FnOnce(DateTime<Utc>) -> Fut,
     Fut: Future<Output = Option<String>>,
 {
-    held_as_of(Utc::now(), chat_id, tag, timezone, render).await
+    held_as_of(held(), Utc::now(), chat_id, tag, timezone, render).await
 }
 
 async fn held_as_of<F, Fut>(
+    map: &HeldMap,
     now: DateTime<Utc>,
     chat_id: Option<&str>,
     tag: &'static str,
@@ -210,20 +211,18 @@ where
         None => now.date_naive(),
     };
     let key = (chat_id.to_string(), tag);
-    let fresh = |h: &Held| {
-        h.zone == zone
-            && h.date == date
-            && (now - h.taken_at).to_std().is_ok_and(|age| age < HELD_FOR)
-    };
-    if let Some(h) = held().lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
-        if fresh(h) {
+    // Young, not "taken before now": a chat's blocks render concurrently, so
+    // a block taken a moment after this call began is as fresh as it gets.
+    let young = |h: &Held| now - h.taken_at < HELD_FOR;
+    if let Some(h) = map.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+        if h.zone == zone && h.date == date && young(h) {
             return h.body.clone();
         }
     }
 
     let body = render(now).await;
-    let mut map = held().lock().unwrap_or_else(|e| e.into_inner());
-    map.retain(|_, h| (now - h.taken_at).to_std().is_ok_and(|age| age < HELD_FOR));
+    let mut map = map.lock().unwrap_or_else(|e| e.into_inner());
+    map.retain(|_, h| young(h));
     map.insert(key, Held { zone, date, taken_at: now, body: body.clone() });
     body
 }
@@ -242,12 +241,13 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     async fn render_counted(
+        map: &HeldMap,
         now: DateTime<Utc>,
         chat: Option<&str>,
         zone: Option<&str>,
         calls: &AtomicUsize,
     ) -> Option<String> {
-        held_as_of(now, chat, "test_block", zone, |at| async move {
+        held_as_of(map, now, chat, "test_block", zone, |at| async move {
             let n = calls.fetch_add(1, Ordering::SeqCst);
             Some(format!("render {n} as of {at}"))
         })
@@ -258,6 +258,8 @@ mod tests {
     /// day turns where they are, or their zone changes.
     #[tokio::test]
     async fn a_chat_keeps_its_present_until_an_hour_or_a_day_turns() {
+        // Its own map: the shared one is pruned by every other test's clock.
+        let map = &HeldMap::default();
         let calls = AtomicUsize::new(0);
         let chat = Some("chat_held_test");
         let zone = Some("America/Chicago");
@@ -265,28 +267,28 @@ mod tests {
         let t0 = DateTime::parse_from_rfc3339("2026-10-09T19:00:00Z").unwrap().with_timezone(&Utc);
         let minutes = |m: i64| t0 + chrono::TimeDelta::minutes(m);
 
-        let first = render_counted(t0, chat, zone, &calls).await;
-        assert_eq!(render_counted(minutes(59), chat, zone, &calls).await, first, "held within the hour");
+        let first = render_counted(map, t0, chat, zone, &calls).await;
+        assert_eq!(render_counted(map, minutes(59), chat, zone, &calls).await, first, "held within the hour");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-        let other_chat = render_counted(minutes(1), Some("chat_held_other"), zone, &calls).await;
+        let other_chat = render_counted(map, minutes(1), Some("chat_held_other"), zone, &calls).await;
         assert_ne!(other_chat, first, "each chat holds its own");
 
-        let after_hour = render_counted(minutes(61), chat, zone, &calls).await;
+        let after_hour = render_counted(map, minutes(61), chat, zone, &calls).await;
         assert_ne!(after_hour, first, "read again once an hour old");
 
-        let moved = render_counted(minutes(62), chat, Some("Europe/London"), &calls).await;
+        let moved = render_counted(map, minutes(62), chat, Some("Europe/London"), &calls).await;
         assert_ne!(moved, after_hour, "read again when their zone changes");
 
         // 23:30 → 00:10 in London: a new day inside the hour.
         let late = DateTime::parse_from_rfc3339("2026-10-09T22:30:00Z").unwrap().with_timezone(&Utc);
-        let before_midnight = render_counted(late, chat, Some("Europe/London"), &calls).await;
+        let before_midnight = render_counted(map, late, chat, Some("Europe/London"), &calls).await;
         let after_midnight =
-            render_counted(late + chrono::TimeDelta::minutes(40), chat, Some("Europe/London"), &calls).await;
+            render_counted(map, late + chrono::TimeDelta::minutes(40), chat, Some("Europe/London"), &calls).await;
         assert_ne!(after_midnight, before_midnight, "read again when the day turns");
 
-        let a = render_counted(t0, None, zone, &calls).await;
-        let b = render_counted(t0, None, zone, &calls).await;
+        let a = render_counted(map, t0, None, zone, &calls).await;
+        let b = render_counted(map, t0, None, zone, &calls).await;
         assert_ne!(a, b, "without a chat nothing is held");
     }
 }
