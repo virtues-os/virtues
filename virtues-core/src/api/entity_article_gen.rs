@@ -501,7 +501,7 @@ fn cap(s: &str, n: usize) -> String {
     out
 }
 
-/// Runs on the **Lite** slot, not Chat.
+/// Runs on the **Standard** slot: never Chat, and not Lite.
 ///
 /// Background writing must not ride the slot the owner picked for
 /// conversation. It silently did, and the effect was that choosing a premium
@@ -509,12 +509,14 @@ fn cap(s: &str, n: usize) -> String {
 /// more without anyone deciding that. There is also no per-day spend ceiling
 /// anywhere in the system, so the model slot is the actual cost control.
 ///
-/// The shared completion helper resolves the Lite slot through the owner's
-/// background pin — that pin exists exactly for jobs like this one.
+/// Standard rather than Lite because a first draft is written once per
+/// person, only when someone asks, and it is the prose they read on that
+/// person's page: one call, a few cents at most. What repeats is upkeep, and
+/// upkeep is what goes on Lite (`agents/plan/person-pages-plan.md`).
 async fn call_virtues_api(pool: &PgPool, system_prompt: &str, user_prompt: &str) -> Result<String> {
     crate::virtues_api::completion::system_completion(
         pool,
-        virtues_registry::models::ModelSlot::Lite,
+        virtues_registry::models::ModelSlot::Standard,
         "entity_article",
         system_prompt,
         user_prompt,
