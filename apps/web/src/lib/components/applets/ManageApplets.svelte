@@ -227,7 +227,7 @@
 		},
 		{
 			key: 'schedule',
-			label: 'Runs',
+			label: 'Schedule',
 			width: '16%',
 			minWidth: '130px',
 			getValue: (a) => runsLabel(a)
@@ -393,8 +393,9 @@
 				</span>
 			</td>
 			<td>
-				<!-- Where its work goes, as a way there: the applet's page. An
-				     applet that doesn't say gets nothing rather than a dash. -->
+				<!-- Where its work goes, as a way there: the applet's page. A
+				     built-in applet's work stays inside the server, and an applet
+				     that doesn't say has nowhere to point, so both get nothing. -->
 				{#if appletDestination(a) !== '-'}
 				<button
 					type="button"

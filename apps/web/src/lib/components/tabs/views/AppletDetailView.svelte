@@ -6,6 +6,7 @@
 	import ShareSheet from '$lib/components/applets/ShareSheet.svelte';
 	import DayDot from '$lib/components/applets/DayDot.svelte';
 	import AppletInfo from '$lib/components/applets/AppletInfo.svelte';
+	import DeleteAppletModal from '$lib/components/applets/DeleteAppletModal.svelte';
 	import AppletSettings from '$lib/components/applets/AppletSettings.svelte';
 	import RunHistory from '$lib/components/applets/RunHistory.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -59,6 +60,7 @@
 	let busy = $state(false);
 	let err = $state<string | null>(null);
 	let sharing = $state(false);
+	let deleting = $state(false);
 
 	const index = $derived(indexRunDays(runDays));
 
@@ -70,11 +72,14 @@
 
 	// What the "What it made" card points to: its pages, its dashboard, or
 	// its conversation when that is where its work goes. Nothing otherwise.
+	// Where its work goes, by the same rule as the icon and the table's Goes
+	// to, so the three can't disagree. A built-in applet's work stays inside
+	// the server, so it has no card.
 	const made = $derived.by((): 'pages' | 'dashboard' | 'chat' | null => {
-		if (!action) return null;
-		if (pages.length > 0) return 'pages';
-		if (action.has_face) return 'dashboard';
-		if (chatId && appletGlyph(action) === 'chats') return 'chat';
+		const glyph = action ? appletGlyph(action) : null;
+		if (glyph === 'pages') return 'pages';
+		if (glyph === 'dashboard') return 'dashboard';
+		if (glyph === 'chats') return 'chat';
 		return null;
 	});
 	// The last thing it said, under "Its conversation".
@@ -334,6 +339,18 @@
 		items.push(
 			pinMenuItem({ url: `/applet/${a.id}`, label: a.name, icon: 'atlas:applets' }, { dividerBefore: items.length > 0 })
 		);
+		if (a.owner !== 'system') {
+			items.push({
+				id: 'delete',
+				label: 'Delete applet',
+				icon: 'ri:delete-bin-line',
+				variant: 'destructive',
+				dividerBefore: true,
+				action: () => {
+					deleting = true;
+				}
+			});
+		}
 		contextMenu.show({ x: rect.left, y: rect.bottom + 4 }, items);
 	}
 </script>
@@ -418,7 +435,16 @@
 					<section class="made">
 						<h2 class="list-head">What it made</h2>
 						<Card list>
-							{#if made === 'pages'}
+							{#if made === 'pages' && pages.length === 0}
+								<!-- It says it makes pages and has none to show: say so,
+								     rather than hide the card the table points at. -->
+								<div class="made-row">
+									<AtlasIcon name="pages" size={16} bare />
+									<span class="made-text">
+										<span class="made-title">No pages yet</span>
+									</span>
+								</div>
+							{:else if made === 'pages'}
 								{#each shownPages as p (p.page_id)}
 									<button type="button" class="made-row" onclick={() => openPage(p.page_id)}>
 										<AtlasIcon name="pages" size={16} bare />
@@ -434,6 +460,14 @@
 										<span class="made-text">{allPages ? 'Show fewer' : `Show all ${pages.length} pages`}</span>
 									</button>
 								{/if}
+							{:else if made === 'dashboard' && !action.has_face}
+								<div class="made-row">
+									<AtlasIcon name="dashboard" size={16} bare />
+									<span class="made-text">
+										<span class="made-title">No dashboard yet</span>
+										<span class="made-sub">It's set to make one and hasn't yet.</span>
+									</span>
+								</div>
 							{:else if made === 'dashboard'}
 								<button type="button" class="made-row" onclick={openDashboard}>
 									<AtlasIcon name="dashboard" size={16} bare />
@@ -443,6 +477,13 @@
 									</span>
 									<Icon icon="ri:arrow-right-s-line" width="16" />
 								</button>
+							{:else if !chatId}
+								<div class="made-row">
+									<AtlasIcon name="chats" size={16} bare />
+									<span class="made-text">
+										<span class="made-title">No conversation yet</span>
+									</span>
+								</div>
 							{:else}
 								<button type="button" class="made-row" onclick={openConversation}>
 									<AtlasIcon name="chats" size={16} bare />
@@ -456,6 +497,11 @@
 						</Card>
 					</section>
 				{/if}
+				<DeleteAppletModal
+					{action}
+					bind:open={deleting}
+					onDeleted={() => windowShellStore.closeTab(tab.id)}
+				/>
 				{#if action.has_face}
 					<ShareSheet
 						open={sharing}
@@ -493,7 +539,6 @@
 						{daysErr}
 						bind:historyOpen
 						bind:technicalOpen
-						onDeleted={() => windowShellStore.closeTab(tab.id)}
 					>
 						{#snippet history()}
 							{#if action}<RunHistory {action} {log} {index} {daysErr} {collectorDenied} />{/if}
@@ -667,13 +712,15 @@
 		background: none;
 		font: inherit;
 		text-align: left;
-		cursor: pointer;
 		color: var(--color-foreground);
+	}
+	button.made-row {
+		cursor: pointer;
 	}
 	.made-row + .made-row {
 		border-top: 1px solid var(--color-border);
 	}
-	.made-row:hover {
+	button.made-row:hover {
 		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
 	}
 	.made-row.more .made-text {

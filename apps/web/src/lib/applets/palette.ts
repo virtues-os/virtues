@@ -154,7 +154,7 @@ export function appletDestination(a: Pick<Applet, 'origin' | 'has_face' | 'confi
 	const title = (a.config?.delivers as { title?: unknown } | undefined)?.title;
 	if (glyph === 'pages') return typeof title === 'string' && title ? title : 'Pages';
 	return (
-		{ settings: 'This server', dashboard: 'Its dashboard', chats: 'Its conversation' } as Record<string, string>
+		{ dashboard: 'Its dashboard', chats: 'Its conversation' } as Record<string, string>
 	)[glyph] ?? '-';
 }
 
