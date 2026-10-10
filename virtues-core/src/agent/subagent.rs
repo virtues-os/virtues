@@ -244,7 +244,7 @@ async fn run_one_worker(
 
     let system_prompt = build_worker_prompt(&pool, &objective).await;
     let tools = crate::tools::get_tools_for_subagent();
-    let messages = build_context_for_llm(&[], None, 0, Some(&system_prompt), None);
+    let messages = build_context_for_llm(&[], None, 0, Some(&system_prompt), None, None);
 
     let (project_id, scope_mode) = scope;
     let context = ToolContext {

@@ -18,7 +18,6 @@ use axum::{
     response::{IntoResponse, Response, Sse},
     Json,
 };
-use chrono::Utc;
 use futures::stream::Stream;
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
@@ -940,6 +939,7 @@ async fn build_rules(pool: &PgPool) -> String {
 /// Loads user name, assistant name, style notes, and narrative identity from profiles.
 async fn build_system_prompt(
     pool: &PgPool,
+    chat_id: Option<&str>,
     active_page: Option<&ActivePageContext>,
     timezone: Option<&str>,
     mode: &ChatMode,
@@ -991,6 +991,7 @@ async fn build_system_prompt(
 
     let (stable, volatile, _rendered) = build_system_prompt_blocks(
         pool,
+        chat_id,
         active_page,
         timezone,
         mode,
@@ -1009,6 +1010,7 @@ async fn build_system_prompt(
 #[allow(clippy::too_many_arguments)]
 async fn build_system_prompt_blocks(
     pool: &PgPool,
+    chat_id: Option<&str>,
     active_page: Option<&ActivePageContext>,
     timezone: Option<&str>,
     mode: &ChatMode,
@@ -1095,36 +1097,37 @@ async fn build_system_prompt_blocks(
                 Some(out)
             }),
         },
-        // The computed present — clock, place, today's spine, calendar,
+        // The computed present — as-of time, place, today's spine, calendar,
         // recent people (with entity ids), live threads, last night's sleep,
         // narrated recent days, connected sources. Deterministic, SQL-only,
-        // budgeted by fixed caps; the quarter-hour clock is computed ONCE and
-        // every line derives from the same instant. Replaces the old
-        // <datetime> + <user_context> pair (formula slice 4).
+        // budgeted by fixed caps; every line derives from one quarter-hour
+        // instant. Held for the chat (`held_per_chat`): it moves with every
+        // ingest, and a system message that changes costs the whole cache.
         Block {
-            meta: BlockMeta { tag: "circumstances", author: Author::Computed, mood: Mood::Declarative, rung: 30, cadence: Cadence::Quantized },
+            meta: BlockMeta { tag: "circumstances", author: Author::Computed, mood: Mood::Declarative, rung: 30, cadence: Cadence::Session },
             body: Box::pin(async move {
-                let now = Utc::now();
-                let floored = now
-                    - chrono::Duration::minutes(i64::from(
-                        now.format("%M").to_string().parse::<u32>().unwrap_or(0) % 15,
-                    ));
-                crate::api::circumstances::build_circumstances(pool, timezone, floored).await
+                crate::agent::prompt_blocks::held_per_chat(chat_id, "circumstances", timezone, |now| async move {
+                    use chrono::DurationRound;
+                    let floored = now.duration_trunc(chrono::TimeDelta::minutes(15)).unwrap_or(now);
+                    crate::api::circumstances::build_circumstances(pool, timezone, floored).await
+                })
+                .await
             }),
         },
         // What the record holds, per table, as a date range — the fact that
         // lets the model tell "the record is silent" from "there was
-        // nothing". Day-floored, so its bytes move once a day per table.
+        // nothing". Day-floored, and held for the chat like the present.
         Block {
-            meta: BlockMeta { tag: "coverage", author: Author::Computed, mood: Mood::Declarative, rung: 30, cadence: Cadence::Quantized },
+            meta: BlockMeta { tag: "coverage", author: Author::Computed, mood: Mood::Declarative, rung: 30, cadence: Cadence::Session },
             body: Box::pin(async move {
-                let tz: Option<chrono_tz::Tz> = timezone.and_then(|t| t.parse().ok());
-                let now = Utc::now();
-                let today = match tz {
-                    Some(tz) => now.with_timezone(&tz).date_naive(),
-                    None => now.date_naive(),
-                };
-                crate::api::coverage::build_coverage(pool, today).await
+                crate::agent::prompt_blocks::held_per_chat(chat_id, "coverage", timezone, |now| async move {
+                    let today = match timezone.and_then(|t| t.parse::<chrono_tz::Tz>().ok()) {
+                        Some(tz) => now.with_timezone(&tz).date_naive(),
+                        None => now.date_naive(),
+                    };
+                    crate::api::coverage::build_coverage(pool, today).await
+                })
+                .await
             }),
         },
         // The active Project (room) as a salience lens: its name, catch-up
@@ -1219,7 +1222,7 @@ fn build_active_page_block(active_page: Option<&ActivePageContext>) -> Option<St
 #[cfg(test)]
 pub(crate) async fn build_system_prompt_for_audit(pool: &PgPool) -> String {
     let (stable, volatile) =
-        build_system_prompt(pool, None, Some("America/Chicago"), &ChatMode::Chat, None).await;
+        build_system_prompt(pool, None, None, Some("America/Chicago"), &ChatMode::Chat, None).await;
     format!("{stable}{volatile}")
 }
 
@@ -1454,7 +1457,7 @@ async fn chat_handler_inner(
     // OUTSIDE the cached block or it invalidates the prefix on every keystroke.
     let t_history = ms(started);
     let prompt_started = std::time::Instant::now();
-    let (mut system_prompt, system_tail) = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &mode, effective_project_id.as_deref()).await;
+    let (mut system_prompt, system_tail) = build_system_prompt(&pool, Some(&chat_id_str), request.active_page.as_ref(), request.timezone.as_deref(), &mode, effective_project_id.as_deref()).await;
     let prompt_ms = ms(prompt_started);
     // Scoped (grounded) chat: retrieval is hard-filtered to the project's
     // items (ScopeMode::Exclusive in ToolContext); this line sets the matching
@@ -1484,6 +1487,9 @@ async fn chat_handler_inner(
         summary_up_to_index as usize,
         Some(&system_prompt),
         Some(&system_tail),
+        // The model's "now" is the newest message's send time; the system
+        // prompt carries no clock (see `prompt_blocks::held_per_chat`).
+        Some(request.timezone.as_deref().unwrap_or("UTC")),
     );
 
     // The turn is driven by its own task and outlives this request, so a tab
@@ -2377,7 +2383,7 @@ mod tests {
     #[sqlx::test]
     async fn a_skill_rides_in_the_tail_and_chat_carries_none(pool: PgPool) {
         let (stable, volatile, rendered) = build_system_prompt_blocks(
-            &pool, None, Some("America/Chicago"), &crate::api::chat_mode::tests::fixture_skill(), None, "Ari", "Adam",
+            &pool, None, None, Some("America/Chicago"), &crate::api::chat_mode::tests::fixture_skill(), None, "Ari", "Adam",
         )
         .await;
         assert!(rendered.iter().any(|r| r.tag == "skill"), "a skill renders its skill block");
@@ -2387,7 +2393,7 @@ mod tests {
         assert!(!stable.contains("<page_tools>"), "a skill without page tools gets no page guidance");
 
         let (stable, volatile, rendered) = build_system_prompt_blocks(
-            &pool, None, Some("America/Chicago"), &ChatMode::Chat, None, "Ari", "Adam",
+            &pool, None, None, Some("America/Chicago"), &ChatMode::Chat, None, "Ari", "Adam",
         )
         .await;
         assert!(!rendered.iter().any(|r| r.tag == "skill"));
@@ -2402,7 +2408,7 @@ mod tests {
             .await
             .unwrap();
         let (stable, volatile, rendered) = build_system_prompt_blocks(
-            &pool, None, Some("America/Chicago"), &ChatMode::Chat, None, "Ari",
+            &pool, None, None, Some("America/Chicago"), &ChatMode::Chat, None, "Ari",
             "Adam",
         )
         .await;
@@ -2557,6 +2563,7 @@ mod live_prompt_audit {
         for (label, nb) in [("no project", None), ("in a project", project.as_deref())] {
             let p = super::build_system_prompt(
                 &pool,
+                None,
                 None,
                 Some("America/Chicago"),
                 &super::ChatMode::Chat,
