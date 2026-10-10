@@ -152,6 +152,10 @@
 				class="chat-btn"
 				onclick={() => openConversation(a)}
 			/>
+		{:else}
+			<!-- The chat button's place, kept empty, so Retry sits in the same
+			     spot on every row whether or not the applet has a chat. -->
+			<span class="chat-slot" aria-hidden="true"></span>
 		{/if}
 	</li>
 {/snippet}
@@ -325,6 +329,10 @@
 	}
 	/* The conversation is its own action on the row, so it reads as a round
 	   button beside the row rather than a glyph inside it (a pill, §6). */
+	.chat-slot {
+		width: 40px;
+		flex: none;
+	}
 	.row :global(.v-iconbtn.chat-btn) {
 		width: 40px;
 		height: 40px;
