@@ -61,6 +61,22 @@ pub async fn run_agent_loop(
 
     // Extract optional chat_id and model from config
     let chat_id = action.config.get("chat_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    // An applet whose work has nowhere to go fails before it spends anything
+    // on the model: the run could only finish as a success that made nothing.
+    let has_face = crate::server::faces::face_dir_for(applet_id).is_some();
+    if let Some(reason) = missing_destination(delivers_kind(&action.config), chat_id.is_some(), has_face) {
+        tracing::warn!(applet_id, %reason, "applet has nowhere to put its work");
+        return Ok(AgentLoopResult {
+            applet_id: applet_id.to_string(),
+            chat_id,
+            steps: 0,
+            message: None,
+            cost_micros: 0,
+            budget_stopped: None,
+            error: Some(reason),
+        });
+    }
     let model_override = action.config.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
     // An applet may ask for a SLOT instead of a model id. The slot is the
     // supported lever: a model id in a manifest is a literal that goes stale
@@ -366,11 +382,24 @@ fn wrote_a_page(tool: &str, success: bool, result: &serde_json::Value) -> bool {
 }
 
 /// Why a finished run failed to make what its applet makes, if it did.
-/// Only a page can be checked today: the other kinds have no tool whose
-/// success says the work arrived.
+/// Only a page is checked after the run: the other kinds have no tool whose
+/// success says the work arrived, so `missing_destination` checks them
+/// before it instead.
 fn missing_delivery(delivers: Option<&str>, wrote_page: bool) -> Option<String> {
     (delivers == Some("page") && !wrote_page)
         .then(|| "The run ended without writing its page.".to_string())
+}
+
+/// Why an applet's work has nowhere to go, if it doesn't. A conversation or a
+/// dashboard can't be checked after the run the way a page is: a run that
+/// found nothing new rightly posts nothing and changes no table. What can be
+/// checked is that the place exists.
+fn missing_destination(delivers: Option<&str>, has_chat: bool, has_face: bool) -> Option<String> {
+    match delivers {
+        Some("chat") if !has_chat => Some("It has no conversation to post to.".to_string()),
+        Some("dashboard") if !has_face => Some("It has no dashboard to update.".to_string()),
+        _ => None,
+    }
 }
 
 /// What a wake nobody asked for (a clock, a poll) runs on.
@@ -516,7 +545,17 @@ mod tests {
         assert!(missing_delivery(Some("page"), false).is_some());
         assert!(missing_delivery(Some("page"), true).is_none());
         assert!(missing_delivery(None, false).is_none(), "an applet that says nothing is not checked");
-        assert!(missing_delivery(Some("chat"), false).is_none(), "only a page can be checked today");
+        assert!(missing_delivery(Some("chat"), false).is_none(), "a quiet run on a chat applet is not a failure");
+    }
+
+    #[test]
+    fn an_applet_with_nowhere_to_put_its_work_fails() {
+        assert!(missing_destination(Some("chat"), false, false).is_some());
+        assert!(missing_destination(Some("chat"), true, false).is_none());
+        assert!(missing_destination(Some("dashboard"), false, false).is_some());
+        assert!(missing_destination(Some("dashboard"), false, true).is_none());
+        assert!(missing_destination(Some("page"), false, false).is_none(), "every box has Pages");
+        assert!(missing_destination(None, false, false).is_none(), "an applet that says nothing is not checked");
     }
 
     #[test]
