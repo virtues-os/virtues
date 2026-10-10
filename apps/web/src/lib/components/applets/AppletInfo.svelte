@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Card from '$lib/components/Card.svelte';
@@ -22,21 +23,27 @@
 
 	/**
 	 * An applet's Info: how its last 7 days went, then Technical details and
-	 * Delete. Its switch and schedule are in the page's header.
+	 * Delete. Its switch and schedule are in the page's header. Run history
+	 * and Technical details open in place: each is one tap from the page, and
+	 * neither holds enough to need a page of its own.
 	 */
 	let {
 		action = $bindable(),
 		index,
 		daysErr,
-		onHistory,
-		onTechnical,
+		historyOpen = $bindable(false),
+		technicalOpen = $bindable(false),
+		history,
+		technical,
 		onDeleted
 	}: {
 		action: Applet;
 		index: DayIndex;
 		daysErr: string | null;
-		onHistory: () => void;
-		onTechnical: () => void;
+		historyOpen?: boolean;
+		technicalOpen?: boolean;
+		history: Snippet;
+		technical: Snippet;
 		onDeleted: () => void;
 	} = $props();
 
@@ -84,7 +91,12 @@
 	<section>
 		<h3 class="group-head">Run history</h3>
 		<Card list>
-			<button type="button" class="row history-row" onclick={onHistory}>
+			<button
+				type="button"
+				class="row history-row"
+				aria-expanded={historyOpen}
+				onclick={() => (historyOpen = !historyOpen)}
+			>
 				{#if daysErr}
 					<span class="row-label">Your server couldn't read the last 7 days</span>
 				{:else}
@@ -99,16 +111,27 @@
 						</span>
 					</span>
 				{/if}
-				<Icon icon="ri:arrow-right-s-line" width="16" />
+				<Icon icon={historyOpen ? 'ri:arrow-up-s-line' : 'ri:arrow-down-s-line'} width="16" />
 			</button>
+			{#if historyOpen}
+				<div class="opened">{@render history()}</div>
+			{/if}
 		</Card>
 	</section>
 
 	<Card list>
-		<button type="button" class="row" onclick={onTechnical}>
+		<button
+			type="button"
+			class="row"
+			aria-expanded={technicalOpen}
+			onclick={() => (technicalOpen = !technicalOpen)}
+		>
 			<span class="row-label">Technical details</span>
-			<Icon icon="ri:arrow-right-s-line" width="16" />
+			<Icon icon={technicalOpen ? 'ri:arrow-up-s-line' : 'ri:arrow-down-s-line'} width="16" />
 		</button>
+		{#if technicalOpen}
+			<div class="opened">{@render technical()}</div>
+		{/if}
 	</Card>
 
 	{#if err}
@@ -201,6 +224,11 @@
 	}
 	.history-row .row-label {
 		color: var(--color-foreground-muted);
+	}
+
+	.opened {
+		padding: 16px;
+		border-top: 1px solid var(--color-border);
 	}
 
 	.delete-row {

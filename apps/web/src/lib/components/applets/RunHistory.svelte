@@ -35,21 +35,13 @@
 		log,
 		index,
 		daysErr,
-		collectorDenied,
-		busy,
-		onRetry,
-		onAsk
+		collectorDenied
 	}: {
 		action: Applet;
 		log: AppletLogEntry[];
 		index: DayIndex;
 		daysErr: string | null;
 		collectorDenied: string[];
-		busy: boolean;
-		/** Present only when the applet can be run by hand. */
-		onRetry?: () => void;
-		/** Present only when the applet has a conversation. */
-		onAsk?: () => void;
 	} = $props();
 
 	// Weeks start on Monday. Four whole weeks plus this one so far, which
@@ -135,15 +127,10 @@
 		budget_exceeded: 'Stopped at its spending limit'
 	};
 
-	// What needs looking at, then the newest of the rest. The log already
-	// folds identical runs into one entry with a count.
-	const isProblem = (e: AppletLogEntry) => e.status === 'error' || e.status === 'budget_exceeded';
-	const problems = $derived(log.filter(isProblem));
-	const latest = $derived(log.filter((e) => !isProblem(e)).slice(0, 5));
-
-	// Only the newest run can be retried: retrying an older failure would
-	// run the applet now, which is what Retry on the newest one does anyway.
-	const newestFailed = $derived(log[0]?.status === 'error' ? log[0] : null);
+	// Newest first, failures among them where they happened. The log already
+	// folds identical runs into one entry with a count. Retrying is the page
+	// header's job: it sits on the problem line under the applet's name.
+	const recent = $derived(log.slice(0, 5));
 
 	// Same relaxation DevicesView chose for its fix button: the deep link opens
 	// THIS machine's settings, so it appears only in the native app.
@@ -194,17 +181,7 @@
 			{#if e.occurrences > 1 && e.first_at}
 				<p class="run-span">{relativeTime(e.first_at)} to {relativeTime(e.last_at)}</p>
 			{/if}
-			{#if e === newestFailed && (onRetry || onAsk)}
-				<div class="run-actions">
-					{#if onRetry}
-						<Button variant="secondary" size="sm" onclick={onRetry} disabled={busy}>Retry</Button>
-					{/if}
-					{#if onAsk}
-						<Button variant="secondary" size="sm" onclick={onAsk}>Ask why in its conversation</Button>
-					{/if}
-				</div>
-			{/if}
-		</li>
+				</li>
 {/snippet}
 
 <div class="history">
@@ -251,18 +228,12 @@
 		</div>
 	{/if}
 
-	<h3 class="runs-head">Problems</h3>
-	{#if problems.length === 0}
-		<p class="note">{log.length === 0 ? 'No runs yet.' : 'None in its recent runs.'}</p>
+	<h3 class="runs-head">Recent runs</h3>
+	{#if recent.length === 0}
+		<p class="note">No runs yet.</p>
 	{:else}
 		<ul class="runs" role="list">
-			{#each problems as e (e.run_id ?? e.last_at)}{@render runItem(e)}{/each}
-		</ul>
-	{/if}
-	{#if latest.length > 0}
-		<h3 class="runs-head">Latest runs</h3>
-		<ul class="runs" role="list">
-			{#each latest as e (e.run_id ?? e.last_at)}{@render runItem(e)}{/each}
+			{#each recent as e (e.run_id ?? e.last_at)}{@render runItem(e)}{/each}
 		</ul>
 	{/if}
 </div>
@@ -413,6 +384,10 @@
 		padding: 12px 0;
 		border-bottom: 1px solid var(--color-border);
 	}
+	.run:last-child {
+		border-bottom: 0;
+		padding-bottom: 0;
+	}
 	.run-top {
 		display: flex;
 		align-items: center;
@@ -455,10 +430,5 @@
 		white-space: pre-wrap;
 		word-break: break-word;
 		color: var(--color-foreground-muted);
-	}
-	.run-actions {
-		display: flex;
-		gap: 8px;
-		margin-top: 4px;
 	}
 </style>

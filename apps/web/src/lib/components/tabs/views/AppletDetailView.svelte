@@ -34,33 +34,22 @@
 	import { explainRunError } from '$lib/sources/run-errors';
 
 	/**
-	 * An applet's home: what it made, first. Info, Run history and Technical
-	 * details open in place, named by `?panel=` in the route so the table's
-	 * dots and Last run cell can link straight to Run history.
+	 * An applet's home: what it made, first, then its Info, where Run history
+	 * and Technical details open in place. `?panel=history` (the table's dots
+	 * and Last run cell link to it) opens the page with Run history open.
 	 */
 	let { tab }: { tab: Tab; active: boolean } = $props();
 
-	// The applet's page carries its Info; Run history and Technical details
-	// open under it, and their Back returns to it.
-	type Panel = 'home' | 'history' | 'details';
-	const PANEL_TITLE: Record<Exclude<Panel, 'home'>, string> = {
-		history: 'Run history',
-		details: 'Technical details'
-	};
-
 	const url = $derived(new URL(tab.route, 'http://localhost'));
 	const appletId = $derived(url.pathname.match(/^\/(?:applet|action)\/(applet_[^/]+)$/)?.[1] ?? null);
-	const panel = $derived.by((): Panel => {
-		const p = url.searchParams.get('panel');
-		// `?panel=info` was Info's own panel; it is the page now.
-		return p === 'history' || p === 'details' ? p : 'home';
-	});
+	const asked = $derived(url.searchParams.get('panel'));
 
-	function go(p: Panel) {
-		if (!appletId) return;
-		const base = `/applet/${appletId}`;
-		windowShellStore.updateTab(tab.id, { route: p === 'home' ? base : `${base}?panel=${p}` });
-	}
+	let historyOpen = $state(false);
+	let technicalOpen = $state(false);
+	$effect(() => {
+		if (asked === 'history') historyOpen = true;
+		if (asked === 'details') technicalOpen = true;
+	});
 
 	let action = $state<Applet | null>(null);
 	let log = $state<AppletLogEntry[]>([]);
@@ -356,7 +345,6 @@
 		<p class="state error-msg">{err}</p>
 	{:else if action}
 		<div class="measure">
-			{#if panel === 'home'}
 				<header class="head">
 					<span class="glyph" aria-hidden="true"><AtlasIcon name={appletGlyph(action)} size={20} bare /></span>
 					<div class="title-block">
@@ -496,47 +484,30 @@
 					</form>
 				{/if}
 
-				<!-- Its Info, on its page: how its week went, the switch, when it
-				     runs, where its work goes, what it costs. -->
+				<!-- Its Info, on its page: how its week went, with Run history and
+				     Technical details opening in place. -->
 				<section class="info-section" aria-label={`About ${action.name}`}>
 					<AppletInfo
 						bind:action
 						{index}
 						{daysErr}
-						onHistory={() => go('history')}
-						onTechnical={() => go('details')}
+						bind:historyOpen
+						bind:technicalOpen
 						onDeleted={() => windowShellStore.closeTab(tab.id)}
-					/>
+					>
+						{#snippet history()}
+							{#if action}<RunHistory {action} {log} {index} {daysErr} {collectorDenied} />{/if}
+						{/snippet}
+						{#snippet technical()}
+							{#if action}
+								<AppletSettings
+									bind:action
+									onRenamed={(name) => windowShellStore.updateTab(tab.id, { label: name })}
+								/>
+							{/if}
+						{/snippet}
+					</AppletInfo>
 				</section>
-			{:else}
-				<div class="narrow">
-				<header class="head sub">
-					<button type="button" class="backlink" onclick={() => go('home')}>
-						<Icon icon="ri:arrow-left-line" width="14" />
-						{action.name}
-					</button>
-					<h1 class="title">{PANEL_TITLE[panel]}</h1>
-					<p class="status">
-						{panel === 'history' ? `${action.name} · ${describeSchedule(action.schedule)}` : action.name}
-					</p>
-				</header>
-
-				{#if panel === 'history'}
-					<RunHistory
-						{action}
-						{log}
-						{index}
-						{daysErr}
-						{collectorDenied}
-						{busy}
-						onRetry={canRunNow ? runNow : undefined}
-						onAsk={chatId ? openConversation : undefined}
-					/>
-				{:else}
-					<AppletSettings bind:action onRenamed={(name) => windowShellStore.updateTab(tab.id, { label: name })} />
-				{/if}
-				</div>
-			{/if}
 		</div>
 	{/if}
 </div>
@@ -583,39 +554,6 @@
 		border-radius: 12px;
 		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
 		color: var(--color-foreground-muted);
-	}
-	/* Info and the pages under it are one narrow column, like a sheet laid
-	   on the applet's page. */
-	.narrow {
-		width: 100%;
-		max-width: 560px;
-		margin: 0 auto;
-		display: flex;
-		flex-direction: column;
-		gap: 24px;
-	}
-	.backlink {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		margin-bottom: 16px;
-		padding: 0;
-		border: 0;
-		background: none;
-		font: inherit;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-	}
-	.backlink:hover {
-		color: var(--color-foreground);
-	}
-	.head.sub {
-		padding-bottom: 0;
-		border-bottom: 0;
-		flex-direction: column;
-		gap: 4px;
-		align-items: flex-start;
 	}
 	.title-block {
 		flex: 1;
