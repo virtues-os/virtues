@@ -409,18 +409,34 @@ impl Verbs {
             AppletCmd::On { id } => self.switch(&id, true).await,
             AppletCmd::Off { id } => self.switch(&id, false).await,
             AppletCmd::Run { id, date, out } => {
-                let mut args = json!({ "id": id });
+                let mut args = json!({ "id": &id });
                 if let Some(d) = date {
                     args["date"] = json!(d);
                 }
-                let data = self.console.tool("run_applet", args).await?;
+                let data = self.console.tool_data("run_applet", args).await?;
                 if out.json {
-                    return print_json(&data);
+                    print_json(&data)?;
                 }
+                // Anything but a run that happened is an error here: a refused
+                // trigger or a disabled applet comes back with no run id, and
+                // printing that as success is a silent no-op.
+                let status = data["status"].as_str().unwrap_or("");
+                match status {
+                    "success" | "skipped" | "running" => {}
+                    "not_found" => return Err(format!("no enabled applet {id}; `virtues applet on {id}` turns it on")),
+                    _ => {
+                        let error = cell(&data["error"]);
+                        return Err(if error.is_empty() { format!("the run ended: {status}") } else { error });
+                    }
+                }
+                if out.json {
+                    return Ok(());
+                }
+                let run_id = cell(&data["run_id"]);
                 if ui::tty() {
-                    ui::ok(&format!("started run {}", cell(&data["run_id"])));
+                    ui::ok(&format!("run {run_id}: {status}"));
                 } else {
-                    println!("{}", cell(&data["run_id"]));
+                    println!("{run_id}\t{status}");
                 }
                 Ok(())
             }
