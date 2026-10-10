@@ -341,6 +341,35 @@
 						<p class="status">
 							{status}
 						</p>
+						{#if failedNow}
+							<!-- Said once, as one mark and one sentence; the fix is the
+							     page's ordinary buttons. -->
+							<div class="problem">
+								<DayDot state="failed" />
+								<p class="problem-text">
+									The last run failed {relativeTime(failedNow.last_at)}.
+									{#if failure}{failure.title}. {failure.remedy}{:else if failedNow.error}{errorHeadline(failedNow.error)}{/if}
+								</p>
+								<div class="problem-actions">
+										{#if canRunNow}
+											<Button variant="secondary" size="sm" onclick={runNow} disabled={busy}>Retry</Button>
+										{/if}
+										{#if chatId}
+											<Button variant="secondary" size="sm" onclick={openConversation}>Ask why</Button>
+										{/if}
+								</div>
+							</div>
+						{:else if overdue}
+							<div class="problem">
+								<DayDot state="missed" />
+								<p class="problem-text">It was due {relativeTime(action.next_due_at)} and hasn't run.</p>
+								<div class="problem-actions">
+										{#if canRunNow}
+											<Button variant="secondary" size="sm" onclick={runNow} disabled={busy}>Run now</Button>
+										{/if}
+								</div>
+							</div>
+						{/if}
 					</div>
 					<div class="head-actions">
 						{#if chatId && made !== 'chat'}
@@ -358,36 +387,6 @@
 
 				{#if err}
 					<p class="error-msg">{err}</p>
-				{/if}
-
-				{#if failedNow}
-					<!-- Said once, as one mark and one sentence; the fix is the
-					     page's ordinary buttons. -->
-					<div class="problem">
-						<DayDot state="failed" size="md" />
-						<p class="problem-text">
-							The last run failed {relativeTime(failedNow.last_at)}.
-							{#if failure}{failure.title}. {failure.remedy}{:else if failedNow.error}{errorHeadline(failedNow.error)}{/if}
-						</p>
-						<div class="problem-actions">
-								{#if canRunNow}
-									<Button variant="secondary" size="sm" onclick={runNow} disabled={busy}>Retry</Button>
-								{/if}
-								{#if chatId}
-									<Button variant="secondary" size="sm" onclick={openConversation}>Ask why</Button>
-								{/if}
-						</div>
-					</div>
-				{:else if overdue}
-					<div class="problem">
-						<DayDot state="missed" size="md" />
-						<p class="problem-text">It was due {relativeTime(action.next_due_at)} and hasn't run.</p>
-						<div class="problem-actions">
-								{#if canRunNow}
-									<Button variant="secondary" size="sm" onclick={runNow} disabled={busy}>Run now</Button>
-								{/if}
-						</div>
-					</div>
 				{/if}
 
 				{#if nextRun}
@@ -538,7 +537,7 @@
 
 	.head {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 16px;
 		padding-bottom: 16px;
 		border-bottom: 1px solid var(--color-border);
@@ -610,22 +609,16 @@
 		flex: none;
 	}
 
-	/* A status surface: a neutral wash, one mark, one sentence, and the
-	   page's ordinary buttons as the fix (design-grammar §5). */
 	.problem {
 		display: flex;
 		align-items: center;
 		flex-wrap: wrap;
 		gap: 8px 12px;
-		padding: 12px 16px;
-		border-radius: 12px;
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		margin-top: 8px;
 	}
 	.problem-text {
-		flex: 1;
-		min-width: 240px;
 		margin: 0;
-		font-size: 15px;
+		font-size: 14px;
 		line-height: 1.5;
 	}
 	.problem-actions {
