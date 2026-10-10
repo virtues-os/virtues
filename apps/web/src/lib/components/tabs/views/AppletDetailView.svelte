@@ -342,36 +342,29 @@
 							{status}
 						</p>
 						{#if failedNow}
-							<!-- Said once, as one mark and one sentence; the fix is the
-							     page's ordinary buttons. -->
-							<div class="problem">
+							<!-- A fact about this applet, under its name: one mark and
+							     one sentence. Its fix (Retry) sits with the header's
+							     buttons, so the line stays as tight as the one above it. -->
+							<p class="problem">
 								<DayDot state="failed" />
-								<p class="problem-text">
+								<span>
 									The last run failed {relativeTime(failedNow.last_at)}.
 									{#if failure}{failure.title}. {failure.remedy}{:else if failedNow.error}{errorHeadline(failedNow.error)}{/if}
-								</p>
-								<div class="problem-actions">
-										{#if canRunNow}
-											<Button variant="secondary" size="sm" onclick={runNow} disabled={busy}>Retry</Button>
-										{/if}
-										{#if chatId}
-											<Button variant="secondary" size="sm" onclick={openConversation}>Ask why</Button>
-										{/if}
-								</div>
-							</div>
+								</span>
+							</p>
 						{:else if overdue}
-							<div class="problem">
+							<p class="problem">
 								<DayDot state="missed" />
-								<p class="problem-text">It was due {relativeTime(action.next_due_at)} and hasn't run.</p>
-								<div class="problem-actions">
-										{#if canRunNow}
-											<Button variant="secondary" size="sm" onclick={runNow} disabled={busy}>Run now</Button>
-										{/if}
-								</div>
-							</div>
+								<span>It was due {relativeTime(action.next_due_at)} and hasn't run.</span>
+							</p>
 						{/if}
 					</div>
 					<div class="head-actions">
+						{#if (failedNow || overdue) && canRunNow}
+							<Button variant="secondary" size="sm" onclick={runNow} disabled={busy}>
+								{failedNow ? 'Retry' : 'Run now'}
+							</Button>
+						{/if}
 						{#if chatId && made !== 'chat'}
 							<Button variant="secondary" size="sm" icon="ri:chat-3-line" onclick={openConversation}>
 								Conversation
@@ -612,19 +605,11 @@
 	.problem {
 		display: flex;
 		align-items: center;
-		flex-wrap: wrap;
-		gap: 8px 12px;
-		margin-top: 8px;
-	}
-	.problem-text {
-		margin: 0;
-		font-size: 14px;
-		line-height: 1.5;
-	}
-	.problem-actions {
-		display: flex;
-		align-items: center;
 		gap: 8px;
+		margin: 4px 0 0;
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--color-foreground);
 	}
 
 	.desc {
