@@ -381,14 +381,13 @@ pub(crate) mod tests {
                     "run_applet",
                     "get_applet",
                     "delete_applet",
-                    "publish_to_github",
                 ],
-                4_100,
+                3_300,
             ),
             ("analysis", &["code_interpreter", "think", "read_asset", "generate_image"], 2_400),
             ("pages", &["edit_page", "get_page_content", "create_page", "get_project_item"], 2_400),
             ("search", &["semantic_search", "web_search"], 2_000),
-            ("self", &["update_memory", "propose_narrative_identity_edit"], 1_400),
+            ("self", &["update_memory"], 800),
             ("sql_write", &["sql_write"], 600),
             // Drawn inside the reply. The kinds and their column contracts are
             // the description; trimming it means dropping a kind.
@@ -408,8 +407,8 @@ pub(crate) mod tests {
         // (mode's wire name, total ceiling). Chat's is the sum of its group
         // ceilings; the rest sit just above their 2026-09-29 size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 21_300),
-            ("sudo", 21_500),
+            ("chat", 19_900),
+            ("sudo", 20_100),
             ("deep_research", 13_100),
             ("interview", 1_500),
             ("getting_started", 2_200),

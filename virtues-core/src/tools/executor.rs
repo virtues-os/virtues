@@ -411,9 +411,6 @@ impl ToolExecutor {
                 // Return minimal acknowledgment to avoid doubling token cost.
                 Ok(ToolResult::success(serde_json::json!({ "acknowledged": true })))
             }
-            "propose_narrative_identity_edit" => {
-                self.execute_propose_narrative_identity(arguments).await
-            }
             // The narrative interview's close (interview mode's only tool):
             // document + chapters from the transcript. The frontend watches
             // this tool's output for document_page_id, opens the page beside
@@ -487,23 +484,6 @@ impl ToolExecutor {
             "shell" => Err(ToolError::ExecutionFailed(
                 "shell runs only in sudo mode, which the owner turns on in the chat".into(),
             )),
-            // Interactive chat only: the grant is for these exact bytes at
-            // this exact place, so an applet run (no one to ask) and a
-            // headless call (no chat to grant in) cannot publish at all.
-            "publish_to_github" => {
-                use super::publish;
-                let Some(chat_id) = context.chat_id.as_deref().filter(|_| context.applet_id.is_none())
-                else {
-                    return Err(ToolError::ExecutionFailed(
-                        "publishing needs the owner present to allow it, in a chat".into(),
-                    ));
-                };
-                let req = publish::prepare(&self._pool, &arguments).await?;
-                if !self.granted(context, chat_id, &req.grant_id()).await {
-                    return Ok(publish::ask(&req));
-                }
-                publish::publish(&self._pool, &req).await
-            }
             "read_asset" => self.execute_read_asset(arguments).await,
             "show" => super::show::execute(&self.sql_query, arguments, context.timezone.as_deref()).await,
             name if crate::browser::TOOLS.contains(&name) => {
@@ -807,62 +787,6 @@ impl ToolExecutor {
     }
 
     /// Update AI persistent memory
-    /// Leave a note proposing an addition to the narrative identity.
-    ///
-    /// **Propose, never write.** The narrative identity is in the system prompt
-    /// of every conversation, so a model editing it directly would be editing
-    /// the lens it is seen through — quietly, and in its own favour if it drifts.
-    /// This writes a `wiki_notes` row and nothing else; the user sees Add or
-    /// Dismiss, and the document changes only if they choose.
-    ///
-    /// The note carries `why` as its citation. A machine note must cite (the DB
-    /// enforces it), and for a proposal drawn from a conversation the honest
-    /// source is the conversation itself — so the reason the model gives IS the
-    /// evidence the user judges it on.
-    async fn execute_propose_narrative_identity(
-        &self,
-        arguments: serde_json::Value,
-    ) -> Result<ToolResult, ToolError> {
-        let text = arguments
-            .get("text")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
-        let why = arguments
-            .get("why")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
-
-        if text.is_empty() {
-            return Err(ToolError::InvalidParameters(
-                "A proposal needs text".to_string(),
-            ));
-        }
-
-        let body = if why.is_empty() {
-            text.to_string()
-        } else {
-            format!("{text}\n\n— proposed because: {why}")
-        };
-
-        sqlx::query(
-            "INSERT INTO wiki_notes (subject_type, subject_id, kind, body, author, source_refs) \
-             VALUES ('narrative_identity', 'nar_identity_001', 'observation', $1, 'ai', $2)",
-        )
-        .bind(&body)
-        .bind(serde_json::json!([format!("conversation: {why}")]))
-        .execute(self._pool.as_ref())
-        .await
-        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to save proposal: {e}")))?;
-
-        Ok(ToolResult::success(serde_json::json!({
-            "status": "proposed",
-            "message": "Left this for them to accept or dismiss on their Narrative Identity page. \
-                        It has NOT been added — do not tell them it has."
-        })))
-    }
-
     async fn execute_update_memory(
         &self,
         arguments: serde_json::Value,

@@ -66,18 +66,6 @@ icon = "ri:github-fill"
 description = "Sync your starred repositories as bookmarks. Uses a personal access token (read-only)."
 auth = { kind = "api_key", fields = ["token"] }
 
-# A destination, not a data source: `publish_to_github` writes an applet's
-# face into a repo with this token, and nothing reads from it. Fine-grained,
-# limited to the repos the owner publishes to, Contents read and write. The
-# token is the whole boundary on which repos can be written; the Allow card
-# names the exact one each time.
-[[source]]
-id = "github_publish"
-display_name = "GitHub publishing"
-icon = "ri:upload-cloud-2-line"
-description = "Publish pages you make in virtues to a GitHub repo, which your host (Vercel, Pages, Netlify) serves. Uses a fine-grained token with Contents read and write on that repo only."
-auth = { kind = "api_key", fields = ["token"] }
-
 # Session cookies, not OAuth: X has no read API for your own bookmarks that a
 # personal appliance can use (the v2 endpoint caps at ~800 and paginates
 # unreliably), so this replays the same authenticated GraphQL call the web

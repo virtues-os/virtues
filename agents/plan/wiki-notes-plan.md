@@ -23,10 +23,9 @@ so it runs on a box with real data, not the demo copy.
 ## The writer
 
 `api::wiki_notes::write_machine_notes` exists — cap, cite check, log when the
-cap binds — and has **no caller outside its tests**. There is no prompt. The
-only production writer of machine notes today is
-`propose_narrative_identity_edit`, whose `source_refs` is the model's own
-`why` string rather than a record route; fix that when the writer lands.
+cap binds — and has **no caller outside its tests**. There is no prompt, and
+no production writer of machine notes: the one there was, the chat tool
+`propose_narrative_identity_edit`, was removed on 2026-10-10.
 
 Shape, as designed:
 
