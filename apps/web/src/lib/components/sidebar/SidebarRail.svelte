@@ -224,7 +224,7 @@
 <style>
 	.rail {
 		/* Width comes from sidebarState (RAIL_WIDTH: wide enough for "Settings"
-		   at 11px under a 40px tile; compact: the 40px glyph column). */
+		   at 11px under a 40px tile; compact: a 36px glyph column). */
 		flex: none;
 		display: flex;
 		flex-direction: column;
@@ -266,6 +266,10 @@
 		display: block;
 		/* The hover swell and the turn both reach past the 24-box. */
 		overflow: visible;
+	}
+
+	.compact .rail-mark {
+		width: 36px;
 	}
 
 	.rail-mark-btn {
@@ -363,8 +367,8 @@
 		gap: 4px;
 		width: 100%;
 		padding: 8px 4px;
-		/* Compact squares the item: the label's 4px gap + 12px row go to
-		   equal padding, so the tile stays a 40px-tall target. */
+		/* Compact squares the item to the 36px column: the label's gap and
+		   row go to equal padding around the 20px glyph. */
 		transition:
 			background var(--sidebar-transition-duration) ease,
 			color var(--sidebar-transition-duration) ease,
@@ -379,7 +383,7 @@
 
 	.compact .rail-item {
 		gap: 0;
-		padding: 10px 0;
+		padding: 8px 0;
 	}
 
 	.rail-tile {
