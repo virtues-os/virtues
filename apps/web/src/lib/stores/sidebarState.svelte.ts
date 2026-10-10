@@ -27,7 +27,7 @@ export const SIDEBAR_COLLAPSE_AT = 148;
  * thinks it is opens a strip of desk between the panel and the pane.
  */
 export const RAIL_WIDTH = 72;
-export const RAIL_COMPACT_WIDTH = 52;
+export const RAIL_COMPACT_WIDTH = 48;
 
 function clampWidth(v: number): number {
 	if (!Number.isFinite(v)) return SIDEBAR_DEFAULT_WIDTH;
