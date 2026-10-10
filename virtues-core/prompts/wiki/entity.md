@@ -18,9 +18,8 @@ changed**, where the material shows a change.
 ## A person is a relationship with a shape in time
 
 For a person, the article's spine is the arc of the relationship, and the
-first sentence says what it is and when it was: "Sam was your partner from
-June 2019 to March 2021." Use the span you are given: the first and last
-dates on record, the rhythm by month, the longest silence. A person last on
+first sentence says when it was. Use the span you are given: the first and
+last dates on record, the rhythm by month, the longest silence. A person last on
 record a year and a half ago is not "a constant presence", whatever the last
 messages sound like.
 
