@@ -177,6 +177,13 @@ const DRIVING_FOR: Duration = Duration::from_secs(15);
 /// assistant hears this side's reason rather than a bare timeout.
 const HANDOFF_WAIT: Duration = Duration::from_secs(15 * 60 - 10);
 
+/// How long the owner's takeover outlives the assistant's last try. Long
+/// enough to stop the task they interrupted, whose next step comes within
+/// seconds; short enough that the next chat finds the browser free. Held
+/// until Hand back, it outlived its task: a click in the page just after a
+/// reply finished left every later chat refused.
+const TAKEOVER_LAPSES: Duration = Duration::from_secs(20);
+
 const TAKEN_OVER: &str = "The owner has taken over the browser. Leave it alone until they hand it back: \
                           tell them where you got to and what is left, and end your turn.";
 
@@ -184,14 +191,17 @@ struct Agent {
     /// A step is running now.
     busy: bool,
     last_step: Option<Instant>,
-    /// The owner took control; steps are refused until they hand it back.
+    /// The owner took control; steps are refused until they hand it back, or
+    /// until the assistant has been quiet for [`TAKEOVER_LAPSES`].
     paused: bool,
+    /// When the owner took control, or the assistant last tried a step since.
+    paused_touch: Option<Instant>,
     /// What the assistant asked the owner to do, and where their answer goes:
     /// true for Done, false for "I can't".
     handoff: Option<(String, oneshot::Sender<bool>)>,
 }
 
-static AGENT: Mutex<Agent> = Mutex::new(Agent { busy: false, last_step: None, paused: false, handoff: None });
+static AGENT: Mutex<Agent> = Mutex::new(Agent { busy: false, last_step: None, paused: false, paused_touch: None, handoff: None });
 
 fn agent() -> MutexGuard<'static, Agent> {
     AGENT.lock().unwrap_or_else(|e| e.into_inner())
@@ -220,7 +230,10 @@ pub fn control(app: &AppHandle, action: &str) -> Result<(), String> {
     {
         let mut a = agent();
         match action {
-            "take" => a.paused = true,
+            "take" => {
+                a.paused = true;
+                a.paused_touch = Some(Instant::now());
+            }
             "resume" => a.paused = false,
             "done" | "decline" => {
                 if let Some((_, answer)) = a.handoff.take() {
@@ -236,6 +249,9 @@ pub fn control(app: &AppHandle, action: &str) -> Result<(), String> {
         }
     }
     announce(app);
+    if action == "take" {
+        lapse_later(app);
+    }
     Ok(())
 }
 
@@ -249,8 +265,31 @@ fn owner_input(app: &AppHandle) {
             return;
         }
         a.paused = true;
+        a.paused_touch = Some(Instant::now());
     }
     announce(app);
+    lapse_later(app);
+}
+
+/// Let the owner's takeover go once the assistant has been quiet long enough.
+fn lapse_later(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(TAKEOVER_LAPSES + Duration::from_millis(100)).await;
+        let lapsed = {
+            let mut a = agent();
+            let quiet = a.paused_touch.is_none_or(|t| t.elapsed() >= TAKEOVER_LAPSES);
+            if a.paused && quiet {
+                a.paused = false;
+                true
+            } else {
+                false
+            }
+        };
+        if lapsed {
+            announce(&app);
+        }
+    });
 }
 
 /// Run one of the assistant's steps: refused while the owner has control,
@@ -260,8 +299,19 @@ async fn step(app: &AppHandle, op: &str, args: &Value) -> Result<Value, String> 
     if op == "eval" {
         return perform(app, op, args).await;
     }
-    if agent().paused {
-        return Err(TAKEN_OVER.into());
+    {
+        let mut a = agent();
+        if a.paused {
+            if a.paused_touch.is_some_and(|t| t.elapsed() < TAKEOVER_LAPSES) {
+                // Still the task the owner interrupted: refuse, and keep the
+                // takeover alive while it keeps trying.
+                a.paused_touch = Some(Instant::now());
+                drop(a);
+                lapse_later(app);
+                return Err(TAKEN_OVER.into());
+            }
+            a.paused = false;
+        }
     }
     agent().busy = true;
     announce(app);
