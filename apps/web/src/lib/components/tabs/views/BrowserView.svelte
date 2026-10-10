@@ -302,7 +302,7 @@
 	{:else if browserAgent.paused}
 		<div class="agent-bar paused" role="status">
 			<Icon icon="ri:user-line" width="16" />
-			<span class="say">You have control. Your assistant waits until you hand it back.</span>
+			<span class="say">You have control, so your assistant stopped.</span>
 			<button class="bar-btn primary" onclick={() => void browserPaneAgent('resume')}>Hand back</button>
 		</div>
 	{:else if browserAgent.driving}
