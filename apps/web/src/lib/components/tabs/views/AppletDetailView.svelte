@@ -1,8 +1,7 @@
 <script lang="ts">
 	import Button from '$lib/components/Button.svelte';
-	import Markdown from '$lib/components/Markdown.svelte';
+	import Card from '$lib/components/Card.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
-	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import ShareSheet from '$lib/components/applets/ShareSheet.svelte';
 	import DayDot from '$lib/components/applets/DayDot.svelte';
 	import AppletInfo from '$lib/components/applets/AppletInfo.svelte';
@@ -17,7 +16,6 @@
 		getAppletLog,
 		getRunsByDay,
 		getAppletPages,
-		getPage,
 		type AppletPage,
 		runApplet,
 		messageApplet,
@@ -25,7 +23,7 @@
 		type AppletLogEntry,
 		type RunDay
 	} from '$lib/api/client';
-	import { appletDestination, appletGlyph, describeSchedule, errorHeadline, relativeTime } from '$lib/applets/palette';
+	import { appletGlyph, describeSchedule, errorHeadline, relativeTime } from '$lib/applets/palette';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { indexRunDays } from '$lib/applets/days';
@@ -72,23 +70,27 @@
 
 	const index = $derived(indexRunDays(runDays));
 
-	// The pages its runs wrote, newest first, and the one open.
+	// The pages its runs wrote, newest first.
 	let pages = $state<AppletPage[]>([]);
-	let selectedId = $state<string | null>(null);
-	let pageContent = $state<string | null>(null);
-	const selectedPage = $derived(pages.find((p) => p.page_id === selectedId) ?? pages[0] ?? null);
-	$effect(() => {
-		const id = selectedPage?.page_id;
-		if (!id) return;
-		pageContent = null;
-		getPage(id)
-			.then((p) => {
-				if (selectedPage?.page_id === id) pageContent = p.content;
-			})
-			.catch(() => {
-				if (selectedPage?.page_id === id) pageContent = '';
-			});
+	const PAGES_SHOWN = 5;
+	let allPages = $state(false);
+	const shownPages = $derived(allPages ? pages : pages.slice(0, PAGES_SHOWN));
+
+	// What the "What it made" card points to: its pages, its dashboard, or
+	// its conversation when that is where its work goes. Nothing otherwise.
+	const made = $derived.by((): 'pages' | 'dashboard' | 'chat' | null => {
+		if (!action) return null;
+		if (pages.length > 0) return 'pages';
+		if (action.has_face) return 'dashboard';
+		if (chatId && appletGlyph(action) === 'chats') return 'chat';
+		return null;
 	});
+	// The last thing it said, under "Its conversation".
+	const lastSaid = $derived(log.find((e) => e.status === 'success' && e.summary)?.summary ?? null);
+
+	function openDashboard() {
+		if (action) windowShellStore.openTabFromRoute(`/applet/${action.id}/view`);
+	}
 
 	function openPage(id: string) {
 		windowShellStore.openTabFromRoute(`/page/${id}`, { focusExisting: true });
@@ -266,12 +268,6 @@
 
 	// Same grace the scheduler and the table use.
 	const OVERDUE_GRACE_MS = 60 * 60 * 1000;
-	// Where its work goes, under the name, when that says something the page
-	// doesn't: an applet whose work is its conversation already has the
-	// Conversation button.
-	const showsDestination = $derived(
-		action ? appletDestination(action) !== '-' && appletGlyph(action) !== 'chats' : false
-	);
 
 	const overdue = $derived(
 		Boolean(
@@ -343,14 +339,11 @@
 					<div class="title-block">
 						<h1 class="title">{action.name}</h1>
 						<p class="status">
-							{status}{#if showsDestination}<span class="goes" aria-label="goes to">
-									<Icon icon="ri:arrow-right-line" width="12" />
-									{appletDestination(action)}</span
-								>{/if}
+							{status}
 						</p>
 					</div>
 					<div class="head-actions">
-						{#if chatId}
+						{#if chatId && made !== 'chat'}
 							<Button variant="secondary" size="sm" icon="ri:chat-3-line" onclick={openConversation}>
 								Conversation
 							</Button>
@@ -401,46 +394,56 @@
 					<p class="next">{nextRun}</p>
 				{/if}
 
-				<!-- The face IS the home when there is one. -->
+				<!-- What it made, as one card for every applet: a way to where the
+				     work lives (Pages, its chat, its dashboard), not a copy of it. -->
+				{#if made}
+					<section class="made">
+						<h2 class="list-head">What it made</h2>
+						<Card list>
+							{#if made === 'pages'}
+								{#each shownPages as p (p.page_id)}
+									<button type="button" class="made-row" onclick={() => openPage(p.page_id)}>
+										<AtlasIcon name="pages" size={16} bare />
+										<span class="made-text">
+											<span class="made-title">{p.title}</span>
+											<span class="made-sub">{when(p.written_at)}</span>
+										</span>
+										<Icon icon="ri:arrow-right-s-line" width="16" />
+									</button>
+								{/each}
+								{#if pages.length > PAGES_SHOWN}
+									<button type="button" class="made-row more" onclick={() => (allPages = !allPages)}>
+										<span class="made-text">{allPages ? 'Show fewer' : `Show all ${pages.length} pages`}</span>
+									</button>
+								{/if}
+							{:else if made === 'dashboard'}
+								<button type="button" class="made-row" onclick={openDashboard}>
+									<AtlasIcon name="dashboard" size={16} bare />
+									<span class="made-text">
+										<span class="made-title">Its dashboard</span>
+										<span class="made-sub">Live, opens full size</span>
+									</span>
+									<Icon icon="ri:arrow-right-s-line" width="16" />
+								</button>
+							{:else}
+								<button type="button" class="made-row" onclick={openConversation}>
+									<AtlasIcon name="chats" size={16} bare />
+									<span class="made-text">
+										<span class="made-title">Its conversation</span>
+										{#if lastSaid}<span class="made-sub">{lastSaid}</span>{/if}
+									</span>
+									<Icon icon="ri:arrow-right-s-line" width="16" />
+								</button>
+							{/if}
+						</Card>
+					</section>
+				{/if}
 				{#if action.has_face}
-					<FaceFrame appletId={action.id} height="460px" />
 					<ShareSheet
 						open={sharing}
 						producer={{ kind: 'applet', id: action.id }}
 						onClose={() => (sharing = false)}
 					/>
-				{:else if pages.length > 0}
-					<!-- What it made: the newest page open, every page beside it. -->
-					<div class="pages">
-						<article class="page">
-							{#if selectedPage}
-								<h2 class="page-title">{selectedPage.title}</h2>
-								<p class="page-by">
-									Written by {action.name}, {when(selectedPage.written_at)}
-									<Button variant="ghost" size="sm" onclick={() => openPage(selectedPage.page_id)}>Open page</Button>
-								</p>
-								{#if pageContent === null}
-									<p class="empty">Loading…</p>
-								{:else}
-									<div class="page-body"><Markdown content={pageContent} variant="article" /></div>
-								{/if}
-							{/if}
-						</article>
-						<nav class="page-list" aria-label={`Pages ${action.name} wrote`}>
-							<h2 class="list-head">All pages</h2>
-							{#each pages as p (p.page_id)}
-								<button
-									type="button"
-									class="page-item"
-									aria-current={p.page_id === selectedPage?.page_id}
-									onclick={() => (selectedId = p.page_id)}
-								>
-									<span class="page-item-title">{p.title}</span>
-									<span class="page-item-when">{when(p.written_at)}</span>
-								</button>
-							{/each}
-						</nav>
-					</div>
 				{/if}
 
 				{#if canMessage}
@@ -551,12 +554,6 @@
 		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
 		color: var(--color-foreground-muted);
 	}
-	.goes {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		margin-left: 8px;
-	}
 	/* Info and the pages under it are one narrow column, like a sheet laid
 	   on the applet's page. */
 	.narrow {
@@ -657,77 +654,55 @@
 		color: var(--color-foreground-muted);
 	}
 
-	/* The page it made, with every page it made beside it. */
-	.pages {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) 240px;
-		gap: 32px;
-		align-items: start;
+	/* What it made: one card, the same for every applet. */
+	.made {
+		max-width: 640px;
 	}
-	@container (max-width: 720px) {
-		.pages {
-			grid-template-columns: 1fr;
-		}
-	}
-	.page-title {
-		margin: 0;
-		font-family: var(--font-serif);
-		font-weight: 400;
-		font-size: 36px;
-		line-height: 1.15;
-	}
-	.page-by {
+	.made-row {
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		margin: 8px 0 16px;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
-	.page-body {
-		max-width: 40em;
-	}
-	.page-list {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-	.page-item {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-		padding: 8px 12px;
+		gap: 12px;
+		width: 100%;
+		min-height: 48px;
+		padding: 8px 16px;
 		border: 0;
-		border-radius: 6px;
 		background: none;
-		text-align: left;
 		font: inherit;
+		text-align: left;
 		cursor: pointer;
 		color: var(--color-foreground);
 	}
-	.page-item:hover {
+	.made-row + .made-row {
+		border-top: 1px solid var(--color-border);
+	}
+	.made-row:hover {
 		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
 	}
-	.page-item[aria-current='true'] {
-		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+	.made-row.more .made-text {
+		font-size: 13px;
+		color: var(--color-foreground-muted);
 	}
-	.page-item-title {
+	.made-text {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	.made-title {
 		font-family: var(--font-serif);
 		font-size: 16px;
 	}
-	.page-item-when {
-		font-size: 12px;
+	.made-sub {
+		font-size: 13px;
 		color: var(--color-foreground-muted);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
-
 	/* Info sits at a reading width under what the applet made. */
 	.info-section {
 		max-width: 640px;
-	}
-	.empty {
-		margin: 0;
-		font-size: 15px;
-		color: var(--color-foreground-muted);
 	}
 
 	.composer {

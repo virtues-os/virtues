@@ -12,8 +12,7 @@
 		type Applet,
 		type AppletData
 	} from '$lib/api/client';
-	import { appletDestination, appletGlyph, describeSchedule, limitsOf, relativeTime } from '$lib/applets/palette';
-	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
+	import { describeSchedule, limitsOf, relativeTime } from '$lib/applets/palette';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
 	import {
 		appletDays,
@@ -173,22 +172,6 @@
 			<span class="row-label">Runs</span>
 			<span class="row-value">
 				{describeSchedule(action.schedule)}{#if nextRun}<span class="sub">{nextRun}</span>{/if}
-			</span>
-		</div>
-		<div class="row">
-			<span class="row-label">Goes to</span>
-			<span class="row-value goes">
-				<AtlasIcon name={appletGlyph(action)} size={14} bare />
-				{appletDestination(action)}
-			</span>
-		</div>
-	</Card>
-
-	<Card list>
-		<div class="row">
-			<span class="row-label">Cost</span>
-			<span class="row-value">
-				{spend}{#if limits.length}<span class="sub">Limit {limits.join(', ')}</span>{/if}
 			</span>
 		</div>
 	</Card>
@@ -368,11 +351,6 @@
 	}
 	.summary.problem {
 		color: var(--color-error);
-	}
-	.goes {
-		flex-direction: row;
-		align-items: center;
-		gap: 8px;
 	}
 	.error-msg {
 		margin: 0;
