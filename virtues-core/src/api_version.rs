@@ -23,4 +23,5 @@
 //! | v | change |
 //! |---|---|
 //! | 1 | baseline: the API as of 2026-09-29, the first box to report a version |
-pub const API_VERSION: u32 = 1;
+//! | 2 | the page socket (`/ws/yjs/:page_id`) enforces the document contract: `?contract=N` says what the client reads; below a page's contract it is closed with 4426, above the box's its updates are not applied, and an update outside the contract closes it with 4422; `GET /api/pages/:id` says the page's `contract` |
+pub const API_VERSION: u32 = 2;

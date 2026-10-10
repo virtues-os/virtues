@@ -13,7 +13,6 @@ use crate::types::Timestamp;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::PgPool;
-use yrs::{updates::decoder::Decode, Doc, GetString, ReadTxn, Transact, Update};
 
 /// Custom deserializer for Option<Option<T>> that distinguishes between:
 /// - Missing field → None (don't change)
@@ -927,18 +926,16 @@ pub async fn list_versions(
 
 /// Decode Yjs binary state into markdown (Y.Text format). Sharing freezes a
 /// page from this (`api::publish_page`).
+///
+/// Bytes that are not a state read as empty. A state that does not apply
+/// panics, which `freeze_page` catches to freeze the page's materialized
+/// `content` instead.
 pub(crate) fn yjs_state_to_markdown(yjs_state: &[u8]) -> String {
-    let doc = Doc::new();
-    if let Ok(update) = Update::decode_v1(yjs_state) {
-        let mut txn = doc.transact_mut();
-        txn.apply_update(update);
-    }
-    let txn = doc.transact();
-
-    if let Some(text) = txn.get_text("content") {
-        text.get_string(&txn)
-    } else {
-        String::new()
+    use crate::server::yjs::{text_of_state, ApplyError};
+    match text_of_state(yjs_state) {
+        Ok(text) => text,
+        Err(ApplyError::Decode(_)) => String::new(),
+        Err(ApplyError::Apply(error)) => panic!("the page's saved state did not apply: {error}"),
     }
 }
 

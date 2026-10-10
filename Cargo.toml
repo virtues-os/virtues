@@ -8,6 +8,7 @@ members = [
     "crates/virtues-iroh-ffi",
     "crates/virtues-reach-client",
     "crates/virtues-registry",
+    "crates/virtues-document",
     "crates/virtues-qnnd",
     "crates/virtues-qairt",
     "applets",

@@ -16,7 +16,7 @@ use reqwest::Client;
 use crate::ui;
 
 pub async fn run() -> Result<()> {
-    // Disk space — the GGUFs are ~0.5 GB (embeddinggemma-300m Q8_0 ~0.3 GB +
+    // Disk space — the GGUFs are ~0.5 GB (embeddinggemma-2 Q8_0 ~0.3 GB +
     // gte-reranker-modernbert-base Q8_0 ~0.2 GB); PG18 adds another ~1 GB;
     // binaries + web + working room another GB. We want ≥ 4 GB free on /.
     match free_gb(Path::new("/")) {
@@ -56,7 +56,7 @@ pub async fn run() -> Result<()> {
         }
     }
 
-    // Port conflicts. These three are the ones a working Virtues install
+    // Port conflicts. These are the ones a working Virtues install
     // listens on; on a fresh box they should be free. If they're held,
     // either an old Virtues is still running (idempotent re-run, fine) or
     // an unrelated service is squatting on a port we need.
@@ -64,7 +64,6 @@ pub async fn run() -> Result<()> {
         (5432u16, "postgres"),
         (8000, "virtues"),
         (18181, "virtues-embed"),
-        (18182, "virtues-rerank"),
     ] {
         if port_in_use(port) {
             ui::warn(&format!("Port {port} ({name}) in use — re-run on existing install?"));

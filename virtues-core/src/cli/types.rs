@@ -710,12 +710,24 @@ pub enum Commands {
     #[command(hide = true)]
     WarmModels,
 
-    /// Re-validate the embedding endpoint after a model change and recover the
-    /// index. Run this when the box reports a fingerprint/dims mismatch (manual
-    /// inference mode): re-probes the endpoint and, on confirmation, wipes the
-    /// derived vector index and re-embeds from source with the new model.
+    /// Point search at a different embedding server, or re-validate the current
+    /// one after its model changed. With `--embed-url`, switches the box to
+    /// that server (e.g. llama.cpp on your GPU) and keeps the index when the
+    /// server runs the same model. Without it, re-probes the configured
+    /// endpoint and, on a model change, re-embeds from source.
     #[command(name = "configure-inference")]
     ConfigureInference {
+        /// Switch search to this embedding server (an OpenAI-style
+        /// /v1/embeddings endpoint on this machine, your LAN, or your VPN).
+        #[arg(long)]
+        embed_url: Option<String>,
+        /// Rerank server to record with the switch. Reranking stays off
+        /// unless VIRTUES_RERANK_GAP opts in.
+        #[arg(long)]
+        rerank_url: Option<String>,
+        /// Model name sent with every request; Ollama routes by it.
+        #[arg(long)]
+        embed_model: Option<String>,
         /// Re-embed without the interactive confirmation if the model changed.
         #[arg(long)]
         reembed: bool,

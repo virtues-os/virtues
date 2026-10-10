@@ -30,7 +30,7 @@ const INDEXER_LOCK_KEY: i64 = 0x656d_6269_6478_3031;
 
 /// The geometry the index was built in, as (model, width), or `None` if nothing
 /// has recorded one: a fresh box, or the first run after a reindex.
-async fn recorded_geometry(pool: &PgPool) -> Result<Option<(String, i32)>> {
+pub(super) async fn recorded_geometry(pool: &PgPool) -> Result<Option<(String, i32)>> {
     let recorded: Option<(Option<String>, Option<i32>)> =
         sqlx::query_as("SELECT model, dim FROM search_index_meta WHERE singleton")
             .fetch_optional(pool)
@@ -149,13 +149,23 @@ impl IndexerLock {
     }
 }
 
-/// Run one cycle of the embedding indexer, unless another run is already going.
+/// Run one cycle of the embedding indexer, unless another run is already going:
+/// index what's new, then continue a model change if one is under way
+/// (`next_index`), in the time the drain left.
 pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
     let Some(lock) = IndexerLock::try_acquire(pool).await? else {
         tracing::info!("Embedding indexer: another run holds the advisory lock; skipping");
         return Ok(0);
     };
-    drain(pool, &lock).await
+    let started = std::time::Instant::now();
+    // A current server that is down must not stop the move away from it.
+    let drained = drain(pool, &lock).await;
+    match super::next_index::step(pool, &lock, started + MAX_DRAIN_DURATION).await {
+        Ok(super::next_index::Progress::Idle) => {}
+        Ok(p) => tracing::info!(progress = ?p, "search model change"),
+        Err(e) => tracing::error!(error = %format!("{e:#}"), "search model change failed this run"),
+    }
+    drained
 }
 
 /// Index everything not yet indexed, for a caller holding the indexer lock.
@@ -460,7 +470,7 @@ const EMBED_BATCH: usize = 32;
 /// single bad input would otherwise fail its 31 innocent neighbours, so a failed
 /// group is retried one at a time. The slow path costs latency exactly where
 /// something is already wrong, and nowhere else.
-async fn embed_all(
+pub(super) async fn embed_all(
     embedder: &std::sync::Arc<super::embedder::LocalEmbedder>,
     texts: Vec<String>,
 ) -> Vec<Option<Vec<f32>>> {
@@ -753,6 +763,12 @@ async fn embed_one_batch(
             .bind(Vector::from(embedding))
             .execute(&mut *tx)
             .await?;
+            // A model change under way may hold a vector of this chunk's old
+            // text; `next_index` embeds the new text on its next pass.
+            sqlx::query("DELETE FROM search_vectors_next WHERE embedding_id = $1")
+                .bind(&embedding_id)
+                .execute(&mut *tx)
+                .await?;
 
             // Replace this chunk's BM25 postings (idempotent under re-index).
             sqlx::query("DELETE FROM search_bm25_postings WHERE chunk_id = $1")

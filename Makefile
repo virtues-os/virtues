@@ -86,11 +86,11 @@ VIRTUES_DEV_SKIP_SETUP ?= 1
 WITH_EMBED ?= 1
 VIRTUES_MODELS_DIR ?= $(CURDIR)/.data/models
 # Must match the GGUFs virtues-core expects (see virtues-core/src/inference_report.rs):
-# EmbeddingGemma-300M is 768-dim + mean-pooled + task-prompted (embedder.rs);
+# EmbeddingGemma 2 is 768-dim + mean-pooled + task-prompted (embedder.rs);
 # serving bge-m3 here emits 1024-dim vectors that core rejects.
-EMBED_GGUF  := embeddinggemma-300m-qat-Q8_0.gguf
+EMBED_GGUF  := embeddinggemma-2-Q8_0.gguf
 RERANK_GGUF := gte-reranker-modernbert-base-Q8_0.gguf
-EMBED_GGUF_URL  := https://huggingface.co/ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/resolve/main/$(EMBED_GGUF)
+EMBED_GGUF_URL  := https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/bfcd298762cc34d0357ece5ebdd31791a3a374d8/$(EMBED_GGUF)
 RERANK_GGUF_URL := https://huggingface.co/keisuke-miyako/gte-reranker-modernbert-base-gguf-q8_0/resolve/main/$(RERANK_GGUF)
 
 # Brew Postgres binaries (formula installs to opt/postgresql@$(PG_MAJOR)/bin).
@@ -314,8 +314,20 @@ dev-web: ## Run the SvelteKit dev server on :$(DEV_WEB_PORT)
 # download runs once, then the `test -s` guards skip it). `make dev` calls this
 # up front so the ~480 MB fetch happens before the concurrent stack starts,
 # rather than racing the cargo/vite output.
+#
+# llama-server is llama.cpp's own release build at the SAME tag CI compiles for
+# boxes (LLAMA_CPP_TAG in .github/workflows/release-linux.yml), unpacked under
+# .data/. Homebrew's build trails it: EmbeddingGemma 2 needs b11507 or later.
+LLAMA_CPP_TAG := b11507
+LLAMA_DIR     := $(CURDIR)/.data/llama/llama-$(LLAMA_CPP_TAG)
+LLAMA_SERVER  := $(LLAMA_DIR)/llama-server
 _embed-ensure:
-	@command -v llama-server >/dev/null || { echo "→ installing llama.cpp (provides llama-server)"; brew install llama.cpp; }
+	@test -x "$(LLAMA_SERVER)" || { \
+	  echo "→ downloading llama.cpp $(LLAMA_CPP_TAG) (macOS arm64, ~12 MB, one-time)…"; \
+	  mkdir -p "$(CURDIR)/.data/llama" \
+	    && curl -fL --progress-bar "https://github.com/ggml-org/llama.cpp/releases/download/$(LLAMA_CPP_TAG)/llama-$(LLAMA_CPP_TAG)-bin-macos-arm64.tar.gz" -o "$(CURDIR)/.data/llama/llama.tgz" \
+	    && tar -xzf "$(CURDIR)/.data/llama/llama.tgz" -C "$(CURDIR)/.data/llama" \
+	    && rm "$(CURDIR)/.data/llama/llama.tgz"; }
 	@mkdir -p "$(VIRTUES_MODELS_DIR)"
 	@test -s "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF)" || { \
 	  echo "→ downloading $(EMBED_GGUF) (~320 MB, one-time)…"; \
@@ -346,11 +358,12 @@ _pdfium-ensure:
 # idle). `-lv 1` quiets llama.cpp's startup spam (device-info/slot/warmup) while
 # keeping the "model loaded / listening" line, warnings, and errors.
 # `--pooling mean` matches EmbeddingGemma (and the installer's unit); cls pooling
-# would emit the wrong sentence vector.
+# would emit the wrong sentence vector. `-ngl 0` keeps the embedder on CPU like
+# the box: EmbeddingGemma's activations overflow fp16 GPU paths.
 _embed-run:
 	@trap 'kill 0' INT TERM; \
-	  llama-server -lv 1 --embedding --pooling mean -m "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF)"  --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 & \
-	  llama-server -lv 1 --rerank                  -m "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF)" --host 127.0.0.1 --port 18182 -c 8192 -b 8192 -ub 8192 & \
+	  "$(LLAMA_SERVER)" -lv 1 --embedding --pooling mean -ngl 0 -m "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF)"  --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 & \
+	  "$(LLAMA_SERVER)" -lv 1 --rerank                         -m "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF)" --host 127.0.0.1 --port 18182 -c 8192 -b 8192 -ub 8192 & \
 	  wait
 
 dev-embed: _embed-ensure ## Run local embed (:18181) + rerank (:18182) llama-server sidecars (models cached in .data/)

@@ -18,7 +18,7 @@ once, at install (`InferenceMode`), and there are three answers:
 | Mode | Where | Serves | Chosen by |
 |---|---|---|---|
 | **Dragon** | our board (Q6A, Hexagon v68 NPU), detected from the device tree | `virtues-qnnd` on the NPU: gte-small (384-d, native) on `:18181`, answerai-colbert-small@256 MaxSim rerank on `:18182` | detection; zero questions |
-| **Bundled** | any other machine, as a quick trial | the CPU `llama-server` sidecars we build and smoke-test in CI: EmbeddingGemma-300M (QAT Q8_0) on `:18181`, gte-reranker-modernbert on `:18182` | the interactive picker, or `VIRTUES_INFERENCE=bundled` |
+| **Bundled** | any other machine, as a quick trial | the CPU `llama-server` sidecars we build and smoke-test in CI: EmbeddingGemma 2 (Q8_0, 768-d native) on `:18181`, gte-reranker-modernbert on `:18182` | the interactive picker, or `VIRTUES_INFERENCE=bundled` |
 | **Manual** | any other machine | whatever the user runs — llama.cpp, Ollama, LM Studio, a vendor NPU server | the picker: recipes, then URLs, a probe, and a pinned fingerprint |
 
 There is deliberately **no managed GPU/NPU mode for arbitrary hardware**: we
@@ -44,7 +44,7 @@ Written by the installer into the box env file; read by core.
 | `VIRTUES_RERANK_URL` | `http://127.0.0.1:18182` | same | user's, if any |
 | `VIRTUES_EMBED_MODEL` | — | — | model name sent in every request |
 | `VIRTUES_EMBED_FINGERPRINT` | — | — | pinned at install |
-| `VIRTUES_EMBED_DIMS` | — | `256` | probed native width |
+| `VIRTUES_EMBED_DIMS` | — | — (native 768) | probed native width |
 | `VIRTUES_EMBED_QUERY_PROMPT` / `_DOC_PROMPT` | — | Gemma's | resolved by the installer |
 | `VIRTUES_QNND_MODELS_DIR` | the QNN models dir | — | — |
 
@@ -69,8 +69,9 @@ A width is a property of a model; nothing in the binary asserts one.
   never from the network (it runs on boxes whose embedder is down).
 - **Stored width = the model's native width**, unless `VIRTUES_EMBED_DIMS` asks
   to truncate. Truncation is only safe for Matryoshka-trained models
-  (EmbeddingGemma: 768 → 256); lopping dimensions off any other model destroys
-  it, so it is opt-in per model.
+  (EmbeddingGemma: 768 → 256, which on the 2026-10-08 personal-data eval gave up
+  half of EmbeddingGemma 2's recall gain, so bundled stores 768); lopping
+  dimensions off any other model destroys it, so it is opt-in per model.
 - **The columns are `halfvec`.** pgvector's HNSW caps `halfvec` at 4000 dims
   (`MAX_INDEXED_DIM`), and plain `vector` at 2000. `search_vectors`,
   `search_topic_cache` and `app_projects.centroid` share one geometry and are

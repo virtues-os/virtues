@@ -60,6 +60,9 @@ const SAFARI_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWe
 /// An outline longer than this is cut, with a note saying how to read the
 /// rest. About 10k tokens; Hacker News's front page alone is 44k characters.
 const MAX_OUTLINE_CHARS: usize = 40_000;
+/// The page's corner radius, inside the Browser tab's 12px card and its 2px
+/// frame (`.stage` in BrowserView.svelte).
+const PAGE_RADIUS: f64 = 10.0;
 
 // ─── The connection ─────────────────────────────────────────────────────────
 
@@ -552,6 +555,13 @@ async fn create(app: &AppHandle, target: &tauri::Url) -> Result<Webview, String>
     let owner = app.clone();
     on_main(&view, move |wk, mtm| unsafe {
         watch_owner_input(owner, wk, mtm);
+        // Round the page to the card the UI draws around it.
+        wk.setWantsLayer(true);
+        let layer: *mut AnyObject = msg_send![wk, layer];
+        if !layer.is_null() {
+            let _: () = msg_send![layer, setCornerRadius: PAGE_RADIUS];
+            let _: () = msg_send![layer, setMasksToBounds: true];
+        }
         wk.configuration()
             .preferences()
             .setInactiveSchedulingPolicy(WKInactiveSchedulingPolicy::None);

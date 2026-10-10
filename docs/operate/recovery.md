@@ -79,15 +79,15 @@ sudo journalctl -u virtues -n 200 --no-pager
 
 ## The pieces
 
-Beyond the main service, a server runs the inference sidecars - and on hardware
-with an NPU, one daemon replaces both:
+Beyond the main service, a server runs an inference sidecar - and on hardware
+with an NPU, one daemon replaces it:
 
 | Unit | What it is |
 |---|---|
 | `virtues` | the server itself, on port 8000 |
 | `virtues-embed` | embedding model, on local port 18181 |
-| `virtues-rerank` | reranking model, on local port 18182 |
-| `virtues-qnnd` | on NPU hardware, replaces both sidecars and serves both ports |
+| `virtues-embed-next` | only while search moves to a new model, on local port 18183 |
+| `virtues-qnnd` | on NPU hardware, replaces the sidecar and serves ports 18181 and 18182 |
 | `virtues-display` | the on-server screen, if your server has one |
 
 If search returns nothing or feels broken while the server is otherwise healthy,

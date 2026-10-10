@@ -24,14 +24,11 @@ pub struct InstallConfig {
     /// `.github/workflows/models-release.yml` workflow populates that tag
     /// from vetted upstream GGUFs, with `.sha256` sidecars.
     pub models_base: String,
-    /// GGUF file names the inference sidecars load. EmbeddingGemma-300M
-    /// (QAT Q8_0, 768-dim native → Matryoshka-256) for embedding;
-    /// gte-reranker-modernbert-base (Q8_0, stateless) for the reranker.
-    /// Must stay in sync with virtues-core's `inference_report::{EMBED_GGUF,
-    /// RERANK_GGUF}` — the sidecar `-m` path and the runtime's dim/pooling
-    /// expectations have to agree or embeds are rejected at runtime.
+    /// GGUF file name the embedding sidecar loads: EmbeddingGemma 2 (Q8_0,
+    /// stored at its native 768 dims). Must stay in sync with virtues-core's
+    /// `inference_report::{EMBED_GGUF, EMBED_GGUF_SHA256}`, which `virtues
+    /// upgrade` uses to move installed boxes to it.
     pub embed_gguf: String,
-    pub rerank_gguf: String,
     /// QNN context-binary names for the Dragon NPU path (Hexagon v68). These are
     /// the QAIRT-compiled artifacts the `virtues-qnnd` daemon loads: gte-small
     /// embed (idx 0) + answerai-colbert-small@256 rerank (idx 1). Fetched from
@@ -74,8 +71,7 @@ impl InstallConfig {
                         .unwrap_or_else(|_| "virtues".to_string()),
                 )
             }),
-            embed_gguf: "embeddinggemma-300m-qat-Q8_0.gguf".to_string(),
-            rerank_gguf: "gte-reranker-modernbert-base-Q8_0.gguf".to_string(),
+            embed_gguf: "embeddinggemma-2-Q8_0.gguf".to_string(),
             qnn_embed_bin: "gte_v68_vtcm2.bin".to_string(),
             qnn_rerank_bin: "cb256_v68_vtcm2.bin".to_string(),
             // (relative-dest, asset-name) — dest is under the QNN models dir.
@@ -117,7 +113,6 @@ impl InstallConfig {
     pub fn models_release_assets(&self) -> Vec<String> {
         let mut assets = vec![
             self.embed_gguf.clone(),
-            self.rerank_gguf.clone(),
             self.qnn_embed_bin.clone(),
             self.qnn_rerank_bin.clone(),
         ];
