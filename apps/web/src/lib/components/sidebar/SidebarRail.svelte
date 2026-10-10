@@ -28,7 +28,9 @@
 	 * that pushes it to the foot.
 	 *
 	 * One object on the rail is not a room: the ∴ mark at the head, which
-	 * toggles the sidebar.
+	 * toggles the sidebar on click and the rail's labels on right-click. With
+	 * the labels gone the rail narrows to the glyph column (Obsidian's ribbon);
+	 * the room names stay in each tile's tooltip and accessible name.
 	 *
 	 * SETUP IS A ROOM, at the very top, above Home, while any step of Setup is
 	 * not done (2026-09-23 as Getting started; Setup since 2026-09-24). It was
@@ -84,6 +86,7 @@
 
 	const selectedId = $derived(sidebarRoom.selectedId);
 	const panelOpen = $derived(!sidebarState.collapsed);
+	const compact = $derived(sidebarState.railCompact);
 
 	function isSelected(room: Room): boolean {
 		return room.id === selectedId && panelOpen;
@@ -96,6 +99,12 @@
 		// it and the way back had to be a second, different affordance. One
 		// object, one job, always in the same place.
 		sidebarState.toggle();
+	}
+
+	function toggleLabels(e: MouseEvent) {
+		// The browser's own context menu has nothing to offer on the mark.
+		e.preventDefault();
+		sidebarState.toggleRailCompact();
 	}
 
 	/**
@@ -145,7 +154,7 @@
 	}
 </script>
 
-<nav class="rail" aria-label="Rooms">
+<nav class="rail" class:compact aria-label="Rooms">
 	<!-- Identity AND the sidebar's toggle. The mark no longer carries the
 	     "way home" job the old path-mast root did (Chats is the ground now,
 	     and it is the first tile); what it carries instead is open/closed, in
@@ -155,8 +164,9 @@
 		class="rail-mark rail-mark-btn"
 		aria-label={panelOpen ? 'Hide the sidebar' : 'Show the sidebar'}
 		aria-expanded={panelOpen}
-		title={panelOpen ? 'Hide the sidebar (⌘B)' : 'Show the sidebar (⌘B)'}
+		title={`${panelOpen ? 'Hide' : 'Show'} the sidebar (⌘B) · Right-click to ${compact ? 'show' : 'hide'} labels`}
 		onclick={toggleSidebar}
+		oncontextmenu={toggleLabels}
 	>
 		<!-- Drawn, not typed. A typed ∴ glyph is text-weight — a 21px glyph
 		     put a 12px figure with 2px dots over a column of 20px line icons. The
@@ -196,7 +206,7 @@
 					<AtlasIcon name={room.icon} size={20} stroke={1.0} bare />
 				{/if}
 			</span>
-			<span class="rail-label">{room.label}</span>
+			<span class="rail-label" aria-hidden={compact}>{room.label}</span>
 		</button>
 	{/snippet}
 
@@ -235,6 +245,15 @@
 		/* The rail is the only thing left on the desk ground — the panel and the
 		   pane are the white card beside it — so it paints nothing of its own. */
 		background: transparent;
+		/* Compact narrows to the 40px glyph column. The labels fade out before
+		   the width closes and back in after it opens, so text is never seen
+		   being clipped by the edge it is passing through. */
+		transition: width 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
+	}
+
+	.rail.compact {
+		width: 52px;
+		transition-delay: 80ms;
 	}
 
 	.rail-mark {
@@ -347,14 +366,23 @@
 		gap: 4px;
 		width: 100%;
 		padding: 8px 4px;
+		/* Compact squares the item: the label's 4px gap + 12px row go to
+		   equal padding, so the tile stays a 40px-tall target. */
+		transition:
+			background var(--sidebar-transition-duration) ease,
+			color var(--sidebar-transition-duration) ease,
+			gap 220ms cubic-bezier(0.2, 0.7, 0.2, 1),
+			padding 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
 		border: none;
 		border-radius: var(--sidebar-interactive-radius);
 		background: none;
 		cursor: pointer;
 		color: var(--color-foreground-muted);
-		transition:
-			background var(--sidebar-transition-duration) ease,
-			color var(--sidebar-transition-duration) ease;
+	}
+
+	.compact .rail-item {
+		gap: 0;
+		padding: 10px 0;
 	}
 
 	.rail-tile {
@@ -368,6 +396,28 @@
 		line-height: 1.1;
 		letter-spacing: 0.01em;
 		white-space: nowrap;
+		max-height: 13px;
+		/* Opening: fade in once the width has made room. */
+		transition:
+			opacity 160ms ease 200ms,
+			max-height 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
+	}
+
+	.compact .rail-label {
+		opacity: 0;
+		max-height: 0;
+		/* Closing: fade out first, then the row collapses. */
+		transition:
+			opacity 100ms ease,
+			max-height 220ms cubic-bezier(0.2, 0.7, 0.2, 1) 60ms;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.rail,
+		.rail-item,
+		.rail-label {
+			transition: none;
+		}
 	}
 
 	.rail-item :global(svg) {
