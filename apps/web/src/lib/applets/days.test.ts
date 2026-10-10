@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest';
 import type { Applet, RunDay } from '$lib/api/client';
 import {
 	appletDays,
+	appletSpans,
 	busiestDay,
 	countRuns,
 	indexRunDays,
 	lastDays,
 	needsYou,
+	recentSpans,
 	recentSummary,
 	reliabilityScore,
+	spanDays,
 	stateOf,
 	type DayState
 } from './days';
@@ -52,6 +55,31 @@ describe('reliabilityScore', () => {
 	it('ranks failures and misses above stops', () => {
 		expect(reliabilityScore(['failed', 'ran'])).toBeGreaterThan(reliabilityScore(['stopped', 'ran']));
 		expect(reliabilityScore(['ran', 'quiet', 'none'])).toBe(0);
+	});
+});
+
+describe('weekly applets', () => {
+	const today = new Date('2026-10-10T12:00:00');
+
+	it('get a dot a week when they run on one day of the week or month', () => {
+		expect(spanDays('0 0 17 * * 5')).toBe(7);
+		expect(spanDays('0 0 9 1 * *')).toBe(7);
+		expect(spanDays('0 0 7 * * *')).toBe(1);
+		expect(spanDays('0 0 9 * * 1-5')).toBe(1);
+		expect(spanDays(null)).toBe(1);
+	});
+
+	it('keep a failure from two weeks ago in view', () => {
+		const spans = recentSpans('0 0 17 * * 5', today);
+		expect(spans).toHaveLength(7);
+		expect(spans.every((s) => s.length === 7)).toBe(true);
+		expect(spans[6].at(-1)).toBe('2026-10-10');
+		const rows: RunDay[] = [{ applet_id: 'applet_a', day: '2026-10-02', status: 'error', runs: 1 }];
+		const states = appletSpans(applet(), indexRunDays(rows), spans, today.getTime());
+		expect(states.filter((s) => s === 'failed')).toHaveLength(1);
+		expect(recentSummary(states, countRuns(indexRunDays(rows), 'applet_a', spans.flat()), 'weeks')).toBe(
+			'1 failed in the last 7 weeks'
+		);
 	});
 });
 

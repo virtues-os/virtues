@@ -21,7 +21,7 @@
 	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { appletDestination, appletGlyph, describeSchedule, relativeTime } from '$lib/applets/palette';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
-	import { appletDays, DAY_LABEL, indexRunDays, lastDays, reliabilityScore, type DayState } from '$lib/applets/days';
+	import { appletSpans, DAY_LABEL, indexRunDays, recentSpans, reliabilityScore, type DayState } from '$lib/applets/days';
 	import DayDot from './DayDot.svelte';
 	import Popover from '$lib/floating/primitives/Popover.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
@@ -59,13 +59,11 @@
 
 	const visible = $derived(showFinished ? [...living, ...finished] : living);
 
-	// One dot per day for the last week, oldest on the left. Every applet
-	// shares this axis, so the column reads down the list whatever each one's
-	// schedule is.
-	const WEEK = 7;
-	const week = $derived(lastDays(WEEK));
+	// Seven dots, oldest on the left: a day each, or a week each for an
+	// applet that runs weekly or less, whose seven days would hold one run.
 	const dayIndex = $derived(indexRunDays(runDays));
-	const daysOf = (a: Applet): DayState[] => appletDays(a, dayIndex, week);
+	const daysOf = (a: Applet): DayState[] => appletSpans(a, dayIndex, recentSpans(a.schedule));
+	const spanLabel = (span: string[]) => (span.length === 1 ? span[0] : `${span[0]} to ${span.at(-1)}`);
 
 	/** The last run's outcome, as the row shows it. */
 	type Outcome = 'failed' | 'stopped' | 'ran' | 'running' | 'off' | 'finished' | 'never';
@@ -117,7 +115,7 @@
 		loading = true;
 		err = null;
 		runDaysErr = null;
-		const [, days] = await Promise.allSettled([appletsStore.load(), getRunsByDay(30)]);
+		const [, days] = await Promise.allSettled([appletsStore.load(), getRunsByDay(49)]);
 		// The table says what failed in words; the raw reason ("Bad Gateway")
 		// is no help to the person reading it.
 		err = appletsStore.error ? "Your server couldn't send your applets. Reload the page to try again." : null;
@@ -234,7 +232,7 @@
 		},
 		{
 			key: 'pulse',
-			label: 'Last 7 days',
+			label: 'Recent',
 			width: '128px',
 			// Sorting by this column puts the least reliable applets first.
 			getValue: (a) => -reliabilityScore(daysOf(a))
@@ -358,7 +356,7 @@
 
 	{#if runDaysErr}
 		<!-- Said once for the table, not in every row. -->
-		<p class="days-note">Your server couldn't send the last 7 days, so that column is empty.</p>
+		<p class="days-note">Your server couldn't send the recent runs, so that column is empty.</p>
 	{/if}
 	<div class="table-card">
 	<UniversalDataGrid
@@ -419,18 +417,19 @@
 				{#if runDaysErr || !a.enabled || a.archived_at}
 					<span class="muted">-</span>
 				{:else}
+					{@const spans = recentSpans(a.schedule)}
 					<button
 						type="button"
 						class="week"
 						title="Show run history"
-						aria-label={`Last 7 days for ${a.name}. Show run history`}
+						aria-label={`Recent runs for ${a.name}. Show run history`}
 						onclick={(e) => {
 							e.stopPropagation();
 							openHistory(a);
 						}}
 					>
-						{#each daysOf(a) as state, i (week[i])}
-							<DayDot {state} title={`${week[i]}: ${DAY_LABEL[state]}`} />
+						{#each daysOf(a) as state, i (spans[i][0])}
+							<DayDot {state} title={`${spanLabel(spans[i])}: ${DAY_LABEL[state]}`} />
 						{/each}
 						<span class="week-go" aria-hidden="true">›</span>
 					</button>

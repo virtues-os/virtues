@@ -1,10 +1,11 @@
 /**
- * One dot per day for an applet's recent runs.
+ * One dot per day, or per week, for an applet's recent runs.
  *
- * Every applet shares the same time axis (the last N days), whether it runs
- * hourly, daily or weekly, so a column of dots can be read down the list. Each
- * day takes the worst thing that happened on it: one failure among 24 hourly
- * runs still makes that day red.
+ * An applet that runs daily or more often gets a dot a day. One that runs
+ * once a week or less gets a dot a week, because seven days of a weekly
+ * applet hold at most one run, and its failures fell outside the window.
+ * Each dot takes the worst thing that happened in it: one failure among 24
+ * hourly runs still makes that day red.
  */
 import type { Applet, RunDay } from '$lib/api/client';
 
@@ -47,6 +48,23 @@ export function lastDays(count: number, today = new Date()): string[] {
 	return out;
 }
 
+/** How many days one dot covers for this schedule: 7 for an applet that runs
+ *  on one day of the week or of the month, 1 for everything else. */
+export function spanDays(schedule: string | null): 1 | 7 {
+	const fields = schedule?.trim().split(/\s+/) ?? [];
+	if (fields.length !== 5 && fields.length !== 6) return 1;
+	const [day, , dow] = fields.slice(-3);
+	const single = (f: string) => /^[0-9A-Za-z]+$/.test(f);
+	return (day === '*' && single(dow)) || (day !== '*' && single(day)) ? 7 : 1;
+}
+
+/** The days behind each of an applet's 7 recent dots, oldest first. */
+export function recentSpans(schedule: string | null, today = new Date()): string[][] {
+	const span = spanDays(schedule);
+	const days = lastDays(7 * span, today);
+	return Array.from({ length: 7 }, (_, i) => days.slice(i * span, (i + 1) * span));
+}
+
 /** Group the per-day rows by applet, so each applet's lookup is cheap. */
 export function indexRunDays(rows: RunDay[]): DayIndex {
 	const byApplet: DayIndex = new Map();
@@ -72,19 +90,24 @@ export function stateOf(statuses: Map<string, number> | undefined): DayState {
 }
 
 /**
- * The dots for one applet, oldest first. Today becomes `missed` when the
- * scheduler says a run was due more than an hour ago and nothing ran today.
- * Earlier missed days can't be told apart from unscheduled ones: the box keeps
- * only the latest slot (`next_due_at`), not a history of slots.
+ * The dots for one applet, oldest first, one per span of days. The newest
+ * becomes `missed` when the scheduler says a run was due more than an hour ago
+ * and nothing ran in it. Earlier missed spans can't be told apart from
+ * unscheduled ones: the box keeps only the latest slot (`next_due_at`), not a
+ * history of slots.
  */
-export function appletDays(
+export function appletSpans(
 	applet: Applet,
 	index: DayIndex,
-	days: string[],
+	spans: string[][],
 	now = Date.now()
 ): DayState[] {
 	const mine = index.get(applet.id);
-	const states = days.map((d) => stateOf(mine?.get(d)));
+	const states = spans.map((span) => {
+		const merged = new Map<string, number>();
+		for (const d of span) for (const [status, n] of mine?.get(d) ?? []) merged.set(status, (merged.get(status) ?? 0) + n);
+		return stateOf(merged);
+	});
 	const last = states.length - 1;
 	if (
 		last >= 0 &&
@@ -97,6 +120,11 @@ export function appletDays(
 		states[last] = 'missed';
 	}
 	return states;
+}
+
+/** One dot per day: `appletSpans` with a span of one. */
+export function appletDays(applet: Applet, index: DayIndex, days: string[], now = Date.now()): DayState[] {
+	return appletSpans(applet, index, days.map((d) => [d]), now);
 }
 
 /**
@@ -138,12 +166,12 @@ export function busiestDay(index: DayIndex, appletId: string): number {
 	return most;
 }
 
-/** One sentence about the days shown, worst news first. */
-export function recentSummary(states: DayState[], counts: Map<string, number>): string {
-	const span = `in the last ${states.length} days`;
+/** One sentence about the dots shown, worst news first. */
+export function recentSummary(states: DayState[], counts: Map<string, number>, unit: 'days' | 'weeks' = 'days'): string {
+	const span = `in the last ${states.length} ${unit}`;
 	const failed = counts.get('error') ?? 0;
 	if (failed > 0) return `${failed} failed ${span}`;
-	if (states.at(-1) === 'missed') return "Didn't run today when it was due";
+	if (states.at(-1) === 'missed') return unit === 'days' ? "Didn't run today when it was due" : "Didn't run when it was due";
 	const stopped = counts.get('budget_exceeded') ?? 0;
 	if (stopped > 0) {
 		return `Stopped at its spending limit ${stopped === 1 ? 'once' : `${stopped} times`} ${span}`;
