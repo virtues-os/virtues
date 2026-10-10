@@ -223,8 +223,10 @@
 
 <style>
 	.rail {
-		/* Width comes from sidebarState (RAIL_WIDTH: wide enough for "Settings"
-		   at 11px under a 40px tile; compact: a 36px glyph column). */
+		/* Width comes from sidebarState. RAIL_WIDTH makes each labelled item
+		   square (52 × 52: glyph, gap, label, padding), which still clears
+		   the widest label, "Timeline" at 11px; compact is a 36px glyph
+		   column of 36px squares. */
 		flex: none;
 		display: flex;
 		flex-direction: column;
@@ -240,7 +242,7 @@
 		   the old symmetric 6/6 read as 6px to the window edge against 18px to
 		   the card. Optical symmetry over arithmetic symmetry. */
 		padding: 12px 0 12px 12px;
-		gap: 2px;
+		gap: 6px;
 		overflow: hidden;
 		/* The rail is the only thing left on the desk ground — the panel and the
 		   pane are the white card beside it — so it paints nothing of its own. */
