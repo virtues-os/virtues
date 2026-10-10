@@ -23,7 +23,16 @@ COMPONENTS
              bits and activations to 16 bits, with a fixed 4,096-token
              context. The tokenizer is unmodified.
 
-2. EmbeddingGemma-300M, the search embedder on servers without the Dragon NPU
+2. EmbeddingGemma 2, the search embedder on servers without the Dragon NPU
+   Asset:    embeddinggemma-2-Q8_0.gguf
+   Source:   https://huggingface.co/google/embeddinggemma-2 (text model only),
+             converted to GGUF by https://huggingface.co/ggml-org/embeddinggemma-2-GGUF
+   Author:   Google
+   License:  Apache License 2.0 (text A)
+   Modified: Not by Virtues. Redistributed as published by ggml-org.
+
+   EmbeddingGemma-300M, the search embedder on servers set up before
+   EmbeddingGemma 2; still offered to them
    Asset:    embeddinggemma-300m-qat-Q8_0.gguf
    Source:   https://huggingface.co/google/embeddinggemma-300m, converted to
              GGUF by https://huggingface.co/ggml-org/embeddinggemma-300m-qat-q8_0-GGUF
@@ -72,8 +81,8 @@ COMPONENTS
 
 
 ==============================================================================
-TEXT A: Apache License 2.0 (Qwen3-0.6B, gte-reranker-modernbert-base,
-answerai-colbert-small-v1)
+TEXT A: Apache License 2.0 (Qwen3-0.6B, EmbeddingGemma 2,
+gte-reranker-modernbert-base, answerai-colbert-small-v1)
 ==============================================================================
 
                                  Apache License

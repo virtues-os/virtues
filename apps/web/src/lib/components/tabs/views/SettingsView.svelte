@@ -15,6 +15,7 @@
 	  Billing      /virtues/billing        — subscription, balance, routing, and
 	                                         the AI calls that draw it down
 	  System       /virtues/system         — the machine, measured (read-only)
+	  Search       /virtues/search         — where search runs, and what it covers
 	  Network      /virtues/network        — which network the box is on
 	  Software     /virtues/software       — release, track, update, artifacts
 	  Devices      /virtues/devices        — paired devices (Unpair, Start over)
@@ -60,6 +61,7 @@
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
 	import SharedLinksView from '$lib/components/tabs/views/SharedLinksView.svelte';
 	import ManageApplets from '$lib/components/applets/ManageApplets.svelte';
+	import SearchSettingsView from '$lib/components/tabs/views/SearchSettingsView.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -174,6 +176,7 @@
 		| 'assistant'
 		| 'billing'
 		| 'system'
+		| 'search'
 		| 'devices'
 		| 'shared'
 		| 'applets'
@@ -184,6 +187,7 @@
 		'assistant',
 		'billing',
 		'system',
+		'search',
 		'devices',
 		'shared',
 		'applets',
@@ -225,6 +229,8 @@
 			<BillingView {tab} {active} />
 		{:else if section === 'system'}
 			<SystemInfoView {tab} {active} />
+		{:else if section === 'search'}
+			<SearchSettingsView />
 		{:else if section === 'display'}
 			<DisplayView />
 		{:else if section === 'shared'}

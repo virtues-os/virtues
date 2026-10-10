@@ -18,9 +18,9 @@ Before installing, read these two pages first:
 
 1. [What to run it on](/docs/setup/requirements) for details on minimum
    specs and supported OS.
-2. [Setting up inference](/docs/inference) to configure your embedding and
-   rerank models. The installer asks for their URLs before it does anything
-   else.
+2. [Faster search on a GPU or NPU](/docs/setup/accelerators), if the machine
+   has one. Search runs on the CPU unless you set one up, and the installer
+   tells you when it finds one.
 
 ## Read it before you run it
 
@@ -56,8 +56,8 @@ microSD card produce very different servers, and that difference is worth
 knowing up front.
 [What to run it on](/docs/setup/requirements) has the full picture.
 
-It checks whether ports `5432`, `8000`, `18181`, and `18182` are already
-bound - Postgres, the server itself, and the two inference endpoints. A
+It checks whether ports `5432`, `8000`, and `18181` are already bound -
+Postgres, the server itself, and the embedding endpoint. A
 warning there usually means you're reinstalling over an existing server, which
 is fine.
 

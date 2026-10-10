@@ -1,4 +1,4 @@
--- 0049_add_applet_run_outputs
+-- 0050_add_applet_run_outputs
 --
 -- What each applet run made. The runner records one row when a run writes a
 -- page (create_page, edit_page, revise_article), so an applet's page can show

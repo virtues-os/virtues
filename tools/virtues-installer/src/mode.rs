@@ -35,12 +35,11 @@ pub enum InferenceMode {
     /// Inference is built in — the installer provisions the on-box NPU daemon
     /// and the runtime talks to it over loopback.
     Dragon,
-    /// User opted into the bundled local engine on non-Dragon hardware: a
-    /// portable **CPU-only** llama-server (the one we build + test in CI — no
-    /// GPU/driver babysitting), our two models, zero config. A quick-trial
-    /// path, honestly slow and NOT a deployment; for anything real
-    /// the user runs their own endpoint (Manual), which is the recommended
-    /// generic path.
+    /// The default on non-Dragon hardware: a portable **CPU-only**
+    /// llama-server (the one we build + test in CI — no GPU/driver
+    /// babysitting) with our models, zero config. Fine for a box's daily
+    /// volume; an accelerator, when present, is faster still, and the
+    /// installer points the owner at its guide (Manual mode).
     Bundled,
     /// User-run endpoints on any other machine. `embed_model` is the model
     /// name sent in every `/v1/embeddings` request body — llama.cpp ignores
@@ -137,26 +136,61 @@ impl InferenceMode {
             );
         }
 
-        // Pick the path BEFORE demanding a URL — otherwise a user who hasn't
-        // stood up an endpoint yet is stuck (Ctrl-C, set it up, start over).
-        let choice = cliclack::select("How should Virtues run inference?")
-            .item(
-                "byo",
-                "Bring your own endpoint  (recommended)",
-                "run llama.cpp / Ollama / vLLM on your own hardware — GPU- or NPU-accelerated, \
-                 tuned to your silicon; the right choice for any real use",
-            )
-            .item(
-                "bundled",
-                "Quick trial  (bundled CPU, not for real data)",
-                "we drop in a local CPU engine + our two models, zero config — but it's SLOW and \
-                 NOT a deployment; stand up your own endpoint before loading real data",
-            )
-            .interact()
-            .context("choosing an inference path")?;
+        // CPU is the default: the bundled sidecars are identical on every
+        // machine and need nothing from the owner. An accelerator, when the
+        // kernel shows one, gets a strong nudge toward its guide — the
+        // installer still never installs GPU/NPU software itself (see
+        // `accel`). Pick the path BEFORE demanding a URL, so an owner who
+        // hasn't stood up a server yet is never stuck.
+        let accels = crate::accel::detect();
+        let choice = if let Some(best) = accels.first() {
+            println!();
+            println!(
+                "  {} {}",
+                console::style("Found:").bold(),
+                accels.iter().map(|a| a.label.as_str()).collect::<Vec<_>>().join(", ")
+            );
+            println!("  Search runs on this computer's CPU unless you point it at a server on that");
+            println!("  hardware. Search and your first index are much faster there, so we strongly");
+            println!("  recommend setting it up. The guide takes about ten minutes:");
+            println!("    {}", console::style(best.kind.guide_url()).cyan());
+            println!();
+            cliclack::select("How should search run?")
+                .item(
+                    "bundled",
+                    "On this computer's CPU for now",
+                    "works today; switch later with `virtues configure-inference --embed-url <URL>`",
+                )
+                .item("byo", "On a server I've already set up", "you'll enter its URL next")
+                .item("exit", "Stop, so I can set up the server first", "re-run this installer afterwards")
+                .interact()
+                .context("choosing where search runs")?
+        } else {
+            cliclack::select("How should search run?")
+                .item(
+                    "bundled",
+                    "On this computer's CPU  (recommended)",
+                    "nothing to set up; Virtues installs a small local engine and its models",
+                )
+                .item(
+                    "byo",
+                    "On my own server",
+                    "llama.cpp, Ollama or another server you run on this machine or your network",
+                )
+                .interact()
+                .context("choosing where search runs")?
+        };
 
+        if choice == "exit" {
+            let url = accels.first().map(|a| a.kind.guide_url()).unwrap_or("https://virtues.com/docs/setup/accelerators");
+            println!();
+            println!("  Set up the server with the guide, then run the installer again:");
+            println!("    {url}");
+            println!();
+            std::process::exit(0);
+        }
         if choice == "bundled" {
-            ui::ok("Bundled local CPU engine — no setup needed");
+            ui::ok("Search runs on this computer's CPU");
             return Ok(Self::Bundled);
         }
 
@@ -280,7 +314,7 @@ fn print_byo_guide() {
     println!();
     println!("  {}", style("Known-good models (embedding dim in parens):").bold());
     println!("    embed :  gte-small (384) · bge-small-en-v1.5 (384) · e5-small-v2 (384)");
-    println!("             embeddinggemma-300m (768) · nomic-embed-text-v1.5 (768)");
+    println!("             embeddinggemma-2 (768) · nomic-embed-text-v1.5 (768)");
     println!("    rerank:  gte-reranker-modernbert-base · bge-reranker-v2-m3 · jina-reranker-v2");
     println!();
     println!("  {}", style("Start commands (we'll ask only for the URLs):").bold());

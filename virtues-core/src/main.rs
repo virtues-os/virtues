@@ -161,8 +161,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let embedder = virtues::search::get_embedder().await?;
         // Actually embed once, don't just connect: this runs the sidecar's
-        // native-dim validation, so a wrong GGUF (e.g. a 1024-dim model vs
-        // EmbeddingGemma's 768-dim native) fails HERE instead of "passing" a connect-only
+        // native-dim validation, so a wrong GGUF (e.g. a 1024-dim model where the
+        // index holds 768) fails HERE instead of "passing" a connect-only
         // check and silently corrupting the index.
         let probe = embedder.embed_query_async("virtues warm-up probe").await?;
         ui::ok(&format!(
@@ -563,8 +563,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Recover after a manual endpoint's model changed. Runs BEFORE the app
     // builds the guarded embedder — which would itself fail on the very
     // fingerprint mismatch this command exists to fix.
-    if let Some(Commands::ConfigureInference { reembed, yes }) = &cli.command {
-        match virtues::cli::configure_inference::run(*reembed, *yes).await {
+    if let Some(Commands::ConfigureInference { embed_url, rerank_url, embed_model, reembed, yes }) =
+        &cli.command
+    {
+        let result = match embed_url {
+            Some(url) => {
+                virtues::cli::configure_inference::switch(
+                    url,
+                    rerank_url.as_deref(),
+                    embed_model.as_deref(),
+                    *reembed || *yes,
+                )
+                .await
+            }
+            None => virtues::cli::configure_inference::run(*reembed, *yes).await,
+        };
+        match result {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: configure-inference failed: {e}");

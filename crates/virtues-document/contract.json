@@ -1,0 +1,133 @@
+{
+  "$comment": "The page document contract, read by the Rust server (crates/virtues-document) and the browser editor alike. Key order is meaningful: mark order decides HTML nesting (link outermost) and attribute order is rendering order. `version` is bumped only once documents written under it have shipped; from then on, adding a node type, a mark or an attribute needs a bump, because a client deletes from the shared document what its schema cannot read. An `int` is a whole number a JavaScript number holds exactly, at most 2^53 - 1 either side of zero; `min` and `max` narrow it. A `route` is a ref to something on the box, `/kind/id`, and never another site. `urlSchemes` are the schemes a `url` attribute may use, checked after removing tabs and newlines and trimming control characters and spaces as a browser does; a URL without a scheme is a path on the box.",
+  "version": 1,
+  "fragment": "doc",
+  "id": { "attr": "id", "html": "data-id" },
+  "urlSchemes": ["http", "https", "mailto", "tel"],
+  "nodes": {
+    "doc": { "content": "block+" },
+
+    "paragraph": {
+      "group": "block", "content": "inline*", "id": true,
+      "html": [{ "tag": "p" }]
+    },
+    "heading": {
+      "group": "block", "content": "inline*", "id": true,
+      "attrs": { "level": { "type": "int", "enum": [1, 2, 3, 4, 5, 6], "default": 1 } },
+      "html": [
+        { "tag": "h1", "set": { "level": 1 } },
+        { "tag": "h2", "set": { "level": 2 } },
+        { "tag": "h3", "set": { "level": 3 } },
+        { "tag": "h4", "set": { "level": 4 } },
+        { "tag": "h5", "set": { "level": 5 } },
+        { "tag": "h6", "set": { "level": 6 } }
+      ]
+    },
+    "blockquote": {
+      "group": "block", "content": "block+", "id": true,
+      "html": [{ "tag": "blockquote" }]
+    },
+    "callout": {
+      "group": "block", "content": "block+", "id": true,
+      "attrs": { "tone": { "type": "string", "enum": ["note", "tip", "warning"], "default": "note", "html": "data-tone" } },
+      "html": [{ "tag": "aside" }]
+    },
+    "bulletList": {
+      "group": "block list", "content": "listItem+", "id": true,
+      "html": [{ "tag": "ul" }]
+    },
+    "orderedList": {
+      "group": "block list", "content": "listItem+", "id": true,
+      "attrs": { "start": { "type": "int", "default": 1, "html": "start" } },
+      "html": [{ "tag": "ol" }]
+    },
+    "listItem": {
+      "content": "paragraph block*", "id": true,
+      "html": [{ "tag": "li" }]
+    },
+    "taskList": {
+      "group": "block list", "content": "taskItem+", "id": true,
+      "html": [{ "tag": "ul", "match": { "data-type": "taskList" } }]
+    },
+    "taskItem": {
+      "content": "paragraph block*", "id": true,
+      "attrs": { "checked": { "type": "bool", "default": false, "html": "data-checked" } },
+      "html": [{ "tag": "li", "match": { "data-type": "taskItem" } }]
+    },
+    "codeBlock": {
+      "group": "block", "content": "text*", "marks": "", "code": true, "id": true,
+      "attrs": { "language": { "type": "string", "default": null, "html": "data-language", "fromChildClass": "language-" } },
+      "html": [{ "tag": "pre" }]
+    },
+    "horizontalRule": {
+      "group": "block", "id": true,
+      "html": [{ "tag": "hr" }]
+    },
+    "image": {
+      "group": "block", "atom": true, "id": true,
+      "attrs": {
+        "src": { "type": "url", "required": true, "html": "src" },
+        "alt": { "type": "string", "default": null, "html": "alt" },
+        "width": { "type": "int", "default": null, "html": "width" }
+      },
+      "html": [{ "tag": "img" }]
+    },
+    "table": {
+      "group": "block", "content": "tableRow+", "id": true,
+      "html": [{ "tag": "table", "wrap": "tbody", "transparent": ["thead", "tbody", "tfoot"] }]
+    },
+    "tableRow": {
+      "content": "(tableCell | tableHeader)*",
+      "html": [{ "tag": "tr" }]
+    },
+    "tableHeader": {
+      "content": "block+",
+      "attrs": {
+        "colspan": { "type": "int", "min": 1, "max": 1000, "default": 1, "html": "colspan" },
+        "rowspan": { "type": "int", "min": 1, "max": 65534, "default": 1, "html": "rowspan" },
+        "align": { "type": "string", "enum": ["left", "center", "right"], "default": null, "html": "align" }
+      },
+      "html": [{ "tag": "th" }]
+    },
+    "tableCell": {
+      "content": "block+",
+      "attrs": {
+        "colspan": { "type": "int", "min": 1, "max": 1000, "default": 1, "html": "colspan" },
+        "rowspan": { "type": "int", "min": 1, "max": 65534, "default": 1, "html": "rowspan" },
+        "align": { "type": "string", "enum": ["left", "center", "right"], "default": null, "html": "align" }
+      },
+      "html": [{ "tag": "td" }]
+    },
+    "applet": {
+      "group": "block", "atom": true, "id": true,
+      "attrs": {
+        "ref": { "type": "string", "required": true, "html": "ref" },
+        "height": { "type": "int", "default": null, "html": "height" }
+      },
+      "html": [{ "tag": "virtues-applet" }]
+    },
+
+    "text": { "group": "inline" },
+    "hardBreak": {
+      "group": "inline", "inline": true,
+      "html": [{ "tag": "br" }]
+    },
+    "mention": {
+      "group": "inline", "inline": true, "atom": true,
+      "attrs": {
+        "to": { "type": "route", "required": true, "html": "to" },
+        "label": { "type": "string", "required": true, "html": "label" }
+      },
+      "html": [{ "tag": "virtues-mention" }]
+    }
+  },
+  "marks": {
+    "link": { "attrs": { "href": { "type": "url", "required": true, "html": "href" } }, "html": [{ "tag": "a" }] },
+    "bold": { "html": [{ "tag": "strong" }, { "tag": "b", "parseOnly": true }] },
+    "italic": { "html": [{ "tag": "em" }, { "tag": "i", "parseOnly": true }] },
+    "underline": { "html": [{ "tag": "u" }] },
+    "strike": { "html": [{ "tag": "s" }, { "tag": "del", "parseOnly": true }] },
+    "highlight": { "html": [{ "tag": "mark" }] },
+    "code": { "html": [{ "tag": "code" }], "excludes": "code" }
+  }
+}

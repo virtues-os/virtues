@@ -1,19 +1,20 @@
 ---
 title: Setting up inference
-description: Virtues searches your record with two local models - an embedder and a reranker - that you run yourself. The contracts they must speak, the llama.cpp commands that serve them, which models work, and how to point the server at them.
-updated: 2026-09-03
+description: Run Virtues search on your own embedding server - the contracts it must speak, the llama.cpp commands that serve it, which models work, and how to point Virtues at it.
+updated: 2026-10-08
 ---
 
-Search over your own life needs two small models running near your data: an
-**embedder**, which turns everything in your record into vectors, and a
-**reranker**, which re-scores the candidates a search turns up. Neither is
-the model that writes - that one is remote, and this page has nothing to do
-with it.
+Search over your own life needs a small model running near your data: an
+**embedder**, which turns everything in your record into vectors. A
+**reranker**, which re-scores the candidates a search turns up, is optional
+and off by default. Neither is the model that writes - that one is remote,
+and this page has nothing to do with it.
 
-Skip this page if you're on hardware we build - both are set up for you. On
-your own machine they are **yours to run**, and standing them up is worth
-doing *before* you install, because the installer asks for their URLs and
-refuses to guess.
+You may not need this page. On hardware we build, search is set up for you.
+On your own machine, the installer runs search on its CPU unless you choose
+otherwise. This page is for running your own server instead: on a GPU or NPU
+([the short version](/docs/setup/accelerators)), on another machine, or with
+a different model.
 
 ## What Virtues consumes
 
@@ -25,9 +26,11 @@ Two HTTP contracts:
 | `POST /v1/rerank` | No | Precision on the results of a search |
 
 Without an embedder there is no semantic search and no indexing at all.
-Without a reranker search still works, ranked by vector similarity and
-lexical fusion alone, at slightly lower precision - a real option, not a
-degraded mode to be ashamed of.
+The reranker is optional, and search doesn't call it unless you turn it on.
+On our own search tests, the small rerankers we ship ranked results worse
+than the embedder and keyword match they followed, so search ranks by those
+two alone. To try a reranker anyway, set `VIRTUES_RERANK_GAP` (a value from
+0 to 1; 1 reranks every search).
 
 Both endpoints must be on **your own machine, your LAN, or your VPN**. The
 installer refuses a public address: loopback, RFC1918, link-local, CGNAT
@@ -48,12 +51,15 @@ path is that you own the endpoint and we validate it at the door.
 The installer offers three answers:
 
 - **Our hardware** - detected from the device tree. Inference is built in.
-- **Bring your own endpoint** *(recommended for everything else)* - you run
-  the servers; the installer probes them, records what it found, and pins it.
-- **Quick trial** - a bundled CPU-only model server with our two models
-  and no configuration. Honestly slow, explicitly not a deployment. It
-  exists so you can watch the product move in five minutes; stand up real
-  endpoints before you load real data.
+- **This machine's CPU** *(the default)* - Virtues runs the embedding model
+  we recommend, on the CPU, and keeps it current. When a release recommends a
+  different model, the update downloads it and rebuilds your index for it in
+  the background; search keeps working on the old model until the new index is
+  ready, then switches.
+- **Your own server** - you run the server and choose the model; the
+  installer probes it, records what it found, and pins it. Updates never
+  change your model: it's yours to keep running and to upgrade when you
+  decide to.
 
 Headless installs skip the picker with `VIRTUES_INFERENCE=manual` (plus
 `VIRTUES_EMBED_URL`, optionally `VIRTUES_RERANK_URL`) or
@@ -71,12 +77,21 @@ flags.
 
 ```bash
 llama-server --embedding --pooling mean \
-  -m embeddinggemma-300m-qat-Q8_0.gguf \
+  -m embeddinggemma-2-Q8_0.gguf \
   --host 127.0.0.1 --port 18181 \
   -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0
 ```
 
-**The reranker**, on port 18182:
+EmbeddingGemma 2 needs a recent llama.cpp. An older build refuses the model
+file, so check yours first; the build number it prints should be at least
+the one we run:
+
+```bash
+llama-server --version   # build 11507 or later
+```
+
+**A reranker**, on port 18182, only if you turn reranking on (see
+[What Virtues consumes](#what-virtues-consumes)):
 
 ```bash
 llama-server --rerank --pooling rank \
@@ -105,9 +120,8 @@ What the flags are doing, since these are the ones that matter:
   roughly 2.5 GB resident to about 1 GB.
 
 If you want the servers to survive a reboot, run each as a systemd unit. The
-two units Virtues writes on the bundled path - `virtues-embed.service` and
-`virtues-rerank.service`, both in `/etc/systemd/system/` - are a fair
-template: loopback-only, unprivileged, `ProtectSystem=strict`,
+one Virtues writes when search runs on the CPU, `virtues-embed.service` in
+`/etc/systemd/system/`, is a fair template: loopback-only, unprivileged, `ProtectSystem=strict`,
 `Restart=on-failure` with a start limit so a permanently broken server ends
 up visibly `failed` rather than restarting forever.
 
@@ -130,24 +144,24 @@ wants a prefix on its inputs:
 
 | Embedding model | Dims | Prompt prefixes |
 |---|---|---|
-| **EmbeddingGemma-300M** *(what we ship)* | 768, truncatable to 256 | `task: search result \| query: ` / `title: none \| text: ` |
+| **EmbeddingGemma 2** *(what we ship)* | 768, truncatable to 256 | `task: search result \| query: ` / `title: none \| text: ` |
 | gte-small | 384 | none |
 | bge-small-en-v1.5 | 384 | query only: `Represent this sentence for searching relevant passages: ` |
 | e5-small-v2 | 384 | `query: ` / `passage: ` |
 | nomic-embed-text-v1.5 | 768, truncatable | `search_query: ` / `search_document: ` |
 
-| Reranker | Note |
+| Reranker (optional) | Note |
 |---|---|
-| **gte-reranker-modernbert-base** *(what we ship)* | Cross-encoder, served by llama.cpp directly |
+| gte-reranker-modernbert-base | Cross-encoder, served by llama.cpp directly |
 | bge-reranker-v2-m3 | Multilingual, larger |
 | jina-reranker-v2 | Multilingual |
 
 GGUF builds of all of these are on Hugging Face; search the model name plus
-`gguf`. Quantized to Q8_0, the pair we ship is about half a gigabyte
-together, and these are the exact builds we run:
+`gguf`. Quantized to Q8_0, the embedder we ship is about 300 MB. These are
+the exact builds we've run:
 
 ```bash
-curl -fLO https://huggingface.co/ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/resolve/main/embeddinggemma-300m-qat-Q8_0.gguf
+curl -fLO https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/bfcd298762cc34d0357ece5ebdd31791a3a374d8/embeddinggemma-2-Q8_0.gguf
 curl -fLO https://huggingface.co/keisuke-miyako/gte-reranker-modernbert-base-gguf-q8_0/resolve/main/gte-reranker-modernbert-base-Q8_0.gguf
 ```
 
@@ -167,8 +181,9 @@ pgvector's index supports. Above that you must truncate.
 
 **Truncation is only safe for models trained for it.** Setting
 `VIRTUES_EMBED_DIMS` slices vectors to a narrower width - a third of the
-storage and a faster index for very little quality on a Matryoshka-trained
-model like EmbeddingGemma or nomic. On a model that was *not* trained that
+storage and a faster index on a Matryoshka-trained model like EmbeddingGemma
+or nomic, at a real cost: on our own search tests, EmbeddingGemma cut to 256
+found noticeably less than at its full 768, which is why we store all 768. On a model that was *not* trained that
 way it destroys the vector. It is opt-in per model, never a default, and
 asking for a width wider than the model emits is an error rather than
 something we pad.
@@ -186,9 +201,11 @@ curl -sSL https://virtues.com/sh | sudo sh
 ```
 
 The first thing it asks - before it touches a package, a service, or a disk -
-is how you want inference. Choose bring-your-own and give it the two URLs
-(`http://localhost:18181` and `http://localhost:18182` for the recipes
-above; the rerank prompt takes an empty answer). It then probes what you gave
+is how search should run. Choose **On a server I've already set up** (or **On
+my own server**) and give it the URLs (`http://localhost:18181` and
+`http://localhost:18182` for the recipes above; the rerank prompt takes an
+empty answer). Already installed? Point the running server at yours with
+`virtues configure-inference --embed-url <URL>` instead. It then probes what you gave
 it and prints what it found: the vector width, a latency verdict, and whether
 the reranker answered.
 
@@ -307,9 +324,17 @@ comes with the command that diagnoses it.
 
 ## Changing your mind later
 
-Moving from the bundled trial to your own endpoints, or from one model to
-another, is the same short path: start the new servers, edit the URLs in
-`/var/lib/virtues/virtues.env`, run `virtues configure-inference`, and let it
-re-embed. Nothing about the decision is baked in at install time except which
-services the installer provisioned, and on the bundled path those are two
-ordinary systemd units you can stop and disable.
+To move search from the CPU to your own server, start the server and run
+`virtues configure-inference --embed-url <URL>`. It keeps your index when
+the new server runs the same model, and rebuilds it when the model differs.
+Nothing about the decision is baked in at install time except which services
+the installer provisioned, and on the CPU path that is one ordinary systemd
+unit you can stop and disable.
+
+On the CPU path, Virtues changes models for you. An update that recommends a
+new model starts it beside the current one (`virtues-embed-next.service`,
+on port 18183), and the indexer builds the new index from the text already
+stored while search keeps answering from the old one. Settings → Search
+shows how far along it is. When every chunk has a new vector, the two
+indexes swap in a moment, and the next update moves the new model onto the
+usual service and removes the old one.

@@ -15,7 +15,8 @@
 	 * The owner always sees who is driving. While the assistant acts, a bar
 	 * offers Take control and Stop and the page gets an accent frame; when it
 	 * hands the browser over (a sign-in, a code), the bar says what to do and
-	 * waits for Done. Its steps collect in an Activity row under the page.
+	 * waits for Done. Its steps collect in an Activity row under the page, off
+	 * unless you open it: most people watch the page, not a log.
 	 */
 	import { onDestroy, onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -50,9 +51,9 @@
 	let showSteps = $state(readShowSteps());
 	function readShowSteps(): boolean {
 		try {
-			return localStorage.getItem(STEPS_KEY) !== '0';
+			return localStorage.getItem(STEPS_KEY) === '1';
 		} catch {
-			return true;
+			return false;
 		}
 	}
 	function toggleSteps() {
@@ -89,15 +90,6 @@
 	}
 
 	const latestId = $derived(browserAgent.steps.at(-1)?.id ?? null);
-
-	// The row comes back when the assistant starts driving, hidden or not:
-	// hiding it is for the task you watched, not the next one.
-	let wasDriving = false;
-	$effect(() => {
-		const driving = browserAgent.driving;
-		if (driving && !wasDriving) showSteps = true;
-		wasDriving = driving;
-	});
 
 	// A new step comes into view.
 	$effect(() => {
@@ -250,26 +242,37 @@
 
 <div class="browser">
 	<div class="toolbar">
-		<button class="tool" title="Back" aria-label="Back" onclick={() => void browserPaneGo('back')} disabled={!available}>
-			<Icon icon="ri:arrow-left-line" width="16" />
-		</button>
-		<button class="tool" title="Forward" aria-label="Forward" onclick={() => void browserPaneGo('forward')} disabled={!available}>
-			<Icon icon="ri:arrow-right-line" width="16" />
-		</button>
-		<button class="tool" title="Reload" aria-label="Reload" onclick={() => void browserPaneGo('reload')} disabled={!available}>
-			<Icon icon="ri:refresh-line" width="16" />
-		</button>
+		<div class="nav">
+			<button class="tool" title="Back" aria-label="Back" onclick={() => void browserPaneGo('back')} disabled={!available}>
+				<Icon icon="ri:arrow-left-line" width="16" />
+			</button>
+			<button class="tool" title="Forward" aria-label="Forward" onclick={() => void browserPaneGo('forward')} disabled={!available}>
+				<Icon icon="ri:arrow-right-line" width="16" />
+			</button>
+			<span class="divider" aria-hidden="true"></span>
+			<button class="tool" title="Reload" aria-label="Reload" onclick={() => void browserPaneGo('reload')} disabled={!available}>
+				<Icon icon="ri:refresh-line" width="16" />
+			</button>
+		</div>
 		<input
 			class="address"
-			bind:value={address}
+			class:editing
+			value={editing ? address : hostOf(address) || address}
 			placeholder="Enter an address or search"
 			spellcheck="false"
 			autocapitalize="off"
-			onfocus={() => (editing = true)}
+			oninput={(e) => (address = e.currentTarget.value)}
+			onfocus={(e) => {
+				editing = true;
+				const input = e.currentTarget;
+				requestAnimationFrame(() => input.select());
+			}}
 			onblur={() => (editing = false)}
 			onkeydown={(e) => {
 				if (e.key === 'Enter' && address.trim()) {
 					go(resolve(address));
+					(e.currentTarget as HTMLInputElement).blur();
+				} else if (e.key === 'Escape') {
 					(e.currentTarget as HTMLInputElement).blur();
 				}
 			}}
@@ -277,7 +280,7 @@
 		/>
 		{#if browserAgent.steps.length > 0}
 			<button
-				class="tool steps-toggle"
+				class="round"
 				class:on={showSteps}
 				title={showSteps ? 'Hide activity' : 'Show what your assistant did'}
 				aria-label="Activity"
@@ -285,7 +288,6 @@
 				onclick={toggleSteps}
 			>
 				<Icon icon="ri:history-line" width="16" />
-				<span class="count">{browserAgent.steps.length}</span>
 			</button>
 		{/if}
 	</div>
@@ -364,9 +366,23 @@
 	.toolbar {
 		display: flex;
 		align-items: center;
+		gap: 8px;
+		padding: 8px 12px;
+	}
+	.nav {
+		display: flex;
+		align-items: center;
 		gap: 4px;
-		padding: 6px 8px;
-		border-bottom: 1px solid var(--border);
+		height: 36px;
+		padding: 0 4px;
+		border-radius: 999px;
+		background: var(--surface-elevated, var(--surface));
+		flex-shrink: 0;
+	}
+	.divider {
+		width: 1px;
+		height: 16px;
+		background: var(--border);
 	}
 	.tool {
 		display: inline-flex;
@@ -374,11 +390,11 @@
 		justify-content: center;
 		width: 28px;
 		height: 28px;
-		border-radius: 6px;
+		border-radius: 50%;
 		color: var(--text-muted);
 	}
 	.tool:hover:not(:disabled) {
-		background: var(--surface-hover, var(--surface-elevated));
+		background: var(--surface);
 		color: var(--text);
 	}
 	.tool:disabled {
@@ -387,34 +403,46 @@
 	.address {
 		flex: 1;
 		min-width: 0;
-		height: 28px;
-		padding: 0 10px;
-		border-radius: 6px;
-		border: 1px solid var(--border);
-		background: var(--surface);
+		height: 36px;
+		padding: 0 16px;
+		border-radius: 999px;
+		border: 1px solid transparent;
+		background: var(--surface-elevated, var(--surface));
 		color: var(--text);
 		font-size: 13px;
+		text-align: center;
+		text-overflow: ellipsis;
 	}
-	.steps-toggle {
-		width: auto;
-		gap: 4px;
-		padding: 0 6px;
+	.address.editing {
+		text-align: left;
+		border-color: var(--border-focus, var(--border));
+		background: var(--surface);
+		outline: none;
 	}
-	.steps-toggle.on {
+	.round {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		border-radius: 50%;
+		background: var(--surface-elevated, var(--surface));
+		color: var(--text-muted);
+		flex-shrink: 0;
+	}
+	.round:hover,
+	.round.on {
 		color: var(--text);
-	}
-	.count {
-		font-size: 12px;
-		font-variant-numeric: tabular-nums;
 	}
 
 	.agent-bar {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		padding: 8px 12px;
+		margin: 0 12px 8px;
+		padding: 8px 8px 8px 16px;
+		border-radius: 999px;
 		font-size: 13px;
-		border-bottom: 1px solid var(--border);
 		color: var(--text);
 	}
 	.agent-bar.driving {
@@ -467,16 +495,22 @@
 	}
 
 	/* The page is native and draws over .slot; the frame shows around it. */
+	/* The page is a rounded card; the shell rounds the native view to match
+	   (browser_host.rs, PAGE_RADIUS). */
 	.stage {
 		flex: 1;
 		min-height: 0;
 		display: flex;
+		margin: 0 12px 12px;
+		border: 2px solid transparent;
+		border-radius: 12px;
+		overflow: hidden;
 	}
 	.stage.driving {
-		border: 3px solid var(--primary);
+		border-color: var(--primary);
 	}
 	.stage.handoff {
-		border: 3px solid var(--warning);
+		border-color: var(--warning);
 	}
 	.slot {
 		position: relative;
@@ -498,8 +532,7 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		padding: 8px 12px;
-		border-top: 1px solid var(--border);
+		padding: 0 12px 12px;
 		flex-shrink: 0;
 	}
 	.trail {

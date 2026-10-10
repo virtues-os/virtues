@@ -117,6 +117,14 @@ pub(crate) async fn rebuild(pool: &PgPool) -> Result<(u64, u32, u32)> {
     Ok((embedded, days, scored))
 }
 
+/// `wiki_events` carries its own embedding blob and the scores derived from it.
+/// Whatever replaces the model nulls them so each scoring pass recomputes with
+/// the new one (`dayline::rescore_all_days` puts them back).
+pub(crate) const FORGET_EVENT_EMBEDDINGS: &str = "UPDATE wiki_events SET \
+     embedding = NULL, novelty_z = NULL, local_novelty_z = NULL, \
+     hr_z = NULL, autonomic_z = NULL, topic_novelty = NULL, \
+     entity_novelty = NULL";
+
 /// Forget everything the embedding model produced, so the next model starts from
 /// nothing: the derived index, its recorded geometry, and every event score that
 /// stands on an event embedding. Source rows are never touched — embeddings
@@ -132,14 +140,11 @@ async fn wipe(pool: &PgPool) -> Result<()> {
         // the index was not built with, and a wipe is precisely the act of saying
         // "build it with this one instead". Leave the geometry behind and the wipe
         // would be blocked by the very guard it exists to clear.
+        // A model change under way builds from chunks this wipe just removed
+        // (the CASCADE emptied its table); it starts over.
         "UPDATE search_index_meta SET n_docs = 0, sum_len = 0, \
-             model = NULL, dim = NULL",
-        // wiki_events carries its own embedding blob + derived scores; null them
-        // so each scoring pass recomputes with the current model.
-        "UPDATE wiki_events SET \
-             embedding = NULL, novelty_z = NULL, local_novelty_z = NULL, \
-             hr_z = NULL, autonomic_z = NULL, topic_novelty = NULL, \
-             entity_novelty = NULL",
+             model = NULL, dim = NULL, next_model = NULL, next_dim = NULL",
+        FORGET_EVENT_EMBEDDINGS,
     ] {
         sqlx::query(stmt)
             .execute(pool)
