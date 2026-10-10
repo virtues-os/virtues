@@ -215,7 +215,7 @@ impl InferenceMode {
         ensure_local(&embed_url, "Embedding endpoint")?;
 
         let rerank_raw: String = cliclack::input(
-            "Rerank endpoint URL (Enter to skip — search still works without one, slightly lower precision)",
+            "Rerank endpoint URL (optional; Enter to skip — search doesn't use one unless you turn reranking on)",
         )
         .required(false)
         .validate(|s: &String| {
@@ -553,7 +553,7 @@ pub async fn validate_manual(
             Err(e) => {
                 ui::warn(&format!(
                     "rerank endpoint {url} failed validation ({e:#}) — continuing without \
-                     a reranker (search still works, slightly lower precision)"
+                     a reranker (search doesn't use one unless you turn reranking on)"
                 ));
                 false
             }
@@ -593,7 +593,7 @@ pub async fn validate_manual(
     if rerank_ok {
         ui::ok("Rerank endpoint OK");
     } else {
-        ui::skip("No reranker — search still works without one, slightly lower precision");
+        ui::skip("No reranker — search doesn't use one unless you turn reranking on");
     }
 
     let (query_prompt, doc_prompt) = resolve_prompts(embed_model);

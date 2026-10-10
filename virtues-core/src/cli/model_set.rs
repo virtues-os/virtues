@@ -63,7 +63,8 @@ fn models_base() -> String {
     })
 }
 
-/// The `-m` argument of a llama-server unit's ExecStart.
+/// The `-m` argument of a llama-server unit's ExecStart (`-m PATH`,
+/// `--model PATH` or `--model=PATH`).
 fn unit_model(unit_text: &str) -> Option<PathBuf> {
     let exec = unit_text.lines().find(|l| l.trim_start().starts_with("ExecStart="))?;
     let mut it = exec.split_whitespace();
@@ -71,11 +72,16 @@ fn unit_model(unit_text: &str) -> Option<PathBuf> {
         if tok == "-m" || tok == "--model" {
             return it.next().map(PathBuf::from);
         }
+        if let Some(p) = tok.strip_prefix("--model=") {
+            return Some(PathBuf::from(p));
+        }
     }
     None
 }
 
-/// A copy of a llama-server unit serving another model on another port.
+/// A copy of a llama-server unit serving another model on another port. Reads
+/// the ExecStart the same way [`unit_model`] does, so a unit it can read is a
+/// unit it can rewrite.
 fn retarget_unit(unit_text: &str, model: &Path, port: u16) -> String {
     let stem = model.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     unit_text
@@ -88,15 +94,21 @@ fn retarget_unit(unit_text: &str, model: &Path, port: u16) -> String {
                 return line.to_string();
             }
             let mut out: Vec<String> = Vec::new();
-            let mut toks = line.split(' ').peekable();
+            let mut toks = line.split_whitespace();
             while let Some(tok) = toks.next() {
-                out.push(tok.to_string());
-                if tok == "-m" || tok == "--model" {
-                    toks.next();
-                    out.push(model.display().to_string());
-                } else if tok == "--port" {
-                    toks.next();
-                    out.push(port.to_string());
+                if tok.starts_with("--model=") {
+                    out.push(format!("--model={}", model.display()));
+                } else if tok.starts_with("--port=") {
+                    out.push(format!("--port={port}"));
+                } else {
+                    out.push(tok.to_string());
+                    if tok == "-m" || tok == "--model" {
+                        toks.next();
+                        out.push(model.display().to_string());
+                    } else if tok == "--port" {
+                        toks.next();
+                        out.push(port.to_string());
+                    }
                 }
             }
             out.join(" ")
@@ -110,6 +122,12 @@ fn systemctl(args: &[&str]) -> bool {
     Command::new("systemctl").args(args).status().map(|s| s.success()).unwrap_or(false)
 }
 
+fn remove_unit(unit: &str) {
+    systemctl(&["disable", "--now", unit]);
+    let _ = std::fs::remove_file(unit_path(unit));
+    systemctl(&["daemon-reload"]);
+}
+
 /// The reranker made results worse on every eval we ran, so search stopped
 /// calling it unless the owner opts in. Stop running it too, and get its
 /// memory back.
@@ -121,13 +139,60 @@ fn retire_reranker() {
         return;
     }
     ui::step("retiring the reranker (search no longer uses it)…");
-    systemctl(&["disable", "--now", RERANK]);
-    let _ = std::fs::remove_file(unit_path(RERANK));
-    systemctl(&["daemon-reload"]);
+    remove_unit(RERANK);
     let _ = std::fs::remove_file(models_dir().join(RERANK_GGUF));
     if let Err(e) = box_env::edit(&box_env::path(), &[], &["VIRTUES_RERANK_URL"]) {
         ui::warn(&format!("couldn't remove VIRTUES_RERANK_URL from the box env: {e}"));
     }
+}
+
+/// The llama-server this release ships.
+fn llama_server() -> PathBuf {
+    let prefix = box_env::get("INSTALL_PREFIX").unwrap_or_else(|| "/usr/local".into());
+    Path::new(&prefix).join("bin/llama-server")
+}
+
+/// Download `target` (if needed), run it as `virtues-embed-next` on :18183, and
+/// point `VIRTUES_EMBED_NEXT_*` at it: the start of a model change, which the
+/// indexer then carries out (`search::next_index`). The unit is a copy of the
+/// box's embed unit when it has one, so it keeps that unit's flags and groups.
+///
+/// Always a restart, never `enable --now`: a next unit already running (an
+/// earlier change, overtaken by a newer recommendation) would otherwise keep
+/// serving the model it started with, and the index would be built for that.
+async fn stage_next(target: &Path) -> Result<(), String> {
+    fetch_model(target).await.map_err(|e| format!("download {EMBED_GGUF}: {e}"))?;
+    let body = match std::fs::read_to_string(unit_path(EMBED)) {
+        Ok(embed_unit) => retarget_unit(&embed_unit, target, 18183),
+        Err(_) => {
+            let bin = llama_server();
+            if !bin.exists() {
+                return Err(format!(
+                    "{} isn't on this server; update to the latest release first",
+                    bin.display()
+                ));
+            }
+            embed_unit(&bin, target, 18183)
+        }
+    };
+    std::fs::write(unit_path(NEXT), body).map_err(|e| format!("write {NEXT}.service: {e}"))?;
+    systemctl(&["daemon-reload"]);
+    systemctl(&["enable", NEXT]);
+    systemctl(&["restart", NEXT]);
+    if !wait_serving(NEXT_URL, target).await {
+        return Err(format!(
+            "{NEXT} didn't start serving {EMBED_GGUF}; journalctl -u {NEXT} -n 50"
+        ));
+    }
+    let set = [
+        ("VIRTUES_EMBED_NEXT_URL", NEXT_URL.to_string()),
+        ("VIRTUES_EMBED_NEXT_QUERY_PROMPT", EMBED_QUERY_PROMPT.to_string()),
+        ("VIRTUES_EMBED_NEXT_DOC_PROMPT", EMBED_DOC_PROMPT.to_string()),
+    ];
+    // Stored at the model's native width: no NEXT_DIMS.
+    let unset = ["VIRTUES_EMBED_NEXT_MODEL", "VIRTUES_EMBED_NEXT_FINGERPRINT", "VIRTUES_EMBED_NEXT_DIMS"];
+    box_env::edit(&box_env::path(), &set, &unset).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// After a release is running: on the recommended setup, retire the reranker,
@@ -136,7 +201,7 @@ fn retire_reranker() {
 /// Never fails an upgrade; a step that can't run says so and tries again on
 /// the next one.
 pub(crate) async fn start_recommended_change() {
-    if !on_recommended_setup() {
+    if !on_recommended_setup() || crate::inference_report::is_dragon_profile() {
         return;
     }
     retire_reranker();
@@ -152,34 +217,30 @@ pub(crate) async fn start_recommended_change() {
         .ok()
         .and_then(|t| unit_model(&t))
         .is_some_and(|m| m == target)
-        && box_env::get("VIRTUES_EMBED_NEXT_URL").is_some();
+        && box_env::get("VIRTUES_EMBED_NEXT_URL").as_deref() == Some(NEXT_URL);
     if under_way {
         return;
     }
 
     ui::step(&format!("moving search to {EMBED_GGUF} (search keeps working while it rebuilds)…"));
-    if let Err(e) = fetch_model(&target).await {
-        ui::warn(&format!("couldn't download {EMBED_GGUF}: {e}. The next update tries again."));
+    match stage_next(&target).await {
+        Ok(()) => ui::ok("search will switch to the new model once its index is built"),
+        Err(e) => ui::warn(&format!("{e}. The next update tries again.")),
+    }
+}
+
+/// A next sidecar nothing will use: its change was called off (the owner
+/// moved search to their own server) or never armed. Remove it whatever the
+/// setup, or every upgrade that restarts sidecars brings it back.
+fn remove_abandoned_next() {
+    if !unit_path(NEXT).exists() {
         return;
     }
-    if let Err(e) = std::fs::write(unit_path(NEXT), retarget_unit(&embed_unit, &target, 18183)) {
-        ui::warn(&format!("couldn't write {NEXT}.service: {e}"));
-        return;
-    }
-    systemctl(&["daemon-reload"]);
-    if !systemctl(&["enable", "--now", NEXT]) {
-        ui::warn(&format!("{NEXT} did not start; check `systemctl status {NEXT}`"));
-    }
-    let set = [
-        ("VIRTUES_EMBED_NEXT_URL", NEXT_URL.to_string()),
-        ("VIRTUES_EMBED_NEXT_QUERY_PROMPT", EMBED_QUERY_PROMPT.to_string()),
-        ("VIRTUES_EMBED_NEXT_DOC_PROMPT", EMBED_DOC_PROMPT.to_string()),
-    ];
-    // Stored at the model's native width: no NEXT_DIMS.
-    let unset = ["VIRTUES_EMBED_NEXT_MODEL", "VIRTUES_EMBED_NEXT_FINGERPRINT", "VIRTUES_EMBED_NEXT_DIMS"];
-    match box_env::edit(&box_env::path(), &set, &unset) {
-        Ok(_) => ui::ok("search will switch to the new model once its index is built"),
-        Err(e) => ui::warn(&format!("couldn't point the indexer at the new model: {e}")),
+    let armed = box_env::get("VIRTUES_EMBED_NEXT_URL").as_deref() == Some(NEXT_URL);
+    let serving = box_env::get("VIRTUES_EMBED_URL").as_deref() == Some(NEXT_URL);
+    if !armed && !serving {
+        ui::step(&format!("removing {NEXT} (no model change uses it)…"));
+        remove_unit(NEXT);
     }
 }
 
@@ -187,6 +248,7 @@ pub(crate) async fn start_recommended_change() {
 /// if a model change has finished (the indexer promoted the next endpoint),
 /// move the new model onto the usual unit and port and remove the old one.
 pub(crate) async fn settle_finished_change(restart_server: bool) {
+    remove_abandoned_next();
     if !on_recommended_setup() || !unit_path(NEXT).exists() {
         return;
     }
@@ -195,22 +257,33 @@ pub(crate) async fn settle_finished_change(restart_server: bool) {
     if !finished {
         return;
     }
-    let (Ok(next_unit), Ok(embed_unit)) = (
-        std::fs::read_to_string(unit_path(NEXT)),
-        std::fs::read_to_string(unit_path(EMBED)),
-    ) else {
+    let Some(new_model) = std::fs::read_to_string(unit_path(NEXT)).ok().and_then(|t| unit_model(&t))
+    else {
         return;
     };
-    let (Some(new_model), old_model) = (unit_model(&next_unit), unit_model(&embed_unit)) else {
+    // The index was built for what :18183 actually serves, which is what moves.
+    // If that isn't the model its unit names, moving the unit would put a model
+    // the index wasn't built for behind search.
+    if !wait_serving(NEXT_URL, &new_model).await {
+        ui::warn(&format!(
+            "{NEXT} isn't serving the model its unit names; search stays on it until it does"
+        ));
         return;
-    };
+    }
+    let embed_unit = std::fs::read_to_string(unit_path(EMBED)).ok();
+    let old_model = embed_unit.as_deref().and_then(unit_model);
 
     ui::step("moving the new search model onto its usual port…");
-    if let Err(e) = std::fs::write(unit_path(EMBED), retarget_unit(&embed_unit, &new_model, 18181)) {
+    let body = match &embed_unit {
+        Some(text) => retarget_unit(text, &new_model, 18181),
+        None => embed_unit_for(&new_model),
+    };
+    if let Err(e) = std::fs::write(unit_path(EMBED), body) {
         ui::warn(&format!("couldn't rewrite {EMBED}.service: {e}"));
         return;
     }
     systemctl(&["daemon-reload"]);
+    systemctl(&["enable", EMBED]);
     systemctl(&["restart", EMBED]);
     if !wait_serving(EMBED_URL, &new_model).await {
         ui::warn(&format!("{EMBED} didn't come up with the new model; search stays on {NEXT}"));
@@ -220,12 +293,12 @@ pub(crate) async fn settle_finished_change(restart_server: bool) {
         ui::warn(&format!("couldn't point search back at {EMBED_URL}: {e}"));
         return;
     }
+    // Restart before stopping next: the running server may hold an embedder
+    // pointed at :18183 for a few minutes.
     if restart_server {
         systemctl(&["restart", "virtues"]);
     }
-    systemctl(&["disable", "--now", NEXT]);
-    let _ = std::fs::remove_file(unit_path(NEXT));
-    systemctl(&["daemon-reload"]);
+    remove_unit(NEXT);
     if let Some(old) = old_model.filter(|o| *o != new_model) {
         let _ = std::fs::remove_file(old);
     }
@@ -241,8 +314,10 @@ async fn wait_serving(base_url: &str, model: &Path) -> bool {
         return false;
     };
     let name = model.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    for _ in 0..90 {
-        tokio::time::sleep(Duration::from_secs(1)).await;
+    for attempt in 0..90 {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
         if let Ok(r) = client.get(format!("{base_url}/v1/models")).send().await {
             if r.status().is_success() && r.text().await.is_ok_and(|b| b.contains(&name)) {
                 return true;
@@ -252,11 +327,15 @@ async fn wait_serving(base_url: &str, model: &Path) -> bool {
     false
 }
 
+fn embed_unit_for(model: &Path) -> String {
+    embed_unit(&llama_server(), model, 18181)
+}
+
 /// The embedding sidecar's unit, for a box that never had one (installed on
 /// its own server). Must match the installer's `EMBED_UNIT_TEMPLATE`
 /// (tools/virtues-installer/src/install.rs), which documents the flags; a box
-/// that has the unit keeps its own and only the model changes.
-fn embed_unit(llama_server: &Path, model: &Path) -> String {
+/// that has the unit keeps its own and only the model and port change.
+fn embed_unit(llama_server: &Path, model: &Path, port: u16) -> String {
     format!(
         "[Unit]\n\
          Description=Virtues embedding sidecar (llama-server, {stem})\n\
@@ -269,7 +348,7 @@ fn embed_unit(llama_server: &Path, model: &Path) -> String {
          Type=simple\n\
          User=virtues\n\
          Group=virtues\n\
-         ExecStart={bin} --embedding --pooling mean -m {model} --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0\n\
+         ExecStart={bin} --embedding --pooling mean -m {model} --host 127.0.0.1 --port {port} -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0\n\
          Restart=on-failure\n\
          RestartSec=5\n\
          \n\
@@ -294,10 +373,12 @@ fn embed_unit(llama_server: &Path, model: &Path) -> String {
 
 /// `virtues configure-inference --recommended`: go back from the owner's own
 /// server to the recommended setup. Starts the recommended model on this
-/// machine's CPU and moves search to it the way an update does: search keeps
-/// using the owner's server while the index is rebuilt for the new model in
-/// the background (`search::next_index`), then switches. When the index was
-/// already built with that model, it switches on the indexer's next run.
+/// machine's CPU as the next endpoint, the way an update does, so search keeps
+/// using the owner's server while the index is rebuilt for it (or switches on
+/// the indexer's next run when the index was already built with it). Always on
+/// :18183 first: the owner's server may be the old CPU sidecar on :18181, and
+/// replacing it in place would put a model the index wasn't built for behind
+/// search for the length of the rebuild. The next update moves it to :18181.
 pub async fn use_recommended() -> Result<(), crate::Error> {
     if !super::upgrade::running_as_root() {
         return Err(crate::Error::Other(
@@ -306,60 +387,26 @@ pub async fn use_recommended() -> Result<(), crate::Error> {
                 .into(),
         ));
     }
+    if crate::inference_report::is_dragon_profile() {
+        return Err(crate::Error::Other(
+            "this server's search runs on its NPU, which the installer sets up. To go back to \
+             it, re-run the installer."
+                .into(),
+        ));
+    }
+    let _lock = super::upgrade::acquire_lock()?;
     let target = models_dir().join(EMBED_GGUF);
-    let current_unit = std::fs::read_to_string(unit_path(EMBED)).ok();
-    if on_recommended_setup()
-        && current_unit.as_deref().and_then(unit_model).as_deref() == Some(target.as_path())
-        && box_env::get("VIRTUES_EMBED_URL").as_deref().unwrap_or(EMBED_URL) == EMBED_URL
-    {
+    let current = box_env::get("VIRTUES_EMBED_URL").unwrap_or_else(|| EMBED_URL.to_string());
+    let embed_model = std::fs::read_to_string(unit_path(EMBED)).ok().and_then(|t| unit_model(&t));
+    if on_recommended_setup() && current == EMBED_URL && embed_model.as_deref() == Some(target.as_path()) {
         ui::ok("search already runs on the recommended setup");
         return Ok(());
     }
 
-    ui::step(&format!("downloading {EMBED_GGUF}…"));
-    fetch_model(&target).await.map_err(|e| crate::Error::Other(format!("download: {e}")))?;
+    ui::step(&format!("starting {EMBED_GGUF} on this machine's CPU…"));
+    stage_next(&target).await.map_err(crate::Error::Other)?;
+    box_env::edit(&box_env::path(), &[("VIRTUES_INFERENCE", "bundled".to_string())], &[])?;
 
-    let body = match &current_unit {
-        Some(text) => retarget_unit(text, &target, 18181),
-        None => {
-            let prefix = box_env::get("INSTALL_PREFIX").unwrap_or_else(|| "/usr/local".into());
-            let bin = Path::new(&prefix).join("bin/llama-server");
-            if !bin.exists() {
-                return Err(crate::Error::Other(format!(
-                    "{} isn't on this server, so it can't run the recommended model. \
-                     Update to the latest release first (sudo virtues upgrade).",
-                    bin.display()
-                )));
-            }
-            embed_unit(&bin, &target)
-        }
-    };
-    std::fs::write(unit_path(EMBED), body)
-        .map_err(|e| crate::Error::Other(format!("write {EMBED}.service: {e}")))?;
-    systemctl(&["daemon-reload"]);
-    systemctl(&["enable", EMBED]);
-    systemctl(&["restart", EMBED]);
-    ui::step("waiting for the model to load…");
-    if !wait_serving(EMBED_URL, &target).await {
-        return Err(crate::Error::Other(format!(
-            "{EMBED} didn't start serving {EMBED_GGUF} on {EMBED_URL}. If your own server \
-             uses port 18181, stop it and run this again. Details: journalctl -u {EMBED} -n 50"
-        )));
-    }
-
-    // The move itself is a model change like any other: the next endpoint is
-    // the recommended model, and its settings replace the owner's server's
-    // when the index is ready.
-    let set = [
-        ("VIRTUES_INFERENCE", "bundled".to_string()),
-        ("VIRTUES_EMBED_NEXT_URL", EMBED_URL.to_string()),
-        ("VIRTUES_EMBED_NEXT_QUERY_PROMPT", EMBED_QUERY_PROMPT.to_string()),
-        ("VIRTUES_EMBED_NEXT_DOC_PROMPT", EMBED_DOC_PROMPT.to_string()),
-    ];
-    let unset = ["VIRTUES_EMBED_NEXT_MODEL", "VIRTUES_EMBED_NEXT_FINGERPRINT", "VIRTUES_EMBED_NEXT_DIMS"];
-    box_env::edit(&box_env::path(), &set, &unset)?;
-
-    let current = box_env::get("VIRTUES_EMBED_URL").unwrap_or_else(|| EMBED_URL.to_string());
     println!();
     ui::ok(&format!("{EMBED_GGUF} is running on this machine's CPU"));
     println!("     Search keeps using {current} while your index is rebuilt for it,");
@@ -369,35 +416,47 @@ pub async fn use_recommended() -> Result<(), crate::Error> {
 }
 
 /// Download the recommended model, verified against the checksum this binary
-/// pins. A copy already on disk is kept if it verifies.
+/// pins. A copy already on disk is kept if it verifies. Callers hold the
+/// upgrade lock; the part file is still this process's own, and is checked
+/// again on disk before it takes the model's name.
 async fn fetch_model(dest: &Path) -> Result<(), String> {
     if sha256_file(dest).is_ok_and(|h| h == EMBED_GGUF_SHA256) {
         return Ok(());
     }
     let dir = dest.parent().ok_or("the models dir has no parent")?;
     std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let part = dest.with_extension(format!("gguf.{}.part", std::process::id()));
+    let result = download_to(&part, dir).await.and_then(|()| {
+        let got = sha256_file(&part).map_err(|e| format!("read back: {e}"))?;
+        if got != EMBED_GGUF_SHA256 {
+            return Err(format!("checksum mismatch (expected {EMBED_GGUF_SHA256}, got {got})"));
+        }
+        std::fs::rename(&part, dest).map_err(|e| format!("rename: {e}"))
+    });
+    if result.is_err() {
+        let _ = std::fs::remove_file(&part);
+        return result;
+    }
+    let _ = Command::new("chown").args(["virtues:virtues"]).arg(dest).status();
+    Ok(())
+}
+
+async fn download_to(part: &Path, dir: &Path) -> Result<(), String> {
     let url = format!("{}/{EMBED_GGUF}", models_base());
     let mut resp = super::upgrade::send_get(&url).await.map_err(|e| e.to_string())?;
     if let Some(len) = resp.content_length() {
         super::upgrade::ensure_space(dir, len, "download the new search model")
             .map_err(|e| e.to_string())?;
     }
-    let part = dest.with_extension("gguf.part");
-    let mut file = std::fs::File::create(&part).map_err(|e| format!("create {}: {e}", part.display()))?;
-    let mut hash = Sha256::new();
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(part)
+        .map_err(|e| format!("create {}: {e}", part.display()))?;
     while let Some(chunk) = resp.chunk().await.map_err(|e| format!("download: {e}"))? {
-        hash.update(&chunk);
         file.write_all(&chunk).map_err(|e| format!("write: {e}"))?;
     }
-    file.flush().map_err(|e| format!("flush: {e}"))?;
-    let got = format!("{:x}", hash.finalize());
-    if got != EMBED_GGUF_SHA256 {
-        let _ = std::fs::remove_file(&part);
-        return Err(format!("checksum mismatch (expected {EMBED_GGUF_SHA256}, got {got})"));
-    }
-    std::fs::rename(&part, dest).map_err(|e| format!("rename: {e}"))?;
-    let _ = Command::new("chown").args(["virtues:virtues"]).arg(dest).status();
-    Ok(())
+    file.sync_all().map_err(|e| format!("flush: {e}"))
 }
 
 fn sha256_file(path: &Path) -> std::io::Result<String> {
@@ -411,17 +470,7 @@ fn sha256_file(path: &Path) -> std::io::Result<String> {
 mod tests {
     use super::*;
 
-    const UNIT: &str = "[Unit]\nDescription=Virtues embedding sidecar (llama-server, embeddinggemma-300m)\n\n[Service]\nExecStart=/usr/local/lib/virtues/current/llama-server --embedding --pooling mean -m /var/lib/virtues/models/embeddinggemma-300m-qat-Q8_0.gguf --host 127.0.0.1 --port 18181 -c 2048 -ngl 0\nRestart=on-failure\n";
-
-    #[test]
-    fn a_fresh_unit_serves_the_model_on_the_usual_port() {
-        let model = Path::new("/var/lib/virtues/models/embeddinggemma-2-Q8_0.gguf");
-        let unit = embed_unit(Path::new("/usr/local/bin/llama-server"), model);
-        assert_eq!(unit_model(&unit).as_deref(), Some(model));
-        assert!(unit.contains("ExecStart=/usr/local/bin/llama-server --embedding --pooling mean -m "));
-        assert!(unit.contains("--port 18181 "));
-        assert!(unit.contains("\nUser=virtues\n") && unit.contains("\nWantedBy=multi-user.target\n"));
-    }
+    const UNIT: &str = "[Unit]\nDescription=Virtues embedding sidecar (llama-server, embeddinggemma-300m)\n\n[Service]\nSupplementaryGroups=render video\nExecStart=/usr/local/lib/virtues/current/llama-server --embedding --pooling mean -m /var/lib/virtues/models/embeddinggemma-300m-qat-Q8_0.gguf --host 127.0.0.1 --port 18181 -c 2048 -ngl 0\nRestart=on-failure\n";
 
     #[test]
     fn a_retargeted_unit_serves_the_new_model_on_the_new_port() {
@@ -431,10 +480,31 @@ mod tests {
         assert!(next.contains("--port 18183 -c 2048 -ngl 0\n"), "{next}");
         assert!(next.contains("--pooling mean -m /var/lib/virtues/models/embeddinggemma-2-Q8_0.gguf --host"));
         assert!(next.contains("Description=Virtues embedding sidecar (llama-server, embeddinggemma-2-Q8_0)"));
-        assert!(next.contains("Restart=on-failure"));
+        assert!(next.contains("SupplementaryGroups=render video\n") && next.contains("Restart=on-failure"));
         assert_eq!(
             unit_model(UNIT).as_deref(),
             Some(Path::new("/var/lib/virtues/models/embeddinggemma-300m-qat-Q8_0.gguf"))
         );
+    }
+
+    /// A hand-edited unit: `=` forms and doubled spaces read and rewrite alike.
+    #[test]
+    fn equals_forms_and_extra_spaces_are_rewritten_too() {
+        let unit = "ExecStart=/bin/llama-server  --embedding --model=/m/old.gguf  --port=18181\n";
+        let model = Path::new("/m/new.gguf");
+        let next = retarget_unit(unit, model, 18183);
+        assert_eq!(unit_model(unit).as_deref(), Some(Path::new("/m/old.gguf")));
+        assert_eq!(unit_model(&next).as_deref(), Some(model));
+        assert!(next.contains("--port=18183"), "{next}");
+    }
+
+    #[test]
+    fn a_fresh_unit_serves_the_model_on_the_port_asked_for() {
+        let model = Path::new("/var/lib/virtues/models/embeddinggemma-2-Q8_0.gguf");
+        let unit = embed_unit(Path::new("/usr/local/bin/llama-server"), model, 18183);
+        assert_eq!(unit_model(&unit).as_deref(), Some(model));
+        assert!(unit.contains("ExecStart=/usr/local/bin/llama-server --embedding --pooling mean -m "));
+        assert!(unit.contains("--port 18183 "));
+        assert!(unit.contains("\nUser=virtues\n") && unit.contains("\nWantedBy=multi-user.target\n"));
     }
 }

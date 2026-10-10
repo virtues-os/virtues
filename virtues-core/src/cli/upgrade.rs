@@ -1121,8 +1121,9 @@ fn refresh_named(label: &str, src: &Path, dst: &Path) {
 /// `systemctl stop <unit>` — best-effort (a not-yet-running unit is fine).
 /// The inference sidecars actually installed on THIS box.
 ///
-/// We ship two backends: the llama.cpp sidecars (`virtues-embed` + `virtues-rerank`,
-/// on Jetson/DIY) and the QNN NPU daemon (`virtues-qnnd`, on Q6A). Hardcoding either
+/// We ship two backends: the llama.cpp sidecar (`virtues-embed`, plus
+/// `virtues-embed-next` during a model change and `virtues-rerank` on older
+/// installs) and the QNN NPU daemon (`virtues-qnnd`, on Q6A). Hardcoding either
 /// set is wrong for the other — assuming llama.cpp made a healthy Q6A box print
 /// "Unit virtues-embed.service not loaded" and a false "search/embeddings degraded"
 /// on every upgrade. So ask the filesystem instead of guessing.
@@ -1268,7 +1269,7 @@ async fn wait_healthy(port: u16) -> bool {
 /// permanently-stuck lock.
 const LOCK_PATH: &str = "/run/virtues-upgrade.lock";
 
-struct UpgradeLock;
+pub(super) struct UpgradeLock;
 impl Drop for UpgradeLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(LOCK_PATH);
@@ -1288,7 +1289,7 @@ pub fn is_lock_held(err: &crate::Error) -> bool {
     err.to_string().contains(LOCK_HELD)
 }
 
-fn acquire_lock() -> Result<UpgradeLock, crate::Error> {
+pub(super) fn acquire_lock() -> Result<UpgradeLock, crate::Error> {
     let path = Path::new(LOCK_PATH);
     loop {
         match fs::OpenOptions::new().write(true).create_new(true).open(path) {
