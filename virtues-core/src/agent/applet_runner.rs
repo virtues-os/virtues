@@ -97,7 +97,7 @@ pub async fn run_agent_loop(
     } else {
         Vec::new()
     };
-    let mut llm_messages = build_context_for_llm(&messages, None, 0, Some(&system_prompt), None);
+    let mut llm_messages = build_context_for_llm(&messages, None, 0, Some(&system_prompt), None, None);
 
     // Providers (Bedrock, zai) require the first non-system message to be a
     // user message. Two ways that breaks here: a folder applet with no linked
