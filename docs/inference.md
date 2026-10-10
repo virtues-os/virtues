@@ -105,12 +105,14 @@ What the flags are doing, since these are the ones that matter:
 - **`--pooling mean` for the embedder, `--pooling rank` for the reranker.**
   Not interchangeable. The reranker is a cross-encoder; `rank` is what makes
   `/v1/rerank` exist at all.
-- **`-ngl 0` on the embedder, `-ngl 99` on the reranker.** The two workloads
-  want opposite hardware - see the reasoning in
-  [What to run it on](/docs/setup/requirements#the-accelerator-question). If
-  you have no GPU, `-ngl 99` is harmless; if you do, the reranker needs
-  whatever group membership your distribution puts on the GPU device nodes,
-  or the backend quietly falls back to CPU.
+- **`-ngl 0` runs the model on the CPU, `-ngl 99` on a GPU.** The CPU
+  engine Virtues installs keeps the embedder on the CPU, because
+  EmbeddingGemma's math overflows the 16-bit arithmetic some GPU paths use
+  (see [What to run it on](/docs/setup/requirements#the-accelerator-question)).
+  On a GPU, the server needs whatever group membership your distribution puts
+  on the GPU device nodes, or the backend quietly falls back to CPU; when you
+  point Virtues at it, it checks the vectors match the CPU's before
+  switching.
 - **`-c/-b/-ub 2048`.** Both models handle longer, but Virtues indexes in
   windows of about 128 tokens and caps rerank documents near 256, so a larger
   context buys nothing and costs half a gigabyte of buffers.
@@ -205,9 +207,10 @@ is how search should run. Choose **On a server I've already set up** (or **On
 my own server**) and give it the URLs (`http://localhost:18181` and
 `http://localhost:18182` for the recipes above; the rerank prompt takes an
 empty answer). Already installed? Point the running server at yours with
-`virtues configure-inference --embed-url <URL>` instead. It then probes what you gave
-it and prints what it found: the vector width, a latency verdict, and whether
-the reranker answered.
+`virtues configure-inference --embed-url <URL>` instead. The installer probes
+what you gave it and prints what it found: the vector width, a latency
+verdict, and whether the reranker answered. `configure-inference` prints the
+width and whether the new server runs the same model as the current one.
 
 Everything it learned lands in the server's environment file at
 `/var/lib/virtues/virtues.env`, which is where you go to change any of it

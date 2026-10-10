@@ -151,7 +151,8 @@ row must produce a 429.
    afterwards.** `llama-server` links `libgomp.so.1`, a minimal Ubuntu cloud
    image does not carry it, and both inference sidecars then die at exec with
    status=127 — while the installer still exits 0 and the health check only
-   warns. Check `systemctl is-active virtues-embed virtues-rerank` rather than
+   warns. Check `systemctl is-active virtues-embed` (and `virtues-rerank` on
+   releases that still installed it) rather than
    trusting the install log.
 6. `/var/lib/virtues/virtues.env` (NOT `/etc/virtues/env` — see above):
    `VIRTUES_PUBLIC_URL` + `VIRTUES_REVIEW_PAIR_CODE`. Draw the code randomly

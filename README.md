@@ -70,8 +70,8 @@ board we build, open for pre-order. Either way you can leave with your data.
 
 Five steps on a spare Linux machine — a VM is fine.
 
-**1. Install.** Choose **Quick trial** when it asks about inference: a
-CPU-only model server and two small models, no configuration.
+**1. Install.** When it asks how search should run, take the default: the
+server's CPU, with the embedding model Virtues recommends and keeps current.
 
 ```bash
 curl -sSL https://virtues.com/sh | sudo sh
@@ -106,8 +106,10 @@ for HealthKit and location. The record starts filling from there.
 reading arrives tomorrow. `virtues status` shows what is flowing in the
 meantime; `virtues doctor` explains anything that isn't.
 
-The trial is slow by design. For real use, run your own embedding and rerank
-endpoints — [the full install](#the-full-install) has the commands and models.
+Search on the CPU is enough for everyday use. If the machine has a GPU or
+NPU, the installer links to [the guide](docs/setup/accelerators.md) for
+running search there; [the full install](#the-full-install) covers running
+your own embedding server.
 
 <a id="what-it-does"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-what-it-does-dark.svg"><img alt="What it does" src=".github/images/headings/h2-what-it-does-light.svg" height="28"></picture>
@@ -255,7 +257,7 @@ doesn't have to hold anyone's API keys.
 | Requirement | What, and why |
 |---|---|
 | **Host OS** | Debian 13+, Ubuntu 24.04 LTS+, or Fedora 40+, `x86_64` or `aarch64`, with systemd and root. A VM is fine; a container is not. |
-| **Hardware** | 8 GB RAM and an SSD. **No GPU required** — the model that writes is remote, and of the two local retrieval models only the reranker meaningfully gains from one. |
+| **Hardware** | 8 GB RAM and an SSD. **No GPU required** — the model that writes is remote, and the one local retrieval model runs on the CPU. |
 | **Storage** | NVMe or SATA SSD. The installer classifies *and measures* the disk first: eMMC is workable to ~100k items, microSD is slow and wears out, NFS/SMB is a corruption risk. |
 | **Inference** | Two endpoints you run: `/v1/embeddings` (required) and `/v1/rerank` (optional), on loopback, LAN, or VPN — never a public address. |
 | **Network** | Outbound 443 only. No port forwarding, no inbound rule, no hostname. |
@@ -268,21 +270,21 @@ microSD. Full reasoning behind each number in
 <a id="inference"></a>
 ### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-inference-dark.svg"><img alt="Inference" src=".github/images/headings/h3-inference-light.svg" height="22"></picture>
 
-**Start this before you install.** The first thing the installer asks, before
-it touches a package or a disk, is where the retrieval models live. We provision inference on exactly one board,
-our own; we do not install GPU or NPU inference software on hardware we can't
-test, so on your machine you own the endpoints and we validate them at the
-door.
+**Only if you want your own server.** The first thing the installer asks,
+before it touches a package or a disk, is how search should run. The default
+runs the recommended embedding model on the CPU. We don't install GPU or NPU
+inference software on hardware we can't test, so for those you run the
+server and we validate it at the door.
 
 [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` speaks both
 contracts. These are the invocations our own systemd units use:
 
 ```bash
-# embedder — CPU is the right answer here (fp32 activations)
+# embedder — -ngl 0 keeps it on the CPU (its math overflows fp16 on some GPU paths)
 llama-server --embedding --pooling mean -m embeddinggemma-2-Q8_0.gguf \
   --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0
 
-# reranker — the half that wants a GPU; drop -ngl for CPU
+# reranker — optional; search uses one only if you turn reranking on
 llama-server --rerank --pooling rank -m gte-reranker-modernbert-base-Q8_0.gguf \
   --host 127.0.0.1 --port 18182 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 99
 ```
@@ -368,8 +370,8 @@ tomorrow. `virtues status` is where you watch all three.
 | Config | `/var/lib/virtues/virtues.env` — edit, then `sudo systemctl restart virtues` |
 | Data | `/var/lib/virtues` — the Postgres cluster and the file store. `DATA_DIR` at install moves it |
 | Models | `/var/lib/virtues/models` |
-| Units | `virtues`, plus `virtues-embed` / `virtues-rerank` on the bundled path |
-| Ports | `8000` server · `5432` Postgres · `18181`/`18182` embed and rerank |
+| Units | `virtues`, plus `virtues-embed` when search runs on the CPU |
+| Ports | `8000` server · `5432` Postgres · `18181` embedding |
 | Logs | `journalctl -u virtues -f` |
 
 <img src=".github/images/shots/doctor.png" alt="virtues doctor output: an Inference ledger naming the accelerator, the embedding and rerank models and both endpoints serving; a Reach ledger with the LAN address and three paired devices; then two warnings — no iroh identity yet, and no relay configured — each printed with the command that resolves it." width="100%">

@@ -8,8 +8,9 @@ Search runs on your server's CPU unless you change it. The installer sets up a
 small local engine and its model, and that is enough for everyday use: a few
 minutes of work a day for a typical record.
 
-A GPU or NPU makes two things much faster: every search, and the first index
-of your history, which on a CPU can take hours. The installer tells you when it
+A GPU or NPU can make two things faster: every search, and the first index
+of your history, which on a CPU can take hours. How much depends on the
+hardware. The installer tells you when it
 finds one and links here. Setting it up takes about ten minutes, and you can
 do it any time after installing.
 
@@ -33,14 +34,16 @@ curl -fLO https://github.com/ggml-org/llama.cpp/releases/download/b11507/llama-b
 tar -xzf llama-b11507-bin-ubuntu-vulkan-x64.tar.gz
 ```
 
-**2. Download the model** Virtues uses, so your index stays valid:
+**2. Download the model** Virtues recommends. When Settings → Search shows
+that model, your index stays valid; otherwise the switch rebuilds it:
 
 ```bash
 curl -fLO https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/bfcd298762cc34d0357ece5ebdd31791a3a374d8/embeddinggemma-2-Q8_0.gguf
 ```
 
 **3. Start the server on the accelerator.** `-ngl 99` puts the whole model on
-it:
+it. Some GPU paths compute this model wrong, because its math overflows
+16-bit arithmetic; step 4 catches that and stops before anything changes.
 
 ```bash
 ./llama-b11507/llama-server --embedding --pooling mean \
