@@ -124,7 +124,7 @@
 			const a = await getApplet(id);
 			action = a;
 			windowShellStore.updateTab(tab.id, { label: a.name });
-			const [l, d, p] = await Promise.allSettled([getAppletLog(id), getRunsByDay(35), getAppletPages(id)]);
+			const [l, d, p] = await Promise.allSettled([getAppletLog(id), getRunsByDay(49), getAppletPages(id)]);
 			log = l.status === 'fulfilled' ? l.value : [];
 			pages = p.status === 'fulfilled' ? p.value : [];
 			if (d.status === 'fulfilled') {

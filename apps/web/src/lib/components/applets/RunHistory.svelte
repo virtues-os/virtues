@@ -45,7 +45,7 @@
 	} = $props();
 
 	// Weeks start on Monday. Four whole weeks plus this one so far, which
-	// stays inside the 35 days the home loads.
+	// stays inside the 49 days the home loads.
 	const today = new Date();
 	const weekday = (today.getDay() + 6) % 7;
 	const shown = lastDays(28 + weekday + 1, today);

@@ -6,11 +6,12 @@
 	import type { Applet } from '$lib/api/client';
 
 	import {
-		appletDays,
+		appletSpans,
 		countRuns,
 		DAY_LABEL,
-		lastDays,
+		recentSpans,
 		recentSummary,
+		spanDays,
 		type DayIndex
 	} from '$lib/applets/days';
 
@@ -38,10 +39,13 @@
 		technical: Snippet;
 	} = $props();
 
-	const week = lastDays(7);
-	const states = $derived(appletDays(action, index, week));
-	const counts = $derived(countRuns(index, action.id, week));
-	const summary = $derived(recentSummary(states, counts));
+	// A dot a day, or a dot a week for an applet that runs weekly or less.
+	const spans = $derived(recentSpans(action.schedule));
+	const unit = $derived(spanDays(action.schedule) === 7 ? 'weeks' : 'days');
+	const states = $derived(appletSpans(action, index, spans));
+	const counts = $derived(countRuns(index, action.id, spans.flat()));
+	const summary = $derived(recentSummary(states, counts, unit));
+	const spanLabel = (span: string[]) => (span.length === 1 ? span[0] : `${span[0]} to ${span.at(-1)}`);
 	// Red only for what needs you: a failure, or today's missed run.
 	const weekProblem = $derived((counts.get('error') ?? 0) > 0 || states.at(-1) === 'missed');
 
@@ -58,12 +62,12 @@
 				onclick={() => (historyOpen = !historyOpen)}
 			>
 				{#if daysErr}
-					<span class="row-label">Your server couldn't read the last 7 days</span>
+					<span class="row-label">Your server couldn't read its recent runs</span>
 				{:else}
 					<span class="history-body">
 						<span class="dots">
-							{#each states as state, i (week[i])}
-								<DayDot {state} size="md" title={`${week[i]}: ${DAY_LABEL[state]}`} />
+							{#each states as state, i (spans[i][0])}
+								<DayDot {state} size="md" title={`${spanLabel(spans[i])}: ${DAY_LABEL[state]}`} />
 							{/each}
 						</span>
 						<span class="summary" class:problem={weekProblem}>
