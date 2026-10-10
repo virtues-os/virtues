@@ -2,6 +2,7 @@
 	import Button from '$lib/components/Button.svelte';
 	import Card from '$lib/components/Card.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import ShareSheet from '$lib/components/applets/ShareSheet.svelte';
 	import DayDot from '$lib/components/applets/DayDot.svelte';
 	import AppletInfo from '$lib/components/applets/AppletInfo.svelte';
@@ -19,6 +20,7 @@
 		type AppletPage,
 		runApplet,
 		messageApplet,
+		patchApplet,
 		type Applet,
 		type AppletLogEntry,
 		type RunDay
@@ -28,6 +30,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import { indexRunDays } from '$lib/applets/days';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
+	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { explainRunError } from '$lib/sources/run-errors';
 
 	/**
@@ -218,6 +221,25 @@
 		return stopPolling;
 	});
 
+	// The switch is the one thing every applet's page offers, so it sits in
+	// the header rather than in a card below the work.
+	let saving = $state(false);
+	async function setEnabled(enabled: boolean) {
+		if (!action) return;
+		saving = true;
+		err = null;
+		try {
+			// Turning a finished applet on clears `archived_at` on the server:
+			// there is no "on and finished" state.
+			action = await patchApplet(action.id, { enabled });
+			void appletsStore.load();
+		} catch (e) {
+			err = e instanceof Error ? e.message : String(e);
+		} finally {
+			saving = false;
+		}
+	}
+
 	async function runNow() {
 		if (!action) return;
 		busy = true;
@@ -289,7 +311,8 @@
 	const status = $derived.by(() => {
 		if (!action) return '';
 		if (action.archived_at) return `Finished ${new Date(action.archived_at).toLocaleDateString()}`;
-		if (!action.enabled) return 'Off';
+		// Off keeps its schedule in view: it's what turning it back on brings back.
+		if (!action.enabled) return `Off · ${describeSchedule(action.schedule)}`;
 		return describeSchedule(action.schedule);
 	});
 
@@ -342,28 +365,43 @@
 							{status}
 						</p>
 						{#if failedNow}
-							<!-- A fact about this applet, under its name: one mark and
-							     one sentence. Its fix (Retry) sits with the header's
-							     buttons, so the line stays as tight as the one above it. -->
+							<!-- A fact about this applet, under its name: one mark, one
+							     sentence, and its fix as a word at the end, so the line
+							     stays as tight as the one above it. -->
 							<p class="problem">
 								<DayDot state="failed" />
 								<span>
 									The last run failed {relativeTime(failedNow.last_at)}.
 									{#if failure}{failure.title}. {failure.remedy}{:else if failedNow.error}{errorHeadline(failedNow.error)}{/if}
+									{#if canRunNow}<TextAction inline onclick={runNow} disabled={busy}>Retry</TextAction>{/if}
 								</span>
 							</p>
 						{:else if overdue}
 							<p class="problem">
 								<DayDot state="missed" />
-								<span>It was due {relativeTime(action.next_due_at)} and hasn't run.</span>
+								<span>
+									It was due {relativeTime(action.next_due_at)} and hasn't run.
+									{#if canRunNow}<TextAction inline onclick={runNow} disabled={busy}>Run now</TextAction>{/if}
+								</span>
 							</p>
 						{/if}
 					</div>
 					<div class="head-actions">
-						{#if (failedNow || overdue) && canRunNow}
-							<Button variant="secondary" size="sm" onclick={runNow} disabled={busy}>
-								{failedNow ? 'Retry' : 'Run now'}
+						{#if action.archived_at}
+							<Button variant="secondary" size="sm" onclick={() => setEnabled(true)} disabled={saving}>
+								Turn back on
 							</Button>
+						{:else}
+							<button
+								type="button"
+								class="switch"
+								class:on={action.enabled}
+								role="switch"
+								aria-checked={action.enabled}
+								aria-label="Run this applet"
+								disabled={saving}
+								onclick={() => setEnabled(!action!.enabled)}
+							></button>
 						{/if}
 						{#if chatId && made !== 'chat'}
 							<Button variant="secondary" size="sm" icon="ri:chat-3-line" onclick={openConversation}>
@@ -600,6 +638,50 @@
 		align-items: center;
 		gap: 8px;
 		flex: none;
+	}
+
+	.switch {
+		width: 44px;
+		height: 26px;
+		border-radius: 999px;
+		background: var(--color-border);
+		position: relative;
+		flex: none;
+		border: 0;
+		cursor: pointer;
+		transition: background 150ms ease;
+		padding: 0;
+	}
+	.switch.on {
+		background: var(--color-success);
+	}
+	.switch::after {
+		content: '';
+		position: absolute;
+		top: 3px;
+		left: 3px;
+		width: 20px;
+		height: 20px;
+		border-radius: 50%;
+		background: var(--color-background);
+		transition: transform 150ms ease;
+	}
+	.switch.on::after {
+		transform: translateX(18px);
+	}
+	.switch:focus-visible {
+		outline: 2px solid var(--color-foreground);
+		outline-offset: 3px;
+	}
+	.switch:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.switch,
+		.switch::after {
+			transition: none;
+		}
 	}
 
 	.problem {
