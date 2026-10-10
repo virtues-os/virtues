@@ -79,7 +79,7 @@ describe('appletDestination', () => {
 			'Morning Examen pages'
 		);
 		expect(appletDestination(a({ config: { delivers: { kind: 'page' } } }))).toBe('Pages');
-		expect(appletDestination(a({ origin: 'system' }))).toBe('This server');
+		expect(appletDestination(a({ origin: 'system' }))).toBe('-');
 		expect(appletDestination(a({ has_face: true }))).toBe('Its dashboard');
 		expect(appletDestination(a({ config: { chat_id: 'c' } }))).toBe('Its conversation');
 		expect(appletDestination(a({}))).toBe('-');

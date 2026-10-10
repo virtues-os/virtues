@@ -1,17 +1,10 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
-	import Button from '$lib/components/Button.svelte';
 	import Card from '$lib/components/Card.svelte';
-	import Modal from '$lib/components/Modal.svelte';
 	import DayDot from './DayDot.svelte';
-	import { appletsStore } from '$lib/stores/applets.svelte';
-	import {
-		deleteApplet,
-		getAppletData,
-		type Applet,
-		type AppletData
-	} from '$lib/api/client';
+	import type { Applet } from '$lib/api/client';
+
 	import {
 		appletDays,
 		countRuns,
@@ -22,8 +15,8 @@
 	} from '$lib/applets/days';
 
 	/**
-	 * An applet's Info: how its last 7 days went, then Technical details and
-	 * Delete. Its switch and schedule are in the page's header. Run history
+	 * An applet's Info: how its last 7 days went, then Technical details. Its
+	 * switch and schedule are in the page's header, Delete in its More menu. Run history
 	 * and Technical details open in place: each is one tap from the page, and
 	 * neither holds enough to need a page of its own.
 	 */
@@ -34,8 +27,7 @@
 		historyOpen = $bindable(false),
 		technicalOpen = $bindable(false),
 		history,
-		technical,
-		onDeleted
+		technical
 	}: {
 		action: Applet;
 		index: DayIndex;
@@ -44,10 +36,7 @@
 		technicalOpen?: boolean;
 		history: Snippet;
 		technical: Snippet;
-		onDeleted: () => void;
 	} = $props();
-
-	let err = $state<string | null>(null);
 
 	const week = lastDays(7);
 	const states = $derived(appletDays(action, index, week));
@@ -55,36 +44,7 @@
 	const summary = $derived(recentSummary(states, counts));
 	// Red only for what needs you: a failure, or today's missed run.
 	const weekProblem = $derived((counts.get('error') ?? 0) > 0 || states.at(-1) === 'missed');
-	const isSystem = $derived(action.owner === 'system');
 
-	// Delete confirm. Loads the applet's owned tables so the user can decide
-	// whether to also drop its data (default: keep — data outlives the applet).
-	let deleteOpen = $state(false);
-	let deleteData = $state<AppletData | null>(null);
-	let dropData = $state(false);
-	let deleting = $state(false);
-
-	async function openDelete() {
-		deleteOpen = true;
-		dropData = false;
-		deleteData = null;
-		deleteData = await getAppletData(action.id);
-	}
-
-	async function doDelete() {
-		deleting = true;
-		err = null;
-		try {
-			await deleteApplet(action.id, dropData);
-			deleteOpen = false;
-			void appletsStore.load();
-			onDeleted();
-		} catch (e) {
-			err = e instanceof Error ? e.message : String(e);
-		} finally {
-			deleting = false;
-		}
-	}
 </script>
 
 <div class="info">
@@ -133,50 +93,8 @@
 			<div class="opened">{@render technical()}</div>
 		{/if}
 	</Card>
-
-	{#if err}
-		<p class="error-msg">{err}</p>
-	{/if}
-
-	{#if !isSystem}
-		<div class="delete-row">
-			<Button variant="danger" size="sm" onclick={openDelete}>Delete applet</Button>
-		</div>
-	{/if}
 </div>
 
-<Modal open={deleteOpen} onClose={() => (deleteOpen = false)} title="Delete applet" width="sm">
-	<div class="del">
-		<p>Delete <strong>{action.name}</strong>? This removes the applet and can't be undone.</p>
-		{#if deleteData && deleteData.tables.length > 0}
-			<label class="drop-opt">
-				<input type="checkbox" bind:checked={dropData} />
-				<span>
-					Also permanently delete its data
-					<span class="dim"
-						>({deleteData.tables.length}
-						{deleteData.tables.length === 1 ? 'table' : 'tables'} in
-						<code>{deleteData.schema}</code>)</span
-					>
-				</span>
-			</label>
-			<ul class="tbl-list">
-				{#each deleteData.tables as t (t)}
-					<li><code>{t}</code></li>
-				{/each}
-			</ul>
-			{#if !dropData}
-				<p class="dim">Your server keeps its data, which can outlive the applet.</p>
-			{/if}
-		{/if}
-	</div>
-	{#snippet footer()}
-		<Button variant="ghost" onclick={() => (deleteOpen = false)} disabled={deleting}>Cancel</Button>
-		<Button variant="danger" onclick={doDelete} disabled={deleting}>
-			{deleting ? 'Deleting…' : dropData ? 'Delete applet and data' : 'Delete applet'}
-		</Button>
-	{/snippet}
-</Modal>
 
 <style>
 	.info {
@@ -231,10 +149,6 @@
 		border-top: 1px solid var(--color-border);
 	}
 
-	.delete-row {
-		display: flex;
-		justify-content: center;
-	}
 	.history-body {
 		flex: 1;
 		min-width: 0;
@@ -250,37 +164,5 @@
 	.summary.problem {
 		color: var(--color-error);
 	}
-	.error-msg {
-		margin: 0;
-		font-size: 13px;
-		color: var(--color-error);
-	}
 
-	.del {
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-		font-size: 14px;
-	}
-	.del p {
-		margin: 0;
-	}
-	.drop-opt {
-		display: flex;
-		align-items: flex-start;
-		gap: 8px;
-		cursor: pointer;
-	}
-	.tbl-list {
-		margin: 0;
-		padding-left: 24px;
-		max-height: 8rem;
-		overflow-y: auto;
-	}
-	.del code {
-		font-size: 13px;
-	}
-	.dim {
-		color: var(--color-foreground-subtle);
-	}
 </style>
