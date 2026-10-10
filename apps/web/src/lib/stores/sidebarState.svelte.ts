@@ -26,7 +26,7 @@ export const SIDEBAR_COLLAPSE_AT = 148;
  * rail + gap + panel, so both read these — a rail narrower than the aside
  * thinks it is opens a strip of desk between the panel and the pane.
  */
-export const RAIL_WIDTH = 72;
+export const RAIL_WIDTH = 64;
 export const RAIL_COMPACT_WIDTH = 48;
 
 function clampWidth(v: number): number {
