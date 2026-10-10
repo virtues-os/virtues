@@ -2204,6 +2204,42 @@ export function getChat<T = unknown>(id: string, signal?: AbortSignal): Promise<
 export function getChatUsage<T = unknown>(id: string): Promise<T> {
 	return apiGet<T>(`/chats/${encodeURIComponent(id)}/usage`);
 }
+/** One piece of the next message's request: a prompt section, a tool, or a
+ *  message as it replays. `tokens` is an estimate (four characters a token). */
+export interface NextTurnPart {
+	name: string;
+	tokens: number;
+	/** Prompt sections only: before the cache breakpoint. */
+	cached?: boolean;
+	text?: string;
+}
+/** One of the chat's latest model calls and what it read from cache. */
+export interface CallReading {
+	at: string;
+	step: number;
+	prompt_tokens: number;
+	cache_read_tokens: number;
+	/** The most the cache could have served: the longest earlier request
+	 *  this one started with. */
+	reusable_tokens: number;
+	/** Where this call first left the one before it; empty when it only
+	 *  added to it. */
+	diverged_at: string;
+}
+export interface NextTurnContext {
+	model: string;
+	mode: string;
+	sections: NextTurnPart[];
+	tools: NextTurnPart[];
+	messages: NextTurnPart[];
+	recent_calls: CallReading[];
+}
+/** What the chat's next message would be sent with, built by the send's own
+ *  code (`chat::next_turn_preview`). `inputs` is what the composer would send
+ *  beside the message (`chatInstances.turnInputs`). */
+export function getNextTurnContext(id: string, inputs: object): Promise<NextTurnContext> {
+	return apiSend<NextTurnContext>('POST', `/chats/${encodeURIComponent(id)}/context`, inputs);
+}
 /** What a URL's thing is called and wears now (`refs::resolve_identities`). */
 export interface RefIdentity {
 	url: string;

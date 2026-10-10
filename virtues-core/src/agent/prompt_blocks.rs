@@ -98,12 +98,13 @@ pub struct Block<'a> {
     pub body: BoxFuture<'a, Option<String>>,
 }
 
-/// One rendered block, for audits: which tag produced how many chars.
-#[derive(Debug)]
+/// One rendered block: which tag produced which text, and whether it fell
+/// after the cache breakpoint. What the Context panel lists as the prompt.
+#[derive(Debug, Clone)]
 pub struct RenderedBlock {
     pub tag: &'static str,
-    #[allow(dead_code)]
-    pub chars: usize,
+    pub text: String,
+    pub in_tail: bool,
 }
 
 /// Render the blocks: fan the bodies out concurrently, concatenate strictly
@@ -135,7 +136,7 @@ pub async fn assemble(blocks: Vec<Block<'_>>) -> (String, String, Vec<RenderedBl
             in_tail = true;
         }
         if let Some(body) = body {
-            rendered.push(RenderedBlock { tag: meta.tag, chars: body.chars().count() });
+            rendered.push(RenderedBlock { tag: meta.tag, text: body.clone(), in_tail });
             if in_tail {
                 volatile.push_str(&body);
             } else {

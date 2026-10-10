@@ -979,7 +979,7 @@ async fn build_system_prompt(
     timezone: Option<&str>,
     mode: &ChatMode,
     project_id: Option<&str>,
-) -> (String, String) {
+) -> SystemPrompt {
     use crate::api::assistant_profile::get_assistant_name;
     use crate::api::profile::get_display_name;
 
@@ -1000,9 +1000,9 @@ async fn build_system_prompt(
                 0
             });
         // Whole-prompt stable: it changes only when the reply count does.
-        return (
+        return SystemPrompt::whole(
+            "interview",
             crate::agent::prompt::build_interview_prompt(&assistant_name, &user_name, their_replies),
-            String::new(),
         );
     }
 
@@ -1018,13 +1018,13 @@ async fn build_system_prompt(
         };
         // Regenerated per turn, but its BYTES change only when a step does, so
         // it is stable for caching: it busts once when the state moves on.
-        return (
+        return SystemPrompt::whole(
+            "getting_started",
             crate::agent::prompt::build_getting_started_prompt(&assistant_name, &user_name, &block),
-            String::new(),
         );
     }
 
-    let (stable, volatile, _rendered) = build_system_prompt_blocks(
+    let (stable, tail, blocks) = build_system_prompt_blocks(
         pool,
         chat_id,
         active_page,
@@ -1035,7 +1035,244 @@ async fn build_system_prompt(
         &user_name,
     )
     .await;
-    (stable, volatile)
+    SystemPrompt { stable, tail, blocks }
+}
+
+/// The system prompt a turn is sent, split at the cache breakpoint: `stable`
+/// carries the marker, `tail` is the per-turn rest. `blocks` are the sections
+/// both were concatenated from, in order, which the Context panel lists.
+pub(crate) struct SystemPrompt {
+    pub stable: String,
+    pub tail: String,
+    pub blocks: Vec<crate::agent::prompt_blocks::RenderedBlock>,
+}
+
+impl SystemPrompt {
+    /// A room whose prompt is one piece (the interview, getting started).
+    fn whole(tag: &'static str, text: String) -> Self {
+        let blocks = vec![crate::agent::prompt_blocks::RenderedBlock { tag, text: text.clone(), in_tail: false }];
+        Self { stable: text, tail: String::new(), blocks }
+    }
+}
+
+/// The answer contract of a scoped (grounded) chat: retrieval is hard-filtered
+/// to the project's items (ScopeMode::Exclusive in ToolContext), and this
+/// line says so. Only meaningful inside a project.
+const SCOPED_CHAT_LINE: &str = "\n\nSCOPED CHAT: this conversation is grounded in the current project's \
+     materials only. Retrieval is restricted to them. Answer ONLY from what \
+     retrieval returns, citing each load-bearing claim with its ref link. If \
+     the materials don't cover the question, say so plainly — do not answer \
+     from general knowledge.";
+
+/// What a turn's first model call carries besides its tools: the system
+/// prompt and the conversation as it replays. The send and the Context
+/// panel's preview both build it here, so the preview is the request rather
+/// than a second guess at it.
+pub(crate) struct TurnRequest {
+    pub system: SystemPrompt,
+    pub messages: Vec<serde_json::Value>,
+}
+
+async fn assemble_turn_request(
+    pool: &PgPool,
+    chat_id: &str,
+    mode: &ChatMode,
+    active_page: Option<&ActivePage>,
+    timezone: Option<&str>,
+    scoped: bool,
+    history: &History,
+) -> TurnRequest {
+    let mut system =
+        build_system_prompt(pool, Some(chat_id), active_page, timezone, mode, history.project_id.as_deref()).await;
+    if scoped && history.project_id.is_some() {
+        system.stable.push_str(SCOPED_CHAT_LINE);
+        let at = system.blocks.iter().position(|b| b.in_tail).unwrap_or(system.blocks.len());
+        system.blocks.insert(
+            at,
+            crate::agent::prompt_blocks::RenderedBlock { tag: "scoped", text: SCOPED_CHAT_LINE.to_string(), in_tail: false },
+        );
+    }
+    let messages = build_context_for_llm(
+        &history.messages,
+        history.conversation_summary.as_deref(),
+        history.summary_up_to_index as usize,
+        Some(&system.stable),
+        Some(&system.tail),
+        // The model's "now" is the newest message's send time; the system
+        // prompt carries no clock (see `prompt_blocks::held_per_chat`).
+        Some(timezone.unwrap_or("UTC")),
+    );
+    TurnRequest { system, messages }
+}
+
+/// What the Context panel asks with: the inputs the next send will carry,
+/// read by the client from the same getters its send reads.
+#[derive(Debug, Deserialize)]
+pub struct NextTurnRequest {
+    #[serde(rename = "agentMode", default = "default_agent_mode")]
+    pub agent_mode: String,
+    #[serde(rename = "chatMode", default = "default_chat_mode")]
+    pub chat_mode: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub timezone: Option<String>,
+    #[serde(rename = "activePage", default)]
+    pub active_page: Option<ActivePageContext>,
+}
+
+/// The next message's request before the message itself, as the Context
+/// panel lists it, and what the chat's latest calls read from cache.
+#[derive(Debug, Serialize)]
+pub struct NextTurnPreview {
+    pub model: String,
+    pub mode: String,
+    /// The system prompt's sections in order. `cached` is the side of the
+    /// cache breakpoint the section is on.
+    pub sections: Vec<PreviewPart>,
+    pub tools: Vec<PreviewPart>,
+    /// The conversation as it replays, oldest first.
+    pub messages: Vec<PreviewPart>,
+    pub recent_calls: Vec<crate::agent::cache_watch::CallReading>,
+}
+
+/// One piece of the request: a prompt section, a tool, or a message.
+/// `tokens` is the usual four-characters-a-token estimate.
+#[derive(Debug, Serialize)]
+pub struct PreviewPart {
+    pub name: String,
+    pub tokens: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached: Option<bool>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub text: String,
+}
+
+/// POST /api/chats/:id/context. Built by the send's own code
+/// (`assemble_turn_request`), so what it shows is what goes. It writes
+/// nothing, though it may take the chat's held present, which the next send
+/// would have taken anyway.
+pub async fn next_turn_preview(
+    pool: &PgPool,
+    yjs: &YjsState,
+    chat_id: &str,
+    request: NextTurnRequest,
+) -> Result<NextTurnPreview, Response> {
+    let mode = ChatMode::resolve(pool, chat_id, &request.agent_mode).await;
+    if matches!(mode, ChatMode::Local) {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ChatError {
+                error: "Nothing goes to a provider".to_string(),
+                details: Some("This chat runs on your server's own model.".to_string()),
+            }),
+        )
+            .into_response());
+    }
+    let model = match crate::api::model_choice::resolve_turn_model(pool, request.model.as_deref(), &mode).await {
+        Ok(m) => m,
+        Err(crate::error::Error::InvalidInput(detail)) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ChatError { error: "Invalid model".to_string(), details: Some(detail) }),
+            )
+                .into_response());
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "failed to resolve the model for a context preview");
+            return Err(internal("Failed to resolve model"));
+        }
+    };
+    let history = load_saved_history(pool, chat_id).await?;
+    let active_page = match request.active_page.as_ref() {
+        Some(ctx) => resolve_active_page(pool, yjs, ctx).await,
+        None => None,
+    };
+    let TurnRequest { system, messages } = assemble_turn_request(
+        pool,
+        chat_id,
+        &mode,
+        active_page.as_ref(),
+        request.timezone.as_deref(),
+        request.chat_mode == "scoped",
+        &history,
+    )
+    .await;
+
+    let part = |name: &str, cached: Option<bool>, text: String| PreviewPart {
+        name: name.to_string(),
+        tokens: crate::api::token_estimation::estimate_tokens(&text),
+        cached,
+        text,
+    };
+    let mut sections: Vec<PreviewPart> =
+        system.blocks.iter().map(|b| part(b.tag, Some(!b.in_tail), b.text.clone())).collect();
+    // A compaction summary rides at the end of the cached system message,
+    // appended by `build_context_for_llm` rather than rendered as a block.
+    let first_system = messages.first().map(preview_text).unwrap_or_default();
+    let summary = first_system
+        .strip_prefix(system.stable.as_str())
+        .map(|rest| rest.strip_suffix(system.tail.as_str()).unwrap_or(rest).trim().to_string())
+        .unwrap_or_default();
+    if !summary.is_empty() {
+        let at = system.blocks.iter().position(|b| b.in_tail).unwrap_or(system.blocks.len());
+        sections.insert(at, part("compacted_conversation", Some(true), summary));
+    }
+    let tools = mode
+        .tools()
+        .iter()
+        .map(|tool| {
+            let name = tool["function"]["name"].as_str().unwrap_or("?").to_string();
+            PreviewPart {
+                tokens: crate::api::token_estimation::estimate_tokens(&tool.to_string()),
+                name,
+                cached: None,
+                text: String::new(),
+            }
+        })
+        .collect();
+    let replayed = messages
+        .iter()
+        .skip_while(|m| m["role"] == "system")
+        .map(|m| part(m["role"].as_str().unwrap_or("?"), None, preview_text(m)))
+        .collect();
+
+    Ok(NextTurnPreview {
+        model,
+        mode: mode.wire_name().to_string(),
+        sections,
+        tools,
+        messages: replayed,
+        recent_calls: crate::agent::cache_watch::recent_calls(chat_id),
+    })
+}
+
+/// A request message as text: its text blocks, a placeholder for each
+/// attachment (the bytes are no use on screen), then its tool calls.
+fn preview_text(message: &serde_json::Value) -> String {
+    let mut out = match &message["content"] {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(blocks) => blocks
+            .iter()
+            .filter_map(|b| match b["type"].as_str() {
+                Some("text") => b["text"].as_str().map(str::to_string),
+                Some("image_url") => Some("[image]".to_string()),
+                Some("file") => Some(format!("[file: {}]", b["file"]["filename"].as_str().unwrap_or("file"))),
+                Some("input_audio") => Some("[audio]".to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    };
+    for call in message["tool_calls"].as_array().into_iter().flatten() {
+        out.push_str(&format!(
+            "\n→ {}({})",
+            call["function"]["name"].as_str().unwrap_or("?"),
+            call["function"]["arguments"].as_str().unwrap_or("")
+        ));
+    }
+    out.trim().to_string()
 }
 
 /// The registry: every prompt section as a named block, rendered in list
@@ -1359,9 +1596,8 @@ fn build_active_page_block(active_page: Option<&ActivePage>) -> Option<String> {
 /// assert on what the model is actually sent rather than re-deriving it.
 #[cfg(test)]
 pub(crate) async fn build_system_prompt_for_audit(pool: &PgPool) -> String {
-    let (stable, volatile) =
-        build_system_prompt(pool, None, None, Some("America/Chicago"), &ChatMode::Chat, None).await;
-    format!("{stable}{volatile}")
+    let prompt = build_system_prompt(pool, None, None, Some("America/Chicago"), &ChatMode::Chat, None).await;
+    format!("{}{}", prompt.stable, prompt.tail)
 }
 
 /// Maximum member URLs to inline for a Project before truncating.
@@ -1582,57 +1818,38 @@ async fn chat_handler_inner(
     };
     let t_compacted = ms(started);
 
-    let History { conversation_summary, summary_up_to_index, project_id: effective_project_id, messages } =
-        match load_history(&pool, &request).await {
-            Ok(history) => history,
-            Err(response) => return response,
-        };
+    let history = match load_history(&pool, &request).await {
+        Ok(history) => history,
+        Err(response) => return response,
+    };
 
-    // Build system prompt with active page context, timezone, personalization, and agent mode
-    // Split at the cache breakpoint: `system_prompt` is the stable prefix that
-    // gets the marker, `system_tail` is the per-turn tail (the open page's live
-    // text, and the rules that deliberately sit behind it) which must stay
-    // OUTSIDE the cached block or it invalidates the prefix on every keystroke.
+    // The system prompt, split at the cache breakpoint (`stable` gets the
+    // marker; the per-turn tail stays outside it), and the conversation as it
+    // replays. The Context panel's preview builds the same thing.
     let t_history = ms(started);
     let prompt_started = std::time::Instant::now();
     let active_page = match request.active_page.as_ref() {
         Some(ctx) => resolve_active_page(&pool, &yjs_state, ctx).await,
         None => None,
     };
-    let (mut system_prompt, system_tail) = build_system_prompt(&pool, Some(&chat_id_str), active_page.as_ref(), request.timezone.as_deref(), &mode, effective_project_id.as_deref()).await;
+    let TurnRequest { system, messages: api_messages } = assemble_turn_request(
+        &pool,
+        &chat_id_str,
+        &mode,
+        active_page.as_ref(),
+        request.timezone.as_deref(),
+        request.chat_mode == "scoped",
+        &history,
+    )
+    .await;
     let prompt_ms = ms(prompt_started);
-    // Scoped (grounded) chat: retrieval is hard-filtered to the project's
-    // items (ScopeMode::Exclusive in ToolContext); this line sets the matching
-    // answer contract. Only meaningful inside a project.
-    if request.chat_mode == "scoped" && effective_project_id.is_some() {
-        system_prompt.push_str(
-            "\n\nSCOPED CHAT: this conversation is grounded in the current project's \
-             materials only. Retrieval is restricted to them. Answer ONLY from what \
-             retrieval returns, citing each load-bearing claim with its ref link. If \
-             the materials don't cover the question, say so plainly — do not answer \
-             from general knowledge.",
-        );
-    }
+    let prompt_tokens = crate::api::token_estimation::estimate_tokens(&system.stable)
+        + crate::api::token_estimation::estimate_tokens(&system.tail);
 
     // Tell the gauge how big the prompt actually is. It cannot rebuild it, so
     // without this the biggest single part of the request is invisible to both
     // the context ring the user reads and the threshold that fires compaction.
-    crate::api::token_estimation::record_system_prompt_tokens(
-        crate::api::token_estimation::estimate_tokens(&system_prompt)
-            + crate::api::token_estimation::estimate_tokens(&system_tail),
-    );
-
-    // Build context using compaction summary if available
-    let api_messages = build_context_for_llm(
-        &messages,
-        conversation_summary.as_deref(),
-        summary_up_to_index as usize,
-        Some(&system_prompt),
-        Some(&system_tail),
-        // The model's "now" is the newest message's send time; the system
-        // prompt carries no clock (see `prompt_blocks::held_per_chat`).
-        Some(request.timezone.as_deref().unwrap_or("UTC")),
-    );
+    crate::api::token_estimation::record_system_prompt_tokens(prompt_tokens);
 
     // The turn is driven by its own task and outlives this request, so a tab
     // switched or a phone locked does not drop the loop or the assistant row
@@ -1646,8 +1863,7 @@ async fn chat_handler_inner(
         compaction_ms = t_compacted - t_stored,
         history_ms = t_history - t_compacted,
         prompt_ms,
-        prompt_tokens = crate::api::token_estimation::estimate_tokens(&system_prompt)
-            + crate::api::token_estimation::estimate_tokens(&system_tail),
+        prompt_tokens,
         total_ms = ms(started),
         "turn prepared"
     );
@@ -1663,7 +1879,7 @@ async fn chat_handler_inner(
         request,
         mode,
         model,
-        effective_project_id,
+        history.project_id,
         api_messages,
         msg_id,
         checkpoint_event,
@@ -1972,8 +2188,11 @@ async fn load_history(pool: &PgPool, request: &ChatRequest) -> Result<History, R
             messages: ghost_history(&request.messages),
         });
     }
-    let chat_id = &request.chat_id;
+    load_saved_history(pool, &request.chat_id).await
+}
 
+/// A saved chat's row and transcript. Err is the response to send.
+async fn load_saved_history(pool: &PgPool, chat_id: &str) -> Result<History, Response> {
     // The room is read from the persisted row (single source of truth) so the
     // active-project context always matches the binding, even if a stale
     // client sends a different per-message projectId; the create path has
@@ -2544,6 +2763,71 @@ mod tests {
         assert!(!unheld.contains("Now:"), "the clock is not in the prompt");
     }
 
+    /// The Context panel's preview is the send's own request: the system
+    /// sections in order with the breakpoint marked, the tools, and the
+    /// conversation as it replays, stamped, with its tool calls.
+    #[sqlx::test]
+    async fn the_context_preview_lists_what_the_next_send_carries(pool: PgPool) {
+        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ('chat_preview', 't', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let message = |id: &str, role: &str, parts: Vec<UIPart>| crate::api::chats::ChatMessage {
+            id: Some(id.into()),
+            role: role.into(),
+            content: String::new(),
+            timestamp: crate::types::Timestamp::parse("2026-10-09T23:52:00Z").unwrap(),
+            model: None,
+            provider: None,
+            agent_id: None,
+            tool_calls: None,
+            reasoning: None,
+            intent: None,
+            subject: None,
+            reasoning_details: None,
+            parts: Some(parts),
+        };
+        let call = UIPart::ToolInvocation {
+            tool_call_id: "c1".into(),
+            tool_name: "sql_query".into(),
+            input: serde_json::json!({ "sql": "SELECT 1" }),
+            state: "output-available".into(),
+            output: Some(serde_json::json!({ "rows": [] })),
+            error_text: None,
+        };
+        for m in [
+            message("m1", "user", vec![UIPart::Text { text: "How did I sleep?".into() }]),
+            message("m2", "assistant", vec![UIPart::Text { text: "Looking.".into() }, call]),
+        ] {
+            crate::api::chats::append_message(&pool, "chat_preview".into(), m).await.unwrap();
+        }
+
+        let request = NextTurnRequest {
+            agent_mode: "chat".into(),
+            chat_mode: "open".into(),
+            model: None,
+            timezone: Some("America/Chicago".into()),
+            active_page: None,
+        };
+        let preview = next_turn_preview(&pool, &YjsState::new(pool.clone()), "chat_preview", request)
+            .await
+            .unwrap_or_else(|_| panic!("a preview"));
+
+        let tags: Vec<&str> = preview.sections.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(tags.first(), Some(&"base"), "{tags:?}");
+        assert!(
+            preview.sections.iter().all(|s| s.cached == Some(true)),
+            "no page open and no rules: every section is in the cached prefix: {tags:?}"
+        );
+        assert!(preview.tools.iter().any(|t| t.name == "sql_query" && t.tokens > 100));
+        assert_eq!(preview.mode, "chat");
+
+        let roles: Vec<&str> = preview.messages.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(roles, ["user", "assistant", "tool"]);
+        assert!(preview.messages[0].text.starts_with("[Sent Friday, October 9, 2026 at 6:52 PM CDT]"));
+        assert!(preview.messages[1].text.contains(r#"→ sql_query({"sql":"SELECT 1"})"#), "{}", preview.messages[1].text);
+    }
+
     /// A skill's body is in the tail, never the cached prefix: the prefix
     /// must be the same whatever the chat is doing, or switching skills
     /// rewrites the cache. And ordinary chat carries no skill block at all.
@@ -2738,7 +3022,7 @@ mod live_prompt_audit {
             )
             .await;
             // Measured across the cache split: this reads the whole prompt.
-            let p = format!("{}{}", p.0, p.1);
+            let p = format!("{}{}", p.stable, p.tail);
 
             // ~4 chars/token is the usual English approximation; this is an
             // order-of-magnitude reading, not a billing figure.
