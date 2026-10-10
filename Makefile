@@ -498,7 +498,9 @@ icons: ## Rebuild every icon artifact from AppIcon.icon (needs Xcode 26)
 #
 # Ask cargo where the bundle is rather than globbing `src-tauri/target`: that
 # path holds a pre-shared-target-dir build from July, so the find would have
-# hit a months-old .app and cheerfully relaunched it as "freshly built".
+# hit a months-old .app and cheerfully relaunched it as "freshly built". The
+# bundle sits under the host triple because build-mac-app.sh always passes
+# `--target` (why: apps/web/src-tauri/Cargo.toml, at `[[bin]]`).
 # An ISOLATED second app identity beside the real one: its own store dir
 # (`~/Library/Application Support/virtues-<name>/` — fresh key, fresh pairing,
 # own outbox) and its own loopback port derived from the name (prod keeps
@@ -515,7 +517,8 @@ OPEN ?= 1
 mac-app: ## Build the macOS app (Virtues.app + sidecars) and open it (OPEN=0 to skip)
 	tools/build-mac-app.sh
 	@if [ "$(OPEN)" = "1" ]; then \
-	  bundle=$$(cargo metadata --no-deps --format-version 1 --manifest-path apps/web/src-tauri/Cargo.toml | jq -r .target_directory)/release/bundle/macos/Virtues.app; \
+	  triple=$$(rustc -vV | awk '/^host:/{print $$2}'); \
+	  bundle=$$(cargo metadata --no-deps --format-version 1 --manifest-path apps/web/src-tauri/Cargo.toml | jq -r .target_directory)/$$triple/release/bundle/macos/Virtues.app; \
 	  app=$$([ -d "$$bundle" ] && echo "$$bundle"); \
 	  if [ -n "$$app" ]; then \
 	    echo "→ relaunching $$app"; \
