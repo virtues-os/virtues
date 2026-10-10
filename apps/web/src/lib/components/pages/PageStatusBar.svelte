@@ -2,6 +2,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { aiSession } from "$lib/ai/aiSession.svelte";
 	import { abortAiSession } from "$lib/ai/aiCursorSession";
+	import { treeAiDriver } from "$lib/ai/treeAiSession";
 
 	interface Props {
 		linkCount: number;
@@ -46,7 +47,10 @@
 	<div class="status-spacer"></div>
 	<!-- Live AI writing indicator -->
 	{#if aiSession.active}
-		<button class="ai-indicator" onclick={() => abortAiSession()} title="Stop">
+		<button class="ai-indicator" onclick={() => {
+			abortAiSession();
+			treeAiDriver.abort();
+		}} title="Stop">
 			<Icon icon="ri:sparkling-2-line" width="12" class="ai-spark" />
 			<span>Virtues is writing…</span>
 			<Icon icon="ri:stop-circle-line" width="13" />

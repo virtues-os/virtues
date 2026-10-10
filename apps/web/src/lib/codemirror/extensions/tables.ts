@@ -23,9 +23,11 @@ import { syntaxTree } from '@codemirror/language';
 import { EditorSelection, EditorState, type Extension, Prec, type Range, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, keymap, WidgetType } from '@codemirror/view';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
+import { inComposition } from '$lib/utils/ime';
 
 import { disconnectRemeasure, remeasureOnResize } from '../widget-height';
 import { onContextGesture } from './long-press';
+import { treeAdvanced } from './parse-progress';
 
 export type Alignment = 'left' | 'center' | 'right';
 
@@ -395,7 +397,7 @@ class TableWidget extends WidgetType {
 			});
 
 			cell.addEventListener('keydown', (e) => {
-				if (composing || e.isComposing || e.keyCode === 229) return;
+				if (composing || inComposition(e)) return;
 				const meta = e.metaKey || e.ctrlKey;
 
 				// Formatting shortcuts
@@ -936,7 +938,7 @@ const tableField = StateField.define<DecorationSet>({
 		// changing shape under the cursor. The widget has always been a full
 		// editor — click a cell, Tab between them, +strips to add rows — so
 		// there was never anything to fall back to raw FOR.
-		if (tr.docChanged) {
+		if (tr.docChanged || treeAdvanced(tr)) {
 			return buildTableDecorations(tr.state);
 		}
 		return decos;

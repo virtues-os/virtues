@@ -6,7 +6,16 @@
 
 export {
 	createYjsDocument,
-	type YjsDocument
+	createTreeDocument,
+	type YjsDocument,
+	type TreeDocument,
 } from './document';
 
-export { saveVersion, listVersions, restoreVersion, type PageVersion } from './versions';
+export {
+	saveVersion,
+	listVersions,
+	restoreVersion,
+	cutServerVersion,
+	restorePageVersion,
+	type PageVersion,
+} from './versions';

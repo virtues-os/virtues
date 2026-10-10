@@ -36,7 +36,11 @@ enum Wrong {
 }
 
 fn span(cell: &Node, key: &str) -> i64 {
-    cell.attrs.get(key).and_then(Value::as_i64).unwrap_or(1).max(1)
+    cell.attrs
+        .get(key)
+        .and_then(Value::as_i64)
+        .unwrap_or(1)
+        .max(1)
 }
 
 /// The table's width as the plugin takes it (`findWidth`): the widest row,
@@ -145,11 +149,22 @@ fn wrongs(table: &Node) -> (Vec<Wrong>, i64) {
 
 /// What is wrong with `table`'s shape, for a person or the model to read.
 /// Empty when every row covers the same columns. A cell that runs into
-/// several columns another covers is named once.
+/// several columns another covers is named once, and the rows that cover
+/// too few columns are named in one sentence, however many: a column added
+/// to a long table's first rows alone left every other row short, and a
+/// sentence for each made a refusal as long as the table.
 pub fn problems(table: &Node) -> Vec<String> {
     let (found, width) = wrongs(table);
     let mut messages: Vec<String> = vec![];
+    // The short rows, as (row, columns it covers), and where their sentence goes.
+    let mut short: Vec<(usize, i64)> = vec![];
+    let mut short_at = None;
     for w in found {
+        if let Wrong::Missing { row, n } = w {
+            short_at.get_or_insert(messages.len());
+            short.push((row + 1, width - n));
+            continue;
+        }
         let message = match w {
             Wrong::Empty => "a table needs at least one row with a cell".to_string(),
             Wrong::TooLarge { width, height } => format!(
@@ -164,17 +179,34 @@ pub fn problems(table: &Node) -> Vec<String> {
                 "a cell in row {} spans into a column another cell covers",
                 row + 1
             ),
-            Wrong::Missing { row, n } => format!(
-                "row {} covers {} of the table's {width} columns; every row covers them all",
-                row + 1,
-                width - n
-            ),
+            Wrong::Missing { .. } => unreachable!("taken above"),
         };
         if messages.last() != Some(&message) {
             messages.push(message);
         }
     }
+    if let Some(at) = short_at {
+        messages.insert(at, short_rows(&short, width));
+    }
     messages
+}
+
+/// The rows that cover too few of a table's `width` columns, as (row,
+/// columns covered), in one sentence.
+fn short_rows(short: &[(usize, i64)], width: i64) -> String {
+    let (first, covers) = short[0];
+    let last = short[short.len() - 1].0;
+    let same = short.iter().all(|&(_, c)| c == covers);
+    let covered = if same {
+        format!("{covers} of the table's {width} columns")
+    } else {
+        format!("fewer than the table's {width} columns")
+    };
+    match short.len() {
+        1 => format!("row {first} covers {covered}; every row covers them all"),
+        n if n == last - first + 1 => format!("rows {first} to {last} each cover {covered}; every row covers them all"),
+        n => format!("{n} rows, from row {first} to row {last}, cover {covered}; every row covers them all"),
+    }
 }
 
 /// Even out `table` as the plugin would: shorten spans that run past the
@@ -294,7 +326,11 @@ mod tests {
             assert_eq!(even_out(&c, &mut t), Some(true), "{html}");
             assert_eq!(problems(&t), Vec::<String>::new(), "{html}");
         }
-        let mut empty = Node::element("table", Map::new(), vec![Node::element("tableRow", Map::new(), vec![])]);
+        let mut empty = Node::element(
+            "table",
+            Map::new(),
+            vec![Node::element("tableRow", Map::new(), vec![])],
+        );
         assert_eq!(even_out(&c, &mut empty), None);
     }
 
@@ -320,7 +356,10 @@ mod tests {
         let c = Contract::load();
         for mut t in [
             rows(vec![vec![cell(i64::MAX, 1)]]),
-            rows(vec![vec![cell(i64::MAX / 2 + 1, 1), cell(i64::MAX / 2 + 1, 1)]]),
+            rows(vec![vec![
+                cell(i64::MAX / 2 + 1, 1),
+                cell(i64::MAX / 2 + 1, 1),
+            ]]),
             rows(vec![vec![cell(8_000_000_000_000_000, 1)]]),
             rows(vec![vec![cell(1_000, 1); 2_000]]),
         ] {
@@ -350,5 +389,20 @@ mod tests {
             problems(&short),
             ["row 2 covers 1 of the table's 2 columns; every row covers them all"]
         );
+    }
+
+    /// A column added to the first of many rows leaves every other row
+    /// short: one sentence names them all, as long for 260 rows as for two.
+    #[test]
+    fn short_rows_are_named_in_one_sentence() {
+        let wide = |n: usize| (0..n).map(|_| cell(1, 1)).collect::<Vec<_>>();
+        let mut grid = vec![wide(6)];
+        grid.extend((0..260).map(|_| wide(5)));
+        let p = problems(&rows(grid.clone()));
+        assert_eq!(p, ["rows 2 to 261 each cover 5 of the table's 6 columns; every row covers them all"]);
+        grid[100] = wide(6);
+        grid[200] = wide(4);
+        let p = problems(&rows(grid));
+        assert_eq!(p, ["259 rows, from row 2 to row 261, cover fewer than the table's 6 columns; every row covers them all"]);
     }
 }

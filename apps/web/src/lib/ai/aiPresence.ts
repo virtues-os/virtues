@@ -11,9 +11,16 @@
  *
  * Keeping this seam narrow means the presence look-and-feel is defined once, in
  * the extension, and both callers stay dumb about the DOM.
+ *
+ * A block page's editor (`lib/document`) draws its own presence
+ * (`lib/document/presence.ts`); a chat edit to one flashes the blocks it wrote,
+ * by id, in the editor `lib/document/registry.ts` holds for the page.
  */
 
 import type { EditorView } from "@codemirror/view";
+import type { Editor } from "@tiptap/core";
+import contractJson from "$contract";
+import { getTreeEditor } from "$lib/document/registry";
 import {
 	addAiTrail,
 	clearAiSession,
@@ -66,15 +73,56 @@ export function aiPresenceClear(view: EditorView): void {
 const DONE_DISSOLVE_MS = 650;
 const DWELL_MS = 450;
 
+/** Wait before looking again for what a chat edit wrote, which may not have synced yet. */
+const RETRY_MS = 150;
+
+/** The attribute a block's id is kept in (`contract.json`). */
+const ID_ATTR: string = (contractJson as { id: { attr: string } }).id.attr;
+
+/** The ids in `ids` that a block of the editor's page carries. */
+function blocksPresent(editor: Editor, ids: string[]): string[] {
+	const want = new Set(ids);
+	const found: string[] = [];
+	editor.state.doc.descendants((node) => {
+		const id = node.attrs[ID_ATTR];
+		if (typeof id === "string" && want.has(id)) found.push(id);
+		return found.length < want.size;
+	});
+	return found;
+}
+
 /**
  * Animate the AI presence over the region a chat edit just wrote.
  *
- * `newText` is the tool's `replace` string. We locate it in the *current*
- * editor doc (the synced result already contains it) and trail+caret that
- * range. If the sync hasn't landed yet, we retry once shortly after.
+ * On a block page open in an editor, `blockIds` (the edit's `blocks`) flash
+ * there. Otherwise `newText` is the tool's `replace` string: we locate it in
+ * the *current* CodeMirror doc (the synced result already contains it) and
+ * trail+caret that range. Either way, if the sync hasn't landed yet, we retry
+ * once shortly after.
  */
-export function animateChatEdit(pageId: string, newText: string): void {
-	if (!pageId || !newText) return;
+export function animateChatEdit(pageId: string, newText: string, blockIds: string[] = []): void {
+	if (!pageId) return;
+	const tree = getTreeEditor(pageId);
+	if (tree) {
+		if (!blockIds.length) return;
+		const flash = (attempt: number): void => {
+			if (tree.isDestroyed) return;
+			const present = blocksPresent(tree, blockIds);
+			if (present.length < blockIds.length && attempt === 0) {
+				setTimeout(() => flash(1), RETRY_MS);
+				return;
+			}
+			// Loaded here, not at the top: the chat reaches this module, and
+			// the block editor's code is already loaded when one is open.
+			void import("$lib/document/presence").then(({ flashBlocks }) => {
+				if (!tree.isDestroyed) flashBlocks(tree, present);
+			});
+		};
+		flash(0);
+		return;
+	}
+
+	if (!newText) return;
 	const view = getPageEditor(pageId);
 	if (!view) return; // page isn't open in a pane — nothing to animate
 
@@ -82,7 +130,7 @@ export function animateChatEdit(pageId: string, newText: string): void {
 		const at = view.state.doc.toString().indexOf(newText);
 		if (at < 0) {
 			// The Yjs change may not have reached CodeMirror yet; retry once.
-			if (attempt === 0) setTimeout(() => run(1), 150);
+			if (attempt === 0) setTimeout(() => run(1), RETRY_MS);
 			return;
 		}
 		const to = at + newText.length;

@@ -8,6 +8,7 @@
 
 import type { Extension } from '@codemirror/state';
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
+import type { MenuCommand } from '$lib/components/menuCommand';
 
 export interface SlashCommandCallbacks {
 	onOpen: (coords: { x: number; y: number }, from: number) => void;
@@ -15,11 +16,7 @@ export interface SlashCommandCallbacks {
 	onQueryChange: (query: string) => void;
 }
 
-export interface SlashCommand {
-	label: string;
-	/** Extra terms the label alone would not match ("h1", "todo", "hr"). */
-	keywords?: string[];
-	icon: string;
+export interface SlashCommand extends MenuCommand {
 	execute: (view: EditorView, from: number) => void;
 }
 
@@ -170,19 +167,6 @@ function replaceSlash(view: EditorView, from: number, insert: string) {
 		changes: { from, to, insert },
 		selection: { anchor: from + insert.length },
 	});
-}
-
-/**
- * Filter commands by query string
- */
-export function filterSlashCommands(commands: SlashCommand[], query: string): SlashCommand[] {
-	if (!query) return commands;
-	const q = query.toLowerCase();
-	return commands.filter(
-		(cmd) =>
-			cmd.label.toLowerCase().includes(q) ||
-			cmd.keywords?.some((k) => k.includes(q)),
-	);
 }
 
 /**

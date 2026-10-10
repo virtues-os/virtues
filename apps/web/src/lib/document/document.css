@@ -1,0 +1,824 @@
+/* =============================================================================
+   BLOCK PAGES — the block editor's surface (DocumentEditor, DocumentPreview)
+   =============================================================================
+   Typography is the --md-* tokens (themes.css): the one definition the read
+   path (.markdown in app.css) and the CodeMirror editor already share, so a
+   block page reads at the sizes every other page does. The page's display
+   settings (pageDisplay: font, size) arrive as --editor-font-* on an ancestor
+   and win over the body tokens.
+
+   Spacing is engine-side, as the tokens' own comment says: ProseMirror
+   renders real block elements, so ordinary margins give the rhythm. */
+
+.doc-prose {
+	min-height: 300px;
+	padding-bottom: 96px;
+	color: var(--color-foreground);
+	font-family: var(--editor-font-family, var(--md-body-family));
+	font-size: var(--editor-font-size, var(--md-body-size));
+	line-height: var(--editor-line-height, var(--md-body-lh));
+	overflow-wrap: break-word;
+	word-break: break-word;
+	outline: none;
+	caret-color: var(--color-foreground);
+}
+
+.doc-prose > * + * {
+	margin-top: 0.75em;
+}
+
+.doc-prose p {
+	margin: 0;
+}
+
+.doc-prose p + p {
+	margin-top: 0.75em;
+}
+
+/* ── Headings: h1–h3 in the serif the tokens name, h4–h6 in the body's face. */
+
+.doc-prose h1,
+.doc-prose h2,
+.doc-prose h3,
+.doc-prose h4,
+.doc-prose h5,
+.doc-prose h6 {
+	margin-bottom: 0;
+	color: var(--color-foreground);
+}
+
+.doc-prose h1 {
+	margin-top: 1.5em;
+	font-family: var(--md-heading-major-family);
+	font-size: var(--md-h1-size);
+	line-height: var(--md-h1-lh);
+	font-weight: var(--md-h1-weight);
+}
+
+.doc-prose h2 {
+	margin-top: 1.4em;
+	font-family: var(--md-heading-major-family);
+	font-size: var(--md-h2-size);
+	line-height: var(--md-h2-lh);
+	font-weight: var(--md-h2-weight);
+}
+
+.doc-prose h3 {
+	margin-top: 1.25em;
+	font-family: var(--md-heading-major-family);
+	font-size: var(--md-h3-size);
+	line-height: var(--md-h3-lh);
+	font-weight: var(--md-h3-weight);
+}
+
+.doc-prose h4 {
+	margin-top: 1.1em;
+	font-family: inherit;
+	font-size: var(--md-h4-size);
+	line-height: var(--md-h4-lh);
+	font-weight: var(--md-h4-weight);
+}
+
+.doc-prose h5 {
+	margin-top: 1em;
+	font-family: inherit;
+	font-size: var(--md-h5-size);
+	line-height: var(--md-h5-lh);
+	font-weight: var(--md-h5-weight);
+}
+
+.doc-prose h6 {
+	margin-top: 1em;
+	font-family: inherit;
+	font-size: var(--md-h6-size);
+	line-height: var(--md-h6-lh);
+	font-weight: var(--md-h6-weight);
+	color: var(--color-foreground-muted);
+}
+
+.doc-prose > :first-child {
+	margin-top: 0;
+}
+
+/* ── Inline marks */
+
+.doc-prose strong {
+	font-weight: 600;
+}
+
+.doc-prose code {
+	padding: 0.1em 0.3em;
+	/* design-ok: inline code is code; a fixed advance is the content */
+	font-family: var(--font-mono);
+	font-size: var(--md-inline-code-size);
+	border: var(--md-inline-code-border);
+	border-radius: var(--md-inline-code-radius);
+	background: var(--md-inline-code-bg);
+}
+
+.doc-prose mark {
+	padding: 0 0.1em;
+	border-radius: 0;
+	background: var(--color-highlight);
+	color: var(--color-highlight-foreground, inherit);
+	box-decoration-break: clone;
+	-webkit-box-decoration-break: clone;
+}
+
+.doc-prose a {
+	color: var(--color-primary);
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.15em;
+	cursor: text;
+}
+
+/* A link to something on the box reads as a ref, as `Ref` draws one. */
+.doc-prose a:has(.doc-ref-link) {
+	color: inherit;
+	text-decoration: none;
+}
+
+.doc-ref-link {
+	border-bottom: 1px dotted currentColor;
+}
+
+/* ── Proposals (suggestions.ts): provisional at a glance, comfortable to read
+   through. The same treatment as the CodeMirror editor's review marks. */
+
+.doc-prose virtues-ins {
+	background: var(--color-success-subtle);
+	border-bottom: 1px solid var(--color-success);
+	box-decoration-break: clone;
+	-webkit-box-decoration-break: clone;
+}
+
+.doc-prose virtues-del {
+	background: var(--color-error-subtle);
+	color: var(--color-foreground-muted);
+	text-decoration: line-through;
+	text-decoration-color: var(--color-error);
+	box-decoration-break: clone;
+	-webkit-box-decoration-break: clone;
+}
+
+/* ── Lists */
+
+.doc-prose ul,
+.doc-prose ol {
+	margin-bottom: 0;
+	padding-left: 1.5em;
+}
+
+.doc-prose ul {
+	list-style: disc;
+}
+
+.doc-prose ol {
+	list-style: decimal;
+}
+
+.doc-prose li + li {
+	margin-top: 0.35em;
+}
+
+.doc-prose li > ul,
+.doc-prose li > ol {
+	margin-top: 0.35em;
+}
+
+/* Task lists: Tiptap's TaskItem view draws `<li><label><input></label><div>`,
+   its `li` without the `data-type` canonical HTML carries, so items are
+   matched as the list's children. */
+.doc-prose ul[data-type='taskList'] {
+	list-style: none;
+	padding-left: 0;
+}
+
+.doc-prose ul[data-type='taskList'] > li {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+}
+
+.doc-prose ul[data-type='taskList'] > li > label {
+	flex: none;
+	display: flex;
+	align-items: center;
+	height: calc(1em * var(--editor-line-height, 1.5));
+	user-select: none;
+}
+
+.doc-prose ul[data-type='taskList'] > li > div {
+	flex: 1;
+	min-width: 0;
+}
+
+.doc-prose ul[data-type='taskList'] > li input[type='checkbox'] {
+	appearance: none;
+	width: 14px;
+	height: 14px;
+	margin: 0;
+	border: 1.5px solid var(--color-border);
+	border-radius: 0;
+	background: transparent;
+	cursor: pointer;
+	position: relative;
+}
+
+/* A thumb's 44pt: the box stays 14px, its hit area grows (design-grammar §6),
+   up, down and to the left only. It ends at the box's right edge: the
+   item's text starts 8px past it, and a tap there places the caret. */
+@media (pointer: coarse) {
+	.doc-prose ul[data-type='taskList'] > li > label {
+		position: relative;
+	}
+
+	.doc-prose ul[data-type='taskList'] > li > label::after {
+		content: '';
+		position: absolute;
+		top: 50%;
+		right: 0;
+		width: 44px;
+		height: 44px;
+		transform: translateY(-50%);
+	}
+}
+
+.doc-prose ul[data-type='taskList'] > li input[type='checkbox']:checked {
+	background: var(--color-primary);
+	border-color: var(--color-primary);
+}
+
+.doc-prose ul[data-type='taskList'] > li input[type='checkbox']:checked::after {
+	content: '';
+	position: absolute;
+	left: 3px;
+	top: 0;
+	width: 4px;
+	height: 8px;
+	border: solid var(--color-primary-foreground, var(--color-background));
+	border-width: 0 2px 2px 0;
+	transform: rotate(45deg);
+}
+
+.doc-prose li[data-checked='true'] > div {
+	color: var(--color-foreground-muted);
+	text-decoration: line-through;
+	text-decoration-color: var(--color-border);
+}
+
+/* ── Quotes and callouts */
+
+.doc-prose blockquote {
+	margin-left: 0;
+	margin-right: 0;
+	padding-left: 16px;
+	border-left: var(--md-quote-border);
+	color: var(--color-foreground-muted);
+}
+
+.doc-block-callout {
+	display: flex;
+	gap: 8px;
+	padding: 12px 16px 12px 12px;
+	border: 1px solid var(--color-border-subtle, var(--color-border));
+	border-radius: 12px;
+	background: var(--color-surface-elevated);
+}
+
+.doc-block-callout[data-tone='tip'] {
+	border-color: var(--color-success);
+	background: var(--color-success-subtle);
+}
+
+.doc-block-callout[data-tone='warning'] {
+	border-color: var(--color-warning);
+	background: var(--color-warning-subtle);
+}
+
+.doc-block-callout > .doc-block-chrome {
+	flex: none;
+	color: var(--color-foreground-muted);
+}
+
+.doc-block-callout[data-tone='tip'] > .doc-block-chrome {
+	color: var(--color-success);
+}
+
+.doc-block-callout[data-tone='warning'] > .doc-block-chrome {
+	color: var(--color-warning);
+}
+
+.doc-block-callout > .doc-block-content {
+	flex: 1;
+	min-width: 0;
+}
+
+.doc-block-content > * + * {
+	margin-top: 0.75em;
+}
+
+/* ── Code blocks: a header (CodeBlockNode) over the code. */
+
+.doc-block-codeBlock {
+	border: 1px solid var(--color-border-subtle, var(--color-border));
+	border-radius: 12px;
+	background: var(--color-surface-elevated);
+	overflow: hidden;
+}
+
+.doc-block-codeBlock pre {
+	margin: 0;
+	padding: 0 16px 12px;
+	overflow-x: auto;
+	white-space: pre;
+}
+
+.doc-block-codeBlock code {
+	display: block;
+	padding: 0;
+	border: none;
+	background: transparent;
+	/* design-ok: a code block is code; a fixed advance is the content */
+	font-family: var(--font-mono);
+	font-size: 0.875rem;
+	line-height: 1.6;
+	white-space: pre;
+}
+
+/* ── Rules and tables */
+
+.doc-prose hr {
+	margin: 1.5em 0;
+	border: none;
+	border-top: 1px solid var(--color-border-subtle, var(--color-border));
+}
+
+/* Tiptap's table view wraps each table in `.tableWrapper`: a wide table
+   scrolls inside it, as the CodeMirror table does inside its own scroller,
+   rather than widen the page and take its title and text sideways with it. */
+.doc-prose .tableWrapper {
+	overflow-x: auto;
+}
+
+.doc-prose table {
+	width: 100%;
+	border-collapse: separate;
+	border-spacing: 0;
+	border: 1px solid var(--md-table-border-color);
+	border-radius: 6px;
+	table-layout: auto;
+}
+
+.doc-prose th,
+.doc-prose td {
+	min-width: 4em;
+	padding: var(--md-cell-pad);
+	border-right: 1px solid var(--md-table-border-color);
+	border-bottom: 1px solid var(--md-table-border-color);
+	vertical-align: top;
+	text-align: left;
+}
+
+.doc-prose th {
+	font-size: var(--md-th-size);
+	font-weight: var(--md-th-weight);
+	background: var(--color-surface-elevated);
+}
+
+.doc-prose th:last-child,
+.doc-prose td:last-child {
+	border-right: none;
+}
+
+.doc-prose tr:last-child > td {
+	border-bottom: none;
+}
+
+.doc-prose th[align='center'],
+.doc-prose td[align='center'] {
+	text-align: center;
+}
+
+.doc-prose th[align='right'],
+.doc-prose td[align='right'] {
+	text-align: right;
+}
+
+.doc-prose th > * + *,
+.doc-prose td > * + * {
+	margin-top: 0.5em;
+}
+
+.doc-prose .selectedCell {
+	background: var(--color-primary-subtle);
+}
+
+/* ── Widgets and selection */
+
+.doc-prose .ProseMirror-selectednode {
+	outline: none;
+}
+
+/* A rule selected, as Backspace beside it selects it before it goes. The
+   other widgets draw their own selected outline. */
+.doc-prose hr.ProseMirror-selectednode {
+	outline: 2px solid var(--color-primary);
+	outline-offset: 2px;
+}
+
+.doc-widget-applet,
+.doc-widget-image,
+.doc-widget-audio,
+.doc-widget-video,
+.doc-widget-file {
+	display: block;
+}
+
+.doc-applet-placeholder {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: 1px dashed var(--color-border);
+	border-radius: 12px;
+	color: var(--color-foreground-muted);
+	font-size: 0.8125rem;
+}
+
+/* The placeholder Tiptap draws in an empty page. */
+.doc-prose p.is-editor-empty:first-child::before {
+	content: attr(data-placeholder);
+	float: left;
+	height: 0;
+	pointer-events: none;
+	color: var(--color-foreground-subtle);
+}
+
+/* ── Find, focus, uploads */
+
+.doc-find-match {
+	background: var(--color-highlight);
+}
+
+.doc-find-current {
+	outline: 2px solid var(--color-primary);
+	outline-offset: 0;
+}
+
+/* A quiet echo of the selected words where else they occur. */
+.doc-selection-match {
+	background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+.doc-dim {
+	opacity: 0.35;
+	transition: opacity 0.25s ease;
+}
+
+/* A selection a paste is replacing, while the server converts the paste. */
+.doc-paste-replaced {
+	opacity: 0.35;
+}
+
+.doc-upload {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	border: 1px dashed var(--color-border);
+	border-radius: 12px;
+	color: var(--color-foreground-muted);
+	font-size: 0.875rem;
+}
+
+.doc-upload-spinner {
+	width: 14px;
+	height: 14px;
+	border: 2px solid var(--color-border-subtle, var(--color-border));
+	border-top-color: var(--color-primary);
+	border-radius: 50%;
+	animation: doc-spin 0.8s linear infinite;
+}
+
+@keyframes doc-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+/* ── Other devices' carets (CollaborationCaret; presence.ts draws them). */
+
+.collaboration-carets__caret {
+	position: relative;
+	display: inline-block;
+	width: 0;
+	height: 1.2em;
+	vertical-align: text-bottom;
+	word-break: normal;
+	pointer-events: none;
+}
+
+/* The bar takes no width in the line, so a caret never moves the text. */
+.collaboration-carets__caret::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: -1px;
+	width: 2px;
+	background: var(--caret-color);
+}
+
+.collaboration-carets__label {
+	position: absolute;
+	top: -1.4em;
+	left: -1px;
+	padding: 0 4px;
+	border-radius: 6px 6px 6px 0;
+	background: var(--caret-color);
+	color: var(--color-background);
+	font-family: var(--font-sans);
+	font-size: 0.6875rem;
+	font-style: normal;
+	font-weight: 600;
+	line-height: 1.4;
+	white-space: nowrap;
+	user-select: none;
+}
+
+.collaboration-carets__selection {
+	background: color-mix(in srgb, var(--caret-color) 18%, transparent);
+}
+
+/* ── The assistant (presence.ts): a gliding caret, a fading trail, a flash
+   over blocks a chat edit wrote. The look of the CodeMirror editor's. */
+
+/* What a rewrite is about to replace, while the model thinks: held until
+   its first words mark it as going. */
+.doc-ai-telegraph {
+	background-color: color-mix(in srgb, var(--color-primary) 16%, transparent);
+	transition: background-color 0.2s ease;
+}
+
+.doc-ai-trail {
+	border-radius: 0;
+	animation: doc-ai-trail-fade 1.4s ease forwards;
+}
+
+@keyframes doc-ai-trail-fade {
+	from {
+		background-color: color-mix(in srgb, var(--color-primary) 20%, transparent);
+	}
+	to {
+		background-color: transparent;
+	}
+}
+
+.doc-flash {
+	animation: doc-flash 1.4s ease forwards;
+	border-radius: 6px;
+}
+
+@keyframes doc-flash {
+	from {
+		background-color: color-mix(in srgb, var(--color-primary) 16%, transparent);
+	}
+	to {
+		background-color: transparent;
+	}
+}
+
+.doc-ai-caret {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: flex;
+	align-items: flex-start;
+	pointer-events: none;
+	z-index: 20;
+	transition: transform 0.13s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.doc-ai-caret-bar {
+	width: 2px;
+	height: 100%;
+	background: var(--color-primary);
+	animation: doc-ai-caret-blink 1.1s steps(2, start) infinite;
+}
+
+.doc-ai-caret-label {
+	position: absolute;
+	top: -16px;
+	left: 0;
+	padding: 0 4px;
+	border-radius: 6px;
+	background: var(--color-primary);
+	color: var(--color-primary-foreground, var(--color-background));
+	font-family: var(--font-sans);
+	font-size: 0.6875rem;
+	font-weight: 600;
+	line-height: 1.4;
+	white-space: nowrap;
+}
+
+@keyframes doc-ai-caret-blink {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.4;
+	}
+}
+
+.doc-ai-caret--done .doc-ai-caret-bar {
+	animation: none;
+	opacity: 0.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.doc-ai-caret {
+		transition: none;
+	}
+
+	.doc-ai-caret-bar,
+	.doc-upload-spinner {
+		animation: none;
+	}
+
+	.doc-ai-trail,
+	.doc-flash {
+		animation: none;
+	}
+
+	.doc-ai-telegraph {
+		transition: none;
+	}
+
+	.doc-dim {
+		transition: none;
+	}
+}
+
+/* ── The page view: an A4 sheet, the width the page prints at (pageDisplay
+   `page`). 210 mm wide, 20 mm margins, as the print rule below. */
+
+.doc-page-view {
+	box-sizing: border-box;
+	width: 210mm;
+	max-width: 100%;
+	min-height: 297mm;
+	margin: 0 auto;
+	padding: 20mm;
+	border: 1px solid var(--color-border-subtle, var(--color-border));
+	background: var(--color-background);
+}
+
+@media (max-width: 230mm) {
+	.doc-page-view {
+		padding: 16px;
+		border: none;
+		min-height: 0;
+	}
+}
+
+/* ── Print: the page alone, on A4. Chrome marks itself `data-print="hide"`;
+   each widget says how it prints in its own component. */
+
+@page {
+	size: A4;
+	margin: 20mm;
+}
+
+@media print {
+	/* The page's menus and bars (the selection toolbar, `/`, `@`, Ask AI)
+	   float inside it: whichever was open when the print began is no part
+	   of the page. */
+	[data-print='hide'],
+	[data-print-root] .floating-content,
+	.collaboration-carets__caret,
+	.doc-ai-caret {
+		display: none !important;
+	}
+
+	/* A print drops backgrounds unless asked to keep them (the dialog's
+	   Background graphics): a done to-do is a box ticked in ink, not a fill
+	   with a tick the colour of the paper, and a highlight keeps its colour. */
+	.doc-prose ul[data-type='taskList'] > li input[type='checkbox']:checked {
+		background: none;
+		border-color: var(--color-foreground);
+	}
+
+	.doc-prose ul[data-type='taskList'] > li input[type='checkbox']:checked::after {
+		border-color: var(--color-foreground);
+	}
+
+	.doc-prose mark {
+		-webkit-print-color-adjust: exact;
+		print-color-adjust: exact;
+	}
+
+	.doc-page-view {
+		width: auto;
+		min-height: 0;
+		padding: 0;
+		border: none;
+	}
+
+	/* Ink on paper, whatever the screen's theme. A dark theme's tokens are
+	   light ink on a dark ground, and every rule that reads them (a heading,
+	   a quote, a widget's print rule) would print light grey, or on a dark
+	   sheet: the tokens are paper's while printing. A highlight, which keeps
+	   its colour on paper, is a light marker under black ink, and a link and
+	   a proposal's halves print in ink dark enough to read. `html[data-theme]`
+	   outranks the theme's own `[data-theme]` block. */
+	html,
+	html[data-theme] {
+		--foreground: black;
+		--foreground-muted: color-mix(in srgb, black 70%, white);
+		--foreground-subtle: color-mix(in srgb, black 60%, white);
+		--background: white;
+		--surface: white;
+		--surface-elevated: white;
+		--border: color-mix(in srgb, black 25%, white);
+		--border-subtle: color-mix(in srgb, black 15%, white);
+		--highlight: color-mix(in srgb, yellow 35%, white);
+		--highlight-foreground: black;
+		--primary: color-mix(in srgb, blue 70%, black);
+		--success: color-mix(in srgb, green 85%, black);
+		--success-subtle: color-mix(in srgb, green 12%, white);
+		--error: color-mix(in srgb, red 75%, black);
+		--error-subtle: color-mix(in srgb, red 10%, white);
+		background: white;
+	}
+
+	.doc-prose {
+		min-height: 0;
+		padding-bottom: 0;
+		color: black;
+	}
+
+	/* A code token's colour is its screen theme's (`code.ts`), drawn inline. */
+	.doc-block-codeBlock code span[style] {
+		color: inherit !important;
+	}
+
+	/* Paper does not scroll: a long line wraps rather than run off the sheet. */
+	.doc-block-codeBlock {
+		overflow: visible;
+	}
+
+	.doc-block-codeBlock pre,
+	.doc-block-codeBlock code {
+		overflow: visible;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+
+	.doc-prose a {
+		color: inherit;
+	}
+
+	.doc-dim {
+		opacity: 1;
+	}
+
+	.doc-find-match,
+	.doc-selection-match,
+	.doc-ai-telegraph {
+		background: none;
+		outline: none;
+	}
+
+	.doc-prose h1,
+	.doc-prose h2,
+	.doc-prose h3 {
+		break-after: avoid;
+	}
+
+	.doc-prose table,
+	.doc-prose pre,
+	.doc-block-callout,
+	.doc-widget-image {
+		break-inside: avoid;
+	}
+
+	/* Paper does not scroll. */
+	.doc-prose .tableWrapper {
+		overflow: visible;
+	}
+
+	/* An applet that never came near the screen is still its placeholder:
+	   it prints as a mounted one does, a box naming it, not the height its
+	   frame reserves. */
+	.doc-applet-placeholder {
+		height: auto !important;
+		justify-content: flex-start;
+		padding: 12px;
+		border-style: solid;
+		color: var(--color-foreground);
+		font-size: 0.875rem;
+		break-inside: avoid;
+	}
+}

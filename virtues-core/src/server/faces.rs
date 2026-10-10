@@ -119,17 +119,24 @@ fn cors_headers(headers: &mut HeaderMap) {
     );
 }
 
-/// Strict CSP for face documents: same-URL-origin subresources only, no
-/// external hosts. The face is hung in `<iframe sandbox="allow-scripts">`,
-/// whose document has an opaque origin — and by CSP spec `'self'` matches
-/// nothing for an opaque origin. WebKit enforces that literally: a CSP of
-/// `script-src 'self'` refuses the face's own `virtues.js`, so the panel
-/// never runs the bridge (Chromium is lenient here, which is how it went
-/// unnoticed). So the box's origin is named explicitly on every directive,
-/// derived from the request's Host header so it stays right on whichever
-/// hostname the box is reached by (`localhost`, `.local`, Tailscale, LAN).
-/// `'self'` is kept for a face loaded top-level. Still no external hosts;
-/// CORS (absent everywhere but this module) blocks reading anything else.
+/// Strict CSP for a face's files: same-URL-origin subresources only, no
+/// external hosts, and the document sandboxed as `FaceFrame`'s
+/// `<iframe sandbox="allow-scripts">` sandboxes it. The route is public, so
+/// a face can be loaded top-level too: a link to `/face/<id>/` in a page
+/// (a file block's card, its Open), or a typed address. Unsandboxed there,
+/// its script would run on the box's own origin, where every `/api` route
+/// answers it as the owner. The CSP's sandbox gives it the frame's opaque
+/// origin wherever it is loaded, and is sent with every file, since an SVG
+/// opened on its own runs script too.
+///
+/// By CSP spec `'self'` matches nothing for an opaque origin. WebKit
+/// enforces that literally: a CSP of `script-src 'self'` refuses the face's
+/// own `virtues.js`, so the panel never runs the bridge (Chromium is lenient
+/// here, which is how it went unnoticed). So the box's origin is named
+/// explicitly on every directive, derived from the request's Host header so
+/// it stays right on whichever hostname the box is reached by (`localhost`,
+/// `.local`, Tailscale, LAN). Still no external hosts; CORS (absent
+/// everywhere but this module) blocks reading anything else.
 fn face_csp(req_headers: &HeaderMap) -> String {
     let host = req_headers
         .get(header::HOST)
@@ -141,7 +148,8 @@ fn face_csp(req_headers: &HeaderMap) -> String {
         .unwrap_or("http");
     let origin = format!("{scheme}://{host}");
     format!(
-        "default-src 'none'; \
+        "sandbox allow-scripts; \
+         default-src 'none'; \
          script-src 'self' {origin} 'unsafe-inline'; \
          style-src 'self' {origin} 'unsafe-inline'; \
          img-src 'self' {origin} data: blob:; \
@@ -219,19 +227,22 @@ async fn serve_face_file(applet_id: &str, raw_path: &str, req_headers: &HeaderMa
         _ => "application/octet-stream",
     };
 
+    (face_file_headers(mime, req_headers), bytes).into_response()
+}
+
+/// The headers a face's file is served with: its type, CORS, and the face's
+/// CSP ([`face_csp`]), on every file.
+fn face_file_headers(mime: &str, req_headers: &HeaderMap) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_str(mime).unwrap_or(HeaderValue::from_static("application/octet-stream")),
     );
     cors_headers(&mut headers);
-    if mime.starts_with("text/html") {
-        let csp = face_csp(req_headers);
-        if let Ok(v) = HeaderValue::from_str(&csp) {
-            headers.insert(header::CONTENT_SECURITY_POLICY, v);
-        }
+    if let Ok(v) = HeaderValue::from_str(&face_csp(req_headers)) {
+        headers.insert(header::CONTENT_SECURITY_POLICY, v);
     }
-    (headers, bytes).into_response()
+    headers
 }
 
 fn static_lib(body: &'static str, mime: &'static str) -> Response {
@@ -520,3 +531,28 @@ html, body {
   font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A face loaded top-level (a link to it in a page, a typed address)
+    /// runs sandboxed as it does in its frame: an opaque origin, never the
+    /// box's own, where every `/api` route would answer it as the owner.
+    /// An SVG or a page among its files is sandboxed alike.
+    #[test]
+    fn every_face_file_is_sandboxed_wherever_it_is_loaded() {
+        let mut req = HeaderMap::new();
+        req.insert(header::HOST, HeaderValue::from_static("127.0.0.1:7117"));
+        for mime in ["text/html; charset=utf-8", "image/svg+xml", "application/javascript; charset=utf-8"] {
+            let headers = face_file_headers(mime, &req);
+            let csp = headers
+                .get(header::CONTENT_SECURITY_POLICY)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default();
+            assert!(csp.starts_with("sandbox allow-scripts;"), "{mime}: {csp}");
+            assert!(!csp.contains("allow-same-origin"), "{mime}: {csp}");
+            assert!(csp.contains("script-src 'self' http://127.0.0.1:7117"), "{mime}: {csp}");
+        }
+    }
+}

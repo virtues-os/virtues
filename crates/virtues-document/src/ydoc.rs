@@ -17,10 +17,10 @@ use crate::wire::MAX_VALUE_DEPTH;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
+use yrs::block::ClientID;
 use yrs::types::array::ArrayIter;
 use yrs::types::text::YChange;
 use yrs::types::{Attrs, Delta};
-use yrs::block::ClientID;
 use yrs::{
     Any, Doc, In, Map as YMap, OffsetKind, Options, Out, ReadTxn, Text, TransactionMut, WriteTxn,
     Xml, XmlElementPrelim, XmlFragment, XmlFragmentRef, XmlTextPrelim, XmlTextRef,
@@ -303,41 +303,57 @@ pub(crate) fn read_children<T: ReadTxn, F: XmlFragment>(
             ));
         }
         in_plain_run = plain;
-        match child {
-            Out::YXmlElement(_) if depth > MAX_DEPTH => {
-                problems.push(Problem::new(at, too_deep()));
-            }
-            Out::YXmlElement(el) => {
-                let tag = el.tag().to_string();
-                let here = if at.is_empty() {
-                    format!("{tag}[{i}]")
-                } else {
-                    format!("{at} > {tag}[{i}]")
-                };
-                let mut attrs = Map::new();
-                for (k, v) in el.attributes(txn) {
-                    match &v {
-                        Out::Any(a) => {
-                            attrs.insert(k.to_string(), any_to_value(a));
-                        }
-                        _ => problems.push(Problem::new(
-                            &here,
-                            format!("attribute `{k}` holds a shared type, not a value"),
-                        )),
-                    }
-                }
-                let content = read_children(txn, &el, &here, depth + 1, problems);
-                out.push(Node::element(&tag, attrs, content));
-            }
-            Out::YXmlText(t) => out.extend(read_text_checked(txn, &t, at, problems)),
-            Out::YXmlFragment(_) => problems.push(Problem::new(
-                at,
-                "a nested fragment is not document content",
-            )),
-            _ => {}
-        }
+        out.extend(read_child(txn, i, &child, at, depth, problems));
     }
     out
+}
+
+/// One child of a fragment or element, the `i`th, as [`read_children`] reads
+/// it: an element as one node, text as a node per run of equal marks, and
+/// anything else as nothing, a problem recorded for a nested fragment. A
+/// plain value is recorded by [`read_children`], which sees a run of them.
+pub(crate) fn read_child<T: ReadTxn>(
+    txn: &T,
+    i: u32,
+    child: &Out,
+    at: &str,
+    depth: usize,
+    problems: &mut Vec<Problem>,
+) -> Vec<Node> {
+    match child {
+        Out::YXmlElement(_) if depth > MAX_DEPTH => {
+            problems.push(Problem::new(at, too_deep()));
+            vec![]
+        }
+        Out::YXmlElement(el) => {
+            let tag = el.tag().to_string();
+            let here = if at.is_empty() {
+                format!("{tag}[{i}]")
+            } else {
+                format!("{at} > {tag}[{i}]")
+            };
+            let mut attrs = Map::new();
+            for (k, v) in el.attributes(txn) {
+                match &v {
+                    Out::Any(a) => {
+                        attrs.insert(k.to_string(), any_to_value(a));
+                    }
+                    _ => problems.push(Problem::new(
+                        &here,
+                        format!("attribute `{k}` holds a shared type, not a value"),
+                    )),
+                }
+            }
+            let content = read_children(txn, el, &here, depth + 1, problems);
+            vec![Node::element(&tag, attrs, content)]
+        }
+        Out::YXmlText(t) => read_text_checked(txn, t, at, problems),
+        Out::YXmlFragment(_) => {
+            problems.push(Problem::new(at, "a nested fragment is not document content"));
+            vec![]
+        }
+        _ => vec![],
+    }
 }
 
 /// One `XmlText` as text nodes, a node per run of equal marks.

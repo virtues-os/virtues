@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // class that only loads through the Svelte compiler. Nothing here clicks it.
 vi.mock('$lib/stores/contextMenu.svelte', () => ({ contextMenu: { show: vi.fn() } }));
 
-import { createTestView, destroyTestView, forceFocus, setCursor, visibleText } from '../test-utils';
+import { forceParsing } from '@codemirror/language';
+import { createTestView, destroyTestView, forceFocus, partlyParsedView, setCursor, visibleText } from '../test-utils';
 import { codeBlocks } from './code-blocks';
 import { mouseFreeze } from './mouse-freeze';
 
@@ -29,6 +30,17 @@ describe('code blocks: header and lines', () => {
 		expect(view.contentDOM.querySelectorAll('.cm-codeblock-line').length).toBe(3);
 		expect(view.contentDOM.querySelector('.cm-codeblock-first')).not.toBeNull();
 		expect(view.contentDOM.querySelector('.cm-codeblock-last')).not.toBeNull();
+	});
+});
+
+describe('code blocks: a parse that catches up', () => {
+	it('draws a block below what the first parse reached once the rest arrives', () => {
+		const doc = `${'Line.\n\n'.repeat(4)}${DOC}`;
+		view = partlyParsedView(doc, { selection: 0, extensions: [mouseFreeze, codeBlocks] });
+		expect(view.contentDOM.querySelector('.cm-code-language')).toBeNull();
+		forceParsing(view, view.state.doc.length, 60_000);
+		expect(view.contentDOM.querySelector('.cm-code-language')?.textContent).toBe('js');
+		expect(visibleText(view)).not.toContain('```');
 	});
 });
 

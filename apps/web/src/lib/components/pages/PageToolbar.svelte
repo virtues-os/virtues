@@ -11,6 +11,7 @@
 	import { VersionHistoryPanel } from "$lib/components/pages";
 	import { Popover } from "$lib/floating";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
+	import type { PageFormat } from "$lib/api/client";
 	import type { YjsDocument } from "$lib/yjs";
 
 	interface Props {
@@ -20,6 +21,9 @@
 		coverUrl: string | null;
 		copied: boolean;
 		pageId: string;
+		/** How the page holds its text; a block page's history is kept by the server. */
+		format?: PageFormat;
+		/** A markdown page's document, for its history; none for a block page. */
 		yjsDoc: YjsDocument | undefined;
 		showCoverPicker?: boolean;
 		isShared?: boolean;
@@ -28,6 +32,10 @@
 		onIconColorSelect?: (value: string | null) => void;
 		onCoverSelect: (url: string | null) => void;
 		onCopyMarkdown: () => void;
+		/** Open the page's markdown, read only (block pages). */
+		onViewMarkdown?: () => void;
+		/** Print the page (block pages, which print as A4). */
+		onPrint?: () => void;
 		onShare?: () => void;
 		onToggleReferences?: () => void;
 		onDelete: () => void;
@@ -39,6 +47,7 @@
 		coverUrl,
 		copied,
 		pageId,
+		format = "markdown",
 		yjsDoc,
 		showCoverPicker = $bindable(false),
 		isShared = false,
@@ -47,6 +56,8 @@
 		onIconColorSelect,
 		onCoverSelect,
 		onCopyMarkdown,
+		onViewMarkdown,
+		onPrint,
 		onShare,
 		onToggleReferences,
 		onDelete,
@@ -131,7 +142,15 @@
 				</button>
 			{/snippet}
 			{#snippet children()}
-				<DisplaySettingsPopover />
+				<DisplaySettingsPopover
+					{format}
+					onViewMarkdown={onViewMarkdown
+						? () => {
+								showDisplaySettings = false;
+								onViewMarkdown();
+							}
+						: undefined}
+				/>
 			{/snippet}
 		</Popover>
 		<IconButton
@@ -159,7 +178,7 @@
 				<IconButton icon="ri:history-line" label="Version history" onclick={toggle} />
 			{/snippet}
 			{#snippet children({ close })}
-				<VersionHistoryPanel {close} {pageId} {yjsDoc} />
+				<VersionHistoryPanel {close} {pageId} {format} {yjsDoc} />
 			{/snippet}
 		</Popover>
 		{#if onShare}
@@ -188,6 +207,16 @@
 							close();
 						}}
 					/>
+					{#if onPrint}
+						<MenuItem
+							icon="ri:printer-line"
+							label="Print"
+							onclick={() => {
+								close();
+								onPrint();
+							}}
+						/>
+					{/if}
 					<!-- This popover has no submenus, so the choice opens as the
 					     shared project menu where this row was. -->
 					<MenuItem

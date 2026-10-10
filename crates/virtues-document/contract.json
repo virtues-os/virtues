@@ -1,5 +1,5 @@
 {
-  "$comment": "The page document contract, read by the Rust server (crates/virtues-document) and the browser editor alike. Key order is meaningful: mark order decides HTML nesting (link outermost) and attribute order is rendering order. `version` is bumped only once documents written under it have shipped; from then on, adding a node type, a mark or an attribute needs a bump, because a client deletes from the shared document what its schema cannot read. An `int` is a whole number a JavaScript number holds exactly, at most 2^53 - 1 either side of zero; `min` and `max` narrow it. A `route` is a ref to something on the box, `/kind/id`, and never another site. `urlSchemes` are the schemes a `url` attribute may use, checked after removing tabs and newlines and trimming control characters and spaces as a browser does; a URL without a scheme is a path on the box.",
+  "$comment": "The page document contract, read by the Rust server (crates/virtues-document) and the browser editor alike. Key order is meaningful: mark order decides HTML nesting (proposals outermost, then link) and attribute order is rendering order. `version` is bumped only once documents written under it have shipped; from then on, adding a node type, a mark or an attribute needs a bump, because a client deletes from the shared document what its schema cannot read. An `int` is a whole number a JavaScript number holds exactly, at most 2^53 - 1 either side of zero; `min` and `max` narrow it. A `route` is a ref to something on the box, `/kind/id`, and never another site. `urlSchemes` are the schemes a `url` attribute may use, checked after removing tabs and newlines and trimming control characters and spaces as a browser does; a URL without a scheme is a path on the box.",
   "version": 1,
   "fragment": "doc",
   "id": { "attr": "id", "html": "data-id" },
@@ -72,12 +72,36 @@
       },
       "html": [{ "tag": "img" }]
     },
+    "audio": {
+      "group": "block", "atom": true, "id": true,
+      "attrs": {
+        "src": { "type": "url", "required": true, "html": "src" },
+        "name": { "type": "string", "default": null, "html": "data-name" }
+      },
+      "html": [{ "tag": "audio" }]
+    },
+    "video": {
+      "group": "block", "atom": true, "id": true,
+      "attrs": {
+        "src": { "type": "url", "required": true, "html": "src" },
+        "name": { "type": "string", "default": null, "html": "data-name" }
+      },
+      "html": [{ "tag": "video" }]
+    },
+    "file": {
+      "group": "block", "atom": true, "id": true,
+      "attrs": {
+        "src": { "type": "url", "required": true, "html": "src" },
+        "name": { "type": "string", "default": null, "html": "data-name" }
+      },
+      "html": [{ "tag": "virtues-file" }]
+    },
     "table": {
       "group": "block", "content": "tableRow+", "id": true,
       "html": [{ "tag": "table", "wrap": "tbody", "transparent": ["thead", "tbody", "tfoot"] }]
     },
     "tableRow": {
-      "content": "(tableCell | tableHeader)*",
+      "content": "(tableCell | tableHeader)*", "id": true,
       "html": [{ "tag": "tr" }]
     },
     "tableHeader": {
@@ -122,6 +146,14 @@
     }
   },
   "marks": {
+    "proposedDeletion": {
+      "attrs": { "proposal": { "type": "string", "required": true, "html": "proposal" } },
+      "html": [{ "tag": "virtues-del" }], "excludes": "proposedDeletion proposedInsertion"
+    },
+    "proposedInsertion": {
+      "attrs": { "proposal": { "type": "string", "required": true, "html": "proposal" } },
+      "html": [{ "tag": "virtues-ins" }], "excludes": "proposedDeletion proposedInsertion"
+    },
     "link": { "attrs": { "href": { "type": "url", "required": true, "html": "href" } }, "html": [{ "tag": "a" }] },
     "bold": { "html": [{ "tag": "strong" }, { "tag": "b", "parseOnly": true }] },
     "italic": { "html": [{ "tag": "em" }, { "tag": "i", "parseOnly": true }] },

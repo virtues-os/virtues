@@ -2,7 +2,8 @@
 import { deleteCharBackward } from '@codemirror/commands';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createTestView, destroyTestView } from '../test-utils';
+import { forceParsing } from '@codemirror/language';
+import { createTestView, destroyTestView, partlyParsedView } from '../test-utils';
 import { backspaceAtTableBoundary, parseCells, parseTable, serializeCell, serializeTable, tables } from './tables';
 
 import type { EditorView } from '@codemirror/view';
@@ -36,6 +37,15 @@ const cells = (v: EditorView) => Array.from(v.contentDOM.querySelectorAll<HTMLEl
 
 const keydown = (el: Element, key: string, init: KeyboardEventInit = {}) =>
 	el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
+
+describe('tables: a parse that catches up', () => {
+	it('draws a table below what the first parse reached once the rest arrives', () => {
+		view = partlyParsedView(`${'Line.\n\n'.repeat(4)}${TABLE}`, { extensions: [tables] });
+		expect(cells(view)).toHaveLength(0);
+		forceParsing(view, view.state.doc.length, 60_000);
+		expect(cells(view).map((c) => c.textContent)).toEqual(['1', '2']);
+	});
+});
 
 describe('tables: pipe escaping', () => {
 	it('reads `\\|` as a literal pipe in the cell', () => {

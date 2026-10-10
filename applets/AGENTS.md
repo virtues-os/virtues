@@ -167,7 +167,7 @@ Its prompt may rely on exactly this set — nothing else exists:
 | **deliver to the user** | the run's result message posts to the chat that authored it |
 | write its own tables | `sql_write` — DML inside `applet_*` schemas only (PG-enforced) |
 | keep notes across runs | `update_applet_memory` |
-| write durable pages | `create_page` / `edit_page` / `get_page_content` |
+| write durable pages | `create_page` / `edit_page` / `get_page_content` (block pages: ops on the data-ids `get_page_content` returns; `append` needs no read) |
 | compute | `code_interpreter` (jailed, no network) |
 | introspect applets | `list_applets` / `get_applet` (read-only) |
 

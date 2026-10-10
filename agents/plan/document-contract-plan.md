@@ -140,7 +140,9 @@ reusing `RefPicker`, `SlashMenu`, `SelectionToolbar`, `PageOutline`,
 Typography uses the `--md-*` tokens ([build/design-grammar.md](../build/design-grammar.md)
 makes them the one definition the read path and the editor share).
 
-Parity with today's editor, each kept or cut by name:
+Parity with today's editor, each kept or cut by name. What was built
+keeps that table in [build/document.md](../build/document.md#parity-with-the-codemirror-editor),
+which outlives this plan:
 
 - task lists and the `/task` keyword (`tasks-plan.md` keeps
   page checkboxes as page content); slash commands; find-in-page; word and
@@ -150,12 +152,12 @@ Parity with today's editor, each kept or cut by name:
   long-press for menus on iOS, which fires no `contextmenu`; the cover,
   projects and references panels.
 - **The raw-markdown toggle** (`pageDisplay.rawMode`) has no meaning on a
-  tree. Replace with a read-only "view as markdown", or cut.
+  tree. Replaced by a read-only View as markdown.
 - **The inline AI writer** (Cmd-J, `/ai`, "Ask AI"; `ai/aiCursorSession.ts`)
   streams into the Y.Text and proposes rewrites as CriticMarkup
-  (`{--old--}{++new++}`). Port it to tree transactions, with suggestion
-  marks in the contract if proposals stay, or cut it. Note that `<del>` is a
-  parse alias for strike today.
+  (`{--old--}{++new++}`). Ported to tree transactions with suggestion marks
+  in the contract (`ai/treeAiSession.ts`). Note that `<del>` is a parse
+  alias for strike today.
 - **Browser code that reads `ytext` outside the editor:** the chat's page
   binding (`components/chat/state/pageBinding.ts`,
   `stores/editAllowList.svelte.ts`), which would hand the model an empty

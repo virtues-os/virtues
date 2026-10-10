@@ -16,10 +16,14 @@
  *
  * Component-local handlers (a modal's Escape, an editor's Tab) deliberately
  * stay where they are. They're scoped to a focused thing and are correct as
- * local listeners; only *global* shortcuts belong here.
+ * local listeners; only *global* shortcuts belong here. The registry listens
+ * first (capture, on the window), so a focused thing that gives a global
+ * chord a meaning of its own claims it (`claim`): while the key goes to that
+ * element and its claim holds, the registry leaves the key to it.
  */
 
 import { isAppleKeyboard } from '$lib/utils/platform';
+import { inComposition } from '$lib/utils/ime';
 
 /** Canonical chord: lowercase parts, `mod` for ⌘/Ctrl, `+`-joined. */
 export type Chord = string;
@@ -116,8 +120,16 @@ function isTextEntry(target: EventTarget | null): boolean {
 	return !['checkbox', 'radio', 'button', 'submit', 'reset', 'range'].includes(type);
 }
 
+interface Claim {
+	element: Element;
+	chord: Chord;
+	/** Whether the element has a use for the key now. */
+	when: (event: KeyboardEvent) => boolean;
+}
+
 class ShortcutRegistry {
 	#shortcuts = $state<Shortcut[]>([]);
+	#claims: Claim[] = [];
 	#listening = false;
 
 	/** Everything currently bound — the cheat sheet's data source. */
@@ -154,6 +166,20 @@ class ShortcutRegistry {
 		};
 	}
 
+	/**
+	 * Leave `keys` to `element` while the key goes to it (or to something in
+	 * it) and `when` holds: the page editor's ⌘K links a selection, and the
+	 * app's ⌘K opens search everywhere else. Returns the release.
+	 */
+	claim(element: Element, keys: Chord, when: (event: KeyboardEvent) => boolean = () => true): () => void {
+		const claim: Claim = { element, chord: normalize(keys), when };
+		this.#claims = [...this.#claims, claim];
+		this.#listen();
+		return () => {
+			this.#claims = this.#claims.filter((c) => c !== claim);
+		};
+	}
+
 	/** Render a chord for display: `mod+shift+n` → `⌘⇧N` / `Ctrl+Shift+N`. */
 	format(keys: Chord): string {
 		const parts = normalize(keys).split('+');
@@ -173,10 +199,12 @@ class ShortcutRegistry {
 
 	#onKeydown = (event: KeyboardEvent) => {
 		// Mid-composition (IME) keystrokes belong to the input method.
-		if (event.isComposing || event.keyCode === 229) return;
+		if (inComposition(event)) return;
 
 		const chord = chordOf(event);
 		const inText = isTextEntry(event.target);
+		const target = event.target instanceof Node ? event.target : null;
+		if (target && this.#claims.some((c) => c.chord === chord && c.element.contains(target) && c.when(event))) return;
 
 		for (const s of this.#shortcuts) {
 			if (normalize(s.keys) !== chord) continue;

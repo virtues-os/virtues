@@ -32,6 +32,11 @@
 //! block, and the row keeps it like any other failure. It also counts as a
 //! failure for rule 2, so an identical retry walks toward the close rather
 //! than around it.
+//!
+//! A write a tool refused whole counts as a failure for both rules, though
+//! the tool reports it as a success with `status: "refused"` (`edit_page`
+//! does, so the model acts on it in the same turn and the chat draws no
+//! failed card). Sent again unchanged it is refused again.
 
 use std::collections::{HashMap, HashSet};
 
@@ -136,16 +141,33 @@ impl RepeatGuard {
     pub fn record(&mut self, calls: &[ToolCall], results: &[ToolExecutionResult]) {
         for r in results {
             let ledger = self.tools.entry(r.tool_name.clone()).or_default();
-            if r.is_success() {
+            let Some(said) = failure(r) else {
                 ledger.consecutive_failures = 0;
                 continue;
-            }
+            };
             ledger.consecutive_failures += 1;
             if let Some(call) = calls.iter().find(|c| c.id == r.tool_call_id) {
-                let said = first_line(&r.to_llm_content());
                 ledger.failed_args.insert(fingerprint(&call.arguments), said);
             }
         }
+    }
+}
+
+/// What a result's failure said, or `None` when it did not fail: an error,
+/// or a write the tool refused whole (`status: "refused"`), whose reason is
+/// its `error`.
+fn failure(r: &ToolExecutionResult) -> Option<String> {
+    match &r.result {
+        Ok(t) if t.success && t.data["status"] == "refused" => {
+            let said = t
+                .data
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("the tool wrote nothing");
+            Some(first_line(said))
+        }
+        _ if r.is_success() => None,
+        _ => Some(first_line(&r.to_llm_content())),
     }
 }
 
@@ -300,6 +322,68 @@ mod tests {
         let (run, refused) = g.admit(std::slice::from_ref(&different));
         assert!(run.is_empty(), "identical retries walked the tool to its close");
         assert!(refused[0].to_llm_content().contains("closed"));
+    }
+
+    /// A refused write, reported as a success with `status: "refused"`:
+    /// edit_page's answer to a batch it wrote none of.
+    fn refused_write(call: &ToolCall, why: &str) -> ToolExecutionResult {
+        ToolExecutionResult {
+            tool_call_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            result: Ok(ToolResult::success(serde_json::json!({
+                "applied": false,
+                "status": "refused",
+                "error": why,
+                "base": "3e61765aa88cf9b8",
+            }))),
+        }
+    }
+
+    fn edit(id: &str, base: &str) -> ToolCall {
+        call(
+            id,
+            "edit_page",
+            serde_json::json!({ "page_id": "page_1", "base": base, "ops": [
+                { "op": "delete", "id": "a1b2c3d4" },
+                { "op": "insert_after", "id": "a1b2c3d4", "html": "<p>Lunch with Nick.</p>" },
+            ] }),
+        )
+    }
+
+    #[test]
+    fn a_refused_write_sent_again_unchanged_is_refused_and_a_run_of_them_closes_the_tool() {
+        let mut g = RepeatGuard::new();
+        let first = edit("1", "3e61765aa88cf9b8");
+        g.record(
+            std::slice::from_ref(&first),
+            &[refused_write(
+                &first,
+                "Nothing was written. op 2: op 1 removes the block `a1b2c3d4` before this op runs",
+            )],
+        );
+        let (run, refused) = g.admit(std::slice::from_ref(&edit("2", "3e61765aa88cf9b8")));
+        assert!(run.is_empty());
+        let said = refused[0].to_llm_content();
+        assert!(said.contains("already failed this turn"), "{said}");
+        assert!(said.contains("op 1 removes the block"), "{said}");
+
+        // Changed calls run, and refused in a row they close the tool.
+        for i in 1..MAX_CONSECUTIVE {
+            let c = edit(&format!("c{i}"), &format!("base{i}"));
+            let (run, _) = g.admit(std::slice::from_ref(&c));
+            assert_eq!(run.len(), 1, "a changed call {i} runs");
+            g.record(&run, &[refused_write(&c, "Nothing was written.")]);
+        }
+        let (run, refused) = g.admit(std::slice::from_ref(&edit("z", "fresh")));
+        assert!(run.is_empty());
+        assert!(refused[0].to_llm_content().contains("closed"));
+
+        // A write that lands resets the run.
+        let mut g = RepeatGuard::new();
+        let c = edit("1", "a");
+        g.record(std::slice::from_ref(&c), &[refused_write(&c, "Nothing was written.")]);
+        g.record(std::slice::from_ref(&c), &[ok(&c)]);
+        assert_eq!(g.tools["edit_page"].consecutive_failures, 0);
     }
 
     #[test]

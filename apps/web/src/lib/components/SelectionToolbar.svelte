@@ -13,6 +13,8 @@
 	import { fade } from 'svelte/transition';
 	import { FloatingContent, useClickOutside, useEscapeKey } from '$lib/floating';
 	import type { VirtualAnchor } from '$lib/floating';
+	import { TOOLBAR_OFFSET } from '$lib/document/toolbar';
+	import { shortcuts } from '$lib/shortcuts/registry.svelte';
 
 	type MarkType = 'strong' | 'em' | 'underline' | 'code' | 'strikethrough' | 'link';
 
@@ -32,11 +34,13 @@
 		onFormat: (mark: MarkType) => void;
 		/** Called when "Ask AI" is clicked */
 		onAskAi?: () => void;
+		/** Whether the mark buttons show; text that holds no marks (a code block) offers Ask AI alone. */
+		marks?: boolean;
 		/** Called when toolbar should close */
 		onClose: () => void;
 	}
 
-	let { position, activeMarks, onFormat, onAskAi, onClose }: Props = $props();
+	let { position, activeMarks, onFormat, onAskAi, marks = true, onClose }: Props = $props();
 
 	let toolbarEl: HTMLDivElement | null = $state(null);
 
@@ -61,15 +65,16 @@
 		mark: MarkType;
 		icon: string;
 		label: string;
+		/** Its key, as a chord (`mod+b`): shown with the keyboard's own names, ⌘ on a Mac and Ctrl elsewhere. */
 		shortcut: string;
 	}
 
 	const buttons: FormatButton[] = [
-		{ mark: 'strong', icon: 'ri:bold', label: 'Bold', shortcut: 'Cmd+B' },
-		{ mark: 'em', icon: 'ri:italic', label: 'Italic', shortcut: 'Cmd+I' },
-		{ mark: 'underline', icon: 'ri:underline', label: 'Underline', shortcut: 'Cmd+U' },
-		{ mark: 'code', icon: 'ri:code-line', label: 'Code', shortcut: 'Cmd+E' },
-		{ mark: 'strikethrough', icon: 'ri:strikethrough', label: 'Strikethrough', shortcut: 'Cmd+Shift+S' },
+		{ mark: 'strong', icon: 'ri:bold', label: 'Bold', shortcut: 'mod+b' },
+		{ mark: 'em', icon: 'ri:italic', label: 'Italic', shortcut: 'mod+i' },
+		{ mark: 'underline', icon: 'ri:underline', label: 'Underline', shortcut: 'mod+u' },
+		{ mark: 'code', icon: 'ri:code-line', label: 'Code', shortcut: 'mod+e' },
+		{ mark: 'strikethrough', icon: 'ri:strikethrough', label: 'Strikethrough', shortcut: 'mod+shift+s' },
 		{ mark: 'link', icon: 'ri:link', label: 'Link', shortcut: '' },
 	];
 
@@ -87,7 +92,7 @@
 
 <FloatingContent
 	anchor={virtualAnchor}
-	options={{ placement: 'top', offset: 8, flip: true, shift: true, padding: 8 }}
+	options={{ placement: 'top', offset: TOOLBAR_OFFSET, flip: true, shift: true, padding: 8 }}
 	class="selection-toolbar-container"
 >
 	<div
@@ -109,18 +114,22 @@
 					onAskAi?.();
 				}}
 				title="Ask AI"
+				aria-label="Ask AI"
 			>
 				<Icon icon="ri:sparkling-2-line" width="16" />
 			</button>
-			<span class="toolbar-sep"></span>
+			{#if marks}<span class="toolbar-sep"></span>{/if}
 		{/if}
-		{#each buttons as btn}
+		{#each marks ? buttons : [] as btn}
+			<!-- Its state is said, not only drawn: a screen reader on a phone reads this bar. -->
 			<button
 				type="button"
 				class="toolbar-btn"
 				class:active={activeMarks[btn.mark]}
 				onclick={(e) => handleButtonClick(e, btn.mark)}
-				title={btn.shortcut ? `${btn.label} (${btn.shortcut})` : btn.label}
+				title={btn.shortcut ? `${btn.label} (${shortcuts.format(btn.shortcut)})` : btn.label}
+				aria-label={btn.label}
+				aria-pressed={activeMarks[btn.mark]}
 			>
 				<Icon icon={btn.icon} width="16" />
 			</button>
@@ -211,6 +220,15 @@
 		transition:
 			color 0.12s ease,
 			background-color 0.12s ease;
+	}
+
+	/* A thumb's 44pt, inside the button (design-grammar §6): on touch this
+	   bar sits under the selection and is how a phone formats. */
+	@media (pointer: coarse) {
+		.toolbar-btn {
+			width: 44px;
+			height: 44px;
+		}
 	}
 
 	.toolbar-btn:hover {

@@ -46,6 +46,7 @@
 	import { placeNotes, plainSentence, type NoteAnchor } from "$lib/wiki/dayNotes";
 	import { getDayFirsts, type DayFirstsApi, type WikiNote } from "$lib/wiki/api";
 	import { stepDay } from "$lib/timeline/day";
+	import { inComposition } from "$lib/utils/ime";
 	import { veiled } from "$lib/actions/veil";
 	import { veil } from "$lib/stores/veil.svelte";
 	import DayInline from "./DayInline.svelte";
@@ -382,7 +383,7 @@
 	}
 
 	function onEditorKey(e: KeyboardEvent) {
-		if (e.isComposing) return;
+		if (inComposition(e)) return;
 		if (e.key === "Escape") {
 			e.stopPropagation();
 			stopWriting();

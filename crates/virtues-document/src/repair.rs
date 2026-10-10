@@ -3,17 +3,22 @@
 //! Two edits, each inside the contract on the device that made it, can merge
 //! into a document that is not (see [`crate::validate`]): a laptop and a
 //! phone each delete one of a list's two items, and the list holds none.
-//! Yjs merges without asking the schema, and Tiptap's binding builds what it
-//! is given, so no client puts it right. The server takes such an update and
-//! then repairs the shape in its own transaction, which reaches every client
-//! like any edit:
+//! Yjs merges without asking the schema, and no client puts the shared
+//! document right: the app's patch to Tiptap's binding draws such a node
+//! filled to fit and writes nothing. The server takes such an update and
+//! then repairs the shape in its own transaction, which it relays with the
+//! update that called for it, as one, so no other client holds the merge:
 //!
 //! - a node whose children do not fit its content takes an empty paragraph
 //!   first, when that makes them fit (an emptied list item, quote or table
 //!   cell; an emptied page);
 //! - otherwise a node left with no children is removed (an emptied list or
 //!   table), and its parent is looked at again;
-//! - a block id an earlier block already has is replaced with a new one.
+//! - a block id an earlier block already has is replaced with a new one;
+//! - a run of text carrying two marks that exclude each other keeps the one
+//!   the contract lists later: words one device suggested inserting inside
+//!   a run another device suggested deleting stay a suggested insertion,
+//!   and the deletion goes from those words alone.
 //!
 //! Anything else outside the contract is not a merge's, and is left for
 //! [`crate::validate`] to name.
@@ -22,7 +27,9 @@ use crate::contract::Contract;
 use crate::model::{new_id, MAX_DEPTH};
 use crate::ydoc;
 use std::collections::HashSet;
-use yrs::{Any, Out, ReadTxn, TransactionMut, Xml, XmlElementPrelim, XmlFragment};
+use yrs::types::text::YChange;
+use yrs::types::Attrs;
+use yrs::{Any, OffsetKind, Out, ReadTxn, Text, TransactionMut, Xml, XmlElementPrelim, XmlFragment, XmlTextRef};
 
 /// Repair what a merge left outside the contract, in `txn`. Returns how many
 /// changes it made; 0 writes nothing.
@@ -33,7 +40,57 @@ pub fn repair(c: &Contract, txn: &mut TransactionMut) -> usize {
     let mut changes = 0;
     shape(c, txn, &frag, &c.fragment, true, 1, &mut changes);
     renew_ids(c, txn, &frag, 1, &mut HashSet::new(), &mut changes);
+    exclusive_marks(c, txn, &frag, 1, &mut changes);
     changes
+}
+
+/// Take, from every run of text under `el` carrying two marks that exclude
+/// each other, the one the contract lists first. Of the marks a merge can
+/// cross that way, the proposals, that keeps the insertion: the newer
+/// suggestion, its words someone added inside another's deletion.
+fn exclusive_marks<F: XmlFragment>(c: &Contract, txn: &mut TransactionMut, el: &F, depth: usize, changes: &mut usize) {
+    if depth > MAX_DEPTH {
+        return;
+    }
+    let children: Vec<Out> = ydoc::children(&*txn, el).map(|(_, out)| out).collect();
+    for child in children {
+        match child {
+            Out::YXmlElement(child) => exclusive_marks(c, txn, &child, depth + 1, changes),
+            Out::YXmlText(text) => exclusive_runs(c, txn, &text, changes),
+            _ => {}
+        }
+    }
+}
+
+fn exclusive_runs(c: &Contract, txn: &mut TransactionMut, text: &XmlTextRef, changes: &mut usize) {
+    let kind = txn.doc().offset_kind();
+    let mut fixes: Vec<(u32, u32, String)> = vec![];
+    let mut at = 0u32;
+    for d in text.diff(&*txn, YChange::identity) {
+        let len = match &d.insert {
+            Out::Any(Any::String(s)) => match kind {
+                OffsetKind::Bytes => s.len() as u32,
+                OffsetKind::Utf16 => s.encode_utf16().count() as u32,
+            },
+            _ => 1,
+        };
+        if let Some(attrs) = &d.attributes {
+            let mut marks: Vec<&str> = attrs.keys().map(|k| k.as_ref()).collect();
+            marks.sort_by_key(|m| c.mark_rank(m));
+            for (i, first) in marks.iter().enumerate() {
+                if marks[i + 1..].iter().any(|later| later != first && c.marks_exclude(first, later)) {
+                    fixes.push((at, len, first.to_string()));
+                }
+            }
+        }
+        at += len;
+    }
+    for (at, len, mark) in fixes {
+        let mut off = Attrs::new();
+        off.insert(mark.into(), Any::Null);
+        text.format(txn, at, len, off);
+        *changes += 1;
+    }
 }
 
 /// Repair the children of `el`, a node of type `kind`, then `el` itself.
@@ -256,7 +313,12 @@ mod tests {
                 let sv = server.transact().state_vector();
                 let resync = d.transact().encode_state_as_update_v1(&sv);
                 assert_eq!(check_update(&c, &server, &resync).unwrap(), []);
-                apply(d, &server.transact().encode_state_as_update_v1(&StateVector::default()));
+                apply(
+                    d,
+                    &server
+                        .transact()
+                        .encode_state_as_update_v1(&StateVector::default()),
+                );
                 apply(d, &fix);
                 assert_eq!(html(d), repaired);
             }
@@ -341,6 +403,61 @@ mod tests {
         let tree = ydoc::read_doc(&c, &doc.transact());
         assert_eq!(tree[0].id(), Some("aaaa1111"));
         assert_ne!(tree[1].id(), Some("aaaa1111"));
+    }
+
+    /// One device suggests deleting a sentence; another, offline, pastes a
+    /// suggested insertion inside it. Each is inside the contract; merged,
+    /// the inserted words carry both suggestions. The second is taken, and
+    /// the words keep the insertion alone, in either order.
+    #[test]
+    fn an_insertion_suggested_inside_a_suggested_deletion_keeps_the_insertion() {
+        use yrs::{Text, XmlTextRef};
+        let c = Contract::load();
+        let text_of = |txn: &mut TransactionMut| -> XmlTextRef {
+            let frag = txn.get_or_insert_xml_fragment("doc");
+            let Some(XmlOut::Element(p)) = frag.get(txn, 0) else { panic!("a paragraph") };
+            let Some(XmlOut::Text(t)) = p.get(txn, 0) else { panic!("its text") };
+            t
+        };
+        let proposal = |key: &str, id: &str| {
+            let mut a = Attrs::new();
+            let mut inner = std::collections::HashMap::new();
+            inner.insert("proposal".to_string(), Any::from(id));
+            a.insert(key.into(), Any::from(inner));
+            a
+        };
+        for a_first in [true, false] {
+            let server = page("<p>hello world</p>");
+            let a = device(&server);
+            let b = device(&server);
+            let from_a = edit(&a, |txn| {
+                let t = text_of(txn);
+                t.format(txn, 0, 11, proposal("proposedDeletion", "p1"));
+                t.insert_with_attributes(txn, 11, "Hi there", proposal("proposedInsertion", "p1"));
+            });
+            let from_b = edit(&b, |txn| {
+                let t = text_of(txn);
+                t.insert_with_attributes(txn, 6, "brave ", proposal("proposedInsertion", "p2"));
+            });
+            assert_eq!(validate_doc(&c, &a.transact()), []);
+            assert_eq!(validate_doc(&c, &b.transact()), []);
+            let (first, second) = if a_first { (&from_a, &from_b) } else { (&from_b, &from_a) };
+            assert_eq!(check_update(&c, &server, first).unwrap(), []);
+            apply(&server, first);
+            assert_eq!(check_update(&c, &server, second).unwrap(), [], "the second device is not shut out");
+            apply(&server, second);
+            assert!(validate_doc(&c, &server.transact())
+                .iter()
+                .any(|p| p.message.contains("cannot be combined")));
+            assert!(repair(&c, &mut server.transact_mut()) > 0);
+            assert_eq!(validate_doc(&c, &server.transact()), []);
+            assert_eq!(
+                html(&server),
+                "<p><virtues-del proposal=\"p1\">hello </virtues-del><virtues-ins proposal=\"p2\">brave </virtues-ins>\
+                 <virtues-del proposal=\"p1\">world</virtues-del><virtues-ins proposal=\"p1\">Hi there</virtues-ins></p>"
+            );
+            assert_eq!(repair(&c, &mut server.transact_mut()), 0);
+        }
     }
 
     #[test]

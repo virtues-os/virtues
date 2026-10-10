@@ -34,8 +34,9 @@ enum Class {
     Refused,
     /// A shape a merge of edits inside the contract can make: children that
     /// may each sit in their parent, in a number or order its content does
-    /// not allow (an emptied list), or a block id used twice (two devices
-    /// moving the same block).
+    /// not allow (an emptied list), a block id used twice (two devices
+    /// moving the same block), or two marks that exclude each other on one
+    /// run (words one device inserted inside another's marked run).
     Shape,
 }
 
@@ -45,11 +46,14 @@ struct Found {
     problems: Vec<(Class, Problem)>,
     /// Block ids seen so far, to find one used twice.
     ids: HashSet<String>,
+    /// How many nodes the tree read holds ([`crate::node_count`]).
+    nodes: usize,
 }
 
 impl Found {
     fn refuse(&mut self, at: &str, message: impl Into<String>) {
-        self.problems.push((Class::Refused, Problem::new(at, message)));
+        self.problems
+            .push((Class::Refused, Problem::new(at, message)));
     }
 
     fn all(self) -> Vec<Problem> {
@@ -109,6 +113,7 @@ fn found_doc<T: ReadTxn>(c: &Contract, txn: &T) -> Found {
         ..Found::default()
     };
     if let Some(nodes) = nodes {
+        found.nodes = crate::node_count(&nodes);
         children(c, &c.fragment, &nodes, &c.fragment, 1, &mut found);
     }
     found
@@ -188,20 +193,95 @@ fn problem_key(p: &Problem) -> (String, String) {
 /// clients may bind and a client that lowers it lets in the ones that delete
 /// what they cannot read.
 ///
+/// An update that writes into a root other than the fragment and `meta` is
+/// refused whatever that root holds afterwards. A root, once in a document,
+/// stays in it, and text written and deleted in one update leaves one that
+/// is empty: a reader of the saved state that asks whether a `content` text
+/// exists would then take a tree page for a markdown one.
+///
+/// An update that leaves items or deletions waiting on items the document
+/// does not have is not taken: what waits is not in the copy this check
+/// reads, so it would reach the page unchecked the moment the server's own
+/// next write supplied what it waited on. Here it is a problem; the socket
+/// takes it as [`Admission::Waits`] instead ([`admit_update_on_state`]),
+/// since an honest client sends one too: y-websocket sends a keystroke
+/// typed after a reconnect before the sync that carries what it typed
+/// offline.
+///
 /// An update that does not decode or apply is an error.
 pub fn check_update(c: &Contract, doc: &yrs::Doc, update: &[u8]) -> anyhow::Result<Vec<Problem>> {
-    use yrs::updates::decoder::Decode;
-    let scratch = ydoc::new_doc();
-    {
-        let state = encode_state(&doc.transact(), &yrs::StateVector::default());
-        let mut txn = scratch.transact_mut();
-        txn.apply_update(Update::decode_v1(&state)?)?;
-        txn.apply_update(decode_update(update)?)?;
+    let state = encode_state(&doc.transact(), &yrs::StateVector::default());
+    check_update_on_state(c, &state, update)
+}
+
+/// [`check_update`] against `state`, a document's full state as
+/// [`encode_state`] writes it: the document is read from it alone, so the
+/// check needs nothing of the document while it runs. An update that would
+/// take the page past [`crate::MAX_NODES`] is refused too.
+pub fn check_update_on_state(c: &Contract, state: &[u8], update: &[u8]) -> anyhow::Result<Vec<Problem>> {
+    let (mut problems, waits) = examine_update(c, state, update)?;
+    if waits {
+        problems.push(Problem::new(&c.fragment, WAITS));
     }
-    let after_txn = scratch.transact();
-    let before_txn = doc.transact();
+    Ok(problems)
+}
+
+/// Why an update that waits on items the page lacks is not taken.
+const WAITS: &str =
+    "the update holds edits that follow ones this page does not have; sync with the server first";
+
+/// What the page's socket does with a client's update ([`admit_update_on_state`]).
+#[derive(Debug, PartialEq)]
+pub enum Admission {
+    /// Inside the contract, and nothing in it waits: apply it.
+    Take,
+    /// Inside the contract as far as the page can read it, but it holds
+    /// edits that follow ones the page lacks. Not applied: the client is
+    /// asked to sync, and its answer carries this update's edits again with
+    /// the ones they follow, all of it checked then. y-websocket sends a
+    /// keystroke typed after a reconnect before its answer to the server's
+    /// sync, which carries what it typed offline; refused, that keystroke
+    /// would close the socket and drop the offline edits.
+    Waits,
+    /// Outside the contract.
+    Refused(Vec<Problem>),
+}
+
+/// [`check_update_on_state`] as the socket acts on it: an update whose only
+/// fault is waiting on items the page lacks [`Admission::Waits`].
+pub fn admit_update_on_state(c: &Contract, state: &[u8], update: &[u8]) -> anyhow::Result<Admission> {
+    let (problems, waits) = examine_update(c, state, update)?;
+    Ok(match (problems.is_empty(), waits) {
+        (false, _) => Admission::Refused(problems),
+        (true, true) => Admission::Waits,
+        (true, false) => Admission::Take,
+    })
+}
+
+/// The problems `update` brings into the document `state` holds, and
+/// whether it leaves edits waiting on items the document lacks.
+fn examine_update(c: &Contract, state: &[u8], update: &[u8]) -> anyhow::Result<(Vec<Problem>, bool)> {
+    use yrs::updates::decoder::Decode;
     let mut problems = vec![];
-    if meta_entries(&before_txn) != meta_entries(&after_txn) {
+    for root in crate::wire::named_roots(update)? {
+        if root != c.fragment && root != ydoc::META {
+            problems.push(Problem::new(
+                &root,
+                format!("the update writes `{root}`, which a page does not have"),
+            ));
+        }
+    }
+    let scratch = ydoc::new_doc();
+    let (meta_before, waits) = {
+        let mut txn = scratch.transact_mut();
+        txn.apply_update(Update::decode_v1(state)?)?;
+        let meta_before = meta_entries(&txn);
+        let waiting = held_back(&txn);
+        txn.apply_update(decode_update(update)?)?;
+        (meta_before, held_back(&txn) != waiting)
+    };
+    let after_txn = scratch.transact();
+    if meta_before != meta_entries(&after_txn) {
         problems.push(Problem::new(
             ydoc::META,
             "the update changes `meta`, which only the server writes",
@@ -215,14 +295,24 @@ pub fn check_update(c: &Contract, doc: &yrs::Doc, update: &[u8]) -> anyhow::Resu
             .map(|(_, p)| p)
             .collect::<Vec<_>>()
     };
-    let after = refused(found_doc(c, &after_txn));
-    if after.is_empty() {
-        return Ok(problems);
+    let after = found_doc(c, &after_txn);
+    let after_nodes = after.nodes;
+    let grew_past = after_nodes > crate::MAX_NODES;
+    let after = refused(after);
+    if after.is_empty() && !grew_past {
+        return Ok((problems, waits));
     }
     // Only now is the document as it stands read: a valid result, the
     // usual case, needs no comparison.
+    let before_doc = ydoc::new_doc();
+    before_doc.transact_mut().apply_update(Update::decode_v1(state)?)?;
+    let before_txn = before_doc.transact();
+    let before = found_doc(c, &before_txn);
+    if grew_past && after_nodes > before.nodes {
+        problems.push(Problem::new(&c.fragment, crate::model::too_many_nodes()));
+    }
     let mut had: HashMap<(String, String), usize> = HashMap::new();
-    for p in refused(found_doc(c, &before_txn)) {
+    for p in refused(before) {
         *had.entry(problem_key(&p)).or_default() += 1;
     }
     for p in after {
@@ -231,7 +321,57 @@ pub fn check_update(c: &Contract, doc: &yrs::Doc, update: &[u8]) -> anyhow::Resu
             _ => problems.push(p),
         }
     }
-    Ok(problems)
+    Ok((problems, waits))
+}
+
+/// What a document holds back, waiting on items it does not have, encoded
+/// so two moments can be compared.
+#[derive(PartialEq)]
+struct HeldBack {
+    /// The items, and the state they wait on.
+    items: Option<(Vec<u8>, Vec<u8>)>,
+    deletes: Option<Vec<u8>>,
+}
+
+fn held_back<T: ReadTxn>(txn: &T) -> HeldBack {
+    use yrs::updates::encoder::Encode;
+    let store = txn.store();
+    HeldBack {
+        items: store
+            .pending_update()
+            .map(|p| (p.update.encode_v1(), p.missing.encode_v1())),
+        deletes: store.pending_ds().map(|ds| ds.encode_v1()),
+    }
+}
+
+/// Problems the contract refuses in a document's tree: what [`check_update`]
+/// refuses an update for, found in the tree itself. Empty for every tree
+/// written inside the contract, merged or not; content that reached a
+/// document past the check shows here ([`crate::put_back_in_contract`]).
+pub fn refused_in_tree<T: ReadTxn>(c: &Contract, txn: &T) -> Vec<Problem> {
+    let Some(frag) = txn.get_xml_fragment(c.fragment.as_str()) else {
+        return vec![];
+    };
+    let mut problems = vec![];
+    let nodes = ydoc::read_children(txn, &frag, &c.fragment, 1, &mut problems);
+    refused_in_blocks(c, nodes, problems)
+}
+
+/// [`refused_in_tree`] for `nodes`, a page's blocks as read, and the
+/// problems reading them found: for one block, read alone.
+pub(crate) fn refused_in_blocks(c: &Contract, mut nodes: Vec<Node>, read: Vec<Problem>) -> Vec<Problem> {
+    ydoc::canonicalize(c, &mut nodes);
+    let mut found = Found {
+        problems: read.into_iter().map(|p| (Class::Refused, p)).collect(),
+        ..Found::default()
+    };
+    children(c, &c.fragment, &nodes, &c.fragment, 1, &mut found);
+    found
+        .problems
+        .into_iter()
+        .filter(|(class, _)| *class == Class::Refused)
+        .map(|(_, p)| p)
+        .collect()
 }
 
 /// Whether `update` changes `doc`'s `meta`, and nothing more: for a page
@@ -284,14 +424,7 @@ fn label(n: &Node, i: usize) -> String {
 /// [`MAX_DEPTH`] is reported and not walked: the walk recurses once per
 /// level, and a tree built in code has had no other check. Text is a leaf
 /// and is checked at any level.
-fn children(
-    c: &Contract,
-    parent: &str,
-    nodes: &[Node],
-    at: &str,
-    depth: usize,
-    found: &mut Found,
-) {
+fn children(c: &Contract, parent: &str, nodes: &[Node], at: &str, depth: usize, found: &mut Found) {
     if depth > MAX_DEPTH && nodes.iter().any(|n| !n.is_text()) {
         found.refuse(at, too_deep());
         return;
@@ -418,10 +551,24 @@ fn text(c: &Contract, parent: &str, n: &Node, at: &str, found: &mut Found) {
             .iter()
             .find(|o| c.marks_exclude(&o.kind, &m.kind))
         {
-            found.refuse(
-                at,
-                format!("`{}` cannot be combined with `{}`", m.kind, other.kind),
-            );
+            // Two marks that exclude each other meet where a merge put them:
+            // a mark is positional in Yjs, and words one device inserts
+            // inside a run another device marked take that mark too (a
+            // suggested insertion pasted inside a suggested deletion). The
+            // server takes the run off one of them ([`crate::repair`]). The
+            // same mark twice no merge makes.
+            let class = if other.kind == m.kind {
+                Class::Refused
+            } else {
+                Class::Shape
+            };
+            found.problems.push((
+                class,
+                Problem::new(
+                    at,
+                    format!("`{}` cannot be combined with `{}`", m.kind, other.kind),
+                ),
+            ));
         }
         attrs(c, &m.kind, spec.attrs().iter(), false, &m.attrs, at, found);
     }
@@ -616,6 +763,257 @@ mod tests {
         assert_eq!(ydoc::read_doc(&c, &doc.transact()).len(), 1);
     }
 
+    /// A doc that holds `doc`'s state, under `client` when given.
+    fn copy_of(doc: &yrs::Doc, client: Option<yrs::block::ClientID>) -> yrs::Doc {
+        use yrs::updates::decoder::Decode;
+        let copy = match client {
+            Some(id) => yrs::Doc::with_options(yrs::Options {
+                client_id: id,
+                offset_kind: yrs::OffsetKind::Utf16,
+                ..yrs::Options::default()
+            }),
+            None => ydoc::new_doc(),
+        };
+        let state = doc
+            .transact()
+            .encode_state_as_update_v1(&yrs::StateVector::default());
+        copy.transact_mut()
+            .apply_update(Update::decode_v1(&state).unwrap())
+            .unwrap();
+        copy
+    }
+
+    /// A client writes after an item it made up under the server's own id
+    /// and sends its own items alone. Applied, they would wait, out of the
+    /// check's sight, for the server's next write to supply that item, and
+    /// then reach the page with no check: a `<script>` and a `javascript:`
+    /// link. The update is refused, and the page takes the next one.
+    #[test]
+    fn an_update_that_waits_on_an_item_the_page_lacks_is_refused() {
+        use yrs::{Text, XmlTextPrelim};
+        let c = Contract::load();
+        let doc = crate::doc_from_nodes(tree("<p>x</p>"));
+        let server = doc.client_id();
+        // The server's next item, faked.
+        let fake = copy_of(&doc, Some(server));
+        {
+            let mut txn = fake.transact_mut();
+            let frag = txn.get_or_insert_xml_fragment("doc");
+            frag.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+        }
+        let faked = fake.transact().state_vector();
+        let attacker = copy_of(&fake, None);
+        {
+            let mut txn = attacker.transact_mut();
+            let frag = txn.get_or_insert_xml_fragment("doc");
+            frag.push_back(&mut txn, XmlElementPrelim::empty("script"));
+            let p = frag.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+            let text = p.push_back(&mut txn, XmlTextPrelim::new(""));
+            let link = HashMap::from([(
+                std::sync::Arc::<str>::from("link"),
+                yrs::Any::from(HashMap::from([("href".to_string(), yrs::Any::from("javascript:alert(1)"))])),
+            )]);
+            text.insert_with_attributes(&mut txn, 0, "click me", link.into_iter().collect());
+        }
+        let update = attacker.transact().encode_diff_v1(&faked);
+        let problems = check_update(&c, &doc, &update).unwrap();
+        assert!(
+            problems.iter().any(|p| p.message.contains("follow ones this page does not have")),
+            "{problems:?}"
+        );
+        // The page takes a peer's honest edit all the same.
+        let honest = peer_update(&doc, |txn| {
+            let frag = txn.get_or_insert_xml_fragment("doc");
+            frag.push_back(txn, XmlElementPrelim::empty("paragraph"));
+        });
+        assert_eq!(check_update(&c, &doc, &honest).unwrap(), []);
+    }
+
+    /// y-websocket sends a keystroke typed after a reconnect before its
+    /// answer to the server's sync, which carries what the device typed
+    /// offline: the keystroke waits on those edits. It is neither taken nor
+    /// refused, and the sync after it, which carries it again, is taken.
+    #[test]
+    fn a_keystroke_ahead_of_the_offline_edits_it_follows_waits() {
+        use yrs::{Text, XmlOut};
+        let c = Contract::load();
+        let doc = crate::doc_from_nodes(tree("<p>Hello</p>"));
+        let server = encode_state(&doc.transact(), &yrs::StateVector::default());
+        let device = copy_of(&doc, None);
+        let type_at_end = |typed: &str| {
+            let mut txn = device.transact_mut();
+            let frag = txn.get_or_insert_xml_fragment("doc");
+            let Some(XmlOut::Element(p)) = frag.get(&txn, 0) else {
+                panic!("the paragraph")
+            };
+            let Some(XmlOut::Text(t)) = p.get(&txn, 0) else {
+                panic!("its text")
+            };
+            let end = t.len(&txn);
+            t.insert(&mut txn, end, typed);
+        };
+        let synced = device.transact().state_vector();
+        type_at_end(" world");
+        let offline = device.transact().state_vector();
+        type_at_end("!");
+        let keystroke = device.transact().encode_diff_v1(&offline);
+        assert_eq!(admit_update_on_state(&c, &server, &keystroke).unwrap(), Admission::Waits);
+        let sync = device.transact().encode_diff_v1(&synced);
+        assert_eq!(admit_update_on_state(&c, &server, &sync).unwrap(), Admission::Take);
+        // An update outside the contract is refused, whether or not it waits.
+        let script = peer_update(&doc, |txn| {
+            let frag = txn.get_or_insert_xml_fragment("doc");
+            frag.push_back(txn, XmlElementPrelim::empty("script"));
+        });
+        assert!(matches!(
+            admit_update_on_state(&c, &server, &script).unwrap(),
+            Admission::Refused(_)
+        ));
+    }
+
+    /// A page's size bounds every check of a keystroke, which reads all of
+    /// it: an update that takes a page past [`crate::MAX_NODES`] is
+    /// refused, and one that types within it is taken.
+    #[test]
+    fn an_update_that_takes_a_page_past_its_size_is_refused() {
+        use yrs::{Text, XmlTextPrelim};
+        let c = Contract::load();
+        let paragraphs = "<p>x</p>".repeat(crate::MAX_NODES / 2);
+        let o = parse(&c, &paragraphs, "doc", Mode::Strict);
+        assert!(o.errors.is_empty(), "{:?}", o.errors);
+        let doc = crate::doc_from_nodes(o.nodes);
+        let grows = peer_update(&doc, |txn| {
+            let frag = txn.get_or_insert_xml_fragment("doc");
+            let p = frag.push_back(txn, XmlElementPrelim::empty("paragraph"));
+            p.push_back(txn, XmlTextPrelim::new("one more"));
+        });
+        let problems = check_update(&c, &doc, &grows).unwrap();
+        assert!(problems.iter().any(|p| p.message.contains("more than")), "{problems:?}");
+        let types = peer_update(&doc, |txn| {
+            let frag = txn.get_or_insert_xml_fragment("doc");
+            if let Some(yrs::XmlOut::Element(p)) = frag.get(txn, 0) {
+                if let Some(yrs::XmlOut::Text(t)) = p.get(txn, 0) {
+                    t.insert(txn, 1, "y");
+                }
+            }
+        });
+        assert_eq!(check_update(&c, &doc, &types).unwrap(), []);
+        // So is the server's own edit past it.
+        let refused = crate::apply_ops(&doc, None, &[crate::Op::Append { html: "<p>z</p>".into() }]).unwrap_err();
+        assert!(refused.iter().any(|p| p.message.contains("more than")), "{refused:?}");
+        // Ingest refuses a write past it outright.
+        let rules = parse(&c, &"<hr>".repeat(crate::MAX_NODES + 1), "doc", Mode::Strict);
+        assert!(rules.errors.iter().any(|p| p.message.contains("more than")), "{:?}", &rules.errors[..1]);
+    }
+
+    /// Content that reached a page's tree past the check is put back inside
+    /// the contract: what it cannot hold goes, its text and every block's
+    /// id stay, and a tree inside the contract is left as it is.
+    #[test]
+    fn a_tree_holding_what_the_contract_refuses_is_put_back() {
+        use yrs::{Text, XmlTextPrelim};
+        let c = Contract::load();
+        let doc = crate::doc_from_nodes(tree("<p data-id=\"keep0001\">Hello</p>"));
+        assert_eq!(crate::put_back_in_contract(&mut doc.transact_mut()), Ok(None));
+        {
+            let mut txn = doc.transact_mut();
+            let frag = txn.get_or_insert_xml_fragment("doc");
+            let script = frag.push_back(&mut txn, XmlElementPrelim::empty("script"));
+            script.push_back(&mut txn, XmlTextPrelim::new("alert(1)"));
+            let p = frag.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+            let text = p.push_back(&mut txn, XmlTextPrelim::new(""));
+            let link = HashMap::from([(
+                std::sync::Arc::<str>::from("link"),
+                yrs::Any::from(HashMap::from([("href".to_string(), yrs::Any::from("javascript:alert(1)"))])),
+            )]);
+            text.insert_with_attributes(&mut txn, 0, "click me", link.into_iter().collect());
+        }
+        assert!(!refused_in_tree(&c, &doc.transact()).is_empty());
+        let refused = crate::put_back_in_contract(&mut doc.transact_mut())
+            .expect("put back")
+            .expect("it held what is refused");
+        assert!(!refused.is_empty());
+        assert_eq!(refused_in_tree(&c, &doc.transact()), []);
+        let html = crate::to_html(&crate::read_doc(&doc.transact()), true);
+        assert!(!html.contains("javascript:") && !html.contains("<script"), "{html}");
+        assert!(html.starts_with("<p data-id=\"keep0001\">Hello</p>"), "{html}");
+        assert!(html.contains("click me"), "{html}");
+    }
+
+    /// A paragraph holding a `javascript:` link, written past the check.
+    fn push_bad_link(doc: &yrs::Doc) {
+        use yrs::{Text, XmlTextPrelim};
+        let mut txn = doc.transact_mut();
+        let frag = txn.get_or_insert_xml_fragment("doc");
+        let p = frag.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+        let text = p.push_back(&mut txn, XmlTextPrelim::new(""));
+        let link = HashMap::from([(
+            std::sync::Arc::<str>::from("link"),
+            yrs::Any::from(HashMap::from([("href".to_string(), yrs::Any::from("javascript:alert(1)"))])),
+        )]);
+        text.insert_with_attributes(&mut txn, 0, "click me", link.into_iter().collect());
+    }
+
+    /// Putting a tree back rewrites only the blocks that hold what the
+    /// contract refuses. The others keep their items, so a device that
+    /// typed into one against the saved state, and syncs to the page after
+    /// it was put back, keeps its words, and adds no second copy of any
+    /// block.
+    #[test]
+    fn putting_a_tree_back_keeps_the_blocks_it_does_not_rewrite() {
+        use yrs::{Text, XmlOut};
+        let c = Contract::load();
+        let saved = crate::doc_from_nodes(tree("<p data-id=\"hello001\">Hello</p><p data-id=\"second01\">Second</p>"));
+        push_bad_link(&saved);
+        let state = encode_state(&saved.transact(), &yrs::StateVector::default());
+        // A device holding the saved state types into "Hello", offline.
+        let device = copy_of(&saved, None);
+        let before = device.transact().state_vector();
+        {
+            let mut txn = device.transact_mut();
+            let frag = txn.get_or_insert_xml_fragment("doc");
+            let Some(XmlOut::Element(p)) = frag.get(&txn, 0) else { panic!("Hello") };
+            let Some(XmlOut::Text(t)) = p.get(&txn, 0) else { panic!("its text") };
+            t.insert(&mut txn, 5, " there");
+        }
+        let typed = device.transact().encode_diff_v1(&before);
+        // The server opens the page, putting it back.
+        let server = ydoc::new_doc();
+        {
+            use yrs::updates::decoder::Decode;
+            let mut txn = server.transact_mut();
+            txn.apply_update(Update::decode_v1(&state).unwrap()).unwrap();
+            crate::put_back_in_contract(&mut txn).unwrap().expect("put back");
+        }
+        assert_eq!(check_update(&c, &server, &typed).unwrap(), []);
+        {
+            use yrs::updates::decoder::Decode;
+            server.transact_mut().apply_update(Update::decode_v1(&typed).unwrap()).unwrap();
+        }
+        let html = crate::to_html(&crate::read_doc(&server.transact()), false);
+        assert_eq!(html, "<p>Hello there</p><p>Second</p><p>click me</p>");
+    }
+
+    /// A page grown past one write's size is put back all the same: no
+    /// write's limit bounds the server's own tree.
+    #[test]
+    fn a_tree_past_one_writes_size_is_still_put_back() {
+        let c = Contract::load();
+        let words = "Coffee at nine with the team, then the long walk along the river to the market. ";
+        let page: Vec<Node> = (0..40_000)
+            .map(|_| Node::element("paragraph", Default::default(), vec![Node::text(words, vec![])]))
+            .collect();
+        let doc = crate::doc_from_nodes(page);
+        push_bad_link(&doc);
+        assert!(crate::to_html(&crate::read_doc(&doc.transact()), true).len() > crate::MAX_INPUT_BYTES);
+        let refused = crate::put_back_in_contract(&mut doc.transact_mut()).expect("put back");
+        assert!(refused.is_some());
+        assert_eq!(refused_in_tree(&c, &doc.transact()), []);
+        let nodes = crate::read_doc(&doc.transact());
+        assert_eq!(nodes.len(), 40_001);
+        assert_eq!(crate::to_html(&nodes[40_000..], false), "<p>click me</p>");
+    }
+
     /// A peer that synced `doc`, and the update it sends after `edit`.
     fn peer_update(doc: &yrs::Doc, edit: impl FnOnce(&mut yrs::TransactionMut)) -> Vec<u8> {
         use yrs::updates::decoder::Decode;
@@ -712,7 +1110,10 @@ mod tests {
                 let meta = txn.get_or_insert_map(ydoc::META);
                 meta.insert(txn, ydoc::META_CONTRACT, yrs::Any::from(1i64));
             });
-            assert!(changes_meta(&page, &both).unwrap(), "typed at {at}, then stamped");
+            assert!(
+                changes_meta(&page, &both).unwrap(),
+                "typed at {at}, then stamped"
+            );
         }
         // A stamp sent apart from the typing before it, which the page has
         // not seen: it cannot be placed yet, and is refused all the same.
@@ -722,7 +1123,8 @@ mod tests {
                 .transact()
                 .encode_state_as_update_v1(&yrs::StateVector::default());
             let mut txn = peer.transact_mut();
-            txn.apply_update(Update::decode_v1(&state).unwrap()).unwrap();
+            txn.apply_update(Update::decode_v1(&state).unwrap())
+                .unwrap();
             let t = txn.get_or_insert_text("content");
             t.insert(&mut txn, 2, "unsent ");
         }
@@ -751,7 +1153,10 @@ mod tests {
             let meta = txn.get_or_insert_map(ydoc::META);
             meta.insert(txn, ydoc::META_CONTRACT, yrs::Any::from(1i64));
         });
-        assert_eq!(crate::wire::named_roots(&restamped).unwrap(), Vec::<String>::new());
+        assert_eq!(
+            crate::wire::named_roots(&restamped).unwrap(),
+            Vec::<String>::new()
+        );
         assert!(changes_meta(&emptied, &restamped).unwrap());
 
         // A page that holds a `meta` (one an older writer left) is compared
@@ -771,6 +1176,44 @@ mod tests {
         });
         assert!(!changes_meta(&page, &typed).unwrap());
         assert!(changes_meta(&page, &overwritten).unwrap());
+    }
+
+    #[test]
+    fn an_update_writing_a_root_a_page_lacks_is_refused_even_left_empty() {
+        use yrs::Map as _;
+        let c = Contract::load();
+        let doc = crate::doc_from_nodes(tree("<p>x</p>"));
+        let emptied_text = peer_update(&doc, |txn| {
+            let t = txn.get_or_insert_text("content");
+            t.insert(txn, 0, "x");
+            t.remove_range(txn, 0, 1);
+        });
+        let emptied_map = peer_update(&doc, |txn| {
+            let m = txn.get_or_insert_map("notes");
+            m.insert(txn, "k", "v");
+            m.remove(txn, "k");
+        });
+        for (root, update) in [("content", emptied_text), ("notes", emptied_map)] {
+            let problems = check_update(&c, &doc, &update).unwrap();
+            assert!(
+                messages(&problems)
+                    .iter()
+                    .any(|m| m.contains(&format!("writes `{root}`"))),
+                "{root}: {problems:?}"
+            );
+        }
+        // Typing into the page names no root, and is taken.
+        let typed = peer_update(&doc, |txn| {
+            let frag = txn.get_or_insert_xml_fragment(c.fragment.as_str());
+            let Some(yrs::XmlOut::Element(p)) = frag.get(txn, 0) else {
+                panic!("the paragraph")
+            };
+            let Some(yrs::XmlOut::Text(t)) = p.get(txn, 0) else {
+                panic!("its text")
+            };
+            t.insert(txn, 1, "y");
+        });
+        assert_eq!(check_update(&c, &doc, &typed).unwrap(), []);
     }
 
     #[test]
