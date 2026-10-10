@@ -68,7 +68,6 @@ pub struct ToolConfig {
 pub fn default_tools() -> Vec<ToolConfig> {
     vec![
         think_tool(),
-        propose_narrative_identity_tool(),
         write_it_up_tool(),
         revise_article_tool(),
         skip_step_tool(),
@@ -94,7 +93,6 @@ pub fn default_tools() -> Vec<ToolConfig> {
         get_project_item_tool(),
         generate_image_tool(),
         show_tool(),
-        publish_to_github_tool(),
         read_asset_tool(),
     ]
     .into_iter()
@@ -229,31 +227,6 @@ fn browser_tools() -> Vec<ToolConfig> {
     ]
 }
 
-/// Publish an applet's face to a GitHub repo the owner connected.
-fn publish_to_github_tool() -> ToolConfig {
-    ToolConfig {
-        id: "publish_to_github".to_string(),
-        name: "Publish to GitHub".to_string(),
-        description: "Publish an applet's face as a web page through a GitHub repo".to_string(),
-        llm_description: r#"Put an applet's face in the owner's GitHub repo as one HTML file, which their host serves. Only when the owner asks for GitHub specifically; the Share button is the usual way to share. The face must stand alone: no virtues.query, virtues.js or /api/. The owner allows each exact publish: on permission_needed stop, and once allowed call again with the same arguments."#.to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "required": ["applet_id", "repo", "path"],
-            "properties": {
-                "applet_id": { "type": "string" },
-                "repo": { "type": "string", "description": "owner/name" },
-                "path": { "type": "string", "description": "File path in the repo, ending in .html, e.g. static/rome/index.html" },
-                "branch": { "type": "string", "description": "Defaults to main" }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Edit,
-        icon: "ri:upload-cloud-2-line".to_string(),
-        display_order: 23,
-        is_system: false,
-    }
-}
-
 /// Generate Image tool — text-to-image via the gateway image model.
 fn generate_image_tool() -> ToolConfig {
     ToolConfig {
@@ -309,29 +282,6 @@ fn show_tool() -> ToolConfig {
         category: ToolCategory::Data,
         icon: "ri:bar-chart-2-line".to_string(),
         display_order: 23,
-        is_system: false,
-    }
-}
-
-/// Propose an addition to the user's narrative identity — never write one.
-fn propose_narrative_identity_tool() -> ToolConfig {
-    ToolConfig {
-        id: "propose_narrative_identity_edit".to_string(),
-        name: "Propose identity note".to_string(),
-        description: "Suggest something for the user's narrative identity".to_string(),
-        llm_description: r#"Propose an addition to the user's narrative identity, the document of who they are that goes into every conversation. It is not yours to edit: this leaves a note they Add or Dismiss. Use it rarely: only something durable about who they are or what they are for; never facts, preferences or passing remarks. One or two sentences in their voice ("I'd rather ship early than polish in private."). If unsure, don't."#.to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "required": ["text", "why"],
-            "properties": {
-                "text": { "type": "string" },
-                "why": { "type": "string", "description": "What prompted it; the user sees this" }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Edit,
-        icon: "ri:compass-3-line".to_string(),
-        display_order: 0,
         is_system: false,
     }
 }

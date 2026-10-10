@@ -39,29 +39,6 @@ report that this is a display-only dashboard"* — and it means "Run now" spends
 a model call to say nothing. **Omit the field.** The check accepts that; a
 face-only applet with no `agent` is a complete, valid applet.
 
-## A face that will be published stands alone
-
-When the user wants a page to share (a trip, an invitation, a plan), the face
-is what `publish_to_github` puts on the web. Off the box nothing answers
-`virtues.query`, `virtues.js` or `virtues.css`, so a live face would publish
-as an empty page that also names the box's API. The publish refuses one.
-
-Write it static from the start:
-
-- **Look the data up in chat, then write it into the HTML.** The itinerary,
-  the bookings, the places are text in the page, not queries in it.
-- **No `virtues.js`, no `virtues.css`.** Styles go in a `<style>` block.
-  Respect `prefers-color-scheme` yourself if it should follow dark mode.
-- **One file.** Images are `data:` URIs, and the 48KB face limit means few
-  and small; a page that needs photos is not one this can publish yet.
-- **Nothing private by accident.** It goes wherever the repo's host serves
-  it. Leave out phone numbers, addresses and confirmation codes unless the
-  user asked for them on the page.
-- **No `agent`.** It is a face-only applet, like a dashboard.
-
-Changing the page later is `edit_applet` with new `face_html`, then publishing
-again; the user allows each publish.
-
 ## Tables: `schema_sql` is a migration, not a schema
 
 Each `setup_applet` call's `schema_sql` is **one numbered, append-only
