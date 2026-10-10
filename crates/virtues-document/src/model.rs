@@ -26,6 +26,31 @@ pub struct Mark {
     pub attrs: Map<String, Value>,
 }
 
+/// The most nodes one page holds, every text run counted. Every check of an
+/// editor's keystroke (`check_update`) reads the whole page, and so does
+/// every edit and every save: their cost grows with the page, and this is
+/// what bounds it. A page of plain paragraphs reaches it at some fifty
+/// thousand of them; a 300-row table of five columns is under five
+/// thousand nodes. A write that would take a page past it is refused.
+pub const MAX_NODES: usize = 100_000;
+
+/// How many nodes `nodes` hold, every text run and every level counted.
+pub fn node_count(nodes: &[Node]) -> usize {
+    let mut count = 0;
+    for n in nodes {
+        n.walk(&mut |_| count += 1);
+    }
+    count
+}
+
+/// What a write past [`MAX_NODES`] is told.
+pub fn too_many_nodes() -> String {
+    format!(
+        "the page would hold more than {MAX_NODES} nodes (its blocks, their text runs and what \
+         they hold); split it into pages"
+    )
+}
+
 /// How deep a page's tree may nest: a node inside a node, a hundred times
 /// (text, a leaf, is not a level of its own). Deeper than any page a person
 /// writes (a list nested twenty levels is forty), and shallow enough that

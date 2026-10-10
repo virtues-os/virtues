@@ -63,7 +63,7 @@ pub struct ToolConfig {
 /// - code_interpreter: Execute Python code for calculations and analysis
 /// - create_page: Create a new page with content
 /// - get_page_content: Read current page content
-/// - edit_page: Apply edits using find/replace
+/// - edit_page: Edit a block page by block ops, a markdown page by find/replace
 /// - update_memory: Persist notes across conversations
 pub fn default_tools() -> Vec<ToolConfig> {
     vec![
@@ -821,18 +821,24 @@ fn create_page_tool() -> ToolConfig {
     }
 }
 
-/// Get Page Content tool - reads current content of a page
+/// Get Page Content tool - reads a page: a block page as HTML with block
+/// ids and the base its next edit names, a markdown page as its text. The
+/// how-to for editing rides in the read's result (`how_to_edit`, `tags`),
+/// not here: every word here is re-sent on every step.
 fn get_page_content_tool() -> ToolConfig {
     ToolConfig {
         id: "get_page_content".to_string(),
         name: "Get Page Content".to_string(),
         description: "Read the current content of a page".to_string(),
-        llm_description: r#"Read a page's title and content. Call it before edit_page. A page arrives as a link, [Name](/page/page_abc123); page_id is its last segment, page_abc123."#.to_string(),
+        llm_description: r#"Read a page not already in your context. page_id is the last segment of its link, [Name](/page/page_abc123). A block page returns `base` and `html` with each block's data-id, or, when long, `markdown`: pass `ids` and `base` to read blocks as html, `after` and `base` to read on. Other pages return `content`."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["page_id"],
             "properties": {
-                "page_id": { "type": "string" }
+                "page_id": { "type": "string" },
+                "ids": { "type": "array", "items": { "type": "string" } },
+                "after": { "type": "string" },
+                "base": { "type": "string" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -843,21 +849,40 @@ fn get_page_content_tool() -> ToolConfig {
     }
 }
 
-/// Edit Page tool - applies edits using simple find/replace
+/// Edit Page tool - a block page by block-id ops against the base its read
+/// returned, all or none; a markdown page by find/replace on its text.
 fn edit_page_tool() -> ToolConfig {
     ToolConfig {
         id: "edit_page".to_string(),
         name: "Edit Page".to_string(),
-        description: "Edit a page using find/replace".to_string(),
-        llm_description: r#"Edit a page: replace the text `find` with `replace`, and rename it with `title`. Call get_page_content first. page_id is the last segment of the page's link, [Name](/page/page_abc123).
+        description: "Edit a page".to_string(),
+        llm_description: r#"Edit a page you have read (open, or with get_page_content); `title` renames it.
 
-`find` matches the plain text (formatting stripped): make it unique but short. `replace` is markdown. An empty `find` replaces the whole document; empty `find` and `replace` with a `title` only renames. Prefer a few large edits to many small ones. Changes apply immediately."#.to_string(),
+Block page: send `base` and `ops`, all or none. An op replaces, inserts after or before, or deletes the block whose data-id is `id`, or appends; `html` is whole blocks.
+
+Other pages: `find` (short, unique, as the markdown reads; empty replaces all) and `replace`, markdown."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
-            "required": ["page_id", "find", "replace"],
+            "required": ["page_id"],
             "properties": {
                 "page_id": { "type": "string" },
                 "title": { "type": "string" },
+                "base": { "type": "string" },
+                "ops": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["op"],
+                        "properties": {
+                            "op": {
+                                "type": "string",
+                                "enum": ["replace", "insert_after", "insert_before", "delete", "append"]
+                            },
+                            "id": { "type": "string" },
+                            "html": { "type": "string" }
+                        }
+                    }
+                },
                 "find": { "type": "string" },
                 "replace": { "type": "string" }
             }

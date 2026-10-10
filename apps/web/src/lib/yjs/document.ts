@@ -1,30 +1,45 @@
 /**
- * Yjs Document Manager for CodeMirror
+ * Page bindings: a page's Yjs document on the page socket (`socket.ts`).
  *
- * Creates and manages Yjs documents for real-time collaborative editing.
- * Uses Y.Text for markdown-native editing with CodeMirror 6.
- * Handles WebSocket sync, IndexedDB persistence, and undo management.
+ * - `createYjsDocument` binds a markdown page's Y.Text for the CodeMirror
+ *   editor: contract 0, kept on this device under `v2-<id>`.
+ * - `createTreeDocument` binds a block page's XML tree for the block editor
+ *   (`lib/document`): the contract version `contract.json` says, kept under
+ *   `tree-<id>`, so a page converted from markdown never reads its old copy.
  */
 
 import * as Y from 'yjs';
-import { WebsocketProvider } from 'y-websocket';
-import { IndexeddbPersistence } from 'y-indexeddb';
-import { writable, type Writable } from 'svelte/store';
-import { getWsUrl } from '$lib/config/backend';
+import type { WebsocketProvider } from 'y-websocket';
+import type { IndexeddbPersistence } from 'y-indexeddb';
+import type { Writable } from 'svelte/store';
+import contractJson from '$contract';
+import { connectPage } from './socket';
 
 /**
- * The document contract this binding reads (`crates/virtues-document`). It
- * binds the page's Y.Text, which is contract 0: a page written as a Yjs tree
+ * The document contract the markdown binding reads (`crates/virtues-document`).
+ * It binds the page's Y.Text, which is contract 0: a page written as a Yjs tree
  * carries a higher version, and the server refuses this binding on it, since
  * an editor deletes from the shared document what it cannot read.
  */
-const CONTRACT = 0;
+const MARKDOWN_CONTRACT = 0;
 
-/** Close codes the server ends a refused socket with (`server/yjs.rs`). */
-const CLOSE_CONTRACT = 4426;
-const CLOSE_REFUSED = 4422;
+/** The contract the block editor's schema is built from. */
+const TREE_CONTRACT: number = (contractJson as { version: number }).version;
+const TREE_FRAGMENT: string = (contractJson as { fragment: string }).fragment;
 
-const NEEDS_NEWER_APP = 'A newer version of Virtues wrote this page. Update the app to open it.';
+/** The key the server stamps the document's contract under (`ydoc.rs`, `META`). */
+const META = 'meta';
+const META_CONTRACT = 'contract';
+
+const UNREADABLE = "Your server couldn't read this page's document.";
+const SERVER_NEEDS_UPDATE = 'Your server needs an update before it can save changes to this page.';
+const EMPTY_ON_SERVER = "This page's document is empty on your server.";
+
+/** The contract a document is stamped with; 0 when it carries no stamp. */
+function stampOf(ydoc: Y.Doc): number {
+	// yrs writes the stamp as a 64-bit integer, which arrives as a bigint.
+	return Number(ydoc.getMap(META).get(META_CONTRACT) ?? 0);
+}
 
 export interface YjsDocument {
 	ydoc: Y.Doc;
@@ -54,7 +69,7 @@ export interface YjsDocument {
 }
 
 /**
- * Create a Yjs document for a page
+ * Create a Yjs document for a markdown page.
  *
  * @param pageId - The page ID to sync
  * @param pageContract - The contract the server says the page is written
@@ -67,133 +82,128 @@ export interface YjsDocument {
 export function createYjsDocument(pageId: string, pageContract: number | null = null): YjsDocument {
 	// GC enabled (default) - versions use encodeStateAsUpdate which is self-contained
 	const ydoc = new Y.Doc();
-
-	// Use Y.Text for markdown-native editing
 	const ytext = ydoc.getText('content');
 
-	// Connection state stores
-	const isLoading = writable(true);
-	const isSynced = writable(false);
-	const isConnected = writable(false);
-	const refused = writable<string | null>(null);
-
-	const contractConfirmed = pageContract !== null && pageContract <= CONTRACT;
-	// A page written under a newer contract: the server would refuse this
-	// binding, so it is not asked.
-	const needsNewerApp = pageContract !== null && pageContract > CONTRACT;
-	if (needsNewerApp) {
-		refused.set(NEEDS_NEWER_APP);
-		isLoading.set(false);
-	}
-
-	// Base WS URL (y-websocket appends room/pageId). Same-origin on desktop;
-	// routed to the iroh loopback on mobile via the backend config.
-	const wsUrl = getWsUrl('/ws/yjs');
-
-	// WebSocket provider for real-time sync
-	const provider = new WebsocketProvider(wsUrl, pageId, ydoc, {
-		connect: !needsNewerApp,
-		// Reconnect automatically
-		maxBackoffTime: 10000,
-		params: { contract: String(CONTRACT) },
+	const contractConfirmed = pageContract !== null && pageContract <= MARKDOWN_CONTRACT;
+	const socket = connectPage(pageId, ydoc, {
+		contract: MARKDOWN_CONTRACT,
+		store: `v2-${pageId}`,
+		pageContract,
+		// The copy carries no stamp above this binding's contract.
+		readable: () => contractConfirmed && stampOf(ydoc) <= MARKDOWN_CONTRACT,
+		hasContent: () => ytext.length > 0,
 	});
 
-	// IndexedDB persistence for offline support
-	const persistence = new IndexeddbPersistence(`v2-${pageId}`, ydoc);
-
-	// Track sync state — prefer remote (WebSocket) sync as authoritative.
-	// Local (IndexedDB) sync is sufficient ONLY if it has cached content.
-	// For brand-new pages, IndexedDB fires 'synced' instantly with an empty doc,
-	// which would prematurely show an empty editor before the server delivers content.
-	let localSynced = false;
-	let remoteSynced = false;
-
-	// The local copy stands in for the page only when the server said this
-	// binding reads the page, and the copy carries no stamp above it.
-	const localCopyReadable = () =>
-		contractConfirmed && Number(ydoc.getMap('meta').get('contract') ?? 0) <= CONTRACT;
-
-	function checkSyncComplete() {
-		if (remoteSynced) {
-			// Remote sync is authoritative — always trust it
-			isSynced.set(true);
-			isLoading.set(false);
-		} else if (localSynced && ytext.length > 0 && localCopyReadable()) {
-			// IndexedDB had cached content — use it for fast offline-first loading
-			isSynced.set(true);
-			isLoading.set(false);
-		}
-		// If localSynced but empty, keep waiting for remote sync
-	}
-
-	persistence.on('synced', () => {
-		localSynced = true;
-		checkSyncComplete();
-	});
-
-	// Use 'status' event for reliable connection state tracking
-	provider.on('status', (event: { status: string }) => {
-		isConnected.set(event.status === 'connected');
-	});
-
-	provider.on('sync', () => {
-		// Remote sync completed - content is now in sync with server
-		remoteSynced = true;
-		checkSyncComplete();
-	});
-
-	provider.on('connection-error', () => {
-		// Allow offline editing when connection fails —
-		// accept local sync even if empty (best we can do offline)
-		if (localSynced && localCopyReadable()) {
-			isSynced.set(true);
-			isLoading.set(false);
-		}
-	});
-
-	// The server closes a socket it refuses with a code y-websocket treats as
-	// final (4400-4499), and says why.
-	provider.on('closed', (event: { code: number; reason: string }) => {
-		if (event.code !== CLOSE_CONTRACT && event.code !== CLOSE_REFUSED) return;
-		console.warn(`[yjs] the server closed page ${pageId} (${event.code}): ${event.reason}`);
-		if (event.code === CLOSE_CONTRACT) {
-			refused.set(NEEDS_NEWER_APP);
-			// A local copy may already be showing; it is not this page any more.
-			isSynced.set(false);
-		} else {
-			// The editor stays, so what was typed can still be copied out.
-			refused.set(
-				"Your server couldn't accept an edit to this page, so changes here won't save. Copy what you need, then reload the page.",
-			);
-		}
-		isLoading.set(false);
-	});
-
-	// UndoManager for Y.Text
 	const undoManager = new Y.UndoManager(ytext, {
 		trackedOrigins: new Set([null, 'user', 'ai']),
 		captureTimeout: 500,
 	});
 
-	// Create the document object
-	const doc: YjsDocument = {
+	return {
 		ydoc,
 		ytext,
-		provider,
-		persistence,
+		provider: socket.provider,
+		persistence: socket.persistence,
 		undoManager,
-		isLoading,
-		isSynced,
-		isConnected,
-		refused,
+		isLoading: socket.isLoading,
+		isSynced: socket.isSynced,
+		isConnected: socket.isConnected,
+		refused: socket.refused,
 		contractConfirmed,
 		destroy: () => {
 			undoManager.destroy();
-			provider.destroy();
-			persistence.destroy();
+			socket.destroy();
 			ydoc.destroy();
 		},
 	};
+}
 
-	return doc;
+/** A block page's document, bound for the block editor. */
+export interface TreeDocument {
+	format: 'tree';
+	ydoc: Y.Doc;
+	/** The page's tree: the fragment `contract.json` names. */
+	fragment: Y.XmlFragment;
+	provider: WebsocketProvider;
+	persistence: IndexeddbPersistence;
+	isLoading: Writable<boolean>;
+	isSynced: Writable<boolean>;
+	isConnected: Writable<boolean>;
+	/**
+	 * What to tell the person about this page's binding: why it is not
+	 * shown, or why it is shown read-only. Null when there is nothing to say.
+	 */
+	refused: Writable<string | null>;
+	/** Whether the server said the page is written under a contract this editor reads. */
+	contractConfirmed: boolean;
+	/**
+	 * Whether the server is older than this editor's contract, so it would
+	 * drop what this editor writes: the editor is made read-only.
+	 */
+	readOnly: boolean;
+	/** Whether the copy this device kept may stand in for the page now. */
+	localCopyReadable(): boolean;
+	destroy(): void;
+}
+
+/**
+ * Bind a block page.
+ *
+ * @param pageContract - `contract` from `GET /api/pages/:id`: the contract the
+ *   page is stamped with, or null when the server could not read the page's
+ *   document. Null binds nothing: there is no document to edit.
+ * @param boxContract - `box_contract` from the same response: the newest
+ *   contract the server reads, or null when the server does not say.
+ *
+ * The editor must be created only once `isSynced` is true. It is never true
+ * for an empty tree: Tiptap bound to an empty fragment writes its empty
+ * paragraph into the shared document, and the server always writes at
+ * least one block.
+ */
+export function createTreeDocument(
+	pageId: string,
+	pageContract: number | null,
+	boxContract: number | null,
+): TreeDocument {
+	const ydoc = new Y.Doc();
+	const fragment = ydoc.getXmlFragment(TREE_FRAGMENT);
+
+	const contractConfirmed = pageContract !== null && pageContract <= TREE_CONTRACT;
+	const readOnly = boxContract !== null && TREE_CONTRACT > boxContract;
+
+	// Kept from this page and this contract, and holding a block.
+	const localCopyReadable = () =>
+		contractConfirmed && stampOf(ydoc) === pageContract && fragment.length > 0;
+
+	const socket = connectPage(pageId, ydoc, {
+		contract: TREE_CONTRACT,
+		store: `tree-${pageId}`,
+		pageContract,
+		readable: localCopyReadable,
+		hasContent: () => fragment.length > 0,
+		checkRemote: () => (fragment.length > 0 ? null : EMPTY_ON_SERVER),
+		refusal: pageContract === null ? UNREADABLE : null,
+	});
+	if (readOnly && pageContract !== null && pageContract <= TREE_CONTRACT) {
+		socket.refused.set(SERVER_NEEDS_UPDATE);
+	}
+
+	return {
+		format: 'tree',
+		ydoc,
+		fragment,
+		provider: socket.provider,
+		persistence: socket.persistence,
+		isLoading: socket.isLoading,
+		isSynced: socket.isSynced,
+		isConnected: socket.isConnected,
+		refused: socket.refused,
+		contractConfirmed,
+		readOnly,
+		localCopyReadable,
+		destroy: () => {
+			socket.destroy();
+			ydoc.destroy();
+		},
+	};
 }

@@ -373,8 +373,8 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use yrs::{
-        Any, Array, Doc, Map, ReadTxn, StateVector, Text, Transact, WriteTxn, Xml, XmlElementPrelim,
-        XmlFragment, XmlTextPrelim,
+        Any, Array, Doc, Map, ReadTxn, StateVector, Text, Transact, WriteTxn, Xml,
+        XmlElementPrelim, XmlFragment, XmlTextPrelim,
     };
 
     /// Where the walk ends, for an update it reads.
@@ -431,7 +431,11 @@ mod tests {
             arr.push_back(&mut txn, Any::from(HashMap::<String, Any>::new()));
             let text = txn.get_or_insert_text("content");
             text.insert(&mut txn, 0, "# notes");
-            text.insert_embed(&mut txn, 2, Any::from(HashMap::from([("img".to_string(), Any::from("x"))])));
+            text.insert_embed(
+                &mut txn,
+                2,
+                Any::from(HashMap::from([("img".to_string(), Any::from("x"))])),
+            );
         }
         doc
     }
@@ -439,7 +443,9 @@ mod tests {
     #[test]
     fn the_walk_reads_every_update_to_its_end() {
         let doc = every_kind();
-        let full = doc.transact().encode_state_as_update_v1(&StateVector::default());
+        let full = doc
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
         assert_eq!(walked(&full), full.len());
         assert!(decode_update(&full).is_ok());
         // An update after edits, carrying origins and deletions.
@@ -454,7 +460,9 @@ mod tests {
         }
         let diff = doc.transact().encode_diff_v1(&before);
         assert_eq!(walked(&diff), diff.len());
-        let empty = Doc::new().transact().encode_state_as_update_v1(&StateVector::default());
+        let empty = Doc::new()
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
         assert_eq!(walked(&empty), empty.len());
     }
 
@@ -467,9 +475,13 @@ mod tests {
             let map = txn.get_or_insert_map("meta");
             map.insert(&mut txn, "v", nested(depth));
         }
-        let ok = at_limit.transact().encode_state_as_update_v1(&StateVector::default());
+        let ok = at_limit
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
         assert!(decode_update(&ok).is_ok());
-        let deep = past.transact().encode_state_as_update_v1(&StateVector::default());
+        let deep = past
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
         let err = decode_update(&deep).unwrap_err().to_string();
         assert!(err.contains("nests more than"), "{err}");
     }
@@ -553,7 +565,9 @@ mod tests {
     #[test]
     fn an_update_names_the_roots_its_first_items_go_into() {
         let doc = every_kind();
-        let full = doc.transact().encode_state_as_update_v1(&StateVector::default());
+        let full = doc
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
         let mut roots = named_roots(&full).unwrap();
         roots.sort();
         assert_eq!(roots, ["content", "doc", "list", "meta"]);
@@ -574,7 +588,9 @@ mod tests {
     #[test]
     fn truncated_and_unknown_bytes_are_errors_not_panics() {
         let doc = every_kind();
-        let full = doc.transact().encode_state_as_update_v1(&StateVector::default());
+        let full = doc
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
         for end in 0..full.len() {
             let _ = decode_update(&full[..end]);
         }

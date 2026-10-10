@@ -14,25 +14,31 @@
 
 import {
 	Extension,
+	InputRule,
 	Mark,
 	Node,
+	PasteRule,
+	getExtensionField,
 	getSchema,
-	nodeInputRule,
+	markPasteRule,
 	type Attributes,
 	type Extensions,
 	type MarkConfig,
 	type NodeConfig,
+	type PasteRuleMatch,
 } from '@tiptap/core';
 import type {
 	DOMOutputSpec,
 	Fragment,
 	Mark as PmMark,
+	MarkType,
 	Node as PmNode,
+	NodeType,
 	ParseRule,
 	Schema,
 	TagParseRule,
 } from '@tiptap/pm/model';
-import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state';
 import {
 	AddMarkStep,
 	AddNodeMarkStep,
@@ -44,7 +50,7 @@ import {
 import { ySyncPluginKey } from '@tiptap/y-tiptap';
 import Blockquote from '@tiptap/extension-blockquote';
 import Bold from '@tiptap/extension-bold';
-import Code from '@tiptap/extension-code';
+import Code, { pasteRegexMatch as codePasteMatch } from '@tiptap/extension-code';
 import CodeBlock from '@tiptap/extension-code-block';
 import Document from '@tiptap/extension-document';
 import HardBreak from '@tiptap/extension-hard-break';
@@ -61,6 +67,8 @@ import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table
 import Text from '@tiptap/extension-text';
 import Underline from '@tiptap/extension-underline';
 import contractJson from '$contract';
+import { altWidth, kindOfLink, type MediaKind } from './media-kind';
+import { insertBlockAt } from './place';
 
 export type AttrSpec = {
 	/** `int`: a safe integer. `route`: a ref on the box, `/kind/id` (`isRoute`). */
@@ -119,7 +127,7 @@ export type Contract = {
 	/** Schemes a `url` attribute may use, lowercase. A URL without one is a path on the box. */
 	urlSchemes: string[];
 	nodes: Record<string, NodeSpec>;
-	/** In nesting order: the first mark is outermost in HTML. */
+	/** In nesting order: the first mark is outermost in HTML (proposals, then link). */
 	marks: Record<string, MarkSpec>;
 };
 
@@ -140,9 +148,56 @@ function contractUrl(spec: AttrSpec | undefined, raw: unknown): string | null {
 }
 
 /**
+ * What a typed `![name](src)` makes of a `kind`: the block `kindOfLink`
+ * reads it as (an image, audio, video or a file), as the CodeMirror editor
+ * draws it and the server's converter reads it, a `|600` after the name
+ * being an image's width (`altWidth`); nothing when it is another kind, or
+ * the contract refuses its `src`. The match is the `![name](src)` alone,
+ * not the space before it.
+ */
+function typedMedia(kind: MediaKind) {
+	return (text: string) => {
+		const m = imageInputRegex.exec(text);
+		const src = m ? contractUrl(contract.nodes[kind]?.attrs?.src, m[3]) : null;
+		if (!m || src === null) return null;
+		const { alt, width } = altWidth(m[2]);
+		if (kindOfLink(src, alt) !== kind) return null;
+		const data = kind === 'image' ? { src, alt: alt || null, width } : { src, name: alt || null };
+		return { index: m.index + m[0].lastIndexOf(m[1]), text: m[1], data };
+	};
+}
+
+/**
+ * The block a typed `![name](src)` makes, in place of what was typed: in
+ * place of the line when that was all it held, else after its words or
+ * between them. The caret goes on in the text after the block, on a new
+ * line when nothing follows it there.
+ */
+function typedBlock(type: NodeType, kind: MediaKind): InputRule {
+	return new InputRule({
+		find: typedMedia(kind),
+		handler: ({ state, range, match }) => {
+			const { tr } = state;
+			tr.delete(range.from, range.to);
+			const end = insertBlockAt(tr, range.from, type.create(match.data ?? {}));
+			const $end = tr.doc.resolve(end);
+			const paragraph = state.schema.nodes.paragraph;
+			if ($end.nodeAfter?.isTextblock) {
+				tr.setSelection(TextSelection.create(tr.doc, end + 1));
+			} else if ($end.parent.canReplaceWith($end.index(), $end.index(), paragraph)) {
+				tr.insert(end, paragraph.create());
+				tr.setSelection(TextSelection.create(tr.doc, end + 1));
+			}
+			tr.scrollIntoView();
+		},
+	});
+}
+
+/**
  * The stock image, whose `setImage` and `![alt](src)` input rule take any
  * `src`: here a `src` the contract refuses (`data:`, `javascript:`) inserts
- * nothing, and the typed text stays text.
+ * nothing, and the typed text stays text. The typed form makes the block
+ * the address is (`typedMedia`): audio for an `.mp3`, a file for a `.pdf`.
  */
 const ContractImage = Image.extend({
 	addCommands() {
@@ -157,23 +212,117 @@ const ContractImage = Image.extend({
 		};
 	},
 	addInputRules() {
-		return [
-			nodeInputRule({
-				find: (text) => {
-					const m = imageInputRegex.exec(text);
-					const src = m ? contractUrl(contract.nodes.image?.attrs?.src, m[3]) : null;
-					if (!m || src === null) return null;
-					return { index: m.index, text: m[0], replaceWith: m[1], data: { src, alt: m[2] } };
+		const kinds: MediaKind[] = ['image', 'audio', 'video', 'file'];
+		return kinds.flatMap((kind) => {
+			const type = this.editor.schema.nodes[kind];
+			return type ? [typedBlock(type, kind)] : [];
+		});
+	},
+});
+
+/**
+ * The stock code block, its Enter keeping the line's indent, as the
+ * CodeMirror editor's does: the new line starts with the spaces and tabs
+ * the caret's line starts with. A line of nothing but its indent loses it
+ * first, so a run of Enters leaves empty lines, and the third Enter at the
+ * end of the block still leaves it, as Tiptap's own does.
+ */
+const IndentingCodeBlock = CodeBlock.extend({
+	addKeyboardShortcuts() {
+		return {
+			...this.parent?.(),
+			Enter: ({ editor }) => {
+				const { state } = editor;
+				const { $from, empty } = state.selection;
+				if (!empty || $from.parent.type !== this.type) return false;
+				const before = $from.parent.textBetween(0, $from.parentOffset, '\n');
+				const line = before.slice(before.lastIndexOf('\n') + 1);
+				const indent = /^[ \t]*/.exec(line)?.[0] ?? '';
+				const blank = indent.length === line.length;
+				const atEnd = $from.parentOffset === $from.parent.content.size;
+				if (atEnd && blank && before.slice(0, before.length - line.length).endsWith('\n\n')) {
+					return editor
+						.chain()
+						.command(({ tr }) => {
+							tr.delete($from.pos - line.length - 2, $from.pos);
+							return true;
+						})
+						.exitCode()
+						.run();
+				}
+				const from = blank ? $from.pos - indent.length : $from.pos;
+				editor.view.dispatch(state.tr.insertText(`\n${indent}`, from, $from.pos).scrollIntoView());
+				return true;
+			},
+		};
+	},
+});
+
+/**
+ * Tiptap's to-do, its box ticked without taking the keyboard. The stock
+ * box focuses the editor before it writes the tick, which on a phone raises
+ * the keyboard over half the screen for someone only reading the page, and
+ * puts the caret back where it last was. Here the tick is written as it
+ * is, ahead of the stock handler, and the editor takes the focus back only
+ * when a pointer ticked the box while the editor had it; a tick by Space
+ * leaves the focus on the box. A page that is read only is the stock
+ * handler's: it puts the box back.
+ *
+ * Keys pressed on the box are the box's, as a widget's controls keep theirs
+ * (`nodeviews.svelte.ts`): the editor would read them as typed where the
+ * caret is, splitting a paragraph elsewhere on Enter or nesting another
+ * item on Tab. ⌘Enter ticks the to-do the caret is in, from the text
+ * (`TodoKeys` in commands.ts).
+ */
+const QuietTaskItem = TaskItem.extend({
+	addNodeView() {
+		// The stock view itself, not `this.parent`: the contract extends this
+		// extension again, and Tiptap hands that level this one as its parent,
+		// so `this.parent` there is this wrapper, its listeners added twice.
+		const stock = getExtensionField<NonNullable<NodeConfig['addNodeView']>>(TaskItem, 'addNodeView', {
+			name: this.name,
+			options: this.options,
+			storage: this.storage,
+			editor: this.editor,
+			type: this.type,
+		})();
+		if (!stock) return null;
+		return (props) => {
+			const rendered = stock(props);
+			const dom = rendered.dom as HTMLElement;
+			const box = dom.querySelector('input[type="checkbox"]');
+			const label = box?.parentElement;
+			if (!(box instanceof HTMLInputElement) || !label) return rendered;
+			const { editor } = props;
+			// Whether the editor had the focus when a pointer went down on the
+			// box: set by that pointer, and spent by the tick it makes.
+			let hadFocus = false;
+			label.addEventListener('pointerdown', () => (hadFocus = editor.view.hasFocus()), true);
+			label.addEventListener('keydown', () => (hadFocus = false), true);
+			// On the way down to the box, so the stock handler never runs.
+			label.addEventListener(
+				'change',
+				(event) => {
+					if (event.target !== box || !editor.isEditable) return;
+					event.stopPropagation();
+					const refocus = hadFocus;
+					hadFocus = false;
+					const pos = typeof props.getPos === 'function' ? props.getPos() : undefined;
+					const node = typeof pos === 'number' ? editor.state.doc.nodeAt(pos) : null;
+					if (typeof pos !== 'number' || !node) return;
+					editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, checked: box.checked }));
+					if (refocus) editor.view.focus();
 				},
-				type: this.type,
-				getAttributes: (match) => match.data ?? {},
-			}),
-		];
+				true,
+			);
+			rendered.stopEvent = (event: Event) => label.contains(event.target as globalThis.Node | null);
+			return rendered;
+		};
 	},
 });
 
 /** Whether a link may point at `url`: the contract's schemes, not the stock list. */
-function linkAllowed(url: string): boolean {
+export function linkAllowed(url: string): boolean {
 	return contractUrl(contract.marks.link?.attrs?.href, url) !== null;
 }
 
@@ -201,9 +350,9 @@ function nodeBase(name: string): Node | undefined {
 		case 'taskList':
 			return TaskList;
 		case 'taskItem':
-			return TaskItem.configure({ nested: true });
+			return QuietTaskItem.configure({ nested: true });
 		case 'codeBlock':
-			return CodeBlock;
+			return IndentingCodeBlock;
 		case 'horizontalRule':
 			return HorizontalRule;
 		case 'image':
@@ -223,10 +372,165 @@ function nodeBase(name: string): Node | undefined {
 	}
 }
 
+/**
+ * Tiptap's Link, its autolink run on what this device writes only. Autolink
+ * reads every changed range, and the binding's first render of a page
+ * changes all of it: a page whose first block ends in a word that reads as
+ * a domain (`example.com`, `main.py`) would gain a link on open, and the
+ * next transaction would write it into the shared document from every
+ * device that opened the page. What comes from the shared document was
+ * linked, or not, by whoever wrote it, and so was a block dragged from
+ * another page (`notFromAPage`). Its paste rule (`[label](url)` and a bare
+ * address) runs on plain text only and never in inline code, as every
+ * mark's does (`onPlainText`, `outsideCodeSpans`): pasted HTML carries its
+ * own links, and the text of inline code is what the code says.
+ */
+const TypedLink = Link.extend({
+	addPasteRules() {
+		return (this.parent?.() ?? []).map((rule) => notFromAPage(onPlainText(outsideCodeSpans(rule))));
+	},
+	addProseMirrorPlugins() {
+		return (this.parent?.() ?? []).map((plugin) => {
+			const append = plugin.spec.appendTransaction;
+			if (!append) return plugin;
+			return new Plugin({
+				...plugin.spec,
+				appendTransaction: (transactions, oldState, newState) =>
+					transactions.some((tr) => tr.getMeta(ySyncPluginKey) !== undefined)
+						? null
+						: append.call(plugin, transactions, oldState, newState),
+			});
+		});
+	},
+});
+
+/**
+ * What a drop being put in carried. Tiptap runs paste rules on a drop from
+ * outside the editor, handing them a stand-in paste event with nothing on
+ * it, which read as text pasted: dropped HTML had its `**` and `==` made
+ * marks, and a block dragged from another page gained a link nobody made.
+ * A drop is read as the same data pasted would be. Set while the drop's
+ * own event runs, in which ProseMirror puts it in and the rules run.
+ */
+let dropping: { html: boolean; fromPage: boolean } | null = null;
+
+/** Notes what each drop carried (`dropping`), for the paste rules. */
+const DropsReadAsPastes = Extension.create({
+	name: 'dropsReadAsPastes',
+	addProseMirrorPlugins() {
+		return [
+			new Plugin({
+				props: {
+					handleDOMEvents: {
+						drop(_view, event) {
+							const html = event.dataTransfer?.getData('text/html') ?? '';
+							dropping = { html: !!html, fromPage: html.includes('data-pm-slice') };
+							queueMicrotask(() => (dropping = null));
+							return false;
+						},
+					},
+				},
+			}),
+		];
+	},
+});
+
+/**
+ * Whether a paste, or a drop, came as plain text. HTML carries its own
+ * formatting, and the `**` in its text are its writer's.
+ */
+function pastedAsText(event: ClipboardEvent | null): boolean {
+	if (dropping) return !dropping.html;
+	return !event?.clipboardData?.getData('text/html');
+}
+
+/**
+ * `rule` never run on a block dragged from another page's editor: it is
+ * that page's content, its links its writer's, as Tiptap leaves a paste of
+ * a page's own HTML.
+ */
+function notFromAPage(rule: PasteRule): PasteRule {
+	return new PasteRule({ find: rule.find, handler: (props) => (dropping?.fromPage ? undefined : rule.handler(props)) });
+}
+
+/**
+ * `rule` run only on text pasted as plain text, and never on text in inline
+ * code: the code mark excludes no other mark, so a rule run there would take
+ * the `==` out of `a == b` and highlight what is between.
+ */
+function onPlainText(rule: PasteRule): PasteRule {
+	return new PasteRule({
+		find: rule.find,
+		handler: (props) => {
+			if (!pastedAsText(props.pasteEvent)) return;
+			const code = props.state.schema.marks.code;
+			if (code && props.state.doc.rangeHasMark(props.range.from, props.range.to, code)) return;
+			return rule.handler(props);
+		},
+	});
+}
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Where each code span (`` `x` ``) is in `text`, as CommonMark pairs backtick runs: `[from, to)`. */
+function codeSpans(text: string): [number, number][] {
+	return [...text.matchAll(/(`+)[^`][\s\S]*?\1(?!`)/g)].map((m) => [m.index, m.index + m[0].length]);
+}
+
+/**
+ * `rule` with no match that reaches into a code span of the text it reads:
+ * what is between backticks is code, and Tiptap's link rule would link an
+ * address in one, its closing backtick taken into the address.
+ */
+function outsideCodeSpans(rule: PasteRule): PasteRule {
+	const find = rule.find;
+	if (typeof find !== 'function') return rule;
+	return new PasteRule({
+		find: (text, event) => {
+			const spans = codeSpans(text);
+			return (find(text, event) ?? []).filter((m) => !spans.some(([a, b]) => m.index < b && a < m.index + m.text.length));
+		},
+		handler: rule.handler,
+	});
+}
+
+/**
+ * Text between two `delim`s, read as CommonMark reads emphasis and as the
+ * server's converter does: the opening one begins a word and the closing one
+ * ends it. Neither touches a letter or a digit on its outer side, and
+ * neither has a space on its inner side. So `a == b or c == d`,
+ * `SELECT * FROM t WHERE x = 2 * y` and `a ** b ** c` stay as they are, as
+ * they do when the converter reads them; Tiptap's own rules take any two.
+ * Never inside a code span.
+ */
+function delimited(delim: string): (text: string) => PasteRuleMatch[] {
+	const c = escapeRegExp(delim[0]);
+	const d = escapeRegExp(delim);
+	const re = new RegExp(
+		`(?<![\\p{L}\\p{N}${c}])${d}(?![\\s${c}])([^${c}]*?[^\\s${c}])${d}(?![\\p{L}\\p{N}${c}])`,
+		'gu',
+	);
+	return (text) => {
+		const spans = codeSpans(text);
+		const matches: PasteRuleMatch[] = [];
+		for (const m of text.matchAll(re)) {
+			const [from, to] = [m.index, m.index + m[0].length];
+			if (spans.some(([a, b]) => from < b && a < to)) continue;
+			matches.push({ index: from, text: m[0], replaceWith: m[1] });
+		}
+		return matches;
+	};
+}
+
+/** Paste rules for a mark written between each of `delims`. */
+function delimitedRules(type: MarkType, delims: string[]): PasteRule[] {
+	return delims.map((delim) => onPlainText(markPasteRule({ find: delimited(delim), type })));
+}
+
 function markBase(name: string): Mark | undefined {
 	switch (name) {
 		case 'link':
-			return Link.configure({
+			return TypedLink.configure({
 				openOnClick: false,
 				autolink: true,
 				// The stock check allows schemes the server refuses (ftp:, sms:,
@@ -234,19 +538,49 @@ function markBase(name: string): Mark | undefined {
 				isAllowedUri: (url) => linkAllowed(url),
 				// A URL pasted over selected text asks only this.
 				shouldAutoLink: (url) => linkAllowed(url) && stockShouldAutoLink(url),
+				// `[label](url)` typed or pasted is a link, as the CodeMirror
+				// editor draws it; the address passes `isAllowedUri` first.
+				markdownLinks: true,
 			});
 		case 'bold':
-			return Bold;
+			return Bold.extend({
+				addPasteRules() {
+					return delimitedRules(this.type, ['**', '__']);
+				},
+			});
 		case 'italic':
-			return Italic;
+			return Italic.extend({
+				addPasteRules() {
+					return delimitedRules(this.type, ['*', '_']);
+				},
+			});
 		case 'underline':
 			return Underline;
+		// Each with the CodeMirror editor's key beside Tiptap's own (⌘⇧S, ⌘E).
 		case 'strike':
-			return Strike;
+			return Strike.extend({
+				addKeyboardShortcuts() {
+					return { ...this.parent?.(), 'Mod-Shift-x': () => this.editor.commands.toggleStrike() };
+				},
+				addPasteRules() {
+					return delimitedRules(this.type, ['~~']);
+				},
+			});
 		case 'highlight':
-			return Highlight;
+			return Highlight.extend({
+				addPasteRules() {
+					return delimitedRules(this.type, ['==']);
+				},
+			});
 		case 'code':
-			return Code;
+			return Code.extend({
+				addKeyboardShortcuts() {
+					return { ...this.parent?.(), 'Mod-`': () => this.editor.commands.toggleCode() };
+				},
+				addPasteRules() {
+					return [onPlainText(markPasteRule({ find: codePasteMatch, type: this.type }))];
+				},
+			});
 		default:
 			return undefined;
 	}
@@ -439,8 +773,15 @@ function readAttr(el: HTMLElement, spec: AttrSpec): unknown {
 	return value;
 }
 
-function attributesFor(attrs: Record<string, AttrSpec> = {}): Attributes {
+/**
+ * Attributes the second half of a split block starts without, as the stock
+ * extensions have them: Enter after a checked to-do starts an unchecked one.
+ */
+const NOT_KEPT_ON_SPLIT: Record<string, string[]> = { taskItem: ['checked'] };
+
+function attributesFor(attrs: Record<string, AttrSpec> = {}, node?: string): Attributes {
 	const out: Attributes = {};
+	const fresh = (node && NOT_KEPT_ON_SPLIT[node]) || [];
 	for (const [key, spec] of Object.entries(attrs)) {
 		out[key] = {
 			default: defaultOf(spec),
@@ -450,6 +791,7 @@ function attributesFor(attrs: Record<string, AttrSpec> = {}): Attributes {
 			parseHTML: (el) => readAttr(el, spec),
 			// renderHTML below writes attributes itself, in contract order.
 			rendered: false,
+			...(fresh.includes(key) ? { keepOnSplit: false } : {}),
 		};
 	}
 	return out;
@@ -501,31 +843,40 @@ function nodeParseRules(spec: NodeSpec): TagParseRule[] {
  * What a paste from another editor means, on top of the contract's tags.
  * Google Docs wraps every copy in `<b style="font-weight:normal">`, and it and
  * Word say bold, italic, underline and strike with inline styles rather than
- * tags. Read as the stock Tiptap extensions read them. Only pasted HTML takes
- * this path: the server's ingest refuses `style`, and canonical HTML has none.
+ * tags. Read as the stock Tiptap extensions read them, but for underline: a
+ * link's text in Google Docs is a span styled underlined, which is how it
+ * draws a link, not an underline its writer chose, so a styled span inside a
+ * link is no underline. Only pasted HTML takes this path: the server's ingest
+ * refuses `style`, and canonical HTML has none.
  */
-const PASTE: Record<string, { cancels?: Record<string, (el: HTMLElement) => boolean>; styles?: ParseRule[] }> = {
+const PASTE: Record<string, { cancels?: Record<string, (el: HTMLElement) => boolean>; rules?: ParseRule[] }> = {
 	bold: {
 		cancels: { b: (el) => /^(normal|lighter|[1-4]\d{2})$/.test(el.style.fontWeight) },
-		styles: [
+		rules: [
 			{ style: 'font-weight=400', clearMark: (m) => m.type.name === 'bold' },
 			{ style: 'font-weight', getAttrs: (v) => /^(bold(er)?|[5-9]\d{2,})$/.test(v) && null },
 		],
 	},
 	italic: {
 		cancels: { i: (el) => el.style.fontStyle === 'normal' },
-		styles: [
+		rules: [
 			{ style: 'font-style=normal', clearMark: (m) => m.type.name === 'italic' },
 			{ style: 'font-style=italic' },
 		],
 	},
 	underline: {
-		styles: [
-			{ style: 'text-decoration', consuming: false, getAttrs: (v) => (v.includes('underline') ? {} : false) },
+		rules: [
+			{
+				tag: 'span[style]',
+				getAttrs: (el) =>
+					/text-decoration(-line)?\s*:[^;]*\bunderline\b/i.test(el.getAttribute('style') ?? '') && !el.closest('a')
+						? {}
+						: false,
+			},
 		],
 	},
 	strike: {
-		styles: [
+		rules: [
 			{ style: 'text-decoration', consuming: false, getAttrs: (v) => (v.includes('line-through') ? {} : false) },
 		],
 	},
@@ -540,6 +891,9 @@ function renderAttrs(
 		if (!spec.html) continue;
 		const value = values[key];
 		if (value === null || value === undefined || value === defaultOf(spec)) continue;
+		// An address the contract refuses is never drawn: one that reached
+		// the page past the server's check (`javascript:`) is no link here.
+		if (spec.type === 'url' && contractUrl(spec, value) === null) continue;
 		out[spec.html] = String(value);
 	}
 	return out;
@@ -571,7 +925,7 @@ function nodeConfig(name: string, spec: NodeSpec): Partial<NodeConfig> {
 
 	const idAttr = contract.id.attr;
 	config.addAttributes = () => ({
-		...attributesFor(spec.attrs),
+		...attributesFor(spec.attrs, name),
 		...(spec.id
 			? {
 					[idAttr]: {
@@ -613,7 +967,7 @@ function markConfig(name: string, spec: MarkSpec): Partial<MarkConfig> {
 					cancels?.(el) || required.some((a) => readAttr(el, a) === null) ? false : {},
 			};
 		}),
-		...(paste.styles ?? []),
+		...(paste.rules ?? []),
 	];
 	config.renderHTML = ({ mark }): DOMOutputSpec => {
 		const rule = (spec.html ?? []).find((r) => !r.parseOnly);
@@ -633,15 +987,35 @@ export type Extras = {
 	marks?: Record<string, Partial<MarkConfig>>;
 };
 
+/**
+ * Each mark's extension priority. Tiptap orders a schema's marks by it, and
+ * mark order is nesting order in HTML, so the stock Link's 1000 would put
+ * links outside the proposals the contract puts first. Each mark takes at
+ * least the priority of the mark after it in the contract; the sort keeps
+ * equal priorities in the order given, which is the contract's.
+ */
+function markPriorities(): Record<string, number> {
+	const out: Record<string, number> = {};
+	let floor = 0;
+	for (const name of Object.keys(contract.marks).reverse()) {
+		const base = markBase(name);
+		const own = (base ? getExtensionField<number>(base, 'priority') : undefined) ?? 100;
+		floor = Math.max(own, floor);
+		out[name] = floor;
+	}
+	return out;
+}
+
 export function contractExtensions(extras: Extras = {}): Extensions {
-	const extensions: Extensions = [ContractGuard];
+	const extensions: Extensions = [ContractGuard, DropsReadAsPastes];
 	for (const [name, spec] of Object.entries(contract.nodes)) {
 		const config = { ...nodeConfig(name, spec), ...(extras.nodes?.[name] ?? {}) };
 		const base = nodeBase(name);
 		extensions.push(base ? base.extend(config) : Node.create(config));
 	}
+	const priority = markPriorities();
 	for (const [name, spec] of Object.entries(contract.marks)) {
-		const config = { ...markConfig(name, spec), ...(extras.marks?.[name] ?? {}) };
+		const config = { ...markConfig(name, spec), priority: priority[name], ...(extras.marks?.[name] ?? {}) };
 		const base = markBase(name);
 		extensions.push(base ? base.extend(config) : Mark.create(config));
 	}

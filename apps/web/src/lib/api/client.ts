@@ -1838,9 +1838,17 @@ export function getProjectGraph(projectId: string): Promise<ProjectGraph> {
 // Pages API
 // =============================================================================
 
+/**
+ * How a page holds its text: `markdown` in a Y.Text for the CodeMirror
+ * editor, or `tree`, a Yjs XML tree under the document contract
+ * (`crates/virtues-document`) for the block editor.
+ */
+export type PageFormat = 'markdown' | 'tree';
+
 export interface Page {
 	id: string;
 	title: string;
+	/** Markdown either way: for a block page, the export of its tree. */
 	content: string;
 	project_id: string | null;
 	icon: string | null;
@@ -1850,6 +1858,16 @@ export interface Page {
 	tags: string | null; // JSON array string: '["tag1", "tag2"]'
 	created_at: string;
 	updated_at: string;
+	/** Absent from a server older than block pages, where every page is markdown. */
+	format?: PageFormat;
+	/**
+	 * The document contract the page is written under (`GET /api/pages/:id`
+	 * only); null when the server could not read the page's document, absent
+	 * from a server older than the contract.
+	 */
+	contract?: number | null;
+	/** The newest contract the server reads (`GET /api/pages/:id` only). */
+	box_contract?: number;
 }
 
 export interface PageSummary {
@@ -2238,15 +2256,109 @@ export function getRecommendedModels<T = unknown>(): Promise<T> {
 	return apiGet<T>('/models/recommended');
 }
 
+// ── Block pages (the document contract) ─────────────────────────────────────
+
+/** Something the server's converter changed or could not carry over. */
+export interface DocumentNote {
+	at: string;
+	message: string;
+}
+
+/**
+ * Markdown as the canonical HTML of the blocks it makes, without block ids,
+ * through the server's converter: the one converter, so a paste and the
+ * inline writer read markdown exactly as the server's own writers do.
+ */
+export function convertMarkdown(
+	markdown: string,
+	signal?: AbortSignal,
+): Promise<{ html: string; notes: DocumentNote[] }> {
+	return request('/pages/convert', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ markdown }),
+		signal,
+	});
+}
+
+/**
+ * Pasted markdown, converted as a paste: HTML tags the page cannot hold and
+ * CriticMarkup stay in the text as written, since a person's paste is text
+ * they copied, not tags or suggestions. A server that predates this
+ * converts it as `convertMarkdown` does.
+ */
+export function convertPastedMarkdown(markdown: string): Promise<{ html: string; notes: DocumentNote[] }> {
+	return request('/pages/convert', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ markdown, paste: true }),
+	});
+}
+
+/** A page's text as markdown, live from the server's copy, whatever its format. */
+export function getPageMarkdown(
+	pageId: string,
+): Promise<{ format: 'markdown' | 'tree'; markdown: string }> {
+	return apiGet(`/pages/${encodeURIComponent(pageId)}/markdown`);
+}
+
 // ── Page versions (yjs history) ──────────────────────────────────────────────
+
+/** One version of a page, as `GET /api/pages/versions/:id` returns it. */
+export interface PageVersionDetail {
+	id: string;
+	page_id: string;
+	version_number: number;
+	/**
+	 * The whole Yjs state, base64, for a markdown page's browser restore;
+	 * null for a block page's version, which the server restores.
+	 */
+	snapshot: string | null;
+	content_preview: string | null;
+	created_at: string;
+	created_by: 'user' | 'ai' | 'auto';
+	description?: string | null;
+	/** What the snapshot holds; absent from a server older than block pages. */
+	format?: PageFormat;
+	/** The version as markdown, either format. */
+	markdown?: string;
+	/** A block version's canonical HTML, without block ids. */
+	html?: string | null;
+}
+
+/** What putting a version back did: the version it recorded, and what converting changed. */
+export interface RestoredVersion {
+	/**
+	 * The version "Put back vN" became; null when the page already matched,
+	 * or when History could not take the entry (the page is put back either way).
+	 */
+	version_number: number | null;
+	/** Whether the page changed; false when it already read as the version. */
+	changed?: boolean;
+	notes: DocumentNote[];
+}
+
 export function createPageVersion<T = unknown>(pageId: string, body: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', `/pages/${encodeURIComponent(pageId)}/versions`, body);
 }
 export function listPageVersions<T = unknown>(pageId: string, limit?: number): Promise<T> {
 	return apiGet<T>(`/pages/${encodeURIComponent(pageId)}/versions`, { limit });
 }
-export function getPageVersion<T = unknown>(versionId: string): Promise<T> {
+export function getPageVersion<T = PageVersionDetail>(versionId: string): Promise<T> {
 	return apiGet<T>(`/pages/versions/${encodeURIComponent(versionId)}`);
+}
+
+/**
+ * Put a block page back as `versionId` left it. The server keeps the page as
+ * it stands first, writes only the blocks that differ, and records the result
+ * as "Put back vN".
+ */
+export function restorePageVersionRequest(pageId: string, versionId: string): Promise<RestoredVersion> {
+	return apiSend<RestoredVersion>(
+		'POST',
+		`/pages/${encodeURIComponent(pageId)}/versions/${encodeURIComponent(versionId)}/restore`,
+		{},
+	);
 }
 
 // ── Setup (extras beyond getSetupState) ──────────────────────────────────────
@@ -2395,6 +2507,11 @@ export interface SharePreview {
 	names: string[];
 	/** Images from other sites, left out of the shared copy. */
 	images_left_out: number;
+	/**
+	 * A block page's applets, audio, video and files, which stay on the
+	 * server. Absent from a server older than block pages.
+	 */
+	embeds_left_out?: number;
 	/** A chat: messages that go, and attachments that stay on the server. */
 	message_count: number;
 	attachments_left_out: number;

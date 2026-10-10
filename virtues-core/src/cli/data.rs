@@ -94,13 +94,19 @@ impl Console {
 
     /// Run a write tool in the server. Returns the tool's data.
     async fn tool(&self, tool: &str, args: Value) -> Result<Value, String> {
-        let url = format!("{}/api/console/tool/{tool}", self.base);
-        let body = self.send(self.http.post(url).json(&args)).await?;
-        let data = body.get("data").cloned().unwrap_or(Value::Null);
+        let data = self.tool_data(tool, args).await?;
         if let Some(err) = failed_status(&data) {
             return Err(err);
         }
         Ok(data)
+    }
+
+    /// [`Console::tool`], returning the data of a result whose status says
+    /// it failed too, for a verb that prints more of it than the error.
+    async fn tool_data(&self, tool: &str, args: Value) -> Result<Value, String> {
+        let url = format!("{}/api/console/tool/{tool}", self.base);
+        let body = self.send(self.http.post(url).json(&args)).await?;
+        Ok(body.get("data").cloned().unwrap_or(Value::Null))
     }
 
     /// Turn an applet on or off: the app's own Enable switch.
@@ -460,22 +466,55 @@ impl Verbs {
                     return print_json(&data);
                 }
                 println!("{}", cell(&data["page_id"]));
+                // What converting the markdown into blocks changed.
+                for line in problem_lines(&data["notes"]) {
+                    note(&line);
+                }
                 Ok(())
             }
-            PageCmd::Edit { id, find, replace, out } => {
-                let replace = if replace == "-" {
-                    std::io::read_to_string(std::io::stdin()).map_err(|e| format!("reading stdin: {e}"))?
-                } else {
-                    replace
+            PageCmd::Edit { id, find, replace, base, ops, op, block, html, out } => {
+                let stdin = || std::io::read_to_string(std::io::stdin()).map_err(|e| format!("reading stdin: {e}"));
+                let replace = match replace {
+                    Some(r) if r == "-" => Some(stdin()?),
+                    r => r,
                 };
-                let data = self.console
-                    .tool("edit_page", json!({ "page_id": id, "find": find, "replace": replace }))
-                    .await?;
+                let html = match html {
+                    Some(h) if h == "-" => Some(stdin()?),
+                    h => h,
+                };
+                let ops = match ops {
+                    Some(o) if o == "-" => Some(stdin()?),
+                    // An agent key's verb runs on the box, where a path
+                    // names the box's files, not the agent's.
+                    Some(_) if self.local.is_none() => {
+                        return Err("send the ops on stdin: `--ops -`. A path would name a file on the box, not on your machine".into())
+                    }
+                    Some(path) => Some(std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?),
+                    None => None,
+                };
+                let args = edit_page_args(&id, find, replace, base, ops, op, block, html)?;
+                let data = self.console.tool_data("edit_page", args).await?;
                 if out.json {
-                    return print_json(&data);
+                    print_json(&data)?;
+                } else if data["status"] == json!("refused") {
+                    // What to send next, and the base that has seen the
+                    // blocks as they are now.
+                    note(&cell(&data["message"]));
+                    if let Some(read) = read_by_id(&id, &data) {
+                        note(&read);
+                    }
+                }
+                if let Some(err) = failed_status(&data) {
+                    return Err(err);
+                }
+                if out.json {
+                    return Ok(());
                 }
                 if ui::tty() {
                     ui::ok(&format!("edited {id}"));
+                }
+                for line in problem_lines(&data["notes"]) {
+                    note(&line);
                 }
                 // Made, but not saved yet: a read of the page shows the old
                 // text until the save lands. The server's sentence says so
@@ -485,10 +524,20 @@ impl Verbs {
                 if data["saved"] == json!(false) {
                     note(&cell(&data["message"]));
                 }
+                // The base the next edit names, so edits chain with no read.
+                if let Some(base) = data["base"].as_str() {
+                    note(&format!("base {base}"));
+                }
                 Ok(())
             }
-            PageCmd::Get { id, out } => {
-                let data = self.call("get_page_content", json!({ "page_id": id })).await?;
+            PageCmd::Get { id, blocks, after, ids, base, out } => {
+                let args = match (blocks, after) {
+                    (true, Some(after)) => json!({ "page_id": id, "after": after, "base": base }),
+                    (true, None) if !ids.is_empty() => json!({ "page_id": id, "ids": ids, "base": base }),
+                    (true, None) => json!({ "page_id": id }),
+                    (false, _) => json!({ "page_id": id, "view": "markdown" }),
+                };
+                let data = self.call("get_page_content", args).await?;
                 if out.json {
                     return print_json(&data);
                 }
@@ -496,11 +545,137 @@ impl Verbs {
                     heading(&cell(&data["title"]));
                     println!();
                 }
-                println!("{}", cell(&data["content"]));
+                let read = page_read(&data, blocks);
+                println!("{}", read.text);
+                for line in read.notes {
+                    note(&line);
+                }
                 Ok(())
             }
         }
     }
+}
+
+/// `page edit`'s arguments as `edit_page` takes them, from the flags with
+/// stdin and files already read. Clap has kept the forms apart: find with
+/// replace, `--ops`, or one `--op`.
+#[allow(clippy::too_many_arguments)]
+fn edit_page_args(
+    id: &str,
+    find: Option<String>,
+    replace: Option<String>,
+    base: Option<String>,
+    ops: Option<String>,
+    op: Option<String>,
+    block: Option<String>,
+    html: Option<String>,
+) -> Result<Value, String> {
+    let mut args = json!({ "page_id": id });
+    if let Some(find) = find {
+        args["find"] = json!(find);
+        args["replace"] = json!(replace.unwrap_or_default());
+        return Ok(args);
+    }
+    if let Some(base) = base {
+        args["base"] = json!(base);
+    }
+    if let Some(ops) = ops {
+        let ops: Value = serde_json::from_str(&ops)
+            .map_err(|e| format!("--ops must hold a JSON array of {{op, id, html}} objects: {e}"))?;
+        if !ops.is_array() {
+            return Err("--ops must hold a JSON array of {op, id, html} objects".into());
+        }
+        args["ops"] = ops;
+    } else if let Some(op) = op {
+        let flag = op.replace('_', "-");
+        let mut one = json!({ "op": op });
+        match (op.as_str(), block) {
+            ("append", Some(_)) => {
+                return Err("--op append takes no --block: it adds at the end of the page".into())
+            }
+            ("append", None) => {}
+            (_, Some(block)) => one["id"] = json!(block),
+            (_, None) => {
+                return Err(format!("--op {flag} needs --block, the id of the block it names"))
+            }
+        }
+        match (op.as_str(), html) {
+            ("delete", Some(_)) => return Err("--op delete takes no --html".into()),
+            ("delete", None) => {}
+            (_, Some(html)) => one["html"] = json!(html),
+            (_, None) => return Err(format!("--op {flag} needs --html, the blocks it writes")),
+        }
+        args["ops"] = json!([one]);
+    }
+    Ok(args)
+}
+
+/// What `page get` prints: the page on stdout, and on stderr what goes
+/// with it.
+struct PageRead {
+    text: String,
+    notes: Vec<String>,
+}
+
+fn page_read(data: &Value, blocks: bool) -> PageRead {
+    let text = ["html", "markdown", "content"]
+        .iter()
+        .map(|k| cell(&data[*k]))
+        .find(|t| !t.is_empty())
+        .unwrap_or_default();
+    let mut notes = vec![];
+    if blocks {
+        match data["base"].as_str() {
+            Some(base) => {
+                if let Some(note) = data["note"].as_str() {
+                    notes.push(note.to_string());
+                }
+                notes.push(format!("base {base}"));
+                if let Some(next) = data["more_after"].as_str() {
+                    notes.push(format!(
+                        "more follows: page get {} --blocks --after {next} --base {base}",
+                        cell(&data["page_id"])
+                    ));
+                }
+                // The server says to read by id in its tool's words; this is
+                // the same read as this command takes it.
+                match read_by_id(&cell(&data["page_id"]), data) {
+                    Some(read) => notes.push(read),
+                    None if data["markdown"].is_string() => notes.push(format!(
+                        "to edit a block exactly, read it as html: page get {} --blocks --ids <id,…> --base {base}",
+                        cell(&data["page_id"])
+                    )),
+                    None => {}
+                }
+            }
+            None => notes.push(
+                "this page is markdown text, with no blocks: edit it with --find and --replace".into(),
+            ),
+        }
+    }
+    PageRead { text, notes }
+}
+
+/// The `page get` that reads the blocks a read or a refusal could not show
+/// (`unread`), with the base it returned; none when it showed them all.
+fn read_by_id(page_id: &str, data: &Value) -> Option<String> {
+    let unread: Vec<&str> = array_of(&data["unread"]).iter().filter_map(Value::as_str).collect();
+    let base = data["base"].as_str()?;
+    (!unread.is_empty()).then(|| {
+        format!("read them as html: page get {page_id} --blocks --ids {} --base {base}", unread.join(","))
+    })
+}
+
+/// A tool's notes or refusals, one line each: "where: what".
+fn problem_lines(problems: &Value) -> Vec<String> {
+    array_of(problems)
+        .iter()
+        .map(|p| format!("{}: {}", cell(&p["at"]), cell(&p["message"])))
+        .collect()
+}
+
+fn array_of(v: &Value) -> &[Value] {
+    v.as_array().map(Vec::as_slice).unwrap_or(&[])
 }
 
 /// The manifest keys an authored applet can set: what `setup_applet` writes.
@@ -676,5 +851,202 @@ pub async fn run(verbs: &Verbs, command: Commands) -> Result<(), String> {
         Commands::Applet { cmd } => verbs.applet(cmd).await,
         Commands::Page { cmd } => verbs.page(cmd).await,
         _ => Err("not a data verb".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::types::Cli;
+    use clap::Parser;
+
+    fn parse(words: &[&str]) -> Result<PageCmd, clap::error::Error> {
+        let cli = Cli::try_parse_from(std::iter::once("virtues").chain(words.iter().copied()))?;
+        match cli.command {
+            Some(Commands::Page { cmd }) => Ok(cmd),
+            _ => panic!("not a page verb"),
+        }
+    }
+
+    /// The args `page edit` sends, from its words.
+    fn edit_args(words: &[&str]) -> Result<Value, String> {
+        let Ok(PageCmd::Edit { id, find, replace, base, ops, op, block, html, .. }) = parse(words) else {
+            panic!("{words:?} did not parse as page edit");
+        };
+        edit_page_args(&id, find, replace, base, ops, op, block, html)
+    }
+
+    #[test]
+    fn page_edit_takes_each_form_and_refuses_the_mixes() {
+        assert_eq!(
+            edit_args(&["page", "edit", "page_1", "--find", "Coffee.", "--replace", "Tea."]).unwrap(),
+            json!({ "page_id": "page_1", "find": "Coffee.", "replace": "Tea." })
+        );
+        assert!(matches!(
+            parse(&["page", "edit", "page_1", "--base", "b1", "--ops", "-"]),
+            Ok(PageCmd::Edit { ops: Some(_), base: Some(_), .. })
+        ));
+        assert_eq!(
+            edit_args(&["page", "edit", "page_1", "--base", "b1", "--op", "insert-after", "--block", "k3n1x0aa", "--html", "<p>Tea.</p>"])
+                .unwrap(),
+            json!({ "page_id": "page_1", "base": "b1",
+                    "ops": [{ "op": "insert_after", "id": "k3n1x0aa", "html": "<p>Tea.</p>" }] })
+        );
+        assert_eq!(
+            edit_args(&["page", "edit", "page_1", "--base", "b1", "--op", "delete", "--block", "k3n1x0aa"]).unwrap(),
+            json!({ "page_id": "page_1", "base": "b1", "ops": [{ "op": "delete", "id": "k3n1x0aa" }] })
+        );
+
+        for bad in [
+            // Nothing to change.
+            &["page", "edit", "page_1"][..],
+            // find without replace, and the other way round.
+            &["page", "edit", "page_1", "--find", "Coffee."],
+            &["page", "edit", "page_1", "--replace", "Tea."],
+            // Both forms at once.
+            &["page", "edit", "page_1", "--find", "a", "--replace", "b", "--op", "append", "--html", "<p>c</p>"],
+            &["page", "edit", "page_1", "--find", "a", "--replace", "b", "--ops", "-"],
+            &["page", "edit", "page_1", "--ops", "-", "--op", "append"],
+            // A block or html with no op.
+            &["page", "edit", "page_1", "--ops", "-", "--block", "k3n1x0aa"],
+            // Not an op.
+            &["page", "edit", "page_1", "--op", "move", "--block", "k3n1x0aa"],
+        ] {
+            assert!(parse(bad).is_err(), "{bad:?} parsed");
+        }
+
+        // What clap cannot see: each op's own needs.
+        assert!(edit_args(&["page", "edit", "page_1", "--op", "replace", "--html", "<p>x</p>"])
+            .unwrap_err()
+            .contains("needs --block"));
+        assert!(edit_args(&["page", "edit", "page_1", "--op", "insert-before", "--block", "k3n1x0aa"])
+            .unwrap_err()
+            .contains("--op insert-before needs --html"));
+        assert!(edit_args(&["page", "edit", "page_1", "--op", "append", "--block", "k3n1x0aa", "--html", "<p>x</p>"])
+            .is_err());
+        assert!(edit_args(&["page", "edit", "page_1", "--op", "delete", "--block", "k3n1x0aa", "--html", "<p>x</p>"])
+            .is_err());
+    }
+
+    /// An append is the one op that needs no read first.
+    #[test]
+    fn an_append_needs_no_base() {
+        assert_eq!(
+            edit_args(&["page", "edit", "page_1", "--op", "append", "--html", "<p>From the terminal.</p>"]).unwrap(),
+            json!({ "page_id": "page_1", "ops": [{ "op": "append", "html": "<p>From the terminal.</p>" }] })
+        );
+    }
+
+    #[test]
+    fn ops_from_a_file_or_stdin_must_be_an_array() {
+        let ops = r#"[{"op": "append", "html": "<p>Tea.</p>"}]"#;
+        assert_eq!(
+            edit_page_args("page_1", None, None, Some("b1".into()), Some(ops.into()), None, None, None).unwrap(),
+            json!({ "page_id": "page_1", "base": "b1", "ops": [{ "op": "append", "html": "<p>Tea.</p>" }] })
+        );
+        assert!(edit_page_args("page_1", None, None, None, Some("{\"op\": \"append\"}".into()), None, None, None).is_err());
+        assert!(edit_page_args("page_1", None, None, None, Some("not json".into()), None, None, None).is_err());
+    }
+
+    #[test]
+    fn page_get_prints_the_markdown_and_with_blocks_the_base() {
+        assert!(matches!(parse(&["page", "get", "page_1"]), Ok(PageCmd::Get { blocks: false, .. })));
+        assert!(matches!(parse(&["page", "get", "page_1", "--blocks"]), Ok(PageCmd::Get { blocks: true, .. })));
+
+        // A block page read plainly: the export, nothing on stderr.
+        let plain = page_read(
+            &json!({ "page_id": "page_1", "title": "Trip", "format": "tree", "markdown": "## Plan\n" }),
+            false,
+        );
+        assert_eq!(plain.text, "## Plan\n");
+        assert!(plain.notes.is_empty());
+
+        // By block: the HTML, and the base on stderr.
+        let blocks = page_read(
+            &json!({ "page_id": "page_1", "format": "tree", "base": "3f9a0c2e71b4d8a6",
+                     "html": "<h2 data-id=\"k3n1x0aa\">Plan</h2>", "how_to_edit": "…", "tags": "…" }),
+            true,
+        );
+        assert_eq!(blocks.text, "<h2 data-id=\"k3n1x0aa\">Plan</h2>");
+        assert_eq!(blocks.notes, ["base 3f9a0c2e71b4d8a6"]);
+
+        // A long page read as far as one read holds: how to read on.
+        let start = page_read(
+            &json!({ "page_id": "page_1", "format": "tree", "base": "3f9a0c2e71b4d8a6",
+                     "markdown": "<!-- k3n1x0aa -->\n## Plan\n", "note": "Long page.",
+                     "more_after": "k3n1x0aa" }),
+            true,
+        );
+        assert_eq!(
+            start.notes,
+            [
+                "Long page.",
+                "base 3f9a0c2e71b4d8a6",
+                "more follows: page get page_1 --blocks --after k3n1x0aa --base 3f9a0c2e71b4d8a6",
+                "to edit a block exactly, read it as html: page get page_1 --blocks --ids <id,…> --base 3f9a0c2e71b4d8a6",
+            ]
+        );
+        assert!(matches!(
+            parse(&["page", "get", "page_1", "--blocks", "--after", "k3n1x0aa", "--base", "3f9a"]),
+            Ok(PageCmd::Get { after: Some(_), base: Some(_), .. })
+        ));
+        assert!(parse(&["page", "get", "page_1", "--blocks", "--after", "k3n1x0aa"]).is_err());
+
+        // The server's notes send the reader to an ids read: the command
+        // has one, and says it in its own terms.
+        assert!(matches!(
+            parse(&["page", "get", "page_1", "--blocks", "--ids", "k3n1x0aa,p0q9r8st", "--base", "3f9a"]),
+            Ok(PageCmd::Get { ids, base: Some(_), .. }) if ids == ["k3n1x0aa", "p0q9r8st"]
+        ));
+        assert!(parse(&["page", "get", "page_1", "--blocks", "--ids", "k3n1x0aa"]).is_err());
+        assert!(parse(&["page", "get", "page_1", "--ids", "k3n1x0aa", "--base", "3f9a"]).is_err());
+        assert!(parse(&["page", "get", "page_1", "--blocks", "--base", "3f9a"]).is_err());
+        let long = page_read(
+            &json!({ "page_id": "page_1", "format": "tree", "base": "3f9a0c2e71b4d8a6",
+                     "markdown": "<!-- k3n1x0aa -->\n## Plan\n", "note": "Long page, shown as markdown." }),
+            true,
+        );
+        assert_eq!(
+            long.notes.last().unwrap(),
+            "to edit a block exactly, read it as html: page get page_1 --blocks --ids <id,…> --base 3f9a0c2e71b4d8a6"
+        );
+        let unread = page_read(
+            &json!({ "page_id": "page_1", "format": "tree", "base": "3f9a0c2e71b4d8a6",
+                     "html": "<ul data-id=\"l1\"></ul>", "unread": ["k3n1x0aa", "p0q9r8st"] }),
+            true,
+        );
+        assert_eq!(
+            unread.notes.last().unwrap(),
+            "read them as html: page get page_1 --blocks --ids k3n1x0aa,p0q9r8st --base 3f9a0c2e71b4d8a6"
+        );
+        let refused = json!({ "applied": false, "status": "refused", "base": "7c1d", "unread": ["k3n1x0aa"] });
+        assert_eq!(
+            read_by_id("page_1", &refused).unwrap(),
+            "read them as html: page get page_1 --blocks --ids k3n1x0aa --base 7c1d"
+        );
+
+        // A markdown page has no blocks to print.
+        let text = page_read(&json!({ "format": "markdown", "content": "Coffee.\n" }), true);
+        assert_eq!(text.text, "Coffee.\n");
+        assert!(text.notes[0].contains("--find"));
+    }
+
+    /// A refused edit is a result, not an error, to the tool; to the CLI it
+    /// is a failure, so a script stops on it.
+    #[test]
+    fn a_refused_edit_fails_the_verb() {
+        let refused = json!({
+            "applied": false, "status": "refused",
+            "error": "Nothing was written. op 1: no block has id `zz81aa00`",
+            "refused": [{ "at": "op 1", "message": "no block has id `zz81aa00`" }],
+            "base": "5e0d2c7f9a81b3c4",
+            "message": "Change the refused ops as the problems say, then send the whole batch again with base 5e0d2c7f9a81b3c4, the ops that were not refused as you wrote them.",
+        });
+        assert_eq!(
+            failed_status(&refused).as_deref(),
+            Some("Nothing was written. op 1: no block has id `zz81aa00`")
+        );
+        assert_eq!(problem_lines(&refused["refused"]), ["op 1: no block has id `zz81aa00`"]);
+        assert_eq!(failed_status(&json!({ "applied": true, "saved": true })), None);
     }
 }

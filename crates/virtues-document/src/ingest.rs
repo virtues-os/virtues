@@ -37,7 +37,12 @@ type DomRef<'a> = NodeRef<'a, Dom>;
 
 enum Piece {
     Inline(Node),
-    Block(Node),
+    /// A block found among a textblock's inline content, lifted out of it.
+    /// The first block an element made carries the note saying so (where,
+    /// and what), which `split_textblock` keeps only when the textblock held
+    /// text as well: a block alone on its line, as markdown writes an image,
+    /// was moved out of nothing.
+    Block(Node, Option<(String, String)>),
 }
 
 /// Tags whose content is never document text.
@@ -47,8 +52,9 @@ const DROPPED: &[&str] = &[
 
 /// The most HTML or markdown one call reads: far more than a page holds, and
 /// a bound on what one parse can cost. With the scan's guards a parse costs
-/// in proportion to its input, but the constant is large: at this size,
-/// HTML of nothing but empty paragraphs builds close to a gigabyte.
+/// in proportion to its input (the scan itself reads it once, [`NextOf`]),
+/// but the constant is large: at this size, HTML of nothing but empty
+/// paragraphs builds close to a gigabyte.
 pub const MAX_INPUT_BYTES: usize = 4 << 20;
 
 /// The most elements the source may hold open at once ([`Scan::open_depth`])
@@ -75,18 +81,61 @@ pub const MAX_PROBLEMS: usize = 200;
 /// active formatting, and the parser builds it again inside every block that
 /// follows until it is closed.
 const FORMATTING: &[&str] = &[
-    "a", "b", "big", "code", "em", "font", "i", "nobr", "s", "small", "strike", "strong", "tt",
-    "u",
+    "a", "b", "big", "code", "em", "font", "i", "nobr", "s", "small", "strike", "strong", "tt", "u",
 ];
 
 /// Tags whose start or end closes the elements open inside a block, which
 /// leaves an unclosed formatting element to be built again in the next one.
 const BLOCKS: &[&str] = &[
-    "address", "article", "aside", "blockquote", "caption", "center", "colgroup", "dd", "details",
-    "dialog", "dir", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1",
-    "h2", "h3", "h4", "h5", "h6", "header", "hgroup", "hr", "li", "listing", "main", "menu", "nav",
-    "ol", "p", "plaintext", "pre", "search", "section", "summary", "table", "tbody", "td", "tfoot",
-    "th", "thead", "tr", "ul", "xmp",
+    "address",
+    "article",
+    "aside",
+    "blockquote",
+    "caption",
+    "center",
+    "colgroup",
+    "dd",
+    "details",
+    "dialog",
+    "dir",
+    "div",
+    "dl",
+    "dt",
+    "fieldset",
+    "figcaption",
+    "figure",
+    "footer",
+    "form",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "header",
+    "hgroup",
+    "hr",
+    "li",
+    "listing",
+    "main",
+    "menu",
+    "nav",
+    "ol",
+    "p",
+    "plaintext",
+    "pre",
+    "search",
+    "section",
+    "summary",
+    "table",
+    "tbody",
+    "td",
+    "tfoot",
+    "th",
+    "thead",
+    "tr",
+    "ul",
+    "xmp",
 ];
 
 /// A tag that can close the elements opened inside it: a block, or a custom
@@ -142,6 +191,17 @@ const RAW_TEXT: &[&str] = &[
     "iframe", "noembed", "noframes", "noscript", "script", "style", "textarea", "title", "xmp",
 ];
 
+/// Parts of a table, which HTML's parser reads only inside a `<table>`:
+/// outside one it drops their tags and keeps their text, so a row written
+/// into a cell would become its cells' paragraphs.
+const TABLE_PARTS: &[&str] = &[
+    "caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr",
+];
+
+/// The document's own frame, which a fragment never holds: HTML's parser
+/// drops these tags wherever they are.
+const FRAME: &[&str] = &["html", "head", "body"];
+
 /// What the source says that the parsed tree cannot.
 struct Scan {
     /// Non-void tags written self-closed (`<virtues-applet .../>`), each
@@ -165,6 +225,10 @@ struct Scan {
     rebuilt: usize,
     /// The most attributes on one tag.
     most_attrs: usize,
+    /// The first tag HTML's parser would drop where it stands: a part of a
+    /// table outside any `<table>` ([`TABLE_PARTS`]), or the document's
+    /// frame ([`FRAME`]).
+    dropped: Option<String>,
     /// What the source can be read two ways around, when it can: the scan
     /// read a tag, comment or quoted value across a place where HTML's
     /// parser, depending on where the element sits, may instead end the
@@ -172,6 +236,39 @@ struct Scan {
     /// (`CDATA`). Past that place the scan no longer knows what the parser
     /// reads as tags, so its counts say nothing.
     two_ways: Option<&'static str>,
+}
+
+/// The next place a fixed string occurs, asked at positions that only grow.
+/// A search reads on from the last one's answer, so the scan, asking at
+/// every `<!--` or `<![CDATA[` of input that lacks the string that ends one,
+/// reads the input once rather than once per comment.
+struct NextOf<'a> {
+    hay: &'a [u8],
+    needle: &'static [u8],
+    /// The last search: where it began, and what it found.
+    last: Option<(usize, Option<usize>)>,
+}
+
+impl<'a> NextOf<'a> {
+    fn new(hay: &'a [u8], needle: &'static [u8]) -> Self {
+        Self { hay, needle, last: None }
+    }
+
+    /// Where the string next starts at or after `from`.
+    fn at_or_after(&mut self, from: usize) -> Option<usize> {
+        if let Some((began, found)) = self.last {
+            if from >= began && found.is_none_or(|at| at >= from) {
+                return found;
+            }
+        }
+        let found = self
+            .hay
+            .get(from..)
+            .and_then(|rest| rest.windows(self.needle.len()).position(|w| w == self.needle))
+            .map(|e| from + e);
+        self.last = Some((from, found));
+        found
+    }
 }
 
 /// Read the source's tags as HTML's tokenizer does, for the guards on what
@@ -201,6 +298,9 @@ fn scan(html: &str) -> Scan {
     let mut formatting: Vec<String> = vec![];
     let mut rebuilt = 0usize;
     let mut most_attrs = 0usize;
+    // Tables open, and the first tag the parser would drop.
+    let mut tables = 0usize;
+    let mut dropped: Option<String> = None;
     // Where another reading of the source ends an element's text or a
     // CDATA section, and what ends there: the scan must be between tags at
     // each.
@@ -208,6 +308,10 @@ fn scan(html: &str) -> Scan {
     let mut armed: Vec<&'static str> = vec![];
     let mut lower: Option<String> = None;
     let mut two_ways = None;
+    // Where each comment and CDATA section can end, read on, never again.
+    let mut dashes = NextOf::new(b, b"-->");
+    let mut bang = NextOf::new(b, b"--!>");
+    let mut cdata = NextOf::new(b, b"]]>");
     // The next `>` at or after `from`, and the position past it; the input's
     // end when there is none.
     let past_gt = |from: usize| {
@@ -226,8 +330,8 @@ fn scan(html: &str) -> Scan {
         let mut tag = None;
         let j = if rest.starts_with(b"<!--") {
             // From the `<!`'s end, so `<!-->` and `<!--->` close at once.
-            let dashes = html[i + 2..].find("-->").map(|e| i + 2 + e + 3);
-            let bang = html[i + 4..].find("--!>").map(|e| i + 4 + e + 4);
+            let dashes = dashes.at_or_after(i + 2).map(|e| e + 3);
+            let bang = bang.at_or_after(i + 4).map(|e| e + 4);
             match (dashes, bang) {
                 (Some(a), Some(c)) => a.min(c),
                 (Some(a), None) | (None, Some(a)) => a,
@@ -235,7 +339,7 @@ fn scan(html: &str) -> Scan {
             }
         } else if rest.starts_with(b"<![CDATA[") {
             let bogus = past_gt(i + 2);
-            let section = html[i + 9..].find("]]>").map_or(b.len(), |e| i + 9 + e + 3);
+            let section = cdata.at_or_after(i + 9).map_or(b.len(), |e| e + 3);
             if section > bogus {
                 ends.insert(section, "CDATA");
             }
@@ -271,6 +375,14 @@ fn scan(html: &str) -> Scan {
         let Some((t, start)) = tag else { continue };
         most_attrs = most_attrs.max(t.attrs);
         let name = t.name;
+        if name == "table" {
+            tables = if start { tables + 1 } else { tables.saturating_sub(1) };
+        } else if start
+            && dropped.is_none()
+            && ((tables == 0 && TABLE_PARTS.contains(&name.as_str())) || FRAME.contains(&name.as_str()))
+        {
+            dropped = Some(name.clone());
+        }
         if !start {
             if !VOID.contains(&name.as_str()) && !CLOSE_THEMSELVES.contains(&name.as_str()) {
                 depth = depth.saturating_sub(1);
@@ -292,6 +404,11 @@ fn scan(html: &str) -> Scan {
         if !void && !CLOSE_THEMSELVES.contains(&name.as_str()) {
             depth += 1;
             open_depth = open_depth.max(depth);
+            // Refused already ([`MAX_OPEN_TAGS`]); reading on would look
+            // through every formatting tag left open at each end tag.
+            if open_depth > MAX_OPEN_TAGS {
+                break;
+            }
         }
         if let Some(&raw) = RAW_TEXT.iter().find(|r| **r == name) {
             if !armed.contains(&raw) {
@@ -319,6 +436,7 @@ fn scan(html: &str) -> Scan {
         open_depth,
         rebuilt,
         most_attrs,
+        dropped,
         two_ways,
     }
 }
@@ -426,6 +544,19 @@ pub fn parse(c: &Contract, html: &str, parent: &str, mode: Mode) -> Outcome {
     parse_with(c, html, parent, mode, true)
 }
 
+/// Blocks of a page's own tree, as HTML with their ids, read again in
+/// migration mode: what the contract cannot hold is unwrapped or dropped and
+/// noted, and every block keeps the id and the text it has on the page,
+/// spaces as typed (HTML would collapse them). For putting a
+/// page back inside the contract (`put_back_in_contract`), so no size limit
+/// applies: it is the server's own tree, not a write, and a page grows past
+/// any one write's limit. Blocks that read as nothing are nothing; the
+/// caller fills a page left empty. Markdown's HTML, which carries no ids of
+/// its own, goes through [`parse`].
+pub fn parse_own_blocks(c: &Contract, html: &str) -> Outcome {
+    parse_inner(c, html, &c.fragment, Mode::Migrate, false, true)
+}
+
 /// Parse `html` as a slice that will be spliced into a `parent`'s content.
 /// The top level is not filled or checked here: whether the slice fits
 /// depends on its neighbours, which the caller checks after splicing.
@@ -433,16 +564,41 @@ pub fn parse_slice(c: &Contract, html: &str, parent: &str, mode: Mode) -> Outcom
     parse_with(c, html, parent, mode, false)
 }
 
+/// [`parse_slice`] of the page's own tree, in [`Mode::Strict`]: ids and
+/// text kept as they are, and no write's size limit
+/// (`crate::ops::apply_own_in`).
+pub fn parse_own_slice(c: &Contract, html: &str, parent: &str) -> Outcome {
+    parse_inner(c, html, parent, Mode::Strict, false, true)
+}
+
 fn parse_with(c: &Contract, html: &str, parent: &str, mode: Mode, fill: bool) -> Outcome {
+    parse_inner(c, html, parent, mode, fill, false)
+}
+
+/// `own_tree`: the HTML is the page's own tree ([`parse_own_blocks`]), whose
+/// ids and text are kept as they are and which no write's size limit bounds.
+fn parse_inner(c: &Contract, html: &str, parent: &str, mode: Mode, fill: bool, own_tree: bool) -> Outcome {
+    // A table's rows are read where HTML reads them, inside a table.
+    let in_table = c
+        .node(parent)
+        .is_some_and(|n| n.spec.html.iter().any(|r| r.tag == "table"));
+    let wrapped;
+    let html = if in_table {
+        wrapped = format!("<table>{html}</table>");
+        wrapped.as_str()
+    } else {
+        html
+    };
     let mut r = Reader {
         c,
         mode,
+        own_tree,
         notes: vec![],
         errors: vec![],
         left_out: (0, 0),
     };
     let refused = |r: Reader| r.outcome(vec![], parent);
-    if html.len() > MAX_INPUT_BYTES {
+    if html.len() > MAX_INPUT_BYTES && !own_tree {
         r.error(
             parent,
             format!(
@@ -492,6 +648,20 @@ fn parse_with(c: &Contract, html: &str, parent: &str, mode: Mode, fill: bool) ->
         );
         return refused(r);
     }
+    if let Some(tag) = &scanned.dropped {
+        let msg = if FRAME.contains(&tag.as_str()) {
+            format!("<{tag}> is a whole document's frame, not part of a page: write the blocks alone")
+        } else {
+            format!(
+                "<{tag}> is part of a table, and HTML reads it only inside one: add a row beside \
+                 a row (its <tr data-id>), or replace the table"
+            )
+        };
+        match mode {
+            Mode::Strict => r.error(parent, msg),
+            Mode::Migrate => r.note(parent, format!("{msg}; kept its text")),
+        }
+    }
     for tag in scanned.self_closed {
         let msg = format!(
             "<{tag}/> cannot self-close in HTML: write <{tag} ...></{tag}>, or what follows it lands inside it"
@@ -516,10 +686,18 @@ fn parse_with(c: &Contract, html: &str, parent: &str, mode: Mode, fill: bool) ->
         r.error(parent, too_deep());
         return refused(r);
     }
-    let kids: Vec<DomRef> = root.children().collect();
+    let kids: Vec<DomRef> = if in_table {
+        root.children().flat_map(|table| table.children()).collect()
+    } else {
+        root.children().collect()
+    };
     let nodes = r.block_children(parent, kids, parent, fill);
     if depth(&nodes) > MAX_DEPTH {
         r.error(parent, too_deep());
+        return refused(r);
+    }
+    if crate::node_count(&nodes) > crate::MAX_NODES {
+        r.error(parent, crate::model::too_many_nodes());
         return refused(r);
     }
     r.outcome(nodes, parent)
@@ -528,6 +706,11 @@ fn parse_with(c: &Contract, html: &str, parent: &str, mode: Mode, fill: bool) ->
 struct Reader<'c> {
     c: &'c Contract,
     mode: Mode,
+    /// The HTML is a page's own tree, rendered from it: its ids are its
+    /// blocks', kept in migration mode too, and its text is the text the
+    /// editor holds, spaces, tabs and line ends as typed, which HTML's
+    /// whitespace rules would collapse.
+    own_tree: bool,
     notes: Vec<Problem>,
     errors: Vec<Problem>,
     /// Errors and notes past [`MAX_PROBLEMS`], counted, not kept.
@@ -736,7 +919,9 @@ impl<'c> Reader<'c> {
     /// whose source the contract refuses: its alt text), for the caller to
     /// keep where the element was.
     fn block_element(&mut self, el: DomRef, out: &mut Vec<Node>, at: &str) -> Option<String> {
-        let Dom::Element(e) = el.value() else { return None };
+        let Dom::Element(e) = el.value() else {
+            return None;
+        };
         let tag = e.name();
         let here = format!("{at} > {tag}");
 
@@ -883,7 +1068,10 @@ impl<'c> Reader<'c> {
                     true
                 }
                 Some(false) => {
-                    self.note(at, format!("kept a table as it is: {}", problems.join("; ")));
+                    self.note(
+                        at,
+                        format!("kept a table as it is: {}", problems.join("; ")),
+                    );
                     true
                 }
                 None => {
@@ -916,7 +1104,10 @@ impl<'c> Reader<'c> {
             }
         }
         if name == "orderedList" {
-            self.note(at, "an ordered list's tasks became a task list, without numbers");
+            self.note(
+                at,
+                "an ordered list's tasks became a task list, without numbers",
+            );
         }
         if runs.len() > 1 {
             self.note(
@@ -929,7 +1120,11 @@ impl<'c> Reader<'c> {
         }
         for (task, first, run) in runs {
             if task {
-                out.push(Node::element("taskList", self.c.default_attrs("taskList"), run));
+                out.push(Node::element(
+                    "taskList",
+                    self.c.default_attrs("taskList"),
+                    run,
+                ));
                 continue;
             }
             let mut a = attrs.clone();
@@ -941,9 +1136,9 @@ impl<'c> Reader<'c> {
     }
 
     /// What stands in, on migration's path, for an element that could not be
-    /// built: its `alt` text, or the text inside it, with a note saying what
-    /// was dropped. Nothing on the model's path, where `reasons` are already
-    /// errors.
+    /// built: its `alt` text, a media embed's name, or the text inside it,
+    /// with a note saying what was dropped. Nothing on the model's path,
+    /// where `reasons` are already errors.
     fn stand_in(
         &mut self,
         el: DomRef,
@@ -960,10 +1155,12 @@ impl<'c> Reader<'c> {
         let inner: String = ElementRef::wrap(el)
             .map(|e| e.text().collect())
             .unwrap_or_default();
-        let (text, kept) = match e.attr("alt").filter(|a| !a.trim().is_empty()) {
-            Some(alt) => (alt.to_string(), "; kept its alt text"),
-            None if !inner.trim().is_empty() => (inner, "; kept its text"),
-            None => (String::new(), ""),
+        let given = |name: &str| e.attr(name).filter(|a| !a.trim().is_empty());
+        let (text, kept) = match (given("alt"), given("data-name")) {
+            (Some(alt), _) => (alt.to_string(), "; kept its alt text"),
+            (None, Some(name)) => (name.to_string(), "; kept its name"),
+            _ if !inner.trim().is_empty() => (inner, "; kept its text"),
+            _ => (String::new(), ""),
         };
         self.note(
             at,
@@ -985,8 +1182,12 @@ impl<'c> Reader<'c> {
         let mut seg: Vec<Node> = Vec::new();
         let mut lifted = false;
         let mut emitted = false;
+        let mut moved = Vec::new();
+        let own_tree = self.own_tree;
         let flush = |seg: &mut Vec<Node>, out: &mut Vec<Node>, emitted: &mut bool| {
-            trim_trailing(seg);
+            if !own_tree {
+                trim_trailing(seg);
+            }
             if !seg.is_empty() {
                 out.push(Node::element(name, attrs.clone(), std::mem::take(seg)));
                 *emitted = true;
@@ -995,14 +1196,20 @@ impl<'c> Reader<'c> {
         for p in pieces {
             match p {
                 Piece::Inline(n) => seg.push(n),
-                Piece::Block(b) => {
+                Piece::Block(b, note) => {
                     flush(&mut seg, out, &mut emitted);
                     out.push(b);
                     lifted = true;
+                    moved.extend(note);
                 }
             }
         }
         flush(&mut seg, out, &mut emitted);
+        if emitted {
+            for (at, message) in moved {
+                self.note(&at, message);
+            }
+        }
         if !emitted && !lifted && keep_empty {
             out.push(Node::element(name, attrs, vec![]));
         }
@@ -1075,7 +1282,9 @@ impl<'c> Reader<'c> {
                             let attrs = match self.attrs(spec, rule, kid, &here) {
                                 Ok(attrs) => attrs,
                                 Err(reasons) => {
-                                    if let Some(text) = self.stand_in(kid, &spec.name, reasons, &here) {
+                                    if let Some(text) =
+                                        self.stand_in(kid, &spec.name, reasons, &here)
+                                    {
                                         self.add_text(&text, marks, pieces);
                                     }
                                     continue;
@@ -1109,10 +1318,9 @@ impl<'c> Reader<'c> {
                         if let Some(text) = self.block_element(kid, &mut lifted, at) {
                             self.add_text(&text, marks, pieces);
                         }
-                        if !lifted.is_empty() {
-                            self.note(&here, format!("moved <{tag}> out of the surrounding text"));
-                        }
-                        pieces.extend(lifted.into_iter().map(Piece::Block));
+                        let mut note =
+                            Some((here, format!("moved <{tag}> out of the surrounding text")));
+                        pieces.extend(lifted.into_iter().map(|b| Piece::Block(b, note.take())));
                         continue;
                     }
                     if DROPPED.contains(&tag) {
@@ -1144,12 +1352,13 @@ impl<'c> Reader<'c> {
 
     /// ProseMirror's whitespace rules for non-`pre` text: runs collapse to one
     /// space; a leading space goes when nothing precedes it in the block, a
-    /// hard break does, or the previous text already ends in one.
+    /// hard break does, or the previous text already ends in one. A page's
+    /// own tree keeps its text as it is.
     fn add_text(&mut self, raw: &str, marks: &[Mark], pieces: &mut Vec<Piece>) {
-        let mut value = collapse_ws(raw);
-        if value.starts_with(' ') {
+        let mut value = if self.own_tree { raw.to_string() } else { collapse_ws(raw) };
+        if value.starts_with(' ') && !self.own_tree {
             let strip = match pieces.last() {
-                None | Some(Piece::Block(_)) => true,
+                None | Some(Piece::Block(..)) => true,
                 Some(Piece::Inline(n)) => {
                     n.kind == "hardBreak"
                         || n.text.as_deref().map(|t| t.ends_with(' ')).unwrap_or(false)
@@ -1234,12 +1443,18 @@ impl<'c> Reader<'c> {
                 // somewhere, and may be a block's on this page already.
                 match self.mode {
                     _ if value.is_empty() => {}
+                    _ if self.own_tree => {
+                        attrs.insert(self.c.id.attr.clone(), Value::String(value.to_string()));
+                    }
                     Mode::Strict => {
                         attrs.insert(self.c.id.attr.clone(), Value::String(value.to_string()));
                     }
                     Mode::Migrate => self.note(
                         at,
-                        format!("dropped `{name}` on <{}>: a page gives its blocks ids", e.name()),
+                        format!(
+                            "dropped `{name}` on <{}>: a page gives its blocks ids",
+                            e.name()
+                        ),
                     ),
                 }
                 continue;
@@ -1429,7 +1644,6 @@ impl<'c> Reader<'c> {
         let dropped = format!("{msg} (dropped)");
         self.refuse_or_note(at, msg, dropped);
     }
-
 }
 
 /// One HTML attribute value as the contract types it, or why it is refused.
@@ -1693,7 +1907,10 @@ mod tests {
 
     #[test]
     fn errors_past_the_limit_are_counted_not_kept() {
-        let o = strict(&format!("<p>{}</p>", "<span>x</span>".repeat(MAX_PROBLEMS + 50)));
+        let o = strict(&format!(
+            "<p>{}</p>",
+            "<span>x</span>".repeat(MAX_PROBLEMS + 50)
+        ));
         assert_eq!(o.errors.len(), MAX_PROBLEMS + 1);
         assert_eq!(
             o.errors.last().map(|e| e.message.as_str()),
@@ -1758,7 +1975,9 @@ mod tests {
         assert_eq!(scan("<svg><style><div><div></style>").open_depth, 4);
         let o = strict("<style><!--</style><p>x</p>");
         assert!(
-            o.errors.iter().any(|e| e.message.contains("reads two ways")),
+            o.errors
+                .iter()
+                .any(|e| e.message.contains("reads two ways")),
             "{:?}",
             o.errors
         );

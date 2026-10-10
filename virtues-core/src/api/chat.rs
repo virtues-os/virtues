@@ -163,8 +163,34 @@ pub struct ActivePageContext {
     pub page_id: Option<String>,
     /// Page title (for better LLM context)
     pub page_title: Option<String>,
-    /// Current content from Yjs document (source of truth for edits)
+    /// A markdown page's text, from the client's live document. A block
+    /// page's is not read from here: the server reads its tree.
     pub content: Option<String>,
+}
+
+/// The open page as the prompt shows it, resolved by the server
+/// (`resolve_active_page`).
+#[derive(Debug, Clone)]
+enum ActivePage {
+    /// A markdown page, with the text the client sent.
+    Markdown { id: String, title: String, content: Option<String> },
+    /// A block page, read by the server, with the base its next edit names,
+    /// and whether what it shows holds a suggestion its owner has not decided.
+    Tree { id: String, title: String, view: TreeView, suggestions: bool },
+    /// A block page the server could not read this turn: the model reads it
+    /// with get_page_content.
+    Unreadable { id: String, title: String },
+}
+
+/// How a block page is shown: its HTML with block ids, or, when that is
+/// longer than the prompt holds, its markdown export with each top-level
+/// block's id in a comment above it, whole blocks up to what the prompt
+/// holds. `next` is the block a read of the rest starts after, when the
+/// page goes on past what is shown.
+#[derive(Debug, Clone)]
+enum TreeView {
+    Html { html: String, base: String },
+    Long { markdown: String, base: String, next: Option<String> },
 }
 
 /// Chat request from frontend
@@ -801,6 +827,15 @@ fn data_event<T: Serialize>(event_type: &str, id: Option<String>, data: T, trans
 /// ~10K chars ≈ 2.5K tokens, leaving room for rest of context
 const MAX_PAGE_CONTENT_CHARS: usize = 10_000;
 
+/// Above the tag guide, beside an open block page in either view: the HTML
+/// an edit writes, which a full read would have carried. The open page
+/// stands for that read (the model edits a page shown as HTML with no read
+/// first), so without it a guessed callout was written as a plain quote.
+const OPEN_PAGE_TAGS: &str = "The tags edit_page takes:";
+
+/// Beside an open block page: what an edit's html is, as a full read says.
+const OPEN_PAGE_HTML: &str = "html is whole blocks; leave data-id off blocks you add.";
+
 /// Build narrative identity content for the system prompt.
 ///
 /// The user's telos document — values, character, aspirations — for the system
@@ -940,7 +975,7 @@ async fn build_rules(pool: &PgPool) -> String {
 async fn build_system_prompt(
     pool: &PgPool,
     chat_id: Option<&str>,
-    active_page: Option<&ActivePageContext>,
+    active_page: Option<&ActivePage>,
     timezone: Option<&str>,
     mode: &ChatMode,
     project_id: Option<&str>,
@@ -1011,7 +1046,7 @@ async fn build_system_prompt(
 async fn build_system_prompt_blocks(
     pool: &PgPool,
     chat_id: Option<&str>,
-    active_page: Option<&ActivePageContext>,
+    active_page: Option<&ActivePage>,
     timezone: Option<&str>,
     mode: &ChatMode,
     project_id: Option<&str>,
@@ -1154,7 +1189,8 @@ async fn build_system_prompt_blocks(
                 }
             }),
         },
-        // The open page's live content (Yjs is the source of truth).
+        // The open page's live content: a markdown page's text as the
+        // client sent it, a block page's tree as the server read it.
         Block {
             meta: BlockMeta { tag: "active_context", author: Author::Ui, mood: Mood::Declarative, rung: 45, cadence: Cadence::PerTurn },
             body: Box::pin(async move { build_active_page_block(active_page) }),
@@ -1183,14 +1219,95 @@ async fn build_system_prompt_blocks(
     assemble(blocks).await
 }
 
-/// Render the open-page section, if a page is open.
-fn build_active_page_block(active_page: Option<&ActivePageContext>) -> Option<String> {
-    let ctx = active_page?;
-    let page_id = ctx.page_id.as_ref()?;
-    let title = ctx.page_title.as_deref().unwrap_or("Untitled");
+/// The open page, as the prompt shows it. A markdown page keeps the text
+/// the client sent: an older box reads only that, so the app still sends it.
+/// A block page is read here, from the live tree, whatever the client sent,
+/// and the blocks it lists, and only those, are kept as a read base, so the
+/// model can edit them from the prompt with no read of its own, and a block
+/// past what the prompt holds is read before it is replaced. A block listed
+/// by id alone, too long to show, is in the base as it stands. An unchanged
+/// page keeps the same base each turn.
+async fn resolve_active_page(
+    pool: &PgPool,
+    yjs: &YjsState,
+    ctx: &ActivePageContext,
+) -> Option<ActivePage> {
+    let id = ctx.page_id.clone()?;
+    let title = ctx.page_title.clone().unwrap_or_else(|| "Untitled".to_string());
+    let format = match crate::api::pages::page_format(pool, &id).await {
+        Ok(format) => format,
+        // A page whose format the server can't read is shown as the
+        // client sent it: its text, or the line that has the model read it.
+        Err(e) => {
+            tracing::warn!(page = %id, error = %e, "open page's format unknown; using the client's text");
+            crate::api::pages::PageFormat::Markdown
+        }
+    };
+    if format == crate::api::pages::PageFormat::Markdown {
+        return Some(ActivePage::Markdown { id, title, content: ctx.content.clone() });
+    }
+    let tree = match yjs.read_tree(&id).await {
+        Ok(tree) => tree,
+        Err(e) => {
+            tracing::warn!(page = %id, error = %e, "open block page unreadable for the prompt");
+            return Some(ActivePage::Unreadable { id, title });
+        }
+    };
+    let html = virtues_document::to_html(&tree, true);
+    let (seen, long) = if html.chars().count() <= MAX_PAGE_CONTENT_CHARS {
+        (crate::api::page_reads::ReadBase::of(tree), None)
+    } else {
+        let window = crate::api::page_reads::markdown_window(
+            &tree,
+            0,
+            MAX_PAGE_CONTENT_CHARS,
+            |s| s.chars().count(),
+            crate::tools::fits_one_read,
+        );
+        (window.read_base(), Some((window.markdown, window.next)))
+    };
+    let shown = &seen.tree;
+    let base = match crate::api::page_reads::keep_read_base(pool, &id, &seen).await {
+        Ok(base) => base,
+        Err(e) => {
+            tracing::warn!(page = %id, error = %e, "open block page's base not kept; the model reads it instead");
+            return Some(ActivePage::Unreadable { id, title });
+        }
+    };
+    let suggestions = crate::tools::holds_proposal(shown);
+    let view = match long {
+        None => TreeView::Html { html, base },
+        Some((markdown, next)) => TreeView::Long { markdown, base, next },
+    };
+    Some(ActivePage::Tree { id, title, view, suggestions })
+}
 
-    Some(match &ctx.content {
-        Some(content) => {
+/// The sentence about the owner's undecided suggestions, after a space,
+/// when the page as shown holds one.
+fn suggestions_line(suggestions: bool) -> String {
+    if suggestions {
+        format!(" {}", crate::tools::SUGGESTIONS_NOTE)
+    } else {
+        String::new()
+    }
+}
+
+/// The open page's section of the prompt, as a turn with `ctx` open sends
+/// it: for the page edit eval, which measures the chat's own page guidance.
+#[cfg(test)]
+pub(crate) async fn open_page_section(
+    pool: &PgPool,
+    yjs: &YjsState,
+    ctx: &ActivePageContext,
+) -> Option<String> {
+    let page = resolve_active_page(pool, yjs, ctx).await?;
+    build_active_page_block(Some(&page))
+}
+
+/// Render the open-page section, if a page is open.
+fn build_active_page_block(active_page: Option<&ActivePage>) -> Option<String> {
+    Some(match active_page? {
+        ActivePage::Markdown { id, title, content: Some(content) } => {
             // Truncate large content to avoid consuming too much context
             let (content_display, truncation_note) = if content.chars().count() > MAX_PAGE_CONTENT_CHARS {
                 let truncated_content: String = content.chars().take(MAX_PAGE_CONTENT_CHARS).collect();
@@ -1207,13 +1324,34 @@ fn build_active_page_block(active_page: Option<&ActivePageContext>) -> Option<St
 
             format!(
                 "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing.\n\n<current_content>\n{}\n</current_content>\n\nUse the edit_page tool to make changes. The 'find' parameter locates text, 'replace' provides the new text. For a full rewrite, set find to empty string. Edits are applied immediately via real-time sync.{}\n</active_context>",
-                title, page_id, content_display, truncation_note
+                title, id, content_display, truncation_note
             )
         }
-        None => format!(
+        ActivePage::Markdown { id, title, content: None } | ActivePage::Unreadable { id, title } => format!(
             "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing. Use get_page_content to read it first, then edit_page to make changes.\n</active_context>",
-            title, page_id
+            title, id
         ),
+        ActivePage::Tree { id, title, view: TreeView::Html { html, base }, suggestions } => format!(
+            "\n\n<active_context>\nThe user has \"{title}\" (id: {id}) open. It is a block page.\n\n<current_content base=\"{base}\">\n{html}\n</current_content>\n\nEdit it with edit_page: base \"{base}\" and ops on these data-ids. Your edits appear in their editor as you make them. {OPEN_PAGE_HTML} {OPEN_PAGE_TAGS}\n{}{}\n</active_context>",
+            virtues_document::tag_guide(),
+            suggestions_line(*suggestions)
+        ),
+        ActivePage::Tree { id, title, view: TreeView::Long { markdown, base, next }, suggestions } => {
+            let what = match next {
+                Some(next) => format!(
+                    "This is the start of the page as markdown, each block's data-id in the comment above it. \
+                     Read on with get_page_content, after \"{next}\" and base \"{base}\"; a block not shown here \
+                     is read before it is replaced."
+                ),
+                None => "This is the page as markdown, each block's data-id in the comment above it.".to_string(),
+            };
+            format!(
+                "\n\n<active_context>\nThe user has \"{title}\" (id: {id}) open. It is a block page.\n\n<current_content base=\"{base}\" view=\"markdown\">\n{}\n</current_content>\n\nEdit it with edit_page: base \"{base}\" and ops on these data-ids, in HTML. Your edits appear in their editor as you make them. {what} Markdown does not say what a block's HTML is (a mention reads as a link, a callout as a quote): read a block with get_page_content, ids and base \"{base}\" before you replace it. {OPEN_PAGE_HTML} {OPEN_PAGE_TAGS}\n{}{}\n</active_context>",
+                markdown.trim_end(),
+                virtues_document::tag_guide(),
+                suggestions_line(*suggestions)
+            )
+        }
     })
 }
 
@@ -1457,7 +1595,11 @@ async fn chat_handler_inner(
     // OUTSIDE the cached block or it invalidates the prefix on every keystroke.
     let t_history = ms(started);
     let prompt_started = std::time::Instant::now();
-    let (mut system_prompt, system_tail) = build_system_prompt(&pool, Some(&chat_id_str), request.active_page.as_ref(), request.timezone.as_deref(), &mode, effective_project_id.as_deref()).await;
+    let active_page = match request.active_page.as_ref() {
+        Some(ctx) => resolve_active_page(&pool, &yjs_state, ctx).await,
+        None => None,
+    };
+    let (mut system_prompt, system_tail) = build_system_prompt(&pool, Some(&chat_id_str), active_page.as_ref(), request.timezone.as_deref(), &mode, effective_project_id.as_deref()).await;
     let prompt_ms = ms(prompt_started);
     // Scoped (grounded) chat: retrieval is hard-filtered to the project's
     // items (ScopeMode::Exclusive in ToolContext); this line sets the matching
@@ -3014,5 +3156,289 @@ mod persist_turn_tests {
         assert_eq!(count(&pool, MESSAGES, "chat_e").await, 0);
         assert_eq!(count(&pool, USAGE, "chat_e").await, 1);
         assert_eq!(count(&pool, AI_CALLS, "deep_research").await, 1);
+    }
+}
+
+
+#[cfg(test)]
+mod active_page_tests {
+    use super::*;
+    use crate::api::page_reads;
+    use crate::api::pages::{self, PageFormat};
+
+    async fn page(pool: &PgPool, markdown: &str, format: PageFormat) -> String {
+        pages::create_page_as(
+            pool,
+            pages::CreatePageRequest {
+                title: "Trip".into(),
+                content: markdown.into(),
+                project_id: None,
+                icon: None,
+                icon_color: None,
+                cover_url: None,
+                tags: None,
+                format: None,
+            },
+            format,
+        )
+        .await
+        .unwrap()
+        .page
+        .id
+    }
+
+    fn open(id: &str, content: Option<&str>) -> ActivePageContext {
+        ActivePageContext {
+            page_id: Some(id.to_string()),
+            page_title: Some("Trip".to_string()),
+            content: content.map(str::to_string),
+        }
+    }
+
+    /// A block page is read by the server: the client's text is not used,
+    /// and the base the prompt names is kept, once for an unchanged page.
+    #[sqlx::test]
+    async fn a_block_page_is_shown_as_html_with_its_base(pool: PgPool) {
+        let id = page(&pool, "## Plan\n\nLunch with [@Nick](/person/person_1).\n", PageFormat::Tree).await;
+        let yjs = YjsState::new(pool.clone());
+        let ctx = open(&id, Some("The client's own copy."));
+        let resolved = resolve_active_page(&pool, &yjs, &ctx).await.unwrap();
+        let block = build_active_page_block(Some(&resolved)).unwrap();
+
+        let tree = yjs.read_tree(&id).await.unwrap();
+        let base = page_reads::tree_hash(&tree);
+        assert_eq!(
+            block,
+            format!(
+                "\n\n<active_context>\nThe user has \"Trip\" (id: {id}) open. It is a block page.\n\n\
+                 <current_content base=\"{base}\">\n{}\n</current_content>\n\n\
+                 Edit it with edit_page: base \"{base}\" and ops on these data-ids. \
+                 Your edits appear in their editor as you make them. {OPEN_PAGE_HTML} {OPEN_PAGE_TAGS}\n{}\n</active_context>",
+                virtues_document::to_html(&tree, true),
+                virtues_document::tag_guide()
+            )
+        );
+        // The model edits this view with no read first: a callout it never
+        // saw on the page is in the guide, not guessed as a quote.
+        assert!(block.contains("<aside data-tone"), "{block}");
+        assert!(block.contains("<virtues-mention to=\"/person/person_1\" label=\"Nick\"></virtues-mention>"));
+        assert!(!block.contains("client's own copy"));
+        assert_eq!(page_reads::read_base(&pool, &id, &base).await.unwrap(), Some(page_reads::ReadBase::of(tree)));
+
+        resolve_active_page(&pool, &yjs, &ctx).await.unwrap();
+        let kept: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM app_page_read_bases WHERE page_id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(kept, 1, "an unchanged page keeps one base");
+    }
+
+    /// A long page is shown as whole blocks, as many as the prompt holds,
+    /// and the base the prompt names holds those blocks alone.
+    #[sqlx::test]
+    async fn a_long_block_page_is_cut_with_the_way_to_read_the_rest(pool: PgPool) {
+        let markdown: String = (0..400)
+            .map(|i| format!("Paragraph {i} of a long page about a trip to the coast.\n\n"))
+            .collect();
+        let id = page(&pool, &markdown, PageFormat::Tree).await;
+        let yjs = YjsState::new(pool.clone());
+        let resolved = resolve_active_page(&pool, &yjs, &open(&id, None)).await.unwrap();
+        let block = build_active_page_block(Some(&resolved)).unwrap();
+
+        let tree = yjs.read_tree(&id).await.unwrap();
+        let k = tree
+            .iter()
+            .position(|n| !block.contains(&format!("<!-- {} -->", n.id().unwrap())))
+            .unwrap();
+        assert!(k > 0, "nothing shown");
+        let ActivePage::Tree { view: TreeView::Long { base, .. }, .. } = &resolved else {
+            panic!("a long view: {resolved:?}");
+        };
+        let base = base.clone();
+        let kept = page_reads::read_base(&pool, &id, &base).await.unwrap().unwrap();
+        assert_eq!(kept.tree, tree[..k].to_vec(), "the base is what was shown");
+        // Shown as markdown only: a replace of any of them waits for a read
+        // of its HTML.
+        assert_eq!(
+            kept.markdown_only,
+            tree[..k].iter().map(|n| n.id().unwrap().to_string()).collect(),
+        );
+        let (first, last) = (tree[0].id().unwrap(), tree[k - 1].id().unwrap());
+        assert!(block.contains(&format!(
+            "<current_content base=\"{base}\" view=\"markdown\">\n<!-- {first} -->\nParagraph 0 of"
+        )));
+        // The last block shown is whole.
+        assert!(block.contains(&format!(
+            "<!-- {last} -->\nParagraph {} of a long page about a trip to the coast.\n</current_content>",
+            k - 1
+        )));
+        assert!(block.contains(&format!(
+            "This is the start of the page as markdown, each block's data-id in the comment above it. \
+             Read on with get_page_content, after \"{last}\" and base \"{base}\"; a block not shown here \
+             is read before it is replaced. \
+             Markdown does not say what a block's HTML is (a mention reads as a link, a callout as a quote): \
+             read a block with get_page_content, ids and base \"{base}\" before you replace it."
+        )));
+        // The HTML an edit writes, which no read of this view has carried.
+        assert!(block.contains(&format!("{OPEN_PAGE_TAGS}\n{}", virtues_document::tag_guide())), "{block}");
+        assert!(!block.contains("Paragraph 399"), "the page was not cut");
+        assert!(block.chars().count() < MAX_PAGE_CONTENT_CHARS + 2_000);
+    }
+
+    /// A block too long for the prompt's view of the page, which a read
+    /// shows whole, is said to be read, not to be beyond any read, and is
+    /// not in the prompt's base: a replace of it unread is refused, not
+    /// written over what the model never saw.
+    #[sqlx::test]
+    async fn a_block_too_long_for_the_prompt_is_read_before_it_is_replaced(pool: PgPool) {
+        use crate::tools::{PageEditorTool, ToolContext};
+        use serde_json::json;
+
+        let lines: String = (0..320).map(|i| format!("  \"key{i}\": \"value {i} of the config\",\n")).collect();
+        let markdown = format!("Intro.\n\n```json\n{{\n{lines}}}\n```\n\nOutro.\n");
+        let id = page(&pool, &markdown, PageFormat::Tree).await;
+        let yjs = YjsState::new(pool.clone());
+        let tree = yjs.read_tree(&id).await.unwrap();
+        let code = tree[1].id().unwrap().to_string();
+        assert!(crate::tools::fits_one_read(&tree[1]), "a read shows the block whole");
+        let resolved = resolve_active_page(&pool, &yjs, &open(&id, None)).await.unwrap();
+        let ActivePage::Tree { view: TreeView::Long { base, markdown: shown, .. }, .. } = &resolved else {
+            panic!("a long view: {resolved:?}");
+        };
+        assert!(
+            shown.contains(&format!(
+                "<!-- {code} -->\n<!-- too long to show here; read it with get_page_content, ids and this base -->"
+            )),
+            "{shown}"
+        );
+        assert!(!shown.contains("any read"), "{shown}");
+
+        let tool = PageEditorTool::new(std::sync::Arc::new(pool.clone()), Some(yjs.clone()));
+        let refused = tool
+            .edit_page(
+                json!({ "page_id": id, "base": base, "ops": [
+                    { "op": "replace", "id": code, "html": "<pre><code>{}</code></pre>" }
+                ] }),
+                &ToolContext::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(refused.data["applied"], false, "{}", refused.data);
+        assert!(refused.data["error"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("the block `{code}` is not in the read that base names")));
+        assert_eq!(yjs.read_tree(&id).await.unwrap()[1], tree[1]);
+    }
+
+    /// The model knows a block past what the prompt holds, from a read in an
+    /// earlier turn, and the owner then types in it. A replace sent with the
+    /// prompt's base is refused, not written over the owner's words, since
+    /// the prompt never showed that block; a block it did show is edited
+    /// from it.
+    #[sqlx::test]
+    async fn a_block_past_the_cut_is_read_before_it_is_replaced(pool: PgPool) {
+        use crate::tools::{PageEditorTool, ToolContext};
+        use serde_json::json;
+
+        let markdown: String = (0..12)
+            .map(|i| format!("{}\n\n", format!("Day {i} of the trip, the coast road. ").repeat(28)))
+            .collect();
+        let id = page(&pool, &markdown, PageFormat::Tree).await;
+        let yjs = YjsState::new(pool.clone());
+        let tree = yjs.read_tree(&id).await.unwrap();
+        let resolved = resolve_active_page(&pool, &yjs, &open(&id, None)).await.unwrap();
+        let ActivePage::Tree { view: TreeView::Long { base, markdown: shown, next }, .. } = &resolved else {
+            panic!("a long view: {resolved:?}");
+        };
+        // The cut falls between blocks: the first block not shown is not
+        // shown at all.
+        let k = tree
+            .iter()
+            .position(|n| !shown.contains(n.id().unwrap()))
+            .unwrap();
+        assert!(k > 0 && k < tree.len(), "{k}");
+        assert_eq!(next.as_deref(), tree[k - 1].id());
+        assert!(shown.contains(&tree[k - 1].text_content()));
+        assert!(!shown.contains(&format!("Day {k} of the trip")));
+
+        let cut = tree[k].id().unwrap().to_string();
+        yjs.edit_tree(
+            &id,
+            None,
+            &[virtues_document::Op::Replace {
+                id: cut.clone(),
+                html: "<p>Budget: $800, confirmed with Nick.</p>".into(),
+            }],
+        )
+        .await
+        .unwrap()
+        .after
+        .unwrap();
+
+        let tool = PageEditorTool::new(std::sync::Arc::new(pool.clone()), Some(yjs.clone()));
+        let refused = tool
+            .edit_page(
+                json!({ "page_id": id, "base": base, "ops": [
+                    { "op": "replace", "id": cut, "html": "<p>Budget: $500, hotels $200.</p>" }
+                ] }),
+                &ToolContext::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(refused.data["applied"], false, "{}", refused.data);
+        assert!(refused.data["error"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("the block `{cut}` is not in the read that base names")));
+        let now = yjs.read_tree(&id).await.unwrap();
+        assert_eq!(now[k].text_content(), "Budget: $800, confirmed with Nick.");
+
+        // A block the prompt showed as markdown waits for its HTML, which
+        // the refusal brings, with a base that has seen it.
+        let first = tree[0].id().unwrap();
+        let replace = |base: &str| {
+            json!({ "page_id": id, "base": base, "ops": [
+                { "op": "replace", "id": first, "html": "<p>Day 0, by train.</p>" }
+            ] })
+        };
+        let refused = tool.edit_page(replace(base), &ToolContext::default()).await.unwrap();
+        assert_eq!(refused.data["applied"], false, "{}", refused.data);
+        assert!(refused.data["blocks"].as_str().unwrap().contains(&format!("data-id=\"{first}\"")));
+        let base = refused.data["base"].as_str().unwrap().to_string();
+        let applied = tool.edit_page(replace(&base), &ToolContext::default()).await.unwrap();
+        assert_eq!(applied.data["applied"], true, "{}", applied.data);
+        assert_eq!(yjs.read_tree(&id).await.unwrap()[0].text_content(), "Day 0, by train.");
+    }
+
+    /// A markdown page's block is today's, word for word, from the text the
+    /// client sent.
+    #[sqlx::test]
+    async fn a_markdown_page_keeps_its_block_word_for_word(pool: PgPool) {
+        let id = page(&pool, "Coffee.\n", PageFormat::Markdown).await;
+        let yjs = YjsState::new(pool.clone());
+        let resolved = resolve_active_page(&pool, &yjs, &open(&id, Some("Coffee and tea.\n"))).await.unwrap();
+        assert_eq!(
+            build_active_page_block(Some(&resolved)).unwrap(),
+            format!(
+                "\n\n<active_context>\nThe user has \"Trip\" (id: {id}) open for editing.\n\n\
+                 <current_content>\nCoffee and tea.\n\n</current_content>\n\n\
+                 Use the edit_page tool to make changes. The 'find' parameter locates text, 'replace' \
+                 provides the new text. For a full rewrite, set find to empty string. Edits are applied \
+                 immediately via real-time sync.\n</active_context>"
+            )
+        );
+
+        let unsent = resolve_active_page(&pool, &yjs, &open(&id, None)).await.unwrap();
+        assert_eq!(
+            build_active_page_block(Some(&unsent)).unwrap(),
+            format!(
+                "\n\n<active_context>\nThe user has \"Trip\" (id: {id}) open for editing. \
+                 Use get_page_content to read it first, then edit_page to make changes.\n</active_context>"
+            )
+        );
+        assert!(build_active_page_block(None).is_none());
     }
 }

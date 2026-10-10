@@ -22,7 +22,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use serde_json::{json, Value};
@@ -147,15 +147,10 @@ pub async fn run_tool(name: &str, args: Value) -> ToolResult {
 
 /// `GET /ws/browser` — the app's side of the wire.
 pub async fn ws_handler(ws: WebSocketUpgrade, headers: HeaderMap) -> Response {
-    // Same rule as the terminal socket: a browser page from another origin
-    // must not be able to register itself as the owner's browser. The app's
-    // shell connects with no Origin at all, which only a non-browser can do.
-    if let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
-        let request_host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
-        if !crate::server::origin_is_ours(origin, request_host) {
-            tracing::warn!(origin, "browser websocket rejected: foreign origin");
-            return (StatusCode::FORBIDDEN, "cross-origin websocket rejected").into_response();
-        }
+    // A page from another origin must not register itself as the owner's
+    // browser. The app's shell connects with no Origin at all.
+    if let Some(refused) = crate::server::refuse_foreign_socket(&headers, "browser") {
+        return refused;
     }
     ws.on_upgrade(serve).into_response()
 }

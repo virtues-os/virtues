@@ -45,6 +45,8 @@ pub use executor::{
 pub use web_search::WebSearchTool;
 pub use sql_query::SqlQueryTool;
 pub use page_editor::PageEditorTool;
+/// The chat's page context says what the page editor's reads say about suggestions.
+pub(crate) use page_editor::{fits_one_read, holds_proposal, SUGGESTIONS_NOTE};
 pub use semantic_search::SemanticSearchTool;
 
 /// One registry tool as the LLM reads it (OpenAI/Anthropic function format),

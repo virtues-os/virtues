@@ -6,6 +6,7 @@
 //! and hold the guarantees the model's edits rely on.
 
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use virtues_document::{contract, ingest, migrate, render, validate, ydoc, Node};
 use yrs::Transact;
 
@@ -101,11 +102,6 @@ const EXPORT_DIFFERS: &[(&str, &str)] = &[
         "a space at a mark's edge moves outside it: CommonMark's delimiters must touch text",
     ),
     (
-        "callout tones",
-        "a callout exports as `> [!TONE]`, which the converter does not read yet (plan slice 4)",
-    ),
-    ("callout in list item", "as `callout tones`"),
-    (
         "table thead tbody",
         "a GFM cell holds one line: a cell's paragraphs come back as one with line breaks",
     ),
@@ -124,12 +120,27 @@ const EXPORT_DIFFERS: &[(&str, &str)] = &[
         "table align on one cell",
         "GFM aligns a column, not a cell: the column takes the cell's alignment",
     ),
+    (
+        "image block",
+        "an image at a path with no extension, its alt naming no image file, reads back as a \
+         file, as both page editors read `![alt](src)` (`kindOfLink`)",
+    ),
+    (
+        "file without a name",
+        "an embed with no name exports its file name, which reads back as its name",
+    ),
 ];
 
 #[test]
 fn every_markdown_export_reads_back_in() {
     let c = contract();
-    let plain = |nodes: &[Node]| render::html(c, nodes, &render::Options { ids: false });
+    // CriticMarkup carries no proposal id: the converter makes new ones, and
+    // which runs share one is what reads back.
+    let plain = |nodes: &[Node]| {
+        let mut nodes = nodes.to_vec();
+        migrate::number_proposals(&mut nodes);
+        render::html(c, &nodes, &render::Options { ids: false })
+    };
     for (name, html) in cases()
         .into_iter()
         .filter(|(n, _)| !n.starts_with("REFUSE"))
@@ -212,4 +223,80 @@ fn the_binary_writes_and_reads_the_shapes_the_web_test_expects() {
         assert_eq!(b["refused"], json!([]), "{}", b["name"]);
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The two readers of `content` that find refs by their text: the backlinks
+/// query (`api::pages::get_page_backlinks`, a `LIKE` on `/page/{id})`) and
+/// the project graph (`api::projects::extract_entity_urls`, which scans for
+/// `](/person/`, `](/place/` and `](/org/` up to the next `)`). Neither can
+/// see a tree, so a mention's export must hold what each reads, byte for
+/// byte as the ref picker writes it (`[@Label](/kind/id)`). These mirror the
+/// two parsers; virtues-core tests the parsers themselves on a tree page.
+fn backlink_targets(content: &str, page_id: &str) -> bool {
+    content.contains(&format!("/page/{page_id})"))
+}
+
+fn graph_entities(content: &str) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for prefix in ["/person/", "/place/", "/org/"] {
+        let needle = format!("]({prefix}");
+        let mut from = 0usize;
+        while let Some(hit) = content[from..].find(&needle) {
+            let start = from + hit + 2;
+            let rest = &content[start..];
+            let Some(end) = rest.find(')') else { break };
+            let url = &rest[..end];
+            if !url.is_empty() && !url.contains(['#', '?', ' ']) {
+                out.insert(url.to_string());
+            }
+            from = start + end;
+        }
+    }
+    out
+}
+
+#[test]
+fn mentions_export_as_the_ref_picker_writes_them() {
+    let c = contract();
+    let export = |name: &str| {
+        let (_, html) = cases().into_iter().find(|(n, _)| n == name).unwrap();
+        render::markdown(c, &canonical(strict(&html).nodes))
+    };
+    assert_eq!(
+        export("mention of a person"),
+        "Lunch with [@Nick](/person/person_1).\n"
+    );
+    assert_eq!(
+        export("mention of a person by two names"),
+        "Ask [@David Okafor](/person/person_2) first.\n"
+    );
+    assert_eq!(
+        export("mention of a page"),
+        "See [@Q3 plan](/page/page_abc).\n"
+    );
+
+    let people = export("mention of a person") + &export("mention of a person by two names");
+    assert_eq!(
+        graph_entities(&people),
+        HashSet::from([
+            "/person/person_1".to_string(),
+            "/person/person_2".to_string()
+        ])
+    );
+    assert!(backlink_targets(&export("mention of a page"), "page_abc"));
+    assert!(!backlink_targets(&export("mention of a page"), "page_ab"));
+
+    // Inside a proposal, and among the dialect's other syntax, the ref is
+    // still read: a pending proposal names its refs as the page does.
+    let o = strict(
+        "<p><virtues-ins proposal=\"p1\">with <virtues-mention to=\"/org/org_1\" label=\"Acme [West]\"></virtues-mention></virtues-ins> \
+         and <strong><virtues-mention to=\"/place/place_1\" label=\"Lisbon\"></virtues-mention></strong></p>",
+    );
+    assert!(o.errors.is_empty(), "{:?}", o.errors);
+    let md = render::markdown(c, &canonical(o.nodes));
+    assert_eq!(
+        graph_entities(&md),
+        HashSet::from(["/org/org_1".to_string(), "/place/place_1".to_string()]),
+        "{md}"
+    );
 }
