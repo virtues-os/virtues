@@ -154,7 +154,7 @@
 	}
 </script>
 
-<nav class="rail" class:compact aria-label="Rooms">
+<nav class="rail" class:compact style="width: {sidebarState.railWidth}px" aria-label="Rooms">
 	<!-- Identity AND the sidebar's toggle. The mark no longer carries the
 	     "way home" job the old path-mast root did (Chats is the ground now,
 	     and it is the first tile); what it carries instead is open/closed, in
@@ -223,8 +223,8 @@
 
 <style>
 	.rail {
-		/* Wide enough for "Settings" / "Applets" at 11px under a 40px tile. */
-		width: 72px;
+		/* Width comes from sidebarState (RAIL_WIDTH: wide enough for "Settings"
+		   at 11px under a 40px tile; compact: the 40px glyph column). */
 		flex: none;
 		display: flex;
 		flex-direction: column;
@@ -245,15 +245,12 @@
 		/* The rail is the only thing left on the desk ground — the panel and the
 		   pane are the white card beside it — so it paints nothing of its own. */
 		background: transparent;
-		/* Compact narrows to the 40px glyph column. The labels fade out before
-		   the width closes and back in after it opens, so text is never seen
-		   being clipped by the edge it is passing through. */
-		transition: width 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
-	}
-
-	.rail.compact {
-		width: 52px;
-		transition-delay: 80ms;
+		/* The aside's own width transition, exactly: the panel beside the rail
+		   is fixed-width, so any difference in timing opens the seam between
+		   the panel and the pane for the length of the animation. The labels
+		   fade out early and in late, so text is never seen being clipped by
+		   the edge it is passing through. */
+		transition: width 300ms var(--ease-premium);
 	}
 
 	.rail-mark {

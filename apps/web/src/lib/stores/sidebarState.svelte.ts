@@ -21,6 +21,14 @@ export const SIDEBAR_MAX_WIDTH = 420;
 export const SIDEBAR_DEFAULT_WIDTH = 208;
 export const SIDEBAR_COLLAPSE_AT = 148;
 
+/**
+ * The rail's width with and without its labels. The aside sizes itself as
+ * rail + gap + panel, so both read these — a rail narrower than the aside
+ * thinks it is opens a strip of desk between the panel and the pane.
+ */
+export const RAIL_WIDTH = 72;
+export const RAIL_COMPACT_WIDTH = 52;
+
 function clampWidth(v: number): number {
 	if (!Number.isFinite(v)) return SIDEBAR_DEFAULT_WIDTH;
 	return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.round(v)));
@@ -79,6 +87,9 @@ export const sidebarState = {
 	/** Rail shows glyphs only — toggled by right-clicking the ∴ mark. */
 	get railCompact() {
 		return railCompact;
+	},
+	get railWidth() {
+		return railCompact ? RAIL_COMPACT_WIDTH : RAIL_WIDTH;
 	},
 	toggleRailCompact() {
 		railCompact = !railCompact;
