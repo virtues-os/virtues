@@ -687,7 +687,7 @@
 		min-width: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: 4px;
 	}
 	.made-title {
 		font-family: var(--font-serif);
