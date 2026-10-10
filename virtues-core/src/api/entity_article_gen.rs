@@ -442,23 +442,31 @@ async fn arc(pool: &PgPool, entity_id: &str) -> Result<String> {
         today.format("%B %-d, %Y"),
     );
 
-    let gap: Option<(chrono::NaiveDate, chrono::NaiveDate)> = sqlx::query_as(
-        "WITH d AS (SELECT DISTINCT occurred_at::date AS d FROM wiki_refs \
+    // A silence is counted in days the record has anything else on it, so a
+    // stretch when nothing was being recorded at all (a lost phone, an import
+    // that starts late) is not read as a silence with every person at once.
+    let gap: Option<(chrono::NaiveDate, chrono::NaiveDate, i64)> = sqlx::query_as(
+        "WITH a AS (SELECT d, row_number() OVER (ORDER BY d) AS n \
+                    FROM (SELECT DISTINCT occurred_at::date AS d FROM wiki_refs \
+                          WHERE occurred_at IS NOT NULL) x), \
+              p AS (SELECT DISTINCT occurred_at::date AS d FROM wiki_refs \
                     WHERE entity_id = $1 AND occurred_at IS NOT NULL), \
-              g AS (SELECT d, lead(d) OVER (ORDER BY d) AS nd FROM d) \
-         SELECT d, nd FROM g WHERE nd IS NOT NULL ORDER BY nd - d DESC LIMIT 1",
+              g AS (SELECT p.d, lead(p.d) OVER (ORDER BY p.d) AS nd, \
+                           lead(a.n) OVER (ORDER BY p.d) - a.n - 1 AS quiet \
+                    FROM p JOIN a USING (d)) \
+         SELECT d, nd, quiet FROM g WHERE nd IS NOT NULL ORDER BY quiet DESC LIMIT 1",
     )
     .bind(entity_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to read the subject's longest silence: {e}")))?;
-    if let Some((a, b)) = gap {
-        if (b - a).num_days() > 30 {
+    if let Some((a, b, quiet)) = gap {
+        if quiet > 30 {
             s.push_str(&format!(
-                "- Longest silence: {} days, {} to {}\n",
-                (b - a).num_days(),
+                "- Longest silence: {} to {}, {} days on which the record has other activity\n",
                 a.format("%B %-d, %Y"),
-                b.format("%B %-d, %Y")
+                b.format("%B %-d, %Y"),
+                quiet
             ));
         }
     }
@@ -758,6 +766,16 @@ mod tests {
     /// schema; a future rename fails here instead of on a fielded box.
     #[sqlx::test]
     async fn dossier_header_sql_matches_schema(pool: sqlx::PgPool) {
+        // Something else on record Jan 7 to Mar 31 (85 days); nothing at all
+        // from April to June, which must not count as silence.
+        sqlx::query(
+            "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, occurred_at) \
+             SELECT 'filler_' || d::date, 'person', 'person_filler', 'data_test', 'f' || d::date, d \
+             FROM generate_series('2024-01-07'::date, '2024-03-31'::date, '1 day') d",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         for (table, id, kind) in [
             ("wiki_people", "person_t1", "person"),
             ("wiki_places", "place_t1", "place"),
@@ -790,7 +808,7 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{kind} dossier failed against live schema: {e}"));
             assert!(dossier.contains("Dossier Subject"), "{kind} dossier missing subject name");
             assert!(dossier.contains("First on record: January 5, 2024"), "{kind} span: {dossier}");
-            assert!(dossier.contains("Longest silence: 176 days"), "{kind} gap: {dossier}");
+            assert!(dossier.contains("85 days on which the record has other activity"), "{kind} gap: {dossier}");
             assert!(dossier.contains("2024-01: 2, 2024-06: 1"), "{kind} rhythm: {dossier}");
         }
     }
