@@ -2388,6 +2388,7 @@ fn create_agent_stream(
             ghost_permissions: Some(ghost_permissions.clone()),
             sudo: mode.is_sudo(),
             timezone: request.timezone.clone(),
+            console: false,
         };
 
         let tools = mode.tools();

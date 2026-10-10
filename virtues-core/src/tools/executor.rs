@@ -86,6 +86,10 @@ pub struct ToolContext {
     /// written in. SQL tools read dates in it. `None` (an applet run, a
     /// worker) falls back to `home_timezone`.
     pub timezone: Option<String>,
+    /// The call came through the console door (`server/api/console.rs`): the
+    /// owner at the box, running a CLI verb. Set only by that handler, never
+    /// from a tool's arguments, so the model cannot claim it.
+    pub console: bool,
 }
 
 impl Default for ToolContext {
@@ -104,6 +108,7 @@ impl Default for ToolContext {
             ghost_permissions: None,
             sudo: false,
             timezone: None,
+            console: false,
         }
     }
 }
