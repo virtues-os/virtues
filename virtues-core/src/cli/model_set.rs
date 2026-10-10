@@ -14,10 +14,14 @@
 //! (`VIRTUES_RERANK_GAP`) stops running it.
 //!
 //! A box on its own server (`manual`) chose its models and maintains them, so
-//! nothing here touches it. Nor a Dragon, whose NPU models are compiled for
-//! the board.
+//! nothing here touches it, not even when that server stops answering: it may
+//! be rebooting, and a quiet switch would rebuild the index for a model the
+//! owner didn't choose. Going back is the owner's call, and one command:
+//! [`use_recommended`]. Nor is a Dragon touched; its NPU models are compiled
+//! for the board.
 //!
-//! Runs as root, from `virtues upgrade` and the nightly `virtues auto-update`.
+//! Runs as root, from `virtues upgrade`, the nightly `virtues auto-update`, and
+//! `virtues configure-inference --recommended`.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -208,7 +212,7 @@ pub(crate) async fn settle_finished_change(restart_server: bool) {
     }
     systemctl(&["daemon-reload"]);
     systemctl(&["restart", EMBED]);
-    if !wait_serving(EMBED_URL).await {
+    if !wait_serving(EMBED_URL, &new_model).await {
         ui::warn(&format!("{EMBED} didn't come up with the new model; search stays on {NEXT}"));
         return;
     }
@@ -228,20 +232,140 @@ pub(crate) async fn settle_finished_change(restart_server: bool) {
     ui::ok("search runs on the new model");
 }
 
-/// Wait for a llama-server to load its model and answer `/health`.
-async fn wait_serving(base_url: &str) -> bool {
+/// Wait for the llama-server at `base_url` to load `model` and serve it. Asks
+/// `/v1/models` rather than `/health`, because something else may already be
+/// answering on that port: an owner's own server, before they go back to the
+/// recommended setup.
+async fn wait_serving(base_url: &str, model: &Path) -> bool {
     let Ok(client) = crate::http_client::base_builder().timeout(Duration::from_secs(3)).build() else {
         return false;
     };
-    for _ in 0..60 {
+    let name = model.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    for _ in 0..90 {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        if let Ok(r) = client.get(format!("{base_url}/health")).send().await {
-            if r.status().is_success() {
+        if let Ok(r) = client.get(format!("{base_url}/v1/models")).send().await {
+            if r.status().is_success() && r.text().await.is_ok_and(|b| b.contains(&name)) {
                 return true;
             }
         }
     }
     false
+}
+
+/// The embedding sidecar's unit, for a box that never had one (installed on
+/// its own server). Must match the installer's `EMBED_UNIT_TEMPLATE`
+/// (tools/virtues-installer/src/install.rs), which documents the flags; a box
+/// that has the unit keeps its own and only the model changes.
+fn embed_unit(llama_server: &Path, model: &Path) -> String {
+    format!(
+        "[Unit]\n\
+         Description=Virtues embedding sidecar (llama-server, {stem})\n\
+         Documentation=https://virtues.com/docs\n\
+         After=network.target\n\
+         StartLimitIntervalSec=300\n\
+         StartLimitBurst=5\n\
+         \n\
+         [Service]\n\
+         Type=simple\n\
+         User=virtues\n\
+         Group=virtues\n\
+         ExecStart={bin} --embedding --pooling mean -m {model} --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0\n\
+         Restart=on-failure\n\
+         RestartSec=5\n\
+         \n\
+         NoNewPrivileges=true\n\
+         ProtectSystem=strict\n\
+         ProtectHome=true\n\
+         PrivateTmp=true\n\
+         ProtectKernelTunables=true\n\
+         ProtectControlGroups=true\n\
+         RestrictSUIDSGID=true\n\
+         LockPersonality=true\n\
+         SystemCallArchitectures=native\n\
+         CapabilityBoundingSet=\n\
+         \n\
+         [Install]\n\
+         WantedBy=multi-user.target\n",
+        stem = model.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+        bin = llama_server.display(),
+        model = model.display(),
+    )
+}
+
+/// `virtues configure-inference --recommended`: go back from the owner's own
+/// server to the recommended setup. Starts the recommended model on this
+/// machine's CPU and moves search to it the way an update does: search keeps
+/// using the owner's server while the index is rebuilt for the new model in
+/// the background (`search::next_index`), then switches. When the index was
+/// already built with that model, it switches on the indexer's next run.
+pub async fn use_recommended() -> Result<(), crate::Error> {
+    if !super::upgrade::running_as_root() {
+        return Err(crate::Error::Other(
+            "going back to the recommended setup starts a system service; run it with sudo: \
+             sudo virtues configure-inference --recommended"
+                .into(),
+        ));
+    }
+    let target = models_dir().join(EMBED_GGUF);
+    let current_unit = std::fs::read_to_string(unit_path(EMBED)).ok();
+    if on_recommended_setup()
+        && current_unit.as_deref().and_then(unit_model).as_deref() == Some(target.as_path())
+        && box_env::get("VIRTUES_EMBED_URL").as_deref().unwrap_or(EMBED_URL) == EMBED_URL
+    {
+        ui::ok("search already runs on the recommended setup");
+        return Ok(());
+    }
+
+    ui::step(&format!("downloading {EMBED_GGUF}…"));
+    fetch_model(&target).await.map_err(|e| crate::Error::Other(format!("download: {e}")))?;
+
+    let body = match &current_unit {
+        Some(text) => retarget_unit(text, &target, 18181),
+        None => {
+            let prefix = box_env::get("INSTALL_PREFIX").unwrap_or_else(|| "/usr/local".into());
+            let bin = Path::new(&prefix).join("bin/llama-server");
+            if !bin.exists() {
+                return Err(crate::Error::Other(format!(
+                    "{} isn't on this server, so it can't run the recommended model. \
+                     Update to the latest release first (sudo virtues upgrade).",
+                    bin.display()
+                )));
+            }
+            embed_unit(&bin, &target)
+        }
+    };
+    std::fs::write(unit_path(EMBED), body)
+        .map_err(|e| crate::Error::Other(format!("write {EMBED}.service: {e}")))?;
+    systemctl(&["daemon-reload"]);
+    systemctl(&["enable", EMBED]);
+    systemctl(&["restart", EMBED]);
+    ui::step("waiting for the model to load…");
+    if !wait_serving(EMBED_URL, &target).await {
+        return Err(crate::Error::Other(format!(
+            "{EMBED} didn't start serving {EMBED_GGUF} on {EMBED_URL}. If your own server \
+             uses port 18181, stop it and run this again. Details: journalctl -u {EMBED} -n 50"
+        )));
+    }
+
+    // The move itself is a model change like any other: the next endpoint is
+    // the recommended model, and its settings replace the owner's server's
+    // when the index is ready.
+    let set = [
+        ("VIRTUES_INFERENCE", "bundled".to_string()),
+        ("VIRTUES_EMBED_NEXT_URL", EMBED_URL.to_string()),
+        ("VIRTUES_EMBED_NEXT_QUERY_PROMPT", EMBED_QUERY_PROMPT.to_string()),
+        ("VIRTUES_EMBED_NEXT_DOC_PROMPT", EMBED_DOC_PROMPT.to_string()),
+    ];
+    let unset = ["VIRTUES_EMBED_NEXT_MODEL", "VIRTUES_EMBED_NEXT_FINGERPRINT", "VIRTUES_EMBED_NEXT_DIMS"];
+    box_env::edit(&box_env::path(), &set, &unset)?;
+
+    let current = box_env::get("VIRTUES_EMBED_URL").unwrap_or_else(|| EMBED_URL.to_string());
+    println!();
+    ui::ok(&format!("{EMBED_GGUF} is running on this machine's CPU"));
+    println!("     Search keeps using {current} while your index is rebuilt for it,");
+    println!("     then switches. Settings → Search shows how far along it is. After the");
+    println!("     switch, you can stop your own server; updates keep this model current.");
+    Ok(())
 }
 
 /// Download the recommended model, verified against the checksum this binary
@@ -288,6 +412,16 @@ mod tests {
     use super::*;
 
     const UNIT: &str = "[Unit]\nDescription=Virtues embedding sidecar (llama-server, embeddinggemma-300m)\n\n[Service]\nExecStart=/usr/local/lib/virtues/current/llama-server --embedding --pooling mean -m /var/lib/virtues/models/embeddinggemma-300m-qat-Q8_0.gguf --host 127.0.0.1 --port 18181 -c 2048 -ngl 0\nRestart=on-failure\n";
+
+    #[test]
+    fn a_fresh_unit_serves_the_model_on_the_usual_port() {
+        let model = Path::new("/var/lib/virtues/models/embeddinggemma-2-Q8_0.gguf");
+        let unit = embed_unit(Path::new("/usr/local/bin/llama-server"), model);
+        assert_eq!(unit_model(&unit).as_deref(), Some(model));
+        assert!(unit.contains("ExecStart=/usr/local/bin/llama-server --embedding --pooling mean -m "));
+        assert!(unit.contains("--port 18181 "));
+        assert!(unit.contains("\nUser=virtues\n") && unit.contains("\nWantedBy=multi-user.target\n"));
+    }
 
     #[test]
     fn a_retargeted_unit_serves_the_new_model_on_the_new_port() {

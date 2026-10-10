@@ -327,6 +327,10 @@ comes with the command that diagnoses it.
 To move search from the CPU to your own server, start the server and run
 `virtues configure-inference --embed-url <URL>`. It keeps your index when
 the new server runs the same model, and rebuilds it when the model differs.
+To come back, run `sudo virtues configure-inference --recommended`: Virtues
+starts its recommended model on the CPU, and search keeps using your server
+until the index is rebuilt for it. Virtues never switches back on its own,
+even when your server stops answering.
 Nothing about the decision is baked in at install time except which services
 the installer provisioned, and on the CPU path that is one ordinary systemd
 unit you can stop and disable.
