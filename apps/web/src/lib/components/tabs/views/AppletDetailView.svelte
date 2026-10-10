@@ -1,5 +1,7 @@
 <script lang="ts">
 	import Button from '$lib/components/Button.svelte';
+	import Markdown from '$lib/components/Markdown.svelte';
+	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import Card from '$lib/components/Card.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
@@ -18,6 +20,7 @@
 		getAppletLog,
 		getRunsByDay,
 		getAppletPages,
+		getPage,
 		type AppletPage,
 		runApplet,
 		messageApplet,
@@ -26,7 +29,7 @@
 		type AppletLogEntry,
 		type RunDay
 	} from '$lib/api/client';
-	import { appletGlyph, describeSchedule, errorHeadline, relativeTime } from '$lib/applets/palette';
+	import { appletDestination, appletGlyph, describeSchedule, errorHeadline, relativeTime } from '$lib/applets/palette';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { indexRunDays } from '$lib/applets/days';
@@ -35,15 +38,27 @@
 	import { explainRunError } from '$lib/sources/run-errors';
 
 	/**
-	 * An applet's home: what it made, first, then its Info, where Run history
-	 * and Technical details open in place. `?panel=history` (the table's dots
-	 * and Last run cell link to it) opens the page with Run history open.
+	 * An applet's home opens on its results: its newest page with every page
+	 * beside it, its dashboard live, or what its last runs did. The frame
+	 * around them is the same for every applet: name, schedule and where the
+	 * work goes, the switch, Conversation, Info and More.
+	 *
+	 * Info (`?panel=info`) holds Run history and Technical details, each
+	 * opening in place. `?panel=history` and `?panel=details` open Info with
+	 * that one open, which is where the table's dots and Last run link.
 	 */
 	let { tab }: { tab: Tab; active: boolean } = $props();
 
 	const url = $derived(new URL(tab.route, 'http://localhost'));
 	const appletId = $derived(url.pathname.match(/^\/(?:applet|action)\/(applet_[^/]+)$/)?.[1] ?? null);
 	const asked = $derived(url.searchParams.get('panel'));
+	const inInfo = $derived(asked === 'info' || asked === 'history' || asked === 'details');
+
+	function showInfo(open: boolean) {
+		if (!appletId) return;
+		const base = `/applet/${appletId}`;
+		windowShellStore.updateTab(tab.id, { route: open ? `${base}?panel=info` : base });
+	}
 
 	let historyOpen = $state(false);
 	let technicalOpen = $state(false);
@@ -64,17 +79,26 @@
 
 	const index = $derived(indexRunDays(runDays));
 
-	// The pages its runs wrote, newest first.
+	// The pages its runs wrote, newest first, and the one open.
 	let pages = $state<AppletPage[]>([]);
-	const PAGES_SHOWN = 5;
-	let allPages = $state(false);
-	const shownPages = $derived(allPages ? pages : pages.slice(0, PAGES_SHOWN));
+	let selectedId = $state<string | null>(null);
+	let pageContent = $state<string | null>(null);
+	const selectedPage = $derived(pages.find((p) => p.page_id === selectedId) ?? pages[0] ?? null);
+	$effect(() => {
+		const id = selectedPage?.page_id;
+		if (!id) return;
+		pageContent = null;
+		getPage(id)
+			.then((p) => {
+				if (selectedPage?.page_id === id) pageContent = p.content;
+			})
+			.catch(() => {
+				if (selectedPage?.page_id === id) pageContent = '';
+			});
+	});
 
-	// What the "What it made" card points to: its pages, its dashboard, or
-	// its conversation when that is where its work goes. Nothing otherwise.
 	// Where its work goes, by the same rule as the icon and the table's Goes
-	// to, so the three can't disagree. A built-in applet's work stays inside
-	// the server, so it has no card.
+	// to, so the three can't disagree.
 	const made = $derived.by((): 'pages' | 'dashboard' | 'chat' | null => {
 		const glyph = action ? appletGlyph(action) : null;
 		if (glyph === 'pages') return 'pages';
@@ -82,11 +106,25 @@
 		if (glyph === 'chats') return 'chat';
 		return null;
 	});
-	// The last thing it said, under "Its conversation".
-	const lastSaid = $derived(log.find((e) => e.status === 'success' && e.summary)?.summary ?? null);
+	// The newest run that said something: a chat applet's latest result.
+	const lastSaid = $derived(log.find((e) => e.status === 'success' && e.summary) ?? null);
 
-	function openDashboard() {
-		if (action) windowShellStore.openTabFromRoute(`/applet/${action.id}/view`);
+	const STATUS_WORD: Record<AppletLogEntry['status'], string> = {
+		success: 'Ran',
+		error: 'Failed',
+		running: 'Running',
+		skipped: 'Skipped',
+		cancelled: 'Cancelled',
+		budget_exceeded: 'Stopped at its spending limit'
+	};
+
+	/** One run in a line: what it said, or why it failed. */
+	function runLine(e: AppletLogEntry): string {
+		const what =
+			e.status === 'error'
+				? `Failed${e.error ? `: ${errorHeadline(e.error, 120)}` : ''}`
+				: (e.summary ?? STATUS_WORD[e.status]);
+		return e.occurrences > 1 ? `${what} (${e.occurrences} times)` : what;
 	}
 
 	function openPage(id: string) {
@@ -294,14 +332,6 @@
 		)
 	);
 
-	// When it runs next, so a failure reads as "today failed, tomorrow is
-	// scheduled" rather than as a dead end.
-	const nextRun = $derived(
-		action?.next_due_at && action.enabled && !action.archived_at && !overdue
-			? `Next run ${relativeTime(action.next_due_at)}`
-			: null
-	);
-
 	const status = $derived.by(() => {
 		if (!action) return '';
 		if (action.archived_at) return `Finished ${new Date(action.archived_at).toLocaleDateString()}`;
@@ -362,34 +392,41 @@
 		<p class="state error-msg">{err}</p>
 	{:else if action}
 		<div class="measure">
+			{#if inInfo}
+				<div class="narrow">
+					<header class="head sub">
+						<button type="button" class="backlink" onclick={() => showInfo(false)}>
+							<Icon icon="ri:arrow-left-line" width="14" />
+							{action.name}
+						</button>
+						<h1 class="title">Info</h1>
+						{#if action.description}<p class="status">{action.description}</p>{/if}
+					</header>
+					<AppletInfo bind:action {index} {daysErr} bind:historyOpen bind:technicalOpen>
+						{#snippet history()}
+							{#if action}<RunHistory {action} {log} {index} {daysErr} {collectorDenied} />{/if}
+						{/snippet}
+						{#snippet technical()}
+							{#if action}
+								<AppletSettings
+									bind:action
+									onRenamed={(name) => windowShellStore.updateTab(tab.id, { label: name })}
+								/>
+							{/if}
+						{/snippet}
+					</AppletInfo>
+				</div>
+			{:else}
 				<header class="head">
 					<span class="glyph" aria-hidden="true"><AtlasIcon name={appletGlyph(action)} size={20} bare /></span>
 					<div class="title-block">
 						<h1 class="title">{action.name}</h1>
 						<p class="status">
-							{status}
+							{status}{#if appletDestination(action) !== '-' && made !== 'chat'}<span class="goes" aria-label="goes to">
+									<Icon icon="ri:arrow-right-line" width="12" />
+									{appletDestination(action)}</span
+								>{/if}
 						</p>
-						{#if failedNow}
-							<!-- A fact about this applet, under its name: one mark, one
-							     sentence, and its fix as a word at the end, so the line
-							     stays as tight as the one above it. -->
-							<p class="problem">
-								<DayDot state="failed" />
-								<span>
-									The last run failed {relativeTime(failedNow.last_at)}.
-									{#if failure}{failure.title}. {failure.remedy}{:else if failedNow.error}{errorHeadline(failedNow.error)}{/if}
-									{#if canRunNow}<TextAction inline onclick={runNow} disabled={busy}>Retry</TextAction>{/if}
-								</span>
-							</p>
-						{:else if overdue}
-							<p class="problem">
-								<DayDot state="missed" />
-								<span>
-									It was due {relativeTime(action.next_due_at)} and hasn't run.
-									{#if canRunNow}<TextAction inline onclick={runNow} disabled={busy}>Run now</TextAction>{/if}
-								</span>
-							</p>
-						{/if}
 					</div>
 					<div class="head-actions">
 						{#if action.archived_at}
@@ -408,106 +445,118 @@
 								onclick={() => setEnabled(!action!.enabled)}
 							></button>
 						{/if}
-						{#if chatId && made !== 'chat'}
+						{#if chatId}
 							<Button variant="secondary" size="sm" icon="ri:chat-3-line" onclick={openConversation}>
 								Conversation
 							</Button>
 						{/if}
+						<Button variant="secondary" size="sm" icon="ri:information-line" onclick={() => showInfo(true)}>
+							Info
+						</Button>
 						<IconButton icon="ri:more-line" label="More" variant="secondary" haspopup="menu" onclick={openMore} />
 					</div>
 				</header>
-
-				{#if action.description}
-					<p class="desc">{action.description}</p>
-				{/if}
 
 				{#if err}
 					<p class="error-msg">{err}</p>
 				{/if}
 
-				{#if nextRun}
-					<p class="next">{nextRun}</p>
+				<!-- What needs you, under the header and above the results: one
+				     row, with its fix beside it. -->
+				{#if failedNow || overdue}
+					<Card list>
+						<div class="needs">
+							<DayDot state={failedNow ? 'failed' : 'missed'} size="md" />
+							<span class="needs-text">
+								{#if failedNow}
+									<span class="needs-title">The last run failed {relativeTime(failedNow.last_at)}</span>
+									{#if failure}
+										<span class="needs-sub">{failure.title}. {failure.remedy}</span>
+									{:else if failedNow.error}
+										<span class="needs-sub">{errorHeadline(failedNow.error)}</span>
+									{/if}
+								{:else}
+									<span class="needs-title">It was due {relativeTime(action.next_due_at)} and hasn't run</span>
+								{/if}
+							</span>
+							{#if canRunNow}
+								<Button variant="secondary" size="sm" onclick={runNow} disabled={busy}>
+									{failedNow ? 'Retry' : 'Run now'}
+								</Button>
+							{/if}
+						</div>
+					</Card>
 				{/if}
 
-				<!-- What it made, as one card for every applet: a way to where the
-				     work lives (Pages, its chat, its dashboard), not a copy of it. -->
-				{#if made}
-					<section class="made">
-						<h2 class="list-head">What it made</h2>
-						<Card list>
-							{#if made === 'pages' && pages.length === 0}
-								<!-- It says it makes pages and has none to show: say so,
-								     rather than hide the card the table points at. -->
-								<div class="made-row">
-									<AtlasIcon name="pages" size={16} bare />
-									<span class="made-text">
-										<span class="made-title">No pages yet</span>
-									</span>
-								</div>
-							{:else if made === 'pages'}
-								{#each shownPages as p (p.page_id)}
-									<button type="button" class="made-row" onclick={() => openPage(p.page_id)}>
-										<AtlasIcon name="pages" size={16} bare />
-										<span class="made-text">
-											<span class="made-title">{p.title}</span>
-											<span class="made-sub">{when(p.written_at)}</span>
-										</span>
-										<Icon icon="ri:arrow-right-s-line" width="16" />
-									</button>
-								{/each}
-								{#if pages.length > PAGES_SHOWN}
-									<button type="button" class="made-row more" onclick={() => (allPages = !allPages)}>
-										<span class="made-text">{allPages ? 'Show fewer' : `Show all ${pages.length} pages`}</span>
-									</button>
-								{/if}
-							{:else if made === 'dashboard' && !action.has_face}
-								<div class="made-row">
-									<AtlasIcon name="dashboard" size={16} bare />
-									<span class="made-text">
-										<span class="made-title">No dashboard yet</span>
-										<span class="made-sub">It's set to make one and hasn't yet.</span>
-									</span>
-								</div>
-							{:else if made === 'dashboard'}
-								<button type="button" class="made-row" onclick={openDashboard}>
-									<AtlasIcon name="dashboard" size={16} bare />
-									<span class="made-text">
-										<span class="made-title">Its dashboard</span>
-										<span class="made-sub">Live, opens full size</span>
-									</span>
-									<Icon icon="ri:arrow-right-s-line" width="16" />
-								</button>
-							{:else if !chatId}
-								<div class="made-row">
-									<AtlasIcon name="chats" size={16} bare />
-									<span class="made-text">
-										<span class="made-title">No conversation yet</span>
-									</span>
-								</div>
+				<!-- Its results. They look different from applet to applet
+				     because the work does; the frame above stays the same. -->
+				{#if made === 'dashboard' && action.has_face}
+					<FaceFrame appletId={action.id} height="460px" />
+				{:else if made === 'dashboard'}
+					<p class="empty">No dashboard yet. It's set to make one and hasn't yet.</p>
+				{:else if made === 'pages' && selectedPage}
+					<div class="pages">
+						<article class="page">
+							<h2 class="page-title">{selectedPage.title}</h2>
+							<p class="page-by">
+								Written by {action.name}, {when(selectedPage.written_at)}
+								<Button variant="ghost" size="sm" onclick={() => openPage(selectedPage.page_id)}>Open page</Button>
+							</p>
+							{#if pageContent === null}
+								<p class="empty">Loading…</p>
 							{:else}
-								<button type="button" class="made-row" onclick={openConversation}>
-									<AtlasIcon name="chats" size={16} bare />
-									<span class="made-text">
-										<span class="made-title">Its conversation</span>
-										{#if lastSaid}<span class="made-sub">{lastSaid}</span>{/if}
-									</span>
-									<Icon icon="ri:arrow-right-s-line" width="16" />
-								</button>
+								<div class="page-body"><Markdown content={pageContent} variant="article" /></div>
 							{/if}
-						</Card>
+						</article>
+						<nav class="page-list" aria-label={`Pages ${action.name} wrote`}>
+							<h2 class="list-head">All pages</h2>
+							{#each pages as p (p.page_id)}
+								<button
+									type="button"
+									class="page-item"
+									aria-current={p.page_id === selectedPage.page_id}
+									onclick={() => (selectedId = p.page_id)}
+								>
+									<span class="page-item-title">{p.title}</span>
+									<span class="page-item-when">{when(p.written_at)}</span>
+								</button>
+							{/each}
+						</nav>
+					</div>
+				{:else if made === 'pages'}
+					<p class="empty">No pages yet. Its pages show here after it writes one.</p>
+				{:else if made === 'chat' && lastSaid}
+					<section>
+						<h2 class="list-head">Latest{#if lastSaid.last_at}{' · '}{when(lastSaid.last_at)}{/if}</h2>
+						<Card list><p class="said">{lastSaid.summary}</p></Card>
 					</section>
-				{/if}
-				<DeleteAppletModal
-					{action}
-					bind:open={deleting}
-					onDeleted={() => windowShellStore.closeTab(tab.id)}
-				/>
-				{#if action.has_face}
-					<ShareSheet
-						open={sharing}
-						producer={{ kind: 'applet', id: action.id }}
-						onClose={() => (sharing = false)}
-					/>
+				{:else if log.length > 0}
+					<!-- Nothing to show but what its runs did: one line each,
+					     failures included. -->
+					<section>
+						<h2 class="list-head">Recent runs</h2>
+						<ul class="recent-list" role="list">
+							{#each log.slice(0, 7) as e (e.run_id ?? e.last_at)}
+								<li class="recent-item">
+									<DayDot
+										state={e.status === 'error'
+											? 'failed'
+											: e.status === 'budget_exceeded'
+												? 'stopped'
+												: e.status === 'success'
+													? 'ran'
+													: 'quiet'}
+									/>
+									<span class="recent-when">{e.last_at ? dayLabel(e.last_at) : ''}</span>
+									<span class="recent-what" class:failed={e.status === 'error'}>{runLine(e)}</span>
+								</li>
+							{/each}
+						</ul>
+					</section>
+				{:else}
+					<p class="empty">
+						{action.enabled ? 'Nothing yet. Its results show here after it runs.' : "It's off, so it hasn't run yet."}
+					</p>
 				{/if}
 
 				{#if canMessage}
@@ -529,31 +578,12 @@
 						</Button>
 					</form>
 				{/if}
-
-				<!-- Its Info, on its page: how its week went, with Run history and
-				     Technical details opening in place. -->
-				<section class="info-section" aria-label={`About ${action.name}`}>
-					<AppletInfo
-						bind:action
-						{index}
-						{daysErr}
-						bind:historyOpen
-						bind:technicalOpen
-					>
-						{#snippet history()}
-							{#if action}<RunHistory {action} {log} {index} {daysErr} {collectorDenied} />{/if}
-						{/snippet}
-						{#snippet technical()}
-							{#if action}
-								<AppletSettings
-									bind:action
-									onRenamed={(name) => windowShellStore.updateTab(tab.id, { label: name })}
-								/>
-							{/if}
-						{/snippet}
-					</AppletInfo>
-				</section>
+			{/if}
 		</div>
+		<DeleteAppletModal {action} bind:open={deleting} onDeleted={() => windowShellStore.closeTab(tab.id)} />
+		{#if action.has_face}
+			<ShareSheet open={sharing} producer={{ kind: 'applet', id: action.id }} onClose={() => (sharing = false)} />
+		{/if}
 	{/if}
 </div>
 
@@ -667,28 +697,6 @@
 		}
 	}
 
-	.problem {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		margin: 4px 0 0;
-		font-size: 13px;
-		line-height: 1.5;
-		color: var(--color-foreground);
-	}
-
-	.desc {
-		margin: -8px 0 0;
-		max-width: 40em;
-		font-size: 15px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-	}
-	.next {
-		margin: -8px 0 0;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
 	.list-head {
 		margin: 0 0 8px;
 		font-family: var(--font-sans);
@@ -697,57 +705,168 @@
 		color: var(--color-foreground-muted);
 	}
 
-	/* What it made: one card, the same for every applet. */
-	.made {
-		max-width: 640px;
-	}
-	.made-row {
-		display: flex;
+	.goes {
+		display: inline-flex;
 		align-items: center;
-		gap: 12px;
+		gap: 4px;
+		margin-left: 8px;
+	}
+
+	/* Info: one narrow column, like a sheet laid on the applet. */
+	.narrow {
 		width: 100%;
-		min-height: 48px;
-		padding: 8px 16px;
+		max-width: 640px;
+		margin: 0 auto;
+		display: flex;
+		flex-direction: column;
+		gap: 24px;
+	}
+	.backlink {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 16px;
+		padding: 0;
 		border: 0;
 		background: none;
 		font: inherit;
-		text-align: left;
-		color: var(--color-foreground);
-	}
-	button.made-row {
-		cursor: pointer;
-	}
-	.made-row + .made-row {
-		border-top: 1px solid var(--color-border);
-	}
-	button.made-row:hover {
-		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
-	}
-	.made-row.more .made-text {
 		font-size: 13px;
 		color: var(--color-foreground-muted);
+		cursor: pointer;
 	}
-	.made-text {
+	.backlink:hover {
+		color: var(--color-foreground);
+	}
+	.head.sub {
+		flex-direction: column;
+		gap: 4px;
+		align-items: flex-start;
+	}
+
+	.needs {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		min-height: 48px;
+		padding: 8px 16px;
+	}
+	.needs-text {
 		flex: 1;
 		min-width: 0;
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
 	}
-	.made-title {
+	.needs-title {
+		font-size: 14px;
+		font-weight: 500;
+	}
+	.needs-sub {
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+
+	/* The page it made, with every page it made beside it. */
+	.pages {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 240px;
+		gap: 32px;
+		align-items: start;
+	}
+	@container (max-width: 720px) {
+		.pages {
+			grid-template-columns: 1fr;
+		}
+	}
+	.page-title {
+		margin: 0;
+		font-family: var(--font-serif);
+		font-weight: 400;
+		font-size: 36px;
+		line-height: 1.15;
+	}
+	.page-by {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin: 8px 0 16px;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+	.page-body {
+		max-width: 40em;
+	}
+	.page-list {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.page-item {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 8px 12px;
+		border: 0;
+		border-radius: 6px;
+		background: none;
+		text-align: left;
+		font: inherit;
+		cursor: pointer;
+		color: var(--color-foreground);
+	}
+	.page-item:hover {
+		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+	}
+	.page-item[aria-current='true'] {
+		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+	}
+	.page-item-title {
 		font-family: var(--font-serif);
 		font-size: 16px;
 	}
-	.made-sub {
-		font-size: 13px;
+	.page-item-when {
+		font-size: 12px;
 		color: var(--color-foreground-muted);
+	}
+
+	.said {
+		margin: 0;
+		padding: 16px;
+		font-size: 15px;
+		line-height: 1.5;
+	}
+
+	/* What its last runs did, one line each. */
+	.recent-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.recent-item {
+		display: grid;
+		grid-template-columns: 8px 120px minmax(0, 1fr);
+		align-items: center;
+		gap: 12px;
+		min-height: 40px;
+		border-bottom: 1px solid var(--color-border);
+		font-size: 14px;
+	}
+	.recent-when {
+		color: var(--color-foreground-muted);
+		font-variant-numeric: tabular-nums;
+	}
+	.recent-what {
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
-	/* Info sits at a reading width under what the applet made. */
-	.info-section {
-		max-width: 640px;
+	.recent-what.failed {
+		color: var(--color-error);
+	}
+	.empty {
+		margin: 0;
+		font-size: 15px;
+		color: var(--color-foreground-muted);
 	}
 
 	.composer {
