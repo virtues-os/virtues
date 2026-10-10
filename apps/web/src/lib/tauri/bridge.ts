@@ -450,6 +450,8 @@ export interface BrowserAgentState {
 
 /** One step the assistant took in the Browser, with the page after it. */
 export interface BrowserStepEvent {
+	/** open, snapshot, click, type, press, scroll, screenshot or handoff. */
+	op?: string;
 	what: string;
 	ok: boolean;
 	url: string;

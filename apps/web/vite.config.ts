@@ -69,10 +69,15 @@ export default defineConfig(({ mode }) => {
 					target: env.BACKEND_URL || 'http://localhost:8000',
 					changeOrigin: true
 				},
-				// Proxy WebSocket connections for Yjs real-time sync
+				// Proxy WebSocket connections for Yjs real-time sync. Every
+				// socket on the box refuses a page whose Origin is not one it
+				// serves (`refuse_foreign_socket`), and `changeOrigin` rewrites
+				// only Host: the Origin goes along with it, so the dev server's
+				// page dials the box as the box's own.
 				'/ws': {
 					target: env.BACKEND_URL || 'http://localhost:8000',
 					changeOrigin: true,
+					rewriteWsOrigin: true,
 					ws: true
 				}
 			}

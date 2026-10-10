@@ -1,0 +1,29 @@
+[package]
+name = "virtues-document"
+version = "0.1.0"
+edition = "2021"
+publish = false
+authors = ["Virtues Team <team@virtues.com>"]
+description = "The page document contract: a Yjs XML tree, strict HTML ingest, block-id edits, canonical HTML and markdown"
+license = "MIT"
+repository = "https://github.com/virtues-os/virtues"
+
+[dependencies]
+# One yrs across the workspace: virtues-core holds the sync server on the same
+# requirement, and two copies would be two incompatible `Doc` types.
+yrs = "0.28"
+serde = { version = "1", features = ["derive"] }
+# No `preserve_order`: features unify across the workspace and would change
+# JSON key order everywhere in virtues-core. The contract keeps its order
+# through `contract::Ordered` instead.
+serde_json = "1"
+scraper = "0.27"
+ego-tree = "0.11"
+regex = "1"
+anyhow = "1"
+fastrand = "2"
+pulldown-cmark = { version = "0.10", default-features = false, features = ["html"] }
+
+[[bin]]
+name = "document-conformance"
+path = "src/bin/document-conformance.rs"

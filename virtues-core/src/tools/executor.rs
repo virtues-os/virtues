@@ -306,11 +306,13 @@ impl ToolExecutor {
         if tool_name == "setup_applet" && super::applet_setup::wants_check_only(arguments) {
             return Ok(None);
         }
-        // Sudo sends `sql_write` to `sql_sudo`, whose read-only transaction
-        // is the finer gate: a statement that changes nothing runs, and one
-        // that does asks for itself (`sudo_gate`). The other gated tools ask
-        // in sudo as they do in chat.
-        if tool_name == "sql_write" && context.sudo && context.applet_id.is_none() {
+        // Sudo is the owner's bypass: these run, and a delete in SQL or the
+        // shell asks for itself (`sudo_gate`). Deleting an applet and
+        // spending money still ask.
+        if context.sudo
+            && context.applet_id.is_none()
+            && !matches!(tool_name, "delete_applet" | "generate_image")
+        {
             return Ok(None);
         }
         // Only interactive chat is gated. Autonomous action runs set `applet_id` (and may carry a
@@ -409,9 +411,6 @@ impl ToolExecutor {
                 // Return minimal acknowledgment to avoid doubling token cost.
                 Ok(ToolResult::success(serde_json::json!({ "acknowledged": true })))
             }
-            "propose_narrative_identity_edit" => {
-                self.execute_propose_narrative_identity(arguments).await
-            }
             // The narrative interview's close (interview mode's only tool):
             // document + chapters from the transcript. The frontend watches
             // this tool's output for document_page_id, opens the page beside
@@ -460,8 +459,10 @@ impl ToolExecutor {
                         == "query" =>
             {
                 let sql = super::sql_sudo::statement(&arguments)?;
-                let read_only = !self.sudo_granted(context, "sql", &sql).await;
-                super::sql_sudo::execute(&self._pool, &sql, read_only, context.timezone.as_deref()).await
+                if super::sudo_gate::sql_destroys(&sql) && !self.sudo_granted(context, "sql", &sql).await {
+                    return Ok(super::sudo_gate::ask("sql", &sql));
+                }
+                super::sql_sudo::execute(&self._pool, &sql, context.timezone.as_deref()).await
             }
             "sql_query" => {
                 // A saved chat can keep a result as a file for code_interpreter.
@@ -475,47 +476,14 @@ impl ToolExecutor {
                 use super::sudo_gate;
                 let command =
                     arguments.get("command").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
-                // An empty command: the shell's own error says so.
-                if command.is_empty() || self.sudo_granted(context, "shell", &command).await {
-                    return super::shell::execute(arguments, false).await;
-                }
-                if !sudo_gate::shell_is_read(&command) {
+                if sudo_gate::shell_destroys(&command) && !self.sudo_granted(context, "shell", &command).await {
                     return Ok(sudo_gate::ask("shell", &command));
                 }
-                // A read, as far as the line shows; psql inside it is held
-                // read-only, and a write it tried becomes the same question.
-                // Only a failed command: a read that prints a log line
-                // mentioning the refusal is not one.
-                let result = super::shell::execute(arguments, true).await?;
-                let failed = result.data.get("exit_code").and_then(|v| v.as_i64()) != Some(0);
-                let said = |k: &str| {
-                    result.data.get(k).and_then(|v| v.as_str()).is_some_and(sudo_gate::is_read_only_refusal)
-                };
-                if failed && (said("stderr") || said("stdout")) {
-                    return Ok(sudo_gate::ask("shell", &command));
-                }
-                Ok(result)
+                super::shell::execute(arguments).await
             }
             "shell" => Err(ToolError::ExecutionFailed(
                 "shell runs only in sudo mode, which the owner turns on in the chat".into(),
             )),
-            // Interactive chat only: the grant is for these exact bytes at
-            // this exact place, so an applet run (no one to ask) and a
-            // headless call (no chat to grant in) cannot publish at all.
-            "publish_to_github" => {
-                use super::publish;
-                let Some(chat_id) = context.chat_id.as_deref().filter(|_| context.applet_id.is_none())
-                else {
-                    return Err(ToolError::ExecutionFailed(
-                        "publishing needs the owner present to allow it, in a chat".into(),
-                    ));
-                };
-                let req = publish::prepare(&self._pool, &arguments).await?;
-                if !self.granted(context, chat_id, &req.grant_id()).await {
-                    return Ok(publish::ask(&req));
-                }
-                publish::publish(&self._pool, &req).await
-            }
             "read_asset" => self.execute_read_asset(arguments).await,
             "show" => super::show::execute(&self.sql_query, arguments, context.timezone.as_deref()).await,
             name if crate::browser::TOOLS.contains(&name) => {
@@ -623,9 +591,14 @@ impl ToolExecutor {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| ToolError::InvalidParameters("prompt is required".into()))?;
 
-        let png = crate::api::image_gen::generate_image_via_gateway(&self._pool, prompt)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Image generation failed: {e}")))?;
+        let png = crate::api::image_gen::generate_image_via_gateway(
+            &self._pool,
+            prompt,
+            "generate_image",
+            crate::virtues_api::client::Purpose::User,
+        )
+        .await
+        .map_err(|e| ToolError::ExecutionFailed(format!("Image generation failed: {e}")))?;
 
         let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png);
 
@@ -814,62 +787,6 @@ impl ToolExecutor {
     }
 
     /// Update AI persistent memory
-    /// Leave a note proposing an addition to the narrative identity.
-    ///
-    /// **Propose, never write.** The narrative identity is in the system prompt
-    /// of every conversation, so a model editing it directly would be editing
-    /// the lens it is seen through — quietly, and in its own favour if it drifts.
-    /// This writes a `wiki_notes` row and nothing else; the user sees Add or
-    /// Dismiss, and the document changes only if they choose.
-    ///
-    /// The note carries `why` as its citation. A machine note must cite (the DB
-    /// enforces it), and for a proposal drawn from a conversation the honest
-    /// source is the conversation itself — so the reason the model gives IS the
-    /// evidence the user judges it on.
-    async fn execute_propose_narrative_identity(
-        &self,
-        arguments: serde_json::Value,
-    ) -> Result<ToolResult, ToolError> {
-        let text = arguments
-            .get("text")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
-        let why = arguments
-            .get("why")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
-
-        if text.is_empty() {
-            return Err(ToolError::InvalidParameters(
-                "A proposal needs text".to_string(),
-            ));
-        }
-
-        let body = if why.is_empty() {
-            text.to_string()
-        } else {
-            format!("{text}\n\n— proposed because: {why}")
-        };
-
-        sqlx::query(
-            "INSERT INTO wiki_notes (subject_type, subject_id, kind, body, author, source_refs) \
-             VALUES ('narrative_identity', 'nar_identity_001', 'observation', $1, 'ai', $2)",
-        )
-        .bind(&body)
-        .bind(serde_json::json!([format!("conversation: {why}")]))
-        .execute(self._pool.as_ref())
-        .await
-        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to save proposal: {e}")))?;
-
-        Ok(ToolResult::success(serde_json::json!({
-            "status": "proposed",
-            "message": "Left this for them to accept or dismiss on their Narrative Identity page. \
-                        It has NOT been added — do not tell them it has."
-        })))
-    }
-
     async fn execute_update_memory(
         &self,
         arguments: serde_json::Value,

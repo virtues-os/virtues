@@ -1,13 +1,24 @@
 /**
- * Version History for Yjs Documents
+ * A page's history.
  *
- * Stores full document state for reliable version restoration.
- * Uses Y.encodeStateAsUpdate() which is self-contained and works with GC enabled.
+ * - A block page's versions are kept by the server: `cutServerVersion` asks it
+ *   to keep the page as it stands, and `restorePageVersion` asks it to put one
+ *   back. The browser sends no document either way, so nothing it holds can
+ *   enter the history unchecked.
+ * - A markdown page's versions are cut and restored here, from the Y.Text this
+ *   browser holds (`saveVersion`, `restoreVersion`).
  */
 
 import * as Y from 'yjs';
 import type { YjsDocument } from './document';
-import { request, listPageVersions, getPageVersion } from '$lib/api/client';
+import {
+	request,
+	listPageVersions,
+	getPageVersion,
+	restorePageVersionRequest,
+	type PageFormat,
+	type RestoredVersion,
+} from '$lib/api/client';
 
 /**
  * Page version metadata
@@ -20,10 +31,47 @@ export interface PageVersion {
 	created_at: string;
 	created_by: 'user' | 'ai' | 'auto';
 	description?: string;
+	/** What the version holds; absent from a server older than block pages. */
+	format?: PageFormat;
 }
 
 /**
- * Save the current document state as a version
+ * Ask the server to keep the page as it stands now, either format. It reads
+ * its own copy of the page, which every editor's edits reach first.
+ */
+export async function cutServerVersion(
+	pageId: string,
+	description?: string,
+	createdBy: 'user' | 'ai' | 'auto' = 'user',
+	options?: { keepalive?: boolean },
+): Promise<PageVersion | null> {
+	try {
+		// The typed `request`, so the on-unload save can carry `keepalive`.
+		return await request<PageVersion>(`/pages/${encodeURIComponent(pageId)}/versions`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ description, created_by: createdBy }),
+			keepalive: options?.keepalive,
+		});
+	} catch (err) {
+		console.error('Failed to save page version:', err);
+		return null;
+	}
+}
+
+/**
+ * Put a block page back as `versionId` left it. Throws with the server's
+ * reason when it refuses.
+ */
+export function restorePageVersion(pageId: string, versionId: string): Promise<RestoredVersion> {
+	return restorePageVersionRequest(pageId, versionId);
+}
+
+// TODO(2026-10-07): migrate markdown versions to the server; slice 7 deletes
+// the client path (`saveVersion`, `restoreVersion`).
+
+/**
+ * Save a markdown page's current state as a version, from this browser's copy.
  *
  * Uses encodeStateAsUpdate() which captures the complete document state.
  * Unlike snapshots, this is self-contained and doesn't require gc: false.
@@ -79,7 +127,7 @@ export async function listVersions(pageId: string, limit = 20): Promise<PageVers
 }
 
 /**
- * Restore a document to a specific version
+ * Restore a markdown page to a specific version
  *
  * Creates a fresh Y.Doc, applies the stored state, then copies
  * the text content into the live document.
@@ -89,7 +137,7 @@ export async function restoreVersion(
 	versionId: string
 ): Promise<boolean> {
 	try {
-		const data = await getPageVersion<{ snapshot?: string }>(versionId);
+		const data = await getPageVersion(versionId);
 		if (!data.snapshot) {
 			throw new Error('Version has no snapshot data');
 		}

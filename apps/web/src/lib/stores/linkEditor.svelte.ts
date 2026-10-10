@@ -32,6 +32,8 @@ class LinkEditorStore {
 	href = $state('');
 	anchor = $state<LinkEditorAnchor | null>(null);
 	private _onSave: ((value: LinkEditorValue) => void) | null = null;
+	/** Where the keyboard was when the panel opened: the editor, usually. */
+	private _returnTo: HTMLElement | null = null;
 
 	show(
 		value: LinkEditorValue,
@@ -42,6 +44,8 @@ class LinkEditorStore {
 		this.href = value.href;
 		this.anchor = anchor ?? null;
 		this._onSave = onSave;
+		const active = typeof document === 'undefined' ? null : document.activeElement;
+		this._returnTo = active instanceof HTMLElement && active !== document.body ? active : null;
 		this.open = true;
 	}
 
@@ -57,10 +61,19 @@ class LinkEditorStore {
 		this.hide();
 	}
 
+	/**
+	 * Close the panel. Its field holds the keyboard and goes with it, which
+	 * would leave the keyboard on the page's body, out of the editor: it goes
+	 * back where it was when the panel opened, unless a save already put it
+	 * there.
+	 */
 	hide() {
 		this.open = false;
 		this.anchor = null;
 		this._onSave = null;
+		const back = this._returnTo;
+		this._returnTo = null;
+		if (back?.isConnected && !back.contains(document.activeElement)) back.focus({ preventScroll: true });
 	}
 }
 

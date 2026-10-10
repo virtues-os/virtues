@@ -195,13 +195,13 @@
 	const merged = $derived(!isCollapsed);
 
 	// ── Resizing the seam ─────────────────────────────────────
-	// The rail is fixed; only the panel resizes, so the whole aside is
-	// rail + gap + panelWidth.
-	const RAIL_W = 72;
+	// Only the panel resizes by drag; the rail switches between two widths
+	// (labels on/off). The whole aside is rail + gap + panelWidth.
 	const PANEL_GAP = 12;
+	const railWidth = $derived(sidebarState.railWidth);
 
 	const panelWidth = $derived(sidebarState.width);
-	const asideWidth = $derived(isCollapsed ? RAIL_W : RAIL_W + PANEL_GAP + panelWidth);
+	const asideWidth = $derived(isCollapsed ? railWidth : railWidth + PANEL_GAP + panelWidth);
 
 	let resizing = $state(false);
 	let dragStartX = 0;

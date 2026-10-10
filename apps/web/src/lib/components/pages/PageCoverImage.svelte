@@ -1,8 +1,7 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
 	import { backendUrl } from "$lib/config/backend";
-
-	type WidthMode = "small" | "medium" | "full";
+	import type { WidthMode } from "$lib/stores/pageDisplay.svelte";
 
 	interface Props {
 		coverUrl: string;
@@ -22,6 +21,7 @@
 	class:width-small={widthMode === "small"}
 	class:width-medium={widthMode === "medium"}
 	class:width-full={widthMode === "full"}
+	class:width-page={widthMode === "page"}
 	onmouseenter={() => (coverHover = true)}
 	onmouseleave={() => (coverHover = false)}
 >
@@ -73,6 +73,11 @@
 
 	.cover-image-wrapper.width-full {
 		max-width: 100%;
+	}
+
+	/* As wide as the A4 sheet below it (`.page-inner.width-page`). */
+	.cover-image-wrapper.width-page {
+		max-width: 210mm;
 	}
 
 	.cover-image {

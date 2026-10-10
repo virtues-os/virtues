@@ -22,6 +22,15 @@ type Message = { role: string; parts: unknown[] };
 /** A page the model just created, for the caller to bind and open. */
 export type CreatedPage = { pageId: string; title: string };
 
+/**
+ * Whether an `edit_page` result's card shows the whole page as written: a
+ * markdown edit with an empty `find`. A block page's edit names the blocks
+ * it wrote (`blocks`), and its empty `find` means it only added blocks.
+ */
+export function isFullReplace(edit: { find?: string | null; replace?: string | null; blocks?: string[] | null }): boolean {
+	return !edit.find && !edit.blocks;
+}
+
 export class ToolSideEffects {
 	// Track tool calls that were already complete when we mounted (loaded from history)
 	// Only auto-open pages created AFTER mount (during streaming)
@@ -94,7 +103,7 @@ export class ToolSideEffects {
 					if (!edit?.edit_id || this.#animatedEditIds.has(edit.edit_id)) continue;
 					this.#animatedEditIds.add(edit.edit_id);
 					if (animate && output?.applied) {
-						animateChatEdit(edit.page_id, edit.replace || "");
+						animateChatEdit(edit.page_id, edit.replace ?? "", edit.blocks ?? []);
 					}
 				}
 			}

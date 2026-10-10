@@ -8,33 +8,60 @@
 	way on to the record in Data, and a way to write in the margin. A table or
 	a photo opens its evidence the same way, as a whole.
 
-	The margin holds two things: the section times, as quiet text, and your
-	notes, in your hand (DayHand). A note written on a sentence sits beside it
-	with a bracket over exactly that sentence; a note with no passage, or whose
-	words are no longer on the page, sits beside the lead (the Abstract and
-	your numbers), saying what it was about. Where notes go is
-	`placeNotes` (lib/wiki/dayNotes.ts).
+	The card opens in the margin beside its sentence when the page has a
+	margin, as a popover when it doesn't, and as a sheet on a phone. While it
+	is open, ← and → step to the previous and next sentence (or figure) with a
+	source.
+
+	The margin holds the section times, as quiet text; what the record
+	computes about the passage beside it, a stretch with nothing recorded and
+	the first time a place or a person is in your record (`placeMarks`); and
+	your notes, in your hand (DayHand). A note written on a sentence sits
+	beside it with a bracket over exactly that sentence; a note with no
+	passage, or whose words are no longer on the page, sits beside the lead
+	(the Abstract and your numbers), saying what it was about. Where notes go
+	is `placeNotes` (lib/wiki/dayNotes.ts).
 
 	Paragraphs are drawn sentence by sentence (DayInline) so each can be its
-	own element; headings, tables and figures go through Markdown. On a narrow
-	screen the margin drops under its block. The markdown and its footnotes come
-	from `parseDayArticle` (lib/wiki/dayArticle.ts).
+	own element; a figure is DayFigure; headings, tables and photos go through
+	Markdown. On a narrow screen the margin drops under its block. The markdown
+	and its footnotes come from `parseDayArticle` (lib/wiki/dayArticle.ts).
 -->
 <script lang="ts">
 	import type { Snippet } from "svelte";
 	import { tick } from "svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
-	import { veilMarks, type ArticleBlock, type MarginNote } from "$lib/wiki/dayArticle";
+	import {
+		clockMinutes,
+		dayStartIn,
+		figureRefs,
+		placeMarks,
+		recordingGaps,
+		timeRange,
+		veilMarks,
+		type ArticleBlock,
+		type FirstMark,
+		type MarginNote,
+	} from "$lib/wiki/dayArticle";
 	import { placeNotes, plainSentence, type NoteAnchor } from "$lib/wiki/dayNotes";
-	import type { WikiNote } from "$lib/wiki/api";
+	import { getDayFirsts, type DayFirstsApi, type WikiNote } from "$lib/wiki/api";
+	import { stepDay } from "$lib/timeline/day";
+	import { inComposition } from "$lib/utils/ime";
 	import { veiled } from "$lib/actions/veil";
 	import { veil } from "$lib/stores/veil.svelte";
 	import DayInline from "./DayInline.svelte";
-	import DayEvidence from "./DayEvidence.svelte";
+	import DayEvidence, { type CardMode } from "./DayEvidence.svelte";
+	import DayFigure from "./DayFigure.svelte";
 	import DayHand from "./DayHand.svelte";
 
 	interface Props {
 		blocks: ArticleBlock[];
+		/** The page's day, `YYYY-MM-DD`. */
+		date: string;
+		/** The zone the day was windowed in; null reads it in this device's zone. */
+		timezone: string | null;
+		/** The day's recorded stretches as [start, end] instants, for the margin's gaps. */
+		coverage: [string, string][] | null;
 		/** What leads the page (the Abstract, your numbers); its margin holds notes about the whole day. */
 		lead?: Snippet;
 		/** Your open notes on this day. */
@@ -53,31 +80,117 @@
 		removeFailed?: number[];
 	}
 
-	let { blocks, lead, notes = [], oncite, person, onwrite, onremove, onundo, removing = [], removeFailed = [] }: Props = $props();
+	let {
+		blocks,
+		date,
+		timezone,
+		coverage,
+		lead,
+		notes = [],
+		oncite,
+		person,
+		onwrite,
+		onremove,
+		onundo,
+		removing = [],
+		removeFailed = [],
+	}: Props = $props();
 
 	const context = (b: ArticleBlock) => b.notes.filter((n) => n.kind === "cx");
 	const blockEvidence = (b: ArticleBlock) => b.notes.filter((n) => n.kind === "ev" && n.ref);
 
 	// ── Evidence ────────────────────────────────────────────────────────────
-	/** The open card: the element it belongs to, what it shows, and where a note would go. */
-	type Open = {
-		anchor: HTMLElement;
-		/** The keyboard control that opened it, which takes focus back on Escape. */
-		trigger: HTMLElement | null;
+	/** What a card shows, and where a note written from it would go. */
+	type Source = {
 		evidence: MarginNote[];
 		sentence: string;
 		at: { block: number; sentence: number } | null;
 		label: string;
 	};
+
+	/** Everything on the page with a source, in reading order: what ← and → step through. */
+	type Stop = { id: string; source: Source };
+
+	/** Every citation on the page by its record, so a figure's card can use the writer's label. */
+	const cited = $derived(new Map(blocks.flatMap((b) => b.notes.filter((n) => n.kind === "ev" && n.ref).map((n) => [n.ref, n] as const))));
+	const noteFor = (ref: string): MarginNote => cited.get(ref) ?? { kind: "ev", label: "", ref };
+
+	function figureSource(fields: Record<string, string>, refs = figureRefs(fields)): Source {
+		return { evidence: refs.map(noteFor), sentence: fields.text ?? "", at: null, label: "The record behind this figure" };
+	}
+
+	const stops = $derived<Stop[]>(
+		blocks.flatMap((b, i): Stop[] => {
+			if (b.kind === "paragraph") {
+				return b.sentences.flatMap((s, j) =>
+					s.evidence.length
+						? [{ id: `${i}.${j}`, source: { evidence: s.evidence, sentence: s.markdown, at: { block: i, sentence: j }, label: "The record behind this sentence" } }]
+						: [],
+				);
+			}
+			if (b.kind === "figure") return b.fields && figureRefs(b.fields).length ? [{ id: `${i}`, source: figureSource(b.fields) }] : [];
+			const ev = blockEvidence(b);
+			return ev.length ? [{ id: `${i}`, source: { evidence: ev, sentence: b.markdown, at: null, label: "The record behind this passage" } }] : [];
+		}),
+	);
+
+	/** The open card: the element it belongs to, what it shows, and where it sits. */
+	type Open = Source & {
+		anchor: HTMLElement;
+		/** The keyboard control that opened it, which takes focus back on Escape. */
+		trigger: HTMLElement | null;
+		/** Its place in `stops`. */
+		stop: string;
+		mode: CardMode;
+		place: { top: number; left: number; width: number } | null;
+		/** Opened or stepped to from the keyboard: the card takes focus. */
+		focus: boolean;
+	};
 	let open = $state<Open | null>(null);
 
-	function show(o: Open) {
-		const again = open?.anchor === o.anchor;
+	const sourceOf = $derived(new Map(stops.map((s) => [s.id, s.source])));
+
+	const position = $derived.by(() => {
+		const n = open ? stops.findIndex((s) => s.id === open!.stop) + 1 : 0;
+		return n ? { n, total: stops.length } : null;
+	});
+
+	/** The nearest ancestor that scrolls: the page's right edge, for the card's width. */
+	function scrollParent(el: HTMLElement): HTMLElement | null {
+		for (let p = el.parentElement; p; p = p.parentElement) {
+			if (/(auto|scroll)/.test(getComputedStyle(p).overflowY)) return p;
+		}
+		return null;
+	}
+
+	/**
+	 * In the margin when the row has one: level with the anchor's first line,
+	 * as wide as the margin and on into the page's right gutter, up to 20rem.
+	 * Without a margin, a popover; on a phone, a sheet.
+	 */
+	function placeFor(anchor: HTMLElement): Pick<Open, "mode" | "place"> {
+		const row = anchor.closest<HTMLElement>(".row");
+		const style = row ? getComputedStyle(row) : null;
+		const cols = style?.gridTemplateColumns.split(" ").map(parseFloat) ?? [];
+		if (!root || !row || !style || cols.length < 2) {
+			return { mode: matchMedia("(max-width: 40rem)").matches ? "sheet" : "popover", place: null };
+		}
+		const box = root.getBoundingClientRect();
+		const rowBox = row.getBoundingClientRect();
+		const left = rowBox.left - box.left + cols[0] + (parseFloat(style.columnGap) || 0);
+		const view = scrollParent(root);
+		const right = view ? view.getBoundingClientRect().left + view.clientWidth : document.documentElement.clientWidth;
+		const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+		const width = Math.min(20 * rem, Math.max(cols[1], right - (box.left + left) - rem));
+		const top = (anchor.getClientRects()[0] ?? anchor.getBoundingClientRect()).top - box.top - 4;
+		return { mode: "margin", place: { top, left, width } };
+	}
+
+	function show(o: Omit<Open, "mode" | "place">) {
 		close();
-		if (again) return;
 		o.anchor.classList.add("active");
 		o.trigger?.setAttribute("aria-expanded", "true");
-		open = o;
+		open = { ...o, ...placeFor(o.anchor) };
 	}
 
 	function close(returnFocus = false) {
@@ -87,32 +200,118 @@
 		open = null;
 	}
 
+	/** The card follows its sentence when the page reflows, and changes form when the margin comes or goes. */
+	function reposition() {
+		if (!open) return;
+		const next = placeFor(open.anchor);
+		const was = open.place;
+		const moved = !was || !next.place || was.top !== next.place.top || was.left !== next.place.left || was.width !== next.place.width;
+		if (next.mode !== open.mode || moved) open = { ...open, ...next };
+	}
+
 	const refsOf = (evidence: MarginNote[]) => evidence.map((n) => n.ref).filter(Boolean).join(" ");
 
-	type Source = Omit<Open, "anchor" | "trigger">;
-
-	/** A click anywhere on the sentence (or table, or photo) opens its source. */
-	function onClick(e: MouseEvent, o: Source) {
+	/** A click anywhere on the sentence (or table, or photo) opens its source; a second click closes it. */
+	function onClick(e: MouseEvent, stop: string) {
 		// A link inside the sentence is its own target, and a reader selecting
 		// words to copy them isn't asking for the source.
 		if ((e.target as HTMLElement).closest("button, a")) return;
 		if (String(window.getSelection() ?? "").trim()) return;
 		const anchor = e.currentTarget as HTMLElement;
-		show({ ...o, anchor, trigger: anchor.nextElementSibling as HTMLElement | null });
+		const source = sourceOf.get(stop);
+		if (!source) return;
+		if (open?.anchor === anchor) return close();
+		show({ ...source, anchor, trigger: anchor.nextElementSibling as HTMLElement | null, stop, focus: false });
 	}
 
 	/** The same, from the "source" control after it, for the keyboard and screen readers. */
-	function onTrigger(e: MouseEvent, o: Source) {
+	function onTrigger(e: MouseEvent, stop: string) {
 		const trigger = e.currentTarget as HTMLElement;
 		const anchor = trigger.previousElementSibling as HTMLElement | null;
-		if (anchor) show({ ...o, anchor, trigger });
+		const source = sourceOf.get(stop);
+		if (!anchor || !source) return;
+		if (open?.anchor === anchor) return close();
+		show({ ...source, anchor, trigger, stop, focus: true });
 	}
+
+	/** A figure's own records, from the figure. Opened from the keyboard, the
+	 *  figure is the control the card hands focus back to. */
+	function citeFigure(block: number, refs: string[], anchor: HTMLElement, focus: boolean) {
+		const fields = blocks[block]?.fields;
+		if (!fields || !refs.length) return;
+		if (open?.anchor === anchor) return close();
+		show({ ...figureSource(fields, refs), anchor, trigger: focus ? anchor : null, stop: `${block}`, focus });
+	}
+
+	/** ← and →: the previous or next source on the page, scrolled into view. */
+	function step(by: -1 | 1) {
+		if (!open || !root) return;
+		const next = stops[stops.findIndex((s) => s.id === open!.stop) + by];
+		const el = next && root.querySelector<HTMLElement>(`[data-stop="${next.id}"]`);
+		if (!next || !el) return;
+		const focus = !!document.activeElement?.closest(".evidence-card");
+		const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+		el.scrollIntoView({ block: "center", behavior: still ? "auto" : "smooth" });
+		const trigger = el.nextElementSibling?.classList.contains("ev-trigger") ? (el.nextElementSibling as HTMLElement) : null;
+		show({ ...next.source, anchor: el, trigger, stop: next.id, focus });
+	}
+
+	$effect(() => {
+		if (!open) return;
+		const onKey = (e: KeyboardEvent) => {
+			if ((e.key !== "ArrowLeft" && e.key !== "ArrowRight") || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+			if ((e.target as HTMLElement | null)?.closest("input, textarea, select, [contenteditable]")) return;
+			e.preventDefault();
+			step(e.key === "ArrowRight" ? 1 : -1);
+		};
+		document.addEventListener("keydown", onKey);
+		return () => document.removeEventListener("keydown", onKey);
+	});
 
 	function cite(ref: string) {
 		const at = open?.at ?? null;
 		close();
 		oncite?.(ref, at);
 	}
+
+	// ── The margin's computed marks ─────────────────────────────────────────
+	const zone = $derived(timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
+	const dayEnd = $derived(dayStartIn(stepDay(date, 1), zone));
+
+	let firsts = $state<DayFirstsApi | null>(null);
+	$effect(() => {
+		const day = date;
+		firsts = null;
+		if (!blocks.some((b) => b.kind === "paragraph")) return;
+		getDayFirsts(day)
+			.then((f) => {
+				if (date === day) firsts = f;
+			})
+			// The "new" marks add to the margin; without them the page is
+			// still whole, so a failed fetch leaves them off.
+			.catch(() => {});
+	});
+
+	const marks = $derived.by(() => {
+		const at = (iso: string) => clockMinutes(Date.parse(iso), zone, dayEnd);
+		const gaps = recordingGaps(coverage, dayStartIn(date, zone), dayEnd).map((g) => ({
+			end: clockMinutes(g.end, zone, dayEnd),
+			label: timeRange(g.start, g.end, zone),
+		}));
+		// People and named places before places with no name: a page can
+		// show only a few, and "First visit in your record" alone says least.
+		const news: FirstMark[] = [
+			...(firsts?.people ?? []).map((p) => ({ at: at(p.at), title: null, line: `First message from ${p.name}`, veil: [p.name], rank: 0 })),
+			...(firsts?.places ?? []).map((p) => ({
+				at: at(p.at),
+				title: p.name,
+				line: "First visit in your record",
+				veil: p.name ? [p.name] : [],
+				rank: p.name ? 0 : 1,
+			})),
+		];
+		return placeMarks(blocks, gaps, news);
+	});
 
 	// ── Notes ───────────────────────────────────────────────────────────────
 	const placed = $derived(placeNotes(blocks, notes));
@@ -184,7 +383,7 @@
 	}
 
 	function onEditorKey(e: KeyboardEvent) {
-		if (e.isComposing) return;
+		if (inComposition(e)) return;
 		if (e.key === "Escape") {
 			e.stopPropagation();
 			stopWriting();
@@ -247,6 +446,7 @@
 		void placed;
 		void writing;
 		void blocks;
+		void marks;
 		tick().then(() => requestAnimationFrame(layout));
 	});
 
@@ -255,7 +455,10 @@
 		let frame = 0;
 		const ro = new ResizeObserver(() => {
 			cancelAnimationFrame(frame);
-			frame = requestAnimationFrame(layout);
+			frame = requestAnimationFrame(() => {
+				layout();
+				reposition();
+			});
 		});
 		ro.observe(root);
 		document.fonts?.ready.then(layout);
@@ -315,6 +518,7 @@
 		{@const ev = blockEvidence(block)}
 		{@const marked = veilMarks(block.markdown)}
 		{@const here = notesAt(i)}
+		{@const computed = marks.get(i) ?? []}
 		<div
 			class="row"
 			class:row-heading={block.kind === "heading"}
@@ -322,33 +526,50 @@
 			class:row-figure={block.markdown.startsWith("![")}
 			data-block={block.kind === "paragraph" ? i : null}
 		>
-			<div class="text" use:veiled={{ hiding: veil.hiding, phrases: marked.phrases }}>
-				{#if block.kind === "paragraph"}
-					<div class="markdown markdown--article">
-						<p>
-							{#each block.sentences as s, j (j)}{@const src = { evidence: s.evidence, sentence: s.markdown, at: { block: i, sentence: j }, label: "The record behind this sentence" }}{#if j > 0 && s.space}{" "}{/if}{#if s.evidence.length}<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions --><span
-										class="s"
-										data-s={j}
-										data-refs={refsOf(s.evidence)}
-										onclick={(e) => onClick(e, src)}
-									><DayInline markdown={veilMarks(s.markdown).markdown} {person} /></span
-								><button type="button" class="ev-trigger" data-for="evidence" aria-haspopup="dialog" aria-expanded="false" onclick={(e) => onTrigger(e, src)}>Source</button>{:else}<span data-s={j}><DayInline markdown={veilMarks(s.markdown).markdown} {person} /></span>{/if}{/each}
-						</p>
-					</div>
-					{#each here as p (p.note.id)}<span class="bracket" data-at={p.at?.sentence} class:drawing={drawn === p.note.id} aria-hidden="true"></span>{/each}
-				{:else if ev.length}
-					{@const src = { evidence: ev, sentence: block.markdown, at: null, label: "The record behind this passage" }}
-					<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-					<div class="s s-block" data-refs={refsOf(ev)} onclick={(e) => onClick(e, src)}>
+			{#if block.kind === "figure" && block.fields}
+				<!-- The figure veils its own words, as the card does. -->
+				{@const fields = block.fields}
+				<div class="text" data-stop={figureRefs(fields).length ? `${i}` : null}>
+					<DayFigure {fields} {date} {timezone} oncite={(refs, anchor, focus) => citeFigure(i, refs, anchor, focus)} />
+				</div>
+			{:else}
+				<div class="text" use:veiled={{ hiding: veil.hiding, phrases: marked.phrases }}>
+					{#if block.kind === "paragraph"}
+						<div class="markdown markdown--article">
+							<p>
+								{#each block.sentences as s, j (j)}{#if j > 0 && s.space}{" "}{/if}{#if s.evidence.length}<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions --><span
+											class="s"
+											data-s={j}
+											data-stop="{i}.{j}"
+											data-refs={refsOf(s.evidence)}
+											onclick={(e) => onClick(e, `${i}.${j}`)}
+										><DayInline markdown={veilMarks(s.markdown).markdown} {person} /></span
+									><button type="button" class="ev-trigger" data-for="evidence" aria-haspopup="dialog" aria-expanded="false" onclick={(e) => onTrigger(e, `${i}.${j}`)}>Source</button>{:else}<span data-s={j}><DayInline markdown={veilMarks(s.markdown).markdown} {person} /></span>{/if}{/each}
+							</p>
+						</div>
+						{#each here as p (p.note.id)}<span class="bracket" data-at={p.at?.sentence} class:drawing={drawn === p.note.id} aria-hidden="true"></span>{/each}
+					{:else if ev.length}
+						<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+						<div class="s s-block" data-stop={i} data-refs={refsOf(ev)} onclick={(e) => onClick(e, `${i}`)}>
+							<Markdown content={marked.markdown} refVariant="quiet" variant="article" />
+						</div><button type="button" class="ev-trigger" data-for="evidence" aria-haspopup="dialog" aria-expanded="false" onclick={(e) => onTrigger(e, `${i}`)}>Source</button>
+					{:else}
 						<Markdown content={marked.markdown} refVariant="quiet" variant="article" />
-					</div><button type="button" class="ev-trigger" data-for="evidence" aria-haspopup="dialog" aria-expanded="false" onclick={(e) => onTrigger(e, src)}>Source</button>
-				{:else}
-					<Markdown content={marked.markdown} refVariant="quiet" variant="article" />
-				{/if}
-			</div>
-			{#if cx.length || here.length || writing?.at?.block === i}
-				<aside class="margin" aria-label={here.length || writing?.at?.block === i ? "Your notes beside this passage" : "When"}>
+					{/if}
+				</div>
+			{/if}
+			{#if cx.length || computed.length || here.length || writing?.at?.block === i}
+				<aside class="margin" aria-label={here.length || writing?.at?.block === i ? "Your notes beside this passage" : "Beside this passage"}>
 					{#each cx as n (n.label)}<span class="note">{n.label}</span>{/each}
+					{#each computed as mark, k (k)}
+						{#if mark.kind === "gap"}
+							<span class="note mark gap"><span aria-hidden="true" class="rule"></span><span>Nothing recorded{#each mark.spans as span (span)}<br />{span}{/each}</span></span>
+						{:else}
+							<span class="note mark first" use:veiled={{ hiding: veil.hiding, phrases: mark.veil }}
+								><span class="new">new</span><span>{#if mark.title}<span class="what">{mark.title}</span><br />{/if}{mark.line}</span></span
+							>
+						{/if}
+					{/each}
 					{#each here as p (p.note.id)}
 						<div class="placed" data-at={p.at?.sentence}>
 							<DayHand
@@ -368,24 +589,32 @@
 			{/if}
 		</div>
 	{/each}
+
+	{#if open}
+		{#key open.anchor}
+			<DayEvidence
+				anchor={open.anchor}
+				evidence={open.evidence}
+				sentence={open.sentence}
+				label={open.label}
+				mode={open.mode}
+				place={open.place}
+				{timezone}
+				{position}
+				focus={open.focus}
+				oncite={cite}
+				onnote={onwrite && open.at ? () => open && writeBeside(open) : undefined}
+				onstep={step}
+				onclose={close}
+			/>
+		{/key}
+	{/if}
 </div>
 
-{#if open}
-	{#key open.anchor}
-		<DayEvidence
-			anchor={open.anchor}
-			evidence={open.evidence}
-			sentence={open.sentence}
-			label={open.label}
-			oncite={cite}
-			onnote={onwrite && open.at ? () => open && writeBeside(open) : undefined}
-			onclose={close}
-		/>
-	{/key}
-{/if}
-
 <style>
+	/* The evidence card sits in here when it opens in the margin. */
 	.day-body {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 	}
@@ -427,7 +656,7 @@
 	}
 
 	.s:hover {
-		background-color: color-mix(in srgb, var(--color-primary) 6%, transparent);
+		background-color: color-mix(in srgb, var(--color-highlight) 45%, transparent);
 		transition-delay: 0.2s;
 	}
 
@@ -534,6 +763,31 @@
 
 	.note {
 		display: block;
+	}
+
+	/* What the record says beside the passage: a short dashed rule before a
+	   silence, a small claret "new" before a first. */
+	.mark {
+		display: grid;
+		grid-template-columns: 1.4rem 1fr;
+		column-gap: 0.4rem;
+		line-height: 1.4;
+	}
+
+	.mark .rule {
+		border-top: 1.5px dashed var(--color-border-strong);
+		margin-top: 0.5rem;
+	}
+
+	.mark .new {
+		font-size: 0.625rem;
+		letter-spacing: 0.04em;
+		color: var(--color-secondary);
+		padding-top: 0.08rem;
+	}
+
+	.mark .what {
+		color: var(--color-foreground-muted);
 	}
 
 	/* ── Your notes ── */

@@ -13,10 +13,17 @@
  * (coordsAtPos, wrapped-line geometry, widget heights) is out of scope here
  * and belongs to a browser check. Decoration presence, classes, hidden text,
  * widgets, keymaps and transactions are all fair game.
+ *
+ * A view comes back with its document parsed to the end. A state's first
+ * parse stops when its time slice runs out (20ms of the clock, in
+ * @codemirror/language) and the rest is parsed in idle callbacks; a test
+ * that read the decorations of that first parse passed or failed with the
+ * machine's load. `partlyParsedView` makes the short first parse on purpose.
  */
 
 import { defaultKeymap } from '@codemirror/commands';
 import { markdownKeymap } from '@codemirror/lang-markdown';
+import { forceParsing } from '@codemirror/language';
 import { EditorSelection, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 
@@ -42,10 +49,7 @@ export function createTestView(doc: string, options: TestViewOptions = {}): Edit
 		parent,
 		state: EditorState.create({
 			doc,
-			selection:
-				typeof selection === 'number'
-					? EditorSelection.cursor(selection)
-					: EditorSelection.range(selection.anchor, selection.head),
+			selection: initialSelection(selection),
 			extensions: [
 				virtuesMarkdown(),
 				EditorView.lineWrapping,
@@ -55,7 +59,45 @@ export function createTestView(doc: string, options: TestViewOptions = {}): Edit
 		}),
 	});
 	if (focus) forceFocus(view);
+	// Last, so what the extensions draw from the whole tree is drawn on
+	// the transaction that delivers it, as the idle parse delivers it.
+	forceParsing(view, view.state.doc.length, 60_000);
 	return view;
+}
+
+/**
+ * A view whose first parse ran out of time after one step, as it does on a
+ * long page or a busy machine: its tree ends part way down the document
+ * until `forceParsing` (or the idle parse) delivers the rest.
+ */
+export function partlyParsedView(doc: string, options: TestViewOptions = {}): EditorView {
+	const { selection = 0, focus = true, extensions = [] } = options;
+	const realNow = Date.now;
+	let now = realNow();
+	// Every reading of the clock is a second later, so the slice is spent
+	// after its first step.
+	Date.now = () => (now += 1000);
+	let state: EditorState;
+	try {
+		state = EditorState.create({
+			doc,
+			selection: initialSelection(selection),
+			extensions: [virtuesMarkdown(), EditorView.lineWrapping, ...extensions],
+		});
+	} finally {
+		Date.now = realNow;
+	}
+	const parent = document.createElement('div');
+	document.body.appendChild(parent);
+	const view = new EditorView({ parent, state });
+	if (focus) forceFocus(view);
+	return view;
+}
+
+function initialSelection(selection: NonNullable<TestViewOptions['selection']>): EditorSelection {
+	return typeof selection === 'number'
+		? EditorSelection.single(selection)
+		: EditorSelection.single(selection.anchor, selection.head);
 }
 
 /**

@@ -38,6 +38,7 @@
 	import { fade } from "svelte/transition";
 	import Icon from "$lib/components/Icon.svelte";
 	import { updateAssistantProfile, updateProfile } from "$lib/api/client";
+	import { inComposition } from "$lib/utils/ime";
 	import { setup } from "../setup.svelte";
 	import { vanish } from "../vanish";
 
@@ -129,7 +130,7 @@
 	 * inside the name means editing it, not replacing it.
 	 */
 	function onKey(e: KeyboardEvent) {
-		if (!field || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+		if (!field || e.metaKey || e.ctrlKey || e.altKey || inComposition(e)) return;
 		if (e.key.length !== 1 || text !== original || !text) return;
 		const a = field.selectionStart ?? 0;
 		const b = field.selectionEnd ?? 0;

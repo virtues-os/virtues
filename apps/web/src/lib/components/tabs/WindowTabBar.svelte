@@ -631,7 +631,7 @@
 		   recessed band next to a large recessed sidebar made the whole left
 		   half of the window a slab. Pills carry the state instead, so the strip
 		   has no reason to be a different color from what it sits on. */
-		background: var(--color-surface);
+		background: var(--color-page);
 		flex-shrink: 0;
 		position: relative;
 		z-index: var(--z-overlay); /* Above global drag overlays */
@@ -651,7 +651,7 @@
 	   --tab-active-bg), so the strip does not need to muddy the surface to say
 	   it. The top of the pane now matches the page, on every theme. */
 	.tab-bar.active-pane {
-		background: var(--color-surface);
+		background: var(--color-page);
 	}
 
 	.tabs-scroll {

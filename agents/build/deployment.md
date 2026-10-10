@@ -12,7 +12,7 @@
 
 | Tier | What it is | How it ships | Privilege |
 |---|---|---|---|
-| **Home box** (DIY + appliance) | `virtues` binary (+ `virtues-qnnd` on NPU boards, or `virtues-embed` / `virtues-rerank` llama-server sidecars) | `curl -sSL https://virtues.com/sh \| sudo sh` → systemd units | Runs as the `virtues` user; see [Privilege](#privilege) |
+| **Home box** (DIY + appliance) | `virtues` binary (+ `virtues-qnnd` on NPU boards, or the `virtues-embed` llama-server sidecar) | `curl -sSL https://virtues.com/sh \| sudo sh` → systemd units | Runs as the `virtues` user; see [Privilege](#privilege) |
 | **Cloud sidecar** (Virtues-operated) | `atlas` + `virtues-api` services | Docker images on one dedicated server + Caddy | `docker run`, no orchestrator |
 | **Clients** | Web UI (SvelteKit), iOS app, Mac collector | Static site / App Store / signed pkg | None |
 
@@ -38,7 +38,7 @@ Bootstrap downloads the platform-specific `virtues-installer` binary from the la
 3. **Appliance only:** move the fresh Postgres cluster onto the data disk before it holds anything.
 4. **User and database.** Create the `virtues` system user and the data dir (default `/var/lib/virtues`), then the Postgres role, database, `vector` extension and the NOLOGIN separation roles the migrations expect.
 5. **Binary.** Resolve the release, verify the tarball against its `.sha256`, stage it into a release slot under `/usr/local/share/virtues/releases/` and flip the `current` link (`download.rs`; `virtues upgrade` and `rollback` work within that layout).
-6. **Local inference.** The QNN NPU daemon (`virtues-qnnd`) on a Dragon, the CPU llama-server sidecars (`virtues-embed`, `virtues-rerank`) in bundled mode, nothing for manual endpoints. Then libpdfium.
+6. **Local inference.** The QNN NPU daemon (`virtues-qnnd`) on a Dragon, the CPU llama-server sidecar (`virtues-embed`) in bundled mode, nothing for manual endpoints. Then libpdfium.
 7. **Config.** Write the install manifest and the env file `<data dir>/virtues.env` (generating `VIRTUES_ENCRYPTION_KEY` only if it is absent), run migrations, and write `/etc/systemd/system/virtues.service` (`User=virtues`, `EnvironmentFile=-<data dir>/virtues.env`, `server --port 8000`).
 8. **Appliance only:** the first-boot unit (installed with the service unit), then the appliance profile: kiosk display unit, bluetooth for BLE provisioning, unattended security upgrades.
 9. **Start** with `systemctl enable` + `restart`, so a reinstall replaces a running old binary. Run the health check, then exec `virtues init` as the `virtues` user (skipped with `--no-init`).

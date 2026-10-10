@@ -190,7 +190,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, Lin
     let (name, facts): (String, String) = match entity.kind.as_str() {
         "person" => {
             let row = sqlx::query(
-                "SELECT name, relationship_category, nickname \
+                "SELECT name, relationship_category, nickname, bond \
                  FROM wiki_people WHERE id = $1",
             )
             .bind(&entity.id)
@@ -199,11 +199,16 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, Lin
             .map_err(|e| Error::Database(format!("Failed to load person: {}", e)))?;
             let name: String = row.get("name");
             let mut f = String::new();
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("relationship_category") {
+            if let Some(v) = row.get::<Option<String>, _>("relationship_category") {
                 f.push_str(&format!("- Relationship: {}\n", v));
             }
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("nickname") {
+            if let Some(v) = row.get::<Option<String>, _>("nickname") {
                 f.push_str(&format!("- Nickname: {}\n", v));
+            }
+            // The owner's own sentence about what this person is to them. It
+            // outranks everything the records suggest, so it leads.
+            if let Some(v) = row.get::<Option<String>, _>("bond") {
+                f.push_str(&format!("- In your own words: \"{}\"\n", v.trim()));
             }
             (name, f)
         }
@@ -256,6 +261,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, Lin
     if !facts.is_empty() {
         p.push_str(&format!("\n## Structured facts\n{}", facts));
     }
+    p.push_str(&arc(pool, &entity.id).await?);
 
     // ── Link allowlist: co-occurring entities + narrated days ──
     let mut links: Vec<String> = Vec::new();
@@ -331,52 +337,158 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, Lin
         ));
     }
 
-    // ── The recent record ──
-    let page = super::wiki::get_entity_records_page(
-        pool,
-        &entity.id,
-        0,
-        DOSSIER_RECORDS as i64,
-        "",
-        &[],
-        true,
-    )
-    .await?;
-    if !page.items.is_empty() {
-        let all: Vec<String> = page
-            .items
-            .iter()
-            .map(|r| {
-                let role = r.role.as_deref().map(|x| format!(" [{}]", x)).unwrap_or_default();
-                let preview = r
-                    .preview
-                    .as_deref()
-                    .map(|x| format!(" — {}", cap(x, 160)))
-                    .unwrap_or_default();
-                format!(
-                    "- {} {}{}: {}{}",
-                    r.timestamp.format("%Y-%m-%d"),
-                    r.source_type,
-                    role,
-                    cap(&r.label, 120),
-                    preview
+    // ── The record, sampled across the whole span ──
+    // Not the most recent N. For someone who was central and then wasn't, the
+    // newest records are the last two days of it, and an article drawn from
+    // those described a relationship that ended long ago as ongoing. So: how
+    // it began, evenly spaced moments through the middle, and how it stands.
+    let total = super::wiki::get_entity_records_page(pool, &entity.id, 0, 1, "", &[], true)
+        .await?
+        .total;
+    if total > 0 {
+        // Records come last and take what room is left, split across the three
+        // parts in whole lines, so the facts and the link list the answer is
+        // checked against are never what gets cut.
+        let room = MAX_TOTAL_CHARS.saturating_sub(p.chars().count() + 300);
+        let mut section = format!("\n## The record ({total} records, sampled across the span)\n");
+        for (heading, sample) in sample_offsets(total, DOSSIER_RECORDS as i64) {
+            let mut lines = Vec::new();
+            for (offset, limit) in sample {
+                let page = super::wiki::get_entity_records_page(
+                    pool, &entity.id, offset, limit, "", &[], false,
                 )
-            })
-            .collect();
-        // Records come last and take what room is left: newest first, whole
-        // lines only, so the facts and the link list the answer is checked
-        // against are never what gets cut.
-        let room = MAX_TOTAL_CHARS.saturating_sub(p.chars().count() + 200);
-        let lines = lines_that_fit(&all, room);
-        p.push_str(&format!(
-            "\n## The record (most recent {} of {})\n{}\n",
-            lines.len(),
-            page.total,
-            lines.join("\n")
-        ));
+                .await?;
+                lines.extend(page.items.iter().map(record_line));
+            }
+            let lines = lines_that_fit(&lines, room / 3);
+            if !lines.is_empty() {
+                section.push_str(&format!("\n### {heading}\n{}\n", lines.join("\n")));
+            }
+        }
+        p.push_str(&section);
     }
 
     Ok((p, allowed))
+}
+
+fn record_line(r: &super::wiki::EntityRecord) -> String {
+    let role = r.role.as_deref().map(|x| format!(" [{}]", x)).unwrap_or_default();
+    let preview = r
+        .preview
+        .as_deref()
+        .map(|x| format!(" — {}", cap(x, 160)))
+        .unwrap_or_default();
+    format!(
+        "- {} {}{}: {}{}",
+        r.timestamp.format("%Y-%m-%d"),
+        r.source_type,
+        role,
+        cap(&r.label, 120),
+        preview
+    )
+}
+
+/// Which records to show, oldest-first offsets as `(offset, limit)` runs,
+/// grouped as the beginning, the middle and the latest. `n` is the budget.
+/// A record set that fits whole is shown whole, under one heading.
+fn sample_offsets(total: i64, n: i64) -> Vec<(&'static str, Vec<(i64, i64)>)> {
+    if total <= n {
+        return vec![("All of it, oldest first", vec![(0, total)])];
+    }
+    let edge = n / 4;
+    let first = (0, edge);
+    let last = (total - edge, edge);
+    // Short runs, evenly spaced, so a moment keeps its neighbours: one line of
+    // a conversation is rarely legible alone.
+    let run = 3;
+    let runs = (n - 2 * edge) / run;
+    let span = total - 2 * edge;
+    let middle = (0..runs)
+        .map(|i| (edge + span * (2 * i + 1) / (2 * runs) - run / 2, run))
+        .collect();
+    vec![
+        ("How it began", vec![first]),
+        ("Through the middle", middle),
+        ("The latest", vec![last]),
+    ]
+}
+
+/// The subject's arc in dates: first and last appearance, how long ago the
+/// last one was, the rhythm by month or year, and the longest silence.
+///
+/// These are facts about the subject, not about the evidence: "you first
+/// wrote to each other in November 2024 and stopped in April 2025" is the
+/// spine of an article about a person, and without it the model cannot tell
+/// a relationship that ended from one that is going on now.
+async fn arc(pool: &PgPool, entity_id: &str) -> Result<String> {
+    let (first, last): (Option<chrono::NaiveDate>, Option<chrono::NaiveDate>) = sqlx::query_as(
+        "SELECT min(occurred_at)::date, max(occurred_at)::date \
+         FROM wiki_refs WHERE entity_id = $1",
+    )
+    .bind(entity_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to read the subject's span: {e}")))?;
+    // No dated refs: nothing to say about an arc, and saying nothing is right.
+    let (Some(first), Some(last)) = (first, last) else {
+        return Ok(String::new());
+    };
+    let today = chrono::Utc::now().date_naive();
+    let mut s = format!(
+        "\n## The span\n- First on record: {}\n- Last on record: {} ({} days before today, {})\n",
+        first.format("%B %-d, %Y"),
+        last.format("%B %-d, %Y"),
+        (today - last).num_days(),
+        today.format("%B %-d, %Y"),
+    );
+
+    // A silence is counted in days the record has anything else on it, so a
+    // stretch when nothing was being recorded at all (a lost phone, an import
+    // that starts late) is not read as a silence with every person at once.
+    let gap: Option<(chrono::NaiveDate, chrono::NaiveDate, i64)> = sqlx::query_as(
+        "WITH a AS (SELECT d, row_number() OVER (ORDER BY d) AS n \
+                    FROM (SELECT DISTINCT occurred_at::date AS d FROM wiki_refs \
+                          WHERE occurred_at IS NOT NULL) x), \
+              p AS (SELECT DISTINCT occurred_at::date AS d FROM wiki_refs \
+                    WHERE entity_id = $1 AND occurred_at IS NOT NULL), \
+              g AS (SELECT p.d, lead(p.d) OVER (ORDER BY p.d) AS nd, \
+                           lead(a.n) OVER (ORDER BY p.d) - a.n - 1 AS quiet \
+                    FROM p JOIN a USING (d)) \
+         SELECT d, nd, quiet FROM g WHERE nd IS NOT NULL ORDER BY quiet DESC LIMIT 1",
+    )
+    .bind(entity_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to read the subject's longest silence: {e}")))?;
+    if let Some((a, b, quiet)) = gap {
+        if quiet > 30 {
+            s.push_str(&format!(
+                "- Longest silence: {} to {}, {} days on which the record has other activity\n",
+                a.format("%B %-d, %Y"),
+                b.format("%B %-d, %Y"),
+                quiet
+            ));
+        }
+    }
+
+    // By month across three years or less, by year beyond: the rhythm has to
+    // fit on a line or two to be read at all.
+    let unit = if (last - first).num_days() <= 3 * 366 { "month" } else { "year" };
+    let fmt = if unit == "month" { "YYYY-MM" } else { "YYYY" };
+    let rhythm: Vec<(String, i64)> = sqlx::query_as(&format!(
+        "SELECT to_char(date_trunc('{unit}', occurred_at), '{fmt}'), count(*) \
+         FROM wiki_refs WHERE entity_id = $1 AND occurred_at IS NOT NULL \
+         GROUP BY 1 ORDER BY 1"
+    ))
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to read the subject's rhythm: {e}")))?;
+    if rhythm.len() > 1 {
+        let cells: Vec<String> = rhythm.iter().map(|(k, n)| format!("{k}: {n}")).collect();
+        s.push_str(&format!("- Records by {unit}: {}\n", cells.join(", ")));
+    }
+    Ok(s)
 }
 
 fn cap(s: &str, n: usize) -> String {
@@ -525,6 +637,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_long_record_is_sampled_from_both_ends_and_between() {
+        let parts = sample_offsets(7710, 40);
+        let heads: Vec<_> = parts.iter().map(|(h, _)| *h).collect();
+        assert_eq!(heads, ["How it began", "Through the middle", "The latest"]);
+        assert_eq!(parts[0].1, [(0, 10)], "the first records");
+        assert_eq!(parts[2].1, [(7700, 10)], "the last records");
+        let middle = &parts[1].1;
+        assert_eq!(middle.len(), 6);
+        for w in middle.windows(2) {
+            assert!(w[0].0 + w[0].1 <= w[1].0, "runs overlap: {middle:?}");
+        }
+        assert!(middle.iter().all(|(o, l)| *o >= 10 && o + l <= 7700), "{middle:?}");
+    }
+
+    #[test]
+    fn a_short_record_is_shown_whole() {
+        assert_eq!(sample_offsets(12, 40), [("All of it, oldest first", vec![(0, 12)])]);
+    }
+
+    #[test]
     fn parse_strips_fences() {
         assert_eq!(parse_article("```markdown\nAn article.\n```"), "An article.");
     }
@@ -634,6 +766,16 @@ mod tests {
     /// schema; a future rename fails here instead of on a fielded box.
     #[sqlx::test]
     async fn dossier_header_sql_matches_schema(pool: sqlx::PgPool) {
+        // Something else on record Jan 7 to Mar 31 (85 days); nothing at all
+        // from April to June, which must not count as silence.
+        sqlx::query(
+            "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, occurred_at) \
+             SELECT 'filler_' || d::date, 'person', 'person_filler', 'data_test', 'f' || d::date, d \
+             FROM generate_series('2024-01-07'::date, '2024-03-31'::date, '1 day') d",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         for (table, id, kind) in [
             ("wiki_people", "person_t1", "person"),
             ("wiki_places", "place_t1", "place"),
@@ -646,12 +788,28 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+            for (n, at) in [(1, "2024-01-05"), (2, "2024-01-06"), (3, "2024-06-30")] {
+                sqlx::query(
+                    "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, occurred_at) \
+                     VALUES ($1, $2, $3, 'data_test', $1, $4::date)",
+                )
+                .bind(format!("{id}_ref{n}"))
+                .bind(kind)
+                .bind(id)
+                .bind(at)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
 
             let entity = DueEntity { id: id.to_string(), kind: kind.to_string(), refs: 1 };
             let (dossier, _allowed) = build_dossier(&pool, &entity)
                 .await
                 .unwrap_or_else(|e| panic!("{kind} dossier failed against live schema: {e}"));
             assert!(dossier.contains("Dossier Subject"), "{kind} dossier missing subject name");
+            assert!(dossier.contains("First on record: January 5, 2024"), "{kind} span: {dossier}");
+            assert!(dossier.contains("85 days on which the record has other activity"), "{kind} gap: {dossier}");
+            assert!(dossier.contains("2024-01: 2, 2024-06: 1"), "{kind} rhythm: {dossier}");
         }
     }
 }

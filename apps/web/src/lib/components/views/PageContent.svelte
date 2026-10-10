@@ -4,36 +4,56 @@
 	 *
 	 * Displays and edits a user page. Can be used in tabs, modals, or mobile WebViews.
 	 * Uses Yjs for real-time collaborative editing with WebSocket sync.
+	 *
+	 * The page's format picks the editor (`pageDocument.ts`): a block page
+	 * opens in `DocumentEditor` on its Yjs tree, a markdown page in
+	 * `CodeMirrorEditor` on its Y.Text. A block page's history, Copy markdown
+	 * and View as markdown go through the server, which holds its tree.
 	 */
 	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import IconPicker from "$lib/components/IconPicker.svelte";
 	import CodeMirrorEditor from "$lib/components/pages/CodeMirrorEditor.svelte";
-	import type { DocStats } from "$lib/components/pages/CodeMirrorEditor.svelte";
+	import DocumentEditor from "$lib/components/pages/DocumentEditor.svelte";
+	import MarkdownView from "$lib/components/pages/MarkdownView.svelte";
+	import Modal from "$lib/components/Modal.svelte";
+	import type { DocStats } from "$lib/components/pages/stats";
+	import type { OutlineNav } from "$lib/components/pages/outline";
 	import PageCoverImage from "$lib/components/pages/PageCoverImage.svelte";
 	import PageStatusBar from "$lib/components/pages/PageStatusBar.svelte";
 	import PageToolbar from "$lib/components/pages/PageToolbar.svelte";
 	import PageProjects from "$lib/components/pages/PageProjects.svelte";
 	import PageOutline from "$lib/components/pages/PageOutline.svelte";
 	import ReferencesPanel from "$lib/components/pages/ReferencesPanel.svelte";
-	import type { PageHeading } from "$lib/codemirror/outline";
+	import { cmOutlineNav, type PageHeading } from "$lib/codemirror/outline";
 	import type { EditorView } from "@codemirror/view";
 	import { Popover } from "$lib/floating";
 	import {
 		getPageBacklinks,
+		getPageMarkdown,
 		listPublications,
 		request,
 		ApiError,
 		type Backlink,
+		type PageFormat,
 	} from "$lib/api/client";
+	import { toast } from "svelte-sonner";
 	import ShareSheet from "$lib/components/applets/ShareSheet.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { untitled } from "$lib/refs/identity.svelte";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
-	import { createYjsDocument, type YjsDocument } from "$lib/yjs";
-	import { saveVersion } from "$lib/yjs/versions";
-	import { onDestroy, onMount, untrack } from "svelte";
+	import type { TreeDocument, YjsDocument } from "$lib/yjs";
+	import { cutServerVersion, saveVersion } from "$lib/yjs/versions";
+	import { canPrint, printAlone, printThis } from "$lib/document/print";
+	import { treeAiDriver } from "$lib/ai/treeAiSession";
+	import {
+		mayShowKeptCopy,
+		openPageDocument,
+		stillLoading,
+		type OpenedPage,
+	} from "./pageDocument";
+	import { onDestroy, onMount, tick, untrack } from "svelte";
 
 	interface Props {
 		/** The page ID to display/edit */
@@ -66,6 +86,16 @@
 		tags: string | null;
 		created_at: string;
 		updated_at: string;
+		/**
+		 * The document contract the page is written under; null when the
+		 * server could not read it. A box from before the contract does not
+		 * send it, and every page on such a box is markdown.
+		 */
+		contract?: number | null;
+		/** How the page holds its text; absent from a box from before block pages. */
+		format?: PageFormat;
+		/** The newest contract the server reads; absent from a box from before block pages. */
+		box_contract?: number;
 	}
 
 	let pageData = $state<PageData | null>(null);
@@ -92,11 +122,19 @@
 	let hasEditsSinceSnapshot = false;
 	let autoSnapshotTimeout: ReturnType<typeof setTimeout> | null = null;
 
-	// Yjs document for real-time sync
+	// Yjs document for real-time sync: a markdown page's Y.Text, or a block
+	// page's tree. One of the two at a time; `opened` holds whichever it is.
 	let yjsDoc = $state<YjsDocument | undefined>(undefined);
+	// Raw: the bindings hold live Yjs objects, never to be proxied.
+	let treeDoc = $state.raw<TreeDocument | undefined>(undefined);
+	let opened = $state.raw<OpenedPage | null>(null);
+	let format = $state<PageFormat>("markdown");
 	// Unsubscribe handles for Yjs store subscriptions
 	let unsubSynced: (() => void) | null = null;
 	let unsubConnected: (() => void) | null = null;
+	let unsubRefused: (() => void) | null = null;
+	// Why the server will not sync this page with this editor, once it says so.
+	let refusedReason = $state<string | null>(null);
 	// Track sync/connection state reactively (subscribed from Yjs stores)
 	let isSynced = $state(false);
 	let isConnected = $state(false);
@@ -129,6 +167,12 @@
 	let showReferences = $state(false);
 	let outline = $state<PageHeading[]>([]);
 	let editorView = $state<EditorView | null>(null);
+	/** The block editor's outline navigation, while one is mounted. */
+	let treeNav = $state<OutlineNav | null>(null);
+	/** View as markdown (block pages). */
+	let viewingMarkdown = $state(false);
+	/** The scroller holding the cover, title and text: what Print prints. */
+	let printRootEl = $state<HTMLDivElement>();
 	let backlinks = $state<Backlink[]>([]);
 	let backlinksLoading = $state(false);
 	let backlinksLoadedFor = $state<string | null>(null);
@@ -186,7 +230,14 @@
 	}
 
 	async function autoSnapshot(description: string, keepalive = false) {
-		if (!hasEditsSinceSnapshot || !yjsDoc) return;
+		if (!hasEditsSinceSnapshot) return;
+		if (treeDoc) {
+			// The server reads its own copy of the tree, which every edit reaches first.
+			hasEditsSinceSnapshot = false;
+			await cutServerVersion(pageId, description, 'auto', { keepalive });
+			return;
+		}
+		if (!yjsDoc) return;
 		hasEditsSinceSnapshot = false;
 		await saveVersion(yjsDoc.ydoc, pageId, description, 'auto', { keepalive });
 	}
@@ -198,10 +249,16 @@
 		}, AUTO_SNAPSHOT_IDLE_MS);
 	}
 
-	function handleDocChange(stats: DocStats) {
+	/**
+	 * The editor's counts changed. `local` (the block editor says) is whether
+	 * any of the change was typed here: only that is this device's edit to keep
+	 * a version of, or to show as typing. CodeMirror reports its own edits.
+	 */
+	function handleDocChange(stats: DocStats, local = true) {
 		wordCount = stats.wordCount;
 		charCount = stats.charCount;
 		linkCount = stats.linkCount;
+		if (!local) return;
 
 		// Track edits for auto-snapshot deduplication
 		hasEditsSinceSnapshot = true;
@@ -299,12 +356,24 @@
 		// Unsubscribe from Yjs stores
 		unsubSynced?.();
 		unsubConnected?.();
+		unsubRefused?.();
 		// Clean up Yjs document on component destroy
-		if (yjsDoc) {
-			yjsDoc.destroy();
-			yjsDoc = undefined;
-		}
+		closeDocument();
 	});
+
+	/**
+	 * Let go of the page's document. The editor bound to it unmounts first:
+	 * the document is destroyed a tick later, never under a live editor.
+	 */
+	function closeDocument() {
+		const old = opened;
+		opened = null;
+		yjsDoc = undefined;
+		treeDoc = undefined;
+		treeNav = null;
+		viewingMarkdown = false;
+		if (old) void tick().then(() => old.doc.destroy());
+	}
 
 	// Reload only when pageId actually changes to a new value
 	// Use untrack() to prevent infinite loops from state updates
@@ -343,12 +412,10 @@
 		hasEditsSinceSnapshot = false;
 
 		// Clean up previous Yjs document if switching pages
-		if (yjsDoc) {
-			yjsDoc.destroy();
-			yjsDoc = undefined;
-		}
+		closeDocument();
 		isSynced = false;
 		isConnected = false;
+		refusedReason = null;
 
 		// Reset references for the new page (refetched on next panel open)
 		backlinks = [];
@@ -375,10 +442,16 @@
 			// Unsubscribe from previous doc stores
 			unsubSynced?.();
 			unsubConnected?.();
+			unsubRefused?.();
 
-			// Create Yjs document for real-time sync
-			// This connects via WebSocket to /ws/yjs/{pageId}
-			yjsDoc = createYjsDocument(pageId);
+			// Create Yjs document for real-time sync, in the editor the page's
+			// format calls for. This connects via WebSocket to /ws/yjs/{pageId}
+			const page = openPageDocument(pageId, data);
+			opened = page;
+			format = page.format;
+			if (page.format === "tree") treeDoc = page.doc;
+			else yjsDoc = page.doc;
+			const bound = page.doc;
 
 			// Grace period: suppress "Offline" during initial connection
 			connectionGracePeriod = true;
@@ -388,17 +461,21 @@
 			}, 1500);
 
 			// Sync fallback: if neither IndexedDB nor WebSocket sync within 4s,
-			// force-show the editor so the user never gets a permanent black screen.
+			// force-show the editor so the user never gets a permanent black screen,
+			// on a page the server said this editor reads: the local copy of any
+			// other may be from before the page was rewritten as a tree. A block
+			// page's copy must also hold a block: an editor bound to an empty
+			// tree writes its empty paragraph into the shared document.
 			if (syncFallbackRef) clearTimeout(syncFallbackRef);
 			syncFallbackRef = setTimeout(() => {
-				if (!isSynced) {
+				if (!isSynced && opened === page && mayShowKeptCopy(page, refusedReason)) {
 					console.warn("[PageContent] Sync timeout — force-showing editor");
 					isSynced = true;
 				}
 			}, 4000);
 
 			// Subscribe to sync/connection state (store unsubscribe handles)
-			unsubSynced = yjsDoc.isSynced.subscribe((synced) => {
+			unsubSynced = bound.isSynced.subscribe((synced) => {
 				isSynced = synced;
 				// Clear fallback timer once synced normally
 				if (synced && syncFallbackRef) {
@@ -406,7 +483,10 @@
 					syncFallbackRef = null;
 				}
 			});
-			unsubConnected = yjsDoc.isConnected.subscribe((connected) => {
+			unsubRefused = bound.refused.subscribe((reason) => {
+				refusedReason = reason;
+			});
+			unsubConnected = bound.isConnected.subscribe((connected) => {
 				isConnected = connected;
 				// End grace period early once connected
 				if (connected) {
@@ -557,15 +637,40 @@
 
 	async function copyMarkdown() {
 		try {
-			// Read directly from the local Yjs document (always up-to-date)
-			// The API content field can be stale due to the 2s debounced save queue
-			const text = yjsDoc?.ytext?.toString() || content;
+			// Never the API's `content`, which can trail the page by the 2s
+			// debounced save. A block page's export is the server's live copy;
+			// a markdown page's text is the local Yjs document.
+			const text =
+				format === "tree"
+					? (await getPageMarkdown(pageId)).markdown
+					: yjsDoc?.ytext?.toString() || content;
 			await navigator.clipboard.writeText(text);
 			copied = true;
 		} catch (err) {
 			console.error("Failed to copy markdown:", err);
+			if (format === "tree") {
+				toast.error("Your server couldn't give this page as markdown. Try again.");
+			}
 		}
 	}
+
+	/**
+	 * Print the page alone (`lib/document/print.ts`): the marks that set the
+	 * rest of the app aside go on at `beforeprint`, which the browser's own
+	 * Print fires too, so ⌘P and File > Print print the page as this does.
+	 */
+	async function printPage() {
+		// Menus closing first, so none prints over the page.
+		await tick();
+		if (printRootEl) printThis(printRootEl);
+		else window.print();
+	}
+
+	// A block page prints alone however it is printed.
+	$effect(() => {
+		if (!treeDoc) return;
+		return printAlone(() => printRootEl ?? null);
+	});
 </script>
 
 <Page padding="none" scrollable={false}>
@@ -587,8 +692,11 @@
 	{:else if pageData}
 		<div class="page-layout">
 			<!-- Top bar: TOC (left) + page actions (right), one classic row -->
-			<div class="page-topbar">
-			<PageOutline headings={outline} view={editorView} />
+			<div class="page-topbar" data-print="hide">
+			<PageOutline
+				headings={outline}
+				nav={treeDoc ? treeNav : editorView ? cmOutlineNav(editorView) : null}
+			/>
 			<!-- The projects this page is in, beside the outline: the page's
 			     "where it lives", in the corner a chat says it. -->
 			{#if pageId}
@@ -599,6 +707,7 @@
 				{coverUrl}
 				{copied}
 				{pageId}
+				{format}
 				{yjsDoc}
 				bind:showCoverPicker
 				{isShared}
@@ -624,6 +733,8 @@
 					save();
 				}}
 				onCopyMarkdown={copyMarkdown}
+				onViewMarkdown={format === "tree" ? () => (viewingMarkdown = true) : undefined}
+				onPrint={format === "tree" && canPrint ? printPage : undefined}
 				onDelete={deletePage}
 			/>
 			</div>
@@ -633,6 +744,7 @@
 			<!-- Main Content Area -->
 			<div
 				class="page-content"
+				bind:this={printRootEl}
 				style:--editor-font-family={pageDisplay.fontFamily}
 				style:--editor-font-size={pageDisplay.fontSize}
 				style:--editor-line-height={pageDisplay.lineHeight}
@@ -655,6 +767,7 @@
 					class:width-small={pageDisplay.widthMode === "small"}
 					class:width-medium={pageDisplay.widthMode === "medium"}
 					class:width-full={pageDisplay.widthMode === "full"}
+					class:width-page={pageDisplay.widthMode === "page"}
 				>
 					<!-- Header -->
 					<div class="page-header">
@@ -717,10 +830,13 @@
 						></textarea>
 					</div>
 
-					<!-- Editor area: overlay pattern to avoid destroying CodeMirror -->
+					<!-- Editor area: overlay pattern to avoid destroying the editor -->
 					<div class="page-editor-area" bind:this={editorContainerEl}>
-						{#if !yjsDoc || !isSynced}
-							<div class="editor-loading">
+						{#if refusedReason}
+							<p class="editor-refused" role="alert" data-print="hide">{refusedReason}</p>
+						{/if}
+						{#if !opened || stillLoading(opened, isSynced, refusedReason)}
+							<div class="editor-loading" data-print="hide">
 								<Icon
 									icon="ri:loader-4-line"
 									width="16"
@@ -729,7 +845,21 @@
 								<span>Loading document...</span>
 							</div>
 						{/if}
-						{#if yjsDoc && isSynced}
+						{#if treeDoc && isSynced}
+							{#key pageId}
+								<DocumentEditor
+									doc={treeDoc}
+									{pageId}
+									pageTitle={title}
+									editable={!treeDoc.readOnly}
+									ai={treeAiDriver}
+									placeholder="Start writing, or press / for commands…"
+									onDocChange={handleDocChange}
+									onOutline={(h) => (outline = h)}
+									onOutlineNav={(nav) => (treeNav = nav)}
+								/>
+							{/key}
+						{:else if yjsDoc && isSynced}
 							{#key pageId}
 								<CodeMirrorEditor
 									initialContent={content}
@@ -773,6 +903,11 @@
 				{connectionGracePeriod}
 			/>
 		</div>
+	{/if}
+	{#if pageId && treeDoc}
+		<Modal open={viewingMarkdown} onClose={() => (viewingMarkdown = false)} title="Markdown" width="lg">
+			<MarkdownView {pageId} ydoc={treeDoc.ydoc} />
+		</Modal>
 	{/if}
 	{#if pageId}
 		<ShareSheet
@@ -839,6 +974,33 @@
 
 	.page-inner.width-full {
 		max-width: 100%;
+	}
+
+	/* The A4 sheet, title and all: 210 mm wide with 20 mm margins, as it
+	   prints. The block editor's own sheet (`.doc-page-view`) folds into it,
+	   so the title is not left outside the page it heads. */
+	.page-inner.width-page {
+		box-sizing: border-box;
+		max-width: 210mm;
+		min-height: 297mm;
+		padding: 20mm;
+		border: 1px solid var(--color-border-subtle, var(--color-border));
+		background: var(--color-background);
+	}
+
+	.page-inner.width-page :global(.doc-page-view) {
+		width: auto;
+		min-height: 0;
+		padding: 0;
+		border: none;
+	}
+
+	@media (max-width: 230mm) {
+		.page-inner.width-page {
+			padding: 16px;
+			border: none;
+			min-height: 0;
+		}
 	}
 
 	/* Page Header — title hugs the body so it reads as one document
@@ -914,6 +1076,52 @@
 		padding: 2rem 0;
 		color: var(--color-foreground-muted);
 		font-size: 13px;
+	}
+
+	.editor-refused {
+		margin: 0;
+		padding: 1rem 0;
+		color: var(--color-foreground-muted);
+		font-size: 13px;
+	}
+
+	/* Print (block pages, `lib/document/print.ts`): the page alone. What is not the page's
+	   scroller or a box around it is set aside, and each box around it lets
+	   it run onto as many sheets as it needs instead of clipping it to one. */
+	@media print {
+		[data-print="hide"],
+		:global([data-print-off]) {
+			display: none !important;
+		}
+
+		:global([data-print-chain]),
+		.page-content:global([data-print-root]) {
+			display: block !important;
+			position: static !important;
+			overflow: visible !important;
+			height: auto !important;
+			min-height: 0 !important;
+			max-height: none !important;
+			width: auto !important;
+			max-width: none !important;
+			margin: 0 !important;
+			padding: 0 !important;
+			border: none !important;
+			background: none !important;
+			transform: none !important;
+		}
+
+		.page-title-input {
+			color: black;
+		}
+
+		/* Paper has its own margins (`@page`, document.css). */
+		.page-inner.width-page {
+			max-width: none;
+			min-height: 0;
+			padding: 0;
+			border: none;
+		}
 	}
 
 	/* Spinning animation */

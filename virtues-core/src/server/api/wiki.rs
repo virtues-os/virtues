@@ -194,6 +194,8 @@ pub fn routes() -> Router<AppState> {
             "/api/wiki/day/:date/rewrite",
             get(wiki_get_day_rewrite_handler).post(wiki_rewrite_day_handler),
         )
+        // Wiki - Paint this day: a picture of a place the page names
+        .route("/api/wiki/day/:date/picture", post(wiki_paint_day_handler))
         .route(
             "/api/wiki/stories",
             get(wiki_list_stories_handler).post(wiki_create_story_handler),
@@ -242,15 +244,15 @@ pub fn routes() -> Router<AppState> {
             "/api/wiki/day/:date/sources",
             get(wiki_get_day_sources_handler),
         )
-        // Wiki - Day Chats (in-app + external AI conversations)
-        .route(
-            "/api/wiki/day/:date/chats",
-            get(wiki_get_day_chats_handler),
-        )
         // Wiki - Day facts (the weather and the heard hours above the title)
         .route(
             "/api/wiki/day/:date/facts",
             get(wiki_get_day_facts_handler),
+        )
+        // Wiki - What the day holds for the first time (the margin's "new")
+        .route(
+            "/api/wiki/day/:date/firsts",
+            get(wiki_get_day_firsts_handler),
         )
         // Wiki - Days whose pages read like this one's
         .route(
@@ -266,11 +268,6 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/wiki/day/:date/streams",
             get(wiki_get_day_streams_handler),
-        )
-        // Wiki - Day heart rate (the Autonomic chart)
-        .route(
-            "/api/wiki/day/:date/heart-rate",
-            get(day_heart_rate_handler),
         )
 }
 
@@ -1175,6 +1172,51 @@ pub async fn wiki_rewrite_day_handler(
         .into_response()
 }
 
+/// Paint this day: a picture of one place the day's page names, set into the
+/// page at the end of its section (`api::day_picture`).
+///
+/// `style` is `oil`, `watercolor`, `pencil` or `gouache`; without one, the
+/// owner's choice, and oil when they chose none. Answers when it is done,
+/// which takes about twenty seconds: `{painted: true}`, or `{painted: false,
+/// reason}` with `nothing_to_paint`, `busy` (another writer holds the day),
+/// `billing` or `failed`. The painting runs in a task of its own, so a client
+/// that stops waiting does not stop it between the paid image and the page.
+pub async fn wiki_paint_day_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    body: Option<Json<serde_json::Value>>,
+) -> Response {
+    use crate::api::day_picture::{self, PaintOutcome, Style};
+
+    let Ok(date) = date.parse::<chrono::NaiveDate>() else {
+        return error_response(Error::InvalidInput(format!("Invalid date format: {date}")));
+    };
+    let pool = state.db.pool().clone();
+    let asked = body
+        .as_ref()
+        .and_then(|Json(b)| b.get("style"))
+        .and_then(|v| v.as_str())
+        .and_then(Style::parse);
+    let style = match asked {
+        Some(style) => style,
+        None => match day_picture::chosen_style(&pool).await {
+            Ok(chosen) => chosen.unwrap_or(Style::Oil),
+            Err(e) => return error_response(e),
+        },
+    };
+
+    let yjs = state.yjs_state.clone();
+    let drive = state.drive_config.clone();
+    let outcome = tokio::spawn(async move { day_picture::paint_day(&pool, &yjs, &drive, date, style).await })
+        .await
+        .unwrap_or_else(|e| PaintOutcome::Failed(format!("the painting stopped: {e}")));
+    Json(match outcome.reason() {
+        None => serde_json::json!({ "painted": true }),
+        Some(reason) => serde_json::json!({ "painted": false, "reason": reason }),
+    })
+    .into_response()
+}
+
 /// List days in a date range
 pub async fn wiki_list_days_handler(
     State(state): State<AppState>,
@@ -1379,24 +1421,6 @@ pub struct DaySourcesQuery {
 
 /// Get the three raw record streams (location, calendar, audio) for a day, as
 /// spans — the homepage's "day before synthesis" view.
-/// GET /api/wiki/day/:date/heart-rate — the day's HR samples, for Autonomic.
-pub async fn day_heart_rate_handler(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-    Query(query): Query<DaySourcesQuery>,
-) -> Response {
-    match date.parse::<chrono::NaiveDate>() {
-        Ok(parsed_date) => api_response(
-            crate::api::wiki_streams::get_day_heart_rate(state.db.pool(), parsed_date, query.tz.as_deref())
-                .await,
-        ),
-        Err(_) => error_response(Error::InvalidInput(format!(
-            "Invalid date format: {}",
-            date
-        ))),
-    }
-}
-
 pub async fn today_streams_handler(
     State(state): State<AppState>,
     Path(date): Path<String>,
@@ -1457,22 +1481,6 @@ pub async fn wiki_get_day_sources_handler(
     }
 }
 
-/// Get AI chats (in-app Virtues + external imported) for a day
-pub async fn wiki_get_day_chats_handler(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-) -> Response {
-    match date.parse::<chrono::NaiveDate>() {
-        Ok(parsed_date) => {
-            api_response(crate::api::wiki_streams::get_day_chats(state.db.pool(), parsed_date).await)
-        }
-        Err(_) => error_response(Error::InvalidInput(format!(
-            "Invalid date format: {}",
-            date
-        ))),
-    }
-}
-
 /// The day's facts for the strip under its Abstract: weather, coverage, chats.
 pub async fn wiki_get_day_facts_handler(
     State(state): State<AppState>,
@@ -1486,18 +1494,21 @@ pub async fn wiki_get_day_facts_handler(
 
 #[derive(Deserialize)]
 pub struct DayMeasuresQuery {
-    /// Comma-separated `lane:id` measures, in the order to show them.
+    /// Your pins, comma-separated: `lane:id` measures and `unusual`. Named
+    /// `keys` for good: apps update apart from the server, and an app that
+    /// asks by another name gets nothing back from an older one.
     pub keys: Option<String>,
 }
 
-/// Your numbers for a day page: each pinned measure for the day and the days
-/// before it, plus every measure a day can pin.
+/// Your numbers for a day page: your pins, every measure a day can show, for
+/// the day and the days before it, and the one furthest from its usual when
+/// you pinned `unusual`.
 pub async fn wiki_get_day_measures_handler(
     State(state): State<AppState>,
     Path(date): Path<String>,
     Query(q): Query<DayMeasuresQuery>,
 ) -> Response {
-    let keys: Vec<String> = q
+    let pins: Vec<String> = q
         .keys
         .unwrap_or_default()
         .split(',')
@@ -1505,7 +1516,18 @@ pub async fn wiki_get_day_measures_handler(
         .filter(|k| !k.is_empty())
         .collect();
     match date.parse::<chrono::NaiveDate>() {
-        Ok(parsed_date) => api_response(crate::api::lifeline::day_measures(state.db.pool(), parsed_date, &keys).await),
+        Ok(parsed_date) => api_response(crate::api::lifeline::day_measures(state.db.pool(), parsed_date, &pins).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
+    }
+}
+
+/// The places and people a day holds for the first time in the record.
+pub async fn wiki_get_day_firsts_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => api_response(crate::api::wiki::day_firsts(state.db.pool(), parsed_date).await),
         Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
     }
 }

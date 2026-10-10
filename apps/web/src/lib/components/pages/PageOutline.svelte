@@ -7,56 +7,49 @@
 	to scroll the editor there. Scroll-spy keeps the bar's label and the active
 	entry in sync as you read.
 
-	Works against the CodeMirror view directly (headings live as lines, not DOM
-	anchors): scroll-to via EditorView.scrollIntoView, scroll-spy off the editor's
-	own scroller.
+	Knows no editor: the editor hands over an `OutlineNav` (`cmOutlineNav` for
+	CodeMirror, `treeOutlineNav` for a block page) that scrolls to a heading and
+	says where one starts in its scroller.
 -->
 <script lang="ts">
-	import { EditorView } from "@codemirror/view";
 	import Icon from "$lib/components/Icon.svelte";
-	import type { PageHeading } from "$lib/codemirror/outline";
+	import { sameHeading, type OutlineNav, type PageHeading } from "$lib/components/pages/outline";
 
-	let { headings, view }: { headings: PageHeading[]; view: EditorView | null } = $props();
+	let { headings, nav }: { headings: PageHeading[]; nav: OutlineNav | null } = $props();
 
 	let open = $state(false);
-	let activeFrom = $state<number | null>(null);
+	let active = $state<PageHeading | null>(null);
 
 	const activeHeading = $derived(
-		headings.find((h) => h.from === activeFrom) ?? headings[0] ?? null,
+		(active && headings.find((h) => sameHeading(h, active!))) ?? headings[0] ?? null,
 	);
 
 	function scrollTo(h: PageHeading) {
 		open = false;
-		if (!view) return;
-		const pos = Math.min(h.from, view.state.doc.length);
-		view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: 24 }) });
-		activeFrom = h.from;
+		if (!nav) return;
+		nav.scrollTo(h);
+		active = h;
 	}
 
-	// The active section = the last heading whose line has scrolled to/above the
+	// The active section = the last heading whose top has scrolled to/above the
 	// top of the viewport (with a small threshold so it flips a touch early).
 	function computeActive() {
-		if (!view || headings.length === 0) return;
-		const threshold = view.scrollDOM.scrollTop + 96;
-		let current: number | null = headings[0].from;
+		if (!nav || headings.length === 0) return;
+		const threshold = nav.scroller.scrollTop + 96;
+		let current: PageHeading = headings[0];
 		for (const h of headings) {
-			const pos = Math.min(h.from, view.state.doc.length);
-			let top: number;
-			try {
-				top = view.lineBlockAt(pos).top;
-			} catch {
-				continue;
-			}
-			if (top <= threshold) current = h.from;
+			const top = nav.topOf(h);
+			if (top === null) continue;
+			if (top <= threshold) current = h;
 			else break;
 		}
-		activeFrom = current;
+		active = current;
 	}
 
 	// Scroll-spy off the editor's scroller.
 	$effect(() => {
-		if (!view) return;
-		const scroller = view.scrollDOM;
+		if (!nav) return;
+		const scroller = nav.scroller;
 		computeActive();
 		const onScroll = () => computeActive();
 		scroller.addEventListener("scroll", onScroll, { passive: true });
@@ -83,7 +76,7 @@
 				{#each headings as h}
 					<button
 						class="outline-item level-{h.level}"
-						class:active={h.from === activeFrom}
+						class:active={activeHeading !== null && sameHeading(h, activeHeading)}
 						onclick={() => scrollTo(h)}
 					>
 						{h.text}

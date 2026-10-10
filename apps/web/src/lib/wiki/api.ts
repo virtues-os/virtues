@@ -98,13 +98,6 @@ export interface WikiDayApi {
 	article?: string | null;
 	new_entity_count: number;
 	new_topic_count: number;
-	sleep_cycles: Array<{
-		start_time: string;
-		end_time: string;
-		dominant_stage: string;
-		avg_hr: number | null;
-		autonomic_z: number | null;
-	}>;
 	created_at: string;
 	updated_at: string;
 }
@@ -317,30 +310,6 @@ export async function resolveNote(
 		body: JSON.stringify({ resolution })
 	});
 	if (!res.ok) throw new Error('Could not close that note');
-}
-
-/** One heart-rate sample for the day's Autonomic chart. */
-export interface DayHeartRateSample {
-	timestamp: string;
-	bpm: number;
-}
-
-/**
- * The day's raw HR samples, oldest first. Sparse days are normal.
- *
- * `tz` anchors the local-day window. Without it the server falls back to the
- * day's recorded zone, which is right for a past day and wrong for today when
- * the box and the browser disagree about where midnight is.
- */
-export async function getDayHeartRate(
-	date: string,
-	tz?: string,
-	fetchFn: FetchFn = fetch
-): Promise<DayHeartRateSample[]> {
-	const q = tz ? `?tz=${encodeURIComponent(tz)}` : '';
-	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/heart-rate${q}`);
-	if (!res.ok) return [];
-	return res.json();
 }
 
 /** The article join row for a subject. `page_id` is what the editor opens. */
@@ -882,6 +851,25 @@ export function rewriteDay(
 	});
 }
 
+/** How the day's pictures are made: `ui_preferences.day_pictures`, oil when unset. */
+export type DayPictureStyle = 'oil' | 'watercolor' | 'pencil' | 'gouache';
+
+/**
+ * Ask your server to paint a past day: one picture of a place the page
+ * names, set into the page. It answers when it is done, in about twenty
+ * seconds. `reason` is nothing_to_paint, busy (another writer holds the
+ * day), billing or failed; only `painted: true` changed the page.
+ */
+export function paintDay(
+	date: string,
+	style?: DayPictureStyle
+): Promise<{
+	painted: boolean;
+	reason?: 'nothing_to_paint' | 'busy' | 'billing' | 'failed';
+}> {
+	return apiSend('POST', `/wiki/day/${encodeURIComponent(date)}/picture`, style ? { style } : {});
+}
+
 
 export async function listDays(
 	startDate?: string,
@@ -1062,6 +1050,8 @@ export interface TemporalEventApi {
 	is_user_edited: boolean | null;
 	// Dayline fields
 	novelty_z: number | null;
+	/** Off-pattern for its kind (LOF); the day line prefers it to `novelty_z`. */
+	local_novelty_z: number | null;
 	topics: string[] | null;
 	event_summary: string | null;
 	agent_action: string | null;
@@ -1244,25 +1234,7 @@ export interface TimelineDayView {
 	last_point_before: TimelineDayPoint | null;
 }
 
-// ============================================================================
-// Day Chats (in-app Virtues + external AI conversations)
-// ============================================================================
-
-export interface DayChatApi {
-	id: string;
-	source: "virtues" | "external";
-	provider: string | null;
-	title: string;
-	message_count: number;
-	started_at: string;
-}
-
-/**
- * Get all AI chats (in-app Virtues + external imported) that started on a day.
- * In-app chats are navigable; external chats are display-only.
- * @param date - The date in YYYY-MM-DD format
- */
-/** The dateline above a day's title. Deterministic facts only; absent is null. */
+/** A day's computed facts: the weather under its title and the stretches it was recorded. Absent is null. */
 export interface DayFactsApi {
 	temperature_high_c: number | null;
 	temperature_low_c: number | null;
@@ -1284,6 +1256,8 @@ export async function getDayFacts(date: string, fetchFn: FetchFn = fetch): Promi
 export interface PersonGlossApi {
 	id: string;
 	date: string;
+	/** How you know them, when you wrote it down: your bond, else their relationship. */
+	relationship: string | null;
 	first_message_on: string | null;
 	/** Whether that first message was in a group thread. */
 	first_message_in_group: boolean | null;
@@ -1291,6 +1265,8 @@ export interface PersonGlossApi {
 	/** The days just before `date` that `days_in_window` counts over. */
 	window_days: number;
 	days_in_window: number;
+	/** One per day of the window, oldest first: whether there was a message. A server older than this field leaves it out. */
+	days?: boolean[];
 	direct_messages_in_window: number;
 	group_messages_in_window: number;
 }
@@ -1299,7 +1275,19 @@ export function getPersonGloss(id: string, date: string): Promise<PersonGlossApi
 	return apiGet<PersonGlossApi>(`/wiki/person/${encodeURIComponent(id)}/gloss`, { date });
 }
 
-/** One of your numbers on a day page: the day's value and the days before it. */
+/** What a day holds for the first time in the record, for its margin. */
+export interface DayFirstsApi {
+	/** `name` only when someone named the place; a coordinate stub is null. */
+	places: { name: string | null; at: string }[];
+	/** People whose first message on record came that day; `at` is their first that day. */
+	people: { id: string; name: string; at: string }[];
+}
+
+export function getDayFirsts(date: string): Promise<DayFirstsApi> {
+	return apiGet<DayFirstsApi>(`/wiki/day/${encodeURIComponent(date)}/firsts`);
+}
+
+/** One number a day page can show: the day's value and the days before it. */
 export interface DayMeasureApi {
 	/** `lane:id`, the form a pin is stored in. */
 	key: string;
@@ -1312,6 +1300,15 @@ export interface DayMeasureApi {
 	before: (number | null)[];
 }
 
+/** A measure in the catalog: also where it comes from. */
+export interface CatalogMeasureApi extends DayMeasureApi {
+	lane: string;
+	/** The registry ontology it reads (`health_sleep`) and its display name. */
+	ontology: string;
+	source: string;
+}
+
+/** A measure a day can pin, without its days. */
 export interface MeasureListingApi {
 	key: string;
 	lane: string;
@@ -1320,14 +1317,29 @@ export interface MeasureListingApi {
 	kind: 'total' | 'rate';
 }
 
+/**
+ * The apps carry their own copy of this page and update apart from the
+ * server, so a newer page can meet an older server. That server answers with
+ * `measures` and `available` alone: no `catalog`, no `unusual`.
+ */
 export interface DayMeasuresApi {
 	date: string;
+	/** Your pinned measures, in pin order. */
 	measures: DayMeasureApi[];
 	available: MeasureListingApi[];
+	/** Every measure a day can show, with its days, in registry order. */
+	catalog?: CatalogMeasureApi[];
+	/** With an `unusual` pin: the `lane:id` furthest from its usual today,
+	 *  from a lane the other pins don't show. Null when nothing stood out. */
+	unusual?: string | null;
 }
 
-export function getDayMeasures(date: string, keys: string[]): Promise<DayMeasuresApi> {
-	return apiGet<DayMeasuresApi>(`/wiki/day/${encodeURIComponent(date)}/measures`, { keys: keys.join(',') });
+/** The pin for whichever number sat furthest from its usual today. */
+export const UNUSUAL_PIN = 'unusual';
+
+/** Asks by `keys`, the name every server reads. An older server skips `unusual`. */
+export function getDayMeasures(date: string, pins: string[]): Promise<DayMeasuresApi> {
+	return apiGet<DayMeasuresApi>(`/wiki/day/${encodeURIComponent(date)}/measures`, { keys: pins.join(',') });
 }
 
 /** A day whose page reads like this one's. */
@@ -1340,15 +1352,6 @@ export interface SimilarDayApi {
 
 export async function getSimilarDays(date: string, fetchFn: FetchFn = fetch): Promise<SimilarDayApi[]> {
 	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/similar`);
-	if (!res.ok) return [];
-	return res.json();
-}
-
-export async function getDayChats(
-	date: string,
-	fetchFn: FetchFn = fetch,
-): Promise<DayChatApi[]> {
-	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/chats`);
 	if (!res.ok) return [];
 	return res.json();
 }

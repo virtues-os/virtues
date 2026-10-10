@@ -47,6 +47,13 @@ use virtues_registry::ontologies::registered_ontologies;
 
 /// Annotate every event on `date`. Returns the number of events updated.
 pub async fn annotate_events_for_day(pool: &PgPool, date: NaiveDate) -> Result<u32> {
+    // The owner, who is never someone their own event involved.
+    let self_id: Option<String> =
+        sqlx::query_scalar("SELECT self_person_id FROM app_user_profile LIMIT 1")
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+
     let events = sqlx::query(
         r#"
         SELECT e.id, e.started_at, e.ended_at, e.kind
@@ -69,7 +76,7 @@ pub async fn annotate_events_for_day(pool: &PgPool, date: NaiveDate) -> Result<u
         let kind: String = row.get("kind");
 
         let avg_hr = window_avg_hr(pool, start, end).await;
-        let entities = window_entities(pool, start, end).await?;
+        let entities = window_entities(pool, start, end, self_id.as_deref()).await?;
         let ontologies = window_ontologies(pool, start, end).await;
 
         // Confidence — how sure we are of the block. Deterministic, per the model in
@@ -146,26 +153,38 @@ async fn window_avg_hr(
     .flatten()
 }
 
-/// The entities already resolved to records inside this window.
+/// The entities the event involved: who was on a thread with the owner, where
+/// they were, what they paid.
 ///
 /// No LLM. `wiki_refs` is populated by the deterministic resolvers
 /// (`entity_resolution::people` / `::places`) and by the mention resolver, and
 /// it is the authoritative edge — `wiki_events.entities` is a derived, rebuilt
 /// cache over it, never hand-edited. Events get re-cut; the refs don't move.
+///
+/// Not every ref in the window is involvement. An email's sender is whoever
+/// mailed the owner while it happened, a receipt or a newsletter as often as a
+/// person; a calendar attendee is someone a plan named, and a subscribed
+/// calendar names its own address. Both stay out, and so does the owner, who
+/// is never a companion in their own day. The day page lists these as the
+/// people an event was with.
 async fn window_entities(
     pool: &PgPool,
     start: chrono::DateTime<chrono::Utc>,
     end: chrono::DateTime<chrono::Utc>,
+    self_id: Option<&str>,
 ) -> Result<Vec<String>> {
     let rows = sqlx::query(
         r#"
         SELECT DISTINCT entity_id
         FROM wiki_refs
         WHERE occurred_at >= $1 AND occurred_at < $2
+          AND source_table NOT IN ('data_communication_email', 'data_calendar_event')
+          AND entity_id IS DISTINCT FROM $3
         "#,
     )
     .bind(start)
     .bind(end)
+    .bind(self_id)
     .fetch_all(pool)
     .await?;
 
@@ -207,4 +226,62 @@ async fn window_ontologies(
     }
 
     present
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn refs(pool: &PgPool, rows: &[(&str, &str, &str, &str)]) {
+        for (i, (entity_id, entity_type, source_table, at)) in rows.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at) \
+                 VALUES ($1, $2, $3, $4, $5, 'sender', $6::timestamptz)",
+            )
+            .bind(format!("ref_{i}"))
+            .bind(entity_type)
+            .bind(entity_id)
+            .bind(source_table)
+            .bind(format!("src_{i}"))
+            .bind(at)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    /// The people an event lists are the ones on a thread with the owner in
+    /// it. An email that arrived meanwhile, a plan's attendee list and the
+    /// owner themselves read as companions on the day page, and are none.
+    #[sqlx::test]
+    async fn an_event_involves_its_threads_and_places_not_mail_plans_or_the_owner(pool: PgPool) {
+        sqlx::query("UPDATE app_user_profile SET self_person_id = 'person_me'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        refs(
+            &pool,
+            &[
+                ("person_nick", "person", "data_communication_message", "2026-10-04T15:10:00Z"),
+                ("place_church", "place", "data_location_visit", "2026-10-04T15:00:00Z"),
+                ("person_receipts", "person", "data_communication_email", "2026-10-04T15:20:00Z"),
+                ("person_calendar", "person", "data_calendar_event", "2026-10-04T15:00:00Z"),
+                ("person_me", "person", "data_communication_message", "2026-10-04T15:30:00Z"),
+                // Outside the window.
+                ("person_david", "person", "data_communication_message", "2026-10-04T18:00:00Z"),
+            ],
+        )
+        .await;
+
+        let self_id: Option<String> =
+            sqlx::query_scalar("SELECT self_person_id FROM app_user_profile LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let start = "2026-10-04T15:00:00Z".parse().unwrap();
+        let end = "2026-10-04T16:00:00Z".parse().unwrap();
+        let mut got = window_entities(&pool, start, end, self_id.as_deref()).await.unwrap();
+        got.sort();
+        assert_eq!(got, vec!["person_nick".to_string(), "place_church".to_string()]);
+    }
 }

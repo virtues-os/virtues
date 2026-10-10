@@ -24,27 +24,34 @@ use super::wiki_streams::{get_day_sources, DaySource};
 /// This is not grunt work and it is not prose. It is adjudication: every source
 /// lies a little (calendars run long, GPS drifts, diarization miscounts), the
 /// boundaries between events are latent, and the truth is the convergence of
-/// noisy signals. That is a best-model job, so it runs on Chat — once, nightly,
-/// on a completed day. It reads a compact DOSSIER (clean rollups: visits,
-/// calendar, sleep, audio sessions, messages, health) rather than a raw dump, and
-/// a few days of recent event labels to disambiguate the ambiguous stretches.
+/// noisy signals. That is a best-model job, so it runs on the Standard slot —
+/// once, nightly, on a completed day. It reads a compact DOSSIER (clean
+/// rollups: visits, movement, calendar, sleep, audio sessions, messages) rather
+/// than a raw dump, and a few days of recent event labels to disambiguate the
+/// ambiguous stretches.
+///
+/// What a summary may say is decided as much by what the dossier carries as by
+/// this text: it holds no message counts, no distances or speeds and no
+/// coordinates, because a model handed a number repeats it whatever it is told.
 const SEGMENT_PROMPT: &str = r#"You are the event detective for a personal life-log. You are handed a DOSSIER of a single day's evidence and must reconstruct the day as a clean, gapless timeline of events. Output ONLY a raw JSON array — no markdown, no code fences, no prose, no commentary.
 
 Output format:
-[{"start": "HH:MM", "end": "HH:MM", "label": "Brief label", "summary": "1-3 factual sentences grounded in the dossier.", "topics": ["2-4 lowercase topical tags"]}]
+[{"start": "HH:MM", "end": "HH:MM", "label": "Brief label", "summary": "One or two plain sentences.", "topics": ["2-4 lowercase topical tags"]}]
+
+WHO "YOU" ARE:
+The dossier opens with a <you> block naming the owner of this day. Write every summary in the second person: the owner is "you" ("You and <person> texted about the lease"). The owner is "you:" in the message lines and one of the unnamed voices in the recordings. The owner is never a companion: never write "with <the owner's name>", and never list them among the people in a stretch.
 
 HOW TO READ THE DOSSIER:
 The dossier is a time-ordered list of the day's evidence, each item formatted for its kind. The kinds play different roles:
-- **Location visits** are your PRIMARY boundary and your single strongest line: a change of place was MEASURED, not claimed.
+- **Location visits** are your PRIMARY boundary and your single strongest line: a change of place was MEASURED, not claimed. A visit names its place only when the owner named it; "an unnamed place" has no name, and you must not give it one.
 - **Calendar events are PLANS, NOT EVIDENCE.** They are the weakest line in the dossier and are never a boundary on their own — see CALENDAR EVENTS ARE INTENTIONS below.
 - **Device presence** (`[device]` lines) is a stretch the owner was demonstrably AT a machine — typing, clicking, or holding the screen awake. It is weak evidence of WHAT they were doing and strong evidence of WHERE THEY WERE NOT: a body at a keyboard is not a body at a dinner. Read the tail of the line — `screen locked` and `machine slept` mean they stopped; `collector stopped` means WE stopped watching and says nothing at all about them.
 - **Sleep** spans are hard boundaries, BUT DO NOT EMIT YOUR OWN "Sleep" EVENT. The system stamps the authoritative sleep block separately from deterministic sleep-tracking data. Treat the overnight sleep span as a boundary and leave that stretch as "Unknown" — do not label it "Sleep" yourself.
-- **Audio sessions** color the day and are CANDIDATE boundaries — weigh them, do not obey them. An audio session's content tells you what a stretch actually was (a conversation, a drive, airport noise, quiet work, sickness in bed) even when there is no location or calendar to anchor it. This is how you name a day spent entirely at home, or entirely on the road, where location never changes.
-- **Messages** (`[messages]` lines) are a burst of a single thread, placed in time, with a few excerpts. `you:` is the owner; `them:` is the other person. Content here is the strongest evidence of INTENT in the whole dossier — it says what something was FOR, which no other source can. Read it that way, and read the two rules below before you use it: MESSAGES ARE PLANS, and DO NOT QUOTE PEOPLE.
+- **Audio sessions** color the day and are CANDIDATE boundaries — weigh them, do not obey them. An audio session's content tells you what a stretch actually was (a conversation, a drive, airport noise, quiet work, sickness in bed) even when there is no location or calendar to anchor it. This is how you name a day spent entirely at home, or entirely on the road, where location never changes. The voices are never named: a name heard in a recording is someone MENTIONED, not someone present.
+- **Messages** (`[messages]` lines) are a run of one thread, placed in time, with a few excerpts. `you:` is the owner; `them:` is someone else on the thread. Content here is the strongest evidence of INTENT in the whole dossier — it says what something was FOR, which no other source can. Read it that way, and read the two rules below before you use it: MESSAGES ARE PLANS, and DO NOT QUOTE PEOPLE.
 - **Muted audio** (`[audio MUTED by schedule]` / `[audio MUTED by place]` lines) is a stretch the owner chose not to record. It is COVERAGE — the phone was alive and present — but it is not evidence of anything, and it is not a gap to explain. Never name a stretch by it, never call it a blind spot, never guess what was happening inside it.
-- **Health** (heart rate, steps) is texture, never a boundary on its own.
 - **Purchases** (`[purchase]` / `[refund]` lines) are precise evidence of what a stretch was — a meal, a shop, a checkout; the merchant names the activity.
-- **Movement** (`[movement]` lines) tell you when, and how fast, the owner was actually travelling — see MOVEMENT AND TRANSIT.
+- **Movement** (`[movement]` lines) tell you when the owner was actually travelling, and how far in words — see MOVEMENT.
 
 CALENDAR EVENTS ARE INTENTIONS, NOT ATTENDANCE:
 A `[calendar]` line records what was SCHEDULED. It is not evidence that anyone went. Treating it as evidence is the worst failure you can produce here — it writes a confident, detailed memory of a day that did not happen, and the owner cannot tell it from a real one. Hard rules:
@@ -64,28 +71,37 @@ A message arranging something is a PLAN, exactly as a calendar entry is, and eve
 - Messages that are not plans — the exchange itself, reacting to something, arranging nothing — are ordinary evidence of what a stretch was, like audio. The distinction is whether the text is about a FUTURE time.
 
 DO NOT QUOTE PEOPLE:
-You may READ every message in the dossier, both directions. You may NOT reproduce another person's words in a `summary`. Their text is here so you can cut and name the day correctly, not so it can be printed back. Write what the exchange was ABOUT ("arranging a coffee at the Hayes cafe for 07:30"), never what either party said in their own words. The owner's own words are the one exception, and even then prefer describing to quoting.
+You may READ every message in the dossier, both directions. You may NOT reproduce another person's words in a `summary`. Their text is here so you can cut and name the day correctly, not so it can be printed back. Write what the exchange was ABOUT ("you and <person> settled on coffee at 7:30"), never what either party said in their own words. The owner's own words are the one exception, and even then prefer describing to quoting.
 
 WHAT MAKES A BOUNDARY:
 A boundary is a change of CONTEXT — where you are, what is scheduled, who you are with — never a change of TOPIC. A single conversation at one desk that drifts from work to lunch to weekend plans is ONE event, not three. Do not split on what is being talked about; split on the situation changing.
 
-MOVEMENT AND TRANSIT:
-The dossier includes **[movement]** lines — each a stretch the owner was actually moving, with distance and average pace (km/h) computed from GPS. That is ALL you know about travel: distance and speed, nothing more. Hard rules:
-- NEVER name or infer a MODE of travel — not "walked", not "cycling", not "drove", not "tram"/"bus"/"train"/"flight"/"Uber", nothing. GPS pace cannot reliably tell a walk from a slow bike from a car in traffic, so ANY mode is a guess, and a guess is a fabrication. Describe travel ONLY by its distance and pace - "moved 1.3 km at ~18 km/h", "a 0.5 km trip" — and let the numbers stand.
-- If a stretch has NO [movement] line, they were NOT travelling. Do not call it "transit", "commute", "a drive", or "a ride". A stationary window - a checkout, a wait, a call at a desk - is a STOP, not a trip; a purchase or a conversation there is what it was. If you cannot otherwise name it, it is "Unknown".
+MOVEMENT:
+A `[movement]` line is a stretch the owner was actually moving. It says how far in words (nearby, across town, out of town, a long way), and "from X to Y" when both ends are places the owner named. Hard rules:
+- In a summary, say a move as "from X to Y" only when the line names both places. Otherwise say it plainly, in a few words: "went across town", "a long trip out of town".
+- Say HOW they travelled only when the evidence says it: the line says "at flight speed" or "at walking pace", or a receipt, a booking, or someone in the audio or messages says it. Otherwise name no mode at all. GPS cannot tell a car from a bus, a train or a ride, so "drove", "took the bus" or "walked" would be a guess, and a guess is a fabrication.
+- If a stretch has NO [movement] line, they were NOT travelling. Do not call it "transit", "commute", "a drive", or "a ride". A stationary window - a checkout, a wait, a call at a desk - is a STOP, not a trip. If you cannot otherwise name it, it is "Unknown".
 When a move has CONTENT (a conversation, a call), headline the span by that content, with the movement as the setting. Genuinely empty movement you may leave "Unknown"; the system marks it transit afterward.
 
 WHAT AN EVENT IS:
 Each event is one of exactly two kinds:
-1. **A definitively understood block** — the dossier evidences a specific, nameable activity. The `label` is a short noun phrase (2-5 words). The `summary` is 1-3 plain factual sentences grounded in the actual evidence (place, who, durations, message counts, what the audio content shows, heart rate). No mood, no motivation, no invention.
+1. **A definitively understood block** — the dossier evidences a specific, nameable activity.
+   - The `label` is 2-6 specific words the owner would know their own day by, shaped like "Brunch with <person>", "<activity> at <named place>", "Texting <person> from the gate". Use the day's people and its context: what came just before, and what earlier events were called, so the labels read as one day. Name a person in a label only when the record puts them there: on the message thread, on the call, in a corroborated calendar entry. Never a generic label like "Group outing", "Computer session" or "Move toward somewhere" when the evidence says more.
+   - The `summary` is one or two plain sentences on what mattered in that stretch: who, what was said or done, and where only when the place has a real name. No mood, no motivation, no invention.
 2. **Unknown** — the dossier does not support a specific classification for this stretch. The `label` is exactly "Unknown" and the `summary` is omitted. Do NOT invent "Morning routine" / "Rest" / "Quiet time" to fill it. A genuine gap is more truthful than a guess.
+
+WHAT A SUMMARY NEVER SAYS:
+- No distances, speeds, coordinates or message counts. The dossier carries none, and none belong in a day you lived.
+- Never "incoming messages" or "a few messages": say who wrote and what about.
+- Never silence, quiet, ambient noise or background sound. A stretch where nothing was said is not news.
+- Never the evidence itself ("a visit was logged", "audio covered", "the dossier shows"): say what happened.
 
 RULES:
 - The timeline MUST cover the full 24 hours: first event starts "00:00", last ends "24:00", contiguous, no gaps, no overlaps. Fill any stretch the evidence cannot name with a single "Unknown" block.
 - Use 24-hour local time (HH:MM). Do not emit "Sleep" (the system owns it); leave overnight/rest stretches with no waking activity as "Unknown".
 - Event count scales with evidence. A rich, mobile, talkative day might have 10-16 events; a quiet day might have 3-5. Do not pad to a minimum, do not fragment a coherent context to inflate the count.
-- RECENT CONTEXT (if provided) is the last few days' event labels — use it only to disambiguate a stretch the dossier leaves ambiguous ("Unknown 18:00-19:00" that lines up with a nightly gym pattern), never to invent evidence this day lacks.
-- The `summary` is the single most load-bearing field: the user reads it AND it is embedded to measure how novel the event was. Make it factual and specific — "Forty minutes at Blue Bottle on Hayes; six messages with Maya about the lease; heart rate mid-70s." Not "a pleasant coffee.""#;
+- RECENT CONTEXT (if provided) is the last few days' event labels — use it to keep labels consistent across days and to disambiguate a stretch the dossier leaves ambiguous ("Unknown 18:00-19:00" that lines up with a nightly gym pattern), never to invent evidence this day lacks.
+- The `summary` is the single most load-bearing field: the owner reads it AND it is embedded to measure how unlike their usual the event was. Make it factual and specific, shaped like "You and <person> went over the lease, then met for coffee at <named place>." Not "a pleasant coffee.""#;
 
 
 // ── Timezone helpers ─────────────────────────────────────────────────────────
@@ -427,11 +443,11 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
         return Ok(0);
     }
 
-    // 3. Build the dossier — one compact, time-ordered feature list from the clean
-    //    rollups (visits, calendar, sleep, audio sessions, chats, messages, health).
-    //    High-cardinality streams (messages, and later email) are folded into bounded
-    //    AGGREGATES (participant counts), never dumped row-by-row — that is what keeps
-    //    the whole thing bounded without a blunt total-length truncation.
+    // 3. Build the dossier — who the owner is, then one compact, time-ordered
+    //    feature list from the clean rollups (visits, movement, calendar, sleep,
+    //    audio sessions, chats, messages). Messages arrive as bounded per-thread
+    //    bursts, never row-by-row — that is what keeps the whole thing bounded
+    //    without a blunt total-length truncation.
     let tz_for_display: Option<Tz> = timezone.as_deref().and_then(|s| s.parse().ok());
     let dossier = build_dossier(
         pool,
@@ -521,6 +537,44 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
 
     tracing::info!(date = %date, events = n, "day segmented");
     Ok(n)
+}
+
+/// What a forced re-cut of one day did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Recut {
+    /// Audio sessions rolled up first, so the dossier reads the day's own.
+    pub sessions: u32,
+    /// Events the detective cut. Zero when the day has too little to cut or is
+    /// not over yet, and then no model was called.
+    pub events: u32,
+    /// Slivers absorbed and gaps labelled transit after the cut.
+    pub gap_ops: u32,
+}
+
+/// Re-cut one day's events from scratch: forget its sources fingerprint so
+/// segmentation runs even when nothing changed, roll up its audio, cut it (one
+/// Standard call, when the day has enough to cut), then settle sleep and gaps.
+/// The new events carry no scores; `dayline::rescore_day` gives them theirs.
+pub async fn recut_day(pool: &PgPool, date: NaiveDate) -> Result<Recut> {
+    sqlx::query("UPDATE wiki_days SET sources_fingerprint = NULL WHERE date = $1")
+        .bind(date)
+        .execute(pool)
+        .await?;
+    let sessions = crate::sessionize::audio::sessionize_day(pool, date).await?;
+    let events = segment_day_events(pool, date).await?;
+    crate::dayline::sleep::resolve_sleep_events(pool, date).await;
+    let gap_ops = crate::dayline::gaps::classify_day_gaps(pool, date).await?;
+    Ok(Recut { sessions, events, gap_ops })
+}
+
+/// The days from `from` to `to`, both included, oldest first: the order a
+/// backlog is re-cut and scored in, because each day's novelty is measured
+/// against the days before it.
+pub fn days_between(from: NaiveDate, to: NaiveDate) -> Result<Vec<NaiveDate>> {
+    if to < from {
+        return Err(crate::Error::InvalidInput(format!("{to} is before {from}")));
+    }
+    Ok(from.iter_days().take_while(|d| *d <= to).collect())
 }
 
 /// What the day's sources looked like, so we can tell whether anything changed.
@@ -1109,7 +1163,8 @@ fn is_whole_page(draft: &str) -> bool {
 /// `had_your_edits` whether the page carried the owner's edits then (a
 /// rewrite that went ahead with them had their consent). In order:
 ///
-/// 1. A thin draft is refused.
+/// 1. A thin draft is refused. The page's picture figures are carried into
+///    the draft (`day_picture::carry_pictures`); everything below sees that.
 /// 2. The page is read again. If it moved, or the owner's edits appeared
 ///    while the server was writing, nothing is cut and nothing changes.
 /// 3. The page as it is now is kept (`pages::cut_restore_point`). If that
@@ -1140,6 +1195,10 @@ pub async fn apply_day_rewrite(
         tracing::warn!(date = %page.date, chars = draft.len(), "the rewrite's draft is too thin to replace the page");
         return RewriteOutcome::ThinDraft;
     }
+    // A draft that leaves out the page's painted picture gets it back: the
+    // weekly gate would not paint another for days.
+    let carried = crate::api::day_picture::carry_pictures(before, draft);
+    let draft = carried.as_str();
 
     let _turn = yjs.write_turn(&page.page_id).await;
     let live = match yjs.read_text(&page.page_id).await {
@@ -1248,84 +1307,6 @@ async fn record_rewrite(
     Ok(())
 }
 
-// ── Section builders ─────────────────────────────────────────────────────────
-
-/// A prompt section with a heading and body
-struct PromptSection {
-    heading: String,
-    body: String,
-}
-
-/// Build health snapshot from aggregation queries
-async fn build_health_snapshot(
-    pool: &PgPool,
-    start_str: &str,
-    end_str: &str,
-) -> Result<Option<PromptSection>> {
-    Ok({
-        let mut lines = Vec::new();
-
-        // Heart rate
-        // `AVG` over an integer column is NUMERIC in Postgres, which sqlx
-        // will not decode as f64, and `COUNT(*)` is INT8, not INT4 — both
-        // failed at row decode, and the `?` on every caller took the whole
-        // narration down with them. Cast at the boundary; the count is i64.
-        let hr: Option<(Option<i32>, Option<i32>, Option<f64>, i64)> = sqlx::query_as(
-            r#"
-        SELECT MIN(bpm), MAX(bpm), ROUND(AVG(bpm))::float8, COUNT(*)
-        FROM data_health_heart_rate
-        WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz
-        "#,
-        )
-        .bind(start_str)
-        .bind(end_str)
-        .fetch_optional(pool)
-        .await?;
-
-        if let Some((Some(min_hr), Some(max_hr), Some(avg_hr), count)) = hr {
-            if count > 0 {
-                lines.push(format!(
-                    "- Heart rate: avg {:.0}, min {}, max {} ({} readings)",
-                    avg_hr, min_hr, max_hr, count
-                ));
-            }
-        }
-
-        // Steps
-        let steps: Option<(Option<i64>,)> = sqlx::query_as(
-            r#"
-        SELECT SUM(step_count)
-        FROM data_health_steps
-        WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz
-        "#,
-        )
-        .bind(start_str)
-        .bind(end_str)
-        .fetch_optional(pool)
-        .await?;
-
-        if let Some((Some(total_steps),)) = steps {
-            if total_steps > 0 {
-                lines.push(format!("- Steps: {}", total_steps));
-            }
-        }
-
-        if lines.is_empty() {
-            None
-        } else {
-            Some(PromptSection {
-                heading: "Health Snapshot".to_string(),
-                body: lines.join("\n"),
-            })
-        }
-    })
-}
-
-/// Append a section to the prompt string
-fn append_section(prompt: &mut String, section: &PromptSection) {
-    prompt.push_str(&format!("\n## {}\n{}\n", section.heading, section.body));
-}
-
 // ── The dossier ────────────────────────────────────────────────────────────────
 
 
@@ -1342,6 +1323,17 @@ fn cap(s: &str, n: usize) -> String {
     out
 }
 
+/// One stretch of the day the owner was moving.
+struct Move {
+    start: chrono::DateTime<chrono::Utc>,
+    end: chrono::DateTime<chrono::Utc>,
+    km: f64,
+    /// Mean speed of the run's moving fixes.
+    avg_kmh: Option<f64>,
+    /// The fastest moving fix in the run.
+    peak_kmh: Option<f64>,
+}
+
 /// Segment the day's GPS trace into MOVING stretches, computed from `speed` (never
 /// stored — movement is the negative space between stays). A stretch is a run of
 /// fixes above a walking-still threshold, coalescing brief pauses (a light, a
@@ -1349,20 +1341,8 @@ fn cap(s: &str, n: usize) -> String {
 /// ground. Keyed on the raw trace, NOT on visits, so a stretch with no clustered
 /// visit (a whole evening at an unrecognised home) still gets grounded — and,
 /// crucially, a mostly-stationary window (standing at a till) yields NO stretch, so
-/// the detective has no license to call it transit. Returns
-/// `(start, end, distance_km, avg_moving_kmh)`.
-async fn day_movement_segments(
-    pool: &PgPool,
-    start_str: &str,
-    end_str: &str,
-) -> Result<
-    Vec<(
-        chrono::DateTime<chrono::Utc>,
-        chrono::DateTime<chrono::Utc>,
-        f64,
-        Option<f64>,
-    )>,
-> {
+/// the detective has no license to call it transit.
+async fn day_movement_segments(pool: &PgPool, start_str: &str, end_str: &str) -> Result<Vec<Move>> {
     Ok({
         use sqlx::Row;
         let rows = sqlx::query(
@@ -1449,16 +1429,22 @@ async fn day_movement_segments(
             for w in start..end {
                 dist += haversine((pts[w].1, pts[w].2), (pts[w + 1].1, pts[w + 1].2));
             }
-            let (mut sspeed, mut nspeed) = (0.0, 0usize);
+            let (mut sspeed, mut nspeed, mut peak) = (0.0, 0usize, 0.0f64);
             for w in start..=end {
                 if eff[w] > MOVING_MPS {
                     sspeed += eff[w];
                     nspeed += 1;
+                    peak = peak.max(eff[w]);
                 }
             }
             if dist >= MIN_DIST_M {
-                let avg_kmh = (nspeed > 0).then(|| sspeed / nspeed as f64 * 3.6);
-                segs.push((pts[start].0, pts[end].0, dist / 1000.0, avg_kmh));
+                segs.push(Move {
+                    start: pts[start].0,
+                    end: pts[end].0,
+                    km: dist / 1000.0,
+                    avg_kmh: (nspeed > 0).then(|| sspeed / nspeed as f64 * 3.6),
+                    peak_kmh: (nspeed > 0).then(|| peak * 3.6),
+                });
             }
             i = end + 1;
         }
@@ -1787,11 +1773,72 @@ async fn day_message_bursts(
     })
 }
 
-/// Build the DOSSIER: one compact, time-ordered feature list of the day's
-/// evidence, drawn from the CLEAN rollups (visits, calendar, sleep, audio
-/// sessions) plus time-placed message bursts and a health snapshot. Each item is
-/// capped per-type, so the whole dossier is bounded by construction — that is
-/// what lets the detective drop the old global truncation.
+/// A visit on the spine, with its place's name when the owner named it.
+struct Visit {
+    start: chrono::DateTime<chrono::Utc>,
+    end: Option<chrono::DateTime<chrono::Utc>>,
+    name: Option<String>,
+}
+
+/// How far a move went, in the words a summary may use.
+fn distance_words(km: f64) -> &'static str {
+    match km {
+        k if k < 2.0 => "nearby",
+        k if k < 30.0 => "across town",
+        k if k < 300.0 => "out of town",
+        _ => "a long way",
+    }
+}
+
+/// How the owner moved, only where the pace proves it. GPS cannot tell a car
+/// from a bus, a train or a ride; it can tell a plane, and a walk. The walk is
+/// the timeline's own rule (`movementTitle` in the web app's inspector).
+fn pace_words(m: &Move) -> Option<&'static str> {
+    let (avg, peak) = (m.avg_kmh?, m.peak_kmh?);
+    if m.km >= 100.0 && avg >= 250.0 {
+        Some("at flight speed")
+    } else if avg < 7.0 && peak < 15.0 {
+        Some("at walking pace")
+    } else {
+        None
+    }
+}
+
+/// The named places a move left and reached: the visit under way within half
+/// an hour before it set off, and the first one that began within half an hour
+/// of it stopping.
+fn move_ends<'a>(visits: &'a [Visit], m: &Move) -> (Option<&'a str>, Option<&'a str>) {
+    let slack = chrono::Duration::minutes(30);
+    let from = visits
+        .iter()
+        .filter(|v| v.start <= m.start && v.end.unwrap_or(v.start) >= m.start - slack)
+        .last();
+    let to = visits
+        .iter()
+        .find(|v| v.start > m.start && v.start >= m.end - slack && v.start <= m.end + slack);
+    (from.and_then(|v| v.name.as_deref()), to.and_then(|v| v.name.as_deref()))
+}
+
+/// A `[movement]` line: when, how far in words, how only where the pace proves
+/// it, and from where to where when the owner named both ends.
+fn movement_line(span: &str, m: &Move, from: Option<&str>, to: Option<&str>) -> String {
+    let mut line = format!("- [movement] {span} — moving, {}", distance_words(m.km));
+    if let Some(pace) = pace_words(m) {
+        line.push_str(&format!(", {pace}"));
+    }
+    if let (Some(a), Some(b)) = (from, to) {
+        if !a.eq_ignore_ascii_case(b) {
+            line.push_str(&format!(", from {a} to {b}"));
+        }
+    }
+    line
+}
+
+/// Build the DOSSIER: who the owner is, then one compact, time-ordered feature
+/// list of the day's evidence, drawn from the CLEAN rollups (visits, movement,
+/// calendar, sleep, audio sessions) plus time-placed message bursts. Each item
+/// is capped per-type, so the whole dossier is bounded by construction — that
+/// is what lets the detective drop the old global truncation.
 async fn build_dossier(
     pool: &PgPool,
     date: NaiveDate,
@@ -1811,9 +1858,13 @@ async fn build_dossier(
         // The time-ordered spine — everything with a start (and usually an end).
         let mut spine: Vec<(chrono::DateTime<chrono::Utc>, String)> = Vec::new();
 
-        // Visits — place resolved through wiki_places, arrival→departure.
-        let visits = sqlx::query(
-            "SELECT COALESCE(p.name, v.place_name) AS place, v.started_at, v.ended_at \
+        // Visits — arrival→departure, named only when the owner named the place.
+        // A place nobody named carries its coordinates as a name, and a model
+        // handed "Location 41.9, -87.6" writes it into the summary. A visit with
+        // no place linked keeps whatever name its own source gave it.
+        let visit_rows = sqlx::query(
+            "SELECT CASE WHEN p.is_named THEN p.name WHEN p.id IS NULL THEN v.place_name END AS place, \
+                v.started_at, v.ended_at \
          FROM data_location_visit v \
          LEFT JOIN wiki_refs er \
            ON er.source_table = 'data_location_visit' AND er.source_id = v.id \
@@ -1826,20 +1877,24 @@ async fn build_dossier(
         .bind(end_str)
         .fetch_all(pool)
         .await?;
-        for r in &visits {
-            let place = r
-                .try_get::<Option<String>, _>("place")
-                .ok()
-                .flatten()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "Unknown place".to_string());
-            let arr: chrono::DateTime<chrono::Utc> = r.get("started_at");
-            let dep: Option<chrono::DateTime<chrono::Utc>> = r.try_get("ended_at").ok().flatten();
-            let span = match dep {
-                Some(d) => format!("{}–{}", fmt(&arr), fmt(&d)),
-                None => format!("{}–?", fmt(&arr)),
+        let mut visits: Vec<Visit> = Vec::with_capacity(visit_rows.len());
+        for r in &visit_rows {
+            visits.push(Visit {
+                start: r.try_get("started_at")?,
+                end: r.try_get("ended_at")?,
+                name: r
+                    .try_get::<Option<String>, _>("place")?
+                    .map(|n| n.trim().to_string())
+                    .filter(|n| !n.is_empty()),
+            });
+        }
+        for v in &visits {
+            let span = match v.end {
+                Some(d) => format!("{}–{}", fmt(&v.start), fmt(&d)),
+                None => format!("{}–?", fmt(&v.start)),
             };
-            spine.push((arr, format!("- [visit] {} — {}", span, cap(&place, 80))));
+            let place = v.name.as_deref().map(|n| cap(n, 80)).unwrap_or_else(|| "an unnamed place".into());
+            spine.push((v.start, format!("- [visit] {span} — {place}")));
         }
 
         // Movement — MOVING stretches of the day's GPS trace, computed from `speed`
@@ -1847,24 +1902,11 @@ async fn build_dossier(
         // owner travelled; without it the model fabricates a mode (the "tram" over a real
         // walk). Keyed on the raw trace, not visits, so movement is grounded even where
         // no visit was clustered — and a mostly-stationary window yields NO stretch, so
-        // it can never be called transit.
-        for (s, e, km, avg_kmh) in day_movement_segments(pool, start_str, end_str).await? {
-            let line = match avg_kmh {
-                Some(kmh) => format!(
-                    "- [movement] {}–{} — {:.1} km at ~{:.0} km/h",
-                    fmt(&s),
-                    fmt(&e),
-                    km,
-                    kmh,
-                ),
-                None => format!(
-                    "- [movement] {}–{} — {:.1} km, pace unknown",
-                    fmt(&s),
-                    fmt(&e),
-                    km
-                ),
-            };
-            spine.push((s, line));
+        // it can never be called transit. Said in words, never numbers.
+        for m in day_movement_segments(pool, start_str, end_str).await? {
+            let span = format!("{}–{}", fmt(&m.start), fmt(&m.end));
+            let (from, to) = move_ends(&visits, &m);
+            spine.push((m.start, movement_line(&span, &m, from, to)));
         }
 
         // Device presence — the negative instrument. A keyboard in use is a body that
@@ -2080,7 +2122,7 @@ async fn build_dossier(
         // boundary signal but real "what was I doing / thinking" context. Bounded by
         // LIMIT and the title cap.
         let chats = sqlx::query(
-            "SELECT title, message_count, created_at \
+            "SELECT title, created_at \
          FROM app_chats \
          WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz \
            AND deleted_at IS NULL \
@@ -2092,20 +2134,14 @@ async fn build_dossier(
         .await?;
         for r in &chats {
             let title = r
-                .try_get::<Option<String>, _>("title")
-                .ok()
-                .flatten()
+                .try_get::<Option<String>, _>("title")?
                 .filter(|s| !s.trim().is_empty())
+                // absent-ok: a chat nobody titled yet is a real answer, not a failed read
                 .unwrap_or_else(|| "(untitled)".to_string());
-            let mc: i64 = r.try_get("message_count").unwrap_or(0);
             let s: chrono::DateTime<chrono::Utc> = r.get("created_at");
             spine.push((
                 s,
-                format!(
-                    "- [assistant chat] {} — \"{}\" ({mc} msgs)",
-                    fmt(&s),
-                    cap(&title, 80)
-                ),
+                format!("- [assistant chat] {} — \"{}\"", fmt(&s), cap(&title, 80)),
             ));
         }
 
@@ -2174,15 +2210,15 @@ async fn build_dossier(
         // timestamp; the richest human-intent source in the lake carried neither.
         // A coffee arranged by text, walked to, and paid for read as an unnamed
         // purchase next to an unnamed conversation.
+        //
+        // The line carries no counts: a summary that reads "six messages with" or
+        // "incoming messages" is reporting the record, not the day.
         for b in day_message_bursts(pool, start_str, end_str).await? {
             let mut line = format!(
-                "- [messages] {}–{} — {} with {} ({} sent, {} received)",
+                "- [messages] {}–{} — thread with {}",
                 fmt(&b.start),
                 fmt(&b.end),
-                b.sent + b.received,
                 cap(&b.counterpart, 60),
-                b.sent,
-                b.received
             );
             for (from_me, text) in &b.excerpts {
                 line.push_str(&format!(
@@ -2196,16 +2232,28 @@ async fn build_dossier(
         spine.sort_by_key(|(k, _)| *k);
 
         // ── Assemble ──
+        // Who "you" is comes first, the same block the day's writer reads, so
+        // the owner is never filed as a companion in their own day.
+        let self_id: Option<String> =
+            sqlx::query_scalar("SELECT self_person_id FROM app_user_profile LIMIT 1")
+                .fetch_optional(pool)
+                .await?
+                .flatten();
+        let owner = match &self_id {
+            Some(id) => super::day_article::owner_names(pool, id).await?,
+            None => Vec::new(),
+        };
         let day_of_week = date.format("%A").to_string();
         let date_display = date.format("%B %e, %Y").to_string();
         let tz_name = tz_label.unwrap_or("UTC");
-        let mut out = format!(
+        let mut out = super::day_article::you_block(&owner);
+        out.push_str(&format!(
             "Date: {}, {} ({} local time)\n\
          All times below are the user's local timezone ({}). \
          Emit event start/end times in the same local timezone.\n\n\
          ## Timeline evidence\n",
             day_of_week, date_display, tz_name, tz_name
-        );
+        ));
         if spine.is_empty() {
             out.push_str("(no located visits, calendar blocks, sleep, or audio for this day)\n");
         } else {
@@ -2213,10 +2261,6 @@ async fn build_dossier(
                 out.push_str(line);
                 out.push('\n');
             }
-        }
-
-        if let Some(h) = build_health_snapshot(pool, start_str, end_str).await? {
-            append_section(&mut out, &h);
         }
 
         out
@@ -2499,7 +2543,8 @@ async fn store_structured_events(
 }
 
 /// Extract the primary location for an event's time range from location_visit data.
-/// Returns the place name with the longest visit duration, or None if no location data.
+/// Returns the name of the place of the longest visit when the owner named it,
+/// or None: an unnamed place's coordinates are not a location to print.
 async fn extract_event_location(pool: &PgPool, start: &str, end: &str) -> Result<Option<String>> {
     Ok({
         use sqlx::Row;
@@ -2508,7 +2553,7 @@ async fn extract_event_location(pool: &PgPool, start: &str, end: &str) -> Result
         // (same shape the timeline reader uses). JOIN through to get the real name;
         // selecting the visit's own `place_name` column always returned NULL.
         let row: Option<sqlx::postgres::PgRow> = sqlx::query(
-            "SELECT p.name AS place_name \
+            "SELECT CASE WHEN p.is_named THEN p.name END AS place_name \
          FROM data_location_visit v \
          JOIN wiki_refs er \
            ON er.source_table = 'data_location_visit' \
@@ -2516,7 +2561,7 @@ async fn extract_event_location(pool: &PgPool, start: &str, end: &str) -> Result
           AND er.entity_type = 'place' \
          JOIN wiki_places p ON p.id = er.entity_id \
          WHERE v.started_at >= $1::timestamptz AND v.started_at <= $2::timestamptz \
-         ORDER BY v.duration_minutes DESC LIMIT 1",
+         ORDER BY v.duration_minutes DESC NULLS LAST LIMIT 1",
         )
         .bind(start)
         .bind(end)
@@ -2956,26 +3001,10 @@ mod dossier_tests {
     /// owner sat at a Mac the whole evening, and the dossier showed only the plan.
     /// Both corrections have to reach the prompt or the detective cannot possibly
     /// get this right — it can only reason about lines it is given.
-    ///
-    /// ```sh
-    /// DATABASE_URL=postgres://virtues:virtues@localhost:5432/virtues_mig_check \
-    ///   cargo test -p virtues dossier_ -- --ignored --nocapture
-    /// ```
-    #[tokio::test]
-    #[ignore = "needs Postgres with the migration chain applied"]
-    async fn dossier_carries_device_presence_and_calendar_provenance() {
-        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
-        let pool = PgPool::connect(&url).await.expect("connect");
-
+    #[sqlx::test]
+    async fn dossier_carries_device_presence_and_calendar_provenance(pool: PgPool) {
         let date = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
         let (start_str, end_str) = day_boundaries_utc(date, Some("UTC"));
-
-        for t in ["data_calendar_event", "data_activity_app_session"] {
-            sqlx::query(&format!("DELETE FROM {t}"))
-                .execute(&pool)
-                .await
-                .expect("clean");
-        }
 
         sqlx::query(
             "INSERT INTO data_calendar_event \
@@ -3058,23 +3087,12 @@ mod dossier_tests {
     /// counterpart has no `wiki_people` row still reaches the spine — the events
     /// that matter most are often with someone the graph has never seen.
     ///
-    /// ```sh
-    /// DATABASE_URL=postgres://virtues:virtues@localhost:5432/virtues_mig_check \
-    ///   cargo test -p virtues dossier_ -- --ignored --nocapture
-    /// ```
-    #[tokio::test]
-    #[ignore = "needs Postgres with the migration chain applied"]
-    async fn dossier_carries_message_bursts_with_text_and_time() {
-        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
-        let pool = PgPool::connect(&url).await.expect("connect");
-
+    /// And the line carries no counts: "three with Sam (1 sent, 2 received)"
+    /// came back in summaries as "a few incoming messages".
+    #[sqlx::test]
+    async fn dossier_carries_message_bursts_with_text_and_time(pool: PgPool) {
         let date = NaiveDate::from_ymd_opt(2026, 7, 27).unwrap();
         let (start_str, end_str) = day_boundaries_utc(date, Some("UTC"));
-
-        sqlx::query("DELETE FROM data_communication_message")
-            .execute(&pool)
-            .await
-            .expect("clean");
 
         // An unresolved correspondent: no wiki_people row, no entity ref. The old
         // aggregate would have filed this under "unknown"; the burst must still
@@ -3091,7 +3109,7 @@ mod dossier_tests {
             sqlx::query(
                 "INSERT INTO data_communication_message \
                  (id,message_id,thread_id,channel,body,from_identifier,from_name, \
-                  timestamp,source_stream_id,source_table,source_provider,metadata) \
+                  occurred_at,source_stream_id,source_table,source_provider,metadata) \
                  VALUES ($1,$1,'th_demo','imessage',$2,$3,$4, \
                          $5::timestamptz,$1,'mac_imessage','mac',$6::jsonb)",
             )
@@ -3133,18 +3151,241 @@ mod dossier_tests {
             "the owner's own words must survive too"
         );
         assert!(
-            dossier.contains("with Sam"),
+            dossier.contains("thread with Sam"),
             "an unresolved correspondent still names the thread from the message itself"
         );
         assert!(
-            dossier.contains("(1 sent, 2 received)"),
-            "direction counts must be honest — they are what the quoting rule keys on"
+            dossier.contains("    them: still on for 7:30") && dossier.contains("    you: yes!"),
+            "each excerpt says whose words it is — that is what the quoting rule keys on"
+        );
+        assert!(
+            !dossier.contains(" sent,") && !dossier.contains(" received)"),
+            "a message line carries no counts, or the summary repeats them"
         );
         assert!(
             !dossier.contains("## Messages"),
             "the whole-day aggregate block is gone; a count off the spine taught \
              the detective nothing it could place"
         );
+    }
+
+    fn utc(s: &str) -> chrono::DateTime<chrono::Utc> {
+        s.parse().unwrap()
+    }
+
+    fn mv(km: f64, avg: f64, peak: f64) -> Move {
+        Move {
+            start: utc("2026-07-28T10:00:00Z"),
+            end: utc("2026-07-28T10:20:00Z"),
+            km,
+            avg_kmh: Some(avg),
+            peak_kmh: Some(peak),
+        }
+    }
+
+    /// A move is said in words. "Moved 3.5 km at about 30 km/h" is what the
+    /// summaries said while the dossier said it, and nobody lives a day in
+    /// kilometres an hour.
+    #[test]
+    fn a_move_is_said_in_words_with_no_numbers() {
+        let line = movement_line("10:00–10:20", &mv(12.4, 36.0, 61.0), None, None);
+        assert_eq!(line, "- [movement] 10:00–10:20 — moving, across town");
+        assert!(!line.chars().skip_while(|c| *c != '—').any(|c| c.is_ascii_digit()));
+        assert_eq!(distance_words(0.8), "nearby");
+        assert_eq!(distance_words(85.0), "out of town");
+        assert_eq!(distance_words(1100.0), "a long way");
+    }
+
+    /// The pace names a mode only where it proves one: a plane, or a walk.
+    /// A car, a bus, a train and a ride all read the same to GPS.
+    #[test]
+    fn only_a_flight_or_a_walk_is_named_by_its_pace() {
+        assert_eq!(pace_words(&mv(1100.0, 640.0, 820.0)), Some("at flight speed"));
+        assert_eq!(pace_words(&mv(1.2, 4.8, 9.0)), Some("at walking pace"));
+        assert_eq!(pace_words(&mv(14.0, 38.0, 70.0)), None, "a drive, a bus or a ride");
+        // One wild fix in a city is a GPS jump, not a plane.
+        assert_eq!(pace_words(&mv(6.0, 30.0, 900.0)), None);
+    }
+
+    /// "From X to Y" only when the owner named both ends, and never "from X to X".
+    #[test]
+    fn a_move_names_its_ends_only_when_both_are_named() {
+        let named = |name: &str, s: &str, e: &str| Visit {
+            start: utc(s),
+            end: Some(utc(e)),
+            name: Some(name.to_string()),
+        };
+        let unnamed = |s: &str, e: &str| Visit { start: utc(s), end: Some(utc(e)), name: None };
+        let m = mv(12.4, 36.0, 61.0);
+
+        let both = [
+            named("the Hayes cafe", "2026-07-28T09:00:00Z", "2026-07-28T10:00:00Z"),
+            named("the office", "2026-07-28T10:25:00Z", "2026-07-28T12:00:00Z"),
+        ];
+        let (from, to) = move_ends(&both, &m);
+        assert_eq!(
+            movement_line("10:00–10:20", &m, from, to),
+            "- [movement] 10:00–10:20 — moving, across town, from the Hayes cafe to the office"
+        );
+
+        let one = [
+            named("the Hayes cafe", "2026-07-28T09:00:00Z", "2026-07-28T10:00:00Z"),
+            unnamed("2026-07-28T10:25:00Z", "2026-07-28T12:00:00Z"),
+        ];
+        let (from, to) = move_ends(&one, &m);
+        assert_eq!(movement_line("10:00–10:20", &m, from, to), "- [movement] 10:00–10:20 — moving, across town");
+
+        let round = [
+            named("home", "2026-07-28T09:00:00Z", "2026-07-28T10:00:00Z"),
+            named("Home", "2026-07-28T10:25:00Z", "2026-07-28T12:00:00Z"),
+        ];
+        let (from, to) = move_ends(&round, &m);
+        assert_eq!(movement_line("10:00–10:20", &m, from, to), "- [movement] 10:00–10:20 — moving, across town");
+
+        // A place left hours before the move set off is not where it set off from.
+        let stale = [
+            named("the Hayes cafe", "2026-07-28T06:00:00Z", "2026-07-28T07:00:00Z"),
+            named("the office", "2026-07-28T10:25:00Z", "2026-07-28T12:00:00Z"),
+        ];
+        assert_eq!(move_ends(&stale, &m), (None, Some("the office")));
+    }
+
+    /// The dossier opens on who "you" are, names a visit only by a name the
+    /// owner gave its place, and says a move from one named place to another
+    /// in words. Each of these reached the day page as written: the owner
+    /// listed as a companion, "a visit was logged at 41.9, -87.6", "moved
+    /// 17.1 km at about 41 km/h".
+    #[sqlx::test]
+    async fn dossier_names_you_and_only_named_places(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 7, 28).unwrap();
+        let (start_str, end_str) = day_boundaries_utc(date, Some("UTC"));
+
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('person_me', 'David Okafor')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE app_user_profile SET self_person_id = 'person_me'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO wiki_places (id, name, latitude, longitude, is_named) VALUES \
+             ('place_cafe', 'the Hayes cafe', 41.80, -87.60, true), \
+             ('place_office', 'the office', 41.908, -87.60, true), \
+             ('place_stub', 'Location 41.9500, -87.6000', 41.95, -87.60, false)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (i, (place, lat, s, e)) in [
+            ("place_cafe", 41.80, "09:00", "10:00"),
+            ("place_office", 41.908, "10:25", "12:00"),
+            ("place_stub", 41.95, "15:00", "16:00"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            sqlx::query(
+                "INSERT INTO data_location_visit \
+                 (id, latitude, longitude, started_at, ended_at, source_stream_id, source_table, source_provider) \
+                 VALUES ($1, $2, -87.60, $3::timestamptz, $4::timestamptz, $1, 'location_visit', 'ios')",
+            )
+            .bind(format!("visit_{i}"))
+            .bind(lat)
+            .bind(format!("2026-07-28T{s}:00Z"))
+            .bind(format!("2026-07-28T{e}:00Z"))
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at) \
+                 VALUES ($1, 'place', $2, 'data_location_visit', $3, 'location', $4::timestamptz)",
+            )
+            .bind(format!("ref_{i}"))
+            .bind(place)
+            .bind(format!("visit_{i}"))
+            .bind(format!("2026-07-28T{s}:00Z"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        // Twenty minutes north at ten metres a second: about twelve kilometres.
+        for i in 0..=20 {
+            sqlx::query(
+                "INSERT INTO data_location_point \
+                 (id, latitude, longitude, occurred_at, speed, source_stream_id, source_table, source_provider) \
+                 VALUES ($1, $2, -87.60, '2026-07-28T10:00:00Z'::timestamptz + make_interval(mins => $3), \
+                         10.0, $1, 'location_point', 'ios')",
+            )
+            .bind(format!("pt_{i}"))
+            .bind(41.80 + 0.0054 * i as f64)
+            .bind(i)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let dossier = build_dossier(&pool, date, &start_str, &end_str, Some("UTC"), None)
+            .await
+            .unwrap();
+        println!("{dossier}");
+
+        assert!(dossier.starts_with("<you>\nThis is David Okafor's day"), "who you are comes first");
+        assert!(dossier.contains("- [visit] 09:00–10:00 — the Hayes cafe"));
+        assert!(dossier.contains("- [visit] 15:00–16:00 — an unnamed place"));
+        assert!(!dossier.contains("Location 41"), "a coordinate stub is not a name");
+        assert!(
+            dossier.contains("- [movement] 10:00–10:20 — moving, across town, from the Hayes cafe to the office"),
+            "a move between two named places says so, in words"
+        );
+        assert!(!dossier.contains("km"), "no distance reaches the detective");
+    }
+
+    /// The prompt keeps the JSON the store reads, and hands the model no
+    /// number to copy: its examples were "six messages with Maya" and "heart
+    /// rate mid-70s", and summaries came back saying exactly that.
+    #[test]
+    fn the_prompt_keeps_its_shape_and_gives_no_numbers_to_copy() {
+        assert!(SEGMENT_PROMPT.contains(
+            r#"[{"start": "HH:MM", "end": "HH:MM", "label": "Brief label", "summary": "#
+        ));
+        assert!(SEGMENT_PROMPT.contains(r#""topics": ["2-4 lowercase topical tags"]}]"#));
+        assert!(SEGMENT_PROMPT.contains("<you> block"), "the owner is named, so never a companion");
+        for leak in ["km/h", "heart rate", "six messages", "Maya"] {
+            assert!(!SEGMENT_PROMPT.contains(leak), "the prompt still carries {leak:?}");
+        }
+        assert!(SEGMENT_PROMPT.contains("No distances, speeds, coordinates or message counts"));
+    }
+
+    #[test]
+    fn a_backlog_runs_oldest_first_and_refuses_a_backwards_range() {
+        let d = |m: u32, day: u32| NaiveDate::from_ymd_opt(2026, m, day).unwrap();
+        assert_eq!(days_between(d(9, 29), d(10, 2)).unwrap(), vec![d(9, 29), d(9, 30), d(10, 1), d(10, 2)]);
+        assert_eq!(days_between(d(10, 4), d(10, 4)).unwrap(), vec![d(10, 4)]);
+        assert!(days_between(d(10, 4), d(10, 1)).is_err());
+    }
+
+    /// A forced re-cut forgets the fingerprint, and a day with too little in it
+    /// stops before any model call — every step's SQL runs against the schema.
+    #[sqlx::test]
+    async fn a_recut_of_a_thin_day_makes_no_model_call(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 7, 29).unwrap();
+        get_or_create_day(&pool, date).await.unwrap();
+        sqlx::query("UPDATE wiki_days SET sources_fingerprint = 'old' WHERE date = $1")
+            .bind(date)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let r = recut_day(&pool, date).await.expect("the re-cut's own SQL must run");
+        assert_eq!(r, Recut { sessions: 0, events: 0, gap_ops: 0 });
+        let fp: Option<String> =
+            sqlx::query_scalar("SELECT sources_fingerprint FROM wiki_days WHERE date = $1")
+                .bind(date)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(fp, None, "the fingerprint is forgotten so a changed day really is re-cut");
     }
 
     /// Runs narration's SQL against the schema the migrations actually build.
@@ -3164,47 +3405,6 @@ mod dossier_tests {
             .await
             .expect("narration must not die on its own SQL");
         assert!(matches!(out, NarrateOutcome::NotEnough), "an empty day earns no story: {out:?}");
-    }
-
-    /// The heart-rate snapshot decodes. `ROUND(AVG(bpm))` over an integer
-    /// column is NUMERIC and `COUNT(*)` is INT8 in Postgres; read as f64 and
-    /// i32 they fail at decode time, and both callers propagate with `?` — so
-    /// every day that had events lost its narration to this one row. An empty
-    /// table does not dodge it: the aggregate row always exists and its types
-    /// are fixed at plan time.
-    #[sqlx::test]
-    async fn health_snapshot_decodes_with_and_without_readings(pool: PgPool) {
-        let (start, end) = ("2026-09-10T00:00:00Z", "2026-09-11T00:00:00Z");
-        let empty = build_health_snapshot(&pool, start, end)
-            .await
-            .expect("the aggregate row must decode over an empty table");
-        assert!(empty.is_none(), "no readings, no section");
-
-        for (i, bpm) in [60, 70, 80].iter().enumerate() {
-            sqlx::query(
-                "INSERT INTO data_health_heart_rate \
-                 (id, bpm, occurred_at, source_stream_id, source_table, source_provider) \
-                 VALUES ($1, $2, '2026-09-10T08:00:00Z'::timestamptz + make_interval(mins => $3), \
-                         $4, 't', 'p')",
-            )
-            .bind(format!("hr{i}"))
-            .bind(bpm)
-            .bind(i as i32)
-            // source_stream_id is unique per row.
-            .bind(format!("src{i}"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
-        let section = build_health_snapshot(&pool, start, end)
-            .await
-            .expect("the aggregate row must decode over readings")
-            .expect("three readings earn a section");
-        assert!(
-            section.body.contains("avg 70, min 60, max 80 (3 readings)"),
-            "{}",
-            section.body
-        );
     }
 
     /// Give a page a CRDT, the state a page is in once the editor has opened

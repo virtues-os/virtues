@@ -24,6 +24,7 @@
 //! is a shell-out to the underlying CLI. We're an orchestration layer,
 //! not a re-implementation of apt.
 
+mod accel;
 mod brand;
 mod config;
 mod download;

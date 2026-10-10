@@ -12,6 +12,7 @@
 	import TextPane from "$lib/components/asset/TextPane.svelte";
 	import { getDriveFile, type DriveFile } from "$lib/api/client";
 	import { refIcon } from "$lib/utils/refRoutes";
+	import { kindOfLink } from "$lib/document/media-kind";
 	import type { Tab } from "$lib/tabs/types";
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
@@ -57,9 +58,6 @@
 	});
 
 	type Kind = "image" | "audio" | "video" | "pdf" | "csv" | "markdown" | "code" | "plain" | "other";
-	const IMAGE_EXT = /\.(jpe?g|png|gif|webp|svg|bmp|ico|heic)$/i;
-	const AUDIO_EXT = /\.(mp3|wav|ogg|flac|aac|m4a)$/i;
-	const VIDEO_EXT = /\.(mp4|webm|mov|avi|mkv)$/i;
 	const CSV_EXT = /\.(csv|tsv)$/i;
 	const MD_EXT = /\.(md|markdown)$/i;
 	const CODE_EXT =
@@ -70,9 +68,12 @@
 		if (!f) return "other";
 		const mime = f.mime_type ?? "";
 		const name = f.filename ?? "";
-		if (mime.startsWith("image/") || IMAGE_EXT.test(name)) return "image";
-		if (mime.startsWith("audio/") || AUDIO_EXT.test(name)) return "audio";
-		if (mime.startsWith("video/") || VIDEO_EXT.test(name)) return "video";
+		// Media by its name, as a page draws a link to it; the address here is
+		// the box's download route, which says nothing of what the file is.
+		const media = kindOfLink("", name);
+		if (mime.startsWith("image/") || media === "image") return "image";
+		if (mime.startsWith("audio/") || media === "audio") return "audio";
+		if (mime.startsWith("video/") || media === "video") return "video";
 		if (mime === "application/pdf" || /\.pdf$/i.test(name)) return "pdf";
 		if (mime === "text/csv" || mime === "text/tab-separated-values" || CSV_EXT.test(name))
 			return "csv";
@@ -243,7 +244,7 @@
 		padding: 16px;
 	}
 	.asset-body.framed {
-		background: var(--color-surface-sunken, #000);
+		background: var(--color-surface-elevated);
 		padding: 0;
 	}
 	/* Text/CSV panes own their scroll and padding — fill the body edge-to-edge. */

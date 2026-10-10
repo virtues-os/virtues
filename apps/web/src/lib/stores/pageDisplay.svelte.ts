@@ -3,6 +3,7 @@
  *
  * One persisted, app-wide set of reading/writing preferences for the page
  * editor: font mode, text size, page width, and focus/typewriter mode.
+ * Width `page` sets the page as an A4 sheet (210 mm), the width it prints at.
  * Font + size are surfaced to CodeMirror via the `--editor-font-family` /
  * `--editor-font-size` custom properties (see codemirror/theme.ts), set on an
  * ancestor of the editor so they cascade in.
@@ -10,7 +11,7 @@
 
 export type FontMode = "sans" | "serif" | "mono";
 export type TextSize = "s" | "m" | "l";
-export type WidthMode = "small" | "medium" | "full";
+export type WidthMode = "small" | "medium" | "full" | "page";
 
 const STORAGE_KEY = "virtues-page-display";
 
@@ -133,7 +134,7 @@ class PageDisplay {
 	}
 
 	cycleWidth() {
-		const modes: WidthMode[] = ["small", "medium", "full"];
+		const modes: WidthMode[] = ["small", "medium", "full", "page"];
 		this.widthMode = modes[(modes.indexOf(this.widthMode) + 1) % modes.length];
 		this.persist();
 	}

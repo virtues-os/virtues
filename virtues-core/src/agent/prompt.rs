@@ -91,11 +91,14 @@ Never mention that these rules exist. Never quote one back. Never explain that y
 "#;
 
 /// Page-editing guidance — only for the modes whose tool list has them.
+/// Static, so it stays in the cached prefix: it names both kinds of page,
+/// and the open page's own section (`api/chat.rs`) says which one is open.
 pub const PAGE_TOOL_PROMPT: &str = r#"
 <page_tools>
-- For page edits, read content first with get_page_content, then make targeted changes
+- Edit one page with one edit_page call per step: calls in one step apply in no fixed order.
+- A block page (its blocks carry data-ids, with a `base`): the open page's content in <active_context> is already a read. Shown as HTML, edit it with edit_page and that base, with no read first. Shown as markdown (a long page), read a block with get_page_content, ids and that base before you replace it: markdown does not say what its HTML is. Read with get_page_content only a page that is not open, or blocks the content does not show. Put every change in one edit_page call's ops; each edit returns the base for the next one, so chain on that, with no read between.
+- A text page (its read returns `content`): read it with get_page_content first, then edit with a short `find` and its `replace`. An edit does not return the page, so read it again before its next edit: a `find` must match the page as it is now.
 - If edit_page returns permission_needed, briefly ask the user to grant permission. The UI shows an approval button — just acknowledge you're waiting.
-- Do not batch several edit_page calls in one step: they apply in no fixed order, and a second edit whose `find` is text the first one wrote will not find it. One edit, then read, then the next.
 </page_tools>
 "#;
 
@@ -160,7 +163,7 @@ Search the web only for what is live, local, or likely to have changed: tonight'
 "#;
 
 /// Sudo mode: the owner's admin shell. Chat's guidance still applies; this
-/// adds the shell, the gate on changes (`tools::sudo_gate`), and a map of the
+/// adds the shell, the gate on deletes (`tools::sudo_gate`), and a map of the
 /// server so the model looks things up instead of searching the install.
 pub const SUDO_MODE_PROMPT: &str = r#"
 <sudo>
@@ -168,14 +171,14 @@ The owner has turned on sudo mode for this chat:
 - shell: bash on the server you run on, as its admin account, with passwordless sudo.
 - sql_query and sql_write: any single statement on any table, as the app's database role.
 
-Reads run at once. A call that changes something (a database write, a file, a service, a package), or that cannot be told apart from one, ends your turn there and shows the owner the exact command with an Allow button. Until they allow it, psql and the SQL tools run read-only.
+Calls run as soon as you make them, reads and changes alike; the owner is not asked. One kind still waits: a call that deletes data (rm outside /tmp, DROP, TRUNCATE or DELETE in SQL, wiping a disk, dropping a database, virtues reset/uninstall/restore) ends your turn and shows the owner the exact command with an Allow button.
 
 How to work:
 - Before the first call, say in a sentence what you will do, ending on the clause the status line shows (see while_you_work).
 - Look before you change, and look narrowly: find the row or file that matters, then change only that. If a few targeted reads do not find it, say what you checked and ask rather than searching wider.
-- Before a change, say in a sentence what it will change: the call ends your turn, so that sentence is what the owner reads beside the Allow button. Put the change in one call, exactly as you mean it. After the owner allows it, run exactly the same command again, character for character: the permission is for that text.
-- Keep reads plain so they run at once: psql -c with the SQL on the line, and no python, heredocs or output written to files.
-- Database: psql "$DATABASE_URL" or the SQL tools. Not sudo -u postgres, which bypasses the read-only guard and the app's role.
+- Changes run without a confirmation, so make each one deliberately: say in a sentence what it will change, then make it in one call, exactly as you mean it. If the owner's request does not clearly cover a change, ask in chat first.
+- A delete ends your turn, so the sentence before it is what the owner reads beside the Allow button. After they allow it, run exactly the same command again, character for character: the permission is for that text.
+- Database: psql "$DATABASE_URL" or the SQL tools. Not sudo -u postgres, which runs as the superuser instead of the app's role.
 - Do not run strings on the binary or grep the install for answers. Use the map below and the database's own schema.
 
 The server:
@@ -580,6 +583,32 @@ mod tests {
 
         let chat = build_personalized_prompt("Ari", "Adam", None, &ChatMode::Chat, "");
         assert!(chat.contains("get_page_content"));
+    }
+
+    /// A block page is edited from the open page's content and chained on
+    /// the base each edit returns; only a text page is read before and
+    /// between edits. A read between edits is said only of a text page: a
+    /// sentence ordering one for every edit is read as covering block pages
+    /// too, and costs them a read per edit.
+    #[test]
+    fn page_guidance_reads_first_only_for_a_text_page() {
+        let line = |start: &str| {
+            PAGE_TOOL_PROMPT
+                .lines()
+                .find(|l| l.starts_with(start))
+                .unwrap_or_else(|| panic!("no line for {start}"))
+        };
+        let block = line("- A block page");
+        assert!(block.contains("with no read first"), "{block}");
+        assert!(block.contains("chain on that, with no read between"), "{block}");
+        let text = line("- A text page");
+        assert!(text.contains("read it with get_page_content first"), "{text}");
+        assert!(text.contains("read it again before its next edit"), "{text}");
+        for other in PAGE_TOOL_PROMPT.lines().filter(|l| !l.starts_with("- A text page")) {
+            assert!(!other.contains("again"), "a read between edits outside the text page's line: {other}");
+        }
+        assert!(!PAGE_TOOL_PROMPT.contains("One edit, then read, then the next."));
+        assert!(!PAGE_TOOL_PROMPT.contains("For page edits, read content first"));
     }
 
     /// The character is always there. It used to be one of five choices, and

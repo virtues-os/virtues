@@ -11,8 +11,18 @@
  *
  * Consumers get (x, y, target) instead of the raw event, so the same
  * callback serves both gestures; `target` is the pointerdown target on the
- * long-press path, where there is no contextmenu event to ask.
+ * long-press path, where there is no contextmenu event to ask. The element
+ * is marked `data-context-gesture`, so the block editor's keyboard path
+ * (Shift-F10 on a selected widget, `lib/document/gesture.ts`) finds it.
+ *
+ * A press on a size handle (`role="slider"`) is a resize, never a hold: a
+ * thumb settles on the handle before it drags. After a hold opens the menu,
+ * the lift's click and the platform's own `contextmenu` are swallowed
+ * (`swallowLift`), or either would close it.
  */
+
+// Relative, not `$lib`: CodeMirror reaches this without the app's aliases.
+import { swallowLift } from '../../components/contextMenu/lift';
 
 const HOLD_MS = 450;
 const DRIFT_PX = 8;
@@ -21,6 +31,7 @@ export function onContextGesture(
 	el: HTMLElement,
 	callback: (x: number, y: number, target: EventTarget | null) => void,
 ): void {
+	el.dataset.contextGesture = '';
 	el.addEventListener('contextmenu', (e) => {
 		e.preventDefault();
 		e.stopPropagation();
@@ -41,6 +52,7 @@ export function onContextGesture(
 	el.addEventListener('pointerdown', (e) => {
 		// Mouse has a real right-click; the hold path is for touch and pen.
 		if (e.pointerType === 'mouse') return;
+		if (e.target instanceof Element && e.target.closest('[role="slider"]')) return;
 		startX = e.clientX;
 		startY = e.clientY;
 		const target = e.target;
@@ -48,6 +60,7 @@ export function onContextGesture(
 		timer = setTimeout(() => {
 			timer = null;
 			callback(startX, startY, target);
+			swallowLift();
 		}, HOLD_MS);
 	});
 

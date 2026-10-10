@@ -25,10 +25,12 @@
 	interface Props {
 		item: ContextMenuItem;
 		focused?: boolean;
+		/** The row's id, which the focused element points at while it is reached. */
+		rowId?: string;
 		onHover?: () => void;
 	}
 
-	let { item, focused = false, onHover }: Props = $props();
+	let { item, focused = false, rowId, onHover }: Props = $props();
 
 	const isLoading = $derived(contextMenu.loadingItemId === item.id);
 
@@ -67,6 +69,8 @@
 	description={item.description}
 	shortcut={item.shortcut}
 	checked={item.checked}
+	role={item.role}
+	id={rowId}
 	destructive={item.variant === 'destructive'}
 	disabled={item.disabled}
 	loading={isLoading}

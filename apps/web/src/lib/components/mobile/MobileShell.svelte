@@ -354,10 +354,10 @@
 		flex: 1;
 		min-height: 0;
 		overflow: hidden;
-		/* Opaque on its own, matching the app shell's treatment: the drawer sits
-		   beneath this plane, and a transparent viewport would show it through
-		   the chat at rest. */
-		background-color: var(--color-surface);
+		/* Opaque on its own, the page like the desktop's main card: the drawer
+		   sits beneath this plane, and a transparent viewport would show it
+		   through the chat at rest. */
+		background-color: var(--color-page);
 		background-image: var(--background-image);
 		background-blend-mode: multiply;
 	}

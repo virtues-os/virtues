@@ -3,17 +3,11 @@
  *
  * Core positioning hook that wraps @floating-ui/dom.
  * Handles automatic repositioning on scroll/resize for HTMLElement anchors.
+ * Placed with `floatingMiddleware`, which keeps above the software keyboard.
  */
 
-import {
-	computePosition,
-	autoUpdate,
-	flip,
-	shift,
-	offset,
-	arrow as arrowMiddleware,
-	type Middleware
-} from '@floating-ui/dom';
+import { computePosition, autoUpdate, arrow as arrowMiddleware } from '@floating-ui/dom';
+import { floatingMiddleware, keyboardInset } from '../core/middleware';
 import type { Anchor, FloatingOptions, FloatingState } from '../core/types';
 import { isVirtualAnchor } from '../core/types';
 
@@ -65,10 +59,10 @@ export function useFloating(
 			: anchor;
 
 		// Build middleware stack
-		const middleware: Middleware[] = [];
-		if (offsetValue) middleware.push(offset(offsetValue));
-		if (enableFlip) middleware.push(flip());
-		if (enableShift) middleware.push(shift({ padding }));
+		const middleware = floatingMiddleware(
+			{ offset: offsetValue, flip: enableFlip, shift: enableShift, padding },
+			keyboardInset(),
+		);
 		if (arrowEl) middleware.push(arrowMiddleware({ element: arrowEl }));
 
 		async function updatePosition() {

@@ -28,9 +28,9 @@
 	import {
 		createSlashCommands,
 		getDefaultSlashCommands,
-		filterSlashCommands,
 		type SlashCommand,
 	} from "$lib/codemirror/extensions/slash-commands";
+	import { filterCommands } from "$lib/components/menuCommand";
 	import {
 		createSelectionToolbar,
 		dismissSelectionToolbar,
@@ -41,16 +41,10 @@
 	import type { EntityResult } from "$lib/components/RefPicker.svelte";
 	import SlashMenu from "$lib/components/SlashMenu.svelte";
 	import SelectionToolbar from "$lib/components/SelectionToolbar.svelte";
+	import type { DocStats } from "$lib/components/pages/stats";
 
 	// Import CodeMirror theme CSS
 	import "$lib/codemirror/theme.css";
-
-	export interface DocStats {
-		wordCount: number;
-		charCount: number;
-		linkCount: number;
-		mediaCount: number;
-	}
 
 	interface Props {
 		/** Initial markdown content (used for non-Yjs init and Yjs empty-doc init) */
@@ -108,7 +102,7 @@
 	let slashMenuQuery = $state("");
 	let slashMenuFrom = $state(0);
 	const allSlashCommands = getDefaultSlashCommands();
-	const filteredCommands = $derived(filterSlashCommands(allSlashCommands, slashMenuQuery));
+	const filteredCommands = $derived(filterCommands(allSlashCommands, slashMenuQuery));
 
 	// --- Selection Toolbar state ---
 	let selToolbarOpen = $state(false);

@@ -1090,7 +1090,7 @@
 		min-height: 0;
 		overflow: auto;
 		padding: 16px;
-		background: var(--color-surface-sunken, #1a1a1a);
+		background: var(--color-surface-elevated);
 	}
 
 	/* Toolbar highlight-count badge on the rail toggle. */

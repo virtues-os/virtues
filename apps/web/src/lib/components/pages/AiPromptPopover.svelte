@@ -11,6 +11,7 @@
 	import { fade } from "svelte/transition";
 	import { FloatingContent, useClickOutside } from "$lib/floating";
 	import type { VirtualAnchor } from "$lib/floating";
+	import { inComposition } from "$lib/utils/ime";
 	import type { AiIntent } from "$lib/ai/inlineComplete";
 
 	interface Props {
@@ -61,6 +62,7 @@
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
+		if (inComposition(e)) return;
 		if (e.key === "Escape") {
 			e.preventDefault();
 			onClose();
@@ -176,5 +178,13 @@
 	.ai-prompt-action:hover {
 		background: var(--color-primary-subtle);
 		color: var(--color-primary);
+	}
+
+	/* A thumb's 44pt (design-grammar §6): the selection toolbar's Ask AI and
+	   `/ai` open this on a phone. The row wraps there, as it may. */
+	@media (pointer: coarse) {
+		.ai-prompt-action {
+			min-height: 44px;
+		}
 	}
 </style>

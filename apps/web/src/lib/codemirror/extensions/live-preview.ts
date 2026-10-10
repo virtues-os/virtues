@@ -22,6 +22,7 @@ import { Decoration, type DecorationSet, type EditorView, ViewPlugin, type ViewU
 
 import { inlineMarks, selectionTouches } from './inline-marks';
 import { dragJustEnded, isMouseSelecting } from './mouse-freeze';
+import { treeAdvanced } from './parse-progress';
 
 /** Deepest list level with its own indent class; anything deeper shares it. */
 const MAX_LIST_DEPTH = 5;
@@ -434,6 +435,7 @@ const livePreviewPlugin = ViewPlugin.fromClass(
 				update.docChanged ||
 				update.viewportChanged ||
 				update.focusChanged ||
+				treeAdvanced(update) ||
 				(update.selectionSet && !isMouseSelecting(update.state)) ||
 				dragJustEnded(update);
 			if (rebuild) {

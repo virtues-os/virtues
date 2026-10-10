@@ -18,9 +18,9 @@ Before installing, read these two pages first:
 
 1. [What to run it on](/docs/setup/requirements) for details on minimum
    specs and supported OS.
-2. [Setting up inference](/docs/inference) to configure your embedding and
-   rerank models. The installer asks for their URLs before it does anything
-   else.
+2. [Faster search on a GPU or NPU](/docs/setup/accelerators), if the machine
+   has one. Search runs on the CPU unless you set one up, and the installer
+   tells you when it finds one.
 
 ## Read it before you run it
 
@@ -56,22 +56,24 @@ microSD card produce very different servers, and that difference is worth
 knowing up front.
 [What to run it on](/docs/setup/requirements) has the full picture.
 
-It checks whether ports `5432`, `8000`, `18181`, and `18182` are already
-bound - Postgres, the server itself, and the two inference endpoints. A
+It checks whether ports `5432`, `8000`, and `18181` are already bound -
+Postgres, the server itself, and the embedding endpoint. A
 warning there usually means you're reinstalling over an existing server, which
 is fine.
 
 ## The first question is inference
 
-The installer asks how you want to run the two models that make your record
-searchable before it touches a package, a service, or a disk - so that a
-broken endpoint costs you a prompt rather than a half-finished install. On Virtues
-hardware this is pre-configured.
+The installer asks how search should run before it touches a package, a
+service, or a disk - so that a broken endpoint costs you a prompt rather than
+a half-finished install. On Virtues hardware this is pre-configured.
 
-On yours, you either point it at endpoints you already run, or take the bundled 
-CPU-only trial, which is deliberately labeled as slow and not a deployment.
+On yours, search runs on the server's CPU unless you choose otherwise:
+Virtues installs the embedding model it recommends and keeps it current.
+If the installer finds a GPU or NPU, it links to
+[Faster search on a GPU or NPU](/docs/setup/accelerators), and you can set
+that up at any time. Or point it at an embedding server you already run.
 
-If you choose your own endpoints, have them running before you start.
+If you choose your own server, have it running before you start.
 [Setting up inference](/docs/inference) gives the commands, the models, and
 the contract those servers have to speak. To skip the prompt entirely on an
 unattended install, set `VIRTUES_INFERENCE` (with `VIRTUES_EMBED_URL`) in the

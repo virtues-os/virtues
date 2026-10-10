@@ -16,6 +16,7 @@ false for every face below.
 | Family | Files | Cuts | Token |
 |---|---|---|---|
 | EB Garamond | `EBGaramond-Regular-latin.woff2`, `-latin-ext.woff2` | **one** (400) | `--font-serif`, `--font-serif-ui` |
+| EB Garamond Lead | `EBGaramond-SemiBold-latin.woff2` | one (600), Latin only | `--font-serif-lead` |
 | Avenir | Regular / Medium / Bold `.woff2` | 400 / 500 / 700 | `--font-sans` |
 | IBM Plex Mono | Regular / Medium / SemiBold `.woff2` | 400 / 500 / 600 | `--font-mono` |
 | Nothing You Could Do | `NothingYouCouldDo-Regular-latin.woff2` | one (400) | `--font-hand` |
@@ -35,16 +36,17 @@ build time by `apps/web/scripts/precompress.mjs` — which walks the directory, 
 neither one carries a filename list to update. Nothing else in the repo names a
 font file. Adding or removing a face is `app.css` plus the file.
 
-## The serif ships exactly one cut
+## Regular is the face
 
-**There is no bold serif and no italic serif, and there cannot be one.** This is
-the thing to know before designing anything here.
+**There is no bold serif and no italic serif, and there cannot be one,** with a
+single exception for a single job (below). This is the thing to know before
+designing anything here.
 
-EB Garamond has a bold and an italic; we ship neither. `app.css` registers the
-regular as `EB Garamond` (weights 300–400) and again as `EB Garamond UI` with
-corrected vertical metrics, each as two files split by `unicode-range` (Latin,
-24 KB, and Latin Extended, 57 KB), so a page of English prose fetches one small
-file. Every registration is the same ink.
+EB Garamond has an italic; we don't ship it. `app.css` registers the regular as
+`EB Garamond` (weights 300–400) and again as `EB Garamond UI` with corrected
+vertical metrics, each as two files split by `unicode-range` (Latin, 24 KB, and
+Latin Extended, 57 KB), so a page of English prose fetches one small file. Every
+registration is the same ink.
 
 What follows mechanically, not as preference:
 
@@ -69,6 +71,22 @@ The house rules "the serif is never bold" and "no italic serif" are therefore
 enforced by the file, not only by taste. Anyone proposing a serif system with
 two weights is proposing a new file and a change to the design grammar, not a
 CSS change.
+
+## The one semibold: a day's first word
+
+SemiBold 600 exists for one job: the first word of a day page's Abstract, after
+its two-line drop cap. The cap itself is the regular; the rest of the word is
+semibold. Nothing else uses it, and nothing else should.
+
+It is registered as its own family, `EB Garamond Lead` (`--font-serif-lead`),
+not as a 600 inside `EB Garamond`. Inside the family, CSS font matching would
+hand it to every bold the app already asks the serif for (the markdown table
+header's 600, a bare `<strong>`), and those would quietly turn semibold. As its
+own family it is reached only by name. The file is the Latin subset (25 KB, the
+same `unicode-range` as the regular Latin file); a letter outside it falls back
+to the regular. `design-lint.sh`'s serif-impossible rule still counts any bold
+asked of `--font-serif`, and does not count `--font-serif-lead`, whose 600 is
+real.
 
 ## Two serif tokens, one face
 

@@ -33,6 +33,8 @@ pub fn routes() -> Router<AppState> {
         .route("/api/chats/:id/seen", post(mark_chat_seen_handler))
         // Chat Usage & Compaction API
         .route("/api/chats/:id/usage", get(get_chat_usage_handler))
+        // What the next message would be sent with (the Context panel)
+        .route("/api/chats/:id/context", post(next_turn_context_handler))
         .route("/api/chats/:id/compact", post(compact_chat_handler))
         // Files the chat's code runs wrote: the charts under a Python call
         .route("/api/chats/:id/files/*path", get(chat_file_handler))
@@ -68,6 +70,22 @@ pub async fn get_chat_usage_handler(
     Path(chat_id): Path<String>,
 ) -> Response {
     api_response(crate::api::chat_usage::get_chat_usage(state.db.pool(), chat_id).await)
+}
+
+/// POST /api/chats/:id/context - The next message's request before the
+/// message itself: system prompt sections, tools, the replayed conversation,
+/// and what the chat's latest calls read from cache. Owner only, like every
+/// route here; a shared chat's link never reaches it.
+pub async fn next_turn_context_handler(
+    State(state): State<AppState>,
+    _user: crate::middleware::auth::AuthUser,
+    Path(chat_id): Path<String>,
+    Json(request): Json<crate::api::chat::NextTurnRequest>,
+) -> Response {
+    match crate::api::chat::next_turn_preview(state.db.pool(), &state.yjs_state, &chat_id, request).await {
+        Ok(preview) => Json(preview).into_response(),
+        Err(response) => response,
+    }
 }
 
 /// Compact a chat (summarize older messages)

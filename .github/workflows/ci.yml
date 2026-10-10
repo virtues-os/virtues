@@ -199,6 +199,60 @@ jobs:
       - name: Shell unit tests
         run: cargo test --manifest-path apps/web/src-tauri/Cargo.toml --lib
 
+  # Pages are a Yjs tree under one contract, crates/virtues-document/
+  # contract.json, read by two implementations: the Rust crate (the model's
+  # HTML in, canonical HTML and the Yjs tree out) and the editor's Tiptap
+  # schema in apps/web/src/lib/document. Each has unit tests against itself;
+  # this is the one place the two meet. The crate's corpus goes through both,
+  # and the job fails when canonical HTML is not a fixed point in the browser,
+  # when either side's Yjs reads back differently in the other, or when the
+  # server's check of an update would refuse what Tiptap wrote for any case,
+  # pasted input included. A drift there is a block the model writes back
+  # unchanged and moves, a page one side opens differently from how the other
+  # wrote it, or an editor the server disconnects for its own paste.
+  #
+  # Without DOCUMENT_CONFORMANCE_BIN the conformance cases skip (and say so),
+  # so a local `pnpm vitest run` that does not build the binary is not this
+  # check. The block editor's tests (src/lib/document), the page bindings'
+  # (src/lib/yjs), the AI writer's (src/lib/ai), the page and chat glue's
+  # (src/lib/components/views, src/lib/components/chat/state), the CodeMirror
+  # page editor's (src/lib/codemirror) and the floating elements'
+  # (src/lib/floating) run here too: this job is where vitest runs in CI.
+  document-conformance:
+    name: Document contract conformance
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: document-conformance
+
+      - name: Build the conformance binary
+        run: cargo build -p virtues-document --bin document-conformance
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      - name: Rust and the editor agree on the corpus
+        working-directory: apps/web
+        env:
+          DOCUMENT_CONFORMANCE_BIN: ${{ github.workspace }}/target/debug/document-conformance
+        run: pnpm vitest run src/lib/document src/lib/yjs src/lib/ai src/lib/components/views src/lib/components/chat/state src/lib/codemirror src/lib/floating
+
   rust:
     runs-on: blacksmith-8vcpu-ubuntu-2204
     # A real Postgres for the #[sqlx::test] tests (action_templates,

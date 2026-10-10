@@ -5,12 +5,15 @@
  * Automatically cleans up on unmount or when disabled.
  */
 
+import { inComposition } from '$lib/utils/ime';
+
 export function useEscapeKey(onEscape: () => void, enabled: () => boolean = () => true) {
 	$effect(() => {
 		if (!enabled()) return;
 
 		function handleKeydown(event: KeyboardEvent) {
-			if (event.key === 'Escape') {
+			// An Escape mid-composition drops the input method's candidate.
+			if (event.key === 'Escape' && !inComposition(event)) {
 				event.preventDefault();
 				onEscape();
 			}

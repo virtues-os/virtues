@@ -63,12 +63,11 @@ pub struct ToolConfig {
 /// - code_interpreter: Execute Python code for calculations and analysis
 /// - create_page: Create a new page with content
 /// - get_page_content: Read current page content
-/// - edit_page: Apply edits using find/replace
+/// - edit_page: Edit a block page by block ops, a markdown page by find/replace
 /// - update_memory: Persist notes across conversations
 pub fn default_tools() -> Vec<ToolConfig> {
     vec![
         think_tool(),
-        propose_narrative_identity_tool(),
         write_it_up_tool(),
         revise_article_tool(),
         skip_step_tool(),
@@ -94,7 +93,6 @@ pub fn default_tools() -> Vec<ToolConfig> {
         get_project_item_tool(),
         generate_image_tool(),
         show_tool(),
-        publish_to_github_tool(),
         read_asset_tool(),
     ]
     .into_iter()
@@ -229,31 +227,6 @@ fn browser_tools() -> Vec<ToolConfig> {
     ]
 }
 
-/// Publish an applet's face to a GitHub repo the owner connected.
-fn publish_to_github_tool() -> ToolConfig {
-    ToolConfig {
-        id: "publish_to_github".to_string(),
-        name: "Publish to GitHub".to_string(),
-        description: "Publish an applet's face as a web page through a GitHub repo".to_string(),
-        llm_description: r#"Put an applet's face in the owner's GitHub repo as one HTML file, which their host serves. Only when the owner asks for GitHub specifically; the Share button is the usual way to share. The face must stand alone: no virtues.query, virtues.js or /api/. The owner allows each exact publish: on permission_needed stop, and once allowed call again with the same arguments."#.to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "required": ["applet_id", "repo", "path"],
-            "properties": {
-                "applet_id": { "type": "string" },
-                "repo": { "type": "string", "description": "owner/name" },
-                "path": { "type": "string", "description": "File path in the repo, ending in .html, e.g. static/rome/index.html" },
-                "branch": { "type": "string", "description": "Defaults to main" }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Edit,
-        icon: "ri:upload-cloud-2-line".to_string(),
-        display_order: 23,
-        is_system: false,
-    }
-}
-
 /// Generate Image tool — text-to-image via the gateway image model.
 fn generate_image_tool() -> ToolConfig {
     ToolConfig {
@@ -309,29 +282,6 @@ fn show_tool() -> ToolConfig {
         category: ToolCategory::Data,
         icon: "ri:bar-chart-2-line".to_string(),
         display_order: 23,
-        is_system: false,
-    }
-}
-
-/// Propose an addition to the user's narrative identity — never write one.
-fn propose_narrative_identity_tool() -> ToolConfig {
-    ToolConfig {
-        id: "propose_narrative_identity_edit".to_string(),
-        name: "Propose identity note".to_string(),
-        description: "Suggest something for the user's narrative identity".to_string(),
-        llm_description: r#"Propose an addition to the user's narrative identity, the document of who they are that goes into every conversation. It is not yours to edit: this leaves a note they Add or Dismiss. Use it rarely: only something durable about who they are or what they are for; never facts, preferences or passing remarks. One or two sentences in their voice ("I'd rather ship early than polish in private."). If unsure, don't."#.to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "required": ["text", "why"],
-            "properties": {
-                "text": { "type": "string" },
-                "why": { "type": "string", "description": "What prompted it; the user sees this" }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Edit,
-        icon: "ri:compass-3-line".to_string(),
-        display_order: 0,
         is_system: false,
     }
 }
@@ -821,18 +771,24 @@ fn create_page_tool() -> ToolConfig {
     }
 }
 
-/// Get Page Content tool - reads current content of a page
+/// Get Page Content tool - reads a page: a block page as HTML with block
+/// ids and the base its next edit names, a markdown page as its text. The
+/// how-to for editing rides in the read's result (`how_to_edit`, `tags`),
+/// not here: every word here is re-sent on every step.
 fn get_page_content_tool() -> ToolConfig {
     ToolConfig {
         id: "get_page_content".to_string(),
         name: "Get Page Content".to_string(),
         description: "Read the current content of a page".to_string(),
-        llm_description: r#"Read a page's title and content. Call it before edit_page. A page arrives as a link, [Name](/page/page_abc123); page_id is its last segment, page_abc123."#.to_string(),
+        llm_description: r#"Read a page not already in your context. page_id is the last segment of its link, [Name](/page/page_abc123). A block page returns `base` and `html` with each block's data-id, or, when long, `markdown`: pass `ids` and `base` to read blocks as html, `after` and `base` to read on. Other pages return `content`."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["page_id"],
             "properties": {
-                "page_id": { "type": "string" }
+                "page_id": { "type": "string" },
+                "ids": { "type": "array", "items": { "type": "string" } },
+                "after": { "type": "string" },
+                "base": { "type": "string" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -843,21 +799,40 @@ fn get_page_content_tool() -> ToolConfig {
     }
 }
 
-/// Edit Page tool - applies edits using simple find/replace
+/// Edit Page tool - a block page by block-id ops against the base its read
+/// returned, all or none; a markdown page by find/replace on its text.
 fn edit_page_tool() -> ToolConfig {
     ToolConfig {
         id: "edit_page".to_string(),
         name: "Edit Page".to_string(),
-        description: "Edit a page using find/replace".to_string(),
-        llm_description: r#"Edit a page: replace the text `find` with `replace`, and rename it with `title`. Call get_page_content first. page_id is the last segment of the page's link, [Name](/page/page_abc123).
+        description: "Edit a page".to_string(),
+        llm_description: r#"Edit a page you have read (open, or with get_page_content); `title` renames it.
 
-`find` matches the plain text (formatting stripped): make it unique but short. `replace` is markdown. An empty `find` replaces the whole document; empty `find` and `replace` with a `title` only renames. Prefer a few large edits to many small ones. Changes apply immediately."#.to_string(),
+Block page: send `base` and `ops`, all or none. An op replaces, inserts after or before, or deletes the block whose data-id is `id`, or appends; `html` is whole blocks.
+
+Other pages: `find` (short, unique, as the markdown reads; empty replaces all) and `replace`, markdown."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
-            "required": ["page_id", "find", "replace"],
+            "required": ["page_id"],
             "properties": {
                 "page_id": { "type": "string" },
                 "title": { "type": "string" },
+                "base": { "type": "string" },
+                "ops": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["op"],
+                        "properties": {
+                            "op": {
+                                "type": "string",
+                                "enum": ["replace", "insert_after", "insert_before", "delete", "append"]
+                            },
+                            "id": { "type": "string" },
+                            "html": { "type": "string" }
+                        }
+                    }
+                },
                 "find": { "type": "string" },
                 "replace": { "type": "string" }
             }

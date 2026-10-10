@@ -146,8 +146,9 @@ old binary before it migrates. Rollback is the real reason.
   `auto_update` and `wiki_days.last_edited_by` were dropped.
 - **Narrative identity** as its own table. `wiki_narrative_identity` was
   dropped in 0024; the life document is an article whose subject has no brief,
-  so the editor structurally cannot touch it. Proposals arrive as notes through
-  `propose_narrative_identity_edit`.
+  so the editor structurally cannot touch it. Proposals arrived as notes through
+  `propose_narrative_identity_edit` until that tool was removed on 2026-10-10;
+  only the person edits it now.
 - **The day article** shipped, moving `autobiography` into article pages. Its
   narration is being redone from the day's own evidence in
   `agents/plan/day-article-plan.md`.

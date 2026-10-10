@@ -130,28 +130,34 @@
 	font-display: swap;
 }
 
-/* EB Garamond (serif) — ONE WEIGHT, NO ITALIC. Read this before designing
-   anything with it.
-   We ship EB Garamond Regular 400 only, as two subsets split by
-   `unicode-range` (Latin, then Latin Extended), so a page of English prose
-   downloads the 24 KB file and nothing else. The face itself has a bold and an
-   italic; we do not ship them, and the house grammar never asks for them.
+/* EB Garamond (serif) — REGULAR IS THE FACE, NO ITALIC. Read this before
+   designing anything with it.
+   `EB Garamond` is Regular 400 only, as two subsets split by `unicode-range`
+   (Latin, then Latin Extended), so a page of English prose downloads the
+   24 KB file and nothing else. The face has an italic; we do not ship it.
 
    The consequence is a CONSTRAINT, not a taste: "the serif is never bold and
-   never italic" cannot be violated, only faked. Ask a browser for weight 700
-   and CSS font matching stays inside the family and hands back the one cut, so
-   the heading silently renders regular; ask for italic and the browser
-   synthesizes an oblique — a mechanical slant, not a drawn italic, and it
-   looks it. There is no fall-through to another family for weight or style:
-   family fallback happens only for missing glyphs and while the file loads.
+   never italic" cannot be violated, only faked. Ask `EB Garamond` for weight
+   700 and CSS font matching stays inside the family and hands back the one
+   cut, so the heading silently renders regular; ask for italic and the
+   browser synthesizes an oblique — a mechanical slant, not a drawn italic,
+   and it looks it. There is no fall-through to another family for weight or
+   style: family fallback happens only for missing glyphs and while the file
+   loads.
 
    So a serif hierarchy CANNOT be set with weight or slope. Set it with size,
    case, color, and space — which is what the design grammar already asks for.
    The 300 and 400 registrations exist so that either number in a
    `font-weight` resolves without synthesis; they are the same ink.
 
-   Adding a weight or the italic is a deliberate change to that grammar, not a
-   CSS tweak: it means shipping another file and deciding where it is allowed. */
+   SemiBold 600 exists for ONE job: the first word of a day's Abstract, after
+   its drop cap (DayPage). Nothing else uses it. It is registered as its own
+   family, `EB Garamond Lead`, not as a 600 inside `EB Garamond`: inside the
+   family, every bold the app already asks the serif for (a table header's
+   600, a `<strong>`) would quietly start rendering semibold. Latin only; a
+   letter outside it falls back to the regular, because `.lead-word` turns off
+   weight synthesis (without that the browser fakes a bold from the regular).
+   Another use, or the italic, is a change to the grammar, not a CSS tweak. */
 @font-face {
 	font-family: 'EB Garamond';
 	src: url('/fonts/EBGaramond-Regular-latin.woff2') format('woff2');
@@ -208,6 +214,16 @@
 	ascent-override: 94.3%;
 	descent-override: 29%;
 	line-gap-override: 0%;
+}
+
+/* The Abstract's lead word, semibold (see the EB Garamond note above). */
+@font-face {
+	font-family: 'EB Garamond Lead';
+	src: url('/fonts/EBGaramond-SemiBold-latin.woff2') format('woff2');
+	font-weight: 600;
+	font-style: normal;
+	font-display: swap;
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
 /* Nothing You Could Do (hand) — OFL, Kimberly Geswein; the copyright and

@@ -223,14 +223,14 @@
 		font-size: 0.875rem;
 	}
 	label span {
-		color: var(--text-muted);
+		color: var(--color-foreground-muted);
 	}
 	.muted {
-		color: var(--text-muted);
+		color: var(--color-foreground-muted);
 		font-size: 0.875rem;
 	}
 	.error {
-		color: var(--danger);
+		color: var(--color-error);
 		font-size: 0.875rem;
 	}
 	.actions {

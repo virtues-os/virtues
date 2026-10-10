@@ -47,6 +47,9 @@
 	--color-surface: var(--surface);
 	--color-surface-elevated: var(--surface-elevated);
 	--color-surface-overlay: var(--surface-overlay);
+	/* The ground the main content card paints, which every view reads on.
+	   `--surface` stays for what lifts off it: cards, popovers, menus. */
+	--color-page: var(--page);
 
 	/* Interaction surfaces. These two were referenced across the app (datagrid,
 	   filter chips, pinned sidebar rows) but never bridged, so they resolved to
@@ -109,12 +112,15 @@
 	/* Font Families */
 	--font-mono: 'IBM Plex Mono', monospace;
 	--font-sans: 'Avenir', sans-serif;
-	/* EB Garamond ships here in ONE cut — regular 400, no bold, no italic. That
-	   is a technical constraint on any serif hierarchy, not only house taste;
-	   the @font-face note in app.css says what follows from it. The tail is a
-	   system stack, not a webfont: it is only ever seen during `font-display:
-	   swap` or for a glyph outside the two subsets, and it costs zero bytes. */
+	/* EB Garamond is regular 400 here: no bold, no italic. That is a technical
+	   constraint on any serif hierarchy, not only house taste; the @font-face
+	   note in app.css says what follows from it. The tail is a system stack,
+	   not a webfont: it is only ever seen during `font-display: swap` or for a
+	   glyph outside the two subsets, and it costs zero bytes. */
 	--font-serif: 'EB Garamond', ui-serif, Georgia, 'Times New Roman', serif;
+	/* The one semibold: the first word of a day's Abstract, at weight 600, and
+	   nothing else. Its own family, so no other bold reaches it (app.css). */
+	--font-serif-lead: 'EB Garamond Lead', 'EB Garamond', ui-serif, Georgia, 'Times New Roman', serif;
 	/* The serif for chrome — same face, metrics normalized so a centered line
 	   box centers the letters and not the em square. Use it wherever the serif
 	   shares a row with something that isn't text (an icon, a dot, a control);
@@ -225,6 +231,10 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #FFFFFF;
 	--surface-overlay: #FFFFFF;
+	/* The page is the surface unless a theme says otherwise. It resolves here,
+	   on <html>, which is also where `data-theme` lands, so every theme's own
+	   --surface is the one it reads. */
+	--page: var(--surface);
 
 	/* Background Treatment - Nothing. No texture, no wash. */
 	--background-image: none;
@@ -566,6 +576,8 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F4F3F0;
 	--surface-overlay: #FFFFFF;
+	/* The page is ivory, so a white card, popover or menu lifts off it. */
+	--page: #FDFCF9;
 
 	/* Background Treatment - Flat warm ivory */
 	--background-image: none;
@@ -607,16 +619,13 @@
 	--border-strong: #D4D1CC;
 	--border-focus: #1D4572;
 
-	/* Selection/Highlight - A classic yellow highlighter, a little desaturated.
-	   The claret wash that was here borrowed the signature accent, so a marked
-	   passage read as an error state rather than as something someone marked.
-	   Yellow is what a pen does to paper, and the hue is nobody else's here.
-	   Red stays near 255 (HSL 53°, 95%, 72%): pulling it down further to
-	   desaturate turns the composite olive, which reads as stain rather than
-	   marker. The paleness comes from the blue channel and the alpha instead,
-	   so over the ivory ground this lands at a clean #FCF5C4, over white at
-	   #FDF7C7. */
-	--highlight: rgba(251, 235, 116, 0.4);
+	/* Selection/Highlight - A yellow highlighter, warmed toward gold. Not the
+	   claret: a marked passage in the signature accent reads as an error state
+	   rather than as something someone marked. Yellow is what a pen does to
+	   paper, and the hue is nobody else's here. Warm (HSL 46°, 85%, 71%) so it
+	   reads as a mark on the ivory page and not as a tint of it: over the page
+	   it lands at #F9ECC3, over a white card at #FAEEC6. */
+	--highlight: rgba(244, 215, 120, 0.42);
 	--highlight-foreground: #1A2030;
 
 	/* Diff Colors */

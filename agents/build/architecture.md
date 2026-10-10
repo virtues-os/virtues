@@ -86,8 +86,11 @@ jail limits blast radius; it is not an authority boundary, and `build_command`
 says why.
 
 **Faces** are served by `server/faces.rs` into a `sandbox="allow-scripts"`
-iframe with an opaque origin. Svelte components are never loaded from an
-applet folder: the app bundle is trusted code and applet folders are not.
+iframe with an opaque origin, and every file carries a CSP `sandbox
+allow-scripts`, so a face loaded on its own (a link to it, a typed address)
+gets the same opaque origin and never the box's. Svelte components are never
+loaded from an applet folder: the app bundle is trusted code and applet
+folders are not.
 
 ## Why subprocesses
 

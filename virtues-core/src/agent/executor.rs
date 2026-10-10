@@ -117,9 +117,9 @@ impl ToolExecutionResult {
 
 /// How much of one tool's output the turn that called it gets to read.
 ///
-/// The next turn replays at most 32 KiB (`compaction::MAX_REPLAYED_TOOL_BYTES`)
-/// and every turn after that 2 KiB, but the calling turn saw everything, and
-/// measured on a real box the ninetieth-percentile result was 94 KB — a
+/// Later turns replay 2 KiB of it (`compaction::REPLAYED_TOOL_BYTES`), but
+/// the calling turn saw everything, and measured on a real box the
+/// ninetieth-percentile result was 94 KB — a
 /// `semantic_search` with fifty previews, a page, a web result set — with
 /// nothing capping it but `sql_query`'s own limit (then 256 KiB, now 64 KiB).
 /// Ninety-six KiB is about 24k tokens, where the

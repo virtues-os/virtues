@@ -55,6 +55,7 @@
 		expanded,
 		focused = false,
 		role = "menuitem",
+		id,
 		onclick,
 		onmouseenter,
 		onmouseleave,
@@ -80,6 +81,8 @@
 		/** Keyboard cursor — the owner's business, not the row's. */
 		focused?: boolean;
 		role?: "menuitem" | "menuitemcheckbox" | "menuitemradio" | "option";
+		/** For a menu whose keyboard cursor the focused element points at (`aria-activedescendant`). */
+		id?: string;
 		onclick?: (e: MouseEvent) => void;
 		onmouseenter?: (e: MouseEvent) => void;
 		onmouseleave?: (e: MouseEvent) => void;
@@ -94,6 +97,7 @@
 <button
 	type="button"
 	{role}
+	{id}
 	class="v-menuitem {className}"
 	data-destructive={destructive ? "true" : undefined}
 	class:is-checked={checked}
@@ -153,6 +157,14 @@
 		text-align: left;
 		cursor: pointer;
 		transition: background-color 100ms ease;
+	}
+
+	/* A thumb's 44pt, inside the row (design-grammar §6): a long press on a
+	   block page opens these menus on a phone. */
+	@media (pointer: coarse) {
+		.v-menuitem {
+			min-height: 44px;
+		}
 	}
 
 	/* The interaction ramp, never a surface token: `--surface-elevated` against

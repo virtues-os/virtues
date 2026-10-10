@@ -1,11 +1,21 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import type { PageFormat } from "$lib/api/client";
 	import {
 		pageDisplay,
 		type FontMode,
 		type TextSize,
 		type WidthMode,
 	} from "$lib/stores/pageDisplay.svelte";
+
+	interface Props {
+		/** A block page has no raw markdown to edit; it offers its export to read. */
+		format?: PageFormat;
+		/** Open the page's markdown, read only (block pages). */
+		onViewMarkdown?: () => void;
+	}
+
+	let { format = "markdown", onViewMarkdown }: Props = $props();
 
 	const fontModes: { value: FontMode; label: string }[] = [
 		{ value: "sans", label: "Sans" },
@@ -23,6 +33,7 @@
 		{ value: "small", icon: "ri:contract-left-right-line", label: "Narrow" },
 		{ value: "medium", icon: "ri:pause-line", label: "Medium" },
 		{ value: "full", icon: "ri:expand-left-right-line", label: "Wide" },
+		{ value: "page", icon: "ri:file-paper-2-line", label: "Page (A4)" },
 	];
 </script>
 
@@ -94,16 +105,25 @@
 		<kbd class="focus-kbd">⌘⇧F</kbd>
 	</button>
 
-	<button class="focus-toggle" onclick={() => pageDisplay.toggleRaw()}>
-		<Icon
-			icon={pageDisplay.rawMode ? "ri:markdown-fill" : "ri:markdown-line"}
-			width="15"
-		/>
-		<span class="focus-label">Raw markdown</span>
-		<span class="focus-state" class:on={pageDisplay.rawMode}>
-			{pageDisplay.rawMode ? "On" : "Off"}
-		</span>
-	</button>
+	{#if format === "tree"}
+		{#if onViewMarkdown}
+			<button class="focus-toggle" onclick={onViewMarkdown}>
+				<Icon icon="ri:markdown-line" width="15" />
+				<span class="focus-label">View as markdown</span>
+			</button>
+		{/if}
+	{:else}
+		<button class="focus-toggle" onclick={() => pageDisplay.toggleRaw()}>
+			<Icon
+				icon={pageDisplay.rawMode ? "ri:markdown-fill" : "ri:markdown-line"}
+				width="15"
+			/>
+			<span class="focus-label">Raw markdown</span>
+			<span class="focus-state" class:on={pageDisplay.rawMode}>
+				{pageDisplay.rawMode ? "On" : "Off"}
+			</span>
+		</button>
+	{/if}
 </div>
 
 <style>

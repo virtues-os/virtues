@@ -120,6 +120,8 @@ pub fn routes() -> Router<AppState> {
             get(crate::api::network::relay_status_handler)
                 .put(crate::api::network::relay_toggle_handler),
         )
+        // Settings → Search: where search runs and how much it covers.
+        .route("/api/search/status", get(search_status_handler))
         // Box updates (Settings → Box)
         .route("/api/system/update", get(update_status_handler))
         .route(
@@ -600,6 +602,11 @@ pub async fn unsplash_search_handler(
 // ============================================================================
 // Update Handlers (Settings → Box)
 // ============================================================================
+
+/// GET /api/search/status — Settings → Search.
+pub async fn search_status_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::search_status::status(state.db.pool()).await)
+}
 
 /// GET /api/system/update — current version, channel, and what's available.
 pub async fn update_status_handler() -> Response {
