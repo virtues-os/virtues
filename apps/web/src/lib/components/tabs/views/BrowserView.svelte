@@ -391,11 +391,11 @@
 		width: 28px;
 		height: 28px;
 		border-radius: 50%;
-		color: var(--text-muted);
+		color: var(--color-foreground-muted);
 	}
 	.tool:hover:not(:disabled) {
 		background: var(--surface);
-		color: var(--text);
+		color: var(--color-foreground);
 	}
 	.tool:disabled {
 		opacity: 0.4;
@@ -408,7 +408,7 @@
 		border-radius: 999px;
 		border: 1px solid transparent;
 		background: var(--surface-elevated, var(--surface));
-		color: var(--text);
+		color: var(--color-foreground);
 		font-size: 13px;
 		text-align: center;
 		text-overflow: ellipsis;
@@ -427,12 +427,12 @@
 		height: 36px;
 		border-radius: 50%;
 		background: var(--surface-elevated, var(--surface));
-		color: var(--text-muted);
+		color: var(--color-foreground-muted);
 		flex-shrink: 0;
 	}
 	.round:hover,
 	.round.on {
-		color: var(--text);
+		color: var(--color-foreground);
 	}
 
 	.agent-bar {
@@ -443,7 +443,7 @@
 		padding: 8px 8px 8px 16px;
 		border-radius: 999px;
 		font-size: 13px;
-		color: var(--text);
+		color: var(--color-foreground);
 	}
 	.agent-bar.driving {
 		background: color-mix(in srgb, var(--primary) 10%, var(--surface));
@@ -481,12 +481,12 @@
 		border-radius: 999px;
 		border: 1px solid var(--border);
 		background: var(--surface);
-		color: var(--text);
+		color: var(--color-foreground);
 		font-size: 12px;
 		white-space: nowrap;
 	}
 	.bar-btn:hover {
-		background: var(--surface-hover, var(--surface-elevated));
+		background: var(--color-background-hover);
 	}
 	.bar-btn.primary {
 		background: var(--primary);
@@ -572,7 +572,7 @@
 		justify-content: center;
 		width: 32px;
 		height: 100%;
-		color: var(--text-muted);
+		color: var(--color-foreground-muted);
 	}
 	.chip.failed .glyph {
 		color: var(--warning);
@@ -582,30 +582,30 @@
 	}
 	.what {
 		font-size: 12px;
-		color: var(--text);
+		color: var(--color-foreground);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 	.chip:not(:last-child) .what,
 	.chip.failed .what {
-		color: var(--text-muted);
+		color: var(--color-foreground-muted);
 	}
 	.times {
 		font-size: 12px;
-		color: var(--text-muted);
+		color: var(--color-foreground-muted);
 		font-variant-numeric: tabular-nums;
 	}
 	.link {
 		flex-shrink: 0;
 		font-size: 12px;
-		color: var(--text-muted);
+		color: var(--color-foreground-muted);
 	}
 	.link:hover {
-		color: var(--text);
+		color: var(--color-foreground);
 	}
 	.note {
-		color: var(--text-muted);
+		color: var(--color-foreground-muted);
 		font-size: 14px;
 	}
 </style>
