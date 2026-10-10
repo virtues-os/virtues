@@ -27,6 +27,9 @@ pub struct SearchStatus {
     pub last_indexed_at: Option<chrono::DateTime<chrono::Utc>>,
     /// The embedding server answered the probe, and how long it took.
     pub reachable: bool,
+    /// Didn't answer within the probe's time limit: a one-slot CPU server busy
+    /// indexing queues the probe behind its work, which is not the same as down.
+    pub busy: bool,
     pub probe_ms: Option<u64>,
     pub probe_error: Option<String>,
     /// Reranking runs only when `VIRTUES_RERANK_GAP` opts in (search::query).
@@ -68,10 +71,10 @@ pub async fn status(pool: &PgPool) -> Result<SearchStatus> {
         crate::search::embedder::probe_vectors(&cfg.base_url, &cfg.model),
     )
     .await;
-    let (reachable, probe_ms, probe_error) = match probe {
-        Ok(Ok(_)) => (true, Some(started.elapsed().as_millis() as u64), None),
-        Ok(Err(e)) => (false, None, Some(format!("{e:#}"))),
-        Err(_) => (false, None, Some("no answer within 5 seconds".to_string())),
+    let (reachable, busy, probe_ms, probe_error) = match probe {
+        Ok(Ok(_)) => (true, false, Some(started.elapsed().as_millis() as u64), None),
+        Ok(Err(e)) => (false, false, None, Some(format!("{e:#}"))),
+        Err(_) => (false, true, None, Some("no answer within 5 seconds".to_string())),
     };
 
     let rerank_on = crate::search::query::reranker_enabled();
@@ -94,6 +97,7 @@ pub async fn status(pool: &PgPool) -> Result<SearchStatus> {
         chunks,
         last_indexed_at,
         reachable,
+        busy,
         probe_ms,
         probe_error,
         rerank_on,

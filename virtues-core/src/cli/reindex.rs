@@ -76,22 +76,36 @@ pub(crate) async fn estimate(pool: &PgPool) -> Result<Option<String>> {
 /// the wipe clears it. The re-embed's first step records the current model's
 /// width and sizes the columns to it, before any vector is written.
 pub(crate) async fn rebuild(pool: &PgPool) -> Result<(u64, u32, u32)> {
-    // 0. Take the indexer lock, and keep it until the re-embed is done. If the
-    //    box's own indexer ran between the wipe and the re-embed, the re-embed
-    //    would skip and report nothing embedded, and its indexer could record
-    //    the geometry first.
-    let lock = crate::search::indexer::IndexerLock::try_acquire(pool)
+    let lock = indexer_lock(pool).await?;
+    rebuild_locked(pool, lock).await
+}
+
+/// The indexer lock, or an error saying the indexer is busy. Take it before
+/// changing anything a rebuild depends on (`configure-inference` pins the new
+/// server first), so a busy indexer refuses the whole operation, not just its
+/// second half.
+pub(crate) async fn indexer_lock(pool: &PgPool) -> Result<crate::search::indexer::IndexerLock> {
+    crate::search::indexer::IndexerLock::try_acquire(pool)
         .await
         .map_err(|e| Error::Database(format!("taking the indexer lock: {e:#}")))?
         .ok_or_else(|| {
             Error::Other(
-                "the box's indexer is running right now. Nothing was wiped. Wait for it \
+                "the box's indexer is running right now. Nothing was changed. Wait for it \
                  to finish and run this again, or stop the server first \
                  (sudo systemctl stop virtues)."
                     .into(),
             )
-        })?;
+        })
+}
 
+/// [`rebuild`], for a caller already holding the indexer lock. Holds it until
+/// the re-embed is done: if the box's own indexer ran between the wipe and the
+/// re-embed, the re-embed would skip and report nothing embedded, and its
+/// indexer could record the geometry first.
+pub(crate) async fn rebuild_locked(
+    pool: &PgPool,
+    lock: crate::search::indexer::IndexerLock,
+) -> Result<(u64, u32, u32)> {
     // 1. Wipe the derived index, its recorded geometry and the event scores
     //    (source untouched).
     println!("→ wiping the derived index (vectors + BM25)…");

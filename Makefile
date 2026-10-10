@@ -81,17 +81,18 @@ VIRTUES_DEV_SKIP_SETUP ?= 1
 # (gitignored) and are reused — same GGUFs + llama-server flags the appliance
 # installer pins (see tools/virtues-installer/src/install.rs). `dev-core` points
 # at this dir so `virtues doctor` reports them baked.
-# `make dev` runs the embed/rerank sidecars by default (~1 GB RAM, ~0% CPU
-# idle). Skip them for a UI-only or low-RAM session: `make dev WITH_EMBED=0`.
+# `make dev` runs the embedding sidecar by default (~1 GB RAM, ~0% CPU idle).
+# Skip it for a UI-only or low-RAM session: `make dev WITH_EMBED=0`. No
+# reranker: search calls one only when VIRTUES_RERANK_GAP opts in, so a dev
+# session testing that runs its own on :18182.
 WITH_EMBED ?= 1
 VIRTUES_MODELS_DIR ?= $(CURDIR)/.data/models
-# Must match the GGUFs virtues-core expects (see virtues-core/src/inference_report.rs):
-# EmbeddingGemma 2 is 768-dim + mean-pooled + task-prompted (embedder.rs);
-# serving bge-m3 here emits 1024-dim vectors that core rejects.
+# Must match the GGUF boxes run (virtues-core/src/inference_report.rs
+# EMBED_GGUF): EmbeddingGemma 2, 768-dim, mean-pooled, task-prompted. Another
+# model here builds the dev index in another geometry, which core then holds
+# every later run to.
 EMBED_GGUF  := embeddinggemma-2-Q8_0.gguf
-RERANK_GGUF := gte-reranker-modernbert-base-Q8_0.gguf
 EMBED_GGUF_URL  := https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/bfcd298762cc34d0357ece5ebdd31791a3a374d8/$(EMBED_GGUF)
-RERANK_GGUF_URL := https://huggingface.co/keisuke-miyako/gte-reranker-modernbert-base-gguf-q8_0/resolve/main/$(RERANK_GGUF)
 
 # Brew Postgres binaries (formula installs to opt/postgresql@$(PG_MAJOR)/bin).
 # Postgres major version. PINNED, and pinned to match what the installer puts
@@ -245,7 +246,7 @@ DEV_LOCAL_API := $(filter http://localhost%,$(VIRTUES_API_URL))
 
 dev: db ## Run the full LOCAL dev stack: postgres + api (:9002) + core (:8000) + web + embed (Ctrl-C stops all)
 	@if [ "$(WITH_EMBED)" = "1" ]; then $(MAKE) _embed-ensure; fi
-	@echo "→ starting$(if $(DEV_LOCAL_API), virtues-api (:9002) +,) virtues-core (:8000) + web (:$(DEV_WEB_PORT))$(if $(filter 1,$(WITH_EMBED)), + embed :18181/rerank :18182,). Ctrl-C stops all."
+	@echo "→ starting$(if $(DEV_LOCAL_API), virtues-api (:9002) +,) virtues-core (:8000) + web (:$(DEV_WEB_PORT))$(if $(filter 1,$(WITH_EMBED)), + embed :18181,). Ctrl-C stops all."
 	@echo "  api: $(VIRTUES_API_URL)  atlas: $(VIRTUES_ATLAS_URL)$(if $(DEV_LOCAL_API),  (fully local — AI works, no checkout), (PROD — real billing, real rows))"
 	@echo "  lands straight in the app (setup skipped).$(if $(filter 1,$(WITH_EMBED)),, search off — 'make dev WITH_EMBED=1' or 'make dev-embed' to enable.)"
 	@trap 'kill 0' EXIT INT TERM; \
@@ -333,10 +334,6 @@ _embed-ensure:
 	  echo "→ downloading $(EMBED_GGUF) (~320 MB, one-time)…"; \
 	  curl -fL --progress-bar "$(EMBED_GGUF_URL)" -o "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF).part" \
 	    && mv "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF).part" "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF)"; }
-	@test -s "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF)" || { \
-	  echo "→ downloading $(RERANK_GGUF) (~160 MB, one-time)…"; \
-	  curl -fL --progress-bar "$(RERANK_GGUF_URL)" -o "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF).part" \
-	    && mv "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF).part" "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF)"; }
 	@$(MAKE) --no-print-directory _pdfium-ensure
 
 # libpdfium for document extraction (dev-only convenience: direct from
@@ -354,20 +351,19 @@ _pdfium-ensure:
 	    && mv "$(PDFIUM_DIR)/lib/libpdfium.dylib" "$(PDFIUM_DIR)/libpdfium.dylib" \
 	    && rm -rf "$(PDFIUM_DIR)/pdfium.tgz" "$(PDFIUM_DIR)/lib"; }
 
-# Run the two sidecars (assumes models present; ~1 GB resident, ~0% CPU
-# idle). `-lv 1` quiets llama.cpp's startup spam (device-info/slot/warmup) while
+# Run the embedding sidecar (assumes the model is present; ~1 GB resident, ~0%
+# CPU idle). `-lv 1` quiets llama.cpp's startup spam (device-info/slot/warmup) while
 # keeping the "model loaded / listening" line, warnings, and errors.
 # `--pooling mean` matches EmbeddingGemma (and the installer's unit); cls pooling
 # would emit the wrong sentence vector. `-ngl 0` keeps the embedder on CPU like
 # the box: EmbeddingGemma's activations overflow fp16 GPU paths.
 _embed-run:
 	@trap 'kill 0' INT TERM; \
-	  "$(LLAMA_SERVER)" -lv 1 --embedding --pooling mean -ngl 0 -m "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF)"  --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 & \
-	  "$(LLAMA_SERVER)" -lv 1 --rerank                         -m "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF)" --host 127.0.0.1 --port 18182 -c 8192 -b 8192 -ub 8192 & \
+	  "$(LLAMA_SERVER)" -lv 1 --embedding --pooling mean -ngl 0 -m "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF)" --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 & \
 	  wait
 
-dev-embed: _embed-ensure ## Run local embed (:18181) + rerank (:18182) llama-server sidecars (models cached in .data/)
-	@echo "→ embed :18181 + rerank :18182 (Ctrl-C stops both)."
+dev-embed: _embed-ensure ## Run the local embedding llama-server sidecar on :18181 (model cached in .data/)
+	@echo "→ embed :18181 (Ctrl-C stops it)."
 	@$(MAKE) _embed-run
 
 dev-link: ## Print a login URL for the local dev stack (no prompts, no .env writes)
@@ -409,7 +405,7 @@ dev-reset: ## Drop + recreate the dev dbs (DESTRUCTIVE, dev only)
 #   · credentialed syncs (gmail, calendar, plaid) decrypt their OAuth tokens
 #     with the BOX's key, which never leaves the box — so they can't work on a
 #     laptop, not now and not after any amount of fixing;
-#   · the embedding/extraction applets want the llama sidecars on :18181/:18182,
+#   · the embedding/extraction applets want the llama sidecar on :18181,
 #     which `dev-real` doesn't start;
 #   · and the ones that DO run would write into a snapshot nobody keeps.
 #

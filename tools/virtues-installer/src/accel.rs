@@ -84,14 +84,23 @@ fn detect_in(root: &Path) -> Vec<Accelerator> {
             .ok()
             .and_then(|l| l.file_name().map(|n| n.to_string_lossy().to_string()))
             .unwrap_or_default();
+        // Integrated graphics share the CPU's memory and rarely beat it at
+        // embedding, so they don't earn a nudge: nearly every Intel or AMD mini
+        // PC has one. An AMD card counts when it has its own memory (an APU's
+        // is a small carve-out), an Intel one when it isn't the CPU's built-in
+        // device, which always sits at PCI 00:02.0.
+        let device = std::fs::canonicalize(card.join("device")).unwrap_or_else(|_| card.join("device"));
+        let pci = device.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let (label, kind) = match driver.as_str() {
-            "amdgpu" => ("AMD Radeon GPU", Kind::Amd),
-            "i915" | "xe" => ("Intel GPU", Kind::Intel),
+            "amdgpu" if vram_bytes(&card) >= 2 << 30 => ("AMD Radeon GPU", Kind::Amd),
+            "i915" | "xe" if !pci.starts_with("0000:00:") => ("Intel Arc GPU", Kind::Intel),
+            // An NVIDIA card on the open-source driver: no compute until the
+            // proprietary driver goes in, which the guide's first step covers.
+            "nouveau" => ("NVIDIA GPU", Kind::Nvidia),
             "panfrost" | "panthor" | "mali" | "mali_kbase" => ("Arm Mali GPU", Kind::OtherGpu),
             "msm" | "msm_drm" => ("Qualcomm Adreno GPU", Kind::OtherGpu),
-            // nvidia is covered above; nouveau has no compute path we can use.
-            // vc4/v3d (Raspberry Pi), virtual and display-only drivers can't
-            // run models, so they don't earn a nudge.
+            // nvidia is covered above. vc4/v3d (Raspberry Pi), virtual and
+            // display-only drivers can't run models.
             _ => continue,
         };
         push(Accelerator { label: label.to_string(), kind });
@@ -132,6 +141,14 @@ fn detect_in(root: &Path) -> Vec<Accelerator> {
     found
 }
 
+/// Dedicated video memory an amdgpu card reports, or 0.
+fn vram_bytes(card: &Path) -> u64 {
+    std::fs::read_to_string(card.join("device/mem_info_vram_total"))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
+}
+
 fn compatible(root: &Path) -> String {
     std::fs::read(root.join("proc/device-tree/compatible"))
         .map(|b| String::from_utf8_lossy(&b).replace('\0', " ").to_lowercase())
@@ -160,13 +177,18 @@ mod tests {
         tempfile::tempdir().unwrap()
     }
 
-    fn card(root: &Path, n: &str, driver: &str) {
-        let dev = root.join(format!("sys/devices/{n}"));
+    fn card(root: &Path, n: &str, driver: &str, pci: &str) {
+        let dev = root.join(format!("sys/devices/pci0000:00/{pci}"));
         fs::create_dir_all(&dev).unwrap();
         fs::create_dir_all(root.join(format!("sys/bus/pci/drivers/{driver}"))).unwrap();
         std::os::unix::fs::symlink(root.join(format!("sys/bus/pci/drivers/{driver}")), dev.join("driver")).unwrap();
         fs::create_dir_all(root.join(format!("sys/class/drm/{n}"))).unwrap();
         std::os::unix::fs::symlink(&dev, root.join(format!("sys/class/drm/{n}/device"))).unwrap();
+    }
+
+    fn vram(root: &Path, pci: &str, bytes: u64) {
+        fs::write(root.join(format!("sys/devices/pci0000:00/{pci}/mem_info_vram_total")), bytes.to_string())
+            .unwrap();
     }
 
     #[test]
@@ -188,12 +210,25 @@ mod tests {
     #[test]
     fn drm_drivers_map_to_families_and_skip_display_only() {
         let t = tree();
-        card(t.path(), "card0", "amdgpu");
-        card(t.path(), "card1", "vc4");
-        card(t.path(), "card2", "i915");
+        card(t.path(), "card0", "amdgpu", "0000:03:00.0");
+        vram(t.path(), "0000:03:00.0", 8 << 30);
+        card(t.path(), "card1", "vc4", "0000:04:00.0");
+        card(t.path(), "card2", "xe", "0000:05:00.0");
+        card(t.path(), "card3", "nouveau", "0000:06:00.0");
         fs::create_dir_all(t.path().join("sys/class/drm/card0-HDMI-A-1")).unwrap();
         let kinds: Vec<Kind> = detect_in(t.path()).into_iter().map(|a| a.kind).collect();
-        assert_eq!(kinds, vec![Kind::Amd, Kind::Intel]);
+        assert_eq!(kinds, vec![Kind::Nvidia, Kind::Amd, Kind::Intel]);
+    }
+
+    /// A mini PC's built-in graphics: Intel's at 00:02.0, an AMD APU with a
+    /// small memory carve-out. Neither gets the nudge.
+    #[test]
+    fn integrated_graphics_are_not_accelerators() {
+        let t = tree();
+        card(t.path(), "card0", "i915", "0000:00:02.0");
+        card(t.path(), "card1", "amdgpu", "0000:c4:00.0");
+        vram(t.path(), "0000:c4:00.0", 512 << 20);
+        assert!(detect_in(t.path()).is_empty());
     }
 
     #[test]

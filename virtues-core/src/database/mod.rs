@@ -210,11 +210,30 @@ impl Database {
                 .fetch_one(&self.pool)
                 .await
                 .map_err(|e| Error::Database(format!("looking for search_vectors_hnsw: {e}")))?;
-        if at_target(current_type.as_deref())
-            && at_target(topic_type.as_deref())
-            && at_target(centroid_type.as_deref())
-            && index_built
-        {
+        let search_ready =
+            at_target(current_type.as_deref()) && at_target(topic_type.as_deref()) && index_built;
+        if search_ready && at_target(centroid_type.as_deref()) {
+            return Ok(());
+        }
+        // Only the centroids are off: a model change whose centroid resize
+        // couldn't get its lock (`search::next_index`). Resize just them; the
+        // full pass below would drop and rebuild the search index for nothing.
+        if search_ready {
+            for stmt in [
+                format!(
+                    "UPDATE app_projects SET centroid = NULL \
+                     WHERE centroid IS NOT NULL AND vector_dims(centroid) <> {target}"
+                ),
+                format!(
+                    "ALTER TABLE app_projects ALTER COLUMN centroid \
+                     TYPE halfvec({target}) USING centroid::halfvec({target})"
+                ),
+            ] {
+                sqlx::query(&stmt)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| Error::Database(format!("resizing project centroids: {e}")))?;
+            }
             return Ok(());
         }
 
@@ -271,7 +290,7 @@ impl Database {
                 "ALTER TABLE app_projects ALTER COLUMN centroid \
                  TYPE halfvec({target}) USING centroid::halfvec({target})"
             ),
-            hnsw_index_sql("search_vectors_hnsw", "search_vectors"),
+            hnsw_index_sql("search_vectors_hnsw", "search_vectors", false),
         ] {
             sqlx::query(&stmt)
                 .execute(&self.pool)
@@ -643,9 +662,11 @@ impl MigrationCheck {
 /// time for materially better recall at the same query cost — the right trade
 /// for an index rebuilt rarely (a reindex, a model change) and queried
 /// constantly. Cosine ops (`<=>`), matching what query.rs uses.
-pub(crate) fn hnsw_index_sql(index: &str, table: &str) -> String {
+/// `concurrently` builds without blocking writes; it can't run in a transaction.
+pub(crate) fn hnsw_index_sql(index: &str, table: &str, concurrently: bool) -> String {
+    let how = if concurrently { "CONCURRENTLY " } else { "" };
     format!(
-        "CREATE INDEX IF NOT EXISTS {index} ON {table} \
+        "CREATE INDEX {how}IF NOT EXISTS {index} ON {table} \
          USING hnsw (embedding halfvec_cosine_ops) \
          WITH (m = 16, ef_construction = 128)"
     )

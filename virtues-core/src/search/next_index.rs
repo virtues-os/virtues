@@ -77,6 +77,11 @@ pub async fn status(pool: &PgPool) -> Result<Option<NextStatus>> {
 /// Build what remains of the next index before `deadline`, and swap it in once
 /// it's complete. A no-op when no change is under way.
 pub(crate) async fn step(pool: &PgPool, _lock: &IndexerLock, deadline: Instant) -> Result<Progress> {
+    // A swap whose follow-up was cut off (time limit, a restart): finish it
+    // first, whatever the configuration says now.
+    if rescore_pending(pool).await? {
+        finish(pool).await?;
+    }
     let Some(cfg) = EndpointConfig::next() else {
         forget_abandoned_build(pool).await?;
         return Ok(Progress::Idle);
@@ -165,16 +170,80 @@ pub(crate) async fn step(pool: &PgPool, _lock: &IndexerLock, deadline: Instant) 
     tracing::info!(%model, dim, done, total, "next index complete; swapping it in");
 
     swap(pool, &model, dim).await?;
+    // The database now records the new model, so every search fails its
+    // geometry check until the configuration names it too. Promote before
+    // anything slow.
     promote()?;
     super::embedder::invalidate_embedder().await;
+    finish(pool).await?;
+    Ok(Progress::Swapped { model, dim })
+}
 
-    // Day scores stand on event embeddings from the old model; the swap
-    // cleared them (as a reindex does), so put them back.
+async fn rescore_pending(pool: &PgPool) -> Result<bool> {
+    let pending: Option<bool> =
+        sqlx::query_scalar("SELECT rescore_pending FROM search_index_meta WHERE singleton")
+            .fetch_optional(pool)
+            .await?;
+    // absent-ok: no meta row means no index, and so no swap to follow up.
+    Ok(pending.unwrap_or(false))
+}
+
+/// What follows a swap, outside its lock: stamp the chunks with the new model,
+/// forget the old model's event embeddings, resize project centroids, and
+/// rescore every day's events. Safe to run again from the start, and it is,
+/// by every indexer run, until it completes and clears `rescore_pending`.
+/// Whatever invalidates scores must restore them (`dayline::rescore_all_days`).
+async fn finish(pool: &PgPool) -> Result<()> {
+    let Some((model, dim)) = super::indexer::recorded_geometry(pool).await? else {
+        return Err(anyhow!("a model change is finishing but the index records no model"));
+    };
+    // Nothing reads the stamp but `<> 'skip'`; done here so it never holds
+    // search behind the swap's lock.
+    sqlx::query("UPDATE search_embeddings SET model = $1 WHERE model <> 'skip' AND model <> $1")
+        .bind(&model)
+        .execute(pool)
+        .await?;
+    sqlx::query(crate::cli::reindex::FORGET_EVENT_EMBEDDINGS).execute(pool).await?;
+    resize_centroids(pool, dim).await;
     let (days, scored) = crate::dayline::rescore_all_days(pool)
         .await
         .map_err(|e| anyhow!("rescoring events after the model change: {e}"))?;
+    sqlx::query("UPDATE search_index_meta SET rescore_pending = false WHERE singleton")
+        .execute(pool)
+        .await?;
     tracing::info!(days, scored, "events rescored with the new model");
-    Ok(Progress::Swapped { model, dim })
+    Ok(())
+}
+
+/// Centroids share the index's geometry but have no reader (see
+/// `Database::ensure_embedding_dims`). Their ALTER needs `app_projects` to
+/// itself; a few short tries rather than one long wait that would hold project
+/// reads behind it. If none lands, bringup resizes the column on its own.
+async fn resize_centroids(pool: &PgPool, dim: i32) {
+    for attempt in 1..=6 {
+        let result = async {
+            let mut tx = pool.begin().await?;
+            sqlx::query("SET LOCAL lock_timeout = '5s'").execute(&mut *tx).await?;
+            sqlx::query("UPDATE app_projects SET centroid = NULL WHERE centroid IS NOT NULL")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(&format!(
+                "ALTER TABLE app_projects ALTER COLUMN centroid TYPE halfvec({dim}) \
+                 USING centroid::halfvec({dim})"
+            ))
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await
+        }
+        .await;
+        match result {
+            Ok(()) => return,
+            Err(e) if attempt == 6 => {
+                tracing::warn!(error = %e, "project centroids resize at the next bringup instead")
+            }
+            Err(_) => tokio::time::sleep(std::time::Duration::from_secs(10)).await,
+        }
+    }
 }
 
 async fn counts(pool: &PgPool) -> Result<(i64, i64)> {
@@ -243,22 +312,17 @@ async fn forget_abandoned_build(pool: &PgPool) -> Result<()> {
     Ok(())
 }
 
-/// Make the next table the live one, and everything that shares the index's
-/// geometry follow it.
+/// Make the next table the live one.
 ///
 /// Search waits on the swap's lock, so the transaction holds only what search
-/// reads, and only briefly. The HNSW index is built before it, so the swap is
-/// renames and small updates. `lock_timeout` makes it give up rather than queue
-/// behind a long transaction while search queues behind it: on a scratch box
-/// the event-score update waited eight minutes on the day pipeline, with every
-/// search stuck behind the swap. A swap that times out leaves everything as it
-/// was, and the next run tries again. Event scores and project centroids are
-/// updated after the swap, outside it.
+/// reads, and only briefly: renames, the topic cache, and the index's record.
+/// The HNSW index is built before it. `lock_timeout` makes it give up rather
+/// than queue behind a long transaction while search queues behind it; on a
+/// scratch box a wider swap waited eight minutes on the day pipeline with every
+/// search stuck behind it. A swap that times out leaves everything as it was,
+/// and the next run tries again. The rest follows in [`finish`].
 async fn swap(pool: &PgPool, model: &str, dim: i32) -> Result<()> {
-    // IF NOT EXISTS: a previous run may have built it and stopped before the swap.
-    sqlx::query(&crate::database::hnsw_index_sql("search_vectors_next_hnsw", "search_vectors_next"))
-        .execute(pool)
-        .await?;
+    build_next_hnsw(pool).await?;
 
     let mut tx = pool.begin().await?;
     for stmt in [
@@ -286,45 +350,44 @@ async fn swap(pool: &PgPool, model: &str, dim: i32) -> Result<()> {
     ] {
         sqlx::query(&stmt).execute(&mut *tx).await?;
     }
-    sqlx::query("UPDATE search_embeddings SET model = $1 WHERE model <> 'skip'")
-        .bind(model)
-        .execute(&mut *tx)
-        .await?;
     sqlx::query(
-        "UPDATE search_index_meta SET model = $1, dim = $2, next_model = NULL, next_dim = NULL \
-         WHERE singleton",
+        "UPDATE search_index_meta SET model = $1, dim = $2, next_model = NULL, next_dim = NULL, \
+         rescore_pending = true WHERE singleton",
     )
     .bind(model)
     .bind(dim)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+    Ok(())
+}
 
-    // Event scores stand on old-model event embeddings; the rescore after the
-    // swap puts them back. Row locks only, so search never waits on it.
-    sqlx::query(crate::cli::reindex::FORGET_EVENT_EMBEDDINGS).execute(pool).await?;
-
-    // Centroids share the geometry but have no reader (see
-    // `Database::ensure_embedding_dims`, which also resizes them at the next
-    // start if this can't get its lock now).
-    let mut tx = pool.begin().await?;
-    let centroids = async {
-        sqlx::query("SET LOCAL lock_timeout = '5s'").execute(&mut *tx).await?;
-        sqlx::query("UPDATE app_projects SET centroid = NULL WHERE centroid IS NOT NULL")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query(&format!(
-            "ALTER TABLE app_projects ALTER COLUMN centroid TYPE halfvec({dim}) USING centroid::halfvec({dim})"
-        ))
-        .execute(&mut *tx)
-        .await?;
-        Ok::<_, sqlx::Error>(())
+/// The next table's HNSW index, built CONCURRENTLY so that deleting a chunk
+/// (which cascades into this table) doesn't wait minutes on the build. A build
+/// cut off leaves an invalid index behind; drop it and build again.
+async fn build_next_hnsw(pool: &PgPool) -> Result<()> {
+    let valid: Option<bool> = sqlx::query_scalar(
+        "SELECT i.indisvalid FROM pg_index i \
+         WHERE i.indexrelid = to_regclass('search_vectors_next_hnsw')",
+    )
+    .fetch_optional(pool)
+    .await?;
+    match valid {
+        Some(true) => return Ok(()),
+        Some(false) => {
+            sqlx::query("DROP INDEX CONCURRENTLY IF EXISTS search_vectors_next_hnsw")
+                .execute(pool)
+                .await?;
+        }
+        None => {}
     }
-    .await;
-    match centroids {
-        Ok(()) => tx.commit().await?,
-        Err(e) => tracing::warn!(error = %e, "project centroids resize at the next start instead"),
-    }
+    sqlx::query(&crate::database::hnsw_index_sql(
+        "search_vectors_next_hnsw",
+        "search_vectors_next",
+        true,
+    ))
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -383,6 +446,14 @@ mod tests {
         fill_next(&pool, 768).await;
         assert_eq!(counts(&pool).await.unwrap(), (1, 1));
         swap(&pool, "n", 768).await.unwrap();
+        assert!(rescore_pending(&pool).await.unwrap(), "the follow-up is owed until it runs");
+        finish(&pool).await.unwrap();
+        assert!(!rescore_pending(&pool).await.unwrap());
+        let stamped: String = sqlx::query_scalar("SELECT model FROM search_embeddings")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(stamped, "n");
 
         assert_eq!(column_types(&pool).await, ["halfvec(768)"; 3]);
         let live: i32 = sqlx::query_scalar("SELECT vector_dims(embedding) FROM search_vectors")
@@ -417,6 +488,7 @@ mod tests {
         begin(&pool, "o", 512).await.unwrap();
         fill_next(&pool, 512).await;
         swap(&pool, "o", 512).await.unwrap();
+        finish(&pool).await.unwrap();
         assert_eq!(column_types(&pool).await, ["halfvec(512)"; 3]);
     }
 

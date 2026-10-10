@@ -307,6 +307,8 @@ export interface SearchStatus {
 	chunks: number;
 	last_indexed_at: string | null;
 	reachable: boolean;
+	/** No answer within the probe's limit: busy (often indexing), not down. */
+	busy: boolean;
 	probe_ms: number | null;
 	probe_error: string | null;
 	rerank_on: boolean;

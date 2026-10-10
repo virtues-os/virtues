@@ -210,7 +210,7 @@ pub(crate) fn fingerprint_vectors(vectors: &[Vec<f32>]) -> String {
 /// never *assumed*. The hard guards elsewhere (native-dim validation, and the
 /// fingerprint for pinned endpoints) are what actually protect the index — this
 /// is the label on the jar.
-async fn probe_served_model(client: &reqwest::Client, base_url: &str) -> Option<String> {
+pub(crate) async fn probe_served_model(client: &reqwest::Client, base_url: &str) -> Option<String> {
     let body: serde_json::Value = client
         .get(format!("{base_url}/v1/models"))
         .send()
@@ -238,6 +238,27 @@ async fn probe_served_model(client: &reqwest::Client, base_url: &str) -> Option<
         }
     }
     None
+}
+
+/// The query and document prefixes a known model family expects, by model
+/// name; `None` for a family we don't know (no prefix is then the safe
+/// default). Must match the installer's `family_prompts`
+/// (tools/virtues-installer/src/mode.rs), which applies the same table at setup.
+pub(crate) fn family_prompts(model: &str) -> Option<(&'static str, &'static str)> {
+    let m = model.to_lowercase();
+    if m.contains("embeddinggemma") || m.contains("embedding-gemma") {
+        Some(("task: search result | query: ", "title: none | text: "))
+    } else if m.contains("e5") {
+        Some(("query: ", "passage: "))
+    } else if m.contains("nomic") {
+        Some(("search_query: ", "search_document: "))
+    } else if m.contains("bge") {
+        Some(("Represent this sentence for searching relevant passages: ", ""))
+    } else if m.contains("gte") {
+        Some(("", ""))
+    } else {
+        None
+    }
 }
 
 /// Truncate a native embedding to `dim` and L2-renormalize (Matryoshka).

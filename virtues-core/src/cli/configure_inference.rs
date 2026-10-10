@@ -84,6 +84,7 @@ pub async fn run(reembed: bool, yes: bool) -> Result<()> {
     //    The embedder reads both at construction and refuses a model whose
     //    fingerprint is not the pinned one. Pinned before the wipe, so a failed
     //    write leaves the index untouched.
+    let lock = super::reindex::indexer_lock(db.pool()).await?;
     println!("→ pinning the new model fingerprint…");
     pin(
         &[
@@ -94,7 +95,7 @@ pub async fn run(reembed: bool, yes: bool) -> Result<()> {
     )?;
 
     // 2. Wipe, re-embed with the new model, and rescore every day's events.
-    let (embedded, days, scored) = super::reindex::rebuild(db.pool()).await?;
+    let (embedded, days, scored) = super::reindex::rebuild_locked(db.pool(), lock).await?;
 
     println!();
     println!(
@@ -222,11 +223,39 @@ pub async fn switch(
     ];
     if !same_model {
         unset.push("VIRTUES_EMBED_DIMS");
+        // Prefixes belong to the model. Keeping the old model's would glue them
+        // onto every input the new one embeds.
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| Error::Other(format!("http client: {e}")))?;
+        let served = crate::search::embedder::probe_served_model(&client, &embed_url).await;
+        let name = served.as_deref().filter(|s| !s.is_empty()).unwrap_or(&model);
+        match crate::search::embedder::family_prompts(name) {
+            Some((q, d)) => {
+                for (k, v) in [("VIRTUES_EMBED_QUERY_PROMPT", q), ("VIRTUES_EMBED_DOC_PROMPT", d)] {
+                    if v.is_empty() {
+                        unset.push(k);
+                    } else {
+                        set.push((k, v.to_string()));
+                    }
+                }
+            }
+            None => {
+                unset.extend(["VIRTUES_EMBED_QUERY_PROMPT", "VIRTUES_EMBED_DOC_PROMPT"]);
+                println!("  No prompt prefixes known for {name}, so none are used. If your model");
+                println!("  expects them, set VIRTUES_EMBED_QUERY_PROMPT / _DOC_PROMPT in the box");
+                println!("  env file and run `virtues reindex`.");
+            }
+        }
     }
+    // Before anything is written: a busy indexer refuses the whole switch,
+    // rather than leaving the box pointed at the new server with the old index.
+    let lock = if rebuild { Some(super::reindex::indexer_lock(db.pool()).await?) } else { None };
     pin(&set, &unset)?;
 
-    if rebuild {
-        let (embedded, days, scored) = super::reindex::rebuild(db.pool()).await?;
+    if let Some(lock) = lock {
+        let (embedded, days, scored) = super::reindex::rebuild_locked(db.pool(), lock).await?;
         println!(
             "✓ {embedded} records embedded with the new model, {scored} events rescored across {days} days."
         );
@@ -279,11 +308,13 @@ async fn ensure_local(url: &str, label: &str) -> Result<()> {
     }
     let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
     let authority = rest.split('/').next().unwrap_or(rest);
-    let lookup = if authority.starts_with('[') || authority.rsplit_once(':').is_some_and(|(_, p)| p.parse::<u16>().is_ok()) {
-        authority.to_string()
-    } else {
-        format!("{authority}:80")
+    // A port is whatever follows the last ':' outside an IPv6 literal's
+    // brackets: `[::1]:8080` has one, `[::1]` and `host` don't.
+    let has_port = match authority.rfind(']') {
+        Some(end) => authority[end..].contains(':'),
+        None => authority.rsplit_once(':').is_some_and(|(_, p)| p.parse::<u16>().is_ok()),
     };
+    let lookup = if has_port { authority.to_string() } else { format!("{authority}:80") };
     let addrs: Vec<std::net::IpAddr> = tokio::net::lookup_host(&lookup)
         .await
         .map_err(|e| Error::Other(format!("can't resolve the {label} {url}: {e}")))?
@@ -294,7 +325,11 @@ async fn ensure_local(url: &str, label: &str) -> Result<()> {
             let o = v4.octets();
             v4.is_loopback() || v4.is_private() || v4.is_link_local() || (o[0] == 100 && (64..128).contains(&o[1]))
         }
-        std::net::IpAddr::V6(v6) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
+        // Loopback, unique-local (fc00::/7) and link-local (fe80::/10).
+        std::net::IpAddr::V6(v6) => {
+            let s0 = v6.segments()[0];
+            v6.is_loopback() || (s0 & 0xfe00) == 0xfc00 || (s0 & 0xffc0) == 0xfe80
+        }
     };
     if addrs.is_empty() || !addrs.iter().all(local) {
         return Err(Error::Other(format!(
