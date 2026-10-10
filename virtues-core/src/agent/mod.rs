@@ -34,7 +34,7 @@
 //! ```
 
 pub mod applet_runner;
-mod cache_watch;
+pub(crate) mod cache_watch;
 pub mod caps;
 pub mod executor;
 pub mod guard;

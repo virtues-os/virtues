@@ -80,7 +80,13 @@ impl TurnState {
         if let Some(cost) = usage.cost_micros {
             self.spent_micros += cost;
         }
-        let reading = chat_id.map(|chat| super::cache_watch::record(chat, signature, usage.prompt_tokens));
+        let reading = chat_id.map(|chat| super::cache_watch::record(
+            chat,
+            signature,
+            self.step,
+            usage.prompt_tokens,
+            usage.cache_read_tokens.unwrap_or(0),
+        ));
         tracing::info!(
             step = self.step,
             model = %model,

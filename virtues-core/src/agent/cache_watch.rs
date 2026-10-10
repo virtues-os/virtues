@@ -18,12 +18,15 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 /// How long a chat's requests are remembered, and how many. Past an hour no
 /// provider here still holds the cache, so nothing older can be reusable.
 const REMEMBERED_FOR: Duration = Duration::from_secs(60 * 60);
 const REMEMBERED_REQUESTS: usize = 64;
+/// How many of a chat's latest calls the Context panel can list.
+const SHOWN_CALLS: usize = 10;
 
 /// One request as hashes. `prefix[i]` covers the model, the tools and
 /// messages `0..=i`, so two requests agree up to `i` exactly when their
@@ -75,20 +78,52 @@ pub(super) struct Reading {
     pub diverged_at: String,
 }
 
-fn sent() -> &'static Mutex<HashMap<String, Vec<Sent>>> {
-    static SENT: OnceLock<Mutex<HashMap<String, Vec<Sent>>>> = OnceLock::new();
+/// One finished call as the Context panel shows it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CallReading {
+    pub at: DateTime<Utc>,
+    pub step: u32,
+    pub prompt_tokens: u32,
+    pub cache_read_tokens: u32,
+    pub reusable_tokens: u32,
+    pub diverged_at: String,
+}
+
+#[derive(Default)]
+struct Chat {
+    requests: Vec<Sent>,
+    /// Newest last.
+    calls: Vec<CallReading>,
+}
+
+fn sent() -> &'static Mutex<HashMap<String, Chat>> {
+    static SENT: OnceLock<Mutex<HashMap<String, Chat>>> = OnceLock::new();
     SENT.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// The chat's latest calls since the server started, oldest first. Held in
+/// memory with the hashes, so a restart starts the list again.
+pub(crate) fn recent_calls(chat_id: &str) -> Vec<CallReading> {
+    let chats = sent().lock().unwrap_or_else(|e| e.into_inner());
+    chats.get(chat_id).map(|c| c.calls.clone()).unwrap_or_default()
+}
+
 /// Compare a finished call with the chat's earlier ones, then remember it.
-pub(super) fn record(chat_id: &str, signature: Signature, prompt_tokens: u32) -> Reading {
+pub(super) fn record(
+    chat_id: &str,
+    signature: Signature,
+    step: u32,
+    prompt_tokens: u32,
+    cache_read_tokens: u32,
+) -> Reading {
     let now = Instant::now();
     let mut chats = sent().lock().unwrap_or_else(|e| e.into_inner());
-    chats.retain(|_, requests| {
-        requests.retain(|r| now.duration_since(r.at) < REMEMBERED_FOR);
-        !requests.is_empty()
+    chats.retain(|_, chat| {
+        chat.requests.retain(|r| now.duration_since(r.at) < REMEMBERED_FOR);
+        !chat.requests.is_empty()
     });
-    let requests = chats.entry(chat_id.to_string()).or_default();
+    let chat = chats.entry(chat_id.to_string()).or_default();
+    let requests = &mut chat.requests;
 
     let reusable_tokens = requests
         .iter()
@@ -104,6 +139,17 @@ pub(super) fn record(chat_id: &str, signature: Signature, prompt_tokens: u32) ->
     requests.push(Sent { signature, prompt_tokens, at: now });
     if requests.len() > REMEMBERED_REQUESTS {
         requests.remove(0);
+    }
+    chat.calls.push(CallReading {
+        at: Utc::now(),
+        step,
+        prompt_tokens,
+        cache_read_tokens,
+        reusable_tokens,
+        diverged_at: diverged_at.clone(),
+    });
+    if chat.calls.len() > SHOWN_CALLS {
+        chat.calls.remove(0);
     }
     Reading { reusable_tokens, diverged_at }
 }
@@ -152,16 +198,16 @@ mod tests {
         let mut second = first.clone();
         second.extend(request(&[("assistant", "hello"), ("user", "and?")]));
 
-        assert_eq!(record(chat, sign("m", &[], &first), 1000).reusable_tokens, 0);
-        let reading = record(chat, sign("m", &[], &second), 1200);
+        assert_eq!(record(chat, sign("m", &[], &first), 1, 1000, 0).reusable_tokens, 0);
+        let reading = record(chat, sign("m", &[], &second), 1, 1200, 0);
         assert_eq!(reading, Reading { reusable_tokens: 1000, diverged_at: String::new() });
     }
 
     #[test]
     fn a_changed_system_prompt_leaves_nothing_reusable_and_says_so() {
         let chat = "chat_watch_system";
-        record(chat, sign("m", &[], &request(&[("system", "clock 6:30"), ("user", "hi")])), 1000);
-        let reading = record(chat, sign("m", &[], &request(&[("system", "clock 6:45"), ("user", "hi")])), 1000);
+        record(chat, sign("m", &[], &request(&[("system", "clock 6:30"), ("user", "hi")])), 1, 1000, 0);
+        let reading = record(chat, sign("m", &[], &request(&[("system", "clock 6:45"), ("user", "hi")])), 1, 1000, 0);
         assert_eq!(reading.reusable_tokens, 0);
         assert_eq!(reading.diverged_at, "system prompt");
     }
@@ -172,12 +218,12 @@ mod tests {
         let step1 = request(&[("system", "S"), ("user", "look")]);
         let mut step2 = step1.clone();
         step2.extend(request(&[("assistant", "calling"), ("tool", "32 KiB of rows")]));
-        record(chat, sign("m", &[], &step1), 800);
-        record(chat, sign("m", &[], &step2), 2000);
+        record(chat, sign("m", &[], &step1), 1, 800, 0);
+        record(chat, sign("m", &[], &step2), 1, 2000, 0);
 
         let mut next = step1.clone();
         next.extend(request(&[("assistant", "calling"), ("tool", "2 KiB of rows"), ("user", "thanks")]));
-        let reading = record(chat, sign("m", &[], &next), 1100);
+        let reading = record(chat, sign("m", &[], &next), 1, 1100, 0);
         assert_eq!(reading.reusable_tokens, 800, "turn 1's first request is still a prefix");
         assert_eq!(reading.diverged_at, "message 3 (tool)");
     }
@@ -186,8 +232,8 @@ mod tests {
     fn a_new_tool_is_a_change_before_every_message() {
         let chat = "chat_watch_tools";
         let messages = request(&[("system", "S"), ("user", "hi")]);
-        record(chat, sign("m", &[json!({"name": "a"})], &messages), 1000);
-        let reading = record(chat, sign("m", &[json!({"name": "a"}), json!({"name": "b"})], &messages), 1000);
+        record(chat, sign("m", &[json!({"name": "a"})], &messages), 1, 1000, 0);
+        let reading = record(chat, sign("m", &[json!({"name": "a"}), json!({"name": "b"})], &messages), 1, 1000, 0);
         assert_eq!(reading, Reading { reusable_tokens: 0, diverged_at: "tools".to_string() });
     }
 }
