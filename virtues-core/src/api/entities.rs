@@ -407,6 +407,30 @@ pub async fn merge_people(pool: &PgPool, keep: &str, absorb: &str) -> Result<()>
         ));
     }
 
+    // Numbers and addresses as the person wrote them, one spelling per
+    // number: two cards hold "(512) 555-0101" and "+1 512 555 0101" for the
+    // same phone, and the page would list it twice. `keep`'s spelling wins.
+    let (k_phones, k_emails, a_phones, a_emails): (Vec<String>, Vec<String>, Vec<String>, Vec<String>) =
+        sqlx::query_as(
+            "SELECT ARRAY(SELECT jsonb_array_elements_text(k.phones)), ARRAY(SELECT jsonb_array_elements_text(k.emails)), \
+                    ARRAY(SELECT jsonb_array_elements_text(a.phones)), ARRAY(SELECT jsonb_array_elements_text(a.emails)) \
+             FROM wiki_people k, wiki_people a WHERE k.id = $1 AND a.id = $2",
+        )
+        .bind(keep)
+        .bind(absorb)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db)?;
+    let phones = one_spelling_each(k_phones.into_iter().chain(a_phones));
+    let emails = one_spelling_each(k_emails.into_iter().chain(a_emails));
+    sqlx::query("UPDATE wiki_people SET phones = $2, emails = $3 WHERE id = $1")
+        .bind(keep)
+        .bind(serde_json::json!(phones))
+        .bind(serde_json::json!(emails))
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+
     // Each statement first drops what would collide with a row `keep` already
     // has, then moves the rest.
     let steps: [&str; 12] = [
@@ -428,8 +452,6 @@ pub async fn merge_people(pool: &PgPool, keep: &str, absorb: &str) -> Result<()>
         // `keep` holds `absorb` only where it has nothing of its own: a field
         // either of them set is never lost, and `keep`'s wins a conflict.
         "UPDATE wiki_people k SET \
-           emails = (SELECT COALESCE(jsonb_agg(DISTINCT v), '[]'::jsonb) FROM jsonb_array_elements(k.emails || a.emails) v), \
-           phones = (SELECT COALESCE(jsonb_agg(DISTINCT v), '[]'::jsonb) FROM jsonb_array_elements(k.phones || a.phones) v), \
            handles = (SELECT COALESCE(jsonb_agg(DISTINCT v), '[]'::jsonb) FROM jsonb_array_elements(k.handles || a.handles) v), \
            aliases = (SELECT COALESCE(jsonb_agg(DISTINCT v), '[]'::jsonb) \
                       FROM jsonb_array_elements(COALESCE(k.aliases, '[]'::jsonb) || COALESCE(a.aliases, '[]'::jsonb) \
@@ -474,6 +496,16 @@ pub async fn merge_people(pool: &PgPool, keep: &str, absorb: &str) -> Result<()>
     }
     crate::api::wiki_articles::retitle_article(pool, "person", keep).await?;
     Ok(())
+}
+
+/// The first spelling of each distinct number or address, in order.
+fn one_spelling_each(raw: impl Iterator<Item = String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    raw.filter(|r| {
+        let key = virtues_helpers::handles::normalize_handle(r).unwrap_or_else(|| r.trim().to_string());
+        seen.insert(key)
+    })
+    .collect()
 }
 
 /// The person a merged-away id now lives in, so a link written before the
@@ -995,6 +1027,11 @@ mod entity_crud_tests {
                 .unwrap();
         assert_eq!(name, "Nick", "the person kept keeps their name");
         assert_eq!(handles, serde_json::json!(["+15125550101", "nick@example.com"]));
+        let phones: serde_json::Value = sqlx::query_scalar("SELECT phones FROM wiki_people WHERE id = 'person_a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(phones, serde_json::json!(["(512) 555-0101"]), "one number, one spelling");
         assert_eq!(aliases, serde_json::json!(["nicky b"]), "the other card's name answers too");
         assert!(metadata.get("name_edited_at").is_some(), "both cards sync in; the name must not flip");
 
