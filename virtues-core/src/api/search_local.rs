@@ -72,16 +72,9 @@ pub async fn search_local(
 
     let engine = SemanticSearchEngine::new(Arc::new(pool.clone()));
 
-    let embedder = crate::search::embedder::get_embedder()
+    let embedder = crate::search::embedder::searchable_embedder(pool)
         .await
-        .map_err(|e| Error::Other(format!("embedder unavailable: {e}")))?;
-    crate::search::indexer::check_index_geometry(
-        pool,
-        &embedder.model_id(),
-        embedder.dimension() as i32,
-    )
-    .await
-    .map_err(|e| Error::Other(format!("{e:#}")))?;
+        .map_err(|e| Error::Other(format!("{e:#}")))?;
     let query_vec = embedder
         .embed_query_async(&query)
         .await

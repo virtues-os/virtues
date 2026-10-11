@@ -438,12 +438,12 @@
 	{/if}
 
 	<!-- Main Content -->
-	<!-- One card, always. `main` paints the surface and clips the corners; the
+	<!-- One card, always. `main` paints the page (`--page`) and clips the corners; the
 	     panes inside it are transparent and separated by the resize handle's
 	     own 1px line. It used to go transparent in split so the two pane cards
 	     could float on the desk — there are no pane cards now. -->
 	<main
-		class="flex-1 flex flex-col z-0 min-w-0 text-foreground overflow-hidden bg-surface"
+		class="flex-1 flex flex-col z-0 min-w-0 text-foreground overflow-hidden bg-page"
 		class:m-3={!mobileLayout.isMobile && !sidebarMerged}
 		class:my-3={sidebarMerged}
 		class:mr-3={sidebarMerged}

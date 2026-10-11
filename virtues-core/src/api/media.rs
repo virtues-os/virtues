@@ -212,7 +212,7 @@ pub async fn get_media(pool: &PgPool, file_id: &str) -> Result<DriveFile> {
 /// Image dimensions from raw image data. Always `(None, None)`: `width` and
 /// `height` are never stored, and the frontend measures the image itself.
 // TODO(2026-09-29): read dimensions from the header (`imagesize`, or the
-// `image` crate already in Cargo.toml, which is built with png only) so the
+// `image` crate already in Cargo.toml, which is built with png and jpeg) so the
 // stored row carries them.
 fn extract_image_dimensions(_data: &[u8]) -> (Option<u32>, Option<u32>) {
     (None, None)

@@ -1,9 +1,10 @@
 //! Text-to-image generation via the AI Gateway.
 //!
-//! Used by the `generate_image` chat tool: the assistant turns a prompt into an
-//! inline image. Routes through virtues-api `/v1/ai/chat/completions` on the
-//! device bearer (same as every other AI call) — so the gateway key never lives
-//! on the box and image-gen cost is metered through the entitlement.
+//! Used by the `generate_image` chat tool (the assistant turns a prompt into
+//! an inline image) and by the day's picture (`api::day_picture`). Routes
+//! through virtues-api `/v1/ai/chat/completions` on the device bearer (same as
+//! every other AI call), so the gateway key never lives on the box and
+//! image-gen cost is metered through the entitlement.
 //!
 //! The gateway returns the image inline (base64) in an OpenAI-compatible
 //! response body, but the exact shape has drifted across providers, so
@@ -22,18 +23,28 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::error::{Error, Result};
+use crate::virtues_api::client::Purpose;
 
 /// Generate an image from `prompt` and return the raw image bytes.
 ///
 /// Model choice goes through the slot system (`ModelSlot::Image`); this
-/// function only owns the transport and the response parsing.
-pub async fn generate_image_via_gateway(pool: &PgPool, prompt: &str) -> Result<Vec<u8>> {
+/// function only owns the transport and the response parsing. `feature` is
+/// the spend bucket in `app_ai_calls` and `purpose` the telemetry tag: the
+/// chat tool runs on demand (`User`), the day's picture in the background
+/// (`System`).
+///
+/// A 402 comes back worded by `payment_required_message`, so a caller can
+/// tell billing apart from any other failure (`is_payment_refusal`).
+pub async fn generate_image_via_gateway(
+    pool: &PgPool,
+    prompt: &str,
+    feature: &str,
+    purpose: Purpose,
+) -> Result<Vec<u8>> {
     let model = crate::api::assistant_profile::get_image_model(pool).await?;
     let response = crate::virtues_api::client::BearerClient::from_env(pool.clone())
-        // User-initiated: the `generate_image` chat tool runs on demand, so it
-        // books to the User purpose (the default) — not System, which this file
-        // inherited from the deleted nightly day-illustration job.
-        .with_feature("generate_image")
+        .with_purpose(purpose)
+        .with_feature(feature)
         .post_json(
             "/v1/ai/chat/completions",
             &serde_json::json!({
@@ -48,10 +59,10 @@ pub async fn generate_image_via_gateway(pool: &PgPool, prompt: &str) -> Result<V
         .map_err(|e| Error::Network(format!("Image gen request failed: {e}")))?;
 
     if !response.is_success() {
-        return Err(Error::ExternalApi(format!(
-            "Image gen error {}: {}",
-            response.status, response.body
-        )));
+        return Err(Error::ExternalApi(match response.status {
+            402 => crate::virtues_api::client::payment_required_message(&response.body, feature),
+            status => format!("Image gen error {status}: {}", response.body),
+        }));
     }
 
     extract_image_bytes(&response.body)

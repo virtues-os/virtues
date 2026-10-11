@@ -255,7 +255,7 @@ async fn probe_inference(issues: &mut ui::Issues) {
     // Row labels stay inside `ui::kv`'s 12-column leader so the values line up
     // with the rows above them; the prose noun for the issue list is separate,
     // because "embed live answered 503" is not a sentence.
-    for (label, noun, base, unit, work) in [
+    let rows = [
         (
             "embed live",
             "embed endpoint",
@@ -270,7 +270,13 @@ async fn probe_inference(issues: &mut ui::Issues) {
             if dragon { "virtues-qnnd" } else { "virtues-rerank" },
             Work::Rerank,
         ),
-    ] {
+    ];
+    // Search calls a reranker only when the owner opted in; an absent one is
+    // not a fault otherwise.
+    let rerank = crate::search::query::reranker_enabled();
+    for (label, noun, base, unit, work) in
+        rows.into_iter().filter(|(_, _, _, _, w)| rerank || !matches!(w, Work::Rerank))
+    {
         let health = format!("{base}/health");
         // Distinguish "nothing is listening" from "listening but not ready"
         // from "listening, working, and simply has no /health route": the first
@@ -396,7 +402,7 @@ async fn work_probe(
 fn embed_model() -> String {
     std::env::var("VIRTUES_EMBED_MODEL")
         .ok()
-        .or_else(|| super::upgrade::read_box_env_var("VIRTUES_EMBED_MODEL"))
+        .or_else(|| crate::box_env::get("VIRTUES_EMBED_MODEL"))
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "default".to_string())
@@ -414,7 +420,7 @@ fn endpoint(key: &str, from_process_env: String) -> String {
     if std::env::var(key).is_ok() {
         return from_process_env;
     }
-    super::upgrade::read_box_env_var(key)
+    crate::box_env::get(key)
         .map(|s| s.trim_end_matches('/').to_string())
         .unwrap_or(from_process_env)
 }

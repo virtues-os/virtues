@@ -56,7 +56,13 @@ const config = {
 			precompress: false,
 			strict: true
 		}),
-		version: { name: versionName() }
+		version: { name: versionName() },
+		alias: {
+			// The document contract. The Rust crate that checks the model's HTML
+			// reads this same file, so the editor's schema cannot drift from it
+			// without the conformance test failing. Mirrored in vitest.config.ts.
+			$contract: '../../crates/virtues-document/contract.json'
+		}
 		// No CSRF config needed - static SPA has no server-side form handling
 	}
 };

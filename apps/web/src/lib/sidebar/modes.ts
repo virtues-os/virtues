@@ -110,6 +110,8 @@ export const SETTINGS_MODE: SidebarMode = {
 		// The machine itself and what is physically attached to it: its readings,
 		// its network (/virtues/system/network).
 		{ id: 'system', label: 'System', icon: 'ri:server-line', glyph: 'system', href: '/virtues/system', group: 'Server' },
+		// Where search runs (NPU, CPU, or the owner's server) and what it covers.
+		{ id: 'search', label: 'Search', icon: 'ri:search-line', glyph: 'search', href: '/virtues/search', group: 'Server' },
 		// Every participant, the server first: the release it runs is a fact
 		// about a device.
 		{

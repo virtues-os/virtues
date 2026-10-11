@@ -6,8 +6,8 @@
  * (`ChatMode::tools`, `agent::prompt`).
  *
  * `sudo` is the owner's admin mode: a shell on the server with passwordless
- * sudo. Reads run; a change waits for Allow on the exact command
- * (`tools::sudo_gate`). It lasts for one chat and starts off every time a chat
+ * sudo. Commands run without asking; one that deletes data waits for Allow
+ * on the exact command (`tools::sudo_gate`). It lasts for one chat and starts off every time a chat
  * opens.
  *
  * `local` runs a small model on the server's NPU and nowhere else. It is
@@ -45,7 +45,7 @@ export const AGENT_MODES: AgentMode[] = [
 	{
 		id: 'sudo',
 		name: 'Sudo',
-		description: 'Full access to the server, asks before changing it',
+		description: 'Full access to the server, asks before deleting anything',
 		icon: 'ri:terminal-box-line',
 		color: 'var(--color-error)'
 	},

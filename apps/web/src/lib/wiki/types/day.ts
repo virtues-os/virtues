@@ -1,5 +1,5 @@
 /**
- * The shapes four chart components read: a day's EVENTS and its sleep cycles.
+ * The shape the day page's Data view reads: a day's EVENTS.
  *
  * This file was 273 lines and the wiki's page-type layer hung off it — a
  * `DayPage` extending a `WikiPageBase`, two "linked" structures nothing ever
@@ -7,8 +7,8 @@
  * built. Components take the wire shape from `$lib/wiki/api` now.
  *
  * What survives is the one genuine translation. `DayEvent` is read by
- * DaylineChart, DaylineStrip, EventTimeline and DayPage, and it is a different
- * shape from the wire rather than a renaming of it — so moving those four onto
+ * DaylineChart, EventTimeline and DayPage, and it is a different shape from
+ * the wire rather than a renaming of it — so moving those three onto
  * snake_case is a change to make on its own, with the charts in front of you.
  */
 
@@ -35,8 +35,10 @@ export interface DayEvent {
 	userLocation?: string; // Override auto-detected place
 	userNotes?: string; // Brief annotation
 
-	// Dayline: Novelty (Novel ↑ / Routine ↓)
-	noveltyZ: number | null; // z-scored novelty vs 12-week baseline
+	// How unlike the owner's usual: global (rare in your life at all) and
+	// local (off-pattern for its kind). `usualScore` picks between them.
+	noveltyZ: number | null;
+	localNoveltyZ: number | null;
 	// Dayline: Autonomic (Stress ↑ / Recovery ↓)
 	autonomicZ: number | null; // z-scored HR/HRV vs embedding-similar past events
 	avgHr: number | null; // average heart rate during event
@@ -80,13 +82,4 @@ export function getEventDisplayLabel(event: DayEvent): string {
  */
 export function getEventDisplayLocation(event: DayEvent): string | undefined {
 	return event.userLocation ?? event.autoLocation;
-}
-
-/** A scored sleep cycle, derived at query time from sleep stages + HR data */
-export interface ScoredSleepCycle {
-	startTime: Date;
-	endTime: Date;
-	dominantStage: string; // "deep", "core", "rem"
-	avgHr: number | null;
-	autonomicZ: number | null;
 }
