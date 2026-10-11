@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from 'vitest';
+import { forceParsing } from '@codemirror/language';
 
-import { createTestView, destroyTestView, forceFocus, lines, setCursor, visibleText } from '../test-utils';
+import { createTestView, destroyTestView, forceFocus, lines, partlyParsedView, setCursor, visibleText } from '../test-utils';
 import { livePreview } from './live-preview';
 import { mouseFreeze } from './mouse-freeze';
 
@@ -159,6 +160,16 @@ describe('live preview: lists', () => {
 	it('depth classes cap at 5', () => {
 		const doc = ['- a', '  - b', '    - c', '      - d', '        - e', '          - f', '            - g'].join('\n');
 		view = mount(doc, doc.length);
+		expect(depthOf(lines(view)[6])).toBe('cm-list-depth-5');
+	});
+
+	it('draws what the parser reaches after its first slice of time', () => {
+		const doc = ['- a', '  - b', '    - c', '      - d', '        - e', '          - f', '            - g'].join('\n');
+		view = partlyParsedView(doc, { selection: 0, extensions: [mouseFreeze, livePreview] });
+		// The first parse stopped short of the last item.
+		expect(depthOf(lines(view)[6])).toBeUndefined();
+		// The rest arrives in a transaction that changes nothing else.
+		forceParsing(view, view.state.doc.length, 60_000);
 		expect(depthOf(lines(view)[6])).toBe('cm-list-depth-5');
 	});
 

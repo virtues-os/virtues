@@ -364,6 +364,208 @@ pub async fn merge_places(pool: &PgPool, keep: &str, absorb: &str) -> Result<()>
     Ok(())
 }
 
+/// Two people who are one human: usually two contact cards for the same
+/// person ("Anna" and a nickname card), which also leaves their shared number
+/// owned by nobody, so every message from it reaches neither page. Merging
+/// moves everything that pointed at `absorb` to `keep` (refs, notes, rules, a
+/// chat's edit grant, pins, project items), folds `absorb`'s addresses,
+/// numbers and name into `keep`, and deletes it.
+///
+/// Only you merge people. Nothing here decides two rows are one person; the
+/// page offers "Same as…?" for people who share a number or address, and the
+/// choice is yours.
+///
+/// `keep`'s name becomes yours (`name_edited_at`): both cards will keep
+/// syncing into it, and without that the name would flip between them on
+/// every contacts sync. `absorb`'s name is kept as an alias, and its id in
+/// `metadata.merged_from`, which is how a link to it still opens `keep`
+/// (`merged_into`).
+pub async fn merge_people(pool: &PgPool, keep: &str, absorb: &str) -> Result<()> {
+    if keep == absorb {
+        return Err(Error::InvalidInput("That's the same person. Choose a different one to merge into.".into()));
+    }
+    let db = |e: sqlx::Error| Error::Database(format!("Failed to merge people: {e}"));
+    let mut tx = pool.begin().await.map_err(db)?;
+    let found: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM (SELECT 1 FROM wiki_people WHERE id = ANY($1) FOR UPDATE) p")
+            .bind([keep, absorb])
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db)?;
+    if found != 2 {
+        return Err(Error::NotFound("Person not found".into()));
+    }
+    let absorb_is_self: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app_user_profile WHERE self_person_id = $1)")
+            .bind(absorb)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db)?;
+    if absorb_is_self {
+        return Err(Error::InvalidInput(
+            "That person is you. Merge the other person into yourself instead.".into(),
+        ));
+    }
+
+    // Numbers and addresses as the person wrote them, one spelling per
+    // number: two cards hold "(512) 555-0101" and "+1 512 555 0101" for the
+    // same phone, and the page would list it twice. `keep`'s spelling wins.
+    let (k_phones, k_emails, a_phones, a_emails): (Vec<String>, Vec<String>, Vec<String>, Vec<String>) =
+        sqlx::query_as(
+            "SELECT ARRAY(SELECT jsonb_array_elements_text(k.phones)), ARRAY(SELECT jsonb_array_elements_text(k.emails)), \
+                    ARRAY(SELECT jsonb_array_elements_text(a.phones)), ARRAY(SELECT jsonb_array_elements_text(a.emails)) \
+             FROM wiki_people k, wiki_people a WHERE k.id = $1 AND a.id = $2",
+        )
+        .bind(keep)
+        .bind(absorb)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db)?;
+    let phones = one_spelling_each(k_phones.into_iter().chain(a_phones));
+    let emails = one_spelling_each(k_emails.into_iter().chain(a_emails));
+    sqlx::query("UPDATE wiki_people SET phones = $2, emails = $3 WHERE id = $1")
+        .bind(keep)
+        .bind(serde_json::json!(phones))
+        .bind(serde_json::json!(emails))
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+
+    // Each statement first drops what would collide with a row `keep` already
+    // has, then moves the rest.
+    let steps: [&str; 12] = [
+        "DELETE FROM wiki_refs a USING wiki_refs k \
+         WHERE a.entity_id = $2 AND k.entity_id = $1 AND a.source_table = k.source_table \
+           AND a.source_id = k.source_id AND a.role IS NOT DISTINCT FROM k.role",
+        "UPDATE wiki_refs SET entity_id = $1 WHERE entity_id = $2",
+        "UPDATE wiki_notes SET subject_id = $1 WHERE subject_type = 'person' AND subject_id = $2",
+        "UPDATE wiki_rules SET subject_id = $1 WHERE subject_type = 'person' AND subject_id = $2",
+        "DELETE FROM app_chat_edit_permissions a USING app_chat_edit_permissions k \
+         WHERE a.entity_id = $2 AND k.entity_id = $1 AND a.chat_id = k.chat_id",
+        "UPDATE app_chat_edit_permissions SET entity_id = $1 WHERE entity_id = $2",
+        "DELETE FROM app_pins WHERE url = '/person/' || $2 \
+           AND EXISTS (SELECT 1 FROM app_pins WHERE url = '/person/' || $1)",
+        "UPDATE app_pins SET url = '/person/' || $1 WHERE url = '/person/' || $2",
+        "DELETE FROM app_project_items a USING app_project_items k \
+         WHERE a.url = '/person/' || $2 AND k.url = '/person/' || $1 AND a.project_id = k.project_id",
+        "UPDATE app_project_items SET url = '/person/' || $1 WHERE url = '/person/' || $2",
+        // `keep` holds `absorb` only where it has nothing of its own: a field
+        // either of them set is never lost, and `keep`'s wins a conflict.
+        "UPDATE wiki_people k SET \
+           handles = (SELECT COALESCE(jsonb_agg(DISTINCT v), '[]'::jsonb) FROM jsonb_array_elements(k.handles || a.handles) v), \
+           aliases = (SELECT COALESCE(jsonb_agg(DISTINCT v), '[]'::jsonb) \
+                      FROM jsonb_array_elements(COALESCE(k.aliases, '[]'::jsonb) || COALESCE(a.aliases, '[]'::jsonb) \
+                                                || CASE WHEN lower(a.name) <> lower(k.name) THEN jsonb_build_array(lower(a.name)) \
+                                                        ELSE '[]'::jsonb END) v), \
+           bond = COALESCE(k.bond, a.bond), \
+           birthday = COALESCE(k.birthday, a.birthday), \
+           died_on = COALESCE(k.died_on, a.died_on), \
+           died_precision = CASE WHEN k.died_on IS NULL THEN a.died_precision ELSE k.died_precision END, \
+           relationship_category = COALESCE(k.relationship_category, a.relationship_category), \
+           nickname = COALESCE(k.nickname, a.nickname), \
+           picture = COALESCE(k.picture, a.picture), \
+           cover_image = COALESCE(k.cover_image, a.cover_image), \
+           metadata = a.metadata || k.metadata || jsonb_build_object( \
+             'name_edited_at', now(), \
+             'merged_from', COALESCE(k.metadata->'merged_from', '[]'::jsonb) \
+                            || COALESCE(a.metadata->'merged_from', '[]'::jsonb) || to_jsonb(a.id)), \
+           updated_at = now() \
+         FROM wiki_people a WHERE k.id = $1 AND a.id = $2",
+        "DELETE FROM wiki_people WHERE id = $2",
+    ];
+    for sql in steps {
+        sqlx::query(sql).bind(keep).bind(absorb).execute(&mut *tx).await.map_err(db)?;
+    }
+    // One article survives. If only the absorbed person had one, it becomes
+    // `keep`'s; if both did, `keep`'s stays and the other goes with its subject.
+    let moved = sqlx::query(
+        "UPDATE wiki_articles SET subject_id = $1 \
+         WHERE subject_type = 'person' AND subject_id = $2 \
+           AND NOT EXISTS (SELECT 1 FROM wiki_articles WHERE subject_type = 'person' AND subject_id = $1)",
+    )
+    .bind(keep)
+    .bind(absorb)
+    .execute(&mut *tx)
+    .await
+    .map_err(db)?
+    .rows_affected();
+    tx.commit().await.map_err(db)?;
+
+    if moved == 0 {
+        crate::api::wiki_articles::delete_article(pool, "person", absorb).await?;
+    }
+    crate::api::wiki_articles::retitle_article(pool, "person", keep).await?;
+    Ok(())
+}
+
+/// The first spelling of each distinct number or address, in order.
+fn one_spelling_each(raw: impl Iterator<Item = String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    raw.filter(|r| {
+        let key = virtues_helpers::handles::normalize_handle(r).unwrap_or_else(|| r.trim().to_string());
+        seen.insert(key)
+    })
+    .collect()
+}
+
+/// The person a merged-away id now lives in, so a link written before the
+/// merge (a day page, an article, a chat) still opens the right page.
+pub async fn merged_into(pool: &PgPool, id: &str) -> Result<Option<String>> {
+    sqlx::query_scalar(
+        "SELECT id FROM wiki_people WHERE metadata->'merged_from' ? $1 LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to follow a merged person: {e}")))
+}
+
+/// Another person who answers to a number or address this one does: a
+/// "Same as…?" choice.
+#[derive(Debug, Serialize)]
+pub struct SharedHandlePerson {
+    pub id: String,
+    pub name: String,
+    /// The numbers and addresses both of them hold.
+    pub handles: Vec<String>,
+    /// Messages from those handles. A handle two people hold resolves to
+    /// neither (`resolve_message_senders`), so these reach no page until the
+    /// two are merged or one card stops listing it.
+    pub messages: i64,
+}
+
+/// The people who share a handle with this one, most messages first.
+pub async fn people_sharing_a_handle(pool: &PgPool, id: &str) -> Result<Vec<SharedHandlePerson>> {
+    let rows: Vec<(String, String, Vec<String>, i64)> = sqlx::query_as(
+        r#"
+        WITH mine AS (
+            SELECT jsonb_array_elements_text(handles) AS handle FROM wiki_people WHERE id = $1
+        ),
+        shared AS (
+            SELECT p.id, p.name, array_agg(DISTINCT m.handle ORDER BY m.handle) AS handles
+            FROM wiki_people p
+            CROSS JOIN LATERAL jsonb_array_elements_text(p.handles) AS h(handle)
+            JOIN mine m ON m.handle = h.handle
+            WHERE p.id <> $1
+            GROUP BY p.id, p.name
+        )
+        SELECT s.id, s.name, s.handles,
+               (SELECT count(*) FROM data_communication_message msg
+                WHERE msg.from_handle = ANY(s.handles)) AS messages
+        FROM shared s
+        ORDER BY messages DESC, s.name
+        "#,
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to find people sharing a number: {e}")))?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, name, handles, messages)| SharedHandlePerson { id, name, handles, messages })
+        .collect())
+}
+
 /// A named place near another, as a "Same as…?" choice.
 #[derive(Debug, Serialize)]
 pub struct NearbyPlace {
@@ -767,6 +969,105 @@ pub async fn delete_organization(pool: &PgPool, id: String) -> Result<()> {
 #[cfg(test)]
 mod entity_crud_tests {
     use super::*;
+
+    async fn insert_person(pool: &PgPool, id: &str, name: &str, phones: &[&str], emails: &[&str]) {
+        let handles = virtues_helpers::handles::normalized_handles(emails.iter().copied(), phones.iter().copied());
+        sqlx::query("INSERT INTO wiki_people (id, name, phones, emails, handles) VALUES ($1, $2, $3, $4, $5)")
+            .bind(id)
+            .bind(name)
+            .bind(serde_json::json!(phones))
+            .bind(serde_json::json!(emails))
+            .bind(serde_json::json!(handles))
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn insert_ref(pool: &PgPool, person: &str, source: &str, role: &str) {
+        sqlx::query(
+            "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at) \
+             VALUES ($1, 'person', $2, 'data_communication_message', $3, $4, now())",
+        )
+        .bind(format!("ref_{person}_{source}_{role}"))
+        .bind(person)
+        .bind(source)
+        .bind(role)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Two contact cards for one human share a number, which resolves to
+    /// neither of them. The page offers the other card as "Same as…?", and
+    /// merging leaves one person holding everything both did.
+    #[sqlx::test]
+    async fn two_cards_for_one_person_merge_into_one(pool: PgPool) {
+        insert_person(&pool, "person_a", "Nick", &["(512) 555-0101"], &[]).await;
+        insert_person(&pool, "person_b", "Nicky B", &["+1 512 555 0101"], &["nick@example.com"]).await;
+        insert_person(&pool, "person_c", "David Okafor", &["+15125550177"], &[]).await;
+        insert_ref(&pool, "person_a", "msg_1", "sender").await;
+        insert_ref(&pool, "person_b", "msg_1", "sender").await; // the same record: collapses
+        insert_ref(&pool, "person_b", "msg_2", "recipient").await;
+        sqlx::query("INSERT INTO app_pins (id, url) VALUES ('pin_b', '/person/person_b')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let same = people_sharing_a_handle(&pool, "person_a").await.unwrap();
+        assert_eq!(same.len(), 1, "only the card that shares a number: {same:?}");
+        assert_eq!(same[0].id, "person_b");
+        assert_eq!(same[0].handles, ["+15125550101"]);
+
+        merge_people(&pool, "person_a", "person_b").await.unwrap();
+
+        let (name, handles, aliases, metadata): (String, serde_json::Value, serde_json::Value, serde_json::Value) =
+            sqlx::query_as("SELECT name, handles, aliases, metadata FROM wiki_people WHERE id = 'person_a'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(name, "Nick", "the person kept keeps their name");
+        assert_eq!(handles, serde_json::json!(["+15125550101", "nick@example.com"]));
+        let phones: serde_json::Value = sqlx::query_scalar("SELECT phones FROM wiki_people WHERE id = 'person_a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(phones, serde_json::json!(["(512) 555-0101"]), "one number, one spelling");
+        assert_eq!(aliases, serde_json::json!(["nicky b"]), "the other card's name answers too");
+        assert!(metadata.get("name_edited_at").is_some(), "both cards sync in; the name must not flip");
+
+        let refs: Vec<(String, String)> = sqlx::query_as(
+            "SELECT source_id, role FROM wiki_refs WHERE entity_id = 'person_a' ORDER BY source_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(refs, [("msg_1".into(), "sender".into()), ("msg_2".into(), "recipient".into())]);
+        let gone: i64 = sqlx::query_scalar("SELECT count(*) FROM wiki_people WHERE id = 'person_b'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(gone, 0);
+        let pin: String = sqlx::query_scalar("SELECT url FROM app_pins WHERE id = 'pin_b'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(pin, "/person/person_a");
+        assert_eq!(merged_into(&pool, "person_b").await.unwrap().as_deref(), Some("person_a"));
+        assert!(people_sharing_a_handle(&pool, "person_a").await.unwrap().is_empty());
+    }
+
+    /// The self is never the one merged away.
+    #[sqlx::test]
+    async fn you_are_never_merged_away(pool: PgPool) {
+        insert_person(&pool, "person_me", "Adam", &["+15125550111"], &[]).await;
+        insert_person(&pool, "person_dup", "Adam J", &["+15125550111"], &[]).await;
+        sqlx::query("UPDATE app_user_profile SET self_person_id = 'person_me'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(merge_people(&pool, "person_dup", "person_me").await.is_err());
+        merge_people(&pool, "person_me", "person_dup").await.unwrap();
+    }
 
     /// Deleting an entity must not leave edges pointing at a vanished id. This
     /// is what `delete_place` did for its whole life: the row went, the refs

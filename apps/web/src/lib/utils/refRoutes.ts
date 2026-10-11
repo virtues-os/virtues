@@ -3,7 +3,9 @@
  * Convert between entity IDs and their corresponding routes
  */
 
+import { kindOfLink, type MediaKind } from '$lib/document/media-kind';
 import { PROJECT_ICON } from '$lib/utils/iconHelpers';
+import { decoded } from '$lib/utils/urlUtils';
 
 // Route bases to entity types (for URLs like /person/slug)
 const ROUTE_TO_TYPE: Record<string, string> = {
@@ -42,9 +44,10 @@ export function entityTypeIcon(type: string | null | undefined): string {
 	return (type && TYPE_TO_ICON[type]) || 'ri:at-line';
 }
 
-// File sub-type icons, resolved from mime type first, then filename extension.
-// Lets a file ref show its true nature (image / pdf / audio / video) instead of
-// the generic file icon — even inline, where only the filename is known.
+// File sub-type icons, resolved from mime type first, then the filename, read
+// as a page reads a link's (`kindOfLink`). Lets a file ref show its true nature
+// (image / pdf / audio / video) instead of the generic file icon — even inline,
+// where only the filename is known.
 const MIME_ICON: Array<[RegExp, string]> = [
 	[/^image\//, 'ri:image-line'],
 	[/^audio\//, 'ri:music-2-line'],
@@ -52,15 +55,11 @@ const MIME_ICON: Array<[RegExp, string]> = [
 	[/^application\/pdf$/, 'ri:file-pdf-line'],
 ];
 
-const EXT_ICON: Record<string, string> = {
-	jpg: 'ri:image-line', jpeg: 'ri:image-line', png: 'ri:image-line',
-	gif: 'ri:image-line', webp: 'ri:image-line', svg: 'ri:image-line',
-	bmp: 'ri:image-line', ico: 'ri:image-line', heic: 'ri:image-line',
-	pdf: 'ri:file-pdf-line',
-	mp3: 'ri:music-2-line', wav: 'ri:music-2-line', ogg: 'ri:music-2-line',
-	flac: 'ri:music-2-line', aac: 'ri:music-2-line', m4a: 'ri:music-2-line',
-	mp4: 'ri:movie-line', webm: 'ri:movie-line', mov: 'ri:movie-line',
-	avi: 'ri:movie-line', mkv: 'ri:movie-line',
+const KIND_ICON: Record<MediaKind, string> = {
+	image: 'ri:image-line',
+	audio: 'ri:music-2-line',
+	video: 'ri:movie-line',
+	file: 'ri:file-line',
 };
 
 export type RefIconHint = { mimeType?: string | null; filename?: string | null };
@@ -72,12 +71,10 @@ export function fileIcon(hint?: RefIconHint): string {
 		for (const [re, icon] of MIME_ICON) if (re.test(mime)) return icon;
 	}
 	const name = hint?.filename;
-	if (name) {
-		const dot = name.lastIndexOf('.');
-		const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
-		if (ext && EXT_ICON[ext]) return EXT_ICON[ext];
-	}
-	return 'ri:file-line';
+	if (!name) return KIND_ICON.file;
+	const kind = kindOfLink('', name);
+	if (kind === 'file' && name.toLowerCase().endsWith('.pdf')) return 'ri:file-pdf-line';
+	return KIND_ICON[kind];
 }
 
 /**
@@ -115,14 +112,16 @@ export function parseEntityRoute(route: string): string | null {
  * `/kind/id` → its kind and id: the client's twin of the server's
  * `refs::split_ref`, and the grammar every consumer should parse with. The
  * legacy `/notebook/` reads as `project`; `?` and `#` never belong to an id.
- * Null for an external URL or anything that is not a record route.
+ * Null for an external URL or anything that is not a record route. Never
+ * throws: an id whose %-escapes are malformed (`/person/%`) is read as
+ * written, since a page holds any path and is drawn link by link.
  */
 export function parseRef(url: string): { kind: string; id: string } | null {
 	const m = /^\/([^/?#]+)\/([^?#]+)/.exec(url);
 	if (!m) return null;
 	const kind = ROUTE_TO_TYPE[`/${m[1]}`];
 	if (!kind) return null;
-	return { kind, id: decodeURIComponent(m[2]) };
+	return { kind, id: decoded(m[2]) };
 }
 
 /**

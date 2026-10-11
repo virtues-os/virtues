@@ -10,6 +10,7 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { listPeople, type WikiPersonListItem } from "$lib/wiki/api";
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
+	import PersonPicture from "./PersonPicture.svelte";
 
 	// State
 	let people = $state<WikiPersonListItem[]>([]);
@@ -111,13 +112,7 @@
 	{#snippet tableRow(person: WikiPersonListItem)}
 		<td class="col-name">
 			<div class="name-cell">
-				{#if person.picture}
-					<img src={person.picture} alt={person.name} class="avatar-img" />
-				{:else}
-					<div class="avatar">
-						{person.name.charAt(0).toUpperCase()}
-					</div>
-				{/if}
+				<PersonPicture name={person.name} picture={person.picture} size={28} />
 				<span class="name-text">{person.name}</span>
 			</div>
 		</td>
@@ -135,13 +130,7 @@
 	<!-- Custom card with avatar -->
 	{#snippet card(person: WikiPersonListItem)}
 		<div class="card-content">
-			{#if person.picture}
-				<img src={person.picture} alt={person.name} class="avatar-img avatar-lg" />
-			{:else}
-				<div class="avatar avatar-lg">
-					{person.name.charAt(0).toUpperCase()}
-				</div>
-			{/if}
+			<PersonPicture name={person.name} picture={person.picture} size={56} />
 			<span class="card-name">{person.name}</span>
 			{#if person.relationship_category}
 				<span class="badge {getRelationshipClass(person.relationship_category)}">
@@ -158,39 +147,6 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-	}
-
-	.avatar {
-		width: 28px;
-		height: 28px;
-		border-radius: 50%;
-		background: linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 70%, #000));
-		color: white;
-		font-size: 0.75rem;
-		font-weight: 600;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-	}
-
-	.avatar-lg {
-		width: 56px;
-		height: 56px;
-		font-size: 1.25rem;
-	}
-
-	.avatar-img {
-		width: 28px;
-		height: 28px;
-		border-radius: 50%;
-		object-fit: cover;
-		flex-shrink: 0;
-	}
-
-	.avatar-img.avatar-lg {
-		width: 56px;
-		height: 56px;
 	}
 
 	.name-text {

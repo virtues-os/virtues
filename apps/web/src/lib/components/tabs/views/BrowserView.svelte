@@ -15,7 +15,8 @@
 	 * The owner always sees who is driving. While the assistant acts, a bar
 	 * offers Take control and Stop and the page gets an accent frame; when it
 	 * hands the browser over (a sign-in, a code), the bar says what to do and
-	 * waits for Done. Its steps collect in a strip under the page.
+	 * waits for Done. Its steps collect in an Activity row under the page, off
+	 * unless you open it: most people watch the page, not a log.
 	 */
 	import { onDestroy, onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -44,15 +45,15 @@
 	let editing = $state(false);
 	let modalOpen = $state(false);
 	let slot = $state<HTMLDivElement | null>(null);
-	let strip = $state<HTMLDivElement | null>(null);
+	let trail = $state<HTMLOListElement | null>(null);
 
 	const STEPS_KEY = 'virtues.browser.steps';
 	let showSteps = $state(readShowSteps());
 	function readShowSteps(): boolean {
 		try {
-			return localStorage.getItem(STEPS_KEY) !== '0';
+			return localStorage.getItem(STEPS_KEY) === '1';
 		} catch {
-			return true;
+			return false;
 		}
 	}
 	function toggleSteps() {
@@ -88,11 +89,57 @@
 		}
 	}
 
-	// Keep the newest step in view.
+	const latestId = $derived(browserAgent.steps.at(-1)?.id ?? null);
+
+	// A new step comes into view.
 	$effect(() => {
-		void browserAgent.steps.length;
-		if (strip) strip.scrollLeft = strip.scrollWidth;
+		void latestId;
+		if (trail) requestAnimationFrame(() => trail && (trail.scrollLeft = trail.scrollWidth));
 	});
+
+	/** Steps as chips: a run of the same step on the same page is one chip
+	 *  with a count. */
+	const rows = $derived.by(() => {
+		const out: { step: (typeof browserAgent.steps)[number]; times: number }[] = [];
+		for (const step of browserAgent.steps) {
+			const prev = out.at(-1);
+			if (prev && prev.step.what === step.what && prev.step.url === step.url && prev.step.ok === step.ok) {
+				prev.step = step;
+				prev.times += 1;
+				continue;
+			}
+			out.push({ step, times: 1 });
+		}
+		return out;
+	});
+
+	const GLYPHS: Record<string, string> = {
+		open: 'ri:global-line',
+		snapshot: 'ri:file-text-line',
+		click: 'ri:cursor-line',
+		type: 'ri:keyboard-line',
+		press: 'ri:corner-down-left-line',
+		scroll: 'ri:arrow-up-down-line',
+		screenshot: 'ri:eye-line',
+		handoff: 'ri:hand'
+	};
+	function glyph(op: string | undefined) {
+		return GLYPHS[op ?? ''] ?? 'ri:checkbox-blank-circle-line';
+	}
+
+	// Minutes tick over without a new step.
+	let now = $state(Date.now());
+	$effect(() => {
+		const timer = setInterval(() => (now = Date.now()), 30_000);
+		return () => clearInterval(timer);
+	});
+	function ago(at: number) {
+		const s = Math.max(0, Math.round((now - at) / 1000));
+		if (s < 45) return 'just now';
+		const m = Math.round(s / 60);
+		if (m < 60) return `${m} min ago`;
+		return new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+	}
 
 	function routeFor(url: string) {
 		return `/browser?url=${encodeURIComponent(url)}`;
@@ -144,7 +191,7 @@
 		void modalOpen;
 		void mobileLayout.isMobile;
 		void available;
-		// The bar, frame and step strip move the page.
+		// The bar, frame and Activity column move the page.
 		void browserAgent.driving;
 		void browserAgent.paused;
 		void browserAgent.handoff;
@@ -195,26 +242,37 @@
 
 <div class="browser">
 	<div class="toolbar">
-		<button class="tool" title="Back" aria-label="Back" onclick={() => void browserPaneGo('back')} disabled={!available}>
-			<Icon icon="ri:arrow-left-line" width="16" />
-		</button>
-		<button class="tool" title="Forward" aria-label="Forward" onclick={() => void browserPaneGo('forward')} disabled={!available}>
-			<Icon icon="ri:arrow-right-line" width="16" />
-		</button>
-		<button class="tool" title="Reload" aria-label="Reload" onclick={() => void browserPaneGo('reload')} disabled={!available}>
-			<Icon icon="ri:refresh-line" width="16" />
-		</button>
+		<div class="nav">
+			<button class="tool" title="Back" aria-label="Back" onclick={() => void browserPaneGo('back')} disabled={!available}>
+				<Icon icon="ri:arrow-left-line" width="16" />
+			</button>
+			<button class="tool" title="Forward" aria-label="Forward" onclick={() => void browserPaneGo('forward')} disabled={!available}>
+				<Icon icon="ri:arrow-right-line" width="16" />
+			</button>
+			<span class="divider" aria-hidden="true"></span>
+			<button class="tool" title="Reload" aria-label="Reload" onclick={() => void browserPaneGo('reload')} disabled={!available}>
+				<Icon icon="ri:refresh-line" width="16" />
+			</button>
+		</div>
 		<input
 			class="address"
-			bind:value={address}
+			class:editing
+			value={editing ? address : hostOf(address) || address}
 			placeholder="Enter an address or search"
 			spellcheck="false"
 			autocapitalize="off"
-			onfocus={() => (editing = true)}
+			oninput={(e) => (address = e.currentTarget.value)}
+			onfocus={(e) => {
+				editing = true;
+				const input = e.currentTarget;
+				requestAnimationFrame(() => input.select());
+			}}
 			onblur={() => (editing = false)}
 			onkeydown={(e) => {
 				if (e.key === 'Enter' && address.trim()) {
 					go(resolve(address));
+					(e.currentTarget as HTMLInputElement).blur();
+				} else if (e.key === 'Escape') {
 					(e.currentTarget as HTMLInputElement).blur();
 				}
 			}}
@@ -222,15 +280,14 @@
 		/>
 		{#if browserAgent.steps.length > 0}
 			<button
-				class="tool steps-toggle"
+				class="round"
 				class:on={showSteps}
-				title={showSteps ? 'Hide your assistant\'s steps' : 'Show your assistant\'s steps'}
-				aria-label="Your assistant's steps"
+				title={showSteps ? 'Hide activity' : 'Show what your assistant did'}
+				aria-label="Activity"
 				aria-pressed={showSteps}
 				onclick={toggleSteps}
 			>
-				<Icon icon="ri:footprint-line" width="16" />
-				<span class="count">{browserAgent.steps.length}</span>
+				<Icon icon="ri:history-line" width="16" />
 			</button>
 		{/if}
 	</div>
@@ -245,7 +302,7 @@
 	{:else if browserAgent.paused}
 		<div class="agent-bar paused" role="status">
 			<Icon icon="ri:user-line" width="16" />
-			<span class="say">You have control. Your assistant waits until you hand it back.</span>
+			<span class="say">You have control, so your assistant stopped.</span>
 			<button class="bar-btn primary" onclick={() => void browserPaneAgent('resume')}>Hand back</button>
 		</div>
 	{:else if browserAgent.driving}
@@ -257,6 +314,7 @@
 		</div>
 	{/if}
 
+	<div class="body">
 	<div
 		class="stage"
 		class:driving={browserAgent.driving && !browserAgent.paused && !browserAgent.handoff}
@@ -271,22 +329,29 @@
 		</div>
 	</div>
 
+	</div>
+
 	{#if showSteps && browserAgent.steps.length > 0}
-		<div class="steps" bind:this={strip} aria-label="Your assistant's steps">
-			{#each browserAgent.steps as step (step.id)}
-				<figure class="step" class:failed={!step.ok} title={`${step.what}\n${step.url}`}>
-					{#if step.thumb}
-						<img src={step.thumb} alt="" loading="lazy" />
-					{:else}
-						<div class="blank"></div>
-					{/if}
-					<figcaption>
+		<div class="activity" aria-label="Activity">
+			<ol class="trail" bind:this={trail}>
+				{#each rows as { step, times } (step.id)}
+					<li
+						class="chip"
+						class:failed={!step.ok}
+						class:live={step.id === latestId && browserAgent.driving}
+						title={`${step.what}${times > 1 ? ` ×${times}` : ''} · ${hostOf(step.url)} · ${ago(step.at)}`}
+					>
+						{#if step.ok && step.thumb}
+							<img src={step.thumb} alt="" />
+						{:else}
+							<span class="glyph"><Icon icon={step.ok ? glyph(step.op) : 'ri:error-warning-line'} width="13" /></span>
+						{/if}
 						<span class="what">{step.what}</span>
-						<span class="where">{hostOf(step.url)}</span>
-					</figcaption>
-				</figure>
-			{/each}
-			<button class="clear" onclick={() => browserAgent.clearSteps()}>Clear</button>
+						{#if times > 1}<span class="times">×{times}</span>{/if}
+					</li>
+				{/each}
+			</ol>
+			<button class="link" onclick={() => browserAgent.clearSteps()}>Clear</button>
 		</div>
 	{/if}
 </div>
@@ -301,9 +366,23 @@
 	.toolbar {
 		display: flex;
 		align-items: center;
+		gap: 8px;
+		padding: 8px 12px;
+	}
+	.nav {
+		display: flex;
+		align-items: center;
 		gap: 4px;
-		padding: 6px 8px;
-		border-bottom: 1px solid var(--border);
+		height: 36px;
+		padding: 0 4px;
+		border-radius: 999px;
+		background: var(--surface-elevated, var(--surface));
+		flex-shrink: 0;
+	}
+	.divider {
+		width: 1px;
+		height: 16px;
+		background: var(--border);
 	}
 	.tool {
 		display: inline-flex;
@@ -311,12 +390,12 @@
 		justify-content: center;
 		width: 28px;
 		height: 28px;
-		border-radius: 6px;
-		color: var(--text-muted);
+		border-radius: 50%;
+		color: var(--color-foreground-muted);
 	}
 	.tool:hover:not(:disabled) {
-		background: var(--surface-hover, var(--surface-elevated));
-		color: var(--text);
+		background: var(--surface);
+		color: var(--color-foreground);
 	}
 	.tool:disabled {
 		opacity: 0.4;
@@ -324,35 +403,47 @@
 	.address {
 		flex: 1;
 		min-width: 0;
-		height: 28px;
-		padding: 0 10px;
-		border-radius: 6px;
-		border: 1px solid var(--border);
-		background: var(--surface);
-		color: var(--text);
+		height: 36px;
+		padding: 0 16px;
+		border-radius: 999px;
+		border: 1px solid transparent;
+		background: var(--surface-elevated, var(--surface));
+		color: var(--color-foreground);
 		font-size: 13px;
+		text-align: center;
+		text-overflow: ellipsis;
 	}
-	.steps-toggle {
-		width: auto;
-		gap: 4px;
-		padding: 0 6px;
+	.address.editing {
+		text-align: left;
+		border-color: var(--border-focus, var(--border));
+		background: var(--surface);
+		outline: none;
 	}
-	.steps-toggle.on {
-		color: var(--text);
+	.round {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		border-radius: 50%;
+		background: var(--surface-elevated, var(--surface));
+		color: var(--color-foreground-muted);
+		flex-shrink: 0;
 	}
-	.count {
-		font-size: 12px;
-		font-variant-numeric: tabular-nums;
+	.round:hover,
+	.round.on {
+		color: var(--color-foreground);
 	}
 
 	.agent-bar {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		padding: 8px 12px;
+		margin: 0 12px 8px;
+		padding: 8px 8px 8px 16px;
+		border-radius: 999px;
 		font-size: 13px;
-		border-bottom: 1px solid var(--border);
-		color: var(--text);
+		color: var(--color-foreground);
 	}
 	.agent-bar.driving {
 		background: color-mix(in srgb, var(--primary) 10%, var(--surface));
@@ -390,12 +481,12 @@
 		border-radius: 999px;
 		border: 1px solid var(--border);
 		background: var(--surface);
-		color: var(--text);
+		color: var(--color-foreground);
 		font-size: 12px;
 		white-space: nowrap;
 	}
 	.bar-btn:hover {
-		background: var(--surface-hover, var(--surface-elevated));
+		background: var(--color-background-hover);
 	}
 	.bar-btn.primary {
 		background: var(--primary);
@@ -404,16 +495,22 @@
 	}
 
 	/* The page is native and draws over .slot; the frame shows around it. */
+	/* The page is a rounded card; the shell rounds the native view to match
+	   (browser_host.rs, PAGE_RADIUS). */
 	.stage {
 		flex: 1;
 		min-height: 0;
 		display: flex;
+		margin: 0 12px 12px;
+		border: 2px solid transparent;
+		border-radius: 12px;
+		overflow: hidden;
 	}
 	.stage.driving {
-		border: 3px solid var(--primary);
+		border-color: var(--primary);
 	}
 	.stage.handoff {
-		border: 3px solid var(--warning);
+		border-color: var(--warning);
 	}
 	.slot {
 		position: relative;
@@ -425,61 +522,90 @@
 		background: var(--surface);
 	}
 
-	.steps {
+	.body {
+		flex: 1;
+		min-height: 0;
+		display: flex;
+	}
+
+	.activity {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 0 12px 12px;
+		flex-shrink: 0;
+	}
+	.trail {
+		flex: 1;
+		min-width: 0;
 		display: flex;
 		gap: 8px;
-		padding: 8px;
-		overflow-x: auto;
-		border-top: 1px solid var(--border);
-		flex-shrink: 0;
-	}
-	.step {
-		flex: 0 0 132px;
+		list-style: none;
 		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
+		padding: 0;
+		overflow-x: auto;
+		scrollbar-width: none;
 	}
-	.step img,
-	.step .blank {
-		width: 132px;
-		height: 80px;
-		object-fit: cover;
-		object-position: top;
+	.chip {
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		height: 32px;
+		max-width: 240px;
+		padding-right: 12px;
 		border: 1px solid var(--border);
-		background: var(--surface-elevated, var(--surface));
+		border-radius: 999px;
+		overflow: hidden;
+		background: var(--surface);
 	}
-	.step figcaption {
-		display: flex;
-		flex-direction: column;
-		font-size: 11px;
-		line-height: 1.3;
+	.chip img {
+		width: 44px;
+		height: 100%;
+		object-fit: cover;
+		object-position: top left;
+		border-right: 1px solid var(--border);
+	}
+	.chip .glyph {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 100%;
+		color: var(--color-foreground-muted);
+	}
+	.chip.failed .glyph {
+		color: var(--warning);
+	}
+	.chip.live {
+		border-color: var(--primary);
 	}
 	.what {
-		color: var(--text);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.where {
-		color: var(--text-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.step.failed .what {
-		color: var(--text-muted);
-		text-decoration: line-through;
-	}
-	.clear {
-		align-self: center;
-		flex-shrink: 0;
-		padding: 0 8px;
 		font-size: 12px;
-		color: var(--text-muted);
+		color: var(--color-foreground);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.chip:not(:last-child) .what,
+	.chip.failed .what {
+		color: var(--color-foreground-muted);
+	}
+	.times {
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+		font-variant-numeric: tabular-nums;
+	}
+	.link {
+		flex-shrink: 0;
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+	}
+	.link:hover {
+		color: var(--color-foreground);
 	}
 	.note {
-		color: var(--text-muted);
+		color: var(--color-foreground-muted);
 		font-size: 14px;
 	}
 </style>

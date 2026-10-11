@@ -37,7 +37,7 @@
 	import { AttachmentsController } from "$lib/components/chat/state/attachments.svelte";
 	import { ModelChoiceController } from "$lib/components/chat/state/modelChoice.svelte";
 	import { OpeningRevealController } from "$lib/components/chat/state/openingReveal.svelte";
-	import { ToolSideEffects } from "$lib/components/chat/state/toolSideEffects";
+	import { ToolSideEffects, isFullReplace } from "$lib/components/chat/state/toolSideEffects";
 	import { toolErrorDetail, toolErrorSummary } from "$lib/components/chat/state/toolError";
 	import { observeComposerReserve } from "$lib/components/chat/state/composerReserve";
 	import { holdReadingPosition } from "$lib/components/chat/state/holdReadingPosition";
@@ -2043,7 +2043,7 @@
 														pageId={editPageId}
 														find={output.edit.find || ''}
 														replace={output.edit.replace || ''}
-														isFullReplace={!output.edit.find}
+														isFullReplace={isFullReplace(output.edit)}
 														onViewPage={editPageId ? () => {
 															// View the edited page WITHOUT creating a split: beside the
 															// chat only when already in split view, else a new tab here.

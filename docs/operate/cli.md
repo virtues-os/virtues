@@ -116,11 +116,19 @@ recovery path for a stale or mismatched index rather than something to fear.
 
 ```bash
 virtues configure-inference
+virtues configure-inference --embed-url http://127.0.0.1:8080
+sudo virtues configure-inference --recommended
 ```
 
-Re-validates the embedding endpoint after you change models, and offers to
-re-embed from source. Run it when the server reports a fingerprint or dimension
-mismatch.
+With `--embed-url`, moves search to another embedding server, such as
+llama.cpp on your GPU ([Faster search on a GPU or NPU](/docs/setup/accelerators)).
+It keeps your index when the new server runs the same model, and re-embeds
+from source when it doesn't. From then on the model is yours: updates leave
+it alone. `--recommended` goes back: Virtues runs the model it recommends on
+the server's CPU and keeps it current, and search keeps using your server
+until the index is rebuilt for the new model. Without it, re-validates the current server after
+you change models, and offers to re-embed. Run that form when the server
+reports a fingerprint or dimension mismatch.
 
 ## Leaving
 

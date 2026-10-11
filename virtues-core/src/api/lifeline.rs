@@ -625,26 +625,42 @@ pub async fn get_clock(
 
 /// How many days before a day page its numbers are compared with.
 pub const BASELINE_DAYS: i64 = 30;
+/// The pin that stands for whichever number sat furthest from its usual today.
+pub const UNUSUAL: &str = "unusual";
 /// The most numbers one day page shows.
 pub const MAX_PINNED: usize = 5;
+/// The fewest days before with a value that make a usual. The page draws no
+/// usual from fewer, so nothing can stand out from fewer either.
+const USUAL_MIN_DAYS: usize = 7;
+/// The fewest distinct values among those days. A count that is nearly always
+/// the same number has a middle half too narrow to measure a day against.
+const USUAL_MIN_DISTINCT: usize = 4;
+/// How far from the middle day, in widths of the middle half, a day has to sit
+/// to stand out.
+const UNUSUAL_MIN_SCORE: f64 = 1.0;
 
-/// One of your numbers on a day page: the day's value and the days before it,
+/// One number a day page can show: the day's value and the days before it,
 /// so the page can say where the day sat against your own usual.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DayMeasure {
     /// `lane:id`, the form a pin is stored in.
     pub key: String,
+    pub lane: String,
     pub label: String,
     pub unit: String,
     pub kind: String,
-    /// The day's value. `None` when the measure's table holds nothing at all
-    /// that day: nothing was collected, which is not the same as zero.
+    /// The registry ontology it reads (`health_sleep`) and that ontology's
+    /// display name: where the number comes from.
+    pub ontology: String,
+    pub source: String,
+    /// The day's value. `None` when nothing was collected that day, which is
+    /// not the same as zero.
     pub value: Option<f64>,
     /// The `BASELINE_DAYS` days before, oldest first, `None` the same way.
     pub before: Vec<Option<f64>>,
 }
 
-/// Every measure a day page can show, for the picker.
+/// Every measure a day page can pin, without its days.
 #[derive(Debug, Serialize)]
 pub struct MeasureListing {
     pub key: String,
@@ -654,32 +670,37 @@ pub struct MeasureListing {
     pub kind: String,
 }
 
+/// The phone and computer apps carry their own copy of the page and update
+/// apart from the server, so this answer only grows: `measures` and
+/// `available` keep the shape an app older than `catalog` reads, and a newer
+/// app reads `catalog` and `unusual`.
 #[derive(Debug, Serialize)]
 pub struct DayMeasures {
     pub date: chrono::NaiveDate,
+    /// The pinned measures, in pin order, at most `MAX_PINNED`.
     pub measures: Vec<DayMeasure>,
     pub available: Vec<MeasureListing>,
+    /// Every measure a day page can show, in registry order. The pins read
+    /// their cells from here and the picker draws every row, so choosing a
+    /// number needs no second request.
+    pub catalog: Vec<DayMeasure>,
+    /// When the pins include `unusual`: the `lane:id` that sat furthest from
+    /// its usual. `None` when nothing stood out, when the day isn't over in
+    /// its own timezone, or when `unusual` isn't pinned.
+    pub unusual: Option<String>,
 }
 
-/// The pinned measures (`lane:id`) for one day and the days before it. Each
-/// day is its own local day, in the timezone that day was lived in. Unknown
-/// keys are skipped, not an error: a pin can outlive a measure.
+/// Every measure for one day and the days before it, and, when `pins`
+/// includes `unusual` and the day is over, the one that sat furthest from its
+/// usual. Each day is
+/// its own local day, in the timezone that day was lived in. A pin the
+/// registry no longer lists is ignored: a pin can outlive a measure.
 pub async fn day_measures(
     pool: &PgPool,
     date: chrono::NaiveDate,
-    keys: &[String],
+    pins: &[String],
 ) -> Result<DayMeasures> {
-    use virtues_registry::ontologies::{lane_measures, MeasureKind};
-
-    let all = lane_measures();
-    let picked: Vec<_> = keys
-        .iter()
-        .filter_map(|k| {
-            let (lane, id) = k.split_once(':')?;
-            all.iter().find(|m| m.lane == lane && m.id == id)
-        })
-        .take(MAX_PINNED)
-        .collect();
+    use virtues_registry::ontologies::{lane_measures, registered_ontologies, MeasureKind};
 
     let mut starts = Vec::new();
     let mut ends = Vec::new();
@@ -691,18 +712,21 @@ pub async fn day_measures(
         ends.push(end);
     }
 
-    let mut measures = Vec::new();
-    for m in picked {
+    let ontologies = registered_ontologies();
+    let mut catalog = Vec::new();
+    for m in lane_measures() {
         // Table, column, aggregate, filter and coverage are registry
         // constants, never request input; the windows are bound.
         //
         // Collection starts at the measure's first row it can judge (the rule
         // `Lane.first_seen` uses): a day before that is NULL, nothing was
-        // measured. After it, a day with no rows is a real zero for a total,
-        // because workouts and purchases are sparse by nature, and no reading
-        // for a rate. A day whose rows all fall outside `coverage` is NULL
-        // again: spend over unsigned rows is unknown, not $0. There is no
-        // trailing bound, so the days after the last purchase stay zeros.
+        // measured. After it, a day whose rows all fall outside `coverage` is
+        // NULL: spend over unsigned rows is unknown, not $0. A day with no
+        // rows at all is a real zero only where the registry says so
+        // (`empty_is_zero`): purchases are sparse by nature, sleep is not.
+        // There is no trailing bound, so the days after the last purchase
+        // stay zeros. Rows that all fail `filter` are a zero for a total and
+        // no reading for a rate: an average of nothing is not 0 bpm.
         let and = m.filter.map(|f| format!(" AND ({f})")).unwrap_or_default();
         let judged = m.coverage.map(|c| format!(" AND ({c})")).unwrap_or_default();
         let outside = m
@@ -717,16 +741,25 @@ pub async fn day_measures(
                 )
             })
             .unwrap_or_default();
-        let empty = match m.kind {
+        let unrecorded = if m.empty_is_zero {
+            String::new()
+        } else {
+            format!(
+                "WHEN NOT EXISTS (SELECT 1 FROM {t} WHERE {ts} >= w.s AND {ts} < w.e) THEN NULL ",
+                t = m.table,
+                ts = m.timestamp_column,
+            )
+        };
+        let nothing = match m.kind {
             MeasureKind::Total => "0",
             MeasureKind::Rate => "NULL",
         };
         let sql = format!(
             "WITH f AS (SELECT min({ts}) AS first FROM {t} WHERE true{judged}) \
              SELECT CASE WHEN f.first IS NULL OR w.e <= f.first THEN NULL \
-                    {outside}\
+                    {outside}{unrecorded}\
                     ELSE COALESCE((SELECT ({agg})::float8 FROM {t} \
-                                   WHERE {ts} >= w.s AND {ts} < w.e{and}), {empty}) END \
+                                   WHERE {ts} >= w.s AND {ts} < w.e{and}), {nothing}) END \
              FROM unnest($1::timestamptz[], $2::timestamptz[]) WITH ORDINALITY AS w(s, e, n) \
              CROSS JOIN f \
              ORDER BY w.n",
@@ -738,19 +771,45 @@ pub async fn day_measures(
             .bind(&starts)
             .bind(&ends)
             .fetch_all(pool)
-            .await?;
+            .await
+            .map_err(|e| Error::Database(format!("day measure {}:{}: {e}", m.lane, m.id)))?;
         let value = values.pop().flatten();
-        measures.push(DayMeasure {
+        // `every_measure_points_at_a_real_lane_table` holds this lookup to a
+        // registered ontology; the table name is only a fallback for a reader.
+        let (ontology, source) = ontologies
+            .iter()
+            .find(|o| o.table_name == m.table && o.lane == Some(m.lane))
+            .map(|o| (o.name, o.display_name))
+            .unwrap_or((m.table, m.table));
+        catalog.push(DayMeasure {
             key: format!("{}:{}", m.lane, m.id),
+            lane: m.lane.to_string(),
             label: m.label.to_string(),
             unit: m.unit.to_string(),
             kind: kind_str(m.kind).to_string(),
+            ontology: ontology.to_string(),
+            source: source.to_string(),
             value,
             before: values,
         });
     }
 
-    let available = all
+    // A day still under way holds half its totals: no visits by 9 AM is not
+    // unusual, only early. It is scored once it is over in its own zone.
+    let unusual = if pins.iter().any(|p| p == UNUSUAL)
+        && crate::api::day_summary::day_is_over(pool, date).await?
+    {
+        most_unusual(&catalog, pins)
+    } else {
+        None
+    };
+    let measures = pins
+        .iter()
+        .filter_map(|p| catalog.iter().find(|m| &m.key == p))
+        .take(MAX_PINNED)
+        .cloned()
+        .collect();
+    let available = lane_measures()
         .iter()
         .map(|m| MeasureListing {
             key: format!("{}:{}", m.lane, m.id),
@@ -760,8 +819,59 @@ pub async fn day_measures(
             kind: kind_str(m.kind).to_string(),
         })
         .collect();
+    Ok(DayMeasures { date, measures, available, catalog, unusual })
+}
 
-    Ok(DayMeasures { date, measures, available })
+/// The `p` quantile of sorted values, interpolating between neighbours: the
+/// same rule the page uses to draw the usual.
+fn quantile(sorted: &[f64], p: f64) -> f64 {
+    let i = (sorted.len() - 1) as f64 * p;
+    let (lo, hi) = (i.floor() as usize, i.ceil() as usize);
+    sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo as f64)
+}
+
+/// How far a day sat from its usual, in widths of the middle half of the days
+/// before, or `None` when those days can't say what usual is.
+fn unusual_score(m: &DayMeasure) -> Option<f64> {
+    let today = m.value?;
+    let mut days: Vec<f64> = m.before.iter().flatten().copied().collect();
+    if days.len() < USUAL_MIN_DAYS {
+        return None;
+    }
+    days.sort_by(f64::total_cmp);
+    let mut distinct = days.clone();
+    distinct.dedup();
+    if distinct.len() < USUAL_MIN_DISTINCT {
+        return None;
+    }
+    let spread = quantile(&days, 0.75) - quantile(&days, 0.25);
+    // A middle half with no width says nothing about how far is far.
+    if spread <= 0.0 {
+        return None;
+    }
+    Some((today - quantile(&days, 0.5)).abs() / spread)
+}
+
+/// The `unusual` pin: the measure furthest from its usual today, among the
+/// lanes the other pins don't already show. A pin with nothing in the days
+/// it covers shows no number, so it doesn't claim its lane. Ties go to the
+/// measure the registry lists first.
+fn most_unusual(measures: &[DayMeasure], pins: &[String]) -> Option<String> {
+    let shown: std::collections::HashSet<&str> = pins
+        .iter()
+        .filter(|p| p.as_str() != UNUSUAL)
+        .filter_map(|p| measures.iter().find(|m| &m.key == p))
+        .filter(|m| m.value.is_some() || m.before.iter().any(Option::is_some))
+        .map(|m| m.lane.as_str())
+        .collect();
+    let mut best: Option<(&DayMeasure, f64)> = None;
+    for m in measures.iter().filter(|m| !shown.contains(m.lane.as_str())) {
+        let Some(score) = unusual_score(m) else { continue };
+        if score >= UNUSUAL_MIN_SCORE && best.is_none_or(|(_, s)| score > s) {
+            best = Some((m, score));
+        }
+    }
+    best.map(|(m, _)| m.key.clone())
 }
 
 #[cfg(test)]
@@ -1182,6 +1292,14 @@ mod tests {
         );
     }
 
+    /// One measure's cell out of a day's numbers.
+    fn cell<'a>(d: &'a DayMeasures, key: &str) -> &'a DayMeasure {
+        d.catalog
+            .iter()
+            .find(|m| m.key == key)
+            .unwrap_or_else(|| panic!("{key} missing from the day's numbers"))
+    }
+
     /// A day page's numbers: the day, the days before it, and the difference
     /// between a day nothing was collected (null) and a day of zero.
     #[sqlx::test]
@@ -1209,12 +1327,10 @@ mod tests {
         }
 
         let date = chrono::NaiveDate::from_ymd_opt(2026, 9, 23).unwrap();
-        let keys = vec!["communication:sent".to_string(), "nowhere:nothing".to_string()];
-        let d = day_measures(&pool, date, &keys).await.unwrap();
+        let pins = vec!["communication:sent".to_string(), "nowhere:nothing".to_string()];
+        let d = day_measures(&pool, date, &pins).await.unwrap();
 
-        assert_eq!(d.measures.len(), 1, "an unknown pin is skipped");
-        let sent = &d.measures[0];
-        assert_eq!(sent.key, "communication:sent");
+        let sent = cell(&d, "communication:sent");
         assert_eq!(sent.value, Some(2.0));
         assert_eq!(sent.before.len(), BASELINE_DAYS as usize);
         assert_eq!(sent.before[29], Some(1.0), "the day before");
@@ -1222,22 +1338,94 @@ mod tests {
         assert_eq!(sent.before[27], Some(0.0), "no messages, after collection began: a real zero");
         assert_eq!(sent.before[24], None, "before collection began: not a zero");
         assert_eq!(sent.before[0], None, "nothing collected: not a zero");
-        assert!(d.available.iter().any(|m| m.key == "health:steps"));
+        assert_eq!(sent.ontology, "communication_message");
+        assert_eq!(sent.source, "Messages");
+        assert_eq!(d.unusual, None, "nothing is picked when `unusual` isn't pinned");
+    }
+
+    /// An app older than the catalog reads `measures` (its pins, in order,
+    /// unknown ones skipped) and `available`. The answer grows; it never
+    /// takes those away.
+    #[sqlx::test]
+    async fn an_older_app_still_reads_its_pins(pool: PgPool) {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 9, 23).unwrap();
+        let pins = vec![
+            "communication:sent".to_string(),
+            "nowhere:nothing".to_string(),
+            UNUSUAL.to_string(),
+            "health:steps".to_string(),
+        ];
+        let d = day_measures(&pool, date, &pins).await.unwrap();
+        let keys: Vec<&str> = d.measures.iter().map(|m| m.key.as_str()).collect();
+        assert_eq!(keys, ["communication:sent", "health:steps"]);
+        assert_eq!(d.measures[1].before.len(), BASELINE_DAYS as usize);
+        assert_eq!(d.available.len(), virtues_registry::ontologies::lane_measures().len());
+        assert!(d.available.iter().any(|m| m.key == "health:sleep"));
+
+        let json = serde_json::to_value(&d).unwrap();
+        for field in ["date", "measures", "available", "catalog", "unusual"] {
+            assert!(json.get(field).is_some(), "the answer lost `{field}`");
+        }
     }
 
     /// Every measure's SQL, coverage included, runs through `day_measures`.
     /// The registry crate cannot reach a database, so a typo in a predicate
-    /// would otherwise first show up as a 500 on a day page.
+    /// would otherwise first show up as a 500 on a day page. One call answers
+    /// for all of them: the picker draws every row.
     #[sqlx::test]
     async fn every_measure_executes_for_a_day(pool: PgPool) {
         let date = chrono::NaiveDate::from_ymd_opt(2026, 9, 23).unwrap();
-        for m in virtues_registry::ontologies::lane_measures() {
-            let key = format!("{}:{}", m.lane, m.id);
-            let d = day_measures(&pool, date, std::slice::from_ref(&key))
-                .await
-                .unwrap_or_else(|e| panic!("measure {key} failed: {e}"));
-            assert_eq!(d.measures.len(), 1, "{key} was not read");
+        let d = day_measures(&pool, date, &[UNUSUAL.to_string()]).await.unwrap();
+        let all = virtues_registry::ontologies::lane_measures();
+        assert_eq!(d.catalog.len(), all.len());
+        for (cell, m) in d.catalog.iter().zip(all) {
+            assert_eq!(cell.key, format!("{}:{}", m.lane, m.id), "registry order");
+            assert_eq!(cell.before.len(), BASELINE_DAYS as usize, "{}", cell.key);
+            assert_ne!(cell.source, m.table, "{} found no ontology", cell.key);
         }
+        assert_eq!(d.unusual, None, "an empty record has nothing unusual");
+    }
+
+    /// A day still under way holds half-finished totals, so it picks nothing
+    /// unusual; the same record on a day that is over does.
+    #[sqlx::test]
+    async fn a_day_under_way_has_nothing_unusual(pool: PgPool) {
+        let utc_today = chrono::Utc::now().date_naive();
+        let tz: chrono_tz::Tz = crate::timezone::day_timezone(&pool, utc_today)
+            .await
+            .unwrap()
+            .parse()
+            .unwrap_or(chrono_tz::UTC);
+        let today = chrono::Utc::now().with_timezone(&tz).date_naive();
+        let past = today - chrono::Duration::days(100);
+        let mut n = 0;
+        for date in [past, today] {
+            for back in 0..=BASELINE_DAYS {
+                let sent = if back == 0 { 20 } else { back % 4 + 1 };
+                let at = (date - chrono::Duration::days(back)).and_hms_opt(12, 0, 0).unwrap().and_utc();
+                for _ in 0..sent {
+                    n += 1;
+                    sqlx::query(
+                        "INSERT INTO data_communication_message
+                            (id, message_id, channel, from_identifier, from_handle, occurred_at,
+                             source_stream_id, source_table, source_provider, metadata)
+                         VALUES ($1, $1, 'imessage', 'x', 'h', $2, $1, 'test', 'test',
+                                 jsonb_build_object('is_from_me', true))",
+                    )
+                    .bind(format!("m{n}"))
+                    .bind(at)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                }
+            }
+        }
+
+        let pins = vec![UNUSUAL.to_string()];
+        let over = day_measures(&pool, past, &pins).await.unwrap();
+        assert!(over.unusual.is_some(), "twenty sent against a usual of one to four stands out");
+        let under_way = day_measures(&pool, today, &pins).await.unwrap();
+        assert_eq!(under_way.unusual, None, "today isn't over");
     }
 
     /// A day whose only rows fall outside a measure's coverage was not
@@ -1266,10 +1454,10 @@ mod tests {
         .unwrap();
 
         let date = chrono::NaiveDate::from_ymd_opt(2026, 9, 23).unwrap();
-        let spend = ["financial:spend".to_string()];
-        let d = day_measures(&pool, date, &spend).await.unwrap();
-        assert_eq!(d.measures[0].value, None, "unknown direction is not $0");
-        assert!(d.measures[0].before.iter().all(Option::is_none), "nothing judged yet");
+        let d = day_measures(&pool, date, &[]).await.unwrap();
+        let spend = cell(&d, "financial:spend");
+        assert_eq!(spend.value, None, "unknown direction is not $0");
+        assert!(spend.before.iter().all(Option::is_none), "nothing judged yet");
 
         sqlx::query(
             "INSERT INTO data_financial_transaction
@@ -1281,10 +1469,175 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        let d = day_measures(&pool, date, &spend).await.unwrap();
-        let before = &d.measures[0].before;
-        assert_eq!(d.measures[0].value, None, "still unknown on the day itself");
-        assert_eq!(before[28], Some(0.0), "a quiet day after collection began is $0");
-        assert_eq!(before[26], None, "the day before collection began");
+        let d = day_measures(&pool, date, &[]).await.unwrap();
+        let spend = cell(&d, "financial:spend");
+        assert_eq!(spend.value, None, "still unknown on the day itself");
+        assert_eq!(spend.before[28], Some(0.0), "a quiet day after collection began is $0");
+        assert_eq!(spend.before[26], None, "the day before collection began");
+    }
+
+    /// Nobody sleeps zero hours. A night with no sleep rows, after the record
+    /// of sleep began and after it stopped, was not recorded.
+    #[sqlx::test]
+    async fn a_day_without_sleep_rows_is_not_recorded(pool: PgPool) {
+        for (id, start, end, minutes) in [
+            // Early-morning UTC starts, so each lands on one date in any US zone.
+            ("s1", "2026-09-19T06:00:00Z", "2026-09-19T13:30:00Z", 450),
+            ("s2", "2026-09-21T06:30:00Z", "2026-09-21T13:00:00Z", 390),
+        ] {
+            sqlx::query(
+                "INSERT INTO data_health_sleep
+                     (id, started_at, ended_at, duration_minutes,
+                      source_stream_id, source_table, source_provider)
+                 VALUES ($1, $2::timestamptz, $3::timestamptz, $4, $1, 'test', 'test')",
+            )
+            .bind(id)
+            .bind(start)
+            .bind(end)
+            .bind(minutes)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 9, 23).unwrap();
+        let d = day_measures(&pool, date, &[]).await.unwrap();
+        let sleep = cell(&d, "health:sleep");
+        assert_eq!(sleep.value, None, "the day itself, after the last night recorded");
+        assert_eq!(sleep.before[26], Some(7.5), "Sep 19");
+        assert_eq!(sleep.before[27], None, "between two recorded nights: not 0h");
+        assert_eq!(sleep.before[28], Some(6.5), "Sep 21");
+        assert_eq!(sleep.before[29], None, "after the last recorded night: not 0h");
+        assert_eq!(sleep.before[25], None, "before the record of sleep began");
+    }
+
+    /// Silent chunks are kept as rows with empty text. Speech heard counts the
+    /// chunks with words in them; a day of only silent chunks heard nothing,
+    /// and a day with no chunks at all was not recorded.
+    #[sqlx::test]
+    async fn speech_heard_counts_only_rows_with_words(pool: PgPool) {
+        for (id, at, text, seconds) in [
+            ("t1", "2026-09-23T15:00:00Z", "Nick, are you coming to dinner?", 60.0),
+            ("t2", "2026-09-23T15:01:00Z", "", 3000.0),
+            ("t3", "2026-09-23T16:00:00Z", "...", 300.0),
+            ("t4", "2026-09-23T17:00:00Z", "  ", 60.0),
+            ("t5", "2026-09-23T18:00:00Z", "Ja, gern.", 120.0),
+            ("t6", "2026-09-21T15:00:00Z", "", 600.0),
+            ("t7", "2026-09-20T15:00:00Z", "Thanks, David.", 30.0),
+        ] {
+            sqlx::query(
+                "INSERT INTO data_communication_transcription
+                     (id, text, duration_seconds, started_at,
+                      source_stream_id, source_table, source_provider)
+                 VALUES ($1, $2, $3, $4::timestamptz, $1, 'test', 'test')",
+            )
+            .bind(id)
+            .bind(text)
+            .bind(seconds)
+            .bind(at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 9, 23).unwrap();
+        let d = day_measures(&pool, date, &[]).await.unwrap();
+        let talk = cell(&d, "communication:talk");
+        assert_eq!(talk.value, Some(3.0), "only the two chunks with words, in minutes");
+        assert_eq!(talk.before[27], Some(0.5), "Sep 20");
+        assert_eq!(talk.before[28], Some(0.0), "silent chunks only: nothing heard");
+        assert_eq!(talk.before[29], None, "no chunks at all: the microphone wasn't recording");
+        assert_eq!(talk.before[26], None, "before the record of speech began");
+    }
+
+    /// A day of numbers for the picker, with `before` the 30 days before and
+    /// `value` the day.
+    fn measure(key: &str, value: Option<f64>, before: &[f64]) -> DayMeasure {
+        let (lane, _) = key.split_once(':').unwrap();
+        let mut days: Vec<Option<f64>> = vec![None; BASELINE_DAYS as usize - before.len()];
+        days.extend(before.iter().copied().map(Some));
+        DayMeasure {
+            key: key.into(),
+            lane: lane.into(),
+            label: key.into(),
+            unit: String::new(),
+            kind: "total".into(),
+            ontology: String::new(),
+            source: String::new(),
+            value,
+            before: days,
+        }
+    }
+
+    fn pins(keys: &[&str]) -> Vec<String> {
+        keys.iter().map(|k| k.to_string()).collect()
+    }
+
+    /// The widest miss wins, measured in widths of each number's own middle
+    /// half, so a step count and a message count compare fairly.
+    #[test]
+    fn the_most_unusual_is_the_furthest_from_its_own_usual() {
+        let usual = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0];
+        let ms = vec![
+            // Middle 13.5, middle half 3.5 wide: 21 sits ~2.1 widths out.
+            measure("health:steps", Some(21.0), &usual),
+            // ~4.3 widths out.
+            measure("activity:screen", Some(28.5), &usual),
+            // Under one width out: not unusual at all.
+            measure("financial:spend", Some(15.0), &usual),
+        ];
+        assert_eq!(most_unusual(&ms, &pins(&[UNUSUAL])).as_deref(), Some("activity:screen"));
+        let ms = vec![measure("financial:spend", Some(15.0), &usual)];
+        assert_eq!(most_unusual(&ms, &pins(&[UNUSUAL])), None, "nothing stood out");
+    }
+
+    /// The fifth number comes from a kind the other four don't show; a pin
+    /// that has shown nothing in 31 days doesn't claim its lane.
+    #[test]
+    fn the_most_unusual_skips_lanes_the_other_pins_show() {
+        let usual = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0];
+        let ms = vec![
+            measure("health:steps", Some(40.0), &usual),
+            measure("health:sleep", None, &[]),
+            measure("activity:screen", Some(21.0), &usual),
+        ];
+        assert_eq!(
+            most_unusual(&ms, &pins(&["health:sleep", UNUSUAL])).as_deref(),
+            Some("health:steps"),
+            "sleep holds nothing, so health is still open"
+        );
+        assert_eq!(
+            most_unusual(&ms, &pins(&["health:steps", UNUSUAL])).as_deref(),
+            Some("activity:screen")
+        );
+        assert_eq!(most_unusual(&ms, &pins(&["health:steps", "activity:screen", UNUSUAL])), None);
+    }
+
+    /// A usual needs enough days, and enough different days, to measure
+    /// against; and a day with nothing recorded can't be unusual.
+    #[test]
+    fn the_most_unusual_needs_a_usual_to_stand_out_from() {
+        let few = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0];
+        assert_eq!(unusual_score(&measure("health:steps", Some(99.0), &few)), None, "six days");
+        let same = [5.0, 5.0, 5.0, 6.0, 6.0, 7.0, 7.0, 5.0];
+        assert_eq!(unusual_score(&measure("health:steps", Some(99.0), &same)), None, "three values");
+        let flat = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0];
+        assert_eq!(unusual_score(&measure("health:workouts", Some(1.0), &flat)), None, "no spread");
+        let usual = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0];
+        assert_eq!(unusual_score(&measure("health:steps", None, &usual)), None, "not recorded");
+        let score = unusual_score(&measure("health:steps", Some(6.5), &usual)).unwrap();
+        assert!((score - 2.0).abs() < 1e-9, "7 below a middle day of 13.5, over 3.5: {score}");
+    }
+
+    /// Every rate reads "not recorded" on a day without rows: an average of
+    /// nothing is no reading, never zero.
+    #[test]
+    fn a_rate_is_never_zero() {
+        use virtues_registry::ontologies::MeasureKind;
+        for m in virtues_registry::ontologies::lane_measures() {
+            if m.kind == MeasureKind::Rate {
+                assert!(!m.empty_is_zero, "{} is a rate but reads an empty day as zero", m.id);
+            }
+        }
     }
 }

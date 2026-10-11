@@ -1,27 +1,36 @@
 <!--
 	DayNumbers.svelte
 
-	Your numbers for the day: a few measures you chose, each with where the
-	day sat against your own usual. The tick's band is the middle half of the
-	days before, the line through it is the middle day, and the dot is this
-	one. The usual is said in words under it, because a mark alone is a guess
-	at what it means.
+	Your numbers for the day: a few measures you chose, each with the day's
+	value, a bar for each of the 30 days before and this one, and the usual
+	said in words, because a mark alone is a guess at what it means. The light
+	band behind the bars is the middle half of the days before; the dark bar
+	is this day.
 
 	Which numbers: the ones you pinned (up to five, the same on every day).
-	Before you pin any, a few common ones show, and only those your record
+	One pin, "Most unusual today", stands for whichever number sat furthest
+	from its usual, from a kind the other pins don't show; your server picks
+	it. Before you pin any, a few common ones show, and only those your record
 	actually holds. Nothing here is written by a model; every value is counted
-	from the record (`/api/wiki/day/:date/measures`).
+	from the record (`/api/wiki/day/:date/measures`), and one request brings
+	every measure, so the picker draws its rows without asking again.
+
+	The apps carry their own copy of this page and can meet a server older than
+	the catalog. That server returns only the pins it knows and a bare list of
+	measures, so the strip shows those pins without "Most unusual today", and
+	the picker lists the measures without their charts.
 -->
 <script lang="ts">
 	import { FloatingContent, useClickOutside, useEscapeKey } from "$lib/floating";
 	import { portal } from "$lib/actions/portal";
-	import { getDayMeasures, type DayMeasureApi, type DayMeasuresApi } from "$lib/wiki/api";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { getDayMeasures, UNUSUAL_PIN, type CatalogMeasureApi, type DayMeasureApi, type DayMeasuresApi } from "$lib/wiki/api";
 
 	interface Props {
 		/** The page's day, `YYYY-MM-DD`. */
 		date: string;
-		/** Your pins (`lane:id`): undefined while loading, null before you've
-		 *  chosen any (the starters show), empty when you chose none. */
+		/** Your pins (`lane:id`, or `unusual`): undefined while loading, null
+		 *  before you've chosen any (the starters show), empty when you chose none. */
 		pins: string[] | null | undefined;
 		onchange: (pins: string[]) => void;
 		/** Your last change couldn't be saved. */
@@ -32,16 +41,16 @@
 
 	const MAX = 5;
 	/** Shown before you've chosen, when your record holds them. */
-	const STARTERS = ["health:steps", "financial:spend", "communication:people", "health:sleep", "activity:screen"];
+	const STARTERS = ["health:steps", "communication:people", "communication:sent", "activity:screen", UNUSUAL_PIN];
 
 	const chosen = $derived(pins ?? STARTERS);
 	let data = $state<DayMeasuresApi | null>(null);
 	let failed = $state(false);
 
 	$effect(() => {
-		const keys = chosen;
-		const day = date;
 		if (pins === undefined) return;
+		const day = date;
+		const keys = chosen;
 		// A newer pin set or day supersedes this request.
 		let live = true;
 		failed = false;
@@ -57,10 +66,34 @@
 		};
 	});
 
-	/** Before you choose, a starter shows only if the record has held it lately. */
-	const shown = $derived(
-		(data?.measures ?? []).filter((m) => pins != null || m.value != null || m.before.some((v) => v != null)),
-	);
+	/** Every measure with its days; null from a server older than the catalog. */
+	const catalog = $derived<CatalogMeasureApi[] | null>(data?.catalog ?? null);
+	const byKey = $derived(new Map<string, DayMeasureApi>((catalog ?? data?.measures ?? []).map((m) => [m.key, m])));
+
+	/** Days in the 31 with a value. */
+	const daysWith = (m: DayMeasureApi) => m.before.filter((v) => v != null).length + (m.value != null ? 1 : 0);
+	const held = (m: DayMeasureApi) => daysWith(m) > 0;
+
+	type Cell = { key: string; m: DayMeasureApi | null; unusual: boolean };
+
+	const cells = $derived.by((): Cell[] => {
+		if (!data) return [];
+		const out: Cell[] = [];
+		for (const key of chosen) {
+			if (key === UNUSUAL_PIN) {
+				// An older server can't pick one: no cell, rather than a wrong one.
+				if (data.unusual !== undefined) out.push({ key, m: (data.unusual && byKey.get(data.unusual)) || null, unusual: true });
+				continue;
+			}
+			const m = byKey.get(key);
+			// A pin can outlive its measure; a starter shows only if the record has held it lately.
+			if (!m || (pins == null && !held(m))) continue;
+			out.push({ key, m, unusual: false });
+		}
+		// Before you choose, "Nothing stood out" alone is not worth a strip.
+		if (pins == null && out.every((c) => c.unusual && !c.m)) return [];
+		return out;
+	});
 
 	function quantile(sorted: number[], p: number): number {
 		const i = (sorted.length - 1) * p;
@@ -76,35 +109,61 @@
 		return [quantile(v, 0.25), quantile(v, 0.5), quantile(v, 0.75)];
 	}
 
-	function fmt(m: DayMeasureApi, v: number): string {
-		switch (m.unit) {
-			case "$":
-				return `$${Math.round(v).toLocaleString()}`;
-			case "h":
-				return `${v.toFixed(1)} h`;
-			case "":
-				return Math.round(v).toLocaleString();
-			default:
-				return `${Math.round(v).toLocaleString()} ${m.unit}`;
-		}
+	/** A duration in whole minutes, when the unit is one. */
+	function minutes(m: DayMeasureApi, v: number): number | null {
+		if (m.unit === "h") return Math.round(v * 60);
+		if (m.unit === "min") return Math.round(v);
+		return null;
 	}
+
+	/** The value as text and unit pieces, so the units can be set smaller. */
+	function pieces(m: DayMeasureApi, v: number): [string, string][] {
+		const min = minutes(m, v);
+		if (min != null) {
+			const h = Math.floor(min / 60);
+			return h ? [[`${h}`, "h"], [` ${min % 60}`, "m"]] : [[`${min}`, "m"]];
+		}
+		const n = Math.round(v).toLocaleString();
+		if (m.unit === "$") return [[`$${n}`, ""]];
+		if (m.unit === "") return [[n, ""]];
+		return [[n, ` ${m.unit}`]];
+	}
+
+	const fmt = (m: DayMeasureApi, v: number) => pieces(m, v).map(([n, u]) => n + u).join("");
 
 	const label = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-
-	// One geometry for every cell: the middle half of the usual days fills the
-	// middle third, the middle day sits at the centre, the day is placed
-	// piecewise between them and clamped to the ends.
-	const W = 72;
-	function dotX(v: number, [q1, q2, q3]: [number, number, number]): number {
-		const x = v <= q2 ? 36 - (12 * (q2 - v)) / Math.max(q2 - q1, 1e-9) : 36 + (12 * (v - q2)) / Math.max(q3 - q2, 1e-9);
-		return Math.max(3, Math.min(W - 3, x));
-	}
 
 	function tip(m: DayMeasureApi, u: [number, number, number] | null): string {
 		if (!u) return "Not enough days before this one to say what's usual.";
 		const n = m.before.filter((x) => x != null).length;
 		const days = n === m.before.length ? `the ${n} days before` : `the ${n} days with a count in the ${m.before.length} before`;
 		return `The middle half of ${days} ran ${fmt(m, u[0])} to ${fmt(m, u[2])}.`;
+	}
+
+	/** The 31 bars: the days before, oldest first, then this one. */
+	function chart(m: DayMeasureApi, w: number, h: number) {
+		const vals = [...m.before, m.value];
+		const known = vals.filter((v): v is number => v != null);
+		const max = Math.max(...known, 0);
+		const min = Math.min(...known, max);
+		// A rate (a heart rate, say) floats between its own floor and peak: from
+		// zero, 60 bpm spends most of the bar saying "alive".
+		const lo = m.kind === "rate" ? Math.max(0, min - (max - min) / 2) : 0;
+		const span = max - lo || 1;
+		const y = (v: number) => h - 1 - ((v - lo) / span) * (h - 3);
+		const step = w / vals.length;
+		const u = usual(m);
+		return {
+			band: u ? { top: y(u[2]), height: Math.max(1, y(u[0]) - y(u[2])) } : null,
+			bars: vals.map((v, i) => ({
+				x: i * step + step * 0.18,
+				width: step * 0.64,
+				top: v == null ? h - 1.5 : y(v),
+				height: v == null ? 1 : Math.max(1, h - 1 - y(v)),
+				none: v == null,
+				today: i === vals.length - 1,
+			})),
+		};
 	}
 
 	// ── Choosing ────────────────────────────────────────────────────────────
@@ -118,9 +177,14 @@
 	}, () => open);
 
 	// Pins the registry no longer lists don't count toward the limit; the next
-	// change writes them out.
+	// change writes them out. Before you choose, the starters on the strip are
+	// your pins.
 	const known = $derived(new Set((data?.available ?? []).map((m) => m.key)));
-	const picked = $derived(pins != null ? (data ? pins.filter((k) => known.has(k)) : pins) : shown.map((m) => m.key));
+	const picked = $derived(
+		pins != null ? (data ? pins.filter((k) => k === UNUSUAL_PIN || known.has(k)) : pins) : cells.map((c) => c.key),
+	);
+	const full = $derived(picked.length >= MAX);
+	const unusualOn = $derived(picked.includes(UNUSUAL_PIN));
 
 	// The panel is at the end of <body>, so it takes focus to make its first
 	// checkbox the next Tab; Escape hands focus back to the button.
@@ -129,145 +193,278 @@
 	});
 
 	function toggle(key: string, on: boolean) {
-		const next = on ? [...picked, key].slice(0, MAX) : picked.filter((k) => k !== key);
-		onchange(next);
+		onchange(on ? [...picked, key].slice(0, MAX) : picked.filter((k) => k !== key));
 	}
 
-	const lanes = $derived.by(() => {
-		const by = new Map<string, { key: string; label: string }[]>();
-		for (const m of data?.available ?? []) {
-			if (!by.has(m.lane)) by.set(m.lane, []);
-			by.get(m.lane)!.push({ key: m.key, label: label(m.label) });
-		}
-		return [...by.entries()];
-	});
+	/** In your record: what the 31 days hold, the most-held first. */
+	const inRecord = $derived(
+		(catalog ?? [])
+			.map((m, i) => ({ m, i, days: daysWith(m) }))
+			.filter((r) => r.days > 0)
+			.sort((a, b) => b.days - a.days || a.i - b.i),
+	);
+	const missing = $derived((catalog ?? []).filter((m) => !held(m)));
+
+	/** Sentence case for a registry display name: "Sleep Sessions" reads "Sleep sessions". */
+	const sentence = (s: string) => s.replace(/ ([A-Z][a-z]+)/g, (_, w: string) => ` ${w.toLowerCase()}`);
+
+	/** What gives a measure, by the ontology it reads. */
+	const NEEDS: Record<string, string> = {
+		health_heart_rate: "Needs Apple Health on your phone",
+		health_hrv: "Needs Apple Health on your phone",
+		health_sleep: "Needs a sleep source, like Apple Health on your phone",
+		health_steps: "Needs Apple Health on your phone",
+		health_workout: "Needs Apple Health on your phone or Strava",
+		location_visit: "Needs location on your phone",
+		communication_message: "Needs Messages on your computer",
+		communication_transcription: "Needs the microphone on your phone",
+		financial_transaction: "Needs a bank or card connection",
+		activity_app_session: "Needs app usage on your computer",
+		activity_web_browsing: "Needs browsing history on your computer",
+	};
+	/** Why a measure reads nothing when its ontology holds rows it can't judge. */
+	const UNJUDGED: Record<string, string> = {
+		financial_transaction: "Your phone's card transactions don't say which way the money went yet",
+	};
+
+	/** The line under a measure the 31 days don't hold, and whether a source would give it. */
+	function why(m: CatalogMeasureApi): { line: string; connect: boolean } {
+		const rows = (catalog ?? []).some((o) => o.ontology === m.ontology && held(o));
+		if (rows && UNJUDGED[m.ontology]) return { line: UNJUDGED[m.ontology], connect: false };
+		return { line: NEEDS[m.ontology] ?? `Needs ${sentence(m.source).toLowerCase()} in your record`, connect: true };
+	}
+
+	function openSources() {
+		open = false;
+		windowShellStore.openTabFromRoute("/sources");
+	}
 </script>
 
-{#if shown.length}
-	<section class="numbers" aria-label="Your numbers for the day">
-		{#each shown as m (m.key)}
-			{@const u = usual(m)}
-			<div class="num" data-tip={m.value != null ? tip(m, u) : null}>
-				<span class="k">{label(m.label)}</span>
-				{#if m.value == null}
-					<span class="none">Not recorded</span>
-				{:else}
-					<span class="v">{fmt(m, m.value)}</span>
-					{#if u}
-						<svg width={W} height="9" viewBox="0 0 {W} 9" aria-hidden="true">
-							<line x1="24" x2="48" y1="4.5" y2="4.5" class="band" stroke-width="3" stroke-linecap="round" />
-							<circle cx={dotX(m.value, u)} cy="4.5" r="2.5" class="dot" />
-							<line x1="36" x2="36" y1="0" y2="9" class="mid" stroke-width="1" />
-						</svg>
-						<span class="u">Usual {fmt(m, u[1])}</span>
-						<span class="sr-only">{tip(m, u)}</span>
-					{/if}
-				{/if}
-			</div>
+{#snippet bars(m: DayMeasureApi, w: number, h: number, hot: boolean)}
+	{@const c = chart(m, w, h)}
+	<svg width={w} height={h} viewBox="0 0 {w} {h}" aria-hidden="true">
+		{#if c.band}<rect x="0" y={c.band.top} width={w} height={c.band.height} class="band" />{/if}
+		{#each c.bars as b, i (i)}
+			<rect x={b.x} y={b.top} width={b.width} height={b.height} rx="0.5" class={b.none ? "tick" : b.today ? (hot ? "today hot" : "today") : "day"} />
 		{/each}
-	</section>
-{/if}
+	</svg>
+{/snippet}
 
 {#if data || failed}
-	<div class="foot">
-		{#if failed}<span class="err">Your server couldn't count your numbers for this day. Reload to try again.</span>{/if}
-		{#if saveFailed}<span class="err" role="status">Your server couldn't save your numbers. Try again.</span>{/if}
-		<button
-			bind:this={button}
-			type="button"
-			class="choose"
-			aria-haspopup="dialog"
-			aria-expanded={open}
-			onclick={() => (open = !open)}>Choose numbers</button
-		>
+	<div class="nums-row">
+		{#if cells.length}
+			<section class="nums" aria-label="Your numbers for the day">
+				{#each cells as c (c.key)}
+					{@const m = c.m}
+					{#if !m}
+						<div class="num">
+							<span class="k"><span class="hot">Most unusual today</span><span>Nothing stood out</span></span>
+						</div>
+					{:else}
+						{@const u = usual(m)}
+						<div class="num" data-tip={tip(m, u)}>
+							<span class="k">
+								{#if c.unusual}<span class="hot">Most unusual today</span>{/if}
+								<span>{label(m.label)}</span>
+							</span>
+							{#if m.value == null}
+								<span class="v none">Not recorded</span>
+							{:else}
+								<span class="v">{#each pieces(m, m.value) as [n, unit], i (i)}{n}{#if unit}<small>{unit}</small>{/if}{/each}</span>
+							{/if}
+							{@render bars(m, 92, 22, c.unusual)}
+							<span class="u">{u ? `Usual ${fmt(m, u[1])}` : "Too few days to say"}</span>
+							<span class="sr-only">{tip(m, u)}</span>
+						</div>
+					{/if}
+				{/each}
+			</section>
+		{/if}
+		{#if failed}<p class="err">Your server couldn't count your numbers for this day. Reload to try again.</p>{/if}
+		{#if saveFailed}<p class="err" role="status">Your server couldn't save your numbers. Try again.</p>{/if}
+		{#if data}
+			<button
+				bind:this={button}
+				type="button"
+				class="edit"
+				class:bare={!cells.length}
+				aria-haspopup="dialog"
+				aria-expanded={open}
+				onclick={() => (open = !open)}>Edit numbers</button
+			>
+		{/if}
 	</div>
 {/if}
 
-{#if open && button}
+{#if open && button && data}
 	<div use:portal>
 		<FloatingContent anchor={button} options={{ placement: "bottom-end", offset: 6, flip: true, shift: true, padding: 12, strategy: "fixed" }}>
-			<div class="panel" bind:this={panel} role="dialog" aria-label="Choose your numbers">
-				<div class="head"><span class="title">Your numbers</span><span class="sub">Up to {MAX}, the same on every day</span></div>
-				{#each lanes as [lane, items] (lane)}
-					<div class="lane">
-						<div class="lane-name">{label(lane)}</div>
-						{#each items as it (it.key)}
-							{@const on = picked.includes(it.key)}
-							<label class="row" class:full={!on && picked.length >= MAX}>
-								<input type="checkbox" checked={on} disabled={!on && picked.length >= MAX} onchange={(e) => toggle(it.key, e.currentTarget.checked)} />
-								<span>{it.label}</span>
-							</label>
-						{/each}
-					</div>
-				{/each}
+			<div class="panel" bind:this={panel} role="dialog" aria-label="Your numbers">
+				<div class="head"><span class="title">Your numbers</span><span class="count">{picked.length} of {MAX}</span></div>
+				<p class="sub">The same five on every day.</p>
+				{#if full}<p class="sub" role="status">Uncheck one to choose another.</p>{/if}
+
+				<label class="pick unusual-pick" class:full={!unusualOn && full}>
+					<input type="checkbox" checked={unusualOn} disabled={!unusualOn && full} onchange={(e) => toggle(UNUSUAL_PIN, e.currentTarget.checked)} />
+					<span
+						>Most unusual today<span class="from"
+							>{catalog ? "Each day, the number furthest from your usual, from a kind your other numbers don't show" : "Update your server to see this one"}</span
+						></span
+					>
+				</label>
+
+				{#if !catalog}
+					<!-- An older server lists its measures without their days. -->
+					<div class="group">Numbers</div>
+					{#each data.available as a (a.key)}
+						{@const on = picked.includes(a.key)}
+						<label class="pick" class:full={!on && full}>
+							<input type="checkbox" checked={on} disabled={!on && full} onchange={(e) => toggle(a.key, e.currentTarget.checked)} />
+							<span>{label(a.label)}</span>
+						</label>
+					{/each}
+				{/if}
+
+				{#if inRecord.length}
+					<div class="group">In your record</div>
+					{#each inRecord as { m, days } (m.key)}
+						{@const on = picked.includes(m.key)}
+						<label class="pick" class:full={!on && full}>
+							<input type="checkbox" checked={on} disabled={!on && full} onchange={(e) => toggle(m.key, e.currentTarget.checked)} />
+							<span>{label(m.label)}<span class="from">From {sentence(m.source)}{days < 31 ? ` · ${days} of the last 31 days` : ""}</span></span>
+							{@render bars(m, 64, 16, false)}
+						</label>
+					{/each}
+				{/if}
+
+				{#if missing.length}
+					<div class="group">Not in your record yet</div>
+					{#each missing as m (m.key)}
+						{@const on = picked.includes(m.key)}
+						{@const w = why(m)}
+						<div class="pick missing">
+							{#if on}
+								<input type="checkbox" checked aria-label="Show {label(m.label)}" onchange={(e) => toggle(m.key, e.currentTarget.checked)} />
+							{:else}
+								<span class="info" aria-hidden="true">ⓘ</span>
+							{/if}
+							<span>{label(m.label)}<span class="how">{w.line}{#if w.connect} · <button type="button" class="link" onclick={openSources}>Connect it</button>{/if}</span></span>
+						</div>
+					{/each}
+				{/if}
 			</div>
 		</FloatingContent>
 	</div>
 {/if}
 
 <style>
-	.numbers {
-		display: grid;
-		grid-auto-flow: column;
-		grid-auto-columns: minmax(0, 1fr);
-		column-gap: 1.5rem;
+	/* The strip sits in the text column; its edit button hangs in the margin
+	   beside it (the article's 2.25rem gutter), and under it when there is no
+	   margin. */
+	.nums-row {
+		position: relative;
 		max-width: 40rem;
-		padding: 0.75rem 0;
-		border-top: 1px solid var(--color-border);
-		border-bottom: 1px solid var(--color-border);
+		margin: 1.4rem 0 1.75rem;
+		container-type: inline-size;
 		font-family: var(--font-sans);
+	}
+
+	.nums {
+		display: grid;
+		grid-template-columns: repeat(5, minmax(0, 1fr));
+		gap: 1.25rem;
+	}
+
+	@container (max-width: 34rem) {
+		.nums {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+		}
+	}
+
+	@container (max-width: 20rem) {
+		.nums {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
 	}
 
 	.num {
 		position: relative;
-		display: grid;
-		grid-template-rows: 1fr auto 12px auto;
-		align-items: end;
-		row-gap: 3px;
+		display: flex;
+		flex-direction: column;
 		min-width: 0;
 	}
 
 	.k {
+		display: flex;
+		flex-direction: column;
+		justify-content: flex-end;
+		min-height: 2rem;
 		font-size: 0.75rem;
 		line-height: 1.3;
 		color: var(--color-foreground-subtle);
 	}
 
+	.hot {
+		font-size: 0.6875rem;
+		color: var(--color-secondary);
+	}
+
 	.v {
+		margin-top: 0.2rem;
 		font-family: var(--font-serif);
-		font-size: 1.125rem;
-		line-height: 1.25;
+		font-size: 1.625rem;
+		line-height: 1.15;
 		font-variant-numeric: lining-nums tabular-nums;
 		color: var(--color-foreground);
 		white-space: nowrap;
 	}
 
-	.none {
+	.v small {
+		margin-left: 0.05em;
+		font-size: 0.9rem;
+		color: var(--color-foreground-muted);
+	}
+
+	.v.none {
+		font-family: var(--font-sans);
 		font-size: 0.8125rem;
+		line-height: calc(1.625rem * 1.15);
 		color: var(--color-foreground-subtle);
 	}
 
 	svg {
 		display: block;
-		align-self: center;
+		flex: none;
 		overflow: visible;
 	}
 
-	.band {
-		stroke: color-mix(in srgb, var(--color-foreground) 18%, transparent);
+	.num svg {
+		margin: 0.35rem 0 0.25rem;
 	}
 
-	.dot {
+	.band {
+		fill: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+	}
+
+	.day {
+		fill: color-mix(in srgb, var(--color-foreground) 22%, transparent);
+	}
+
+	.tick {
+		fill: color-mix(in srgb, var(--color-foreground) 14%, transparent);
+	}
+
+	.today {
 		fill: var(--color-foreground);
 	}
 
-	.mid {
-		stroke: var(--color-foreground-subtle);
+	.today.hot {
+		fill: var(--color-secondary);
 	}
 
 	.u {
 		font-size: 0.75rem;
-		line-height: 14px;
+		line-height: 1.3;
 		color: var(--color-foreground-subtle);
 		white-space: nowrap;
 		overflow: hidden;
@@ -293,41 +490,82 @@
 		white-space: normal;
 	}
 
-	.foot {
-		display: flex;
-		justify-content: flex-end;
-		align-items: baseline;
-		gap: 1rem;
-		max-width: 40rem;
-		margin: 0.375rem 0 1.75rem;
-		font-family: var(--font-sans);
-		font-size: 0.8125rem;
-	}
-
 	.err {
+		margin: 0.5rem 0 0;
+		font-size: 0.8125rem;
 		color: var(--color-foreground-subtle);
 	}
 
-	.choose {
+	/* The padding spans the gutter, so the pointer crossing from the strip to
+	   the margin never leaves the row and the button stays shown. Unshown, it
+	   takes no pointer, so the margin notes under it keep their clicks. */
+	.edit {
+		position: absolute;
+		top: 0;
+		left: 100%;
+		padding: 0.25rem 0 0.25rem 2.25rem;
 		font: inherit;
+		font-size: 0.75rem;
+		white-space: nowrap;
 		color: var(--color-foreground-subtle);
 		background: none;
 		border: none;
-		padding: 0.25rem 0;
 		cursor: pointer;
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 0.15s;
 	}
 
-	.choose:hover,
-	.choose[aria-expanded="true"] {
+	.nums-row:hover .edit,
+	.edit:focus-visible,
+	.edit[aria-expanded="true"] {
+		opacity: 1;
+		pointer-events: auto;
+	}
+
+	.edit:hover,
+	.edit[aria-expanded="true"] {
 		color: var(--color-foreground);
 	}
 
+	@media (hover: none) {
+		.edit {
+			opacity: 1;
+			pointer-events: auto;
+		}
+	}
+
+	/* No strip to hover: the button is the only way back to your numbers. */
+	.edit.bare {
+		position: static;
+		padding: 0.25rem 0;
+		opacity: 1;
+		pointer-events: auto;
+	}
+
+	@media (max-width: 56rem) {
+		.edit {
+			position: static;
+			display: block;
+			margin-top: 0.625rem;
+			padding: 0.25rem 0;
+			opacity: 1;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.edit {
+			transition: none;
+		}
+	}
+
+	/* ── The picker ── */
 	.panel {
-		width: min(20rem, calc(100vw - 32px));
-		max-height: min(30rem, 70vh);
+		width: min(23rem, calc(100vw - 32px));
+		max-height: min(32rem, 70vh);
 		overflow-y: auto;
 		overscroll-behavior: contain;
-		padding: 0.5rem 0.375rem 0.625rem;
+		padding: 0.875rem 0.75rem 0.875rem;
 		font-family: var(--font-sans);
 		font-size: 0.8125rem;
 	}
@@ -336,7 +574,7 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: baseline;
-		padding: 0.375rem 0.5rem 0.5rem;
+		padding: 0 0.35rem;
 	}
 
 	.title {
@@ -345,67 +583,87 @@
 		color: var(--color-foreground);
 	}
 
-	.sub,
-	.lane-name {
+	.count,
+	.sub {
 		font-size: 0.75rem;
 		color: var(--color-foreground-subtle);
 	}
 
-	.lane {
-		border-top: 1px solid var(--color-border-subtle);
-		padding: 0.375rem 0 0.25rem;
+	.sub {
+		margin: 0.1rem 0 0;
+		padding: 0 0.35rem;
 	}
 
-	.lane-name {
-		padding: 0.25rem 0.5rem;
+	.unusual-pick {
+		margin-top: 0.75rem;
+		background: color-mix(in srgb, var(--color-secondary) 6%, transparent);
 	}
 
-	.row {
-		display: flex;
+	.group {
+		margin: 0.9rem 0.35rem 0.35rem;
+		font-size: 0.6875rem;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		color: var(--color-foreground-subtle);
+	}
+
+	.pick {
+		display: grid;
+		grid-template-columns: 1.1rem minmax(0, 1fr) auto;
 		align-items: center;
-		gap: 0.5rem;
-		padding: 0.3rem 0.5rem;
+		column-gap: 0.55rem;
+		padding: 0.4rem 0.35rem;
 		border-radius: 6px;
 		color: var(--color-foreground);
 		cursor: pointer;
 	}
 
-	.row:hover {
+	.pick:not(.missing):hover {
 		background: var(--color-surface-elevated);
 	}
 
-	.row.full {
-		opacity: 0.55;
+	.pick.full {
 		cursor: default;
 	}
 
-	.row input {
-		margin: 0;
-		accent-color: var(--color-foreground);
+	.pick.full > span {
+		opacity: 0.55;
 	}
 
-	@media (max-width: 56rem) {
-		.numbers {
-			grid-auto-flow: row;
-			grid-template-columns: 1fr;
-			padding: 0;
-		}
+	.pick input {
+		margin: 0;
+		accent-color: var(--color-primary);
+	}
 
-		.num {
-			grid-template-rows: none;
-			grid-template-columns: 1fr auto 72px;
-			column-gap: 0.75rem;
-			align-items: center;
-			padding: 0.5rem 0;
-		}
+	.from,
+	.how {
+		display: block;
+		font-size: 0.6875rem;
+		line-height: 1.4;
+		color: var(--color-foreground-subtle);
+	}
 
-		.num + .num {
-			border-top: 1px solid var(--color-border-subtle);
-		}
+	.pick.missing {
+		grid-template-columns: 1.1rem minmax(0, 1fr);
+		color: var(--color-foreground-muted);
+		cursor: default;
+	}
 
-		.u {
-			grid-column: 1 / -1;
-			justify-self: end;
-		}
+	.info {
+		justify-self: center;
+		color: var(--color-foreground-subtle);
+	}
+
+	.link {
+		font: inherit;
+		padding: 0;
+		color: var(--color-primary);
+		background: none;
+		border: none;
+		cursor: pointer;
+	}
+
+	.link:hover {
+		text-decoration: underline;
 	}
 </style>

@@ -202,6 +202,14 @@ fn spawn_background(client: &Virtues, yjs_state: &yjs::YjsState) {
     // covers and drop the ones it no longer does. See `crate::maps::sync`.
     crate::maps::sync::spawn(pool.clone());
 
+    // The day's picture: daily, paint one day of the last week when the
+    // week's pages hold no picture yet. See `crate::api::day_picture`.
+    crate::api::day_picture::spawn(
+        pool.clone(),
+        yjs_state.clone(),
+        crate::api::drive::DriveConfig::new(client.storage.clone()),
+    );
+
     // Setup access point. An appliance arrives with no network and a display
     // its owner cannot type on, so the box raises its own wifi and the phone
     // does the typing. Up while unclaimed, down once a device pairs — NOT down
@@ -1129,6 +1137,42 @@ fn face_origin_allowed(origin: &str, path: &str, request_host: Option<&str>) -> 
     origin_is_ours(origin, request_host) || (origin == "null" && is_face_path(path))
 }
 
+/// The answer to a WebSocket handshake a page from another origin sent, or
+/// `None` to let it through: the defense against Cross-Site WebSocket
+/// Hijacking that every socket on the box runs before it upgrades.
+///
+/// A handshake is outside CORS: the browser sends it from any page and
+/// never asks. A socket is the owner's whenever the box sees the owner,
+/// and the desktop app splices 127.0.0.1:7117 to the box as the owner, so
+/// without this any site the owner visits could open the page socket and
+/// read the page, or the terminal and type into a shell. The policy is the
+/// CORS layer's (`origin_is_ours`), which takes the phone's `virtues://`
+/// bundle and a loopback page served by the authority it dials. A request
+/// with no `Origin` is no browser's (the app's shell, a test client) and
+/// passes; the route's own auth still applies to it.
+pub(crate) fn refuse_foreign_socket(
+    headers: &axum::http::HeaderMap,
+    socket: &str,
+) -> Option<axum::response::Response> {
+    let origin = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())?;
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok());
+    if origin_is_ours(origin, host) {
+        return None;
+    }
+    tracing::warn!(socket, origin, "websocket refused: foreign origin");
+    Some(
+        (
+            axum::http::StatusCode::FORBIDDEN,
+            "cross-origin websocket rejected",
+        )
+            .into_response(),
+    )
+}
+
 /// Is this `Origin` one of ours?
 ///
 /// The allowlist behind the CORS layer. Kept as a named function with tests
@@ -1195,7 +1239,7 @@ pub(crate) fn origin_is_ours(origin: &str, request_host: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod cors_tests {
-    use super::{face_origin_allowed, origin_is_ours};
+    use super::{face_origin_allowed, origin_is_ours, refuse_foreign_socket};
 
     /// A remote page must not be allowed to read the box's responses.
     ///
@@ -1260,6 +1304,30 @@ mod cors_tests {
             ("http://127.0.0.1:7117", None),
         ] {
             assert!(!origin_is_ours(o, host), "must refuse {o} for host {host:?}");
+        }
+    }
+
+    fn handshake(origin: Option<&str>) -> axum::http::HeaderMap {
+        let mut h = axum::http::HeaderMap::new();
+        if let Some(origin) = origin {
+            h.insert(axum::http::header::ORIGIN, origin.parse().unwrap());
+        }
+        h.insert(axum::http::header::HOST, "127.0.0.1:7117".parse().unwrap());
+        h
+    }
+
+    /// A socket opens for the app's own pages and for a client that sends
+    /// no Origin, and refuses a page from anywhere else, a local process on
+    /// another port included.
+    #[test]
+    fn a_socket_refuses_a_foreign_page_alone() {
+        for o in ["virtues://localhost", "tauri://localhost", "http://127.0.0.1:7117"] {
+            assert!(refuse_foreign_socket(&handshake(Some(o)), "test").is_none(), "{o}");
+        }
+        assert!(refuse_foreign_socket(&handshake(None), "test").is_none());
+        for o in ["https://evil.example", "http://localhost.evil.example", "http://localhost:8888", "null"] {
+            let refused = refuse_foreign_socket(&handshake(Some(o)), "test").expect(o);
+            assert_eq!(refused.status(), axum::http::StatusCode::FORBIDDEN, "{o}");
         }
     }
 
