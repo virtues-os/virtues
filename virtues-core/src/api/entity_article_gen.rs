@@ -66,7 +66,6 @@ fn lines_that_fit(lines: &[String], room: usize) -> Vec<String> {
 struct DueEntity {
     id: String,
     kind: String, // 'person' | 'place' | 'organization'
-    refs: i64,
 }
 
 
@@ -90,23 +89,14 @@ pub async fn write_entity_article_now(
         )));
     }
 
-    let refs: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM wiki_refs WHERE entity_id = $1",
-    )
-    .bind(subject_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to count refs: {}", e)))?;
-
     let entity = DueEntity {
         id: subject_id.to_string(),
         kind: subject_type.to_string(),
-        refs,
     };
 
     let (prompt, allowed) = build_dossier(pool, &entity).await?;
     tracing::info!(
-        entity = %entity.id, kind = %entity.kind, refs,
+        entity = %entity.id, kind = %entity.kind,
         prompt_chars = prompt.len(),
         "writing first entity article (user-requested)"
     );
@@ -178,8 +168,7 @@ async fn entity_title(pool: &PgPool, entity_type: &str, entity_id: &str) -> Resu
 /// `last_seen`, `article` and `wiki_people.notes` have no writer anywhere, so
 /// every one of them either fed the model a zero or fed it nothing — and
 /// "Interactions on record: 0" was reaching the prompt for entities with
-/// thousands of refs. The honest count is `entity.refs`, straight from
-/// `wiki_refs`, and it is already in the header line.
+/// thousands of refs. The span comes from `wiki_refs` itself (`arc`).
 async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, LinkAllowlist)> {
     use sqlx::Row;
 
@@ -254,10 +243,11 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, Lin
         }
     };
 
-    p.push_str(&format!(
-        "The article is about: {} ({}), total records referencing it: {}\n",
-        name, entity.kind, entity.refs
-    ));
+    // No count of records here or anywhere in the dossier. Handed one, the
+    // model led 20 of 21 person articles on a real box with it ("your most
+    // constant correspondent, 8,182 records"): volume is not who someone is,
+    // and the span and rhythm below carry the shape without a total to quote.
+    p.push_str(&format!("The article is about: {} ({})\n", name, entity.kind));
     if !facts.is_empty() {
         p.push_str(&format!("\n## Structured facts\n{}", facts));
     }
@@ -350,7 +340,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<(String, Lin
         // parts in whole lines, so the facts and the link list the answer is
         // checked against are never what gets cut.
         let room = MAX_TOTAL_CHARS.saturating_sub(p.chars().count() + 300);
-        let mut section = format!("\n## The record ({total} records, sampled across the span)\n");
+        let mut section = String::from("\n## The record, sampled across the span\n");
         for (heading, sample) in sample_offsets(total, DOSSIER_RECORDS as i64) {
             let mut lines = Vec::new();
             for (offset, limit) in sample {
@@ -804,7 +794,7 @@ mod tests {
                 .unwrap();
             }
 
-            let entity = DueEntity { id: id.to_string(), kind: kind.to_string(), refs: 1 };
+            let entity = DueEntity { id: id.to_string(), kind: kind.to_string() };
             let (dossier, _allowed) = build_dossier(&pool, &entity)
                 .await
                 .unwrap_or_else(|e| panic!("{kind} dossier failed against live schema: {e}"));
