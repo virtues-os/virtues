@@ -324,16 +324,14 @@ async fn resolve_or_create(db: &PgPool, contact: &ContactRecord) -> Result<Strin
     Ok(person_id)
 }
 
-/// The person this contact already is: by email first, then by phone.
+/// The person this contact already is: whoever holds one of its addresses or
+/// numbers, compared in normal form, addresses first.
 async fn find_person(db: &PgPool, contact: &ContactRecord) -> Result<Option<String>> {
-    for email in &contact.emails {
-        if let Some(person_id) = find_by_email(db, email).await? {
-            return Ok(Some(person_id));
-        }
-    }
-    for phone in &contact.phones {
-        let normalized = normalize_phone(phone);
-        if let Some(person_id) = find_by_phone(db, &normalized).await? {
+    for raw in contact.emails.iter().chain(contact.phones.iter()) {
+        let Some(handle) = virtues_helpers::handles::normalize_handle(raw) else {
+            continue;
+        };
+        if let Some(person_id) = find_by_handle(db, &handle).await? {
             return Ok(Some(person_id));
         }
     }
@@ -392,55 +390,23 @@ async fn apply_contact_photo(db: &PgPool, person_id: &str, photo: &ContactPhoto)
     Ok(written.rows_affected() > 0)
 }
 
-async fn find_by_email(db: &PgPool, email: &str) -> Result<Option<String>> {
-    let row = sqlx::query(
-        r#"SELECT id FROM wiki_people
-           WHERE emails @> to_jsonb($1::text)
-           LIMIT 1"#,
-    )
-    .bind(email)
-    .fetch_optional(db)
-    .await?;
-    Ok(row.and_then(|r| r.try_get::<Option<String>, _>("id").ok().flatten()))
+/// Who holds this normalized address or number. `handles` is complete for
+/// everyone (the people resolver derives it from `emails` and `phones` on
+/// every pass), so this is an exact, indexed match. It replaced a digits
+/// `LIKE '%…%'`, which joined a contact to anyone whose number merely
+/// contained its digits, and a case-sensitive match on raw `emails`.
+async fn find_by_handle(db: &PgPool, handle: &str) -> Result<Option<String>> {
+    Ok(sqlx::query_scalar("SELECT id FROM wiki_people WHERE handles ? $1 ORDER BY id LIMIT 1")
+        .bind(handle)
+        .fetch_optional(db)
+        .await?)
 }
 
-async fn find_by_phone(db: &PgPool, phone: &str) -> Result<Option<String>> {
-    // `phones` is JSONB (a string array), so the old `phones LIKE $1` errored
-    // (`operator does not exist: jsonb ~~ text`) and counted EVERY phone-only
-    // contact as a failure. Unnest the array and compare digit-only forms so
-    // formatting differences ("(512) 555-1234" vs "+15125551234") still match —
-    // mirrors `normalize_phone`, since stored numbers are raw.
-    let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
-    if digits.is_empty() {
-        return Ok(None);
-    }
-    let row = sqlx::query(
-        r#"SELECT id FROM wiki_people
-           WHERE EXISTS (
-               SELECT 1 FROM jsonb_array_elements_text(phones) AS p
-               WHERE regexp_replace(p, '[^0-9]', '', 'g') LIKE '%' || $1 || '%'
-           )
-           LIMIT 1"#,
-    )
-    .bind(&digits)
-    .fetch_optional(db)
-    .await?;
-    Ok(row.and_then(|r| r.try_get::<Option<String>, _>("id").ok().flatten()))
-}
-
-fn normalize_phone(phone: &str) -> String {
-    let trimmed = phone.trim();
-    if let Some(stripped) = trimmed.strip_prefix('+') {
-        format!(
-            "+{}",
-            stripped
-                .chars()
-                .filter(|c| c.is_ascii_digit())
-                .collect::<String>()
-        )
-    } else {
-        trimmed.chars().filter(|c| c.is_ascii_digit()).collect()
-    }
+/// A phone's identity for "do we already have this number": its E.164 form
+/// when it has one, else the digits.
+fn phone_key(phone: &str) -> String {
+    virtues_helpers::handles::normalize_phone(phone)
+        .unwrap_or_else(|| phone.chars().filter(|c| c.is_ascii_digit()).collect())
 }
 
 /// Keep letters, digits and the punctuation names actually use; drop emoji and
@@ -561,8 +527,8 @@ async fn merge_into_person(db: &PgPool, person_id: &str, contact: &ContactRecord
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
     for phone in &contact.phones {
-        let normalized = normalize_phone(phone);
-        if !phones.iter().any(|p| normalize_phone(p) == normalized) {
+        let key = phone_key(phone);
+        if !phones.iter().any(|p| phone_key(p) == key) {
             phones.push(phone.clone());
         }
     }
@@ -708,6 +674,15 @@ async fn create_person(db: &PgPool, contact: &ContactRecord) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Two spellings of one number are one number, so a card synced again
+    /// does not add "+1 512 555 0101" beside "(512) 555-0101".
+    #[test]
+    fn one_number_in_two_spellings_is_one_number() {
+        assert_eq!(phone_key("(512) 555-0101"), phone_key("+1 512 555 0101"));
+        assert_ne!(phone_key("512-555-0101"), phone_key("+44 20 7946 0101"));
+    }
+
     use super::*;
 
     fn contact(given: &str, middle: &str, family: &str) -> ContactRecord {
