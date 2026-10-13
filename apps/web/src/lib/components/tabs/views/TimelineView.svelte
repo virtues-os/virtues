@@ -838,6 +838,13 @@
 		detourFrom = null;
 		if (back && from && from !== date) date = from;
 	}
+	/** The list on show: behind it, the day it was opened on, not the last
+	 *  name's (the owner's call, 2026-10-13: a confirmed name left him on
+	 *  its day). */
+	function listShown() {
+		detourFrom ??= date;
+		if (date !== detourFrom) date = detourFrom;
+	}
 	/** A name from "Named Places": its last day, with its question asked
 	 *  again under its stay once the day is drawn (`drawDay`). */
 	let pendingShow: string | null = null;
@@ -1683,6 +1690,7 @@
 		focus={inspectorFocus}
 		onopenplace={openPlace}
 		ondetour={detour}
+		onlist={listShown}
 		onpick={reveal}
 		onseek={(t) => {
 			inspectorFocus = 'row';
