@@ -48,7 +48,6 @@
 	);
 
 	// Right pane only used in split mode
-	const rightPaneTabs = $derived(windowShellStore.panes[1]?.tabs ?? []);
 	const rightPaneActiveTabId = $derived(
 		windowShellStore.panes[1]?.activeTabId ?? null,
 	);
@@ -275,30 +274,14 @@
 		</div>
 	{/each}
 
-	<!-- Empty pane fallbacks: ephemeral ChatView when a pane has no tabs -->
+	<!-- An empty window shows a new chat. A split pane is never empty: one is
+	     only made by putting a tab in it (window-shell `moveTabAcross`). -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	{#if leftPaneTabs.length === 0}
 		<div class="tab-slot in-left" style:display="flex" onpointerdown={() => isSplitEnabled && handlePaneClick("left")}>
 			<ChatView
 				tab={{
 					id: "new-chat-left",
-					type: "chat",
-					label: "New Chat",
-					route: "/chat",
-					history: ["/chat"],
-					historyIndex: 0,
-					createdAt: Date.now(),
-				}}
-				active={true}
-			/>
-		</div>
-	{/if}
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	{#if isSplitEnabled && rightPaneTabs.length === 0}
-		<div class="tab-slot in-right" style:display="flex" onpointerdown={() => handlePaneClick("right")}>
-			<ChatView
-				tab={{
-					id: "new-chat-right",
 					type: "chat",
 					label: "New Chat",
 					route: "/chat",

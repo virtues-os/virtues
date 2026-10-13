@@ -420,6 +420,15 @@ class WindowShellStore {
 						return { ...pane, tabs: uniqueTabs, activeTabId };
 					});
 
+					// A split saved with one side empty (the old split button made
+					// exactly that) restores whole: an empty pane has no pill.
+					const filled = migratedPanes.filter((p: PaneState) => p.tabs.length > 0);
+					if (migratedPanes.length > 1 && filled.length === 1) {
+						this.panes = [{ ...filled[0], id: 'left', width: 100 }];
+						this.activePaneId = 'left';
+						return;
+					}
+
 					this.panes = migratedPanes;
 					this.activePaneId = data.activePaneId || 'left';
 					if (migratedPanes.every((p: PaneState) => p.tabs.length === 0)) this.openDefaultTab();
@@ -1147,31 +1156,10 @@ class WindowShellStore {
 		this.syncActiveToUrl(false);
 	}
 
-	toggleSplit(): void {
-		if (this.isSplit) {
-			this.disableSplit();
-		} else {
-			this.enableSplit();
-		}
-	}
-
 	setActivePane(paneId: 'left' | 'right'): void {
 		if (!this.panes.some(p => p.id === paneId)) return;
 		this.activePaneId = paneId;
 		this.persistTabState();
-	}
-
-	/**
-	 * Focus a pane by position (⌘1/⌘2). Asking for the right pane when there
-	 * isn't one *creates* it, so the shortcut teaches the split rather than
-	 * doing nothing — the same way ⌘2 opens a second group in editors. On the
-	 * phone shell `enableSplit` refuses, so this correctly no-ops there.
-	 */
-	focusPane(paneId: 'left' | 'right'): void {
-		if (paneId === 'right' && !this.isSplit) {
-			this.enableSplit();
-		}
-		this.setActivePane(paneId);
 	}
 
 	/**
@@ -1242,6 +1230,22 @@ class WindowShellStore {
 
 	closeTabInPane(tabId: string, _paneId: 'left' | 'right'): void {
 		this.closeTab(tabId);
+	}
+
+	/**
+	 * Move a tab to the other side, splitting the window if it is whole. The
+	 * menu twin of dragging a tab to a pane's edge. A pane is only ever made
+	 * by putting a tab in it: an empty pane has no pill to grab, close or
+	 * drag back, so nothing may leave one on screen.
+	 */
+	moveTabAcross(tabId: string): void {
+		const source = this.findTabPane(tabId);
+		if (!source) return;
+		if (!this.isSplit) {
+			if (this.singleWindow || this.panes[0].tabs.length < 2) return;
+			this.enableSplit();
+		}
+		this.moveTabToPane(tabId, source === 'left' ? 'right' : 'left');
 	}
 
 	moveTabToPane(tabId: string, targetPaneId: 'left' | 'right'): void {
