@@ -32,6 +32,7 @@
 	let {
 		sections,
 		zone,
+		day,
 		playT,
 		focus = 'row',
 		armed = false,
@@ -48,6 +49,8 @@
 	}: {
 		sections: InspectorSection[];
 		zone: string;
+		/** The day on show, YYYY-MM-DD: the list's header. */
+		day: string;
 		playT: number;
 		/** What the user last pointed at: 'sec' after a section click keeps the
 		 *  inspector on that section; anything else hands focus back to the moment. */
@@ -142,6 +145,11 @@
 		if (row?.convs.length) open = s;
 	}
 
+	/** "Sunday, September 13": the calendar date itself, not an instant, so
+	 *  read at noon UTC and never shifted by a zone. */
+	const dayTitle = $derived(
+		day ? new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' }) : '',
+	);
 	const time = (ms: number) =>
 		new Date(ms).toLocaleTimeString('en-US', { timeZone: zone, hour: 'numeric', minute: '2-digit' });
 	const holds = (x: { s: number; e: number }) => x.s <= playT && playT < x.e;
@@ -157,10 +165,14 @@
 	});
 
 	// "Help Virtues out": each place's question under every stay there that
-	// day (one answer names them all), and the card open in place of the
-	// list, on one place's question or on the names Virtues chose.
-	let card = $state<{ id: string } | 'names' | null>(null);
+	// day (one answer names them all). A question's card opens in the list,
+	// under the stay it was opened from, with the rest of the day dimmed
+	// around it (the owner's call, 2026-10-10: the day is the context); the
+	// names Virtues chose open in place of the list.
+	let card = $state<{ id: string; at: number } | 'names' | null>(null);
 	const cardQ = $derived(card && card !== 'names' ? (review?.byPlace.get(card.id) ?? null) : null);
+	/** The section the open question sits under. */
+	const openAt = $derived(cardQ && card && card !== 'names' ? card.at : null);
 	// Answered (or another day on show without it): back to the list, where
 	// the stay has its new name and Undo.
 	$effect(() => {
@@ -173,7 +185,7 @@
 		const i = at ?? sections.findIndex((x) => x.placeId === id);
 		if (i < 0 || !review?.byPlace.has(id)) return;
 		if (i !== curSection) pickSection(i, sections[i]);
-		card = { id };
+		card = { id, at: i };
 	}
 	/** Open the card on the names Virtues chose without asking. */
 	export function names() {
@@ -214,6 +226,8 @@
 	});
 
 	function pickSection(i: number, sec: InspectorSection) {
+		// Another stay picked while a question is open: the question closes.
+		if (openAt !== null && i !== openAt) card = null;
 		if (i === curSection) secOpen = !secOpen;
 		chosen = i;
 		open = null;
@@ -234,14 +248,18 @@
 	const liveLine = $derived(openRow && openLines.length ? lineAt(openRow.s, openRow.e, openLines.length, playT) : -1);
 
 	// One scroll surface, kept on the finest live thing (main.js:1627-1633):
-	// the pointed-at section, else the spoken line, else the live row, else
-	// the live section. It glides only when that thing is out of view, and
-	// once per target.
+	// an open question, else the pointed-at section, else the spoken line,
+	// else the live row, else the live section. It glides only when that
+	// thing is out of view, and once per target.
+	/** The date header's height: the stays' headers pin just under it. */
+	let dayHd = $state(0);
 	let glide = -1;
 	$effect(() => {
 		const box = scroller;
 		const sec = curSection;
 		const row = curRow;
+		const asking = openAt;
+		const under = dayHd;
 		void liveLine;
 		if (!box) return;
 		const top = box.getBoundingClientRect().top;
@@ -257,7 +275,18 @@
 			return { seen: t <= sT + h - 40 && t + g.offsetHeight >= sT + 40, want: t - h * 0.28 };
 		};
 		let view: { seen: boolean; want: number } | null = null;
-		if (focus === 'sec' && group) view = sectionView(group);
+		const openGroup = asking !== null ? box.querySelector<HTMLElement>('.group.open') : null;
+		if (openGroup) {
+			// The open question shows whole, its stay and every answer (the
+			// stay's conversations may run on below), under the date header:
+			// the least scroll that does it, the top kept when the two don't
+			// both fit.
+			const t = at(openGroup);
+			const cardEl = openGroup.querySelector<HTMLElement>('.inline-card');
+			const b = cardEl ? at(cardEl) + cardEl.offsetHeight : t + openGroup.offsetHeight;
+			const above = t - under - 8;
+			view = { seen: t >= sT + under && b <= sT + h, want: b > sT + h ? Math.min(b - h + 16, above) : above };
+		} else if (focus === 'sec' && group) view = sectionView(group);
 		else if (lineEl) {
 			const t = at(lineEl);
 			view = { seen: t >= sT + 24 && t <= sT + h - 48, want: t - h * 0.45 };
@@ -280,6 +309,7 @@
 	// out of it: only then does it take a hairline (main.js:1605).
 	$effect(() => {
 		const box = scroller;
+		const under = dayHd;
 		void sections;
 		if (!box || typeof IntersectionObserver === 'undefined') return;
 		const io = new IntersectionObserver(
@@ -289,7 +319,7 @@
 					(e.target as HTMLElement).classList.toggle('stuck', pinned);
 				}
 			},
-			{ root: box, threshold: [1] },
+			{ root: box, threshold: [1], rootMargin: `-${under}px 0px 0px 0px` },
 		);
 		box.querySelectorAll('.sec').forEach((n) => io.observe(n));
 		return () => io.disconnect();
@@ -298,15 +328,19 @@
 
 {#if sections.length || card}
 	<section class="inspector" bind:this={inspector} aria-label="The day, stay by stay">
-		{#if review && (card === 'names' || cardQ)}
+		{#if review && card === 'names'}
 			<div class="scroll">
-				<ReviewCard {review} q={cardQ} onback={() => (card = null)} onfocus={(at) => onfocus?.(at)} />
+				<ReviewCard {review} onback={() => (card = null)} onfocus={(at) => onfocus?.(at)} />
 			</div>
 		{:else}
-		<div class="scroll" bind:this={scroller}>
+		<div class="scroll" class:asking-open={openAt !== null} style:--day-hd="{dayHd}px" bind:this={scroller}>
+			<!-- What the list describes, pinned while it scrolls. The day's
+			     standout goes under it when significance lands (the owner's
+			     call, 2026-10-10). -->
+			<header class="day-hd" bind:clientHeight={dayHd}>{dayTitle}</header>
 			{#each sections as sec, i (sec.kind + sec.s)}
 				{@const asked = sec.kind === 'place' && sec.placeId ? review?.byPlace.get(sec.placeId) : undefined}
-				<div class="group" class:bare={!sec.rows.length} class:cur={i === curSection} class:sel={selected?.s === sec.s && selected.kind === sec.kind} class:hov={hovered?.s === sec.s && hovered.kind === sec.kind} class:asking={!!asked}>
+				<div class="group" class:bare={!sec.rows.length} class:cur={i === curSection} class:sel={selected?.s === sec.s && selected.kind === sec.kind} class:hov={hovered?.s === sec.s && hovered.kind === sec.kind} class:asking={!!asked} class:open={openAt === i}>
 					<button class="sec" onclick={() => pickSection(i, sec)}>
 						<span class="hd">
 							<i class="dot {sec.kind}"></i>
@@ -321,7 +355,11 @@
 							<span class="note">{sec.src === 'estimated' ? 'Estimated from your usual time in bed' : 'From Health on your iPhone'}</span>
 						{/if}
 					</button>
-					{#if asked && review && !review.pointing}
+					{#if openAt === i && cardQ && review}
+						<div class="inline-card">
+							<ReviewCard {review} q={cardQ} inline onback={() => (card = null)} onfocus={(at) => onfocus?.(at)} />
+						</div>
+					{:else if asked && review && !review.pointing}
 						{@const id = asked.id}
 						{@const a = askFor(asked)}
 						{@const yes = a.yes}
@@ -476,9 +514,9 @@
 	/* The section header pins while its rows scroll past, like Contacts. */
 	.sec {
 		position: sticky;
-		/* Pinned, it pokes 1 px out of the box: that is how the observer tells
-		   pinned from at rest. */
-		top: -1px;
+		/* Pinned under the date header, it pokes 1 px past it: that is how
+		   the observer tells pinned from at rest. */
+		top: calc(var(--day-hd, 0px) - 1px);
 		z-index: 2;
 		background: var(--color-surface);
 		/* The right edge keeps room for a map-named stay's ⓘ, and so lines
@@ -520,7 +558,9 @@
 		padding-right: 32px;
 		border-radius: 12px;
 	}
-	.group.sel.asking > .sec {
+	/* A line under the stay (its question, or "Saved as… Undo") joins the
+	   selection: the row squares off where the line meets it. */
+	.group.sel > .sec:not(:last-child) {
 		border-radius: 12px 12px 0 0;
 	}
 	.group.sel > .ask-line {
@@ -800,5 +840,40 @@
 	.spk {
 		font-weight: 600;
 		color: var(--color-foreground);
+	}
+	/* A question open in the list: its stay and card at full strength, the
+	   rest of the day dimmed around it, still there to read and to pick. */
+	.scroll.asking-open .group:not(.open) {
+		opacity: 0.45;
+		transition: opacity 160ms ease;
+	}
+	.scroll.asking-open .group:not(.open):hover {
+		opacity: 0.8;
+	}
+	/* The open question hangs inside the stay's selection: the tint runs on
+	   under the card and rounds off below it, so stay and question read as
+	   one thing. */
+	.inline-card {
+		margin: 0 8px 8px;
+		padding: 0 8px 8px;
+		border-radius: 0 0 12px 12px;
+		background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface));
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.scroll.asking-open .group:not(.open) {
+			transition: none;
+		}
+	}
+	/* The list's subject, quiet in the muted colour, pinned over the rows
+	   as they scroll. */
+	.day-hd {
+		position: sticky;
+		top: 0;
+		z-index: 3;
+		padding: 12px 16px 8px;
+		background: var(--color-surface);
+		font-family: var(--font-sans);
+		font-size: 13px;
+		color: var(--color-foreground-muted);
 	}
 </style>

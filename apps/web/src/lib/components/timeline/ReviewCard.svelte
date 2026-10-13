@@ -15,10 +15,13 @@
 	let {
 		review,
 		q = null,
+		inline = false,
 		onback,
 		onfocus,
 	}: {
 		review: ReviewState;
+		/** Open in the day's list under its stay: no header, a Close at the foot. */
+		inline?: boolean;
 		/** The place asked about; `null` lists the names Virtues chose. */
 		q?: PlaceQuestion | null;
 		/** Back to the day's list. */
@@ -56,14 +59,16 @@
 	const SOURCE = { home: 'Your home', work: 'Where you work', named: 'Named by you', map: 'From the map' };
 </script>
 
-<div class="card">
-	<div class="top">
-		<Pill quiet onclick={onback}>‹ Back to the Day</Pill>
-	</div>
+<div class="card" class:inline>
+	{#if !inline}
+		<div class="top">
+			<Pill quiet onclick={onback}>‹ Back to the Day</Pill>
+		</div>
+	{/if}
 
 	{#if q}
 		<div class="pad">
-			<ReviewAsk {q} {review} />
+			<ReviewAsk {q} {review} onclose={inline ? onback : undefined} />
 		</div>
 	{:else}
 		<div class="pad">
@@ -101,6 +106,11 @@
 	.card {
 		font-family: var(--font-sans);
 		color: var(--color-foreground);
+	}
+	/* Under its stay, on the stay's own tint: the question's text in line
+	   with the stay's name and set a step below it. */
+	.card.inline :global(.q) {
+		font-size: 17px;
 	}
 	.top {
 		display: flex;
