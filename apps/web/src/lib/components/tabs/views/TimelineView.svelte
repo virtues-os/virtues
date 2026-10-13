@@ -659,12 +659,17 @@
 		await tick();
 		if (mine !== asked) return;
 		if (dayFixes.length) {
-			frameDay(m, 0);
+			// The first day jumps into place; every day after it glides there,
+			// so a step between days reads as one move (the owner's call,
+			// 2026-10-10).
+			frameDay(m, framedOnce ? DAY_GLIDE_MS : 0);
+			framedOnce = true;
 			bubbles?.build(mapMoments());
 			syncPlayhead();
 			// A card opened while the day loaded (the tile's step to another
-			// day): the place it asks about, not the whole day.
-			if (focused) focusPlace(focused);
+			// day): the place it asks about, not the whole day. Only a card on
+			// this day: one left open on the day before must not hold the map.
+			if (focused && focusedDay === date) focusPlace(focused);
 			return;
 		}
 		bubbles?.clear();
@@ -867,8 +872,14 @@
 	 *  prototype faded it and framed the named places around, which left the
 	 *  stay small and its path a ghost (the owner's call, 2026-10-09). */
 	let focused: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null = null;
+	/** The day the focused question was opened on. */
+	let focusedDay: string | null = null;
+	/** Whether a day has been framed yet: the first jumps, the rest glide. */
+	let framedOnce = false;
+	const DAY_GLIDE_MS = 900;
 	function focusPlace(at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null) {
 		focused = at;
+		focusedDay = at ? date : null;
 		const m = map;
 		if (!m || !maplibre || !m.getLayer('track-run')) return;
 		glow?.remove();
