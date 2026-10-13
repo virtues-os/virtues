@@ -179,14 +179,17 @@
 	/* The same count the Home panel's Applets door carries. */
 	.mode-count {
 		margin-left: auto;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		min-width: 16px;
+		height: 16px;
 		padding: 0 4px;
 		border-radius: 999px;
 		background: var(--color-error);
 		color: var(--color-background);
 		font-size: 11px;
-		line-height: 16px;
-		text-align: center;
+		line-height: 1;
 		font-variant-numeric: tabular-nums;
 	}
 
