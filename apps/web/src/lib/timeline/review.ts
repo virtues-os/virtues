@@ -262,13 +262,3 @@ export function askFor(q: PlaceQuestion): Ask {
 		reachM: around.length ? Math.max(...around.map((c) => c.meters)) : 0,
 	};
 }
-
-/** The map's zoom that shows places `reachM` out readably (main.js:2216-
- *  2220): a span of twice the farthest plus a margin, fitted to about 400 px,
- *  between 15.5 and 18.5; with nothing to tell apart, 16.3 or closer. */
-export function focusZoom(lat: number, reachM: number, current: number): number {
-	if (reachM <= 0) return Math.max(current, 16.3);
-	const metresPerPx = (Math.max(2 * reachM, 90) * 1.9) / 400;
-	const z = Math.log2((78271.5169 * Math.cos((lat * Math.PI) / 180)) / metresPerPx);
-	return Math.min(Math.max(z, 15.5), 18.5);
-}
