@@ -381,12 +381,14 @@
 		position: relative;
 	}
 
+	/* Off the glyph's top-right corner, not on it: at 8px over the glyph
+	   it covered the roof of the Home icon. */
 	.rail-problem {
 		position: absolute;
-		top: 4px;
-		right: 4px;
-		width: 8px;
-		height: 8px;
+		top: -2px;
+		right: -4px;
+		width: 6px;
+		height: 6px;
 		border-radius: 50%;
 		background: var(--color-error);
 	}
