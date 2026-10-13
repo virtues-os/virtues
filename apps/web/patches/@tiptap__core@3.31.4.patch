@@ -1,0 +1,52 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index bc8b2ae67ccd77ba690a9615d72fd4203364a4f3..769fd375971aaef8761f4bcc8656217dbfd0236c 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -5258,17 +5258,10 @@ function pasteRulesPlugin(props) {
+ 				drop: (view, event) => {
+ 					isDroppedFromProseMirror = dragSourceElement === view.dom.parentElement;
+ 					dropEvent = event;
+-					if (!isDroppedFromProseMirror) {
+-						const dragFromOtherEditor = tiptapDragFromOtherEditor;
+-						if (dragFromOtherEditor === null || dragFromOtherEditor === void 0 ? void 0 : dragFromOtherEditor.isEditable) setTimeout(() => {
+-							if (dragFromOtherEditor.isDestroyed) return;
+-							const selection = dragFromOtherEditor.state.selection;
+-							if (selection) dragFromOtherEditor.commands.deleteRange({
+-								from: selection.from,
+-								to: selection.to
+-							});
+-						}, 10);
+-					}
++					// No delete in the editor the drag came from: each rule's plugin
++					// ran one, so a drop deleted that editor's selection once per
++					// rule, and the selection, not what was dragged. The page
++					// editor moves what was dragged itself (virtues: editor.ts).
+ 					return false;
+ 				},
+ 				paste: (_view, event) => {
+diff --git a/dist/index.js b/dist/index.js
+index 957903bc2f41b88239c054bb3f8a56829acdd9c6..02cdad20343f5e35772f9624c8e32def91fc5fed 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -5246,17 +5246,10 @@ function pasteRulesPlugin(props) {
+ 				drop: (view, event) => {
+ 					isDroppedFromProseMirror = dragSourceElement === view.dom.parentElement;
+ 					dropEvent = event;
+-					if (!isDroppedFromProseMirror) {
+-						const dragFromOtherEditor = tiptapDragFromOtherEditor;
+-						if (dragFromOtherEditor === null || dragFromOtherEditor === void 0 ? void 0 : dragFromOtherEditor.isEditable) setTimeout(() => {
+-							if (dragFromOtherEditor.isDestroyed) return;
+-							const selection = dragFromOtherEditor.state.selection;
+-							if (selection) dragFromOtherEditor.commands.deleteRange({
+-								from: selection.from,
+-								to: selection.to
+-							});
+-						}, 10);
+-					}
++					// No delete in the editor the drag came from: each rule's plugin
++					// ran one, so a drop deleted that editor's selection once per
++					// rule, and the selection, not what was dragged. The page
++					// editor moves what was dragged itself (virtues: editor.ts).
+ 					return false;
+ 				},
+ 				paste: (_view, event) => {

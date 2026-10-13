@@ -17,35 +17,11 @@ import { syntaxTree } from '@codemirror/language';
 import { type EditorState, type Extension, type Range, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
+import { LANGUAGE_CHOICES } from '$lib/document/languages';
 
 import { createWidgetIcon, disconnectRemeasure, remeasureOnResize } from '../widget-height';
 import { dragJustEnded, isMouseSelecting } from './mouse-freeze';
-
-/**
- * The offer in the language picker. Deliberately a short, curated list, not
- * the ~150 languages CodeMirror can highlight — a context menu is a menu,
- * not a search index. The fence's info string still accepts anything when
- * typed (on the fence line or in raw mode); this is the fast path for the
- * common cases. Each entry is (info-string, display label).
- */
-const LANGUAGE_CHOICES: [string, string][] = [
-	['', 'Plain text'],
-	['js', 'JavaScript'],
-	['ts', 'TypeScript'],
-	['python', 'Python'],
-	['rust', 'Rust'],
-	['go', 'Go'],
-	['sh', 'Shell'],
-	['sql', 'SQL'],
-	['json', 'JSON'],
-	['yaml', 'YAML'],
-	['html', 'HTML'],
-	['css', 'CSS'],
-	['swift', 'Swift'],
-	['java', 'Java'],
-	['cpp', 'C++'],
-	['md', 'Markdown'],
-];
+import { treeAdvanced } from './parse-progress';
 
 class CodeBlockHeaderWidget extends WidgetType {
 	constructor(private language: string) {
@@ -220,8 +196,8 @@ const codeBlockField = StateField.define<DecorationSet>({
 		return buildCodeBlockDecorations(state);
 	},
 	update(decos, tr) {
-		// Header and line classes depend on the document alone.
-		return tr.docChanged ? buildCodeBlockDecorations(tr.state) : decos;
+		// Header and line classes depend on the document's tree alone.
+		return tr.docChanged || treeAdvanced(tr) ? buildCodeBlockDecorations(tr.state) : decos;
 	},
 	provide: (field) => EditorView.decorations.from(field),
 });
@@ -278,6 +254,7 @@ const fenceRevealPlugin = ViewPlugin.fromClass(
 				update.docChanged ||
 				update.viewportChanged ||
 				update.focusChanged ||
+				treeAdvanced(update) ||
 				(update.selectionSet && !isMouseSelecting(update.state)) ||
 				dragJustEnded(update);
 			if (rebuild) {

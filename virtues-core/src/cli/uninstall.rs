@@ -52,6 +52,7 @@ const LEGACY_UNITS: &[&str] = &[
     "virtues-display.service",
     "virtues.service",
     "virtues-embed.service",
+    "virtues-embed-next.service",
     "virtues-rerank.service",
     "virtues-qnnd.service",
     "virtues-captive-redirect.service",

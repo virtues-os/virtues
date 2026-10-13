@@ -994,6 +994,7 @@ mod tests {
                 cover_url: None,
                 tags: None,
                 project_id: None,
+                format: None,
             },
         )
         .await

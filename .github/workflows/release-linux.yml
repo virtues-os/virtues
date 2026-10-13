@@ -46,8 +46,10 @@ env:
   # upstream moves fast and has changed embedding/pooling defaults before.
   # After a bump, run `virtues warm-models` + a fixture search on a staging
   # box before publishing (llama-server smoke test below only proves the
-  # binary starts).
-  LLAMA_CPP_TAG: b9606
+  # binary starts). Also pinned in warm-release-caches.yml and the Makefile
+  # (dev sidecars); move all three together. b11507 is the first we run with
+  # EmbeddingGemma 2 (architecture added upstream in llama.cpp#30054).
+  LLAMA_CPP_TAG: b11507
   # QAIRT SDK (Community) version used to BUILD virtues-qnnd, the Dragon NPU
   # daemon (aarch64 only). Public download from Qualcomm's software center; the
   # daemon is header-only against it (dlopen's the runtime libs on the box). Must

@@ -197,8 +197,9 @@ Everything logs to the journal; there is no Virtues log file.
 |---|---|
 | `virtues` | the server, port 8000 |
 | `virtues-embed` | embedding sidecar, `127.0.0.1:18181` |
-| `virtues-rerank` | rerank sidecar, `127.0.0.1:18182` |
-| `virtues-qnnd` | on NPU hardware, replaces both and serves both ports |
+| `virtues-embed-next` | only during a search model change, `127.0.0.1:18183` |
+| `virtues-rerank` | older installs only; `virtues upgrade` retires it |
+| `virtues-qnnd` | on NPU hardware, replaces the sidecars and serves `:18181` and `:18182` |
 | `virtues-display` | the on-box screen, where there is one |
 
 **The kiosk caches the SPA**, so after an upgrade the panel can draw the old
