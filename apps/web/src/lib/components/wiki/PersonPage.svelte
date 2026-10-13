@@ -18,6 +18,7 @@
 	import AliasEditor from "./AliasEditor.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import { updatePerson, samePeople, mergePerson, type SamePersonApi } from "$lib/wiki/api";
+	import { reloadApp } from "$lib/reload";
 	import TextAction from "$lib/components/TextAction.svelte";
 	import { uploadMedia } from "$lib/api/client";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
@@ -209,7 +210,7 @@
 		mergeError = null;
 		const ok = await mergePerson(other.id, page.id);
 		merging = false;
-		if (ok) location.reload();
+		if (ok) reloadApp();
 		else mergeError = `Your server couldn't merge ${other.name} into ${page.name}. Try again.`;
 	}
 
@@ -339,7 +340,7 @@
 					subjectType="person"
 					subjectId={page.id}
 					maintained={page.article_maintained}
-					onChanged={() => location.reload()}
+					onChanged={() => reloadApp()}
 				/>
 			</section>
 

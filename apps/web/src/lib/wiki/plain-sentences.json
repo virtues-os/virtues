@@ -1,0 +1,122 @@
+[
+	{
+		"markdown": "You met [Nick](/person/p_1) at **R\\&B**.",
+		"plain": "You met Nick at R&B."
+	},
+	{
+		"markdown": "![@Nick](/person/p_1) said ⟦the clinic⟧ &amp; more",
+		"plain": "Nick said the clinic & more"
+	},
+	{
+		"markdown": "You were ~tired~ by noon.",
+		"plain": "You were ~tired~ by noon."
+	},
+	{
+		"markdown": "You were ~~tired~~ by noon.",
+		"plain": "You were tired by noon."
+	},
+	{
+		"markdown": "You felt __done__ today.",
+		"plain": "You felt __done__ today."
+	},
+	{
+		"markdown": "You felt **done** today.",
+		"plain": "You felt done today."
+	},
+	{
+		"markdown": "You walked with [@Nick](/person/person_1) by the river.",
+		"plain": "You walked with Nick by the river."
+	},
+	{
+		"markdown": "You walked with ![@Nick](/person/person_1) by the river.",
+		"plain": "You walked with Nick by the river."
+	},
+	{
+		"markdown": "A link [@home](/people/p_1) that is no ref keeps its @.",
+		"plain": "A link @home that is no ref keeps its @."
+	},
+	{
+		"markdown": "An image ![a view](https://example.com/v.png) stays as written.",
+		"plain": "An image ![a view](https://example.com/v.png) stays as written."
+	},
+	{
+		"markdown": "An image of a ref that is no ref ![@Nick](/people/p_1) too.",
+		"plain": "An image of a ref that is no ref ![@Nick](/people/p_1) too."
+	},
+	{
+		"markdown": "Case Stays As Written.",
+		"plain": "Case Stays As Written."
+	},
+	{
+		"markdown": "A `code_span` and *em* and _em_ too.",
+		"plain": "A code_span and em and em too."
+	},
+	{
+		"markdown": "Inside a word a*b*c and snake_case_name stay.",
+		"plain": "Inside a word a*b*c and snake_case_name stay."
+	},
+	{
+		"markdown": "A user\\_name and \\*stars\\* and \\~20 minutes.",
+		"plain": "A user_name and *stars* and ~20 minutes."
+	},
+	{
+		"markdown": "Tabs\tand  spaces\n collapse.",
+		"plain": "Tabs and spaces collapse."
+	},
+	{
+		"markdown": "A reference &#10214;x&#10215;, &#0;, &#x41;, &#12345678; and &copy;.",
+		"plain": "A reference x, �, A, &#12345678; and &copy;."
+	},
+	{
+		"markdown": "[^note] and [^ev-1] stay as written.",
+		"plain": "[^note] and [^ev-1] stay as written."
+	},
+	{
+		"markdown": "A link [with **bold**](/page/p) label.",
+		"plain": "A link with **bold** label."
+	},
+	{
+		"markdown": "A [link](<path with space>) here.",
+		"plain": "A link here."
+	},
+	{
+		"markdown": "Nested (parens) [x](/a(b)c) ok.",
+		"plain": "Nested (parens) x ok."
+	},
+	{
+		"markdown": "Unclosed **bold and *em and `code.",
+		"plain": "Unclosed **bold and *em and `code."
+	},
+	{
+		"markdown": "Escaped close **a\\** b** here.",
+		"plain": "Escaped close a** b here."
+	},
+	{
+		"markdown": "Strong **across\nlines** stays.",
+		"plain": "Strong **across lines** stays."
+	},
+	{
+		"markdown": "Emphasis *across\nlines* reads.",
+		"plain": "Emphasis across lines reads."
+	},
+	{
+		"markdown": "Spaced ** not bold ** and * not em *.",
+		"plain": "Spaced ** not bold ** and * not em *."
+	},
+	{
+		"markdown": "A hard break\\\nthen more.",
+		"plain": "A hard break then more."
+	},
+	{
+		"markdown": "Nested **bold *and em* inside** here.",
+		"plain": "Nested bold and em inside here."
+	},
+	{
+		"markdown": "Empty [](/person/p_1) label and ``.",
+		"plain": "Empty [](/person/p_1) label and ``."
+	},
+	{
+		"markdown": "A **⟦veiled⟧** name.",
+		"plain": "A veiled name."
+	}
+]

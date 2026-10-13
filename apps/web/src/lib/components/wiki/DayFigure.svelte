@@ -49,11 +49,11 @@
 	// ── quote ──
 	/** Attributions that name nobody; any other `who` is a person's name. */
 	const UNNAMED = new Set(["You", "In a recording", "In a message"]);
-	const quoteText = $derived(veilMarks(fields.text ?? "").markdown);
+	const quoteText = $derived(veilMarks(fields.text ?? "", "text").markdown);
 
 	// ── picture ──
 	/** The caption's words, and the place in it the veil hides. */
-	const caption = $derived(veilMarks(fields.caption ?? ""));
+	const caption = $derived(veilMarks(fields.caption ?? "", "text"));
 	const made = $derived(fields.style === "pencil" ? "Drawn from the record" : "Painted from the record");
 
 	// ── route ──

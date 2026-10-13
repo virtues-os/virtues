@@ -7,6 +7,11 @@
 	 * like contact details. Creating a link freezes the page; Update re-freezes
 	 * it under the same link; Revoke deletes it. Your server serves the page
 	 * itself (`api::publications`, the door), so a link only opens while it is on.
+	 *
+	 * A block page with an image this device has not finished sending is not
+	 * shared from here until it has (`imagesOnTheirWay`): the page would go
+	 * without it. The server refuses the same share once it has heard of the
+	 * file, and says it in the same words.
 	 */
 	import Modal from '$lib/components/Modal.svelte';
 	import Button from '$lib/components/Button.svelte';
@@ -21,6 +26,9 @@
 		type SharePreview,
 		type ShareProducer
 	} from '$lib/api/client';
+	import { untrack } from 'svelte';
+	import { imagesOnTheirWay } from '$lib/document/media';
+	import { watchUploadsAtStake } from '$lib/document/uploads';
 
 	type Props = {
 		open: boolean;
@@ -47,7 +55,25 @@
 		{ value: '0', label: 'Never' }
 	];
 
+	/** The server's refusal of a page whose image is still on its way (`STILL_UPLOADING` in `publish_page.rs`). */
+	const STILL_UPLOADING =
+		"An image on this page hasn't finished uploading, so your server didn't share the page. Share it again once the image has arrived, or remove it from the page.";
+
+	/** An image on the page is still on its way from this device: nothing is shared until it arrives. */
+	let imagesComing = $state(false);
+
+	function imagesHeld(): boolean {
+		return producer.kind === 'page' && imagesOnTheirWay(producer.id) > 0;
+	}
+
 	async function load() {
+		const held = imagesHeld();
+		imagesComing = held;
+		if (held) {
+			preview = null;
+			loading = false;
+			return;
+		}
 		loading = true;
 		error = null;
 		try {
@@ -69,6 +95,16 @@
 			confirmRevoke = null;
 			load();
 		}
+	});
+
+	// The image arrives while the sheet is open: what leaves is shown then.
+	$effect(() => {
+		if (!open || producer.kind !== 'page') return;
+		return watchUploadsAtStake().subscribe(() =>
+			untrack(() => {
+				if (imagesComing && !imagesHeld()) load();
+			}),
+		);
 	});
 
 	// The share server starts when the first link goes live and reports its
@@ -168,7 +204,15 @@
 
 <Modal {open} onClose={onClose} title={preview ? `Share ${preview.title}` : 'Share'} width="lg">
 	<div class="sheet">
-		{#if loading && !preview}
+		{#if imagesComing}
+			<div class="warn">
+				<Icon icon="ri:error-warning-line" width="16" />
+				<div>
+					<p class="warn-title">You can't share this page yet</p>
+					<p>{STILL_UPLOADING}</p>
+				</div>
+			</div>
+		{:else if loading && !preview}
 			<p class="hint">Getting the page ready…</p>
 		{:else if preview?.problem}
 			<div class="warn">
@@ -217,8 +261,15 @@
 					{#if preview.images_left_out}
 						<li>
 							{preview.images_left_out === 1
-								? '1 image from another site is left out; only images in your Drive go with the page.'
-								: `${preview.images_left_out} images from other sites are left out; only images in your Drive go with the page.`}
+								? "1 image is left out because it isn't stored in your Drive. Only images in your Drive go with the page."
+								: `${preview.images_left_out} images are left out because they aren't stored in your Drive. Only images in your Drive go with the page.`}
+						</li>
+					{/if}
+					{#if preview.embeds_left_out}
+						<li>
+							{preview.embeds_left_out === 1
+								? '1 applet or file stays on your server.'
+								: `${preview.embeds_left_out} applets and files stay on your server.`}
 						</li>
 					{/if}
 					{#if preview.embeds_left_out}

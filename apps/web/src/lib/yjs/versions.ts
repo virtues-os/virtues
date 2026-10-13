@@ -11,6 +11,7 @@
 
 import * as Y from 'yjs';
 import type { YjsDocument } from './document';
+import { bytesToBase64 } from '$lib/utils/base64';
 import {
 	request,
 	listPageVersions,
@@ -92,7 +93,7 @@ export async function saveVersion(
 		const contentPreview = ytext.toString().slice(0, 500);
 
 		// Encode as base64 for JSON transport
-		const stateBase64 = btoa(String.fromCharCode(...fullState));
+		const stateBase64 = bytesToBase64(fullState);
 
 		// Uses the underlying typed `request` (not the createPageVersion wrapper)
 		// so we can carry `keepalive` for the on-unload save path.

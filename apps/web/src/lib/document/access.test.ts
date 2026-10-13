@@ -25,6 +25,8 @@ vi.mock('$lib/components/pages/nodes/MediaNode.svelte', () => ({ default: () => 
 vi.mock('$lib/components/pages/nodes/AppletNode.svelte', () => ({ default: () => {} }));
 vi.mock('$lib/components/pages/nodes/CalloutNode.svelte', () => ({ default: () => {} }));
 vi.mock('$lib/components/pages/nodes/CodeBlockNode.svelte', () => ({ default: () => {} }));
+vi.mock('$lib/components/pages/nodes/FootnoteNode.svelte', () => ({ default: () => {} }));
+vi.mock('$lib/components/pages/nodes/FigureNode.svelte', () => ({ default: () => {} }));
 vi.mock('$lib/stores/contextMenu.svelte', () => ({ contextMenu: { show: vi.fn(), reachFirstRow: vi.fn() } }));
 vi.mock('$lib/stores/linkEditor.svelte', () => ({ linkEditor: { show: vi.fn() } }));
 vi.mock('$lib/stores/window-shell.svelte', () => ({
@@ -1329,6 +1331,25 @@ describe('copying out', () => {
 			editor.commands.setTextSelection({ from: posIn(editor, 'first para', 6), to: posIn(editor, 'second para', 6) });
 			expect(copied(editor), list).toBe('para\n\nsecond');
 		}
+	});
+
+	// An article's words copy with their sources: a footnote's marker, its
+	// note after the words, and a veil's brackets, as the export writes them.
+	it('a copy of an article’s words carries their sources and veils', () => {
+		const editor = bound(
+			'<p>Lunch with <virtues-veil>Nick</virtues-veil>.<virtues-footnote label="ev-1" note="Message · 12:10 PM"></virtues-footnote> Then home.</p><p>After</p>',
+		);
+		const from = posIn(editor, 'Lunch');
+		// `posIn` counts text alone; the footnote is a position of its own.
+		let footnote = -1;
+		editor.state.doc.descendants((n, pos) => {
+			if (n.type.name === 'footnote') footnote = pos;
+			return footnote < 0;
+		});
+		editor.commands.setTextSelection({ from, to: footnote + 1 + ' Then'.length });
+		expect(copied(editor)).toBe('Lunch with ⟦Nick⟧.[^ev-1] Then\n\n[^ev-1]: Message · 12:10 PM');
+		editor.commands.selectAll();
+		expect(copied(editor)).toBe('Lunch with ⟦Nick⟧.[^ev-1] Then home.\n\nAfter\n\n[^ev-1]: Message · 12:10 PM');
 	});
 
 	// As a spreadsheet copies a range, and as the CodeMirror editor's table did.

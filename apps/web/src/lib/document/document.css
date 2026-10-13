@@ -162,6 +162,31 @@
 	-webkit-box-decoration-break: clone;
 }
 
+/* ── The veil: an article's ⟦…⟧, what the device's veil hides (a name, a
+   hard passage). A dotted underline says which words it covers. With the
+   veil on (`.doc-veiled`, from `stores/veil.svelte.ts`) the words keep
+   their place and lose their ink, as the day page's do; pointing at one
+   shows it, and holding V lifts the veil. */
+
+.doc-prose virtues-veil {
+	text-decoration: underline dotted var(--color-foreground-subtle);
+	text-underline-offset: 0.2em;
+}
+
+.doc-veiled .doc-prose virtues-veil {
+	color: transparent;
+	text-decoration: none;
+	background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
+	border-radius: 6px;
+	box-decoration-break: clone;
+	-webkit-box-decoration-break: clone;
+}
+
+.doc-veiled .doc-prose virtues-veil:hover {
+	color: inherit;
+	background: none;
+}
+
 /* ── Lists */
 
 .doc-prose ul,
@@ -476,37 +501,6 @@
 	transition: opacity 0.25s ease;
 }
 
-/* A selection a paste is replacing, while the server converts the paste. */
-.doc-paste-replaced {
-	opacity: 0.35;
-}
-
-.doc-upload {
-	display: inline-flex;
-	align-items: center;
-	gap: 8px;
-	padding: 8px 12px;
-	border: 1px dashed var(--color-border);
-	border-radius: 12px;
-	color: var(--color-foreground-muted);
-	font-size: 0.875rem;
-}
-
-.doc-upload-spinner {
-	width: 14px;
-	height: 14px;
-	border: 2px solid var(--color-border-subtle, var(--color-border));
-	border-top-color: var(--color-primary);
-	border-radius: 50%;
-	animation: doc-spin 0.8s linear infinite;
-}
-
-@keyframes doc-spin {
-	to {
-		transform: rotate(360deg);
-	}
-}
-
 /* ── Other devices' carets (CollaborationCaret; presence.ts draws them). */
 
 .collaboration-carets__caret {
@@ -642,8 +636,7 @@
 		transition: none;
 	}
 
-	.doc-ai-caret-bar,
-	.doc-upload-spinner {
+	.doc-ai-caret-bar {
 		animation: none;
 	}
 
@@ -715,6 +708,17 @@
 	}
 
 	.doc-prose mark {
+		-webkit-print-color-adjust: exact;
+		print-color-adjust: exact;
+	}
+
+	/* Paper keeps the veil as the screen had it: a veiled word prints as its
+	   fill, never as blank paper or as the word. */
+	.doc-prose virtues-veil {
+		text-decoration: none;
+	}
+
+	.doc-veiled .doc-prose virtues-veil {
 		-webkit-print-color-adjust: exact;
 		print-color-adjust: exact;
 	}

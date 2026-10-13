@@ -16,6 +16,8 @@ vi.mock('$lib/components/pages/nodes/MediaNode.svelte', () => ({ default: () => 
 vi.mock('$lib/components/pages/nodes/AppletNode.svelte', () => ({ default: () => {} }));
 vi.mock('$lib/components/pages/nodes/CalloutNode.svelte', () => ({ default: () => {} }));
 vi.mock('$lib/components/pages/nodes/CodeBlockNode.svelte', () => ({ default: () => {} }));
+vi.mock('$lib/components/pages/nodes/FootnoteNode.svelte', () => ({ default: () => {} }));
+vi.mock('$lib/components/pages/nodes/FigureNode.svelte', () => ({ default: () => {} }));
 vi.mock('svelte-sonner', () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 
 import type { Editor } from '@tiptap/core';

@@ -117,6 +117,53 @@ describe("parseDayArticle", () => {
 		expect(a.blocks[0].sentences.map((s) => s.evidence.length)).toEqual([1, 0, 1]);
 	});
 
+	it("reads an escaped bracket or star as text: it opens nothing and a sentence may start with one", () => {
+		const a = parseDayArticle(
+			"Lede.\n\nYou paid \\[about\\] \\[20. The rest waited.[^ev-1] It rained. \\*Twenty\\* came.\n\n" +
+				"[^ev-1]: Message · 9:00 AM · data_communication_message:m1",
+		);
+		expect(a.blocks[0].sentences.map((s) => s.markdown)).toEqual([
+			"You paid \\[about\\] \\[20.",
+			"The rest waited.",
+			"It rained.",
+			"\\*Twenty\\* came.",
+		]);
+		expect(a.blocks[0].sentences.map((s) => s.evidence.length)).toEqual([0, 1, 0, 0]);
+	});
+
+	it("reads another day's Abstract as plain words, its escapes read", () => {
+		expect(abstractOf("A night of R\\&B with [⟦Nick⟧](/person/p) and \\~20 others.[^ev-1]\n\n[^ev-1]: Message · 9:00 PM · data_communication_message:m1")).toBe(
+			"A night of R&B with Nick and ~20 others.",
+		);
+	});
+
+	it("ends a heading at its line, as its export parts it from the paragraph under it", () => {
+		const a = parseDayArticle("Lede.\n\n## Morning[^cx-1]\nYou walked.[^ev-1] You ate.\n\n[^cx-1]: 8:00–9:00 AM\n[^ev-1]: Message · 8:10 AM · data_communication_message:m1");
+		expect(a.blocks.map((b) => b.kind)).toEqual(["heading", "paragraph"]);
+		expect(a.blocks[0].notes.map((n) => n.label)).toEqual(["8:00–9:00 AM"]);
+		expect(a.blocks[1].sentences.map((s) => [s.markdown, s.evidence.length])).toEqual([
+			["You walked.", 1],
+			["You ate.", 0],
+		]);
+	});
+
+	it("reads an image alone on its line as a block, and a name written as one as a name", () => {
+		const a = parseDayArticle("Lede.\n\n![The harbour](/api/drive/files/f_1/download)\nThe boats came in.[^ev-1]\n\n![@Nick](/person/p)\nwaved.\n\n[^ev-1]: Recording · 9:00 AM · data_communication_transcription:t1");
+		expect(a.blocks.map((b) => b.markdown)).toEqual([
+			"![The harbour](/api/drive/files/f_1/download)",
+			"The boats came in.",
+			"![@Nick](/person/p)\nwaved.",
+		]);
+		expect(a.blocks[1].sentences[0]).toMatchObject({ markdown: "The boats came in.", evidence: [{ ref: "data_communication_transcription:t1" }] });
+	});
+
+	it("reads rows with no rule under the first as a paragraph of pipes, as its blocks hold them", () => {
+		const rows = parseDayArticle("Lede.\n\n| Question | Answer |\n| Music or movies? | Movies |");
+		expect(rows.blocks.map((b) => b.kind)).toEqual(["paragraph"]);
+		const table = parseDayArticle("Lede.\n\n| Question | Answer |\n| :--- | ---: |\n| Music or movies? | Movies |");
+		expect(table.blocks.map((b) => b.kind)).toEqual(["table"]);
+	});
+
 	it("keeps the paragraph's own spacing around a marker", () => {
 		const a = parseDayArticle("Lede.\n\nShe said yes[^cx-1], then left.\n\n[^cx-1]: 5:00 PM");
 		expect(a.blocks[0].sentences.map((s) => [s.markdown, s.space])).toEqual([
@@ -147,6 +194,40 @@ describe("veilMarks", () => {
 
 	it("leaves an unmarked page alone", () => {
 		expect(veilMarks("A quiet day.")).toEqual({ markdown: "A quiet day.", phrases: [] });
+	});
+
+	it("gives each phrase as the page draws it: in markdown with its escapes read, in a field as written", () => {
+		expect(veilMarks("You called ⟦AT\\&T⟧ about ⟦the \\[old\\] clinic⟧.").phrases).toEqual(["AT&T", "the [old] clinic"]);
+		expect(veilMarks("A night at ⟦AT\\&T Stadium⟧.", "text").phrases).toEqual(["AT\\&T Stadium"]);
+	});
+});
+
+describe("a hard line break", () => {
+	// A block page's export writes one as a backslash ending its line, where
+	// the writer wrote two spaces.
+	it("parts two sentences, the backslash read, and a source before it stays with the first", () => {
+		const ev = "[^ev-2]: Recording · 7:10 PM\n";
+		const page = parseDayArticle(`Lead.\n\nYou cooked dinner.[^ev-2]\\\nThen you read a book. It was late.\n\n${ev}`);
+		const said = page.blocks[0].sentences.map((s) => [s.markdown, s.evidence.length]);
+		expect(said).toEqual([
+			["You cooked dinner.", 1],
+			["Then you read a book.", 0],
+			["It was late.", 0],
+		]);
+		const bare = parseDayArticle("Lead.\n\nYou cooked dinner.\\\nThen you read a book. It was late.\n");
+		expect(bare.blocks[0].sentences.map((s) => s.markdown)).toEqual(["You cooked dinner.", "Then you read a book.", "It was late."]);
+	});
+
+	it("leaves an escaped backslash at a line's end a backslash", () => {
+		const page = parseDayArticle("Lead.\n\nThe path was C:\\\\\nthen home.\n");
+		expect(page.blocks[0].sentences.map((s) => s.markdown)).toEqual(["The path was C:\\\\ then home."]);
+	});
+});
+
+describe("a list numbered with parentheses", () => {
+	it("is a list, as the export writes a second list beside one of its kind", () => {
+		const page = parseDayArticle("Lead.\n\n1. one\n\n1) two\n");
+		expect(page.blocks.map((b) => b.kind)).toEqual(["other", "other"]);
 	});
 });
 

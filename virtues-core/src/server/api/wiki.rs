@@ -1131,6 +1131,9 @@ pub async fn wiki_get_day_rewrite_handler(
 ///
 /// What can be refused without a model call is refused here, with the code
 /// the page keys its copy on: `not_over` (422), `no_page` (404),
+/// `pending_suggestion` (409: the page holds a suggestion its owner has not
+/// accepted or rejected yet, which a rewrite from the record would decide;
+/// asked before consent, which would not let the rewrite through),
 /// `needs_consent` (409: the page may hold the owner's words and
 /// `replace_edits` is not true), `rewrite_in_progress` (409: a rewrite of
 /// this day is running, and the GET beside this reports it) and `busy` (409:
@@ -1160,13 +1163,18 @@ pub async fn wiki_rewrite_day_handler(
         Ok(false) => return day_rewrite_refusal(StatusCode::UNPROCESSABLE_ENTITY, "not_over"),
         Err(e) => return error_response(e),
     }
-    match day_summary::day_page(pool, date).await {
+    let page = match day_summary::day_page(pool, date).await {
         Ok(None) => return day_rewrite_refusal(StatusCode::NOT_FOUND, "no_page"),
-        Ok(Some(page)) if page.has_your_edits && !replace_edits => {
-            return day_rewrite_refusal(StatusCode::CONFLICT, "needs_consent")
-        }
-        Ok(Some(_)) => {}
+        Ok(Some(page)) => page,
         Err(e) => return error_response(e),
+    };
+    match day_summary::holds_pending_suggestion(&state.yjs_state, &page.page_id).await {
+        Ok(true) => return day_rewrite_refusal(StatusCode::CONFLICT, "pending_suggestion"),
+        Ok(false) => {}
+        Err(e) => return error_response(e),
+    }
+    if page.has_your_edits && !replace_edits {
+        return day_rewrite_refusal(StatusCode::CONFLICT, "needs_consent");
     }
     let lock = match day_summary::try_lock_day(pool, date).await {
         Ok(Some(lock)) => lock,

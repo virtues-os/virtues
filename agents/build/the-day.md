@@ -110,7 +110,7 @@ The autobiography is the **meaning layer** — synthesis, not chronology. Event 
 **Embedding note**: For Personal Dimensions axes (e.g., social/solitary, being/becoming), the autobiography is the better embedding surface because those axes are thematic, not factual. A raw event list won't project well onto "being/becoming." A synthesis that says "three domains are pulling at you" will.
 
 **UI details**:
-- Editable inline (current contenteditable approach for now; CodeMirror later)
+- Editable inline (current contenteditable approach for now)
 - Subtle authorship signal: slightly muted when system-authored, full opacity when user-edited
 - Pencil icon on hover to edit
 

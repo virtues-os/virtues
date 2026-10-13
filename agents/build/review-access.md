@@ -165,6 +165,14 @@ row must produce a 429.
    [Why the env gate is the whole safety story](#why-the-env-gate-is-the-whole-safety-story).
    Prove it after the restart: eleven bad codes in a row must give ten 401s and
    then a 429.
+6b. `VIRTUES_PUBLIC_ORIGINS=https://demo.virtues.com,https://demo-<rand>.virtues.ch`
+   in the same file: the origins a browser opens the box's UI from through
+   Caddy. A page's socket takes the app's own origins and these, nothing else
+   (`server::public_origins`), so without them every page there waits on
+   Loading and nothing typed in one is saved. They pass CORS and open the
+   page socket only: the terminal and the owner's browser socket still take
+   the app's own origins alone. Each must be the exact `https://host`, with
+   no path or wildcard; an entry that is not is left out.
 7. **Seed it.** There are two demo seeds, each with its own re-anchor pass —
    the SQL that walks the seeded life forward so its anchor day lands on today,
    because Home asks for the literal current date and has no fallback to the

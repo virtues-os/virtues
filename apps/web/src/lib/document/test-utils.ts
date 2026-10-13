@@ -9,14 +9,32 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Editor, type AnyExtension } from '@tiptap/core';
 import { DOMParser as PmDOMParser, DOMSerializer, type Node as PmNode } from '@tiptap/pm/model';
 import { prosemirrorToYXmlFragment } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { Awareness } from 'y-protocols/awareness';
 import { contract, contractExtensions, contractSchema, idTypes, newId } from './schema';
+import { useConverterModule } from './converter';
 
 const BIN = process.env.DOCUMENT_CONFORMANCE_BIN;
+
+/** The built converter (scripts/build-converter.mjs, vitest's global setup). */
+export const CONVERTER_WASM = path.join(path.dirname(fileURLToPath(import.meta.url)), 'converter.wasm');
+
+let converter: WebAssembly.Module | null = null;
+
+/** The crate's converter, compiled to WebAssembly, as this module's: what every paste in a test goes through. */
+export function useRealConverter(): void {
+	if (!converter) {
+		if (!fs.existsSync(CONVERTER_WASM)) {
+			throw new Error(`no converter at ${CONVERTER_WASM}: build it with \`pnpm converter\``);
+		}
+		converter = new WebAssembly.Module(fs.readFileSync(CONVERTER_WASM));
+	}
+	useConverterModule(converter);
+}
 
 /**
  * `html` with a block id on every block that carries one, as every page on

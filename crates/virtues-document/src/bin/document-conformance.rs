@@ -10,17 +10,25 @@
 //!     and canonical HTML Rust reads from it, the problems the server's
 //!     check of a whole document (`validate_doc`) finds in it, and those of
 //!     them the server would refuse the update for (`check_update`)
-//! document-conformance migrate files <path>... [--report <out.json>]
-//! document-conformance migrate json <pages.json> [--report <out.json>]
+//! document-conformance convert <in.json> <out.json>
+//!     each {name, markdown, mode} → the editor's conversion of it
+//!     (`convert_for_editor_json`), the answer the browser's WebAssembly
+//!     build must give byte for byte. `mode` is `written`, `paste` or
+//!     `article`; without one, `paste: true` reads it as a paste
+//! document-conformance migrate files <path>... [--dialect <d>] [--report <out.json>]
+//! document-conformance migrate json <pages.json> [--dialect <d>] [--report <out.json>]
 //!     convert markdown documents ({name, markdown} for json) and report
-//!     notes, lost text and whether the export reads back to the same tree
+//!     notes, lost text and whether the export reads back to the same tree.
+//!     `--dialect` is `written` (the default), `page`, `paste` or `article`;
+//!     an article's footnotes, figures and veils are counted against the
+//!     bar a move to blocks needs (`ArticleCounts::holds`)
 //! ```
 
 use anyhow::{bail, Context};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
-use virtues_document::{contract, decode_update, ingest, migrate, render, validate, ydoc};
+use virtues_document::{contract, decode_update, ingest, migrate, render, validate, ydoc, EditorMode};
 use yrs::{ReadTxn, StateVector, Transact};
 
 fn hex(bytes: &[u8]) -> String {
@@ -108,6 +116,26 @@ fn read_updates(input: &str, output: &str) -> anyhow::Result<()> {
     write_json(output, &out)
 }
 
+fn convert(input: &str, output: &str) -> anyhow::Result<()> {
+    let out: Vec<Value> = read_cases(input)?
+        .iter()
+        .map(|case| {
+            let markdown = case["markdown"].as_str().unwrap_or("");
+            let mode = match case["mode"].as_str() {
+                Some("article") => EditorMode::Article,
+                Some("paste") => EditorMode::Paste,
+                Some(_) => EditorMode::Written,
+                None => case["paste"].as_bool().unwrap_or(false).into(),
+            };
+            json!({
+                "name": case["name"],
+                "answer": virtues_document::convert_for_editor_json(markdown, mode),
+            })
+        })
+        .collect();
+    write_json(output, &out)
+}
+
 fn walk(root: &Path) -> Vec<PathBuf> {
     let mut out = vec![];
     if root.is_file() {
@@ -134,8 +162,17 @@ fn migrate_report(args: &[String]) -> anyhow::Result<()> {
         bail!(USAGE)
     };
     let report_at = args.iter().position(|a| a == "--report");
-    let sources = &args[1..report_at.unwrap_or(args.len()).max(1)];
+    let dialect_at = args.iter().position(|a| a == "--dialect");
+    let options_at = [report_at, dialect_at].into_iter().flatten().min();
+    let sources = &args[1..options_at.unwrap_or(args.len()).max(1)];
     let report_path = report_at.and_then(|i| args.get(i + 1));
+    let dialect = match dialect_at.and_then(|i| args.get(i + 1)).map(String::as_str) {
+        None | Some("written") => migrate::Dialect::Written,
+        Some("page") => migrate::Dialect::Page,
+        Some("paste") => migrate::Dialect::Paste,
+        Some("article") => migrate::Dialect::Article,
+        Some(other) => bail!("no dialect `{other}`: written, page, paste or article"),
+    };
     let mut docs: Vec<(String, String)> = vec![];
     match mode.as_str() {
         "files" => {
@@ -168,9 +205,10 @@ fn migrate_report(args: &[String]) -> anyhow::Result<()> {
     let mut export_same = 0;
     let mut export_diffs: BTreeMap<String, usize> = BTreeMap::new();
     let mut per_doc = vec![];
+    let mut off_the_bar = 0;
 
     for (name, md) in &docs {
-        let m = migrate::measure(c, md);
+        let m = migrate::measure_as(c, md, dialect);
         if !m.outcome.errors.is_empty() {
             rejected.push(json!({ "doc": name, "errors": m.outcome.errors }));
             continue;
@@ -220,11 +258,15 @@ fn migrate_report(args: &[String]) -> anyhow::Result<()> {
                 *export_diffs.entry(last + suffix).or_default() += 1;
             }
         }
+        if m.article.as_ref().is_some_and(|a| !a.holds()) {
+            off_the_bar += 1;
+        }
         per_doc.push(json!({
             "doc": name,
             "notes": m.outcome.notes.iter().map(|n| migrate::category(&n.message)).collect::<Vec<_>>(),
             "text_lost": m.text_lost.is_some(),
             "export_diff": m.export_diff,
+            "article": m.article,
         }));
     }
 
@@ -236,6 +278,9 @@ fn migrate_report(args: &[String]) -> anyhow::Result<()> {
     println!("refused:              {}", rejected.len());
     println!("text lost:            {}", text_lost.len());
     println!("export reads back:    {export_same}/{accepted}");
+    if dialect == migrate::Dialect::Article {
+        println!("article syntax held:  {}/{accepted}", accepted - off_the_bar);
+    }
     println!("\nnotes (documents, occurrences):");
     let mut cats: Vec<_> = categories.iter().collect();
     cats.sort_by_key(|(_, (docs, _))| std::cmp::Reverse(*docs));
@@ -260,13 +305,15 @@ fn migrate_report(args: &[String]) -> anyhow::Result<()> {
 }
 
 const USAGE: &str = "usage: document-conformance batch <in> <out> | read-updates <in> <out> | \
-                     migrate files <path>... [--report <out>] | migrate json <pages.json> [--report <out>]";
+                     convert <in> <out> | migrate files <path>... [--dialect <d>] [--report <out>] | \
+                     migrate json <pages.json> [--dialect <d>] [--report <out>]";
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match (args.first().map(String::as_str), args.get(1), args.get(2)) {
         (Some("batch"), Some(input), Some(output)) => batch(input, output),
         (Some("read-updates"), Some(input), Some(output)) => read_updates(input, output),
+        (Some("convert"), Some(input), Some(output)) => convert(input, output),
         (Some("migrate"), _, _) => migrate_report(&args[1..]),
         _ => bail!(USAGE),
     }

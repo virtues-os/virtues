@@ -4,6 +4,8 @@
 // the X-Virtues-Client header and shows on the Devices page.
 // See agents/archive/update-identity-spine.md.
 
+import { reloadOnceQuiet } from '$lib/reload';
+
 export type Channel = 'stable' | 'staging' | 'edge' | 'dev';
 
 export interface BuildInfo {
@@ -156,14 +158,6 @@ function noteBoxBuild(r: Response): void {
 	}
 	if (reloadArmed) return;
 	reloadArmed = true;
-	if (document.hidden) {
-		window.location.reload();
-	} else {
-		const onHide = () => {
-			if (!document.hidden) return; // becoming visible is not the moment
-			document.removeEventListener('visibilitychange', onHide);
-			window.location.reload();
-		};
-		document.addEventListener('visibilitychange', onHide);
-	}
+	// From the background only, and never over a page's file on its way.
+	reloadOnceQuiet(() => document.hidden);
 }

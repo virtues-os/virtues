@@ -66,7 +66,11 @@ vi.mock('y-websocket', () => ({ WebsocketProvider: fakes.FakeProvider }));
 vi.mock('y-indexeddb', () => ({ IndexeddbPersistence: fakes.FakePersistence }));
 vi.mock('$lib/config/backend', () => ({ getWsUrl: (path: string) => `ws://box${path}` }));
 
+import contractJson from '$contract';
 import { createTreeDocument, createYjsDocument } from './document';
+
+/** The contract this app's block editor reads. */
+const V: number = (contractJson as { version: number }).version;
 
 /** Open a page whose kept copy holds `text`, stamped `stamp` when given. */
 function openWithKeptCopy(pageContract: number | null, text: string, stamp?: number) {
@@ -154,24 +158,24 @@ describe('a block page', () => {
 		return { doc, store, provider: fakes.made.provider! };
 	}
 
-	it('keeps its copy apart from the markdown one, and asks for contract 1 on the socket', () => {
-		const { doc, store, provider } = openTree(1, 1);
+	it('keeps its copy apart from the markdown one, and asks for its contract on the socket', () => {
+		const { doc, store, provider } = openTree(V, V);
 		expect(store.name).toBe('tree-pg_2');
-		expect(provider.options.params.contract).toBe('1');
+		expect(provider.options.params.contract).toBe(String(V));
 		expect(provider.options.connect).toBe(true);
 		expect(doc.format).toBe('tree');
 		doc.destroy();
 	});
 
 	it('shows the kept copy at once when it is this contract and holds a block', () => {
-		const { doc } = openTree(1, 1, { blocks: 1, stamp: 1 });
+		const { doc } = openTree(V, V, { blocks: 1, stamp: V });
 		expect(doc.localCopyReadable()).toBe(true);
 		expect(get(doc.isSynced)).toBe(true);
 		doc.destroy();
 	});
 
 	it('never shows an empty kept copy, even offline', () => {
-		const { doc, provider } = openTree(1, 1, { stamp: 1 });
+		const { doc, provider } = openTree(V, V, { stamp: V });
 		expect(get(doc.isSynced)).toBe(false);
 		provider.emit('connection-error');
 		expect(get(doc.isSynced)).toBe(false);
@@ -179,7 +183,7 @@ describe('a block page', () => {
 	});
 
 	it('never shows a kept copy stamped differently from the page', () => {
-		const { doc, provider } = openTree(1, 1, { blocks: 1, stamp: 0 });
+		const { doc, provider } = openTree(V, V, { blocks: 1, stamp: 0 });
 		expect(get(doc.isSynced)).toBe(false);
 		provider.emit('connection-error');
 		expect(get(doc.isSynced)).toBe(false);
@@ -187,7 +191,7 @@ describe('a block page', () => {
 	});
 
 	it('binds nothing when the server could not read the page', () => {
-		const { doc, provider } = openTree(null, 1, { blocks: 1, stamp: 1 });
+		const { doc, provider } = openTree(null, V, { blocks: 1, stamp: V });
 		expect(provider.options.connect).toBe(false);
 		expect(get(doc.refused)).toBe("Your server couldn't read this page's document.");
 		expect(get(doc.isSynced)).toBe(false);
@@ -195,7 +199,7 @@ describe('a block page', () => {
 	});
 
 	it('refuses a page the server holds empty, rather than binding an editor to it', () => {
-		const { doc, provider } = openTree(1, 1);
+		const { doc, provider } = openTree(V, V);
 		provider.emit('sync', true);
 		expect(get(doc.isSynced)).toBe(false);
 		expect(get(doc.refused)).toBe("This page's document is empty on your server.");
@@ -203,7 +207,7 @@ describe('a block page', () => {
 	});
 
 	it('syncs from the server when the server holds blocks', () => {
-		const { doc, provider } = openTree(1, 1);
+		const { doc, provider } = openTree(V, V);
 		doc.fragment.push([new Y.XmlElement('paragraph')]);
 		provider.emit('sync', true);
 		expect(get(doc.isSynced)).toBe(true);
@@ -212,7 +216,7 @@ describe('a block page', () => {
 	});
 
 	it('is read-only, and says so, on a server older than its contract', () => {
-		const { doc } = openTree(1, 0);
+		const { doc } = openTree(V, V - 1);
 		expect(doc.readOnly).toBe(true);
 		expect(get(doc.refused)).toBe('Your server needs an update before it can save changes to this page.');
 		doc.destroy();
@@ -220,7 +224,7 @@ describe('a block page', () => {
 
 	it('drops the kept copy when the server refuses an edit, so opening the page again does not send it', () => {
 		fakes.kept.clear();
-		const first = openTree(1, 1, { blocks: 1, stamp: 1 });
+		const first = openTree(V, V, { blocks: 1, stamp: V });
 		first.doc.ydoc.getText('content').insert(0, 'stray');
 		first.provider.emit('closed', { code: 4422, reason: 'the document holds `content`' });
 		expect(get(first.doc.refused)).toContain("couldn't accept an edit");
@@ -228,7 +232,7 @@ describe('a block page', () => {
 		expect(first.doc.ydoc.getText('content').toString()).toBe('stray');
 		first.doc.destroy();
 
-		const again = createTreeDocument('pg_2', 1, 1);
+		const again = createTreeDocument('pg_2', V, V);
 		const store = fakes.made.persistence!;
 		for (const update of fakes.kept.get(store.name) ?? []) Y.applyUpdate(store.doc, update, store);
 		store.emit('synced');
@@ -237,8 +241,17 @@ describe('a block page', () => {
 		again.destroy();
 	});
 
+	it("keeps its copy under the document's lineage, so a copy of an earlier document is never bound", () => {
+		const doc = createTreeDocument('pg_2', V, V, '0a1b2c3d4e5f6a7b');
+		expect(fakes.made.persistence!.name).toBe('tree-pg_2.0a1b2c3d4e5f6a7b');
+		doc.destroy();
+		const before = createTreeDocument('pg_2', V, V, null);
+		expect(fakes.made.persistence!.name).toBe('tree-pg_2');
+		before.destroy();
+	});
+
 	it('says the page needs a newer app when the server closes it with 4426', () => {
-		const { doc, provider } = openTree(1, 1, { blocks: 1, stamp: 1 });
+		const { doc, provider } = openTree(V, V, { blocks: 1, stamp: V });
 		expect(get(doc.isSynced)).toBe(true);
 		provider.emit('closed', { code: 4426, reason: 'contract' });
 		expect(get(doc.refused)).toContain('newer version');

@@ -1,3 +1,5 @@
+import { tokenize, type Token } from './inlineMarkdown';
+
 /**
  * THE LEDE — an article's opening paragraph, which is the short form every
  * rung above it reads.
@@ -35,6 +37,10 @@ export function lede(article: string | null | undefined): string | null {
  * day page veils as a link, and a plain-text row has no link left to veil. So
  * the result can carry marks, and a caller showing it runs `veilMarks` over it.
  *
+ * The markdown is read by the page's own rules (`inlineMarkdown.tokenize`),
+ * so an escape (`R\&B`, `user\_name`) reads as its character: an article
+ * that has become a block page has its export here, which escapes them.
+ *
  * A sentence ends at a terminal mark followed by whitespace and a capital,
  * outside any ⟦ ⟧ mark, so "Toys \"R\" Us." and a linked "St. Mary's" do not
  * cut it early. An unlinked, unmarked "St. Mary" still does.
@@ -42,11 +48,14 @@ export function lede(article: string | null | undefined): string | null {
 export function ledeSentence(article: string | null | undefined): string | null {
 	const paragraph = lede(article);
 	if (!paragraph) return null;
-	const plain = paragraph
-		.replace(/\[([^\]]*)\]\([^)]*\)/g, (_, label: string) => `⟦${label.replace(/[⟦⟧]/g, '')}⟧`)
-		.replace(/[*_`]/g, '')
-		.replace(/\s+/g, ' ')
-		.trim();
+	const words = (ts: Token[]): string =>
+		ts
+			.map((t) => {
+				if (t.kind === 'link') return `⟦${t.text.replace(/[⟦⟧]/g, '')}⟧`;
+				return 'children' in t ? words(t.children) : t.text;
+			})
+			.join('');
+	const plain = words(tokenize(paragraph)).replace(/\s+/g, ' ').trim();
 	for (const end of plain.matchAll(/[.!?]["')⟧]?(?=\s+⟦?[A-Z])/g)) {
 		const head = plain.slice(0, end.index + end[0].length);
 		if (head.split('⟦').length === head.split('⟧').length) return head;

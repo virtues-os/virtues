@@ -1,5 +1,8 @@
 //! Document tree → canonical HTML (what the model reads, with block ids) and
-//! → markdown (what search, embeddings and the `content` column read).
+//! → markdown (what search, embeddings and the `content` column read). An
+//! article's footnotes, figures and veils export as the day page's readers
+//! read them: a marker in the text and its note on a line after the last
+//! block, a `figure` fence, and `⟦…⟧`.
 //!
 //! The HTML is byte-identical to the browser editor's `getHTML()` for the
 //! same tree: same tags, same attribute order, attributes at their default
@@ -11,8 +14,9 @@
 //! children, for a node); `validate` is what refuses such a tree.
 
 use crate::contract::Contract;
-use crate::model::{Mark, Node};
+use crate::model::{Mark, Node, ITEM_NUMBER};
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 const VOID: &[&str] = &["img", "br", "hr"];
@@ -201,7 +205,10 @@ pub fn markdown_with_ids(c: &Contract, nodes: &[Node]) -> String {
 }
 
 fn page_md(c: &Contract, nodes: &[Node], ids: bool) -> String {
+    let apart = footnotes_as_exported(nodes, false);
+    let nodes = apart.as_deref().unwrap_or(nodes);
     let mut w = Md::default();
+    let mut alt = false;
     for (i, n) in nodes.iter().enumerate() {
         if i > 0 {
             w.text("\n\n");
@@ -209,10 +216,165 @@ fn page_md(c: &Contract, nodes: &[Node], ids: bool) -> String {
         if let Some(id) = n.id().filter(|id| ids && comment_holds(id)) {
             w.text(&format!("<!-- {id} -->\n"));
         }
+        alt = continues_list(nodes, i, alt);
+        w.alt_list = alt;
         block_md(c, n, false, &mut w);
+    }
+    let notes = footnote_lines(nodes);
+    if !notes.is_empty() {
+        w.text("\n\n");
+        w.text(&notes.join("\n"));
     }
     w.text("\n");
     w.into_string()
+}
+
+/// The definitions of the footnotes in `nodes`, as the export writes them
+/// after its last block: one line per label, in the order the labels are
+/// first cited, `[^label]: note`. A label's note is the first one its
+/// footnotes carry; one carrying none writes no line. The note is written
+/// as it is, a line break as a space: the converter reads a definition's
+/// first line as text, never as markdown. Last, as the day page's readers
+/// find them (`day_picture::sections` stops at the first).
+pub fn footnote_lines(nodes: &[Node]) -> Vec<String> {
+    let mut labels: Vec<(String, Option<String>)> = vec![];
+    for n in nodes {
+        n.walk(&mut |n| {
+            if n.kind != "footnote" {
+                return;
+            }
+            let Some(label) = n.attrs.get("label").and_then(Value::as_str) else {
+                return;
+            };
+            let note = n.attrs.get("note").and_then(Value::as_str);
+            match labels.iter_mut().find(|(l, _)| l == label) {
+                Some((_, held)) => {
+                    if held.is_none() {
+                        *held = note.map(str::to_string);
+                    }
+                }
+                None => labels.push((label.to_string(), note.map(str::to_string))),
+            }
+        });
+    }
+    labels
+        .into_iter()
+        .filter_map(|(label, note)| Some(format!("[^{label}]: {}", note?.replace(['\r', '\n'], " "))))
+        .collect()
+}
+
+/// `nodes` with each footnote as the export writes it, or `None` when that
+/// is each as it stands. A label carries one note in markdown, its one
+/// definition: where footnotes of one label carry different notes (a
+/// sentence pasted from another day, numbered there), the first note the
+/// label carries keeps it, and each other note takes a label of its own
+/// (`apart_label`), so every sentence's source is written and reads back
+/// beside it. `fill`: a footnote carrying no note takes its label's, as the
+/// export reads back, for comparing a page with what its export shows.
+pub fn footnotes_as_exported(nodes: &[Node], fill: bool) -> Option<Vec<Node>> {
+    let mut first: HashMap<String, Option<String>> = HashMap::new();
+    let mut used: HashSet<String> = HashSet::new();
+    let mut changes = false;
+    for n in nodes {
+        n.walk(&mut |n| {
+            if n.kind != "footnote" {
+                return;
+            }
+            let Some(label) = n.attrs.get("label").and_then(Value::as_str) else {
+                return;
+            };
+            let note = n.attrs.get("note").and_then(Value::as_str);
+            used.insert(label.to_string());
+            let held = first.entry(label.to_string()).or_insert(None);
+            match (held.as_deref(), note) {
+                (None, Some(note)) => *held = Some(note.to_string()),
+                (Some(held), Some(note)) => changes |= held != note,
+                _ => {}
+            }
+        });
+    }
+    if !changes && fill {
+        for n in nodes {
+            n.walk(&mut |n| {
+                let label = n.attrs.get("label").and_then(Value::as_str);
+                changes |= n.kind == "footnote"
+                    && n.attrs.get("note").and_then(Value::as_str).is_none()
+                    && label.is_some_and(|l| first.get(l).is_some_and(Option::is_some));
+            });
+        }
+    }
+    if !changes {
+        return None;
+    }
+    let mut given: HashMap<(String, String), Option<String>> = HashMap::new();
+    let mut out = nodes.to_vec();
+    for n in &mut out {
+        n.walk_mut(&mut |n| {
+            if n.kind != "footnote" {
+                return;
+            }
+            let Some(label) = n.attrs.get("label").and_then(Value::as_str).map(str::to_string) else {
+                return;
+            };
+            let Some(Some(held)) = first.get(&label) else {
+                return;
+            };
+            match n.attrs.get("note").and_then(Value::as_str).map(str::to_string) {
+                Some(note) if note != *held => {
+                    let label = given
+                        .entry((label.clone(), note))
+                        .or_insert_with(|| apart_label(&label, &mut used))
+                        .clone();
+                    if let Some(label) = label {
+                        n.attrs.insert("label".into(), Value::String(label));
+                    }
+                }
+                None if fill => {
+                    n.attrs.insert("note".into(), Value::String(held.clone()));
+                }
+                _ => {}
+            }
+        });
+    }
+    Some(out)
+}
+
+/// A label for a second note under `label`, one no footnote in `used`
+/// carries, which it then holds: the label's prefix and the number after the
+/// highest any label of that prefix ends in (`ev-2` beside `ev-6` → `ev-7`),
+/// so the day page reads it as a source of its kind; a label ending in no
+/// digit takes `-2` on, the first one free. `None` when no such label fits
+/// a label's length.
+fn apart_label(label: &str, used: &mut HashSet<String>) -> Option<String> {
+    let digits = label.len() - label.trim_end_matches(|c: char| c.is_ascii_digit()).len();
+    let (prefix, from) = if digits == 0 {
+        (format!("{label}-"), 2u64)
+    } else {
+        let prefix = &label[..label.len() - digits];
+        let highest = used
+            .iter()
+            .filter_map(|l| l.strip_prefix(prefix))
+            .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            .filter_map(|n| n.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0);
+        (prefix.to_string(), highest.saturating_add(1))
+    };
+    let free = (from..from.saturating_add(1_000))
+        .map(|n| format!("{prefix}{n}"))
+        .find(|l| !used.contains(l))
+        .filter(|l| crate::contract::is_label(l))?;
+    used.insert(free.clone());
+    Some(free)
+}
+
+/// Whether the block `nodes[i]` is a list written straight after a list of
+/// its own kind, which markdown would read as the same list, and so takes
+/// the other marker (`*` for `-`, `)` for `.`) unless the list before it
+/// took that one. `before`: whether the block before it did.
+fn continues_list(nodes: &[Node], i: usize, before: bool) -> bool {
+    let list = |n: &Node| matches!(n.kind.as_str(), "bulletList" | "orderedList" | "taskList");
+    i > 0 && list(&nodes[i]) && nodes[i - 1].kind == nodes[i].kind && !before
 }
 
 /// Whether `<!-- {id} -->` reads back as a comment holding exactly `id`.
@@ -301,6 +463,9 @@ struct Md {
     /// How many times anything was written: a block wrote nothing when this
     /// did not move.
     writes: u64,
+    /// The next list written takes its kind's other marker
+    /// ([`continues_list`]); read and cleared as the list opens.
+    alt_list: bool,
 }
 
 impl Md {
@@ -472,10 +637,13 @@ fn block_string(c: &Contract, n: &Node, in_table: bool) -> String {
 }
 
 fn children_md(c: &Contract, n: &Node, sep: &str, w: &mut Md) {
+    let mut alt = false;
     for (i, ch) in n.content.iter().enumerate() {
         if i > 0 {
             w.text(sep);
         }
+        alt = continues_list(&n.content, i, alt);
+        w.alt_list = alt;
         block_md(c, ch, false, w);
     }
 }
@@ -511,23 +679,30 @@ fn block_md(c: &Contract, n: &Node, in_table: bool, w: &mut Md) {
             w.close();
         }
         "bulletList" | "orderedList" | "taskList" => {
+            let alt = std::mem::take(&mut w.alt_list);
+            let (bullet, stop) = if alt { ('*', ')') } else { ('-', '.') };
             let loose = n.content.iter().any(|item| item.content.len() > 1);
-            let start = a("start").as_u64().unwrap_or(1);
+            // Each item's number, its own where it has one: markdown writes
+            // every item's, and reads each back as written. A number below
+            // zero, which no marker writes, gives way to the count.
+            let mut next = a("start").as_u64().unwrap_or(1);
             for (i, item) in n.content.iter().enumerate() {
                 if i > 0 {
                     w.text(if loose { "\n\n" } else { "\n" });
                 }
+                let number = item.attrs.get(ITEM_NUMBER).and_then(Value::as_u64).unwrap_or(next);
+                next = number.saturating_add(1);
                 let marker = match n.kind.as_str() {
-                    "orderedList" => format!("{}. ", start + i as u64),
+                    "orderedList" => format!("{number}{stop} "),
                     "taskList" => {
                         let checked = item
                             .attrs
                             .get("checked")
                             .and_then(Value::as_bool)
                             .unwrap_or(false);
-                        format!("- [{}] ", if checked { "x" } else { " " })
+                        format!("{bullet} [{}] ", if checked { "x" } else { " " })
                     }
-                    _ => "- ".to_string(),
+                    _ => format!("{bullet} "),
                 };
                 let indent = " ".repeat(if n.kind == "taskList" {
                     2
@@ -536,6 +711,7 @@ fn block_md(c: &Contract, n: &Node, in_table: bool, w: &mut Md) {
                 });
                 w.open(&marker, &indent);
                 let mut first_empty = false;
+                let mut alt = false;
                 for (k, b) in item.content.iter().enumerate() {
                     if k > 0 {
                         // After an empty first block, a blank line would end
@@ -545,6 +721,8 @@ fn block_md(c: &Contract, n: &Node, in_table: bool, w: &mut Md) {
                         w.text(if loose && !after_empty { "\n\n" } else { "\n" });
                     }
                     let before = w.writes;
+                    alt = continues_list(&item.content, k, alt);
+                    w.alt_list = alt;
                     block_md(c, b, false, w);
                     if k == 0 {
                         first_empty = w.writes == before;
@@ -581,7 +759,11 @@ fn leaf_md(c: &Contract, n: &Node, in_table: bool) -> String {
             // fence's can.
             let mark = if lang.contains('`') { '~' } else { '`' };
             let longest = text.split(|ch| ch != mark).map(str::len).max().unwrap_or(0);
-            let fence = mark.to_string().repeat((longest + 1).max(3));
+            // An article reads a fence of exactly three backticks in the
+            // language `figure` as a figure: code that would read as one
+            // takes a fence of four, and stays code.
+            let least = if lang == "figure" && crate::migrate::reads_as_figure(c, &text) { 4 } else { 3 };
+            let fence = mark.to_string().repeat((longest + 1).max(least));
             format!("{fence}{lang}\n{text}\n{fence}")
         }
         "horizontalRule" => "---".to_string(),
@@ -615,8 +797,26 @@ fn leaf_md(c: &Contract, n: &Node, in_table: bool) -> String {
             node_html(c, n, &Options { ids: false }, &mut s);
             s
         }
+        "figure" => figure_md(c, n),
         other => format!("<!-- {other} -->"),
     }
+}
+
+/// A figure as the day page's writers write it: a fence of three backticks
+/// whose info string is `figure`, then a `key: value` line for each value
+/// it holds, in the contract's order, which is the order every writer uses.
+/// An empty value is written as `key: `, and a line break in one as a space.
+fn figure_md(c: &Contract, n: &Node) -> String {
+    let mut s = String::from("```figure\n");
+    if let Some(spec) = c.node("figure") {
+        for (key, _) in spec.attrs() {
+            if let Some(v) = n.attrs.get(key).and_then(Value::as_str) {
+                s.push_str(&format!("{key}: {}\n", v.replace(['\r', '\n'], " ")));
+            }
+        }
+    }
+    s.push_str("```");
+    s
 }
 
 /// The last segment of a URL's path, for a media embed with no name.
@@ -856,8 +1056,20 @@ fn delim(kind: &str) -> (&'static str, &'static str) {
         "strike" => ("~~", "~~"),
         "highlight" => ("==", "=="),
         "underline" => ("<u>", "</u>"),
+        "veil" => (VEIL.0, VEIL.1),
         _ => ("", ""),
     }
+}
+
+/// The veil's delimiters. Innermost of all, so a veil inside a link or
+/// around bold text reads back as the same marks; written around each run,
+/// with no whitespace moved outside them, since no flanking rule reads them.
+const VEIL: (&str, &str) = ("⟦", "⟧");
+
+/// A veil's own text with its brackets written as character references: a
+/// bare one would end the veil, or open another.
+fn veiled(text: &str) -> String {
+    text.replace(VEIL.0, "&#10214;").replace(VEIL.1, "&#10215;")
 }
 
 /// The marks a proposal is written with, as CriticMarkup.
@@ -1002,8 +1214,14 @@ fn delimited_md(
     let mut active: Vec<&str> = vec![];
     let block_start = line_start;
     let mut line_start = line_start;
+    // Where the last footnote's marker ends in `out`, and whether it began a
+    // line: what follows it straight away may need an escape.
+    let mut marker: Option<(usize, bool)> = None;
     let close_to = |out: &mut String, active: &mut Vec<&str>, keep: usize| {
-        let trailing = out.len() - out.trim_end_matches(' ').len();
+        // The veil's brackets keep their whitespace inside; any other
+        // delimiter closing with it takes it outside, as flanking needs.
+        let moves = active[keep.min(active.len())..].iter().any(|k| *k != "veil");
+        let trailing = if moves { out.len() - out.trim_end_matches(' ').len() } else { 0 };
         let spaces = out.split_off(out.len() - trailing);
         while active.len() > keep {
             if let Some(k) = active.pop() {
@@ -1027,8 +1245,11 @@ fn delimited_md(
         match n.kind.as_str() {
             "text" => {
                 let t = n.text.as_deref().unwrap_or("");
-                let lead_len = t.len() - t.trim_start_matches(' ').len();
                 let opens = keep < wanted.len();
+                // Whitespace at an opening moves outside it, but for the
+                // veil's alone, which keeps it.
+                let moves = wanted[keep..].iter().any(|k| *k != "veil");
+                let lead_len = if moves { t.len() - t.trim_start_matches(' ').len() } else { 0 };
                 if opens {
                     out.push_str(&t[..lead_len]);
                 }
@@ -1037,6 +1258,7 @@ fn delimited_md(
                     active.push(k);
                 }
                 let rest = if opens { &t[lead_len..] } else { t };
+                let veil = n.marks.iter().any(|m| m.kind == "veil");
                 if n.marks.iter().any(|m| m.kind == "code") {
                     // A code span reads a line break as a space; written as
                     // one, a blank line would end the block.
@@ -1053,7 +1275,18 @@ fn delimited_md(
                     };
                     out.push_str(&format!("{ticks}{pad}{rest}{pad}{ticks}"));
                 } else {
-                    let escaped = escape_md(rest, lines, &out, body);
+                    let mut escaped = escape_md(rest, lines, &out, body);
+                    if veil {
+                        escaped = veiled(&escaped);
+                    }
+                    // Straight after a footnote's marker, `(` would make it a
+                    // link's text, and `:` after one that begins a line of a
+                    // paragraph would make it a definition.
+                    if let Some((_, began)) = marker.filter(|(end, _)| *end == out.len()) {
+                        if escaped.starts_with('(') || (began && lines == Lines::Many && escaped.starts_with(':')) {
+                            escaped.insert(0, '\\');
+                        }
+                    }
                     if line_start && !opens && lines == Lines::Many {
                         let first = block_start && out.is_empty();
                         out.push_str(&escape_line_start(&escaped, first));
@@ -1082,6 +1315,14 @@ fn delimited_md(
                     escape_md(label, lines, "", body),
                     destination(to)
                 ));
+            }
+            // `[^label]`, never escaped: a label is letters, digits, `_`
+            // and `-`. Its note is written after the page's last block
+            // (`footnote_lines`).
+            "footnote" => {
+                let label = n.attrs.get("label").and_then(Value::as_str).unwrap_or("");
+                out.push_str(&format!("[^{label}]"));
+                marker = Some((out.len(), line_start));
             }
             _ => {}
         }
@@ -1122,6 +1363,34 @@ mod tests {
             markdown(&c, &nodes),
             "# a\n\n## b\n\n### c\n\n#### d\n\n##### e\n\n###### f\n"
         );
+    }
+
+    /// An item's own number is written as HTML's `<li value>`, and the
+    /// export writes every item's number, its own or the count's, so the
+    /// markdown reads back to the same list. An item holding the number the
+    /// count gives it (one the editor added an item before) keeps it: the
+    /// page's tree is written as it is.
+    #[test]
+    fn an_items_own_number_renders_and_exports() {
+        let c = Contract::load();
+        let src = "<ol start=\"2019\"><li><p>a</p></li><li value=\"2021\"><p>b</p></li><li><p>c</p></li><li value=\"2020\"><p>d</p></li></ol>";
+        let nodes = tree(src);
+        assert_eq!(html(&c, &nodes, &Options { ids: false }), src);
+        assert_eq!(markdown(&c, &nodes), "2019. a\n2021. b\n2022. c\n2020. d\n");
+        let mut pinned = tree("<ol><li>a</li><li>b</li></ol>");
+        pinned[0].content[1].attrs.insert(ITEM_NUMBER.into(), Value::from(2));
+        assert_eq!(
+            html(&c, &pinned, &Options { ids: false }),
+            "<ol><li><p>a</p></li><li value=\"2\"><p>b</p></li></ol>"
+        );
+        assert_eq!(markdown(&c, &pinned), "1. a\n2. b\n");
+        // A number below zero, which no marker writes, gives way to the
+        // count, as a start below zero does.
+        let nodes = tree("<ol start=\"-1\"><li>a</li><li value=\"-5\">b</li><li value=\"7\">c</li><li>d</li></ol>");
+        assert_eq!(markdown(&c, &nodes), "1. a\n2. b\n7. c\n8. d\n");
+        // An item's markdown is indented by its own marker's width.
+        let nodes = tree("<ol start=\"9\"><li><p>a</p><p>more</p></li><li value=\"100\"><p>b</p><p>more</p></li></ol>");
+        assert_eq!(markdown(&c, &nodes), "9. a\n\n   more\n\n100. b\n\n     more\n");
     }
 
     #[test]
@@ -1373,6 +1642,198 @@ mod tests {
             .filter(|l| !(l.starts_with("<!-- ") && l.ends_with(" -->\n")))
             .collect();
         assert_eq!(stripped, markdown(&c, &nodes));
+    }
+
+    /// Every footnote's note is written once, after the last block, in the
+    /// order its label is first cited: a heading's, a cell's and a list's
+    /// footnotes as a paragraph's. One block alone carries its own. A
+    /// second note under one label takes a label of its own, the next of
+    /// its kind, so it is written too.
+    #[test]
+    fn references_write_their_notes_after_the_body_in_order() {
+        let c = Contract::load();
+        let f = |label: &str, note: &str| format!("<virtues-footnote label=\"{label}\" note=\"{note}\"></virtues-footnote>");
+        let nodes = tree(&format!(
+            "<h2 data-id=\"h\">Morning{}</h2><p data-id=\"p\">You read.{} You ate.{}{}</p>\
+             <table data-id=\"t\"><tr><th><p>When</p></th></tr><tr><td><p>noon{}</p></td></tr></table>\
+             <ul data-id=\"l\"><li><p>again{}</p></li></ul>",
+            f("cx-1", "9:05 AM"),
+            f("ev-1", "Recording · 9:10 AM · data_communication_transcription:tr_1"),
+            f("ev-2", "Message · 9:44 AM"),
+            f("cx-1", "a second note for one label"),
+            f("ev-3", "Chat · 12:00 PM"),
+            f("ev-1", "Recording · 9:10 AM · data_communication_transcription:tr_1"),
+        ));
+        let notes = "[^cx-1]: 9:05 AM\n[^ev-1]: Recording · 9:10 AM · data_communication_transcription:tr_1\n\
+                     [^ev-2]: Message · 9:44 AM\n[^cx-2]: a second note for one label\n[^ev-3]: Chat · 12:00 PM\n";
+        let md = markdown(&c, &nodes);
+        assert_eq!(
+            md,
+            format!(
+                "## Morning[^cx-1]\n\nYou read.[^ev-1] You ate.[^ev-2][^cx-2]\n\n| When |\n| --- |\n| noon[^ev-3] |\n\n- again[^ev-1]\n\n{notes}"
+            )
+        );
+        let with = markdown_with_ids(&c, &nodes);
+        assert!(with.ends_with(&format!("- again[^ev-1]\n\n{notes}")), "{with}");
+        let stripped: String = with
+            .split_inclusive('\n')
+            .filter(|l| !(l.starts_with("<!-- ") && l.ends_with(" -->\n")))
+            .collect();
+        assert_eq!(stripped, md);
+        assert_eq!(markdown(&c, &nodes[2..3]), "| When |\n| --- |\n| noon[^ev-3] |\n\n[^ev-3]: Chat · 12:00 PM\n");
+        assert_eq!(markdown(&c, &nodes[0..1]), "## Morning[^cx-1]\n\n[^cx-1]: 9:05 AM\n");
+    }
+
+    #[test]
+    fn a_reference_without_a_note_writes_no_line() {
+        let c = Contract::load();
+        let nodes = tree(
+            "<p>Bare.<virtues-footnote label=\"ev-9\"></virtues-footnote> Noted.\
+             <virtues-footnote label=\"ev-1\" note=\"Message · 1:00 PM\"></virtues-footnote></p>",
+        );
+        assert_eq!(markdown(&c, &nodes), "Bare.[^ev-9] Noted.[^ev-1]\n\n[^ev-1]: Message · 1:00 PM\n");
+        let bare = tree("<p>Bare.<virtues-footnote label=\"ev-9\"></virtues-footnote></p>");
+        assert_eq!(markdown(&c, &bare), "Bare.[^ev-9]\n");
+        // A label first cited without a note takes the first note a later
+        // footnote with it carries.
+        let later = tree(
+            "<p>a<virtues-footnote label=\"x\"></virtues-footnote> b<virtues-footnote label=\"x\" note=\"n\"></virtues-footnote></p>",
+        );
+        assert_eq!(markdown(&c, &later), "a[^x] b[^x]\n\n[^x]: n\n");
+    }
+
+    /// Two sentences cite one label with different sources (one pasted from
+    /// another day, numbered there). Markdown holds one definition a label:
+    /// written as it stood, the export gave both sentences the first
+    /// source, and a writer's markdown read off it wrote that source over
+    /// the second's. The second source takes the next label of its kind.
+    #[test]
+    fn two_notes_under_one_label_each_keep_their_source() {
+        let c = Contract::load();
+        let f = |label: &str, note: &str| format!("<virtues-footnote label=\"{label}\" note=\"{note}\"></virtues-footnote>");
+        let nodes = tree(&format!(
+            "<p>You ate with Nick.{}</p><p>You swam at noon.{}{}</p><p>Later.{}</p><p>Again.{}</p>",
+            f("ev-2", "Message · 12:10 PM · data_communication_message:m_1"),
+            f("ev-2", "Location · 9:30 AM"),
+            f("ev-6", "Chat · 1:00 PM"),
+            f("ev-2", "Location · 9:30 AM"),
+            f("ev-2", "Message · 12:10 PM · data_communication_message:m_1"),
+        ));
+        let md = markdown(&c, &nodes);
+        assert_eq!(
+            md,
+            "You ate with Nick.[^ev-2]\n\nYou swam at noon.[^ev-7][^ev-6]\n\nLater.[^ev-7]\n\nAgain.[^ev-2]\n\n\
+             [^ev-2]: Message · 12:10 PM · data_communication_message:m_1\n[^ev-7]: Location · 9:30 AM\n\
+             [^ev-6]: Chat · 1:00 PM\n"
+        );
+        let back = crate::migrate::from_markdown_as(&c, &md, crate::migrate::Dialect::Article);
+        let notes: Vec<(String, String)> = back
+            .nodes
+            .iter()
+            .flat_map(|b| b.content.iter())
+            .filter(|n| n.kind == "footnote")
+            .map(|n| {
+                let a = |k: &str| n.attrs.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+                (a("label"), a("note"))
+            })
+            .collect();
+        assert_eq!(notes[1], ("ev-7".to_string(), "Location · 9:30 AM".to_string()));
+        assert_eq!(notes[3].1, "Location · 9:30 AM");
+        assert_eq!(markdown(&c, &back.nodes), md, "the export reads back as itself");
+        // A label ending in no number takes `-2`, the first one free.
+        let other = tree(&format!("<p>a{}</p><p>b{}</p><p>c{}</p>", f("x", "one"), f("x-2", "taken"), f("x", "two")));
+        assert_eq!(markdown(&c, &other), "a[^x]\n\nb[^x-2]\n\nc[^x-3]\n\n[^x]: one\n[^x-2]: taken\n[^x-3]: two\n");
+        // A footnote carrying no note keeps its label, and reads back with
+        // its label's.
+        let bare = tree(&format!("<p>a{}</p><p>b<virtues-footnote label=\"ev-1\"></virtues-footnote></p>", f("ev-1", "one")));
+        assert_eq!(markdown(&c, &bare), "a[^ev-1]\n\nb[^ev-1]\n\n[^ev-1]: one\n");
+    }
+
+    /// Two lists of one kind side by side are one list to markdown: written
+    /// with one marker, they read back as one, so a writer's markdown read
+    /// off the export merged them. The second takes its kind's other marker.
+    #[test]
+    fn lists_of_one_kind_side_by_side_stay_apart() {
+        let c = Contract::load();
+        for (src, md) in [
+            ("<ul><li><p>a</p></li></ul><ul><li><p>b</p></li></ul>", "- a\n\n* b\n"),
+            ("<ol><li><p>a</p></li></ol><ol start=\"4\"><li><p>b</p></li></ol>", "1. a\n\n4) b\n"),
+            (
+                "<ul data-type=\"taskList\"><li data-type=\"taskItem\" data-checked=\"true\"><p>a</p></li></ul>\
+                 <ul data-type=\"taskList\"><li data-type=\"taskItem\"><p>b</p></li></ul>",
+                "- [x] a\n\n* [ ] b\n",
+            ),
+            (
+                "<ul><li><p>a</p></li></ul><ul><li><p>b</p></li></ul><ul><li><p>c</p></li></ul>",
+                "- a\n\n* b\n\n- c\n",
+            ),
+            ("<ul><li><p>a</p></li></ul><p>x</p><ul><li><p>b</p></li></ul>", "- a\n\nx\n\n- b\n"),
+            ("<ul><li><p>a</p></li></ul><ol><li><p>b</p></li></ol>", "- a\n\n1. b\n"),
+            (
+                "<blockquote><ul><li><p>a</p></li></ul><ul><li><p>b</p></li></ul></blockquote>",
+                "> - a\n>\n> * b\n",
+            ),
+            (
+                "<ul><li><p>a</p><ul><li><p>b</p></li></ul><ul><li><p>c</p></li></ul></li></ul>",
+                "- a\n\n  - b\n\n  * c\n",
+            ),
+        ] {
+            let nodes = tree(src);
+            assert_eq!(markdown(&c, &nodes), md, "{src}");
+            let back = crate::migrate::from_markdown_as(&c, md, crate::migrate::Dialect::Article);
+            assert_eq!(html(&c, &back.nodes, &Options { ids: false }), html(&c, &nodes, &Options { ids: false }), "{md}");
+        }
+    }
+
+    /// The veil is the innermost delimiter, so inside a link and around bold
+    /// it reads back as the same marks. Its brackets keep whitespace inside;
+    /// a bracket of its own text is a character reference, and one in text
+    /// no veil covers stays bare, as it was written.
+    #[test]
+    fn veil_is_innermost_and_brackets_stay_bare() {
+        let c = Contract::load();
+        for (src, md) in [
+            ("<p>With <a href=\"/person/p_1\"><virtues-veil>Nick</virtues-veil></a>.</p>", "With [⟦Nick⟧](/person/p_1).\n"),
+            ("<p>At <strong><virtues-veil>the clinic</virtues-veil></strong>.</p>", "At **⟦the clinic⟧**.\n"),
+            ("<p><em>said <virtues-veil>his name</virtues-veil></em> once</p>", "*said ⟦his name⟧* once\n"),
+            ("<p>a<virtues-veil> b </virtues-veil>c</p>", "a⟦ b ⟧c\n"),
+            ("<p>A <virtues-veil>x ⟦y⟧</virtues-veil> z</p>", "A ⟦x &#10214;y&#10215;⟧ z\n"),
+            ("<p>Typed ⟦as is⟧ here.</p>", "Typed ⟦as is⟧ here.\n"),
+            ("<p><mark><virtues-veil>marked</virtues-veil></mark></p>", "==⟦marked⟧==\n"),
+        ] {
+            let nodes = tree(src);
+            assert_eq!(markdown(&c, &nodes), md, "{src}");
+            let back = crate::migrate::from_markdown_as(&c, md, crate::migrate::Dialect::Article);
+            if !src.contains("Typed") {
+                assert_eq!(html(&c, &back.nodes, &Options { ids: false }), src, "{md}");
+            }
+        }
+        // After a footnote, `(` would make a link of its marker, and `:` at
+        // a line's start a definition.
+        let nodes = tree(
+            "<p><virtues-footnote label=\"a\" note=\"n\"></virtues-footnote>: begins (x)<virtues-footnote label=\"a\" note=\"n\"></virtues-footnote>(y)</p>",
+        );
+        let md = markdown(&c, &nodes);
+        assert_eq!(md, "[^a]\\: begins (x)[^a]\\(y)\n\n[^a]: n\n");
+        let back = crate::migrate::from_markdown_as(&c, &md, crate::migrate::Dialect::Article);
+        assert_eq!(html(&c, &back.nodes, &Options { ids: false }), html(&c, &nodes, &Options { ids: false }));
+    }
+
+    /// A figure is a fence of three backticks, its values one per line in
+    /// the contract's order; a code block that would read as one takes four.
+    #[test]
+    fn a_figure_exports_as_its_fence() {
+        let c = Contract::load();
+        let nodes = tree(
+            "<virtues-figure kind=\"picture\" time=\"10:40 AM\" src=\"/api/drive/files/f_1/download\" \
+             caption=\"Rain\non the glass\" data-style=\"watercolor\" who=\"\"></virtues-figure>\
+             <pre data-language=\"figure\">kind: route</pre><pre data-language=\"figure\">not a figure</pre>",
+        );
+        assert_eq!(
+            markdown(&c, &nodes),
+            "```figure\nkind: picture\nwho: \nsrc: /api/drive/files/f_1/download\ncaption: Rain on the glass\n\
+             style: watercolor\ntime: 10:40 AM\n```\n\n````figure\nkind: route\n````\n\n```figure\nnot a figure\n```\n"
+        );
     }
 
     #[test]

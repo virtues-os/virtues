@@ -47,6 +47,7 @@
 	import { cutServerVersion, saveVersion } from "$lib/yjs/versions";
 	import { canPrint, printAlone, printThis } from "$lib/document/print";
 	import { treeAiDriver } from "$lib/ai/treeAiSession";
+	import { converterSettled } from "$lib/document/converter";
 	import {
 		mayShowKeptCopy,
 		openPageDocument,
@@ -96,6 +97,8 @@
 		format?: PageFormat;
 		/** The newest contract the server reads; absent from a box from before block pages. */
 		box_contract?: number;
+		/** `article` for a wiki article or a day page, `page` for a person's own; absent from an older box. */
+		kind?: string;
 	}
 
 	let pageData = $state<PageData | null>(null);
@@ -835,7 +838,7 @@
 						{#if refusedReason}
 							<p class="editor-refused" role="alert" data-print="hide">{refusedReason}</p>
 						{/if}
-						{#if !opened || stillLoading(opened, isSynced, refusedReason)}
+						{#if !opened || stillLoading(opened, isSynced, refusedReason) || (treeDoc && isSynced && !$converterSettled)}
 							<div class="editor-loading" data-print="hide">
 								<Icon
 									icon="ri:loader-4-line"
@@ -845,12 +848,13 @@
 								<span>Loading document...</span>
 							</div>
 						{/if}
-						{#if treeDoc && isSynced}
+						{#if treeDoc && isSynced && $converterSettled}
 							{#key pageId}
 								<DocumentEditor
 									doc={treeDoc}
 									{pageId}
 									pageTitle={title}
+									article={pageData?.kind === "article"}
 									editable={!treeDoc.readOnly}
 									ai={treeAiDriver}
 									placeholder="Start writing, or press / for commands…"

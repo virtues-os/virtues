@@ -19,10 +19,15 @@
 
 use crate::contract::Contract;
 use crate::model::{too_deep, Node, Problem, MAX_DEPTH};
+#[cfg(feature = "yjs")]
 use crate::wire::{decode_update, encode_state};
+#[cfg(feature = "yjs")]
 use crate::ydoc;
 use serde_json::{Map, Value};
-use std::collections::{HashMap, HashSet};
+#[cfg(feature = "yjs")]
+use std::collections::HashMap;
+use std::collections::HashSet;
+#[cfg(feature = "yjs")]
 use yrs::{ReadTxn, Transact, Update};
 
 /// Whether a problem refuses the update that brings it.
@@ -47,6 +52,7 @@ struct Found {
     /// Block ids seen so far, to find one used twice.
     ids: HashSet<String>,
     /// How many nodes the tree read holds ([`crate::node_count`]).
+    #[cfg(feature = "yjs")]
     nodes: usize,
 }
 
@@ -69,6 +75,7 @@ pub fn validate(c: &Contract, nodes: &[Node], parent: &str) -> Vec<Problem> {
     found.all()
 }
 
+#[cfg(feature = "yjs")]
 /// Problems with a whole Yjs document: what [`validate`] finds in its tree,
 /// plus what the tree cannot express (a root other than the fragment and
 /// `meta` holding content, plain content where a node belongs, an embed
@@ -80,6 +87,7 @@ pub fn validate_doc<T: ReadTxn>(c: &Contract, txn: &T) -> Vec<Problem> {
     found_doc(c, txn).all()
 }
 
+#[cfg(feature = "yjs")]
 fn found_doc<T: ReadTxn>(c: &Contract, txn: &T) -> Found {
     let mut problems = vec![];
     for (name, root) in txn.root_refs() {
@@ -119,6 +127,7 @@ fn found_doc<T: ReadTxn>(c: &Contract, txn: &T) -> Found {
     found
 }
 
+#[cfg(feature = "yjs")]
 /// `meta` holds one entry, the contract version as a whole number
 /// ([`ydoc::stamp_version`]), and nothing else.
 fn meta<T: ReadTxn>(txn: &T, holds_items: bool, problems: &mut Vec<Problem>) {
@@ -149,6 +158,7 @@ fn meta<T: ReadTxn>(txn: &T, holds_items: bool, problems: &mut Vec<Problem>) {
     }
 }
 
+#[cfg(feature = "yjs")]
 /// Everything `meta` holds, to tell whether an update changed it.
 fn meta_entries<T: ReadTxn>(txn: &T) -> Value {
     let Some(m) = txn.get_map(ydoc::META) else {
@@ -161,6 +171,7 @@ fn meta_entries<T: ReadTxn>(txn: &T) -> Value {
     )
 }
 
+#[cfg(feature = "yjs")]
 /// A problem's identity across an edit: its message and where it is, with
 /// positions left out, since an insert before a node moves its index.
 fn problem_key(p: &Problem) -> (String, String) {
@@ -177,6 +188,7 @@ fn problem_key(p: &Problem) -> (String, String) {
     (at, p.message.clone())
 }
 
+#[cfg(feature = "yjs")]
 /// Problems `update` would bring into `doc` that refuse it: what the
 /// document holds after the update that it did not hold before, and that no
 /// merge of edits inside the contract can make. A shape a merge can make
@@ -214,6 +226,7 @@ pub fn check_update(c: &Contract, doc: &yrs::Doc, update: &[u8]) -> anyhow::Resu
     check_update_on_state(c, &state, update)
 }
 
+#[cfg(feature = "yjs")]
 /// [`check_update`] against `state`, a document's full state as
 /// [`encode_state`] writes it: the document is read from it alone, so the
 /// check needs nothing of the document while it runs. An update that would
@@ -226,10 +239,12 @@ pub fn check_update_on_state(c: &Contract, state: &[u8], update: &[u8]) -> anyho
     Ok(problems)
 }
 
+#[cfg(feature = "yjs")]
 /// Why an update that waits on items the page lacks is not taken.
 const WAITS: &str =
     "the update holds edits that follow ones this page does not have; sync with the server first";
 
+#[cfg(feature = "yjs")]
 /// What the page's socket does with a client's update ([`admit_update_on_state`]).
 #[derive(Debug, PartialEq)]
 pub enum Admission {
@@ -247,6 +262,7 @@ pub enum Admission {
     Refused(Vec<Problem>),
 }
 
+#[cfg(feature = "yjs")]
 /// [`check_update_on_state`] as the socket acts on it: an update whose only
 /// fault is waiting on items the page lacks [`Admission::Waits`].
 pub fn admit_update_on_state(c: &Contract, state: &[u8], update: &[u8]) -> anyhow::Result<Admission> {
@@ -258,6 +274,7 @@ pub fn admit_update_on_state(c: &Contract, state: &[u8], update: &[u8]) -> anyho
     })
 }
 
+#[cfg(feature = "yjs")]
 /// The problems `update` brings into the document `state` holds, and
 /// whether it leaves edits waiting on items the document lacks.
 fn examine_update(c: &Contract, state: &[u8], update: &[u8]) -> anyhow::Result<(Vec<Problem>, bool)> {
@@ -324,6 +341,7 @@ fn examine_update(c: &Contract, state: &[u8], update: &[u8]) -> anyhow::Result<(
     Ok((problems, waits))
 }
 
+#[cfg(feature = "yjs")]
 /// What a document holds back, waiting on items it does not have, encoded
 /// so two moments can be compared.
 #[derive(PartialEq)]
@@ -333,6 +351,7 @@ struct HeldBack {
     deletes: Option<Vec<u8>>,
 }
 
+#[cfg(feature = "yjs")]
 fn held_back<T: ReadTxn>(txn: &T) -> HeldBack {
     use yrs::updates::encoder::Encode;
     let store = txn.store();
@@ -344,6 +363,7 @@ fn held_back<T: ReadTxn>(txn: &T) -> HeldBack {
     }
 }
 
+#[cfg(feature = "yjs")]
 /// Problems the contract refuses in a document's tree: what [`check_update`]
 /// refuses an update for, found in the tree itself. Empty for every tree
 /// written inside the contract, merged or not; content that reached a
@@ -357,6 +377,7 @@ pub fn refused_in_tree<T: ReadTxn>(c: &Contract, txn: &T) -> Vec<Problem> {
     refused_in_blocks(c, nodes, problems)
 }
 
+#[cfg(feature = "yjs")]
 /// [`refused_in_tree`] for `nodes`, a page's blocks as read, and the
 /// problems reading them found: for one block, read alone.
 pub(crate) fn refused_in_blocks(c: &Contract, mut nodes: Vec<Node>, read: Vec<Problem>) -> Vec<Problem> {
@@ -374,6 +395,7 @@ pub(crate) fn refused_in_blocks(c: &Contract, mut nodes: Vec<Node>, read: Vec<Pr
         .collect()
 }
 
+#[cfg(feature = "yjs")]
 /// Whether `update` changes `doc`'s `meta`, and nothing more: for a page
 /// still in markdown, whose text has no contract to check but whose `meta`
 /// is the server's all the same.
@@ -606,7 +628,7 @@ fn attrs<'a>(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "yjs"))]
 mod tests {
     use super::*;
     use crate::ingest::{parse, Mode};
@@ -658,6 +680,25 @@ mod tests {
             msgs.iter().any(|m| m.contains("`details` is not part")),
             "{msgs:?}"
         );
+    }
+
+    /// A list item's own number is an int as any other: held in an ordered
+    /// list, a bullet list (where a list made bullets keeps it) and an
+    /// item whose number only repeats the count, all of which an editor
+    /// writes; refused as text or past what a browser holds exactly.
+    #[test]
+    fn an_items_own_number_is_checked_as_an_int() {
+        let c = Contract::load();
+        let mut nodes = tree("<ol start=\"2019\"><li>a</li><li value=\"2021\">b</li></ol><ul><li>c</li></ul>");
+        nodes[0].content[0].attrs.insert("value".into(), json!(2019));
+        nodes[1].content[0].attrs.insert("value".into(), json!(-4));
+        assert_eq!(validate(&c, &nodes, "doc"), []);
+        for bad in [json!("2021"), json!(1.5), json!(crate::contract::MAX_INT + 1), json!(true)] {
+            let mut nodes = nodes.clone();
+            nodes[0].content[1].attrs.insert("value".into(), bad.clone());
+            let problems = validate(&c, &nodes, "doc");
+            assert!(problems.iter().any(|p| p.message.contains("`value`")), "{bad}: {problems:?}");
+        }
     }
 
     #[test]

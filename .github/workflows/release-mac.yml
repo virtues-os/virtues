@@ -136,10 +136,12 @@ jobs:
           mv "$tmp" tauri.conf.json
           echo "tauri.conf.json version → $(jq -r .version tauri.conf.json)"
 
+      # wasm32 for the page editor's markdown converter, which the UI bake's
+      # `pnpm build` builds (apps/web/scripts/build-converter.mjs).
       - name: Install Rust (universal targets)
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2
         with:

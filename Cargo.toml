@@ -9,6 +9,7 @@ members = [
     "crates/virtues-reach-client",
     "crates/virtues-registry",
     "crates/virtues-document",
+    "crates/virtues-document-wasm",
     "crates/virtues-qnnd",
     "crates/virtues-qairt",
     "applets",
@@ -76,6 +77,19 @@ lto = "thin"
 inherits = "release"
 opt-level = 2
 lto = false
+
+# The editor's converter, crates/virtues-document-wasm built for
+# wasm32-unknown-unknown (apps/web/scripts/build-converter.mjs). `s` over `z`:
+# a 256 KiB paste converts in about three quarters of the time for 7% more
+# bytes (437 KB gzip against 407 KB). `panic = "abort"` makes a panic a trap
+# the page answers by pasting text; nothing unwinds across the module's edge.
+[profile.wasm]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
 
 [profile.dev]
 opt-level = 0

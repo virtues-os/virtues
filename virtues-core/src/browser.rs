@@ -149,7 +149,7 @@ pub async fn run_tool(name: &str, args: Value) -> ToolResult {
 pub async fn ws_handler(ws: WebSocketUpgrade, headers: HeaderMap) -> Response {
     // A page from another origin must not register itself as the owner's
     // browser. The app's shell connects with no Origin at all.
-    if let Some(refused) = crate::server::refuse_foreign_socket(&headers, "browser") {
+    if let Some(refused) = crate::server::refuse_foreign_socket(&headers, "browser", &[]) {
         return refused;
     }
     ws.on_upgrade(serve).into_response()
