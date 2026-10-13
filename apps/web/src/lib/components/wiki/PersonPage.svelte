@@ -17,7 +17,11 @@
 	import Markdown from "$lib/components/Markdown.svelte";
 	import AliasEditor from "./AliasEditor.svelte";
 	import Button from "$lib/components/Button.svelte";
-	import { updatePerson } from "$lib/wiki/api";
+	import { updatePerson, samePeople, mergePerson, type SamePersonApi } from "$lib/wiki/api";
+	import TextAction from "$lib/components/TextAction.svelte";
+	import { uploadMedia } from "$lib/api/client";
+	import { contextMenu } from "$lib/stores/contextMenu.svelte";
+	import PersonPicture from "./PersonPicture.svelte";
 
 	interface Props {
 		/**
@@ -101,6 +105,114 @@
 		}
 	}
 
+	// ── the picture ───────────────────────────────────────────────────────
+	// Comes from their contact card until you choose one here. A picture you
+	// choose, or your removing one, is yours: a contact photo never replaces
+	// it (the server records whose it is). Seeded once, like the bond.
+	let picture = $state(untrack(() => page.picture));
+	let pictureBusy = $state(false);
+	let pictureError = $state<string | null>(null);
+	let pictureButton: HTMLButtonElement | null = $state(null);
+	let pictureInput: HTMLInputElement | null = $state(null);
+
+	/** The cover picker's limit, and the same media store. */
+	const MAX_PICTURE_BYTES = 20 * 1024 * 1024;
+
+	function choosePicture() {
+		pictureInput?.click();
+	}
+
+	function pictureMenu() {
+		if (!picture || !pictureButton) {
+			choosePicture();
+			return;
+		}
+		const r = pictureButton.getBoundingClientRect();
+		contextMenu.show(
+			{ x: r.left, y: r.bottom },
+			[
+				{ id: "choose", label: "Choose a new picture", icon: "ri:image-add-line", action: choosePicture },
+				{
+					id: "remove",
+					label: "Remove picture",
+					description: "A photo from your contacts won't take its place",
+					icon: "ri:delete-bin-line",
+					action: () => savePicture(""),
+				},
+			],
+			{ anchor: { x: r.left, y: r.top, width: r.width, height: r.height }, placement: "bottom-start" },
+		);
+	}
+
+	/** Save a picture URL, or "" to remove it. */
+	async function savePicture(next: string) {
+		pictureBusy = true;
+		pictureError = null;
+		const saved = await updatePerson(page.id, { picture: next });
+		pictureBusy = false;
+		if (saved) picture = saved.picture;
+		else pictureError = "Your server couldn't save the picture. Try again.";
+	}
+
+	async function onPicturePicked(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = ""; // so choosing the same file again still fires
+		if (!file) return;
+		if (!file.type.startsWith("image/")) {
+			pictureError = "That file isn't an image. Choose a JPEG, PNG, or WebP.";
+			return;
+		}
+		if (file.size > MAX_PICTURE_BYTES) {
+			pictureError = "That image is over 20 MB. Choose a smaller one.";
+			return;
+		}
+		pictureBusy = true;
+		pictureError = null;
+		let url: string;
+		try {
+			url = (await uploadMedia(file)).url;
+		} catch {
+			pictureBusy = false;
+			pictureError = "Couldn't upload that image to your server. Try again.";
+			return;
+		}
+		await savePicture(url);
+	}
+
+	// ── the same person ───────────────────────────────────────────────────
+	// Someone else who holds one of this person's numbers or addresses,
+	// almost always a second contact card for the same human. A number two
+	// people hold reaches neither page, so its messages wait on this choice.
+	// Only you merge: nothing is offered here that you did not confirm.
+	let same = $state<SamePersonApi[]>([]);
+	let confirming = $state<string | null>(null);
+	let merging = $state(false);
+	let mergeError = $state<string | null>(null);
+
+	$effect(() => {
+		const id = page.id;
+		void samePeople(id).then((rows) => {
+			if (page.id === id) same = rows;
+		});
+	});
+
+	function sharedWhat(other: SamePersonApi): string {
+		const numbers = other.handles.every((h) => h.startsWith("+"));
+		const one = other.handles.length === 1;
+		if (numbers) return one ? "number" : "numbers";
+		return one ? "address" : "addresses";
+	}
+
+	async function confirmMerge(other: SamePersonApi) {
+		merging = true;
+		mergeError = null;
+		const ok = await mergePerson(other.id, page.id);
+		merging = false;
+		if (ok) location.reload();
+		else mergeError = `Your server couldn't merge ${other.name} into ${page.name}. Try again.`;
+	}
+
 	/** "1948 – 2019" under the name once a death is recorded; birthday alone
 	 *  stays where it was (the About list). */
 	const lifespan = $derived.by(() => {
@@ -116,18 +228,62 @@
 		<div class="person-content">
 			<!-- Header -->
 			<header class="person-header">
-				<h1 class="person-title">{page.name}</h1>
-				{#if page.nickname && page.nickname !== page.name}
-					<p class="person-subtitle">"{page.nickname}"</p>
-				{/if}
-				<div class="person-meta">
-					<span class="meta-badge">{relationship}</span>
-					{#if lifespan}
-						<span class="meta-sep">·</span>
-						<span class="meta-lifespan">{lifespan}</span>
+				<button
+					bind:this={pictureButton}
+					type="button"
+					class="picture-button"
+					class:busy={pictureBusy}
+					disabled={pictureBusy}
+					onclick={pictureMenu}
+					aria-label={picture ? `Change or remove ${page.name}'s picture` : `Add a picture of ${page.name}`}
+					title={picture ? "Change picture" : "Add a picture"}
+				>
+					<PersonPicture name={page.name} {picture} size={64} />
+				</button>
+				<input bind:this={pictureInput} type="file" accept="image/*" hidden onchange={onPicturePicked} />
+				<div class="person-heading">
+					<h1 class="person-title">{page.name}</h1>
+					{#if page.nickname && page.nickname !== page.name}
+						<p class="person-subtitle">"{page.nickname}"</p>
 					{/if}
+					<div class="person-meta">
+						<span class="meta-badge">{relationship}</span>
+						{#if lifespan}
+							<span class="meta-sep">·</span>
+							<span class="meta-lifespan">{lifespan}</span>
+						{/if}
+					</div>
 				</div>
 			</header>
+			{#if pictureError}
+				<p class="picture-error" role="alert">{pictureError}</p>
+			{/if}
+
+			{#each same as other (other.id)}
+				<div class="same-person">
+					{#if confirming === other.id}
+						<p>
+							Merge {other.name} into {page.name}? Their messages, notes and pins move to
+							this page, and {other.name}'s page goes away. You can't undo this.
+						</p>
+						<div class="same-actions">
+							<Button variant="primary" size="sm" onclick={() => confirmMerge(other)} loading={merging}>
+								Merge into {page.name}
+							</Button>
+							<Button variant="ghost" size="sm" onclick={() => (confirming = null)} disabled={merging}>
+								Cancel
+							</Button>
+						</div>
+						{#if mergeError}<p class="same-error" role="alert">{mergeError}</p>{/if}
+					{:else}
+						<p>
+							{other.name} has the same {sharedWhat(other)} in your contacts.{#if other.messages > 0}
+								{" "}{other.messages.toLocaleString()} messages from it show on neither page.{/if}
+							<TextAction inline onclick={() => (confirming = other.id)}>Same person?</TextAction>
+						</p>
+					{/if}
+				</div>
+			{/each}
 
 			<!-- The bond: authored, above everything observed. -->
 			<div class="bond">
@@ -313,9 +469,71 @@
 		padding-bottom: 4rem;
 	}
 
+	/* Same person */
+	.same-person {
+		margin: 0 0 1rem;
+		padding: 0.75rem 1rem;
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		font-size: 0.875rem;
+		color: var(--color-foreground-muted);
+	}
+
+	.same-person p {
+		margin: 0;
+	}
+
+	.same-actions {
+		display: flex;
+		gap: 0.5rem;
+		margin-top: 0.625rem;
+	}
+
+	.same-error {
+		margin-top: 0.5rem !important;
+		color: var(--color-error);
+	}
+
 	/* Header */
 	.person-header {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
 		margin-bottom: 1rem;
+	}
+
+	.person-heading {
+		min-width: 0;
+	}
+
+	.picture-button {
+		flex-shrink: 0;
+		display: inline-flex;
+		padding: 0;
+		border: none;
+		border-radius: 50%;
+		background: none;
+		cursor: pointer;
+	}
+
+	.picture-button:hover {
+		opacity: 0.85;
+	}
+
+	.picture-button:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+
+	.picture-button.busy {
+		opacity: 0.5;
+		cursor: progress;
+	}
+
+	.picture-error {
+		margin: -0.5rem 0 1rem;
+		font-size: 0.8125rem;
+		color: var(--color-error);
 	}
 
 	.person-title {

@@ -191,6 +191,13 @@ above. It is shared across the virtues repos so that `target/` (~67GB when it
 sprawls) is not duplicated per checkout. Cargo finds the config by walking up
 from the working directory.
 
+Because every workspace links into that one directory, **a binary name must be
+unique across all of them.** Two bins with one name overwrite each other's
+`debug/<name>`, and cargo restores the right one only on its next build of that
+package — anything that execs the path in between runs the wrong program. The
+Mac app's bin is `virtues-app` for this reason; it still ships as `virtues`
+through `mainBinaryName`.
+
 Do not move this setting to `~/.cargo/config.toml`. Other unrelated Rust
 projects live on this machine, and `cargo clean` in any of them deletes the
 whole shared target directory.

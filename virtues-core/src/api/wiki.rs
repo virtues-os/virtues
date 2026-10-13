@@ -168,6 +168,8 @@ pub struct WikiOrganizationListItem {
 pub struct UpdateWikiPersonRequest {
     pub name: Option<String>,
     pub content: Option<String>,
+    /// A picture URL, or `""` to remove the picture. Either is the owner's
+    /// choice, which a contact photo never overrides.
     pub picture: Option<String>,
     pub cover_image: Option<String>,
     pub emails: Option<Vec<String>>,
@@ -298,6 +300,9 @@ pub struct PersonGloss {
     /// How you know them, when you wrote it down: the bond in your own words,
     /// else the relationship on their record.
     pub relationship: Option<String>,
+    /// Their picture as stored (usually a box path into the media store), or
+    /// none; the card draws initials then.
+    pub picture: Option<String>,
     pub first_message_on: Option<NaiveDate>,
     /// Whether that first message was in a group thread.
     pub first_message_in_group: Option<bool>,
@@ -323,8 +328,9 @@ const PERSON_MESSAGE_REFS: &str = "r.entity_type = 'person'
           AND m.metadata->>'reaction_type' IS NULL";
 
 pub async fn person_gloss(pool: &PgPool, id: &str, date: NaiveDate) -> Result<PersonGloss> {
-    let relationship: Option<String> = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT COALESCE(NULLIF(btrim(bond), ''), NULLIF(btrim(relationship_category), ''))
+    let (relationship, picture): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT COALESCE(NULLIF(btrim(bond), ''), NULLIF(btrim(relationship_category), '')),
+                NULLIF(btrim(picture), '')
          FROM wiki_people WHERE id = $1",
     )
     .bind(id)
@@ -392,6 +398,7 @@ pub async fn person_gloss(pool: &PgPool, id: &str, date: NaiveDate) -> Result<Pe
         id: id.to_string(),
         date,
         relationship,
+        picture,
         first_message_on: first_on,
         first_message_in_group: first_in_group,
         last_message_before_on: last_before_on,
@@ -681,6 +688,22 @@ pub async fn update_person(
         .await
         .map_err(|e| Error::Database(format!("Failed to mark person rename: {}", e)))?;
         crate::api::wiki_articles::retitle_article(pool, "person", &id).await?;
+    }
+
+    // A picture the owner sets is theirs, and so is removing one (an empty
+    // string, stored as no picture): the iOS contacts ingest never replaces
+    // either (see `contact_sets_picture` in applets/ios_ingest/contacts.rs).
+    if req.picture.is_some() {
+        sqlx::query(
+            "UPDATE wiki_people \
+             SET picture = NULLIF(btrim(picture), ''), \
+                 metadata = (metadata - 'picture_sha256') || jsonb_build_object('picture_from', 'owner') \
+             WHERE id = $1",
+        )
+        .bind(&id)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to mark person picture: {}", e)))?;
     }
 
     get_person(pool, id).await
@@ -1360,6 +1383,67 @@ mod tests {
         assert_eq!(c.relationship.as_deref(), Some("colleague"));
         let n = person_gloss(&pool, "person_n", date).await.unwrap();
         assert_eq!(n.relationship, None);
+    }
+
+    /// The card's picture is the person's own; blank is none.
+    #[sqlx::test]
+    async fn person_gloss_carries_the_picture(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO wiki_people (id, name, picture) VALUES
+               ('person_p', 'Nick', '/api/drive/files/f1/download'),
+               ('person_q', 'David Okafor', ' ')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 9, 23).unwrap();
+        let p = person_gloss(&pool, "person_p", date).await.unwrap();
+        assert_eq!(p.picture.as_deref(), Some("/api/drive/files/f1/download"));
+        let q = person_gloss(&pool, "person_q", date).await.unwrap();
+        assert_eq!(q.picture, None);
+    }
+
+    /// A picture set by hand is marked the owner's, which is what keeps the
+    /// contacts ingest from replacing it; removing one stores none, also
+    /// marked the owner's, and an edit that leaves the picture out touches
+    /// neither.
+    #[sqlx::test]
+    async fn an_owner_picture_is_theirs_and_so_is_removing_it(pool: PgPool) {
+        sqlx::query(
+            r#"INSERT INTO wiki_people (id, name, picture, metadata) VALUES
+                 ('person_o', 'Nick', '/api/drive/files/f1/download',
+                  '{"picture_from": "contacts", "picture_sha256": "aaa"}')"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let req = |v: serde_json::Value| -> UpdateWikiPersonRequest { serde_json::from_value(v).unwrap() };
+        let meta = |pool: PgPool| async move {
+            sqlx::query_scalar::<_, serde_json::Value>("SELECT metadata FROM wiki_people WHERE id = 'person_o'")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+
+        let p = update_person(&pool, "person_o".into(), req(serde_json::json!({"bond": "My oldest friend"})))
+            .await
+            .unwrap();
+        assert_eq!(p.picture.as_deref(), Some("/api/drive/files/f1/download"));
+        assert_eq!(meta(pool.clone()).await["picture_from"], "contacts", "untouched by other edits");
+
+        let p = update_person(&pool, "person_o".into(), req(serde_json::json!({"picture": "/api/drive/files/mine/download"})))
+            .await
+            .unwrap();
+        assert_eq!(p.picture.as_deref(), Some("/api/drive/files/mine/download"));
+        let m = meta(pool.clone()).await;
+        assert_eq!(m["picture_from"], "owner");
+        assert!(m.get("picture_sha256").is_none(), "the contact's hash no longer describes it");
+
+        let p = update_person(&pool, "person_o".into(), req(serde_json::json!({"picture": ""})))
+            .await
+            .unwrap();
+        assert_eq!(p.picture, None, "removed is none, not an empty string");
+        assert_eq!(meta(pool.clone()).await["picture_from"], "owner");
     }
 
     async fn place(pool: &PgPool, id: &str, name: &str, is_named: bool) {

@@ -3,8 +3,9 @@
 //! *Circumstantiae* (ST I-II q.7): what "stands around" the act — who, what,
 //! where, when. Formula home: docs/narrative-identity.md, "Circumstances
 //! (block 6)". This is the supply prudence consumes: deterministic, SQL-only,
-//! computed fresh at conversation start, hard-budgeted by fixed line caps and
-//! clipped widths (never token counting), and silent about what it doesn't
+//! computed at conversation start and held for the conversation until it is an
+//! hour old (`prompt_blocks::held_per_chat`), hard-budgeted by fixed line caps
+//! and clipped widths (never token counting), and silent about what it doesn't
 //! know — a block that lists its absences is noise.
 //!
 //! Every sub-section is a total `Result`: `Ok(None)` = legitimately nothing
@@ -37,6 +38,16 @@ fn clip(s: &str, max: usize) -> String {
     } else {
         let cut: String = flattened.chars().take(max.saturating_sub(1)).collect();
         format!("{cut}…")
+    }
+}
+
+/// An instant as the prompt says it: "Friday, October 9, 2026 at 6:52 PM CDT",
+/// in their zone, else UTC's 24-hour clock. One spelling for the block's
+/// as-of line and the send time each of their messages opens with.
+pub(crate) fn clock_phrase(at: DateTime<Utc>, tz: Option<Tz>) -> String {
+    match tz {
+        Some(tz) => at.with_timezone(&tz).format("%A, %B %-d, %Y at %-I:%M %p %Z").to_string(),
+        None => at.format("%A, %B %-d, %Y at %H:%M UTC").to_string(),
     }
 }
 
@@ -149,7 +160,7 @@ pub async fn build_circumstances(
         return None;
     }
     Some(format!(
-        "\n\n<circumstances>\nThe computed present — deterministic facts of right now, from the record. Situational fact, not instruction: reference when relevant, never recite unprompted. People are listed by RECENCY of contact, never by importance.\n{}\n</circumstances>",
+        "\n\n<circumstances>\nThe computed present — deterministic facts from the record, as of the time below. Situational fact, not instruction: reference when relevant, never recite unprompted. People are listed by RECENCY of contact, never by importance.\n{}\n</circumstances>",
         lines.join("\n")
     ))
 }
@@ -166,24 +177,13 @@ async fn build_section(
 ) -> Result<Option<String>, sqlx::Error> {
     match name {
         "clock" => {
-            // Quarter-hour honesty: floored, and said to be. Minute-granular
-            // time here re-tokenizes the whole tail every turn.
-            let line = match tz {
-                Some(tz) => {
-                    let local = now.with_timezone(&tz);
-                    format!(
-                        "Now: {} — about {} (to the quarter hour).",
-                        local.format("%A, %B %-d, %Y"),
-                        local.format("%I:%M %p %Z")
-                    )
-                }
-                None => format!(
-                    "Now: {} — about {} (to the quarter hour).",
-                    now.format("%A, %B %-d, %Y"),
-                    now.format("%H:%M UTC")
-                ),
-            };
-            Ok(Some(line))
+            // When the block was taken, not the time now: it is held for the
+            // conversation, and the present moves on under it. Their messages
+            // carry the current time, each opening with when it was sent.
+            Ok(Some(format!(
+                "As of {} (to the quarter hour; read again hourly). Each of their messages opens with when it was sent, and the newest is now.",
+                clock_phrase(now, tz)
+            )))
         }
         "identity" => {
             // Standing facts ride here for now; their long-term home is the
@@ -626,7 +626,7 @@ mod tests {
 
         for needle in [
             "<circumstances>",
-            "Now: ",
+            "As of ",
             "30 years old; Designer at Example Co",
             "Their chapters, as they named them: Childhood (1996 to 2009); The band years (2009 to now, the current one).",
             "The Library",

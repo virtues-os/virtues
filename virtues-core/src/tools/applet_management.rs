@@ -195,7 +195,19 @@ pub async fn delete_applet(
     })))
 }
 
-/// `run_applet` — dispatch an action manually with `trigger = "tool"`.
+/// The trigger a `run_applet` call runs under. The owner typing
+/// `virtues applet run` is a manual run, the same as the app's Run button;
+/// the model calling the tool from chat is `tool`, which an applet has to
+/// opt into (sync applets allow only `cron` and `manual`).
+fn run_trigger(context: &ToolContext) -> &'static str {
+    if context.console {
+        "manual"
+    } else {
+        "tool"
+    }
+}
+
+/// `run_applet` — dispatch an action now, under [`run_trigger`].
 /// Optional `payload` is forwarded to the runner; optional `date` is merged
 /// into the action's `config.date` for actions that accept a date override
 /// (e.g. `day_summary_eod`).
@@ -203,7 +215,7 @@ pub async fn run_applet(
     pool: &PgPool,
     yjs: &YjsState,
     arguments: serde_json::Value,
-    _context: &ToolContext,
+    context: &ToolContext,
 ) -> Result<ToolResult, ToolError> {
     let id = arguments
         .get("id")
@@ -232,7 +244,7 @@ pub async fn run_applet(
         yjs: yjs.clone(),
     };
 
-    let result = crate::applet_runner::run_applet(&deps, id, "tool", payload.as_ref())
+    let result = crate::applet_runner::run_applet(&deps, id, run_trigger(context), payload.as_ref())
         .await
         .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
 
@@ -254,4 +266,20 @@ pub async fn run_applet(
         "summary": result.summary,
         "error": result.error,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_console_runs_an_applet_manually() {
+        let console = ToolContext { console: true, ..Default::default() };
+        assert_eq!(run_trigger(&console), "manual");
+    }
+
+    #[test]
+    fn chat_runs_an_applet_as_a_tool() {
+        assert_eq!(run_trigger(&ToolContext::default()), "tool");
+    }
 }

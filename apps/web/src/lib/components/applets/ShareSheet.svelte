@@ -221,6 +221,13 @@
 								: `${preview.images_left_out} images from other sites are left out; only images in your Drive go with the page.`}
 						</li>
 					{/if}
+					{#if preview.embeds_left_out}
+						<li>
+							{preview.embeds_left_out === 1
+								? '1 applet or file stays on your server.'
+								: `${preview.embeds_left_out} applets and files stay on your server.`}
+						</li>
+					{/if}
 					{#if preview.names.length}
 						<li>
 							{preview.names.length === 1

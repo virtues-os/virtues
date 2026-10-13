@@ -59,7 +59,8 @@ async fn console_tool_handler(
         format!("{:x}", h.finalize())
     };
     let exec = ToolExecutor::new_with_yjs(state.db.pool().clone(), state.yjs_state.clone());
-    let outcome = exec.execute(&tool, arguments, &ToolContext::default()).await;
+    let context = ToolContext { console: true, ..Default::default() };
+    let outcome = exec.execute(&tool, arguments, &context).await;
 
     let (status, body) = match outcome {
         Ok(result) => {

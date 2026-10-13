@@ -62,7 +62,7 @@ permissions:
 
 env:
   # MUST match release-linux.yml. See the note above about drift.
-  LLAMA_CPP_TAG: b9606
+  LLAMA_CPP_TAG: b11507
 
 jobs:
   llama:

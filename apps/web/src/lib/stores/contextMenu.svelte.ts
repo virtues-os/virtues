@@ -5,6 +5,8 @@
  * Components call contextMenu.show() with their items, and ContextMenuProvider renders them.
  */
 
+import { fitMenu } from '$lib/components/contextMenu/fit';
+
 export interface ContextMenuItem {
 	id: string;
 	label: string;
@@ -21,6 +23,11 @@ export interface ContextMenuItem {
 	submenu?: ContextMenuItem[];
 	disabled?: boolean;
 	checked?: boolean;
+	/**
+	 * A row that is one of a set of choices (a callout's kind, a column's
+	 * alignment): `checked` then reads as selected, not as "you are here".
+	 */
+	role?: 'menuitemradio' | 'menuitemcheckbox';
 	loading?: boolean;
 	variant?: 'default' | 'destructive';
 	dividerBefore?: boolean;
@@ -199,6 +206,22 @@ class ContextMenuStore {
 		this.focusedIndex = prevIndex;
 	}
 
+	/** Reach the row at `index`, when it can be chosen. */
+	focusAt(index: number) {
+		if (index >= 0 && index < this.items.length && !this.items[index].disabled) this.focusedIndex = index;
+	}
+
+	/**
+	 * A menu opened from the keyboard (Shift-F10, the menu key) starts on its
+	 * first row that can be chosen, as a menu opened so does: the focus then
+	 * names that row at once (`aria-activedescendant`), so a screen reader
+	 * says the menu opened and reads the row, and Enter chooses it. One
+	 * opened by the pointer reaches no row until a key moves.
+	 */
+	reachFirstRow() {
+		if (this.visible && this.focusedIndex < 0) this.focusNext();
+	}
+
 	/**
 	 * Activate the currently focused item
 	 */
@@ -214,39 +237,12 @@ class ContextMenuStore {
 	}
 
 	/**
-	 * Adjust position to keep menu within viewport
+	 * Where a menu with no anchor opens: at `pos`, kept inside the window and
+	 * above the software keyboard (`fitMenu`), by a size guessed until the
+	 * menu is drawn; the provider fits it again by its real size then.
 	 */
 	private adjustPosition(pos: ContextMenuPosition): ContextMenuPosition {
-		// Menu dimensions (estimate, will be refined after render)
-		const menuWidth = 200;
-		const menuHeight = 300;
-		const padding = 8;
-
-		let { x, y } = pos;
-
-		// Check if we're in a browser environment
-		if (typeof window !== 'undefined') {
-			const viewportWidth = window.innerWidth;
-			const viewportHeight = window.innerHeight;
-
-			// Adjust horizontal position
-			if (x + menuWidth + padding > viewportWidth) {
-				x = viewportWidth - menuWidth - padding;
-			}
-			if (x < padding) {
-				x = padding;
-			}
-
-			// Adjust vertical position
-			if (y + menuHeight + padding > viewportHeight) {
-				y = viewportHeight - menuHeight - padding;
-			}
-			if (y < padding) {
-				y = padding;
-			}
-		}
-
-		return { x, y };
+		return fitMenu(pos, { width: 200, height: 300 });
 	}
 }
 
