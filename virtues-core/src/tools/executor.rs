@@ -491,6 +491,9 @@ impl ToolExecutor {
             )),
             "read_asset" => self.execute_read_asset(arguments).await,
             "show" => super::show::execute(&self.sql_query, arguments, context.timezone.as_deref()).await,
+            // The chat's browsing task, run by its own loop, whose steps come
+            // back through this executor as the `browser_*` calls below.
+            crate::browse::TOOL => Ok(crate::browse::run_tool(&self._pool, &arguments, context).await),
             name if crate::browser::TOOLS.contains(&name) => {
                 Ok(crate::browser::run_tool(name, arguments).await)
             }

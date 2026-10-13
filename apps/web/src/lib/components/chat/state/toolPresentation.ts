@@ -143,7 +143,18 @@ const TOOLS: Record<string, Presentation> = {
 		},
 	},
 	read_asset: { noun: "a file", depth: 4, say: ["Opening a file", "Opened a file"] },
-	// The owner's browser, a window in the Mac app.
+	// The owner's browser, a window in the Mac app. The chat hands it a whole
+	// task; the steps are the browsing agent's, and show in the Browser's
+	// Activity row. The browser_* entries below are chats from before that.
+	browse: {
+		noun: "your browser",
+		depth: 4,
+		say: (input, live) => {
+			const host = siteIn(String(input.task ?? ""));
+			if (host) return `${live ? "Browsing" : "Browsed"} ${host}`;
+			return live ? "Using your browser" : "Used your browser";
+		},
+	},
 	browser_open: {
 		noun: "your browser",
 		depth: 4,
@@ -277,6 +288,18 @@ function plainTableName(table: string): string {
 }
 
 /** The header's budget for a model-written argument. */
+/** The first site a browsing task names, as a bare host: "united.com" from
+ *  "https://www.united.com/en/us/manageres" or from "Go to united.com and…". */
+export function siteIn(task: string): string {
+	const named = task.match(/https?:\/\/[^\s)'"]+/i)?.[0] ?? task.match(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b/i)?.[0];
+	if (!named) return "";
+	try {
+		return new URL(named.includes("://") ? named : `https://${named}`).hostname.replace(/^www\./, "");
+	} catch {
+		return "";
+	}
+}
+
 const LABEL_ARG_CHARS = 40;
 
 function fit(text: string, short: boolean): string {

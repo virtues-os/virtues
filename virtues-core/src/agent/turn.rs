@@ -10,7 +10,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::JoinHandle;
 
 use super::executor::{self, ExecutorConfig, ToolExecutionError, ToolExecutionResult};
-use super::protocol::{AgentEvent, ErrorCode, FinishReason, StepReason};
+use super::protocol::{AgentEvent, DelegatedUsage, ErrorCode, FinishReason, StepReason};
 use super::stream::{self, LlmConfig, LlmStreamResult, StepOptions, StreamError, ToolCall};
 use super::{caps, guard, TurnBudget};
 use crate::tools::{ToolContext, ToolExecutor};
@@ -69,6 +69,16 @@ impl TurnState {
     /// `reusable_tokens` is the most the cache could have served (see
     /// `cache_watch`); `cache_read_tokens` well under it is the provider's
     /// miss, and a non-empty `diverged_at` is ours.
+    /// Count what the step's tools spent on the turn's behalf (`browse`,
+    /// research workers) against the cost budget, as its own calls are.
+    pub fn record_tool_spend(&mut self, results: &[ToolExecutionResult]) {
+        for result in results {
+            if let Ok(done) = &result.result {
+                self.spent_micros += DelegatedUsage::read(&done.data).iter().map(|u| u.cost_micros).sum::<i64>();
+            }
+        }
+    }
+
     pub fn record_usage(
         &mut self,
         result: &LlmStreamResult,
@@ -388,6 +398,22 @@ mod tests {
         turn.record_usage(&usage(None), "m", None, super::super::cache_watch::sign("m", &[], &[])); // a BYO call is free here
         assert_eq!(turn.last_step(20, &budget), None);
         turn.record_usage(&usage(Some(400)), "m", None, super::super::cache_watch::sign("m", &[], &[]));
+        assert_eq!(turn.last_step(20, &budget), Some(FinishReason::BudgetExceeded));
+    }
+
+    fn spent(id: &str, cost_micros: i64) -> ToolExecutionResult {
+        let data = json!({"answer": "x", "usage": [{"model": "lite", "input_tokens": 10, "output_tokens": 1, "cost_micros": cost_micros}]});
+        ToolExecutionResult { tool_call_id: id.into(), tool_name: "browse".into(), result: Ok(ToolResult::success(data)) }
+    }
+
+    #[test]
+    fn what_a_tool_spends_for_the_turn_counts_toward_its_cost_budget() {
+        let budget = TurnBudget { max_cost_micros: Some(1_000), ..Default::default() };
+        let mut turn = TurnState::new(&budget);
+        turn.step = 1;
+        turn.record_tool_spend(&[spent("a", 600), done("b", vec![])]);
+        assert_eq!(turn.last_step(20, &budget), None);
+        turn.record_tool_spend(&[spent("c", 400)]);
         assert_eq!(turn.last_step(20, &budget), Some(FinishReason::BudgetExceeded));
     }
 

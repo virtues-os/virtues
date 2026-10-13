@@ -2450,9 +2450,10 @@ fn create_agent_stream(
         yield ("[DONE]".to_string());
 
         let usage = recorder.usage();
+        let delegated = recorder.delegated_usage().to_vec();
         let subject = recorder.subject(was_cancelled, was_unattended);
         let message = recorder.into_message(&model, agent_id, subject);
-        persist_turn(&pool, &chat_id, &model, mode.wire_name(), temporary, message, usage, Some(started_at)).await;
+        persist_turn(&pool, &chat_id, &model, mode.wire_name(), temporary, message, usage, &delegated, Some(started_at)).await;
 
         // Clean up cancellation token when stream ends
         cancel_state.remove(&chat_id, &cancel_token);
@@ -2471,6 +2472,7 @@ async fn persist_turn(
     temporary: bool,
     message: Option<ChatMessage>,
     usage: TurnUsage,
+    delegated: &[crate::agent::DelegatedUsage],
     started_at: Option<crate::types::Timestamp>,
 ) {
     if let Some(assistant_message) = message {
@@ -2529,17 +2531,8 @@ async fn persist_turn(
     // recorded in app_ai_calls below, and the one the wallet was actually
     // debited for. No estimating. Cache writes are 0 on every turn today
     // because nothing reports one, not because this assumes it.
-    let usage_data = UsageData {
-        input_tokens: usage.input_tokens as i64,
-        output_tokens: usage.output_tokens as i64,
-        reasoning_tokens: usage.reasoning_tokens as i64,
-        cache_read_tokens: usage.cache_read_tokens as i64,
-        cache_write_tokens: usage.cache_write_tokens as i64,
-        cost_micros: Some(usage.cost_micros),
-    };
-
-    // Read once and shared with the cost log below, so the two cannot
-    // disagree about which route paid for this turn.
+    // Read once and shared by every row below, so the usage table and the
+    // cost log cannot disagree about which route paid for this turn.
     //
     // The CHECKED form, because this value decides whether the box prices
     // the turn from its own catalog: a swallowed error would read as "not
@@ -2562,45 +2555,98 @@ async fn persist_turn(
             true
         }
     };
-    if temporary {
-        // Ghost: app_chat_usage keys on a chat row that does not exist.
-        // app_ai_calls below still records cost and counts, no content.
-    } else if let Err(e) = record_chat_usage(pool, chat_id.to_string(), model, usage_data, byo).await {
-        tracing::warn!(
-            chat_id = %chat_id,
-            error = %e,
-            "Failed to record chat usage"
-        );
-    }
-
-    // Box-local per-call cost log (authoritative gateway cost) for the
-    // Usage/Telemetry tabs. Best-effort — never break the response.
-    if let Err(e) = crate::api::ai_calls::record_ai_call(
-        pool,
-        &crate::api::ai_calls::AiCall {
-            // Real feature bucket: the mode's wire name (every mode shares
-            // this handler), so spend attributes correctly.
-            feature: agent_mode.to_string(),
-            model: model.to_string(),
-            prompt_tokens: usage.input_tokens as i64,
-            completion_tokens: usage.output_tokens as i64,
-            reasoning_tokens: usage.reasoning_tokens as i64,
-            cost_micros: usage.cost_micros,
-            // `stream()` diverts to the user's endpoint when BYO is set, and
-            // no upstream but our own gateway sends a cost trailer — so the
-            // cost is 0-as-unknown there, and the Usage tab must show tokens
-            // instead of "$0.00".
-            route: if byo {
-                crate::api::ai_calls::Route::Byo
-            } else {
-                crate::api::ai_calls::Route::Wallet
+    let spend = Spend { pool, chat_id, temporary, byo };
+    spend
+        .record(
+            model,
+            agent_mode,
+            UsageData {
+                input_tokens: usage.input_tokens as i64,
+                output_tokens: usage.output_tokens as i64,
+                reasoning_tokens: usage.reasoning_tokens as i64,
+                cache_read_tokens: usage.cache_read_tokens as i64,
+                cache_write_tokens: usage.cache_write_tokens as i64,
+                cost_micros: Some(usage.cost_micros),
             },
-            applet_run_id: None,
-        },
-    )
-    .await
-    {
-        tracing::warn!(chat_id = %chat_id, error = %e, "Failed to record ai_call");
+        )
+        .await;
+    // What the turn's tools spent on its behalf, each under the model that
+    // spent it: a browsing task on Lite is not the chat model's spend.
+    for spent in delegated {
+        spend
+            .record(
+                &spent.model,
+                spent.feature.as_deref().unwrap_or(agent_mode),
+                UsageData {
+                    input_tokens: spent.input_tokens as i64,
+                    output_tokens: spent.output_tokens as i64,
+                    reasoning_tokens: spent.reasoning_tokens as i64,
+                    cache_read_tokens: spent.cache_read_tokens as i64,
+                    cache_write_tokens: 0,
+                    cost_micros: Some(spent.cost_micros),
+                },
+            )
+            .await;
+    }
+}
+
+/// Where a turn's spend is written, shared by each model it spent on.
+struct Spend<'a> {
+    pool: &'a PgPool,
+    chat_id: &'a str,
+    temporary: bool,
+    byo: bool,
+}
+
+impl Spend<'_> {
+    /// One model's share of the turn: its row in the chat's usage, and its
+    /// line in the cost log.
+    async fn record(&self, model: &str, feature: &str, usage: UsageData) {
+        let (pool, chat_id) = (self.pool, self.chat_id);
+        let (prompt_tokens, completion_tokens, reasoning_tokens) =
+            (usage.input_tokens, usage.output_tokens, usage.reasoning_tokens);
+        let cost_micros = usage.cost_micros.unwrap_or(0);
+        if self.temporary {
+            // Ghost: app_chat_usage keys on a chat row that does not exist.
+            // app_ai_calls below still records cost and counts, no content.
+        } else if let Err(e) = record_chat_usage(pool, chat_id.to_string(), model, usage, self.byo).await {
+            tracing::warn!(
+                chat_id = %chat_id,
+                error = %e,
+                "Failed to record chat usage"
+            );
+        }
+
+        // Box-local per-call cost log (authoritative gateway cost) for the
+        // Usage/Telemetry tabs. Best-effort — never break the response.
+        if let Err(e) = crate::api::ai_calls::record_ai_call(
+            pool,
+            &crate::api::ai_calls::AiCall {
+                // Real feature bucket: the mode's wire name (every mode shares
+                // this handler) or the tool that spent it, so spend
+                // attributes correctly.
+                feature: feature.to_string(),
+                model: model.to_string(),
+                prompt_tokens,
+                completion_tokens,
+                reasoning_tokens,
+                cost_micros,
+                // `stream()` diverts to the user's endpoint when BYO is set, and
+                // no upstream but our own gateway sends a cost trailer — so the
+                // cost is 0-as-unknown there, and the Usage tab must show tokens
+                // instead of "$0.00".
+                route: if self.byo {
+                    crate::api::ai_calls::Route::Byo
+                } else {
+                    crate::api::ai_calls::Route::Wallet
+                },
+                applet_run_id: None,
+            },
+        )
+        .await
+        {
+            tracing::warn!(chat_id = %chat_id, error = %e, "Failed to record ai_call");
+        }
     }
 }
 
@@ -3382,6 +3428,42 @@ mod persist_turn_tests {
     const USAGE: &str = "SELECT count(*) FROM app_chat_usage WHERE chat_id = $1";
     const AI_CALLS: &str = "SELECT count(*) FROM app_ai_calls WHERE feature = $1";
 
+    /// What a tool spent for the turn is billed under the model that spent
+    /// it: its own usage row beside the chat model's, and its own cost-log
+    /// line filed under the tool.
+    #[sqlx::test]
+    async fn persist_turn_bills_a_tools_spend_under_its_own_model(pool: PgPool) {
+        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ('chat_b', 't', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (message, usage) = recorded_turn("Your flight leaves at 9:40.");
+        let browsing = crate::agent::DelegatedUsage {
+            model: "openai/lite-x".into(),
+            feature: Some("browse".into()),
+            input_tokens: 40_000,
+            output_tokens: 900,
+            cost_micros: 3_500,
+            ..Default::default()
+        };
+        persist_turn(&pool, "chat_b", "anthropic/claude-x", "chat", false, message, usage, &[browsing], None).await;
+
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT model, input_tokens FROM app_chat_usage WHERE chat_id = 'chat_b' ORDER BY model",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows, vec![("anthropic/claude-x".to_string(), 1_200), ("openai/lite-x".to_string(), 40_000)]);
+        let (model, cost): (String, i64) =
+            sqlx::query_as("SELECT model, cost_micros::bigint FROM app_ai_calls WHERE feature = 'browse'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((model.as_str(), cost), ("openai/lite-x", 3_500));
+        assert_eq!(count(&pool, AI_CALLS, "chat").await, 1, "the chat model's own line is unchanged");
+    }
+
     /// A normal turn writes its row, its per-chat usage and its ai_call, each
     /// carrying the recorder's figures.
     #[sqlx::test]
@@ -3392,7 +3474,7 @@ mod persist_turn_tests {
             .unwrap();
         let began = crate::types::Timestamp::now();
         let (message, usage) = recorded_turn("Hello.");
-        persist_turn(&pool, "chat_p", "anthropic/claude-x", "chat", false, message, usage, Some(began)).await;
+        persist_turn(&pool, "chat_p", "anthropic/claude-x", "chat", false, message, usage, &[], Some(began)).await;
 
         let (role, content, model): (String, String, Option<String>) =
             sqlx::query_as("SELECT role, content, model FROM app_chat_messages WHERE chat_id = 'chat_p'")
@@ -3439,7 +3521,7 @@ mod persist_turn_tests {
     async fn a_temporary_turn_writes_only_its_ai_call(pool: PgPool) {
         let (message, usage) = recorded_turn("Off the record.");
         assert!(message.is_some(), "the turn said something; only `temporary` keeps it out");
-        persist_turn(&pool, "chat_ghost", "anthropic/claude-x", "sudo", true, message, usage, None).await;
+        persist_turn(&pool, "chat_ghost", "anthropic/claude-x", "sudo", true, message, usage, &[], None).await;
 
         assert_eq!(count(&pool, MESSAGES, "chat_ghost").await, 0);
         assert_eq!(count(&pool, USAGE, "chat_ghost").await, 0);
@@ -3461,7 +3543,7 @@ mod persist_turn_tests {
             .unwrap();
         let (message, usage) = recorded_turn("");
         assert!(message.is_none(), "no text and no tools is no message");
-        persist_turn(&pool, "chat_e", "anthropic/claude-x", "deep_research", false, message, usage, None).await;
+        persist_turn(&pool, "chat_e", "anthropic/claude-x", "deep_research", false, message, usage, &[], None).await;
 
         assert_eq!(count(&pool, MESSAGES, "chat_e").await, 0);
         assert_eq!(count(&pool, USAGE, "chat_e").await, 1);
