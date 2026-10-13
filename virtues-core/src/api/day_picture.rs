@@ -211,11 +211,23 @@ struct Section {
     words: String,
 }
 
-/// A line as words: footnote markers, link targets and veil marks removed.
+/// A line as words: footnote markers, link targets and veil marks removed,
+/// and escapes and a hard line break read (`AT\&T` is `AT&T`): a page that
+/// holds blocks is read as its export, which escapes what would read as
+/// markup and ends a line that breaks with a backslash.
 fn plain_line(line: &str) -> String {
+    // A backslash ending the line is the export's hard line break.
+    let trailing = line.len() - line.trim_end_matches('\\').len();
+    let line = if trailing % 2 == 1 { &line[..line.len() - 1] } else { line };
     let s = FOOTNOTE_MARK.replace_all(line, "");
     let s = LINK.replace_all(&s, "$1");
-    s.replace(['⟦', '⟧'], "")
+    crate::api::wiki_editor::unescape(&s).replace(['⟦', '⟧'], "")
+}
+
+/// A veiled phrase as words: its escapes read, as [`plain_line`] reads the
+/// sentence around it, so the subject a pick names is the one the page says.
+fn veiled_words(raw: &str) -> String {
+    crate::api::wiki_editor::unescape(raw.trim()).trim().to_string()
 }
 
 /// Text as it is compared: lowercase, straight quotes, single spaces.
@@ -384,14 +396,14 @@ impl PageFacts {
         let mut names = names;
         names.extend(PERSON_LINK.captures_iter(md).filter_map(|c| {
             let text = c.get(1)?.as_str().replace(['⟦', '⟧'], "");
-            Some(text.trim().to_string())
+            Some(veiled_words(&text))
         }));
         let mut seen = std::collections::HashSet::new();
         names.retain(|n| n.chars().filter(|c| c.is_alphabetic()).count() >= 2 && seen.insert(n.clone()));
         let mut seen = std::collections::HashSet::new();
         let veiled = VEILED
             .captures_iter(md)
-            .filter_map(|c| Some(c.get(1)?.as_str().trim().to_string()))
+            .filter_map(|c| Some(veiled_words(c.get(1)?.as_str())))
             .filter(|v| !v.is_empty() && seen.insert(fold(v)))
             .collect();
         PageFacts {
@@ -589,7 +601,8 @@ pub(crate) fn candidates(md: &str, facts: &PageFacts) -> Vec<Candidate> {
         let mut seen = std::collections::HashSet::new();
         for (line, words) in &own {
             for c in VEILED.captures_iter(line) {
-                let phrase = c[1].trim();
+                let phrase = veiled_words(&c[1]);
+                let phrase = phrase.as_str();
                 if !paintable_place(phrase, facts) || !seen.insert(fold(phrase)) {
                     continue;
                 }
@@ -1059,7 +1072,8 @@ pub(crate) fn carry_pictures(before: &str, draft: &str) -> String {
 /// Whether the article's edition (`machine_text`) takes the picture too, so a
 /// picture never makes a page look edited by its owner: when the page is the
 /// edition, or when the page has no edition and nothing says the owner
-/// touched it.
+/// touched it. On a page that holds blocks both texts come in as this server
+/// compares them (`block_move::as_compared`).
 pub(crate) fn edition_follows(live: &str, machine_text: Option<&str>, has_your_edits: bool) -> bool {
     match machine_text {
         Some(edition) => live == edition,
@@ -1258,10 +1272,11 @@ where
 
 /// Set a figure block into the page at the end of its section, through the
 /// editor's document, as `day_summary::apply_day_rewrite` writes: the page's
-/// write turn, the page read live, a restore point, the change by line, and
-/// a version credited to the server. The edition follows only as
-/// [`edition_follows`] says. A section that has gone, or that holds a picture
-/// by now, is nothing to paint.
+/// write turn, the page read live, a restore point, the change (by line, or
+/// on a block page the figure's one block), and a version credited to the
+/// server. The edition follows only as [`edition_follows`] says, and is then
+/// what the write left. A section that has gone, or that holds a picture by
+/// now, is nothing to paint.
 pub(crate) async fn set_into_page(
     pool: &PgPool,
     yjs: &YjsState,
@@ -1272,13 +1287,16 @@ pub(crate) async fn set_into_page(
     use crate::server::yjs::TextWriteError;
 
     let _turn = yjs.write_turn(&page.page_id).await;
-    let live = yjs
-        .read_text(&page.page_id)
+    let current = yjs
+        .text_and_state(&page.page_id)
         .await
         .map_err(|e| Error::Other(format!("could not read the page: {e}")))?;
+    let live = current.text;
     let Some(next) = insert_picture(&live, section, block) else {
         return Ok(PaintOutcome::NothingToPaint);
     };
+    // Read after the page: building its document can move an article nobody
+    // had opened to blocks, which rebases its edition.
     let machine_text: Option<String> =
         sqlx::query_scalar("SELECT machine_text FROM wiki_articles WHERE id = $1")
             .bind(&page.article_id)
@@ -1287,7 +1305,18 @@ pub(crate) async fn set_into_page(
     let Some(now) = day_summary::day_page(pool, page.date).await? else {
         return Ok(PaintOutcome::NothingToPaint);
     };
-    let follows = edition_follows(&live, machine_text.as_deref(), now.has_your_edits);
+    let format = if current.tree.is_some() {
+        crate::api::pages::PageFormat::Tree
+    } else {
+        crate::api::pages::PageFormat::Markdown
+    };
+    let follows = match machine_text {
+        Some(edition) => {
+            let both = crate::api::block_move::compared(format, true, vec![live.clone(), edition]).await;
+            edition_follows(&both[0], Some(&both[1]), now.has_your_edits)
+        }
+        None => edition_follows(&live, None, now.has_your_edits),
+    };
 
     crate::api::pages::cut_restore_point(pool, yjs, &page.page_id).await?;
     let (written, saved) = match yjs.replace_text(&page.page_id, &live, &next).await {
@@ -1302,7 +1331,9 @@ pub(crate) async fn set_into_page(
             tracing::error!(date = %page.date, error = %error, "the picture is on the page but not saved yet");
             (written, false)
         }
-        Err(TextWriteError::Other(e)) => return Ok(PaintOutcome::Failed(e)),
+        Err(e @ (TextWriteError::SuggestionKept | TextWriteError::Other(_))) => {
+            return Ok(PaintOutcome::Failed(e.to_string()))
+        }
     };
 
     // The page has changed: nothing below may say it did not.
@@ -1522,6 +1553,31 @@ mod tests {
         assert_eq!(c.subject, "St. Paul's Cathedral");
         // A curly apostrophe is the same place.
         assert!(check(&pick("Morning at the cathedral", "St. Paul’s Cathedral", SCENE, "A wet morning at St. Paul’s Cathedral."), &facts()).is_ok());
+    }
+
+    /// A page that holds blocks is read as its export, which escapes what
+    /// would read as markup (`⟦AT\&T Stadium⟧`). The place is offered, and
+    /// passes, as the page says it: read as written, the subject carried
+    /// the backslash, a caption naming the place plainly was refused, and
+    /// one copying the backslash showed it under the picture.
+    #[test]
+    fn a_place_holding_an_escape_is_named_as_the_page_reads() {
+        let written = "We went to the game.\n\n## At the game[^cx-1]\n\nYou watched the match at ⟦AT&T Stadium⟧ under the lights.[^ev-1]\n\n[^cx-1]: 7:00 PM–10:00 PM\n[^ev-1]: Location · 7:10 PM\n";
+        let export = virtues_document::to_markdown(&virtues_document::parse_own_article_markdown(written).nodes);
+        assert!(export.contains("⟦AT\\&T Stadium⟧"), "{export}");
+        let facts = PageFacts::read(&export, Vec::new());
+        let found = candidates(&export, &facts);
+        let stadium = found.iter().find(|c| c.subject.contains("Stadium")).expect("the stadium is offered");
+        assert_eq!(stadium.subject, "AT&T Stadium");
+        assert_eq!(stadium.sentence, "You watched the match at AT&T Stadium under the lights.");
+        assert!(!director_page(&export).contains('\\'), "{}", director_page(&export));
+        let pick = Pick {
+            candidate: found.iter().position(|c| c.subject == "AT&T Stadium").unwrap() + 1,
+            scene: "AT&T Stadium at night under bright lights, a few small figures far off in the stands.".into(),
+            caption: "A night game at AT&T Stadium.".into(),
+        };
+        let checked = check_pick(&pick, &found, &facts).expect("passes");
+        assert_eq!(checked.caption, "A night game at ⟦AT&T Stadium⟧.");
     }
 
     #[test]
@@ -2092,4 +2148,91 @@ mod tests {
         assert!(check(&p, &f).is_ok());
     }
 
+    /// A picture set into a day page that holds blocks is one new block:
+    /// every block already there keeps its id, and the figure lands at the
+    /// end of its section.
+    #[sqlx::test]
+    async fn a_picture_on_a_tree_page_is_one_insert(pool: PgPool) {
+        let page = day_with_page(&pool, NaiveDate::from_ymd_opt(2026, 9, 12).unwrap(), PAGE).await;
+        let yjs = YjsState::with_tree_articles(pool.clone(), true);
+        let before = yjs.read_tree(&page.page_id).await.unwrap();
+        let block = figure_block("/api/drive/files/f_1/download", "Rain.", Style::Oil, None);
+
+        let out = set_into_page(&pool, &yjs, &page, "the walk home", &block).await.unwrap();
+        assert!(matches!(out, PaintOutcome::Painted { version: Some(_) }), "{out:?}");
+        let after = yjs.read_tree(&page.page_id).await.unwrap();
+        let ids = |tree: &[virtues_document::Node]| -> Vec<String> {
+            tree.iter().filter_map(|n| n.id().map(str::to_string)).collect()
+        };
+        assert_eq!(after.len(), before.len() + 1);
+        let new: Vec<&virtues_document::Node> = after
+            .iter()
+            .filter(|n| !ids(&before).iter().any(|id| Some(id.as_str()) == n.id()))
+            .collect();
+        assert_eq!(new.len(), 1, "one new block");
+        assert_eq!(new[0].kind, "figure");
+        assert_eq!(after.last().map(|n| n.kind.as_str()), Some("figure"), "at the end of its section");
+        let mut kept = ids(&after);
+        kept.retain(|id| Some(id.as_str()) != new[0].id());
+        assert_eq!(kept, ids(&before), "every block already there keeps its id");
+        let now = content(&pool, &page.page_id).await;
+        assert!(holds_picture(&now), "{now}");
+        assert_eq!(machine_text(&pool, &page).await.as_deref(), Some(now.as_str()), "the edition takes the picture");
+    }
+
+    /// A picture set into one section leaves the owner's pending suggestion
+    /// in another as it was: the page is written back through its export,
+    /// which says the suggestion as CriticMarkup, and a block that export
+    /// shows as it stands is left alone, suggestion and all. Read as a
+    /// writer's, the suggestion came back accepted, deciding it for the
+    /// owner with no model involved.
+    #[sqlx::test]
+    async fn a_picture_leaves_a_pending_suggestion_as_it_was(pool: PgPool) {
+        let with = PAGE.replace(
+            "You walked back along the river.[^ev-4]",
+            "You walked back {--along the river--}{++by the canal++}.[^ev-4]",
+        );
+        let page = day_with_page(&pool, NaiveDate::from_ymd_opt(2026, 9, 14).unwrap(), &with).await;
+        let yjs = YjsState::with_tree_articles(pool.clone(), true);
+        let suggested = |tree: &[virtues_document::Node]| {
+            let html = virtues_document::to_html(tree, false);
+            html.contains(">along the river</virtues-del>") && html.contains(">by the canal</virtues-ins>")
+        };
+        assert!(suggested(&yjs.read_tree(&page.page_id).await.unwrap()), "the move keeps it a suggestion");
+
+        let block = figure_block("/api/drive/files/f_1/download", "Rain.", Style::Oil, None);
+        let out = set_into_page(&pool, &yjs, &page, "morning at the cathedral", &block).await.unwrap();
+        assert!(matches!(out, PaintOutcome::Painted { .. }), "{out:?}");
+        let after = yjs.read_tree(&page.page_id).await.unwrap();
+        assert!(suggested(&after), "{}", virtues_document::to_html(&after, false));
+        let now = content(&pool, &page.page_id).await;
+        assert!(holds_picture(&now), "{now}");
+        assert!(now.contains("You walked back {--along the river--}{++by the canal++}."), "{now}");
+    }
+
+    /// The edition follows a picture on a page that holds blocks whenever
+    /// the page is the edition as this server writes both, whatever the
+    /// spelling the edition was recorded in.
+    #[sqlx::test]
+    async fn the_edition_follows_on_a_tree_page(pool: PgPool) {
+        let page = day_with_page(&pool, NaiveDate::from_ymd_opt(2026, 9, 13).unwrap(), PAGE).await;
+        let yjs = YjsState::with_tree_articles(pool.clone(), true);
+        let export = yjs.read_text(&page.page_id).await.unwrap();
+        assert_ne!(export, PAGE, "the export writes the notes in the order the page cites them");
+        // An edition as the writer spelled it, not as the export does.
+        sqlx::query("UPDATE wiki_articles SET machine_text = $2 WHERE id = $1")
+            .bind(&page.article_id)
+            .bind(PAGE)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(!day_summary::day_page(&pool, page.date).await.unwrap().unwrap().has_your_edits);
+
+        let block = figure_block("/api/drive/files/f_1/download", "Rain.", Style::Oil, None);
+        let out = set_into_page(&pool, &yjs, &page, "the walk home", &block).await.unwrap();
+        assert!(matches!(out, PaintOutcome::Painted { .. }), "{out:?}");
+        let now = content(&pool, &page.page_id).await;
+        assert_eq!(machine_text(&pool, &page).await.as_deref(), Some(now.as_str()));
+        assert!(!day_summary::day_page(&pool, page.date).await.unwrap().unwrap().has_your_edits);
+    }
 }

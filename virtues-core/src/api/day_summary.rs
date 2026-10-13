@@ -863,17 +863,20 @@ async fn kept_by(pool: &PgPool, day_id: &str) -> Result<Option<SaveOutcome>> {
 ///   editor update that changes the text and on every version put back, and
 ///   a day carrying one is never re-drafted: the alternative loses the
 ///   owner's own words, and only later evidence is recoverable;
-/// - a page that has been opened in the editor (`yjs_state IS NOT NULL`,
-///   which the first sync of an open tab sets). Its text lives in a CRDT that
-///   open tabs and each browser's IndexedDB copy share. A pool write has to
-///   null `yjs_state` so the server reseeds, and a reseeded doc is a new
+/// - a page whose live document the server has built (`yjs_state IS NOT
+///   NULL`): an open tab's first sync, a read of the page, a machine write,
+///   or its move to blocks at that first build. Its text lives in a CRDT
+///   that open tabs and each browser's IndexedDB copy share. A pool write has
+///   to null `yjs_state` so the server reseeds, and a reseeded doc is a new
 ///   lineage: an open tab saves its old doc back over it, and an IndexedDB
 ///   copy merges in as a second copy of the text. The owner's Rewrite this
 ///   page ([`rewrite_day_page`]) is the write that goes through the CRDT.
 ///
-/// So the write itself is `WHERE yjs_state IS NULL`, which also settles a page
-/// opened between the check and the write. A kept page is not retried: the
-/// day has its page, and `narrate_day` stamps it.
+/// So the write itself is `WHERE yjs_state IS NULL AND format = 'markdown'`,
+/// which also settles a page opened between the check and the write (a block
+/// page always has its document, so the format is a second guard on the
+/// same fact). A kept page is not retried: the day has its page, and
+/// `narrate_day` stamps it.
 ///
 /// What it writes is recorded as the edition (`machine_text`), as every
 /// first-draft writer does, so a later difference between the page and that
@@ -923,7 +926,7 @@ async fn save_day_article(
     let mut tx = pool.begin().await?;
     let updated = sqlx::query(
         "UPDATE app_pages SET content = $1, updated_at = now() \
-         WHERE id = $2 AND yjs_state IS NULL",
+         WHERE id = $2 AND yjs_state IS NULL AND format = 'markdown'",
     )
     .bind(prose)
     .bind(&article.page_id)
@@ -967,43 +970,68 @@ pub struct DayPage {
     /// its text is no longer what the server last wrote (`machine_text`). A
     /// rewrite replaces those only with their consent.
     ///
+    /// A page that holds blocks is compared with its edition as this server
+    /// writes both (`block_move::as_compared`), so an export that changed
+    /// how it writes an escape is no edit of theirs.
+    ///
     /// A page with no `machine_text` was written before narration recorded
     /// its edition, so its text cannot be compared. If it has any version
     /// besides a restore point (which only keeps what the page said before a
-    /// machine changed it, the first draft included), a chat edit, a version
-    /// put back or a browser save has touched it, and none of those is sure
-    /// to have left a stamp, so it counts. Asking when there was nothing to
-    /// replace costs one line in the confirm; not asking costs the owner's
-    /// change.
+    /// machine changed it, the first draft included) or one of its move to
+    /// blocks, a chat edit, a version put back or a browser save has touched
+    /// it, and none of those is sure to have left a stamp, so it counts.
+    /// Asking when there was nothing to replace costs one line in the
+    /// confirm; not asking costs the owner's change.
     pub has_your_edits: bool,
 }
 
 /// The day's page, or `None` when the day has none.
 pub async fn day_page(pool: &PgPool, date: NaiveDate) -> Result<Option<DayPage>> {
-    let row: Option<(String, String, String, bool)> = sqlx::query_as(
-        "SELECT d.id, a.id, a.page_id, \
-                (a.last_human_edit_at IS NOT NULL \
-                 OR a.maintenance = 'never' \
-                 OR (a.machine_text IS NOT NULL AND p.content <> a.machine_text) \
-                 OR (a.machine_text IS NULL \
-                     AND EXISTS (SELECT 1 FROM app_page_versions v \
-                                 WHERE v.page_id = a.page_id \
-                                   AND (v.created_by <> 'auto' OR v.description IS DISTINCT FROM $2)))) \
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        day_id: String,
+        article_id: String,
+        page_id: String,
+        content: String,
+        format: String,
+        machine_text: Option<String>,
+        stamped: bool,
+        never: bool,
+        versioned: bool,
+    }
+    let row: Option<Row> = sqlx::query_as(
+        "SELECT d.id AS day_id, a.id AS article_id, a.page_id, p.content, p.format, a.machine_text, \
+                a.last_human_edit_at IS NOT NULL AS stamped, \
+                a.maintenance = 'never' AS never, \
+                EXISTS (SELECT 1 FROM app_page_versions v \
+                        WHERE v.page_id = a.page_id \
+                          AND NOT (v.created_by = 'auto' \
+                                   AND COALESCE(v.description = ANY($2::text[]), false))) AS versioned \
          FROM wiki_days d \
          JOIN wiki_articles a ON a.subject_type = 'day' AND a.subject_id = d.id \
          JOIN app_pages p ON p.id = a.page_id \
          WHERE d.date = $1",
     )
     .bind(date)
-    .bind(crate::api::pages::RESTORE_POINT)
+    .bind(vec![
+        crate::api::pages::RESTORE_POINT,
+        crate::api::pages::BEFORE_BLOCKS,
+        crate::api::page_convert::MOVED_TO_BLOCKS,
+    ])
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|(day_id, article_id, page_id, has_your_edits)| DayPage {
+    let Some(row) = row else { return Ok(None) };
+    let format = crate::api::pages::PageFormat::try_from(row.format).map_err(crate::Error::Other)?;
+    let edited = match row.machine_text.as_deref() {
+        Some(edition) => !crate::api::block_move::reads_the_same(format, true, &row.content, edition).await,
+        None => row.versioned,
+    };
+    Ok(Some(DayPage {
         date,
-        day_id,
-        article_id,
-        page_id,
-        has_your_edits,
+        day_id: row.day_id,
+        article_id: row.article_id,
+        page_id: row.page_id,
+        has_your_edits: row.stamped || row.never || edited,
     }))
 }
 
@@ -1020,6 +1048,10 @@ pub enum RewriteOutcome {
     },
     NotOver,
     NoPage,
+    /// The page holds a suggestion its owner has not accepted or rejected
+    /// yet. A rewrite from the record would decide it, and the decision is
+    /// theirs, so it waits until they make it.
+    SuggestionPending,
     /// The page may hold the owner's words and they did not say to replace
     /// them.
     NeedsConsent,
@@ -1044,6 +1076,7 @@ impl RewriteOutcome {
             Self::Rewritten { .. } => None,
             Self::NotOver => Some("not_over"),
             Self::NoPage => Some("no_page"),
+            Self::SuggestionPending => Some("pending_suggestion"),
             Self::NeedsConsent => Some("needs_consent"),
             Self::NotEnough => Some("not_enough"),
             Self::ThinDraft => Some("thin_draft"),
@@ -1052,6 +1085,21 @@ impl RewriteOutcome {
             Self::Billing => Some("billing"),
             Self::Failed(_) => Some("failed"),
         }
+    }
+}
+
+/// Whether the day's page holds a suggestion its owner has not accepted or
+/// rejected yet (text under a proposal mark). A rewrite is a new draft from
+/// the record, which never carries the page's suggestions back, so the
+/// write would decide each one and is refused (`TextWriteError::SuggestionKept`):
+/// this is asked before the writer runs, so the refusal costs no model call.
+/// On a markdown page a suggestion is CriticMarkup in its text, written over
+/// as the rest of the text is.
+pub async fn holds_pending_suggestion(yjs: &crate::server::yjs::YjsState, page_id: &str) -> Result<bool> {
+    match yjs.read_tree(page_id).await {
+        Ok(tree) => Ok(tree.iter().any(virtues_document::diff::holds_suggestion)),
+        Err(crate::server::yjs::TreeError::NotTree) => Ok(false),
+        Err(e) => Err(crate::Error::Other(format!("could not read the page: {e}"))),
     }
 }
 
@@ -1087,6 +1135,9 @@ pub async fn rewrite_day_page(
         let Some(page) = day_page(pool, date).await? else {
             return Ok(RewriteOutcome::NoPage);
         };
+        if holds_pending_suggestion(yjs, &page.page_id).await? {
+            return Ok(RewriteOutcome::SuggestionPending);
+        }
         if page.has_your_edits && !replace_edits {
             return Ok(RewriteOutcome::NeedsConsent);
         }
@@ -1170,9 +1221,11 @@ fn is_whole_page(draft: &str) -> bool {
 /// 3. The page as it is now is kept (`pages::cut_restore_point`). If that
 ///    cannot be saved, nothing changes: a rewrite nobody can undo is not one
 ///    to make.
-/// 4. The draft replaces the page by line, refused if the page moved since 2.
-///    A draft that is on the page but could not be saved yet (`NotSaved`)
-///    is a rewrite made: 5 and 6 still run, and the save queue lands it.
+/// 4. The draft replaces the page by line, refused if the page moved since 2,
+///    or if it would decide a suggestion the owner has not accepted or
+///    rejected yet (`SuggestionPending`). A draft that is on the page but
+///    could not be saved yet (`NotSaved`) is a rewrite made: 5 and 6 still
+///    run, and the save queue lands it.
 /// 5. The rewrite's own version is cut from what the write left, credited
 ///    to the server (`'ai'`).
 /// 6. The edition is recorded, the owner's edit stamp cleared unless a newer
@@ -1243,6 +1296,7 @@ pub async fn apply_day_rewrite(
             tracing::error!(date = %page.date, error = %error, "the rewrite is on the page but not saved yet");
             (written, false)
         }
+        Err(TextWriteError::SuggestionKept) => return RewriteOutcome::SuggestionPending,
         Err(TextWriteError::Other(e)) => return RewriteOutcome::Failed(e),
     };
     let applied = written.text.as_str();
@@ -4126,5 +4180,151 @@ mod dossier_tests {
             RewriteOutcome::NotEnough
         );
         assert_eq!(yjs.read_text(&page.page_id).await.unwrap(), OLD_PAGE);
+    }
+
+    // ── a day page that holds blocks ───────────────────────────────────────
+
+    const ESCAPED_PAGE: &str = "You met Nick at the R&B night.\n\n## The night\n\nYou danced until late.\n";
+    const ESCAPED_EXPORT: &str = "You met Nick at the R\\&B night.\n\n## The night\n\nYou danced until late.\n";
+
+    /// A day's page as narration leaves it, `draft` its text and edition,
+    /// and a server that moves an article to blocks at its first open.
+    async fn day_moving_to_blocks(
+        pool: &PgPool,
+        date: NaiveDate,
+        draft: &str,
+    ) -> (crate::server::yjs::YjsState, DayPage) {
+        let day = get_or_create_day(pool, date).await.unwrap();
+        assert_eq!(save_day_article(pool, &day.id, date, draft).await.unwrap(), SaveOutcome::Created);
+        sqlx::query(
+            "UPDATE wiki_days SET narrated_at = now() - interval '30 days', \
+             start_timezone = 'UTC' WHERE id = $1",
+        )
+        .bind(&day.id)
+        .execute(pool)
+        .await
+        .unwrap();
+        let page = day_page(pool, date).await.unwrap().expect("the day has its page");
+        (crate::server::yjs::YjsState::with_tree_articles(pool.clone(), true), page)
+    }
+
+    /// The owner's rewrite of a day page that holds blocks goes through its
+    /// document, so an editor open on it receives it, and the edition it
+    /// records is what the page says, so nothing reads as the owner's.
+    #[sqlx::test]
+    async fn rewrite_of_a_tree_day_page_reaches_an_open_editor_and_leaves_no_owner_edit(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 9, 2).unwrap();
+        let (yjs, page) = day_moving_to_blocks(&pool, date, ESCAPED_PAGE).await;
+        let doc = yjs.doc_cache.get_or_create(&page.page_id, &pool).await.unwrap();
+        assert_eq!(doc.read().await.format(), crate::api::pages::PageFormat::Tree);
+        let mut editor = doc.read().await.broadcast_tx.subscribe();
+
+        let before = yjs.read_text(&page.page_id).await.unwrap();
+        assert_eq!(before, ESCAPED_EXPORT);
+        let out = apply_day_rewrite(&pool, &yjs, &page, "UTC", &before, NEW_PAGE, false).await;
+        assert!(matches!(out, RewriteOutcome::Rewritten { .. }), "{out:?}");
+        assert!(editor.try_recv().is_ok(), "the open editor receives the rewrite");
+        assert_eq!(yjs.read_text(&page.page_id).await.unwrap(), NEW_PAGE);
+        assert_eq!(page_row(&pool, &page.page_id).await.0, NEW_PAGE);
+        let (edition, stamp, _) = article_state(&pool, &page).await;
+        assert_eq!(edition.as_deref(), Some(NEW_PAGE));
+        assert!(stamp.is_none());
+        assert!(!day_page(&pool, date).await.unwrap().unwrap().has_your_edits);
+    }
+
+    /// A day page holding a suggestion its owner has not accepted or
+    /// rejected yet is not rewritten: the rewrite is refused as waiting on
+    /// it before the writer runs, with consent or without, and a draft
+    /// written over it is refused the same way, the page unchanged.
+    #[sqlx::test]
+    async fn a_rewrite_waits_for_the_owners_pending_suggestion(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 9, 7).unwrap();
+        let (yjs, page) = day_moving_to_blocks(&pool, date, ESCAPED_PAGE).await;
+        // The owner's suggestion, which the move makes a suggestion's marks.
+        sqlx::query("UPDATE app_pages SET content = $2 WHERE id = $1")
+            .bind(&page.page_id)
+            .bind("You met Nick at the R&B night.\n\n## The night\n\nYou danced {--until late--}{++until two++}.\n")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let before = yjs.read_text(&page.page_id).await.unwrap();
+        assert!(before.contains("You danced {--until late--}{++until two++}."), "{before}");
+        assert!(yjs.read_tree(&page.page_id).await.is_ok(), "the page holds blocks");
+        let page = day_page(&pool, date).await.unwrap().unwrap();
+        assert!(page.has_your_edits);
+
+        for consent in [false, true] {
+            let lock = try_lock_day(&pool, date).await.unwrap().expect("the day is free");
+            let out = rewrite_day_page(&pool, &yjs, date, consent, lock).await;
+            assert_eq!(out, RewriteOutcome::SuggestionPending, "consent: {consent}");
+            assert_eq!(out.code(), Some("pending_suggestion"));
+        }
+
+        let out = apply_day_rewrite(&pool, &yjs, &page, "UTC", &before, NEW_PAGE, true).await;
+        assert_eq!(out, RewriteOutcome::SuggestionPending);
+        assert_eq!(yjs.read_text(&page.page_id).await.unwrap(), before, "nothing written");
+    }
+
+    /// A day page moved to blocks reads as the server's, with its edition
+    /// and without one: neither the escapes its export writes nor the
+    /// versions its move cut count as the owner's.
+    #[sqlx::test]
+    async fn has_your_edits_is_false_for_a_moved_article(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 9, 3).unwrap();
+        let (yjs, page) = day_moving_to_blocks(&pool, date, ESCAPED_PAGE).await;
+        assert_eq!(yjs.read_text(&page.page_id).await.unwrap(), ESCAPED_EXPORT);
+        assert!(!day_page(&pool, date).await.unwrap().unwrap().has_your_edits);
+
+        // A page from before narration recorded its edition.
+        let date = NaiveDate::from_ymd_opt(2026, 9, 4).unwrap();
+        let (yjs, page) = day_moving_to_blocks(&pool, date, ESCAPED_PAGE).await;
+        sqlx::query("UPDATE wiki_articles SET machine_text = NULL WHERE id = $1")
+            .bind(&page.article_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(yjs.read_text(&page.page_id).await.unwrap(), ESCAPED_EXPORT);
+        assert!(!day_page(&pool, date).await.unwrap().unwrap().has_your_edits);
+        assert_eq!(article_state(&pool, &page).await.0, None, "no edition stays none");
+    }
+
+    /// The edition is compared with the page as this server writes both: an
+    /// edition spelled as an earlier export wrote it reads as no edit, and a
+    /// sentence of the owner's still reads as one.
+    #[sqlx::test]
+    async fn has_your_edits_survives_a_changed_export(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
+        let (yjs, page) = day_moving_to_blocks(&pool, date, ESCAPED_PAGE).await;
+        yjs.read_text(&page.page_id).await.unwrap();
+        sqlx::query("UPDATE wiki_articles SET machine_text = $2 WHERE id = $1")
+            .bind(&page.article_id)
+            .bind(ESCAPED_PAGE)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_ne!(page_row(&pool, &page.page_id).await.0, ESCAPED_PAGE);
+        assert!(!day_page(&pool, date).await.unwrap().unwrap().has_your_edits);
+
+        sqlx::query("UPDATE app_pages SET content = content || '\nYou also swam.\n' WHERE id = $1")
+            .bind(&page.page_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(day_page(&pool, date).await.unwrap().unwrap().has_your_edits);
+    }
+
+    /// Once a day page holds blocks, narration leaves it as it is: it has
+    /// its document, and a write through the pool would fork it.
+    #[sqlx::test]
+    async fn narration_after_the_move_keeps_the_page(pool: PgPool) {
+        let date = NaiveDate::from_ymd_opt(2026, 9, 6).unwrap();
+        let (yjs, page) = day_moving_to_blocks(&pool, date, ESCAPED_PAGE).await;
+        yjs.read_text(&page.page_id).await.unwrap();
+        assert_eq!(
+            save_day_article(&pool, &page.day_id, date, NEW_PAGE).await.unwrap(),
+            SaveOutcome::KeptOpened
+        );
+        assert_eq!(page_row(&pool, &page.page_id).await.0, ESCAPED_EXPORT);
+        assert_eq!(yjs.read_text(&page.page_id).await.unwrap(), ESCAPED_EXPORT);
     }
 }

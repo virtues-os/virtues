@@ -79,7 +79,7 @@ pub async fn terminal_ws_handler(
     headers: HeaderMap,
 ) -> Response {
     // A foreign page must not ride the owner's session to a shell.
-    if let Some(refused) = crate::server::refuse_foreign_socket(&headers, "terminal") {
+    if let Some(refused) = crate::server::refuse_foreign_socket(&headers, "terminal", &[]) {
         return refused;
     }
     let size = PtySize {

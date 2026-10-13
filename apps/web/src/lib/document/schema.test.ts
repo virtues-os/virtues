@@ -13,6 +13,7 @@ import {
 	contractExtensions,
 	contractSchema,
 	fits,
+	isLabel,
 	normalizeUrl,
 	typed,
 	type AttrSpec,
@@ -280,6 +281,61 @@ describe('attributes', () => {
 
 		expect(typed({ type: 'string', enum: ['note', 'tip'] }, 'tip')).toBe('tip');
 		expect(typed({ type: 'string', enum: ['note', 'tip'] }, 'other')).toBeNull();
+	});
+
+	// A footnote's label, as the server reads one (`is_label` in the crate).
+	it('a label is a letter or digit, then up to 63 letters, digits, `_` or `-`', () => {
+		const label: AttrSpec = { type: 'label', required: true };
+		for (const fine of ['ev-1', 'cx-12', '1', 'a', 'note_2', 'A-b_3', 'x'.repeat(64)]) {
+			expect(isLabel(fine), fine).toBe(true);
+			expect(typed(label, fine)).toBe(fine);
+			expect(fits(label, fine)).toBe(true);
+		}
+		for (const refused of ['', '-1', '_a', 'ev 1', 'ev]1', 'ev^1', '^ev-1', 'évé', 'ev-1\n', 'x'.repeat(65)]) {
+			expect(isLabel(refused), refused).toBe(false);
+			expect(typed(label, refused)).toBeNull();
+			expect(fits(label, refused)).toBe(false);
+		}
+		expect(fits(label, 1)).toBe(false);
+		expect(fits(label, null)).toBe(false);
+	});
+});
+
+describe('an article’s nodes and mark', () => {
+	it('a footnote is an inline atom carrying its note, and needs a label', () => {
+		const doc = parse('<p>Lunch.<virtues-footnote label="ev-1" note="Message · 12:10 PM"></virtues-footnote></p>');
+		const footnote = doc.firstChild!.lastChild!;
+		expect(footnote.type.name).toBe('footnote');
+		expect(footnote.attrs).toMatchObject({ label: 'ev-1', note: 'Message · 12:10 PM' });
+		expect(render(doc)).toBe('<p>Lunch.<virtues-footnote label="ev-1" note="Message · 12:10 PM"></virtues-footnote></p>');
+		const unlabelled = parse('<p>Lunch.<virtues-footnote label="ev 1"></virtues-footnote></p>');
+		expect(unlabelled.firstChild!.childCount).toBe(1);
+	});
+
+	it('a figure is a block atom whose style is data-style', () => {
+		const html = '<virtues-figure kind="picture" src="/api/drive/files/f_1/download" caption="Rain." data-style="watercolor"></virtues-figure>';
+		const doc = parse(html);
+		expect(doc.firstChild!.type.name).toBe('figure');
+		expect(doc.firstChild!.attrs).toMatchObject({ kind: 'picture', style: 'watercolor', caption: 'Rain.' });
+		expect(render(doc)).toBe(html);
+		expect(parse('<virtues-figure kind="chart"></virtues-figure>').firstChild?.type.name).not.toBe('figure');
+	});
+
+	it('the veil is innermost of the delimiters, and holds no code', () => {
+		const doc = parse('<p><a href="/person/person_1"><strong><virtues-veil>Nick</virtues-veil></strong></a></p>');
+		const marks = doc.firstChild!.firstChild!.marks.map((m) => m.type.name);
+		expect(marks).toEqual(['link', 'bold', 'veil']);
+		expect(schema.marks.veil.excludes(schema.marks.code)).toBe(true);
+	});
+
+	it('typing `⟦words⟧` veils the words', () => {
+		const editor = editorWith('<p>Lunch with </p>');
+		editor.commands.setTextSelection(editor.state.doc.firstChild!.nodeSize - 1);
+		type(editor, '⟦Nick⟧');
+		const run = editor.state.doc.firstChild!.lastChild!;
+		expect(run.text).toBe('Nick');
+		expect(run.marks.map((m) => m.type.name)).toEqual(['veil']);
+		editor.destroy();
 	});
 });
 

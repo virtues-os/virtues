@@ -16,6 +16,7 @@ pub mod doctor;
 pub mod lake_adopt;
 pub mod model_set;
 pub mod link;
+pub mod page_convert;
 pub mod reindex;
 pub mod report_crash;
 pub mod reset;
@@ -85,6 +86,17 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             let verbs = data::Verbs::new(virtues.database.pool().clone());
             let outcome = data::run(&verbs, command).await;
             if let Err(e) = outcome {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
+        }
+
+        // `--dry-run` reads the database here, as it stands: no migrations.
+        // `--apply` runs in the server; it opens the database this process
+        // was pointed at only to name it, and the server must serve that one.
+        Commands::Pages { cmd } => {
+            virtues.database.connect().await?;
+            if let Err(e) = page_convert::run(virtues.database.pool().clone(), cmd).await {
                 eprintln!("error: {e}");
                 std::process::exit(1);
             }

@@ -13,7 +13,11 @@
 	(`onDocChange`, 300 ms after the last change, saying whether any of it
 	was typed here), the outline (`onOutline`, `onOutlineNav`) and the
 	editor itself (`onEditorReady`, and the registry by page).
+	A paste converts markdown in the page (lib/document/converter.ts): the
+	page mounts this editor once the converter has loaded, failed, or taken
+	three seconds (`converterSettled`).
 -->
+
 <script lang="ts">
 	import { onDestroy, onMount } from "svelte";
 	import type { Editor } from "@tiptap/core";
@@ -30,7 +34,7 @@
 	import { focusMode, setFocusMode } from "$lib/document/focus";
 	import { codeHighlight } from "$lib/document/code";
 	import { pasteHandling } from "$lib/document/paste";
-	import { mediaUploads, uploadFiles } from "$lib/document/media";
+	import { addFiles, mediaUploads } from "$lib/document/media";
 	import { anchorAt, anchorRange, pinAt, placeOf, resolveRange, type Anchor, type AnchoredRange, type Pinned } from "$lib/document/anchor";
 	import { canEditLinkAtSelection, editLinkAtSelection, linkContext, links, openLinkBeside, previewType } from "$lib/document/links";
 	import { cellAt, selectionForCellMenu, tableActions, tableBarAnchor, tableMenuItems } from "$lib/document/tables";
@@ -58,6 +62,7 @@
 	import { listApplets } from "$lib/api/client";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
+	import { veil } from "$lib/stores/veil.svelte";
 	import RefPicker, { type EntityResult } from "$lib/components/RefPicker.svelte";
 	import RefPreview from "$lib/components/RefPreview.svelte";
 	import SlashMenu from "$lib/components/SlashMenu.svelte";
@@ -73,6 +78,12 @@
 		pageId: string;
 		/** The page's title, for the inline writer's context. */
 		pageTitle?: string;
+		/**
+		 * The page is an article (a wiki article or a day page): the inline
+		 * writer's markdown is read as an article's, its footnotes, figures
+		 * and veils the article's own.
+		 */
+		article?: boolean;
 		editable: boolean;
 		placeholder?: string;
 		/** The inline writer; without one, Ask AI is not offered. */
@@ -88,6 +99,7 @@
 		doc,
 		pageId,
 		pageTitle,
+		article = false,
 		editable,
 		placeholder = "Start writing, or press / for commands…",
 		ai,
@@ -296,7 +308,8 @@
 		const input = e.target as HTMLInputElement;
 		const files = Array.from(input.files ?? []);
 		input.value = "";
-		if (editor && files.length) void uploadFiles(editor.view, files, fileAt ?? editor.state.selection.from);
+		if (editor && files.length) addFiles(editor.view, files, fileAt ?? editor.state.selection.from);
+		fileAt = null;
 	}
 
 	// ── Selection toolbar ────────────────────────────────────────────────
@@ -383,7 +396,7 @@
 		aiOpen = false;
 		if (!editor || !ai) return;
 		editor.commands.focus();
-		ai.start({ editor, intent: aiIntent, instruction, pageTitle });
+		ai.start({ editor, intent: aiIntent, instruction, pageTitle, article });
 	}
 
 	function handleAiClose() {
@@ -665,6 +678,7 @@
 	bind:this={frame}
 	class="document-editor"
 	class:doc-page-view={pageDisplay.widthMode === "page"}
+	class:doc-veiled={veil.hiding}
 	style:--editor-font-family={pageDisplay.fontFamily}
 	style:--editor-font-size={pageDisplay.fontSize}
 	style:--editor-line-height={pageDisplay.lineHeight}

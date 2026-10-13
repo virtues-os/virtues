@@ -412,7 +412,7 @@ pub(crate) async fn assemble(
     .await?;
     let recent_block: String = recent
         .iter()
-        .map(|(d, c)| format!("#### {}\n{}\n", d.format("%A, %B %-d"), strip_footnotes(c)))
+        .map(|(d, c)| format!("#### {}\n{}\n", d.format("%A, %B %-d"), earlier_page(c)))
         .collect();
 
     // ── what the record already says about these people, and the weeks before ──
@@ -524,9 +524,20 @@ pub(crate) fn you_block(names: &[String]) -> String {
     )
 }
 
+/// An earlier day page as the writer reads it in its prompt: its prose,
+/// footnotes and figures gone ([`strip_footnotes`]), and what a page that
+/// has become a block page writes in its export to keep text from reading
+/// as markup (`R\&B`, `user\_name`, `&#32;`, a `\` ending a hard-broken
+/// line) read as the characters it stands for
+/// (`wiki_editor::unescape`), so the writer reads the words the page
+/// shows, as it read them before the page moved.
+fn earlier_page(md: &str) -> String {
+    crate::api::wiki_editor::unescape(&strip_footnotes(md))
+}
+
 /// Earlier pages feed the writer as prose; their footnotes and figures are
-/// page furniture.
-fn strip_footnotes(md: &str) -> String {
+/// page furniture. Still markdown, escapes and all: a share renders it.
+pub(crate) fn strip_footnotes(md: &str) -> String {
     let mut in_figure = false;
     let body: Vec<&str> = md
         .lines()
@@ -1969,6 +1980,19 @@ mod tests {
         let s = strip_footnotes(page);
         assert!(!s.contains("figure") && !s.contains("safe") && !s.contains("[^"), "{s}");
         assert!(s.contains("You got home.") && s.contains("More."), "{s}");
+    }
+
+    /// A day page that has become a block page holds its export, which
+    /// escapes what would read as markup and writes a hard line break as a
+    /// `\` ending its line. The writer reads the page's words, as it read
+    /// them before the page moved, and its source markers stay gone.
+    #[test]
+    fn an_earlier_page_reaches_the_writer_as_its_words_once_it_is_blocks() {
+        let written = "You met Nick at the R&B night.[^ev-1] Your user_name was [Dad] on the list.\n\nA list:  \nmilk and eggs.\n\n[^ev-1]: Message · 9:44 PM";
+        let export = "You met Nick at the R\\&B night.[^ev-1] Your user\\_name was \\[Dad\\] on the list.\n\n&#32;A list:\\\nmilk and eggs.\n\n[^ev-1]: Message · 9:44 PM\n";
+        let words = |md: &str| earlier_page(md).split_whitespace().collect::<Vec<_>>().join(" ");
+        assert_eq!(words(export), words(written));
+        assert_eq!(words(export), "You met Nick at the R&B night. Your user_name was [Dad] on the list. A list: milk and eggs.");
     }
 
     fn fix(h: u32, m: u32, lat: f64, lon: f64) -> Fix {

@@ -14,6 +14,8 @@
 
 import type { Component } from 'svelte';
 import { deadline } from '$lib/api/client';
+import { uploadsAtStake } from '$lib/document/uploads';
+import { reloadApp } from '$lib/reload';
 
 // biome-ignore lint/suspicious/noExplicitAny: view props vary by tab type
 export type View = Component<any>;
@@ -73,16 +75,16 @@ const RELOAD_GAP_MS = 60_000;
 /**
  * Reload the page to pick up the current build, after a chunk failed to load.
  * Resolves false, and reloads nothing, when this tab already reloaded for the
- * same reason within the last minute, or when the app's own files can't be
- * reached right now: in a browser whose server is down, a reload trades a
- * view that didn't load for the browser's "can't connect" page. The caller
- * then shows its error instead.
+ * same reason within the last minute, when the app's own files can't be
+ * reached right now (in a browser whose server is down, a reload trades a
+ * view that didn't load for the browser's "can't connect" page), or while a
+ * page's file is on its way to the server, whose only copy is in this page
+ * (`uploadsAtStake`). The caller then shows its error instead.
  *
- * Chat drafts and page edits are kept on the device (drafts.ts, IndexedDB),
- * so a reload here costs a moment, not work.
+ * Chat drafts and page edits are kept on the device (drafts.ts, IndexedDB).
  */
 export async function reloadForStaleChunk(): Promise<boolean> {
-	if (typeof window === 'undefined') return false;
+	if (typeof window === 'undefined' || uploadsAtStake() > 0) return false;
 	try {
 		const last = Number(sessionStorage.getItem(RELOAD_KEY) ?? 0);
 		if (Date.now() - last < RELOAD_GAP_MS) return false;
@@ -106,6 +108,5 @@ export async function reloadForStaleChunk(): Promise<boolean> {
 	} catch {
 		return false;
 	}
-	window.location.reload();
-	return true;
+	return reloadApp();
 }

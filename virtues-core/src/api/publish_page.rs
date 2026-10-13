@@ -12,13 +12,25 @@
 //!   their number. The names are listed so the Share modal can show them.
 //! - **Its own images**, from Drive, inlined. An image from another site is
 //!   left out (the loader's frame may not fetch anything), and counted, so the
-//!   modal can say so.
+//!   modal can say so. A block page's image goes in at its Drive address
+//!   before its bytes are stored: while they are on their way the page is
+//!   not shared, since it would go without the image, which is coming.
 //! - **What the owner accepted.** A pending proposal leaves as the text it
 //!   would replace: what nobody accepted stays on the box.
 //!
 //! Applets, audio, video and files work only on the box. A block page leaves
 //! them out, a file or a recording as its name, and counts them for the
 //! modal.
+//!
+//! **An article** (a day page, a wiki article) carries its writer's syntax:
+//! sources (footnotes whose notes name the records behind a sentence),
+//! figures and veiled phrases. Its sources stay on the box, since their notes
+//! hold record ids; a veiled phrase leaves as its words; a quote leaves as a
+//! quotation with who said it and when, a picture as its image and caption,
+//! and a thread or a route, which only the box can draw, is left out and
+//! counted. A markdown article is converted in memory to blocks first, so
+//! both formats leave by one set of rules; one that will not convert leaves
+//! as its prose, its sources and figures stripped.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::OnceLock;
@@ -52,6 +64,11 @@ pub struct FrozenPage {
 const UNREADABLE: &str = "Your server couldn't read this page's document, so it didn't share the page. \
                           Nothing on the page changed.";
 
+/// The refusal for a block page whose image is still on its way to the
+/// server: shared now, the page would go without it.
+const STILL_UPLOADING: &str = "An image on this page hasn't finished uploading, so your server didn't share \
+                               the page. Share it again once the image has arrived, or remove it from the page.";
+
 /// The refusal for a block page holding a node or mark this server's
 /// contract does not name: a newer version wrote it, and the HTML would
 /// leave that part out without a word.
@@ -67,6 +84,9 @@ struct PageRow {
     cover_url: Option<String>,
     #[sqlx(try_from = "String")]
     format: PageFormat,
+    /// The page is an article: `kind = 'article'`, or a `wiki_articles` row
+    /// owns it.
+    is_article: bool,
 }
 
 /// The shared page's body, and what the Share modal says about it.
@@ -150,6 +170,9 @@ pub(crate) fn render(markdown: &str) -> String {
 /// the images still to fetch.
 #[derive(Debug, Default, PartialEq)]
 struct Collected {
+    /// The page is an article, whose writer marks what the veil hides with
+    /// `⟦ ⟧`: brackets left in its text leave without them.
+    article: bool,
     /// Labels of the people, places and organizations the page names, sorted,
     /// each once.
     names: Vec<String>,
@@ -201,13 +224,79 @@ fn italic_paragraph(text: Option<&str>) -> Option<Node> {
 /// | audio, video, a file | its name in italics, or nothing |
 /// | an image | kept, for [`place_images`] |
 ///
-/// Names count for a mention or a link to a person, place or organization.
-fn publishable(nodes: Vec<Node>) -> (Vec<Node>, Collected) {
-    let mut collected = Collected::default();
+/// An article's syntax:
+///
+/// | In the page | In the shared page |
+/// |---|---|
+/// | a source (`footnote`) | nothing: its note names records |
+/// | a veiled phrase | its words, unmarked |
+/// | `⟦ ⟧` left in an article's text | nothing |
+/// | a quote figure | a quotation, then who and when |
+/// | a picture figure | its image, then its caption in italics |
+/// | a thread or route figure | nothing |
+/// | a figure that did not convert (a `figure` code block) | nothing |
+///
+/// Names count for a mention or a link to a person, place or organization,
+/// and for a quote's speaker unless it is you or unnamed.
+fn publishable(nodes: Vec<Node>, article: bool) -> (Vec<Node>, Collected) {
+    let mut collected = Collected { article, ..Collected::default() };
     let nodes = publish_blocks(nodes, &mut collected);
     collected.names.sort();
     collected.names.dedup();
     (nodes, collected)
+}
+
+/// Who a quote figure names when it names nobody: the owner, or a speaker
+/// the record did not identify.
+const UNNAMED_SPEAKERS: [&str; 3] = ["You", "In a message", "In a recording"];
+
+/// `text` without the veil's `⟦ ⟧`, trimmed; `None` when that leaves nothing.
+fn unveiled(text: Option<&str>) -> Option<String> {
+    let text = text?.replace(['⟦', '⟧'], "");
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+/// A paragraph of plain text.
+fn paragraph(text: &str) -> Node {
+    Node::element("paragraph", Default::default(), vec![Node::text(text, vec![])])
+}
+
+/// A figure as it leaves the box, pushed onto `kept`: a quote as a
+/// quotation, a picture as its image and caption. Anything else (a thread
+/// or a route, which the box draws from its records) is left out and
+/// counted.
+fn publish_figure(node: &Node, kept: &mut Vec<Node>, out: &mut Collected) {
+    match attr(node, "kind") {
+        Some("quote") => {
+            let Some(words) = unveiled(attr(node, "text")) else {
+                out.embeds_left_out += 1;
+                return;
+            };
+            let who = unveiled(attr(node, "who"));
+            if let Some(who) = who.as_deref().filter(|w| !UNNAMED_SPEAKERS.contains(w)) {
+                out.names.push(who.to_string());
+            }
+            let said: Vec<String> = [who, unveiled(attr(node, "time"))].into_iter().flatten().collect();
+            let mut quote = vec![paragraph(&words)];
+            if !said.is_empty() {
+                quote.push(paragraph(&said.join(" · ")));
+            }
+            kept.push(Node::element("blockquote", Default::default(), quote));
+        }
+        Some("picture") => {
+            let Some(src) = attr(node, "src").filter(|s| !s.trim().is_empty()) else {
+                out.embeds_left_out += 1;
+                return;
+            };
+            out.images.insert(src.to_string());
+            let mut attrs = serde_json::Map::new();
+            attrs.insert("src".into(), Value::String(src.to_string()));
+            kept.push(Node::element("image", attrs, vec![]));
+            kept.extend(italic_paragraph(unveiled(attr(node, "caption")).as_deref()));
+        }
+        _ => out.embeds_left_out += 1,
+    }
 }
 
 fn publish_blocks(nodes: Vec<Node>, out: &mut Collected) -> Vec<Node> {
@@ -216,6 +305,10 @@ fn publish_blocks(nodes: Vec<Node>, out: &mut Collected) -> Vec<Node> {
     for mut node in nodes {
         match node.kind.as_str() {
             "applet" => out.embeds_left_out += 1,
+            "figure" => publish_figure(&node, &mut kept, out),
+            // A figure fence that did not convert holds the figure's fields,
+            // record ids among them, as code.
+            "codeBlock" if out.article && attr(&node, "language") == Some("figure") => out.embeds_left_out += 1,
             "audio" | "video" | "file" => {
                 out.embeds_left_out += 1;
                 kept.extend(italic_paragraph(attr(&node, "name")));
@@ -248,10 +341,15 @@ fn publish_inline(nodes: Vec<Node>, out: &mut Collected) -> Vec<Node> {
     // where the run starts in `kept`.
     let mut run: Option<(String, usize)> = None;
     for mut node in nodes {
-        if node.marks.iter().any(|m| m.kind == "proposedInsertion") {
+        if node.kind == "footnote" || node.marks.iter().any(|m| m.kind == "proposedInsertion") {
             continue;
         }
-        node.marks.retain(|m| m.kind != "proposedDeletion");
+        node.marks.retain(|m| m.kind != "proposedDeletion" && m.kind != "veil");
+        if out.article {
+            if let Some(text) = node.text.as_mut().filter(|t| t.contains(['⟦', '⟧'])) {
+                *text = text.replace(['⟦', '⟧'], "");
+            }
+        }
         if node.kind == "mention" {
             let label = ref_label(attr(&node, "label").unwrap_or_default()).to_string();
             if !label.is_empty() && names_someone(attr(&node, "to").unwrap_or_default()) {
@@ -358,13 +456,25 @@ async fn tree_body(pool: &PgPool, drive: &DriveConfig, page_id: &str, row: &Page
     if !all_known(&nodes) {
         return Err(Error::InvalidInput(NEWER.into()));
     }
+    blocks_body(pool, drive, nodes, row.is_article).await
+}
 
-    let (nodes, collected) = publishable(nodes);
+/// The body of `nodes`, a page's blocks, as they may leave the box, its
+/// Drive images inlined.
+async fn blocks_body(pool: &PgPool, drive: &DriveConfig, nodes: Vec<Node>, article: bool) -> Result<Body> {
+    let (nodes, collected) = publishable(nodes, article);
     let mut inlined = HashMap::new();
+    let mut not_stored = vec![];
     for src in &collected.images {
-        if let Some(data) = inline_image(pool, drive, src).await {
-            inlined.insert(src.clone(), data);
+        match inline_image(pool, drive, src).await {
+            Some(data) => {
+                inlined.insert(src.clone(), data);
+            }
+            None => not_stored.extend(drive_file_id(src).map(str::to_string)),
         }
+    }
+    if on_their_way(pool, &not_stored).await? {
+        return Err(Error::InvalidInput(STILL_UPLOADING.into()));
     }
     let mut images_left_out = 0;
     let nodes = place_images(nodes, &inlined, &mut images_left_out);
@@ -376,26 +486,93 @@ async fn tree_body(pool: &PgPool, drive: &DriveConfig, page_id: &str, row: &Page
     })
 }
 
+/// Whether any of `ids`, the Drive files of images that did not inline, is
+/// on its way: arriving, or stopped short of a refusal, which the device
+/// holding it sends again (`media::page_file_states`). One refused, or one
+/// that never came or is gone, is left out with the images from other sites.
+async fn on_their_way(pool: &PgPool, ids: &[String]) -> Result<bool> {
+    if ids.is_empty() {
+        return Ok(false);
+    }
+    let states = crate::api::media::page_file_states(pool, ids).await?;
+    Ok(states.values().any(|state| {
+        matches!(
+            state,
+            crate::api::media::PageFileState::Uploading { .. }
+                | crate::api::media::PageFileState::Failed { refused: false, .. }
+        )
+    }))
+}
+
 // ------------------------------------------------------------- markdown pages
 
-/// A markdown page's body, from its saved document, or from `content` when
-/// the document does not read.
-async fn markdown_body(pool: &PgPool, drive: &DriveConfig, page_id: &str, row: &PageRow) -> Body {
-    let markdown = match row.yjs_state.as_deref().map(page_text_of_state) {
+/// A markdown page's text: its saved document, or `content` when the
+/// document does not read.
+fn saved_markdown(page_id: &str, row: &PageRow) -> String {
+    match row.yjs_state.as_deref().map(page_text_of_state) {
         Some(Ok(text)) => text.markdown,
         Some(Err(error)) => {
             tracing::warn!(page_id, %error, "a page's saved document did not read; sharing its content");
             row.content.clone()
         }
         None => row.content.clone(),
-    };
+    }
+}
 
+/// A markdown article's body: converted in memory as an article (its
+/// sources, figures and veiled phrases read as such, a pending proposal as
+/// a suggestion, which leaves as the text it would replace) and shared as a
+/// block article is. One that will not convert is shared as its prose, its
+/// sources, figures and veil marks stripped, so no record id leaves with it.
+async fn markdown_article_body(pool: &PgPool, drive: &DriveConfig, page_id: &str, row: &PageRow) -> Result<Body> {
+    let markdown = saved_markdown(page_id, row);
+    let source = markdown.clone();
+    let converted = crate::api::pages::convert_off_workers(move || {
+        virtues_document::migrate::from_markdown_as(
+            virtues_document::contract(),
+            &source,
+            virtues_document::migrate::Dialect::Article,
+        )
+    })
+    .await;
+    match converted {
+        Ok(outcome) if outcome.errors.is_empty() => blocks_body(pool, drive, outcome.nodes, true).await,
+        Ok(outcome) => {
+            tracing::warn!(
+                page_id,
+                errors = outcome.errors.len(),
+                "an article did not convert to blocks; sharing its prose"
+            );
+            Ok(markdown_text_body(pool, drive, &article_prose(&markdown)).await)
+        }
+        Err(error) => {
+            tracing::warn!(page_id, %error, "an article did not convert to blocks; sharing its prose");
+            Ok(markdown_text_body(pool, drive, &article_prose(&markdown)).await)
+        }
+    }
+}
+
+/// An article's markdown with what stays on the box taken out: its sources
+/// (markers and definitions), its figures and the veil's brackets.
+fn article_prose(markdown: &str) -> String {
+    crate::api::day_article::strip_footnotes(markdown).replace(['⟦', '⟧'], "")
+}
+
+/// A markdown page's body, from its saved document, or from `content` when
+/// the document does not read.
+async fn markdown_body(pool: &PgPool, drive: &DriveConfig, page_id: &str, row: &PageRow) -> Body {
+    markdown_text_body(pool, drive, &saved_markdown(page_id, row)).await
+}
+
+/// The body of `markdown`: its Drive images inlined, its links to the box
+/// left as their words.
+async fn markdown_text_body(pool: &PgPool, drive: &DriveConfig, markdown: &str) -> Body {
     // Images first: their URLs also start with `/`, and must not be taken
     // for internal links.
     let mut images_left_out = 0;
     let mut with_images = String::with_capacity(markdown.len());
     let mut last = 0;
-    for c in image_re().captures_iter(&markdown) {
+    for c in image_re().captures_iter(markdown) {
         let whole = c.get(0).expect("match");
         with_images.push_str(&markdown[last..whole.start()]);
         let alt = c[1].to_string();
@@ -457,8 +634,9 @@ li[data-type="taskItem"][data-checked="true"] > p:first-child::before { content:
 /// The page as one standalone file.
 pub async fn freeze_page(pool: &PgPool, drive: &DriveConfig, page_id: &str) -> Result<FrozenPage> {
     let row: Option<PageRow> = sqlx::query_as(
-        "SELECT title, content, yjs_state, icon, cover_url, format FROM app_pages \
-         WHERE id = $1 AND deleted_at IS NULL",
+        "SELECT p.title, p.content, p.yjs_state, p.icon, p.cover_url, p.format, \
+                (p.kind = 'article' OR EXISTS (SELECT 1 FROM wiki_articles a WHERE a.page_id = p.id)) AS is_article \
+         FROM app_pages p WHERE p.id = $1 AND p.deleted_at IS NULL",
     )
     .bind(page_id)
     .fetch_optional(pool)
@@ -468,9 +646,10 @@ pub async fn freeze_page(pool: &PgPool, drive: &DriveConfig, page_id: &str) -> R
 
     // The saved document. Edits from the last few seconds may still be on
     // their way to the database; Update re-freezes.
-    let Body { html: body, names, mut images_left_out, embeds_left_out } = match row.format {
-        PageFormat::Markdown => markdown_body(pool, drive, page_id, &row).await,
-        PageFormat::Tree => tree_body(pool, drive, page_id, &row).await?,
+    let Body { html: body, names, mut images_left_out, embeds_left_out } = match (row.format, row.is_article) {
+        (PageFormat::Markdown, false) => markdown_body(pool, drive, page_id, &row).await,
+        (PageFormat::Markdown, true) => markdown_article_body(pool, drive, page_id, &row).await?,
+        (PageFormat::Tree, _) => tree_body(pool, drive, page_id, &row).await?,
     };
 
     let cover = match row.cover_url.as_deref() {
@@ -542,7 +721,7 @@ mod tests {
     }
 
     fn shared(html: &str) -> (String, Collected) {
-        let (nodes, collected) = publishable(tree(html));
+        let (nodes, collected) = publishable(tree(html), false);
         (virtues_document::to_html(&nodes, false), collected)
     }
 
@@ -623,11 +802,14 @@ mod tests {
 
     #[test]
     fn drive_images_are_inlined_and_the_rest_left_out_with_their_alt() {
-        let (nodes, _) = publishable(tree(
-            "<img src=\"/drive/df_4\" alt=\"Harbour\" width=\"600\">\
-             <blockquote><img src=\"https://images.example.com/photo-1\" alt=\" Harbour at dusk \"></blockquote>\
-             <img src=\"https://images.example.com/photo-2\">",
-        ));
+        let (nodes, _) = publishable(
+            tree(
+                "<img src=\"/drive/df_4\" alt=\"Harbour\" width=\"600\">\
+                 <blockquote><img src=\"https://images.example.com/photo-1\" alt=\" Harbour at dusk \"></blockquote>\
+                 <img src=\"https://images.example.com/photo-2\">",
+            ),
+            false,
+        );
         let inlined = HashMap::from([("/drive/df_4".to_string(), "data:image/png;base64,AAAA".to_string())]);
         let mut left_out = 0;
         let nodes = place_images(nodes, &inlined, &mut left_out);
@@ -666,6 +848,91 @@ mod tests {
         ] {
             assert!(PAGE_CSS.contains(rule), "the shared page styles {rule}");
         }
+    }
+
+    /// A day page as blocks: its sources hold record ids and stay on the
+    /// box, a veiled phrase leaves as its words, and brackets left in an
+    /// article's text go too.
+    #[test]
+    fn a_tree_day_page_leaves_its_sources_and_veil_marks_behind() {
+        let (nodes, got) = publishable(
+            tree(
+                "<h2>The walk home<virtues-footnote label=\"cx-1\" note=\"5:14–7:40 PM\"></virtues-footnote></h2>\
+                 <p>You met <a href=\"/person/p_1\"><virtues-veil>Nick</virtues-veil></a> at \
+                 <virtues-veil><strong>the clinic</strong></virtues-veil>.\
+                 <virtues-footnote label=\"ev-1\" note=\"Message · 7:40 PM · data_communication_message:m_1\"></virtues-footnote>\
+                 <virtues-footnote label=\"ev-2\" note=\"Recording · 7:41 PM · data_communication_transcription:t_1\"></virtues-footnote> \
+                 A stray ⟦bracket⟧ stays words.</p>",
+            ),
+            true,
+        );
+        let html = virtues_document::to_html(&nodes, false);
+        assert_eq!(
+            html,
+            "<h2>The walk home</h2><p>You met Nick at <strong>the clinic</strong>. A stray bracket stays words.</p>"
+        );
+        assert_eq!(got.names, ["Nick"]);
+        for gone in ["data_communication", "virtues-", "⟦", "⟧", "7:40"] {
+            assert!(!html.contains(gone), "{gone} stays on the box: {html}");
+        }
+
+        // A user page's own brackets are its words.
+        let (nodes, _) = publishable(tree("<p>A ⟦bracket⟧ typed by hand.</p>"), false);
+        assert_eq!(virtues_document::to_html(&nodes, false), "<p>A ⟦bracket⟧ typed by hand.</p>");
+    }
+
+    /// A quote leaves as a quotation with who and when; a picture as its
+    /// image and caption; a thread or a route, which only the box draws, is
+    /// left out and counted; a figure that never converted (its fence kept as
+    /// code) is left out too, since its lines name records.
+    #[test]
+    fn figures_publish_by_kind() {
+        let (nodes, got) = publishable(
+            tree(
+                "<virtues-figure kind=\"quote\" text=\"Did you get ⟦home⟧ safe?\" who=\"Nick\" \
+                     ref=\"data_communication_message:m_1\" time=\"9:44 PM\"></virtues-figure>\
+                 <virtues-figure kind=\"thread\" refs=\"data_communication_message:m_1, data_communication_message:m_2\"></virtues-figure>\
+                 <virtues-figure kind=\"route\"></virtues-figure>\
+                 <virtues-figure kind=\"picture\" src=\"/api/drive/files/df_photo/download\" \
+                     caption=\"A wet morning at ⟦the harbour⟧.\" data-style=\"watercolor\" time=\"10:40 AM\"></virtues-figure>\
+                 <pre data-language=\"figure\">kind: quote\nref: data_communication_message:m_9</pre>",
+            ),
+            true,
+        );
+        assert_eq!(got.embeds_left_out, 3, "a thread, a route and a figure kept as code");
+        assert_eq!(got.images.iter().map(String::as_str).collect::<Vec<_>>(), ["/api/drive/files/df_photo/download"]);
+        let html = virtues_document::to_html(&nodes, false);
+        assert_eq!(
+            html,
+            "<blockquote><p>Did you get home safe?</p><p>Nick · 9:44 PM</p></blockquote>\
+             <img src=\"/api/drive/files/df_photo/download\"><p><em>A wet morning at the harbour.</em></p>"
+        );
+        assert!(!html.contains("data_communication"), "{html}");
+
+        let inlined = HashMap::from([(
+            "/api/drive/files/df_photo/download".to_string(),
+            "data:image/png;base64,AAAA".to_string(),
+        )]);
+        let mut left_out = 0;
+        let placed = virtues_document::to_html(&place_images(nodes, &inlined, &mut left_out), false);
+        assert_eq!(left_out, 0);
+        assert!(placed.contains("<img src=\"data:image/png;base64,AAAA\"><p><em>A wet morning"), "{placed}");
+    }
+
+    /// A quote's speaker is listed with the page's names, unless it is the
+    /// owner or a speaker the record did not identify.
+    #[test]
+    fn a_quote_figure_lists_its_speaker_unless_it_is_you_or_unnamed() {
+        let figure = |who: &str| {
+            format!("<virtues-figure kind=\"quote\" text=\"See you at noon.\" who=\"{who}\" time=\"9:00 AM\"></virtues-figure>")
+        };
+        let html = ["⟦David Okafor⟧", "You", "In a message", "In a recording"].map(figure).concat();
+        let (nodes, got) = publishable(tree(&html), true);
+        assert_eq!(got.names, ["David Okafor"]);
+        let html = virtues_document::to_html(&nodes, false);
+        assert!(html.contains("<p>David Okafor · 9:00 AM</p>"), "{html}");
+        assert!(html.contains("<p>You · 9:00 AM</p>"), "{html}");
+        assert!(html.contains("<p>In a recording · 9:00 AM</p>"), "{html}");
     }
 
     // ---------------------------------------------------------- freeze_page
@@ -808,6 +1075,62 @@ mod tests {
         assert!(frozen.html.contains("<p><em>voice.m4a</em></p>"));
     }
 
+    /// A photo given to a block page is in the page at its Drive address
+    /// before its bytes are stored. Shared while they were on their way, the
+    /// page went without it and the Share sheet called it an image from
+    /// another site. Not shared until it arrives; refused or never come, it
+    /// is left out.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_block_page_whose_image_is_on_its_way_is_not_shared_yet(pool: PgPool) {
+        use crate::api::media::{page_file_arriving, page_file_failed, page_file_stored};
+        let (_dir, drive) = drive_with_a_photo(&pool).await;
+        // A Drive id as a browser makes one, which no other test uses.
+        let id = "file_5b1e0c4d2a9f8e37";
+        let page_id = block_page(&pool, &format!("<p>Harbour</p><img src=\"/drive/{id}\" alt=\"harbour.png\">")).await;
+        let producer = crate::api::publications::Producer::Page(page_id.clone());
+
+        let upload = page_file_arriving(id, "harbour.png", Some(10));
+        let err = freeze_page(&pool, &drive, &page_id).await.err().expect("refused while it arrives");
+        assert!(matches!(&err, Error::InvalidInput(m) if m == STILL_UPLOADING), "{err}");
+        let preview = crate::api::publications::preview(&pool, &drive, &producer).await.unwrap();
+        assert_eq!(preview.problem.as_deref(), Some(STILL_UPLOADING));
+        assert!(preview.html.is_none());
+
+        // Stopped short of a refusal: the device holding it sends it again.
+        page_file_failed(id, "harbour.png", "harbour.png stopped arriving.", false, Some(upload));
+        assert!(matches!(freeze_page(&pool, &drive, &page_id).await, Err(Error::InvalidInput(_))));
+
+        // Refused, or no longer known here: it is not coming.
+        page_file_failed(id, "harbour.png", "harbour.png is over 100 MB.", true, Some(upload));
+        let frozen = freeze_page(&pool, &drive, &page_id).await.unwrap();
+        assert_eq!(frozen.images_left_out, 1);
+        page_file_stored(id);
+        let frozen = freeze_page(&pool, &drive, &page_id).await.unwrap();
+        assert_eq!(frozen.images_left_out, 1);
+    }
+
+    /// The browser sends a few of a drop's files at once and holds the rest
+    /// where the server cannot see them, their blocks already in the page.
+    /// The device holding them says they are coming before their bytes can
+    /// (`media::page_file_announced`): the page is not shared until they
+    /// arrive. Shared meanwhile, it went without them, and the Share sheet
+    /// said they aren't stored in Drive.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_block_page_whose_image_is_said_to_be_coming_is_not_shared_yet(pool: PgPool) {
+        use crate::api::media::{page_file_announced, page_file_stored};
+        let (_dir, drive) = drive_with_a_photo(&pool).await;
+        let id = "file_6c2f1d5e3b0a9f48";
+        let page_id = block_page(&pool, &format!("<p>Pier</p><img src=\"/drive/{id}\" alt=\"pier.png\">")).await;
+
+        page_file_announced(id, "pier.png", Some(10));
+        let err = freeze_page(&pool, &drive, &page_id).await.err().expect("refused while it is coming");
+        assert!(matches!(&err, Error::InvalidInput(m) if m == STILL_UPLOADING), "{err}");
+        let producer = crate::api::publications::Producer::Page(page_id.clone());
+        let preview = crate::api::publications::preview(&pool, &drive, &producer).await.unwrap();
+        assert_eq!(preview.problem.as_deref(), Some(STILL_UPLOADING));
+        page_file_stored(id);
+    }
+
     #[sqlx::test(migrations = "./migrations")]
     async fn a_block_page_whose_document_does_not_read_is_not_shared(pool: PgPool) {
         let (_dir, drive) = drive_with_a_photo(&pool).await;
@@ -859,6 +1182,46 @@ mod tests {
         assert_eq!(preview.title, "Trip");
         assert_eq!(preview.problem.as_deref(), Some(NEWER));
         assert!(preview.html.is_none());
+    }
+
+    /// A day page still in markdown shared every source's line, record ids
+    /// and all, and every figure's `ref:`. It is shared by the rules a block
+    /// article is shared by; and one that will not convert leaves as its
+    /// prose, its sources and figures stripped.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_markdown_article_no_longer_shares_record_ids(pool: PgPool) {
+        let (_dir, drive) = drive_with_a_photo(&pool).await;
+        let day = "You met [⟦Nick⟧](/person/p_1) at ⟦the clinic⟧.[^ev-1] It rained.[^ev-2]\n\n\
+                   ## The walk home[^cx-1]\n\n\
+                   You walked by the water.[^ev-3] You slept early{++, finally++}.\n\n\
+                   ```figure\nkind: quote\ntext: Did you get home safe?\nwho: Nick\nref: data_communication_message:m_4\ntime: 9:44 PM\n```\n\n\
+                   ```figure\nkind: thread\nrefs: data_communication_message:m_4, data_communication_message:m_5\n```\n\n\
+                   [^ev-1]: Message · 9:00 AM · data_communication_message:m_1\n\
+                   [^ev-2]: Recording · 9:30 AM · data_communication_transcription:t_1\n\
+                   [^cx-1]: 5:14–7:40 PM\n\
+                   [^ev-3]: Recording · 6:00 PM · data_communication_transcription:t_2\n";
+        let article = crate::api::wiki_articles::create_article(&pool, "day", "day_2026-03-14", "Saturday, March 14", day)
+            .await
+            .unwrap();
+
+        let frozen = freeze_page(&pool, &drive, &article.page_id).await.unwrap();
+        let html = &frozen.html;
+        assert!(html.contains("<p>You met Nick at the clinic. It rained.</p>"), "{html}");
+        assert!(html.contains("<h2>The walk home</h2>"), "{html}");
+        assert!(html.contains("<p>You walked by the water. You slept early.</p>"), "a pending proposal stays: {html}");
+        assert!(html.contains("<blockquote><p>Did you get home safe?</p><p>Nick · 9:44 PM</p></blockquote>"), "{html}");
+        for gone in ["data_communication", "[^", "⟦", "⟧", "5:14", "/person/", "finally"] {
+            assert!(!html.contains(gone), "{gone} stays on the box: {html}");
+        }
+        assert_eq!(frozen.names, ["Nick"]);
+        assert_eq!(frozen.embeds_left_out, 1, "the thread");
+
+        // Prose that will not convert leaves stripped.
+        assert_eq!(
+            article_prose(day),
+            "You met [Nick](/person/p_1) at the clinic. It rained.\n\n## The walk home\n\n\
+             You walked by the water. You slept early{++, finally++}.\n\n\n"
+        );
     }
 
     #[sqlx::test(migrations = "./migrations")]

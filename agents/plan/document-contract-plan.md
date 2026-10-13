@@ -65,6 +65,22 @@ From the spike and the audits. Each is owned by a slice below.
    must skip remote transactions or every client rewrites ids.
 8. **HTML has no self-closing custom elements;** `<virtues-applet .../>`
    swallows what follows. Ingest refuses it by name.
+9. **A wait's result written at a held place races undo and every device.**
+   A paste that waited on the server's converter, or an upload that waited
+   for its address, was written after the wait at a place held for it, and
+   each review round found the next thing the hold did not carry: the
+   selection, landing order, undo, another device's edit. Nothing in the
+   editor lands after a wait: a paste converts in the page (the crate's
+   converter compiled to WebAssembly), and a file's block goes in at once at
+   its final address, its bytes following outside the page.
+10. **A read base filled from the page, not from what a read showed, lets a
+   write take what no read showed.** Each late review round found the next
+   way through: a block too long for any read counted as seen, a delete
+   stood alone and its rewrite came in the next edit, a callout was taken
+   whole around a list read in part. A read's text and its base are read
+   off one value (`virtues_document::Shown`), the base holds each block on
+   its own (`Seen`), and a batch is judged by what it does to the page
+   (`check_ops`), not op by op.
 
 ## Slices
 
@@ -165,9 +181,21 @@ which outlives this plan:
   (`yjs/versions.ts`); the chat edit animation (`ai/aiPresence.ts`). Chat
   cards that render old `edit_page` results must still render.
 - **Paste:** markdown pasted from chat's Copy button lands as literal `**`
-  today. Convert pasted markdown through the server's converter (one
-  converter, not a second one in TypeScript). Map the inline styles Google
-  Docs and Word use for bold, italic and strike onto contract marks.
+  today. Convert pasted markdown through the contract's converter, run in
+  the browser (one converter, not a second one in TypeScript; trap 9). Map
+  the inline styles Google Docs and Word use for bold, italic and strike
+  onto contract marks.
+  - Open: the converter's `regex` is a quarter of its module; a small
+    content-match automaton, as ProseMirror's `ContentMatch`, would save
+    about 85 KB gzip.
+  - Open, needs a migration: a page's file is stored under its own id, so
+    the same file given twice is stored twice, and how an upload stands is
+    held in memory (stalled past 2 minutes as failed, `STALLED_AFTER`),
+    lost on a restart. A table `app_media_uploads` (id with a CHECK on its
+    shape, the bound Drive file never changed once set, state read from
+    timestamps) keeps content-addressed storage and lets any device "Choose
+    a file" for a block whose upload never finished. Keep the `file_` id shape, which ref
+    indexing (`search/query.rs`) and tab restore (`tabs/registry.ts`) read.
 - **Collaboration:** carets via the existing awareness relay, which keeps no
   state (`server/yjs.rs`): late joiners see no carets and closed tabs'
   carets linger. Keep last awareness per client on the server, or have
@@ -184,6 +212,11 @@ which outlives this plan:
 - `tools/page_editor.rs`: `get_page_content` returns canonical HTML with
   block ids, a read base, and the markdown export for whole-page context;
   `edit_page` takes ops plus the read base. A refused batch writes nothing.
+- Open: a table row too long for any read is listed whole, since its cells
+  carry no id (`page_reads::opens`). An edit that would take the blocks in
+  its cells is refused until they are read by id, and the refusal names
+  them; opening a row through its cells, so one read shows them in place,
+  is for reading, not safety.
 - **Read bases are durable** (a table, not the doc cache) and keyed by a hash
   of the tree, which changes on deletion (trap 6). A write whose base is gone
   is refused if its block changed, not guessed at. Per-block revisions are
@@ -234,15 +267,17 @@ acceptable. Then `kind = 'page'` pages are created as `tree`.
 
 ### 5. Move user pages
 
-- Dry run on a copy of a real box. The bar: no character lost, every change
-  reported. (The spike's 179-page corpus was mostly articles; about 57 were
+- Dry run on a copy of a real box. The bar: no character lost, no item's
+  number changed (an ordered list keeps each one, `listItem.value`), every
+  change reported. (The spike's 179-page corpus was mostly articles; about 57 were
   user pages.)
 - Per page: evict the doc from the cache and drain its queued save
   (`DocCache.held`, the save queue) so no Y.Text save lands after the flip;
   cut a restore point; convert; write the tree; flip `format`; keep the
   migration from bumping `updated_at` (the `set_updated_at` trigger).
 - IndexedDB copies are keyed by format so a converted page ignores its old
-  copy.
+  copy; a device sends that copy once, and typing in it the server never
+  had is kept as a version.
 - Pending CriticMarkup proposals are resolved or converted, not migrated as
   text.
 - History: a markdown-era snapshot restores into a tree page by conversion,
@@ -276,7 +311,54 @@ written by machines.
 - The ownership rule stands: the server refuses a machine edit that loses a
   sentence the person wrote.
 
-Design this slice when slices 0 to 5 have shipped.
+**Built** on the integration branch (2026-10-11), as
+[build/document.md](../build/document.md) describes ("Articles"): contract
+2's `footnote`, `figure` and `veil`; the writers' door
+(`YjsState::draft`, `write_draft`, `revise_ops`); the edition as the export,
+compared by re-projection; the move at first open and in the run
+(`virtues pages convert --articles`); migration 0051 (the constraint
+dropped, `updated_at` kept on a change of format by the trigger, not by
+turning it off, and `tree_lineage`); and the readers made escape-aware.
+The dry run on a copy of a real box (126 articles, 95 day pages) met the
+bar: no text or address lost, every article's syntax counted on the bar,
+every untouched article still untouched, and the day page's readers read
+every day page's export as its markdown. Applied to a copy with no server,
+the run moved the 7 opened articles and left 119 to their first open, and
+a second run moved nothing; every article kept its letters and digits, no
+page's `updated_at` moved and no article row's, and no article read as its
+owner's that did not before. The export ends in a newline the writers'
+markdown lacks on 100 of them, named in the report as its own kind. That
+copy predates 0046 and holds no notes, so no note's anchor was measured.
+
+Open before it ships:
+
+- Contract 2 refuses `mac-v1.0.30` (contract 1) on every page a server
+  writes after it, and on every block page a contract 2 client changes
+  (`PageDoc::raise_for_writer`); the release note goes with slice 7's
+  `MIN_BOX_API`.
+- The other direction: an app at contract 2 (an iOS or Mac build that
+  updated itself) against a box at contract 1 opens every block page read
+  only, a page stamped 1 with no footnote, figure or veil included, with
+  "Your server needs an update" (`TREE_CONTRACT > box_contract`,
+  `lib/yjs/document.ts`), and the box binds its socket read only too.
+  Nothing is lost, and until new pages default to blocks only a box with
+  `VIRTUES_TREE_PAGES=1` has block pages, but the box release carrying
+  contract 2 ships before the apps that carry it, or `MIN_BOX_API` rises
+  with it.
+- `revise_ops`'s similarity threshold (0.5) is a guess: measure it on
+  rewrite pairs (ids kept against swapped).
+- Unopened articles stay lazy; `--include-unopened` would move them through
+  the first open, if one uniform state matters more than narration
+  re-drafting an unread day.
+- `escape_md` escapes `&`, `_`, `*`, `~`, `<`, `[` and `]` everywhere; the
+  readers read them now. The dry run's `changed_by` counts (escapes on 14 of
+  126 articles) are the measure for narrowing it.
+- A read of an unborn article moves it; a read could serve a converted copy
+  without moving, at the cost of a second path.
+- Ten day pages on the measured box hold rows of pipes with no rule row,
+  which no markdown renderer draws as a table; the move keeps them as one
+  paragraph of pipes, as the page drew them before. Whatever wrote them
+  should write the rule row.
 
 ### 7. Delete the old way
 
@@ -313,6 +395,14 @@ Design this slice when slices 0 to 5 have shipped.
 - Android, if [cross-platform-apps-plan.md](cross-platform-apps-plan.md)'s app
   can edit pages by then: keyboard input is ProseMirror's weakest platform.
 - Two devices on one page with the model writing.
+- The page's markdown converter (WebAssembly) on the reference iPhone: a
+  256 KiB paste converts in under 300 ms, or `EDITOR_MAX_BYTES` comes down;
+  it loads under the box's and both apps' content security policies; a first
+  open over the relay with nothing cached. An app shell older than
+  `'wasm-unsafe-eval'` pastes markdown as text, so the shell that carries it
+  ships before tree pages default.
+- A page's file uploaded from the phone, the laptop showing it arrive; the
+  phone's app closed mid-upload, the laptop saying it never finished.
 - [mobile-ux-plan.md](mobile-ux-plan.md) defers the phone editor to a "pages
   editor roadmap" that does not exist; this plan is it.
 
@@ -322,8 +412,8 @@ Design this slice when slices 0 to 5 have shipped.
   2) and co-editing on the page CRDT (wave 4) should target block ops.
 - `tasks-plan.md`: its note about page checkboxes moves from
   `build/codemirror.md` to the document build doc.
-- [day-article-plan.md](day-article-plan.md): "the article stays one
-  ordinary markdown page" holds until slice 6.
+- [day-article-plan.md](day-article-plan.md): the article is a block page
+  once opened, since slice 6.
 
 ## Not in this plan
 

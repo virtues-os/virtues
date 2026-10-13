@@ -78,6 +78,40 @@ pub fn depth(nodes: &[Node]) -> usize {
         .unwrap_or(0)
 }
 
+/// The attribute holding a list item's own number, HTML's `<li value>`.
+pub const ITEM_NUMBER: &str = "value";
+
+/// Each item's number in an ordered list starting at `start`, as HTML
+/// numbers `<ol start>` and `<li value>`: an item carrying its own number
+/// ([`ITEM_NUMBER`]) is that, and every other one is one past the item
+/// before it (the first, `start`). A to-do, which carries none, counts on
+/// like any item without one.
+pub fn item_numbers(start: i64, items: &[Node]) -> Vec<i64> {
+    let mut next = start;
+    items
+        .iter()
+        .map(|item| {
+            let n = item.attrs.get(ITEM_NUMBER).and_then(Value::as_i64).unwrap_or(next);
+            next = n.saturating_add(1);
+            n
+        })
+        .collect()
+}
+
+/// Drop each item's own number that only repeats the count
+/// ([`item_numbers`]): the list shows the same numbers, and holds a `value`
+/// only where an item's number departs from the count.
+pub fn drop_counted_numbers(start: i64, items: &mut [Node]) {
+    let mut next = start;
+    for item in items {
+        let own = item.attrs.get(ITEM_NUMBER).and_then(Value::as_i64);
+        if own == Some(next) {
+            item.attrs.insert(ITEM_NUMBER.into(), Value::Null);
+        }
+        next = own.unwrap_or(next).saturating_add(1);
+    }
+}
+
 /// Something the contract refuses (an error) or a change made on the way in
 /// (a note), with where it happened.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

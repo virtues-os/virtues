@@ -18,6 +18,7 @@
 
 import { toast } from "svelte-sonner";
 import { normalizeImage } from "$lib/multimodal/normalizeImage";
+import { bytesToBase64 } from "$lib/utils/base64";
 
 export type Attachment = {
 	id: string;
@@ -129,10 +130,7 @@ function signature(file: File): string {
 }
 
 function base64Utf8(s: string): string {
-	const bytes = new TextEncoder().encode(s);
-	let bin = "";
-	for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-	return btoa(bin);
+	return bytesToBase64(new TextEncoder().encode(s));
 }
 
 export class AttachmentsController {

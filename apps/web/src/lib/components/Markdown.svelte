@@ -190,7 +190,9 @@
 				{@const isExternal = url ? /^https?:\/\//.test(url) : false}
 				{@const queryCitation = citationForToolRef(url)}
 				{#if isEntity}
-					<Ref displayName={token.text} url={url} variant={refVariant} />
+					<!-- `[@X](/entity/id)`: the editor's `@` marks the ref, and
+					     is no part of its name, as in the image form below. -->
+					<Ref displayName={(token.text ?? '').replace(/^@/, '')} url={url} variant={refVariant} />
 				{:else if queryCitation}
 					<!-- The rows behind a figure. Same quiet dotted form as a
 					     web citation: it is evidence for the number, not a

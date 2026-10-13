@@ -3,6 +3,7 @@
 	import { type Tab, routeToEntityId } from "$lib/tabs/types";
 	import { tabRegistry, getComponent, getVirtuesComponent } from "$lib/tabs/registry";
 	import { loadView, peekView, reloadForStaleChunk, type View, type ViewLoader } from "$lib/tabs/lazy";
+	import { reloadApp } from "$lib/reload";
 	import Button from "$lib/components/Button.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -76,7 +77,7 @@
 			<span class="subtitle">Your server may have just updated. Reload the app to get its latest version.</span>
 			<div class="actions">
 				<Button variant="secondary" size="sm" onclick={() => (attempt += 1)}>Try again</Button>
-				<Button size="sm" onclick={() => window.location.reload()}>Reload the app</Button>
+				<Button size="sm" onclick={() => reloadApp()}>Reload the app</Button>
 			</div>
 		</div>
 	{:else if !tabRegistry[tab.type]}

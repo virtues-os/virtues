@@ -45,6 +45,9 @@
 	import { otaCheckNow, bundleUpdateReady, shellIdentity } from "$lib/tauri/bridge";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
+	import { prefetchConverter } from "$lib/document/converter";
+	import { nothingToLose as reloadLosesNothing } from "$lib/tauri/quietReload";
+	import { reloadApp } from "$lib/reload";
 
 	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
 	const BUILD_COMMIT: string = __BUILD_COMMIT__;
@@ -76,27 +79,24 @@
 		// the app itself: Setup and the recovery screens hold state a reload
 		// would lose, like an open Bluetooth link. agents/plan/local-ui-plan.md.
 		void bundleUpdateReady().then((ready) => {
-			if (ready && document.hidden && nothingToLose()) window.location.reload();
+			if (ready && document.hidden && nothingToLose()) reloadApp();
 		});
 	}
 
 	/**
 	 * Would a reload now cost anything that isn't saved? The staged UI waits
-	 * for the next time the app is hidden with nothing at stake: a temporary
-	 * chat (its transcript lives only in this page), a reply still streaming,
-	 * Setup showing in a pane (a step can hold a connection or an interview
-	 * mid-flight), or text in the focused field (a half-entered key or
-	 * rename). Composer drafts are saved as they are typed, so they don't
-	 * count.
+	 * for the next time the app is hidden with nothing at stake
+	 * (`quietReload.ts` says what counts, a page's file on its way among it).
 	 */
 	function nothingToLose(): boolean {
 		const tabs = windowShellStore.panes.flatMap((p) => p.tabs);
-		if (tabs.some((t) => isTemporaryRoute(t.route))) return false;
 		const showing = windowShellStore.panes.map((p) => p.tabs.find((t) => t.id === p.activeTabId)?.route ?? "");
-		if (showing.some((r) => r === "/setup" || r.startsWith("/setup/"))) return false;
-		if (chatInstances.debug().some((c) => c.status === "streaming" || c.status === "submitted")) return false;
-		const focused = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
-		return !(focused && typeof focused.value === "string" && focused.value.length > 0);
+		return reloadLosesNothing({
+			temporaryChat: tabs.some((t) => isTemporaryRoute(t.route)),
+			setupShowing: showing.some((r) => r === "/setup" || r.startsWith("/setup/")),
+			replying: chatInstances.debug().some((c) => c.status === "streaming" || c.status === "submitted"),
+			focused: document.activeElement,
+		});
 	}
 
 	// Get session expiry from page data
@@ -212,6 +212,9 @@
 		projectStore.load();
 		installRevalidate();
 		initTheme();
+		// The page editor's markdown converter, fetched while the app is idle
+		// so a block page rarely waits on it (lib/document/converter.ts).
+		prefetchConverter();
 
 		// Initialize workspace store (loads workspaces, tree, and tabs)
 		await windowShellStore.init();

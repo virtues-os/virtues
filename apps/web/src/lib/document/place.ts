@@ -13,6 +13,9 @@ import type { Transaction } from '@tiptap/pm/state';
  * position just after the block.
  */
 export function insertBlockAt(tr: Transaction, pos: number, node: PmNode): number {
+	// `pos` is in the document as `tr` has it now: mapped only through the
+	// steps this call adds, never through those before it.
+	const steps = tr.steps.length;
 	const $pos = tr.doc.resolve(Math.min(pos, tr.doc.content.size));
 	if ($pos.parent.isTextblock && $pos.depth > 0) {
 		if ($pos.parent.content.size === 0) tr.replaceWith($pos.before(), $pos.after(), node);
@@ -24,10 +27,11 @@ export function insertBlockAt(tr: Transaction, pos: number, node: PmNode): numbe
 	}
 	// Where it landed: a block is placed whole, so it is the node itself,
 	// at most a few levels of splitting past where it was asked for.
-	const from = tr.mapping.map($pos.pos, -1);
+	const mapping = tr.mapping.slice(steps);
+	const from = mapping.map($pos.pos, -1);
 	const limit = Math.min(tr.doc.content.size, from + 2 * $pos.depth + 2);
 	for (let p = Math.max(0, from - 2 * $pos.depth - 2); p <= limit; p++) {
 		if (tr.doc.nodeAt(p) === node) return p + node.nodeSize;
 	}
-	return tr.mapping.map($pos.pos, 1);
+	return mapping.map($pos.pos, 1);
 }

@@ -1,0 +1,20 @@
+[package]
+name = "virtues-document-wasm"
+version = "0.1.0"
+edition = "2021"
+publish = false
+authors = ["Virtues Team <team@virtues.com>"]
+description = "The page converter (virtues-document) as the WebAssembly module the editor runs"
+license = "MIT"
+repository = "https://github.com/virtues-os/virtues"
+
+# A workspace member, so it builds from the root Cargo.lock: the same
+# pulldown-cmark, html5ever, scraper and regex as the server, which is what
+# makes it the server's converter and not a second one.
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The converter alone: without `yjs`, nothing in the module imports from
+# its host (see virtues-document's Cargo.toml).
+virtues-document = { path = "../virtues-document", default-features = false }

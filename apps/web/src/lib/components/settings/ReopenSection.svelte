@@ -39,7 +39,8 @@
 		try {
 			await reopenOnboarding();
 			// This device is revoked now. A reload lands on the unpaired gate,
-			// which is the honest next screen.
+			// which is the honest next screen. Not `reloadApp`: no file a page
+			// has on its way can reach the server from a revoked device.
 			location.reload();
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);

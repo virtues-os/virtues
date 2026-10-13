@@ -1,0 +1,93 @@
+[
+  {
+    "name": "day page, as the narrator writes it",
+    "kind": "day",
+    "markdown": "You spent a slow Saturday at home, then met [⟦Nick⟧](/person/person_n) at ⟦the Blue Kettle⟧ for dinner.\n\n## Morning on the porch[^cx-1]\n\nYou read on the porch while it rained.[^ev-1] **⟦Nick⟧** wrote that he was running late.[^ev-2][^ev-3]\n\n```figure\nkind: quote\ntext: Save me a seat by the window.\nwho: Nick\nref: data_communication_message:msg_3\ntime: 9:12 AM\n```\n\n## Dinner at ⟦the Blue Kettle⟧[^cx-2]\n\nYou ate by the window and talked about ⟦his new job⟧.[^ev-4] It was late when you walked home.[^ev-5]\n\n```figure\nkind: route\n```\n\n[^cx-1]: 8:40 AM–10:05 AM\n[^ev-1]: Recording · 8:40 AM · data_communication_transcription:tr_1\n[^ev-2]: Message · 9:12 AM · data_communication_message:msg_3\n[^ev-3]: Chat · 9:30 AM\n[^cx-2]: 7:15 PM–9:40 PM\n[^ev-4]: Recording · 7:20 PM · data_communication_transcription:tr_2\n[^ev-5]: Location · 9:40 PM\n",
+    "export": "You spent a slow Saturday at home, then met [⟦Nick⟧](/person/person_n) at ⟦the Blue Kettle⟧ for dinner.\n\n## Morning on the porch[^cx-1]\n\nYou read on the porch while it rained.[^ev-1] **⟦Nick⟧** wrote that he was running late.[^ev-2][^ev-3]\n\n```figure\nkind: quote\ntext: Save me a seat by the window.\nwho: Nick\nref: data_communication_message:msg_3\ntime: 9:12 AM\n```\n\n## Dinner at ⟦the Blue Kettle⟧[^cx-2]\n\nYou ate by the window and talked about ⟦his new job⟧.[^ev-4] It was late when you walked home.[^ev-5]\n\n```figure\nkind: route\n```\n\n[^cx-1]: 8:40 AM–10:05 AM\n[^ev-1]: Recording · 8:40 AM · data_communication_transcription:tr_1\n[^ev-2]: Message · 9:12 AM · data_communication_message:msg_3\n[^ev-3]: Chat · 9:30 AM\n[^cx-2]: 7:15 PM–9:40 PM\n[^ev-4]: Recording · 7:20 PM · data_communication_transcription:tr_2\n[^ev-5]: Location · 9:40 PM\n",
+    "writer": true
+  },
+  {
+    "name": "day page with a table, every figure and a heading's orphan note",
+    "kind": "day",
+    "markdown": "You spent the morning at ⟦the Larkspur Clinic⟧ with [⟦Nick⟧](/person/person_n), then walked home along the canal.\n\n## Morning at the clinic[^cx-1]\n\nYou waited at ⟦the Larkspur Clinic⟧ while it rained.[^ev-1] **⟦Nick⟧** talked about ⟦his knee surgery⟧.[^ev-2][^ev-3]\n\n```figure\nkind: quote\ntext: The waiting room had one window.\nwho: Nick\nref: data_communication_message:msg_7\ntime: 9:44 AM\n```\n\n## What you ate[^cx-2]\n\n| Time | Where |\n|---|---|\n| 12:10 PM | ⟦the Blue Kettle⟧ |\n\n[^ev-4]\n\n## The walk home[^cx-3]\n\nYou walked back along the canal.[^ev-5] [David Okafor](/person/person_2) wrote that the bridge was closed.[^ev-6]\n\n```figure\nkind: thread\nrefs: data_communication_message:msg_8, data_communication_message:msg_9\n```\n\n```figure\nkind: route\n```\n\n```figure\nkind: picture\nsrc: /api/drive/files/f_1/download\ncaption: A wet morning at ⟦the Larkspur Clinic⟧.\nstyle: watercolor\ntime: 10:40 AM\n```\n\n[^cx-1]: 9:05 AM–10:50 AM\n[^ev-1]: Recording · 9:05 AM · data_communication_transcription:tr_1\n[^ev-2]: Message · 9:44 AM · data_communication_message:msg_7\n[^ev-3]: Chat · 10:12 AM\n[^cx-2]: 12:10 PM\n[^ev-4]: Message · 12:10 PM · data_communication_message:msg_5\n[^cx-3]: 11:00 AM–11:40 AM\n[^ev-5]: Location · 11:20 AM\n[^ev-6]: Message · 11:31 AM · data_communication_message:msg_8\n[^cx-4]: 2:00 PM\n",
+    "export": "You spent the morning at ⟦the Larkspur Clinic⟧ with [⟦Nick⟧](/person/person_n), then walked home along the canal.\n\n## Morning at the clinic[^cx-1]\n\nYou waited at ⟦the Larkspur Clinic⟧ while it rained.[^ev-1] **⟦Nick⟧** talked about ⟦his knee surgery⟧.[^ev-2][^ev-3]\n\n```figure\nkind: quote\ntext: The waiting room had one window.\nwho: Nick\nref: data_communication_message:msg_7\ntime: 9:44 AM\n```\n\n## What you ate[^cx-2]\n\n| Time | Where |\n| --- | --- |\n| 12:10 PM | ⟦the Blue Kettle⟧ |\n\n[^ev-4]\n\n## The walk home[^cx-3]\n\nYou walked back along the canal.[^ev-5] [David Okafor](/person/person_2) wrote that the bridge was closed.[^ev-6]\n\n```figure\nkind: thread\nrefs: data_communication_message:msg_8, data_communication_message:msg_9\n```\n\n```figure\nkind: route\n```\n\n```figure\nkind: picture\nsrc: /api/drive/files/f_1/download\ncaption: A wet morning at ⟦the Larkspur Clinic⟧.\nstyle: watercolor\ntime: 10:40 AM\n```\n\n[^cx-1]: 9:05 AM–10:50 AM\n[^ev-1]: Recording · 9:05 AM · data_communication_transcription:tr_1\n[^ev-2]: Message · 9:44 AM · data_communication_message:msg_7\n[^ev-3]: Chat · 10:12 AM\n[^cx-2]: 12:10 PM\n[^ev-4]: Message · 12:10 PM · data_communication_message:msg_5\n[^cx-3]: 11:00 AM–11:40 AM\n[^ev-5]: Location · 11:20 AM\n[^ev-6]: Message · 11:31 AM · data_communication_message:msg_8\n",
+    "writer": false
+  },
+  {
+    "name": "day page from before footnotes",
+    "kind": "day",
+    "markdown": "A quiet Sunday at home.\n\n## Morning\n\nYou made pancakes and read on the porch.\n\n## Evening\n\n[Nick](/person/person_1) called about the cabin.\n",
+    "export": "A quiet Sunday at home.\n\n## Morning\n\nYou made pancakes and read on the porch.\n\n## Evening\n\n[Nick](/person/person_1) called about the cabin.\n",
+    "writer": true
+  },
+  {
+    "name": "year article",
+    "kind": "year",
+    "markdown": "2025 was the year you moved to ⟦Harbor Street⟧ and started running again.\n\n## Spring\n\nYou ran the canal loop most mornings with [David Okafor](/person/person_2). In April you spent a week in [Lisbon](/place/place_4).\n\n## Days to remember\n\n- [3 March](/day/day_2025-03-03)\n- [19 April](/day/day_2025-04-19)\n",
+    "export": "2025 was the year you moved to ⟦Harbor Street⟧ and started running again.\n\n## Spring\n\nYou ran the canal loop most mornings with [David Okafor](/person/person_2). In April you spent a week in [Lisbon](/place/place_4).\n\n## Days to remember\n\n- [3 March](/day/day_2025-03-03)\n- [19 April](/day/day_2025-04-19)\n",
+    "writer": true
+  },
+  {
+    "name": "entity article with a table",
+    "kind": "entity",
+    "markdown": "[Nick](/person/person_1) is your brother. He lives in ⟦Riverside⟧ and works as a carpenter.\n\n## How you talk\n\n| Channel | How often |\n|---|---|\n| Messages | Most mornings |\n| Calls | Sundays |\n\nYou mostly write about the dog and the weather.\n",
+    "export": "[Nick](/person/person_1) is your brother. He lives in ⟦Riverside⟧ and works as a carpenter.\n\n## How you talk\n\n| Channel | How often |\n| --- | --- |\n| Messages | Most mornings |\n| Calls | Sundays |\n\nYou mostly write about the dog and the weather.\n",
+    "writer": false
+  },
+  {
+    "name": "story article with a numbered list",
+    "kind": "story",
+    "markdown": "It started with a message from [Nick](/person/person_1) about a cabin near the water.\n\nThe drive took most of a Saturday. You stopped twice:\n\n1. a bakery in [Millbrook](/place/place_9)\n2. a lookout over the bay\n\nBy evening you were on the porch, listening to the tide.\n",
+    "export": "It started with a message from [Nick](/person/person_1) about a cabin near the water.\n\nThe drive took most of a Saturday. You stopped twice:\n\n1. a bakery in [Millbrook](/place/place_9)\n2. a lookout over the bay\n\nBy evening you were on the porch, listening to the tide.\n",
+    "writer": true
+  },
+  {
+    "name": "identity article",
+    "kind": "identity",
+    "markdown": "You care about keeping promises small enough to keep. You run, you cook on Sundays, and you write to [Nick](/person/person_1) most mornings.\n",
+    "export": "You care about keeping promises small enough to keep. You run, you cook on Sundays, and you write to [Nick](/person/person_1) most mornings.\n",
+    "writer": true
+  },
+  {
+    "name": "prose with escapes",
+    "kind": "entity",
+    "markdown": "You listened to R&B on the train and renamed the file to user_name.txt. It took ~20 minutes.\n",
+    "export": "You listened to R\\&B on the train and renamed the file to user\\_name.txt. It took \\~20 minutes.\n",
+    "writer": false
+  },
+  {
+    "name": "a definition with a continuation line",
+    "kind": "day",
+    "markdown": "You walked the dog.[^ev-1]\n\n[^ev-1]: Recording · 7:10 AM · data_communication_transcription:tr_3\nrecorded on the porch\n",
+    "export": "You walked the dog.[^ev-1]\n\n[^ev-1]: Recording · 7:10 AM · data_communication_transcription:tr_3\n",
+    "writer": false
+  },
+  {
+    "name": "day page whose veils hold characters the export escapes",
+    "kind": "day",
+    "markdown": "You called ⟦AT&T⟧ about the bill, then wrote to ⟦user_name_one⟧ about ⟦the [old] clinic⟧.[^ev-1]\n\n## Evening[^cx-1]\n\nLater ⟦H&M⟧ was closed, so you walked home with ⟦Nick_B⟧.[^ev-2]\n\n[^ev-1]: Message · 9:10 AM · data_communication_message:m_1\n[^cx-1]: 6:00 PM–9:00 PM\n[^ev-2]: Location · 7:40 PM\n",
+    "export": "You called ⟦AT\\&T⟧ about the bill, then wrote to ⟦user\\_name\\_one⟧ about ⟦the \\[old\\] clinic⟧.[^ev-1]\n\n## Evening[^cx-1]\n\nLater ⟦H\\&M⟧ was closed, so you walked home with ⟦Nick\\_B⟧.[^ev-2]\n\n[^ev-1]: Message · 9:10 AM · data_communication_message:m_1\n[^cx-1]: 6:00 PM–9:00 PM\n[^ev-2]: Location · 7:40 PM\n",
+    "writer": false
+  },
+  {
+    "name": "day page with a hard line break",
+    "kind": "day",
+    "markdown": "A slow evening at home.[^ev-1]\n\n## Night[^cx-1]\n\nYou cooked dinner.[^ev-2]  \nThen you read a book. It was late.[^ev-3]\n\n[^ev-1]: Location · 6:00 PM\n[^cx-1]: 6:00 PM–11:00 PM\n[^ev-2]: Recording · 7:10 PM\n[^ev-3]: Recording · 9:30 PM\n",
+    "export": "A slow evening at home.[^ev-1]\n\n## Night[^cx-1]\n\nYou cooked dinner.[^ev-2]\\\nThen you read a book. It was late.[^ev-3]\n\n[^ev-1]: Location · 6:00 PM\n[^cx-1]: 6:00 PM–11:00 PM\n[^ev-2]: Recording · 7:10 PM\n[^ev-3]: Recording · 9:30 PM\n",
+    "writer": false
+  },
+  {
+    "name": "day page with a tag that is no markup and an uncited note of the owner's",
+    "kind": "day",
+    "markdown": "A quiet day at home.\n\nThe log said <unk> twice.[^ev-1] Then you walked home.[^ev-2]\n\n[^note]: Remember to call the bank about it.\n\n[^ev-1]: Message · 9:00 AM\n[^ev-2]: Location · 6:00 PM\n",
+    "export": "A quiet day at home.\n\nThe log said \\<unk> twice.[^ev-1] Then you walked home.[^ev-2]\n\n\\[^note\\]: Remember to call the bank about it.\n\n[^ev-1]: Message · 9:00 AM\n[^ev-2]: Location · 6:00 PM\n",
+    "writer": false
+  },
+  {
+    "name": "day page with refs in both of the editor's forms",
+    "kind": "day",
+    "markdown": "You spent the afternoon with ![@Nick](/person/person_n) at the park.\n\n## Afternoon[^cx-1]\n\nYou walked with [@Zoe](/person/person_z) by the river.[^ev-1] Later ![@Nick](/person/person_n) brought lunch from the market.[^ev-2]\n\n[^cx-1]: 1:00 PM–3:00 PM\n[^ev-1]: Walk · 1:10 PM\n[^ev-2]: Message · 1:40 PM · data_communication_message:msg_4\n",
+    "export": "You spent the afternoon with [@Nick](/person/person_n) at the park.\n\n## Afternoon[^cx-1]\n\nYou walked with [@Zoe](/person/person_z) by the river.[^ev-1] Later [@Nick](/person/person_n) brought lunch from the market.[^ev-2]\n\n[^cx-1]: 1:00 PM–3:00 PM\n[^ev-1]: Walk · 1:10 PM\n[^ev-2]: Message · 1:40 PM · data_communication_message:msg_4\n",
+    "writer": false
+  }
+]

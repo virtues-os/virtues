@@ -22,6 +22,7 @@ import { IndexeddbPersistence } from 'y-indexeddb';
 import { writable, type Writable } from 'svelte/store';
 import type * as Y from 'yjs';
 import { getWsUrl } from '$lib/config/backend';
+import { serverBack } from '$lib/document/uploads';
 
 /** Close codes the server ends a refused socket with (`server/yjs.rs`). */
 export const CLOSE_CONTRACT = 4426;
@@ -129,8 +130,16 @@ export function connectPage(pageId: string, ydoc: Y.Doc, o: PageSocketOptions): 
 		checkSyncComplete();
 	});
 
+	// A socket connected again after it dropped: the server is back, and a
+	// page's file waiting on it goes now (`serverBack`).
+	let dropped = false;
 	provider.on('status', (event: { status: string }) => {
 		isConnected.set(event.status === 'connected');
+		if (event.status === 'disconnected') dropped = true;
+		if (event.status === 'connected' && dropped) {
+			dropped = false;
+			serverBack();
+		}
 	});
 
 	// y-websocket also emits `sync` with false when a synced socket drops;
