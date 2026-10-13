@@ -1600,6 +1600,7 @@
 		onfocus={focusPlace}
 		onmerge={mergeInto}
 		{zone}
+		day={date}
 		{playT}
 		{armed}
 		focus={inspectorFocus}
