@@ -3,13 +3,15 @@
 	(dayback/src/main.js:2113-2201), opened in the day's list in place of the
 	list: one place's question, from "Answer" on its stay, while the map goes
 	to the place with the named places it offers; or the names Virtues chose
-	without asking, where a wrong one is marked and corrected. "‹ Back to the
-	Day" returns to the list, and so does an answer.
+	without asking or the person set, where picking one opens the last day
+	the person was there with its question asked again, to change it. "‹ Back
+	to the Day" returns to the list, and so does an answer.
 -->
 <script lang="ts">
+	import Icon from '$lib/components/Icon.svelte';
 	import Pill from '$lib/components/timeline/Pill.svelte';
 	import ReviewAsk from '$lib/components/timeline/ReviewAsk.svelte';
-	import { askFor, type ConfirmedPlace, type PlaceCandidate, type PlaceQuestion } from '$lib/timeline/review';
+	import { askFor, nowLine, type ConfirmedPlace, type PlaceCandidate, type PlaceQuestion } from '$lib/timeline/review';
 	import type { ReviewState } from '$lib/timeline/reviewState.svelte';
 
 	let {
@@ -18,6 +20,8 @@
 		inline = false,
 		onback,
 		onfocus,
+		onopen,
+		change,
 	}: {
 		review: ReviewState;
 		/** Open in the day's list under its stay: no header, a Close at the foot. */
@@ -29,34 +33,35 @@
 		/** The place being asked about and the named places it offers, for
 		 *  the map; `null` lets go. */
 		onfocus: (at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null) => void;
+		/** A name picked in the list: open the last day the person was there. */
+		onopen?: (c: ConfirmedPlace) => void;
+		/** `q` is a named place asked again from "Named Places": what it is now. */
+		change?: ConfirmedPlace;
 	} = $props();
 
-	/** A named place marked wrong, whose right name is being typed. */
-	let flagged = $state<string | null>(null);
-
+	// The map goes to the place asked about and labels the places it
+	// offers; a name being changed that the person set is the open question.
 	$effect(() => {
 		const at = q && !review.pointing ? q : null;
-		const ask = at ? askFor(at) : null;
+		const ask = at ? askFor(at, change?.source === 'named') : null;
 		onfocus(at && ask ? { lat: at.latitude, lon: at.longitude, reachM: ask.reachM, shown: ask.shown } : null);
 		return () => onfocus(null);
 	});
 
-	/** A named place's right name, typed after marking it wrong (main.js:
-	 *  2141): a name saves it; left blank, the map's match is set aside, and
-	 *  the person's own answer (a name, Home, Work) is forgotten, so the place
-	 *  is asked about again. */
-	function correct(c: ConfirmedPlace, value: string) {
-		const v = value.trim();
-		flagged = null;
-		if (v) void review.answer(c.id, { kind: 'name', name: v });
-		else if (c.source === 'map') void review.answer(c.id, { kind: 'not_this', name: c.title });
-		else void review.answer(c.id, { kind: 'reopen' });
-	}
-
 	const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
-	const duration = (h: number) => (h < 1 ? `${Math.round(h * 60)} min` : `${h} ${h === 1 ? 'hour' : 'hours'}`);
-	/** Why a place is named (main.js:2113). */
-	const SOURCE = { home: 'Your home', work: 'Where you work', named: 'Named by you', map: 'From the map' };
+	/** "45 min", "3.5 hours", "422 hours": a tenth of an hour only under 10. */
+	const duration = (h: number) => {
+		if (h < 1) return `${Math.round(h * 60)} min`;
+		const v = h < 10 ? h : Math.round(h);
+		return `${v} ${v === 1 ? 'hour' : 'hours'}`;
+	};
+	/** The names in groups by where they came from: Home and Work, then the
+	 *  map's (guesses, the ones worth checking), then the person's own. */
+	const GROUPS: { label: string; sources: ConfirmedPlace['source'][] }[] = [
+		{ label: 'Home and work', sources: ['home', 'work'] },
+		{ label: 'Matched by Virtues', sources: ['map'] },
+		{ label: 'Named by you', sources: ['named'] },
+	];
 </script>
 
 <div class="card" class:inline>
@@ -68,29 +73,31 @@
 
 	{#if q}
 		<div class="pad">
-			<ReviewAsk {q} {review} onclose={inline ? onback : undefined} />
+			<ReviewAsk {q} {review} onclose={inline ? onback : undefined} now={change ? nowLine(change) : undefined} current={change?.source === 'named' ? change.title : undefined} />
 		</div>
 	{:else}
 		<div class="pad">
-			<h3 class="title">Auto-selected names</h3>
-			<p class="sub">Virtues chose these without asking, or you set them. Mark one with ✕ if it's wrong.</p>
-			{#each review.confirmed as c (c.id)}
-				<div class="row" class:flagged={flagged === c.id}>
-					<div class="row-main">
-						<div class="row-name">{c.title}</div>
-						<div class="row-meta">{SOURCE[c.source]} · {plural(c.stop_count, 'visit')} · {duration(c.hours)}</div>
-						{#if flagged === c.id}
-							<input
-								class="field"
-								placeholder="What was it? - or leave blank"
-								aria-label="What was it?"
-								disabled={review.saving}
-								onkeydown={(e) => e.key === 'Enter' && correct(c, (e.currentTarget as HTMLInputElement).value)}
-							/>
-						{/if}
-					</div>
-					<button class="wrong" type="button" aria-label="Mark as wrong" aria-pressed={flagged === c.id} disabled={review.saving} onclick={() => (flagged = flagged === c.id ? null : c.id)}>✕</button>
-				</div>
+			<h3 class="title">Named Places</h3>
+			{#each GROUPS as g (g.label)}
+				{@const rows = review.confirmed.filter((c) => g.sources.includes(c.source))}
+				{#if rows.length}
+					<p class="section-hd">{g.label}</p>
+					<!-- The question card's grouped list; each row leads to its
+					     day, so it carries Settings' chevron. -->
+					<ul class="list">
+						{#each rows as c (c.id)}
+							<li>
+								<button type="button" disabled={!onopen || !c.last_day} onclick={() => onopen?.(c)}>
+									<span class="row-main">
+										<span class="row-name">{c.title}</span>
+										<span class="row-meta">{plural(c.stop_count, 'visit')} · {duration(c.hours)}</span>
+									</span>
+									<Icon icon="ri:arrow-right-s-line" width="16" />
+								</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
 			{/each}
 		</div>
 		{#if review.undo}
@@ -129,12 +136,6 @@
 		font-size: 20px;
 		font-weight: 400;
 	}
-	.sub {
-		margin: 4px 0 0;
-		font-size: 13px;
-		line-height: 1.35;
-		color: var(--color-foreground-muted);
-	}
 	.undo {
 		display: flex;
 		align-items: center;
@@ -145,56 +146,63 @@
 		font-size: 13px;
 		color: var(--color-foreground-muted);
 	}
-	.row {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 12px 0;
+	/* A list's header, as in the question card: quiet, in line with the
+	   rows' text. */
+	.section-hd {
+		margin: 16px 0 0;
+		padding-left: 13px;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+	/* The question card's inset grouped list: one white rounded box of rows,
+	   hairlines between them. */
+	.list {
+		margin: 8px 0 0;
+		padding: 0;
+		list-style: none;
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
+		background: var(--color-surface);
+		overflow: hidden;
+	}
+	.list li + li {
 		border-top: 1px solid var(--color-border);
 	}
-	.row:first-of-type {
-		margin-top: 12px;
+	.list button {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 8px 12px;
+		border: 0;
+		background: none;
+		color: var(--color-foreground);
+		font-family: var(--font-sans);
+		text-align: left;
+		cursor: pointer;
+	}
+	.list button:hover:not(:disabled) {
+		background: var(--hover-bg);
+	}
+	.list button:disabled {
+		cursor: default;
+	}
+	.list button :global(svg) {
+		flex: none;
+		color: var(--color-foreground-muted);
 	}
 	.row-main {
 		flex: 1;
 		min-width: 0;
 	}
 	.row-name {
+		display: block;
 		font-size: 15px;
 	}
-	.row.flagged .row-name {
-		color: var(--color-foreground-muted);
-		text-decoration: line-through;
-	}
 	.row-meta {
+		display: block;
 		margin-top: 4px;
 		font-size: 12px;
 		color: var(--color-foreground-muted);
-	}
-	.field {
-		width: 100%;
-		margin-top: 8px;
-		padding: 8px 12px;
-		border: 1px solid var(--color-border);
-		border-radius: 12px;
-		background: var(--color-surface);
-		color: var(--color-foreground);
-		font-family: var(--font-sans);
-		font-size: 15px;
-	}
-	.wrong {
-		width: 28px;
-		height: 28px;
-		border: 0;
-		border-radius: 50%;
-		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
-		color: var(--color-foreground-muted);
-		font-size: 12px;
-		cursor: pointer;
-	}
-	.wrong[aria-pressed='true'],
-	.wrong:hover:not(:disabled) {
-		color: var(--color-foreground);
-		background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
 	}
 </style>

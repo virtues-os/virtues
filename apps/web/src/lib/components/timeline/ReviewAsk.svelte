@@ -6,7 +6,8 @@
 	"No" hands over to pointing on the map. Anything else is an open
 	question, in Apple's grouped lists: the named places around with a row
 	to type a name, then the kinds of place for when the name isn't known
-	(a hotel or someone's home ask which one).
+	(a hotel or someone's home ask which one). From "Named Places", a named
+	place's question is asked again, under what it is now, to change it.
 -->
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
@@ -19,17 +20,24 @@
 		q,
 		review,
 		onclose,
+		now,
+		current,
 	}: {
 		q: PlaceQuestion;
 		review: ReviewState;
 		/** Close the question (its card in the list); no Close without it. */
 		onclose?: () => void;
+		/** A named place asked again: what it is now ("Named by you"). */
+		now?: string;
+		/** The name the person set, being changed: the first row, checked,
+		 *  and the question always the open one. */
+		current?: string;
 	} = $props();
 
 	/** A name to offer, with the kind of place it is when the map knows. */
 	type Offer = { name: string; category: string | null };
 
-	const ask = $derived(askFor(q));
+	const ask = $derived(askFor(q, !!current));
 	let picked = $state<string[]>([]);
 	/** "None of these" on the checklist: the name field instead. */
 	let noneOfThese = $state(false);
@@ -38,7 +46,10 @@
 	let text = $state('');
 	let input = $state<HTMLInputElement | null>(null);
 	let people = $state<string[] | null>(null);
-	const sub = $derived(ask.role ? weekly(q) : q.recall);
+	// Under the question: what a named place is now, and for Home and Work
+	// the week there. When the person was there is the day on show, so it
+	// isn't repeated (the owner's call, 2026-10-13).
+	const sub = $derived([now, ask.role ? weekly(q) : null].filter(Boolean).join(' · '));
 	const open = $derived(!ask.chips.length && (!ask.picks.length || noneOfThese));
 	/** The hotels "Which hotel?" offers: the map's, less one set aside. */
 	const hotels = $derived(q.naming.hotels.filter((h) => h.name !== q.rejected_match));
@@ -52,7 +63,7 @@
 				: kind?.then === 'hotel' || q.overnight
 					? hotels
 					: q.naming.nearby.filter((c) => c.name !== q.rejected_match);
-		const seen = new Set<string>();
+		const seen = new Set<string>(kind ? [] : [current ?? '']);
 		return list.filter((o) => !seen.has(o.name) && seen.add(o.name));
 	});
 
@@ -149,6 +160,14 @@
 	<!-- One list: the names to pick, then a row to type one, as Reminders'
 	     new-item row. A name picked from the map's carries its kind. -->
 	<ul class="list">
+		{#if current && !kind}
+			<!-- The answer it has now, checked, as Settings marks the option
+			     in use; any other row changes it. -->
+			<li class="current" aria-current="true">
+				<Icon icon="ri:check-line" width="16" />
+				<span>{current}</span>
+			</li>
+		{/if}
 		{#each items as o (o.name)}
 			<li>
 				<button type="button" disabled={review.saving} onclick={() => saveName(o.name, o.category)}>
@@ -283,10 +302,14 @@
 		font-weight: 400;
 		line-height: 1.25;
 	}
+	/* Under a serif question, the sans line starts its ink where the
+	   question's does: Avenir's capitals sit about 0.08em in from their
+	   box, the serif's at its edge, so the line moves out by that much. */
 	.sub {
 		margin: 4px 0 0;
 		font-size: 13px;
 		line-height: 1.35;
+		text-indent: -0.08em;
 		color: var(--color-foreground-muted);
 	}
 
@@ -301,6 +324,13 @@
 	}
 	.more-hd {
 		margin-top: 16px;
+	}
+	/* A list's header, Apple's: quiet, in line with the rows' icons. */
+	.section-hd {
+		margin: 16px 0 0;
+		padding-left: 13px;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
 	}
 	/* Names to pick, as Apple's inset grouped list (Settings, Maps'
 	   suggestions): one white rounded box of rows, each with its icon,
@@ -339,6 +369,20 @@
 	.list button:hover:not(:disabled) {
 		background: var(--hover-bg);
 	}
+	/* The answer in use: a row like the others, not pressable, its tick in
+	   the accent. */
+	.list .current {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-height: 40px;
+		padding: 8px 12px;
+		font-size: 15px;
+	}
+	.list .current > :global(svg) {
+		flex: none;
+		color: var(--color-primary);
+	}
 	/* The last row types a name: the same height and inset as a row, the
 	   field itself borderless, Save only once there's something to save. */
 	.list .entry {
@@ -370,15 +414,6 @@
 	.list:has(.entry input:focus-visible) {
 		border-color: var(--color-border-focus);
 	}
-	/* A list's header, Apple's: small capitals in line with the rows'
-	   icons. */
-	.section-hd {
-		margin: 16px 0 0;
-		padding-left: 13px;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
-
 	/* Apple's settings list: a checkmark on each row picked. */
 	.checklist {
 		margin: 12px 0 0;

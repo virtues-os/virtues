@@ -6,8 +6,9 @@
 	card on its stay in the day's list, so every question is answered beside
 	the stay it's about. Its arrows point up and down, as Mail's previous and
 	next message do: the date card's arrows step a day, and these step through
-	a list that can jump weeks. With nothing left, "All caught up" opens the names
-	Virtues chose without asking.
+	a list that can jump weeks. Once the last question is answered, "All caught
+	up" opens the names Virtues chose without asking; the Timeline shows the
+	pill only while something is left to ask, and on that one day after.
 -->
 <script lang="ts">
 	import IconButton from '$lib/components/IconButton.svelte';

@@ -60,8 +60,6 @@ export interface PlaceQuestion {
 	rejected_match: string | null;
 	/** The place's title until it's answered: its city. */
 	title: string;
-	/** When the person was there, in words. */
-	recall: string;
 	/** The day with the most time there, YYYY-MM-DD. */
 	best_day: string | null;
 	/** A typical week there, from the first stay to the last. */
@@ -77,6 +75,51 @@ export interface ConfirmedPlace {
 	longitude: number;
 	hours: number;
 	stop_count: number;
+	/** YYYY-MM-DD of its latest stay: the day the name opens. */
+	last_day: string | null;
+	/** What its question asked, so the name changes with the same answers
+	 *  as the first time. */
+	overnight: boolean;
+	naming: PlaceNaming;
+	rejected_match: string | null;
+	hours_a_week: number;
+	nights_a_week: number;
+}
+
+/** A named place's question, asked again to change its name: Home and Work
+ *  as "Is this home?", any other as the place it was. */
+export function asQuestion(c: ConfirmedPlace): PlaceQuestion {
+	return {
+		ask: c.source === "home" || c.source === "work" ? c.source : "place",
+		changed: false,
+		id: c.id,
+		latitude: c.latitude,
+		longitude: c.longitude,
+		hours: c.hours,
+		stop_count: c.stop_count,
+		overnight: c.overnight,
+		naming: c.naming,
+		rejected_match: c.rejected_match,
+		title: c.title,
+		best_day: c.last_day,
+		hours_a_week: c.hours_a_week,
+		nights_a_week: c.nights_a_week,
+	};
+}
+
+/** What a named place is now, over its question when it's asked again;
+ *  the name itself is the stay's, just above. */
+export function nowLine(c: ConfirmedPlace): string {
+	switch (c.source) {
+		case "home":
+			return "Set as your home";
+		case "work":
+			return "Set as where you work";
+		case "named":
+			return "Named by you";
+		default:
+			return "Matched by Virtues";
+	}
 }
 
 export interface PlaceReview {
@@ -188,8 +231,10 @@ export function weekly(q: PlaceQuestion): string {
  *  are kinds of place, always true, with the names around only as the
  *  typed answer's suggestions (the owner's call, 2026-10-09: a button
  *  nothing supports, like a car dealership 175 m off, is worse than none).
- *  A match the person said was wrong is never offered again. */
-export function askFor(q: PlaceQuestion): Ask {
+ *  A match the person said was wrong is never offered again. `open`: a
+ *  name the person set, being changed, is always the open question, never
+ *  a guess or a checklist about the map's places. */
+export function askFor(q: PlaceQuestion, open = false): Ask {
 	const n = q.naming;
 	const ok = (c: PlaceCandidate) => c.name !== q.rejected_match;
 	const named = (name: string, category: string | null = null): Answer => ({ kind: "name", name, category });
@@ -227,7 +272,7 @@ export function askFor(q: PlaceQuestion): Ask {
 	});
 	if (q.overnight) {
 		const hotel = n.lodging && ok(n.lodging) && n.lodging.meters <= GUESS_M ? n.lodging : null;
-		if (hotel) return guess(hotel);
+		if (hotel && !open) return guess(hotel);
 		return {
 			...base,
 			text: "Where did you stay that night?",
@@ -237,7 +282,7 @@ export function askFor(q: PlaceQuestion): Ask {
 		};
 	}
 	const cands = n.candidates.filter(ok);
-	if (cands.length > 1)
+	if (cands.length > 1 && !open)
 		return {
 			...base,
 			text: "Which of these were you at?",
@@ -248,7 +293,7 @@ export function askFor(q: PlaceQuestion): Ask {
 			shown: cands,
 			reachM: Math.max(...cands.map((c) => c.meters)),
 		};
-	if (cands.length === 1) return guess(cands[0]);
+	if (cands.length === 1 && !open) return guess(cands[0]);
 	// The nearest named places are labelled on the map, so a place the base
 	// map leaves unlabelled at this zoom (a school among its grounds) can be
 	// found, though none is offered as a button.

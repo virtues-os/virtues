@@ -26,7 +26,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import ReviewCard from '$lib/components/timeline/ReviewCard.svelte';
 	import { getNearbyPlaces, type NearbyPlace } from '$lib/wiki/api';
-	import { askFor, type PlaceCandidate } from '$lib/timeline/review';
+	import { askFor, type Answer, type PlaceCandidate } from '$lib/timeline/review';
 	import type { ReviewState } from '$lib/timeline/reviewState.svelte';
 
 	let {
@@ -46,6 +46,8 @@
 		selected = null,
 		hovered = null,
 		onfocus,
+		onopenplace,
+		ondetour,
 	}: {
 		sections: InspectorSection[];
 		zone: string;
@@ -79,6 +81,12 @@
 		onfocus?: (at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null) => void;
 		/** Fold an unnamed place into a named one near it. */
 		onmerge: (placeId: string, into: NearbyPlace) => Promise<boolean>;
+		/** A name picked in "Named Places": open the day `day` with the place's
+		 *  stay picked. */
+		onopenplace?: (id: string, day: string) => void;
+		/** "Named Places" opened (`true`) or left (`false`); `back` when left
+		 *  by "‹ Back to the Day", which returns to the day it was opened on. */
+		ondetour?: (open: boolean, back?: boolean) => void;
 	} = $props();
 
 	// Naming a place, one at a time. The named places within 150 m come first,
@@ -169,15 +177,53 @@
 	// under the stay it was opened from, with the rest of the day dimmed
 	// around it (the owner's call, 2026-10-10: the day is the context); the
 	// names Virtues chose open in place of the list.
-	let card = $state<{ id: string; at: number } | 'names' | null>(null);
-	const cardQ = $derived(card && card !== 'names' ? (review?.byPlace.get(card.id) ?? null) : null);
+	// A named place's question can be asked again from "Named Places"
+	// (`change`), to change its name with the first time's answers.
+	let card = $state<{ id: string; at: number; change?: boolean } | 'names' | null>(null);
+	const cardQ = $derived(
+		card && card !== 'names' ? ((card.change ? review?.named.get(card.id) : review?.byPlace.get(card.id)) ?? null) : null,
+	);
+	/** The named place being changed, for what it is now. */
+	const changing = $derived.by(() => {
+		const c = card;
+		return c && c !== 'names' && c.change ? review?.confirmed.find((x) => x.id === c.id) : undefined;
+	});
 	/** The section the open question sits under. */
 	const openAt = $derived(cardQ && card && card !== 'names' ? card.at : null);
 	// Answered (or another day on show without it): back to the list, where
 	// the stay has its new name and Undo.
 	$effect(() => {
 		void sections;
-		if (card && card !== 'names' && (!cardQ || !sections.some((x) => x.placeId === (card as { id: string }).id))) untrack(() => (card = null));
+		if (card && card !== 'names' && !card.change && (!cardQ || !sections.some((x) => x.placeId === (card as { id: string }).id))) untrack(() => (card = null));
+	});
+	// "Named Places" is a detour from the day being read: the list, and any
+	// name's card opened from it. "‹ Back to the Day" ends it on the day it
+	// began from, not the last name's (the owner's call, 2026-10-13).
+	const detour = $derived(card === 'names' || !!(card && card.change));
+	let inDetour = false;
+	let leavingBack = false;
+	$effect(() => {
+		const d = detour;
+		untrack(() => {
+			if (d !== inDetour) ondetour?.(d, leavingBack);
+			inDetour = d;
+			leavingBack = false;
+		});
+	});
+	// A name changed from "Named Places": back to the list it was picked in,
+	// with the new name on it.
+	let changesSeen = 0;
+	$effect(() => {
+		const n = review?.changes ?? 0;
+		untrack(() => {
+			if (n === changesSeen) return;
+			changesSeen = n;
+			if (!card || card === 'names' || !card.change) return;
+			// "No" to the map's match leaves the place unnamed: its question
+			// goes on in the same card, as the first time. Any other change
+			// is done.
+			card = review?.byPlace.has(card.id) ? { id: card.id, at: card.at } : 'names';
+		});
 	});
 	/** Open the card on a place's question, with stay `at` picked, else the
 	 *  place's first stay that day. */
@@ -187,9 +233,23 @@
 		if (i !== curSection) pickSection(i, sections[i]);
 		card = { id, at: i };
 	}
+	/** "No" to a guess on a stay's line: the guess is set aside, and the
+	 *  card opens on what the place was, rather than a second "Choose". */
+	async function saidNo(id: string, no: Answer, at: number) {
+		if (await review?.answer(id, no)) ask(id, at);
+	}
 	/** Open the card on the names Virtues chose without asking. */
 	export function names() {
 		card = 'names';
+	}
+	/** Ask a named place's question again, under its last stay on the day
+	 *  on show: "Named Places" opens a name there, to change it. */
+	export function revisit(id: string) {
+		const i = sections.findLastIndex((x) => x.placeId === id);
+		if (i < 0 || !review?.named.has(id)) return void (card = null);
+		card = null;
+		if (i !== curSection) pickSection(i, sections[i]);
+		card = { id, at: i, change: true };
 	}
 	const curRow = $derived(
 		sections
@@ -330,7 +390,7 @@
 	<section class="inspector" bind:this={inspector} aria-label="The day, stay by stay">
 		{#if review && card === 'names'}
 			<div class="scroll">
-				<ReviewCard {review} onback={() => (card = null)} onfocus={(at) => onfocus?.(at)} />
+				<ReviewCard {review} onback={() => ((leavingBack = true), (card = null))} onfocus={(at) => onfocus?.(at)} onopen={onopenplace ? (c) => c.last_day && onopenplace(c.id, c.last_day) : undefined} />
 			</div>
 		{:else}
 		<div class="scroll" class:asking-open={openAt !== null} style:--day-hd="{dayHd}px" bind:this={scroller}>
@@ -357,7 +417,7 @@
 					</button>
 					{#if openAt === i && cardQ && review}
 						<div class="inline-card">
-							<ReviewCard {review} q={cardQ} inline onback={() => (card = null)} onfocus={(at) => onfocus?.(at)} />
+							<ReviewCard {review} q={cardQ} inline change={changing} onback={() => (card = changing ? 'names' : null)} onfocus={(at) => onfocus?.(at)} />
 						</div>
 					{:else if asked && review && !review.pointing}
 						{@const id = asked.id}
@@ -372,7 +432,7 @@
 							{#if yes}
 								<span class="ask-actions">
 									<Pill filled disabled={review.saving} onclick={() => void review.answer(id, yes)}>Yes</Pill>
-									<Pill disabled={review.saving} onclick={() => (a.role ? review.startPointing(id, a.role) : a.no ? void review.answer(id, a.no) : ask(id, i))}>No</Pill>
+									<Pill disabled={review.saving} onclick={() => (a.role ? review.startPointing(id, a.role) : a.no ? void saidNo(id, a.no, i) : ask(id, i))}>No</Pill>
 								</span>
 							{:else}
 								<Pill onclick={() => ask(id, i)}>Choose</Pill>
@@ -387,7 +447,7 @@
 						{@const placeId = sec.placeId}
 						{#if naming === placeId}
 							<form class="name-form" onsubmit={(e) => (e.preventDefault(), saveName(placeId))}>
-								{#if sec.guessed}<p class="same">Named from the map</p>{/if}
+								{#if sec.guessed}<p class="same">Matched by Virtues</p>{/if}
 								{#if nearby.length}
 									<p class="same">Same as</p>
 									<span class="pills">
@@ -421,7 +481,7 @@
 								<!-- A name the map chose: no line under it, only Reminders'
 								     ⓘ on the row pointed at or selected, which opens the
 								     name field to correct it. -->
-								<button class="info" class:shown={i === curSection} type="button" aria-label="About this name" title="Named from the map" onclick={() => startNaming(placeId)}>
+								<button class="info" class:shown={i === curSection} type="button" aria-label="About this name" title="Matched by Virtues" onclick={() => startNaming(placeId)}>
 									<Icon icon="ri:information-line" width="18" />
 								</button>
 							{:else}
@@ -461,6 +521,12 @@
 					{/each}
 				</div>
 			{/each}
+			<!-- Every name Virtues chose or the person set, at the end of every
+			     day's list: always there, never on the map (the owner's call,
+			     2026-10-13, over a pill that stayed after the last answer). -->
+			{#if review?.review && review.confirmed.length}
+				<div class="all-names"><Pill onclick={names}>Named Places</Pill></div>
+			{/if}
 		</div>
 		{/if}
 	</section>
@@ -766,7 +832,7 @@
 		padding: 0 16px 12px 32px;
 	}
 	/* "Help Virtues out" in the list: a question as its stay's second line,
-	   in the type of "From the map · Not right?", with one way in; an
+	   in the type of the stay's notes, with one way in; an
 	   answer's Undo takes the same line. */
 	.ask-actions,
 	.pills {
@@ -867,6 +933,10 @@
 		.scroll.asking-open .group:not(.open) {
 			transition: none;
 		}
+	}
+	/* In line with the date header above the list. */
+	.all-names {
+		padding: 8px 16px 16px;
 	}
 	/* The list's subject, quiet in the muted colour, pinned over the rows
 	   as they scroll. */

@@ -358,6 +358,15 @@ pub struct Confirmed {
     pub longitude: f64,
     pub hours: f64,
     pub stop_count: usize,
+    /// The local date of its latest stay: the day a name opens.
+    pub last_day: Option<NaiveDate>,
+    /// What the place's question asked, kept so a name can be changed with
+    /// the same answers as the first time.
+    pub overnight: bool,
+    pub naming: Naming,
+    pub rejected_match: Option<String>,
+    pub hours_a_week: f64,
+    pub nights_a_week: f64,
 }
 
 /// Every place's standing: a question, or confirmed.
@@ -377,15 +386,24 @@ pub async fn review(pool: &PgPool) -> Result<Review> {
             _ => ("place", false),
         };
         match t.source {
-            "named" | "home" | "work" | "map" if ask == "place" => confirmed.push(Confirmed {
-                id: p.id.clone(),
-                title: t.title,
-                source: t.source,
-                latitude: p.latitude,
-                longitude: p.longitude,
-                hours: p.hours(),
-                stop_count: p.stays.len(),
-            }),
+            "named" | "home" | "work" | "map" if ask == "place" => {
+                let (hours_a_week, nights_a_week) = per_week(p);
+                confirmed.push(Confirmed {
+                    id: p.id.clone(),
+                    title: t.title,
+                    source: t.source,
+                    latitude: p.latitude,
+                    longitude: p.longitude,
+                    hours: p.hours(),
+                    stop_count: p.stays.len(),
+                    last_day: p.stays.iter().map(|(s, _)| *s).max().map(|s| local(s, p.tz).date()),
+                    overnight: p.night_ms > OVERNIGHT_MS,
+                    naming,
+                    rejected_match: p.rejected_match.clone(),
+                    hours_a_week,
+                    nights_a_week,
+                })
+            }
             _ if p.passing_through && ask == "place" => {}
             _ => {
                 let (recall, best_day) = recall_line(&p.stays, p.tz);
@@ -869,6 +887,9 @@ mod tests {
         let r = review(&pool).await.unwrap();
         assert!(r.questions.iter().all(|q| q.id != id));
         assert!(r.confirmed.iter().any(|c| c.id == id && c.source == "named" && c.title == "The Boathouse"));
+        let c = r.confirmed.iter().find(|c| c.id == id).unwrap();
+        assert_eq!(c.last_day, NaiveDate::from_ymd_opt(2026, 9, 12), "a name opens the day of its latest stay");
+        assert_eq!((c.overnight, c.naming.tier), (q.overnight, q.naming.tier), "and changes with the first time's question");
         assert_eq!(titles(&pool, &[id.clone()]).await.unwrap()[&id].title, "The Boathouse");
     }
 

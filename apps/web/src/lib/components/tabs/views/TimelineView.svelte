@@ -675,6 +675,14 @@
 			// day): the place it asks about, not the whole day. Only a card on
 			// this day: one left open on the day before must not hold the map.
 			if (focused && focusedDay === date) focusPlace(focused);
+			// A name opened from "Named Places" while its day loaded: its
+			// question opened once the day is framed, so the framing doesn't
+			// undo it.
+			if (pendingShow) {
+				const id = pendingShow;
+				pendingShow = null;
+				inspector?.revisit(id);
+			}
 			return;
 		}
 		bubbles?.clear();
@@ -816,6 +824,41 @@
 		untrack(() => {
 			pendingAsk = null;
 			inspector?.ask(id);
+		});
+	});
+	/** The day "Named Places" was opened on: leaving it by "‹ Back to the
+	 *  Day" returns there, however many names' days it showed. */
+	let detourFrom: string | null = null;
+	function detour(open: boolean, back = false) {
+		if (open) {
+			detourFrom ??= date;
+			return;
+		}
+		const from = detourFrom;
+		detourFrom = null;
+		if (back && from && from !== date) date = from;
+	}
+	/** A name from "Named Places": its last day, with its question asked
+	 *  again under its stay once the day is drawn (`drawDay`). */
+	let pendingShow: string | null = null;
+	function openPlace(id: string, day: string) {
+		if (day === date) inspector?.revisit(id);
+		else {
+			pendingShow = id;
+			date = day;
+		}
+	}
+	// The pill is there while something is left to ask. The answer that
+	// clears the list leaves "All caught up" on that day, then the pill goes
+	// (the owner's call, 2026-10-13: a pill that stays is noise); every name
+	// stays under "Named Places" at the end of the day's list.
+	let caughtUpOn = $state<string | null>(null);
+	let lastCount = -1;
+	$effect(() => {
+		const n = steps.length;
+		untrack(() => {
+			if (lastCount > 0 && n === 0) caughtUpOn = date;
+			lastCount = n;
 		});
 	});
 	// An answer shortens the list: the step stays where the answered one was,
@@ -1583,7 +1626,7 @@
 			</div>
 			<button class="date-title" type="button" title="Back to the whole day" onclick={resetView}>{title}</button>
 		</div>
-		{#if review.review && !monthOpen}
+		{#if review.review && !monthOpen && (steps.length || caughtUpOn === date)}
 			<ReviewTile
 				count={steps.length}
 				at={stepAt}
@@ -1638,6 +1681,8 @@
 		{playT}
 		{armed}
 		focus={inspectorFocus}
+		onopenplace={openPlace}
+		ondetour={detour}
 		onpick={reveal}
 		onseek={(t) => {
 			inspectorFocus = 'row';

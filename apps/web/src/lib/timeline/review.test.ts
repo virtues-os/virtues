@@ -13,7 +13,6 @@ const question = (over: Partial<Omit<PlaceQuestion, "naming">> & { naming?: Part
 	overnight: false,
 	rejected_match: null,
 	title: "Riverton",
-	recall: "",
 	best_day: null,
 	hours_a_week: 0,
 	nights_a_week: 0,
