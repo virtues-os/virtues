@@ -64,8 +64,20 @@ pub async fn run_agent_loop(
 
     // An applet whose work has nowhere to go fails before it spends anything
     // on the model: the run could only finish as a success that made nothing.
+    // A chat in Recently deleted still has its id here, but nobody reads it.
+    let has_chat = match &chat_id {
+        Some(cid) => {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM app_chats WHERE id = $1 AND deleted_at IS NULL)",
+            )
+            .bind(cid)
+            .fetch_one(pool)
+            .await?
+        }
+        None => false,
+    };
     let has_face = crate::server::faces::face_dir_for(applet_id).is_some();
-    if let Some(reason) = missing_destination(delivers_kind(&action.config), chat_id.is_some(), has_face) {
+    if let Some(reason) = missing_destination(delivers_kind(&action.config), has_chat, has_face) {
         tracing::warn!(applet_id, %reason, "applet has nowhere to put its work");
         return Ok(AgentLoopResult {
             applet_id: applet_id.to_string(),
@@ -313,7 +325,7 @@ pub async fn run_agent_loop(
     // success. A run already failed or stopped at its ceiling keeps that
     // reason.
     if error.is_none() && budget_stopped.is_none() {
-        error = missing_delivery(delivers, wrote_page);
+        error = missing_delivery(delivers, wrote_page, message.is_some());
     }
 
     // 8. Save assistant message (only if chat is linked)
@@ -384,9 +396,10 @@ fn wrote_a_page(tool: &str, success: bool, result: &serde_json::Value) -> bool {
 /// Why a finished run failed to make what its applet makes, if it did.
 /// Only a page is checked after the run: the other kinds have no tool whose
 /// success says the work arrived, so `missing_destination` checks them
-/// before it instead.
-fn missing_delivery(delivers: Option<&str>, wrote_page: bool) -> Option<String> {
-    (delivers == Some("page") && !wrote_page)
+/// before it instead. A run a person's message woke is answering them, and a
+/// reply that writes no page is still a reply, so it isn't checked.
+fn missing_delivery(delivers: Option<&str>, wrote_page: bool, answering: bool) -> Option<String> {
+    (delivers == Some("page") && !wrote_page && !answering)
         .then(|| "The run ended without writing its page.".to_string())
 }
 
@@ -542,10 +555,11 @@ mod tests {
         let page = json!({ "delivers": { "kind": "page" } });
         assert_eq!(delivers_kind(&page), Some("page"));
         assert_eq!(delivers_kind(&json!({})), None);
-        assert!(missing_delivery(Some("page"), false).is_some());
-        assert!(missing_delivery(Some("page"), true).is_none());
-        assert!(missing_delivery(None, false).is_none(), "an applet that says nothing is not checked");
-        assert!(missing_delivery(Some("chat"), false).is_none(), "a quiet run on a chat applet is not a failure");
+        assert!(missing_delivery(Some("page"), false, false).is_some());
+        assert!(missing_delivery(Some("page"), true, false).is_none());
+        assert!(missing_delivery(None, false, false).is_none(), "an applet that says nothing is not checked");
+        assert!(missing_delivery(Some("chat"), false, false).is_none(), "a quiet run on a chat applet is not a failure");
+        assert!(missing_delivery(Some("page"), false, true).is_none(), "a reply to a message is not a missing page");
     }
 
     #[test]
