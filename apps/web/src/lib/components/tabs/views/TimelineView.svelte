@@ -776,12 +776,17 @@
 	 *  in Review's order (Home and Work, then the most time first). */
 	const steps = $derived(review.questions.filter((q) => q.best_day));
 	let stepAt = $state<number | null>(null);
+	/** The question stepped to. Once answered it leaves the list, and the
+	 *  step sits between its neighbours: the next one has taken its index. */
+	let stepId = $state<string | null>(null);
+	const stepAnswered = $derived(stepAt !== null && steps[stepAt]?.id !== stepId);
 	/** A question whose day is loading: its card opens once the day is in. */
 	let pendingAsk = $state<string | null>(null);
 	function stepTo(i: number) {
 		const q = steps[i];
 		if (!q?.best_day) return;
 		stepAt = i;
+		stepId = q.id;
 		if (q.best_day === date) inspector?.ask(q.id);
 		else {
 			pendingAsk = q.id;
@@ -796,11 +801,13 @@
 			inspector?.ask(id);
 		});
 	});
-	// An answer shortens the list: the step stays on the next one in line.
+	// An answer shortens the list: the step stays where the answered one was,
+	// so the next one in line is one tap away, never skipped.
 	$effect(() => {
 		const n = steps.length;
 		untrack(() => {
-			if (stepAt !== null && stepAt >= n) stepAt = n ? n - 1 : null;
+			if (stepAt !== null && stepAt > n) stepAt = n;
+			if (!n) stepAt = null;
 		});
 	});
 	/** A stay's name field made its place Home or Work. */
@@ -1554,6 +1561,7 @@
 			<ReviewTile
 				count={steps.length}
 				at={stepAt}
+				answered={stepAnswered}
 				onstep={stepTo}
 				onnames={() => inspector?.names()}
 				onclose={() => {

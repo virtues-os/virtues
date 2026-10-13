@@ -4,7 +4,9 @@
 	1177). It goes between days: from the pill, the question with the most
 	time first; ‹ › to the one before or after; each opens its day and the
 	card on its stay in the day's list, so every question is answered beside
-	the stay it's about. With nothing left, "All caught up" opens the names
+	the stay it's about. Its arrows point up and down, as Mail's previous and
+	next message do: the date card's arrows step a day, and these step through
+	a list that can jump weeks. With nothing left, "All caught up" opens the names
 	Virtues chose without asking.
 -->
 <script lang="ts">
@@ -13,6 +15,7 @@
 	let {
 		count,
 		at,
+		answered = false,
 		onstep,
 		onnames,
 		onclose,
@@ -21,6 +24,9 @@
 		count: number;
 		/** Which of them is open; `null` before the first step. */
 		at: number | null;
+		/** The one at `at` was answered and has left the list: the step sits
+		 *  before index `at`, so the next is `at` itself. */
+		answered?: boolean;
 		/** Open question `i`, on its day. */
 		onstep: (i: number) => void;
 		/** Open the names Virtues chose. */
@@ -42,9 +48,9 @@
 			<span class="ic" aria-hidden="true">◎</span>Help Virtues out
 		</button>
 		<span class="steps">
-			<IconButton icon="ri:arrow-left-s-line" label="Previous question" size="xs" disabled={at <= 0} onclick={() => onstep(at - 1)} />
-			<span class="counter">{at + 1} of {count}</span>
-			<IconButton icon="ri:arrow-right-s-line" label="Next question" size="xs" disabled={at >= count - 1} onclick={() => onstep(at + 1)} />
+			<IconButton icon="ri:arrow-up-s-line" label="Previous question" size="xs" disabled={at <= 0} onclick={() => onstep(at - 1)} />
+			<span class="counter">{count} left</span>
+			<IconButton icon="ri:arrow-down-s-line" label="Next question" size="xs" disabled={answered ? at >= count : at >= count - 1} onclick={() => onstep(answered ? at : at + 1)} />
 			<IconButton icon="ri:close-line" label="Stop" size="xs" onclick={onclose} />
 		</span>
 	{/if}
@@ -88,16 +94,23 @@
 	.ic {
 		color: var(--c-place);
 	}
+	/* Centred on the figure itself: the line trimmed to cap height and
+	   baseline, so the font's descender room no longer pushes it high. */
 	.badge {
-		min-width: 16px;
-		height: 16px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		box-sizing: border-box;
+		min-width: 18px;
+		height: 18px;
 		padding: 0 4px;
 		border-radius: 999px;
 		background: color-mix(in srgb, var(--color-foreground-muted) 22%, transparent);
 		font-size: 11px;
 		font-weight: 600;
-		line-height: 16px;
-		text-align: center;
+		font-variant-numeric: tabular-nums;
+		line-height: 1;
+		text-box: trim-both cap alphabetic;
 	}
 	.steps {
 		display: inline-flex;
