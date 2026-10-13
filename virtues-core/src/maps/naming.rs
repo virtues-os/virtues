@@ -30,9 +30,6 @@ const NEAR_MAX: usize = 40;
 /// An airport's label sits far from any gate: name the whole facility from
 /// within this (`resolve.py:34`).
 const AERO_M: f64 = 3000.0;
-/// An airport feature (a gate, an apron, a runway) this close means the
-/// place is on airport ground (`resolve.py:35`).
-const INFRA_M: f64 = 250.0;
 /// The nearest candidate is clear when the next is this much further, or
 /// this many times as far (`resolve.py:243`).
 const CLEAR_GAP_M: f64 = 15.0;
@@ -49,9 +46,8 @@ const POI_ZOOM: u8 = 15;
 /// The world overview's deepest zoom, held everywhere, where the map labels
 /// cities and the larger towns.
 const CITY_ZOOM: u8 = 7;
-
-/// Map features that exist only on airport ground (`resolve.py:40`).
-const AIRPORT_INFRA: &[&str] = &["gate", "apron", "runway", "taxiway", "helipad", "hangar", "terminal"];
+/// A visited square's most detailed zoom: streets and outlines, no businesses.
+const STREET_ZOOM: u8 = 13;
 
 /// Kinds nobody stays at: infrastructure, transport, street furniture
 /// (`resolve.py:43-48`).
@@ -171,12 +167,8 @@ pub(crate) fn resolve(lat: f64, lon: f64, centre: &[Label], block: &[Label]) -> 
     let dist = |p: &Label| crate::geo::haversine_distance(lat, lon, p.lat, p.lon);
     let mut cands = Vec::new();
     let mut wide = Vec::new();
-    let mut infra = 0;
     for p in centre {
         let d = dist(p);
-        if AIRPORT_INFRA.contains(&p.kind.as_str()) && d <= INFRA_M {
-            infra += 1;
-        }
         if EXCLUDE.contains(&p.kind.as_str()) || p.name.is_empty() {
             continue;
         }
@@ -201,29 +193,6 @@ pub(crate) fn resolve(lat: f64, lon: f64, centre: &[Label], block: &[Label]) -> 
         street_detail: true,
         ..Naming::default()
     };
-    // On airport ground with no business to name: the whole airport, never "which gate?".
-    if infra > 0 {
-        let aero = block
-            .iter()
-            .filter(|p| p.kind == "aerodrome" && !p.name.is_empty())
-            .map(|p| (dist(p), p))
-            .filter(|(d, _)| *d <= AERO_M)
-            .min_by(|a, b| a.0.total_cmp(&b.0));
-        if let Some((d, p)) = aero {
-            out.tier = "confident";
-            out.name = Some(p.name.clone());
-            out.category = Some(category("aerodrome"));
-            out.candidates = vec![Candidate {
-                meters: (d * 10.0).round() / 10.0,
-                kind: "aerodrome".into(),
-                category: category("aerodrome"),
-                name: p.name.clone(),
-                lat: p.lat,
-                lon: p.lon,
-            }];
-            return out;
-        }
-    }
     let by_distance = |a: &Candidate, b: &Candidate| a.meters.total_cmp(&b.meters);
     cands.sort_by(by_distance);
     wide.sort_by(by_distance);
@@ -245,6 +214,48 @@ pub(crate) fn resolve(lat: f64, lon: f64, centre: &[Label], block: &[Label]) -> 
     }
     out.candidates = cands;
     out
+}
+
+/// The nearest named airport within 3 km.
+fn nearest_aerodrome(lat: f64, lon: f64, block: &[Label]) -> Option<Candidate> {
+    block
+        .iter()
+        .filter(|p| p.kind == "aerodrome" && !p.name.is_empty())
+        .map(|p| (crate::geo::haversine_distance(lat, lon, p.lat, p.lon), p))
+        .filter(|(d, _)| *d <= AERO_M)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(d, p)| Candidate {
+            meters: (d * 10.0).round() / 10.0,
+            kind: "aerodrome".into(),
+            category: category("aerodrome"),
+            name: p.name.clone(),
+            lat: p.lat,
+            lon: p.lon,
+        })
+}
+
+/// A place named after the airport it's on, without asking.
+fn airport(aero: Candidate) -> Naming {
+    Naming {
+        tier: "confident",
+        name: Some(aero.name.clone()),
+        category: Some(aero.category),
+        candidates: vec![aero],
+        ..Naming::default()
+    }
+}
+
+/// Whether a point lies inside an airport's grounds, by the `landuse` layer of
+/// a tile: a visited square's street tiles (z13) draw an airport's outline
+/// though they list no gates or businesses.
+fn on_airport_ground(mvt: &[u8], (z, x, y): (u8, u32, u32), lat: f64, lon: f64) -> bool {
+    let Some(Some(layer)) = super::mvt::layer(mvt, "landuse") else { return false };
+    let (px, py) = super::mvt::to_tile(z, x, y, layer.extent, lat, lon);
+    layer.features.iter().any(|f| {
+        f.kind == 3
+            && f.tags.get("kind").copied() == Some("aerodrome")
+            && super::water::inside(px, py, &super::mvt::rings(&f.geometry))
+    })
 }
 
 /// The nearest named lodging within 250 m.
@@ -333,6 +344,17 @@ impl Tiles {
         self.0[&(layer, z, x, y)].as_ref()
     }
 
+    /// A place on an airport's grounds, named after it.
+    async fn layover(&mut self, lat: f64, lon: f64) -> Option<Naming> {
+        let (x, y) = super::tile_at(lat, lon, STREET_ZOOM);
+        let tile = super::tile(STREET_ZOOM, x, y).await?;
+        if !on_airport_ground(&tile.mvt, (STREET_ZOOM, x, y), lat, lon) {
+            return None;
+        }
+        let (_, block) = self.block("pois", STREET_ZOOM, lat, lon).await?;
+        nearest_aerodrome(lat, lon, &block).map(airport)
+    }
+
     /// The tile at a point and its eight neighbours; `None` when the centre
     /// tile can't be read.
     async fn block(&mut self, layer: &'static str, z: u8, lat: f64, lon: f64) -> Option<(Vec<Label>, Vec<Label>)> {
@@ -354,10 +376,15 @@ impl Tiles {
 
     /// What the box's map says a place is.
     pub(crate) async fn name(&mut self, lat: f64, lon: f64) -> Naming {
-        let mut out = match self.block("pois", POI_ZOOM, lat, lon).await {
-            // A z15 tile is only ever in a home square: street detail.
-            Some((centre, block)) => resolve(lat, lon, &centre, &block),
-            None => Naming { tier: "none", ..Naming::default() },
+        // A z15 tile is only ever in a home square: street detail.
+        let street = self.block("pois", POI_ZOOM, lat, lon).await;
+        // Inside an airport's outline, the whole airport: never "which gate?",
+        // nor the café by it. Every square's street tiles (z13) draw the
+        // outline, so a layover is named too, where no business is listed.
+        let mut out = match (self.layover(lat, lon).await, street) {
+            (Some(aero), street) => Naming { street_detail: street.is_some(), ..aero },
+            (None, Some((centre, block))) => resolve(lat, lon, &centre, &block),
+            (None, None) => Naming { tier: "none", ..Naming::default() },
         };
         if let Some((_, block)) = self.block("places", CITY_ZOOM, lat, lon).await {
             out.city = city(lat, lon, &block);
@@ -378,6 +405,28 @@ mod tests {
     }
     fn resolve_here(pois: &[Label]) -> Naming {
         resolve(30.0, -97.0, pois, pois)
+    }
+
+    #[test]
+    fn an_airport_outline_holds_a_layover() {
+        use super::super::mvt::build::{encode_layer, encode_tile, feature, zz};
+        // One aerodrome outline over the tile's middle, as MVT commands.
+        let ring = vec![9, zz(1000), zz(1000), 2 | (3 << 3), zz(2000), zz(0), zz(0), zz(2000), zz(-2000), zz(0), 15];
+        let tile = encode_tile(&[encode_layer("landuse", &[feature(3, &[0, 0], &ring)], &["kind"], &["aerodrome"])]);
+        let (z, x, y) = (13u8, 1910u32, 3390u32);
+        let at = |px: f64, py: f64| {
+            // A point at tile pixel (px, py) of 4096, back to lat/lon.
+            let n = f64::from(1u32 << z);
+            let lon = (f64::from(x) + px / 4096.0) / n * 360.0 - 180.0;
+            let lat = (std::f64::consts::PI * (1.0 - 2.0 * (f64::from(y) + py / 4096.0) / n)).sinh().atan().to_degrees();
+            (lat, lon)
+        };
+        let (lat, lon) = at(2000.0, 2000.0);
+        assert!(on_airport_ground(&tile, (z, x, y), lat, lon), "inside the outline");
+        let (lat, lon) = at(3500.0, 3500.0);
+        assert!(!on_airport_ground(&tile, (z, x, y), lat, lon), "outside it");
+        let n = airport(Candidate { meters: 900.0, kind: "aerodrome".into(), category: "transit", name: "Riverton Airport".into(), lat: 0.0, lon: 0.0 });
+        assert_eq!((n.tier, n.name.as_deref(), n.street_detail), ("confident", Some("Riverton Airport"), false));
     }
 
     #[test]
@@ -444,15 +493,6 @@ mod tests {
         assert_eq!(l.name, "Hotel Rowan", "a nearer cafe doesn't hide it");
         assert!((l.meters - 120.0).abs() < 0.5);
         assert_eq!(resolve_here(&[at(300.0, "hotel", "Far Inn")]).lodging, None);
-    }
-
-    #[test]
-    fn airport_ground_names_the_whole_airport() {
-        let pois = [at(30.0, "gate", "Gate 12"), at(50.0, "fast_food", "Taco Stand"), at(2400.0, "aerodrome", "Regional Airport")];
-        let n = resolve_here(&pois);
-        assert_eq!(n.tier, "confident");
-        assert_eq!(n.name.as_deref(), Some("Regional Airport"), "never which gate, nor the stand by it");
-        assert_eq!(n.category, Some("transit"));
     }
 
     #[test]
