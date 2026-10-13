@@ -105,6 +105,9 @@
 					<AtlasIcon name={row.glyph} size={15} />
 				{/if}
 				<span>{row.label}</span>
+				{#if (row.attention?.() ?? 0) > 0}
+					<span class="mode-count" title={`${row.attention?.()} need you`}>{row.attention?.()}</span>
+				{/if}
 			</button>
 		{/each}
 	</nav>
@@ -171,6 +174,20 @@
 
 	.mode-row {
 		font-weight: 500;
+	}
+
+	/* The same count the Home panel's Applets door carries. */
+	.mode-count {
+		margin-left: auto;
+		min-width: 16px;
+		padding: 0 4px;
+		border-radius: 999px;
+		background: var(--color-error);
+		color: var(--color-background);
+		font-size: 11px;
+		line-height: 16px;
+		text-align: center;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.mode-row:hover {

@@ -6,7 +6,6 @@
 	import IconButton from '$lib/components/IconButton.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import ShareSheet from '$lib/components/applets/ShareSheet.svelte';
-	import DayDot from '$lib/components/applets/DayDot.svelte';
 	import AppletInfo from '$lib/components/applets/AppletInfo.svelte';
 	import DeleteAppletModal from '$lib/components/applets/DeleteAppletModal.svelte';
 	import AppletSettings from '$lib/components/applets/AppletSettings.svelte';
@@ -29,7 +28,9 @@
 		type AppletLogEntry,
 		type RunDay
 	} from '$lib/api/client';
-	import { appletDestination, appletGlyph, describeSchedule, errorHeadline, relativeTime } from '$lib/applets/palette';
+	import { appletGlyph, describeSchedule, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
+	import { formatMicrosPrecise } from '$lib/utils/currency';
+	import RecentDots from '$lib/components/applets/RecentDots.svelte';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { indexRunDays } from '$lib/applets/days';
@@ -59,6 +60,20 @@
 		const base = `/applet/${appletId}`;
 		windowShellStore.updateTab(tab.id, { route: open ? `${base}?panel=info` : base });
 	}
+
+	/** Info's full view, from the inspector, with Run history or Technical
+	 *  details already open. */
+	function openInfo(panel: 'history' | 'details') {
+		if (appletId) windowShellStore.updateTab(tab.id, { route: `/applet/${appletId}?panel=${panel}` });
+	}
+
+	// The inspector: Info beside the results, so they stay in view. Closed
+	// whenever the tab moves to another applet.
+	let insp = $state(false);
+	$effect(() => {
+		void appletId;
+		insp = false;
+	});
 
 	let historyOpen = $state(false);
 	let technicalOpen = $state(false);
@@ -106,8 +121,6 @@
 		if (glyph === 'chats') return 'chat';
 		return null;
 	});
-	// The newest run that said something: a chat applet's latest result.
-	const lastSaid = $derived(log.find((e) => e.status === 'success' && e.summary) ?? null);
 
 	const STATUS_WORD: Record<AppletLogEntry['status'], string> = {
 		success: 'Ran',
@@ -332,6 +345,57 @@
 		)
 	);
 
+	// What went wrong, said once, where the missing result would be.
+	const problem = $derived(Boolean(failedNow || overdue));
+	const problemText = $derived(
+		failedNow
+			? failure
+				? `${failure.title}. ${failure.remedy}`
+				: failedNow.error
+					? errorHeadline(failedNow.error)
+					: 'The run failed.'
+			: overdue && action?.next_due_at
+				? `It was due ${relativeTime(action.next_due_at)} and hasn't run.`
+				: null
+	);
+	const missedWhen = $derived(failedNow?.last_at ?? (overdue ? (action?.next_due_at ?? null) : null));
+	// Reconnect when the sign-in lapsed; otherwise another try is the fix.
+	const fix = $derived(failedNow ? runFix(failedNow.error ?? null) : null);
+	function openFix() {
+		if (fix) windowShellStore.openTabFromRoute(fix.href, { focusExisting: true });
+	}
+
+	/** "Tuesday, 6 October". */
+	function longDay(iso: string): string {
+		return new Date(iso).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+	}
+
+	// A list of what its runs produced: a conversation applet's results, or
+	// for one that makes nothing to show, what each run did. The failure the
+	// row above names isn't repeated.
+	const results = $derived(
+		made === 'chat'
+			? log.filter((e) => e.status === 'success' && e.summary).slice(0, 8)
+			: log.filter((e) => e !== failedNow).slice(0, 7)
+	);
+
+	const nextRunText = $derived.by(() => {
+		if (!action || action.archived_at) return 'Finished';
+		if (!action.enabled) return 'Off';
+		if (!action.next_due_at) return describeSchedule(action.schedule);
+		return relativeTime(action.next_due_at);
+	});
+	// The week's cost comes with the applet list, not with one applet.
+	const costText = $derived.by(() => {
+		if (!appletsStore.loaded) return '…';
+		const m = appletsStore.list.find((a) => a.id === action?.id)?.spend_week_micros;
+		// null means the server couldn't read it, which is not the same as free.
+		if (m === null || m === undefined) return "Couldn't read it";
+		if (m === 0) return 'Nothing this week';
+		if (m < 100) return 'Under a cent this week';
+		return `${formatMicrosPrecise(m)} this week`;
+	});
+
 	const status = $derived.by(() => {
 		if (!action) return '';
 		if (action.archived_at) return `Finished ${new Date(action.archived_at).toLocaleDateString()}`;
@@ -385,6 +449,59 @@
 	}
 </script>
 
+{#snippet fixAction()}
+	{#if fix}
+		<TextAction inline onclick={openFix}>{fix.label}</TextAction>
+	{:else if canRunNow}
+		<TextAction inline onclick={runNow} disabled={busy}>{failedNow ? 'Retry' : 'Run now'}</TextAction>
+	{/if}
+{/snippet}
+
+{#snippet problemRow()}
+	<li class="result missing">
+		<span class="result-text">
+			{#if missedWhen}<span class="result-when">{longDay(missedWhen)}</span>{/if}
+			<span class="failed">{problemText}</span>
+		</span>
+		{#if fix}
+			<Button variant="primary" size="sm" onclick={openFix}>{fix.label}</Button>
+		{:else if canRunNow}
+			<TextAction onclick={runNow} disabled={busy}>{failedNow ? 'Retry' : 'Run now'}</TextAction>
+		{/if}
+	</li>
+{/snippet}
+
+{#snippet inspector()}
+	{#if action}
+		<aside class="insp" aria-label={`Info for ${action.name}`}>
+			{#if action.description}
+				<section>
+					<h2 class="list-head">Goal</h2>
+					<p class="insp-text">{action.description}</p>
+				</section>
+			{/if}
+			<section>
+				<h2 class="list-head">Recent runs</h2>
+				{#if daysErr}
+					<p class="insp-text muted">Your server couldn't read its recent runs.</p>
+				{:else}
+					<RecentDots {action} {index} />
+				{/if}
+			</section>
+			<Card list>
+				<div class="insp-row"><span>Next run</span><span class="insp-value">{nextRunText}</span></div>
+				<div class="insp-row"><span>Cost</span><span class="insp-value">{costText}</span></div>
+				<button type="button" class="insp-row link" onclick={() => openInfo('history')}>
+					<span>Run history</span><Icon icon="ri:arrow-right-s-line" width="16" />
+				</button>
+				<button type="button" class="insp-row link" onclick={() => openInfo('details')}>
+					<span>Technical details</span><Icon icon="ri:arrow-right-s-line" width="16" />
+				</button>
+			</Card>
+		</aside>
+	{/if}
+{/snippet}
+
 <div class="applet-home">
 	{#if loading && !action}
 		<p class="state">Loading…</p>
@@ -421,14 +538,24 @@
 					<span class="glyph" aria-hidden="true"><AtlasIcon name={appletGlyph(action)} size={20} bare /></span>
 					<div class="title-block">
 						<h1 class="title">{action.name}</h1>
-						<p class="status">
-							{status}{#if appletDestination(action) !== '-' && made !== 'chat'}<span class="goes" aria-label="goes to">
-									<Icon icon="ri:arrow-right-line" width="12" />
-									{appletDestination(action)}</span
-								>{/if}
-						</p>
+						<p class="status">{status}</p>
 					</div>
+					<!-- One title block, the icons centred on it, the switch last. -->
 					<div class="head-actions">
+						{#if chatId}
+							<IconButton
+								icon="ri:chat-3-line"
+								label="Conversation: ask it something or change it"
+								onclick={openConversation}
+							/>
+						{/if}
+						<IconButton
+							icon="ri:information-line"
+							label="Info"
+							pressed={insp}
+							onclick={() => (insp = !insp)}
+						/>
+						<IconButton icon="ri:more-line" label="More" haspopup="menu" onclick={openMore} />
 						{#if action.archived_at}
 							<Button variant="secondary" size="sm" onclick={() => setEnabled(true)} disabled={saving}>
 								Turn back on
@@ -445,15 +572,6 @@
 								onclick={() => setEnabled(!action!.enabled)}
 							></button>
 						{/if}
-						{#if chatId}
-							<Button variant="secondary" size="sm" icon="ri:chat-3-line" onclick={openConversation}>
-								Conversation
-							</Button>
-						{/if}
-						<Button variant="secondary" size="sm" icon="ri:information-line" onclick={() => showInfo(true)}>
-							Info
-						</Button>
-						<IconButton icon="ri:more-line" label="More" variant="secondary" haspopup="menu" onclick={openMore} />
 					</div>
 				</header>
 
@@ -461,60 +579,76 @@
 					<p class="error-msg">{err}</p>
 				{/if}
 
-				<!-- What needs you, under the header and above the results: one
-				     row, with its fix beside it. -->
-				{#if failedNow || overdue}
-					<Card list>
-						<div class="needs">
-							<DayDot state={failedNow ? 'failed' : 'missed'} size="md" />
-							<span class="needs-text">
-								{#if failedNow}
-									<span class="needs-title">The last run failed {relativeTime(failedNow.last_at)}</span>
-									{#if failure}
-										<span class="needs-sub">{failure.title}. {failure.remedy}</span>
-									{:else if failedNow.error}
-										<span class="needs-sub">{errorHeadline(failedNow.error)}</span>
+				<!-- Its results, with a column beside them: All pages for an applet
+				     that writes pages, the inspector when Info is open. A failure
+				     shows where its result is missing, with the fix that fits. -->
+				<div class="body" class:with-side={made === 'pages' || insp}>
+					<div class="results">
+						{#if made === 'pages'}
+							{#if selectedPage}
+								<article class="page">
+									<h2 class="page-title">{selectedPage.title}</h2>
+									<p class="page-by">
+										Written by {action.name}, {when(selectedPage.written_at)} ·
+										<TextAction inline onclick={() => openPage(selectedPage.page_id)}>Open page</TextAction>
+									</p>
+									{#if pageContent === null}
+										<p class="empty">Loading…</p>
+									{:else}
+										<div class="page-body"><Markdown content={pageContent} variant="article" /></div>
 									{/if}
-								{:else}
-									<span class="needs-title">It was due {relativeTime(action.next_due_at)} and hasn't run</span>
-								{/if}
-							</span>
-							{#if canRunNow}
-								<Button variant="secondary" size="sm" onclick={runNow} disabled={busy}>
-									{failedNow ? 'Retry' : 'Run now'}
-								</Button>
-							{/if}
-						</div>
-					</Card>
-				{/if}
-
-				<!-- Its results. They look different from applet to applet
-				     because the work does; the frame above stays the same. -->
-				{#if made === 'dashboard' && action.has_face}
-					<FaceFrame appletId={action.id} height="460px" />
-				{:else if made === 'dashboard'}
-					<p class="empty">No dashboard yet. It's set to make one and hasn't yet.</p>
-				{:else if made === 'pages' && selectedPage}
-					<div class="pages">
-						<article class="page">
-							<h2 class="page-title">{selectedPage.title}</h2>
-							<p class="page-by">
-								Written by {action.name}, {when(selectedPage.written_at)}
-								<Button variant="ghost" size="sm" onclick={() => openPage(selectedPage.page_id)}>Open page</Button>
-							</p>
-							{#if pageContent === null}
-								<p class="empty">Loading…</p>
+								</article>
 							{:else}
-								<div class="page-body"><Markdown content={pageContent} variant="article" /></div>
+								<p class="empty">No pages yet. Its pages show here after it writes one.</p>
 							{/if}
-						</article>
+						{:else}
+							{#if problem}
+								<ul class="result-list" role="list">{@render problemRow()}</ul>
+							{/if}
+							{#if made === 'dashboard' && action.has_face}
+								<FaceFrame appletId={action.id} height="460px" />
+							{:else if made === 'dashboard'}
+								<p class="empty">No dashboard yet. It's set to make one and hasn't yet.</p>
+							{:else if results.length > 0}
+								<section>
+									<h2 class="list-head">{made === 'chat' ? 'Results' : 'Recent runs'}</h2>
+									<ul class="result-list" role="list">
+										{#each results as e (e.run_id ?? e.last_at)}
+											<li class="result">
+												<span class="result-text">
+													{#if e.last_at}<span class="result-when">{longDay(e.last_at)}</span>{/if}
+													<span class:failed={e.status === 'error'}>{made === 'chat' ? e.summary : runLine(e)}</span>
+												</span>
+											</li>
+										{/each}
+									</ul>
+								</section>
+							{:else if !problem}
+								<p class="empty">
+									{action.enabled ? 'Nothing yet. Its results show here after it runs.' : "It's off, so it hasn't run yet."}
+								</p>
+							{/if}
+						{/if}
+					</div>
+
+					{#if insp}
+						{@render inspector()}
+					{:else if made === 'pages'}
 						<nav class="page-list" aria-label={`Pages ${action.name} wrote`}>
 							<h2 class="list-head">All pages</h2>
+							{#if problem}
+								<div class="page-item missing" title={problemText ?? undefined}>
+									<span class="page-item-title">{missedWhen ? longDay(missedWhen) : 'Its last run'}</span>
+									<span class="page-item-when">
+										{failedNow ? "Wasn't written" : "Hasn't run"}{#if fix || canRunNow}{' · '}{@render fixAction()}{/if}
+									</span>
+								</div>
+							{/if}
 							{#each pages as p (p.page_id)}
 								<button
 									type="button"
 									class="page-item"
-									aria-current={p.page_id === selectedPage.page_id}
+									aria-current={p.page_id === selectedPage?.page_id}
 									onclick={() => (selectedId = p.page_id)}
 								>
 									<span class="page-item-title">{p.title}</span>
@@ -522,42 +656,8 @@
 								</button>
 							{/each}
 						</nav>
-					</div>
-				{:else if made === 'pages'}
-					<p class="empty">No pages yet. Its pages show here after it writes one.</p>
-				{:else if made === 'chat' && lastSaid}
-					<section>
-						<h2 class="list-head">Latest{#if lastSaid.last_at}{' · '}{when(lastSaid.last_at)}{/if}</h2>
-						<Card list><p class="said">{lastSaid.summary}</p></Card>
-					</section>
-				{:else if log.length > 0}
-					<!-- Nothing to show but what its runs did: one line each,
-					     failures included. -->
-					<section>
-						<h2 class="list-head">Recent runs</h2>
-						<ul class="recent-list" role="list">
-							{#each log.slice(0, 7) as e (e.run_id ?? e.last_at)}
-								<li class="recent-item">
-									<DayDot
-										state={e.status === 'error'
-											? 'failed'
-											: e.status === 'budget_exceeded'
-												? 'stopped'
-												: e.status === 'success'
-													? 'ran'
-													: 'quiet'}
-									/>
-									<span class="recent-when">{e.last_at ? dayLabel(e.last_at) : ''}</span>
-									<span class="recent-what" class:failed={e.status === 'error'}>{runLine(e)}</span>
-								</li>
-							{/each}
-						</ul>
-					</section>
-				{:else}
-					<p class="empty">
-						{action.enabled ? 'Nothing yet. Its results show here after it runs.' : "It's off, so it hasn't run yet."}
-					</p>
-				{/if}
+					{/if}
+				</div>
 
 				{#if canMessage}
 					<form
@@ -614,7 +714,7 @@
 
 	.head {
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		gap: 16px;
 		padding-bottom: 16px;
 		border-bottom: 1px solid var(--color-border);
@@ -649,8 +749,11 @@
 	.head-actions {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: 4px;
 		flex: none;
+	}
+	.head-actions .switch {
+		margin-left: 8px;
 	}
 
 	.switch {
@@ -705,12 +808,6 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.goes {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		margin-left: 8px;
-	}
 
 	/* Info: one narrow column, like a sheet laid on the applet. */
 	.narrow {
@@ -743,40 +840,103 @@
 		align-items: flex-start;
 	}
 
-	.needs {
+
+	/* Results, and beside them All pages or the inspector. */
+	.body.with-side {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 264px;
+		gap: 32px;
+		align-items: start;
+	}
+	@container (max-width: 720px) {
+		.body.with-side {
+			grid-template-columns: 1fr;
+		}
+	}
+	.results {
+		display: flex;
+		flex-direction: column;
+		gap: 24px;
+		min-width: 0;
+	}
+
+	.insp {
+		display: flex;
+		flex-direction: column;
+		gap: 24px;
+		padding-left: 24px;
+		border-left: 1px solid var(--color-border);
+	}
+	.insp-text {
+		margin: 0;
+		font-size: 14px;
+		line-height: 1.5;
+	}
+	.insp-text.muted {
+		color: var(--color-foreground-muted);
+	}
+	.insp-row {
 		display: flex;
 		align-items: center;
+		justify-content: space-between;
 		gap: 12px;
-		min-height: 48px;
+		width: 100%;
+		min-height: 40px;
 		padding: 8px 16px;
+		border: 0;
+		background: none;
+		font: inherit;
+		font-size: 14px;
+		text-align: left;
+		color: var(--color-foreground);
 	}
-	.needs-text {
+	.insp-row + .insp-row {
+		border-top: 1px solid var(--color-border);
+	}
+	.insp-row.link {
+		cursor: pointer;
+	}
+	.insp-row.link:hover {
+		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+	}
+	.insp-value {
+		color: var(--color-foreground-muted);
+		text-align: right;
+	}
+
+	/* A list of results, one line each, failures where they happened. */
+	.result-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
+	}
+	.result {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		min-height: 48px;
+		padding: 12px 16px;
+	}
+	.result + .result {
+		border-top: 1px solid var(--color-border);
+	}
+	.result-text {
 		flex: 1;
 		min-width: 0;
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
-	}
-	.needs-title {
 		font-size: 14px;
-		font-weight: 500;
+		line-height: 1.5;
 	}
-	.needs-sub {
-		font-size: 13px;
+	.result-when {
+		font-size: 12px;
 		color: var(--color-foreground-muted);
 	}
-
-	/* The page it made, with every page it made beside it. */
-	.pages {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) 240px;
-		gap: 32px;
-		align-items: start;
-	}
-	@container (max-width: 720px) {
-		.pages {
-			grid-template-columns: 1fr;
-		}
+	.failed {
+		color: var(--color-error);
 	}
 	.page-title {
 		margin: 0;
@@ -820,49 +980,24 @@
 	.page-item[aria-current='true'] {
 		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
 	}
+	/* A row, so sans; the page's own title above stays serif. */
 	.page-item-title {
-		font-family: var(--font-serif);
-		font-size: 16px;
+		font-size: 14px;
+	}
+	.page-item.missing {
+		cursor: default;
+	}
+	.page-item.missing .page-item-title,
+	.page-item.missing .page-item-when {
+		color: var(--color-error);
 	}
 	.page-item-when {
 		font-size: 12px;
 		color: var(--color-foreground-muted);
 	}
 
-	.said {
-		margin: 0;
-		padding: 16px;
-		font-size: 15px;
-		line-height: 1.5;
-	}
 
 	/* What its last runs did, one line each. */
-	.recent-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-	.recent-item {
-		display: grid;
-		grid-template-columns: 8px 120px minmax(0, 1fr);
-		align-items: center;
-		gap: 12px;
-		min-height: 40px;
-		border-bottom: 1px solid var(--color-border);
-		font-size: 14px;
-	}
-	.recent-when {
-		color: var(--color-foreground-muted);
-		font-variant-numeric: tabular-nums;
-	}
-	.recent-what {
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.recent-what.failed {
-		color: var(--color-error);
-	}
 	.empty {
 		margin: 0;
 		font-size: 15px;

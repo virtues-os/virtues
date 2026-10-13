@@ -14,6 +14,7 @@
 	 */
 	import Button from '$lib/components/Button.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { runApplet, type Applet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -21,7 +22,7 @@
 	import { chatSessions } from '$lib/stores/chatSessions.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { pinMenuItem } from '$lib/pins/pinAction';
-	import { appletGlyph, describeSchedule, errorHeadline, relativeTime } from '$lib/applets/palette';
+	import { appletGlyph, describeSchedule, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
 	import { needsYou } from '$lib/applets/days';
 	import GitImportModal from './GitImportModal.svelte';
 	import NewAppletSheet from './NewAppletSheet.svelte';
@@ -35,14 +36,9 @@
 		void appletsStore.load();
 	});
 
-	// Yours, plus any other applet only while it needs you (a backup with no
-	// drive, a source whose sign-in lapsed).
-	const shown = $derived([
-		...appletsStore.mine,
-		...appletsStore.list.filter(
-			(a) => !appletsStore.mine.includes(a) && !a.archived_at && needsYou(a)
-		)
-	]);
+	// Yours. A built-in applet that needs you (a backup with no drive) marks
+	// Settings instead, and Settings > Applets lists it first.
+	const shown = $derived(appletsStore.mine);
 	const problems = $derived(shown.filter((a) => needsYou(a)));
 	const rest = $derived(
 		shown
@@ -89,6 +85,13 @@
 		const chat = chatOf(a);
 		if (!chat) return;
 		windowShellStore.openAside({ type: 'chat', label: a.name, route: `/chat/${chat}`, icon: 'atlas:applets' });
+	}
+
+	const fixOf = (a: Applet) => (a.last_run?.status === 'error' ? runFix(a.last_run.error ?? null) : null);
+
+	function openFix(a: Applet) {
+		const fix = fixOf(a);
+		if (fix) windowShellStore.openTabFromRoute(fix.href, { focusExisting: true });
 	}
 
 	function openManage() {
@@ -139,16 +142,19 @@
 				<span class="line" class:problem={l.problem}>{l.text}</span>
 			</span>
 		</button>
-		{#if l.problem && canRetry(a)}
-			<Button variant="secondary" size="sm" disabled={retrying === a.id} onclick={() => retry(a)}>
+		<!-- The fix as a word, not a pill: Reconnect when the sign-in lapsed,
+		     Retry when another try can work. -->
+		{#if l.problem && fixOf(a)}
+			<TextAction onclick={() => openFix(a)}>{fixOf(a)?.label}</TextAction>
+		{:else if l.problem && canRetry(a)}
+			<TextAction disabled={retrying === a.id} onclick={() => retry(a)}>
 				{retrying === a.id ? 'Retrying…' : 'Retry'}
-			</Button>
+			</TextAction>
 		{/if}
 		{#if chatOf(a)}
 			<IconButton
 				icon="ri:chat-3-line"
-				label={`Open the conversation with ${a.name}`}
-				variant="secondary"
+				label={`Conversation with ${a.name}: ask it something or change it`}
 				class="chat-btn"
 				onclick={() => openConversation(a)}
 			/>
@@ -330,13 +336,10 @@
 	/* The conversation is its own action on the row, so it reads as a round
 	   button beside the row rather than a glyph inside it (a pill, §6). */
 	.chat-slot {
-		width: 40px;
+		width: 32px;
 		flex: none;
 	}
 	.row :global(.v-iconbtn.chat-btn) {
-		width: 40px;
-		height: 40px;
-		border-radius: 999px;
 		flex: none;
 	}
 	.load-failed {

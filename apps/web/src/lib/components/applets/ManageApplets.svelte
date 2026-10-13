@@ -6,6 +6,7 @@
 	 */
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import MenuItem from '$lib/components/MenuItem.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
@@ -19,7 +20,7 @@
 	} from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
-	import { appletDestination, appletGlyph, describeSchedule, relativeTime } from '$lib/applets/palette';
+	import { appletDestination, appletGlyph, describeSchedule, relativeTime, runFix } from '$lib/applets/palette';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { appletSpans, DAY_LABEL, indexRunDays, recentSpans, reliabilityScore, type DayState } from '$lib/applets/days';
 	import DayDot from './DayDot.svelte';
@@ -451,17 +452,19 @@
 					</span>
 				</button>
 				{#if outcome === 'failed'}
-					<Button
-						variant="secondary"
-						size="sm"
-						disabled={retrying === a.id}
+					{@const fix = runFix(a.last_run?.error ?? null)}
+					<!-- The fix as a word: Reconnect when the sign-in lapsed,
+					     Retry when another try can work. -->
+					<TextAction
+						disabled={!fix && retrying === a.id}
 						onclick={(e: MouseEvent) => {
 							e.stopPropagation();
-							void retry(a);
+							if (fix) windowShellStore.openTabFromRoute(fix.href, { focusExisting: true });
+							else void retry(a);
 						}}
 					>
-						{retrying === a.id ? 'Retrying…' : 'Retry'}
-					</Button>
+						{fix ? fix.label : retrying === a.id ? 'Retrying…' : 'Retry'}
+					</TextAction>
 				{/if}
 			</td>
 		{/snippet}
@@ -523,8 +526,8 @@
 		font-size: 0.75rem;
 		color: var(--color-foreground-subtle);
 	}
+	/* A row, so sans: serif is for titles (agents/build/design-grammar.md §4). */
 	.name {
-		font-family: var(--font-serif, ui-serif, Georgia, serif);
 		font-size: 1rem;
 		color: var(--color-foreground);
 	}
