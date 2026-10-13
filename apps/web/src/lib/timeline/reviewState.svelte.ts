@@ -5,7 +5,7 @@
  * themselves are review.ts's; this holds what the person has done with them.
  */
 import { mergePlace } from "$lib/wiki/api";
-import { fetchReview, sendAnswer, type Answer, type PlaceReview } from "./review";
+import { asQuestion, fetchReview, sendAnswer, type Answer, type PlaceReview } from "./review";
 
 /** How long an answer can be undone. */
 const UNDO_MS = 8000;
@@ -50,6 +50,11 @@ export class ReviewState {
 	questions = $derived(this.review?.questions ?? []);
 	confirmed = $derived(this.review?.confirmed ?? []);
 	byPlace = $derived(new Map(this.questions.map((q) => [q.id, q])));
+	/** Each named place's question, asked again from "Named Places". */
+	named = $derived(new Map(this.confirmed.map((c) => [c.id, asQuestion(c)])));
+	/** Counts the changes to a named place's name: the card that made one
+	 *  goes back to "Named Places". */
+	changes = $state(0);
 	homeSet = $derived(this.confirmed.some((c) => c.source === "home"));
 
 	private undoTimer = 0;
@@ -72,13 +77,18 @@ export class ReviewState {
 		if (this.saving) return false;
 		this.saving = true;
 		this.saveFailed = null;
+		// A named place's new answer has no Undo: Undo forgets an answer, and
+		// here that would forget the name it replaced too. Named Places
+		// changes it back.
+		const change = this.confirmed.some((c) => c.id === id) && a.kind !== "reopen";
 		try {
 			const done = await sendAnswer(id, a);
 			this.pointing = null;
 			await this.load();
 			clearTimeout(this.undoTimer);
-			this.undo = a.kind === "reopen" ? null : { at: id, said: said(a), ids: [id, ...(done.place_id ? [done.place_id] : [])] };
+			this.undo = a.kind === "reopen" || change ? null : { at: id, said: said(a), ids: [id, ...(done.place_id ? [done.place_id] : [])] };
 			this.undoTimer = window.setTimeout(() => (this.undo = null), UNDO_MS);
+			if (change) this.changes++;
 			this.onanswered();
 			return true;
 		} catch (e) {
@@ -107,10 +117,12 @@ export class ReviewState {
 		if (this.saving) return false;
 		this.saving = true;
 		this.saveFailed = null;
+		const change = this.confirmed.some((c) => c.id === id);
 		try {
 			if (!(await mergePlace(id, into))) throw new Error("merge refused");
 			this.undo = null;
 			await this.load();
+			if (change) this.changes++;
 			this.onanswered();
 			return true;
 		} catch (e) {
