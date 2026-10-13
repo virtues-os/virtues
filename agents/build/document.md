@@ -15,7 +15,18 @@ what was built, and what is left, is [record/document-contract.md](../record/doc
 | Format | Document | In the app |
 |---|---|---|
 | `tree` | XML tree in the `doc` fragment, stamped `meta.contract` | Tiptap (`components/pages/DocumentEditor.svelte`), bound by `createTreeDocument` (`lib/yjs/document.ts`), contract 2, IndexedDB `tree-<id>.<lineage>` |
-| `markdown` | markdown in a Y.Text (`content`), until the server moves the page | read only: the server's markdown of it in `MarkdownView`, with "This page is still in markdown" (`MARKDOWN_READ_ONLY` in `components/views/pageDocument.ts`); no socket, no copy on the device, no Restore in History |
+| `markdown` | markdown in a Y.Text (`content`), until the server moves the page | read only: the server's markdown of it in `MarkdownView`, with "Your server couldn't move this page from markdown to blocks" (`MARKDOWN_READ_ONLY` in `components/views/pageDocument.ts`); no socket, no copy on the device, no Restore in History |
+
+**Block pages are the default.** Two switches, each on unless set to `0`
+(`pages::on_unless_zero`), are kill switches: `VIRTUES_TREE_PAGES` (a new
+user page is created as blocks; anything moves to blocks at all) and
+`VIRTUES_CONVERT_PAGES` (user pages move at startup and as they are
+opened). A user page in markdown moves as the app opens it: `GET
+/api/pages/:id` runs the run's own move on it first
+(`page_convert::convert_on_open`, `apply_page`), so the answer says
+`format: "tree"`. A page that cannot move (it would lose text, or holds a
+suggestion its blocks cannot) stays markdown, logged with why, is tried
+again at its next open, and opens read only.
 
 The app has no markdown editor. The server still holds markdown pages, edits
 them for the model, the CLI and the writers, and binds the Y.Text of one for
@@ -388,13 +399,12 @@ the caret is, and ⌘Enter ticks the to-do the caret is in (`TodoKeys` in
 
 `virtues pages convert --dry-run | --apply` (run as the `virtues` service
 user on a box, as every command that reads the database is:
-`cli::types::RUNS_AS_SERVICE_USER`), and the server's startup when
-`VIRTUES_CONVERT_PAGES=1`, move every markdown user page to blocks
-(`api/page_convert.rs`); with `--articles`, and at startup with
-`VIRTUES_CONVERT_ARTICLES=1`, they move articles instead ([Articles](#articles)).
-Both move pages only while block pages are on
-(`VIRTUES_TREE_PAGES=1`); the startup switches are off unless set to `1`,
-because the move is one way. `--dry-run` runs in the CLI's own process against
+`cli::types::RUNS_AS_SERVICE_USER`), the server's startup unless
+`VIRTUES_CONVERT_PAGES=0`, and opening a page, move every markdown user
+page to blocks (`api/page_convert.rs`); with `--articles`, and at startup
+with `VIRTUES_CONVERT_ARTICLES=1` (off unless set to `1`), they move
+articles instead ([Articles](#articles)). All move pages only while block
+pages are on (unless `VIRTUES_TREE_PAGES=0`). `--dry-run` runs in the CLI's own process against
 `DATABASE_URL` and writes no page, so it runs on a copy of a box;
 `--apply` runs in the server through the console door
 (`POST /api/console/pages/convert`), since only the server holds the pages'
@@ -496,7 +506,7 @@ moves nothing, as it does a request naming none (`page_convert::apply_on`).
 Articles are the pages machines write: day pages (`api/day_article.rs`),
 wiki articles, years, stories, chapters and the life page, each owned by a
 `wiki_articles` row (`kind = 'article'`). They become block pages behind
-`VIRTUES_TREE_ARTICLES=1`, beside `VIRTUES_TREE_PAGES=1`
+`VIRTUES_TREE_ARTICLES=1`, with block pages on
 (`block_move::tree_articles_enabled`). The switch gates the move only: an
 article that holds blocks opens, edits and saves with it off. Migration 0051
 dropped the constraint that kept articles markdown

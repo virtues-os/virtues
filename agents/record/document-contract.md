@@ -42,8 +42,8 @@ theme ([build/codemirror.md](../build/codemirror.md)).
 What took their places:
 
 - A page still in markdown opens read only, as its server's markdown, with
-  "This page is still in markdown, so it opens read only. You can edit it
-  here after your server moves it to blocks." It binds no socket and keeps
+  "Your server couldn't move this page from markdown to blocks, so it opens
+  read only. To edit it, copy its markdown into a new page." It binds no socket and keeps
   no copy on the device. History cuts and previews its versions on the
   server and offers no Restore, which the server refuses on a markdown page.
 - Copy markdown reads the server's copy for either format.
@@ -63,30 +63,35 @@ version of the app edits pages as blocks. Update your server first: on a
 server older than this release, the app asks you to update before it
 opens. A page your server hasn't moved to blocks yet opens read only."
 
-### What slice 7 did not do
+### Block pages by default, and the move as a page opens
 
-The plan's slice 7 also deleted the server's Y.Text page paths, the
-find/replace form of `edit_page` and of `virtues page edit`, and
-`format = 'markdown'`. None of that was done, because markdown pages still
-exist on every box:
+The owner decided the move from markdown only has to be good enough, so
+slice 7 turns block pages on rather than wait for the gate:
 
-- New pages are created as markdown unless `VIRTUES_TREE_PAGES=1`, and user
-  pages and articles move only with `VIRTUES_CONVERT_PAGES=1`,
-  `VIRTUES_CONVERT_ARTICLES=1` and `VIRTUES_TREE_ARTICLES=1`. The plan turns
-  these on at its gate, after the device checks below and a measurement of
-  the model's edits, neither of which has run. The defaults were left off.
-- A page whose move would lose text, or that holds a suggestion its blocks
-  cannot, stays markdown by design, as does an article nobody has opened.
-- Older apps edit markdown pages through the Y.Text binding, and the model,
-  the CLI and the writers edit them through find/replace.
+- `VIRTUES_TREE_PAGES` and `VIRTUES_CONVERT_PAGES` are on unless set to `0`
+  (`pages::on_unless_zero`), kept as kill switches. A user page created
+  with no format holds blocks; startup moves every markdown user page.
+  `VIRTUES_TREE_ARTICLES` and `VIRTUES_CONVERT_ARTICLES` stay off unless
+  set to `1`, and an opened article still moves at its first open only
+  with them on.
+- `GET /api/pages/:id` moves a markdown user page before answering
+  (`page_convert::convert_on_open`), by the run's own move (`apply_page`:
+  saved, kept as "Before blocks", flipped, versioned "Moved to blocks"), so
+  a page startup missed, or one written as markdown since, opens as blocks.
+  A page that cannot move stays markdown, is logged with why, opens read
+  only, and is tried again at its next open.
 
-So the app as built here cannot edit a page on a box with the defaults: the
-branch is not shippable until the flags default on, or markdown pages move
-when opened.
+What the plan's slice 7 also deleted stays, because markdown pages still
+exist: the server's Y.Text page paths, the find/replace form of
+`edit_page` and of `virtues page edit`, and `format = 'markdown'`. A page
+that cannot move, an article nobody has opened, a box with a switch off,
+older apps on the Y.Text binding, and the model, the CLI and the writers
+writing markdown all still reach them.
 
 ## Left open
 
-- **The gate.** A physical iPhone in the Tauri web view (dictation,
+- **The gate, passed over.** Block pages default on without it. Still
+  worth running: a physical iPhone in the Tauri web view (dictation,
   selection handles, IME composition while the model edits the same block,
   the keyboard accessory, a widget's controls by touch); Android if its app
   edits pages; two devices on one page with the model writing; a large page
@@ -101,8 +106,9 @@ when opened.
   paths in `server/yjs.rs`, find/replace in `edit_page` and `virtues page
   edit`, `format = 'markdown'`, the `snapshot` a version request may carry,
   and the 4409 close an older app's markdown binding gets.
-- **Pages left in markdown:** whether a user page moves when opened, as an
-  article does, and what happens to one that cannot move.
+- **Pages left in markdown:** a page that cannot move is read only in the
+  app, with nothing to show which pages those are but the server's log.
+  Whether to move it anyway, losing what the move reports, is open.
 - The converter's `regex` is a quarter of its WebAssembly module; a small
   content-match automaton would save about 85 KB gzip.
 - An upload's state is held in memory and lost on a restart; a table

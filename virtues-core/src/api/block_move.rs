@@ -36,7 +36,7 @@ use crate::api::wiki_editor::{sentence_key, sentences};
 use crate::error::Result;
 use crate::server::yjs::Written;
 
-/// `VIRTUES_TREE_ARTICLES=1`, with block pages on (`VIRTUES_TREE_PAGES=1`),
+/// `VIRTUES_TREE_ARTICLES=1`, with block pages on (`pages::tree_pages_enabled`),
 /// read once: an article nobody has opened becomes blocks when the server
 /// first builds its document. Gates the move only: an article that holds
 /// blocks keeps opening, editing and saving with it off.

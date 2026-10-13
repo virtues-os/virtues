@@ -2950,7 +2950,7 @@ mod tests {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
         )
         .await
@@ -2996,7 +2996,7 @@ mod tests {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
         )
         .await
@@ -3062,7 +3062,7 @@ mod tests {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
         )
         .await
@@ -3128,7 +3128,7 @@ mod tests {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
         )
         .await
@@ -3282,7 +3282,7 @@ mod block_pages {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
             PageFormat::Tree,
         )
@@ -3790,7 +3790,7 @@ mod block_pages {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
         )
         .await
@@ -5803,7 +5803,7 @@ mod block_pages {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
         )
         .await
@@ -5963,7 +5963,7 @@ mod block_pages {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
             PageFormat::Tree,
         )
@@ -5983,17 +5983,15 @@ mod block_pages {
             "{data}"
         );
 
-        // The tool itself follows the server's default: markdown, with the
-        // flag off as it is in tests.
+        // The tool itself follows the server's default: blocks, as block
+        // pages are on unless switched off.
         let yjs = YjsState::new(pool.clone());
         let data = tool(&pool, &yjs)
             .create_page(json!({ "title": "Notes", "content": "Coffee." }))
             .await
             .unwrap()
             .data;
-        assert_eq!(data["format"], "markdown");
-        assert_eq!(data["message"], "Page created.");
-        assert!(data.get("notes").is_none());
+        assert_eq!(data["format"], "tree");
     }
 
     /// A page with a callout holding a list too long for one read, the
@@ -6887,7 +6885,7 @@ mod page_edit_eval {
                         icon_color: None,
                         cover_url: None,
                         tags: None,
-                        format: None,
+                        format: Some(crate::api::pages::PageFormat::Markdown),
                     },
                     PageFormat::Tree,
                 )

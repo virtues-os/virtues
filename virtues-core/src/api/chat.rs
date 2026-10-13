@@ -3607,7 +3607,7 @@ mod active_page_tests {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
             format,
         )

@@ -72,11 +72,11 @@
 //! console door, because only the server holds the pages' live docs and
 //! their queued saves, and only on the database the CLI names, by its
 //! name and its Postgres server: [`apply_on`]),
-//! and the server's startup when `VIRTUES_CONVERT_PAGES=1` (user pages) or
-//! `VIRTUES_CONVERT_ARTICLES=1` (articles) ([`spawn_on_startup`]). Both move
-//! pages only while block pages are on (`VIRTUES_TREE_PAGES=1`), and
-//! articles only while block articles are on too (`VIRTUES_TREE_ARTICLES=1`),
-//! since the plan keeps each behind its flag.
+//! the server's startup ([`spawn_on_startup`]): user pages unless
+//! `VIRTUES_CONVERT_PAGES=0`, articles when `VIRTUES_CONVERT_ARTICLES=1`;
+//! and opening a markdown user page ([`convert_on_open`]). All move pages
+//! only while block pages are on (unless `VIRTUES_TREE_PAGES=0`), and
+//! articles only while block articles are on too (`VIRTUES_TREE_ARTICLES=1`).
 
 use std::path::{Path, PathBuf};
 
@@ -339,12 +339,12 @@ pub struct Report {
 pub const MOVED_TO_BLOCKS: &str = "Moved to blocks";
 
 /// Why pages are not moved while block pages are off.
-pub const BLOCK_PAGES_OFF: &str = "Block pages aren't turned on for this server, so it moved no page. \
-     Turn them on with VIRTUES_TREE_PAGES=1 first.";
+pub const BLOCK_PAGES_OFF: &str = "Block pages are turned off on this server, so it moved no page. \
+     Remove VIRTUES_TREE_PAGES=0 to turn them back on.";
 
 /// Why articles are not moved while block articles are off.
 pub const ARTICLES_OFF: &str = "Block articles aren't turned on for this server, so it moved no article. \
-     Turn them on with VIRTUES_TREE_ARTICLES=1, beside VIRTUES_TREE_PAGES=1, first.";
+     Turn them on with VIRTUES_TREE_ARTICLES=1 first, with block pages on.";
 
 const STAYS_MARKDOWN: &str =
     "The page kept changing while your server converted it, so it left the page in markdown. The next run converts it.";
@@ -368,12 +368,12 @@ const ATTEMPTS: usize = 3;
 /// One run at a time in this process, whichever door started it.
 static RUNNING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// `VIRTUES_CONVERT_PAGES=1`: the server moves every markdown user page to
-/// blocks when it starts. Off unless set, because the move is one-way: a
-/// page in blocks needs an app that edits blocks. Takes effect only with
-/// `VIRTUES_TREE_PAGES=1` as well.
+/// The server moves every markdown user page to blocks when it starts, and
+/// one it missed when the app opens it ([`convert_on_open`]). On unless
+/// `VIRTUES_CONVERT_PAGES=0`, a kill switch (`pages::on_unless_zero`): the
+/// app edits only block pages. Takes effect only while block pages are on.
 pub fn convert_on_startup() -> bool {
-    converts_on_startup(std::env::var("VIRTUES_CONVERT_PAGES").ok().as_deref())
+    pages::on_unless_zero(std::env::var("VIRTUES_CONVERT_PAGES").ok().as_deref())
 }
 
 /// `VIRTUES_CONVERT_ARTICLES=1`: the server moves every opened markdown
@@ -614,6 +614,53 @@ pub async fn apply_which_into(yjs: &YjsState, which: Which, dir: &Path) -> Resul
         results.push(apply_page(yjs, which, &id).await);
     }
     Ok(finish(Run::Apply, which, started_at, results, dir).await)
+}
+
+/// Move the markdown user page `id` to blocks as the app opens it
+/// (`GET /api/pages/:id`), by the one move a run makes ([`apply_page`]): a
+/// page startup missed, or written since, moves as it is opened. Only while
+/// block pages and their move are on. `None` when there is nothing to move:
+/// the page holds blocks, is an article (which moves at first open on its
+/// own, `block_move::first_open`), is in the trash or is gone. A page that
+/// stays markdown is logged with why, and opens read only.
+pub async fn convert_on_open(yjs: &YjsState, id: &str) -> Option<PageResult> {
+    let on = Switches::read().refuse(Which::Pages).is_none() && convert_on_startup();
+    convert_on_open_if(on, yjs, id).await
+}
+
+async fn convert_on_open_if(on: bool, yjs: &YjsState, id: &str) -> Option<PageResult> {
+    if !on {
+        return None;
+    }
+    let waiting: std::result::Result<Option<bool>, sqlx::Error> = sqlx::query_scalar(
+        "SELECT p.format = 'markdown' AND p.kind = 'page' AND p.deleted_at IS NULL \
+                AND NOT EXISTS (SELECT 1 FROM wiki_articles a WHERE a.page_id = p.id) \
+         FROM app_pages p WHERE p.id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&yjs.pool)
+    .await;
+    match waiting {
+        Ok(Some(true)) => {}
+        Ok(_) => return None,
+        Err(e) => {
+            tracing::warn!(page_id = id, error = %e, "couldn't read whether an opened page waits to move to blocks");
+            return None;
+        }
+    }
+    let result = apply_page(yjs, Which::Pages, id).await;
+    match result.outcome {
+        Outcome::Converted => {
+            tracing::info!(page_id = id, notes = result.notes.len(), "a markdown page moved to blocks as it was opened")
+        }
+        Outcome::Failed => tracing::warn!(
+            page_id = id,
+            reason = result.reason.as_deref().unwrap_or(""),
+            "a markdown page stays markdown as it is opened"
+        ),
+        _ => {}
+    }
+    Some(result)
 }
 
 /// The markdown pages of a kind, oldest first, the trash included so the
@@ -1360,7 +1407,7 @@ mod tests {
             icon_color: None,
             cover_url: None,
             tags: None,
-            format: None,
+            format: Some(crate::api::pages::PageFormat::Markdown),
         };
         pages::create_page_as(pool, req, PageFormat::Markdown)
             .await
@@ -1581,6 +1628,52 @@ mod tests {
         assert_eq!(kept.description.as_deref(), Some(pages::BEFORE_BLOCKS));
         assert_eq!(page.restore_point, Some(kept.version_number), "{page:?}");
         assert_eq!(stored(&pool, &id).await.format, "markdown");
+    }
+
+    /// A markdown page startup missed moves as the app opens it, by the
+    /// run's own move: kept as it was, flipped, versioned as blocks.
+    #[sqlx::test]
+    async fn a_markdown_page_moves_to_blocks_as_it_is_opened(pool: PgPool) {
+        let id = markdown_page(&pool, "Lunch with Nick.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let page = convert_on_open_if(true, &yjs, &id).await.expect("a markdown page moves");
+        assert_eq!(page.outcome, Outcome::Converted, "{page:?}");
+        assert_eq!(stored(&pool, &id).await.format, "tree");
+        let history: Vec<_> = versions(&pool, &id).await.into_iter().filter_map(|v| v.description).collect();
+        assert!(history.iter().any(|d| d == pages::BEFORE_BLOCKS), "{history:?}");
+        assert!(history.iter().any(|d| d == MOVED_TO_BLOCKS), "{history:?}");
+        // Opened again, it holds blocks: nothing to move.
+        assert!(convert_on_open_if(true, &yjs, &id).await.is_none());
+    }
+
+    /// A page that cannot move stays markdown as it is opened, and the open
+    /// goes on: the app shows it read only. Nothing moves with the switch
+    /// off, and nothing but a user page in markdown is touched.
+    #[sqlx::test]
+    async fn opening_moves_nothing_it_should_not(pool: PgPool) {
+        let yjs = YjsState::new(pool.clone());
+        let lossy = markdown_page(&pool, LOSSY).await;
+        let page = convert_on_open_if(true, &yjs, &lossy).await.expect("it was tried");
+        assert_eq!(page.outcome, Outcome::Failed, "{page:?}");
+        assert!(page.reason.is_some(), "{page:?}");
+        assert_eq!(stored(&pool, &lossy).await.format, "markdown");
+
+        let off = markdown_page(&pool, "Lunch.\n").await;
+        assert!(convert_on_open_if(false, &yjs, &off).await.is_none());
+        assert_eq!(stored(&pool, &off).await.format, "markdown");
+
+        let trashed = markdown_page(&pool, "Lunch.\n").await;
+        sqlx::query("UPDATE app_pages SET deleted_at = now() WHERE id = $1").bind(&trashed).execute(&pool).await.unwrap();
+        assert!(convert_on_open_if(true, &yjs, &trashed).await.is_none());
+        assert_eq!(stored(&pool, &trashed).await.format, "markdown");
+        assert!(convert_on_open_if(true, &yjs, "page_gone").await.is_none());
+    }
+
+    /// The page conversion switch is on unless `VIRTUES_CONVERT_PAGES=0`.
+    #[test]
+    fn page_conversion_is_on_unless_switched_off_with_0() {
+        assert!(pages::on_unless_zero(None));
+        assert!(!pages::on_unless_zero(Some("0")));
     }
 
     /// A page whose blocks would lose what it says stays markdown: here a

@@ -129,15 +129,18 @@ struct PageWithContract {
 
 /// GET /api/pages/:id - Get a single page.
 ///
-/// The page's document is built before its row is read: building it moves
-/// an article nobody had opened to blocks (`block_move::first_open`), so the
-/// row read after says `format: "tree"` and the contract and lineage the
-/// app binds at once.
+/// A markdown user page moves to blocks first (`page_convert::convert_on_open`),
+/// and the page's document is built before its row is read: building it
+/// moves an article nobody had opened to blocks (`block_move::first_open`).
+/// So the row read after says `format: "tree"` and the contract and lineage
+/// the app binds at once. A page that stays markdown answers as markdown,
+/// which the app shows read only.
 pub async fn get_page_handler(
     State(pool): State<PgPool>,
     State(yjs): State<YjsState>,
     Path(id): Path<String>,
 ) -> Response {
+    crate::api::page_convert::convert_on_open(&yjs, &id).await;
     let contract = yjs.page_contract(&id).await;
     let page = match crate::api::pages::get_page(&pool, &id).await {
         Ok(page) => page,
@@ -468,7 +471,7 @@ mod tests {
             icon_color: None,
             cover_url: None,
             tags: None,
-            format: None,
+            format: Some(crate::api::pages::PageFormat::Markdown),
         };
         create_page_as(pool, request, format).await.unwrap().page.id
     }
@@ -498,31 +501,32 @@ mod tests {
         assert_eq!(body["box_contract"], json!(version));
         assert_eq!(body["content"], "## Plan\n\nLunch.\n");
 
+        // A markdown page moves to blocks as it is opened, and says so.
         let markdown = page_as(&pool, "Notes.\n", PageFormat::Markdown).await;
         let (_, body) = call(&mut app, Method::GET, &format!("/api/pages/{markdown}"), None).await;
-        assert_eq!(body["format"], "markdown");
-        assert_eq!(body["contract"], json!(0));
+        assert_eq!(body["format"], "tree");
+        assert_eq!(body["contract"], json!(version));
         assert_eq!(body["box_contract"], json!(version));
+        assert!(body["lineage"].as_str().is_some(), "{body}");
     }
 
-    /// Tests never set the flag, so it is off here as on every real box.
+    /// A markdown page that cannot move opens as markdown, as it was: the
+    /// app shows it read only, and the open is no error.
     #[sqlx::test]
-    async fn creating_a_block_page_is_refused_while_the_flag_is_off(pool: PgPool) {
-        if crate::api::pages::tree_pages_enabled() {
-            eprintln!("VIRTUES_TREE_PAGES is set; the flag-off case cannot run here");
-            return;
-        }
+    async fn a_page_that_cannot_move_opens_as_markdown(pool: PgPool) {
         let (mut app, _) = app(&pool);
-        let (status, body) = call(
-            &mut app,
-            Method::POST,
-            "/api/pages",
-            Some(json!({ "title": "Trip", "content": "Lunch.\n", "format": "tree" })),
-        )
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-        assert!(error_of(&body).contains("Block pages aren't turned on"), "{body}");
+        let lossy = page_as(&pool, "![see [the plan](/page/page_1)](https://example.com/x.png)\n", PageFormat::Markdown).await;
+        let (status, body) = call(&mut app, Method::GET, &format!("/api/pages/{lossy}"), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["format"], "markdown");
+        assert_eq!(body["contract"], json!(0));
+    }
 
+    /// Block pages are on by default: a page created with no format holds
+    /// blocks.
+    #[sqlx::test]
+    async fn a_page_is_created_as_blocks_by_default(pool: PgPool) {
+        let (mut app, _) = app(&pool);
         let (status, body) = call(
             &mut app,
             Method::POST,
@@ -531,8 +535,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
-        assert_eq!(body["format"], "markdown");
-        assert!(body.get("notes").is_none(), "{body}");
+        assert_eq!(body["format"], "tree");
     }
 
     #[sqlx::test]
@@ -798,9 +801,10 @@ mod tests {
         let lineage = body["lineage"].as_str().expect("a lineage");
         assert!(lineage.len() == 16 && lineage.bytes().all(|b| b.is_ascii_hexdigit()), "{lineage}");
 
+        // A user page moves to blocks as it is opened, and gets its lineage.
         let markdown = page_as(&pool, "Notes.\n", PageFormat::Markdown).await;
         let (_, body) = call(&mut app, Method::GET, &format!("/api/pages/{markdown}"), None).await;
-        assert_eq!((body["kind"].as_str(), body["lineage"].is_null()), (Some("page"), true));
+        assert_eq!((body["kind"].as_str(), body["lineage"].is_string()), (Some("page"), true));
         // A page a wiki article owns is an article whatever its kind, as the
         // server reads and moves it.
         sqlx::query("INSERT INTO wiki_articles (id, subject_type, subject_id, page_id) VALUES ('wa_owned', 'person', 'person_2', $1)")

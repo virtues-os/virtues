@@ -169,7 +169,7 @@ mod tests {
             icon_color: None,
             cover_url: None,
             tags: None,
-            format: None,
+            format: Some(crate::api::pages::PageFormat::Markdown),
         };
         create_page_as(pool, req, PageFormat::Markdown).await.unwrap().page.id
     }
@@ -199,16 +199,15 @@ mod tests {
         assert_eq!(format(&pool, &id).await, "markdown");
     }
 
-    /// A run the server refuses (meant for another database, or with block
-    /// pages off, as tests leave them) is a 422 saying why, and moves
-    /// nothing.
+    /// A run the server refuses (meant for another database, or naming
+    /// none) is a 422 saying why, and moves nothing.
     #[sqlx::test]
     async fn a_refused_run_says_why_and_moves_nothing(pool: PgPool) {
         let id = markdown_page(&pool).await;
         let yjs = YjsState::new(pool.clone());
         let ours = crate::api::page_convert::database_identity(&pool).await.unwrap();
         let elsewhere = ConvertPages {
-            database: Some(crate::api::page_convert::DatabaseIdentity { name: "virtues_doc_dryrun".into(), ..ours.clone() }),
+            database: Some(crate::api::page_convert::DatabaseIdentity { name: "virtues_doc_dryrun".into(), ..ours }),
             which: Default::default(),
         };
         let (status, body) = answer(convert_pages(yjs.clone(), &caller(CONSOLE_DEVICE_ID), elsewhere).await).await;
@@ -217,12 +216,6 @@ mod tests {
         let (status, body) = answer(convert_pages(yjs.clone(), &caller(CONSOLE_DEVICE_ID), ConvertPages::default()).await).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
         assert_eq!(body["error"], crate::api::page_convert::NO_DATABASE_NAMED, "{body}");
-        if !crate::api::pages::tree_pages_enabled() {
-            let named = ConvertPages { database: Some(ours), which: Default::default() };
-            let (status, body) = answer(convert_pages(yjs, &caller(CONSOLE_DEVICE_ID), named).await).await;
-            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-            assert_eq!(body["error"], crate::api::page_convert::BLOCK_PAGES_OFF, "{body}");
-        }
         assert_eq!(format(&pool, &id).await, "markdown");
     }
 

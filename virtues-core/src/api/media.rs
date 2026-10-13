@@ -844,7 +844,7 @@ mod tests {
             icon_color: None,
             cover_url: None,
             tags: None,
-            format: None,
+            format: Some(crate::api::pages::PageFormat::Markdown),
         };
         let closed = crate::api::pages::create_page_as(&pool, page(format!("![harbour.png](/drive/{kept})\n")), crate::api::pages::PageFormat::Markdown)
             .await

@@ -37,8 +37,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
     spawn_background(&client, &yjs_state);
 
-    // Markdown pages moved to blocks, only when `VIRTUES_CONVERT_PAGES=1`
-    // says so. See `api::page_convert`.
+    // Markdown pages moved to blocks, unless `VIRTUES_CONVERT_PAGES=0` says
+    // not. See `api::page_convert`.
     crate::api::page_convert::spawn_on_startup(yjs_state.clone());
 
     let app = build_app(build_state(&client, yjs_state.clone()));

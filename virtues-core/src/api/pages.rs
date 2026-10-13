@@ -67,19 +67,28 @@ impl TryFrom<String> for PageFormat {
     }
 }
 
-/// `VIRTUES_TREE_PAGES=1`, read once. Gates creation only: tree pages that
+/// Block pages, read once: on unless `VIRTUES_TREE_PAGES=0`, a kill switch.
+/// Gates creating a page as blocks and moving one there: tree pages that
 /// exist keep opening, editing and saving with it off.
 pub fn tree_pages_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var("VIRTUES_TREE_PAGES").is_ok_and(|v| v.trim() == "1")
-    })
+    *ENABLED.get_or_init(|| on_unless_zero(std::env::var("VIRTUES_TREE_PAGES").ok().as_deref()))
+}
+
+/// Whether a switch that is on by default is on when set to `value`: off
+/// for `0` alone, so a typo never turns it off.
+pub fn on_unless_zero(value: Option<&str>) -> bool {
+    value.is_none_or(|v| v.trim() != "0")
 }
 
 /// The format a new user page is created in when the request names none:
-/// tree when the flag is on, else markdown.
+/// tree while block pages are on, else markdown.
 pub fn default_page_format() -> PageFormat {
-    if tree_pages_enabled() {
+    format_by_default(tree_pages_enabled())
+}
+
+fn format_by_default(block_pages: bool) -> PageFormat {
+    if block_pages {
         PageFormat::Tree
     } else {
         PageFormat::Markdown
@@ -189,8 +198,8 @@ pub struct CreatedPage {
 pub const TREE_CONTENT_REFUSED: &str =
     "This page holds blocks, so you can't replace its text in one piece. Edit it in the page instead.";
 
-/// Why a tree page is refused while the flag is off.
-const TREE_PAGES_OFF: &str = "Block pages aren't turned on for this server.";
+/// Why a tree page is refused while block pages are switched off.
+const TREE_PAGES_OFF: &str = "Block pages are turned off on this server.";
 
 /// Summary of a page (for list views)
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -218,7 +227,7 @@ pub struct CreatePageRequest {
     pub cover_url: Option<String>,
     pub tags: Option<serde_json::Value>, // JSONB array: ["tag1", "tag2"]
     /// The format to create the page in. Absent: the server's default
-    /// (`default_page_format`). `tree` is refused while the flag is off.
+    /// (`default_page_format`). `tree` is refused while block pages are off.
     #[serde(default)]
     pub format: Option<PageFormat>,
 }
@@ -623,14 +632,17 @@ pub async fn create_page(pool: &PgPool, req: CreatePageRequest) -> Result<Page> 
 /// The one gate on the format, shared by every door that creates a page
 /// (`POST /api/pages`, the model's `create_page`, `virtues page new`): the
 /// request's format, or `default_page_format` when it names none; `tree`
-/// is refused while the flag is off.
+/// is refused while block pages are switched off.
 pub async fn create_page_reporting(pool: &PgPool, req: CreatePageRequest) -> Result<CreatedPage> {
+    create_page_reporting_if(pool, req, tree_pages_enabled()).await
+}
+
+/// [`create_page_reporting`] with block pages `on` or off.
+async fn create_page_reporting_if(pool: &PgPool, req: CreatePageRequest, block_pages: bool) -> Result<CreatedPage> {
     let format = match req.format {
-        Some(PageFormat::Tree) if !tree_pages_enabled() => {
-            return Err(Error::InvalidInput(TREE_PAGES_OFF.into()))
-        }
+        Some(PageFormat::Tree) if !block_pages => return Err(Error::InvalidInput(TREE_PAGES_OFF.into())),
         Some(format) => format,
-        None => default_page_format(),
+        None => format_by_default(block_pages),
     };
     create_page_as(pool, req, format).await
 }
@@ -1937,7 +1949,7 @@ mod tests {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
         )
         .await
@@ -2089,7 +2101,7 @@ mod tests {
             icon_color: None,
             cover_url: None,
             tags: None,
-            format: None,
+            format: Some(crate::api::pages::PageFormat::Markdown),
         }
     }
 
@@ -2226,32 +2238,49 @@ mod tests {
         assert_eq!(empty.page.content, virtues_document::to_markdown(&tree));
     }
 
-    /// The flag gates every door that creates a page, in one place. Tests
-    /// never set it, so it is off here as on every real box.
-    #[sqlx::test]
-    async fn a_tree_page_is_refused_while_the_flag_is_off(pool: PgPool) {
-        if tree_pages_enabled() {
-            eprintln!("VIRTUES_TREE_PAGES is set; the flag-off case cannot run here");
-            return;
+    /// Block pages are on unless `VIRTUES_TREE_PAGES=0`: a kill switch, off
+    /// for `0` alone.
+    #[test]
+    fn block_pages_are_on_unless_switched_off_with_0() {
+        for on in [None, Some(""), Some("1"), Some("true"), Some("off"), Some("00")] {
+            assert!(on_unless_zero(on), "{on:?}");
         }
-        assert_eq!(default_page_format(), PageFormat::Markdown);
+        for off in [Some("0"), Some(" 0\n")] {
+            assert!(!on_unless_zero(off), "{off:?}");
+        }
+    }
+
+    /// With block pages on, as by default, a page created with no format
+    /// is a block page.
+    #[sqlx::test]
+    async fn a_new_page_is_a_block_page_by_default(pool: PgPool) {
+        let mut unnamed = request("Lunch.\n");
+        unnamed.format = None;
+        let created = create_page_reporting_if(&pool, unnamed, true).await.unwrap();
+        assert_eq!(created.page.format, PageFormat::Tree);
+        let markdown = request("Lunch.\n");
+        let asked = create_page_reporting_if(&pool, markdown, true).await.unwrap();
+        assert_eq!(asked.page.format, PageFormat::Markdown, "a writer may still ask for markdown");
+    }
+
+    /// The switch gates every door that creates a page, in one place.
+    #[sqlx::test]
+    async fn a_tree_page_is_refused_while_block_pages_are_off(pool: PgPool) {
         let mut tree = request("Lunch.\n");
         tree.format = Some(PageFormat::Tree);
-        let err = create_page_reporting(&pool, tree.clone()).await.unwrap_err();
+        let err = create_page_reporting_if(&pool, tree, false).await.unwrap_err();
         assert!(matches!(&err, Error::InvalidInput(m) if m == TREE_PAGES_OFF), "{err}");
-        assert!(create_page(&pool, tree).await.is_err());
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app_pages")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(count, 0, "nothing created");
 
-        let created = create_page_reporting(&pool, request("Lunch.\n")).await.unwrap();
+        let mut unnamed = request("Lunch.\n");
+        unnamed.format = None;
+        let created = create_page_reporting_if(&pool, unnamed, false).await.unwrap();
         assert_eq!(created.page.format, PageFormat::Markdown);
         assert!(created.notes.is_empty());
-        let mut markdown = request("Lunch.\n");
-        markdown.format = Some(PageFormat::Markdown);
-        assert_eq!(create_page(&pool, markdown).await.unwrap().format, PageFormat::Markdown);
     }
 
     #[sqlx::test]

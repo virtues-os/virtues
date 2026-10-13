@@ -996,7 +996,7 @@ mod tests {
                 cover_url: None,
                 tags: None,
                 project_id: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
         )
         .await
