@@ -618,8 +618,12 @@
 	.dot.walk {
 		border: 1.5px solid var(--c-move);
 	}
+	/* A ring broken into four even dashes, as the map's dashed bridge across
+	   a gap: a dashed border at 8 px draws two or three uneven ones. */
 	.dot.gap {
-		border: 1.5px dashed var(--c-gap);
+		background: repeating-conic-gradient(var(--c-gap) 0 54deg, transparent 54deg 90deg);
+		-webkit-mask: radial-gradient(circle, transparent 2.5px, #000 2.6px);
+		mask: radial-gradient(circle, transparent 2.5px, #000 2.6px);
 	}
 	.dot.sleep {
 		border: 1.5px solid var(--c-rest-ink);
