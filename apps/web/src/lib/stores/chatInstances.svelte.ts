@@ -143,7 +143,6 @@ export interface WorkerStep {
 interface ActivePageContext {
     page_id: string;
     page_title?: string;
-    content?: string; // Current content from Yjs document
 }
 
 interface CreateChatConfig {

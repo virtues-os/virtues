@@ -94,7 +94,6 @@ import { GapCursor } from '@tiptap/pm/gapcursor';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { filterCommands, menuKey } from '$lib/components/menuCommand';
-import { getDefaultSlashCommands } from '$lib/codemirror/extensions/slash-commands';
 import { createPageEditor } from './editor';
 import { contract, contractExtensions, ITEM_NUMBER, itemNumbers } from './schema';
 import { appletCommands, insertEntity, moveBlock, treeCommands, type TreeCommandHost } from './commands';
@@ -744,14 +743,11 @@ describe('the insert menu', () => {
 		expect(triggerState(editor.state, '/').active).toBe(false);
 	});
 
-	// Text came first, so `/` and Enter, and `/h` and Enter (`paragraph`
-	// holds an h), made a paragraph a paragraph: on a markdown page they
-	// make Heading 1.
-	it('`/` and Enter, `/h` and `/t` and Enter, make Heading 1, as on a markdown page', () => {
+	// Text first would make `/` and Enter, and `/h` and Enter (`paragraph`
+	// holds an h), turn a paragraph into a paragraph: they make Heading 1.
+	it('`/` and Enter, `/h` and `/t` and Enter, make Heading 1', () => {
 		for (const query of ['', 'h', 't']) {
-			const first = filterCommands(commands, query)[0]?.label;
-			expect(first, `/${query}`).toBe('Heading 1');
-			expect(first, `/${query}`).toBe(filterCommands(getDefaultSlashCommands(), query)[0]?.label);
+			expect(filterCommands(commands, query)[0]?.label, `/${query}`).toBe('Heading 1');
 		}
 		expect(filterCommands(commands, 'text')[0]?.label).toBe('Text');
 		expect(filterCommands(commands, 'paragraph')[0]?.label).toBe('Text');

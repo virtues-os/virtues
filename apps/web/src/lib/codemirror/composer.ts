@@ -1,5 +1,5 @@
 /**
- * Chat composer — a second, smaller configuration of the page editor's kernel.
+ * Chat composer — the one CodeMirror surface.
  *
  * The composer used to be a hand-rolled `contenteditable` with a tree walker
  * that flattened mention pills back into markdown on send. That was the one
@@ -8,8 +8,8 @@
  * DOM instead of in `\n` (VIR-333), and no list continuation (VIR-328).
  *
  * Here the document IS the message — a markdown string, exactly what the
- * model receives — and the extensions Pages already carry do the rest:
- * `entityLinks` renders `[label](url)` as a pill, `createRefPicker` detects
+ * model receives — and a few extensions do the rest:
+ * `entityLinks` renders `[label](url)` as a link, `createRefPicker` detects
  * `@`, `markdownKeymap` continues lists on Shift+Enter, `listRenumber` keeps
  * numbers sequential. What is deliberately NOT here: Yjs, live preview of
  * headings/emphasis, slash commands. A message box that renders while you
@@ -130,8 +130,8 @@ export interface ComposerEditor {
 // beat these and a one-line composer measured 42px instead of 28.
 const composerTheme = Prec.high(EditorView.theme({
 	'&': {
-		// Match the old `.chat-input` box: the composer is body text, not the
-		// page editor's 1.7 reading rhythm.
+		// Match the old `.chat-input` box: the composer is body text, not a
+		// page's 1.7 reading rhythm.
 		fontSize: '1rem',
 		lineHeight: '1.5',
 	},

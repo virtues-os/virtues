@@ -845,7 +845,7 @@ function cellWords(cell: PmNode): string {
  * than one block as markdown, which the chat composer and a markdown page
  * read back. Rich editors read the HTML beside it. Selected table cells are
  * their words, a tab between cells and a line between rows, as a
- * spreadsheet copies a range and the CodeMirror editor's table copied one.
+ * spreadsheet copies a range.
  */
 export function clipboardText(slice: Slice): string {
 	// Into the blocks the copy lies wholly inside: words copied from a list

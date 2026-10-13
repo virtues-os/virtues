@@ -5,19 +5,18 @@
  * Delete at its edge (`BlockEdges`), and moving, copying and deleting the
  * caret's item or block (`BlockMoves`).
  *
- * One flat list in the order a writer reaches for things, as the CodeMirror
- * editor's (`codemirror/extensions/slash-commands.ts`): headings, lists, the
- * occasional block, media, and Ask AI last, since it opens a prompt rather
- * than inserting a block. Heading 1 is first, as there, so `/` and Enter
- * makes one; Text, which makes a heading a paragraph again and which the
- * CodeMirror editor has no need of, comes after the headings. Headings 4 to
+ * One flat list in the order a writer reaches for things: headings, lists,
+ * the occasional block, media, and Ask AI last, since it opens a prompt
+ * rather than inserting a block. Heading 1 is first, so `/` and Enter
+ * makes one; Text, which makes a heading a paragraph again, comes after
+ * the headings. Headings 4 to
  * 6 appear once their name or keyword is typed; `####` makes one too.
  * `/task` makes a to-do list: page checkboxes are page content.
  *
  * A list item nests under the one above it with Tab, which a phone's
  * keyboard does not have: there Indent and Outdent (`/indent`, `/outdent`)
  * do it, and two spaces typed at the start of an item nest it, as spaces
- * before a `-` nest it in the CodeMirror editor.
+ * before a `-` nest one in markdown.
  */
 
 import { Extension, InputRule, isiOS, isMacOS, type Editor, type Range } from '@tiptap/core';
@@ -389,7 +388,7 @@ function withoutIds(node: PmNode): PmNode {
 
 /**
  * The bulleted item `$from` starts the text of, made a to-do: `- [ ] `
- * typed is a to-do, as the CodeMirror editor draws it. A list holds one
+ * typed is a to-do, as GFM reads it. A list holds one
  * kind of item, so the item becomes a to-do list of its own, between the
  * items before and after it. It keeps its id: it is the same item.
  */
@@ -476,7 +475,7 @@ export const pageInputRules = Extension.create({
 
 /**
  * Backspace at the start of a heading makes it a paragraph, as removing
- * its `#` does in the CodeMirror editor; one more Backspace joins it to the
+ * its `#` would in markdown; one more Backspace joins it to the
  * block above. The block keeps its id: it is the same block, now text. An
  * input rule that just made the heading is undone first, giving back what
  * was typed.
@@ -512,7 +511,7 @@ export const HeadingBackspace = Extension.create({
  * Backspace and Delete at a block's edge never take a widget or a code
  * block with them in one key. Beside a widget (an image, an applet, a file,
  * a rule) they select it, drawn as selected, and the next key deletes it,
- * as the CodeMirror editor's table is selected before it goes. Beside a
+ * as a table is selected before it goes. Beside a
  * code block they move the caret into it, and from a code block's edge
  * into the block beside it: joining would flatten the code into a line of
  * text and lose its language. An empty line beside either goes, as the key
@@ -608,7 +607,7 @@ const ITEMS = ['listItem', 'taskItem'];
  * block selected; siblings, from `start` to `end`. A selection reaching
  * from one list item into a block outside the list moves the blocks around
  * both. A selection that ends at the very start of a block leaves that
- * block out, as the CodeMirror editor leaves out a line the selection only
+ * block out, as a code editor leaves out a line the selection only
  * reaches the start of. Null where there is nothing to move.
  */
 function unitAt(state: EditorState): { start: number; end: number; nodes: PmNode[]; parent: PmNode; index: number } | null {
@@ -652,8 +651,8 @@ function shifted(state: EditorState, doc: PmNode, shift: number): Selection {
 /**
  * Move the caret's list item or block, or every one the selection touches,
  * past the one above (`-1`) or below (`1`), as ⌥↑ and ⌥↓ move the lines a
- * selection touches in the CodeMirror editor. In a table it is the row that
- * moves, a table row being that editor's line. Each keeps its id: it is the
+ * selection touches in a code editor. In a table it is the row that
+ * moves, a table row being a line of its markdown. Each keeps its id: it is the
  * same block, elsewhere.
  *
  * They are taken out and put back in two edits, one undo step between them.
@@ -683,7 +682,7 @@ export function moveBlock(editor: Editor, by: -1 | 1): boolean {
 /**
  * Copy the caret's list item or block, or every one the selection touches,
  * above (`-1`) or below (`1`) them, the selection going into the copy, as
- * ⇧⌥↑ and ⇧⌥↓ copy lines in the CodeMirror editor. The copies are new
+ * ⇧⌥↑ and ⇧⌥↓ copy lines in a code editor. The copies are new
  * blocks, with ids of their own.
  */
 export function copyBlock(editor: Editor, by: -1 | 1): boolean {
@@ -698,7 +697,7 @@ export function copyBlock(editor: Editor, by: -1 | 1): boolean {
 
 /**
  * Delete the caret's list item or block, or every one the selection
- * touches, as ⌘⇧K deletes lines in the CodeMirror editor. Every item of a
+ * touches, as ⌘⇧K deletes lines in a code editor. Every item of a
  * list takes the list with it; the whole page leaves an empty line.
  */
 export function deleteBlock(editor: Editor): boolean {
@@ -723,14 +722,14 @@ export function deleteBlock(editor: Editor): boolean {
 	return true;
 }
 
-/** The two spaces a code line is indented by, as the CodeMirror editor's indent unit. */
+/** The two spaces a code line is indented by. */
 const CODE_INDENT = '  ';
 
 /**
  * Indent (`1`) or outdent (`-1`) every line of a code block the selection
- * touches, as ⌘] and ⌘[ do in the CodeMirror editor: two spaces added at
+ * touches, as ⌘] and ⌘[ do in a code editor: two spaces added at
  * each line's start, or up to two spaces, or a tab, taken away. A line the
- * selection only reaches the start of is left, as that editor leaves it.
+ * selection only reaches the start of is left.
  * One edit. False outside a code block, or across its edge.
  */
 export function indentCode(editor: Editor, by: -1 | 1): boolean {
@@ -763,9 +762,9 @@ export function indentCode(editor: Editor, by: -1 | 1): boolean {
  * ⌥↑ ⌥↓ move, ⇧⌥↑ ⇧⌥↓ copy and ⌘⇧K delete the caret's list item or block,
  * or every one a selection touches. ⌘] and ⌘[ indent and outdent the lines
  * of a code block, and elsewhere nest a list item and take it out a level,
- * as they indent and outdent a line in the CodeMirror editor. Those two are
- * taken on an editable page where there is nothing to move too, as that
- * editor takes them on any line: ⌘[ is the browser's Back otherwise.
+ * as they indent and outdent a line in a code editor. Those two are
+ * taken on an editable page where there is nothing to move too: ⌘[ is the
+ * browser's Back otherwise.
  */
 export const BlockMoves = Extension.create({
 	name: 'blockMoves',

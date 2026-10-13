@@ -2,8 +2,8 @@
    BLOCK PAGES — the block editor's surface (DocumentEditor, DocumentPreview)
    =============================================================================
    Typography is the --md-* tokens (themes.css): the one definition the read
-   path (.markdown in app.css) and the CodeMirror editor already share, so a
-   block page reads at the sizes every other page does. The page's display
+   path (.markdown in app.css) shares, so a block page reads at the sizes
+   every other page does. The page's display
    settings (pageDisplay: font, size) arrive as --editor-font-* on an ancestor
    and win over the body tokens.
 
@@ -144,7 +144,7 @@
 }
 
 /* ── Proposals (suggestions.ts): provisional at a glance, comfortable to read
-   through. The same treatment as the CodeMirror editor's review marks. */
+   through. */
 
 .doc-prose virtues-ins {
 	background: var(--color-success-subtle);
@@ -381,8 +381,7 @@
 }
 
 /* Tiptap's table view wraps each table in `.tableWrapper`: a wide table
-   scrolls inside it, as the CodeMirror table does inside its own scroller,
-   rather than widen the page and take its title and text sideways with it. */
+   scrolls inside it, rather than widen the page and take its title and text sideways with it. */
 .doc-prose .tableWrapper {
 	overflow-x: auto;
 }
@@ -546,7 +545,7 @@
 }
 
 /* ── The assistant (presence.ts): a gliding caret, a fading trail, a flash
-   over blocks a chat edit wrote. The look of the CodeMirror editor's. */
+   over blocks a chat edit wrote. */
 
 /* What a rewrite is about to replace, while the model thinks: held until
    its first words mark it as going. */

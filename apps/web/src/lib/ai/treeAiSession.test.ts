@@ -23,7 +23,6 @@ vi.mock('$lib/components/pages/nodes/CodeBlockNode.svelte', () => ({ default: ()
 vi.mock('$lib/components/pages/nodes/FootnoteNode.svelte', () => ({ default: () => {} }));
 vi.mock('$lib/components/pages/nodes/FigureNode.svelte', () => ({ default: () => {} }));
 vi.mock('./aiSession.svelte', () => ({ aiSession: { set: vi.fn(), reset: vi.fn(), active: false } }));
-vi.mock('./aiCursorSession', () => ({ abortAiSession: vi.fn() }));
 vi.mock('svelte-sonner', () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 
 import type { Editor } from '@tiptap/core';

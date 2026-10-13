@@ -23,7 +23,7 @@ const WRAPPER_CLS: Record<string, string> = {
 /** A list item line: bullet, ordered, or task. */
 const LIST_ITEM = /^(\s*)([-*+]|\d+[.)])\s/;
 
-/** One level of list nesting, matching the depth math in live-preview.ts. */
+/** One level of list nesting. */
 const LIST_INDENT = '  ';
 
 /**
@@ -311,16 +311,13 @@ function toggleHtmlTag(view: EditorView, tag: string): boolean {
 /**
  * Backspace at the start of a heading unwraps the heading.
  *
- * The `# ` prefix is hidden (see live-preview.ts), so the default
- * deleteCharBackward would swallow one invisible `#` and leave `## Foo` as
- * `# Foo` — or `# Foo` as `Foo` with a stray space — with nothing on screen
- * explaining why the type changed. Deleting the whole marker is what someone
- * pressing Backspace at the front of a heading actually means.
+ * The default deleteCharBackward would take one `#` and leave `## Foo` as
+ * `# Foo`, or `# Foo` as `Foo` with a stray space. Deleting the whole marker
+ * is what someone pressing Backspace at the front of a heading means.
  *
- * This claims the entire hidden prefix, including position 0, because with the
- * marker hidden the line start and the text start render at the same x and the
- * user cannot aim between them. Joining with the previous line is still one
- * more Backspace away, once the line is no longer a heading.
+ * This claims the entire prefix, including position 0. Joining with the
+ * previous line is still one more Backspace away, once the line is no
+ * longer a heading.
  */
 function unwrapHeadingOnBackspace(view: EditorView): boolean {
 	const { state } = view;

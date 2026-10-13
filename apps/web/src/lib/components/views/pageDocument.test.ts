@@ -1,5 +1,5 @@
 /**
- * Which editor a page opens in (`pageDocument.ts`, `PageContent.svelte`).
+ * How a page opens (`pageDocument.ts`, `PageContent.svelte`).
  *
  * The choice is made in `pageDocument.ts` and tested here against the
  * bindings themselves, with the socket and the device's copy faked. The
@@ -62,30 +62,35 @@ vi.mock('$lib/yjs/keptCopy', () => ({
 }));
 
 import contractJson from '$contract';
-import { formatOf, mayShowKeptCopy, openPageDocument, stillLoading } from './pageDocument';
+import { formatOf, mayShowKeptCopy, openPageDocument, stillLoading, type PageDescription } from './pageDocument';
 
 /** The contract this app's block editor reads. */
 const V: number = (contractJson as { version: number }).version;
 import { loadConverter } from '$lib/document/converter';
 import { keepEarlierTreeCopies, keepMarkdownCopy } from '$lib/yjs/keptCopy';
 
+/** Open a block page, failing the test when it does not bind as one. */
+function openTree(pageId: string, description: PageDescription) {
+	const page = openPageDocument(pageId, description);
+	if (page.format !== 'tree') throw new Error('not a tree');
+	return page;
+}
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const source = (rel: string) => fs.readFileSync(path.resolve(HERE, rel), 'utf8');
 
 describe('the editor a page opens in', () => {
 	it('a block page binds its tree on the contract socket, kept under tree-<id>', () => {
-		const page = openPageDocument('pg_tree', { format: 'tree', contract: V, box_contract: V });
-		expect(page.format).toBe('tree');
+		const page = openTree('pg_tree', { format: 'tree', contract: V, box_contract: V });
 		expect(fakes.made.provider!.options.params).toEqual({ contract: String(V) });
 		expect(fakes.made.persistence!.name).toBe('tree-pg_tree');
-		if (page.format !== 'tree') throw new Error('not a tree');
 		expect(page.doc.readOnly).toBe(false);
 		expect(page.readOnlyNotice).toBeNull();
 		page.doc.destroy();
 	});
 
 	it("a block page keeps its copy under its document's lineage, and sees to copies of earlier ones", () => {
-		const page = openPageDocument('pg_lin', {
+		const page = openTree('pg_lin', {
 			format: 'tree',
 			contract: V,
 			box_contract: V,
@@ -99,34 +104,36 @@ describe('the editor a page opens in', () => {
 
 	it("a block page starts its converter loading beside its socket; a markdown page does not", () => {
 		vi.mocked(loadConverter).mockClear();
-		openPageDocument('pg_md', { format: 'markdown', contract: 0 }).doc.destroy();
+		openPageDocument('pg_md', { format: 'markdown', contract: 0 });
 		expect(loadConverter).not.toHaveBeenCalled();
-		openPageDocument('pg_tree', { format: 'tree', contract: V, box_contract: V }).doc.destroy();
+		openTree('pg_tree', { format: 'tree', contract: V, box_contract: V }).doc.destroy();
 		expect(loadConverter).toHaveBeenCalledOnce();
 	});
 
-	it("a block page sees to the markdown copy this device kept of it; a markdown page binds that copy", () => {
+	it("a block page sees to the markdown copy this device kept of it; a markdown page leaves it", () => {
 		vi.mocked(keepMarkdownCopy).mockClear();
-		openPageDocument('pg_md', { format: 'markdown', contract: 0 }).doc.destroy();
+		openPageDocument('pg_md', { format: 'markdown', contract: 0 });
 		expect(keepMarkdownCopy).not.toHaveBeenCalled();
-		openPageDocument('pg_tree', { format: 'tree', contract: V, box_contract: V }).doc.destroy();
+		openTree('pg_tree', { format: 'tree', contract: V, box_contract: V }).doc.destroy();
 		expect(keepMarkdownCopy).toHaveBeenCalledWith('pg_tree');
 	});
 
-	it('a markdown page, or a page from a server that sends no format, binds its text as today', () => {
+	it('a markdown page, or a page from a server that sends no format, binds nothing and waits on nothing', () => {
 		for (const description of [{ format: 'markdown', contract: 0 }, {}]) {
+			fakes.made.provider = undefined;
+			fakes.made.persistence = undefined;
 			const page = openPageDocument('pg_md', description);
-			expect(page.format).toBe('markdown');
-			expect(fakes.made.provider!.options.params).toEqual({ contract: '0' });
-			expect(fakes.made.persistence!.name).toBe('v2-pg_md');
-			page.doc.destroy();
+			expect(page).toEqual({ format: 'markdown' });
+			expect(fakes.made.provider).toBeUndefined();
+			expect(fakes.made.persistence).toBeUndefined();
+			expect(stillLoading(page, false, null)).toBe(false);
+			expect(mayShowKeptCopy(page, null)).toBe(false);
 		}
 		expect(formatOf({})).toBe('markdown');
 	});
 
 	it('is read-only, and says so, when the server is older than the contract', () => {
-		const page = openPageDocument('pg_tree', { format: 'tree', contract: 0, box_contract: 0 });
-		if (page.format !== 'tree') throw new Error('not a tree');
+		const page = openTree('pg_tree', { format: 'tree', contract: 0, box_contract: 0 });
 		expect(page.doc.readOnly).toBe(true);
 		expect(page.readOnlyNotice).toMatch(/needs an update/);
 		expect(get(page.doc.refused)).toBe(page.readOnlyNotice);
@@ -136,7 +143,7 @@ describe('the editor a page opens in', () => {
 	});
 
 	it('a block page the server could not read is not shown, and not waited on', () => {
-		const page = openPageDocument('pg_tree', { format: 'tree', contract: null, box_contract: V });
+		const page = openTree('pg_tree', { format: 'tree', contract: null, box_contract: V });
 		const why = get(page.doc.refused);
 		expect(why).toMatch(/couldn't read/);
 		expect(fakes.made.provider!.options.connect).toBe(false);
@@ -148,8 +155,7 @@ describe('the editor a page opens in', () => {
 
 describe('showing the copy this device kept, when the server is slow', () => {
 	it('a block page: only a copy holding a block, stamped as the page is', () => {
-		const page = openPageDocument('pg_tree', { format: 'tree', contract: V, box_contract: V });
-		if (page.format !== 'tree') throw new Error('not a tree');
+		const page = openTree('pg_tree', { format: 'tree', contract: V, box_contract: V });
 		// Empty: an editor bound to it would write its empty paragraph.
 		expect(mayShowKeptCopy(page, null)).toBe(false);
 		page.doc.fragment.insert(0, [new Y.XmlElement('paragraph')]);
@@ -161,32 +167,23 @@ describe('showing the copy this device kept, when the server is slow', () => {
 		expect(mayShowKeptCopy(page, 'A newer version of Virtues wrote this page.')).toBe(false);
 		page.doc.destroy();
 	});
-
-	it('a markdown page: as before, when the server said this binding reads it', () => {
-		const page = openPageDocument('pg_md', { format: 'markdown', contract: 0 });
-		expect(mayShowKeptCopy(page, null)).toBe(true);
-		expect(mayShowKeptCopy(page, 'refused')).toBe(false);
-		page.doc.destroy();
-		const unknown = openPageDocument('pg_md', { format: 'markdown', contract: null });
-		expect(mayShowKeptCopy(unknown, null)).toBe(false);
-		unknown.doc.destroy();
-	});
 });
 
 describe('PageContent, in its source', () => {
 	const page = source('PageContent.svelte');
 
-	it('mounts DocumentEditor for a block page once its converter has settled, editable unless the server is older, and CodeMirror otherwise', () => {
+	it('mounts DocumentEditor for a block page once its converter has settled, editable unless the server is older, and shows a markdown page read only', () => {
 		expect(page).toMatch(/openPageDocument\(pageId, data\)/);
 		expect(page).toMatch(
 			/\{#if treeDoc && isSynced && \$converterSettled\}[\s\S]*?<DocumentEditor[\s\S]*?editable=\{!treeDoc\.readOnly\}[\s\S]*?ai=\{treeAiDriver\}/,
 		);
 		// Until then the page says it is loading, as it does before the sync.
 		expect(page).toMatch(/stillLoading\(opened, isSynced, refusedReason\) \|\| \(treeDoc && isSynced && !\$converterSettled\)/);
-		expect(page).toMatch(/\{:else if yjsDoc && isSynced\}[\s\S]*?<CodeMirrorEditor/);
+		expect(page).toMatch(/\{:else if opened\?\.format === "markdown"\}[\s\S]*?MARKDOWN_READ_ONLY[\s\S]*?<MarkdownView \{pageId\} hint=\{null\} \/>/);
+		expect(page).not.toMatch(/codemirror/i);
 	});
 
-	it("keeps a block page's versions, copy and view on the server, and prints it", () => {
+	it("keeps a page's versions, copy and view on the server, and prints a block page", () => {
 		expect(page).toMatch(/cutServerVersion\(pageId, description, 'auto', \{ keepalive \}\)/);
 		expect(page).toMatch(/getPageMarkdown\(pageId\)/);
 		expect(page).toMatch(/<MarkdownView \{pageId\} ydoc=\{treeDoc\.ydoc\} \/>/);
@@ -210,14 +207,16 @@ describe('PageContent, in its source', () => {
 
 	it('the history panel previews a block version with DocumentPreview and restores it on the server', () => {
 		const panel = source('../pages/VersionHistoryPanel.svelte');
+		expect(panel).not.toMatch(/yjsDoc|saveVersion|restoreVersion\b/);
 		expect(panel).toMatch(/<DocumentPreview html=\{preview\.html\} \/>/);
 		expect(panel).toMatch(/restorePageVersion\(pageId, version\.id\)/);
 		expect(panel).toMatch(/cutServerVersion\(pageId\)/);
 	});
 
-	it('display settings offer View as markdown on a block page instead of the raw toggle', () => {
+	it('display settings offer View as markdown, and no raw markdown to edit', () => {
 		const settings = source('../pages/DisplaySettingsPopover.svelte');
-		expect(settings).toMatch(/\{#if format === "tree"\}[\s\S]*View as markdown[\s\S]*\{:else\}[\s\S]*Raw markdown/);
+		expect(settings).toMatch(/\{#if onViewMarkdown\}[\s\S]*View as markdown/);
+		expect(settings).not.toMatch(/Raw markdown|rawMode/);
 	});
 
 	it('the share sheet says what stays on the server', () => {

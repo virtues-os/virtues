@@ -1,14 +1,13 @@
 /**
- * Page bindings: a page's Yjs document on the page socket (`socket.ts`).
+ * A block page's binding: its Yjs document on the page socket (`socket.ts`).
  *
- * - `createYjsDocument` binds a markdown page's Y.Text for the CodeMirror
- *   editor: contract 0, kept on this device under `v2-<id>`.
- * - `createTreeDocument` binds a block page's XML tree for the block editor
- *   (`lib/document`): the contract version `contract.json` says, kept under
- *   `tree-<id>.<lineage>` (`treeStore`), so a page converted from markdown
- *   never reads its old copy, and a page whose document was made again (put
- *   back from a backup and moved to blocks once more) never merges in the
- *   copy of the earlier one.
+ * `createTreeDocument` binds the page's XML tree for the block editor
+ * (`lib/document`): the contract version `contract.json` says, kept under
+ * `tree-<id>.<lineage>` (`treeStore`), so a page converted from markdown
+ * never reads the copy this device kept of it then (`v2-<id>`, which
+ * `keptCopy.ts` sends to the server once), and a page whose document was
+ * made again (put back from a backup and moved to blocks once more) never
+ * merges in the copy of the earlier one.
  */
 
 import * as Y from 'yjs';
@@ -17,14 +16,6 @@ import type { IndexeddbPersistence } from 'y-indexeddb';
 import type { Writable } from 'svelte/store';
 import contractJson from '$contract';
 import { connectPage } from './socket';
-
-/**
- * The document contract the markdown binding reads (`crates/virtues-document`).
- * It binds the page's Y.Text, which is contract 0: a page written as a Yjs tree
- * carries a higher version, and the server refuses this binding on it, since
- * an editor deletes from the shared document what it cannot read.
- */
-const MARKDOWN_CONTRACT = 0;
 
 /** The contract the block editor's schema is built from. */
 const TREE_CONTRACT: number = (contractJson as { version: number }).version;
@@ -42,83 +33,6 @@ const EMPTY_ON_SERVER = "This page's document is empty on your server.";
 function stampOf(ydoc: Y.Doc): number {
 	// yrs writes the stamp as a 64-bit integer, which arrives as a bigint.
 	return Number(ydoc.getMap(META).get(META_CONTRACT) ?? 0);
-}
-
-export interface YjsDocument {
-	ydoc: Y.Doc;
-	ytext: Y.Text;
-	provider: WebsocketProvider;
-	persistence: IndexeddbPersistence;
-	undoManager: Y.UndoManager;
-
-	// Connection state stores
-	isLoading: Writable<boolean>;
-	isSynced: Writable<boolean>;
-	isConnected: Writable<boolean>;
-	/**
-	 * Why the server will not sync this page with this editor, once it has
-	 * said so: the page needs a newer app, or an edit was refused. Null until
-	 * then. A refused editor does not reconnect.
-	 */
-	refused: Writable<string | null>;
-	/**
-	 * Whether the server said this binding reads the page, so the copy kept
-	 * on this device may be shown before the server syncs.
-	 */
-	contractConfirmed: boolean;
-
-	// Cleanup
-	destroy: () => void;
-}
-
-/**
- * Create a Yjs document for a markdown page.
- *
- * @param pageId - The page ID to sync
- * @param pageContract - The contract the server says the page is written
- *   under (`contract` in `GET /api/pages/:id`), or null when it has not said.
- *   The copy of the page this device kept is shown before the server syncs
- *   only when the server said this binding reads the page: a copy kept from
- *   before the page was raised to a tree carries no stamp, would show text
- *   the page no longer holds, and take edits the server refuses.
- */
-export function createYjsDocument(pageId: string, pageContract: number | null = null): YjsDocument {
-	// GC enabled (default) - versions use encodeStateAsUpdate which is self-contained
-	const ydoc = new Y.Doc();
-	const ytext = ydoc.getText('content');
-
-	const contractConfirmed = pageContract !== null && pageContract <= MARKDOWN_CONTRACT;
-	const socket = connectPage(pageId, ydoc, {
-		contract: MARKDOWN_CONTRACT,
-		store: `v2-${pageId}`,
-		pageContract,
-		// The copy carries no stamp above this binding's contract.
-		readable: () => contractConfirmed && stampOf(ydoc) <= MARKDOWN_CONTRACT,
-		hasContent: () => ytext.length > 0,
-	});
-
-	const undoManager = new Y.UndoManager(ytext, {
-		trackedOrigins: new Set([null, 'user', 'ai']),
-		captureTimeout: 500,
-	});
-
-	return {
-		ydoc,
-		ytext,
-		provider: socket.provider,
-		persistence: socket.persistence,
-		undoManager,
-		isLoading: socket.isLoading,
-		isSynced: socket.isSynced,
-		isConnected: socket.isConnected,
-		refused: socket.refused,
-		contractConfirmed,
-		destroy: () => {
-			undoManager.destroy();
-			socket.destroy();
-			ydoc.destroy();
-		},
-	};
 }
 
 /** A block page's document, bound for the block editor. */

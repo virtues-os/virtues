@@ -7,8 +7,7 @@
  *   Off a link, ⌘ or Ctrl-click is a plain click, never ProseMirror's
  *   selection of the whole block.
  *   Both preview on hover (the host's `onHover`): a ref as its record, a
- *   link elsewhere as its address (`previewType`), as the CodeMirror editor
- *   previews them. In an editable page a plain click places the caret, so
+ *   link elsewhere as its address (`previewType`). In an editable page a plain click places the caret, so
  *   a link's text can be edited like any other; in a page that is read
  *   only, a plain click opens it.
  * - The link menu (right-click, or a long press): Open, Open beside, Copy

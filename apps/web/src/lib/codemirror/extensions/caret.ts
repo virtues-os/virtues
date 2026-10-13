@@ -29,9 +29,8 @@
  *     - The blink is a soft asymmetric fade (long on, quick dip) rather than a
  *       hard on/off, so peripheral vision reads it as breathing, not flicker.
  *
- * Note this is the same trick `ai-cursor.ts` already plays for the ASSISTANT's
- * caret — a positioned bar with an eased transition. This module finally gives
- * the human writing the page the same treatment.
+ * The assistant's caret on a page is the same idea (`lib/document/presence.ts`):
+ * a positioned bar with an eased transition.
  *
  * Enabling `drawSelection()` also revives `.cm-selectionBackground` /
  * `.cm-selectionLayer` in `theme.ts`, which until now styled elements that were
@@ -44,7 +43,7 @@ import type { Extension } from '@codemirror/state';
 import { drawSelection, EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 
 // The look travels with the behavior: every editor that turns this on
-// (the page editor and the chat composer) gets its CSS. See caret.css.
+// gets its CSS. See caret.css.
 import './caret.css';
 
 /** How long the caret stays solid after the last keystroke or move. */

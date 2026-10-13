@@ -54,23 +54,22 @@ SRC="apps/web/src"
 # `ChapterLifeline.svelte` (2) are SVG and CSS, which take `var()` fine — their
 # literals are real debt and stay in the baseline where they can be paid down.
 #
-# Mono: `themes.css` declares `--font-mono`, and `lib/codemirror/theme.css`
-# dresses a code editor, where mono IS the content.
+# Mono: `themes.css` declares `--font-mono`.
 #
-# Mono literals: the same two, plus `app.css`, which is where the `@font-face`
+# Mono literals: the same, plus `app.css`, which is where the `@font-face`
 # rules for IBM Plex Mono live — naming the family you are REGISTERING is not
 # dressing a label in it, exactly as `themes.css` declaring `--font-mono` is
 # not. Plus the five surfaces where the mono is the
 # rendered artifact rather than a costume on a label — a terminal emulator
 # (`DeveloperTerminalView`), a source viewer (`AppletSource`), a code view
 # (`CodeInterpreterCard`), a diff view (`EditDiffCard`) and the raw text/CSV
-# pane (`asset/TextPane`). Same test `codemirror/theme.css` passes: the thing
-# inside the box is code, so a fixed advance is information, not decoration.
+# pane (`asset/TextPane`). The thing inside the box is code, so a fixed
+# advance is information, not decoration.
 # Deliberately NOT exempt: `chat/PageEditResult.svelte`, whose `.result-title`
 # is a page TITLE wearing a mono stack — that is exactly the kicker the grammar
 # names, and it stays in the baseline where it can be paid down.
 COLOR_EXEMPT='apps/web/src/themes.css apps/web/src/app.css apps/web/src/lib/components/wiki/LifelineCanvas.svelte apps/web/src/lib/components/wiki/LifelineMap.svelte'
-MONO_EXEMPT='apps/web/src/themes.css apps/web/src/lib/codemirror/theme.css'
+MONO_EXEMPT='apps/web/src/themes.css'
 MONO_LITERAL_EXEMPT="$MONO_EXEMPT apps/web/src/app.css apps/web/src/lib/components/tabs/views/DeveloperTerminalView.svelte apps/web/src/lib/components/applets/AppletSource.svelte apps/web/src/lib/components/chat/CodeInterpreterCard.svelte apps/web/src/lib/components/chat/EditDiffCard.svelte apps/web/src/lib/components/asset/TextPane.svelte"
 
 RULES='shadow tiny-type half-px-type mono mono-literal hex-literal rgb-literal radius off-grid no-reduced-motion serif-impossible'

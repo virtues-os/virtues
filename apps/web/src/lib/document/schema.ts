@@ -155,8 +155,8 @@ function contractUrl(spec: AttrSpec | undefined, raw: unknown): string | null {
 
 /**
  * What a typed `![name](src)` makes of a `kind`: the block `kindOfLink`
- * reads it as (an image, audio, video or a file), as the CodeMirror editor
- * draws it and the server's converter reads it, a `|600` after the name
+ * reads it as (an image, audio, video or a file), as the server's
+ * converter reads it, a `|600` after the name
  * being an image's width (`altWidth`); nothing when it is another kind, or
  * the contract refuses its `src`. The match is the `![name](src)` alone,
  * not the space before it.
@@ -227,8 +227,8 @@ const ContractImage = Image.extend({
 });
 
 /**
- * The stock code block, its Enter keeping the line's indent, as the
- * CodeMirror editor's does: the new line starts with the spaces and tabs
+ * The stock code block, its Enter keeping the line's indent, as a code
+ * editor's does: the new line starts with the spaces and tabs
  * the caret's line starts with. A line of nothing but its indent loses it
  * first, so a run of Enters leaves empty lines, and the third Enter at the
  * end of the block still leaves it, as Tiptap's own does.
@@ -589,8 +589,8 @@ function markBase(name: string): Mark | undefined {
 				isAllowedUri: (url) => linkAllowed(url),
 				// A URL pasted over selected text asks only this.
 				shouldAutoLink: (url) => linkAllowed(url) && stockShouldAutoLink(url),
-				// `[label](url)` typed or pasted is a link, as the CodeMirror
-				// editor draws it; the address passes `isAllowedUri` first.
+				// `[label](url)` typed or pasted is a link, as markdown reads
+				// it; the address passes `isAllowedUri` first.
 				markdownLinks: true,
 			});
 		case 'bold':
@@ -607,7 +607,7 @@ function markBase(name: string): Mark | undefined {
 			});
 		case 'underline':
 			return Underline;
-		// Each with the CodeMirror editor's key beside Tiptap's own (⌘⇧S, ⌘E).
+		// Each with a second key beside Tiptap's own (⌘⇧S, ⌘E).
 		case 'strike':
 			return Strike.extend({
 				addKeyboardShortcuts() {

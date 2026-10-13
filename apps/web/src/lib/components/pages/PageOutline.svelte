@@ -7,9 +7,8 @@
 	to scroll the editor there. Scroll-spy keeps the bar's label and the active
 	entry in sync as you read.
 
-	Knows no editor: the editor hands over an `OutlineNav` (`cmOutlineNav` for
-	CodeMirror, `treeOutlineNav` for a block page) that scrolls to a heading and
-	says where one starts in its scroller.
+	Knows no editor: the editor hands over an `OutlineNav` (`treeOutlineNav`)
+	that scrolls to a heading and says where one starts in its scroller.
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";

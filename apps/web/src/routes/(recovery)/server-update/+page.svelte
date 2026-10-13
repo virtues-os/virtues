@@ -24,7 +24,7 @@
 	async function check() {
 		phase = "checking";
 		error = null;
-		// Arrived here but the box is already new enough (or the floor is 0):
+		// Arrived here but the box is already new enough:
 		// nothing to do, go back to the app.
 		const v = await boxApiVersion(fetch, true);
 		if (v !== null && v >= MIN_BOX_API) {

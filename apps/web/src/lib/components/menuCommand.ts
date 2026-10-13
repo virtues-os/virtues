@@ -1,7 +1,6 @@
 /**
- * One entry in an insert menu (`SlashMenu`), whichever editor fills it: the
- * CodeMirror page editor's `SlashCommand` and the block editor's
- * `TreeCommand` both extend this, so the menu and its filter are shared.
+ * One entry in an insert menu (`SlashMenu`): the block editor's
+ * `TreeCommand` extends this, and the menu and its filter read only this.
  */
 
 export interface MenuCommand {

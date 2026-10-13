@@ -5,8 +5,7 @@
  *   ("Computer", "Phone", "Tablet") and a category colour picked by its Yjs
  *   client id, so two devices of one person tell apart.
  * - The assistant's caret, telegraph and trail (`setAiCaret`,
- *   `setAiTelegraph`, `setAiTrail`, `clearAi`), the look of the CodeMirror
- *   editor's (`codemirror/extensions/ai-cursor.ts`): a caret that glides
+ *   `setAiTelegraph`, `setAiTrail`, `clearAi`): a caret that glides
  *   between positions, a wash over the words a rewrite is about to replace
  *   while the model thinks, and a fading wash over what it wrote. The caret
  *   is one overlay element positioned from the document; the telegraph and

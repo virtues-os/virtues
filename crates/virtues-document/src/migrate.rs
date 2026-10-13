@@ -4179,9 +4179,9 @@ mod tests {
         assert_eq!(o.nodes[0].content[0].attrs["label"], json!("Nick"));
     }
 
-    /// The cases the browser's `kindOfLink` reads too (`editor.test.ts`,
-    /// and CodeMirror's `media-widgets.test.ts`), so a link turned into an
-    /// embed or drawn in either editor is the block this converter makes.
+    /// The cases the browser's `kindOfLink` reads too (`editor.test.ts`),
+    /// so a link turned into an embed or drawn in the editor is the block
+    /// this converter makes.
     #[test]
     fn media_kind_reads_as_kind_of_link_does() {
         #[derive(serde::Deserialize)]
@@ -4352,8 +4352,8 @@ mod tests {
         }
     }
 
-    /// `escapeReviewBody` in the editor's `review-marks.ts`: how the
-    /// CodeMirror editor wrote a proposal's text.
+    /// How the markdown page editor escaped a proposal's text
+    /// (`escapeReviewBody`), which pages written before blocks still hold.
     fn escape_review_body(text: &str) -> String {
         [
             ("\\", "\\\\"),

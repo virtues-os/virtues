@@ -1,6 +1,5 @@
 /**
- * When and where the selection toolbar shows over a block page, with the
- * manners of the CodeMirror editor's (`codemirror/extensions/selection-toolbar.ts`):
+ * When and where the selection toolbar shows over a block page:
  *
  * - Never during a drag. The selection changes under a sweeping pointer,
  *   and a bar over the words being swept is in the way; it shows once the

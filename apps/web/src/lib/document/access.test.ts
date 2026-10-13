@@ -1539,11 +1539,11 @@ describe('printing', () => {
 	});
 });
 
-describe('the build doc', () => {
+describe('the record', () => {
 	// The parity table outlives the plan that asked for it, and once lived
 	// only in a spike file that never shipped.
 	it('names what a block page keeps, replaces and cuts of the CodeMirror editor', () => {
-		const doc = read('../../../../../agents/build/document.md');
+		const doc = read('../../../../../agents/record/document-contract.md');
 		const start = doc.indexOf('## Parity with the CodeMirror editor');
 		expect(start, 'the parity section').toBeGreaterThan(0);
 		const section = doc.slice(start, doc.indexOf('\n## ', start + 1));

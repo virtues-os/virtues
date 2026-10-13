@@ -4,7 +4,7 @@
 	 *
 	 * Shows above selected text with formatting buttons.
 	 * Pattern follows SlashMenu - "dumb display" component
-	 * that receives state from the selection-toolbar plugin.
+	 * that receives state from the block editor (`lib/document/toolbar.ts`).
 	 *
 	 * Uses the floating UI system for smart positioning.
 	 */

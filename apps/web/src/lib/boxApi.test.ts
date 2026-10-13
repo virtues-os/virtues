@@ -24,12 +24,30 @@ describe('boxApiVersion', () => {
 	});
 });
 
+/** Whether a box answering `body` is below the floor. The answer is cached, so it is asked afresh first. */
+async function below(body: unknown, ok = true): Promise<boolean> {
+	await boxApiVersion(answering(body, ok), true);
+	return boxBelowFloor(answering(body, ok));
+}
+
 describe('boxBelowFloor', () => {
-	it('never blocks while the floor is 0', async () => {
-		// Shipping the floor at 0 is what keeps every existing box working on
-		// the day this lands. If this fails, MIN_BOX_API was raised: make sure
-		// that was deliberate and has a release note.
-		expect(MIN_BOX_API).toBe(0);
-		expect(await boxBelowFloor(answering({ version: 'ancient' }))).toBe(false);
+	it('stands at the box that holds pages in blocks under contract 2', () => {
+		// Raising it stops every box below it from opening this app until it
+		// updates: make sure that was deliberate and has a release note.
+		expect(MIN_BOX_API).toBe(4);
+	});
+
+	it('blocks a box below the floor, a box too old to report one included', async () => {
+		expect(await below({ api_version: 3 })).toBe(true);
+		expect(await below({ version: '0.1.9' })).toBe(true);
+	});
+
+	it('lets through a box at the floor or above it', async () => {
+		expect(await below({ api_version: 4 })).toBe(false);
+		expect(await below({ api_version: 9 })).toBe(false);
+	});
+
+	it('never blocks a box it could not reach', async () => {
+		expect(await below({}, false)).toBe(false);
 	});
 });

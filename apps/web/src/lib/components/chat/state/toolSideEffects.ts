@@ -103,7 +103,7 @@ export class ToolSideEffects {
 					if (!edit?.edit_id || this.#animatedEditIds.has(edit.edit_id)) continue;
 					this.#animatedEditIds.add(edit.edit_id);
 					if (animate && output?.applied) {
-						animateChatEdit(edit.page_id, edit.replace ?? "", edit.blocks ?? []);
+						animateChatEdit(edit.page_id, edit.blocks ?? []);
 					}
 				}
 			}

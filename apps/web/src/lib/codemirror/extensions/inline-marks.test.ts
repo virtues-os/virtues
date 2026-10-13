@@ -1,9 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createTestView, destroyTestView, forceFocus, visibleText } from '../test-utils';
+import { createTestView, destroyTestView, forceFocus } from '../test-utils';
 import { type InlineMark, inlineMarks } from './inline-marks';
-import { livePreview } from './live-preview';
 import { mouseFreeze } from './mouse-freeze';
 
 import type { EditorView } from '@codemirror/view';
@@ -20,10 +19,8 @@ const marksOf = (v: EditorView): InlineMark[] =>
 
 const byClass = (marks: InlineMark[], cls: string) => marks.filter((m) => m.cls === cls);
 
-const mountLive = (doc: string, selection = 0) =>
-	createTestView(doc, { selection, extensions: [mouseFreeze, livePreview] });
-// Open marks render through the real live preview; same mount as mountLive,
-// kept as a name so the open-construct tests read as what they test.
+const mountLive = (doc: string, selection = 0) => createTestView(doc, { selection, extensions: [mouseFreeze] });
+// The same mount, kept as a name so the open-construct tests read as what they test.
 const mountOpen = mountLive;
 
 describe('==highlight== comes from the parser', () => {
@@ -31,15 +28,11 @@ describe('==highlight== comes from the parser', () => {
 		view = mountLive('==x== after', 8);
 		const [mark] = byClass(marksOf(view), 'cm-highlight');
 		expect(mark).toEqual({ cls: 'cm-highlight', openFrom: 0, openTo: 2, closeFrom: 3, closeTo: 5 });
-		expect(view.contentDOM.querySelector('.cm-highlight')?.textContent).toBe('x');
-		// Caret elsewhere: the delimiters are hidden.
-		expect(visibleText(view)).toBe('x after');
 	});
 
 	it('a == b == c is a sentence, not a highlight', () => {
 		view = mountLive('a == b == c', 0);
 		expect(byClass(marksOf(view), 'cm-highlight')).toEqual([]);
-		expect(visibleText(view)).toBe('a == b == c');
 	});
 
 	it('=== is never a delimiter', () => {
@@ -57,7 +50,6 @@ describe('==highlight== comes from the parser', () => {
 	it('does not see == inside a fence', () => {
 		view = mountLive('```\n==x==\n```\n', 0);
 		expect(byClass(marksOf(view), 'cm-highlight')).toEqual([]);
-		expect(view.contentDOM.querySelector('.cm-highlight')).toBeNull();
 	});
 
 	it('nests inside emphasis like any other construct', () => {
@@ -75,9 +67,6 @@ describe('emphasis while typing', () => {
 		expect(marks).toEqual([
 			{ cls: 'cm-strong', openFrom: 0, openTo: 2, closeFrom: 5, closeTo: 5, open: true },
 		]);
-		expect(view.contentDOM.querySelector('.cm-strong')?.textContent).toBe('foo');
-		expect(view.contentDOM.querySelector('.cm-formatting-mark')?.textContent).toBe('**');
-		expect(visibleText(view)).toBe('**foo');
 	});
 
 	it('holds across the space that would otherwise drop the styling', () => {
