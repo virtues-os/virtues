@@ -4,6 +4,7 @@
  * and its Undo, and pointing to Home or Work on the map. The questions
  * themselves are review.ts's; this holds what the person has done with them.
  */
+import { mergePlace } from "$lib/wiki/api";
 import { fetchReview, sendAnswer, type Answer, type PlaceReview } from "./review";
 
 /** How long an answer can be undone. */
@@ -98,6 +99,27 @@ export class ReviewState {
 		clearTimeout(this.undoTimer);
 		for (const id of [...u.ids].reverse()) await this.answer(id, { kind: "reopen" });
 		this.undo = null;
+	}
+
+	/** The place is the Work place: folded into it, its stays then Work's.
+	 *  A merge has no Undo. */
+	async fileUnder(id: string, into: string): Promise<boolean> {
+		if (this.saving) return false;
+		this.saving = true;
+		this.saveFailed = null;
+		try {
+			if (!(await mergePlace(id, into))) throw new Error("merge refused");
+			this.undo = null;
+			await this.load();
+			this.onanswered();
+			return true;
+		} catch (e) {
+			console.warn("[Timeline] filing a place under Work failed", e);
+			this.saveFailed = id;
+			return false;
+		} finally {
+			this.saving = false;
+		}
 	}
 
 	startPointing(id: string, role: "home" | "work") {

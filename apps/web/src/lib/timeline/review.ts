@@ -29,10 +29,13 @@ export interface PlaceNaming {
 	candidates: PlaceCandidate[];
 	/** With none within 60 m: the nearest named place within 250 m. */
 	hint: PlaceCandidate | null;
-	/** The nearest hotel within 250 m: after a night, asked about first. */
+	/** The nearest hotel within 250 m. */
 	lodging: PlaceCandidate | null;
-	/** Named places within 300 m: the typed answer's suggestions. */
-	nearby: string[];
+	/** Named hotels within 1 km, nearest first: "Which hotel?". */
+	hotels: PlaceCandidate[];
+	/** Named places within 300 m, nearest first: the typed answer's
+	 *  suggestions, labelled on the map while the place is asked about. */
+	nearby: PlaceCandidate[];
 	city: string | null;
 	/** The box holds street detail here; without it nothing can match. */
 	street_detail: boolean;
@@ -99,40 +102,64 @@ export function sendAnswer(id: string, a: Answer): Promise<{ place_id: string | 
 	return apiSend<{ place_id: string | null }>("POST", `/timeline/places/${encodeURIComponent(id)}/answer`, a);
 }
 
+/** A kind of place, the open question's answer: saved as its label alone,
+ *  or followed by the name ("Which hotel?", "Whose home?", its name). */
+export interface Kind {
+	label: string;
+	category: string | null;
+	/** Its icon in the list of kinds. */
+	icon: string;
+	/** What picking it asks next; `work` files the place under Work. */
+	then: "hotel" | "person" | "name" | "work";
+}
+
 /** The question a place asks. */
 export interface Ask {
 	text: string;
 	/** The question as one line under its stay in the day's list. */
 	line: string;
-	/** A yes-or-no question's "Yes", answered from the list's line; any
-	 *  other question is chosen in its card. */
+	/** A guess's "Yes", answered from the list's line. */
 	yes?: Answer;
-	/** Its "No": the guess set aside for good, so the place is asked about
-	 *  without it. */
+	/** A guess's "No": the guess set aside for good, so the place is asked
+	 *  about without it. */
 	no?: Answer;
-	/** One-tap answers. */
+	/** A guess's Yes and No, or Home's and Work's. */
 	chips: { label: string; answer: Answer }[];
 	/** "Which of these were you at?": the places to pick from, more than one
 	 *  allowed, saved together. */
 	picks: PlaceCandidate[];
-	/** What "Other" takes: the place's name, or whose home it was; `null`
-	 *  for a yes-or-no question, which offers neither Other nor Just passing
-	 *  through. */
-	other: "place" | "person" | null;
+	/** The open question's kinds of place; empty for a guess. Other is a
+	 *  typed name beside them, never a kind. */
+	kinds: Kind[];
+	/** "None of these": more named places around, beyond the close ones. */
+	more: string[];
+	/** "Just Passing Through" is an answer: never for a night. */
+	passing: boolean;
 	/** The named places the question is about, labelled on the map. */
 	shown: PlaceCandidate[];
-	/** How far out they lie, so the map frames them readably; 0 with none. */
+	/** How far out they lie; 0 with none. */
 	reachM: number;
 	/** Home or Work: "No" asks the person to point to the right place on the
 	 *  map instead of answering. */
 	role?: "home" | "work";
 }
 
-/** "Mine / family" names the place Family (main.js:2169). */
-const FAMILY = "Family";
-/** What a spot nobody could name might have been (main.js:2171): the label
- *  is the name saved, as the prototype saves it. */
-const KINDS = ["park", "office", "shop", "outdoors"];
+/** A guess is asked about by name only from this close: further out, the
+ *  nearest named place was usually a neighbour (a car dealership beside a
+ *  stay, a hotel beside the one the person slept at). */
+const GUESS_M = 60;
+const HOTEL: Kind = { label: "A hotel", category: "lodging", icon: "ri:hotel-bed-line", then: "hotel" };
+const SOMEONES_HOME: Kind = { label: "Someone’s home", category: null, icon: "ri:home-4-line", then: "person" };
+/** A day's kinds of place; the label is the name saved when the person
+ *  skips naming it. Work files the place under the person's Work. */
+const DAY_KINDS: Kind[] = [
+	{ label: "Restaurant", category: "dining", icon: "ri:restaurant-line", then: "name" },
+	{ label: "Shop", category: "shopping", icon: "ri:shopping-bag-line", then: "name" },
+	{ label: "Park", category: "outdoors", icon: "ri:tree-line", then: "name" },
+	{ label: "Work", category: "office", icon: "ri:briefcase-line", then: "work" },
+	SOMEONES_HOME,
+];
+const NIGHT_KINDS: Kind[] = [HOTEL, SOMEONES_HOME];
 
 /** A typed name for whose home it was: "<name>'s place" (main.js:2198). */
 export function homeOf(who: string): string {
@@ -153,17 +180,22 @@ export function weekly(q: PlaceQuestion): string {
 	return q.hours_a_week < 1 ? "Less than an hour a week" : `About ${Math.round(q.hours_a_week)} ${Math.round(q.hours_a_week) === 1 ? "hour" : "hours"} a week`;
 }
 
-/** The question for a place (main.js:2156-2179): whether it's home, or
- *  where the person works, for the places where the time went; else which of several close
- *  places; whether it was a named place just out of reach (or someone's
- *  home, after a night there); whose home (where the map's places would
- *  show a hotel, else where they stayed); else what it was. A match the
- *  person said was wrong is never offered again. */
+/** The question for a place. Home and Work are asked for the places where
+ *  the time went. Otherwise Virtues asks about a place by name only on
+ *  strong evidence: one named place within 60 m ("Were you at X?" Yes,
+ *  No), several ("Which of these were you at?"), and after a night only a
+ *  hotel within 60 m. Anything weaker is an open question whose answers
+ *  are kinds of place, always true, with the names around only as the
+ *  typed answer's suggestions (the owner's call, 2026-10-09: a button
+ *  nothing supports, like a car dealership 175 m off, is worse than none).
+ *  A match the person said was wrong is never offered again. */
 export function askFor(q: PlaceQuestion): Ask {
 	const n = q.naming;
-	const cands = n.candidates.filter((c) => c.name !== q.rejected_match);
+	const ok = (c: PlaceCandidate) => c.name !== q.rejected_match;
 	const named = (name: string, category: string | null = null): Answer => ({ kind: "name", name, category });
+	const base = { chips: [], picks: [], kinds: [], more: [], passing: true, shown: [], reachM: 0 };
 	const yesNo = (text: string, role: "home" | "work", yes: Answer, no: Answer): Ask => ({
+		...base,
 		text,
 		line: text,
 		yes,
@@ -172,95 +204,62 @@ export function askFor(q: PlaceQuestion): Ask {
 			{ label: "Yes", answer: yes },
 			{ label: "No", answer: no },
 		],
-		picks: [],
-		other: null,
-		shown: [],
-		reachM: 0,
+		passing: false,
 	});
 	if (q.ask === "home") return yesNo(q.changed ? "Is this your home now?" : "Is this home?", "home", { kind: "home" }, { kind: "not_home" });
 	if (q.ask === "work")
 		return yesNo(q.changed ? "Is this where you work now?" : "Is this where you work?", "work", { kind: "work" }, { kind: "not_work" });
 	/** "Were you at X?": Yes names the place after X; No sets X aside. */
-	const guess = (c: PlaceCandidate) => ({
+	const guess = (c: PlaceCandidate): Ask => ({
+		...base,
 		text: `Were you at ${c.name}?`,
 		line: `Were you at ${c.name}?`,
 		yes: named(c.name, c.category),
-		no: { kind: "not_this", name: c.name } as Answer,
+		no: { kind: "not_this", name: c.name },
 		chips: [
 			{ label: "Yes, that’s it", answer: named(c.name, c.category) },
-			{ label: "No", answer: { kind: "not_this", name: c.name } as Answer },
+			{ label: "No", answer: { kind: "not_this", name: c.name } },
 		],
-		picks: [],
-		other: "place" as const,
+		kinds: q.overnight ? NIGHT_KINDS : DAY_KINDS,
+		passing: !q.overnight,
 		shown: [c],
 		reachM: c.meters,
 	});
-	// A night beside a hotel: was it the hotel? If not, the hotel the person
-	// stayed at may be one the map doesn't list: Other takes its name.
-	const hotel = n.lodging && n.lodging.name !== q.rejected_match ? n.lodging : null;
-	if (q.overnight && hotel) return guess(hotel);
+	if (q.overnight) {
+		const hotel = n.lodging && ok(n.lodging) && n.lodging.meters <= GUESS_M ? n.lodging : null;
+		if (hotel) return guess(hotel);
+		return {
+			...base,
+			text: "Where did you stay that night?",
+			line: "Where did you stay that night?",
+			kinds: NIGHT_KINDS,
+			passing: false,
+		};
+	}
+	const cands = n.candidates.filter(ok);
 	if (cands.length > 1)
 		return {
+			...base,
 			text: "Which of these were you at?",
 			line: `Which of ${cands.length} places nearby?`,
-			chips: [],
 			picks: cands,
-			other: "place",
+			kinds: DAY_KINDS,
+			more: n.nearby.map((c) => c.name).filter((x) => !cands.some((c) => c.name === x) && x !== q.rejected_match).slice(0, 8),
 			shown: cands,
 			reachM: Math.max(...cands.map((c) => c.meters)),
 		};
-	// One named place within reach: asked about by name. A named place
-	// further out (60-250 m) is never asked about by name: too often it was
-	// a neighbour (a car dealership beside a stay, a park beside a pool), so
-	// it is only one of the suggestions below (the owner's call, 2026-10-09).
-	const near = cands[0] ?? null;
-	if (near && q.overnight)
-		return {
-			text: `Were you at ${near.name}, or someone’s home?`,
-			line: `Were you at ${near.name}, or someone’s home?`,
-			chips: [{ label: near.name, answer: named(near.name, near.category) }],
-			picks: [],
-			other: "person",
-			shown: [near],
-			reachM: near.meters,
-		};
-	if (near) return guess(near);
-	const hint = n.hint && n.hint.name !== q.rejected_match ? n.hint : null;
-	// Without the map's places here, nothing named nearby means nothing seen,
-	// not nothing there: a night may have been a hotel as well as a home.
-	if (q.overnight && !n.street_detail)
-		return {
-			text: "Where did you stay that night?",
-			line: "Where did you stay that night?",
-			chips: [{ label: "Mine / family", answer: named(FAMILY) }],
-			picks: [],
-			other: "place",
-			shown: [],
-			reachM: 0,
-		};
-	if (q.overnight)
-		return {
-			text: "Looks like you stayed at a home. Whose place?",
-			line: "Whose place was this?",
-			chips: [{ label: "Mine / family", answer: named(FAMILY) }],
-			picks: [],
-			other: "person",
-			shown: [],
-			reachM: 0,
-		};
-	// The named places around, nearest first, as one-tap answers; with none,
-	// the kinds of place.
-	const around = [...new Set([...(hint ? [hint.name] : []), ...n.nearby])].filter((x) => x !== q.rejected_match).slice(0, 3);
+	if (cands.length === 1) return guess(cands[0]);
+	// The nearest named places are labelled on the map, so a place the base
+	// map leaves unlabelled at this zoom (a school among its grounds) can be
+	// found, though none is offered as a button.
+	const around = n.nearby.filter(ok).slice(0, 5);
 	return {
+		...base,
 		text: "Virtues couldn’t name this spot. What was it?",
 		line: "What was this spot?",
-		chips: around.length
-			? around.map((x) => ({ label: x, answer: named(x, x === hint?.name ? hint.category : null) }))
-			: KINDS.map((k) => ({ label: k, answer: named(k) })),
-		picks: [],
-		other: "place",
-		shown: hint ? [hint] : [],
-		reachM: hint ? hint.meters : 0,
+		kinds: DAY_KINDS,
+		shown: around,
+		reachM: around.length ? Math.max(...around.map((c) => c.meters)) : 0,
 	};
 }
 

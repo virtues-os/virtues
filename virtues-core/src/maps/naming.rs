@@ -27,6 +27,10 @@ const HINT_M: f64 = 250.0;
 /// (`resolve.py:32-33`).
 const NEAR_M: f64 = 300.0;
 const NEAR_MAX: usize = 40;
+/// How far out "Which hotel?" lists hotels, and how many: a hotel the person
+/// slept at can sit a few streets from where the phone placed the night.
+const HOTELS_M: f64 = 1000.0;
+const HOTELS_MAX: usize = 6;
 /// An airport's label sits far from any gate: name the whole facility from
 /// within this (`resolve.py:34`).
 const AERO_M: f64 = 3000.0;
@@ -152,8 +156,12 @@ pub struct Naming {
     /// The nearest hotel (or other lodging) within 250 m: after a night
     /// there, the question is whether it was this hotel.
     pub lodging: Option<Candidate>,
-    /// Named places within 300 m, nearest first: the answer field's suggestions.
-    pub nearby: Vec<String>,
+    /// Named places within 300 m, nearest first, where the map puts them:
+    /// the answer field's suggestions, labelled on the map while asked.
+    pub nearby: Vec<Candidate>,
+    /// Named hotels (or other lodging) within 1 km, nearest first: the
+    /// choices under "Which hotel?".
+    pub hotels: Vec<Candidate>,
     /// The city the place lies in: its title until it has a name.
     pub city: Option<String>,
     /// The box holds street detail (z15) here; without it nothing can match.
@@ -190,6 +198,7 @@ pub(crate) fn resolve(lat: f64, lon: f64, centre: &[Label], block: &[Label]) -> 
         tier: "none",
         nearby: nearby(lat, lon, block),
         lodging: lodging(lat, lon, block),
+        hotels: hotels(lat, lon, block),
         street_detail: true,
         ..Naming::default()
     };
@@ -276,17 +285,47 @@ fn lodging(lat: f64, lon: f64, block: &[Label]) -> Option<Candidate> {
         })
 }
 
+/// Named lodging within 1 km, nearest first, each name once.
+fn hotels(lat: f64, lon: f64, block: &[Label]) -> Vec<Candidate> {
+    let mut v: Vec<Candidate> = block
+        .iter()
+        .filter(|p| category(&p.kind) == "lodging" && !p.name.is_empty())
+        .map(|p| Candidate {
+            meters: (crate::geo::haversine_distance(lat, lon, p.lat, p.lon) * 10.0).round() / 10.0,
+            kind: p.kind.clone(),
+            category: "lodging",
+            name: p.name.clone(),
+            lat: p.lat,
+            lon: p.lon,
+        })
+        .filter(|c| c.meters <= HOTELS_M)
+        .collect();
+    v.sort_by(|a, b| a.meters.total_cmp(&b.meters));
+    let mut v = once(v, |c| c.name.as_str());
+    v.truncate(HOTELS_MAX);
+    v
+}
+
 /// Named places a person can stay at within 300 m, nearest first, each name
 /// once (`resolve.py:211-223`).
-fn nearby(lat: f64, lon: f64, block: &[Label]) -> Vec<String> {
-    let mut v: Vec<(&str, f64)> = block
+fn nearby(lat: f64, lon: f64, block: &[Label]) -> Vec<Candidate> {
+    let mut v: Vec<Candidate> = block
         .iter()
         .filter(|p| !EXCLUDE.contains(&p.kind.as_str()) && !p.name.is_empty())
-        .map(|p| (p.name.as_str(), crate::geo::haversine_distance(lat, lon, p.lat, p.lon)))
-        .filter(|(_, d)| *d <= NEAR_M)
+        .map(|p| Candidate {
+            meters: (crate::geo::haversine_distance(lat, lon, p.lat, p.lon) * 10.0).round() / 10.0,
+            kind: p.kind.clone(),
+            category: category(&p.kind),
+            name: p.name.clone(),
+            lat: p.lat,
+            lon: p.lon,
+        })
+        .filter(|c| c.meters <= NEAR_M)
         .collect();
-    v.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(b.0)));
-    once(v, |(n, _)| n).into_iter().take(NEAR_MAX).map(|(n, _)| n.to_string()).collect()
+    v.sort_by(|a, b| a.meters.total_cmp(&b.meters).then(a.name.cmp(&b.name)));
+    let mut v = once(v, |c| c.name.as_str());
+    v.truncate(NEAR_MAX);
+    v
 }
 
 /// The nearest city within 90 km, else the nearest locality of any size: a
@@ -430,6 +469,19 @@ mod tests {
     }
 
     #[test]
+    fn which_hotel_lists_the_hotels_within_a_kilometre_nearest_first() {
+        let n = resolve_here(&[
+            at(900.0, "hotel", "Far Inn"),
+            at(150.0, "hotel", "Hotel Rowan"),
+            at(1200.0, "hotel", "Too Far Hotel"),
+            at(40.0, "restaurant", "Corner Cafe"),
+            at(300.0, "motel", "Hotel Rowan"),
+        ]);
+        let names: Vec<&str> = n.hotels.iter().map(|h| h.name.as_str()).collect();
+        assert_eq!(names, ["Hotel Rowan", "Far Inn"], "lodging only, within 1 km, each name once");
+    }
+
+    #[test]
     fn one_clear_dwellable_match_is_confident() {
         let n = resolve_here(&[at(5.0, "cafe", "Corner Cafe"), at(12.0, "crossing", "Crosswalk"), at(40.0, "bar", "Blue Door")]);
         assert_eq!(n.tier, "confident", "40 m is 8 times 5 m: clearly nearest");
@@ -482,7 +534,7 @@ mod tests {
         let n = resolve_here(&[at(140.0, "golf_course", "Country Club"), at(400.0, "cafe", "Far")]);
         assert_eq!(n.tier, "none");
         assert_eq!(n.hint.as_ref().map(|h| h.name.as_str()), Some("Country Club"));
-        assert_eq!(n.nearby, ["Country Club"], "only names within 300 m are suggested");
+        assert_eq!(n.nearby.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Country Club"], "only names within 300 m are suggested");
         assert_eq!(resolve_here(&[at(400.0, "cafe", "Far")]).hint, None);
     }
 
