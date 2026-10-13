@@ -48,6 +48,7 @@
 		onfocus,
 		onopenplace,
 		ondetour,
+		onlist,
 	}: {
 		sections: InspectorSection[];
 		zone: string;
@@ -87,6 +88,9 @@
 		/** "Named Places" opened (`true`) or left (`false`); `back` when left
 		 *  by "‹ Back to the Day", which returns to the day it was opened on. */
 		ondetour?: (open: boolean, back?: boolean) => void;
+		/** The "Named Places" list is on show, opened or come back to from a
+		 *  name's day: the day behind it goes back to where it was opened. */
+		onlist?: () => void;
 	} = $props();
 
 	// Naming a place, one at a time. The named places within 150 m come first,
@@ -209,6 +213,9 @@
 			inDetour = d;
 			leavingBack = false;
 		});
+	});
+	$effect(() => {
+		if (card === 'names') untrack(() => onlist?.());
 	});
 	// A name changed from "Named Places": back to the list it was picked in,
 	// with the new name on it.
