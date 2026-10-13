@@ -16,7 +16,9 @@
  *      the shared document with the first keystroke.
  *   4. The Yjs fragment Tiptap's binding writes reads back in Rust as the
  *      HTML ProseMirror renders, inside the contract.
- *   5. That fragment is not refused by the check the server runs on every
+ *   5. The browser's markdown export (`markdown.ts`, what a copy out of a
+ *      page writes) is the server's (`render::markdown`), byte for byte.
+ *   6. That fragment is not refused by the check the server runs on every
  *      update from a browser (`check_update`), for every case, the ones Rust
  *      refuses included: pasting is the browser's path for exactly that
  *      input, and an update the server refuses costs the tab its connection.
@@ -53,6 +55,7 @@ import { prosemirrorToYXmlFragment, yXmlFragmentToProseMirrorRootNode } from '@t
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import { contract, contractExtensions, contractSchema } from './schema';
+import { toMarkdown } from './markdown';
 
 // Not `new URL(…, import.meta.url)`: under happy-dom `URL` is the DOM's, which
 // fileURLToPath refuses.
@@ -80,6 +83,7 @@ type RustCase = {
 	notes: Issue[];
 	tree?: Json[];
 	html?: string;
+	markdown?: string;
 	update?: string;
 };
 type RustRead = { name: string; html: string; problems: Issue[]; refused: Issue[] };
@@ -183,7 +187,8 @@ describe('contract schema', () => {
 			}
 		}
 		expect(Object.keys(schema.nodes).sort()).toEqual(Object.keys(contract.nodes).sort());
-		// Mark order decides nesting in HTML, so it is compared in order: link outermost.
+		// Mark order decides nesting in HTML, so it is compared in order: proposals
+		// outermost, then link.
 		expect(Object.keys(schema.marks)).toEqual(Object.keys(contract.marks));
 	});
 });
@@ -271,6 +276,8 @@ describe.skipIf(!bin)(
 				expect(pmHtml(canon), `${c.name}: canonical html`).toBe(rustHtml);
 				expect(blocks(canon), `${c.name}: canonical tree`).toBe(rustTree);
 				expect(blocks(fromRust), `${c.name}: yjs rust → tiptap`).toBe(rustTree);
+				// What a copy out of the page writes is the server's own export.
+				expect(toMarkdown(fromRust.content), `${c.name}: markdown export`).toBe(r.markdown);
 				edited.push({ name: c.name, update: editedInAnEditor(r.update ?? '') });
 			});
 		}

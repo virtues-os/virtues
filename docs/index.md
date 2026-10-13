@@ -33,8 +33,8 @@ tomorrow. `virtues status` shows what is flowing in the meantime.
 
 ## What leaves the server
 
-Your record stays on your disk, and so do the two models that make it
-searchable: the installer refuses to point them at anything but a local
+Your record stays on your disk, and so does the model that makes it
+searchable: the installer refuses to point it at anything but a local
 address. Two things go out. The model that writes your days and answers your
 questions receives the relevant part of your record for each request, through
 our gateway, which meters the cost, keeps nothing, and routes only to provider

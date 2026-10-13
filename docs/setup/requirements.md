@@ -28,17 +28,18 @@ a miserable one is almost entirely memory and disk, in that order.
 ## Memory
 
 Eight gigabytes is the floor, and here is where it goes. PostgreSQL and the
-Virtues server itself want a couple of gigabytes between them. The two model
-servers - the embedder and the reranker, if you run them on this machine -
-sit at roughly a gigabyte of resident memory *each* with the flags Virtues
-starts them under: one request slot, no prompt cache, a 2048-token context.
-Started with a model server's own defaults they would take about two and a
-half gigabytes each, which is the difference between fitting and swapping on
-an 8 GB board.
+Virtues server itself want a couple of gigabytes between them. The embedding
+model server, when it runs on this machine, sits at roughly a gigabyte of
+resident memory with the flags Virtues starts it under: one request slot, no
+prompt cache, a 2048-token context. Started with a model server's own
+defaults it would take about two and a half gigabytes, which is the
+difference between fitting and swapping on an 8 GB board. While search moves
+to a new model, the old and new servers run side by side for a while, so
+plan for a second gigabyte then.
 
-If you run the models on a different machine - the recommended arrangement,
-and the subject of [Setting up inference](/docs/inference) - then 8 GB here is
-roomy rather than tight.
+If you run the model on a different machine - see
+[Setting up inference](/docs/inference) - then 8 GB here is roomy rather than
+tight.
 
 ## Disk
 
@@ -84,8 +85,9 @@ choose. So there is no VRAM budget to plan for it.
 
 **What runs locally is retrieval:** one embedding model, which turns your
 record into vectors. It runs on the CPU by default, and for everyday use that
-is enough. A GPU or NPU makes every search and the first index of your history
-much faster, so if the machine has one, set it up after installing:
+is enough. A GPU or NPU can make every search and the first index of your
+history faster, so if the machine has one, consider setting it up after
+installing:
 [Faster search on a GPU or NPU](/docs/setup/accelerators).
 
 - **The CPU engine keeps GPU offload off, on purpose.** The model's math

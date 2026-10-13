@@ -107,8 +107,12 @@ pub async fn run() -> Result<(), crate::Error> {
             super::ui::ok("already on the newest build for this channel");
             // No release tonight, but a search model change may have finished
             // or still need starting (a failed download is retried here).
-            super::model_set::settle_finished_change(true).await;
-            super::model_set::start_recommended_change().await;
+            // Under the release lock, so a hand-run upgrade can't do the same
+            // work at the same moment; if one holds it, it does this itself.
+            if let Ok(_lock) = upgrade::acquire_lock() {
+                super::model_set::settle_finished_change(true).await;
+                super::model_set::start_recommended_change().await;
+            }
             return Ok(());
         }
         Ok(Prepared::Already { slot_id }) | Ok(Prepared::Staged { slot_id }) => slot_id,

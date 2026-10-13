@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { untitled } from '$lib/refs/identity.svelte';
-	import { getChatUsage, getChat, compactChat } from '$lib/api/client';
+	import { getChatUsage, getChat, compactChat, getNextTurnContext, type NextTurnContext, type NextTurnPart } from '$lib/api/client';
 	import { chatUsage } from '$lib/stores/chatUsage.svelte';
+	import { chatInstances } from '$lib/stores/chatInstances.svelte';
 	import { formatDateTime } from '$lib/utils/dateUtils';
 
 	interface SessionUsage {
@@ -40,28 +41,6 @@
 			model?: string;
 			provider?: string;
 		};
-		messages: Array<{
-			id: string;
-			role: string;
-			content: string;
-			timestamp: string;
-			model?: string;
-			tool_calls?: Array<{
-				tool_name: string;
-				tool_call_id?: string;
-				arguments: unknown;
-				result?: unknown;
-				timestamp: string;
-			}>;
-			reasoning?: string;
-		}>;
-	}
-
-	interface Breakdown {
-		user: { tokens: number; pct: number };
-		assistant: { tokens: number; pct: number };
-		toolCalls: { tokens: number; pct: number };
-		other: { tokens: number; pct: number };
 	}
 
 	interface Props {
@@ -77,6 +56,8 @@
 	let contextViewLoading = $state(false);
 	let contextViewError = $state<string | null>(null);
 	let compacting = $state(false);
+	let nextTurn = $state<NextTurnContext | null>(null);
+	let nextTurnError = $state<string | null>(null);
 
 	async function fetchContextViewData() {
 		if (!conversationId) {
@@ -100,6 +81,24 @@
 		} finally {
 			contextViewLoading = false;
 		}
+		await fetchNextTurn();
+	}
+
+	/** The next message's request, asked with what the composer would send
+	 *  beside it: the same getters its send reads. */
+	async function fetchNextTurn() {
+		if (!conversationId) return;
+		const inputs = chatInstances.turnInputs(conversationId) ?? {
+			agentMode: 'chat',
+			chatMode: 'open',
+			timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+		};
+		try {
+			nextTurn = await getNextTurnContext(conversationId, inputs);
+			nextTurnError = null;
+		} catch (e) {
+			nextTurnError = e instanceof Error ? e.message : "Your server couldn't build the next request";
+		}
 	}
 
 	async function handleCompact() {
@@ -118,38 +117,6 @@
 		}
 	}
 
-	function calculateBreakdown(messages: SessionDetail['messages']): Breakdown {
-		let user = 0, assistant = 0, toolCalls = 0, other = 0;
-
-		for (const msg of messages) {
-			const contentTokens = Math.ceil((msg.content?.length || 0) / 4);
-
-			if (msg.role === 'user') {
-				user += contentTokens;
-			} else if (msg.role === 'assistant') {
-				assistant += contentTokens;
-				if (msg.tool_calls) {
-					for (const tc of msg.tool_calls) {
-						toolCalls += Math.ceil(JSON.stringify(tc).length / 4);
-					}
-				}
-				if (msg.reasoning) {
-					other += Math.ceil(msg.reasoning.length / 4);
-				}
-			} else {
-				other += contentTokens;
-			}
-		}
-
-		const total = user + assistant + toolCalls + other || 1;
-		return {
-			user: { tokens: user, pct: (user / total) * 100 },
-			assistant: { tokens: assistant, pct: (assistant / total) * 100 },
-			toolCalls: { tokens: toolCalls, pct: (toolCalls / total) * 100 },
-			other: { tokens: other, pct: (other / total) * 100 }
-		};
-	}
-
 	function formatTokens(tokens: number): string {
 		if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(2)}M`;
 		if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}K`;
@@ -166,16 +133,44 @@
 		return formatDateTime(date);
 	}
 
-	function formatShortDate(date: string): string {
-		return formatDateTime(date, {
-			month: 'short',
-			day: 'numeric',
-			hour: 'numeric',
-			minute: '2-digit'
-		});
-	}
+	const sum = (parts: NextTurnPart[]) => parts.reduce((n, p) => n + p.tokens, 0);
 
-	const breakdown = $derived(sessionDetail ? calculateBreakdown(sessionDetail.messages) : null);
+	/** The next request in four parts, the system prompt split where the
+	 *  cache marker falls. */
+	const nextTotals = $derived.by(() => {
+		if (!nextTurn) return null;
+		const held = sum(nextTurn.sections.filter((p) => p.cached));
+		const perTurn = sum(nextTurn.sections.filter((p) => !p.cached));
+		const tools = sum(nextTurn.tools);
+		const conversation = sum(nextTurn.messages);
+		const all = held + perTurn + tools + conversation;
+		const pct = (n: number) => (all ? (n / all) * 100 : 0);
+		return { held, perTurn, tools, conversation, all, pct };
+	});
+
+	const toolsBySize = $derived(nextTurn ? [...nextTurn.tools].sort((a, b) => b.tokens - a.tokens) : []);
+
+	const SECTION_NAMES: Record<string, string> = {
+		base: 'Character and guidance',
+		precedence: 'Precedence',
+		memory: 'Memory',
+		circumstances: 'Circumstances',
+		coverage: 'Coverage',
+		active_project: 'Project',
+		scoped: 'Scoped to the project',
+		compacted_conversation: 'Earlier conversation, summarized',
+		skill: 'Skill',
+		active_context: 'Open page',
+		rules: 'Rules',
+		interview: 'Interview',
+		getting_started: 'Getting started'
+	};
+
+	const ROLE_NAMES: Record<string, string> = { user: 'You', assistant: 'Assistant', tool: 'Tool result' };
+
+	function firstLine(text: string | undefined): string {
+		return (text ?? '').split('\n').find((line) => line.trim() && !line.startsWith('[Sent ')) ?? '';
+	}
 
 	// Read again whenever the chat saves a turn, not only on opening.
 	$effect(() => {
@@ -226,8 +221,8 @@
 			<dt>Reasoning Tokens</dt>
 			<dd class="mono">{formatTokens(sessionUsage.reasoning_tokens)}</dd>
 
-			<dt>Cache Tokens</dt>
-			<dd class="mono">{formatTokens(sessionUsage.cache_read_tokens)} / {formatTokens(sessionUsage.cache_write_tokens)}</dd>
+			<dt>Read from cache</dt>
+			<dd class="mono">{formatTokens(sessionUsage.cache_read_tokens)}</dd>
 
 			<dt>User Messages</dt>
 			<dd>{sessionUsage.user_message_count}</dd>
@@ -245,53 +240,114 @@
 			<dd>{formatDate(sessionUsage.last_message_at)}</dd>
 		</dl>
 
-		<!-- Context Breakdown Bar -->
-		<div class="cv-breakdown">
-			<div class="cv-breakdown-label">Context Breakdown</div>
-			{#if breakdown && (breakdown.user.pct > 0 || breakdown.assistant.pct > 0 || breakdown.toolCalls.pct > 0 || breakdown.other.pct > 0)}
+		<section class="cv-next">
+			<div class="cv-next-head">
+				<div class="cv-section-label">What the next message carries</div>
+				<button type="button" class="cv-refresh" onclick={fetchNextTurn}>Refresh</button>
+			</div>
+			{#if nextTurnError}
+				<div class="cv-empty-note">{nextTurnError}</div>
+			{:else if nextTurn && nextTotals}
+				<p class="cv-next-summary">
+					About {formatTokens(nextTotals.all)} tokens go to {nextTurn.model} before your
+					message{nextTurn.mode === 'chat' ? '' : `, in ${nextTurn.mode}`}.
+				</p>
 				<div class="cv-bar">
-					{#if breakdown.user.pct > 0}
-						<div class="cv-segment cv-user" style="width: {breakdown.user.pct}%"></div>
+					<div class="cv-segment cv-held" style="width: {nextTotals.pct(nextTotals.held)}%"></div>
+					{#if nextTotals.perTurn}
+						<div class="cv-segment cv-per-turn" style="width: {nextTotals.pct(nextTotals.perTurn)}%"></div>
 					{/if}
-					{#if breakdown.assistant.pct > 0}
-						<div class="cv-segment cv-assistant" style="width: {breakdown.assistant.pct}%"></div>
-					{/if}
-					{#if breakdown.toolCalls.pct > 0}
-						<div class="cv-segment cv-tools" style="width: {breakdown.toolCalls.pct}%"></div>
-					{/if}
-					{#if breakdown.other.pct > 0}
-						<div class="cv-segment cv-other" style="width: {breakdown.other.pct}%"></div>
-					{/if}
+					<div class="cv-segment cv-tools" style="width: {nextTotals.pct(nextTotals.tools)}%"></div>
+					<div class="cv-segment cv-conversation" style="width: {nextTotals.pct(nextTotals.conversation)}%"></div>
 				</div>
 				<div class="cv-legend">
-					<span><i class="cv-dot cv-user"></i> User {breakdown.user.pct.toFixed(1)}%</span>
-					<span><i class="cv-dot cv-assistant"></i> Assistant {breakdown.assistant.pct.toFixed(1)}%</span>
-					<span><i class="cv-dot cv-tools"></i> Tool Calls {breakdown.toolCalls.pct.toFixed(1)}%</span>
-					<span><i class="cv-dot cv-other"></i> Other {breakdown.other.pct.toFixed(1)}%</span>
+					<span><i class="cv-dot cv-held"></i> Prompt {formatTokens(nextTotals.held)}</span>
+					{#if nextTotals.perTurn}
+						<span><i class="cv-dot cv-per-turn"></i> Prompt, per turn {formatTokens(nextTotals.perTurn)}</span>
+					{/if}
+					<span><i class="cv-dot cv-tools"></i> Tools {formatTokens(nextTotals.tools)}</span>
+					<span><i class="cv-dot cv-conversation"></i> Conversation {formatTokens(nextTotals.conversation)}</span>
 				</div>
-			{:else}
-				<div class="cv-bar cv-empty"></div>
-				<div class="cv-empty-note">No message data available for breakdown</div>
-			{/if}
-		</div>
 
-		<!-- Raw Messages -->
-		<div class="cv-raw-messages">
-			<div class="cv-section-label">Raw messages ({sessionDetail.messages?.length || 0})</div>
-			{#if sessionDetail.messages && sessionDetail.messages.length > 0}
-				<ul>
-					{#each sessionDetail.messages as msg, i}
+				<div class="cv-group-label">System prompt</div>
+				<ul class="cv-parts">
+					{#each nextTurn.sections as part, i (i)}
 						<li>
-							<span class="cv-role">{msg.role}</span>
-							<span class="cv-msg-id">{msg.id || `msg_${i}`}</span>
-							<span class="cv-timestamp">{formatShortDate(msg.timestamp)}</span>
+							<details>
+								<summary>
+									<span class="cv-part-name">{SECTION_NAMES[part.name] ?? part.name}</span>
+									<span class="cv-part-note">{part.cached ? 'Same each turn' : 'Can change each turn'}</span>
+									<span class="cv-part-tokens">{formatTokens(part.tokens)}</span>
+								</summary>
+								<pre class="cv-text">{part.text?.trim()}</pre>
+							</details>
 						</li>
 					{/each}
 				</ul>
+
+				<details class="cv-group">
+					<summary>
+						<span class="cv-part-name">Tools ({nextTurn.tools.length})</span>
+						<span class="cv-part-tokens">{formatTokens(nextTotals.tools)}</span>
+					</summary>
+					<ul class="cv-parts">
+						{#each toolsBySize as tool (tool.name)}
+							<li class="cv-row">
+								<span class="cv-part-name">{tool.name}</span>
+								<span class="cv-part-tokens">{formatTokens(tool.tokens)}</span>
+							</li>
+						{/each}
+					</ul>
+				</details>
+
+				<details class="cv-group">
+					<summary>
+						<span class="cv-part-name">Conversation ({nextTurn.messages.length} messages)</span>
+						<span class="cv-part-tokens">{formatTokens(nextTotals.conversation)}</span>
+					</summary>
+					<ul class="cv-parts">
+						{#each nextTurn.messages as message, i (i)}
+							<li>
+								<details>
+									<summary>
+										<span class="cv-role">{ROLE_NAMES[message.name] ?? message.name}</span>
+										<span class="cv-part-note cv-first-line">{firstLine(message.text)}</span>
+										<span class="cv-part-tokens">{formatTokens(message.tokens)}</span>
+									</summary>
+									<pre class="cv-text">{message.text}</pre>
+								</details>
+							</li>
+						{/each}
+					</ul>
+				</details>
+
+				{#if nextTurn.recent_calls.length}
+					<div class="cv-group-label">Latest calls</div>
+					<table class="cv-calls">
+						<thead>
+							<tr><th>Step</th><th>Sent</th><th>From cache</th><th>Could be cached</th><th>Changed at</th></tr>
+						</thead>
+						<tbody>
+							{#each [...nextTurn.recent_calls].reverse() as call (call.at)}
+								<tr>
+									<td>{call.step}</td>
+									<td class="cv-num">{formatTokens(call.prompt_tokens)}</td>
+									<td class="cv-num">{formatTokens(call.cache_read_tokens)}</td>
+									<td class="cv-num">{formatTokens(call.reusable_tokens)}</td>
+									<td>{call.diverged_at || '-'}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+					<p class="cv-empty-note">
+						When a call read far less from cache than it could have, the provider missed. When Changed at names a place,
+						the request itself changed there. Your server keeps this list until it restarts.
+					</p>
+				{/if}
 			{:else}
-				<div class="cv-empty-note">No messages found in session data</div>
+				<div class="cv-empty-note">Loading...</div>
 			{/if}
-		</div>
+		</section>
 
 		{#if sessionUsage.usage_percentage > 20}
 			<button class="cv-compact-btn" onclick={handleCompact} disabled={compacting}>
@@ -359,15 +415,44 @@
 		font-family: var(--font-mono);
 	}
 
-	.cv-breakdown {
+	.cv-next {
 		margin-top: 2rem;
 	}
 
-	.cv-breakdown-label,
-	.cv-section-label {
+	.cv-next-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+	}
+
+	.cv-refresh {
+		background: none;
+		border: none;
+		padding: 0;
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+	}
+
+	.cv-refresh:hover {
+		color: var(--color-foreground);
+	}
+
+	.cv-next-summary {
+		margin: 0 0 0.75rem;
+		font-size: 0.875rem;
+		color: var(--color-foreground);
+	}
+
+	.cv-section-label,
+	.cv-group-label {
 		font-size: 0.75rem;
 		color: var(--color-foreground-muted);
 		margin-bottom: 0.5rem;
+	}
+
+	.cv-group-label {
+		margin-top: 1.5rem;
 	}
 
 	.cv-bar {
@@ -382,10 +467,10 @@
 		min-width: 2px;
 	}
 
-	.cv-segment.cv-user { background: var(--cat-emerald); }
-	.cv-segment.cv-assistant { background: var(--cat-pink); }
+	.cv-segment.cv-held { background: var(--cat-emerald); }
+	.cv-segment.cv-per-turn { background: var(--cat-pink); }
 	.cv-segment.cv-tools { background: var(--cat-yellow); }
-	.cv-segment.cv-other { background: var(--color-foreground-muted); }
+	.cv-segment.cv-conversation { background: var(--color-foreground-muted); }
 
 	.cv-legend {
 		display: flex;
@@ -405,14 +490,10 @@
 		vertical-align: middle;
 	}
 
-	.cv-dot.cv-user { background: var(--cat-emerald); }
-	.cv-dot.cv-assistant { background: var(--cat-pink); }
+	.cv-dot.cv-held { background: var(--cat-emerald); }
+	.cv-dot.cv-per-turn { background: var(--cat-pink); }
 	.cv-dot.cv-tools { background: var(--cat-yellow); }
-	.cv-dot.cv-other { background: var(--color-foreground-muted); }
-
-	.cv-bar.cv-empty {
-		background: var(--color-surface-elevated);
-	}
+	.cv-dot.cv-conversation { background: var(--color-foreground-muted); }
 
 	.cv-empty-note {
 		font-size: 0.75rem;
@@ -421,28 +502,63 @@
 		margin-top: 0.5rem;
 	}
 
-	.cv-raw-messages {
-		margin-top: 2rem;
-	}
-
-	.cv-raw-messages ul {
+	.cv-parts {
 		list-style: none;
 		padding: 0;
-		margin: 0.5rem 0 0 0;
-		max-height: 300px;
-		overflow-y: auto;
+		margin: 0;
 	}
 
-	.cv-raw-messages li {
-		display: flex;
-		gap: 0.75rem;
-		padding: 0.375rem 0;
-		font-size: 0.8125rem;
+	.cv-parts li,
+	.cv-group {
 		border-bottom: 1px solid var(--color-border);
 	}
 
-	.cv-raw-messages li:last-child {
-		border-bottom: none;
+	.cv-group {
+		margin-top: 1rem;
+	}
+
+	.cv-parts summary,
+	.cv-group > summary,
+	.cv-row {
+		display: flex;
+		gap: 0.75rem;
+		align-items: baseline;
+		padding: 0.375rem 0;
+		font-size: 0.8125rem;
+		cursor: pointer;
+	}
+
+	.cv-row {
+		cursor: default;
+	}
+
+	.cv-part-name {
+		color: var(--color-foreground);
+	}
+
+	.cv-part-note {
+		flex: 1;
+		min-width: 0;
+		color: var(--color-foreground-muted);
+		font-size: 0.75rem;
+	}
+
+	.cv-first-line {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.cv-part-tokens,
+	.cv-num {
+		font-variant-numeric: tabular-nums;
+	}
+
+	.cv-part-tokens {
+		margin-left: auto;
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+		white-space: nowrap;
 	}
 
 	.cv-role {
@@ -450,18 +566,35 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.cv-msg-id {
-		flex: 1;
-		font-family: var(--font-mono);
+	.cv-text {
+		max-height: 320px;
+		overflow: auto;
+		margin: 0 0 0.75rem;
+		padding: 0.75rem;
+		background: var(--color-surface-elevated);
+		border-radius: 6px;
+		font-family: inherit;
 		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
+		white-space: pre-wrap;
+		word-break: break-word;
 	}
 
-	.cv-timestamp {
+	.cv-calls {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.75rem;
+	}
+
+	.cv-calls th,
+	.cv-calls td {
+		text-align: left;
+		padding: 0.25rem 0.5rem 0.25rem 0;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.cv-calls th {
+		font-weight: normal;
 		color: var(--color-foreground-muted);
-		white-space: nowrap;
 	}
 
 	.cv-compact-btn {

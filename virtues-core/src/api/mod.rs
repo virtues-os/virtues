@@ -52,6 +52,7 @@ pub mod circumstances;
 pub mod coverage;
 pub mod narrative_draft;
 pub mod bookmarks;
+pub mod page_reads;
 pub mod pages;
 pub mod updates;
 pub mod live_turn;

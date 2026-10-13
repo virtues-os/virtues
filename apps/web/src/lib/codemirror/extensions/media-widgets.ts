@@ -9,8 +9,9 @@
  *
  * Right-click context menu on all media types: Go to, Copy, Turn into reference, Edit, Remove.
  *
- * Type determined by file extension. Uses StateField (not ViewPlugin)
- * because block widgets require direct decoration provision via
+ * Type determined by `kindOfLink` (`document/media-kind.ts`), the rule the
+ * block editor and the server's converter share. Uses StateField (not
+ * ViewPlugin) because block widgets require direct decoration provision via
  * EditorView.decorations facet.
  */
 
@@ -29,39 +30,9 @@ import { createWidgetIcon, disconnectRemeasure, remeasureOnResize } from '../wid
 import { collectCodeRanges, inCode } from './code-context';
 import { onContextGesture } from './long-press';
 import { backendUrl } from '../../config/backend';
+import { altWidth, kindOfLink } from '../../document/media-kind';
 
 const MEDIA_REGEX = /!\[([^\]]*)\]\(([^)]+)\)/g;
-
-const IMAGE_EXTS = /\.(png|jpg|jpeg|gif|webp|svg|bmp|ico|avif|heic|heif|tiff?)$/i;
-const AUDIO_EXTS = /\.(mp3|wav|ogg|m4a|aac|flac|opus|wma)$/i;
-const VIDEO_EXTS = /\.(mp4|webm|mov|avi|mkv|m4v|ogv)$/i;
-
-type FileType = 'image' | 'audio' | 'video' | 'file';
-
-function detectFileType(url: string, alt: string): FileType {
-	if (IMAGE_EXTS.test(url) || IMAGE_EXTS.test(alt)) return 'image';
-	if (AUDIO_EXTS.test(url) || AUDIO_EXTS.test(alt)) return 'audio';
-	if (VIDEO_EXTS.test(url) || VIDEO_EXTS.test(alt)) return 'video';
-	// Extensionless EXTERNAL urls default to image: `![…]` is image syntax,
-	// and the modern web serves images from extensionless CDN/signed urls
-	// (unsplash's `photo-…?w=400` rendered as a file-card button before this).
-	// A wrong guess self-heals — ImageWidget swaps to a file card on error.
-	// Internal paths (drive downloads) keep extension detection: the drive
-	// picker embeds pdfs and archives with `![name](/api/drive/…)`, and their
-	// alt carries the real filename for the tests above.
-	if (/^https?:\/\//i.test(url)) return 'image';
-	return 'file';
-}
-
-/** Parse alt text for optional width: "alt|600" → { alt: "alt", width: 600 } */
-function parseAltWidth(raw: string): { alt: string; width: number | null } {
-	const pipeIdx = raw.lastIndexOf('|');
-	if (pipeIdx < 0) return { alt: raw, width: null };
-	const maybeWidth = raw.slice(pipeIdx + 1).trim();
-	const num = parseInt(maybeWidth, 10);
-	if (Number.isNaN(num) || num <= 0 || num > 10000) return { alt: raw, width: null };
-	return { alt: raw.slice(0, pipeIdx).trim(), width: num };
-}
 
 function getFilename(url: string, alt: string): string {
 	if (alt) return alt;
@@ -181,7 +152,7 @@ function showMediaContextMenu(
 	const setWidth = (w: number | null) => {
 		const m = /^!\[([^\]]*)\]\(([^)]+)\)$/.exec(view.state.sliceDoc(from, to));
 		if (!m) return;
-		const { alt } = parseAltWidth(m[1]);
+		const { alt } = altWidth(m[1]);
 		view.dispatch({
 			changes: { from, to, insert: `![${alt}${w ? `|${w}` : ''}](${m[2]})` },
 		});
@@ -249,7 +220,7 @@ function showMediaContextMenu(
 				// dispatch did nothing at all. Same panel as links; the alt text
 				// is the "Text" field, and a `|width` suffix survives the edit.
 				const m = /^!\[([^\]]*)\]\(([^)]+)\)$/.exec(view.state.sliceDoc(from, to));
-				const { alt, width } = parseAltWidth(m?.[1] ?? '');
+				const { alt, width } = altWidth(m?.[1] ?? '');
 				linkEditor.show(
 					{ label: alt, href: m?.[2] ?? href },
 					({ label, href: newHref }) => {
@@ -325,7 +296,7 @@ class ImageWidget extends WidgetType {
 
 	constructor(private src: string, private rawAlt: string, private from: number, private to: number) {
 		super();
-		const parsed = parseAltWidth(rawAlt);
+		const parsed = altWidth(rawAlt);
 		this.displayAlt = parsed.alt;
 		this.width = parsed.width;
 	}
@@ -539,9 +510,9 @@ function buildMediaDecorations(state: EditorState): DecorationSet {
 			const from = line.from + match.index;
 			const to = from + match[0].length;
 			// Strip |width suffix for filename/type detection
-			const cleanAlt = parseAltWidth(rawAlt).alt;
+			const cleanAlt = altWidth(rawAlt).alt;
 			const filename = getFilename(url, cleanAlt);
-			const type = detectFileType(url, cleanAlt);
+			const type = kindOfLink(url, cleanAlt);
 
 			let widget: WidgetType;
 			switch (type) {

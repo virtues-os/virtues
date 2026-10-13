@@ -5,6 +5,7 @@
 
 const STORAGE_KEY = "virtues-sidebar-collapsed";
 const WIDTH_KEY = "virtues-sidebar-width";
+const COMPACT_KEY = "virtues-rail-compact";
 
 /**
  * The PANEL's width — the rail is fixed, so this is the only part that resizes.
@@ -20,6 +21,14 @@ export const SIDEBAR_MAX_WIDTH = 420;
 export const SIDEBAR_DEFAULT_WIDTH = 208;
 export const SIDEBAR_COLLAPSE_AT = 148;
 
+/**
+ * The rail's width with and without its labels. The aside sizes itself as
+ * rail + gap + panel, so both read these — a rail narrower than the aside
+ * thinks it is opens a strip of desk between the panel and the pane.
+ */
+export const RAIL_WIDTH = 64;
+export const RAIL_COMPACT_WIDTH = 48;
+
 function clampWidth(v: number): number {
 	if (!Number.isFinite(v)) return SIDEBAR_DEFAULT_WIDTH;
 	return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.round(v)));
@@ -27,6 +36,9 @@ function clampWidth(v: number): number {
 
 let collapsed = $state(false);
 let width = $state(SIDEBAR_DEFAULT_WIDTH);
+// The rail without its labels: glyphs only, narrower. Independent of
+// `collapsed`, which is the panel beside it.
+let railCompact = $state(false);
 
 // Initialize from localStorage (safe for SSR — guarded)
 if (typeof localStorage !== "undefined") {
@@ -34,6 +46,7 @@ if (typeof localStorage !== "undefined") {
 	if (stored !== null) {
 		collapsed = stored === "true";
 	}
+	railCompact = localStorage.getItem(COMPACT_KEY) === "true";
 	const storedWidth = localStorage.getItem(WIDTH_KEY);
 	if (storedWidth !== null) {
 		// Clamp on read as well as on write: the bounds can move between
@@ -69,5 +82,19 @@ export const sidebarState = {
 	},
 	resetWidth() {
 		sidebarState.width = SIDEBAR_DEFAULT_WIDTH;
+	},
+
+	/** Rail shows glyphs only — toggled by right-clicking the ∴ mark. */
+	get railCompact() {
+		return railCompact;
+	},
+	get railWidth() {
+		return railCompact ? RAIL_COMPACT_WIDTH : RAIL_WIDTH;
+	},
+	toggleRailCompact() {
+		railCompact = !railCompact;
+		if (typeof localStorage !== "undefined") {
+			localStorage.setItem(COMPACT_KEY, String(railCompact));
+		}
 	},
 };

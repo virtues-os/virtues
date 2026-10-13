@@ -1017,4 +1017,40 @@ mod tests {
         let row = listed.projects.iter().find(|p| p.id == a.id).expect("project listed");
         assert_eq!((row.chat_count, row.item_count), (1, 1));
     }
+
+    /// A block page's `content` is its export, and a mention exports as the
+    /// ref the graph reads, so a person a block page mentions is on the
+    /// graph of a project the page is in.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_block_page_puts_who_it_mentions_on_the_graph(pool: PgPool) {
+        use crate::api::pages::{create_page_as, CreatePageRequest, PageFormat};
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('person_1', 'Nick')")
+            .execute(&pool)
+            .await
+            .expect("seed a person");
+        let a = create_project(&pool, named("Trip")).await.expect("create");
+        let page = create_page_as(
+            &pool,
+            CreatePageRequest {
+                title: "Plan".into(),
+                content: "## Plan\n\nLunch with [@Nick](/person/person_1).\n".into(),
+                project_id: Some(a.id.clone()),
+                icon: None,
+                icon_color: None,
+                cover_url: None,
+                tags: None,
+                format: None,
+            },
+            PageFormat::Tree,
+        )
+        .await
+        .expect("create a block page")
+        .page;
+
+        let graph = project_graph(&pool, &a.id).await.expect("graph");
+        assert_eq!(graph.nodes.len(), 1, "{:?}", graph.nodes.iter().map(|n| &n.url).collect::<Vec<_>>());
+        let nick = &graph.nodes[0];
+        assert_eq!((nick.url.as_str(), nick.name.as_str()), ("/person/person_1", "Nick"));
+        assert_eq!(nick.item_urls, [format!("/page/{}", page.id)]);
+    }
 }

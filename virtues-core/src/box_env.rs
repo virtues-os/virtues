@@ -16,12 +16,18 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 
-/// The box env file. `VIRTUES_ENV_FILE` overrides it so tests (and a box with a
-/// different layout) don't have to touch `/var/lib`.
+/// The box env file: `<data dir>/virtues.env`, where the installer wrote it.
+/// The data dir comes from the install manifest, since an install can put it
+/// elsewhere (`DATA_DIR`); `VIRTUES_ENV_FILE` overrides both, for tests.
 pub fn path() -> PathBuf {
-    std::env::var("VIRTUES_ENV_FILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/var/lib/virtues/virtues.env"))
+    if let Ok(p) = std::env::var("VIRTUES_ENV_FILE") {
+        return PathBuf::from(p);
+    }
+    crate::install_manifest::get()
+        .as_ref()
+        .and_then(|m| m.data_dir.clone())
+        .unwrap_or_else(|| PathBuf::from("/var/lib/virtues"))
+        .join("virtues.env")
 }
 
 /// Every `KEY=value` in the file, values unquoted. `None` when the file is
@@ -97,9 +103,16 @@ pub fn quote(v: &str) -> String {
 /// A missing file is not created: on a dev machine there is no box env, and the
 /// caller has already applied the change to its own process.
 pub fn edit(path: &Path, set: &[(&str, String)], unset: &[&str]) -> Result<bool> {
-    let Ok(contents) = std::fs::read_to_string(path) else {
+    let Ok(file) = std::fs::File::open(path) else {
         return Ok(false);
     };
+    // Root (`virtues upgrade`) and the service user (the indexer promoting a
+    // model change) both rewrite this file. Without a lock, two read-modify-
+    // writes interleave and one loses its change. Held until return; the
+    // rename replaces the inode, so a waiter re-reads the new file below.
+    let _lock = Flock::exclusive(&file)?;
+    let contents = std::fs::read_to_string(path)
+        .map_err(|e| Error::Other(format!("read {}: {e}", path.display())))?;
     let key_of = |l: &str| l.trim_start().split_once('=').map(|(k, _)| k.trim().to_string());
     let mut written: Vec<&str> = Vec::new();
     let mut out: Vec<String> = Vec::new();
@@ -124,20 +137,43 @@ pub fn edit(path: &Path, set: &[(&str, String)], unset: &[&str]) -> Result<bool>
     let mut body = out.join("\n");
     body.push('\n');
 
-    let tmp = path.with_extension("env.tmp");
-    std::fs::write(&tmp, body).map_err(|e| Error::Other(format!("write {}: {e}", tmp.display())))?;
-    // Keep the original's mode and owner: the file holds the encryption key.
-    if let Ok(meta) = std::fs::metadata(path) {
-        let _ = std::fs::set_permissions(&tmp, meta.permissions());
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            let _ = std::os::unix::fs::chown(&tmp, Some(meta.uid()), Some(meta.gid()));
-        }
+    // The file holds the encryption key: the copy is created 0600 (never
+    // readable by anyone else, not even for a moment), takes the original's
+    // owner, and has a name of its own so a writer that died leaves nothing in
+    // another's way.
+    use std::io::Write;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let meta = file.metadata().map_err(|e| Error::Other(format!("stat {}: {e}", path.display())))?;
+    let tmp = path.with_extension(format!("env.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    let written = (|| -> std::io::Result<()> {
+        let mut out = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+        out.write_all(body.as_bytes())?;
+        out.sync_all()?;
+        std::os::unix::fs::chown(&tmp, Some(meta.uid()), Some(meta.gid()))?;
+        std::fs::rename(&tmp, path)
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(Error::Other(format!("rewrite {}: {e}", path.display())));
     }
-    std::fs::rename(&tmp, path)
-        .map_err(|e| Error::Other(format!("replace {}: {e}", path.display())))?;
     Ok(true)
+}
+
+/// An exclusive lock on an open file (`flock` on Unix), released on drop.
+struct Flock<'a>(&'a std::fs::File);
+
+impl<'a> Flock<'a> {
+    fn exclusive(file: &'a std::fs::File) -> Result<Self> {
+        file.lock().map_err(|e| Error::Other(format!("lock the box env file: {e}")))?;
+        Ok(Self(file))
+    }
+}
+
+impl Drop for Flock<'_> {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
 }
 
 #[cfg(test)]

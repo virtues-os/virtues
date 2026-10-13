@@ -187,15 +187,37 @@ fn inline_html(c: &Contract, nodes: &[Node], opts: &Options, out: &mut String) {
 // ---------------------------------------------------------------- markdown
 
 pub fn markdown(c: &Contract, nodes: &[Node]) -> String {
+    page_md(c, nodes, false)
+}
+
+/// [`markdown`] with `<!-- {id} -->` on its own line above each top-level
+/// block: the model's read of a page too long to read as HTML, which it
+/// edits by those ids. Removing those lines leaves [`markdown`]'s text. A
+/// block whose id a comment cannot hold as written (a line break, `--`, a
+/// `>`) gets no line: the model cannot name it, and a write naming another
+/// id is refused, not misplaced.
+pub fn markdown_with_ids(c: &Contract, nodes: &[Node]) -> String {
+    page_md(c, nodes, true)
+}
+
+fn page_md(c: &Contract, nodes: &[Node], ids: bool) -> String {
     let mut w = Md::default();
     for (i, n) in nodes.iter().enumerate() {
         if i > 0 {
             w.text("\n\n");
         }
+        if let Some(id) = n.id().filter(|id| ids && comment_holds(id)) {
+            w.text(&format!("<!-- {id} -->\n"));
+        }
         block_md(c, n, false, &mut w);
     }
     w.text("\n");
     w.into_string()
+}
+
+/// Whether `<!-- {id} -->` reads back as a comment holding exactly `id`.
+fn comment_holds(id: &str) -> bool {
+    !id.contains("--") && !id.contains('>') && !id.chars().any(char::is_control)
 }
 
 /// A container's prefix: `> ` for a quote, an item's marker on its first
@@ -565,17 +587,27 @@ fn leaf_md(c: &Contract, n: &Node, in_table: bool) -> String {
         "horizontalRule" => "---".to_string(),
         "image" => {
             let alt = a("alt").as_str().unwrap_or("").replace(['\r', '\n'], " ");
-            let mut alt = escape_md(&alt, Lines::Cell, None);
+            let mut alt = escape_md(&alt, Lines::Cell, "", false);
             // The converter reads a last `|` and digits as the width, so a
             // pipe of the alt's own is written as a character reference.
             match a("width").as_i64() {
                 Some(w) => alt.push_str(&format!("|{w}")),
                 None => alt = alt.replace('|', "&#124;"),
             }
-            format!(
-                "![{alt}]({})",
-                destination(a("src").as_str().unwrap_or(""))
-            )
+            format!("![{alt}]({})", destination(a("src").as_str().unwrap_or("")))
+        }
+        "audio" | "video" | "file" => {
+            // Written as an image: the converter tells the kinds apart by the
+            // name's extension (`migrate::media_kind`), as both page editors
+            // do (`kindOfLink`), so a name without one reads back as a file.
+            let src = a("src").as_str().unwrap_or("").to_string();
+            let name = match a("name").as_str() {
+                Some(name) if !name.is_empty() => name.to_string(),
+                _ => last_segment(&src).to_string(),
+            };
+            let name = escape_md(&name.replace(['\r', '\n'], " "), Lines::Cell, "", false);
+            // A last `|` and digits would read as a width.
+            format!("![{}]({})", name.replace('|', "&#124;"), destination(&src))
         }
         "table" => table_md(c, n),
         "applet" => {
@@ -585,6 +617,12 @@ fn leaf_md(c: &Contract, n: &Node, in_table: bool) -> String {
         }
         other => format!("<!-- {other} -->"),
     }
+}
+
+/// The last segment of a URL's path, for a media embed with no name.
+fn last_segment(url: &str) -> &str {
+    let path = url.split(['?', '#']).next().unwrap_or("");
+    path.rsplit('/').find(|s| !s.is_empty()).unwrap_or("")
 }
 
 /// GFM aligns a column, not a cell: a column takes the first alignment any
@@ -653,32 +691,48 @@ fn table_md(c: &Contract, n: &Node) -> String {
 
 /// Text as markdown that reads back as the same text: every character that
 /// could start inline syntax escaped. `==` is the dialect's highlight, so an
-/// `=` after another is escaped too (`prev` is what the output already ends
-/// with); `&` before a letter, digit or `#` would read as an entity.
+/// `=` after another is escaped too; `&` before a letter, digit or `#` would
+/// read as an entity. `before` is what the output already ends with, read
+/// for its last two characters.
+///
+/// Proposals are CriticMarkup (`{--…--}`, `{++…++}`), which the converter
+/// reads in text, so the `{` of `{--` and `{++` is escaped wherever text
+/// holds one. Inside a proposal (`body`), what would end it or open another
+/// span is escaped too, as the editor escaped a proposal's text: the `{` of
+/// `{>>` and the `}` of `--}`, `++}` and `<<}`.
 ///
 /// A line break inside text is written as a space, which is what markdown
 /// reads one inside a paragraph as: written as a break, a blank line would
 /// end the block and a line starting with `#` would start a heading.
-fn escape_md(s: &str, lines: Lines, prev: Option<char>) -> String {
+fn escape_md(s: &str, lines: Lines, before: &str, body: bool) -> String {
+    let chars: Vec<char> = s
+        .chars()
+        .map(|ch| if matches!(ch, '\n' | '\r') { ' ' } else { ch })
+        .collect();
     let mut out = String::with_capacity(s.len());
-    let mut prev = prev;
-    let mut chars = s.chars().peekable();
-    while let Some(ch) = chars.next() {
-        let ch = if matches!(ch, '\n' | '\r') { ' ' } else { ch };
+    // The two characters before the current one, the nearer last.
+    let mut tail: [Option<char>; 2] = {
+        let mut last = before.chars().rev();
+        let (b, a) = (last.next(), last.next());
+        [a, b]
+    };
+    for (i, &ch) in chars.iter().enumerate() {
+        let next = |k: usize| chars.get(i + k).copied();
+        let opens = |c: char| next(1) == Some(c) && next(2) == Some(c);
         let escape = match ch {
             '\\' | '*' | '_' | '`' | '[' | ']' | '<' | '~' => true,
             '|' => lines != Lines::Cell,
-            '=' => prev == Some('='),
-            '&' => chars
-                .peek()
-                .is_some_and(|n| n.is_ascii_alphanumeric() || *n == '#'),
+            '=' => tail[1] == Some('='),
+            '&' => next(1).is_some_and(|n| n.is_ascii_alphanumeric() || n == '#'),
+            '{' => opens('-') || opens('+') || (body && opens('>')),
+            '}' => body && tail[0] == tail[1] && matches!(tail[1], Some('-' | '+' | '<')),
             _ => false,
         };
         if escape {
             out.push('\\');
         }
         out.push(ch);
-        prev = Some(ch);
+        tail = [tail[1], Some(ch)];
     }
     out
 }
@@ -753,7 +807,10 @@ fn info_string(lang: &str) -> String {
 /// browser leaves them out of a URL and the converter reads it
 /// ([`crate::contract::normalize_url`]): a destination cannot hold one.
 fn destination(url: &str) -> String {
-    let url: String = url.chars().filter(|c| !matches!(c, '\t' | '\n' | '\r')).collect();
+    let url: String = url
+        .chars()
+        .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
+        .collect();
     let url = url.as_str();
     let pointy = url
         .chars()
@@ -803,15 +860,95 @@ fn delim(kind: &str) -> (&'static str, &'static str) {
     }
 }
 
+/// The marks a proposal is written with, as CriticMarkup.
+const PROPOSALS: [(&str, &str, &str); 2] = [
+    ("proposedDeletion", "{--", "--}"),
+    ("proposedInsertion", "{++", "++}"),
+];
+
 fn link_of(n: &Node) -> Option<&Mark> {
     n.marks.iter().find(|m| m.kind == "link")
 }
 
-/// Inline content → markdown. Consecutive nodes under one link become one
-/// link; inside it, delimiter marks stay open across nodes that share them,
-/// and whitespace at a delimiter's edge moves outside it, as CommonMark's
-/// flanking rules need.
+/// The proposal a text node is part of.
+fn proposal_of(n: &Node) -> Option<&Mark> {
+    if !n.is_text() {
+        return None;
+    }
+    n.marks
+        .iter()
+        .find(|m| PROPOSALS.iter().any(|(kind, _, _)| m.kind == *kind))
+}
+
+/// Where the proposal that `nodes[i]` starts ends. An inline atom between
+/// two runs of one proposal is inside it in the markdown (atoms carry no
+/// marks), so the proposal reads back as one span, not two.
+fn proposal_end(nodes: &[Node], i: usize, p: &Mark) -> usize {
+    let mut j = i + 1;
+    loop {
+        while j < nodes.len() && proposal_of(&nodes[j]) == Some(p) {
+            j += 1;
+        }
+        let mut k = j;
+        while k < nodes.len() && !nodes[k].is_text() {
+            k += 1;
+        }
+        if k > j && k < nodes.len() && proposal_of(&nodes[k]) == Some(p) {
+            j = k;
+            continue;
+        }
+        return j;
+    }
+}
+
+/// Inline content → markdown. A proposal is outermost, as its mark is, and
+/// written as CriticMarkup around what it holds; inside it, consecutive nodes
+/// under one link become one link; inside that, delimiter marks stay open
+/// across nodes that share them, and whitespace at a delimiter's edge moves
+/// outside it, as CommonMark's flanking rules need.
 fn inline_md(nodes: &[Node], lines: Lines) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    while i < nodes.len() {
+        let proposal = proposal_of(&nodes[i]);
+        let j = match proposal {
+            Some(p) => proposal_end(nodes, i, p),
+            None => {
+                let mut j = i + 1;
+                while j < nodes.len() && proposal_of(&nodes[j]).is_none() {
+                    j += 1;
+                }
+                j
+            }
+        };
+        let last = j == nodes.len();
+        match proposal.and_then(|p| PROPOSALS.iter().find(|(kind, _, _)| p.kind == *kind)) {
+            Some((_, open, close)) => {
+                out.push_str(open);
+                // The opener stands before the body, so no line starts in it.
+                out.push_str(&linked_md(&nodes[i..j], lines, false, last, true));
+                out.push_str(close);
+            }
+            None => {
+                let line_start = out.is_empty() || out.ends_with('\n');
+                out.push_str(&linked_md(&nodes[i..j], lines, line_start, last, false));
+            }
+        }
+        i = j;
+    }
+    out
+}
+
+/// Consecutive nodes under one link become one link. `line_start`: the
+/// output begins a line of the block. `ends_block`: nothing in the block
+/// follows these nodes. `body`: the nodes are a proposal's.
+fn linked_md(
+    nodes: &[Node],
+    lines: Lines,
+    line_start: bool,
+    ends_block: bool,
+    body: bool,
+) -> String {
     let mut out = String::new();
     let mut i = 0;
     while i < nodes.len() {
@@ -820,18 +957,28 @@ fn inline_md(nodes: &[Node], lines: Lines) -> String {
         while j < nodes.len() && link_of(&nodes[j]).cloned() == link {
             j += 1;
         }
-        let last = j == nodes.len();
+        let last = ends_block && j == nodes.len();
         match link {
             Some(l) => {
                 // Inside the brackets nothing starts a line.
-                let body = delimited_md(&nodes[i..j], lines, false, last);
+                let text = delimited_md(&nodes[i..j], lines, false, last, body);
                 let href = l.attrs.get("href").and_then(Value::as_str).unwrap_or("");
                 escape_bang(&mut out);
-                out.push_str(&format!("[{body}]({})", destination(href)));
+                out.push_str(&format!("[{text}]({})", destination(href)));
             }
             None => {
-                let at_line_start = out.is_empty() || out.ends_with('\n');
-                out.push_str(&delimited_md(&nodes[i..j], lines, at_line_start, last));
+                let at_line_start = if out.is_empty() {
+                    line_start
+                } else {
+                    out.ends_with('\n')
+                };
+                out.push_str(&delimited_md(
+                    &nodes[i..j],
+                    lines,
+                    at_line_start,
+                    last,
+                    body,
+                ));
             }
         }
         i = j;
@@ -842,7 +989,13 @@ fn inline_md(nodes: &[Node], lines: Lines) -> String {
 /// `line_start`: the output begins a line of the block (its first, when the
 /// block's output is still empty). `ends_block`: nothing in the block follows
 /// these nodes.
-fn delimited_md(nodes: &[Node], lines: Lines, line_start: bool, ends_block: bool) -> String {
+fn delimited_md(
+    nodes: &[Node],
+    lines: Lines,
+    line_start: bool,
+    ends_block: bool,
+    body: bool,
+) -> String {
     // Breaks after the last node that is not one end the block with it.
     let last_not_break = nodes.iter().rposition(|n| n.kind != "hardBreak");
     let mut out = String::new();
@@ -900,7 +1053,7 @@ fn delimited_md(nodes: &[Node], lines: Lines, line_start: bool, ends_block: bool
                     };
                     out.push_str(&format!("{ticks}{pad}{rest}{pad}{ticks}"));
                 } else {
-                    let escaped = escape_md(rest, lines, out.chars().last());
+                    let escaped = escape_md(rest, lines, &out, body);
                     if line_start && !opens && lines == Lines::Many {
                         let first = block_start && out.is_empty();
                         out.push_str(&escape_line_start(&escaped, first));
@@ -926,7 +1079,7 @@ fn delimited_md(nodes: &[Node], lines: Lines, line_start: bool, ends_block: bool
                 escape_bang(&mut out);
                 out.push_str(&format!(
                     "[@{}]({})",
-                    escape_md(label, lines, None),
+                    escape_md(label, lines, "", body),
                     destination(to)
                 ));
             }
@@ -1112,6 +1265,114 @@ mod tests {
             let nodes: Vec<Node> = serde_json::from_str(tree).unwrap();
             assert_eq!(markdown(&c, &nodes), md, "{tree}");
         }
+    }
+
+    #[test]
+    fn media_export_as_images_named_for_their_file() {
+        let c = Contract::load();
+        for (src, md) in [
+            (
+                "<audio src=\"/drive/df_3\" data-name=\"Interview.m4a\"></audio>",
+                "![Interview.m4a](/drive/df_3)\n",
+            ),
+            (
+                "<video src=\"/api/drive/files/df_2/download\" data-name=\"clip.mp4\"></video>",
+                "![clip.mp4](/api/drive/files/df_2/download)\n",
+            ),
+            (
+                "<virtues-file src=\"/api/drive/files/df_1/download\" data-name=\"Q3 [draft] 2|5.pdf\"></virtues-file>",
+                "![Q3 \\[draft\\] 2&#124;5.pdf](/api/drive/files/df_1/download)\n",
+            ),
+            (
+                "<virtues-file src=\"https://files.example.com/a/notes.txt?dl=1\"></virtues-file>",
+                "![notes.txt](https://files.example.com/a/notes.txt?dl=1)\n",
+            ),
+        ] {
+            let nodes = tree(src);
+            assert_eq!(markdown(&c, &nodes), md, "{src}");
+            // Named with its extension, it reads back as the same embed.
+            assert_eq!(read_back(md).split(' ').next(), src.split(' ').next(), "{md}");
+        }
+    }
+
+    #[test]
+    fn proposals_export_as_critic_markup_outermost() {
+        let c = Contract::load();
+        for (src, md) in [
+            (
+                "<p>Lunch <virtues-del proposal=\"p1\">at noon</virtues-del><virtues-ins proposal=\"p1\">on Friday</virtues-ins>.</p>",
+                "Lunch {--at noon--}{++on Friday++}.\n",
+            ),
+            (
+                "<p><virtues-ins proposal=\"p2\"><strong>bold</strong> and <a href=\"/page/page_abc\"><em>linked</em></a></virtues-ins></p>",
+                "{++**bold** and [*linked*](/page/page_abc)++}\n",
+            ),
+            // A mention or a break between two runs of one proposal is in it.
+            (
+                "<p><virtues-ins proposal=\"p3\">with </virtues-ins><virtues-mention to=\"/person/person_1\" label=\"Nick\"></virtues-mention><virtues-ins proposal=\"p3\"> today</virtues-ins></p>",
+                "{++with [@Nick](/person/person_1) today++}\n",
+            ),
+            (
+                "<p><virtues-del proposal=\"p4\">one</virtues-del><br><virtues-del proposal=\"p4\">two</virtues-del></p>",
+                "{--one\\\ntwo--}\n",
+            ),
+            // Text that would end the proposal, or open another, is escaped.
+            (
+                "<p><virtues-del proposal=\"p5\">a --} b ++} c {-- d {&gt;&gt; e</virtues-del></p>",
+                "{--a --\\} b ++\\} c \\{-- d \\{>> e--}\n",
+            ),
+        ] {
+            let nodes = tree(src);
+            assert_eq!(markdown(&c, &nodes), md, "{src}");
+        }
+    }
+
+    #[test]
+    fn text_that_reads_like_a_proposal_stays_text() {
+        let c = Contract::load();
+        for src in [
+            "<p>Write {--old--} and {++new++} here.</p>",
+            "<p>{--</p>",
+            "<h2>{++ heading</h2>",
+            "<table><tr><th>A</th></tr><tr><td><p>{--cell--}</p></td></tr></table>",
+        ] {
+            let nodes = tree(src);
+            let md = markdown(&c, &nodes);
+            assert!(!md.contains("{--") || md.contains("\\{--"), "{md:?}");
+            assert_eq!(
+                read_back(&md),
+                html(&c, &nodes, &Options { ids: false }),
+                "{src}: {md:?}"
+            );
+            assert!(!read_back(&md).contains("virtues-"), "{md:?}");
+        }
+        assert_eq!(
+            markdown(&c, &tree("<p>Write {--old--} and {++new++}.</p>")),
+            "Write \\{--old--} and \\{++new++}.\n"
+        );
+    }
+
+    #[test]
+    fn the_export_with_ids_is_the_export_with_a_comment_per_block() {
+        let c = Contract::load();
+        let nodes = tree(
+            "<h2 data-id=\"k3n1x0aa\">Plan</h2><p data-id=\"p0q9z1mm\">Lunch with \
+             <virtues-mention to=\"/person/person_1\" label=\"Nick\"></virtues-mention></p>\
+             <ul data-id=\"l1\"><li data-id=\"i1\"><p data-id=\"q1\">a</p></li><li data-id=\"i2\"><p data-id=\"q2\">b</p></li></ul>\
+             <blockquote data-id=\"b1\"><p data-id=\"q3\">quoted</p></blockquote>\
+             <pre data-id=\"c1\">code\n\nblock</pre><p data-id=\"e1\"></p><p data-id=\"x--y\">odd id</p><hr data-id=\"h1\">",
+        );
+        let with = markdown_with_ids(&c, &nodes);
+        assert!(
+            with.starts_with("<!-- k3n1x0aa -->\n## Plan\n\n<!-- p0q9z1mm -->\nLunch with [@Nick](/person/person_1)\n\n<!-- l1 -->\n- a\n- b\n"),
+            "{with}"
+        );
+        assert!(!with.contains("x--y"), "{with}");
+        let stripped: String = with
+            .split_inclusive('\n')
+            .filter(|l| !(l.starts_with("<!-- ") && l.ends_with(" -->\n")))
+            .collect();
+        assert_eq!(stripped, markdown(&c, &nodes));
     }
 
     #[test]

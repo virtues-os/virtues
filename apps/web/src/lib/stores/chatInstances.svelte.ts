@@ -102,6 +102,23 @@ interface ChatInstanceEntry {
     refCount: number; // Number of tabs/views referencing this instance
     createdAt: number;
     cleanupTimeout?: ReturnType<typeof setTimeout>;
+    /** What the next send carries besides its messages, read now. */
+    turnInputs: () => TurnInputs;
+}
+
+/** What a send carries besides its messages: the mode, the room, the open
+ *  page, the zone, and the person's model pick. One builder for the send and
+ *  for the Context panel's preview of it, so the two cannot disagree. */
+export interface TurnInputs {
+    agentMode: string;
+    chatMode: string;
+    timezone: string;
+    persona: string;
+    temporary?: true;
+    think?: boolean;
+    projectId?: string;
+    activePage?: ActivePageContext;
+    model?: string;
 }
 
 /** Live status of one Deep Research subagent, from transient `data-subagent` events. */
@@ -205,18 +222,37 @@ class ChatInstanceStore {
             return existing.chat;
         }
 
+        const turnInputs = (): TurnInputs => {
+            const projectId = getProjectId();
+            const activePage = getActivePageContext?.();
+            const agentMode = getAgentMode?.() || 'chat';
+            // Omitted unless the person picked one — see getModel above.
+            const model = getModel();
+            return {
+                persona: getPersona?.() || 'default',
+                agentMode,
+                // Retrieval scope for project chats: 'open' (whole graph,
+                // project up-weighted) or 'scoped' (grounded).
+                chatMode: getChatMode?.() || 'open',
+                // Ghost/temporary chat — backend should skip persistence when true.
+                ...(getTemporary?.() && { temporary: true as const }),
+                ...(agentMode === 'local' && { think: getThink?.() ?? false }),
+                // User's timezone for temporal awareness (IANA format, e.g., "America/Los_Angeles")
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                // The Space (room) this chat lives in — drives the agent's
+                // active-space context block and binds the chat on the server.
+                ...(projectId && { projectId }),
+                // Include active page context if a page is bound
+                ...(activePage && { activePage }),
+                ...(model && { model })
+            };
+        };
+
         // Create new Chat instance with transport that uses the getters
         const transport = new DefaultChatTransport({
             api: '/api/chat',
             prepareSendMessagesRequest: ({ messages, trigger }) => {
-                const projectId = getProjectId();
-                const activePage = getActivePageContext?.();
-                const persona = getPersona?.() || 'default';
-                const agentMode = getAgentMode?.() || 'chat';
-                const chatMode = getChatMode?.() || 'open';
-                const temporary = getTemporary?.() || false;
-                // Omitted unless the person picked one — see getModel above.
-                const model = getModel();
+                const inputs = turnInputs();
 
                 // The box owns the history and rebuilds it from its own
                 // store, reading only the last user turn off the wire; it
@@ -229,7 +265,7 @@ class ChatInstanceStore {
                 // the previous good answer instead. A ghost chat is the
                 // one exception, by design: the box holds nothing for it,
                 // so the wire is its whole transcript, every turn.
-                const wireMessages = temporary ? messages : messages.slice(-1);
+                const wireMessages = inputs.temporary ? messages : messages.slice(-1);
 
                 return {
                     body: {
@@ -237,22 +273,7 @@ class ChatInstanceStore {
                         agentId: 'auto',
                         messages: wireMessages,
                         trigger,
-                        persona,
-                        agentMode,
-                        // Retrieval scope for project chats: 'open' (whole
-                        // graph, project up-weighted) or 'scoped' (grounded).
-                        chatMode,
-                        // Ghost/temporary chat — backend should skip persistence when true.
-                        ...(temporary && { temporary: true }),
-                        ...(agentMode === 'local' && { think: getThink?.() ?? false }),
-                        // User's timezone for temporal awareness (IANA format, e.g., "America/Los_Angeles")
-                        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                        // The Space (room) this chat lives in — drives the agent's
-                        // active-space context block and binds the chat on the server.
-                        ...(projectId && { projectId }),
-                        // Include active page context if a page is bound
-                        ...(activePage && { activePage }),
-                        ...(model && { model })
+                        ...inputs
                     }
                 };
             }
@@ -388,7 +409,8 @@ class ChatInstanceStore {
         const entry: ChatInstanceEntry = {
             chat,
             refCount: 1,
-            createdAt: Date.now()
+            createdAt: Date.now(),
+            turnInputs
         };
 
         this.instances.set(conversationId, entry);
@@ -401,6 +423,12 @@ class ChatInstanceStore {
      */
     get(conversationId: string): Chat | undefined {
         return this.instances.get(conversationId)?.chat;
+    }
+
+    /** What this chat's next send would carry besides its messages, or
+     *  undefined when no view of it is open on this device. */
+    turnInputs(conversationId: string): TurnInputs | undefined {
+        return this.instances.get(conversationId)?.turnInputs();
     }
 
     /** The chats on this device whose reply is running and has used the

@@ -213,7 +213,11 @@ jobs:
   #
   # Without DOCUMENT_CONFORMANCE_BIN the conformance cases skip (and say so),
   # so a local `pnpm vitest run` that does not build the binary is not this
-  # check.
+  # check. The block editor's tests (src/lib/document), the page bindings'
+  # (src/lib/yjs), the AI writer's (src/lib/ai), the page and chat glue's
+  # (src/lib/components/views, src/lib/components/chat/state), the CodeMirror
+  # page editor's (src/lib/codemirror) and the floating elements'
+  # (src/lib/floating) run here too: this job is where vitest runs in CI.
   document-conformance:
     name: Document contract conformance
     runs-on: blacksmith-4vcpu-ubuntu-2204
@@ -247,7 +251,7 @@ jobs:
         working-directory: apps/web
         env:
           DOCUMENT_CONFORMANCE_BIN: ${{ github.workspace }}/target/debug/document-conformance
-        run: pnpm vitest run src/lib/document
+        run: pnpm vitest run src/lib/document src/lib/yjs src/lib/ai src/lib/components/views src/lib/components/chat/state src/lib/codemirror src/lib/floating
 
   rust:
     runs-on: blacksmith-8vcpu-ubuntu-2204

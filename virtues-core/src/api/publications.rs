@@ -445,6 +445,9 @@ pub struct SharePreview {
     pub names: Vec<String>,
     /// Images that are not in Drive and so are left out of the shared page.
     pub images_left_out: usize,
+    /// A page's applets, audio, video and files, which work only on the
+    /// box and so are left out.
+    pub embeds_left_out: usize,
     /// A chat: how many messages go, and how many attachments stay behind.
     pub message_count: usize,
     pub attachments_left_out: usize,
@@ -478,6 +481,7 @@ impl SharePreview {
             looks_private: Vec::new(),
             names: Vec::new(),
             images_left_out: 0,
+            embeds_left_out: 0,
             message_count: 0,
             attachments_left_out: 0,
             reads_data: false,
@@ -534,12 +538,15 @@ impl Producer {
     }
 }
 
-/// Everything in `html` the Share sheet should name.
+/// Everything in `html` the Share sheet should name, read in the text a
+/// reader sees: a block page's HTML writes a non-breaking space as `&nbsp;`,
+/// and a pattern over the source would never read the number it separates.
 fn scan(html: &str) -> (usize, Vec<String>, Vec<String>) {
     use std::sync::OnceLock;
     static LINK: OnceLock<regex::Regex> = OnceLock::new();
     static EMAIL: OnceLock<regex::Regex> = OnceLock::new();
     static PHONE: OnceLock<regex::Regex> = OnceLock::new();
+    static DATA_URI: OnceLock<regex::Regex> = OnceLock::new();
     let link = LINK.get_or_init(|| regex::Regex::new(r#"https?://[^\s"'<>)]+"#).unwrap());
     let email = EMAIL.get_or_init(|| {
         regex::Regex::new(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}").unwrap()
@@ -547,18 +554,21 @@ fn scan(html: &str) -> (usize, Vec<String>, Vec<String>) {
     // Ten or more digits, allowing the separators people write numbers with.
     let phone = PHONE.get_or_init(|| regex::Regex::new(r"\+?\d[\d\s().-]{8,}\d").unwrap());
 
+    // A data URI by its shape: `data:`, a media type, then its bytes, up to
+    // the quote, paren, space or tag that closes it. Inline images are
+    // base64, and digits inside them are not phone numbers. The words
+    // "data:" in a page's text are no URI: cut from there, the rest of the
+    // page went unread, its numbers and addresses never named.
+    let data_uri = DATA_URI.get_or_init(|| {
+        regex::Regex::new(r#"(?i)\bdata:[a-z]+/[a-z0-9.+-]+[^,\s"'<>()]*,[^\s"'<>()]*"#).unwrap()
+    });
+
     let image_count = html.matches("data:image/").count() + html.matches("<img").count();
-    let mut links: Vec<String> = link.find_iter(html).map(|m| m.as_str().to_string()).collect();
+    let text = html_escape::decode_html_entities(&data_uri.replace_all(html, " ")).into_owned();
+    let html = html_escape::decode_html_entities(html);
+    let mut links: Vec<String> = link.find_iter(&html).map(|m| m.as_str().to_string()).collect();
     links.sort();
     links.dedup();
-    // Inline images are base64; digits inside them are not phone numbers.
-    let mut parts = html.split("data:");
-    let mut text = parts.next().unwrap_or_default().to_string();
-    for part in parts {
-        // Drop the URI itself, up to the quote or paren that closes it.
-        text.push(' ');
-        text.push_str(part.split_once(['"', '\'', ')']).map_or("", |(_, rest)| rest));
-    }
     let mut private: Vec<String> = email
         .find_iter(&text)
         .chain(phone.find_iter(&text).filter(|m| m.as_str().chars().filter(char::is_ascii_digit).count() >= 10))
@@ -574,7 +584,21 @@ pub async fn preview(pool: &PgPool, drive: &DriveConfig, producer: &Producer) ->
     match producer {
         Producer::Applet(id) => preview_applet(pool, id).await,
         Producer::Page(id) => {
-            let frozen = crate::api::publish_page::freeze_page(pool, drive, id).await?;
+            let frozen = match crate::api::publish_page::freeze_page(pool, drive, id).await {
+                Ok(f) => f,
+                Err(Error::InvalidInput(why)) => {
+                    let title: Option<String> = sqlx::query_scalar(
+                        "SELECT title FROM app_pages WHERE id = $1 AND deleted_at IS NULL",
+                    )
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(|e| Error::Database(format!("read page: {e}")))?;
+                    let title = title.ok_or_else(|| Error::NotFound(format!("no page {id:?}")))?;
+                    return Ok(SharePreview::cannot(title, why));
+                }
+                Err(e) => return Err(e),
+            };
             let (image_count, links, looks_private) = scan(&frozen.html);
             Ok(SharePreview {
                 title: frozen.title,
@@ -592,6 +616,7 @@ pub async fn preview(pool: &PgPool, drive: &DriveConfig, producer: &Producer) ->
                 looks_private,
                 names: frozen.names,
                 images_left_out: frozen.images_left_out,
+                embeds_left_out: frozen.embeds_left_out,
                 message_count: 0,
                 attachments_left_out: 0,
                 reads_data: false,
@@ -630,6 +655,7 @@ pub async fn preview(pool: &PgPool, drive: &DriveConfig, producer: &Producer) ->
                 looks_private,
                 names: frozen.names,
                 images_left_out: 0,
+                embeds_left_out: 0,
                 message_count: frozen.message_count,
                 attachments_left_out: frozen.attachments_left_out,
                 reads_data: false,
@@ -675,6 +701,7 @@ async fn preview_applet(pool: &PgPool, applet_id: &str) -> Result<SharePreview> 
                 looks_private,
                 names: Vec::new(),
                 images_left_out: 0,
+                embeds_left_out: 0,
                 message_count: 0,
                 attachments_left_out: 0,
                 reads_data: reads,
@@ -1081,6 +1108,56 @@ mod tests {
         assert_eq!(links, vec!["https://maps.example.com/rome".to_string()]);
         assert_eq!(private, vec!["+1 512 555 0142".to_string(), "nick@example.com".to_string()]);
         let (_, _, none) = scan("<h1>Day 3 · Vatican</h1><p>Museums at 9:00, 2026-10-14</p>");
+        assert!(none.is_empty(), "{none:?}");
+    }
+
+    /// A block page's frozen HTML writes a non-breaking space as `&nbsp;`; a
+    /// number pasted with them (a web page's, a mail signature's) was never
+    /// named, while the same number on a markdown page was.
+    #[test]
+    fn a_number_spaced_with_non_breaking_spaces_on_a_block_page_is_named() {
+        let page = virtues_document::parse_html(
+            "<p>Call +1&nbsp;512&nbsp;555&nbsp;0100 or <a href=\"https://example.com/?a=1&amp;b=2\">book</a></p>",
+            "doc",
+        );
+        assert!(page.errors.is_empty(), "{:?}", page.errors);
+        let html = virtues_document::to_html(&page.nodes, false);
+        assert!(html.contains("&nbsp;"), "the frozen HTML writes the entity: {html}");
+        let (_, links, private) = scan(&html);
+        assert_eq!(private, vec!["+1\u{a0}512\u{a0}555\u{a0}0100".to_string()]);
+        assert_eq!(links, vec!["https://example.com/?a=1&b=2".to_string()]);
+    }
+
+    /// "Metadata:" in a page's words was read as the start of a data URI,
+    /// and everything after it, to the next quote, went unread: a block
+    /// page has no quote after its text, so its every number and address.
+    #[test]
+    fn the_words_data_colon_in_a_page_hide_nothing_after_them() {
+        let words = "<p>Metadata: Nick, nick@example.com, +1 512 555 0100.</p>\
+                     <p>Contact data: call +1 512 555 0199 or david@example.com</p>";
+        let block = virtues_document::parse_html(words, "doc");
+        assert!(block.errors.is_empty(), "{:?}", block.errors);
+        let frozen = format!(
+            "<!doctype html><html><head><style>main{{}}</style></head><body><main>{}</main>\n</body>\n</html>\n",
+            virtues_document::to_html(&block.nodes, false)
+        );
+        let markdown = format!("<main>{}</main>", crate::api::publish_page::render(
+            "Metadata: Nick, nick@example.com, +1 512 555 0100.\n\nContact data: call +1 512 555 0199 or david@example.com\n"
+        ));
+        for page in [frozen, markdown] {
+            let (_, _, private) = scan(&page);
+            assert_eq!(
+                private,
+                ["+1 512 555 0100", "+1 512 555 0199", "david@example.com", "nick@example.com"],
+                "{page}"
+            );
+        }
+        // A data URI still hides its bytes, in an attribute or a stylesheet.
+        let (images, _, none) = scan(
+            "<p>Notes</p><img src=\"data:image/png;base64,MTIzNDU2Nzg5MDEyMzQ1Ng==\">\
+             <style>main{background:url(data:image/png;base64,OTg3NjU0MzIxMDk4NzY1NA==)}</style>",
+        );
+        assert_eq!(images, 3);
         assert!(none.is_empty(), "{none:?}");
     }
 

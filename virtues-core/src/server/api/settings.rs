@@ -603,12 +603,12 @@ pub async fn unsplash_search_handler(
 // Update Handlers (Settings → Box)
 // ============================================================================
 
-/// GET /api/system/update — current version, channel, and what's available.
 /// GET /api/search/status — Settings → Search.
 pub async fn search_status_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::search_status::status(state.db.pool()).await)
 }
 
+/// GET /api/system/update — current version, channel, and what's available.
 pub async fn update_status_handler() -> Response {
     (StatusCode::OK, Json(crate::api::updates::status().await)).into_response()
 }

@@ -1,9 +1,18 @@
 // @vitest-environment happy-dom
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { EditorView, type WidgetType } from '@codemirror/view';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { isEntityRoute } from '../../utils/refRoutes';
 import { createTestView, destroyTestView } from '../test-utils';
 import { __imageDimensionCache, mediaWidgets } from './media-widgets';
+
+const MEDIA_KINDS = path.resolve(
+	path.dirname(fileURLToPath(import.meta.url)),
+	'../../../../../../crates/virtues-document/tests/corpus/media-kinds.json',
+);
 
 // The context-menu and link-editor stores are Svelte-rune modules (`$state`),
 // which the vitest config (no SvelteKit plugin) cannot compile. Nothing here
@@ -130,5 +139,25 @@ describe('image widget: dimension cache', () => {
 		const after = img(view)!;
 		expect(after).not.toBe(before);
 		expect(after.style.width).toBe('320px');
+	});
+});
+
+describe('what a link to a file draws', () => {
+	/**
+	 * The kind the block editor and the server's converter read
+	 * (`kindOfLink`, `media_kind`), from the cases both are pinned to. A
+	 * Drive ref is drawn by ref-links, not here, so it is left out.
+	 */
+	it('is the kind the block editor and the converter read', () => {
+		const drawn = { image: 'ImageWidget', audio: 'AudioWidget', video: 'VideoWidget', file: 'FileCardWidget' };
+		const cases: { src: string; name: string; kind: keyof typeof drawn }[] = JSON.parse(fs.readFileSync(MEDIA_KINDS, 'utf8'));
+		let checked = 0;
+		for (const c of cases) {
+			if (isEntityRoute(c.src.trim())) continue;
+			const view = mount(`Intro\n\n![${c.name}](${c.src})`);
+			expect(widgets(view).map((w) => w.constructor.name), `${c.src} ${c.name}`).toEqual([drawn[c.kind]]);
+			checked++;
+		}
+		expect(checked).toBeGreaterThan(10);
 	});
 });

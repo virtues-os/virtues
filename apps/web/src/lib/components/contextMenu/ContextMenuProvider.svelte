@@ -4,6 +4,10 @@
 	import ContextMenuSubmenu from './ContextMenuSubmenu.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { useFloating } from '$lib/floating';
+	import { listenForMenuKeys } from './keys';
+	import { swallowLift } from './lift';
+	import { fitMenu } from './fit';
+	import { focusOwner, pointFocusAt, type PointedAt } from './activeDescendant';
 	import type { Placement } from '@floating-ui/dom';
 
 	let menuRef = $state<HTMLElement | null>(null);
@@ -24,16 +28,45 @@
 		}
 	);
 
-	// Update menu rect when visible (for submenu positioning)
+	// Once drawn: the menu's rect (for submenu positioning), and a menu with
+	// no anchor fitted by its real size, which the store could only guess,
+	// inside the window and above the software keyboard.
 	$effect(() => {
 		if (contextMenu.visible && menuRef) {
 			// Use requestAnimationFrame to wait for render
 			requestAnimationFrame(() => {
-				if (menuRef) {
-					menuRect = menuRef.getBoundingClientRect();
+				if (!menuRef) return;
+				menuRect = menuRef.getBoundingClientRect();
+				if (contextMenu.anchor) return;
+				// Its layout size: the opening animation scales the drawn one.
+				const size = { width: menuRef.offsetWidth, height: menuRef.offsetHeight };
+				const fitted = fitMenu(contextMenu.position, size);
+				if (fitted.x !== contextMenu.position.x || fitted.y !== contextMenu.position.y) {
+					contextMenu.position = fitted;
 				}
 			});
 		}
+	});
+
+	// The focus stays where it was while the menu is open (`keys.ts`): the
+	// element holding it points at the menu and at the row the arrows reach,
+	// so a screen reader reads each row as it is reached.
+	const MENU_ID = 'context-menu';
+	const rowId = (index: number) => `${MENU_ID}-row-${index}`;
+	let pointed: PointedAt | null = null;
+	$effect(() => {
+		const visible = contextMenu.visible;
+		const index = contextMenu.focusedIndex;
+		if (!visible) {
+			pointed?.release();
+			pointed = null;
+			return;
+		}
+		if (!pointed) {
+			const owner = focusOwner();
+			if (owner) pointed = pointFocusAt(owner, MENU_ID);
+		}
+		pointed?.highlight(index >= 0 ? rowId(index) : null);
 	});
 
 	// Compute actual position to use - use floating position when anchor provided, fallback to store position
@@ -59,48 +92,6 @@
 	function handleBackdropContextMenu(e: MouseEvent) {
 		e.preventDefault();
 		contextMenu.hide();
-	}
-
-	function handleKeydown(e: KeyboardEvent) {
-		if (!contextMenu.visible) return;
-
-		switch (e.key) {
-			case 'Escape':
-				e.preventDefault();
-				if (contextMenu.openSubmenuId) {
-					contextMenu.closeSubmenu();
-				} else {
-					contextMenu.hide();
-				}
-				break;
-			case 'ArrowDown':
-				e.preventDefault();
-				contextMenu.focusNext();
-				break;
-			case 'ArrowUp':
-				e.preventDefault();
-				contextMenu.focusPrevious();
-				break;
-			case 'ArrowRight':
-				e.preventDefault();
-				// Open submenu if focused item has one
-				if (contextMenu.focusedIndex >= 0) {
-					const item = contextMenu.items[contextMenu.focusedIndex];
-					if (item?.submenu) {
-						contextMenu.openSubmenu(item.id);
-					}
-				}
-				break;
-			case 'ArrowLeft':
-				e.preventDefault();
-				contextMenu.closeSubmenu();
-				break;
-			case 'Enter':
-			case ' ':
-				e.preventDefault();
-				contextMenu.activateFocused();
-				break;
-		}
 	}
 
 	// Track item elements for submenu positioning
@@ -152,10 +143,10 @@
 				clientY: lpY
 			});
 			// preventDefault() from a handler (or the menu becoming visible)
-			// means someone owned it — then eat the click that fires when the
-			// finger lifts, or it would instantly close the menu via backdrop.
+			// means someone owned it — then eat what follows the lift, or it
+			// would instantly close the menu via backdrop.
 			const owned = !target.dispatchEvent(evt) || contextMenu.visible;
-			if (owned) suppressNextClick();
+			if (owned) swallowLift();
 		}, LONG_PRESS_MS);
 	}
 
@@ -166,20 +157,10 @@
 		}
 	}
 
-	function suppressNextClick() {
-		const stop = (ce: MouseEvent) => {
-			ce.preventDefault();
-			ce.stopPropagation();
-			cleanup();
-		};
-		const cleanup = () => window.removeEventListener('click', stop, true);
-		window.addEventListener('click', stop, true);
-		// The lift-click arrives within a frame or two; don't linger.
-		setTimeout(cleanup, 700);
-	}
+	let stopKeys: (() => void) | null = null;
 
 	onMount(() => {
-		window.addEventListener('keydown', handleKeydown);
+		stopKeys = listenForMenuKeys(contextMenu);
 		window.addEventListener('pointerdown', onPointerDown, true);
 		window.addEventListener('pointermove', onPointerMove, { passive: true });
 		window.addEventListener('pointerup', cancelLongPress, true);
@@ -189,7 +170,8 @@
 
 	onDestroy(() => {
 		if (typeof window !== 'undefined') {
-			window.removeEventListener('keydown', handleKeydown);
+			stopKeys?.();
+			pointed?.release();
 			window.removeEventListener('pointerdown', onPointerDown, true);
 			window.removeEventListener('pointermove', onPointerMove);
 			window.removeEventListener('pointerup', cancelLongPress, true);
@@ -216,9 +198,11 @@
 		<div
 			bind:this={menuRef}
 			class="context-menu"
+			id={MENU_ID}
 			style="top: {menuPosition.y}px; left: {menuPosition.x}px"
 			role="menu"
 			aria-label="Context menu"
+			tabindex="-1"
 			onclick={(e) => e.stopPropagation()}
 		>
 			{#each contextMenu.items as item, index (item.id)}
@@ -229,6 +213,7 @@
 				>
 					<ContextMenuItem
 						{item}
+						rowId={rowId(index)}
 						focused={contextMenu.focusedIndex === index}
 						onHover={() => {
 							contextMenu.focusedIndex = index;
@@ -286,12 +271,21 @@
 		padding: 4px;
 		min-width: 180px;
 		max-width: 280px;
-		/* Keep clear of the Dynamic Island / home indicator on the phone. */
+		/* Keep clear of the Dynamic Island / home indicator on the phone, and
+		   of the software keyboard, which WKWebView draws over the page
+		   without shrinking `100dvh`. */
 		max-height: calc(
-			100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom))
+			100dvh - var(--keyboard-inset, 0px) - max(16px, env(safe-area-inset-top)) -
+				max(16px, env(safe-area-inset-bottom))
 		);
 		overflow-y: auto;
 		animation: menu-fade-in 100ms ease-out;
+	}
+
+	/* Opened from a button, the menu holds the focus (`activeDescendant.ts`);
+	   the row reached is what is drawn as focused. */
+	.context-menu:focus {
+		outline: none;
 	}
 
 	@keyframes menu-fade-in {

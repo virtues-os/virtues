@@ -3,7 +3,8 @@
 	 * Settings → Search: where search runs, whether it's answering, and how much
 	 * of the record it covers. Read-only on purpose. Moving search to another
 	 * server re-checks the model and can rebuild the index, so it lives in one
-	 * command (`virtues configure-inference --embed-url`), which this page names.
+	 * command (`virtues configure-inference --embed-url`, or `--recommended` to
+	 * come back), which this page names.
 	 *
 	 * When the installer found a GPU or NPU that search isn't using, the page
 	 * keeps pointing at its guide until the owner dismisses it.
@@ -49,7 +50,9 @@
 		}
 	}
 
-	const showAccelerator = $derived(!!status?.accelerator && dismissed !== status.accelerator);
+	const showAccelerator = $derived(
+		!!status?.accelerator && dismissed !== status.accelerator && !status.model_change
+	);
 
 	const changePercent = $derived.by(() => {
 		const c = status?.model_change;
@@ -65,8 +68,16 @@
 		}
 	}
 
+	// The CPU engine Virtues runs, on its usual port or (mid-move) the next one.
+	const isOwnEngine = (url: string) => /^http:\/\/127\.0\.0\.1:1818[13]$/.test(url);
+
 	const runsOn = $derived.by(() => {
 		if (!status) return '';
+		// Going back to the recommended setup: search uses the owner's server
+		// until the new index is ready.
+		if (status.mode === 'bundled' && !isOwnEngine(status.embed_url)) {
+			return `Your server at ${host(status.embed_url)}`;
+		}
 		switch (status.mode) {
 			case 'dragon':
 				return "This server's NPU";
@@ -125,11 +136,18 @@
 			<dd>
 				{#if status.reachable}
 					Answering in {status.probe_ms} ms
+				{:else if status.busy}
+					Busy
+					<span class="note">
+						The server at {status.embed_url} took more than 5 seconds to answer. It's usually busy
+						indexing; searches wait their turn.
+					</span>
 				{:else}
 					<span class="bad">Not answering</span>
 					<span class="note">
 						New searches can't run until the server at {status.embed_url} answers. Check that it's
 						running, then reload this page.
+						{#if status.probe_error}<br />{status.probe_error}{/if}
 					</span>
 				{/if}
 			</dd>
@@ -164,6 +182,16 @@
 				<button type="button" class="link" onclick={() => openExternal(GUIDE)}>
 					Read the guide for GPUs and NPUs
 				</button>
+			</section>
+		{:else if status.mode === 'manual'}
+			<section class="own">
+				<h3>Go back to the recommended setup</h3>
+				<p>
+					Your server runs the model you chose, and updates leave it alone. To have Virtues run
+					its recommended model on this server's CPU and keep it current, run this on the server.
+					Search keeps using your server until the index is rebuilt for the new model.
+				</p>
+				<pre><code>sudo virtues configure-inference --recommended</code></pre>
 			</section>
 		{/if}
 	{/if}

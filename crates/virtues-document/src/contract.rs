@@ -3,7 +3,8 @@
 //! to. The browser editor builds its ProseMirror schema from the same file.
 //!
 //! Order in the file is part of the contract: mark order is nesting order in
-//! HTML (`link` outermost) and attribute order is rendering order. serde_json's
+//! HTML (proposals outermost, then `link`) and attribute order is rendering
+//! order. serde_json's
 //! `Map` sorts its keys unless the `preserve_order` feature is on, and features
 //! unify across the workspace, so turning it on here would change key order in
 //! every crate that serializes JSON. Every object whose order matters is read
@@ -374,6 +375,14 @@ pub struct Contract {
     mark_index: HashMap<String, usize>,
 }
 
+/// Marks only a page's owner makes, in the editor: a proposal is the
+/// owner's to accept or reject, so a writer's HTML never holds one, and
+/// [`Contract::tag_guide`] leaves them out.
+pub const OWNER_MARKS: &[&str] = &["proposedDeletion", "proposedInsertion"];
+
+/// HTML elements that take no end tag.
+const VOID_TAGS: &[&str] = &["img", "br", "hr"];
+
 /// One private-use character per node type, so a content expression compiles
 /// to an ordinary regex over a string of children.
 fn letter(i: usize) -> char {
@@ -684,6 +693,52 @@ impl Contract {
             .find(|(_, r)| r.tag == tag)
     }
 
+    /// The tags a writer may use, one line each for blocks, inline nodes and
+    /// marks, in contract order: each with the attributes it takes, the
+    /// values a match needs (`data-type="taskList"`), and the choices of an
+    /// attribute with a few (`data-tone="note|tip|warning"`). An element
+    /// that holds nothing and is not void is shown with its end tag, which
+    /// it needs. Generated from the contract, so it holds what ingest takes.
+    pub fn tag_guide(&self) -> String {
+        let mut blocks = vec![];
+        let mut inline = vec![];
+        for n in &self.nodes {
+            let rules: Vec<&HtmlRule> = n.spec.html.iter().filter(|r| !r.parse_only).collect();
+            let Some(first) = rules.first() else { continue };
+            let set_keys: Vec<&str> = rules.iter().flat_map(|r| r.set.keys()).collect();
+            let attrs = guide_attrs(first, n.attrs(), &set_keys);
+            let tags = if rules.len() > 2 {
+                format!("<{}>…<{}>", rules[0].tag, rules[rules.len() - 1].tag)
+            } else {
+                rules
+                    .iter()
+                    .map(|r| guide_tag(r, &attrs, n.spec.content.is_none()))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            if self.is_inline(&n.name) {
+                inline.push(tags);
+            } else {
+                blocks.push(tags);
+            }
+        }
+        let marks: Vec<String> = self
+            .marks
+            .iter()
+            .filter(|m| !OWNER_MARKS.contains(&m.name.as_str()))
+            .map(|m| {
+                let rule = m.render_rule();
+                guide_tag(rule, &guide_attrs(rule, m.attrs(), &[]), false)
+            })
+            .collect();
+        format!(
+            "Blocks: {}\nInline: {}\nMarks: {}",
+            blocks.join(" "),
+            inline.join(" "),
+            marks.join(" ")
+        )
+    }
+
     /// Every attribute a node of this type carries once parsed, defaults
     /// filled: what ProseMirror's `node.attrs` holds.
     pub fn default_attrs(&self, name: &str) -> Map<String, Value> {
@@ -698,6 +753,50 @@ impl Contract {
         }
         m
     }
+}
+
+/// A rule's match values and the attributes it takes, as the tag guide
+/// writes them; `skip`: attributes a rule sets, which its tag says.
+fn guide_attrs(rule: &HtmlRule, attrs: &Ordered<AttrSpec>, skip: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = rule
+        .matches
+        .iter()
+        .map(|(k, v)| format!("{k}=\"{}\"", v.as_str().unwrap_or_default()))
+        .collect();
+    for (key, a) in attrs {
+        let Some(html) = &a.html else { continue };
+        if skip.contains(&key.as_str()) {
+            continue;
+        }
+        let choices: Option<Vec<String>> = match (&a.allowed, a.ty) {
+            (Some(values), _) if values.len() <= 4 => Some(
+                values
+                    .iter()
+                    .map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_string))
+                    .collect(),
+            ),
+            (_, AttrType::Bool) => Some(vec!["true".into(), "false".into()]),
+            _ => None,
+        };
+        out.push(match choices {
+            Some(c) => format!("{html}=\"{}\"", c.join("|")),
+            None => html.clone(),
+        });
+    }
+    out
+}
+
+fn guide_tag(rule: &HtmlRule, attrs: &[String], empty: bool) -> String {
+    let mut s = format!("<{}", rule.tag);
+    for a in attrs {
+        s.push(' ');
+        s.push_str(a);
+    }
+    s.push('>');
+    if empty && !VOID_TAGS.contains(&rule.tag.as_str()) {
+        s.push_str(&format!("</{}>", rule.tag));
+    }
+    s
 }
 
 impl Node {
@@ -774,6 +873,8 @@ mod tests {
         assert_eq!(
             marks,
             [
+                "proposedDeletion",
+                "proposedInsertion",
                 "link",
                 "bold",
                 "italic",
@@ -783,7 +884,10 @@ mod tests {
                 "code"
             ]
         );
-        assert_eq!(c.mark_rank("link"), 0);
+        // Proposals outermost, so a proposal over differently formatted
+        // text stays one element; then link.
+        assert_eq!(c.mark_rank("proposedDeletion"), 0);
+        assert_eq!(c.mark_rank("link"), 2);
         let nodes: Vec<&str> = c.nodes.iter().take(4).map(|n| n.name.as_str()).collect();
         assert_eq!(nodes, ["doc", "paragraph", "heading", "blockquote"]);
         let image: Vec<&str> = c.node("image").unwrap().attrs().keys().collect();
@@ -1002,7 +1106,10 @@ mod tests {
             "person/p_1",
             "",
         ] {
-            assert!(to.check(&c, "to", &json!(refused)).is_err(), "{refused:?} allowed");
+            assert!(
+                to.check(&c, "to", &json!(refused)).is_err(),
+                "{refused:?} allowed"
+            );
         }
         assert!(to.check(&c, "to", &json!(1)).is_err());
     }

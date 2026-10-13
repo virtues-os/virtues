@@ -2,8 +2,11 @@
  * useClickOutside Hook
  *
  * Detects clicks outside of specified elements and calls a callback.
- * Uses mousedown for faster response.
+ * Uses mousedown for faster response. A press in a dialog opened over them
+ * is not outside (`pressedOutside`).
  */
+
+import { pressedOutside } from '../core/outside';
 
 export function useClickOutside(
 	getElements: () => (HTMLElement | null)[],
@@ -14,14 +17,7 @@ export function useClickOutside(
 		if (!enabled()) return;
 
 		function handleClick(event: MouseEvent) {
-			const elements = getElements().filter(Boolean) as HTMLElement[];
-			const target = event.target as Node;
-
-			// Check if click is inside any of the elements
-			const isInside = elements.some((el) => el.contains(target));
-			if (!isInside) {
-				onClickOutside();
-			}
+			if (pressedOutside(event.target, getElements())) onClickOutside();
 		}
 
 		// Use mousedown for faster response
