@@ -6,18 +6,25 @@ The Rust crate reads it to check every write and render HTML and markdown;
 the browser builds its Tiptap schema from the same file
 ([`apps/web/src/lib/document/schema.ts`](../../apps/web/src/lib/document/schema.ts)).
 The decision is [record/editor-kernel-2026-10-07.md](../record/editor-kernel-2026-10-07.md);
-the work still to do is [plan/document-contract-plan.md](../plan/document-contract-plan.md).
+what was built, and what is left, is [record/document-contract.md](../record/document-contract.md).
 
-## Two editors, for now
+## One editor, two formats on the server
 
-`app_pages.format` says which editor a page gets.
+`app_pages.format` says how the server holds a page.
 
-| Format | Document | Editor | Binding |
-|---|---|---|---|
-| `markdown` | markdown in a Y.Text (`content`) | CodeMirror (`components/pages/CodeMirrorEditor.svelte`, [codemirror.md](codemirror.md)) | `createYjsDocument` (`lib/yjs/document.ts`), contract 0, IndexedDB `v2-<id>` |
-| `tree` | XML tree in the `doc` fragment, stamped `meta.contract` | Tiptap (`components/pages/DocumentEditor.svelte`) | `createTreeDocument`, contract 2, IndexedDB `tree-<id>.<lineage>` |
+| Format | Document | In the app |
+|---|---|---|
+| `tree` | XML tree in the `doc` fragment, stamped `meta.contract` | Tiptap (`components/pages/DocumentEditor.svelte`), bound by `createTreeDocument` (`lib/yjs/document.ts`), contract 2, IndexedDB `tree-<id>.<lineage>` |
+| `markdown` | markdown in a Y.Text (`content`), until the server moves the page | read only: the server's markdown of it in `MarkdownView`, with "This page is still in markdown" (`MARKDOWN_READ_ONLY` in `components/views/pageDocument.ts`); no socket, no copy on the device, no Restore in History |
 
-Both bindings sit on `lib/yjs/socket.ts`: the contract on the socket, the
+The app has no markdown editor. The server still holds markdown pages, edits
+them for the model, the CLI and the writers, and binds the Y.Text of one for
+an older app that sends `contract=0`, which is how such an app edits it.
+The app's floor (`MIN_BOX_API` in `lib/boxApi.ts`, 4) is the box that holds
+pages in blocks under contract 2; below it the app shows "Your server needs
+an update".
+
+The binding sits on `lib/yjs/socket.ts`: the contract on the socket, the
 server's 4426 and 4422 close codes, and the rule that the server's sync is
 authoritative while this device's copy stands in only when the binding may
 read it. A page's stamp only rises: a server's write raises it to the
@@ -31,8 +38,7 @@ opens every block page read only, whatever the page holds, and says the
 server needs an update (`TREE_CONTRACT > box_contract` in
 `lib/yjs/document.ts`; the server binds its socket read only too). A
 phone or a Mac updates itself ahead of its box, so a release that raises
-the contract reaches boxes before the apps that carry it. Until every page is a tree, a change to one editor's behaviour is
-checked against the other's ([Parity with the CodeMirror editor](#parity-with-the-codemirror-editor)).
+the contract reaches boxes before the apps that carry it.
 
 ## Rules the editor keeps
 
@@ -95,7 +101,7 @@ checked against the other's ([Parity with the CodeMirror editor](#parity-with-th
   `continues_list` in `render.rs`, `continuesList` in `markdown.ts`), and
   each reads back as its own.
 - **What a link to a file draws** (an image, audio, video or a file card) is
-  `kindOfLink` (`media-kind.ts`) in both editors, the ref card, the file
+  `kindOfLink` (`media-kind.ts`) in the editor, the ref card, the file
   view and a file ref's icon, and the server's converter reads the same
   cases (`media-kinds.json`).
 - **Markdown goes through the crate's converter, in the page**
@@ -366,47 +372,12 @@ all five, in one change:
    when a frame or a player cannot (an applet prints as a box naming it;
    audio, video and a file print as their card).
 
-## Parity with the CodeMirror editor
-
-What a markdown page's editor does, and what a block page does instead.
-
-| CodeMirror page | Block page |
-|---|---|
-| Task lists, `/task`, typed `- [ ]` | Kept: `TaskItem`, the To-do command; typed `- [ ] ` or `- [x] ` makes a to-do (`commands.ts`); Enter after a checked item starts an unchecked one; ticking a box writes the tick without taking the keyboard; ⌘Enter ticks the to-do at the caret (`TodoKeys`), and keys on a focused box are the box's |
-| Slash commands | Kept: `commands.ts`, Heading 1 first, so `/` and Enter make one as there; with Text after the headings, Indent and Outdent; with no command matching, Enter, Tab and the arrows are the editor's (`menuKey`) |
-| Nesting a list item with spaces before its `-`, ⌘] and ⌘[ | Kept: Tab, ⌘] and ⌘[ (`BlockMoves` in `commands.ts`, taken even where there is no item, as ⌘[ is the browser's Back), and on a phone two spaces at an item's start or `/indent`; in a code block ⌘] and ⌘[ indent and outdent the lines the selection touches (`indentCode`) |
-| Find with replace, replace all, match case, regexp, whole word | Kept: `find.ts`, `FindBar` |
-| The selected words echoed where else they occur (`highlightSelectionMatches`) | Kept: `selectionEchoes` in `find.ts` |
-| Word and link counts | Kept: `treeStats` |
-| Code blocks: language, Copy, Shiki; Enter keeps the line's indent | Kept: `CodeBlockNode`, `code.ts`, coloured in the page's theme; any language typed after the picker's Other…; Enter in `schema.ts` |
-| Table menus: add, delete, align, drag rows and columns | Kept: `tables.ts`, `TableMenu`; rows and columns move by Move up, down, left and right, behind More |
-| A row of cells typed, then its delimiter row (`\| a \| b \|`, `\| --- \| ---: \|`), is a table | Kept: the input rule in `commands.ts`, once the delimiter row's cells match the row above; its colons align the columns, and the caret goes into a new row |
-| Enter in a table moves to the cell below; a wide table scrolls inside itself | Kept: `TableKeys` in `tables.ts` (Shift-Enter breaks the line in a cell); `.tableWrapper` scrolls in `document.css` |
-| Backspace at a heading's start makes it text; ⌘-backtick for code, ⌘⇧X for strikethrough | Kept: `HeadingBackspace` in `commands.ts`; the marks' own keys in `schema.ts` |
-| Backspace or Delete beside a widget or a code block never takes it in one key | Kept: `BlockEdges` in `commands.ts` selects a widget first and moves the caret into a code block, never joining it to text, on every key Tiptap joins with (⌥⌫, ⌘⌫, Ctrl-Backspace, ⌃H, ⌥⌦, ⌃D…); an empty line beside either goes, the widget then selected |
-| ⌥↑ ⌥↓ move a line, ⇧⌥↑ ⇧⌥↓ copy it, ⌘⇧K deletes it | Kept: `BlockMoves` in `commands.ts`, on the caret's list item or block or every one a selection touches, a table's row in a table; ⌘Enter is Tiptap's, leaving a code block |
-| Typed `[label](url)` | Kept: the link's markdown input and paste rules |
-| Typed `![name](url)` draws what its address is: an image, audio, a video, a file | Kept: the input rule in `schema.ts`, by `kindOfLink`; `![name\|600](url)` is an image's width (`altWidth`) |
-| Link menu, hover preview of a ref and of a link elsewhere | Kept: `links.ts`; on a read-only page a tap opens a link; ⌘ or Ctrl-click off a link is a plain click, never a selection of the whole block |
-| Selection toolbar: never during a drag, a keyboard selection waits | Kept: `toolbar.ts` |
-| Ask AI, a code block included | Kept: `treeAiSession.ts`; the words a rewrite will replace are washed while the model thinks (`setAiTelegraph`); in a code block it replaces the selection, across a code block's edge it is not offered; on an article the model reads each source as its marker, its note after the context, and a veiled phrase inside `⟦ ⟧`, a rewrite writes the words replacing a sourced sentence before that sentence's source (which no suggestion can hold, so it stays), leaves out a marker naming any other, and writes `⟦…⟧` veiled |
-| Copy: a selection is its markdown; a range of table cells is tab-separated text | Kept: `clipboardText` in `markdown.ts`; a copy inside one list item is its blocks |
-| The platform's undo (shake, three fingers, Edit > Undo) | Kept: `editor.ts` routes `historyUndo` to y-undo, as ⌘Z does |
-| Focus and typewriter | Kept: `focus.ts` |
-| Long-press menus on iOS | Kept: `gesture.ts`, `onContextGesture`; Shift-F10 opens the same menus from the keyboard, on their first row, on a page that is read only the focused link's or widget's; the lift after a hold never closes the menu (`swallowLift`); while one is open every key that would edit the page is the menu's (`contextMenu/keys.ts`) |
-| Media widgets, image width, media paste | Kept: `MediaNode`, `media.ts`, `uploads.ts`; the width and an applet's height are sliders the arrows move; files pasted over a selection replace it at once, over selected cells every cell empties and they land in the first |
-| Refs and their hover preview | Kept: `MentionNode` |
-| Raw markdown editing (`pageDisplay.rawMode`, `render-mode.ts`) | **Replaced** by the read-only View as markdown (`MarkdownView.svelte`); markdown is not edited as text on a block page |
-| CriticMarkup comments (`{>>note<<}`) and Resolve comment (`review-marks.ts`) | **Cut**: the contract has no comment mark |
-| The drawn caret (`caret.ts`): sized to the font, gliding on keyboard moves, a soft blink once still | **Cut**: the browser's own caret, in the page's ink (`caret-color`) |
-| Live preview, render mode, widget height, mouse freeze, list renumber, empty-mark tidy | **Cut**: no meaning on a tree; ProseMirror renders the tree, and the browser numbers a list itself, an item carrying its own number by that ([A numbered item keeps its number](#rules-the-editor-keeps)) |
-
 ## Page checkboxes
 
 Task lists are page content: `taskList` and `taskItem` in the contract,
 Tiptap's `TaskItem` view, and the To-do command in the insert menu, which
-`/task` (and `todo`, `checkbox`, `check`) finds as it does in the CodeMirror
-editor; typed `- [ ] ` makes one too. Checking a box writes the item's
+`/task` (and `todo`, `checkbox`, `check`) finds; typed `- [ ] ` makes one
+too. Checking a box writes the item's
 `checked`, and leaves the focus where it was (`QuietTaskItem` in
 `schema.ts`): the stock box focused the editor, which raises a phone's
 keyboard. Keys pressed on a focused box are the box's, never edits where
@@ -499,9 +470,10 @@ moves nothing, as it does a request naming none (`page_convert::apply_on`).
   `VIRTUES_PAGE_CONVERSION_DIR` overrides it, and a dev checkout uses
   `.page-conversion-state/`). The log has a line for each page with notes or
   a failure, and the run's counts.
-- **After the move:** a markdown binding from an app that knows block pages
-  (it sends `contract=0`) meeting a tree is closed with 4409, "converted,
-  open it again"; an app that sends no contract still gets 4426. The tree
+- **After the move:** a markdown binding from an older app that knows block
+  pages (it sends `contract=0`) meeting a tree is closed with 4409,
+  "converted, open it again"; an app that sends no contract still gets
+  4426. This app binds no markdown page, so it meets neither. The tree
   binding keeps this device's copy under `tree-<id>`, so a converted page
   never binds its `v2-<id>` copy (`lib/yjs/document.ts`). That copy can
   hold typing that never reached the server (the box out of reach, the app
@@ -704,4 +676,5 @@ the page never had ("Typed on a device in an earlier copy of this page").
 | `lib/document/document.css` | typography from the `--md-*` tokens, the A4 page view, print |
 | `components/pages/DocumentEditor.svelte` | the surface and its menus |
 | `components/pages/DocumentPreview.svelte` | a version's HTML, read only |
-| `components/pages/MarkdownView.svelte` | a block page's markdown, read only (View as markdown) |
+| `components/pages/MarkdownView.svelte` | a page's markdown, read only: a block page's View as markdown, and the whole of a page still in markdown |
+| `components/views/pageDocument.ts` | how a page opens: a block page bound, a markdown page read only |

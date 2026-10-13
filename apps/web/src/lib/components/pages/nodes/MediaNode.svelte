@@ -1,6 +1,5 @@
 <!--
-	MediaNode: an image, audio, video or file block in a block page, at
-	parity with the CodeMirror editor's media widgets (media-widgets.ts).
+	MediaNode: an image, audio, video or file block in a block page.
 
 	- Image: drawn at its `width`; the handle on its right edge resizes it and
 	  writes `width` once, when the drag ends. The handle is a slider too: Tab

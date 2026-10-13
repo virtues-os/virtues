@@ -2,7 +2,7 @@
  * Code context — where markdown syntax is NOT markdown
  *
  * Several decorators find their constructs by scanning line text with regexes
- * (links and media in ref-links.ts / media-widgets.ts, ==highlight== and
+ * (links in ref-links.ts, ==highlight== and
  * <u> in inline-marks.ts) because Lezer has no node for them or because the
  * regex predates the tree walk. A regex cannot know it is inside a code
  * region, and the result was verified on screen: a JS string literal

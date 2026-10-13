@@ -1,6 +1,6 @@
 /**
  * The inline writer on a block page: ⌘J, `/ai` and Ask AI in `DocumentEditor`
- * (`TreeAiDriver`). The CodeMirror editor's writer is `aiCursorSession.ts`.
+ * (`TreeAiDriver`).
  *
  * It streams a completion into the page's tree so it reads as writing:
  *
@@ -18,7 +18,7 @@
  *  - A CONTINUATION inserts plainly: there is nothing to compare it with, and
  *    undo takes the whole of it back.
  *  - A REWRITE PROPOSES. While the model thinks, the words it will replace
- *    are washed (the telegraph, as the CodeMirror writer draws it), and the
+ *    are washed (the telegraph), and the
  *    selection is marked as a proposed deletion when the first words arrive, and the rewrite streams in after it as a
  *    proposed insertion sharing its id (`lib/document/suggestions.ts`), for
  *    the person to accept or reject. The original is never sent back through
@@ -62,14 +62,13 @@ import { htmlSlice, looksLikeMarkdown } from "$lib/document/paste";
 import { convertNow, type ConvertResult, type Dialect } from "$lib/document/converter";
 import { contract, newId } from "$lib/document/schema";
 import { aiSession } from "./aiSession.svelte";
-import { abortAiSession } from "./aiCursorSession";
 import { streamCompletion, type AiCompleteRequest, type AiIntent } from "./inlineComplete";
 import { createOutputSanitizer } from "./sanitize";
 
 const CONTEXT_CHARS = 1200;
 const FLUSH_MS = 30;
 const DONE_DISSOLVE_MS = 650;
-/** How long a rewrite shows what it will replace before it asks the model: the CodeMirror writer's beat. */
+/** How long a rewrite shows what it will replace before it asks the model. */
 const TELEGRAPH_MS = 380;
 // Client-side backstop on top of the server's max_tokens, so a runaway
 // completion can never fill the page.
@@ -826,8 +825,6 @@ export function createTreeAiDriver(
 	let running: Promise<void> = Promise.resolve();
 	return {
 		start(o) {
-			// The CodeMirror editor's writer, if one is running elsewhere.
-			abortAiSession();
 			current?.abort();
 			const session = new TreeAiSession(o, resolved);
 			current = session;

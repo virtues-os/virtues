@@ -1,11 +1,10 @@
 /**
  * What a link to a file is drawn as: an image, audio, video or a file card,
- * from its address and its name. One rule for both page editors (the block
- * editor's embeds, `links.ts`, and CodeMirror's media widgets,
- * `codemirror/extensions/media-widgets.ts`) and the server's converter
+ * from its address and its name. One rule for the page editor's embeds
+ * (`links.ts`), the ref card, the file view and the server's converter
  * (`media_kind` in the crate), pinned to it by the cases both read
  * (`crates/virtues-document/tests/corpus/media-kinds.json`). It imports
- * nothing, so CodeMirror reaches it without the block editor.
+ * nothing, so those reach it without the block editor.
  */
 
 export type MediaKind = 'image' | 'audio' | 'video' | 'file';

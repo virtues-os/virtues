@@ -4,7 +4,7 @@
 	 *
 	 * "Dumb display" like SlashMenu/RefPicker: floats at a position, collects
 	 * a quick action or free-text instruction, and reports it via onSubmit. The
-	 * host (CodeMirrorEditor) starts the AI session.
+	 * host (DocumentEditor) starts the AI session.
 	 */
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount, tick } from "svelte";

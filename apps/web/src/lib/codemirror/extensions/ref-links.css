@@ -2,12 +2,11 @@
  * Inline refs as `entityLinks` (ref-links.ts) renders them.
  *
  * Imported by `ref-links.ts`, not by an editor component, for the same reason
- * as `caret.css`: the chat composer renders `@` mentions through this
- * extension, and `../theme.css` only loads with the lazy page editor.
+ * as `caret.css`: the look travels with the extension that draws it.
  */
 
 /* =============================================================================
-   LIVE PREVIEW — REFERENCES (inline links: plain, Wikipedia-style)
+   REFERENCES (inline links: plain, Wikipedia-style)
    =============================================================================
    Every inline ref — entity, file, internal, or external — renders as a plain
    underlined link that belongs to the prose: no pill, no chip, no favicon. The

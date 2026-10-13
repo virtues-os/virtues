@@ -1,7 +1,7 @@
 /**
  * Shared Shiki highlighter singleton (no framework / no CodeMirror deps).
  *
- * Both the CodeMirror extension and the chat markdown code-block renderer import
+ * The page editor's code blocks and the chat markdown code-block renderer import
  * this so there is exactly ONE Shiki instance and one set of lazily-loaded
  * languages/themes across the app.
  */

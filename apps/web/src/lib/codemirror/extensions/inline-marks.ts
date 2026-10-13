@@ -1,24 +1,16 @@
 /**
  * Inline marks — one description of WHERE inline formatting lives
  *
- * Bold, italic, strikethrough, inline code, ==highlight== and <u>underline</u>
- * follow the reveal-on-touch rule (the one Obsidian and every shipping
- * markdown live-preview converged on): a construct's delimiters are hidden
- * until the selection touches that construct, then they appear IN PLACE,
- * dimmed, while the styling stays applied. Only the construct you are inside
- * changes; nothing else on the line moves, and nothing moves vertically.
+ * Bold, italic, strikethrough, inline code, ==highlight== and <u>underline</u>:
+ * each construct's opening and closing delimiters, and whether the selection
+ * touches it. While the editor has focus, a construct still being typed on
+ * the caret's line (`**foo` with no closer yet) counts as open to the caret.
  *
  * This file deliberately owns no decorations. It answers two questions —
  * where are the marks (`inlineMarks`), and is the selection touching this one
- * (`selectionTouches`) — and live-preview.ts renders from those answers, so
- * there is exactly one definition of a construct's extent.
- *
- * History note: an earlier revision hid delimiters permanently and declared
- * them atomic to cursor motion. That is rich-text-editor UX imposed on a plain
- * text buffer, and it made the caret dishonest — every hidden `*` was a caret
- * position that existed but could not be seen or aimed at. Reveal-on-touch is
- * the fix, not a compromise: the document's characters are visible exactly
- * when the caret could interact with them.
+ * (`selectionTouches`) — and the composer's keybindings, tidy-up and ref
+ * links act on those answers, so there is exactly one definition of a
+ * construct's extent.
  */
 
 import { syntaxTree } from '@codemirror/language';

@@ -1954,9 +1954,10 @@ export function getProjectGraph(projectId: string): Promise<ProjectGraph> {
 // =============================================================================
 
 /**
- * How a page holds its text: `markdown` in a Y.Text for the CodeMirror
- * editor, or `tree`, a Yjs XML tree under the document contract
- * (`crates/virtues-document`) for the block editor.
+ * How a page holds its text: `tree`, a Yjs XML tree under the document
+ * contract (`crates/virtues-document`) for the block editor, or `markdown`
+ * in a Y.Text, for a page the server has not moved to blocks yet, which
+ * this app shows read only.
  */
 export type PageFormat = 'markdown' | 'tree';
 

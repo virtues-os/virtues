@@ -20,8 +20,14 @@
  * "a 404 means an older box" guess is replaced.
  */
 
-/** The lowest `api_version` this app runs against. 0 = every box. */
-export const MIN_BOX_API = 0;
+/**
+ * The lowest `api_version` this app runs against: 4, the box that holds a
+ * page in blocks under document contract 2. This app edits only block
+ * pages, and a block editor at contract 2 on a box below it would open
+ * every page read only, or edit none of a box's markdown pages at all, so
+ * an older box updates first.
+ */
+export const MIN_BOX_API = 4;
 
 let cached: Promise<number | null> | null = null;
 
@@ -49,11 +55,9 @@ export function boxApiVersion(fetchFn: typeof fetch = fetch, fresh = false): Pro
 /**
  * True only when the box answered and is below this app's floor. An
  * unreachable box is not "too old": that is the reconnect screen's job, and
- * blocking on it would turn a blip into a wall. Costs nothing while the floor
- * is 0.
+ * blocking on it would turn a blip into a wall.
  */
 export async function boxBelowFloor(fetchFn: typeof fetch = fetch): Promise<boolean> {
-	if (MIN_BOX_API <= 0) return false;
 	const v = await boxApiVersion(fetchFn);
 	return v !== null && v < MIN_BOX_API;
 }

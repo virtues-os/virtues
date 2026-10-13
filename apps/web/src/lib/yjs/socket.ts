@@ -1,7 +1,5 @@
 /**
- * The page socket: what every page binding shares, whatever it binds (the
- * markdown Y.Text in `createYjsDocument`, the block tree in
- * `createTreeDocument`).
+ * The page socket under a block page's binding (`createTreeDocument`).
  *
  * - The websocket carries the contract the binding reads (`?contract=N`),
  *   and the server refuses to bind it below the page's (`server/yjs.rs`).
@@ -27,14 +25,10 @@ import { serverBack } from '$lib/document/uploads';
 /** Close codes the server ends a refused socket with (`server/yjs.rs`). */
 export const CLOSE_CONTRACT = 4426;
 export const CLOSE_REFUSED = 4422;
-/** The page moved to the other format while this binding had it open. */
-export const CLOSE_REFORMATTED = 4409;
 
 export const NEEDS_NEWER_APP = 'A newer version of Virtues wrote this page. Update the app to open it.';
 const EDIT_REFUSED =
 	"Your server couldn't accept an edit to this page, so changes here won't save. Copy what you need, then reload the page.";
-const PAGE_CONVERTED =
-	"Your server converted this page while it was open, so changes here won't save. Copy what you need, then open the page again.";
 
 export interface PageSocketOptions {
 	/** The document contract the binding reads, sent on the socket. */
@@ -157,14 +151,9 @@ export function connectPage(pageId: string, ydoc: Y.Doc, o: PageSocketOptions): 
 	});
 
 	provider.on('closed', (event: { code: number; reason: string }) => {
-		if (event.code !== CLOSE_CONTRACT && event.code !== CLOSE_REFUSED && event.code !== CLOSE_REFORMATTED) return;
+		if (event.code !== CLOSE_CONTRACT && event.code !== CLOSE_REFUSED) return;
 		console.warn(`[yjs] the server closed page ${pageId} (${event.code}): ${event.reason}`);
-		if (event.code === CLOSE_REFORMATTED) {
-			// The editor stays, so what was typed can still be copied out. The
-			// page opens again in the editor its new format takes, which keeps
-			// its own copy on this device.
-			refused.set(PAGE_CONVERTED);
-		} else if (event.code === CLOSE_CONTRACT) {
+		if (event.code === CLOSE_CONTRACT) {
 			refused.set(NEEDS_NEWER_APP);
 			// A local copy may already be showing; it is not this page any more.
 			isSynced.set(false);

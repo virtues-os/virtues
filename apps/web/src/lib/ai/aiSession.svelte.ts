@@ -1,7 +1,8 @@
 /**
  * AI cursor session status — the source of truth for *UI* (the status-bar
  * "Virtues is writing…" indicator + stop button). Positions live in the
- * CodeMirror StateFields (ai-cursor.ts); this only tracks the phase.
+ * editor's presence plugin (`lib/document/presence.ts`); this only tracks
+ * the phase.
  */
 
 export type AiStatus =

@@ -174,8 +174,7 @@ export function codeAt(state: EditorState): 'code' | 'text' | 'across' {
  * The platform's own undo: shake to undo, three fingers, the iPad's undo
  * key, Edit > Undo. They reach the page as `historyUndo` and `historyRedo`
  * input, not as ⌘Z; left alone, the browser would undo the DOM under
- * ProseMirror. They go to the editor's own undo, as the CodeMirror editor's
- * binding sends them to its.
+ * ProseMirror. They go to the editor's own undo.
  */
 const PlatformUndo = Extension.create({
 	name: 'platformUndo',

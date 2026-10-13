@@ -2,8 +2,8 @@
 	FindBar: find and replace in a block page (lib/document/find.ts). Enter
 	goes to the next match and Shift-Enter to the previous one; Escape closes
 	and leaves the selection on the match last gone to. Match case, a regular
-	expression and whole words are toggles, as in the CodeMirror editor's
-	search panel. On a page that can be edited, Replace replaces the current
+	expression and whole words are toggles, as in a code editor's search
+	panel. On a page that can be edited, Replace replaces the current
 	match and goes to the next, and Replace all replaces every match as one
 	undo step.
 -->

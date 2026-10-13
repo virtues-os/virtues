@@ -2,8 +2,8 @@
 	/**
 	 * SlashMenu - Command palette for inserting blocks
 	 *
-	 * Triggered by typing "/" in a page editor: CodeMirror's `SlashCommand`s
-	 * or the block editor's `TreeCommand`s, both `MenuCommand`s.
+	 * Triggered by typing "/" in a page: the block editor's `TreeCommand`s,
+	 * which are `MenuCommand`s.
 	 * Shows available commands filtered by query.
 	 *
 	 * Pattern follows RefPicker - "dumb display" component
@@ -102,7 +102,7 @@
 	});
 
 	onMount(() => {
-		// Focus trap - capture keyboard events (uses capture for CodeMirror integration)
+		// Focus trap - capture keyboard events, ahead of the editor's own
 		document.addEventListener('keydown', handleKeydown, true);
 		return () => {
 			document.removeEventListener('keydown', handleKeydown, true);

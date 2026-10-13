@@ -1,9 +1,9 @@
 /**
- * When the editor shows the copy of a page this device kept, before the
- * server syncs: only for a page the server said this binding reads. A copy
- * kept from before the page was raised to a tree carries no stamp, so the
- * copy alone cannot say; shown, it would be text the page no longer holds,
- * and offline it would take edits the server refuses when the device is back.
+ * A block page's binding, and when the editor shows the copy of the page
+ * this device kept before the server syncs: only for a page the server said
+ * this binding reads, stamped as the page is and holding a block. Shown
+ * otherwise, it would be text the page no longer holds, and offline it would
+ * take edits the server refuses when the device is back.
  */
 
 import { get } from 'svelte/store';
@@ -67,80 +67,10 @@ vi.mock('y-indexeddb', () => ({ IndexeddbPersistence: fakes.FakePersistence }));
 vi.mock('$lib/config/backend', () => ({ getWsUrl: (path: string) => `ws://box${path}` }));
 
 import contractJson from '$contract';
-import { createTreeDocument, createYjsDocument } from './document';
+import { createTreeDocument } from './document';
 
 /** The contract this app's block editor reads. */
 const V: number = (contractJson as { version: number }).version;
-
-/** Open a page whose kept copy holds `text`, stamped `stamp` when given. */
-function openWithKeptCopy(pageContract: number | null, text: string, stamp?: number) {
-	const doc = createYjsDocument('pg_1', pageContract);
-	const kept = fakes.made.persistence!;
-	if (text) kept.doc.getText('content').insert(0, text);
-	if (stamp !== undefined) kept.doc.getMap('meta').set('contract', stamp);
-	kept.emit('synced');
-	return { doc, provider: fakes.made.provider! };
-}
-
-describe('the copy this device kept', () => {
-	it('is shown at once for a page the server said this binding reads', () => {
-		const { doc } = openWithKeptCopy(0, 'Old notes');
-		expect(doc.contractConfirmed).toBe(true);
-		expect(get(doc.isSynced)).toBe(true);
-		doc.destroy();
-	});
-
-	it('waits for the server when the server has not said', () => {
-		const { doc, provider } = openWithKeptCopy(null, 'Old notes');
-		expect(doc.contractConfirmed).toBe(false);
-		expect(get(doc.isSynced)).toBe(false);
-		// Offline, it is not taken as the page either.
-		provider.emit('connection-error');
-		expect(get(doc.isSynced)).toBe(false);
-		// The server's sync is.
-		provider.emit('sync');
-		expect(get(doc.isSynced)).toBe(true);
-		doc.destroy();
-	});
-
-	it('is never shown for a page written under a newer contract, nor is the server asked', () => {
-		const { doc, provider } = openWithKeptCopy(1, 'Old notes');
-		expect(get(doc.refused)).toContain('newer version');
-		expect(provider.options.connect).toBe(false);
-		provider.emit('connection-error');
-		expect(get(doc.isSynced)).toBe(false);
-		doc.destroy();
-	});
-
-	it('is not shown when it carries a newer stamp, whatever the server said', () => {
-		const { doc, provider } = openWithKeptCopy(0, 'Old notes', 1);
-		expect(get(doc.isSynced)).toBe(false);
-		provider.emit('connection-error');
-		expect(get(doc.isSynced)).toBe(false);
-		doc.destroy();
-	});
-
-	it('takes offline edits, empty or not, on a page the server said this binding reads', () => {
-		const { doc, provider } = openWithKeptCopy(0, '');
-		expect(get(doc.isSynced)).toBe(false);
-		provider.emit('connection-error');
-		expect(get(doc.isSynced)).toBe(true);
-		expect(provider.options.params.contract).toBe('0');
-		doc.destroy();
-	});
-});
-
-describe('a page converted while it is open', () => {
-	it('says so when the server closes it with 4409, and keeps what it shows to copy out', () => {
-		const { doc, provider } = openWithKeptCopy(0, 'Typed before the change');
-		expect(get(doc.isSynced)).toBe(true);
-		provider.emit('closed', { code: 4409, reason: 'your server converted this page; open it again' });
-		expect(get(doc.refused)).toContain('converted this page');
-		expect(get(doc.isSynced)).toBe(true);
-		expect(doc.ytext.toString()).toBe('Typed before the change');
-		doc.destroy();
-	});
-});
 
 describe('a block page', () => {
 	/** Open a block page whose kept copy holds `blocks` paragraphs, stamped `stamp`. */
@@ -158,7 +88,7 @@ describe('a block page', () => {
 		return { doc, store, provider: fakes.made.provider! };
 	}
 
-	it('keeps its copy apart from the markdown one, and asks for its contract on the socket', () => {
+	it('keeps its copy apart from the markdown one (`v2-<id>`), and asks for its contract on the socket', () => {
 		const { doc, store, provider } = openTree(V, V);
 		expect(store.name).toBe('tree-pg_2');
 		expect(provider.options.params.contract).toBe(String(V));
@@ -248,6 +178,15 @@ describe('a block page', () => {
 		const before = createTreeDocument('pg_2', V, V, null);
 		expect(fakes.made.persistence!.name).toBe('tree-pg_2');
 		before.destroy();
+	});
+
+	it('is never shown for a page written under a newer contract, nor is the server asked', () => {
+		const { doc, provider } = openTree(V + 1, V + 1, { blocks: 1, stamp: V + 1 });
+		expect(get(doc.refused)).toContain('newer version');
+		expect(provider.options.connect).toBe(false);
+		provider.emit('connection-error');
+		expect(get(doc.isSynced)).toBe(false);
+		doc.destroy();
 	});
 
 	it('says the page needs a newer app when the server closes it with 4426', () => {

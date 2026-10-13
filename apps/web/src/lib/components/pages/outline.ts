@@ -1,8 +1,7 @@
 /**
  * The page outline: h1 to h3 headings, and how the table of contents scrolls
- * to them and spies on the scroll. Each editor supplies an `OutlineNav`
- * (`cmOutlineNav` for CodeMirror, `treeOutlineNav` for the block editor), so
- * `PageOutline` knows neither.
+ * to them and spies on the scroll. The editor supplies an `OutlineNav`
+ * (`treeOutlineNav`), so `PageOutline` knows no editor.
  */
 
 export interface PageHeading {

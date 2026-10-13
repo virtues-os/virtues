@@ -46,9 +46,9 @@ function isExternalUrl(url: string): boolean {
 // =============================================================================
 
 /**
- * The link markdown's CURRENT range, derived from the DOM at gesture time —
- * see the matching helper in media-widgets.ts for why captured widget
- * positions cannot be trusted after upstream edits.
+ * The link markdown's CURRENT range, derived from the DOM at gesture time: a
+ * position captured when the widget was built is stale once anything above
+ * it is edited.
  */
 function linkRangeAtDOM(view: EditorView, dom: HTMLElement): { from: number; to: number } | null {
 	const pos = view.posAtDOM(dom);

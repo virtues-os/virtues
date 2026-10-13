@@ -4,9 +4,9 @@
  * One persisted, app-wide set of reading/writing preferences for the page
  * editor: font mode, text size, page width, and focus/typewriter mode.
  * Width `page` sets the page as an A4 sheet (210 mm), the width it prints at.
- * Font + size are surfaced to CodeMirror via the `--editor-font-family` /
- * `--editor-font-size` custom properties (see codemirror/theme.ts), set on an
- * ancestor of the editor so they cascade in.
+ * Font + size are surfaced to the editor via the `--editor-font-family` /
+ * `--editor-font-size` custom properties (see lib/document/document.css), set
+ * on an ancestor of the editor so they cascade in.
  */
 
 export type FontMode = "sans" | "serif" | "mono";
@@ -41,7 +41,6 @@ interface Persisted {
 	widthMode: WidthMode;
 	focusMode: boolean;
 	spellcheck: boolean;
-	rawMode: boolean;
 }
 
 const DEFAULTS: Persisted = {
@@ -50,7 +49,6 @@ const DEFAULTS: Persisted = {
 	widthMode: "medium",
 	focusMode: false,
 	spellcheck: true,
-	rawMode: false,
 };
 
 function load(): Persisted {
@@ -69,11 +67,6 @@ class PageDisplay {
 	widthMode = $state<WidthMode>(DEFAULTS.widthMode);
 	focusMode = $state(DEFAULTS.focusMode);
 	spellcheck = $state(DEFAULTS.spellcheck);
-	/**
-	 * Show the literal markdown instead of the rendered surface. The escape
-	 * hatch for when a construct mis-parses — see codemirror/extensions/render-mode.ts.
-	 */
-	rawMode = $state(DEFAULTS.rawMode);
 
 	constructor() {
 		const p = load();
@@ -82,7 +75,6 @@ class PageDisplay {
 		this.widthMode = p.widthMode;
 		this.focusMode = p.focusMode;
 		this.spellcheck = p.spellcheck;
-		this.rawMode = p.rawMode;
 	}
 
 	/** CSS value for `--editor-font-family`. */
@@ -110,7 +102,6 @@ class PageDisplay {
 					widthMode: this.widthMode,
 					focusMode: this.focusMode,
 					spellcheck: this.spellcheck,
-					rawMode: this.rawMode,
 				}),
 			);
 		} catch {
@@ -146,11 +137,6 @@ class PageDisplay {
 
 	toggleSpellcheck() {
 		this.spellcheck = !this.spellcheck;
-		this.persist();
-	}
-
-	toggleRaw() {
-		this.rawMode = !this.rawMode;
 		this.persist();
 	}
 }

@@ -1,9 +1,10 @@
 <!--
-	MarkdownView: a block page as markdown, read only. The page's text is a
-	tree; this is its export, the same text search, publishing and Copy
-	markdown read (`GET /api/pages/:id/markdown`, live from the server's copy).
-	It follows the page: half a second after the last change to `ydoc`, it
-	reads the export again.
+	MarkdownView: a page as markdown, read only: a block page's export (View
+	as markdown), or the text of a page still in markdown, which no editor
+	here edits. The same text search, publishing and Copy markdown read
+	(`GET /api/pages/:id/markdown`, live from the server's copy). Given the
+	page's document, it follows the page: half a second after the last change
+	to `ydoc`, it reads the markdown again.
 -->
 <script lang="ts">
 	import { onDestroy, onMount } from "svelte";
@@ -15,9 +16,11 @@
 		pageId: string;
 		/** The page's document, to follow its changes; without one the view reads once. */
 		ydoc?: Y.Doc | null;
+		/** What the view says beside Copy markdown; null when the page says it already. */
+		hint?: string | null;
 	}
 
-	let { pageId, ydoc = null }: Props = $props();
+	let { pageId, ydoc = null, hint = "Read only. Edit the page itself." }: Props = $props();
 
 	const REFRESH_MS = 500;
 
@@ -78,7 +81,7 @@
 
 <div class="markdown-view">
 	<div class="markdown-actions">
-		<span class="markdown-hint">Read only. Edit the page itself.</span>
+		<span class="markdown-hint">{hint ?? ""}</span>
 		<Button
 			variant="secondary"
 			size="sm"

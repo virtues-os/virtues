@@ -1,8 +1,9 @@
 /**
  * Copies this device kept of a block page that are not the page's document:
  *
- * - the copy of the page from when it was markdown (`v2-<id>`,
- *   `createYjsDocument`), once it has moved to blocks (`keepMarkdownCopy`);
+ * - the copy of the page from when it was markdown (`v2-<id>`, kept by the
+ *   markdown editor older apps carried), once it has moved to blocks
+ *   (`keepMarkdownCopy`);
  * - a copy of an earlier document of the page (`tree-<id>` or
  *   `tree-<id>.<lineage>`, `treeStore`), once the page's document has been
  *   made again: put back from a backup and moved to blocks once more

@@ -5,11 +5,12 @@
 	 * Allows users to save snapshots and restore to previous versions.
 	 * Use inside a Popover primitive for proper positioning and dismiss behavior.
 	 *
-	 * A block page's history is the server's: Save asks it to keep the page as
-	 * it stands, Restore asks it to put a version back (it keeps the page as it
+	 * A page's history is the server's: Save asks it to keep the page as it
+	 * stands, Restore asks it to put a version back (it keeps the page as it
 	 * was first, and records "Put back vN"), and a row opens a preview of the
-	 * version drawn as the editor draws it. A markdown page's versions are cut
-	 * and restored from the document this browser holds.
+	 * version drawn as the editor draws it. A page still in markdown, which
+	 * no editor here edits, is put back by no version: Restore is a block
+	 * page's.
 	 */
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
@@ -17,15 +18,7 @@
 	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import { formatTimeAgo } from '$lib/utils/dateUtils';
 	import { getPageVersion, type DocumentNote, type PageFormat } from '$lib/api/client';
-	import type { YjsDocument } from '$lib/yjs';
-	import {
-		cutServerVersion,
-		listVersions,
-		restorePageVersion,
-		restoreVersion,
-		saveVersion,
-		type PageVersion,
-	} from '$lib/yjs/versions';
+	import { cutServerVersion, listVersions, restorePageVersion, type PageVersion } from '$lib/yjs/versions';
 	import { onMount } from 'svelte';
 
 	interface Props {
@@ -33,11 +26,9 @@
 		pageId: string;
 		/** How the page holds its text; markdown when the server does not say. */
 		format?: PageFormat;
-		/** A markdown page's document; a block page needs none. */
-		yjsDoc?: YjsDocument;
 	}
 
-	let { close, pageId, format = 'markdown', yjsDoc }: Props = $props();
+	let { close, pageId, format = 'markdown' }: Props = $props();
 
 	const tree = $derived(format === 'tree');
 
@@ -72,11 +63,10 @@
 	}
 
 	async function handleSave() {
-		if (!tree && !yjsDoc) return;
 		saving = true;
 		error = null;
 		try {
-			const result = tree ? await cutServerVersion(pageId) : await saveVersion(yjsDoc!.ydoc, pageId);
+			const result = await cutServerVersion(pageId);
 			if (result) {
 				await loadVersions();
 			} else {
@@ -119,46 +109,8 @@
 		});
 	}
 
-	async function handleRestore(version: PageVersion) {
-		if (tree) return restoreTree(version);
-		if (!yjsDoc) return;
-		if (!(await confirmRestore())) return;
-
-		restoringId = version.id;
-		error = null;
-		try {
-			// A version holds the page as the edit it records left it. The one
-			// before keeps any edits not yet saved, so the restore can be undone;
-			// the one after is the restore itself, yours in History. The confirm
-			// promised the one before, so without it nothing is put back.
-			const kept = await saveVersion(yjsDoc.ydoc, pageId, 'Auto-saved before restore', 'auto');
-			if (!kept) {
-				error = "Your server couldn't save a copy of this page first, so it didn't put the version back. Try again.";
-				return;
-			}
-
-			const success = await restoreVersion(yjsDoc, version.id);
-			if (!success) {
-				error = 'Failed to restore';
-				return;
-			}
-			const recorded = await saveVersion(yjsDoc.ydoc, pageId, `Put back v${version.version_number}`, 'user');
-			if (!recorded) {
-				// The list gains the copy saved before; the panel stays open to say why.
-				await loadVersions();
-				error = "Your server put the version back but couldn't add it to History. Save a version to keep it there.";
-				return;
-			}
-			close();
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to restore';
-		} finally {
-			restoringId = null;
-		}
-	}
-
 	/** One request: the server keeps the page as it is, writes only what differs, and records it. */
-	async function restoreTree(version: PageVersion) {
+	async function handleRestore(version: PageVersion) {
 		if (!(await confirmRestore())) return;
 		restoringId = version.id;
 		error = null;
@@ -204,7 +156,6 @@
 			size="sm"
 			icon="ri:add-line"
 			loading={saving}
-			disabled={!tree && !yjsDoc}
 			onclick={handleSave}
 		>
 			Save
@@ -242,44 +193,34 @@
 		{:else}
 			{#each versions as version}
 				<div class="version-row" class:selected={preview?.id === version.id}>
-					{#if tree}
-						<button
-							class="version-info version-open"
-							title="Preview this version"
-							aria-pressed={preview?.id === version.id}
-							onclick={() => handlePreview(version)}
-						>
-							<span class="version-num">v{version.version_number}</span>
-							<span class="version-date">{formatDate(version.created_at)}</span>
-							{#if version.created_by === 'ai'}
-								<span class="badge-ai">AI</span>
-							{:else if version.created_by === 'auto'}
-								<span class="badge-auto">Auto</span>
-							{/if}
-							{#if previewLoading === version.id}
-								<Icon icon="ri:loader-4-line" width="12" class="spin" />
-							{/if}
-						</button>
-					{:else}
-						<div class="version-info">
-							<span class="version-num">v{version.version_number}</span>
-							<span class="version-date">{formatDate(version.created_at)}</span>
-							{#if version.created_by === 'ai'}
-								<span class="badge-ai">AI</span>
-							{:else if version.created_by === 'auto'}
-								<span class="badge-auto">Auto</span>
-							{/if}
-						</div>
-					{/if}
-					<Button
-						variant="ghost"
-						size="sm"
-						loading={restoringId === version.id}
-						disabled={restoringId !== null}
-						onclick={() => handleRestore(version)}
+					<button
+						class="version-info version-open"
+						title="Preview this version"
+						aria-pressed={preview?.id === version.id}
+						onclick={() => handlePreview(version)}
 					>
-						Restore
-					</Button>
+						<span class="version-num">v{version.version_number}</span>
+						<span class="version-date">{formatDate(version.created_at)}</span>
+						{#if version.created_by === 'ai'}
+							<span class="badge-ai">AI</span>
+						{:else if version.created_by === 'auto'}
+							<span class="badge-auto">Auto</span>
+						{/if}
+						{#if previewLoading === version.id}
+							<Icon icon="ri:loader-4-line" width="12" class="spin" />
+						{/if}
+					</button>
+					{#if tree}
+						<Button
+							variant="ghost"
+							size="sm"
+							loading={restoringId === version.id}
+							disabled={restoringId !== null}
+							onclick={() => handleRestore(version)}
+						>
+							Restore
+						</Button>
+					{/if}
 				</div>
 			{/each}
 		{/if}
