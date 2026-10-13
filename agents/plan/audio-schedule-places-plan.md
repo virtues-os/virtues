@@ -18,6 +18,11 @@
 > claimed). Delete this file once the device gates pass; what survives is a
 > page under `docs/` for the phone's recording settings and a record.
 >
+> 2026-10-13: location no longer re-arms audio, and audio no longer pushes
+> its health into location (`virtues_ensure_recording` and
+> `virtues_location_audio_state` are gone); see "The background rule" in
+> `agents/record/audio-collector.md`. The facts table below predates that.
+>
 > **2026-10-07:** a Control Center control that pauses (or records anyway)
 > for an hour or until you end it. Built and wired into the Xcode project;
 > the device gate is slice 5.
@@ -205,11 +210,9 @@ be reached, say so and do not fake a local place.
 the existing `PUT`. The gate uses `max(radius_m, 100)` for the enter test so
 a user-created place's default 50 m does not lose to GPS jitter.
 
-**The fix reaches audio the way health reaches location.** A C-ABI mirror
-of `virtues_location_audio_state`: the probe calls
-`virtues_audio_location(lat, lon, accuracy_m, age_s)` from
-`didUpdateLocations`, right beside the existing `virtues_ensure_recording()`
-call. Audio keeps the last fix and its timestamp; nothing else in the probe
+**The fix reaches audio through one C-ABI call.** The probe calls
+`virtues_audio_location(lat, lon, accuracy_m)` from `didUpdateLocations`.
+Audio keeps the last fix and its timestamp; nothing else in the probe
 changes.
 
 **Sticky, accuracy-aware transitions.** The place state is `inside(place)`

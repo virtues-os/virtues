@@ -32,9 +32,9 @@ that, and the refutation reshaped the collector:
    boundary**, because each new recorder is a background start. There is also
    a known silent death around ninety minutes in the restart-loop pattern.
 
-So the location-wake → `ensureRecording()` path is kept (the location plugin
-calls `virtues_ensure_recording`), but it can only re-arm a graph that iOS
-still lets us resume. It is not a resurrection mechanism for a dead mic.
+The location-wake → `ensureRecording()` path survived that research for a
+while, as a best-effort retry. It was removed on 2026-10-13, along with every
+other background retry on a timer: see "The background rule" below.
 
 ## The capture graph: splice, don't restart
 
@@ -102,6 +102,40 @@ so route changes self-recover with staggered re-arms instead of waiting.
 Engine configuration changes finalize the chunk and re-arm with the new
 hardware format. Our own `.categoryChange` / `.override` notifications are
 ignored, or reacting to them loops.
+
+**The background rule.** Every arm reconfigures the audio session the whole
+phone shares (category, IO buffer, pinned input, activation, output override),
+and that can be heard as a dropout in other apps' playback. A recorder that
+died in the background used to retry on the five-second watchdog, on the
+minute-long hold, on every location fix and on every background relaunch, for
+as long as location kept the process alive. None of those tries had ever
+been seen to succeed, and a tester's music, YouTube and car audio kept cutting
+out, roughly once a minute. Now a background arm happens only inside a short window
+(`recoveryUntil`) opened when iOS hands audio back to a recorder that ran in
+this process: an interruption ending, a device switch, an engine
+configuration change, a media-services reset, the car leaving. Inside it the
+watchdog may still retry a refused try or rebuild a dead tap; outside it, the
+watchdog only notices and keeps time for the gap notification, and the
+recorder waits for the app to open. The launch-time resume still arms a
+foreground launch, but a relaunch the OS made for a location event never
+arms. The location hook and location's "audio is down, stay precise" mode
+were removed. The device screen reads fixes only, so diagnostics rows cannot
+crowd them out of its window.
+
+The session also asks not to be interrupted by system alerts
+(`setPrefersNoInterruptionsFromSystemAlerts`): with banner-style call alerts,
+only an accepted call interrupts it, so a declined call no longer leaves the
+recorder down. `prefersInterruptionOnRouteDisconnect` is not set, because
+since iOS 17 a route disconnect only interrupts Now Playing sessions, which
+this is not.
+
+**Diagnostics.** Every arm, refusal (with the step that threw and its error
+code), interruption, route change (port types, never port names), config
+change, mute change, override and gap notice is written to the phone's rolling
+log: the location plugin's `rows` table, as 0,0 marker rows tagged `audio:`,
+pruned after seven days. Each row carries the app state and launch reason. The
+Recent activity page shares it as a text file, with every coordinate removed
+and each muted place's id replaced by a number for that file.
 
 **CarPlay: release, don't coexist.** A record session on a CarPlay route evicts
 the car's audio to the phone speaker, and every re-arm re-evicted it. So while

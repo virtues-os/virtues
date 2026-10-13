@@ -61,7 +61,8 @@ class AudioPlugin: Plugin {
     invoke.resolve(AudioPlugin.fullStatus())
   }
 
-  /// Launch auto-resume: record only if already authorized + left enabled.
+  /// Launch auto-resume: record only if already authorized + left enabled,
+  /// and only in the foreground (see `AudioRecorder.resume`).
   @objc public func resume(_ invoke: Invoke) throws {
     AudioRecorder.shared.resume()
     invoke.resolve(AudioPlugin.fullStatus())
@@ -148,14 +149,6 @@ struct QuietHoursArgs: Decodable {
 @_cdecl("init_plugin_audio")
 func initPlugin() -> Plugin {
   return AudioPlugin()
-}
-
-/// C-ABI so the always-on location plugin can re-arm audio on a background
-/// location update (the piggyback: location keeps the process alive and gives us
-/// a heartbeat to retry the mic). No-op unless enabled + authorized; idempotent.
-@_cdecl("virtues_ensure_recording")
-func virtues_ensure_recording() {
-  AudioRecorder.shared.ensureRecording(reason: "location")
 }
 
 /// C-ABI: the location plugin hands every fix here for the place gate. Any
