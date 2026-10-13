@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { askFor, homeOf, pickAnswer, weekly, type PlaceCandidate, type PlaceQuestion } from "./review";
+import { askFor, distance, homeOf, placeIcon, pickAnswer, weekly, type PlaceCandidate, type PlaceQuestion } from "./review";
 
 const cand = (name: string, meters: number, category = "dining"): PlaceCandidate => ({ name, meters, kind: "cafe", category, lat: 30, lon: -97 });
 const question = (over: Partial<Omit<PlaceQuestion, "naming">> & { naming?: Partial<PlaceQuestion["naming"]> } = {}): PlaceQuestion => ({
@@ -75,10 +75,10 @@ describe("the place questions", () => {
 	it("never asks about a place further out by name: the kinds, and its name only as a suggestion", () => {
 		const q = question({ naming: { hint: cand("Car Dealer", 175, "shopping"), nearby: [cand("Car Dealer", 175, "shopping"), cand("Pine Grill", 200)] } });
 		const a = askFor(q);
-		expect(a.text).toBe("Virtues couldn’t name this spot. What was it?");
+		expect(a.text).toBe("Where were you?");
 		expect(a.yes).toBeUndefined();
 		expect(a.chips).toEqual([]);
-		expect(a.kinds.map((k) => k.label)).toEqual(["Restaurant", "Shop", "Park", "Work", "Someone’s home"]);
+		expect(a.kinds.map((k) => k.label)).toEqual(["Restaurant", "Café", "Bar", "Shop", "Park", "Work", "Someone’s home"]);
 		expect(a.passing).toBe(true);
 	});
 
@@ -103,5 +103,13 @@ describe("the place questions", () => {
 		expect(b.text).toBe("Were you at Blue Door?");
 		const h = cand("Hotel Rowan", 40, "lodging");
 		expect(askFor(question({ overnight: true, rejected_match: "Hotel Rowan", naming: { lodging: h, hotels: [h] } })).text).toBe("Where did you stay that night?");
+	});
+
+	it("marks each place by its kind, else its category, with its distance", () => {
+		expect(placeIcon("cafe", "dining")).toBe("ri:cup-line");
+		expect(placeIcon("restaurant", "dining")).toBe("ri:restaurant-line");
+		expect(placeIcon("car_repair", "other")).toBe("ri:map-pin-line");
+		expect(distance(42.8)).toBe("43 m");
+		expect(distance(1240)).toBe("1.2 km");
 	});
 });

@@ -13,7 +13,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import Pill from '$lib/components/timeline/Pill.svelte';
 	import { listPeople } from '$lib/wiki/api';
-	import { askFor, homeOf, pickAnswer, weekly, type Answer, type Kind, type PlaceQuestion } from '$lib/timeline/review';
+	import { askFor, distance, homeOf, pickAnswer, placeIcon, weekly, type Answer, type Kind, type PlaceQuestion } from '$lib/timeline/review';
 	import type { ReviewState } from '$lib/timeline/reviewState.svelte';
 
 	let {
@@ -34,8 +34,9 @@
 		current?: string;
 	} = $props();
 
-	/** A name to offer, with the kind of place it is when the map knows. */
-	type Offer = { name: string; category: string | null };
+	/** A name to offer, with the kind of place it is and how far from the
+	 *  stay when the map knows. */
+	type Offer = { name: string; category: string | null; kind?: string; meters?: number };
 
 	const ask = $derived(askFor(q, !!current));
 	let picked = $state<string[]>([]);
@@ -58,9 +59,9 @@
 	 *  stay's header just above, so the question doesn't repeat it (the
 	 *  owner's call, 2026-10-13). */
 	const question = $derived.by(() => {
-		if (noneOfThese) return 'What was this spot?';
+		if (noneOfThese) return 'Where were you?';
 		if (now && ask.yes && !ask.role) return 'Is this name right?';
-		if (now && open && !q.overnight) return 'What was this spot?';
+		if (now && open && !q.overnight) return 'Where were you?';
 		return ask.text;
 	});
 	/** The hotels "Which hotel?" offers: the map's, less one set aside. */
@@ -166,54 +167,80 @@
 	/** Yes and No carry a check and a cross. */
 	const iconOf = (a: Answer) =>
 		a.kind === 'home' || a.kind === 'work' ? 'ri:check-line' : a.kind === 'not_home' || a.kind === 'not_work' ? 'ri:close-line' : null;
-	const placeholder = $derived(kind?.then === 'person' ? 'Their name' : kind?.then === 'hotel' ? 'Another hotel' : 'Name this place');
+	const placeholder = $derived(
+		kind?.then === 'person' ? 'Search or type their name' : kind?.then === 'hotel' ? 'Search or type a hotel' : 'Search or type a name',
+	);
 </script>
 
-{#snippet options(items: Offer[], more = false)}
-	<!-- One list: the names to pick, then a row to type one, as Reminders'
-	     new-item row. A name picked from the map's carries its kind. -->
-	<ul class="list">
-		{#if current && !kind}
-			<!-- The answer it has now, as Settings marks the option in use: its
-			     own icon like its neighbours', the name and a check at the end
-			     in the accent. Any other row changes it. -->
-			<li class="current" aria-current="true">
-				<Icon icon="ri:map-pin-line" width="16" />
-				<span class="grow">{current}</span>
-				<Icon icon="ri:check-line" width="18" />
-			</li>
-		{/if}
-		{#each items as o (o.name)}
-			<li>
-				<button type="button" disabled={review.saving} onclick={() => saveName(o.name, o.category)}>
-					<Icon icon={kind?.then === 'person' ? 'ri:user-line' : 'ri:map-pin-line'} width="16" />
-					<span>{o.name}</span>
-				</button>
-			</li>
-		{/each}
-		<li class="entry">
-			<Icon icon="ri:edit-line" width="16" />
-			<input
-				bind:this={input}
-				bind:value={text}
-				{placeholder}
-				aria-label={placeholder}
-				onkeydown={(e) => e.key === 'Enter' && saveName(text)}
-			/>
-			{#if text.trim()}<Pill filled disabled={review.saving} onclick={() => saveName(text)}>Save</Pill>{/if}
-		</li>
-		{#if more}
-			<!-- For when the name isn't known: the kinds of place, one tap
-			     away, with Settings' chevron for a row that leads on. -->
-			<li>
-				<button type="button" onclick={() => (kindsOpen = true)}>
-					<Icon icon="ri:shapes-line" width="16" />
-					<span class="grow">Choose a kind of place</span>
-					<Icon icon="ri:arrow-right-s-line" width="16" />
-				</button>
-			</li>
-		{/if}
-	</ul>
+{#snippet options(items: Offer[], more = false, passing = false)}
+	<!-- Search or type, as Maps' "Add a place": a field above, the places
+	     beneath as suggestions it narrows; a typed name the map doesn't have
+	     is the first row, to save as it is (the owner's call, 2026-10-13: a
+	     typing row inside the list read as one more place). -->
+	<label class="search">
+		<Icon icon="ri:search-line" width="16" />
+		<input
+			bind:this={input}
+			bind:value={text}
+			{placeholder}
+			aria-label={placeholder}
+			onkeydown={(e) => e.key === 'Enter' && saveName(text)}
+		/>
+	</label>
+	{@const typed = text.trim()}
+	{@const newName = typed && !items.some((o) => o.name.toLowerCase() === typed.toLowerCase()) && typed.toLowerCase() !== current?.toLowerCase()}
+	{#if newName || items.length || (current && !kind && !typed) || more || passing}
+		<ul class="list">
+			{#if newName}
+				<li>
+					<button type="button" class="save-row" disabled={review.saving} onclick={() => saveName(typed)}>
+						<Icon icon="ri:add-line" width="16" />
+						<span>Save “{typed}”</span>
+					</button>
+				</li>
+			{/if}
+			{#if current && !kind && !typed}
+				<!-- The answer it has now, as Settings marks the option in use: its
+				     own icon like its neighbours', the name and a check at the end
+				     in the accent. Any other row changes it. -->
+				<li class="current" aria-current="true">
+					<Icon icon="ri:map-pin-line" width="16" />
+					<span class="grow">{current}</span>
+					<Icon icon="ri:check-line" width="18" />
+				</li>
+			{/if}
+			{#each items as o (o.name)}
+				<li>
+					<button type="button" disabled={review.saving} onclick={() => saveName(o.name, o.category)}>
+						<Icon icon={kind?.then === 'person' ? 'ri:user-line' : placeIcon(o.kind, o.category)} width="16" />
+						<span class="grow">{o.name}</span>
+						{#if o.meters !== undefined}<span class="far">{distance(o.meters)}</span>{/if}
+					</button>
+				</li>
+			{/each}
+			{#if more}
+				<!-- For when the name isn't known: the kinds of place, one tap
+				     away, with Settings' chevron for a row that leads on. -->
+				<li>
+					<button type="button" onclick={() => (kindsOpen = true)}>
+						<Icon icon="ri:shapes-line" width="16" />
+						<span class="grow">Choose a kind of place</span>
+						<Icon icon="ri:arrow-right-s-line" width="16" />
+					</button>
+				</li>
+			{/if}
+			{#if passing}
+				<!-- An answer like the rest, so it's a row, not a button in the
+				     card's foot beside Close (the owner's call, 2026-10-13). -->
+				<li>
+					<button type="button" disabled={review.saving} onclick={() => answer({ kind: 'passing' })}>
+						<Icon icon="ri:walk-line" width="16" />
+						<span>Just passing through</span>
+					</button>
+				</li>
+			{/if}
+		</ul>
+	{/if}
 {/snippet}
 
 <div class="ask">
@@ -307,11 +334,11 @@
 			     field, which also narrows the list as it's typed into; the
 			     kinds last, behind one row (the owner's calls, 2026-10-10 and
 			     2026-10-13). -->
-			{@render options(matches(offers, text), true)}
+			{@render options(matches(offers, text), true, ask.passing && !ask.role)}
 		{/if}
-		{#if (ask.passing && !ask.role) || onclose}
+		{#if (ask.passing && !ask.role && !open) || onclose}
 			<div class="foot">
-				{#if ask.passing && !ask.role}<Pill quiet disabled={review.saving} onclick={() => answer({ kind: 'passing' })}>Just Passing Through</Pill>{/if}
+				{#if ask.passing && !ask.role && !open}<Pill quiet disabled={review.saving} onclick={() => answer({ kind: 'passing' })}>Just Passing Through</Pill>{/if}
 				{#if onclose}<span class="end"><Pill quiet onclick={onclose}>Close</Pill></span>{/if}
 			</div>
 		{/if}
@@ -415,20 +442,28 @@
 	.list .current .grow {
 		flex: 1;
 	}
-	/* The last row types a name: the same height and inset as a row, the
-	   field itself borderless, Save only once there's something to save. */
-	.list .entry {
+	/* The field above the list, as the system's search fields: a soft grey
+	   fill and no border, a magnifier at its start, a ring only on focus. */
+	.search {
 		display: flex;
 		align-items: center;
 		gap: 8px;
+		margin-top: 12px;
 		min-height: 40px;
-		padding: 4px 4px 4px 12px;
+		padding: 0 12px;
+		border: 1px solid transparent;
+		border-radius: 12px;
+		background: color-mix(in srgb, var(--color-foreground) 7%, var(--color-surface));
+		cursor: text;
 	}
-	.list .entry > :global(svg) {
+	.search > :global(svg) {
 		flex: none;
 		color: var(--color-foreground-muted);
 	}
-	.entry input {
+	.search:has(input:focus-visible) {
+		border-color: var(--color-border-focus);
+	}
+	.search input {
 		flex: 1;
 		min-width: 0;
 		height: 32px;
@@ -440,11 +475,25 @@
 		font-family: var(--font-sans);
 		font-size: 15px;
 	}
-	.entry input::placeholder {
+	.search input::placeholder {
 		color: var(--color-foreground-muted);
 	}
-	.list:has(.entry input:focus-visible) {
-		border-color: var(--color-border-focus);
+	.search + .list {
+		margin-top: 8px;
+	}
+	/* How far each place is, at the row's end, as Maps lists nearby places. */
+	.list .far {
+		flex: none;
+		font-size: 13px;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground-muted);
+	}
+	/* A typed name to save as it is: the accent says it's new. */
+	.list .save-row {
+		color: var(--color-primary);
+	}
+	.list .save-row :global(svg) {
+		color: var(--color-primary);
 	}
 	/* Apple's settings list: a checkmark on each row picked. */
 	.checklist {

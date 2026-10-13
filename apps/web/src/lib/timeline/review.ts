@@ -86,6 +86,46 @@ export interface ConfirmedPlace {
 	nights_a_week: number;
 }
 
+/** A place's icon in the question's list, as Maps marks its places: by
+ *  its kind where the map's kind is plain to see, else by its category. */
+const KIND_ICON: Record<string, string> = {
+	cafe: "ri:cup-line",
+	bar: "ri:goblet-line",
+	pub: "ri:goblet-line",
+	biergarten: "ri:goblet-line",
+	nightclub: "ri:goblet-line",
+	bakery: "ri:cake-3-line",
+	ice_cream: "ri:cake-line",
+	books: "ri:book-open-line",
+	gallery: "ri:gallery-line",
+	art: "ri:gallery-line",
+	museum: "ri:gallery-line",
+	aerodrome: "ri:plane-line",
+	airport: "ri:plane-line",
+};
+const CATEGORY_ICON: Record<string, string> = {
+	dining: "ri:restaurant-line",
+	shopping: "ri:shopping-bag-line",
+	grocery: "ri:shopping-cart-line",
+	lodging: "ri:hotel-bed-line",
+	office: "ri:briefcase-line",
+	outdoors: "ri:tree-line",
+	fitness: "ri:run-line",
+	entertainment: "ri:film-line",
+	health: "ri:hospital-line",
+	education: "ri:school-line",
+	worship: "ri:building-2-line",
+	transit: "ri:bus-line",
+};
+export function placeIcon(kind: string | undefined, category: string | null): string {
+	return (kind && KIND_ICON[kind]) || (category && CATEGORY_ICON[category]) || "ri:map-pin-line";
+}
+
+/** How far a place is from where the person stayed: "40 m", "1.2 km". */
+export function distance(m: number): string {
+	return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
+}
+
 /** A named place's question, asked again to change its name: Home and Work
  *  as "Is this home?", any other as the place it was. */
 export function asQuestion(c: ConfirmedPlace): PlaceQuestion {
@@ -197,6 +237,8 @@ const SOMEONES_HOME: Kind = { label: "Someone’s home", category: null, icon: "
  *  skips naming it. Work files the place under the person's Work. */
 const DAY_KINDS: Kind[] = [
 	{ label: "Restaurant", category: "dining", icon: "ri:restaurant-line", then: "name" },
+	{ label: "Café", category: "dining", icon: "ri:cup-line", then: "name" },
+	{ label: "Bar", category: "dining", icon: "ri:goblet-line", then: "name" },
 	{ label: "Shop", category: "shopping", icon: "ri:shopping-bag-line", then: "name" },
 	{ label: "Park", category: "outdoors", icon: "ri:tree-line", then: "name" },
 	{ label: "Work", category: "office", icon: "ri:briefcase-line", then: "work" },
@@ -300,8 +342,8 @@ export function askFor(q: PlaceQuestion, open = false): Ask {
 	const around = n.nearby.filter(ok).slice(0, 5);
 	return {
 		...base,
-		text: "Virtues couldn’t name this spot. What was it?",
-		line: "What was this spot?",
+		text: "Where were you?",
+		line: "Where were you?",
 		kinds: DAY_KINDS,
 		shown: around,
 		reachM: around.length ? Math.max(...around.map((c) => c.meters)) : 0,
