@@ -49,8 +49,10 @@ const SPLIT_STAY_GAP_MINUTES: i64 = 10;
 const MAX_QUIET_GAP_MINUTES: i64 = 45;
 /// Stamped into every visit's metadata. Visits written by an older stay
 /// detector carry a lower number (or none), and `rebuild_visits` recomputes
-/// them all from the stored fixes. Bump it whenever the detector changes.
-const TIMELINE_VERSION: i64 = 4;
+/// them all from the stored fixes. Bump it whenever the detector changes, or
+/// when stored visits need a repair the rebuild makes (5: visits filed under a
+/// place they lie outside move to the place that contains them).
+const TIMELINE_VERSION: i64 = 5;
 const MAX_HORIZONTAL_ACCURACY: f64 = 100.0; // Filter low-quality points
 const DEFAULT_PLACE_RADIUS_METERS: f64 = 100.0; // Default radius for new places
 
@@ -129,6 +131,8 @@ async fn resolve_location_visits(db: &Database, window: TimeWindow) -> Result<us
             }
         }
     }
+
+    move_to_containing_place(db).await?;
 
     tracing::debug!(
         visits_written = records_written,
@@ -1297,6 +1301,7 @@ pub async fn rebuild_visits(db: &Database) -> Result<usize> {
 
     let unlinked = keep_one_place_per_visit(db).await?;
     let linked = link_unplaced_visits(db).await?;
+    let moved = move_to_containing_place(db).await?;
     let emptied = delete_empty_places(db).await?;
     tracing::info!(
         before,
@@ -1304,10 +1309,49 @@ pub async fn rebuild_visits(db: &Database) -> Result<usize> {
         kept = kept.len(),
         unlinked,
         linked,
+        moved,
         emptied,
         "rebuilt visits from stored fixes"
     );
     Ok(stays.len())
+}
+
+/// Move a visit linked to a place it lies outside to the nearest place that
+/// does contain it.
+///
+/// A kept visit keeps the place it was first resolved to, and the rebuild
+/// keeps rows by overlap, so a row that now holds a different stay could
+/// point at a place hundreds of metres from it: a day at the office filed
+/// under the place next door, asked about as unknown. The link stands only
+/// while no other place contains the visit, so a visit "Same as…" moved
+/// onto a place it lies outside of stays merged.
+async fn move_to_containing_place(db: &Database) -> Result<u64> {
+    let moved = sqlx::query(
+        r#"
+        UPDATE wiki_refs r SET entity_id = m.best
+        FROM (
+            SELECT r2.id AS rid,
+                   (SELECT p.id FROM wiki_places p
+                     WHERE p.id <> r2.entity_id AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
+                       AND 111320 * sqrt((p.latitude - v.latitude) ^ 2
+                             + ((p.longitude - v.longitude) * cos(radians(v.latitude))) ^ 2) <= p.radius_m
+                     ORDER BY (p.latitude - v.latitude) ^ 2
+                             + ((p.longitude - v.longitude) * cos(radians(v.latitude))) ^ 2
+                     LIMIT 1) AS best
+            FROM wiki_refs r2
+            JOIN data_location_visit v ON v.id = r2.source_id
+            JOIN wiki_places l ON l.id = r2.entity_id
+            WHERE r2.source_table = 'data_location_visit' AND r2.entity_type = 'place'
+              AND 111320 * sqrt((l.latitude - v.latitude) ^ 2
+                    + ((l.longitude - v.longitude) * cos(radians(v.latitude))) ^ 2) > l.radius_m
+        ) m
+        WHERE r.id = m.rid AND m.best IS NOT NULL
+        "#,
+    )
+    .execute(db.pool())
+    .await?
+    .rows_affected();
+    Ok(moved)
 }
 
 /// Leave each visit linked to one place: the nearest of those it points at.
@@ -1790,6 +1834,35 @@ mod tests {
         let id2 = generate_visit_id(lat, lon, time);
 
         assert_eq!(id1, id2);
+    }
+
+    /// A visit linked to a place it lies outside moves to the place that
+    /// contains it; with none, the link stands (a merge).
+    #[sqlx::test]
+    async fn a_visit_moves_to_the_place_that_contains_it(pool: sqlx::PgPool) {
+        for q in [
+            // Work at the origin; the place next door 116 m east; a merged place 3 km off.
+            "INSERT INTO wiki_places (id, name, latitude, longitude, radius_m) VALUES                ('place_work', 'Work', 30.0, -97.0, 100),                ('place_door', 'Location 30.0000, -96.9988', 30.0, -96.9988, 100),                ('place_kept', 'Lake House', 30.03, -97.0, 100)",
+            // A day at work, 9 m from it, filed next door; a stay far from any place, merged.
+            "INSERT INTO data_location_visit (id, latitude, longitude, started_at, ended_at, source_stream_id, source_table, source_provider) VALUES                ('v_work', 30.0, -96.99991, '2026-01-05 18:00Z', '2026-01-05 23:00Z', 's1', 'location_point', 'ios'),                ('v_far', 30.06, -97.0, '2026-01-06 18:00Z', '2026-01-06 20:00Z', 's2', 'location_point', 'ios')",
+            "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id) VALUES                ('r_work', 'place', 'place_door', 'data_location_visit', 'v_work'),                ('r_far', 'place', 'place_kept', 'data_location_visit', 'v_far')",
+        ] {
+            sqlx::query(q).execute(&pool).await.unwrap();
+        }
+        let db = Database::from_pool(pool.clone());
+        assert_eq!(move_to_containing_place(&db).await.unwrap(), 1);
+        let place = |v: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, String>("SELECT entity_id FROM wiki_refs WHERE source_id = $1")
+                    .bind(v)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+            }
+        };
+        assert_eq!(place("v_work").await, "place_work", "the day at work is filed under Work");
+        assert_eq!(place("v_far").await, "place_kept", "with no place containing it, a merged visit stays");
     }
 
     /// The rebuild deletes a place only when nothing points at it and the
