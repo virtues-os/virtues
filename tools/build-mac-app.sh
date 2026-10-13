@@ -3,7 +3,7 @@
 # build-mac-app.sh — build the one-DMG macOS app: Virtues.app bundling both
 # helper sidecars (virtues-client, virtues-collector), signed + notarized.
 #
-# Produces:  <cargo target dir>/release/bundle/dmg/Virtues_*.dmg
+# Produces:  <cargo target dir>/<triple>/release/bundle/dmg/Virtues_*.dmg
 #            (the target dir is whatever `.cargo/config.toml` says — printed at
 #            the end of the run; it is NOT ./target in this repo)
 #
@@ -105,11 +105,14 @@ else
 WARN
 fi
 
-( cd "$REPO_ROOT/apps/web" && "$TAURI_BIN" build )
+# Always an explicit --target, even for the host. `tauri build` renames the
+# app binary to `mainBinaryName` (`virtues`) inside the target dir; without a
+# triple that is `release/virtues`, the core server's own output path.
+( cd "$REPO_ROOT/apps/web" && "$TAURI_BIN" build --target "$TARGET" )
 
 echo ""
 echo "✓ done. DMG:"
-BUNDLE_DIR="$(target_dir_for "$TAURI_DIR/Cargo.toml")/release/bundle"
+BUNDLE_DIR="$(target_dir_for "$TAURI_DIR/Cargo.toml")/$TARGET/release/bundle"
 ls -1 "$BUNDLE_DIR/dmg/"*.dmg 2>/dev/null || \
   echo "  (no dmg — check the tauri build output above)"
 echo "  app: $BUNDLE_DIR/macos/Virtues.app"

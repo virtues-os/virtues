@@ -18,6 +18,8 @@
 //!   endpoint may be llama-server + EmbeddingGemma, the Dragon NPU daemon
 //!   serving gte-small, or any BYO OpenAI-compatible server — one path for all)
 //! - `indexer.rs`  - Background job that embeds new records
+//! - `next_index.rs` - Moves the index to another model in the background, so
+//!   search keeps working until the new vectors are complete
 //! - `query.rs`    - Hybrid retrieval: dense ANN ⊕ BM25, z-fused with a
 //!   query-adaptive weight, RRF across phrasings, then a conditional rerank
 //! - `reranker.rs` - inference-contract client, :18182 (`/v1/rerank`; the
@@ -30,6 +32,7 @@
 pub mod bm25;
 pub mod embedder;
 pub mod indexer;
+pub mod next_index;
 pub mod query;
 pub mod reranker;
 pub mod wiki_first;

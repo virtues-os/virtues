@@ -28,17 +28,18 @@ a miserable one is almost entirely memory and disk, in that order.
 ## Memory
 
 Eight gigabytes is the floor, and here is where it goes. PostgreSQL and the
-Virtues server itself want a couple of gigabytes between them. The two model
-servers - the embedder and the reranker, if you run them on this machine -
-sit at roughly a gigabyte of resident memory *each* with the flags Virtues
-starts them under: one request slot, no prompt cache, a 2048-token context.
-Started with a model server's own defaults they would take about two and a
-half gigabytes each, which is the difference between fitting and swapping on
-an 8 GB board.
+Virtues server itself want a couple of gigabytes between them. The embedding
+model server, when it runs on this machine, sits at roughly a gigabyte of
+resident memory with the flags Virtues starts it under: one request slot, no
+prompt cache, a 2048-token context. Started with a model server's own
+defaults it would take about two and a half gigabytes, which is the
+difference between fitting and swapping on an 8 GB board. While search moves
+to a new model, the old and new servers run side by side for a while, so
+plan for a second gigabyte then.
 
-If you run the models on a different machine - the recommended arrangement,
-and the subject of [Setting up inference](/docs/inference) - then 8 GB here is
-roomy rather than tight.
+If you run the model on a different machine - see
+[Setting up inference](/docs/inference) - then 8 GB here is roomy rather than
+tight.
 
 ## Disk
 
@@ -83,22 +84,22 @@ a model provider, through our gateway by default or through an endpoint you
 choose. So there is no VRAM budget to plan for it.
 
 **What runs locally is retrieval:** one embedding model, which turns your
-record into vectors, and one reranker, which re-scores search results for
-precision. Both are small, and they want *opposite* hardware:
+record into vectors. It runs on the CPU by default, and for everyday use that
+is enough. A GPU or NPU can make every search and the first index of your
+history faster, so if the machine has one, consider setting it up after
+installing:
+[Faster search on a GPU or NPU](/docs/setup/accelerators).
 
-- **Embedding is CPU-friendly.** The model Virtues ships has fp32
-  activations, so fp16 GPU paths fall back to fp32 and come out slower than
-  the CPU. The unit Virtues installs runs the embedder with GPU offload
-  explicitly disabled, on purpose.
-- **Reranking is the half that gains from a GPU.** The installed unit offloads
-  it fully, and on hardware with a usable GPU backend it is markedly faster
-  there than on CPU.
+- **The CPU engine keeps GPU offload off, on purpose.** The model's math
+  overflows 16-bit arithmetic, which some GPU paths use. A GPU server you set
+  up yourself gets checked when you point Virtues at it.
+- **Search doesn't use a reranker by default.** The small rerankers we tested
+  ranked results worse than the embedding model they followed, so there is no
+  second model to plan hardware for.
 
-**An NPU is only useful if its vendor ships a server.** llama.cpp supports
-essentially no NPUs today - its Hexagon backend is a newer-generation,
-Android-only affair - so neural accelerators reach Virtues by speaking the
-two HTTP contracts from behind a vendor's own runtime, which is exactly what
-bring-your-own inference is for.
+**Most NPUs need their vendor's runtime.** They reach Virtues through any
+server that offers the embedding contract, which is what bring-your-own
+inference is for. On a Radxa Dragon, Virtues runs search on the NPU itself.
 
 **The number to care about is embedding latency.** The installer measures the
 p50 of your endpoint and grades it: under 100 ms and searches feel instant, up
@@ -114,9 +115,8 @@ rule; a paired device reaches the server by key, over paths described in
 reach `github.com` for the release and `apt.postgresql.org` for PostgreSQL,
 and it probes both before touching anything.
 
-Locally it binds four ports: `8000` for the server, `5432` for PostgreSQL,
-and `18181`/`18182` for the embedding and rerank endpoints when those run on
-the same machine. The installer warns if something already holds them.
+Locally it binds three ports: `8000` for the server, `5432` for PostgreSQL,
+and `18181` for the embedding endpoint when that runs on the same machine. The installer warns if something already holds them.
 
 ## What we actually test
 

@@ -31,20 +31,13 @@ export interface EditAllowListItem {
 	title: string;
 	/** Optional icon identifier */
 	icon?: string;
-	/** For pages: the Yjs document for real-time sync */
+	/**
+	 * For a markdown page: its Yjs document, so each chat turn carries the
+	 * text as the editor holds it. A block page has none: the server reads
+	 * its tree for the model itself, and a markdown binding on one would be
+	 * refused by the server anyway.
+	 */
 	yjsDoc?: YjsDocument;
-}
-
-/**
- * Context sent to the backend for a single editable resource
- * Used in chat API requests
- */
-export interface EditableResourceContext {
-	type: EditableResourceType;
-	id: string;
-	title?: string;
-	/** Current content from Yjs document (for pages) */
-	content?: string;
 }
 
 /**
@@ -246,7 +239,8 @@ function createEditAllowListStore() {
 		},
 
 		/**
-		 * Add a page to the allow list (convenience method)
+		 * Add a page to the allow list (convenience method). `yjsDoc` only for
+		 * a markdown page.
 		 */
 		async addPage(pageId: string, title: string, yjsDoc?: YjsDocument) {
 			await this.add({
@@ -307,27 +301,6 @@ function createEditAllowListStore() {
 		},
 
 		/**
-		 * Get context for all allowed resources (for API requests)
-		 * Includes current content from Yjs documents where available
-		 */
-		getContextForApi(): EditableResourceContext[] {
-			return state.items.map((item) => {
-				const context: EditableResourceContext = {
-					type: item.type,
-					id: item.id,
-					title: item.title
-				};
-
-				// For pages with Yjs, include current content
-				if (item.type === 'page' && item.yjsDoc) {
-					context.content = item.yjsDoc.ytext.toString();
-				}
-
-				return context;
-			});
-		},
-
-		/**
 		 * Clear all resources from the allow list
 		 * Does NOT sync with backend (use for local cleanup only)
 		 */
@@ -341,21 +314,6 @@ function createEditAllowListStore() {
 			state.items = [];
 			state.chatId = null;
 			state.chatExistsInBackend = false;
-		},
-
-		/**
-		 * Update the Yjs document for a page
-		 * Used when a page is opened/synced
-		 */
-		updateYjsDoc(pageId: string, yjsDoc: YjsDocument) {
-			const item = state.items.find((i) => i.type === 'page' && i.id === pageId);
-			if (item) {
-				// Clean up old doc if different
-				if (item.yjsDoc && item.yjsDoc !== yjsDoc) {
-					item.yjsDoc.destroy();
-				}
-				item.yjsDoc = yjsDoc;
-			}
 		}
 	};
 }

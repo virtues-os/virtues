@@ -12,7 +12,9 @@
 	(DayEvidence): a kicker line, the body, one row of actions.
 
 	It keeps the quiet ref look and the `ref-link` class, so the veil hides
-	the name like any other.
+	the name like any other. Their picture (initials when there is none)
+	sits beside the name in the card, and only where the name does: with
+	the veil on, the card shows neither.
 -->
 <script lang="ts">
 	import { portal } from "$lib/actions/portal";
@@ -23,6 +25,7 @@
 	import { parseDateSlug } from "$lib/utils/dateUtils";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { veil } from "$lib/stores/veil.svelte";
+	import PersonPicture from "./PersonPicture.svelte";
 
 	interface Props {
 		name: string;
@@ -164,8 +167,13 @@
 				{#if veil.hiding}
 					<p class="quiet">Veiled. Hold V to read.</p>
 				{:else}
-					<p class="name">{name}</p>
-					{#if gloss?.relationship}<p class="rel">{gloss.relationship}</p>{/if}
+					<div class="who">
+						<PersonPicture {name} picture={gloss?.picture} size={40} />
+						<div class="who-text">
+							<p class="name">{name}</p>
+							{#if gloss?.relationship}<p class="rel">{gloss.relationship}</p>{/if}
+						</div>
+					</div>
 					{#if missing}
 						<p class="quiet">{name} isn't in your wiki anymore.</p>
 					{:else if failed}
@@ -243,6 +251,16 @@
 	.kick .kind {
 		font-weight: 500;
 		color: var(--color-foreground-muted);
+	}
+
+	.who {
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+	}
+
+	.who-text {
+		min-width: 0;
 	}
 
 	.name {

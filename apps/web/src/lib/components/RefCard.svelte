@@ -183,7 +183,7 @@
 		width: 100%;
 		border-radius: 6px;
 		overflow: hidden;
-		background: var(--color-surface-sunken);
+		background: var(--color-surface-elevated);
 	}
 	.ref-figure-media img {
 		display: block;
@@ -228,7 +228,7 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		background: var(--color-surface-sunken);
+		background: var(--color-surface-elevated);
 		color: var(--color-foreground-muted);
 		font-family: var(--font-sans);
 		font-size: 0.9375rem;
@@ -240,7 +240,7 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		background: var(--color-surface-sunken);
+		background: var(--color-surface-elevated);
 		color: var(--color-foreground-subtle);
 	}
 	.ref-line-text {

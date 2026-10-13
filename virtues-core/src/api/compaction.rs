@@ -469,6 +469,16 @@ pub async fn compact_chat(
     })
 }
 
+/// Whether to ask the provider to cache the system prefix. ON unless
+/// `VIRTUES_PROMPT_CACHE=0` — a kill switch that needs no rebuild, not an
+/// opt-in. See the call site for what was measured before it was turned on.
+fn prompt_cache_enabled() -> bool {
+    !matches!(
+        std::env::var("VIRTUES_PROMPT_CACHE").as_deref(),
+        Ok("0") | Ok("false") | Ok("FALSE")
+    )
+}
+
 /// Build the context to send to the LLM, using checkpoint-based or legacy summary approach
 ///
 /// This function now supports checkpoint messages:
@@ -482,22 +492,20 @@ pub async fn compact_chat(
 /// Returns a vector of messages in OpenAI format ready for the API.
 /// Note: Summary is combined into the system prompt to avoid multiple system messages,
 /// which most LLM providers don't handle well.
-/// Whether to ask the provider to cache the system prefix. ON unless
-/// `VIRTUES_PROMPT_CACHE=0` — a kill switch that needs no rebuild, not an
-/// opt-in. See the call site for what was measured before it was turned on.
-fn prompt_cache_enabled() -> bool {
-    !matches!(
-        std::env::var("VIRTUES_PROMPT_CACHE").as_deref(),
-        Ok("0") | Ok("false") | Ok("FALSE")
-    )
-}
-
+///
+/// `stamp_zone` opens each user message with the time it was sent, in that
+/// IANA zone; `None` leaves messages unstamped (callers with no clock of
+/// their own to replace).
+///
+/// Every message renders from its own row alone, so a turn reads the same on
+/// every later request and the previous request stays a prefix of the next.
 pub fn build_context_for_llm(
     messages: &[ChatMessage],
     summary: Option<&str>,
     summary_up_to_index: usize,
     system_prompt: Option<&str>,
     system_tail: Option<&str>,
+    stamp_zone: Option<&str>,
 ) -> Vec<serde_json::Value> {
     let mut context = Vec::new();
 
@@ -529,14 +537,10 @@ pub fn build_context_for_llm(
         system_content.push_str("\n</compacted_conversation>");
     }
 
-    // The per-turn tail goes AFTER the breakpoint, so it can change freely
-    // without invalidating the prefix. Keeping the textual order the model
-    // sees exactly as it was — stable blocks, then tail, then summary — since
-    // block order is a deliberate product decision (rules last, for adherence)
-    // and a caching change has no business reordering the prompt. The cost is
-    // that a compaction summary sits outside the cached block and is re-sent
-    // whole each turn; moving it would change what the model reads, so that is
-    // a decision for whoever owns prompt order, not a side effect of this.
+    // The per-turn tail goes AFTER the breakpoint, so on a provider that caches
+    // at explicit markers it can change without invalidating the prefix. A
+    // provider that caches whole requests (grok) still loses everything after
+    // a tail that changed, so the tail carries only what really is per turn.
     let tail = system_tail.unwrap_or("");
 
     // Only add system message if there's content
@@ -587,19 +591,9 @@ pub fn build_context_for_llm(
     // one moment it had to shrink, since compaction only runs at 85% of the
     // window.
     let recent_messages = &messages[effective_start_index.min(messages.len())..];
+    let stamp_zone = stamp_zone.map(|name| name.parse::<chrono_tz::Tz>().ok());
 
-    // The last reply is the one a follow-up usually asks about, so its tool
-    // results replay generously. Every earlier turn's replay small: that turn
-    // already wrote what it found into its answer. See
-    // `OLDER_REPLAYED_TOOL_BYTES`.
-    let last_reply = recent_messages.iter().rposition(|m| m.role == "assistant");
-
-    for (index, msg) in recent_messages.iter().enumerate() {
-        let replay_cap = if Some(index) == last_reply {
-            MAX_REPLAYED_TOOL_BYTES
-        } else {
-            OLDER_REPLAYED_TOOL_BYTES
-        };
+    for msg in recent_messages {
         // Skip checkpoint messages - they're metadata, not conversation
         if msg.role == "checkpoint" {
             continue;
@@ -676,7 +670,7 @@ pub fn build_context_for_llm(
                             (None, Some(res)) => res.to_string(),
                             (None, None) => TOOL_UNFINISHED.to_string(),
                         };
-                        let content = clip_replayed_output(content, replay_cap);
+                        let content = clip_replayed_output(content, REPLAYED_TOOL_BYTES);
                         tool_results.push(serde_json::json!({
                             "role": "tool",
                             "tool_call_id": tool_call_id,
@@ -780,6 +774,22 @@ pub fn build_context_for_llm(
         } else {
             serde_json::Value::Array(parts)
         };
+        // What the model reads as "now" is the newest message's stamp: a clock
+        // in the system prompt changed its bytes every quarter hour and cost
+        // the whole cached prefix. Derived from the stored row, so a message
+        // reads the same on every later request.
+        let content = match (stamp_zone, msg.role.as_str(), content) {
+            (Some(zone), "user", serde_json::Value::Array(mut blocks)) => {
+                let stamp = sent_at_line(msg.timestamp.into_inner(), zone);
+                blocks.insert(0, serde_json::json!({ "type": "text", "text": stamp }));
+                serde_json::Value::Array(blocks)
+            }
+            (Some(zone), "user", serde_json::Value::String(text)) => {
+                let stamp = sent_at_line(msg.timestamp.into_inner(), zone);
+                serde_json::Value::String(format!("{stamp}\n{text}"))
+            }
+            (_, _, content) => content,
+        };
 
         let mut message = serde_json::json!({
             "role": msg.role,
@@ -802,24 +812,27 @@ pub fn build_context_for_llm(
 ///
 /// The turn that called the tool sees all of it — that is what it asked for.
 /// Every turn after replays it, though, and measured on a real box the median
-/// tool result is 15 KB and the ninetieth percentile 94 KB, so three of them
-/// compound past any window. The turn that needed the detail had it; a later
-/// turn needs to know what was found, and can call again.
-const MAX_REPLAYED_TOOL_BYTES: usize = 32 * 1024;
+/// tool result is 15 KB and the ninetieth percentile 94 KB. On 2026-09-24 one
+/// research turn ran 14 tool calls returning 170 KB; at a 32 KiB clip every
+/// later call re-sent about 48k tokens of it, roughly half that chat's $2.71.
+/// Two KiB keeps enough to recognize the result; the answer written from it
+/// carries the rest, and the note says how to get the rows back.
+///
+/// One cap for every turn, wherever it sits. A replay that depends on the
+/// turn's position rewrites the turn when a newer one arrives, and a provider
+/// that caches whole requests then serves nothing past it: grok-4.7 reads a
+/// cached prefix only where an earlier request ENDED (measured 2026-10-09,
+/// a one-line change anywhere before that point read 1,152 of 9,535 tokens).
+/// With the last reply replayed larger than the rest, every turn rewrote the
+/// one before it.
+const REPLAYED_TOOL_BYTES: usize = 2 * 1024;
 
-/// How much of one tool's output replays once a newer reply exists.
-///
-/// Measured on a real box on 2026-09-24: one research turn ran 14 tool calls
-/// returning 170 KB. At the 32 KiB clip every later call re-sent about 48k
-/// tokens of it. That chat's next 20 or so model calls cost roughly half its
-/// $2.71, all to repeat rows the model had already turned into prose. Two KiB
-/// keeps enough to recognize the result; the answer written from it carries
-/// the rest, and the note says how to get the rows back.
-///
-/// Deterministic on purpose. The clipped form is identical on every later
-/// request, so a provider's prefix cache still matches. The one cache miss is
-/// the turn where a result steps down from the last reply's cap to this one.
-const OLDER_REPLAYED_TOOL_BYTES: usize = 2 * 1024;
+/// The line a user message opens with on replay: when it was sent, in the
+/// owner's zone (UTC when the zone is unknown or does not parse).
+fn sent_at_line(at: chrono::DateTime<chrono::Utc>, zone: Option<chrono_tz::Tz>) -> String {
+    let when = crate::api::circumstances::clock_phrase(at, zone);
+    format!("[Sent {when}]")
+}
 
 fn clip_replayed_output(content: String, max: usize) -> String {
     if content.len() <= max {
@@ -978,7 +991,7 @@ mod tests {
     #[test]
     fn the_per_turn_tail_travels_as_its_own_system_message() {
         let context =
-            build_context_for_llm(&[], None, 0, Some("STABLE-PREFIX"), Some("VOLATILE-TAIL"));
+            build_context_for_llm(&[], None, 0, Some("STABLE-PREFIX"), Some("VOLATILE-TAIL"), None);
         assert_eq!(context.len(), 2, "the tail is a separate message, not a second block");
 
         let parts = context[0]["content"]
@@ -1079,7 +1092,7 @@ mod tests {
             },
         ];
 
-        let context = build_context_for_llm(&messages, None, 0, Some("You are helpful."), None);
+        let context = build_context_for_llm(&messages, None, 0, Some("You are helpful."), None, None);
 
         assert_eq!(context.len(), 3); // system + 2 messages
         assert_eq!(context[0]["role"], "system");
@@ -1135,7 +1148,7 @@ mod tests {
             },
         ];
 
-        let context = build_context_for_llm(&messages, None, 0, None, None);
+        let context = build_context_for_llm(&messages, None, 0, None, None, None);
 
         assert_eq!(context.len(), 3, "the all-empty message is omitted");
         let first = context[0]["content"].as_array().expect("parts array");
@@ -1191,7 +1204,7 @@ mod tests {
             ..base
         }];
 
-        let context = build_context_for_llm(&messages, None, 0, None, None);
+        let context = build_context_for_llm(&messages, None, 0, None, None, None);
 
         assert_eq!(context.len(), 3, "the turn, then one result per call");
         let turn = &context[0];
@@ -1220,10 +1233,11 @@ mod tests {
         assert_eq!(context[2]["tool_call_id"], "call-1");
     }
 
-    /// The last reply's tool results replay at the generous cap; every earlier
-    /// reply's replay small, and the same way on every request.
+    /// A turn replays the same bytes whatever came after it, so the next
+    /// turn's request starts with the whole of this one's — the only shape a
+    /// provider that caches whole requests can serve from cache.
     #[test]
-    fn older_tool_results_replay_small_and_the_last_reply_keeps_its_own() {
+    fn a_turn_replays_the_same_once_a_newer_turn_arrives() {
         fn turn(role: &str, text: &str, call: Option<(&str, String)>) -> ChatMessage {
             let mut parts = vec![UIPart::Text { text: text.to_string() }];
             if let Some((id, output)) = call {
@@ -1253,31 +1267,64 @@ mod tests {
             }
         }
         let big = "r".repeat(20 * 1024);
-        let messages = vec![
+        let mut messages = vec![
             turn("user", "look it up", None),
             turn("assistant", "Found it.", Some(("old", big.clone()))),
             turn("user", "and the other one", None),
-            turn("assistant", "Found that too.", Some(("new", big.clone()))),
-            turn("user", "thanks", None),
         ];
+        let before = build_context_for_llm(&messages, None, 0, Some("SYS"), None, Some("UTC"));
 
-        let context = build_context_for_llm(&messages, None, 0, None, None);
-        let result = |id: &str| {
-            context
+        messages.push(turn("assistant", "Found that too.", Some(("new", big.clone()))));
+        messages.push(turn("user", "thanks", None));
+        let after = build_context_for_llm(&messages, None, 0, Some("SYS"), None, Some("UTC"));
+
+        assert_eq!(
+            before[..],
+            after[..before.len()],
+            "the earlier request is a prefix of the later one, byte for byte"
+        );
+        for id in ["old", "new"] {
+            let replayed = after
                 .iter()
                 .find(|m| m["tool_call_id"] == id)
                 .and_then(|m| m["content"].as_str())
-                .expect("the call is answered")
-                .to_string()
+                .expect("the call is answered");
+            assert!(replayed.len() < 3 * 1024, "{id} replays ~2 KiB, got {}", replayed.len());
+            assert!(replayed.contains("call the tool again"), "and says how to get the rest");
+        }
+    }
+
+    /// Each user message opens with when it was sent, from its own row: the
+    /// model's "now" without a clock in the system prompt.
+    #[test]
+    fn user_messages_carry_their_send_time_in_the_owners_zone() {
+        let message = |role: &str, at: &str| ChatMessage {
+            id: None,
+            role: role.to_string(),
+            content: "hello".to_string(),
+            timestamp: Timestamp::parse(at).unwrap(),
+            model: None,
+            provider: None,
+            agent_id: None,
+            tool_calls: None,
+            reasoning: None,
+            intent: None,
+            subject: None,
+            reasoning_details: None,
+            parts: Some(vec![UIPart::Text { text: "hello".to_string() }]),
         };
+        let messages = vec![
+            message("user", "2026-10-09T23:52:00Z"),
+            message("assistant", "2026-10-09T23:53:00Z"),
+        ];
 
-        let old = result("old");
-        assert!(old.len() < 3 * 1024, "an earlier turn replays ~2 KiB, got {}", old.len());
-        assert!(old.contains("call the tool again"), "and says how to get the rest");
-        assert_eq!(result("new"), big, "the last reply's result is under its cap, whole");
+        let context = build_context_for_llm(&messages, None, 0, None, None, Some("America/Chicago"));
+        assert_eq!(context[0]["content"][0]["text"], "[Sent Friday, October 9, 2026 at 6:52 PM CDT]");
+        assert_eq!(context[0]["content"][1]["text"], "hello");
+        assert_eq!(context[1]["content"][0]["text"], "hello", "only their messages are stamped");
 
-        let again = build_context_for_llm(&messages, None, 0, None, None);
-        assert_eq!(context, again, "byte-identical per request, so a prefix cache matches");
+        let unstamped = build_context_for_llm(&messages, None, 0, None, None, None);
+        assert_eq!(unstamped[0]["content"][0]["text"], "hello");
     }
 
     /// A turn that said nothing and only called something keeps its calls.
@@ -1306,7 +1353,7 @@ mod tests {
             }]),
         }];
 
-        let context = build_context_for_llm(&messages, None, 0, None, None);
+        let context = build_context_for_llm(&messages, None, 0, None, None, None);
 
         assert_eq!(context.len(), 2);
         assert!(context[0]["content"].is_null(), "no text, but not dropped");
@@ -1346,7 +1393,7 @@ mod tests {
         }]);
         msgs.push(checkpoint);
 
-        let context = build_context_for_llm(&msgs, None, 12, Some("SYS"), None);
+        let context = build_context_for_llm(&msgs, None, 12, Some("SYS"), None, None);
 
         assert_eq!(context[0]["role"], "system");
         assert!(system_text(&context[0]).contains("SUMMARY-OF-m0-TO-m11"));
@@ -1389,7 +1436,7 @@ mod tests {
             },
         ];
 
-        let context = build_context_for_llm(&msgs, None, 1, Some("SYS"), None);
+        let context = build_context_for_llm(&msgs, None, 1, Some("SYS"), None, None);
 
         assert_eq!(context.len(), 1, "the system message and nothing else");
         assert!(system_text(&context[0]).contains("ALL-OF-IT"));
@@ -1451,6 +1498,7 @@ mod tests {
             Some("User asked about something."),
             2,
             Some("You are helpful."),
+            None,
             None,
         );
 

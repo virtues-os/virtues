@@ -149,28 +149,81 @@ pub enum PageCmd {
         out: OutputArgs,
     },
 
-    /// Replace text in a page, through the live document, so an open editor
-    /// sees the change.
+    /// Edit a page through the live document, so an open editor sees the
+    /// change.
+    ///
+    /// A markdown page takes `--find` and `--replace`. A block page takes
+    /// ops on the block ids `page get --blocks` prints, with the base it
+    /// prints: `--ops` for a JSON array of {op, id, html}, or one op with
+    /// `--op`, `--block` and `--html`. An append needs no base. All or
+    /// none: a refused edit writes nothing, says why, and exits 1.
+    #[command(group(clap::ArgGroup::new("change").required(true).args(["find", "ops", "op"])))]
     Edit {
         /// The page id.
         id: String,
-        /// The exact text to find.
-        #[arg(long)]
-        find: String,
+        /// A markdown page: the exact text to find, as the markdown reads.
+        #[arg(long, requires = "replace")]
+        find: Option<String>,
         /// What to put in its place, or `-` for stdin.
+        #[arg(long, requires = "find")]
+        replace: Option<String>,
+        /// A block page: the base from `page get --blocks` or the last edit.
         #[arg(long)]
-        replace: String,
+        base: Option<String>,
+        /// A block page: a file holding the ops as a JSON array, or `-` for
+        /// stdin.
+        #[arg(long, conflicts_with_all = ["op", "find"])]
+        ops: Option<String>,
+        /// A block page: one op. replace, insert-after, insert-before,
+        /// delete or append.
+        #[arg(long, value_parser = parse_op, conflicts_with = "find")]
+        op: Option<String>,
+        /// The id of the block the op names.
+        #[arg(long, requires = "op", conflicts_with_all = ["ops", "find"])]
+        block: Option<String>,
+        /// The op's HTML, whole blocks such as <p>…</p>, or `-` for stdin.
+        #[arg(long, requires = "op", conflicts_with_all = ["ops", "find"])]
+        html: Option<String>,
         #[command(flatten)]
         out: OutputArgs,
     },
 
     /// Print a page's markdown.
+    #[command(group(clap::ArgGroup::new("read_on").args(["after", "ids"])))]
     Get {
         /// The page id.
         id: String,
+        /// A block page: its HTML with block ids (or, when long, its
+        /// markdown with each block's id above it, as far as one read
+        /// holds), and on stderr the base `page edit` takes.
+        #[arg(long)]
+        blocks: bool,
+        /// A long block page: read on after this block, the one the last
+        /// read named. Takes that read's `--base`.
+        #[arg(long, requires_all = ["blocks", "base"])]
+        after: Option<String>,
+        /// A block page: these blocks by id, comma-separated, as HTML to
+        /// edit: a block shown only as markdown, or one inside a list or
+        /// table too long for one read, the list cut down to the way to it.
+        /// Takes the last read's `--base`.
+        #[arg(long, value_delimiter = ',', requires_all = ["blocks", "base"])]
+        ids: Vec<String>,
+        /// The base from the last read, for `--after` or `--ids`.
+        #[arg(long, requires = "read_on")]
+        base: Option<String>,
         #[command(flatten)]
         out: OutputArgs,
     },
+}
+
+/// An op's name as `edit_page` spells it, from the CLI's (`insert-after`)
+/// or the tool's (`insert_after`).
+fn parse_op(name: &str) -> Result<String, String> {
+    let op = name.trim().replace('-', "_");
+    match op.as_str() {
+        "replace" | "insert_after" | "insert_before" | "delete" | "append" => Ok(op),
+        _ => Err("use replace, insert-after, insert-before, delete or append".to_string()),
+    }
 }
 
 /// The output switch every data verb takes. Without it the verb prints a
@@ -710,18 +763,35 @@ pub enum Commands {
     #[command(hide = true)]
     WarmModels,
 
-    /// Re-validate the embedding endpoint after a model change and recover the
-    /// index. Run this when the box reports a fingerprint/dims mismatch (manual
-    /// inference mode): re-probes the endpoint and, on confirmation, wipes the
-    /// derived vector index and re-embeds from source with the new model.
+    /// Point search at a different embedding server, or re-validate the current
+    /// one after its model changed. With `--embed-url`, switches the box to
+    /// that server (e.g. llama.cpp on your GPU) and keeps the index when the
+    /// server runs the same model. Without it, re-probes the configured
+    /// endpoint and, on a model change, re-embeds from source.
     #[command(name = "configure-inference")]
     ConfigureInference {
+        /// Switch search to this embedding server (an OpenAI-style
+        /// /v1/embeddings endpoint on this machine, your LAN, or your VPN).
+        #[arg(long)]
+        embed_url: Option<String>,
+        /// Rerank server to record with the switch. Reranking stays off
+        /// unless VIRTUES_RERANK_GAP opts in.
+        #[arg(long)]
+        rerank_url: Option<String>,
+        /// Model name sent with every request; Ollama routes by it.
+        #[arg(long)]
+        embed_model: Option<String>,
         /// Re-embed without the interactive confirmation if the model changed.
         #[arg(long)]
         reembed: bool,
         /// Skip confirmation prompts (scripts/CI).
         #[arg(long)]
         yes: bool,
+        /// Go back to the recommended setup: Virtues runs the embedding model
+        /// it recommends on this machine's CPU and keeps it current. Search
+        /// keeps using your server until the index is rebuilt. Needs sudo.
+        #[arg(long, conflicts_with_all = ["embed_url", "rerank_url", "embed_model"])]
+        recommended: bool,
     },
 
     /// Adopt orphaned media into the lake: recordings written before the lake
