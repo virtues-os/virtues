@@ -326,9 +326,14 @@
 			m.keyboard.disable();
 			m.dragRotate.disable();
 			m.touchZoomRotate.disableRotation();
-			// A pinch zooms a quarter faster than MapLibre's default (the
-			// owner's call, 2026-10-08: "a bit more aggressive"): the trackpad's
-			// 1/100 per delta becomes 1/80, a wheel's 1/450 becomes 1/360.
+			// A pinch follows the fingers: spreading them twice as far zooms
+			// the map in twice (one zoom level). Browsers send a pinch as a
+			// ctrl wheel with deltaY = -100 * ln(scale) (Chrome's
+			// touchpad_pinch_event_queue.cc; Firefox alike), and MapLibre's
+			// scale per frame is about exp(|delta| * rate / 2), so 1/50 is
+			// 1:1; its default, 1/100, moved the map half as far (the owner's
+			// call, 2026-10-09: match Apple Maps). A mouse's wheel zooms at
+			// 1/360, a quarter faster than MapLibre's 1/450.
 			m.scrollZoom.setZoomRate(PINCH_RATE.trackpad);
 			m.scrollZoom.setWheelZoomRate(PINCH_RATE.wheel);
 			container.addEventListener('wheel', onWheel, { passive: false, capture: true });
@@ -715,7 +720,7 @@
 	 *  it as a wheel with ctrl) is left to MapLibre, which zooms about the
 	 *  cursor; over a place card the card's list scrolls (main.js:988-992). */
 	/** How fast a pinch (or a wheel with Ctrl) zooms the map. */
-	const PINCH_RATE = { trackpad: 1 / 80, wheel: 1 / 360 };
+	const PINCH_RATE = { trackpad: 1 / 50, wheel: 1 / 360 };
 	/** Two fingers pan; a mouse's wheel, with no pinch to zoom by, zooms
 	 *  (MapLibre's scroll zoom, about the pointer). */
 	const wheelFrom = wheelSource();
