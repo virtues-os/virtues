@@ -50,6 +50,13 @@
 	import { appletsStore } from '$lib/stores/applets.svelte';
 
 	const setupRooms = roomsInGroup('setup');
+
+	/** Applets that need you, counted against the room that holds them. */
+	function attention(room: Room): number {
+		if (room.id === 'home') return appletsStore.problems;
+		if (room.id === 'settings') return appletsStore.builtInProblems;
+		return 0;
+	}
 	const primary = roomsInGroup('primary');
 	const library = roomsInGroup('library');
 	const utility = roomsInGroup('utility');
@@ -189,8 +196,8 @@
 			aria-pressed={isSelected(room)}
 			title={room.group === 'setup'
 				? `${room.label} · ${setupCount} done · ${room.chord}`
-				: room.id === 'home' && appletsStore.problems > 0
-					? `${room.label} · ${appletsStore.problems} ${appletsStore.problems === 1 ? 'applet needs' : 'applets need'} you · ${room.chord}`
+				: attention(room) > 0
+					? `${room.label} · ${attention(room)} ${attention(room) === 1 ? 'applet needs' : 'applets need'} you · ${room.chord}`
 					: `${room.label} · ${room.chord}`}
 			onclick={() => activate(room)}
 		>
@@ -200,9 +207,10 @@
 				{:else}
 					<AtlasIcon name={room.icon} size={20} stroke={1.0} bare />
 				{/if}
-				<!-- Applets live in Home, so an applet that needs you marks Home.
-				     The one dot on the rail, and only while something is broken. -->
-				{#if room.id === 'home' && appletsStore.problems > 0}
+				<!-- Your applets live in Home, so one that needs you marks Home;
+				     a built-in one marks Settings, where it's kept. Only while
+				     something is broken. -->
+				{#if attention(room) > 0}
 					<span class="rail-problem" aria-hidden="true"></span>
 				{/if}
 			</span>

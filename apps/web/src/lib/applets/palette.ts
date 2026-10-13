@@ -158,6 +158,19 @@ export function appletDestination(a: Pick<Applet, 'origin' | 'has_face' | 'confi
 	)[glyph] ?? '-';
 }
 
+/**
+ * The fix a failed run needs when running it again can't help: an account
+ * whose sign-in lapsed has to be reconnected first. Null means Retry is the
+ * fix. "Gmail is disconnected" names the account, so the button can too.
+ */
+export function runFix(error: string | null): { label: string; href: string } | null {
+	if (!error) return null;
+	const named = error.match(/^([A-Z][\w.]*(?: [A-Z][\w.]*)*) is disconnected/);
+	const lapsed = /sign-in expired|invalid_grant|reauthori[sz]e|token (?:has )?expired|401 unauthorized/i.test(error);
+	if (!named && !lapsed) return null;
+	return { label: named ? `Reconnect ${named[1]}` : 'Reconnect', href: '/sources' };
+}
+
 /** A run error's first line: the reason, without the trace under it. */
 export function errorHeadline(error: string, max = 160): string {
 	const line = error.split('\n')[0].trim();

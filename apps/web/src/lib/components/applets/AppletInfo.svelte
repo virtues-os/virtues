@@ -2,18 +2,9 @@
 	import type { Snippet } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import Card from '$lib/components/Card.svelte';
-	import DayDot from './DayDot.svelte';
+	import RecentDots from './RecentDots.svelte';
 	import type { Applet } from '$lib/api/client';
-
-	import {
-		appletSpans,
-		countRuns,
-		DAY_LABEL,
-		recentSpans,
-		recentSummary,
-		spanDays,
-		type DayIndex
-	} from '$lib/applets/days';
+	import type { DayIndex } from '$lib/applets/days';
 
 	/**
 	 * An applet's Info: how its last 7 days went, then Technical details. Its
@@ -39,16 +30,6 @@
 		technical: Snippet;
 	} = $props();
 
-	// A dot a day, or a dot a week for an applet that runs weekly or less.
-	const spans = $derived(recentSpans(action.schedule));
-	const unit = $derived(spanDays(action.schedule) === 7 ? 'weeks' : 'days');
-	const states = $derived(appletSpans(action, index, spans));
-	const counts = $derived(countRuns(index, action.id, spans.flat()));
-	const summary = $derived(recentSummary(states, counts, unit));
-	const spanLabel = (span: string[]) => (span.length === 1 ? span[0] : `${span[0]} to ${span.at(-1)}`);
-	// Red only for what needs you: a failure, or today's missed run.
-	const weekProblem = $derived((counts.get('error') ?? 0) > 0 || states.at(-1) === 'missed');
-
 </script>
 
 <div class="info">
@@ -64,16 +45,7 @@
 				{#if daysErr}
 					<span class="row-label">Your server couldn't read its recent runs</span>
 				{:else}
-					<span class="history-body">
-						<span class="dots">
-							{#each states as state, i (spans[i][0])}
-								<DayDot {state} size="md" title={`${spanLabel(spans[i])}: ${DAY_LABEL[state]}`} />
-							{/each}
-						</span>
-						<span class="summary" class:problem={weekProblem}>
-							{summary}
-						</span>
-					</span>
+					<span class="history-body"><RecentDots {action} {index} /></span>
 				{/if}
 				<Icon icon={historyOpen ? 'ri:arrow-up-s-line' : 'ri:arrow-down-s-line'} width="16" />
 			</button>
@@ -139,11 +111,6 @@
 		flex: 1;
 		min-width: 0;
 	}
-	.dots {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
 	.history-row .row-label {
 		color: var(--color-foreground-muted);
 	}
@@ -157,16 +124,7 @@
 		flex: 1;
 		min-width: 0;
 		display: flex;
-		flex-direction: column;
-		gap: 8px;
 		padding: 8px 0;
-	}
-	.summary {
-		font-size: 14px;
-		color: var(--color-foreground-muted);
-	}
-	.summary.problem {
-		color: var(--color-error);
 	}
 
 </style>

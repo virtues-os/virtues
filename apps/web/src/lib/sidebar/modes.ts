@@ -13,6 +13,7 @@
  */
 
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
+import { appletsStore } from '$lib/stores/applets.svelte';
 
 export interface ModeRow {
 	id: string;
@@ -55,6 +56,9 @@ export interface ModeRow {
 	 * existed, which is every mode but the wiki.
 	 */
 	group?: string;
+	/** How many things in this section need you. The row shows the count
+	 *  while it is above zero. */
+	attention?: () => number;
 }
 
 export interface SidebarMode {
@@ -141,6 +145,7 @@ export const SETTINGS_MODE: SidebarMode = {
 			glyph: 'applets',
 			href: '/virtues/applets',
 			group: 'Server',
+			attention: () => appletsStore.builtInProblems,
 		},
 		// The screen on the server: what it shows, its hours, other screens.
 		{

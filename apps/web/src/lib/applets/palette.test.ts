@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { appletDestination, appletGlyph, describeSchedule, errorHeadline, limitsOf, relativeTime } from './palette';
+import { appletDestination, appletGlyph, describeSchedule, errorHeadline, limitsOf, relativeTime, runFix } from './palette';
 
 describe('describeSchedule', () => {
 	it('reads daily and interval schedules as before', () => {
@@ -90,5 +90,17 @@ describe('errorHeadline', () => {
 	it('keeps the reason and drops the trace', () => {
 		expect(errorHeadline('Gmail is disconnected.\n  at sync (gmail.rs:42)')).toBe('Gmail is disconnected.');
 		expect(errorHeadline('x'.repeat(200), 10)).toBe('xxxxxxxxx…');
+	});
+});
+
+describe('runFix', () => {
+	it('names the account to reconnect when the sign-in lapsed', () => {
+		expect(runFix('Gmail is disconnected: the sign-in expired.')).toEqual({ label: 'Reconnect Gmail', href: '/sources' });
+		expect(runFix('upstream said invalid_grant')).toEqual({ label: 'Reconnect', href: '/sources' });
+	});
+	it('leaves every other failure to Retry', () => {
+		expect(runFix('The run ended without writing its page.')).toBeNull();
+		expect(runFix('No backup drive is plugged in, so this box has the only copy of your data.')).toBeNull();
+		expect(runFix(null)).toBeNull();
 	});
 });

@@ -7,6 +7,9 @@
 import { listApplets, type Applet } from '$lib/api/client';
 import { needsYou } from '$lib/applets/days';
 
+/** Made by you, in a chat or by hand, rather than shipped with the server. */
+const isMine = (a: Applet) => a.origin === 'user' || a.origin === 'ai';
+
 class AppletsStore {
 	list = $state<Applet[]>([]);
 	loaded = $state(false);
@@ -14,15 +17,20 @@ class AppletsStore {
 	private inflight: Promise<void> | null = null;
 
 	/** Applets you made, newest problems first, then by name. The built-in and
-	 *  source applets stay in the table only. */
+	 *  source applets stay in Settings > Applets. */
 	mine = $derived(
 		this.list
-			.filter((a) => (a.origin === 'user' || a.origin === 'ai') && !a.archived_at)
+			.filter((a) => isMine(a) && !a.archived_at)
 			.sort((a, b) => Number(needsYou(b)) - Number(needsYou(a)) || a.name.localeCompare(b.name))
 	);
 
-	/** How many applets need you: a failed last run, or a run that's overdue. */
-	problems = $derived(this.list.filter((a) => needsYou(a)).length);
+	/** How many of your applets need you: a failed last run, or a run that's
+	 *  overdue. Marks Home, where you use them. */
+	problems = $derived(this.mine.filter((a) => needsYou(a)).length);
+
+	/** How many built-in and source applets need you. Marks Settings, where
+	 *  they're kept: a backup with no drive is maintenance, not one of yours. */
+	builtInProblems = $derived(this.list.filter((a) => !isMine(a) && needsYou(a)).length);
 
 	/** Load, or join the load already in flight. */
 	load(): Promise<void> {
