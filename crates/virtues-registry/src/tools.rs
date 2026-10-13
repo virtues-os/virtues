@@ -101,9 +101,10 @@ pub fn default_tools() -> Vec<ToolConfig> {
 }
 
 /// The owner's browser, a window in the Mac app (virtues-core `browser.rs`).
-/// The core offers these only while that app is connected. They run without
-/// asking (the owner's call, 2026-10-07); the model is told to ask before
-/// anything irreversible.
+/// The chat is offered `browse` only while that app is connected, and the
+/// browsing agent it starts holds the rest. None asks first (the owner's call,
+/// 2026-10-07); the agent stops before anything irreversible the task did not
+/// name.
 fn browser_tools() -> Vec<ToolConfig> {
     let tool = |id: &str, name: &str, description: &str, llm: &str, parameters: serde_json::Value, order: i32| ToolConfig {
         id: id.to_string(),
@@ -119,6 +120,23 @@ fn browser_tools() -> Vec<ToolConfig> {
     };
     let none = serde_json::json!({ "type": "object", "properties": {} });
     vec![
+        // What the chat model is offered. The eight below are the browsing
+        // agent's own tools (virtues-core `browse.rs`), which the chat never
+        // calls itself.
+        tool(
+            "browse",
+            "Use your browser",
+            "Do a task in your browser",
+            "Hand a task to the browsing agent, which operates the owner's browser: a window in the Virtues app on their Mac, signed in to the sites they use. Use it for what needs a real browser (their accounts, bookings, forms, web apps); prefer web_search for looking things up. The agent sees only `task`, not this chat or the owner's records, so write the task in full: the site or URL, what to find or do, every value it needs (a confirmation code, a name, a date), and how far to go. It hands the browser to the owner for sign-ins and codes, and stops before buying, sending, cancelling or anything else the task does not name, returning what the owner needs to decide. Returns `answer` (the values asked for, as the page showed them, with their source), `ended` (`done`, or why it stopped: `taken_over`, `declined`, `budget`, `max_steps`, `error`) and the page it ended on. The browser stays on that page, so a follow-up task can continue from it.",
+            serde_json::json!({
+                "type": "object",
+                "required": ["task"],
+                "properties": {
+                    "task": { "type": "string", "description": "The whole task, written for someone who has not read this chat" }
+                }
+            }),
+            39,
+        ),
         tool(
             "browser_open",
             "Open in browser",

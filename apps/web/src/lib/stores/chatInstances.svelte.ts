@@ -439,9 +439,12 @@ class ChatInstanceStore {
             if (chat.status !== 'submitted' && chat.status !== 'streaming') continue;
             const last = chat.messages[chat.messages.length - 1];
             if (last?.role !== 'assistant') continue;
-            const usesBrowser = last.parts.some((p: any) =>
-                String(p.type === 'dynamic-tool' ? p.toolName : p.type).replace(/^tool-/, '').startsWith('browser_')
-            );
+            // `browse` is a whole task handed to the browsing agent; the
+            // `browser_*` steps are chats that drove the browser themselves.
+            const usesBrowser = last.parts.some((p: any) => {
+                const name = String(p.type === 'dynamic-tool' ? p.toolName : p.type).replace(/^tool-/, '');
+                return name === 'browse' || name.startsWith('browser_');
+            });
             if (usesBrowser) out.push({ conversationId, chat });
         }
         return out;

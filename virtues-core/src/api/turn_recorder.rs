@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 use chrono::Utc;
 
-use crate::agent::{AgentEvent, ErrorCode, FinishReason, StepReason};
+use crate::agent::{AgentEvent, DelegatedUsage, ErrorCode, FinishReason, StepReason};
 use crate::api::chat::{StreamEvent, UIPart};
 use crate::api::chats::{ChatMessage, ToolCall};
 use crate::types::Timestamp;
@@ -36,8 +36,9 @@ enum TurnSlot {
     Tool(String),
 }
 
-/// A turn's token and cost totals, summed across its steps (and any Deep
-/// Research workers it dispatched).
+/// A turn's token and cost totals for its own model, summed across its steps.
+/// What its tools spent on its behalf is kept apart, per model
+/// (`TurnRecorder::delegated_usage`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TurnUsage {
     pub input_tokens: u32,
@@ -82,6 +83,9 @@ pub struct TurnRecorder {
     /// The gateway's reasoning blocks across the turn's steps, for the row.
     reasoning_details: Vec<serde_json::Value>,
     usage: TurnUsage,
+    /// What the turn's tools spent on its behalf, one entry per model and
+    /// feature.
+    delegated: Vec<DelegatedUsage>,
     /// Set by any error event mid-turn: the reply on screen is partial, and
     /// the row must say so or a reload shows the stub as the answer.
     interrupted: bool,
@@ -112,6 +116,7 @@ impl TurnRecorder {
             failed_tools: HashSet::new(),
             reasoning_details: Vec::new(),
             usage: TurnUsage::default(),
+            delegated: Vec::new(),
             interrupted: false,
             provider_unavailable: false,
             last_step_reason: None,
@@ -121,6 +126,10 @@ impl TurnRecorder {
 
     pub fn usage(&self) -> TurnUsage {
         self.usage
+    }
+
+    pub fn delegated_usage(&self) -> &[DelegatedUsage] {
+        &self.delegated
     }
 
     /// One event from the agent loop, and what the client is told about it.
@@ -246,14 +255,14 @@ impl TurnRecorder {
                             result.get("document_page_id").and_then(|v| v.as_str()).map(str::to_string);
                     }
                 }
-                // Bill nested Deep Research worker tokens to this chat's
-                // usage, and their cost with them: the dispatch result carries
-                // aggregate worker counts that the orchestrator's own Usage
-                // events don't include.
-                if let Some(usage) = result.get("usage") {
-                    self.usage.input_tokens += usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                    self.usage.output_tokens += usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                    self.usage.cost_micros += usage.get("cost_micros").and_then(|v| v.as_i64()).unwrap_or(0);
+                // What a tool spent on the turn's behalf (`browse`, research
+                // workers) never reaches the turn's own Usage events. Billed
+                // to this chat under the model that spent it.
+                for spent in DelegatedUsage::read(&result) {
+                    match self.delegated.iter_mut().find(|d| d.model == spent.model && d.feature == spent.feature) {
+                        Some(entry) => entry.add(&spent),
+                        None => self.delegated.push(spent),
+                    }
                 }
                 out.push(StreamEvent::ToolOutputAvailable { tool_call_id: id, output: result });
                 if let Some(page_id) = narrative_page {
@@ -843,7 +852,7 @@ mod tests {
     }
 
     #[test]
-    fn usage_sums_steps_and_dispatched_workers() {
+    fn usage_sums_steps_and_keeps_what_tools_spent_apart_per_model() {
         let mut r = TurnRecorder::new("m".into());
         let lines = feed(
             &mut r,
@@ -866,21 +875,45 @@ mod tests {
                     cache_write_tokens: Some(7),
                     cost_micros: None,
                 },
-                tool_start("c1", "dispatch_subagents"),
-                tool_ok("c1", json!({"usage": {"input_tokens": 1000, "output_tokens": 300, "cost_micros": 5_000}})),
+                tool_start("c1", "browse"),
+                tool_ok("c1", json!({"usage": [{"model": "lite", "feature": "browse", "input_tokens": 1000, "output_tokens": 300, "cost_micros": 5_000}]})),
+                tool_start("c2", "browse"),
+                tool_ok("c2", json!({"usage": [{"model": "lite", "feature": "browse", "input_tokens": 10, "output_tokens": 3, "cost_micros": 50}]})),
+                tool_start("c3", "dispatch_subagents"),
+                tool_ok("c3", json!({"usage": [{"model": "standard", "input_tokens": 7, "output_tokens": 2, "cost_micros": 9}]})),
             ],
         );
-        assert_eq!(lines.len(), 2, "usage is never on the wire");
+        assert_eq!(lines.len(), 6, "usage events are never on the wire");
         assert_eq!(
             r.usage(),
             TurnUsage {
-                input_tokens: 1300,
-                output_tokens: 330,
+                input_tokens: 300,
+                output_tokens: 30,
                 reasoning_tokens: 4,
                 cache_read_tokens: 50,
                 cache_write_tokens: 7,
-                cost_micros: 6_000,
+                cost_micros: 1_000,
             }
+        );
+        assert_eq!(
+            r.delegated_usage(),
+            &[
+                DelegatedUsage {
+                    model: "lite".into(),
+                    feature: Some("browse".into()),
+                    input_tokens: 1010,
+                    output_tokens: 303,
+                    cost_micros: 5_050,
+                    ..Default::default()
+                },
+                DelegatedUsage {
+                    model: "standard".into(),
+                    input_tokens: 7,
+                    output_tokens: 2,
+                    cost_micros: 9,
+                    ..Default::default()
+                },
+            ]
         );
     }
 

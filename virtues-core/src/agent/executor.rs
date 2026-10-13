@@ -299,6 +299,9 @@ async fn execute_single(
         // A page load on the owner's Mac, which `browser::run_tool` waits up
         // to 45s for. Sit past it so the tool reports its own timeout.
         Duration::from_secs(50)
+    } else if tool_call.name == crate::browse::TOOL {
+        // A whole browsing task in its own loop, which bounds itself.
+        crate::browse::MAX_WALL_CLOCK + Duration::from_secs(10)
     } else if tool_call.name == "browser_handoff" {
         // Waits on the owner to finish a step (a sign-in, a code), up to
         // `browser::HANDOFF_WAIT`. Sit past it so the tool reports its own.
