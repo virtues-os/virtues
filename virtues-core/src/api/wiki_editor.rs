@@ -953,6 +953,8 @@ pub struct Revision {
     /// False when the revision is on the page but its save failed and waits
     /// in the save loop for a retry.
     pub saved: bool,
+    /// The article's page, so an applet run can record what it wrote.
+    pub page_id: String,
 }
 
 /// The maintenance state of one article, as the editor needs it.
@@ -1119,7 +1121,7 @@ pub async fn revise_article(
     if let Err(e) = record_provenance(pool, &article.id, &theirs, &removed).await {
         tracing::error!(article = %article.id, error = %e, "revision applied but its provenance was not recorded");
     }
-    Ok(Revision { change, saved })
+    Ok(Revision { change, saved, page_id: article.page_id })
 }
 
 /// Undo `revise_article`'s `record_edition` for a revision that changed

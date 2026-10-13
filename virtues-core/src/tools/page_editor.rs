@@ -878,6 +878,7 @@ impl PageEditorTool {
         }
 
         Ok(ToolResult::success(serde_json::json!({
+            "page_id": page_id,
             "edit": result,
             "applied": true,
             "saved": saved,

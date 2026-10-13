@@ -1,68 +1,166 @@
 <script lang="ts">
-	import Icon from '$lib/components/Icon.svelte';
-	import AppletSource from '$lib/components/applets/AppletSource.svelte';
-	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
-	import ShareSheet from '$lib/components/applets/ShareSheet.svelte';
-	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import Markdown from '$lib/components/Markdown.svelte';
+	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
+	import Card from '$lib/components/Card.svelte';
+	import IconButton from '$lib/components/IconButton.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
-	import Modal from '$lib/components/Modal.svelte';
+	import ShareSheet from '$lib/components/applets/ShareSheet.svelte';
+	import AppletInfo from '$lib/components/applets/AppletInfo.svelte';
+	import DeleteAppletModal from '$lib/components/applets/DeleteAppletModal.svelte';
+	import AppletSettings from '$lib/components/applets/AppletSettings.svelte';
+	import RunHistory from '$lib/components/applets/RunHistory.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { routeToEntityId } from '$lib/tabs/types';
+	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
+	import { pinMenuItem } from '$lib/pins/pinAction';
 	import type { Tab } from '$lib/tabs/types';
 	import {
 		getApplet,
 		getAppletLog,
-		patchApplet,
-		deleteApplet,
-		getAppletData,
+		getRunsByDay,
+		getAppletPages,
+		getPage,
+		type AppletPage,
 		runApplet,
 		messageApplet,
+		patchApplet,
 		type Applet,
 		type AppletLogEntry,
-		type AppletData,
-		type PatchAppletBody
+		type RunDay
 	} from '$lib/api/client';
-	import { relativeTime, describeSchedule } from '$lib/applets/palette';
+	import { appletGlyph, describeSchedule, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
+	import { formatMicrosPrecise } from '$lib/utils/currency';
+	import RecentDots from '$lib/components/applets/RecentDots.svelte';
+	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
+	import Icon from '$lib/components/Icon.svelte';
+	import { indexRunDays } from '$lib/applets/days';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
+	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { explainRunError } from '$lib/sources/run-errors';
-	import { isTauri } from '$lib/utils/platform';
 
+	/**
+	 * An applet's home opens on its results: its newest page with every page
+	 * beside it, its dashboard live, or what its last runs did. The frame
+	 * around them is the same for every applet: name, schedule and where the
+	 * work goes, the switch, Conversation, Info and More.
+	 *
+	 * Info (`?panel=info`) holds Run history and Technical details, each
+	 * opening in place. `?panel=history` and `?panel=details` open Info with
+	 * that one open, which is where the table's dots and Last run link.
+	 */
 	let { tab }: { tab: Tab; active: boolean } = $props();
 
-	let sharing = $state(false);
+	const url = $derived(new URL(tab.route, 'http://localhost'));
+	const appletId = $derived(url.pathname.match(/^\/(?:applet|action)\/(applet_[^/]+)$/)?.[1] ?? null);
+	const asked = $derived(url.searchParams.get('panel'));
+	const inInfo = $derived(asked === 'info' || asked === 'history' || asked === 'details');
 
-	const appletId = $derived(routeToEntityId(tab.route));
+	function showInfo(open: boolean) {
+		if (!appletId) return;
+		const base = `/applet/${appletId}`;
+		windowShellStore.updateTab(tab.id, { route: open ? `${base}?panel=info` : base });
+	}
+
+	/** Info's full view, from the inspector, with Run history or Technical
+	 *  details already open. */
+	function openInfo(panel: 'history' | 'details') {
+		if (appletId) windowShellStore.updateTab(tab.id, { route: `/applet/${appletId}?panel=${panel}` });
+	}
+
+	// The inspector: Info beside the results, so they stay in view. Closed
+	// whenever the tab moves to another applet.
+	let insp = $state(false);
+	$effect(() => {
+		void appletId;
+		insp = false;
+	});
+
+	let historyOpen = $state(false);
+	let technicalOpen = $state(false);
+	$effect(() => {
+		if (asked === 'history') historyOpen = true;
+		if (asked === 'details') technicalOpen = true;
+	});
 
 	let action = $state<Applet | null>(null);
 	let log = $state<AppletLogEntry[]>([]);
+	let runDays = $state<RunDay[]>([]);
+	let daysErr = $state<string | null>(null);
 	let loading = $state(false);
-	let saving = $state(false);
+	let busy = $state(false);
 	let err = $state<string | null>(null);
+	let sharing = $state(false);
+	let deleting = $state(false);
 
-	/**
-	 * Their prompt differs from the one we ship.
-	 *
-	 * Either they edited it, or they are on a box that predates us recording
-	 * what we shipped. This deliberately does not guess which: both mean "what
-	 * you are running is not what we would give you now", and the honest
-	 * affordance for both is the same one.
-	 */
-	const customized = $derived(
-		Boolean(
-			action?.agent_shipped &&
-				action?.agent &&
-				action.agent.trim() !== action.agent_shipped.trim()
-		)
-	);
+	const index = $derived(indexRunDays(runDays));
 
-	let edit = $state<{ name: string; agent: string; schedule: string; memory: string }>({
-		name: '',
-		agent: '',
-		schedule: '',
-		memory: ''
+	// The pages its runs wrote, newest first, and the one open.
+	let pages = $state<AppletPage[]>([]);
+	let selectedId = $state<string | null>(null);
+	let pageContent = $state<string | null>(null);
+	const selectedPage = $derived(pages.find((p) => p.page_id === selectedId) ?? pages[0] ?? null);
+	$effect(() => {
+		const id = selectedPage?.page_id;
+		if (!id) return;
+		pageContent = null;
+		getPage(id)
+			.then((p) => {
+				if (selectedPage?.page_id === id) pageContent = p.content;
+			})
+			.catch(() => {
+				if (selectedPage?.page_id === id) pageContent = '';
+			});
 	});
-	let isDirty = $state(false);
+
+	// Where its work goes, by the same rule as the icon and the table's Goes
+	// to, so the three can't disagree.
+	const made = $derived.by((): 'pages' | 'dashboard' | 'chat' | null => {
+		const glyph = action ? appletGlyph(action) : null;
+		if (glyph === 'pages') return 'pages';
+		if (glyph === 'dashboard') return 'dashboard';
+		if (glyph === 'chats') return 'chat';
+		return null;
+	});
+
+	const STATUS_WORD: Record<AppletLogEntry['status'], string> = {
+		success: 'Ran',
+		error: 'Failed',
+		running: 'Running',
+		skipped: 'Skipped',
+		cancelled: 'Cancelled',
+		budget_exceeded: 'Stopped at its spending limit'
+	};
+
+	/** One run in a line: what it said, or why it failed. */
+	function runLine(e: AppletLogEntry): string {
+		const what =
+			e.status === 'error'
+				? `Failed${e.error ? `: ${errorHeadline(e.error, 120)}` : ''}`
+				: (e.summary ?? STATUS_WORD[e.status]);
+		return e.occurrences > 1 ? `${what} (${e.occurrences} times)` : what;
+	}
+
+	function openPage(id: string) {
+		windowShellStore.openTabFromRoute(`/page/${id}`, { focusExisting: true });
+	}
+
+	/** "Today at 7:00", "Yesterday at 7:00", "Mon 5 Oct at 7:00". */
+	function when(iso: string): string {
+		const d = new Date(iso);
+		const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+		return `${dayLabel(iso)} at ${time}`;
+	}
+
+	function dayLabel(iso: string): string {
+		const d = new Date(iso);
+		const today = new Date();
+		const yesterday = new Date(today);
+		yesterday.setDate(today.getDate() - 1);
+		if (d.toDateString() === today.toDateString()) return 'Today';
+		if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+		return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+	}
+
 
 	$effect(() => {
 		if (appletId) void load(appletId);
@@ -72,22 +170,20 @@
 		loading = true;
 		err = null;
 		try {
-			// The applet loads on its own. The log is a second, weaker request:
-			// awaiting both together meant one failing log blanked the entire
-			// page, because `action` stayed null and the template fell through
-			// to the error state. An applet you cannot see is a worse outcome
-			// than a log you cannot see.
+			// The applet loads on its own. The log and the day counts are
+			// weaker requests: one of them failing must not blank the page.
 			const a = await getApplet(id);
 			action = a;
-			log = await getAppletLog(id).catch(() => []);
-			edit = {
-				name: a.name,
-				agent: a.agent ?? '',
-				schedule: a.schedule ?? '',
-				memory: a.memory ?? ''
-			};
-			isDirty = false;
 			windowShellStore.updateTab(tab.id, { label: a.name });
+			const [l, d, p] = await Promise.allSettled([getAppletLog(id), getRunsByDay(49), getAppletPages(id)]);
+			log = l.status === 'fulfilled' ? l.value : [];
+			pages = p.status === 'fulfilled' ? p.value : [];
+			if (d.status === 'fulfilled') {
+				runDays = d.value.filter((r) => r.applet_id === id);
+				daysErr = null;
+			} else {
+				daysErr = d.reason instanceof Error ? d.reason.message : String(d.reason);
+			}
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -95,32 +191,29 @@
 		}
 	}
 
-	// Editability follows `owner`, because that is genuinely what the server
-	// enforces: reconcile owns those rows and would overwrite an edit anyway.
-	const isSystem = $derived(action?.owner === 'system');
-	const isAgent = $derived(Boolean(action?.agent && action.agent.trim().length > 0));
-
-	// What the user is told, though, follows `origin` — the distinction the
-	// list page already learned. Every source fan-out row is owner='system',
-	// so keying the EXPLANATION off owner told you the Gmail sync you
-	// connected on purpose was an internal system pipeline.
-	const managedNote = $derived.by(() => {
-		if (!action || !isSystem) return null;
-		switch (action.origin) {
-			case 'source':
-				return 'Part of a source you connected. Its settings come from the connection - disconnect the source to remove it.';
-			default:
-				return 'Built in. It keeps your server running, so you can turn it off but not delete it - reconcile would recreate it.';
-		}
+	const chatId = $derived.by(() => {
+		const id = action?.config?.chat_id;
+		return typeof id === 'string' && id ? id : null;
 	});
 
-	const triggers = $derived(action?.triggers ?? []);
+	function openConversation() {
+		if (!chatId || !action) return;
+		windowShellStore.openAside({
+			type: 'chat',
+			label: action.name,
+			route: `/chat/${chatId}`,
+			icon: 'atlas:applets'
+		});
+	}
+
+	// "Run now" fires `trigger = "manual"`, which the runner refuses unless the
+	// applet lists it, so it's offered only where it can work.
+	const canRunNow = $derived(
+		Boolean(action?.triggers?.includes('manual')) && Boolean(action?.enabled) && !action?.archived_at
+	);
 
 	// The collector's current self-report, for pinning a failed run's bare
 	// "Permission denied" to a named macOS permission (sources/run-errors.ts).
-	// Only device-anchored applets have a collector; the store already blanks
-	// `denied` when the report is stale, so this never asserts from a frozen
-	// snapshot.
 	$effect(() => {
 		if (action?.device_id) void sourcesStore.load();
 	});
@@ -129,72 +222,10 @@
 			? (sourcesStore.connections.find((c) => c.id === action?.device_id)?.denied ?? [])
 			: []
 	);
-	// Same relaxation DevicesView chose for its fix button: the deep link opens
-	// THIS machine's settings, so it appears only in the native app and the
-	// label says "this Mac" rather than pretending to reach the device.
-	const canFix = $derived(isTauri);
-
-	// Lifecycle, in words rather than a raw SQL string.
-	const lifecycle = $derived.by(() => {
-		if (!action) return '';
-		if (action.archived_at) {
-			return `Finished ${new Date(action.archived_at).toLocaleDateString()}`;
-		}
-		if (!action.until) return 'Runs for as long as it is on';
-		if (action.until.toLowerCase() === 'once') return 'Runs once, then finishes';
-		return `Finishes when: ${action.until}`;
-	});
-
-	// The ceilings this applet declares, in the same words the gate uses.
-	// Read from config rather than a new endpoint — config already ships.
-	const limits = $derived.by(() => {
-		const l = (action?.config?.limits ?? {}) as Record<string, unknown>;
-		const out: string[] = [];
-		const money = (k: string, label: string) => {
-			const v = typeof l[k] === 'number' ? (l[k] as number) : null;
-			if (v !== null) out.push(`${label} $${v.toFixed(2)}`);
-		};
-		const count = (k: string, label: string) => {
-			const v = typeof l[k] === 'number' ? (l[k] as number) : null;
-			if (v !== null) out.push(`${label} ${v}`);
-		};
-		money('max_llm_cost', 'at most'); // per run
-		money('max_llm_cost_per_day', 'at most');
-		count('max_runs_per_day', 'at most');
-		count('max_runs_per_hour', 'at most');
-		return out;
-	});
-
-	function usd(micros: number): string {
-		if (!micros) return '';
-		// Sub-cent spend is real and worth showing as more than "$0.00".
-		return micros < 10_000 ? `$${(micros / 1_000_000).toFixed(4)}` : `$${(micros / 1_000_000).toFixed(2)}`;
-	}
-
-	// What recent runs cost, so the ceiling above has something to mean. Read
-	// off the log, whose per-entry cost is already summed across the runs it
-	// collapsed — so this is the true total, not the total of what is visible.
-	const recentSpend = $derived(log.reduce((n, e) => n + (e.cost_micros ?? 0), 0));
-	const recentRuns = $derived(log.reduce((n, e) => n + (e.occurrences ?? 1), 0));
-
-	// Milliseconds past the owed slot. Same hour of grace the scheduler and the
-	// needs-attention strip use, so the three surfaces never disagree about
-	// whether an applet is late.
-	const OVERDUE_GRACE_MS = 60 * 60 * 1000;
-	const overdueBy = $derived(
-		action?.next_due_at
-			? Date.now() - new Date(action.next_due_at).getTime() - OVERDUE_GRACE_MS
-			: 0
-	);
 
 	// A run is detached: the POST returns as soon as the row exists and the
-	// agent keeps going. The server's own comment said "the UI polls for the
-	// final status" and the UI never did — it read the log once, while the run
-	// was still `running`, and nothing updated it again. So pressing Run now
-	// showed you a spinner that never resolved until you reloaded the page.
-	//
-	// Poll while anything is running, and stop the moment nothing is. Bounded
-	// so a wedged run cannot leave a timer chain going forever.
+	// agent keeps going. Poll while anything is running, and stop the moment
+	// nothing is. Bounded so a wedged run can't leave a timer chain going.
 	const POLL_MS = 1500;
 	const POLL_MAX = 40; // ~60s, past which a run is not "just finishing"
 	let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -218,8 +249,8 @@
 				pollSoon();
 			} else {
 				stopPolling();
-				// The run may have archived it, or spent something worth showing.
-				action = await getApplet(id).catch(() => action);
+				// The run may have finished the applet, or spent something.
+				await load(id);
 			}
 		}, POLL_MS);
 	}
@@ -235,53 +266,18 @@
 		return stopPolling;
 	});
 
-	function markDirty() {
-		isDirty = true;
-	}
-
-	/**
-	 * Take the shipped prompt back.
-	 *
-	 * Loads it into the editor rather than saving it, so the change is visible
-	 * and reversible before it is committed — replacing prose someone wrote
-	 * should not happen on one click with nothing shown.
-	 */
-	function useShippedPrompt() {
-		if (!action?.agent_shipped) return;
-		edit.agent = action.agent_shipped;
-		markDirty();
-	}
-
-	async function save() {
+	// The switch is the one thing every applet's page offers, so it sits in
+	// the header rather than in a card below the work.
+	let saving = $state(false);
+	async function setEnabled(enabled: boolean) {
 		if (!action) return;
 		saving = true;
 		err = null;
 		try {
-			const patch: PatchAppletBody = {};
-			if (!isSystem && edit.name !== action.name) patch.name = edit.name;
-			if (!isSystem && edit.agent !== (action.agent ?? '')) {
-				patch.agent = edit.agent.trim() ? edit.agent : null;
-			}
-			if (edit.schedule !== (action.schedule ?? '')) {
-				patch.schedule = edit.schedule.trim() ? edit.schedule : null;
-			}
-			if (edit.memory !== (action.memory ?? '')) {
-				patch.memory = edit.memory.trim() ? edit.memory : null;
-			}
-			if (Object.keys(patch).length === 0) {
-				isDirty = false;
-				return;
-			}
-			const updated = await patchApplet(action.id, patch);
-			action = updated;
-			edit = {
-				name: updated.name,
-				agent: updated.agent ?? '',
-				schedule: updated.schedule ?? '',
-				memory: updated.memory ?? ''
-			};
-			isDirty = false;
-			windowShellStore.updateTab(tab.id, { label: updated.name });
+			// Turning a finished applet on clears `archived_at` on the server:
+			// there is no "on and finished" state.
+			action = await patchApplet(action.id, { enabled });
+			void appletsStore.load();
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -289,66 +285,30 @@
 		}
 	}
 
-	async function toggleEnabled() {
+	async function runNow() {
 		if (!action) return;
-		saving = true;
+		busy = true;
 		err = null;
 		try {
-			action = await patchApplet(action.id, { enabled: !action.enabled });
-		} catch (e) {
-			err = e instanceof Error ? e.message : String(e);
-		} finally {
-			saving = false;
-		}
-	}
-
-	function openView() {
-		if (!action) return;
-		windowShellStore.openTabFromRoute(`/applet/${action.id}/view`);
-	}
-
-	// Put a finished applet back to work. Enabling clears `archived_at`
-	// server-side — there is no coherent "enabled and finished" state — so this
-	// is one PATCH and then a run, not a separate un-archive verb.
-	async function runAgain() {
-		if (!action) return;
-		saving = true;
-		err = null;
-		try {
-			action = await patchApplet(action.id, { enabled: true });
 			await runApplet(action.id);
 			log = await getAppletLog(action.id).catch(() => log);
 			watchForResult();
-			action = await getApplet(action.id);
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
-			saving = false;
+			busy = false;
 		}
 	}
 
-	// The message wake. Deliberately a composer on this page rather than a
-	// thread: on a page the input box and the prompt editor are visibly
-	// different controls, so "I had eggs" and "make it weekly" can't be
-	// confused. In a thread they would be the same box, which is why
-	// correspondent threads were deferred in the first place.
+	// The message wake: a composer on the home, so "I had eggs" goes to the
+	// applet and "make it weekly" goes to its prompt, and the two can't be
+	// confused.
 	let draft = $state('');
 	let sending = $state(false);
-	const canMessage = $derived(
-		Boolean(action?.triggers?.includes('message')) && !action?.archived_at
-	);
-	// The composer is only usable if the applet is actually on. Messaging a
-	// disabled applet reaches `prepare_run`, which reports it as not-found —
-	// a confusing thing to be told about an applet whose page you are reading.
+	const canMessage = $derived(Boolean(action?.triggers?.includes('message')) && !action?.archived_at);
+	// Messaging an applet that's off reaches `prepare_run`, which reports it
+	// as not found, so the composer waits for the switch.
 	const canSend = $derived(canMessage && Boolean(action?.enabled));
-
-	// "Run now" fires `trigger = "manual"`, which the runner refuses unless the
-	// applet lists it. Six shipped applets do not — the two device ingests are
-	// webhook-only, three sweeps are cron-only — so the button was offered on
-	// their pages and answered 403. Offer it only where it can work.
-	const canRunNow = $derived(
-		Boolean(action?.triggers?.includes('manual')) && !action?.archived_at
-	);
 
 	async function send() {
 		const text = draft.trim();
@@ -358,8 +318,6 @@
 		try {
 			await messageApplet(action.id, text);
 			draft = '';
-			// The row exists before the POST returns; the agent turn keeps going.
-			// Show the question immediately, then watch for the answer.
 			log = await getAppletLog(action.id).catch(() => log);
 			watchForResult();
 		} catch (e) {
@@ -369,342 +327,336 @@
 		}
 	}
 
-	async function runNow() {
-		if (!action) return;
-		saving = true;
-		err = null;
-		try {
-			await runApplet(action.id);
-			log = await getAppletLog(action.id).catch(() => log);
-			watchForResult();
-		} catch (e) {
-			err = e instanceof Error ? e.message : String(e);
-		} finally {
-			saving = false;
-		}
+	// The newest run that said something, for the home's body when the applet
+	// has no face. The log is newest first.
+	const lastEntry = $derived(log[0] ?? null);
+	const failedNow = $derived(lastEntry?.status === 'error' ? lastEntry : null);
+	const failure = $derived(failedNow?.error ? explainRunError(failedNow.error, collectorDenied) : null);
+
+	// Same grace the scheduler and the table use.
+	const OVERDUE_GRACE_MS = 60 * 60 * 1000;
+
+	const overdue = $derived(
+		Boolean(
+			action?.next_due_at &&
+				action.enabled &&
+				!action.archived_at &&
+				Date.now() - new Date(action.next_due_at).getTime() > OVERDUE_GRACE_MS
+		)
+	);
+
+	// What went wrong, said once, where the missing result would be.
+	const problem = $derived(Boolean(failedNow || overdue));
+	const problemText = $derived(
+		failedNow
+			? failure
+				? `${failure.title}. ${failure.remedy}`
+				: failedNow.error
+					? errorHeadline(failedNow.error)
+					: 'The run failed.'
+			: overdue && action?.next_due_at
+				? `It was due ${relativeTime(action.next_due_at)} and hasn't run.`
+				: null
+	);
+	const missedWhen = $derived(failedNow?.last_at ?? (overdue ? (action?.next_due_at ?? null) : null));
+	// Reconnect when the sign-in lapsed; otherwise another try is the fix.
+	const fix = $derived(failedNow ? runFix(failedNow.error ?? null) : null);
+	function openFix() {
+		if (fix) windowShellStore.openTabFromRoute(fix.href, { focusExisting: true });
 	}
 
-	// Delete confirm. Loads the applet's owned tables so the user can decide
-	// whether to also drop its data (default: keep — data outlives the applet).
-	let deleteOpen = $state(false);
-	let deleteData = $state<AppletData | null>(null);
-	let dropData = $state(false);
-	let deleting = $state(false);
-
-	async function openDelete() {
-		if (!action) return;
-		deleteOpen = true;
-		dropData = false;
-		deleteData = null;
-		deleteData = await getAppletData(action.id);
+	/** "Tuesday, 6 October". */
+	function longDay(iso: string): string {
+		return new Date(iso).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
 	}
 
-	async function doDelete() {
+	// A list of what its runs produced: a conversation applet's results, or
+	// for one that makes nothing to show, what each run did. The failure the
+	// row above names isn't repeated.
+	const results = $derived(
+		made === 'chat'
+			? log.filter((e) => e.status === 'success' && e.summary).slice(0, 8)
+			: log.filter((e) => e !== failedNow).slice(0, 7)
+	);
+
+	const nextRunText = $derived.by(() => {
+		if (!action || action.archived_at) return 'Finished';
+		if (!action.enabled) return 'Off';
+		if (!action.next_due_at) return describeSchedule(action.schedule);
+		return relativeTime(action.next_due_at);
+	});
+	// The week's cost comes with the applet list, not with one applet.
+	const costText = $derived.by(() => {
+		if (!appletsStore.loaded) return '…';
+		const m = appletsStore.list.find((a) => a.id === action?.id)?.spend_week_micros;
+		// null means the server couldn't read it, which is not the same as free.
+		if (m === null || m === undefined) return "Couldn't read it";
+		if (m === 0) return 'Nothing this week';
+		if (m < 100) return 'Under a cent this week';
+		return `${formatMicrosPrecise(m)} this week`;
+	});
+
+	const status = $derived.by(() => {
+		if (!action) return '';
+		if (action.archived_at) return `Finished ${new Date(action.archived_at).toLocaleDateString()}`;
+		// Off keeps its schedule in view: it's what turning it back on brings back.
+		if (!action.enabled) return `Off · ${describeSchedule(action.schedule)}`;
+		return describeSchedule(action.schedule);
+	});
+
+	function openMore(e: MouseEvent) {
 		if (!action) return;
-		deleting = true;
-		err = null;
-		try {
-			await deleteApplet(action.id, dropData);
-			deleteOpen = false;
-			windowShellStore.closeTab(tab.id);
-		} catch (e) {
-			err = e instanceof Error ? e.message : String(e);
-		} finally {
-			deleting = false;
+		const a = action;
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		const items: ContextMenuItem[] = [];
+		if (canRunNow) {
+			items.push({ id: 'run', label: 'Run now', icon: 'ri:play-line', action: () => void runNow() });
 		}
+		if (a.has_face) {
+			items.push({
+				id: 'share',
+				label: 'Share',
+				icon: 'ri:share-forward-line',
+				action: () => {
+					sharing = true;
+				}
+			});
+			items.push({
+				id: 'full',
+				label: 'Open full page',
+				icon: 'ri:external-link-line',
+				action: () => {
+					windowShellStore.openTabFromRoute(`/applet/${a.id}/view`);
+				}
+			});
+		}
+		items.push(
+			pinMenuItem({ url: `/applet/${a.id}`, label: a.name, icon: 'atlas:applets' }, { dividerBefore: items.length > 0 })
+		);
+		if (a.owner !== 'system') {
+			items.push({
+				id: 'delete',
+				label: 'Delete applet',
+				icon: 'ri:delete-bin-line',
+				variant: 'destructive',
+				dividerBefore: true,
+				action: () => {
+					deleting = true;
+				}
+			});
+		}
+		contextMenu.show({ x: rect.left, y: rect.bottom + 4 }, items);
 	}
 </script>
 
-<div class="detail">
-	{#if loading && !action}
-		<div class="state">
-			<p class="muted">Loading…</p>
-		</div>
-	{:else if err && !action}
-		<div class="state">
-			<p class="error-msg">{err}</p>
-		</div>
-	{:else if action}
-		<header class="hero">
-			<div class="hero-top">
-				<div class="title-block">
-					<h1 class="title">{action.name}</h1>
-					{#if action.description}
-						<!-- The intent sentence: what this applet is for, in the user's
-						     terms. The page opened with a name and a cron string before
-						     this, neither of which says what the thing does. -->
-						<p class="intent">{action.description}</p>
-					{/if}
-					<div class="meta">
-						<span>{describeSchedule(action.schedule ?? null)}</span>
-						{#if action.next_due_at && action.enabled && !action.archived_at}
-							<span class="dot-sep">·</span>
-							<!-- The scheduler's own pointer, not a re-derivation from the
-							     cron string: an applet that silently stopped firing says
-							     so here instead of predicting a run that never comes. -->
-							<span class:overdue={overdueBy > 0}>
-								{overdueBy > 0
-									? `expected ${relativeTime(action.next_due_at)}`
-									: `next ${relativeTime(action.next_due_at)}`}
-							</span>
-						{/if}
-						<span class="dot-sep">·</span>
-						<span class="muted-inline">
-							{#if action.archived_at}
-								archived {new Date(action.archived_at).toLocaleDateString()}
-							{:else if !action.until}
-								runs forever
-							{:else if action.until.toLowerCase() === 'once'}
-								runs once, then archives
-							{:else}
-								runs until: {action.until}
-							{/if}
-						</span>
-						{#if !action.enabled && !action.archived_at}
-							<span class="dot-sep">·</span>
-							<span class="muted-inline">disabled</span>
-						{/if}
-					</div>
-				</div>
-				<div class="hero-actions">
-					{#if action.archived_at}
-						<!-- A finished applet has enabled = FALSE, so "Disable" is
-						     meaningless and "Run now" would be refused as not-found.
-						     One honest affordance instead: put it back to work. -->
-						<Button variant="primary" onclick={runAgain} disabled={saving}>
-							Run again
-						</Button>
-					{:else}
-						<Button variant="secondary" onclick={toggleEnabled} disabled={saving}>
-							{action.enabled ? 'Disable' : 'Enable'}
-						</Button>
-						{#if canRunNow}
-							<Button variant="primary" onclick={runNow} disabled={saving}>
-								Run now
-							</Button>
-						{/if}
-					{/if}
-				</div>
-			</div>
+{#snippet fixAction()}
+	{#if fix}
+		<TextAction inline onclick={openFix}>{fix.label}</TextAction>
+	{:else if canRunNow}
+		<TextAction inline onclick={runNow} disabled={busy}>{failedNow ? 'Retry' : 'Run now'}</TextAction>
+	{/if}
+{/snippet}
 
-			{#if err}
-				<div class="error-banner">{err}</div>
-			{/if}
-		</header>
-
-		<!-- The face IS the page when there is one. It was a button to another
-		     tab before, which put the applet's own output one click further away
-		     than its cron string. -->
-		{#if action.has_face}
-			<section class="face-block">
-				<div class="face-head">
-					<h2>What it shows</h2>
-					<div class="face-actions">
-						<Button
-							variant="secondary"
-							size="sm"
-							icon="ri:share-forward-line"
-							onclick={() => (sharing = true)}>Share</Button
-						>
-						<Button
-							variant="secondary"
-							size="sm"
-							icon="ri:external-link-line"
-							onclick={openView}>Open full page</Button
-						>
-					</div>
-				</div>
-				<FaceFrame appletId={action.id} height="460px" />
-			</section>
-			<ShareSheet
-				open={sharing}
-				producer={{ kind: 'applet', id: action.id }}
-				onClose={() => (sharing = false)}
-			/>
+{#snippet problemRow()}
+	<li class="result missing">
+		<span class="result-text">
+			{#if missedWhen}<span class="result-when">{longDay(missedWhen)}</span>{/if}
+			<span class="failed">{problemText}</span>
+		</span>
+		{#if fix}
+			<Button variant="primary" size="sm" onclick={openFix}>{fix.label}</Button>
+		{:else if canRunNow}
+			<TextAction onclick={runNow} disabled={busy}>{failedNow ? 'Retry' : 'Run now'}</TextAction>
 		{/if}
+	</li>
+{/snippet}
 
-		<div class="body">
-			<section class="col main">
-				<h2 class="section-head">How it works</h2>
-
-				<label class="field">
-					<span class="label">Name</span>
-					<input
-						type="text"
-						bind:value={edit.name}
-						disabled={isSystem}
-						oninput={markDirty}
-					/>
-					{#if managedNote}
-						<span class="hint">
-							<Icon icon="ri:lock-line" width="12" />
-							{managedNote}
-						</span>
-					{/if}
-				</label>
-
-				{#if action.description}
-					<div class="field">
-						<span class="label">What it does</span>
-						<p class="readonly-value">{action.description}</p>
-						<span class="hint">
-							Comes from the applet's manifest. Editing it there and
-							reconciling changes it here.
-						</span>
-					</div>
-				{/if}
-
-				<!-- A face-only applet has no server-side run and no prompt —
-				     don't show an empty agent editor for it. -->
-				{#if isAgent || !action.has_face}
-					<label class="field">
-						<!-- An applet's shape comes from which fields are set, and this
-						     label is where a reader first learns which one they are
-						     looking at. Calling a compiled sync's field "Agent prompt"
-						     said the opposite of the truth on 22 of the 24 shipped
-						     applets. -->
-						<span class="label">{isAgent ? 'What it does each run' : 'What it runs'}</span>
-						{#if isAgent || !isSystem}
-							<textarea
-								rows="10"
-								bind:value={edit.agent}
-								disabled={isSystem}
-								oninput={markDirty}
-								placeholder="What should this applet do each run?"
-							></textarea>
-						{:else}
-							<div class="pipeline-note">
-								<Icon icon="ri:terminal-line" width="14" />
-								<span>
-									Compiled program, run fresh each time it fires - <code>{action.command?.join(' ') ?? 'built in'}</code>.
-									No model is involved.
-								</span>
-							</div>
-						{/if}
-						{#if isSystem && isAgent}
-							<span class="hint">
-								<Icon icon="ri:lock-line" width="12" /> Read-only. This prompt ships with the applet
-							</span>
-						{:else if customized}
-							<!-- The only channel an edited applet has. A prompt you
-							     wrote is never overwritten on upgrade, which is right
-							     and also means a fix we ship cannot reach you — so
-							     this line is how you find out one exists. -->
-							<div class="prompt-drift">
-								<span>
-									You've edited this. The version that ships with the applet
-									has changed since - improvements and fixes land there, not
-									here.
-								</span>
-								<TextAction inline onclick={useShippedPrompt}>
-									Use the version that ships
-								</TextAction>
-							</div>
-						{/if}
-					</label>
-				{/if}
-
-				<label class="field">
-					<span class="label">Schedule</span>
-					<input
-						type="text"
-						bind:value={edit.schedule}
-						placeholder="0 0 * * * *  (6-field cron, empty = on-demand)"
-						oninput={markDirty}
-					/>
-					<span class="hint">{describeSchedule(edit.schedule || null)}</span>
-				</label>
-
-				<!-- Three facts the page never showed, and the reason a person
-				     could not tell why an applet had or hadn't run: what wakes
-				     it, what it checks once awake, and when it is done. -->
-				<div class="field">
-					<span class="label">What wakes it</span>
-					<div class="chips">
-						{#each triggers as t (t)}
-							<span class="chip">{t === 'cron' ? 'schedule' : t}</span>
-						{/each}
-						{#if triggers.length === 0}
-							<span class="readonly-value dim">nothing. It never runs on its own</span>
-						{/if}
-					</div>
-				</div>
-
-				{#if action.condition}
-					<div class="field">
-						<span class="label">Only when</span>
-						<code class="readonly-value mono">{action.condition}</code>
-						<span class="hint">
-							Checked before each run. When it's false your server skips the
-							run rather than failing it.
-						</span>
-					</div>
-				{/if}
-
-				<div class="field">
-					<span class="label">Lifecycle</span>
-					<p class="readonly-value">{lifecycle}</p>
-				</div>
-
-				<div class="field">
-					<span class="label">Limits</span>
-					{#if limits.length > 0}
-						<p class="readonly-value">{limits.join(' · ')}</p>
-					{:else}
-						<p class="readonly-value dim">No ceilings set.</p>
-					{/if}
-					{#if recentSpend > 0}
-						<span class="hint">
-							The last {recentRuns} runs cost {usd(recentSpend)}.
-						</span>
-					{:else if isAgent}
-						<span class="hint">Nothing spent so far.</span>
-					{/if}
-				</div>
-
-				<label class="field">
-					<!-- Not a settings field: this is the applet's own scratchpad,
-					     written by it, for its next run. Editing it by hand is
-					     allowed and is closer to amending a diary than filling a
-					     form, so the label says whose it is. -->
-					<span class="label">Notes it keeps</span>
-					<textarea
-						rows="6"
-						bind:value={edit.memory}
-						oninput={markDirty}
-						placeholder="Empty. This applet has not written itself any notes yet."
-					></textarea>
-					<span class="hint">
-						What this applet wrote down for its own next run. Yours to read, and
-						to correct.
-					</span>
-				</label>
-
-				<div class="save-row">
-					{#if !isSystem}
-						<Button variant="danger" onclick={openDelete} disabled={saving}>
-							Delete applet
-						</Button>
-					{:else}
-						<span class="system-note">
-							<Icon icon="ri:lock-line" width="12" />
-							{managedNote}
-						</span>
-					{/if}
-					<Button variant="primary" onclick={save} disabled={!isDirty || saving}>
-						{saving ? 'Saving…' : 'Save changes'}
-					</Button>
-				</div>
-				<section class="source-block">
-					<h3>Source</h3>
-					<p class="muted">
-						The code this applet runs. Read-only - editing forks it onto this server.
-					</p>
-					<AppletSource appletId={action.id} />
+{#snippet inspector()}
+	{#if action}
+		<aside class="insp" aria-label={`Info for ${action.name}`}>
+			{#if action.description}
+				<section>
+					<h2 class="list-head">Goal</h2>
+					<p class="insp-text">{action.description}</p>
 				</section>
+			{/if}
+			<section>
+				<h2 class="list-head">Recent runs</h2>
+				{#if daysErr}
+					<p class="insp-text muted">Your server couldn't read its recent runs.</p>
+				{:else}
+					<RecentDots {action} {index} />
+				{/if}
 			</section>
+			<Card list>
+				<div class="insp-row"><span>Next run</span><span class="insp-value">{nextRunText}</span></div>
+				<div class="insp-row"><span>Cost</span><span class="insp-value">{costText}</span></div>
+				<button type="button" class="insp-row link" onclick={() => openInfo('history')}>
+					<span>Run history</span><Icon icon="ri:arrow-right-s-line" width="16" />
+				</button>
+				<button type="button" class="insp-row link" onclick={() => openInfo('details')}>
+					<span>Technical details</span><Icon icon="ri:arrow-right-s-line" width="16" />
+				</button>
+			</Card>
+		</aside>
+	{/if}
+{/snippet}
 
-			<aside class="col runs">
+<div class="applet-home">
+	{#if loading && !action}
+		<p class="state">Loading…</p>
+	{:else if err && !action}
+		<p class="state error-msg">{err}</p>
+	{:else if action}
+		<div class="measure">
+			{#if inInfo}
+				<div class="narrow">
+					<header class="head sub">
+						<button type="button" class="backlink" onclick={() => showInfo(false)}>
+							<Icon icon="ri:arrow-left-line" width="14" />
+							{action.name}
+						</button>
+						<h1 class="title">Info</h1>
+						{#if action.description}<p class="status">{action.description}</p>{/if}
+					</header>
+					<AppletInfo bind:action {index} {daysErr} bind:historyOpen bind:technicalOpen>
+						{#snippet history()}
+							{#if action}<RunHistory {action} {log} {index} {daysErr} {collectorDenied} />{/if}
+						{/snippet}
+						{#snippet technical()}
+							{#if action}
+								<AppletSettings
+									bind:action
+									onRenamed={(name) => windowShellStore.updateTab(tab.id, { label: name })}
+								/>
+							{/if}
+						{/snippet}
+					</AppletInfo>
+				</div>
+			{:else}
+				<header class="head">
+					<span class="glyph" aria-hidden="true"><AtlasIcon name={appletGlyph(action)} size={20} bare /></span>
+					<div class="title-block">
+						<h1 class="title">{action.name}</h1>
+						<p class="status">{status}</p>
+					</div>
+					<!-- One title block, the icons centred on it, the switch last. -->
+					<div class="head-actions">
+						{#if chatId}
+							<!-- A word with the icon: a speech bubble alone didn't say you
+							     can tell it things or change it there. -->
+							<Button variant="ghost" size="sm" icon="ri:chat-3-line" onclick={openConversation}>Chat</Button>
+						{/if}
+						<IconButton
+							icon="ri:information-line"
+							label="Info"
+							pressed={insp}
+							onclick={() => (insp = !insp)}
+						/>
+						<IconButton icon="ri:more-line" label="More" haspopup="menu" onclick={openMore} />
+						{#if action.archived_at}
+							<Button variant="secondary" size="sm" onclick={() => setEnabled(true)} disabled={saving}>
+								Turn back on
+							</Button>
+						{:else}
+							<button
+								type="button"
+								class="switch"
+								class:on={action.enabled}
+								role="switch"
+								aria-checked={action.enabled}
+								aria-label="Run this applet"
+								disabled={saving}
+								onclick={() => setEnabled(!action!.enabled)}
+							></button>
+						{/if}
+					</div>
+				</header>
+
+				{#if err}
+					<p class="error-msg">{err}</p>
+				{/if}
+
+				<!-- Its results, with a column beside them: All pages for an applet
+				     that writes pages, the inspector when Info is open. A failure
+				     shows where its result is missing, with the fix that fits. -->
+				<div class="body" class:with-side={made === 'pages' || insp}>
+					<div class="results">
+						{#if made === 'pages'}
+							{#if selectedPage}
+								<article class="page">
+									<h2 class="page-title">{selectedPage.title}</h2>
+									<p class="page-by">
+										Written by {action.name}, {when(selectedPage.written_at)} ·
+										<TextAction inline onclick={() => openPage(selectedPage.page_id)}>Open page</TextAction>
+									</p>
+									{#if pageContent === null}
+										<p class="empty">Loading…</p>
+									{:else}
+										<div class="page-body"><Markdown content={pageContent} variant="article" /></div>
+									{/if}
+								</article>
+							{:else}
+								<p class="empty">No pages yet. Its pages show here after it writes one.</p>
+							{/if}
+						{:else}
+							{#if problem}
+								<ul class="result-list" role="list">{@render problemRow()}</ul>
+							{/if}
+							{#if made === 'dashboard' && action.has_face}
+								<FaceFrame appletId={action.id} height="460px" />
+							{:else if made === 'dashboard'}
+								<p class="empty">No dashboard yet. It's set to make one and hasn't yet.</p>
+							{:else if results.length > 0}
+								<section>
+									<h2 class="list-head">{made === 'chat' ? 'Results' : 'Recent runs'}</h2>
+									<ul class="result-list" role="list">
+										{#each results as e (e.run_id ?? e.last_at)}
+											<li class="result">
+												<span class="result-text">
+													{#if e.last_at}<span class="result-when">{longDay(e.last_at)}</span>{/if}
+													<span class:failed={e.status === 'error'}>{made === 'chat' ? e.summary : runLine(e)}</span>
+												</span>
+											</li>
+										{/each}
+									</ul>
+								</section>
+							{:else if !problem}
+								<p class="empty">
+									{action.enabled ? 'Nothing yet. Its results show here after it runs.' : "It's off, so it hasn't run yet."}
+								</p>
+							{/if}
+						{/if}
+					</div>
+
+					{#if insp}
+						{@render inspector()}
+					{:else if made === 'pages'}
+						<nav class="page-list" aria-label={`Pages ${action.name} wrote`}>
+							<h2 class="list-head">All pages</h2>
+							{#if problem}
+								<div class="page-item missing" title={problemText ?? undefined}>
+									<span class="page-item-title">{missedWhen ? longDay(missedWhen) : 'Its last run'}</span>
+									<span class="page-item-when">
+										{failedNow ? "Wasn't written" : "Hasn't run"}{#if fix || canRunNow}{' · '}{@render fixAction()}{/if}
+									</span>
+								</div>
+							{/if}
+							{#each pages as p (p.page_id)}
+								<button
+									type="button"
+									class="page-item"
+									aria-current={p.page_id === selectedPage?.page_id}
+									onclick={() => (selectedId = p.page_id)}
+								>
+									<span class="page-item-title">{p.title}</span>
+									<span class="page-item-when">{when(p.written_at)}</span>
+								</button>
+							{/each}
+						</nav>
+					{/if}
+				</div>
+
 				{#if canMessage}
 					<form
 						class="composer"
@@ -717,582 +669,357 @@
 							type="text"
 							bind:value={draft}
 							disabled={sending || !canSend}
-							placeholder={canSend ? 'Tell it something…' : 'Turn it on to send it anything'}
+							placeholder={canSend ? `Tell ${action.name} something…` : 'Turn it on to send it anything'}
 						/>
-						<Button
-							variant="primary"
-							onclick={send}
-							disabled={sending || !canSend || !draft.trim()}
-						>
+						<Button variant="primary" onclick={send} disabled={sending || !canSend || !draft.trim()}>
 							{sending ? 'Sending…' : 'Send'}
 						</Button>
 					</form>
 				{/if}
-				<h3>{canMessage ? 'Exchange' : 'Recent runs'}</h3>
-				{#if log.length === 0}
-					<p class="muted">No runs yet.</p>
-				{:else}
-					<ul class="runs-list">
-						{#each log as e (e.run_id ?? e.last_at)}
-							<li class="run-item" data-status={e.status}>
-								<div class="run-top">
-									<Badge
-										variant={e.status === 'success'
-											? 'success'
-											: e.status === 'error'
-												? 'error'
-												: e.status === 'skipped'
-													? 'muted'
-													: e.status === 'budget_exceeded'
-														? 'warning'
-														: 'info'}
-									>
-										{e.status === 'budget_exceeded' ? 'over budget' : e.status}
-									</Badge>
-									{#if e.occurrences > 1}
-										<!-- The applet repeated itself. On a real box this is most
-										     of history — a poll that finds nothing still records a
-										     run — so saying it once with a count is both shorter
-										     and more honest than 600 identical lines. -->
-										<span class="run-count">×{e.occurrences}</span>
-									{:else if e.trigger}
-										<span class="run-trigger">{e.trigger}</span>
-									{/if}
-									{#if e.cost_micros}
-										<span class="run-cost" title="What these runs spent with the model">
-											{usd(e.cost_micros)}
-										</span>
-									{/if}
-									<span class="run-time">{relativeTime(e.last_at)}</span>
-								</div>
-								{#if e.message}
-									<p class="run-said">{e.message}</p>
-								{/if}
-								{#if e.summary}
-									<p class="run-summary">{e.summary}</p>
-								{/if}
-								{#if e.error}
-									<!-- A permission failure is a checkbox in System Settings,
-									     not a stack trace: name the condition and the fix, and
-									     keep the OS's sentence beneath it as evidence rather
-									     than as the whole message. Unclassified errors still
-									     print raw — a wrong remedy is worse than none. -->
-									{@const why = explainRunError(e.error, collectorDenied)}
-									{#if why}
-										<div class="run-why">
-											<p class="run-why-title">
-												<Icon icon="ri:lock-line" width="12" />
-												{why.title}
-											</p>
-											<p class="run-why-remedy">{why.remedy}</p>
-											{#if canFix && why.open}
-												<button class="run-why-fix" onclick={() => why.open?.()}>
-													<Icon icon="ri:external-link-line" width="12" />
-													Open {why.label} on this Mac
-												</button>
-											{/if}
-											<p class="run-error run-why-detail">{e.error}</p>
-										</div>
-									{:else}
-										<p class="run-error">{e.error}</p>
-									{/if}
-								{/if}
-								{#if e.occurrences > 1 && e.first_at}
-									<p class="run-span">
-										{e.occurrences} times, {relativeTime(e.first_at)} to {relativeTime(e.last_at)}
-									</p>
-								{/if}
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</aside>
+			{/if}
 		</div>
-
+		<DeleteAppletModal {action} bind:open={deleting} onDeleted={() => windowShellStore.closeTab(tab.id)} />
+		{#if action.has_face}
+			<ShareSheet open={sharing} producer={{ kind: 'applet', id: action.id }} onClose={() => (sharing = false)} />
+		{/if}
 	{/if}
 </div>
 
-{#if action}
-	<Modal open={deleteOpen} onClose={() => (deleteOpen = false)} title="Delete applet" width="sm">
-		<div class="del">
-			<p>
-				Delete <strong>{action.name}</strong>? This removes the applet and can't be undone.
-			</p>
-			{#if deleteData && deleteData.tables.length > 0}
-				<label class="drop-opt">
-					<input type="checkbox" bind:checked={dropData} />
-					<span>
-						Also permanently delete its data
-						<span class="dim"
-							>({deleteData.tables.length}
-							{deleteData.tables.length === 1 ? 'table' : 'tables'} in
-							<code>{deleteData.schema}</code>)</span
-						>
-					</span>
-				</label>
-				<ul class="tbl-list">
-					{#each deleteData.tables as t (t)}
-						<li><code>{t}</code></li>
-					{/each}
-				</ul>
-				{#if !dropData}
-					<p class="keep-note dim">Your server keeps its data, which can outlive the applet.</p>
-				{/if}
-			{/if}
-		</div>
-		{#snippet footer()}
-			<Button variant="ghost" onclick={() => (deleteOpen = false)} disabled={deleting}>Cancel</Button>
-			<Button variant="danger" onclick={doDelete} disabled={deleting}>
-				{deleting ? 'Deleting…' : dropData ? 'Delete applet + data' : 'Delete applet'}
-			</Button>
-		{/snippet}
-	</Modal>
-{/if}
-
 <style>
-	.del {
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-		font-size: 0.875rem;
-	}
-	.del p {
-		margin: 0;
-	}
-	.drop-opt {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.5rem;
-		cursor: pointer;
-	}
-	.drop-opt input {
-		margin-top: 0.15rem;
-	}
-	.tbl-list {
-		margin: 0;
-		padding-left: 1.5rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.15rem;
-		max-height: 8rem;
-		overflow-y: auto;
-	}
-	.del code {
-		font-size: 0.8125rem;
-	}
-	.keep-note {
-		margin: 0;
-		font-size: 0.8125rem;
-	}
-	.del .dim {
-		color: var(--color-foreground-subtle);
-	}
-
-	.detail {
-		display: flex;
-		flex-direction: column;
+	.applet-home {
 		height: 100%;
 		overflow-y: auto;
-		background: var(--color-surface, #fff);
+		padding: 40px 48px 64px;
 	}
-
-	.state {
-		padding: 3rem 1.5rem;
-		text-align: center;
+	@container (max-width: 640px) {
+		.applet-home {
+			padding: 24px 16px 48px;
+		}
 	}
-
-	.hero {
-		padding: 1.25rem 2rem 1rem;
-		border-bottom: 1px solid var(--color-border, #e5e7eb);
-		background: var(--color-surface, #fff);
-		position: sticky;
-		top: 0;
-		z-index: 1;
-	}
-	.hero-top {
+	.measure {
+		max-width: 920px;
+		margin: 0 auto;
 		display: flex;
-		align-items: flex-start;
-		gap: 1rem;
+		flex-direction: column;
+		gap: 24px;
+	}
+	.state {
+		text-align: center;
+		color: var(--color-foreground-subtle);
+		font-size: 14px;
+	}
+
+	.head {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		padding-bottom: 16px;
+		border-bottom: 1px solid var(--color-border);
+	}
+	.glyph {
+		width: 40px;
+		height: 40px;
+		flex: none;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 12px;
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		color: var(--color-foreground-muted);
 	}
 	.title-block {
 		flex: 1;
 		min-width: 0;
 	}
 	.title {
-		margin: 0 0 0.25rem;
-		font-size: 1.1875rem;
-		font-weight: 600;
+		margin: 0;
+		font-family: var(--font-serif);
+		font-weight: 400;
+		font-size: var(--md-h2-size);
 		line-height: 1.25;
 	}
-	.section-head {
-		margin: 0;
-		font-size: 0.8125rem;
-		font-weight: 600;
+	.status {
+		margin: 4px 0 0;
+		font-size: 13px;
 		color: var(--color-foreground-muted);
 	}
-	.readonly-value {
-		margin: 0;
-		font-size: 0.875rem;
-		line-height: 1.5;
-		color: var(--color-foreground);
-	}
-	.readonly-value.dim {
-		color: var(--color-foreground-subtle);
-	}
-	.readonly-value.mono {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.8125rem;
-		padding: 0.5rem 0.625rem;
-		border-radius: 6px;
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border-subtle);
-		display: block;
-		overflow-x: auto;
-	}
-	.chips {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.3rem;
-	}
-	.chip {
-		padding: 0.1rem 0.5rem;
-		border: 1px solid var(--color-border);
-		border-radius: 999px;
-		background: var(--color-surface-elevated);
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-	}
-	.face-block {
-		padding: 1.25rem 2rem 0;
-		max-width: 1400px;
-		width: 100%;
-		margin: 0 auto;
-	}
-	.face-head {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		margin-bottom: 0.5rem;
-	}
-	.face-actions {
-		display: flex;
-		gap: 0.5rem;
-	}
-	.face-head h2 {
-		margin: 0;
-		font-size: 0.8125rem;
-		font-weight: 600;
-		color: var(--color-foreground-muted);
-	}
-	.intent {
-		margin: 0 0 0.375rem;
-		max-width: 68ch;
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 0.875rem;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-	}
-	.meta {
+	.head-actions {
 		display: flex;
 		align-items: center;
-		gap: 0.375rem;
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle, #9ca3af);
+		gap: 4px;
+		flex: none;
 	}
-	.dot-sep {
-		opacity: 0.5;
-	}
-	/* Lifecycle is a neutral fact — "runs forever" is not a warning. This was
-	   tinted `--color-warning`, which made every applet's normal state read as
-	   a problem and left nothing distinct for the state that IS one. */
-	.muted-inline {
-		color: inherit;
-	}
-	/* The slot passed and nothing ran. The one thing in this row that earns a
-	   colour, now that it is the only one taking it. */
-	.overdue {
-		color: var(--color-warning);
-		font-weight: 500;
-	}
-	.hero-actions {
-		display: flex;
-		gap: 0.5rem;
-		flex-shrink: 0;
-	}
-	.error-banner {
-		margin-top: 0.75rem;
-		padding: 0.5rem 0.75rem;
-		border-radius: 6px;
-		background: var(--color-error-subtle);
-		color: var(--color-error);
-		font-size: 0.8125rem;
+	.head-actions .switch {
+		margin-left: 8px;
 	}
 
-	.body {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, 380px);
-		gap: 1.5rem;
-		padding: 1.5rem 2rem 2rem;
-		max-width: 1400px;
-		width: 100%;
-		margin: 0 auto;
+	.switch {
+		width: 44px;
+		height: 26px;
+		border-radius: 999px;
+		background: var(--color-border);
+		position: relative;
+		flex: none;
+		border: 0;
+		cursor: pointer;
+		transition: background 150ms ease;
+		padding: 0;
 	}
-	@media (max-width: 900px) {
-		.body {
+	.switch.on {
+		background: var(--color-success);
+	}
+	.switch::after {
+		content: '';
+		position: absolute;
+		top: 3px;
+		left: 3px;
+		width: 20px;
+		height: 20px;
+		border-radius: 50%;
+		background: var(--color-background);
+		transition: transform 150ms ease;
+	}
+	.switch.on::after {
+		transform: translateX(18px);
+	}
+	.switch:focus-visible {
+		outline: 2px solid var(--color-foreground);
+		outline-offset: 3px;
+	}
+	.switch:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.switch,
+		.switch::after {
+			transition: none;
+		}
+	}
+
+	.list-head {
+		margin: 0 0 8px;
+		font-family: var(--font-sans);
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--color-foreground-muted);
+	}
+
+
+	/* Info: one narrow column, like a sheet laid on the applet. */
+	.narrow {
+		width: 100%;
+		max-width: 640px;
+		margin: 0 auto;
+		display: flex;
+		flex-direction: column;
+		gap: 24px;
+	}
+	.backlink {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 16px;
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+	}
+	.backlink:hover {
+		color: var(--color-foreground);
+	}
+	.head.sub {
+		flex-direction: column;
+		gap: 4px;
+		align-items: flex-start;
+	}
+
+
+	/* Results, and beside them All pages or the inspector. */
+	.body.with-side {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 264px;
+		gap: 32px;
+		align-items: start;
+	}
+	@container (max-width: 720px) {
+		.body.with-side {
 			grid-template-columns: 1fr;
 		}
 	}
-
-	.col {
+	.results {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: 24px;
 		min-width: 0;
 	}
 
-	.field {
+	.insp {
 		display: flex;
 		flex-direction: column;
-		gap: 0.25rem;
+		gap: 24px;
+		padding-left: 24px;
+		border-left: 1px solid var(--color-border);
 	}
-	.label {
-		font-size: 0.75rem;
-		font-weight: 500;
-		color: var(--color-foreground-muted, #6b7280);
-	}
-	.field input,
-	.field textarea {
-		font: inherit;
-		font-size: 0.875rem;
-		padding: 0.5rem 0.625rem;
-		border-radius: 6px;
-		border: 1px solid var(--color-border, #e5e7eb);
-		background: var(--color-surface, #fff);
-		color: var(--color-foreground, inherit);
-		resize: vertical;
-	}
-	.field textarea {
-		font-family: var(--font-sans, inherit);
+	.insp-text {
+		margin: 0;
+		font-size: 14px;
 		line-height: 1.5;
 	}
-	.field input:disabled,
-	.field textarea:disabled {
-		background: var(--color-surface-elevated, #f9fafb);
-		opacity: 0.7;
-		cursor: not-allowed;
+	.insp-text.muted {
+		color: var(--color-foreground-muted);
 	}
-	.hint {
-		font-size: 0.6875rem;
-		color: var(--color-foreground-subtle, #9ca3af);
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
-	}
-	.pipeline-note {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.5rem 0.75rem;
-		background: var(--color-surface-elevated, #f3f4f6);
-		border-radius: 6px;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted, #6b7280);
-	}
-	.pipeline-note code {
-		font-family: var(--font-mono, monospace);
-		font-size: 0.75rem;
-	}
-
-	.save-row {
+	.insp-row {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding-top: 0.5rem;
-		border-top: 1px solid var(--color-border-subtle, #f3f4f6);
-		margin-top: 0.5rem;
+		gap: 12px;
+		width: 100%;
+		min-height: 40px;
+		padding: 8px 16px;
+		border: 0;
+		background: none;
+		font: inherit;
+		font-size: 14px;
+		text-align: left;
+		color: var(--color-foreground);
 	}
-	.system-note {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		max-width: 60ch;
-		font-size: 0.6875rem;
-		line-height: 1.4;
-		color: var(--color-foreground-subtle, #9ca3af);
+	.insp-row + .insp-row {
+		border-top: 1px solid var(--color-border);
+	}
+	.insp-row.link {
+		cursor: pointer;
+	}
+	.insp-row.link:hover {
+		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+	}
+	.insp-value {
+		color: var(--color-foreground-muted);
+		text-align: right;
 	}
 
-	.runs {
-		border-left: 1px solid var(--color-border-subtle, #f3f4f6);
-		padding-left: 1.5rem;
-	}
-	@media (max-width: 900px) {
-		.runs {
-			border-left: none;
-			border-top: 1px solid var(--color-border-subtle, #f3f4f6);
-			padding-left: 0;
-			padding-top: 1rem;
-		}
-	}
-	.runs h3 {
-		font-size: 0.8125rem;
-		font-weight: 600;
-		color: var(--color-foreground-muted, #6b7280);
-		margin: 0 0 0.75rem;
-	}
-	.runs-list {
+	/* A list of results, one line each, failures where they happened. */
+	.result-list {
 		list-style: none;
-		padding: 0;
 		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
+		padding: 0;
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
+		background: var(--color-surface);
 	}
-	.run-item {
-		padding: 0.625rem 0.75rem;
-		border-radius: 6px;
-		background: var(--color-surface-elevated, #f9fafb);
-		border: 1px solid var(--color-border-subtle, #f3f4f6);
-	}
-	.run-top {
+	.result {
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
-		font-size: 0.75rem;
+		gap: 16px;
+		min-height: 48px;
+		padding: 12px 16px;
 	}
-	.run-count {
-		font-variant-numeric: tabular-nums;
-		font-size: 0.6875rem;
-		color: var(--color-foreground-subtle);
+	.result + .result {
+		border-top: 1px solid var(--color-border);
 	}
-	.run-span {
-		margin: 0.25rem 0 0;
-		font-size: 0.6875rem;
-		color: var(--color-foreground-subtle);
+	.result-text {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		font-size: 14px;
+		line-height: 1.5;
 	}
-	.run-cost {
-		font-variant-numeric: tabular-nums;
+	.result-when {
+		font-size: 12px;
 		color: var(--color-foreground-muted);
 	}
-	.run-trigger {
-		font-family: var(--font-mono, monospace);
-		color: var(--color-foreground-subtle, #9ca3af);
+	.failed {
+		color: var(--color-error);
 	}
-	.run-time {
-		margin-left: auto;
-		color: var(--color-foreground-subtle, #9ca3af);
+	.page-title {
+		margin: 0;
+		font-family: var(--font-serif);
+		font-weight: 400;
+		font-size: 36px;
+		line-height: 1.15;
 	}
+	.page-by {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin: 8px 0 16px;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+	.page-body {
+		max-width: 40em;
+	}
+	.page-list {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.page-item {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 8px 12px;
+		border: 0;
+		border-radius: 6px;
+		background: none;
+		text-align: left;
+		font: inherit;
+		cursor: pointer;
+		color: var(--color-foreground);
+	}
+	.page-item:hover {
+		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+	}
+	.page-item[aria-current='true'] {
+		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+	}
+	/* A row, so sans; the page's own title above stays serif. */
+	.page-item-title {
+		font-size: 14px;
+	}
+	.page-item.missing {
+		cursor: default;
+	}
+	.page-item.missing .page-item-title,
+	.page-item.missing .page-item-when {
+		color: var(--color-error);
+	}
+	.page-item-when {
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+	}
+
+
+	/* What its last runs did, one line each. */
+	.empty {
+		margin: 0;
+		font-size: 15px;
+		color: var(--color-foreground-muted);
+	}
+
 	.composer {
 		display: flex;
-		gap: 0.375rem;
-		margin-bottom: 0.75rem;
+		gap: 8px;
 	}
 	.composer input {
 		flex: 1;
 		min-width: 0;
 		font: inherit;
-		font-size: 0.8125rem;
-		padding: 0.4rem 0.6rem;
+		font-size: 14px;
+		padding: 8px 12px;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: 12px;
 		background: var(--color-surface);
 		color: var(--color-foreground);
-	}
-	/* What the person said — set apart from what the applet answered, so the
-	   run log reads as the two-sided thing it now is. */
-	.run-said {
-		margin: 0.375rem 0 0;
-		padding-left: 0.5rem;
-		border-left: 2px solid var(--color-border);
-		font-size: 0.8125rem;
-		color: var(--color-foreground);
-	}
-	.run-summary {
-		margin: 0.375rem 0 0;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted, #4b5563);
-	}
-	.run-error {
-		margin: 0.375rem 0 0;
-		font-size: 0.75rem;
-		color: color-mix(in srgb, var(--color-error) 75%, #000);
-		font-family: var(--font-mono, monospace);
-	}
-	.run-why {
-		margin: 0.375rem 0 0;
-		padding: 0.375rem 0.5rem;
-		border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
-		background: var(--color-warning-subtle);
-		border-radius: 6px;
-	}
-	.run-why-title {
-		margin: 0;
-		display: flex;
-		align-items: center;
-		gap: 0.25rem;
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--color-foreground);
-	}
-	.run-why-remedy {
-		margin: 0.125rem 0 0;
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted, #4b5563);
-	}
-	.run-why-fix {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
-		margin-top: 0.375rem;
-		padding: 0.2rem 0.5rem;
-		font: inherit;
-		font-size: 0.75rem;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		background: var(--color-surface);
-		color: var(--color-foreground);
-		cursor: pointer;
-	}
-	/* The OS's own sentence, demoted to evidence under the named condition. */
-	.run-why-detail {
-		opacity: 0.65;
-	}
-
-	.muted {
-		color: var(--color-foreground-subtle, #9ca3af);
-		font-style: italic;
 	}
 	.error-msg {
-		color: color-mix(in srgb, var(--color-error) 75%, #000);
+		margin: 0;
+		font-size: 13px;
+		color: var(--color-error);
 	}
-
-	.source-block {
-		margin-top: 1.5rem;
-		padding-top: 1.25rem;
-		border-top: 1px solid var(--color-border, #e5e7eb);
-	}
-	.source-block h3 {
-		margin: 0 0 0.25rem;
-		font-size: 0.875rem;
-		font-weight: 600;
-	}
-	.source-block .muted {
-		margin: 0 0 0.75rem;
-		font-size: 0.75rem;
-		font-style: normal;
-	}
-
-	/* The prompt you are running is not the prompt we ship. Stated plainly and
-	   quietly: it is information, not a warning — an edited prompt is a
-	   legitimate thing to have. */
-	.prompt-drift {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		gap: 0.4rem;
-		margin-top: 0.4rem;
-		font-size: 0.8125rem;
-		line-height: 1.5;
-		color: var(--color-foreground-subtle);
-	}
-
 </style>

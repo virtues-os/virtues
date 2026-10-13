@@ -939,6 +939,107 @@ pub async fn collapsed_log(db: &PgPool, applet_id: &str, limit: i64) -> Result<V
         .collect()
 }
 
+/// One applet's runs on one local day, counted by outcome.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RunDay {
+    pub applet_id: String,
+    /// The calendar day the runs started on, in the timezone passed in.
+    pub day: chrono::NaiveDate,
+    pub status: String,
+    pub runs: i64,
+}
+
+/// How many runs each applet had on each of the last `days` days, split by
+/// outcome. The Applets page draws one dot per applet per day from this, so
+/// an hourly applet and a weekly one sit on the same time axis.
+///
+/// Days are counted in `tz` because schedules fire on that clock: a run at
+/// 23:30 local time belongs to the day it ran on there, not to the UTC date.
+pub async fn runs_by_day(db: &PgPool, tz: &str, days: i32) -> Result<Vec<RunDay>> {
+    let rows = sqlx::query(
+        r#"SELECT applet_id,
+                  (started_at AT TIME ZONE $1)::date AS day,
+                  status,
+                  count(*) AS runs
+             FROM app_applet_runs
+            WHERE applet_id IS NOT NULL
+              AND started_at >= (date_trunc('day', now() AT TIME ZONE $1)
+                                 - make_interval(days => $2 - 1)) AT TIME ZONE $1
+            GROUP BY applet_id, day, status
+            ORDER BY applet_id, day, status"#,
+    )
+    .bind(tz)
+    .bind(days)
+    .fetch_all(db)
+    .await?;
+
+    rows.iter()
+        .map(|r| {
+            Ok(RunDay {
+                applet_id: r.try_get("applet_id")?,
+                day: r.try_get("day")?,
+                status: r.try_get("status")?,
+                runs: r.try_get("runs")?,
+            })
+        })
+        .collect()
+}
+
+/// Record that a run wrote a page. Writing the same page twice in one run is
+/// one record.
+pub async fn record_page_output(db: &PgPool, run_id: &str, page_id: &str) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO app_applet_run_outputs (run_id, kind, ref_id) VALUES ($1, 'page', $2) \
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(run_id)
+    .bind(page_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// A page an applet wrote, with the last time one of its runs wrote it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AppletPage {
+    pub page_id: String,
+    pub title: String,
+    pub written_at: chrono::DateTime<chrono::Utc>,
+    pub run_id: String,
+}
+
+/// The pages an applet's runs wrote, most recently written first. A page
+/// deleted since is left out; the run that wrote it keeps its history.
+pub async fn applet_pages(db: &PgPool, applet_id: &str, limit: i64) -> Result<Vec<AppletPage>> {
+    let rows = sqlx::query(
+        r#"SELECT DISTINCT ON (o.ref_id)
+                  o.ref_id AS page_id, p.title, r.started_at AS written_at, r.id AS run_id
+             FROM app_applet_run_outputs o
+             JOIN app_applet_runs r ON r.id = o.run_id
+             JOIN app_pages p ON p.id = o.ref_id AND p.deleted_at IS NULL
+            WHERE o.kind = 'page' AND r.applet_id = $1
+            ORDER BY o.ref_id, r.started_at DESC"#,
+    )
+    .bind(applet_id)
+    .fetch_all(db)
+    .await?;
+
+    let mut pages = rows
+        .iter()
+        .map(|r| {
+            Ok(AppletPage {
+                page_id: r.try_get("page_id")?,
+                title: r.try_get("title")?,
+                written_at: r.try_get("written_at")?,
+                run_id: r.try_get("run_id")?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    pages.sort_by(|a, b| b.written_at.cmp(&a.written_at));
+    pages.truncate(limit.max(0) as usize);
+    Ok(pages)
+}
+
 /// Record what the user said on a `message` run.
 pub async fn set_run_message(db: &PgPool, run_id: &str, message: &str) -> Result<()> {
     sqlx::query("UPDATE app_applet_runs SET message = $1 WHERE id = $2")
@@ -1180,6 +1281,106 @@ mod tests {
         let log = collapsed_log(&pool, "applet_varied", 50).await.unwrap();
         assert_eq!(log.len(), 3, "three different things said, three lines");
         assert!(log.iter().all(|e| e.occurrences == 1));
+    }
+
+    /// A run at local noon, `days_ago` days back, so the test never lands on
+    /// a day boundary whatever time it runs.
+    async fn seed_run_on_day(pool: &PgPool, id: &str, applet: &str, status: &str, days_ago: i32) {
+        sqlx::query(
+            "INSERT INTO app_applet_runs (id, applet_id, status, trigger, started_at) \
+             VALUES ($1, $2, $3, 'cron', \
+                     (date_trunc('day', now() AT TIME ZONE 'UTC') + interval '12 hours' \
+                      - make_interval(days => $4)) AT TIME ZONE 'UTC')",
+        )
+        .bind(id)
+        .bind(applet)
+        .bind(status)
+        .bind(days_ago)
+        .execute(pool)
+        .await
+        .expect("seed run on day");
+    }
+
+    async fn page_row(pool: &PgPool, id: &str, title: &str) {
+        sqlx::query("INSERT INTO app_pages (id, title) VALUES ($1, $2)")
+            .bind(id)
+            .bind(title)
+            .execute(pool)
+            .await
+            .expect("seed page");
+    }
+
+    /// An applet's pages come back newest first, once each, and a deleted
+    /// page drops out while its run stays.
+    #[sqlx::test]
+    async fn applet_pages_lists_what_its_runs_wrote(pool: PgPool) {
+        applet_row(&pool, "applet_journal").await;
+        seed_run_on_day(&pool, "run_old", "applet_journal", "success", 2).await;
+        seed_run_on_day(&pool, "run_new", "applet_journal", "success", 0).await;
+        page_row(&pool, "page_a", "Monday").await;
+        page_row(&pool, "page_b", "Wednesday").await;
+        page_row(&pool, "page_gone", "Deleted").await;
+        record_page_output(&pool, "run_old", "page_a").await.unwrap();
+        record_page_output(&pool, "run_old", "page_a").await.unwrap(); // twice in one run
+        record_page_output(&pool, "run_old", "page_gone").await.unwrap();
+        record_page_output(&pool, "run_new", "page_b").await.unwrap();
+        record_page_output(&pool, "run_new", "page_a").await.unwrap(); // rewritten later
+        sqlx::query("UPDATE app_pages SET deleted_at = now() WHERE id = 'page_gone'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let pages = applet_pages(&pool, "applet_journal", 10).await.unwrap();
+        let ids: Vec<&str> = pages.iter().map(|p| p.page_id.as_str()).collect();
+        assert_eq!(ids.len(), 2, "each page once, the deleted one gone: {ids:?}");
+        assert!(pages.iter().all(|p| p.run_id == "run_new"), "credited to the latest run that wrote it");
+        assert!(applet_pages(&pool, "applet_other", 10).await.unwrap().is_empty());
+    }
+
+    /// Runs are counted per day and per outcome, and only inside the window.
+    #[sqlx::test]
+    async fn runs_by_day_counts_each_outcome_per_day(pool: PgPool) {
+        applet_row(&pool, "applet_daily").await;
+        for i in 0..3 {
+            seed_run_on_day(&pool, &format!("run_ok_{i}"), "applet_daily", "success", 0).await;
+        }
+        seed_run_on_day(&pool, "run_err", "applet_daily", "error", 0).await;
+        seed_run_on_day(&pool, "run_old_ok", "applet_daily", "success", 2).await;
+        seed_run_on_day(&pool, "run_too_old", "applet_daily", "success", 40).await;
+
+        let days = runs_by_day(&pool, "UTC", 30).await.unwrap();
+        let today = chrono::Utc::now().date_naive();
+        let count = |day: chrono::NaiveDate, status: &str| {
+            days.iter()
+                .find(|d| d.day == day && d.status == status)
+                .map(|d| d.runs)
+        };
+
+        assert_eq!(count(today, "success"), Some(3));
+        assert_eq!(count(today, "error"), Some(1), "a failure keeps its own count");
+        assert_eq!(count(today - chrono::Duration::days(2), "success"), Some(1));
+        assert_eq!(days.len(), 3, "the run from 40 days ago is outside the window");
+    }
+
+    /// The same run lands on different days in different timezones. 23:30 UTC
+    /// is still yesterday in UTC but already the next morning in Tokyo.
+    #[sqlx::test]
+    async fn runs_by_day_counts_days_in_the_given_timezone(pool: PgPool) {
+        applet_row(&pool, "applet_tz").await;
+        sqlx::query(
+            "INSERT INTO app_applet_runs (id, applet_id, status, trigger, started_at) \
+             VALUES ('run_late', 'applet_tz', 'success', 'cron', \
+                     (date_trunc('day', now() AT TIME ZONE 'UTC') - interval '30 minutes') AT TIME ZONE 'UTC')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed late run");
+
+        let utc = runs_by_day(&pool, "UTC", 30).await.unwrap();
+        let tokyo = runs_by_day(&pool, "Asia/Tokyo", 30).await.unwrap();
+        assert_eq!(utc.len(), 1);
+        assert_eq!(tokyo.len(), 1);
+        assert_eq!(tokyo[0].day - utc[0].day, chrono::Duration::days(1));
     }
 
     /// Turning a finished applet back on un-finishes it. Without this the row
