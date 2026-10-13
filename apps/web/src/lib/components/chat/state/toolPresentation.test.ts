@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import registry from "$lib/ai/fixtures/tool-ids.json";
-import { clip, describeTool, PRESENTED_TOOLS, TOOL_UNFINISHED, toolStatus } from "./toolPresentation";
+import { clip, describeTool, PRESENTED_TOOLS, siteIn, TOOL_UNFINISHED, toolStatus } from "./toolPresentation";
 
 describe("toolPresentation", () => {
 	it("has an entry for every tool the box registers, and none it does not", () => {
@@ -22,6 +22,16 @@ describe("toolPresentation", () => {
 
 	it("never leaves a short string clipped", () => {
 		expect(clip("short")).toBe("short");
+	});
+
+	it("names the site a browsing task goes to, or none", () => {
+		const browse = (task: string, live: boolean) => describeTool({ type: "tool-browse", input: { task } }, live);
+		expect(browse("Open https://www.united.com/en/us/manageres/mytrips and read the trip.", true)).toBe(
+			"Browsing united.com",
+		);
+		expect(browse("Go to expedia.com and find the hotel booking.", false)).toBe("Browsed expedia.com");
+		expect(browse("Find the confirmation for the trip in October.", false)).toBe("Used your browser");
+		expect(siteIn("Read news.ycombinator.com/news?p=2")).toBe("news.ycombinator.com");
 	});
 });
 

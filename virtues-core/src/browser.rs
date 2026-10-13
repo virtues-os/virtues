@@ -43,7 +43,7 @@ pub const TOOLS: &[&str] = &[
     "browser_handoff",
 ];
 
-const NOT_OPEN: &str = "No browser is connected. The browser lives in the Virtues app on a Mac, \
+pub(crate) const NOT_OPEN: &str = "No browser is connected. The browser lives in the Virtues app on a Mac, \
                         and the app has to be open for the assistant to use it.";
 
 /// How long `browser_handoff` waits for the owner to press Done.

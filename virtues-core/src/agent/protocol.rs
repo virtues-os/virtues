@@ -6,6 +6,51 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Model spend a tool made on the turn's behalf: a browsing agent, research
+/// workers. A tool result carries a list of these as `usage`, one per model,
+/// so the turn counts the spend against its budget and bills it under the
+/// model that spent it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegatedUsage {
+    pub model: String,
+    /// The `app_ai_calls` feature the spend is filed under; the turn's own
+    /// mode when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<String>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub reasoning_tokens: u64,
+    #[serde(default)]
+    pub cache_read_tokens: u64,
+    pub cost_micros: i64,
+}
+
+impl DelegatedUsage {
+    /// The spend a tool result reports. A result with no `usage` spent
+    /// nothing on the turn's behalf; one whose `usage` does not parse is a
+    /// tool reporting wrongly, and is logged rather than read as free.
+    pub fn read(result: &Value) -> Vec<DelegatedUsage> {
+        let Some(usage) = result.get("usage") else { return Vec::new() };
+        match serde_json::from_value(usage.clone()) {
+            Ok(entries) => entries,
+            Err(e) => {
+                tracing::error!(error = %e, "a tool reported usage in a shape the turn cannot bill");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Fold `other` in, summing every count.
+    pub fn add(&mut self, other: &DelegatedUsage) {
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
+        self.reasoning_tokens += other.reasoning_tokens;
+        self.cache_read_tokens += other.cache_read_tokens;
+        self.cost_micros += other.cost_micros;
+    }
+}
+
 /// Events emitted by the AgentLoop during execution.
 ///
 /// These are serialized to SSE events for the frontend to consume.

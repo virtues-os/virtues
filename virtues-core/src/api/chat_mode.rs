@@ -167,7 +167,7 @@ impl ChatMode {
             Self::Chat => {
                 let mut tools = get_tool_definitions_for_llm();
                 if crate::browser::connected() {
-                    tools.extend(tools_named(crate::browser::TOOLS));
+                    tools.extend(tools_named(&[crate::browse::TOOL]));
                 }
                 tools
             }
@@ -176,7 +176,7 @@ impl ChatMode {
                 let mut tools = get_tool_definitions_for_llm();
                 tools.extend(tools_named(crate::tools::SUDO_ONLY_TOOLS));
                 if crate::browser::connected() {
-                    tools.extend(tools_named(crate::browser::TOOLS));
+                    tools.extend(tools_named(&[crate::browse::TOOL]));
                 }
                 tools
             }
