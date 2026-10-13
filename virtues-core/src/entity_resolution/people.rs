@@ -4,16 +4,21 @@
 //!
 //! ## Sources
 //!
-//! 1. **Calendar Attendees** - Event attendee emails → wiki_people
-//! 2. **Email Senders** - From email addresses → wiki_people
+//! 1. **Calendar attendees**: an address that shares a meeting with you.
+//! 2. **Email you sent**: everyone you wrote to.
+//! 3. **Email you received**: from someone you already know, or have written to.
+//! 4. **Messages**, both directions, by handle.
 //!
-//! ## Process
+//! ## Who becomes a person
 //!
-//! 1. Fetch records in time window (calendar events, emails)
-//! 2. Extract emails from records
-//! 3. Match against wiki_people by email
-//! 4. Create new person entities for unknowns
-//! 5. Update source records with resolved person IDs
+//! Someone you have had two-way contact with: on a contact card, in a meeting
+//! with you, or written to by you. A one-way sender (a newsletter, a receipt,
+//! a stranger's cold email) gets no person and no ref. Minting one per unseen
+//! sender filled a real box with 257 "people", half of them no-reply robots,
+//! none of whom you had ever written to. An address with automated signals
+//! (`is_automated_address`) never becomes a person at all.
+
+use std::collections::HashSet;
 
 use uuid::Uuid;
 
@@ -32,22 +37,30 @@ pub async fn resolve_people(db: &Database, window: TimeWindow) -> Result<usize> 
         "Resolving people from all sources"
     );
 
+    // First, so every pass below matches against complete handles.
+    sync_person_handles(db).await?;
+    let owner = owner_addresses(db).await?;
+
     let mut total_resolved = 0;
 
     // 1. Resolve from calendar attendees
-    total_resolved += resolve_calendar_attendees(db, window).await?;
+    total_resolved += resolve_calendar_attendees(db, window, &owner).await?;
 
-    // 2. Resolve from email senders
+    // 2. Everyone you wrote to. Before the senders, so a reply you sent today
+    //    makes yesterday's email from them resolvable.
+    total_resolved += resolve_email_recipients(db, window, &owner).await?;
+
+    // 3. Resolve from email senders
     total_resolved += resolve_email_senders(db, window).await?;
 
-    // 3 & 4. The two message passes. Deliberately NOT window-bounded — see
+    // 4 & 5. The two message passes. Deliberately NOT window-bounded — see
     //    `resolve_message_senders` — which is also why they need the gate below.
     if message_work_is_possible(db).await? {
-        // 3. Message senders.
+        // 4. Message senders.
         total_resolved += resolve_message_senders(db).await?;
 
-        // 4. The *recipient* of the messages you sent. Same anti-join shape as
-        //    (3), same reason it takes no window.
+        // 5. The *recipient* of the messages you sent. Same anti-join shape as
+        //    (4), same reason it takes no window.
         total_resolved += resolve_message_recipients(db).await?;
     }
 
@@ -57,6 +70,177 @@ pub async fn resolve_people(db: &Database, window: TimeWindow) -> Result<usize> 
     );
 
     Ok(total_resolved)
+}
+
+/// Give every person the normal form of every address and number they hold.
+///
+/// `handles` is what every resolver matches on, and it used to be written in
+/// exactly one place: when a contact card *created* a person. A card merged
+/// into an existing person, a number added on the page, a person minted from
+/// an email, and two people merged all kept whatever handles they had, so
+/// messages from those numbers and addresses never reached them.
+///
+/// So it is derived here, from `emails` and `phones`, for everyone, every
+/// tick. Additive only: a handle already held is never taken away, because
+/// losing one silently stops resolution, and the cost of keeping a stale one
+/// is a number that still finds the person it used to belong to.
+async fn sync_person_handles(db: &Database) -> Result<u64> {
+    let rows: Vec<(String, serde_json::Value, serde_json::Value, serde_json::Value)> =
+        sqlx::query_as("SELECT id, emails, phones, handles FROM wiki_people")
+            .fetch_all(db.pool())
+            .await?;
+    let strings = |v: &serde_json::Value| -> Vec<String> {
+        v.as_array()
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            // absent-ok: a column that is not a JSON array holds no addresses
+            .unwrap_or_default()
+    };
+    let mut ids = Vec::new();
+    let mut handles = Vec::new();
+    for (id, emails, phones, have) in &rows {
+        let have = strings(have);
+        let emails = strings(emails);
+        let phones = strings(phones);
+        let derived = virtues_helpers::handles::normalized_handles(
+            emails.iter().map(String::as_str),
+            phones.iter().map(String::as_str),
+        );
+        let want = union_handles(&have, &derived);
+        if want.len() != have.len() {
+            ids.push(id.clone());
+            handles.push(serde_json::json!(want).to_string());
+        }
+    }
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let n = sqlx::query(
+        "UPDATE wiki_people p SET handles = u.h::jsonb, updated_at = now() \
+         FROM unnest($1::text[], $2::text[]) AS u(id, h) WHERE p.id = u.id",
+    )
+    .bind(&ids)
+    .bind(&handles)
+    .execute(db.pool())
+    .await?
+    .rows_affected();
+    tracing::info!(people = n, "gave people the handles their addresses and numbers imply");
+    Ok(n)
+}
+
+/// `have` plus whatever `derived` adds, sorted and without repeats.
+fn union_handles(have: &[String], derived: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = have.iter().chain(derived).cloned().collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The addresses that are you: every address you have sent email from, and
+/// the handles on your own person. Never a person of their own, never a ref
+/// to anyone: you are not an attendee of your own calendar or the recipient
+/// of your own cc.
+async fn owner_addresses(db: &Database) -> Result<HashSet<String>> {
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT lower(from_email) FROM data_communication_email \
+         WHERE direction = 'sent' AND from_email <> '' \
+         UNION \
+         SELECT jsonb_array_elements_text(p.handles) FROM wiki_people p \
+         JOIN app_user_profile u ON u.self_person_id = p.id",
+    )
+    .fetch_all(db.pool())
+    .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// Does this address belong to a machine rather than a person?
+///
+/// Narrow on purpose, and only ever used to *refuse* a new person: a false
+/// positive costs one person you can still add by hand, a false negative a
+/// robot on your People list.
+fn is_automated_address(addr: &str) -> bool {
+    let Some((local, domain)) = addr.rsplit_once('@') else {
+        return true;
+    };
+    let local = local.split('+').next().unwrap_or(local).to_ascii_lowercase();
+    let domain = domain.to_ascii_lowercase();
+    // Rooms, resource calendars and group calendars are attendees, not people.
+    if domain.ends_with("calendar.google.com") {
+        return true;
+    }
+    let squashed: String = local.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    const PREFIXES: [&str; 3] = ["noreply", "donotreply", "mailerdaemon"];
+    if PREFIXES.iter().any(|p| squashed.starts_with(p)) {
+        return true;
+    }
+    const EXACT: [&str; 22] = [
+        "notifications", "notification", "notify", "alerts", "alert", "billing",
+        "info", "news", "newsletter", "newsletters", "updates", "postmaster",
+        "bounce", "bounces", "receipts", "receipt", "marketing", "support",
+        "invoice", "invoices", "calendar", "reply",
+    ];
+    EXACT.contains(&squashed.as_str())
+}
+
+/// Who an address belongs to, if anyone.
+enum Holder {
+    /// No person holds it.
+    Nobody,
+    /// Exactly one person.
+    One(String),
+    /// More than one person holds it, so it belongs to none of them. Same rule
+    /// as a shared phone number in `resolve_message_senders`: guessing which of
+    /// two cards an email came from is worse than leaving it, and the person
+    /// page offers "Same as…?" for exactly this.
+    Several,
+}
+
+async fn holder_of(db: &Database, addr: &str) -> Result<Holder> {
+    let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM wiki_people WHERE handles ? $1 LIMIT 2")
+        .bind(addr)
+        .fetch_all(db.pool())
+        .await?;
+    Ok(match ids.as_slice() {
+        [] => Holder::Nobody,
+        [one] => Holder::One(one.clone()),
+        _ => Holder::Several,
+    })
+}
+
+/// Have you ever written to this address?
+async fn owner_wrote_to(db: &Database, addr: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM data_communication_email e \
+         CROSS JOIN LATERAL jsonb_array_elements_text(e.to_emails || e.cc_emails || e.bcc_emails) AS t(a) \
+         WHERE e.direction = 'sent' AND lower(t.a) = $1)",
+    )
+    .bind(addr)
+    .fetch_one(db.pool())
+    .await?)
+}
+
+/// A new person for an address you have had two-way contact with.
+///
+/// The id is a hash of the address, so creating the same person twice is a
+/// no-op. `handles` is written here too, so the person is resolvable on the
+/// next message without waiting for `sync_person_handles`.
+async fn create_person_for_address(db: &Database, addr: &str, display_name: Option<&str>) -> Result<String> {
+    let name = display_name
+        .map(str::trim)
+        .filter(|n| !n.is_empty() && !n.contains('@'))
+        .map(str::to_string)
+        .unwrap_or_else(|| extract_name_from_email(addr));
+    let person_id = ids::generate_id(ids::WIKI_PERSON_PREFIX, &[addr]);
+    sqlx::query(
+        "INSERT INTO wiki_people (id, name, emails, handles) VALUES ($1, $2, $3, $3) \
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(&person_id)
+    .bind(&name)
+    .bind(serde_json::json!([addr]))
+    .execute(db.pool())
+    .await?;
+    tracing::info!(person_id = %person_id, name = %name, "created a person you have written to or met");
+    Ok(person_id)
 }
 
 /// What the two message passes read, reduced to four numbers.
@@ -513,8 +697,14 @@ async fn normalize_pending_handles(db: &Database) -> Result<u64> {
     }
 }
 
-/// Resolve people from calendar attendees in time window
-async fn resolve_calendar_attendees(db: &Database, window: TimeWindow) -> Result<usize> {
+/// Resolve calendar attendees in the time window. Sharing a meeting with you
+/// is two-way contact, so an attendee nobody holds becomes a person, unless
+/// the address is you or a machine (a room, a resource calendar).
+async fn resolve_calendar_attendees(
+    db: &Database,
+    window: TimeWindow,
+    owner: &HashSet<String>,
+) -> Result<usize> {
     let calendar_events = fetch_calendar_events(db, window).await?;
 
     if calendar_events.is_empty() {
@@ -529,7 +719,7 @@ async fn resolve_calendar_attendees(db: &Database, window: TimeWindow) -> Result
 
     let mut total_people_resolved = 0;
     for event in calendar_events {
-        match resolve_and_link_event_attendees(db, &event).await {
+        match resolve_and_link_event_attendees(db, &event, owner).await {
             Ok(count) => total_people_resolved += count,
             Err(e) => {
                 tracing::warn!(
@@ -549,11 +739,12 @@ async fn resolve_calendar_attendees(db: &Database, window: TimeWindow) -> Result
     Ok(total_people_resolved)
 }
 
-/// Resolve people from email senders in time window
+/// Link email you received to the person who sent it.
 ///
-/// Links from_email to person entity via wiki_refs.
+/// Only email you received: the sender of email you sent is you, and filing it
+/// as a ref made your own address a person. And only from someone you already
+/// know or have written to; see the module doc.
 async fn resolve_email_senders(db: &Database, window: TimeWindow) -> Result<usize> {
-    // Fetch emails without resolved from_person_id
     let emails = fetch_unresolved_emails(db, window).await?;
 
     if emails.is_empty() {
@@ -598,19 +789,16 @@ struct EmailRecord {
     from_name: Option<String>,
 }
 
-/// Fetch emails without resolved sender entity reference
+/// Received email in the window with no sender ref yet.
 async fn fetch_unresolved_emails(db: &Database, window: TimeWindow) -> Result<Vec<EmailRecord>> {
-    let rows = sqlx::query!(
+    let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
         r#"
-        SELECT
-            e.id,
-            e.from_email,
-            e.from_name
+        SELECT e.id, e.from_email, e.from_name
         FROM data_communication_email e
         WHERE e.occurred_at >= $1
           AND e.occurred_at < $2
-          AND e.from_email IS NOT NULL
-          AND e.from_email != ''
+          AND e.direction = 'received'
+          AND e.from_email <> ''
           AND NOT EXISTS (
               SELECT 1 FROM wiki_refs er
               WHERE er.source_table = 'data_communication_email'
@@ -620,160 +808,183 @@ async fn fetch_unresolved_emails(db: &Database, window: TimeWindow) -> Result<Ve
         ORDER BY e.occurred_at ASC
         LIMIT 1000
         "#,
-        window.start,
-        window.end
     )
+    .bind(window.start)
+    .bind(window.end)
     .fetch_all(db.pool())
     .await?;
 
-    let emails = rows
+    Ok(rows
         .into_iter()
-        .filter_map(|row| {
-            Some(EmailRecord {
-                id: row.id,
-                from_email: row.from_email,
-                from_name: row.from_name,
-            })
-        })
-        .collect();
-
-    Ok(emails)
+        .map(|(id, from_email, from_name)| EmailRecord { id, from_email, from_name })
+        .collect())
 }
 
-/// Resolve email sender and link to person entity via wiki_refs
-///
-/// Returns true if a new person was created or linked.
+/// Link one received email to its sender. Returns whether it was linked.
 async fn resolve_and_link_email_sender(db: &Database, email_record: &EmailRecord) -> Result<bool> {
-    let email_lower = email_record.from_email.to_lowercase();
+    let addr = email_record.from_email.trim().to_lowercase();
 
-    // Resolve or create person
-    let person_id = resolve_or_create_person_with_name(
-        db,
-        &email_lower,
-        email_record.from_name.as_deref(),
-    )
-    .await?;
+    let person_id = match holder_of(db, &addr).await? {
+        Holder::One(id) => {
+            name_from_header(db, &id, email_record.from_name.as_deref()).await?;
+            id
+        }
+        Holder::Several => return Ok(false),
+        Holder::Nobody => {
+            if is_automated_address(&addr) || !owner_wrote_to(db, &addr).await? {
+                return Ok(false);
+            }
+            create_person_for_address(db, &addr, email_record.from_name.as_deref()).await?
+        }
+    };
 
-    // Link via wiki_refs
     let ref_id = ids::generate_id("eref", &[&email_record.id, &person_id, "sender"]);
-    sqlx::query!(
+    sqlx::query(
         r#"
         INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
         SELECT $1, 'person', $2, 'data_communication_email', $3, 'sender', occurred_at
         FROM data_communication_email WHERE id = $3
         ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
         "#,
-        ref_id,
-        person_id,
-        email_record.id
     )
+    .bind(ref_id)
+    .bind(&person_id)
+    .bind(&email_record.id)
     .execute(db.pool())
     .await?;
-
-    tracing::debug!(
-        email_id = %email_record.id,
-        from_email = %email_record.from_email,
-        person_id = %person_id,
-        "Linked email sender to person via wiki_refs"
-    );
 
     Ok(true)
 }
 
-/// Resolve email to person entity (or create if new), with optional display name
+/// A name from an email header replaces one the record made up from an
+/// address ("jdoe"), and nothing else: never a name from a contact card,
+/// never one you gave.
+async fn name_from_header(db: &Database, person_id: &str, display_name: Option<&str>) -> Result<()> {
+    let Some(name) = display_name.map(str::trim).filter(|n| n.contains(' ') && !n.contains('@')) else {
+        return Ok(());
+    };
+    sqlx::query(
+        "UPDATE wiki_people SET name = $1, updated_at = now() \
+         WHERE id = $2 AND position(' ' in name) = 0 \
+           AND metadata->>'source' IS NULL AND NOT metadata ? 'name_edited_at'",
+    )
+    .bind(name)
+    .bind(person_id)
+    .execute(db.pool())
+    .await?;
+    Ok(())
+}
+
+/// Link email you sent to everyone you sent it to.
 ///
-/// If the person already exists, updates the canonical name if a better name is provided.
-async fn resolve_or_create_person_with_name(
+/// Writing to someone is two-way contact, so a recipient nobody holds becomes
+/// a person here, and the email they sent you before you answered is linked to
+/// them in the same step: it arrived when they were a one-way sender, and the
+/// sender pass only looks back a window.
+async fn resolve_email_recipients(
     db: &Database,
-    email: &str,
-    display_name: Option<&str>,
-) -> Result<String> {
-    // Check if person exists with this email
-    let existing = sqlx::query!(
+    window: TimeWindow,
+    owner: &HashSet<String>,
+) -> Result<usize> {
+    let rows: Vec<(String, serde_json::Value, serde_json::Value, serde_json::Value)> = sqlx::query_as(
         r#"
-        SELECT id, name
-        FROM wiki_people
-        WHERE emails @> to_jsonb($1::text)
-        LIMIT 1
+        SELECT e.id, e.to_emails, e.to_names, e.cc_emails
+        FROM data_communication_email e
+        WHERE e.occurred_at >= $1
+          AND e.occurred_at < $2
+          AND e.direction = 'sent'
+          AND NOT EXISTS (
+              SELECT 1 FROM wiki_refs er
+              WHERE er.source_table = 'data_communication_email'
+                AND er.source_id = e.id
+                AND er.role = 'recipient'
+          )
+        ORDER BY e.occurred_at ASC
+        LIMIT 1000
         "#,
-        email
     )
-    .fetch_optional(db.pool())
+    .bind(window.start)
+    .bind(window.end)
+    .fetch_all(db.pool())
     .await?;
 
-    if let Some(row) = existing {
-        let person_id = row.id;
-
-        // Update canonical name if we have a better one (from email header vs extracted from email)
-        if let Some(name) = display_name {
-            let current_name = row.name;
-            // Only update if current name looks like it was extracted from email (no spaces, or matches email pattern)
-            let name_trimmed = name.trim();
-            if !name_trimmed.is_empty()
-                && !current_name.contains(' ')
-                && name_trimmed.contains(' ')
-            {
-                sqlx::query!(
-                    r#"
-                    UPDATE wiki_people
-                    SET name = $1,
-                        updated_at = now()
-                    WHERE id = $2
-                    "#,
-                    name_trimmed,
-                    person_id
-                )
-                .execute(db.pool())
-                .await?;
-
-                tracing::debug!(
-                    person_id = %person_id,
-                    old_name = %current_name,
-                    new_name = %name_trimmed,
-                    "Updated person canonical name from email header"
-                );
+    // Positional, not filtered: `to_names[i]` names `to_emails[i]`.
+    let strings = |v: &serde_json::Value| -> Vec<String> {
+        v.as_array()
+            // absent-ok: a non-string entry is an address we cannot use, kept as '' to hold its position
+            .map(|a| a.iter().map(|x| x.as_str().unwrap_or_default().to_string()).collect())
+            // absent-ok: a column that is not a JSON array holds no addresses
+            .unwrap_or_default()
+    };
+    let mut linked = 0;
+    for (email_id, to, to_names, cc) in rows {
+        let to = strings(&to);
+        let names = strings(&to_names);
+        let addressed = to
+            .iter()
+            .enumerate()
+            .map(|(i, a)| (a.clone(), names.get(i).filter(|n| !n.is_empty()).cloned()))
+            .chain(strings(&cc).into_iter().map(|a| (a, None)));
+        for (raw, name) in addressed {
+            let addr = raw.trim().to_lowercase();
+            if addr.is_empty() || owner.contains(&addr) || is_automated_address(&addr) {
+                continue;
             }
+            let person_id = match holder_of(db, &addr).await? {
+                Holder::One(id) => id,
+                Holder::Several => continue,
+                Holder::Nobody => {
+                    let id = create_person_for_address(db, &addr, name.as_deref()).await?;
+                    link_received_email_from(db, &id, &addr).await?;
+                    id
+                }
+            };
+            let ref_id = ids::generate_id("eref", &[&email_id, &person_id, "recipient"]);
+            sqlx::query(
+                r#"
+                INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
+                SELECT $1, 'person', $2, 'data_communication_email', $3, 'recipient', occurred_at
+                FROM data_communication_email WHERE id = $3
+                ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
+                "#,
+            )
+            .bind(ref_id)
+            .bind(&person_id)
+            .bind(&email_id)
+            .execute(db.pool())
+            .await?;
+            linked += 1;
         }
-
-        return Ok(person_id);
     }
+    Ok(linked)
+}
 
-    // Create new person entity
-    let name = display_name
-        .filter(|n| !n.trim().is_empty())
-        .map(|n| n.trim().to_string())
-        .unwrap_or_else(|| extract_name_from_email(email));
-
-    let emails_json = serde_json::json!([email]);
-
-    let person_id = ids::generate_id(ids::WIKI_PERSON_PREFIX, &[email]);
-
-    sqlx::query!(
-        r#"
-        INSERT INTO wiki_people (
-            id,
-            name,
-            emails
-        ) VALUES ($1, $2, $3)
-        ON CONFLICT (id) DO NOTHING
-        RETURNING id
-        "#,
-        person_id,
-        name,
-        emails_json,
+/// Every email you received from `addr`, linked to `person_id` as its sender.
+async fn link_received_email_from(db: &Database, person_id: &str, addr: &str) -> Result<()> {
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM data_communication_email \
+         WHERE direction = 'received' AND lower(from_email) = $1",
     )
-    .fetch_optional(db.pool())
+    .bind(addr)
+    .fetch_all(db.pool())
     .await?;
-
-    tracing::info!(
-        email = %email,
-        person_id = %person_id,
-        name = %name,
-        source = "email_sender",
-        "Created new person entity"
-    );
-
-    Ok(person_id)
+    for email_id in rows {
+        let ref_id = ids::generate_id("eref", &[&email_id, person_id, "sender"]);
+        sqlx::query(
+            r#"
+            INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
+            SELECT $1, 'person', $2, 'data_communication_email', $3, 'sender', occurred_at
+            FROM data_communication_email WHERE id = $3
+            ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
+            "#,
+        )
+        .bind(ref_id)
+        .bind(person_id)
+        .bind(&email_id)
+        .execute(db.pool())
+        .await?;
+    }
+    Ok(())
 }
 
 /// Calendar event with attendees
@@ -785,49 +996,46 @@ struct CalendarEvent {
 
 /// Fetch calendar events in time window
 async fn fetch_calendar_events(db: &Database, window: TimeWindow) -> Result<Vec<CalendarEvent>> {
-    let rows = sqlx::query!(
+    let rows: Vec<(String, serde_json::Value)> = sqlx::query_as(
         r#"
-        SELECT
-            id,
-            attendee_identifiers
+        SELECT id, attendee_identifiers
         FROM data_calendar_event
         WHERE started_at >= $1
           AND started_at < $2
           AND jsonb_array_length(attendee_identifiers) > 0
         "#,
-        window.start,
-        window.end,
     )
+    .bind(window.start)
+    .bind(window.end)
     .fetch_all(db.pool())
     .await?;
 
-    let events = rows
+    Ok(rows
         .into_iter()
-        .filter_map(|row| {
-            let identifiers: Vec<String> = serde_json::from_value(row.attendee_identifiers).ok()?;
-            let id = Uuid::parse_str(&row.id).ok()?;
-            Some(CalendarEvent {
-                id,
-                attendee_identifiers: identifiers,
-            })
+        .filter_map(|(id, attendees)| {
+            // absent-ok: an attendee list that is not strings names nobody we can resolve
+            let identifiers: Vec<String> = serde_json::from_value(attendees).ok()?;
+            let id = Uuid::parse_str(&id).ok()?;
+            Some(CalendarEvent { id, attendee_identifiers: identifiers })
         })
-        .collect();
-
-    Ok(events)
+        .collect())
 }
 
 /// Resolve all attendees for an event and link via wiki_refs
 ///
 /// Returns the number of unique people resolved.
-async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) -> Result<usize> {
+async fn resolve_and_link_event_attendees(
+    db: &Database,
+    event: &CalendarEvent,
+    owner: &HashSet<String>,
+) -> Result<usize> {
     if event.attendee_identifiers.is_empty() {
         return Ok(0);
     }
 
-    let mut unique_people = std::collections::HashSet::new();
+    let mut unique_people = HashSet::new();
     let event_id_str = event.id.to_string();
 
-    // Fetch event start_time for the wiki_refs timestamp
     let timestamp: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
         "SELECT started_at FROM data_calendar_event WHERE id = $1",
     )
@@ -836,113 +1044,35 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
     .await?
     .flatten();
 
-    for email in &event.attendee_identifiers {
-        let email_lower = email.to_lowercase();
-
-        match resolve_or_create_person(db, &email_lower).await {
-            Ok(person_id) => {
-                if unique_people.insert(person_id.clone()) {
-                    // Create entity_reference for this attendee
-                    let ref_id = ids::generate_id("eref", &[&event_id_str, &person_id, "attendee"]);
-                    sqlx::query!(
-                        r#"
-                        INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
-                        VALUES ($1, 'person', $2, 'data_calendar_event', $3, 'attendee', $4)
-                        ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
-                        "#,
-                        ref_id,
-                        person_id,
-                        event_id_str,
-                        timestamp
-                    )
-                    .execute(db.pool())
-                    .await?;
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    email = %email,
-                    event_id = %event.id,
-                    error = %e,
-                    "Failed to resolve person for attendee"
-                );
-            }
+    for raw in &event.attendee_identifiers {
+        let addr = raw.trim().to_lowercase();
+        if addr.is_empty() || owner.contains(&addr) || is_automated_address(&addr) {
+            continue;
+        }
+        let person_id = match holder_of(db, &addr).await? {
+            Holder::One(id) => id,
+            Holder::Several => continue,
+            Holder::Nobody => create_person_for_address(db, &addr, None).await?,
+        };
+        if unique_people.insert(person_id.clone()) {
+            let ref_id = ids::generate_id("eref", &[&event_id_str, &person_id, "attendee"]);
+            sqlx::query(
+                r#"
+                INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
+                VALUES ($1, 'person', $2, 'data_calendar_event', $3, 'attendee', $4)
+                ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
+                "#,
+            )
+            .bind(ref_id)
+            .bind(&person_id)
+            .bind(&event_id_str)
+            .bind(timestamp)
+            .execute(db.pool())
+            .await?;
         }
     }
 
-    if !unique_people.is_empty() {
-        tracing::debug!(
-            event_id = %event.id,
-            people_count = unique_people.len(),
-            "Linked attendees to calendar event via wiki_refs"
-        );
-    }
-
     Ok(unique_people.len())
-}
-
-/// Resolve email to person entity (or create if new)
-///
-/// Returns the person entity ID (format: person_{hash16}).
-async fn resolve_or_create_person(db: &Database, email: &str) -> Result<String> {
-    // Check if person exists with this email
-    let existing = sqlx::query!(
-        r#"
-        SELECT id
-        FROM wiki_people
-        WHERE emails @> to_jsonb($1::text)
-        LIMIT 1
-        "#,
-        email
-    )
-    .fetch_optional(db.pool())
-    .await?;
-
-    if let Some(row) = existing {
-        let id_str = row.id;
-        tracing::debug!(
-            email = %email,
-            person_id = %id_str,
-            "Found existing person entity"
-        );
-        return Ok(id_str);
-    }
-
-    // Create new person entity
-    let name = extract_name_from_email(email);
-
-    let emails_json = serde_json::json!([email]);
-
-    // Generate ID with proper prefix (person_{hash16})
-    let person_id = ids::generate_id(ids::WIKI_PERSON_PREFIX, &[email]);
-    let row = sqlx::query!(
-        r#"
-        INSERT INTO wiki_people (
-            id,
-            name,
-            emails
-        ) VALUES (
-            $1, $2, $3
-        )
-        RETURNING id
-        "#,
-        person_id,
-        name,
-        emails_json,
-    )
-    .fetch_one(db.pool())
-    .await?;
-
-    let person_id_str = row.id;
-
-    tracing::info!(
-        email = %email,
-        person_id = %person_id_str,
-        name = %name,
-        "Created new person entity"
-    );
-
-    Ok(person_id_str)
 }
 
 /// Extract name from email (simple heuristic)
@@ -1172,5 +1302,128 @@ mod tests {
         assert_eq!(again, 0, "recipient pass must be self-healing, not re-doing work");
 
         cleanup(&db, &person_id, &thread).await;
+    }
+}
+
+#[cfg(test)]
+mod two_way_tests {
+    use super::*;
+    use chrono::{Duration, Utc};
+    use sqlx::PgPool;
+
+    fn window() -> TimeWindow {
+        TimeWindow::new(Utc::now() - Duration::hours(30), Utc::now() + Duration::hours(1))
+    }
+
+    async fn email(pool: &PgPool, id: &str, direction: &str, from: &str, to: &[&str], to_names: &[&str], days_ago: i64) {
+        sqlx::query(
+            "INSERT INTO data_communication_email \
+               (id, message_id, from_email, to_emails, to_names, direction, occurred_at, \
+                source_stream_id, source_table, source_provider) \
+             VALUES ($1, $1, $2, $3, $4, $5, now() - make_interval(days => $6::int), $1, 'gmail', 'google')",
+        )
+        .bind(id)
+        .bind(from)
+        .bind(serde_json::json!(to))
+        .bind(serde_json::json!(to_names))
+        .bind(direction)
+        .bind(days_ago as i32)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn people(pool: &PgPool) -> Vec<(String, serde_json::Value)> {
+        sqlx::query_as("SELECT name, handles FROM wiki_people ORDER BY name")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    #[test]
+    fn machines_are_not_people() {
+        for a in [
+            "no-reply@shop.example.com",
+            "noreply+1234@example.com",
+            "do_not_reply@example.com",
+            "notifications@example.com",
+            "info@example.com",
+            "c_123abc@resource.calendar.google.com",
+            "team_abc@group.calendar.google.com",
+            "not-an-address",
+        ] {
+            assert!(is_automated_address(a), "{a}");
+        }
+        for a in ["nick@example.com", "david.okafor@example.com", "supporting.cast@example.com"] {
+            assert!(!is_automated_address(a), "{a}");
+        }
+    }
+
+    /// A newsletter, a receipt and a stranger's cold email are not people.
+    #[sqlx::test]
+    async fn a_one_way_sender_is_not_a_person(pool: PgPool) {
+        email(&pool, "e1", "received", "deals@shop.example.com", &["me@example.com"], &[], 0).await;
+        email(&pool, "e2", "received", "stranger@example.com", &["me@example.com"], &[], 0).await;
+        resolve_people(&Database::from_pool(pool.clone()), window()).await.unwrap();
+        assert!(people(&pool).await.is_empty(), "{:?}", people(&pool).await);
+    }
+
+    /// Writing to someone makes them a person, links what you sent, and links
+    /// what they sent you before you answered, which is outside the window.
+    /// Your own address is never a person.
+    #[sqlx::test]
+    async fn writing_to_someone_makes_them_a_person(pool: PgPool) {
+        email(&pool, "old", "received", "Nick@Example.com", &["me@example.com"], &[], 10).await;
+        email(&pool, "reply", "sent", "me@example.com", &["Nick@Example.com"], &["Nick Bell"], 0).await;
+        resolve_people(&Database::from_pool(pool.clone()), window()).await.unwrap();
+
+        assert_eq!(
+            people(&pool).await,
+            [("Nick Bell".to_string(), serde_json::json!(["nick@example.com"]))]
+        );
+        let refs: Vec<(String, String)> =
+            sqlx::query_as("SELECT source_id, role FROM wiki_refs ORDER BY source_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(refs, [("old".into(), "sender".into()), ("reply".into(), "recipient".into())]);
+    }
+
+    /// A person's handles follow their addresses and numbers, however they got
+    /// them, and a handle already held is never dropped.
+    #[sqlx::test]
+    async fn handles_follow_addresses_and_numbers(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO wiki_people (id, name, phones, emails, handles) \
+             VALUES ('person_n', 'Nick', '[\"(512) 555-0142\"]', '[\"Nick@Example.com\"]', '[\"+15125550199\"]')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        resolve_people(&Database::from_pool(pool.clone()), window()).await.unwrap();
+        assert_eq!(
+            people(&pool).await[0].1,
+            serde_json::json!(["+15125550142", "+15125550199", "nick@example.com"])
+        );
+    }
+
+    /// Sharing a meeting is two-way contact, but you and a room are not attendees.
+    #[sqlx::test]
+    async fn a_meeting_makes_a_person_but_not_you_or_the_room(pool: PgPool) {
+        email(&pool, "mine", "sent", "me@example.com", &[], &[], 40).await; // how the box knows your address
+        sqlx::query(
+            "INSERT INTO data_calendar_event \
+               (id, title, attendee_identifiers, started_at, ended_at, source_stream_id, source_table, source_provider) \
+             VALUES ('7a1c3e0e-0000-4000-8000-000000000001', 'Lunch', $1, now(), now() + interval '1 hour', 's1', 'gcal', 'google')",
+        )
+        .bind(serde_json::json!(["me@example.com", "c_1@resource.calendar.google.com", "dana.okafor@example.com"]))
+        .execute(&pool)
+        .await
+        .unwrap();
+        resolve_people(&Database::from_pool(pool.clone()), window()).await.unwrap();
+        assert_eq!(
+            people(&pool).await,
+            [("Dana Okafor".to_string(), serde_json::json!(["dana.okafor@example.com"]))]
+        );
     }
 }

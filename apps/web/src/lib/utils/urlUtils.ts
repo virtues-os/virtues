@@ -11,6 +11,19 @@
  * - System: /virtues/{page} (e.g., /virtues/account)
  */
 
+/**
+ * `text` with its %-escapes read, or as written when one is malformed
+ * (`50%.pdf`, `/person/%`, a cut `%E0%A4%A`). A page's document takes any
+ * path, so whatever reads an address out of it has to read this one too.
+ */
+export function decoded(text: string): string {
+	try {
+		return decodeURIComponent(text);
+	} catch {
+		return text;
+	}
+}
+
 // All entity namespaces that follow the /{namespace}/{namespace}_{id} pattern
 const ENTITY_NAMESPACES = [
 	'chat',

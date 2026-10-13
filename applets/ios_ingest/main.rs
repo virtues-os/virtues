@@ -80,14 +80,12 @@ async fn main() -> Result<()> {
             format!("events: {} written", written)
         }
         "contacts" => {
-            let recs = archive(
-                &db,
-                &storage,
-                "contacts",
-                payload,
-                records(payload, "contacts")?,
-            )
-            .await?;
+            // Photos FIRST, the bookmark arm's order: each card's photo goes to
+            // the media store and its base64 comes out before the record is
+            // archived.
+            let recs = records(payload, "contacts")?;
+            let recs = contacts::externalize_photos(&db, &storage, recs).await?;
+            let recs = archive(&db, &storage, "contacts", payload, &recs).await?;
             let (resolved, failed) = contacts::resolve_contacts(&db, &recs).await?;
             format!("contacts: {} resolved, {} failed", resolved, failed)
         }

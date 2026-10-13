@@ -6,8 +6,9 @@
 > end to end; virtues introduces the two and, once a direct transport for
 > browsers lands, drops out of the path. The publication primitive, the face
 > as the medium, and the doctrine carry over from the 09-01 plan.
-> `publish_to_github` is built and becomes an optional destination, not the
-> front door.
+> The chat tool `publish_to_github` was removed on 2026-10-10 (never run,
+> no stored token on the main box); GitHub returns, if at all, as a virtues
+> GitHub App destination below.
 
 ## The ask
 
@@ -32,7 +33,6 @@ the content lives, which turns a home server into a client of ours.
 | The origin bug | `PageContent.svelte:562` and `:585` build the share URL from `window.location.origin`: `http://localhost:7117` on a Mac. Nobody else can load it. |
 | Listeners | `server/mod.rs`: plain HTTP on :8000 is the only listener; the box has no TLS surface. Off-LAN reach is iroh, allowlisted by EndpointId; a browser has no EndpointId, so **iroh cannot carry a browser.** |
 | Faces | `face/index.html` in a sandboxed iframe, read-only `virtues.query`, 48KB cap (`applet_setup.rs` `FACE_HTML_MAX`). |
-| `publish_to_github` | **Built, wave `322a7a8f`, unreleased, never run against GitHub.** Writes an applet's face as one `.html` file into a repo via the contents API, with a pasted fine-grained token (`github_publish` source). Grant hashes repo, branch, path and bytes; refuses faces that need the box; chat-only. `applets/AGENTS.md` tells faces meant for sharing to stand alone (`7ff23663`). |
 | Print, pagination, export | None. Zero `@media print` in `apps/web`; "Copy as Markdown" is the only export. |
 | Guests | None. `app_auth_user` plus pairing means *your devices*. |
 
@@ -237,11 +237,12 @@ agent is a prompt-injection path. No guest writes until that marking exists.
 All take the same frozen bundle:
 
 - **Download HTML**: always, including the free open-source build.
-- **GitHub**: `publish_to_github` exists, but a pasted fine-grained token is
-  the wrong front door; nobody makes one. The right one is a **virtues GitHub
-  App** connected by device flow (a code, approve, pick repos on GitHub's own
-  screen), scoped to the chosen repos, no secret on the box and no proxy.
-  Never the owner's ambient `gh` login: it covers every repo.
+- **GitHub**: a pasted fine-grained token is the wrong front door; nobody
+  makes one (the token-based `publish_to_github` tool was removed for that
+  reason). The right one is a **virtues GitHub App** connected by device
+  flow (a code, approve, pick repos on GitHub's own screen), scoped to the
+  chosen repos, no secret on the box and no proxy. Never the owner's ambient
+  `gh` login: it covers every repo.
 - **S3-compatible storage** (R2, B2, any bucket) for people who want a copy
   off their own box.
 
@@ -439,9 +440,6 @@ page isn't available right now".
   the loader domain serves, which would mean virtues holds that much?
 - **Handles.** Chosen by the owner or assigned; how they are claimed,
   changed, and released, and what an old handle does after a change.
-- **`publish_to_github` in chat now.** Keep it as an expert path until the
-  share sheet exists, or pull it so the first thing users meet is not a token
-  form.
 
 ## Verification
 

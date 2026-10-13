@@ -117,6 +117,9 @@ pub fn routes() -> Router<AppState> {
             "/api/entities/people/:id/reclassify-as-org",
             post(reclassify_person_handler),
         )
+        // Fold this person into another; the people who share a number with them
+        .route("/api/entities/people/:id/merge", post(merge_person_handler))
+        .route("/api/entities/people/:id/same", get(same_people_handler))
         // ── Wiki API ────────────────────────────────────────────────────
         //
         // TWO ADDRESSING SHAPES, and both are right. Don't unify them.
@@ -299,7 +302,7 @@ pub async fn get_place_handler(
 
 #[derive(Debug, Deserialize)]
 pub struct MergePlaceRequest {
-    /// The place that survives; the one in the path is folded into it.
+    /// The place (or person) that survives; the one in the path is folded into it.
     pub into: String,
 }
 
@@ -914,12 +917,42 @@ pub async fn reclassify_person_handler(
 
 // --- Person ---
 
-/// Get a person by ID
+/// Get a person by ID. An id merged into someone else opens them, so a link
+/// written before the merge still lands on the person it meant.
 pub async fn wiki_get_person_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::wiki::get_person(state.db.pool(), id).await)
+    let pool = state.db.pool();
+    match crate::api::wiki::get_person(pool, id.clone()).await {
+        Err(Error::NotFound(msg)) => match crate::api::entities::merged_into(pool, &id).await {
+            Ok(Some(survivor)) => api_response(crate::api::wiki::get_person(pool, survivor).await),
+            Ok(None) => error_response(Error::NotFound(msg)),
+            Err(e) => error_response(e),
+        },
+        other => api_response(other),
+    }
+}
+
+/// Fold the person in the path into `into`. Same request shape as places.
+pub async fn merge_person_handler(
+    State(state): State<AppState>,
+    Path(person_id): Path<String>,
+    Json(req): Json<MergePlaceRequest>,
+) -> Response {
+    match crate::api::entities::merge_people(state.db.pool(), &req.into, &person_id).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "id": req.into }))).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// The people who share a number or address with this one, as "Same as…?"
+/// choices.
+pub async fn same_people_handler(
+    State(state): State<AppState>,
+    Path(person_id): Path<String>,
+) -> Response {
+    api_response(crate::api::entities::people_sharing_a_handle(state.db.pool(), &person_id).await)
 }
 
 #[derive(Deserialize)]

@@ -63,15 +63,17 @@ is fine.
 
 ## The first question is inference
 
-The installer asks how you want to run the two models that make your record
-searchable before it touches a package, a service, or a disk - so that a
-broken endpoint costs you a prompt rather than a half-finished install. On Virtues
-hardware this is pre-configured.
+The installer asks how search should run before it touches a package, a
+service, or a disk - so that a broken endpoint costs you a prompt rather than
+a half-finished install. On Virtues hardware this is pre-configured.
 
-On yours, you either point it at endpoints you already run, or take the bundled 
-CPU-only trial, which is deliberately labeled as slow and not a deployment.
+On yours, search runs on the server's CPU unless you choose otherwise:
+Virtues installs the embedding model it recommends and keeps it current.
+If the installer finds a GPU or NPU, it links to
+[Faster search on a GPU or NPU](/docs/setup/accelerators), and you can set
+that up at any time. Or point it at an embedding server you already run.
 
-If you choose your own endpoints, have them running before you start.
+If you choose your own server, have it running before you start.
 [Setting up inference](/docs/inference) gives the commands, the models, and
 the contract those servers have to speak. To skip the prompt entirely on an
 unattended install, set `VIRTUES_INFERENCE` (with `VIRTUES_EMBED_URL`) in the

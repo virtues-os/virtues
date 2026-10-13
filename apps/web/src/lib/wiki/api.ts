@@ -680,6 +680,33 @@ export async function updatePerson(
 	return res.json();
 }
 
+/** Someone else who holds one of this person's numbers or addresses. */
+export interface SamePersonApi {
+	id: string;
+	name: string;
+	/** The numbers and addresses both of them hold, normalized. */
+	handles: string[];
+	/** Messages from those handles, which reach neither page while two people hold them. */
+	messages: number;
+}
+
+/** The people who share a number or address with this one, as "Same as…?" choices. */
+export async function samePeople(id: string, fetchFn: FetchFn = fetch): Promise<SamePersonApi[]> {
+	const res = await fetchFn(`/api/entities/people/${encodeURIComponent(id)}/same`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/** Fold person `id` into `into`, which keeps its name and page. */
+export async function mergePerson(id: string, into: string, fetchFn: FetchFn = fetch): Promise<boolean> {
+	const res = await fetchFn(`/api/entities/people/${encodeURIComponent(id)}/merge`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ into }),
+	});
+	return res.ok;
+}
+
 // --- Place ---
 
 export async function getPlaceById(
@@ -1258,6 +1285,8 @@ export interface PersonGlossApi {
 	date: string;
 	/** How you know them, when you wrote it down: your bond, else their relationship. */
 	relationship: string | null;
+	/** Their picture as stored, usually a box path; none draws initials. A server older than this field leaves it out. */
+	picture?: string | null;
 	first_message_on: string | null;
 	/** Whether that first message was in a group thread. */
 	first_message_in_group: boolean | null;

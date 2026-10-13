@@ -8,7 +8,7 @@
 use std::time::{Duration, Instant};
 use virtues_document::{
     apply_ops, check_update, decode_update, doc_from_nodes, new_doc, parse_html, parse_markdown,
-    read_doc, to_html, to_markdown, validate, validate_doc, Op, MAX_DEPTH, MAX_VALUE_DEPTH,
+    parse_pasted_markdown, read_doc, to_html, to_markdown, validate, validate_doc, Op, MAX_DEPTH, MAX_VALUE_DEPTH,
 };
 use yrs::updates::decoder::Decode;
 use yrs::{
@@ -378,6 +378,52 @@ fn html_that_costs_more_than_its_size_is_refused_before_it_is_parsed() {
     });
 }
 
+/// Comments and CDATA sections each end at a fixed string; input full of
+/// them that lacks it once read on to the end from every one, so a few MiB
+/// pasted or written took minutes, under the page's lock for an edit and
+/// holding the box's one conversion turn for a paste. Every way in costs
+/// about four times as long for four times the input, as it does for
+/// paragraphs; so does formatting left open and closed by end tags that
+/// close none of it.
+/// A named input of about `n` bytes.
+type Shape = (&'static str, fn(usize) -> String);
+/// A named way into a parse.
+type Way = (&'static str, fn(&str));
+
+#[test]
+fn comments_and_cdata_cost_what_they_hold() {
+    let shapes: [Shape; 4] = [
+        ("<!--x-->", |n| "<!--x-->".repeat(n / 8)),
+        ("<!--x--!>", |n| "<!--x--!>".repeat(n / 9)),
+        ("<![CDATA[x>", |n| "<![CDATA[x>".repeat(n / 11)),
+        ("<b> then </i>", |n| format!("{}{}", "<b>".repeat(n / 7), "</i>".repeat(n / 7))),
+    ];
+    for (what, make) in shapes {
+        let (small, large) = (make(128 << 10), make(512 << 10));
+        let ways: [Way; 3] = [
+            ("html", |h| {
+                parse_html(h, "doc");
+            }),
+            ("pasted markdown", |h| {
+                parse_pasted_markdown(&format!("# Notes\n\n{h}\n"));
+            }),
+            ("an edit", |h| {
+                let doc = doc_from_nodes(parse_html("<p>x</p>", "doc").nodes);
+                let _ = apply_ops(&doc, None, &[Op::Append { html: h.to_string() }]);
+            }),
+        ];
+        for (way, f) in ways {
+            let s = best(|| f(&small));
+            let l = best(|| f(&large));
+            let ratio = l.as_secs_f64() / s.as_secs_f64().max(1e-6);
+            assert!(
+                ratio < 9.0 && l < Duration::from_secs(5),
+                "{what} as {way}: 128 KiB {s:?}, 512 KiB {l:?} ({ratio:.1}x)"
+            );
+        }
+    }
+}
+
 #[test]
 fn input_past_the_size_limit_is_refused() {
     let big = "x".repeat(virtues_document::MAX_INPUT_BYTES + 1);
@@ -574,4 +620,101 @@ fn page_costs_grow_with_the_page_not_its_square() {
             "{what}: 2,000 blocks {s:?}, 8,000 blocks {l:?} ({ratio:.1}x)"
         );
     }
+}
+
+/// CriticMarkup is read from every character of the text, so reading it
+/// costs time in proportion to the markdown, proposals or none, and a line
+/// of nothing but delimiter characters is read, not refused or crashed on.
+#[test]
+fn proposals_cost_what_the_markdown_holds() {
+    let page = |n: usize| "Lunch {--at noon--}{++on Friday++} with Nick. ".repeat(n) + "\n";
+    let (small, large) = (page(2_000), page(8_000));
+    let o = parse_markdown(&small);
+    assert!(o.errors.is_empty(), "{:?}", o.errors.first());
+    let marked = o.nodes[0]
+        .content
+        .iter()
+        .filter(|n| n.marks.iter().any(|m| m.kind.starts_with("proposed")))
+        .count();
+    assert_eq!(marked, 4_000);
+    let s = best(|| {
+        parse_markdown(&small);
+    });
+    let l = best(|| {
+        parse_markdown(&large);
+    });
+    let ratio = l.as_secs_f64() / s.as_secs_f64().max(1e-6);
+    assert!(ratio < 9.0, "proposals: 2,000 {s:?}, 8,000 {l:?} ({ratio:.1}x)");
+
+    // As many as one conversion holds (each makes about three parser
+    // events, `~` pairing into strikethroughs), and then past that, where
+    // it is refused as too many parts.
+    for (n, read) in [(60_000, true), (600_000, false)] {
+        let start = Instant::now();
+        let o = parse_markdown(&format!("{}\n", "{-+<>~}".repeat(n)));
+        assert_eq!(o.errors.is_empty(), read, "{n}: {:?}", o.errors.first());
+        assert!(start.elapsed() < Duration::from_secs(10), "{n}: {:?}", start.elapsed());
+    }
+}
+
+/// Markdown that only looks like front matter (an indented `---` with a
+/// `---` line after it) converts, and quickly: the parser's own reading of
+/// front matter never returned on it. Front matter at the very start is
+/// still left out, with a note.
+#[test]
+fn markdown_that_looks_like_front_matter_converts() {
+    for md in [
+        " ---\nx\n---",
+        "Notes:\n\n ---\nLunch with **Nick** on Friday.\n---\n",
+        "- [ ] ---\nx\n---",
+        "Notes.\n\n---\ntitle: x\n---\n",
+    ] {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(parse_markdown(md)).ok());
+        let o = rx
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap_or_else(|_| panic!("{md:?}: no answer in ten seconds"));
+        assert!(o.errors.is_empty(), "{md:?}: {:?}", o.errors);
+        assert!(!o.nodes.is_empty(), "{md:?}");
+        assert!(
+            o.notes.iter().all(|n| !n.message.contains("front matter")),
+            "{md:?}: {:?}",
+            o.notes
+        );
+    }
+    let o = parse_markdown("---\ntitle: Trip\n---\n\nLunch.\n");
+    assert_eq!(to_markdown(&o.nodes), "Lunch.\n");
+    assert!(o.notes.iter().any(|n| n.message.contains("front matter")), "{:?}", o.notes);
+}
+
+/// What a conversion holds is bounded by its parts, not only its bytes:
+/// markdown under the size limit that makes more parts than one conversion
+/// holds, or more HTML than one write takes, is refused before the whole of
+/// it is rendered.
+#[test]
+fn markdown_past_what_one_conversion_holds_is_refused() {
+    let cap = virtues_document::MAX_INPUT_BYTES - 64;
+    let fill = |unit: &str| unit.repeat(cap / unit.len());
+    let mut table = format!("{}|\n{}|\n", "|h".repeat(1000), "|-".repeat(1000));
+    while table.len() < cap {
+        table.push_str("|a\n");
+    }
+    for md in [table, fill("*a "), fill("{++a++}"), fill("a\n\n")] {
+        let o = parse_markdown(&md);
+        assert!(
+            o.errors.iter().any(|e| e.message.contains("parts to convert")),
+            "{:?}",
+            o.errors
+        );
+    }
+    let prose = fill(
+        "Lunch with **Nick** on *Friday* at [the cafe](https://example.com/cafe), then a walk by \
+         the river and a long talk about the trip.\n\n",
+    );
+    let o = parse_markdown(&prose);
+    assert!(
+        o.errors.iter().any(|e| e.message.contains("MiB of HTML")),
+        "{:?}",
+        o.errors
+    );
 }

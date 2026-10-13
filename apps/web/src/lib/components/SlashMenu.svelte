@@ -1,12 +1,13 @@
-<script lang="ts">
+<script lang="ts" generics="T extends MenuCommand">
 	/**
 	 * SlashMenu - Command palette for inserting blocks
 	 *
-	 * Triggered by typing "/" in the CodeMirror editor.
+	 * Triggered by typing "/" in a page editor: CodeMirror's `SlashCommand`s
+	 * or the block editor's `TreeCommand`s, both `MenuCommand`s.
 	 * Shows available commands filtered by query.
 	 *
 	 * Pattern follows RefPicker - "dumb display" component
-	 * that receives state from the slash-commands plugin.
+	 * that receives state from the editor's trigger plugin.
 	 *
 	 * Uses the floating UI system for smart positioning.
 	 */
@@ -14,17 +15,19 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import { onMount, tick } from 'svelte';
 	import { fade } from 'svelte/transition';
-	import type { SlashCommand } from '$lib/codemirror/extensions/slash-commands';
+	import { menuKey, type MenuCommand } from '$lib/components/menuCommand';
 	import { FloatingContent, useClickOutside } from '$lib/floating';
+	import { focusOwner, pointFocusAt } from '$lib/components/contextMenu/activeDescendant';
 	import type { VirtualAnchor } from '$lib/floating';
+	import { inComposition } from '$lib/utils/ime';
 
 	interface Props {
 		/** Available commands (pre-filtered by plugin) */
-		commands: SlashCommand[];
+		commands: T[];
 		/** Position for absolute positioning */
 		position: { x: number; y: number };
 		/** Called when a command is selected */
-		onSelect: (command: SlashCommand) => void;
+		onSelect: (command: T) => void;
 		/** Called when menu should close */
 		onClose: () => void;
 	}
@@ -55,31 +58,26 @@
 		selectedIndex = 0;
 	});
 
-	// One flat list — the order in slash-commands.ts is the order shown.
+	// One flat list: the order the editor gives is the order shown.
 	const flatCommands = $derived(commands);
 
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') {
-			e.preventDefault();
-			e.stopPropagation();
+		if (inComposition(e)) return;
+		const action = menuKey(e.key, flatCommands.length);
+		if (!action) return;
+		e.preventDefault();
+		e.stopPropagation();
+		if (action === 'close') {
 			onClose();
-		} else if (e.key === 'ArrowDown') {
-			e.preventDefault();
-			e.stopPropagation();
+		} else if (action === 'next') {
 			selectedIndex = Math.min(selectedIndex + 1, flatCommands.length - 1);
 			scrollToSelected();
-		} else if (e.key === 'ArrowUp') {
-			e.preventDefault();
-			e.stopPropagation();
+		} else if (action === 'previous') {
 			selectedIndex = Math.max(selectedIndex - 1, 0);
 			scrollToSelected();
-		} else if (e.key === 'Enter' || e.key === 'Tab') {
-			e.preventDefault();
-			e.stopPropagation();
+		} else {
 			const cmd = flatCommands[selectedIndex];
-			if (cmd) {
-				onSelect(cmd);
-			}
+			if (cmd) onSelect(cmd);
 		}
 	}
 
@@ -89,15 +87,26 @@
 		selected?.scrollIntoView({ block: 'nearest' });
 	}
 
-	function handleItemClick(cmd: SlashCommand) {
+	function handleItemClick(cmd: T) {
 		onSelect(cmd);
 	}
+
+	// The editor keeps the focus while the menu is open: it points at the
+	// list and at the command the arrows reach, so a screen reader reads it.
+	const LIST_ID = 'slash-menu';
+	const optionId = (index: number) => `${LIST_ID}-option-${index}`;
+	const owner = focusOwner();
+	const pointed = owner ? pointFocusAt(owner, LIST_ID) : null;
+	$effect(() => {
+		pointed?.highlight(flatCommands.length ? optionId(selectedIndex) : null);
+	});
 
 	onMount(() => {
 		// Focus trap - capture keyboard events (uses capture for CodeMirror integration)
 		document.addEventListener('keydown', handleKeydown, true);
 		return () => {
 			document.removeEventListener('keydown', handleKeydown, true);
+			pointed?.release();
 		};
 	});
 </script>
@@ -108,13 +117,16 @@
 	class="slash-menu-container"
 >
 	<div bind:this={menuEl} class="slash-menu" transition:fade={{ duration: 100 }}>
-		<div class="commands">
+		<div class="commands" id={LIST_ID} role="listbox" aria-label="Commands">
 			{#if flatCommands.length === 0}
-				<div class="empty">No matching commands</div>
+				<div class="empty" role="presentation">No matching commands</div>
 			{:else}
 				{#each flatCommands as cmd, index}
 					<button
 						class="command-item"
+						id={optionId(index)}
+						role="option"
+						aria-selected={index === selectedIndex}
 						class:selected={index === selectedIndex}
 						onclick={() => handleItemClick(cmd)}
 						onmouseenter={() => (selectedIndex = index)}
@@ -181,6 +193,13 @@
 		transition:
 			color 0.12s ease,
 			background-color 0.12s ease;
+	}
+
+	/* A thumb's 44pt, inside the row (design-grammar §6). */
+	@media (pointer: coarse) {
+		.command-item {
+			min-height: 44px;
+		}
 	}
 
 	/* One highlight, driven by keyboard AND hover (mouseenter moves the

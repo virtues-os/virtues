@@ -1,8 +1,12 @@
 <script lang="ts">
 	import Button from "$lib/components/Button.svelte";
 	import { linkEditor } from "$lib/stores/linkEditor.svelte";
+	import { inComposition } from "$lib/utils/ime";
 
 	let labelInput = $state<HTMLInputElement | null>(null);
+
+	/** On touch the panel's buttons are a thumb's 44pt (design-grammar §6): `lg` is 48px, `sm` 32px. */
+	const touch = typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
 
 	// The label is what the reader sees, so it is what someone usually came to
 	// fix; select it so a correction can just be typed over.
@@ -14,6 +18,7 @@
 	});
 
 	function onKeydown(e: KeyboardEvent) {
+		if (inComposition(e)) return;
 		if (e.key === "Enter") {
 			e.preventDefault();
 			linkEditor.save();
@@ -53,8 +58,8 @@
 	</label>
 
 	<div class="actions">
-		<Button variant="secondary" size="sm" onclick={() => linkEditor.hide()}>Cancel</Button>
-		<Button variant="primary" size="sm" onclick={() => linkEditor.save()}>Save</Button>
+		<Button variant="secondary" size={touch ? "lg" : "sm"} onclick={() => linkEditor.hide()}>Cancel</Button>
+		<Button variant="primary" size={touch ? "lg" : "sm"} onclick={() => linkEditor.save()}>Save</Button>
 	</div>
 </div>
 

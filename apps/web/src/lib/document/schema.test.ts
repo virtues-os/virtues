@@ -95,6 +95,87 @@ describe('marks', () => {
 	});
 });
 
+describe('media', () => {
+	it.each([
+		['audio', '<audio src="/drive/df_3" data-name="Interview.m4a"></audio>'],
+		['video', '<video src="/api/drive/files/df_2/download" data-name="clip.mp4"></video>'],
+		['file', '<virtues-file src="/api/drive/files/df_1/download" data-name="report.pdf"></virtues-file>'],
+		['file', '<virtues-file src="/drive/df_5"></virtues-file>'],
+	])('%s reads and writes its src and name', (type, html) => {
+		const doc = parse(html);
+		expect(doc.firstChild!.type.name).toBe(type);
+		expect(doc.firstChild!.type.isAtom).toBe(true);
+		expect(render(doc)).toBe(html);
+	});
+
+	it('an embed inside a paragraph is moved out of it', () => {
+		const doc = parse('<p>Listen: <audio src="/drive/df_3" data-name="memo.m4a"></audio> later.</p>');
+		expect(doc.content.content.map((n) => n.type.name)).toEqual(['paragraph', 'audio', 'paragraph']);
+	});
+
+	it('an embed without a src it would accept is none', () => {
+		const types = (html: string) => {
+			const out: string[] = [];
+			parse(html).descendants((n) => {
+				out.push(n.type.name);
+			});
+			return out;
+		};
+		expect(types('<audio data-name="memo.m4a"></audio>')).not.toContain('audio');
+		expect(types('<virtues-file src="javascript:alert(1)"></virtues-file>')).not.toContain('file');
+	});
+});
+
+describe('proposals', () => {
+	const marksOf = (html: string) =>
+		parse(html).firstChild!.content.content.map((n) => n.marks.map((m) => `${m.type.name}:${m.attrs.proposal ?? ''}`));
+
+	it('come first in the mark order, so they are outermost', () => {
+		expect(Object.keys(schema.marks).slice(0, 3)).toEqual(['proposedDeletion', 'proposedInsertion', 'link']);
+		expect(
+			render(parse('<p><strong><virtues-ins proposal="p1">bold<a href="/page/page_abc">linked</a></virtues-ins></strong></p>')),
+		).toBe(
+			'<p><virtues-ins proposal="p1"><strong>bold</strong><a href="/page/page_abc"><strong>linked</strong></a></virtues-ins></p>',
+		);
+	});
+
+	it('a change is a deletion and an insertion sharing an id', () => {
+		const html = '<p>Lunch <virtues-del proposal="p1">at noon</virtues-del><virtues-ins proposal="p1">on Friday</virtues-ins>.</p>';
+		expect(render(parse(html))).toBe(html);
+		expect(marksOf(html)).toEqual([[], ['proposedDeletion:p1'], ['proposedInsertion:p1'], []]);
+	});
+
+	it('del stays strike', () => {
+		expect(render(parse('<p><del>gone</del> <virtues-del proposal="p2">going</virtues-del></p>'))).toBe(
+			'<p><s>gone</s> <virtues-del proposal="p2">going</virtues-del></p>',
+		);
+	});
+
+	it('a proposal without its id is its text', () => {
+		expect(render(parse('<p><virtues-ins>new</virtues-ins> <virtues-del>old</virtues-del></p>'))).toBe('<p>new old</p>');
+	});
+
+	it('one span is never both', () => {
+		expect(schema.marks.proposedDeletion.excludes(schema.marks.proposedInsertion)).toBe(true);
+		expect(schema.marks.proposedInsertion.excludes(schema.marks.proposedDeletion)).toBe(true);
+		expect(schema.marks.proposedDeletion.excludes(schema.marks.bold)).toBe(false);
+		expect(marksOf('<p><virtues-del proposal="a"><virtues-ins proposal="a">x</virtues-ins></virtues-del></p>')).toEqual([
+			['proposedInsertion:a'],
+		]);
+	});
+
+	it('an editor cannot write one without its id', () => {
+		const editor = editorWith('<p>text</p>');
+		const before = editor.getHTML();
+		editor.commands.selectAll();
+		editor.commands.setMark('proposedInsertion', {});
+		expect(editor.getHTML()).toBe(before);
+		editor.commands.setMark('proposedInsertion', { proposal: 'p9' });
+		expect(editor.getHTML()).toBe('<p><virtues-ins proposal="p9">text</virtues-ins></p>');
+		editor.destroy();
+	});
+});
+
 describe('pasted formatting', () => {
 	// The shape of a Google Docs copy: everything inside a bold that is not.
 	const googleDocs =
@@ -115,6 +196,17 @@ describe('pasted formatting', () => {
 		expect(render(parse('<p><span style="font-style:italic">i</span></p>'))).toBe('<p><em>i</em></p>');
 		expect(render(parse('<p><span style="text-decoration:line-through">s</span></p>'))).toBe('<p><s>s</s></p>');
 		expect(render(parse('<p><span style="text-decoration:underline">u</span></p>'))).toBe('<p><u>u</u></p>');
+	});
+
+	// Google Docs draws a link as a span styled blue and underlined, inside
+	// the link: its look for a link, not an underline its writer chose.
+	it("a link from Google Docs is a link, not an underline", () => {
+		const link =
+			'<b style="font-weight:normal;" id="docs-internal-guid-2"><p dir="ltr"><span style="font-size:11pt;color:#000000;">See </span>' +
+			'<a href="https://example.com/notes" style="text-decoration:none;"><span style="font-size:11pt;color:#1155cc;' +
+			'background-color:transparent;text-decoration:underline;-webkit-text-decoration-skip:none;text-decoration-skip-ink:none;">the notes</span></a>' +
+			'<span style="font-size:11pt;color:#000000;"> and </span><span style="font-size:11pt;text-decoration:underline;">this</span></p></b>';
+		expect(render(parse(link))).toBe('<p>See <a href="https://example.com/notes">the notes</a> and <u>this</u></p>');
 	});
 });
 
@@ -264,6 +356,20 @@ describe('what an editor writes stays inside the contract', () => {
 		editor.destroy();
 	});
 
+	// The CodeMirror editor draws a typed `[label](url)` as a link.
+	it('typing a markdown link makes a link, only to an address a page may hold', () => {
+		const editor = editorWith('<p></p>');
+		type(editor, 'see [docs](https://example.com) and [Nick](/person/person_1) ');
+		expect(links(editor)).toEqual(['https://example.com', '/person/person_1']);
+		expect(editor.state.doc.textContent).toBe('see docs and Nick ');
+		editor.destroy();
+		const refused = editorWith('<p></p>');
+		type(refused, '[bad](javascript:alert(1)) ');
+		expect(links(refused)).toEqual([]);
+		expect(refused.state.doc.textContent).toBe('[bad](javascript:alert(1)) ');
+		refused.destroy();
+	});
+
 	it('the markdown image input rule takes only a source a page may hold', () => {
 		const refused = editorWith('<p></p>');
 		type(refused, '![x](data:text/html,hi)');
@@ -274,6 +380,71 @@ describe('what an editor writes stays inside the contract', () => {
 		type(taken, '![x](/a.png)');
 		expect(images(taken)).toEqual(['/a.png']);
 		taken.destroy();
+	});
+
+	it('typed `![name](src)` makes the block its address is, as the CodeMirror editor draws it', () => {
+		for (const [src, kind] of [
+			['/media/song.mp3', 'audio'],
+			['/media/clip.mp4', 'video'],
+			['/media/plan.pdf', 'file'],
+			['/media/photo.png', 'image'],
+		]) {
+			const editor = editorWith('<p></p>');
+			type(editor, `![name](${src})`);
+			const made: string[][] = [];
+			editor.state.doc.descendants((n) => {
+				if (['image', 'audio', 'video', 'file'].includes(n.type.name)) made.push([n.type.name, n.attrs.src]);
+			});
+			expect(made, src).toEqual([[kind, src]]);
+			editor.destroy();
+		}
+	});
+
+	// Tiptap's node rule types the last character a second time and leaves
+	// it after the block, and splits off an empty line above a block that
+	// was all the line held.
+	it('typed `![name](src)` becomes the block alone: no `)` left after it, no empty line above it', () => {
+		const alone = editorWith('<p></p>');
+		type(alone, '![name](/media/photo.png)');
+		expect(alone.getHTML()).toBe('<img src="/media/photo.png" alt="name"><p></p>');
+		type(alone, 'next');
+		expect(alone.getHTML()).toBe('<img src="/media/photo.png" alt="name"><p>next</p>');
+		alone.destroy();
+
+		const after = editorWith('<p></p>');
+		type(after, 'see ![name](/media/song.mp3)');
+		expect(after.getHTML()).toBe('<p>see </p><audio src="/media/song.mp3" data-name="name"></audio><p></p>');
+		after.destroy();
+
+		const between = editorWith('<p>see more</p>');
+		between.commands.setTextSelection(5);
+		type(between, '![x](/media/plan.pdf)');
+		expect(between.getHTML()).toBe('<p>see </p><virtues-file src="/media/plan.pdf" data-name="x"></virtues-file><p>more</p>');
+		expect(between.state.selection.from).toBe(between.state.doc.content.size - 'more'.length - 1);
+		between.destroy();
+	});
+
+	// The CodeMirror editor and the server's converter read `|600` as an
+	// image's width, the name before it deciding the kind.
+	it('typed `![name|600](src)` is that width, its name without the width', () => {
+		const drive = editorWith('<p></p>');
+		type(drive, '![photo.jpg|600](/api/drive/files/abc/download)');
+		const made: Record<string, unknown>[] = [];
+		drive.state.doc.descendants((n) => {
+			if (['image', 'audio', 'video', 'file'].includes(n.type.name)) made.push({ type: n.type.name, ...n.attrs });
+		});
+		expect(made).toMatchObject([{ type: 'image', src: '/api/drive/files/abc/download', alt: 'photo.jpg', width: 600 }]);
+		drive.destroy();
+
+		const web = editorWith('<p></p>');
+		type(web, '![Harbour|320](https://images.example.com/a.png)');
+		expect(web.getHTML()).toContain('<img src="https://images.example.com/a.png" alt="Harbour" width="320">');
+		web.destroy();
+
+		const named = editorWith('<p></p>');
+		type(named, '![a|b](/media/photo.png)');
+		expect(named.getHTML()).toContain('alt="a|b"');
+		named.destroy();
 	});
 
 	it('any other command that would write a refused value writes nothing', () => {
@@ -370,5 +541,23 @@ describe('what an editor writes stays inside the contract', () => {
 		expect(render(parse('<p>See <virtues-mention to="javascript:alert(1)" label="Nick"></virtues-mention></p>'))).toBe(
 			'<p>See</p>',
 		);
+	});
+});
+
+describe('to-do items', () => {
+	// The stock TaskItem starts an unchecked item on Enter; a checked one
+	// copied into the new item would tick something nobody did.
+	it('Enter at the end of a checked item starts an unchecked one', () => {
+		const editor = editorWith('<ul data-type="taskList"><li data-type="taskItem" data-checked="true"><p>Pack</p></li></ul>');
+		editor.commands.setTextSelection(7);
+		expect(editor.state.doc.textBetween(0, editor.state.selection.from)).toBe('Pack');
+		editor.commands.keyboardShortcut('Enter');
+		const items: boolean[] = [];
+		editor.state.doc.descendants((n) => {
+			if (n.type.name === 'taskItem') items.push(n.attrs.checked);
+			return true;
+		});
+		expect(items).toEqual([true, false]);
+		editor.destroy();
 	});
 });

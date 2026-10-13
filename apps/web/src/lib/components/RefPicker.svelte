@@ -23,6 +23,7 @@
 	import { fade } from 'svelte/transition';
 	import { FloatingContent, useClickOutside, useEscapeKey } from '$lib/floating';
 	import type { VirtualAnchor } from '$lib/floating';
+	import { inComposition } from '$lib/utils/ime';
 	import { searchRefs } from '$lib/api/client';
 
 	/** Entity result from the API */
@@ -49,8 +50,13 @@
 		onSelect?: (entity: EntityResult) => void;
 		/** Called when selection is confirmed (multi mode) */
 		onSelectMultiple?: (entities: EntityResult[]) => void;
-		/** Called when picker is closed */
-		onClose: () => void;
+		/**
+		 * Called when the picker closes. Closed with nothing picked (Escape, a
+		 * click outside), it is handed what was typed in its search box, which
+		 * a page's `@` puts back after the `@`: the box takes the keyboard as
+		 * the picker opens, so what the person typed went there.
+		 */
+		onClose: (typed?: string) => void;
 		/** Filter to specific entity types */
 		entityTypes?: string[];
 		/** IDs to exclude from results (already selected) */
@@ -93,6 +99,12 @@
 		return /^https?:\/\//i.test(text) ? text : `https://${text}`;
 	}
 
+	// The input keeps the focus and says which row the arrows have reached,
+	// as a combobox does, so a screen reader reads each row as it is reached.
+	const uid = $props.id();
+	const LIST_ID = `${uid}-results`;
+	const optionId = (index: number) => `${uid}-option-${index}`;
+
 	let query = $state(initialQuery);
 	let results = $state<EntityResult[]>([]);
 	let selectedIndex = $state(0);
@@ -109,10 +121,10 @@
 	// Use hooks for dismiss behavior (wrap callbacks to capture current values)
 	useClickOutside(
 		() => [pickerEl],
-		() => onClose(),
+		() => onClose(query),
 		() => true
 	);
-	useEscapeKey(() => onClose(), () => true);
+	useEscapeKey(() => onClose(query), () => true);
 
 	// Fetch results when query changes
 	$effect(() => {
@@ -186,6 +198,7 @@
 	});
 
 	function handleKeydown(e: KeyboardEvent) {
+		if (inComposition(e)) return;
 		// Only handle events if focus is within the picker or on its input
 		const target = e.target as HTMLElement;
 		const isWithinPicker = pickerEl?.contains(target) || target === inputEl;
@@ -263,6 +276,12 @@
 			type="text"
 			{placeholder}
 			class="search-input"
+			role="combobox"
+			aria-label={placeholder}
+			aria-autocomplete="list"
+			aria-expanded="true"
+			aria-controls={LIST_ID}
+			aria-activedescendant={flatResults.length ? optionId(selectedIndex) : undefined}
 		/>
 		{#if isLoading}
 			<Icon icon="ri:loader-4-line" width="14" />
@@ -270,23 +289,34 @@
 	</div>
 
 	<!-- Results -->
-	<div class="results">
+	<div
+		class="results"
+		id={LIST_ID}
+		role="listbox"
+		aria-label="Results"
+		aria-multiselectable={mode === 'multi' || undefined}
+	>
 		{#if flatResults.length === 0}
-			<div class="empty">
+			<div class="empty" role="presentation">
 				{query ? 'No results found' : 'Type to search...'}
 			</div>
 		{:else}
 			{#each Object.entries(groupedResults) as [type, items]}
-				<div class="type-group">
-					<div class="type-header">{getTypeLabel(type)}</div>
+				<div class="type-group" role="group" aria-label={getTypeLabel(type)}>
+					<div class="type-header" aria-hidden="true">{getTypeLabel(type)}</div>
 					{#each items as item}
 						{@const globalIndex = flatResults.indexOf(item)}
+						<!-- A row Tab reached is the one Enter picks: the window's Enter takes the highlighted row. -->
 						<button
 							class="result-item"
+							id={optionId(globalIndex)}
+							role="option"
+							aria-selected={mode === 'multi' ? isSelected(item) : globalIndex === selectedIndex}
 							class:selected={globalIndex === selectedIndex}
 							class:checked={mode === 'multi' && isSelected(item)}
 							onclick={() => handleItemClick(item)}
 							onmouseenter={() => (selectedIndex = globalIndex)}
+							onfocus={() => (selectedIndex = globalIndex)}
 							type="button"
 						>
 							{#if mode === 'multi'}
@@ -447,6 +477,13 @@
 		color: var(--color-foreground);
 		font-size: 13px;
 		transition: background-color 0.1s;
+	}
+
+	/* A thumb's 44pt, inside the row (design-grammar §6). */
+	@media (pointer: coarse) {
+		.result-item {
+			min-height: 44px;
+		}
 	}
 
 	.result-item:hover,
