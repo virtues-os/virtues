@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { askFor, focusZoom, homeOf, pickAnswer, weekly, type PlaceCandidate, type PlaceQuestion } from "./review";
+import { askFor, homeOf, pickAnswer, weekly, type PlaceCandidate, type PlaceQuestion } from "./review";
 
 const cand = (name: string, meters: number, category = "dining"): PlaceCandidate => ({ name, meters, kind: "cafe", category, lat: 30, lon: -97 });
 const question = (over: Partial<Omit<PlaceQuestion, "naming">> & { naming?: Partial<PlaceQuestion["naming"]> } = {}): PlaceQuestion => ({
@@ -104,14 +104,5 @@ describe("the place questions", () => {
 		expect(b.text).toBe("Were you at Blue Door?");
 		const h = cand("Hotel Rowan", 40, "lodging");
 		expect(askFor(question({ overnight: true, rejected_match: "Hotel Rowan", naming: { lodging: h, hotels: [h] } })).text).toBe("Where did you stay that night?");
-	});
-
-	it("frames the places asked about readably", () => {
-		expect(focusZoom(30, 0, 14)).toBe(16.3);
-		expect(focusZoom(30, 0, 17)).toBe(17);
-		// A close pair about 25 m apart lands near z17 (main.js:2217); 100 m out, near z16.
-		expect(focusZoom(30, 25, 14)).toBeCloseTo(17.27, 1);
-		expect(focusZoom(30, 100, 14)).toBeCloseTo(16.12, 1);
-		expect(focusZoom(30, 250, 14)).toBe(15.5);
 	});
 });

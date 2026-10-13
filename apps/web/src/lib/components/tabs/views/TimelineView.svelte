@@ -35,7 +35,7 @@
 	import TimelineScrubber from '$lib/components/timeline/TimelineScrubber.svelte';
 	import TimelineMonth from '$lib/components/timeline/TimelineMonth.svelte';
 	import { ReviewState } from '$lib/timeline/reviewState.svelte';
-	import { focusZoom, sendAnswer, type PlaceCandidate } from '$lib/timeline/review';
+	import { sendAnswer, type PlaceCandidate } from '$lib/timeline/review';
 	import Icon from '$lib/components/Icon.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import Pill from '$lib/components/timeline/Pill.svelte';
@@ -842,6 +842,8 @@
 		tapMark.setLngLat([lon, lat]).addTo(m);
 		tapped = { lat, lon };
 	}
+	/** How close the map comes to a place being asked about. */
+	const QUESTION_ZOOM = 16.75;
 	/** A place is being asked about: the map is on it, the day's marks dimmed. */
 	let focusing = $state(false);
 	/** Take the map to the place "Help Virtues out" is asking about, under a
@@ -867,8 +869,11 @@
 		const el = document.createElement('div');
 		el.className = 'tl-glow';
 		glow = new maplibre.Marker({ element: el, anchor: 'center' }).setLngLat([at.lon, at.lat]).addTo(m);
-		if (picked?.kind === 'place') frameStay(m, [at.lon, at.lat], picked.s, picked.e);
-		else m.easeTo({ center: [at.lon, at.lat], zoom: focusZoom(at.lat, 0, m.getZoom()), padding: fitPad(m), duration: 820 });
+		// The place in the middle of the clear map, at block scale: its
+		// streets named and the path around it in view (the owner's call,
+		// 2026-10-10, over framing the stay's own path, which set the pin low
+		// and close).
+		m.easeTo({ center: [at.lon, at.lat], zoom: QUESTION_ZOOM, padding: fitPad(m), duration: 820 });
 	}
 
 	/** After an answer, the day's titles again: a place just named, or one no
