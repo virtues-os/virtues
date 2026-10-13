@@ -54,6 +54,15 @@
 	// isn't repeated (the owner's call, 2026-10-13).
 	const sub = $derived([now, ask.role ? weekly(q) : null].filter(Boolean).join(' · '));
 	const open = $derived(!ask.chips.length && (!ask.picks.length || noneOfThese));
+	/** The question's words. A named place asked again has its name in the
+	 *  stay's header just above, so the question doesn't repeat it (the
+	 *  owner's call, 2026-10-13). */
+	const question = $derived.by(() => {
+		if (noneOfThese) return 'What was this spot?';
+		if (now && ask.yes && !ask.role) return 'Is this name right?';
+		if (now && open && !q.overnight) return 'What was this spot?';
+		return ask.text;
+	});
 	/** The hotels "Which hotel?" offers: the map's, less one set aside. */
 	const hotels = $derived(q.naming.hotels.filter((h) => h.name !== q.rejected_match));
 	/** The names offered: whose home, the hotels around (a night is only
@@ -165,11 +174,13 @@
 	     new-item row. A name picked from the map's carries its kind. -->
 	<ul class="list">
 		{#if current && !kind}
-			<!-- The answer it has now, checked, as Settings marks the option
-			     in use; any other row changes it. -->
+			<!-- The answer it has now, as Settings marks the option in use: its
+			     own icon like its neighbours', the name and a check at the end
+			     in the accent. Any other row changes it. -->
 			<li class="current" aria-current="true">
-				<Icon icon="ri:check-line" width="16" />
-				<span>{current}</span>
+				<Icon icon="ri:map-pin-line" width="16" />
+				<span class="grow">{current}</span>
+				<Icon icon="ri:check-line" width="18" />
 			</li>
 		{/if}
 		{#each items as o (o.name)}
@@ -235,7 +246,7 @@
 			{#if onclose}<span class="end"><Pill quiet onclick={onclose}>Close</Pill></span>{/if}
 		</div>
 	{:else}
-		<p class="q">{noneOfThese ? 'What was this spot?' : ask.text}</p>
+		<p class="q">{question}</p>
 		{#if sub}<p class="sub">{sub}</p>{/if}
 		{#if ask.role}<p class="sub">Virtues uses your home and work to tell the story of your day.</p>{/if}
 
@@ -307,7 +318,7 @@
 	{/if}
 
 	{#if review.saveFailed === q.id}<p class="note">Error: your server couldn't save that. Try again.</p>{/if}
-	{#if !q.naming.street_detail && !ask.role}
+	{#if open && !offers.length && !q.naming.street_detail}
 		<p class="note">Your server's map of this area doesn't list its places, so it can't suggest names here.</p>
 	{/if}
 </div>
@@ -383,8 +394,8 @@
 	.list button:hover:not(:disabled) {
 		background: var(--hover-bg);
 	}
-	/* The answer in use: a row like the others, not pressable, its tick in
-	   the accent. */
+	/* The answer in use: a row like the others, not pressable, its name and
+	   its check in the accent. */
 	.list .current {
 		display: flex;
 		align-items: center;
@@ -392,10 +403,17 @@
 		min-height: 40px;
 		padding: 8px 12px;
 		font-size: 15px;
+		color: var(--color-primary);
 	}
 	.list .current > :global(svg) {
 		flex: none;
+		color: var(--color-foreground-muted);
+	}
+	.list .current > :global(svg:last-child) {
 		color: var(--color-primary);
+	}
+	.list .current .grow {
+		flex: 1;
 	}
 	/* The last row types a name: the same height and inset as a row, the
 	   field itself borderless, Save only once there's something to save. */

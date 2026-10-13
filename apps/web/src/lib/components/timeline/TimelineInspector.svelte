@@ -293,8 +293,10 @@
 	});
 
 	function pickSection(i: number, sec: InspectorSection) {
-		// Another stay picked while a question is open: the question closes.
-		if (openAt !== null && i !== openAt) card = null;
+		// Another stay picked while a question is open, or its own stay picked
+		// again, which lets go of it: the question closes.
+		const again = selected?.s === sec.s && selected.kind === sec.kind;
+		if (openAt !== null && (i !== openAt || again)) card = null;
 		if (i === curSection) secOpen = !secOpen;
 		chosen = i;
 		open = null;
@@ -625,13 +627,15 @@
 	/* Selected, as a Mac list selects: a rounded fill in the accent, stronger
 	   than the hover's grey, over the stay and its question line; the
 	   playhead's edge steps aside for it. */
-	.group.sel > .sec,
+	/* A stay with its question open stays selected, whatever else lets go
+	   of the pick (the map, "Show the whole day"): the card hangs from it. */
+	.group:is(.sel, .open) > .sec,
 	.group.sel > .ask-line,
-	.group.sel:has(> .sec:hover, > .ask-line:hover) > :is(.sec, .ask-line) {
+	.group:is(.sel, .open):has(> .sec:hover, > .ask-line:hover) > :is(.sec, .ask-line) {
 		margin: 0 8px;
 		background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface));
 	}
-	.group.sel > .sec {
+	.group:is(.sel, .open) > .sec {
 		width: calc(100% - 16px);
 		padding-left: 8px;
 		padding-right: 32px;
@@ -639,7 +643,7 @@
 	}
 	/* A line under the stay (its question, or "Saved as… Undo") joins the
 	   selection: the row squares off where the line meets it. */
-	.group.sel > .sec:not(:last-child) {
+	.group:is(.sel, .open) > .sec:not(:last-child) {
 		border-radius: 12px 12px 0 0;
 	}
 	.group.sel > .ask-line {
@@ -647,7 +651,7 @@
 		padding-right: 32px;
 		border-radius: 0 0 12px 12px;
 	}
-	.group.sel::before {
+	.group:is(.sel, .open)::before {
 		display: none;
 	}
 	/* A stay and its question line light together, wherever the pointer is:
