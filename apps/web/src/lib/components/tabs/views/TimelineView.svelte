@@ -757,7 +757,14 @@
 	/** "Help Virtues out": the questions, answers and Undo, shared by the
 	 *  day's list and its Review. An answer re-reads the day's titles. */
 	const review = new ReviewState(() => void refreshTitles());
-	onMount(() => void review.load());
+	// Home and Work come first, for everyone: while either is unanswered,
+	// opening the Timeline opens its question (the owner's call, 2026-10-09).
+	onMount(() => {
+		void review.load().then(() => {
+			const first = steps[0];
+			if (first && (first.ask === 'home' || first.ask === 'work')) stepTo(0);
+		});
+	});
 	/** The places "Help Virtues out" asks about: titled "Unknown" while only
 	 *  their city names them. */
 	function markAsked(places: DerivedPlace[]) {
