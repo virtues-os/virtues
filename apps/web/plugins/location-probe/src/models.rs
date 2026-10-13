@@ -15,6 +15,8 @@ pub struct StartResponse {
 #[serde(rename_all = "camelCase")]
 pub struct RowsRequest {
   pub limit: Option<u32>,
+  /// Leave out the 0,0 marker rows (events and diagnostics), fixes only.
+  pub fixes_only: Option<bool>,
 }
 
 /// One recorded location callback. `source` distinguishes an ordinary

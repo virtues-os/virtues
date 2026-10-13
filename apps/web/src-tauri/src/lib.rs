@@ -551,9 +551,9 @@ pub fn run() {
         if let Err(e) = app.finance().resume() {
           eprintln!("[finance] resume failed: {e}");
         }
-        // Audio: resume recording only if already authorized + left enabled. The
-        // recording session doubles as the background keepalive; a significant-
-        // location wake also calls this path so it resurrects after suspension.
+        // Audio: resume recording only if already authorized + left enabled. A
+        // relaunch the OS made in the background (a location event) cannot
+        // start the mic, so there this only starts the gap nudge's clock.
         if let Err(e) = app.audio().resume() {
           eprintln!("[audio] resume failed: {e}");
         }
