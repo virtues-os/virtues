@@ -971,7 +971,7 @@ mod tests {
             icon_color: None,
             cover_url: None,
             tags: None,
-            format: None,
+            format: Some(crate::api::pages::PageFormat::Markdown),
         };
         crate::api::pages::create_page_as(pool, req, PageFormat::Markdown).await.unwrap().page.id
     }
@@ -1061,7 +1061,7 @@ mod tests {
             icon_color: None,
             cover_url: None,
             tags: None,
-            format: None,
+            format: Some(crate::api::pages::PageFormat::Markdown),
         };
         let page = crate::api::pages::create_page_as(&pool, req, PageFormat::Tree).await.unwrap().page;
         assert_eq!(page.format, PageFormat::Tree);

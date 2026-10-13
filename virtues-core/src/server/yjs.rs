@@ -4045,7 +4045,7 @@ mod tests {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
         )
         .await
@@ -4149,7 +4149,7 @@ mod tests {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
         )
         .await
@@ -6000,7 +6000,7 @@ mod tests {
             icon_color: None,
             cover_url: None,
             tags: None,
-            format: None,
+            format: Some(crate::api::pages::PageFormat::Markdown),
         }
     }
 

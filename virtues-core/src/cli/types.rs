@@ -288,7 +288,7 @@ pub enum PagesCmd {
     /// each page as it was in History first, leaves a page that would lose
     /// text in markdown, and closes any editor open on a page it moves.
     /// Both keep a report on the box and print it; `--apply` needs block
-    /// pages turned on (VIRTUES_TREE_PAGES=1).
+    /// pages on, as they are unless VIRTUES_TREE_PAGES=0.
     ///
     /// User pages by default. `--articles` moves wiki articles and day pages
     /// instead: an article nobody has opened moves when it is first opened,

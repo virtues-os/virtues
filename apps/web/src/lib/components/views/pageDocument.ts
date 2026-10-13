@@ -13,7 +13,9 @@
  *   (`keepMarkdownCopy`, `keepEarlierTreeCopies`).
  * - A page still in markdown binds nothing: no editor here edits markdown,
  *   so it is shown read only as its server's markdown of it
- *   (`MarkdownView`), until the server moves it to blocks.
+ *   (`MarkdownView`). The server moves a markdown page to blocks as it is
+ *   opened (`GET /api/pages/:id`), so one still in markdown is one it could
+ *   not move.
  */
 
 import { get } from 'svelte/store';
@@ -44,7 +46,7 @@ export type OpenedPage =
 
 /** What a page still in markdown says above its text. */
 export const MARKDOWN_READ_ONLY =
-	'This page is still in markdown, so it opens read only. You can edit it here after your server moves it to blocks.';
+	"Your server couldn't move this page from markdown to blocks, so it opens read only. To edit it, copy its markdown into a new page.";
 
 /** How a page holds its text, as its server describes it. */
 export function formatOf(page: PageDescription): PageFormat {
