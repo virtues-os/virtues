@@ -79,7 +79,7 @@
 	const viewActions = $derived(paneActions.for(activeTabId));
 
 	// Two inline, the rest behind a `···`. A pane can be dragged to a third of
-	// the window, and the toolbar already carries split/merge/new-tab — without
+	// the window, and the toolbar already carries back/forward/new-tab — without
 	// a cap, a view with four actions would push the tabs out of their own bar.
 	const INLINE_ACTION_LIMIT = 2;
 	const inlineActions = $derived(viewActions.slice(0, INLINE_ACTION_LIMIT));
@@ -170,14 +170,6 @@
 		} else {
 			windowShellStore.closeTab(id);
 		}
-	}
-
-	function handleToggleSplit() {
-		windowShellStore.toggleSplit();
-	}
-
-	function handleMergePanes() {
-		windowShellStore.disableSplit();
 	}
 
 	function handleMiddleClick(e: MouseEvent, id: string) {
@@ -279,6 +271,19 @@
 			});
 		}
 
+
+		// The menu way to split: dragging a tab to a pane's edge does the same,
+		// and moving a side's last tab across makes the window whole again.
+		// A lone tab has nothing to sit beside, so it gets no entry.
+		if (!mobileLayout.isMobile && (isSplitMode || tabs.length > 1)) {
+			const toRight = paneId !== "right";
+			items.push({
+				id: "move-across",
+				label: toRight ? "Move to right side" : "Move to left side",
+				icon: toRight ? "ri:layout-right-line" : "ri:layout-left-line",
+				action: () => windowShellStore.moveTabAcross(tabId),
+			});
+		}
 
 		// Divider + Close actions
 		items.push({
@@ -556,28 +561,6 @@
 	>
 		<Icon icon="ri:add-line" />
 	</button>
-
-	{#if !paneId && !mobileLayout.isMobile}
-		<button
-			class="split-toggle"
-			onclick={handleToggleSplit}
-			aria-label="Split view"
-			title="Split view"
-		>
-			<Icon icon="ri:layout-column-line" />
-		</button>
-	{/if}
-
-	{#if paneId === "right" && isSplitMode}
-		<button
-			class="merge-toggle"
-			onclick={handleMergePanes}
-			aria-label="Merge panes"
-			title="Merge panes"
-		>
-			<Icon icon="ri:layout-right-line" />
-		</button>
-	{/if}
 
 	<!-- The view's own actions, published into the slot rather than rendered
 	     wherever each view felt like putting them. Last in the row, after the
@@ -951,8 +934,6 @@
 	}
 
 	.sidebar-toggle,
-	.split-toggle,
-	.merge-toggle,
 	.nav-btn,
 	.new-tab-btn {
 		display: flex;
@@ -985,8 +966,6 @@
 	   as nothing happening. A foreground mix is legible in every theme instead
 	   of depending on two surface tokens staying far enough apart. */
 	.sidebar-toggle:hover,
-	.split-toggle:hover,
-	.merge-toggle:hover,
 	.nav-btn:hover:not(:disabled),
 	.new-tab-btn:hover {
 		background: var(--hover-bg);
@@ -994,16 +973,12 @@
 	}
 
 	.sidebar-toggle:active,
-	.split-toggle:active,
-	.merge-toggle:active,
 	.nav-btn:active:not(:disabled),
 	.new-tab-btn:active {
 		background: var(--press-bg);
 	}
 
 	.sidebar-toggle:focus-visible,
-	.split-toggle:focus-visible,
-	.merge-toggle:focus-visible,
 	.nav-btn:focus-visible,
 	.new-tab-btn:focus-visible {
 		outline: 2px solid var(--color-primary);
