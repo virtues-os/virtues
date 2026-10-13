@@ -543,11 +543,9 @@
 					<!-- One title block, the icons centred on it, the switch last. -->
 					<div class="head-actions">
 						{#if chatId}
-							<IconButton
-								icon="ri:chat-3-line"
-								label="Conversation: ask it something or change it"
-								onclick={openConversation}
-							/>
+							<!-- A word with the icon: a speech bubble alone didn't say you
+							     can tell it things or change it there. -->
+							<Button variant="ghost" size="sm" icon="ri:chat-3-line" onclick={openConversation}>Chat</Button>
 						{/if}
 						<IconButton
 							icon="ri:information-line"
