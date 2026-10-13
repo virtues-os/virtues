@@ -67,4 +67,16 @@ describe("a markdown page's versions", () => {
 		expect(typeof body.snapshot).toBe('string');
 		expect(body.content_preview).toBe('Lunch with Nick.');
 	});
+
+	it('are saved when the state is past what one call takes as arguments', async () => {
+		api.request.mockResolvedValue({ id: 'v3' });
+		const doc = new Y.Doc();
+		doc.getText('content').insert(0, 'Lunch with Nick. '.repeat(12_000));
+		const state = Y.encodeStateAsUpdate(doc);
+		expect(state.length).toBeGreaterThan(200_000);
+		expect(await saveVersion(doc, 'page_md', 'Saved')).toEqual({ id: 'v3' });
+		const body = JSON.parse(api.request.mock.calls[0][1].body);
+		const sent = Uint8Array.from(atob(body.snapshot), (c) => c.charCodeAt(0));
+		expect(sent).toEqual(state);
+	});
 });

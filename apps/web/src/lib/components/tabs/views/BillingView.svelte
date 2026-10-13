@@ -22,6 +22,7 @@
 	} from '$lib/api/client';
 	import Icon from '$lib/components/Icon.svelte';
 	import { toast } from 'svelte-sonner';
+	import { reloadApp } from '$lib/reload';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -125,7 +126,7 @@
 					linkPolling = false;
 					linkDone = true;
 					// Re-fetch subscription state now that the box is linked.
-					setTimeout(() => location.reload(), 1200);
+					setTimeout(() => reloadApp(), 1200);
 				} else if (data.status === 'expired' || data.status === 'none') {
 					stopPolling();
 					linkPolling = false;

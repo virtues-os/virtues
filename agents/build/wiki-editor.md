@@ -76,6 +76,59 @@ level up.
 4. Prompts are not migrations, but they are close: every box gets the new text
    on upgrade and applies it to pages that already exist.
 
+## Articles that hold blocks
+
+An article becomes a block page when the server first builds its live
+document (`api/block_move.rs`, `first_open`, behind `VIRTUES_TREE_ARTICLES=1`
+with block pages on), or in the conversion run once opened. The editor does
+not change for it: it still reads the article as markdown and returns the
+whole revised article as markdown. What changes is the server's half of
+`revise_article`:
+
+- **The page is read first, the article's row after.** Building the document
+  can move an article nobody had opened, and the move rewrites its edition
+  (`block_move::rebase`). Reading the row before the page would diff against
+  an edition that no longer exists.
+- **The model's text becomes a draft** (`YjsState::draft`): on a block page,
+  its markdown converted as an article (`parse_article_markdown`: footnotes,
+  figures and veils become the contract's own nodes), and the draft's text is
+  the blocks' export. Markdown the contract refuses is an `InvalidInput` back
+  to the agent, with nothing written.
+- **The invariant runs on the draft, never the raw text**, and compares
+  sentences by key (`sentence_key`: escapes and the character references an
+  export writes read as their characters, whitespace collapsed). The export
+  writes `R\&B` where the model wrote `R&B`; compared raw, the owner's own
+  sentence would read as lost, or a sentence of the machine's as theirs.
+- **The edition is the draft's text, recorded before the write**
+  (`record_edition`), and the write is `YjsState::write_draft`: block by
+  block (`virtues_document::revise_ops`), so a block the draft shows as the
+  page has it keeps its items and any caret in it, and a block changed a
+  little is patched in place, keeping its id. Should the write leave other
+  text than the draft, what it left is recorded instead, and logged.
+- **"Has the owner changed it?" re-projects both sides**
+  (`block_move::as_compared`: the edition and the live text each as this
+  server's export would write them). A release that writes an escape or a
+  list marker differently then changes no answer. The day page's
+  `has_your_edits` and the picture's `edition_follows` compare the same way.
+  A pending suggestion of the owner's reads as one, `{--…--}{++…++}`, never
+  as decided, so a sentence under it is theirs and the invariant keeps it.
+- **The owner's pending suggestion is theirs to decide.** The draft keeps
+  a suggestion the model carried back as the page has it, and a revision
+  that would change or drop a block holding one is refused with nothing
+  written (`suggestions_taken`); the model is told to keep that paragraph
+  as it is. A suggestion the model writes of its own comes in accepted.
+  The owner's rewrite of a day page, a new draft from the record that never
+  carries a suggestion back, is refused before its writer runs while the
+  page holds one (`pending_suggestion`).
+- **A revert of a block article goes by blocks** (`pages::restore_version`):
+  a version from before the article held blocks is converted as an article,
+  its pending suggestions kept, and `machine_text` is left alone, as on a
+  markdown article. The restore stamps `last_human_edit_at` itself, as
+  every version put back from History does.
+
+Find/replace (`apply_text_edit`) is the one text path a block page refuses:
+its anchors are markdown the page does not hold.
+
 ## Notes, and what may not be one
 
 A `wiki_notes` row is the machine's only channel into the record: a cited

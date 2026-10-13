@@ -103,6 +103,8 @@ pub enum AttrType {
     Url,
     /// A ref to something on the box, `/kind/id` ([`is_route`]).
     Route,
+    /// A footnote's name within its page ([`is_label`]).
+    Label,
 }
 
 impl AttrType {
@@ -113,6 +115,7 @@ impl AttrType {
             AttrType::Bool => "true or false",
             AttrType::Url => "a URL",
             AttrType::Route => "a ref on this box, `/kind/id`",
+            AttrType::Label => "a label: a letter or digit, then up to 63 letters, digits, `_` or `-`",
         }
     }
 }
@@ -145,6 +148,20 @@ pub fn is_route(route: &str) -> bool {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
         && !id.is_empty()
+}
+
+/// The most characters a footnote's label holds.
+pub const MAX_LABEL: usize = 64;
+
+/// Is `label` a footnote's name: an ASCII letter or digit, then up to 63
+/// more letters, digits, `_` or `-` (`ev-1`, `cx-12`, `1`). Such a label
+/// reads back from `[^label]` as written, whatever markdown reads next to it,
+/// and needs no escape in it.
+pub fn is_label(label: &str) -> bool {
+    let mut chars = label.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && label.len() <= MAX_LABEL
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -223,6 +240,7 @@ impl AttrSpec {
             AttrType::Int => value.as_i64().is_some(),
             AttrType::Bool => value.is_boolean(),
             AttrType::Route => value.as_str().is_some_and(is_route),
+            AttrType::Label => value.as_str().is_some_and(is_label),
             AttrType::String | AttrType::Url => value.is_string(),
         };
         if !fits {
@@ -838,9 +856,33 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// Tested alone, this crate builds `regex` with `std` only, as the
+    /// browser's converter does (crates/virtues-document-wasm): every content
+    /// expression compiles and matches without Unicode tables or literal
+    /// search.
     #[test]
     fn content_expressions_compile_and_match() {
         let c = Contract::load();
+        let raw: Value = serde_json::from_str(CONTRACT_JSON).unwrap();
+        for node in &c.nodes {
+            let expr = raw["nodes"][node.name.as_str()]["content"].as_str();
+            assert_eq!(node.content.is_some(), expr.is_some(), "{}", node.name);
+        }
+        for (parent, fits, misfits) in [
+            ("blockquote", &["paragraph", "table", "codeBlock"][..], &[][..]),
+            ("callout", &["heading", "taskList"], &["listItem"]),
+            ("orderedList", &["listItem", "listItem"], &["taskItem"]),
+            ("taskList", &["taskItem"], &["listItem"]),
+            ("taskItem", &["paragraph", "taskList"], &["taskList"]),
+            ("table", &["tableRow", "tableRow"], &[]),
+            ("tableCell", &["paragraph", "image"], &[]),
+            ("tableHeader", &["paragraph"], &["text"]),
+            ("codeBlock", &["text"], &["mention"]),
+            ("heading", &[], &["paragraph"]),
+        ] {
+            assert!(c.content_matches(parent, fits), "{parent} holds {fits:?}");
+            assert!(!c.content_matches(parent, misfits), "{parent} refuses {misfits:?}");
+        }
         assert!(c.content_matches("doc", &["paragraph"]));
         assert!(!c.content_matches("doc", &[]));
         assert!(c.content_matches("listItem", &["paragraph", "bulletList"]));
@@ -881,6 +923,7 @@ mod tests {
                 "underline",
                 "strike",
                 "highlight",
+                "veil",
                 "code"
             ]
         );
@@ -1112,5 +1155,55 @@ mod tests {
             );
         }
         assert!(to.check(&c, "to", &json!(1)).is_err());
+    }
+
+    /// A footnote's label is what the day page's readers find in `[^…]`:
+    /// letters, digits, `_` and `-`, first a letter or digit, at most 64.
+    #[test]
+    fn a_footnote_is_named_by_a_label() {
+        let c = Contract::load();
+        let label = c.node("footnote").unwrap().attrs().get("label").unwrap();
+        for fine in ["ev-1", "cx-12", "1", "a", "note_2", "A-b_3", &"x".repeat(MAX_LABEL)] {
+            assert!(label.check(&c, "label", &json!(fine)).is_ok(), "{fine:?} refused");
+        }
+        for refused in [
+            "",
+            "-1",
+            "_a",
+            "ev 1",
+            "ev]1",
+            "ev^1",
+            "^ev-1",
+            "ev\\1",
+            "évé",
+            "ev-1\n",
+            &"x".repeat(MAX_LABEL + 1),
+        ] {
+            assert!(label.check(&c, "label", &json!(refused)).is_err(), "{refused:?} allowed");
+        }
+        assert!(label.check(&c, "label", &json!(1)).is_err());
+        assert!(label.check(&c, "label", &Value::Null).is_err());
+    }
+
+    /// The article's nodes and its mark: a footnote is an inline atom
+    /// carrying its note, a figure a block atom, the veil the innermost
+    /// delimiter, which no code span holds.
+    #[test]
+    fn the_articles_syntax_is_in_the_contract() {
+        let c = Contract::load();
+        assert!(c.is_inline("footnote"));
+        assert!(c.node("footnote").unwrap().spec.atom);
+        assert!(!c.is_inline("figure"));
+        assert!(c.node("figure").unwrap().spec.id);
+        let figure: Vec<&str> = c.node("figure").unwrap().attrs().keys().collect();
+        assert_eq!(figure, ["kind", "text", "who", "ref", "refs", "src", "caption", "style", "time"]);
+        assert_eq!(c.mark_rank("veil") + 1, c.mark_rank("code"));
+        assert_eq!(c.mark_rank("highlight") + 1, c.mark_rank("veil"));
+        assert!(c.marks_exclude("veil", "code"));
+        assert!(!c.marks_exclude("veil", "bold"));
+        assert!(!c.marks_exclude("veil", "link"));
+        assert!(c.content_matches("paragraph", &["text", "footnote", "footnote"]));
+        assert!(c.content_matches("doc", &["figure"]));
+        assert!(c.content_matches("tableCell", &["figure"]));
     }
 }

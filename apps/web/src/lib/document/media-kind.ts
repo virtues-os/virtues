@@ -13,6 +13,12 @@ export type MediaKind = 'image' | 'audio' | 'video' | 'file';
 const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif', 'heic', 'heif', 'tif', 'tiff'];
 const AUDIO_EXT = ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'opus', 'wma'];
 const VIDEO_EXT = ['mp4', 'webm', 'mov', 'avi', 'mkv', 'm4v', 'ogv'];
+/** What a web address names a document, data or an archive by: never an image, however the site serves it. */
+const FILE_EXT = [
+	'pdf', 'md', 'markdown', 'txt', 'rtf', 'csv', 'tsv', 'json', 'xml', 'yaml', 'yml', 'html', 'htm',
+	'doc', 'docx', 'odt', 'pages', 'xls', 'xlsx', 'ods', 'numbers', 'ppt', 'pptx', 'odp', 'key', 'epub',
+	'ics', 'vcf', 'zip', 'gz', 'tgz', 'tar', 'rar', '7z', 'dmg', 'pkg', 'exe', 'msi', 'apk',
+];
 
 /**
  * A name's or an address's extension, lowercase: what follows the last `.`
@@ -28,10 +34,12 @@ function extension(s: string): string {
 
 /**
  * A link's block, from its address and name: an image, audio or video
- * extension on either makes that block; past that, a web address with no
- * extension of its own is an image (the web serves images from such
- * addresses), and anything else is a file, a web address ending in `.pdf`
- * included.
+ * extension on either makes that block; past that, a web address is an
+ * image unless its extension names a document, data or an archive
+ * (`FILE_EXT`, a web address ending in `.pdf` among them): the web serves
+ * images from addresses of every shape (`photo-1?w=400`, `svg.latex?x^2`,
+ * `image.php?id=3`), and one that is no image draws as a file card once it
+ * fails to load. Anything else is a file.
  */
 export function kindOfLink(src: string, name: string): MediaKind {
 	const onSrc = extension(src);
@@ -43,7 +51,7 @@ export function kindOfLink(src: string, name: string): MediaKind {
 	// The URL parser's reading: tabs and line breaks dropped, control
 	// characters and spaces trimmed from both ends.
 	const address = src.replace(/[\t\n\r]/g, '').replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '');
-	return /^https?:/i.test(address) && !onSrc ? 'image' : 'file';
+	return /^https?:/i.test(address) && !FILE_EXT.includes(onSrc) ? 'image' : 'file';
 }
 
 /**

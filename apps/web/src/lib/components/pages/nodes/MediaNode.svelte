@@ -12,16 +12,35 @@
 	  image's description, and the address), Turn into link, the image widths,
 	  Remove.
 	- Print: an image prints; audio, video and a file print as their card.
+	- A file on its way (lib/document/uploads.ts): the block is in the page
+	  from the moment the file was given, at its final address, and draws
+	  the upload. On the device sending it: the picture itself while it is
+	  an image, else a card, with how much has gone, then the file; a failed
+	  upload says why and, short of a refusal, offers Try again, which sends
+	  the same file to the same address. Its Remove is the menu's: the file
+	  is held, so undo brings back a block this device still sends. On any
+	  other device, a file that
+	  does not load asks the server about it, and a file's card, which loads
+	  nothing, asks from the start: still arriving says so, and the file
+	  draws once it is there; a stop the device sending it may still recover
+	  from says so, without Remove; a stop past that says it didn't finish;
+	  one that never came draws as a file that did not load. A file the
+	  server holds is drawn again once, from the server, since it may have
+	  arrived between the load and the asking; one that still does not load
+	  is one this browser cannot draw (a TIFF in Chrome, WMA anywhere): it
+	  stays a card, and nothing asks or loads it again. None of it writes to
+	  the page.
 -->
 <script lang="ts">
-	import { onMount } from "svelte";
+	import { onMount, untrack } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { backendUrl } from "$lib/config/backend";
 	import { onContextGesture } from "$lib/codemirror/extensions/long-press";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { linkEditor } from "$lib/stores/linkEditor.svelte";
 	import { fileIcon } from "$lib/utils/refRoutes";
-	import { mediaSrc, nameOfSrc } from "$lib/document/media";
+	import { driveFileId, mediaSrc, nameOfSrc } from "$lib/document/media";
+	import { askUpload, retryUpload, watchUpload, type LocalUpload, type RemoteUpload } from "$lib/document/uploads";
 	import { shareableHref } from "$lib/document/links";
 	import { dragToResize, sizeByKey } from "$lib/document/resize";
 	import type { ViewState } from "$lib/document/nodeviews.svelte";
@@ -32,7 +51,76 @@
 	const MIN_WIDTH = 48;
 
 	const src = $derived(String(view.attrs.src ?? ""));
-	const href = $derived(backendUrl(mediaSrc(src)));
+	/** Bumped when the server says a file that did not load has arrived: drawn again from the server. */
+	let arrived = $state(0);
+	const href = $derived.by(() => {
+		const url = backendUrl(mediaSrc(src));
+		return arrived ? `${url}${url.includes("?") ? "&" : "?"}arrived=${arrived}` : url;
+	});
+	const fileId = $derived(driveFileId(src));
+
+	/** This device's upload of the file, while it holds one. */
+	let local = $state<LocalUpload | null>(null);
+	$effect(() => watchUpload(fileId).subscribe((u) => (local = u)));
+
+	/** The server's word on a file that did not load here, once asked. */
+	let remote = $state<RemoteUpload | null>(null);
+	let asking = $state(false);
+	/**
+	 * Whether the file has been drawn again from the server since it did not
+	 * load. Stored, it is drawn again once: it may have arrived between the
+	 * load and the asking, which a first word of `done` cannot tell from a
+	 * file the server held all along. Once drawn again, a file that still
+	 * does not load is the browser's doing, and loading it again would fail
+	 * again.
+	 */
+	let drawnAgain = false;
+	$effect(() => {
+		if (!asking || !fileId || local) return;
+		return askUpload(fileId).subscribe((u) =>
+			untrack(() => {
+				remote = u;
+				if (u.state !== "done") return;
+				asking = false;
+				if (!drawnAgain) {
+					drawnAgain = true;
+					failed = false;
+					arrived += 1;
+				}
+			}),
+		);
+	});
+	/** On its way: this device's upload, or another device's the server knows of. */
+	const onItsWay = $derived(
+		local?.phase === "uploading"
+			? { here: true, percent: local.total ? Math.floor((100 * local.sent) / local.total) : null }
+			: !local && (remote?.state === "waiting" || remote?.state === "uploading")
+				? {
+						here: false,
+						percent: remote.state === "uploading" && remote.total ? Math.floor((100 * remote.received) / remote.total) : null,
+					}
+				: null,
+	);
+	/**
+	 * Stopped: here, with why, and whether the server refused it (then there
+	 * is no Try again: it would be refused again); elsewhere, with why, and
+	 * whether that device may still send it (`stopped`).
+	 */
+	const uploadFailed = $derived(
+		local?.phase === "failed"
+			? { here: true, reason: local.reason, mayRecover: false, refused: local.refused }
+			: !local && remote?.state === "failed"
+				? { here: false, reason: remote.reason, mayRecover: false, refused: remote.refused }
+				: !local && remote?.state === "stopped"
+					? { here: false, reason: remote.reason, mayRecover: true, refused: false }
+					: null,
+	);
+
+	/** A file that did not load: ask the server whether it is still on its way. */
+	function didNotLoad() {
+		failed = true;
+		if (fileId && !local) asking = true;
+	}
 	const isImage = $derived(view.type === "image");
 	/** What the block is called: an image's description, a file's name, else its address's last part. */
 	const name = $derived.by(() => {
@@ -50,10 +138,14 @@
 	let el: HTMLElement;
 	let img = $state<HTMLImageElement | null>(null);
 
-	// A new address gets a fresh try.
+	// A new address gets a fresh try. A file's card loads nothing, so no
+	// error says its file is not there: it asks from the start.
 	$effect(() => {
 		void src;
 		failed = false;
+		remote = null;
+		drawnAgain = false;
+		asking = view.type === "file" && driveFileId(src) !== null;
 	});
 
 	function startResize(e: PointerEvent) {
@@ -160,8 +252,53 @@
 	</a>
 {/snippet}
 
+{#snippet uploading(o: { here: boolean; percent: number | null })}
+	<div class="doc-file-card doc-upload" role="status">
+		<Icon icon="ri:loader-4-line" width="20" class="doc-upload-spinner" />
+		<span class="doc-file-info">
+			<span class="doc-file-name">{o.here ? `Uploading ${name}…` : `${name} is uploading on another device…`}</span>
+			{#if o.percent !== null}<span class="doc-file-ext">{o.percent}%</span>{/if}
+		</span>
+	</div>
+{/snippet}
+
+{#snippet notUploaded(o: { here: boolean; reason: string; mayRecover: boolean; refused: boolean })}
+	<div class="doc-file-card doc-upload doc-upload-failed" role="alert">
+		<Icon icon="ri:error-warning-line" width="20" />
+		<span class="doc-file-info">
+			<span class="doc-file-name">
+				{o.here
+					? `Couldn't upload ${name}`
+					: o.mayRecover
+						? `${name} stopped uploading on another device`
+						: `${name} didn't finish uploading`}
+			</span>
+			<span class="doc-file-ext">{o.mayRecover ? `${o.reason} That device may send it again.` : o.reason}</span>
+		</span>
+		{#if view.editable && !o.mayRecover}
+			<span class="doc-upload-actions">
+				{#if o.here && fileId && !o.refused}
+					<button type="button" data-widget-control onclick={() => fileId && retryUpload(fileId)}>Try again</button>
+				{/if}
+				<button type="button" data-widget-control onclick={() => view.remove()}>Remove</button>
+			</span>
+		{/if}
+	</div>
+{/snippet}
+
 <figure bind:this={el} class="doc-media doc-media-{view.type}" class:selected={view.selected}>
-	{#if isImage && !failed}
+	{#if uploadFailed}
+		{@render notUploaded(uploadFailed)}
+	{:else if onItsWay && isImage && local?.phase === "uploading" && local.preview}
+		<span class="doc-image-frame doc-image-sending" style:width={width ? `${width}px` : null}>
+			<img src={local.preview} alt={String(view.attrs.alt ?? "")} draggable="false" />
+			<span class="doc-image-progress" role="status">
+				Uploading… {onItsWay.percent ?? 0}%
+			</span>
+		</span>
+	{:else if onItsWay}
+		{@render uploading(onItsWay)}
+	{:else if isImage && !failed}
 		<span class="doc-image-frame" style:width={dragWidth !== null ? `${dragWidth}px` : width ? `${width}px` : null}>
 			<img
 				bind:this={img}
@@ -169,7 +306,7 @@
 				alt={String(view.attrs.alt ?? "")}
 				loading="lazy"
 				draggable="false"
-				onerror={() => (failed = true)}
+				onerror={didNotLoad}
 			/>
 			{#if view.editable}
 				<span
@@ -193,12 +330,12 @@
 				<Icon icon="ri:music-2-line" width="16" />
 				<span class="doc-file-name">{name}</span>
 			</div>
-			<audio controls preload="metadata" src={href}></audio>
+			<audio controls preload="metadata" src={href} onerror={didNotLoad}></audio>
 		</div>
 		<div class="doc-print-card">{@render card()}</div>
 	{:else if view.type === "video"}
 		<!-- svelte-ignore a11y_media_has_caption -->
-		<video controls preload="metadata" src={href}></video>
+		<video controls preload="metadata" src={href} onerror={didNotLoad}></video>
 		<div class="doc-print-card">{@render card()}</div>
 	{:else}
 		{@render card()}
@@ -348,6 +485,64 @@
 
 	.doc-print-card {
 		display: none;
+	}
+
+	.doc-upload {
+		color: var(--color-foreground-muted);
+	}
+
+	.doc-upload :global(.doc-upload-spinner) {
+		animation: doc-upload-spin 1s linear infinite;
+	}
+
+	@keyframes doc-upload-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	.doc-upload-failed {
+		color: var(--color-foreground);
+	}
+
+	.doc-upload-actions {
+		display: flex;
+		gap: 8px;
+		margin-left: 8px;
+	}
+
+	.doc-upload-actions button {
+		padding: 4px 8px;
+		border: 1px solid var(--color-border-subtle, var(--color-border));
+		border-radius: 6px;
+		background: var(--color-surface);
+		color: var(--color-foreground);
+		font-size: 0.875rem;
+	}
+
+	.doc-upload-actions button:hover {
+		background: var(--hover-bg);
+	}
+
+	.doc-image-sending img {
+		opacity: 0.6;
+	}
+
+	.doc-image-progress {
+		position: absolute;
+		left: 8px;
+		bottom: 8px;
+		padding: 2px 8px;
+		border-radius: 9999px;
+		background: var(--color-surface);
+		color: var(--color-foreground-muted);
+		font-size: 0.75rem;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.doc-upload :global(.doc-upload-spinner) {
+			animation: none;
+		}
 	}
 
 	@media print {

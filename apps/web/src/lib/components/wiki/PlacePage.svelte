@@ -16,6 +16,7 @@
 	import Markdown from "$lib/components/Markdown.svelte";
 	import TextAction from "$lib/components/TextAction.svelte";
 	import { updatePlace } from "$lib/wiki/api";
+	import { reloadApp } from "$lib/reload";
 
 	interface Props {
 		/** The wire shape. See PersonPage for why the converter is gone. */
@@ -129,7 +130,7 @@
 									subjectType="place"
 					subjectId={page.id}
 					maintained={page.article_maintained}
-					onChanged={() => location.reload()}
+					onChanged={() => reloadApp()}
 				/>
 			</section>
 

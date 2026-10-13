@@ -23,3 +23,8 @@ export function getTreeEditor(pageId: string): Editor | null {
 	if (!editor || editor.isDestroyed) return null;
 	return editor;
 }
+
+/** Every block editor open now and alive. */
+export function openTreeEditors(): Editor[] {
+	return [...editors.values()].filter((editor) => !editor.isDestroyed);
+}

@@ -5,7 +5,10 @@
  *   editor: contract 0, kept on this device under `v2-<id>`.
  * - `createTreeDocument` binds a block page's XML tree for the block editor
  *   (`lib/document`): the contract version `contract.json` says, kept under
- *   `tree-<id>`, so a page converted from markdown never reads its old copy.
+ *   `tree-<id>.<lineage>` (`treeStore`), so a page converted from markdown
+ *   never reads its old copy, and a page whose document was made again (put
+ *   back from a backup and moved to blocks once more) never merges in the
+ *   copy of the earlier one.
  */
 
 import * as Y from 'yjs';
@@ -147,6 +150,16 @@ export interface TreeDocument {
 }
 
 /**
+ * The store this device keeps a block page's copy in: `tree-<id>.<lineage>`,
+ * or `tree-<id>` for a block page from before lineages (its `lineage` null).
+ * Two documents of one page never share a store, so a copy of one is never
+ * merged into the other as a second copy of its text.
+ */
+export function treeStore(pageId: string, lineage: string | null): string {
+	return lineage ? `tree-${pageId}.${lineage}` : `tree-${pageId}`;
+}
+
+/**
  * Bind a block page.
  *
  * @param pageContract - `contract` from `GET /api/pages/:id`: the contract the
@@ -154,6 +167,8 @@ export interface TreeDocument {
  *   document. Null binds nothing: there is no document to edit.
  * @param boxContract - `box_contract` from the same response: the newest
  *   contract the server reads, or null when the server does not say.
+ * @param lineage - `lineage` from the same response: which document of the
+ *   page the server holds, which keys this device's copy (`treeStore`).
  *
  * The editor must be created only once `isSynced` is true. It is never true
  * for an empty tree: Tiptap bound to an empty fragment writes its empty
@@ -164,6 +179,7 @@ export function createTreeDocument(
 	pageId: string,
 	pageContract: number | null,
 	boxContract: number | null,
+	lineage: string | null = null,
 ): TreeDocument {
 	const ydoc = new Y.Doc();
 	const fragment = ydoc.getXmlFragment(TREE_FRAGMENT);
@@ -177,7 +193,7 @@ export function createTreeDocument(
 
 	const socket = connectPage(pageId, ydoc, {
 		contract: TREE_CONTRACT,
-		store: `tree-${pageId}`,
+		store: treeStore(pageId, lineage),
 		pageContract,
 		readable: localCopyReadable,
 		hasContent: () => fragment.length > 0,

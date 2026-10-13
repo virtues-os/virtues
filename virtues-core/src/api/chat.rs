@@ -1185,7 +1185,8 @@ pub async fn next_turn_preview(
     };
     let history = load_saved_history(pool, chat_id).await?;
     let active_page = match request.active_page.as_ref() {
-        Some(ctx) => resolve_active_page(pool, yjs, ctx).await,
+        // A preview is not a turn: its read of the page serves no edit.
+        Some(ctx) => resolve_active_page(pool, yjs, ctx, None).await,
         None => None,
     };
     let TurnRequest { system, messages } = assemble_turn_request(
@@ -1459,15 +1460,16 @@ async fn build_system_prompt_blocks(
 /// The open page, as the prompt shows it. A markdown page keeps the text
 /// the client sent: an older box reads only that, so the app still sends it.
 /// A block page is read here, from the live tree, whatever the client sent,
-/// and the blocks it lists, and only those, are kept as a read base, so the
-/// model can edit them from the prompt with no read of its own, and a block
-/// past what the prompt holds is read before it is replaced. A block listed
-/// by id alone, too long to show, is in the base as it stands. An unchanged
-/// page keeps the same base each turn.
+/// and what it shows, and only that, is kept as a read base, so the model
+/// can edit those blocks from the prompt with no read of its own, and a
+/// block past what the prompt holds is read before it is replaced. A block
+/// listed by id alone as too long for any read is taken whole only by an op
+/// naming it. An unchanged page keeps the same base each turn.
 async fn resolve_active_page(
     pool: &PgPool,
     yjs: &YjsState,
     ctx: &ActivePageContext,
+    turn: Option<&str>,
 ) -> Option<ActivePage> {
     let id = ctx.page_id.clone()?;
     let title = ctx.page_title.clone().unwrap_or_else(|| "Untitled".to_string());
@@ -1491,8 +1493,8 @@ async fn resolve_active_page(
         }
     };
     let html = virtues_document::to_html(&tree, true);
-    let (seen, long) = if html.chars().count() <= MAX_PAGE_CONTENT_CHARS {
-        (crate::api::page_reads::ReadBase::of(tree), None)
+    let (seen, shown, long) = if html.chars().count() <= MAX_PAGE_CONTENT_CHARS {
+        (virtues_document::Seen::of_page(&tree), tree.clone(), None)
     } else {
         let window = crate::api::page_reads::markdown_window(
             &tree,
@@ -1501,17 +1503,27 @@ async fn resolve_active_page(
             |s| s.chars().count(),
             crate::tools::fits_one_read,
         );
-        (window.read_base(), Some((window.markdown, window.next)))
+        let mut seen = virtues_document::Seen::default();
+        seen.learn(&window.shown, &tree, &Default::default());
+        let shown = window
+            .shown
+            .parts
+            .iter()
+            .filter_map(|p| match p {
+                virtues_document::Part::Whole(n) => Some(n.clone()),
+                _ => None,
+            })
+            .collect();
+        (seen, shown, Some((window.shown.text(), window.next)))
     };
-    let shown = &seen.tree;
-    let base = match crate::api::page_reads::keep_read_base(pool, &id, &seen).await {
+    let base = match crate::api::page_reads::keep_read_base(pool, &id, &seen, &tree, turn).await {
         Ok(base) => base,
         Err(e) => {
             tracing::warn!(page = %id, error = %e, "open block page's base not kept; the model reads it instead");
             return Some(ActivePage::Unreadable { id, title });
         }
     };
-    let suggestions = crate::tools::holds_proposal(shown);
+    let suggestions = crate::tools::holds_proposal(&shown);
     let view = match long {
         None => TreeView::Html { html, base },
         Some((markdown, next)) => TreeView::Long { markdown, base, next },
@@ -1537,7 +1549,7 @@ pub(crate) async fn open_page_section(
     yjs: &YjsState,
     ctx: &ActivePageContext,
 ) -> Option<String> {
-    let page = resolve_active_page(pool, yjs, ctx).await?;
+    let page = resolve_active_page(pool, yjs, ctx, None).await?;
     build_active_page_block(Some(&page))
 }
 
@@ -1828,8 +1840,11 @@ async fn chat_handler_inner(
     // replays. The Context panel's preview builds the same thing.
     let t_history = ms(started);
     let prompt_started = std::time::Instant::now();
+    // This turn, for what it reads of a page: a read base made in it serves
+    // only it (`page_reads::serves_turn`), the open page's included.
+    let turn_key = format!("turn_{}", generate_id());
     let active_page = match request.active_page.as_ref() {
-        Some(ctx) => resolve_active_page(&pool, &yjs_state, ctx).await,
+        Some(ctx) => resolve_active_page(&pool, &yjs_state, ctx, Some(&turn_key)).await,
         None => None,
     };
     let TurnRequest { system, messages: api_messages } = assemble_turn_request(
@@ -1886,6 +1901,7 @@ async fn chat_handler_inner(
         turn_token.clone(),
         ghost_permissions,
         turn_started_at,
+        turn_key,
     );
     spawn_turn_driver(agent_stream, turn.clone(), turn_token, live_turns, cancel_state, chat_id_str);
 
@@ -2333,6 +2349,8 @@ fn create_agent_stream(
     ghost_permissions: crate::api::chat_permissions::GhostPermissions,
     // When the box received the request, before history and compaction.
     started_at: crate::types::Timestamp,
+    // This turn, as the handler named it for the open page's base.
+    turn_key: String,
 ) -> Pin<Box<dyn Stream<Item = String> + Send>> {
     let chat_id = request.chat_id.clone();
     // Copied out for the stream block below, which reads `request` for a
@@ -2388,6 +2406,7 @@ fn create_agent_stream(
             ghost_permissions: Some(ghost_permissions.clone()),
             sudo: mode.is_sudo(),
             timezone: request.timezone.clone(),
+            turn: Some(turn_key),
             console: false,
         };
 
@@ -3594,11 +3613,11 @@ mod active_page_tests {
         let id = page(&pool, "## Plan\n\nLunch with [@Nick](/person/person_1).\n", PageFormat::Tree).await;
         let yjs = YjsState::new(pool.clone());
         let ctx = open(&id, Some("The client's own copy."));
-        let resolved = resolve_active_page(&pool, &yjs, &ctx).await.unwrap();
+        let resolved = resolve_active_page(&pool, &yjs, &ctx, None).await.unwrap();
         let block = build_active_page_block(Some(&resolved)).unwrap();
 
         let tree = yjs.read_tree(&id).await.unwrap();
-        let base = page_reads::tree_hash(&tree);
+        let base = virtues_document::tree_hash(&tree);
         assert_eq!(
             block,
             format!(
@@ -3615,9 +3634,9 @@ mod active_page_tests {
         assert!(block.contains("<aside data-tone"), "{block}");
         assert!(block.contains("<virtues-mention to=\"/person/person_1\" label=\"Nick\"></virtues-mention>"));
         assert!(!block.contains("client's own copy"));
-        assert_eq!(page_reads::read_base(&pool, &id, &base).await.unwrap(), Some(page_reads::ReadBase::of(tree)));
+        assert_eq!(page_reads::read_base(&pool, &id, &base).await.unwrap(), Some(virtues_document::Seen::of_page(&tree)));
 
-        resolve_active_page(&pool, &yjs, &ctx).await.unwrap();
+        resolve_active_page(&pool, &yjs, &ctx, None).await.unwrap();
         let kept: i64 =
             sqlx::query_scalar("SELECT count(*) FROM app_page_read_bases WHERE page_id = $1")
                 .bind(&id)
@@ -3636,7 +3655,7 @@ mod active_page_tests {
             .collect();
         let id = page(&pool, &markdown, PageFormat::Tree).await;
         let yjs = YjsState::new(pool.clone());
-        let resolved = resolve_active_page(&pool, &yjs, &open(&id, None)).await.unwrap();
+        let resolved = resolve_active_page(&pool, &yjs, &open(&id, None), None).await.unwrap();
         let block = build_active_page_block(Some(&resolved)).unwrap();
 
         let tree = yjs.read_tree(&id).await.unwrap();
@@ -3650,13 +3669,13 @@ mod active_page_tests {
         };
         let base = base.clone();
         let kept = page_reads::read_base(&pool, &id, &base).await.unwrap().unwrap();
-        assert_eq!(kept.tree, tree[..k].to_vec(), "the base is what was shown");
-        // Shown as markdown only: a replace of any of them waits for a read
-        // of its HTML.
-        assert_eq!(
-            kept.markdown_only,
-            tree[..k].iter().map(|n| n.id().unwrap().to_string()).collect(),
-        );
+        // The base is what was shown, as markdown only: a write that changes
+        // any of them waits for a read of its HTML.
+        for (i, n) in tree.iter().enumerate() {
+            let known = kept.known(n.id().unwrap());
+            assert_eq!(known.is_some(), i < k, "block {i}");
+            assert!(known.is_none_or(|k| k.form == virtues_document::Form::Markdown), "block {i}");
+        }
         let (first, last) = (tree[0].id().unwrap(), tree[k - 1].id().unwrap());
         assert!(block.contains(&format!(
             "<current_content base=\"{base}\" view=\"markdown\">\n<!-- {first} -->\nParagraph 0 of"
@@ -3695,7 +3714,7 @@ mod active_page_tests {
         let tree = yjs.read_tree(&id).await.unwrap();
         let code = tree[1].id().unwrap().to_string();
         assert!(crate::tools::fits_one_read(&tree[1]), "a read shows the block whole");
-        let resolved = resolve_active_page(&pool, &yjs, &open(&id, None)).await.unwrap();
+        let resolved = resolve_active_page(&pool, &yjs, &open(&id, None), None).await.unwrap();
         let ActivePage::Tree { view: TreeView::Long { base, markdown: shown, .. }, .. } = &resolved else {
             panic!("a long view: {resolved:?}");
         };
@@ -3741,7 +3760,7 @@ mod active_page_tests {
         let id = page(&pool, &markdown, PageFormat::Tree).await;
         let yjs = YjsState::new(pool.clone());
         let tree = yjs.read_tree(&id).await.unwrap();
-        let resolved = resolve_active_page(&pool, &yjs, &open(&id, None)).await.unwrap();
+        let resolved = resolve_active_page(&pool, &yjs, &open(&id, None), None).await.unwrap();
         let ActivePage::Tree { view: TreeView::Long { base, markdown: shown, next }, .. } = &resolved else {
             panic!("a long view: {resolved:?}");
         };
@@ -3811,7 +3830,7 @@ mod active_page_tests {
     async fn a_markdown_page_keeps_its_block_word_for_word(pool: PgPool) {
         let id = page(&pool, "Coffee.\n", PageFormat::Markdown).await;
         let yjs = YjsState::new(pool.clone());
-        let resolved = resolve_active_page(&pool, &yjs, &open(&id, Some("Coffee and tea.\n"))).await.unwrap();
+        let resolved = resolve_active_page(&pool, &yjs, &open(&id, Some("Coffee and tea.\n")), None).await.unwrap();
         assert_eq!(
             build_active_page_block(Some(&resolved)).unwrap(),
             format!(
@@ -3823,7 +3842,7 @@ mod active_page_tests {
             )
         );
 
-        let unsent = resolve_active_page(&pool, &yjs, &open(&id, None)).await.unwrap();
+        let unsent = resolve_active_page(&pool, &yjs, &open(&id, None), None).await.unwrap();
         assert_eq!(
             build_active_page_block(Some(&unsent)).unwrap(),
             format!(

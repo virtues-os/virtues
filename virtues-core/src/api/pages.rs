@@ -86,6 +86,59 @@ pub fn default_page_format() -> PageFormat {
     }
 }
 
+/// A new value for `app_pages.tree_lineage`: which copy of a block page's
+/// document this is, 16 hex digits. Written wherever a tree is made for a
+/// page (`create_page_as`, `yjs::move_row`), so a device's copy of an
+/// earlier document of the page is never merged into this one.
+pub(crate) fn new_lineage() -> String {
+    format!("{:016x}", rand::random::<u64>())
+}
+
+/// Whether the page is an article: `kind = 'article'`, or a `wiki_articles`
+/// row owns it, whatever its kind. `NotFound` for a missing page.
+pub async fn is_article(pool: &PgPool, page_id: &str) -> Result<bool> {
+    let article: Option<bool> = sqlx::query_scalar(
+        "SELECT kind = 'article' OR EXISTS (SELECT 1 FROM wiki_articles a WHERE a.page_id = p.id) \
+         FROM app_pages p WHERE p.id = $1",
+    )
+    .bind(page_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to read what the page is: {e}")))?;
+    article.ok_or_else(|| Error::NotFound(format!("Page not found: {page_id}")))
+}
+
+/// How markdown from before a page held blocks reads into its blocks: an
+/// article's as an article (its footnotes, figures and veils the contract's
+/// nodes), a user page's as its markdown editor showed it.
+pub fn markdown_dialect_for(is_article: bool) -> virtues_document::migrate::Dialect {
+    if is_article {
+        virtues_document::migrate::Dialect::Article
+    } else {
+        virtues_document::migrate::Dialect::Page
+    }
+}
+
+/// What the page is and which document it holds: its `kind` (`page` or
+/// `article`, an article as [`is_article`] reads one, so the editor reads
+/// its markdown as the move did) and, for a block page, its lineage
+/// (`tree_lineage`; `None` for markdown, and for a block page from before
+/// lineages). `NotFound` for a missing or trashed page.
+pub async fn kind_and_lineage(pool: &PgPool, page_id: &str) -> Result<(String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT CASE WHEN p.kind = 'article' \
+                       OR EXISTS (SELECT 1 FROM wiki_articles a WHERE a.page_id = p.id) \
+                     THEN 'article' ELSE p.kind END, \
+                p.tree_lineage \
+         FROM app_pages p WHERE p.id = $1 AND p.deleted_at IS NULL",
+    )
+        .bind(page_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to read the page: {e}")))?
+        .ok_or_else(|| Error::NotFound(format!("Page not found: {page_id}")))
+}
+
 /// The page's format. `NotFound` for a missing or trashed page.
 pub async fn page_format(pool: &PgPool, page_id: &str) -> Result<PageFormat> {
     let format: Option<String> = sqlx::query_scalar(
@@ -330,21 +383,13 @@ pub struct Restored {
     pub changed: bool,
     /// What converting a version from before the page held blocks changed.
     pub notes: Vec<virtues_document::Problem>,
+    /// What changed, counted (`wiki_editor::change_line`) between the export
+    /// just before the restore and just after, both read under its lock.
+    pub change: String,
+    /// False when the restore is on the page but its save failed and waits
+    /// in the save loop for a retry.
+    pub saved: bool,
 }
-
-/// Markdown as the blocks it makes (`convert_markdown`).
-#[derive(Debug, Clone, Serialize)]
-pub struct Converted {
-    /// Canonical HTML of the blocks, without block ids: the editor gives
-    /// each block its own when it inserts them.
-    pub html: String,
-    /// What the conversion changed on the way in.
-    pub notes: Vec<virtues_document::Problem>,
-}
-
-/// Why a paste is too large to convert: one conversion reads at most
-/// `virtues_document::MAX_INPUT_BYTES`.
-pub const PASTE_TOO_LARGE: &str = "That's more markdown than one paste converts. Paste it in parts.";
 
 /// How many markdown conversions run at once. One holds up to about half a
 /// gigabyte (`virtues_document::migrate::MAX_EVENTS`) on a box whose memory
@@ -622,9 +667,10 @@ pub async fn create_page_as(
     let timestamp = chrono::Utc::now().to_rfc3339();
     let id = generate_id(PAGE_PREFIX, &[title, &timestamp]);
 
+    let lineage = yjs_state.is_some().then(new_lineage);
     let page = sqlx::query_as::<_, Page>(&format!(
-        "INSERT INTO app_pages (id, title, content, icon, icon_color, cover_url, tags, format, yjs_state) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+        "INSERT INTO app_pages (id, title, content, icon, icon_color, cover_url, tags, format, yjs_state, tree_lineage) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
          RETURNING {PAGE_COLUMNS}"
     ))
     .bind(&id)
@@ -636,6 +682,7 @@ pub async fn create_page_as(
     .bind(req.tags.clone().unwrap_or_else(|| serde_json::json!([])))
     .bind(format.as_str())
     .bind(&yjs_state)
+    .bind(&lineage)
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to create page: {}", e)))?;
@@ -664,7 +711,6 @@ pub async fn create_page_as(
 /// (`parse_written_markdown`). A conversion: run it through
 /// [`convert_off_workers`].
 fn tree_document(markdown: &str) -> Result<(String, Vec<u8>, Vec<virtues_document::Problem>)> {
-    use yrs::Transact;
     let converted = virtues_document::parse_written_markdown(markdown);
     if !converted.errors.is_empty() {
         return Err(Error::InvalidInput(format!(
@@ -672,18 +718,30 @@ fn tree_document(markdown: &str) -> Result<(String, Vec<u8>, Vec<virtues_documen
             crate::server::yjs::problems_summary(&converted.errors)
         )));
     }
-    let doc = virtues_document::doc_from_nodes(at_least_one_block(converted.nodes));
+    let new = new_tree_document(converted.nodes);
+    Ok((new.text, new.state, converted.notes))
+}
+
+/// A new tree document holding `nodes`, block ids filled and the contract
+/// stamped, with one empty paragraph when there are none: what a page
+/// created as blocks holds, and what a markdown page moved to blocks
+/// becomes (`api::page_convert`). `text` is its export.
+pub(crate) fn new_tree_document(nodes: Vec<virtues_document::Node>) -> crate::server::yjs::Written {
+    use yrs::Transact;
+    let doc = virtues_document::doc_from_nodes(at_least_one_block(nodes));
     let txn = doc.transact();
     let tree = virtues_document::read_doc(&txn);
-    let content = virtues_document::to_markdown(&tree);
-    let state = virtues_document::encode_state(&txn, &yrs::StateVector::default());
-    Ok((content, state, converted.notes))
+    crate::server::yjs::Written {
+        text: virtues_document::to_markdown(&tree),
+        state: virtues_document::encode_state(&txn, &yrs::StateVector::default()),
+        tree: Some(tree),
+    }
 }
 
 /// A page's blocks, with one empty paragraph when there are none: a page
 /// holds at least one block (`doc: block+`), and an editor bound to an empty
 /// document writes its own paragraph into it.
-fn at_least_one_block(mut nodes: Vec<virtues_document::Node>) -> Vec<virtues_document::Node> {
+pub(crate) fn at_least_one_block(mut nodes: Vec<virtues_document::Node>) -> Vec<virtues_document::Node> {
     if nodes.is_empty() {
         nodes.push(virtues_document::Node::element(
             "paragraph",
@@ -1021,7 +1079,18 @@ pub async fn cut_restore_point(
         .text_and_state(page_id)
         .await
         .map_err(|e| Error::Other(format!("could not read the page: {e}")))?;
+    keep_as_restore_point(pool, page_id, now).await
+}
 
+/// [`cut_restore_point`] of the page as `now` says it, read by the caller
+/// with the database rather than the live doc: a markdown page about to be
+/// moved to blocks (`api::page_convert`), read from the row the move is
+/// checked against.
+pub(crate) async fn keep_as_restore_point(
+    pool: &PgPool,
+    page_id: &str,
+    now: crate::server::yjs::Written,
+) -> Result<RestorePoint> {
     let latest: Option<(i64, Option<Vec<u8>>)> = sqlx::query_as(
         "SELECT version_number, yjs_snapshot FROM app_page_versions \
          WHERE page_id = $1 ORDER BY version_number DESC LIMIT 1",
@@ -1060,17 +1129,273 @@ pub async fn cut_restore_point(
     })
 }
 
+/// What the version that holds a markdown page as it was before it moved
+/// to blocks says (`api::page_convert`). It is the one copy of what the
+/// move left out of the blocks (a code block's info past its language,
+/// and whatever else its notes name), and putting it back undoes the move,
+/// so it is never pruned and History always lists it ([`create_version`],
+/// [`list_versions`]).
+pub const BEFORE_BLOCKS: &str = "Before blocks";
+
+/// Whether a version row is one of a move to blocks: the page as it was
+/// ([`BEFORE_BLOCKS`]) or as the blocks it became
+/// (`page_convert::MOVED_TO_BLOCKS`). Neither is an edit: History diffs
+/// across them and shows no entry for either, as for a restore point.
+pub fn is_move_version(created_by: &str, description: Option<&str>) -> bool {
+    created_by == "auto"
+        && matches!(description, Some(d) if d == BEFORE_BLOCKS || d == crate::api::page_convert::MOVED_TO_BLOCKS)
+}
+
+/// A markdown page kept as it was before it moves to blocks
+/// ([`keep_before_blocks`]).
+pub(crate) struct KeptBefore {
+    pub point: RestorePoint,
+    /// Whether this keeping cut the version, rather than finding the latest
+    /// one already holding the page.
+    pub cut: bool,
+}
+
+/// Keep a markdown page as `now` says it, before it moves to blocks: the
+/// latest version when that is already this page's [`BEFORE_BLOCKS`]
+/// version holding exactly `now` (a run stopped after keeping it, read
+/// again), otherwise a new one. Labelled `'auto'`, as a restore point is:
+/// the text was written by whoever wrote it.
+pub(crate) async fn keep_before_blocks(
+    pool: &PgPool,
+    page_id: &str,
+    now: crate::server::yjs::Written,
+) -> Result<KeptBefore> {
+    let latest: Option<(i64, String, Option<String>, Option<Vec<u8>>)> = sqlx::query_as(
+        "SELECT version_number, created_by, description, yjs_snapshot FROM app_page_versions \
+         WHERE page_id = $1 ORDER BY version_number DESC LIMIT 1",
+    )
+    .bind(page_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to read the latest version: {e}")))?;
+    if let Some((number, by, Some(description), Some(snapshot))) = latest {
+        if by == "auto" && description == BEFORE_BLOCKS {
+            if let Ok(then) = crate::server::yjs::page_text_of_state(&snapshot) {
+                let latest = RestorePoint {
+                    version_number: number,
+                    text: then.markdown,
+                    tree: then.tree,
+                };
+                if latest.holds(&now) {
+                    return Ok(KeptBefore { point: latest, cut: false });
+                }
+            }
+        }
+    }
+    let kept = create_version_from_snapshot(pool, page_id, &now.state, &now.text, "auto", Some(BEFORE_BLOCKS)).await?;
+    Ok(KeptBefore {
+        point: RestorePoint {
+            version_number: kept.version_number,
+            text: now.text,
+            tree: now.tree,
+        },
+        cut: true,
+    })
+}
+
+/// Drop the [`BEFORE_BLOCKS`] version `version_number` that
+/// [`keep_before_blocks`] cut for a move that did not happen: the page
+/// changed before it moved, and stays the markdown it now is. Never
+/// pruned and always listed, a copy of each attempt would otherwise stay
+/// in History for a move that never happened.
+pub(crate) async fn drop_before_blocks(pool: &PgPool, page_id: &str, version_number: i64) -> Result<()> {
+    sqlx::query(
+        "DELETE FROM app_page_versions \
+         WHERE page_id = $1 AND version_number = $2 AND created_by = 'auto' AND description = $3",
+    )
+    .bind(page_id)
+    .bind(version_number)
+    .bind(BEFORE_BLOCKS)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to drop the page as it was before blocks: {e}")))?;
+    Ok(())
+}
+
+/// What a version says that holds typing a device made on a markdown page
+/// which never reached the server before the page moved to blocks
+/// ([`keep_device_copy`]).
+pub const TYPED_ON_A_DEVICE: &str = "Typed on a device before the move to blocks";
+
+/// What a version says that holds a device's copy of an earlier document of
+/// a block page, holding typing the page never had ([`keep_device_copy`]).
+pub const TYPED_IN_AN_EARLIER_COPY: &str = "Typed on a device in an earlier copy of this page";
+
+/// Keep what a device's copy of a page holds that the page never had:
+/// typing made while the server was out of reach, on a device closed before
+/// it reconnected. [`keep_device_copy_of`] with no lineage named.
+pub async fn keep_device_copy(pool: &PgPool, page_id: &str, copy: &[u8]) -> Result<Option<PageVersionSummary>> {
+    keep_device_copy_of(pool, page_id, copy, None).await
+}
+
+/// Keep what a device's copy of a block page holds that the page never had.
+/// A block page never binds a copy it is not: a device keeps a markdown
+/// page's under `v2-<id>`, and a block page's under its lineage
+/// (`tree-<id>.<lineage>`, `app_pages.tree_lineage`), so neither a copy from
+/// before the page moved to blocks nor one of an earlier document of it (a
+/// page put back from a backup and moved again) is merged into the page as
+/// a second copy. The device sends each such copy here once, the first time
+/// it opens the page, and deletes it after. What the copy is, the server
+/// reads from its bytes; `lineage` names the copy's, when the device knows
+/// it, and a copy of this document's own lineage holds nothing to keep.
+///
+/// - A markdown copy is merged over the markdown the page held when it
+///   moved ([`BEFORE_BLOCKS`]), as the page's socket would have merged it
+///   (`yjs::merge_device_copy`). When that adds nothing (the device's typing
+///   all arrived, or it was only behind), nothing is kept. Otherwise the
+///   merged markdown is kept as the owner's version
+///   ([`TYPED_ON_A_DEVICE`]), which History shows and puts back by
+///   conversion.
+/// - A copy of an earlier document is kept as it is, as the owner's version
+///   ([`TYPED_IN_AN_EARLIER_COPY`]), when its export is neither the page's
+///   nor any version's: typing that never reached this document. A copy
+///   the contract refuses is refused.
+///
+/// Either is never pruned, and the same copy sent again gets the version
+/// already kept. `None` when nothing is kept.
+pub async fn keep_device_copy_of(
+    pool: &PgPool,
+    page_id: &str,
+    copy: &[u8],
+    lineage: Option<&str>,
+) -> Result<Option<PageVersionSummary>> {
+    get_page(pool, page_id).await?;
+    if page_format(pool, page_id).await? != PageFormat::Tree {
+        return Err(Error::InvalidInput(
+            "This page holds markdown still, so its own editor syncs this device's copy.".into(),
+        ));
+    }
+    let read = crate::server::yjs::page_text_of_state(copy)
+        .map_err(|e| Error::InvalidInput(format!("This device's copy of the page doesn't read: {e}")))?;
+    match read.tree {
+        Some(tree) => keep_earlier_tree_copy(pool, page_id, copy, &read.markdown, &tree, lineage).await,
+        None => keep_markdown_copy(pool, page_id, copy).await,
+    }
+}
+
+/// [`keep_device_copy_of`] of a markdown copy.
+async fn keep_markdown_copy(pool: &PgPool, page_id: &str, copy: &[u8]) -> Result<Option<PageVersionSummary>> {
+    let base: Option<Vec<u8>> = sqlx::query_scalar(
+        "SELECT yjs_snapshot FROM app_page_versions \
+         WHERE page_id = $1 AND created_by = 'auto' AND description = $2 \
+         ORDER BY version_number DESC LIMIT 1",
+    )
+    .bind(page_id)
+    .bind(BEFORE_BLOCKS)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to read the page before blocks: {e}")))?
+    .flatten();
+    let merged = crate::server::yjs::merge_device_copy(base.as_deref(), copy)
+        .map_err(|e| Error::InvalidInput(format!("This device's copy of the page doesn't read: {e}")))?;
+    if merged.copy == merged.base || merged.merged == merged.base {
+        return Ok(None);
+    }
+    if let Some(kept) = kept_as(pool, page_id, TYPED_ON_A_DEVICE, &merged.merged).await? {
+        return Ok(Some(kept));
+    }
+    create_version_from_snapshot(pool, page_id, &merged.state, &merged.merged, "user", Some(TYPED_ON_A_DEVICE))
+        .await
+        .map(Some)
+}
+
+/// [`keep_device_copy_of`] of a copy of an earlier document of the page,
+/// exporting as `export`.
+async fn keep_earlier_tree_copy(
+    pool: &PgPool,
+    page_id: &str,
+    copy: &[u8],
+    export: &str,
+    tree: &[virtues_document::Node],
+    lineage: Option<&str>,
+) -> Result<Option<PageVersionSummary>> {
+    let (_, current) = kind_and_lineage(pool, page_id).await?;
+    if lineage.is_some() && lineage == current.as_deref() {
+        return Ok(None);
+    }
+    let refused = virtues_document::validate(tree);
+    if !refused.is_empty() {
+        return Err(Error::InvalidInput(format!(
+            "This device's copy of the page holds what your server's document contract refuses ({}), so your server kept nothing of it.",
+            crate::server::yjs::problems_summary(&refused)
+        )));
+    }
+    if let Some(kept) = kept_as(pool, page_id, TYPED_IN_AN_EARLIER_COPY, export).await? {
+        return Ok(Some(kept));
+    }
+    let content: String = sqlx::query_scalar("SELECT content FROM app_pages WHERE id = $1")
+        .bind(page_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to read the page: {e}")))?;
+    if content == export {
+        return Ok(None);
+    }
+    let snapshots: Vec<Option<Vec<u8>>> =
+        sqlx::query_scalar("SELECT yjs_snapshot FROM app_page_versions WHERE page_id = $1")
+            .bind(page_id)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to read the page's versions: {e}")))?;
+    for snapshot in snapshots.into_iter().flatten() {
+        // absent-ok: a version whose snapshot does not read holds no text this copy could match.
+        let text = crate::server::yjs::text_of_state(&snapshot).ok();
+        if text.as_deref() == Some(export) {
+            return Ok(None);
+        }
+    }
+    create_version_from_snapshot(pool, page_id, copy, export, "user", Some(TYPED_IN_AN_EARLIER_COPY))
+        .await
+        .map(Some)
+}
+
+/// The owner's version described `description` that already holds `text`:
+/// a device's copy sent again.
+async fn kept_as(pool: &PgPool, page_id: &str, description: &str, text: &str) -> Result<Option<PageVersionSummary>> {
+    let kept: Vec<(String, Option<Vec<u8>>)> = sqlx::query_as(
+        "SELECT id, yjs_snapshot FROM app_page_versions \
+         WHERE page_id = $1 AND created_by = 'user' AND description = $2",
+    )
+    .bind(page_id)
+    .bind(description)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to read the page's versions: {e}")))?;
+    for (id, snapshot) in kept {
+        // absent-ok: a kept version whose snapshot does not read holds no text this copy could match.
+        let then = snapshot.and_then(|s| crate::server::yjs::text_of_state(&s).ok());
+        if then.as_deref() == Some(text) {
+            let summary = sqlx::query_as::<_, PageVersionSummary>(
+                "SELECT id, page_id, version_number, content_preview, created_at, created_by, description \
+                 FROM app_page_versions WHERE id = $1",
+            )
+            .bind(&id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to read the version: {e}")))?;
+            return Ok(Some(summary));
+        }
+    }
+    Ok(None)
+}
+
 /// Keep a page's first draft as its first version, when it has no version
 /// yet: a restore point, so History has the text every later edit is diffed
 /// against, and putting it back undoes them.
 ///
 /// For a draft the server has as markdown rather than in a live doc: an
 /// article as it is created, or as the editor last wrote it when nothing
-/// versioned it then. Only articles call it, and the table keeps articles
-/// markdown, so the draft is a Y.Text. The state is built from the text
-/// (`yjs::state_from_text`); a version is put back by its text, so a state
-/// built apart from the page's own doc serves. Takes any executor, so an
-/// article is created with its first version in one transaction.
+/// versioned it then. The state is built from the text
+/// (`yjs::state_from_text`), a Y.Text even for an article that holds blocks
+/// by now: a version is read by its text and put back by conversion
+/// ([`restore_version`]), so a state built apart from the page's own doc
+/// serves. Takes any executor, so an article is created with its first
+/// version in one transaction.
 ///
 /// Returns the version's number, or `None` when the page already has a
 /// version and nothing is cut.
@@ -1209,6 +1534,9 @@ pub async fn create_version(
           -- the cap would drop is the person's own first edit, the one version
           -- on the page nobody can reconstruct.
           AND created_by IS DISTINCT FROM 'user'
+          -- Nor the page as it was before it moved to blocks: the one copy
+          -- of what the move left out of them.
+          AND NOT (created_by = 'auto' AND description IS NOT DISTINCT FROM $2)
           AND id NOT IN (
             SELECT id FROM app_page_versions
             WHERE page_id = $1
@@ -1218,6 +1546,7 @@ pub async fn create_version(
         "#,
     )
     .bind(page_id)
+    .bind(BEFORE_BLOCKS)
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to prune versions: {}", e)))?;
@@ -1225,7 +1554,9 @@ pub async fn create_version(
     Ok(version)
 }
 
-/// List versions for a page (without snapshot data)
+/// List versions for a page (without snapshot data): the newest `limit`,
+/// and the page as it was before it moved to blocks ([`BEFORE_BLOCKS`])
+/// however many came after it, so History can always put it back.
 pub async fn list_versions(
     pool: &PgPool,
     page_id: &str,
@@ -1236,14 +1567,25 @@ pub async fn list_versions(
     let versions = sqlx::query_as::<_, PageVersionSummary>(
         r#"
         SELECT id, page_id, version_number, content_preview, created_at, created_by, description
-        FROM app_page_versions
-        WHERE page_id = $1
+        FROM (
+            (SELECT id, page_id, version_number, content_preview, created_at, created_by, description
+             FROM app_page_versions
+             WHERE page_id = $1
+             ORDER BY version_number DESC
+             LIMIT $2)
+            UNION
+            (SELECT id, page_id, version_number, content_preview, created_at, created_by, description
+             FROM app_page_versions
+             WHERE page_id = $1 AND created_by = 'auto' AND description = $3
+             ORDER BY version_number DESC
+             LIMIT 1)
+        ) listed
         ORDER BY version_number DESC
-        LIMIT $2
         "#,
     )
     .bind(page_id)
     .bind(limit)
+    .bind(BEFORE_BLOCKS)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to list versions: {}", e)))?;
@@ -1329,8 +1671,11 @@ pub(crate) const TYPED_BEFORE_RESTORE: &str = "Auto-saved (before a restore)";
 /// Put a tree page back as one of its versions, on the server.
 ///
 /// The target is the version's tree, or, for a version from before the page
-/// held blocks, its markdown converted through the contract's converter,
-/// whose notes come back. In the page's write turn: the page as it stands
+/// held blocks, its markdown converted through the contract's converter as
+/// the move to blocks read it ([`markdown_dialect_for`]: a user page's as
+/// its markdown editor showed it, an article's as an article, its pending
+/// suggestions staying suggestions, the owner's to decide), whose notes
+/// come back. In the page's write turn: the page as it stands
 /// is kept first (`cut_restore_point`), so the restore can be undone; the
 /// page is then turned into the version block by block
 /// (`YjsState::replace_tree`), so a block the two share keeps its Yjs items
@@ -1338,7 +1683,10 @@ pub(crate) const TYPED_BEFORE_RESTORE: &str = "Auto-saved (before a restore)";
 /// being cut is kept as the owner's own version; and the restore is
 /// versioned as the owner's, "Put back vN", as History labels a markdown
 /// page's restore. A page that already reads as the version is not written
-/// and gains no version.
+/// and gains no version. What changed comes back counted, from the export
+/// just before the restore and just after. An article put back is its
+/// owner's edit (`wiki_articles.last_human_edit_at`), as one they typed
+/// is, so its writers wait before revising it again.
 ///
 /// A version of another page is `NotFound`. A markdown page is refused: its
 /// editor restores it from its own copy of the text. Takes the write turn
@@ -1386,22 +1734,32 @@ pub async fn restore_version(
         Some(tree) => (tree, vec![]),
         None if then.markdown.trim().is_empty() => return Err(empty()),
         None => {
+            // Judged as the move to blocks judges a page (`page_convert`):
+            // what the blocks lose of the version is said beside the rest.
+            let dialect = markdown_dialect_for(is_article(pool, page_id).await?);
             let markdown = then.markdown.clone();
-            let converted =
-                convert_off_workers(move || virtues_document::parse_markdown(&markdown)).await?;
+            let measured = convert_off_workers(move || {
+                virtues_document::migrate::measure_as(virtues_document::contract(), &markdown, dialect)
+            })
+            .await?;
+            let converted = measured.outcome;
             if !converted.errors.is_empty() {
                 return Err(Error::InvalidInput(format!(
                     "Your server couldn't turn version {number} into blocks ({}). Choose another version.",
                     crate::server::yjs::problems_summary(&converted.errors)
                 )));
             }
-            (at_least_one_block(converted.nodes), converted.notes)
+            let mut notes = converted.notes;
+            notes.extend(lost_in_blocks(measured.text_lost.as_ref(), &measured.addresses_lost));
+            (at_least_one_block(converted.nodes), notes)
         }
     };
     let unchanged = Restored {
         version_number: None,
         changed: false,
         notes: notes.clone(),
+        change: crate::api::wiki_editor::change_line("", ""),
+        saved: true,
     };
 
     let _turn = yjs.write_turn(page_id).await;
@@ -1418,12 +1776,12 @@ pub async fn restore_version(
         Ok(None) => return Ok(unchanged),
         Err(e) => return Err(Error::Other(e.to_string())),
     };
-    let after = match edit.after {
-        Ok(written) => written,
+    let (after, saved) = match edit.after {
+        Ok(written) => (written, true),
         // On the page and in every open editor; the save loop retries it.
         Err(TextWriteError::NotSaved { written, error }) => {
             tracing::warn!(page = %page_id, %error, "a restore is on the page but not saved yet");
-            written
+            (written, false)
         }
         Err(e) => return Err(Error::Other(e.to_string())),
     };
@@ -1441,45 +1799,50 @@ pub async fn restore_version(
         Some(&format!("Put back v{number}")),
     )
     .await;
+    // The page is its owner's choice now, as one they typed is: an
+    // article's writers wait before revising it again.
+    if let Err(e) = sqlx::query("UPDATE wiki_articles SET last_human_edit_at = now() WHERE page_id = $1")
+        .bind(page_id)
+        .execute(pool)
+        .await
+    {
+        tracing::error!(page = %page_id, error = %e, "a version is put back, but the owner's stamp was not recorded");
+    }
     Ok(Restored {
         version_number,
         changed: true,
         notes,
+        change: crate::api::wiki_editor::change_line(&edit.before.text, &after.text),
+        saved,
     })
 }
 
-/// Markdown as the blocks it makes, for a paste into a tree page and the
-/// inline writer's output: through the contract's converter, the one the
-/// server's own writers use, so a paste reads markdown exactly as they do.
-/// A suggestion in it comes in accepted: suggestions are made in the page,
-/// never brought into it (`parse_written_markdown`). A person's `paste` is
-/// read as one (`parse_pasted_markdown`): a raw tag that is no HTML and
-/// CriticMarkup stay in its text as written.
-pub async fn convert_markdown(markdown: String, paste: bool) -> Result<Converted> {
-    if markdown.len() > virtues_document::MAX_INPUT_BYTES {
-        return Err(Error::InvalidInput(PASTE_TOO_LARGE.into()));
+/// What a version from before the page held blocks loses as blocks, said as
+/// notes History shows: the text around where its text first departs, and
+/// each address no block holds. The version itself stays in History.
+fn lost_in_blocks(
+    text: Option<&virtues_document::migrate::TextLoss>,
+    addresses: &[String],
+) -> Vec<virtues_document::Problem> {
+    let mut notes = vec![];
+    if let Some(lost) = text {
+        let around = lost.html_around.trim();
+        notes.push(virtues_document::Problem::new(
+            "markdown",
+            if around.is_empty() {
+                "Some of the version's text didn't carry over to blocks. It's still in the version.".to_string()
+            } else {
+                format!("Some of the version's text didn't carry over to blocks, near \"{around}\". It's still in the version.")
+            },
+        ));
     }
-    convert_off_workers(move || {
-        let converted = if paste {
-            virtues_document::parse_pasted_markdown(&markdown)
-        } else {
-            virtues_document::parse_written_markdown(&markdown)
-        };
-        if converted.errors.iter().any(virtues_document::migrate::past_one_conversion) {
-            return Err(Error::InvalidInput(PASTE_TOO_LARGE.into()));
-        }
-        if !converted.errors.is_empty() {
-            return Err(Error::InvalidInput(format!(
-                "Your server couldn't turn this markdown into blocks ({}). Fix those parts and paste it again.",
-                crate::server::yjs::problems_summary(&converted.errors)
-            )));
-        }
-        Ok(Converted {
-            html: virtues_document::to_html(&converted.nodes, false),
-            notes: converted.notes,
-        })
-    })
-    .await?
+    for address in addresses {
+        notes.push(virtues_document::Problem::new(
+            "markdown",
+            format!("The address {address} didn't carry over to blocks. It's still in the version."),
+        ));
+    }
+    notes
 }
 
 /// A version and what it says. Its format is read from its bytes: a tree
@@ -1794,15 +2157,6 @@ mod tests {
                 .await,
             "app_pages_format_check",
         );
-        refused_by(
-            sqlx::query(
-                "INSERT INTO app_pages (id, title, kind, format, yjs_state) \
-                 VALUES ('page_article', 'Nick', 'article', 'tree', '\\x00')",
-            )
-            .execute(&pool)
-            .await,
-            "app_pages_tree_is_a_user_page",
-        );
         let tree = tree_page(&pool, "Lunch.\n").await.page.id;
         refused_by(
             sqlx::query("UPDATE app_pages SET yjs_state = NULL WHERE id = $1")
@@ -1842,7 +2196,7 @@ mod tests {
         let tree = {
             use yrs::Transact;
             let txn = doc.transact();
-            assert_eq!(virtues_document::stamped_version(&txn), Some(1));
+            assert_eq!(virtues_document::stamped_version(&txn), Some(virtues_document::contract().version));
             assert_eq!(virtues_document::validate_doc(&txn), []);
             virtues_document::read_doc(&txn)
         };
@@ -2191,7 +2545,7 @@ mod tests {
                 html: "<p>New line.</p>".into(),
             },
         ];
-        yjs.edit_tree(&page_id, Some(&then), &ops).await.unwrap();
+        yjs.edit_tree(&page_id, Some(&virtues_document::Seen::of_page(&then)), &ops).await.unwrap();
         let edited = yjs.read_tree(&page_id).await.unwrap();
 
         let restored = restore_version(&pool, &yjs, &page_id, &v1.id).await.unwrap();
@@ -2244,6 +2598,30 @@ mod tests {
         assert!(tree.iter().all(|n| n.id().is_some()));
     }
 
+    /// A version whose blocks lose what it says is put back with the loss
+    /// said: here a link written inside an image's description, whose
+    /// address a page's image has nowhere to keep. The move to blocks leaves
+    /// such a page in markdown; putting the version back dropped the
+    /// address with nothing in History to say so.
+    #[sqlx::test]
+    async fn a_markdown_version_put_back_says_what_its_blocks_lose(pool: PgPool) {
+        let page_id = tree_page(&pool, "Now.\n").await.page.id;
+        let yjs = YjsState::new(pool.clone());
+        let before = "Before.\n\n![see [the plan](/page/page_1)](https://example.com/harbour.png)\n\nAfter.\n";
+        let old = crate::server::yjs::state_from_text(before);
+        let v = create_version_from_snapshot(&pool, &page_id, &old, before, "user", None)
+            .await
+            .unwrap();
+
+        let restored = restore_version(&pool, &yjs, &page_id, &v.id).await.unwrap();
+        assert!(restored.changed);
+        assert!(
+            restored.notes.iter().any(|n| n.message.contains("/page/page_1")),
+            "{:?}",
+            restored.notes
+        );
+    }
+
     /// Putting back what the page already says writes nothing and cuts no
     /// version.
     #[sqlx::test]
@@ -2290,7 +2668,7 @@ mod tests {
         let v = cut_version_now(&pool, &yjs, &page_id, "user", None).await.unwrap();
         let ids = block_ids(&typed);
         let changed = [Op::Replace { id: ids[0].clone(), html: "<p>Changed.</p>".into() }];
-        yjs.edit_tree(&page_id, Some(&typed), &changed).await.unwrap();
+        yjs.edit_tree(&page_id, Some(&virtues_document::Seen::of_page(&typed)), &changed).await.unwrap();
 
         let restored = restore_version(&pool, &yjs, &page_id, &v.id).await.unwrap();
         assert!(restored.changed);
@@ -2299,6 +2677,41 @@ mod tests {
         let again = restore_version(&pool, &yjs, &page_id, &v.id).await.unwrap();
         assert!(!again.changed, "the page already says what the version says");
         assert_eq!(versions_of(&pool, &page_id).await.len(), cut, "no version cut");
+    }
+
+    /// A version of an article put back from History is its owner's edit,
+    /// as typing it is: stamped, so the wiki editor waits before revising
+    /// it again. One from before the article held blocks puts its pending
+    /// suggestion back as a suggestion, still the owner's to decide.
+    #[sqlx::test]
+    async fn an_article_put_back_is_its_owners_edit(pool: PgPool) {
+        let article = crate::api::wiki_articles::create_article(&pool, "person", "p_1", "Zoe", "You met Zoe at the shop.\n")
+            .await
+            .unwrap();
+        let yjs = YjsState::with_tree_articles(pool.clone(), true);
+        assert_eq!(yjs.format_of(&article.page_id).await.unwrap(), PageFormat::Tree);
+        let stamp = || async {
+            sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+                "SELECT last_human_edit_at FROM wiki_articles WHERE id = $1",
+            )
+            .bind(&article.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        assert_eq!(stamp().await, None);
+
+        let suggested = "You met Zoe {--at the shop--}{++at the market++}.\n";
+        let old = crate::server::yjs::state_from_text(suggested);
+        let v = create_version_from_snapshot(&pool, &article.page_id, &old, suggested, "user", None)
+            .await
+            .unwrap();
+        let restored = restore_version(&pool, &yjs, &article.page_id, &v.id).await.unwrap();
+        assert!(restored.changed);
+        assert!(stamp().await.is_some(), "the owner's edit is stamped");
+        let html = virtues_document::to_html(&yjs.read_tree(&article.page_id).await.unwrap(), false);
+        assert!(html.contains(">at the shop</virtues-del>") && html.contains(">at the market</virtues-ins>"), "{html}");
+        assert_eq!(yjs.read_text(&article.page_id).await.unwrap(), suggested);
     }
 
     #[sqlx::test]
@@ -2335,46 +2748,11 @@ mod tests {
         let tree = yjs.read_tree(&created.page.id).await.unwrap();
         assert!(!crate::tools::holds_proposal(&tree));
 
-        let converted = convert_markdown(markdown.into(), false).await.unwrap();
+        // The editor's conversion of the same markdown, the inline writer's.
+        let converted = virtues_document::convert_for_editor(markdown, false).unwrap();
         assert!(!converted.html.contains("virtues-ins") && !converted.html.contains("virtues-del"));
         assert!(converted.html.contains("Dinner on Saturday."), "{}", converted.html);
         assert!(converted.notes.iter().any(|n| n.message.contains("as accepted")));
-    }
-
-    #[tokio::test]
-    async fn markdown_converts_to_blocks_without_ids() {
-        let converted = convert_markdown(
-            "---\ntitle: Trip\n---\n\n## Plan\n\n- [ ] Book seats\n\nLunch with [@Nick](/person/person_1).\n"
-                .into(),
-            false,
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            converted.html,
-            "<h2>Plan</h2><ul data-type=\"taskList\"><li data-type=\"taskItem\"><p>Book seats</p></li></ul>\
-             <p>Lunch with <virtues-mention to=\"/person/person_1\" label=\"Nick\"></virtues-mention>.</p>"
-        );
-        assert!(
-            converted.notes.iter().any(|n| n.message.contains("front matter")),
-            "{:?}",
-            converted.notes
-        );
-
-        let deep = format!("{}Deep.\n", "> ".repeat(150));
-        let err = convert_markdown(deep, false).await.unwrap_err();
-        assert!(
-            matches!(&err, Error::InvalidInput(m) if m.contains("couldn't turn this markdown into blocks")),
-            "{err}"
-        );
-
-        let too_large = "a".repeat(virtues_document::MAX_INPUT_BYTES + 1);
-        let err = convert_markdown(too_large, true).await.unwrap_err();
-        assert!(matches!(&err, Error::InvalidInput(m) if m == PASTE_TOO_LARGE), "{err}");
-        // Under the size limit, but more than one conversion holds.
-        let parts = "*a ".repeat(virtues_document::MAX_INPUT_BYTES / 3 - 1);
-        let err = convert_markdown(parts, false).await.unwrap_err();
-        assert!(matches!(&err, Error::InvalidInput(m) if m == PASTE_TOO_LARGE), "{err}");
     }
 
     /// Conversions take turns, and one that runs past the deadline is given
@@ -2402,5 +2780,143 @@ mod tests {
         finished.recv().unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert_eq!(convert_taking_turns(&TURNS, within, || 1).await.unwrap(), 1);
+    }
+
+    /// Articles can hold blocks (migration 0051).
+    #[sqlx::test]
+    async fn an_article_can_be_a_tree(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO app_pages (id, title, kind, format, yjs_state) \
+             VALUES ('page_article', 'Nick', 'article', 'tree', '\\x00')",
+        )
+        .execute(&pool)
+        .await
+        .expect("an article in blocks");
+    }
+
+    /// A change of format keeps `updated_at`; any other write moves it.
+    #[sqlx::test]
+    async fn a_format_change_keeps_updated_at_and_an_edit_moves_it(pool: PgPool) {
+        let id = page(&pool, "Text.\n").await;
+        let at = |pool: PgPool, id: String| async move {
+            sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>("SELECT updated_at FROM app_pages WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        let before = at(pool.clone(), id.clone()).await;
+        let blocks = new_tree_document(virtues_document::parse_markdown("Text.\n").nodes);
+        sqlx::query("UPDATE app_pages SET format = 'tree', yjs_state = $1, content = $2 WHERE id = $3")
+            .bind(&blocks.state)
+            .bind(&blocks.text)
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(at(pool.clone(), id.clone()).await, before, "a move is no edit");
+        sqlx::query("UPDATE app_pages SET content = 'Text, edited.' WHERE id = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(at(pool.clone(), id.clone()).await > before, "an edit moves it");
+    }
+
+    /// A page's move to blocks locks its own row only: another page saves
+    /// while the move's transaction is open.
+    #[sqlx::test]
+    async fn the_move_holds_no_table_lock(pool: PgPool) {
+        let moving = page(&pool, "Moving.\n").await;
+        let other = page(&pool, "Other.\n").await;
+        let blocks = new_tree_document(virtues_document::parse_markdown("Moving.\n").nodes);
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("UPDATE app_pages SET format = 'tree', yjs_state = $1, content = $2, tree_lineage = $3 WHERE id = $4")
+            .bind(&blocks.state)
+            .bind(&blocks.text)
+            .bind(new_lineage())
+            .bind(&moving)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let saved = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            sqlx::query("UPDATE app_pages SET content = 'Other, typed.' WHERE id = $1")
+                .bind(&other)
+                .execute(&pool),
+        )
+        .await
+        .expect("another page saves while a page moves");
+        assert_eq!(saved.unwrap().rows_affected(), 1);
+        tx.rollback().await.unwrap();
+    }
+
+    /// Type `typed` at the start of a tree state's first paragraph, as a
+    /// device's editor does: that device's copy.
+    fn typed_into(state: &[u8], typed: &str) -> Vec<u8> {
+        use yrs::{updates::decoder::Decode, ReadTxn, Text, Transact, WriteTxn, XmlFragment, XmlOut};
+        let doc = virtues_document::new_doc();
+        doc.transact_mut().apply_update(yrs::Update::decode_v1(state).unwrap()).unwrap();
+        {
+            let mut txn = doc.transact_mut();
+            let frag = txn.get_or_insert_xml_fragment("doc");
+            let Some(XmlOut::Element(p)) = frag.get(&txn, 0) else { panic!("a paragraph") };
+            let Some(XmlOut::Text(t)) = p.get(&txn, 0) else { panic!("its text") };
+            t.insert(&mut txn, 0, typed);
+        }
+        let state = doc.transact().encode_state_as_update_v1(&yrs::StateVector::default());
+        state
+    }
+
+    /// A device's copy of an earlier document of a block page (the page put
+    /// back from a backup and moved to blocks again) is never merged in: it
+    /// is kept as the owner's version when it holds typing the page never
+    /// had, once, and otherwise left.
+    #[sqlx::test]
+    async fn a_tree_copy_from_an_earlier_lineage_is_kept_only_when_it_holds_new_typing(pool: PgPool) {
+        let created = tree_page(&pool, "Lunch.\n").await;
+        let id = created.page.id;
+        let (earlier, first): (Vec<u8>, Option<String>) =
+            sqlx::query_as("SELECT yjs_state, tree_lineage FROM app_pages WHERE id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let first = first.expect("a block page has its lineage");
+        let typed = typed_into(&earlier, "Typed offline. ");
+
+        // The page's document made again: the same words, another lineage.
+        let again = new_tree_document(virtues_document::parse_markdown("Lunch.\n").nodes);
+        sqlx::query("UPDATE app_pages SET yjs_state = $1, content = $2, tree_lineage = $3 WHERE id = $4")
+            .bind(&again.state)
+            .bind(&again.text)
+            .bind(new_lineage())
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(keep_device_copy_of(&pool, &id, &earlier, Some(&first)).await.unwrap().is_none(), "nothing new");
+        let kept = keep_device_copy_of(&pool, &id, &typed, Some(&first))
+            .await
+            .unwrap()
+            .expect("the typing is kept");
+        assert_eq!(kept.created_by, "user");
+        assert_eq!(kept.description.as_deref(), Some(TYPED_IN_AN_EARLIER_COPY));
+        let versions = versions_of(&pool, &id).await;
+        let (_, _, _, snapshot) = versions.iter().find(|v| v.0 == kept.version_number).unwrap();
+        assert_eq!(crate::server::yjs::text_of_state(snapshot).unwrap(), "Typed offline. Lunch.\n");
+        let resent = keep_device_copy_of(&pool, &id, &typed, Some(&first)).await.unwrap().unwrap();
+        assert_eq!(resent.id, kept.id, "the same copy sent again gets the version already kept");
+
+        let (current,): (Option<String>,) = sqlx::query_as("SELECT tree_lineage FROM app_pages WHERE id = $1")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            keep_device_copy_of(&pool, &id, &typed, current.as_deref()).await.unwrap().is_none(),
+            "a copy of this document syncs through its socket"
+        );
     }
 }

@@ -278,9 +278,13 @@ dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seed
 # build rather than two serial ones, and the `cargo run` below starts with
 # nothing left to compile. Warm-tree cost: a freshness check, ~1s.
 	SQLX_OFFLINE="$(SQLX_OFFLINE)" cargo build -p virtues -p virtues-applets -p virtues-door
+# The dev server's page dials the box's sockets through its proxy, which
+# passes the page's Origin as sent (apps/web/vite.config.ts). The box lists
+# that origin for the page socket alone; its terminal refuses it.
 	RUST_LOG="$(RUST_LOG),noq_udp=error" \
 	SQLX_OFFLINE="$(SQLX_OFFLINE)" \
 	VIRTUES_DEV_SKIP_SETUP="$(VIRTUES_DEV_SKIP_SETUP)" \
+	VIRTUES_PUBLIC_ORIGINS="http://localhost:$(DEV_WEB_PORT),http://127.0.0.1:$(DEV_WEB_PORT)" \
 	ENVIRONMENT=dev \
 	DATABASE_URL=$(DEV_DB_URL) \
 	VIRTUES_API_URL=$(VIRTUES_API_URL) \

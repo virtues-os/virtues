@@ -33,7 +33,18 @@ function names(fragment: Y.XmlFragment): string[] {
 	return fragment.toArray().map((n) => (n as Y.XmlElement).nodeName);
 }
 
+/** The nodes and marks version 2 added, which a version 1 client would delete. */
+const SINCE_VERSION_ONE = { nodes: ['figure', 'footnote'], marks: ['veil'] };
+
 describe('contract version skew', () => {
+	// Version 1 shipped (staging.97, mac 1.0.30): what an article holds was
+	// added under version 2, so no version 1 client binds a page holding it.
+	it('the contract is version 2, for the article’s nodes and mark', () => {
+		expect(contract.version).toBe(2);
+		for (const name of SINCE_VERSION_ONE.nodes) expect(contract.nodes[name], name).toBeDefined();
+		for (const name of SINCE_VERSION_ONE.marks) expect(contract.marks[name], name).toBeDefined();
+	});
+
 	it('an old client binding the document deletes what it cannot parse', () => {
 		expect(contract.nodes[FUTURE_TYPE], `${FUTURE_TYPE} must stay outside the contract`).toBeUndefined();
 

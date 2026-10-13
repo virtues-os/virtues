@@ -4,6 +4,8 @@
 //!
 //! A case named `REFUSE …` must be refused; every other case must be accepted
 //! and hold the guarantees the model's edits rely on.
+// The tree in a document, which the converter alone (no `yjs`) lacks.
+#![cfg(feature = "yjs")]
 
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -98,6 +100,10 @@ fn every_accepted_tree_validates_and_round_trips_through_yjs() {
 /// export reads back to it.
 const EXPORT_DIFFERS: &[(&str, &str)] = &[
     (
+        "one label, two sources",
+        "markdown defines a label once: a second source under one label takes the next label of its kind",
+    ),
+    (
         "whitespace around marks",
         "a space at a mark's edge moves outside it: CommonMark's delimiters must touch text",
     ),
@@ -116,6 +122,15 @@ const EXPORT_DIFFERS: &[(&str, &str)] = &[
         "ordered list starting past 2^53 / 1000",
         "CommonMark reads a list's start number up to nine digits",
     ),
+    ("item numbered at the largest int", "as `ordered list starting past 2^53 / 1000`"),
+    (
+        "item numbered below zero",
+        "no list marker is below zero: the export counts such an item on from the item before it",
+    ),
+    (
+        "ordered list whose items repeat one number",
+        "`1.` `1.` `1.` is a list numbered lazily, which CommonMark counts on, and a writer's markdown reads so",
+    ),
     (
         "table align on one cell",
         "GFM aligns a column, not a cell: the column takes the cell's alignment",
@@ -130,6 +145,29 @@ const EXPORT_DIFFERS: &[(&str, &str)] = &[
         "an embed with no name exports its file name, which reads back as its name",
     ),
 ];
+
+/// Whether a tree holds the article's syntax: a footnote, a figure, a veil.
+/// Its export is an article's, read as one (`Dialect::Article`); any other
+/// page's export reads as a writer's.
+fn holds_article_syntax(nodes: &[Node]) -> bool {
+    let mut found = false;
+    for n in nodes {
+        n.walk(&mut |n| {
+            found |= matches!(n.kind.as_str(), "footnote" | "figure") || n.marks.iter().any(|m| m.kind == "veil");
+        });
+    }
+    found
+}
+
+/// The export of `tree`, read back as its writer's markdown.
+fn read_back(md: &str, tree: &[Node]) -> ingest::Outcome {
+    let dialect = if holds_article_syntax(tree) {
+        migrate::Dialect::Article
+    } else {
+        migrate::Dialect::Written
+    };
+    migrate::from_markdown_as(contract(), md, dialect)
+}
 
 #[test]
 fn every_markdown_export_reads_back_in() {
@@ -147,7 +185,7 @@ fn every_markdown_export_reads_back_in() {
     {
         let tree = canonical(strict(&html).nodes);
         let md = render::markdown(c, &tree);
-        let back = migrate::from_markdown(c, &md);
+        let back = read_back(&md, &tree);
         assert!(
             back.errors.is_empty(),
             "{name}: export {md:?} refused: {:?}",
@@ -168,7 +206,7 @@ fn every_markdown_export_reads_back_in() {
             "{name} now reads back the same: take it off EXPORT_DIFFERS"
         );
         let again = render::markdown(c, &back);
-        let steady = canonical(migrate::from_markdown(c, &again).nodes);
+        let steady = canonical(read_back(&again, &back).nodes);
         assert_eq!(
             plain(&steady),
             plain(&back),

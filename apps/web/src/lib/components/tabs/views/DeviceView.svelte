@@ -55,6 +55,7 @@
 		type ShellIdentity,
 		type AppUpdateState,
 	} from "$lib/tauri/bridge";
+	import { uploadsHold } from "$lib/reload";
 
 	let { deviceId, tab, active }: { deviceId: string; tab?: Tab; active?: boolean } = $props();
 
@@ -308,7 +309,7 @@
 			>
 				{#snippet action()}
 					{#if local && upd?.stagedVersion}
-						<Button variant="secondary" onclick={() => void applyAppUpdate()}>Relaunch</Button>
+						<Button variant="secondary" onclick={() => void (uploadsHold("relaunch", () => void applyAppUpdate()) || applyAppUpdate())}>Relaunch</Button>
 					{:else if local}
 						<Button variant="ghost" onclick={() => void checkAppUpdate()}>Check</Button>
 					{/if}

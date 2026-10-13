@@ -700,19 +700,50 @@ pub async fn upload_system_file(
     mime_type: Option<String>,
     data: &[u8],
 ) -> Result<DriveFile> {
+    upload_system_file_as(pool, config, path, filename, mime_type, data, None).await
+}
+
+/// [`upload_system_file`], the row given `id` when there is one: a page's
+/// file, whose block named its Drive id before the bytes arrived
+/// (`api::media::store_page_file`). Without one the id is derived from the
+/// path, as every other file's is. Nothing reads a file's id back from its
+/// path (a moved file keeps its id), so a given id is one more id.
+pub async fn upload_system_file_as(
+    pool: &PgPool,
+    config: &DriveConfig,
+    path: &str,
+    filename: &str,
+    mime_type: Option<String>,
+    data: &[u8],
+    id: Option<&str>,
+) -> Result<DriveFile> {
+    store_system_file(pool, config, path, filename, mime_type, data, id).await?.ok_or_else(|| {
+        Error::InvalidInput(
+            "Your server is out of space, so it didn't save this file. Empty the trash in Drive or \
+             delete something large, then upload again."
+                .into(),
+        )
+    })
+}
+
+/// [`upload_system_file_as`], with no room said as `None` rather than as an
+/// error, for a caller that answers it otherwise (a page's file stops short
+/// of a refusal). A file already at the path is that file, room or not: it
+/// takes no more of the disk, and it is what a retry after a lost answer
+/// finds.
+pub async fn store_system_file(
+    pool: &PgPool,
+    config: &DriveConfig,
+    path: &str,
+    filename: &str,
+    mime_type: Option<String>,
+    data: &[u8],
+    id: Option<&str>,
+) -> Result<Option<DriveFile>> {
     // Validate path (allows hidden folders)
     let validated_path = validate_system_path(path)?;
 
     let size_bytes = data.len() as i64;
-
-    // Check quota
-    if !check_quota(config, size_bytes).await? {
-        return Err(Error::InvalidInput(
-            "Your server is out of space, so it didn't save this file. Empty the trash in Drive or \
-             delete something large, then upload again."
-                .into(),
-        ));
-    }
 
     // Build storage key (relative path)
     let file_path = if validated_path.as_os_str().is_empty() {
@@ -738,7 +769,11 @@ pub async fn upload_system_file(
 
     if let Some(existing_file) = existing {
         // File already exists (content-addressed dedup)
-        return Ok(existing_file);
+        return Ok(Some(existing_file));
+    }
+
+    if !check_quota(config, size_bytes).await? {
+        return Ok(None);
     }
 
     // Calculate SHA-256 hash
@@ -768,7 +803,9 @@ pub async fn upload_system_file(
     });
 
     // Insert database record
-    let file_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &[&file_path_str]);
+    let file_id = id
+        .map(str::to_string)
+        .unwrap_or_else(|| ids::generate_id(ids::DRIVE_FILE_PREFIX, &[&file_path_str]));
     sqlx::query(
         r#"
         INSERT INTO app_drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder, sha256_hash)
@@ -790,7 +827,7 @@ pub async fn upload_system_file(
     update_usage_add(pool, size_bytes, false).await?;
 
     // Return the created file
-    get_file_metadata(pool, &file_id).await
+    get_file_metadata(pool, &file_id).await.map(Some)
 }
 
 /// Get or create a system folder record (allows hidden folders like `.media`)

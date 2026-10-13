@@ -1587,6 +1587,120 @@ export async function uploadMedia(
 	});
 }
 
+/**
+ * Why a page file's upload stopped (`sendPageFile`). `status` is the
+ * server's answer, 0 when none came. `refusedAnyway`: refused whatever the
+ * status, as a file stored under another address is.
+ */
+export class UploadError extends Error {
+	constructor(
+		message: string,
+		readonly status: number,
+		private readonly refusedAnyway = false,
+	) {
+		super(message);
+		this.name = 'UploadError';
+	}
+
+	/** The server refused it (a file too large, an address taken): sending it again would be refused again. */
+	get refused(): boolean {
+		return this.refusedAnyway || (this.status >= 400 && this.status < 500 && this.status !== 408 && this.status !== 429);
+	}
+}
+
+/**
+ * Upload a file a block page already shows, to the Drive id its block's
+ * address names (`/drive/<id>`, made in the browser: `mintFileId`). The id
+ * is the form's first field, so the server knows the upload by it before
+ * the bytes arrive (`GET /api/media/uploads`). Sending the same file to the
+ * same id again is answered with the file already stored.
+ *
+ * Stored is only stored at that id: a server from before page files took
+ * their id stores the bytes under one of its own and answers 201 all the
+ * same, which leaves the block's address naming nothing. That is a refusal.
+ */
+export function sendPageFile(
+	id: string,
+	file: File,
+	onProgress?: (sent: number, total: number) => void,
+): Promise<MediaFile> {
+	const form = new FormData();
+	form.append('id', id);
+	form.append('filename', file.name);
+	form.append('size', String(file.size));
+	form.append('file', file);
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		// XHR bypasses the fetch rewrite, so the box's origin is spelled out.
+		xhr.open('POST', backendUrl(`${API_BASE}/media/upload`));
+		xhr.upload.onprogress = (e) => {
+			if (e.lengthComputable) onProgress?.(Math.min(e.loaded, file.size), file.size);
+		};
+		xhr.onload = () => {
+			if (xhr.status >= 200 && xhr.status < 300) {
+				let stored: MediaFile | null = null;
+				try {
+					stored = JSON.parse(xhr.responseText) as MediaFile;
+				} catch {
+					/* no file in the answer: not stored at this address */
+				}
+				if (stored?.id === id) {
+					resolve(stored);
+					return;
+				}
+				reject(
+					new UploadError(
+						`Your server stored ${file.name} somewhere this page can't find it. Update your server, then add the file again.`,
+						xhr.status,
+						true,
+					),
+				);
+				return;
+			}
+			let message = `Your server couldn't store ${file.name} (${xhr.status}).`;
+			try {
+				const body = JSON.parse(xhr.responseText) as { error?: string };
+				if (body.error) message = body.error;
+			} catch {
+				/* the status says it */
+			}
+			reject(new UploadError(message, xhr.status));
+		};
+		xhr.onerror = () => reject(new UploadError(`Couldn't reach your server to upload ${file.name}.`, 0));
+		xhr.send(form);
+	});
+}
+
+/** What the server knows of a page file's upload (`GET /api/media/uploads`). */
+export type PageFileState =
+	| { state: 'done' }
+	| { state: 'uploading'; filename: string; received: number; total: number | null }
+	/**
+	 * `refused`: the server refused the file, so the device holding it does not send it again.
+	 * `stopped_ms_ago`: how long before this answer the upload stopped.
+	 */
+	| { state: 'failed'; filename: string; reason: string; refused: boolean; stopped_ms_ago: number }
+	| { state: 'missing' };
+
+/** What the server knows of each of these files' uploads: up to 100 ids, each answered. */
+export function getMediaUploads(ids: string[]): Promise<Record<string, PageFileState>> {
+	return apiGet<Record<string, PageFileState>>('/media/uploads', { ids: ids.join(',') });
+}
+
+/**
+ * Tell the server these page files are coming, before a request can carry
+ * their bytes: up to 100. Each reads as arriving until its bytes begin
+ * (`POST /api/media/uploads`).
+ */
+export function announcePageFiles(files: { id: string; filename: string; size: number }[]): Promise<void> {
+	return apiSend<void>('POST', '/media/uploads', { files });
+}
+
+/** Whether any page names each of these files, as the server has every page now: up to 100 ids, each answered. */
+export function getNamedUploads(ids: string[]): Promise<Record<string, boolean>> {
+	return apiGet<Record<string, boolean>>('/media/uploads/named', { ids: ids.join(',') });
+}
+
 // =============================================================================
 // Chats - Chat Management
 // =============================================================================
@@ -1870,6 +1984,19 @@ export interface Page {
 	contract?: number | null;
 	/** The newest contract the server reads (`GET /api/pages/:id` only). */
 	box_contract?: number;
+	/**
+	 * `page` or `article` (`GET /api/pages/:id` only): an article's markdown
+	 * reads as an article, its footnotes, figures and veils included. Absent
+	 * from a server older than articles in blocks.
+	 */
+	kind?: 'page' | 'article';
+	/**
+	 * Which copy of a block page's document the server holds
+	 * (`GET /api/pages/:id` only): this device keeps its copy under it. Null
+	 * for a markdown page and a block page from before lineages; absent from
+	 * an older server.
+	 */
+	lineage?: string | null;
 }
 
 export interface PageSummary {
@@ -2296,41 +2423,10 @@ export function getRecommendedModels<T = unknown>(): Promise<T> {
 
 // ── Block pages (the document contract) ─────────────────────────────────────
 
-/** Something the server's converter changed or could not carry over. */
+/** Something the contract's converter changed or could not carry over. */
 export interface DocumentNote {
 	at: string;
 	message: string;
-}
-
-/**
- * Markdown as the canonical HTML of the blocks it makes, without block ids,
- * through the server's converter: the one converter, so a paste and the
- * inline writer read markdown exactly as the server's own writers do.
- */
-export function convertMarkdown(
-	markdown: string,
-	signal?: AbortSignal,
-): Promise<{ html: string; notes: DocumentNote[] }> {
-	return request('/pages/convert', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ markdown }),
-		signal,
-	});
-}
-
-/**
- * Pasted markdown, converted as a paste: HTML tags the page cannot hold and
- * CriticMarkup stay in the text as written, since a person's paste is text
- * they copied, not tags or suggestions. A server that predates this
- * converts it as `convertMarkdown` does.
- */
-export function convertPastedMarkdown(markdown: string): Promise<{ html: string; notes: DocumentNote[] }> {
-	return request('/pages/convert', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ markdown, paste: true }),
-	});
 }
 
 /** A page's text as markdown, live from the server's copy, whatever its format. */
@@ -2397,6 +2493,22 @@ export function restorePageVersionRequest(pageId: string, versionId: string): Pr
 		`/pages/${encodeURIComponent(pageId)}/versions/${encodeURIComponent(versionId)}/restore`,
 		{},
 	);
+}
+
+/**
+ * Send a copy this device kept of a block page that is not the page's
+ * document (its Yjs state, base64): one from before the page moved to
+ * blocks, or one of an earlier document of it, with the `lineage` it was
+ * kept under (null when its store named none). The server keeps it as a
+ * version when it holds typing the page never had, and says which; `kept`
+ * is null when it held none.
+ */
+export function sendDeviceCopy(
+	pageId: string,
+	state: string,
+	lineage: string | null = null,
+): Promise<{ kept: { version_number: number } | null }> {
+	return apiSend('POST', `/pages/${encodeURIComponent(pageId)}/device-copy`, lineage === null ? { state } : { state, lineage });
 }
 
 // ── Setup (extras beyond getSetupState) ──────────────────────────────────────
@@ -2543,7 +2655,7 @@ export interface SharePreview {
 	looks_private: string[];
 	/** People, places and things a page names; only the names leave. */
 	names: string[];
-	/** Images from other sites, left out of the shared copy. */
+	/** Images not stored in Drive (from another site, or a file that never arrived), left out of the shared copy. */
 	images_left_out: number;
 	/**
 	 * A block page's applets, audio, video and files, which stay on the

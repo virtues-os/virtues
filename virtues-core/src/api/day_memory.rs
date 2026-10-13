@@ -21,13 +21,20 @@ pub fn abstract_of(page: &str) -> &str {
 }
 
 /// An Abstract as a prompt reads it: footnote markers, veil marks and link
-/// targets removed, so a name is a name.
+/// targets removed, so a name is a name. A day page that has become a block
+/// page holds its export, which escapes what would read as markup
+/// (`R\&B`, `user\_name`, `&#32;`); those read as their characters, so the
+/// prompt sees the words the page shows.
 pub fn plain(md: &str) -> String {
     let footnotes = regex::Regex::new(r"\[\^[a-z]{2}-\d+\]").expect("static regex");
-    let links = regex::Regex::new(r"\[([^\]]+)\]\(/[a-z]+/[^)]+\)").expect("static regex");
+    let links = regex::Regex::new(r"\[((?:\\.|[^\]\\])+)\]\(/[a-z]+/[^)]+\)").expect("static regex");
     let s = footnotes.replace_all(md, "");
     let s = links.replace_all(&s, "$1");
-    s.replace(['⟦', '⟧'], "").split_whitespace().collect::<Vec<_>>().join(" ")
+    crate::api::wiki_editor::unescape(&s)
+        .replace(['⟦', '⟧'], "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The Abstracts of the `days` days before `before`, newest first.
@@ -214,6 +221,20 @@ mod tests {
         let page = "You drove [⟦Nick⟧](/person/person_a1) to ⟦the clinic⟧.[^ev-1]\n\n## Later\n\nMore.";
         assert_eq!(abstract_of(page), "You drove [⟦Nick⟧](/person/person_a1) to ⟦the clinic⟧.[^ev-1]");
         assert_eq!(plain(abstract_of(page)), "You drove Nick to the clinic.");
+    }
+
+    /// A day page that has become a block page holds its export, which
+    /// escapes what would read as markup: the prompt reads the same words.
+    #[test]
+    fn an_exported_abstract_reads_as_the_written_one() {
+        let written = "A night of R&B at [⟦Ruth's⟧](/place/p_1) with ~20 people and user_name.[^ev-1]";
+        let exported = "A night of R\\&B at [⟦Ruth's⟧](/place/p_1) with \\~20 people and user\\_name.[^ev-1]";
+        assert_eq!(plain(exported), plain(written));
+        assert_eq!(plain(exported), "A night of R&B at Ruth's with ~20 people and user_name.");
+        assert_eq!(plain("&#32;   Four &amp; a \\[bracket\\] &#10214;x&#10215; &bogus;"), "Four & a [bracket] x &bogus;");
+        assert_eq!(plain("[R\\&B \\[live\\]](/place/p_2) played."), "R&B [live] played.");
+        // A hard line break the export writes as a backslash ending a line.
+        assert_eq!(plain("You cooked dinner.[^ev-2]\\\nThen you read."), "You cooked dinner. Then you read.");
     }
 
     #[test]

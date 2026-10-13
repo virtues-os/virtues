@@ -61,6 +61,7 @@
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import { openApp } from "$lib/stores/appOpening";
 	import { getProfile, updateProfile, getSetupState, skipOnboarding } from "$lib/api/client";
+	import { reloadApp } from "$lib/reload";
 
 	let ready = $state(false);
 	/** Welcome's dots wait for the cold open to finish drawing the mark. */
@@ -430,7 +431,7 @@
 	<div class="center">
 		<!-- Over the relay "the same network" is not the fix, and was untrue. -->
 		<p class="err" in:fade>Couldn't reach your server. Check that it's on and connected to the internet, then try again.</p>
-		<button type="button" class="setup-go" in:fade onclick={() => location.reload()}>Try again</button>
+		<button type="button" class="setup-go" in:fade onclick={() => reloadApp()}>Try again</button>
 	</div>
 {:else if !ready}
 	<div class="center" aria-hidden="true"></div>

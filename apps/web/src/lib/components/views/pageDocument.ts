@@ -4,7 +4,13 @@
  *
  * - A block page (`format: 'tree'`) binds its XML tree for `DocumentEditor`
  *   (`createTreeDocument`), read-only when the server is older than this
- *   app's document contract and would drop what it writes.
+ *   app's document contract and would drop what it writes. Its markdown
+ *   converter starts loading beside the socket (`loadConverter`): the
+ *   editor mounts once both are ready, so a paste never waits on it. Its
+ *   copy on this device is kept under its lineage, the document of the page
+ *   the server holds (`treeStore`); the copy this device kept of it as
+ *   markdown, and any of an earlier document of it, go to the server
+ *   (`keepMarkdownCopy`, `keepEarlierTreeCopies`).
  * - Anything else binds its Y.Text for `CodeMirrorEditor` (`createYjsDocument`).
  *   A server from before block pages sends no `format`, and every page on it
  *   is markdown; one from before the contract sends no `contract`, and every
@@ -14,12 +20,18 @@
 import { get } from 'svelte/store';
 import type { PageFormat } from '$lib/api/client';
 import { createTreeDocument, createYjsDocument, type TreeDocument, type YjsDocument } from '$lib/yjs';
+import { loadConverter } from '$lib/document/converter';
+import { keepEarlierTreeCopies, keepMarkdownCopy } from '$lib/yjs/keptCopy';
 
 /** What `GET /api/pages/:id` says about a page's text. */
 export interface PageDescription {
 	format?: PageFormat | string;
 	contract?: number | null;
 	box_contract?: number | null;
+	/** `page` or `article`; absent from a server older than articles in blocks. */
+	kind?: 'page' | 'article' | string;
+	/** Which document of a block page the server holds; null or absent before lineages. */
+	lineage?: string | null;
 }
 
 export type OpenedPage =
@@ -39,7 +51,13 @@ export function formatOf(page: PageDescription): PageFormat {
 /** Bind a page in the editor its format calls for. */
 export function openPageDocument(pageId: string, page: PageDescription): OpenedPage {
 	if (formatOf(page) === 'tree') {
-		const doc = createTreeDocument(pageId, page.contract ?? null, page.box_contract ?? null);
+		void loadConverter();
+		const lineage = page.lineage ?? null;
+		// Typing kept in this device's copies of the page that are not its
+		// document: from before it moved to blocks, or of an earlier document.
+		void keepMarkdownCopy(pageId);
+		void keepEarlierTreeCopies(pageId, lineage);
+		const doc = createTreeDocument(pageId, page.contract ?? null, page.box_contract ?? null, lineage);
 		// Shown read-only only when it is shown at all: a page this editor
 		// cannot read says why instead, and is not shown.
 		const shown = doc.readOnly && doc.contractConfirmed;

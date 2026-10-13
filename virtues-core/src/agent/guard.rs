@@ -36,7 +36,11 @@
 //! A write a tool refused whole counts as a failure for both rules, though
 //! the tool reports it as a success with `status: "refused"` (`edit_page`
 //! does, so the model acts on it in the same turn and the chat draws no
-//! failed card). Sent again unchanged it is refused again.
+//! failed card). Sent again unchanged it is refused again. One refused only
+//! until the model reads blocks no read has shown it (`read_first`) counts
+//! for rule 1 alone: each read and edit after it shows the model more of
+//! the page, and a table row too long for any read holds as many blocks as
+//! its cells do, each needing its read before the row can go.
 
 use std::collections::{HashMap, HashSet};
 
@@ -145,7 +149,9 @@ impl RepeatGuard {
                 ledger.consecutive_failures = 0;
                 continue;
             };
-            ledger.consecutive_failures += 1;
+            if !waits_on_reads(r) {
+                ledger.consecutive_failures += 1;
+            }
             if let Some(call) = calls.iter().find(|c| c.id == r.tool_call_id) {
                 ledger.failed_args.insert(fingerprint(&call.arguments), said);
             }
@@ -169,6 +175,13 @@ fn failure(r: &ToolExecutionResult) -> Option<String> {
         _ if r.is_success() => None,
         _ => Some(first_line(&r.to_llm_content())),
     }
+}
+
+/// Whether a refused write waits only on reads of blocks no read has shown
+/// the model (`read_first`): the batch is right, and the model is reading
+/// on, not repeating itself.
+fn waits_on_reads(r: &ToolExecutionResult) -> bool {
+    matches!(&r.result, Ok(t) if t.success && t.data["status"] == "refused" && t.data["read_first"] == true)
 }
 
 /// Canonical text of the arguments. `serde_json::Value` objects serialize in a
@@ -348,6 +361,37 @@ mod tests {
                 { "op": "insert_after", "id": "a1b2c3d4", "html": "<p>Lunch with Nick.</p>" },
             ] }),
         )
+    }
+
+    /// A write refused only until the model reads blocks no read has shown
+    /// it: the model reads, and writes again with the read's base. A row of
+    /// a table too long for any read took one such round for every block
+    /// in its cells, and the run closed the tool before the row could go.
+    #[test]
+    fn a_write_waiting_on_reads_does_not_close_the_tool_but_sent_again_unchanged_is_refused() {
+        let waiting = |c: &ToolCall| {
+            let mut r = refused_write(c, "Nothing was written. op 1: this op would remove 3 blocks that no read has shown you");
+            if let Ok(t) = &mut r.result {
+                t.data["read_first"] = serde_json::json!(true);
+            }
+            r
+        };
+        let mut g = RepeatGuard::new();
+        for i in 0..MAX_CONSECUTIVE * 3 {
+            let c = edit(&format!("c{i}"), &format!("base{i}"));
+            let (run, refused) = g.admit(std::slice::from_ref(&c));
+            assert_eq!(run.len(), 1, "a changed call {i} runs: {refused:?}");
+            g.record(&run, &[waiting(&c)]);
+        }
+        assert_eq!(g.tools["edit_page"].consecutive_failures, 0);
+
+        // The same call again is answered as it was, and counts.
+        let same = edit("again", "base0");
+        let (run, refused) = g.admit(std::slice::from_ref(&same));
+        assert!(run.is_empty());
+        assert!(refused[0].to_llm_content().contains("already failed this turn"));
+        g.record(&[], &refused);
+        assert_eq!(g.tools["edit_page"].consecutive_failures, 1);
     }
 
     #[test]

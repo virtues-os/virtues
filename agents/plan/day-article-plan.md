@@ -171,7 +171,12 @@ the sentence that was clicked.
 
 ## Markdown
 
-The article stays one ordinary markdown page, editable in the Pages editor.
+The article is one page, written in markdown by its writers. Where block
+articles are on, it is a block page once opened ("Articles" in
+[build/document.md](../build/document.md)): its sources, figures and veils
+are the contract's own nodes, editable in the Pages editor, and its export
+(`app_pages.content`, what every reader below reads) writes them back in
+the shapes below.
 
 - Marginalia are GFM footnotes rendered as sidenotes (the Tufte/Gwern
   convention); inline under the paragraph on a phone. Labels carry the kind:
@@ -251,9 +256,12 @@ is wrong or the writer has improved.
   (`try_lock_day`). It saves money, not pages; the guards above and the
   CRDT's staleness check still do that.
 - **The request answers at once.** `POST /api/wiki/day/:date/rewrite` refuses
-  what needs no model call (`not_over` 422, `no_page` 404, `needs_consent`
-  409, `rewrite_in_progress` 409 while a rewrite of the day runs, `busy` 409
-  while another writer such as narration holds it), takes the lock, and hands
+  what needs no model call (`not_over` 422, `no_page` 404,
+  `pending_suggestion` 409 while a block page holds a suggestion the owner
+  has not accepted or rejected, which a new draft from the record would
+  decide, `needs_consent` 409, `rewrite_in_progress` 409 while a rewrite of
+  the day runs, `busy` 409 while another writer such as narration holds
+  it), takes the lock, and hands
   it to a task; `GET` on the same path reads how it went from an in-memory
   board (`DayRewrites`). A restart forgets the board, and an interrupted
   rewrite is not resumed, because resuming would pay again.
