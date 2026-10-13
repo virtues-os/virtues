@@ -58,7 +58,7 @@ use crate::tools::{ToolContext, ToolExecutor};
 use crate::server::yjs::YjsState;
 
 pub use executor::{ExecutorConfig, ToolExecutionError, ToolExecutionResult};
-pub use protocol::{AgentEvent, ErrorCode, FinishReason, StepReason};
+pub use protocol::{AgentEvent, DelegatedUsage, ErrorCode, FinishReason, StepReason};
 pub use stream::{LlmConfig, LlmStreamResult, StepOptions, StreamError, ToolCall, TokenUsage};
 pub use crate::virtues_api::request::Thinking;
 
@@ -324,6 +324,7 @@ impl AgentLoop {
                     finish = FinishReason::Cancelled;
                     break;
                 };
+                turn.record_tool_spend(&tool_results);
                 let awaiting_user = tool_results.iter().any(turn::needs_user);
                 for tool_result in &tool_results {
                     yield tool_result.to_event();

@@ -79,9 +79,15 @@ pub fn get_tool_definitions_for_llm() -> Vec<serde_json::Value> {
         .into_iter()
         .filter(|tool| !tool.is_system)
         .filter(|tool| !SUDO_ONLY_TOOLS.contains(&tool.id.as_str()))
-        .filter(|tool| !crate::browser::TOOLS.contains(&tool.id.as_str()))
+        .filter(|tool| !is_browser_tool(&tool.id))
         .map(llm_definition)
         .collect()
+}
+
+/// The owner's browser: `browse`, which the chat is offered only while it is
+/// connected (`ChatMode::tools`), and the browsing agent's own tools.
+fn is_browser_tool(id: &str) -> bool {
+    id == crate::browse::TOOL || crate::browser::TOOLS.contains(&id)
 }
 
 /// Get ALL tool definitions including system tools (for action runners).
@@ -91,7 +97,7 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
         .into_iter()
         .filter(|tool| !SUDO_ONLY_TOOLS.contains(&tool.id.as_str()))
         // An applet runs with nobody watching; the browser is the owner's.
-        .filter(|tool| !crate::browser::TOOLS.contains(&tool.id.as_str()))
+        .filter(|tool| !is_browser_tool(&tool.id))
         .map(llm_definition)
         .collect()
 }

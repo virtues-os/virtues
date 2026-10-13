@@ -19,7 +19,7 @@ use sqlx::PgPool;
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::{AgentConfig, AgentEvent, AgentLoop};
+use crate::agent::{AgentConfig, AgentEvent, AgentLoop, DelegatedUsage};
 use crate::api::compaction::build_context_for_llm;
 use crate::tools::{SubagentStatus, SubagentUpdate, ToolContext, ToolError, ToolResult};
 
@@ -176,18 +176,24 @@ pub async fn dispatch(
 
     let mut out_missions = Vec::new();
     let mut ok_count = 0usize;
-    let mut total_input: u32 = 0;
-    let mut total_output: u32 = 0;
-    let mut total_cost_micros: i64 = 0;
+    let mut usage: Vec<DelegatedUsage> = Vec::new();
     for result in joined {
         match result {
             Ok(m) => {
                 if m.ok {
                     ok_count += 1;
                 }
-                total_input = total_input.saturating_add(m.input_tokens);
-                total_output = total_output.saturating_add(m.output_tokens);
-                total_cost_micros = total_cost_micros.saturating_add(m.cost_micros);
+                let spent = DelegatedUsage {
+                    model: m.model.clone(),
+                    input_tokens: u64::from(m.input_tokens),
+                    output_tokens: u64::from(m.output_tokens),
+                    cost_micros: m.cost_micros,
+                    ..Default::default()
+                };
+                match usage.iter_mut().find(|u| u.model == spent.model) {
+                    Some(entry) => entry.add(&spent),
+                    None => usage.push(spent),
+                }
                 out_missions.push(json!({
                     "title": m.title,
                     "model": m.model,
@@ -216,13 +222,10 @@ pub async fn dispatch(
     Ok(ToolResult::success(json!({
         "missions": out_missions,
         "note": note,
-        // Aggregate worker token usage so the chat handler can bill it (the gateway already
-        // charged per call; this keeps the app's own accounting honest).
-        "usage": {
-            "input_tokens": total_input,
-            "output_tokens": total_output,
-            "cost_micros": total_cost_micros,
-        },
+        // What the workers spent, per model, so the turn bills it under the
+        // model that spent it and counts it against its budget (the gateway
+        // already charged per call; this keeps the app's own accounting honest).
+        "usage": usage,
     })))
 }
 

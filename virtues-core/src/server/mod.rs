@@ -735,6 +735,8 @@ fn protected_routes(state: &AppState) -> Router<AppState> {
         // The owner's browser: the Mac app holds this socket open and the
         // assistant's browser_* tools ride it (`browser.rs`).
         .route("/ws/browser", get(crate::browser::ws_handler))
+        // Debug builds only: run a browse task without a chat (`browse.rs`).
+        .merge(crate::browse::debug_routes())
         // Paste/drop a file into the terminal: writes it under the user's home
         // and returns the path, which the frontend types at the cursor.
         .route(
