@@ -1,14 +1,14 @@
 //! Trees compared block by block: the ops that turn one page into another
-//! ([`diff_ops`]), for a restore that keeps every block it does not change,
-//! and what a reader has seen of a page ([`seen_tree`]), the base its next
-//! edit is merged against.
+//! ([`diff_ops`]), for a restore that keeps every block it does not change.
 
 use crate::contract::Contract;
+use crate::migrate::{self, Dialect};
 use crate::model::Node;
-use crate::ops::{find_node, Op};
+use crate::ops::Op;
 use crate::render;
 use crate::ydoc::canonicalize;
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 
 /// The most cells the pairing below fills for the blocks between a common
 /// start and end that cannot be paired by id: a 2,000-block page against
@@ -38,14 +38,35 @@ pub fn diff_ops(c: &Contract, current: &[Node], target: &[Node]) -> Vec<Op> {
     canonicalize(c, &mut current);
     canonicalize(c, &mut target);
     let pairs = pair_blocks(&current, &target);
+    let unchanged = |i: usize, j: usize| {
+        let (cur, tgt) = (&current[i], &target[j]);
+        if tgt.id().is_some() {
+            cur == tgt
+        } else {
+            without_ids(c, cur) == without_ids(c, tgt)
+        }
+    };
+    ops_for(c, &current, &target, &pairs, &unchanged)
+}
 
+/// The ops that turn `current` into `target` once their blocks are paired
+/// (`pairs`, in order): a pair `unchanged` says is the same is left alone,
+/// any other is a `Replace`, and what is unpaired is inserted or deleted, as
+/// [`diff_ops`] says.
+fn ops_for(
+    c: &Contract,
+    current: &[Node],
+    target: &[Node],
+    pairs: &[(usize, usize)],
+    unchanged: &dyn Fn(usize, usize) -> bool,
+) -> Vec<Op> {
     let mut inserts = vec![];
     let mut replaces = vec![];
     let html = |nodes: &[Node]| render::html(c, nodes, &render::Options { ids: true });
 
     // Where each target block pairs, if it does.
     let mut paired_at: Vec<Option<usize>> = vec![None; target.len()];
-    for &(i, j) in &pairs {
+    for &(i, j) in pairs {
         paired_at[j] = Some(i);
     }
     let first_paired = pairs.iter().find_map(|&(i, _)| current[i].id());
@@ -53,19 +74,13 @@ pub fn diff_ops(c: &Contract, current: &[Node], target: &[Node]) -> Vec<Op> {
     let mut j = 0;
     while j < target.len() {
         if let Some(i) = paired_at[j] {
-            let (cur, tgt) = (&current[i], &target[j]);
-            let same = if tgt.id().is_some() {
-                cur == tgt
-            } else {
-                without_ids(c, cur) == without_ids(c, tgt)
-            };
-            if let (false, Some(id)) = (same, cur.id()) {
+            if let (false, Some(id)) = (unchanged(i, j), current[i].id()) {
                 replaces.push(Op::Replace {
                     id: id.to_string(),
-                    html: html(std::slice::from_ref(tgt)),
+                    html: html(std::slice::from_ref(&target[j])),
                 });
             }
-            before = cur.id().or(before);
+            before = current[i].id().or(before);
             j += 1;
             continue;
         }
@@ -98,6 +113,372 @@ pub fn diff_ops(c: &Contract, current: &[Node], target: &[Node]) -> Vec<Op> {
     inserts.into_iter().chain(replaces).chain(deletes).collect()
 }
 
+/// How alike two blocks' words must be, as a Dice coefficient over each
+/// one's words, for a writer's changed block to be written over the page's
+/// in place. A guess, to be measured on the writers' own rewrites.
+const SIMILAR: f64 = 0.5;
+
+/// Ops that write `target`, a writer's markdown converted (blocks without
+/// ids, read as `dialect`, the suggestions the page shows kept:
+/// [`keep_shown_suggestions`]), over the page `current`, for
+/// [`crate::apply_own_ops_in`].
+///
+/// Each block is keyed by its markdown as the page's export shows it
+/// (`AsShown`): its footnotes' notes included, so a changed source is a
+/// change, and, where that differs from every block of the target, as that
+/// markdown reads back, so what markdown cannot carry (a run of spaces, a
+/// tab) is no change. A block the export shows as nothing (an empty
+/// paragraph) is never paired, and is left where it is unless the write
+/// keeps no block of the page at all. Blocks
+/// with equal keys pair first, by a longest common subsequence, and a pair
+/// is left alone: a block the markdown shows as it stands keeps everything,
+/// what markdown cannot show included. Between two such pairs (and before
+/// the first and after the last), blocks pair again where they are alike
+/// ([`similar`]), and each of those pairs is a `Replace` of the page's
+/// block, which `apply` writes in place: a text block by its changed text,
+/// its id, its atoms and an open editor's caret kept. A list, table or
+/// quote is paired the same way inside ([`revised`]): what the writer did
+/// not change in it is the page's as it stands, what it changed a little
+/// keeps its id, and what it added is new. What is left is inserted and
+/// deleted as in [`diff_ops`].
+///
+/// A writer may not decide the owner's suggestions: [`suggestions_taken`]
+/// names a block holding one that the ops would write over.
+pub fn revise_ops(c: &Contract, current: &[Node], target: &[Node], dialect: Dialect) -> Vec<Op> {
+    let mut current = current.to_vec();
+    let mut target = target.to_vec();
+    canonicalize(c, &mut current);
+    canonicalize(c, &mut target);
+    let target_keys: Vec<String> = target.iter().map(|n| key(c, n)).collect();
+    let shown = AsShown::of(c, &current, &target_keys, dialect);
+    // A block the export shows as nothing takes no part: it stays.
+    let seen: Vec<usize> = (0..current.len()).filter(|&i| shown.keys[i].is_some()).collect();
+    let same = |a: usize, j: usize| shown.keys[seen[a]].as_deref() == Some(target_keys[j].as_str());
+    let exact: Vec<(usize, usize)> = pair_by(0..seen.len(), 0..target.len(), &same);
+
+    let words: Vec<Words> = current.iter().chain(&target).map(words).collect();
+    let (cur_words, tgt_words) = words.split_at(current.len());
+    let alike = |a: usize, j: usize| {
+        let i = seen[a];
+        similar(&current[i], &target[j], &cur_words[i], &tgt_words[j])
+    };
+    let paired = alike_between(&exact, seen.len(), target.len(), &alike);
+    let pairs: Vec<(usize, usize)> = paired.iter().map(|&(a, j, _)| (seen[a], j)).collect();
+    let exact: HashSet<(usize, usize)> = paired
+        .iter()
+        .filter(|&&(_, _, same)| same)
+        .map(|&(a, j, _)| (seen[a], j))
+        .collect();
+    // A changed list, table or quote keeps what the writer did not change
+    // in it as it stands.
+    for &(i, j) in &pairs {
+        if exact.contains(&(i, j)) || c.is_textblock(&current[i].kind) || current[i].content.is_empty() {
+            continue;
+        }
+        let merged = shown
+            .read_back(c, i, dialect)
+            .and_then(|read| revised(c, &current[i], &read, &target[j]))
+            .filter(grids_hold);
+        if let Some(merged) = merged {
+            target[j] = merged;
+        }
+    }
+    let mut ops = ops_for(c, &current, &target, &pairs, &|i, j| exact.contains(&(i, j)));
+    // Kept among the blocks the write keeps or writes in place; a write that
+    // keeps none is the whole page anew, and takes them with the rest (a new
+    // page's one empty paragraph under its first draft).
+    if !pairs.is_empty() {
+        let invisible: HashSet<&str> = (0..current.len())
+            .filter(|&i| shown.keys[i].is_none())
+            .filter_map(|i| current[i].id())
+            .collect();
+        ops.retain(|op| !matches!(op, Op::Delete { id } if invisible.contains(id.as_str())));
+    }
+    ops
+}
+
+/// The ids of the blocks of `current` holding a suggestion its owner has
+/// not decided (text under a proposal mark, at any depth) that `ops`
+/// replace or delete. A writer's whole-page write that would is refused:
+/// whatever it writes over such a block decides the suggestion, which is
+/// its owner's to accept or reject.
+pub fn suggestions_taken(current: &[Node], ops: &[Op]) -> Vec<String> {
+    ops.iter()
+        .filter_map(|op| match op {
+            Op::Replace { id, .. } | Op::Delete { id } => Some(id.as_str()),
+            _ => None,
+        })
+        .filter(|id| crate::ops::find_node(current, id).is_some_and(holds_suggestion))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Whether `n` holds a suggestion its owner has not decided: text under a
+/// proposal mark, at any depth.
+pub fn holds_suggestion(n: &Node) -> bool {
+    let mut found = false;
+    n.walk(&mut |n| {
+        found |= n
+            .marks
+            .iter()
+            .any(|m| crate::contract::OWNER_MARKS.contains(&m.kind.as_str()));
+    });
+    found
+}
+
+/// Accept every suggestion in `target`, a writer's markdown read as
+/// `dialect` with its suggestions kept, but those in a block that shows one
+/// of `current`'s as it stands (`AsShown`): the page's own suggestions,
+/// which a writer's markdown carries back because it is read off the page's
+/// export. A suggestion anywhere else is the writer's, and suggestions are
+/// the page owner's to make, in the page. Returns whether it accepted any.
+pub fn keep_shown_suggestions(c: &Contract, current: &[Node], target: &mut [Node], dialect: Dialect) -> bool {
+    if !target.iter().any(holds_suggestion) {
+        return false;
+    }
+    let mut current = current.to_vec();
+    canonicalize(c, &mut current);
+    let mut canonical = target.to_vec();
+    canonicalize(c, &mut canonical);
+    let target_keys: Vec<String> = canonical.iter().map(|n| key(c, n)).collect();
+    let shown = AsShown::of(c, &current, &target_keys, dialect);
+    let own: HashSet<&str> = (0..current.len())
+        .filter(|&i| holds_suggestion(&current[i]))
+        .filter_map(|i| shown.keys[i].as_deref())
+        .collect();
+    let mut accepted = false;
+    for (n, k) in target.iter_mut().zip(&target_keys) {
+        if holds_suggestion(n) && !own.contains(k.as_str()) {
+            let mut one = vec![std::mem::replace(n, Node::text("", vec![]))];
+            accepted |= crate::accept_proposals(&mut one);
+            *n = one.pop().unwrap_or_else(|| Node::element("paragraph", Default::default(), vec![]));
+        }
+    }
+    accepted
+}
+
+/// A block's markdown alone: its own footnotes' definitions after it.
+fn key(c: &Contract, n: &Node) -> String {
+    render::markdown(c, std::slice::from_ref(n))
+}
+
+/// The page's blocks as its export shows them, each keyed for a writer's
+/// markdown to be compared with: its markdown with the labels and notes the
+/// page's export gives its footnotes
+/// ([`render::footnotes_as_exported`]), or, where no block of the target
+/// has that key, that markdown as it reads back as `dialect`. `None` for a
+/// block the export writes as nothing.
+struct AsShown {
+    keys: Vec<Option<String>>,
+    /// The page's blocks with their footnotes as its export writes them.
+    blocks: Vec<Node>,
+}
+
+impl AsShown {
+    fn of(c: &Contract, current: &[Node], target_keys: &[String], dialect: Dialect) -> Self {
+        let blocks = render::footnotes_as_exported(current, true).unwrap_or_else(|| current.to_vec());
+        let wanted: HashSet<&str> = target_keys.iter().map(String::as_str).collect();
+        let keys = blocks
+            .iter()
+            .map(|n| {
+                let k = key(c, n);
+                if wanted.contains(k.as_str()) {
+                    return Some(k);
+                }
+                if k.trim().is_empty() {
+                    return None;
+                }
+                let mut back = migrate::from_markdown_as(c, &k, dialect).nodes;
+                canonicalize(c, &mut back);
+                Some(render::markdown(c, &back))
+            })
+            .collect();
+        AsShown { keys, blocks }
+    }
+
+    /// The page's block `i` as its markdown reads back as `dialect`: what a
+    /// writer reading the export read of it. `None` when that is not one
+    /// block.
+    fn read_back(&self, c: &Contract, i: usize, dialect: Dialect) -> Option<Node> {
+        let o = migrate::from_markdown_as(c, &key(c, &self.blocks[i]), dialect);
+        if !o.errors.is_empty() {
+            return None;
+        }
+        let mut back = o.nodes;
+        canonicalize(c, &mut back);
+        match <[Node; 1]>::try_from(back) {
+            Ok([one]) => Some(one),
+            Err(_) => None,
+        }
+    }
+}
+
+/// The pairs [`revise_ops`] writes over a page of `n` blocks for a writer's
+/// `m`, as (page index, writer's index, whether they read the same): the
+/// `exact` pairs, and between two of them (and before the first and after
+/// the last) the blocks [`similar`] says are alike, by a longest common
+/// subsequence.
+fn alike_between(
+    exact: &[(usize, usize)],
+    n: usize,
+    m: usize,
+    alike: &dyn Fn(usize, usize) -> bool,
+) -> Vec<(usize, usize, bool)> {
+    let mut pairs = vec![];
+    let (mut i0, mut j0) = (0, 0);
+    for (i, j) in exact.iter().copied().chain(std::iter::once((n, m))) {
+        pairs.extend(pair_by(i0..i, j0..j, alike).into_iter().map(|(i, j)| (i, j, false)));
+        if i < n {
+            pairs.push((i, j, true));
+        }
+        (i0, j0) = (i + 1, j + 1);
+    }
+    pairs
+}
+
+/// The writer's block `tgt`, a list, a table, a quote or a block in one,
+/// that [`revise_ops`] pairs with the page's `cur` as changed, with what
+/// the writer did not change in it taken from the page. `shown` is `cur`
+/// as its markdown reads back: what the writer read of it.
+///
+/// Its children pair as the page's blocks do. A child of `tgt` that reads
+/// as its child of `shown` reads is the page's child as it stands, with
+/// whatever it holds that markdown cannot show (a cell's span, its own
+/// alignment, a space inside bold); one that is alike is that child
+/// revised the same way, keeping its id, so an open editor's caret and a
+/// keystroke on its way into it stay in it; any other is new, with ids of
+/// its own, so it takes none from a child the writer dropped. An attribute
+/// the writer's markdown shows as `shown` shows it is the page's. Read
+/// from the markdown alone, a row the writer never touched lost its cells'
+/// spans, and an item inserted beside a reworded one took that one's id
+/// and live text.
+///
+/// `None` where a child the writer changed does not line up with its
+/// markdown child for child (a row holding a cell across two columns,
+/// which markdown writes as two): the writer's block is written as it
+/// reads, whole.
+fn revised(c: &Contract, cur: &Node, shown: &Node, tgt: &Node) -> Option<Node> {
+    if cur.kind != tgt.kind || shown.kind != cur.kind {
+        return None;
+    }
+    let mut out = tgt.clone();
+    let keys: HashSet<&String> = cur.attrs.keys().chain(tgt.attrs.keys()).collect();
+    for k in keys {
+        if tgt.attrs.get(k) != shown.attrs.get(k) {
+            continue;
+        }
+        match cur.attrs.get(k) {
+            Some(v) => out.attrs.insert(k.clone(), v.clone()),
+            None => out.attrs.remove(k),
+        };
+    }
+    if c.is_textblock(&cur.kind) || tgt.content.is_empty() {
+        return Some(out);
+    }
+    let (now, read, want) = (&cur.content, &shown.content, &tgt.content);
+    if now.len() != read.len() || now.iter().zip(read).any(|(a, b)| a.kind != b.kind) {
+        return None;
+    }
+    let read_bare: Vec<Node> = read.iter().map(|n| without_ids(c, n)).collect();
+    let want_bare: Vec<Node> = want.iter().map(|n| without_ids(c, n)).collect();
+    let exact = pair_by(0..now.len(), 0..want.len(), &|i, j| read_bare[i] == want_bare[j]);
+    let words: Vec<Words> = now.iter().chain(want).map(words).collect();
+    let (now_words, want_words) = words.split_at(now.len());
+    let alike = |i: usize, j: usize| similar(&now[i], &want[j], &now_words[i], &want_words[j]);
+    let mut paired: Vec<Option<(usize, bool)>> = vec![None; want.len()];
+    for (i, j, same) in alike_between(&exact, now.len(), want.len(), &alike) {
+        paired[j] = Some((i, same));
+    }
+    out.content = want
+        .iter()
+        .zip(paired)
+        .map(|(w, p)| match p {
+            Some((i, true)) => Some(now[i].clone()),
+            Some((i, false)) => revised(c, &now[i], &read[i], w),
+            None => Some(fresh(c, w)),
+        })
+        .collect::<Option<Vec<Node>>>()?;
+    Some(out)
+}
+
+/// `n` with a new id on every node in it that carries one.
+fn fresh(c: &Contract, n: &Node) -> Node {
+    let mut n = n.clone();
+    n.walk_mut(&mut |x| {
+        if c.node(&x.kind).is_some_and(|s| s.spec.id) {
+            x.attrs
+                .insert(c.id.attr.clone(), serde_json::Value::String(crate::model::new_id()));
+        }
+    });
+    n
+}
+
+/// Whether every table in `n` is a grid. The page's rows and the writer's
+/// together may not make one: a cell down two rows, kept, over the row
+/// under it written from the markdown, which gives that row a cell of its
+/// own in the column.
+fn grids_hold(n: &Node) -> bool {
+    let mut ok = true;
+    n.walk(&mut |x| ok &= x.kind != "table" || crate::table::problems(x).is_empty());
+    ok
+}
+
+/// A block's words, lowercased, each with how often it comes: letters and
+/// digits, anything else between them, and between two blocks in it (a
+/// table's cells, whose texts run together in its text with nothing
+/// between).
+type Words = (HashMap<String, usize>, usize);
+
+fn words(n: &Node) -> Words {
+    fn spaced(n: &Node, out: &mut String) {
+        match &n.text {
+            Some(t) => out.push_str(t),
+            None => {
+                out.push(' ');
+                for k in &n.content {
+                    spaced(k, out);
+                }
+                out.push(' ');
+            }
+        }
+    }
+    let mut out: HashMap<String, usize> = HashMap::new();
+    let mut total = 0;
+    let mut text = String::new();
+    spaced(n, &mut text);
+    let text = text.to_lowercase();
+    for w in text.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()) {
+        *out.entry(w.to_string()).or_default() += 1;
+        total += 1;
+    }
+    (out, total)
+}
+
+/// Whether a writer's block `b` is the page's block `a` changed, for
+/// [`revise_ops`]: of one type, and, for blocks that hold text, words alike
+/// by [`SIMILAR`] or more; a figure of one kind, media with one source.
+fn similar(a: &Node, b: &Node, aw: &Words, bw: &Words) -> bool {
+    if a.kind != b.kind {
+        return false;
+    }
+    let attr = |n: &Node, k: &str| n.attrs.get(k).cloned();
+    match a.kind.as_str() {
+        "figure" => return attr(a, "kind") == attr(b, "kind"),
+        "image" | "audio" | "video" | "file" => return attr(a, "src") == attr(b, "src"),
+        "applet" => return attr(a, "ref") == attr(b, "ref"),
+        _ => {}
+    }
+    let ((a_words, a_total), (b_words, b_total)) = (aw, bw);
+    if *a_total == 0 || *b_total == 0 {
+        return false;
+    }
+    let shared: usize = a_words
+        .iter()
+        .map(|(w, n)| (*n).min(b_words.get(w).copied().unwrap_or(0)))
+        .sum();
+    2.0 * shared as f64 >= SIMILAR * (a_total + b_total) as f64
+}
+
 fn without_ids(c: &Contract, n: &Node) -> Node {
     let mut n = n.clone();
     n.walk_mut(&mut |x| {
@@ -109,54 +490,88 @@ fn without_ids(c: &Contract, n: &Node) -> Node {
 /// The longest common subsequence of `current` and `target`, as (current
 /// index, target index) pairs in order. A target block with an id is equal
 /// only to the block with that id; one without, to a block of its type and
-/// text. A common start and end are paired first; between them, blocks that
-/// all carry ids pair by the longest increasing run of their places in
-/// `current`, which for unique keys is the same subsequence, and others by
-/// the textbook table, up to [`MAX_PAIRING_CELLS`].
+/// text, or of its type holding the block with the first id it holds (a
+/// table's cell, which has no id of its own, by its paragraph's). A common
+/// start and end are paired first; between them, blocks that all carry ids
+/// pair by the longest increasing run of their places in `current`, which
+/// for unique keys is the same subsequence, and others by [`pair_by`]'s
+/// table.
 pub(crate) fn pair_blocks(current: &[Node], target: &[Node]) -> Vec<(usize, usize)> {
-    // Text, read once, for a target without ids to pair by.
+    // Text and the first id inside, read once, for a target without ids to
+    // pair by.
     let by_text = target.iter().any(|t| t.id().is_none());
-    let text = |nodes: &[Node]| -> Vec<String> {
+    let read = |nodes: &[Node]| -> Vec<(String, Option<String>)> {
         match by_text {
-            true => nodes.iter().map(Node::text_content).collect(),
+            true => nodes.iter().map(|n| (n.text_content(), id_inside(n))).collect(),
             false => vec![],
         }
     };
-    let (current_text, target_text) = (text(current), text(target));
+    let (current_read, target_read) = (read(current), read(target));
     let eq = |i: usize, j: usize| match target[j].id() {
         Some(id) => current[i].id() == Some(id),
-        None => current[i].kind == target[j].kind && current_text[i] == target_text[j],
+        None => {
+            let ((cur_text, cur_inside), (tgt_text, tgt_inside)) = (&current_read[i], &target_read[j]);
+            current[i].kind == target[j].kind
+                && (cur_text == tgt_text || (tgt_inside.is_some() && cur_inside == tgt_inside))
+        }
     };
     let (n, m) = (current.len(), target.len());
+    let (pre, suf) = common_ends(0..n, 0..m, &eq);
+    let (cur, tgt) = (pre..n - suf, pre..m - suf);
+    if !target[tgt.clone()].iter().all(|t| t.id().is_some()) {
+        return pair_by(0..n, 0..m, &eq);
+    }
+    let mut pairs: Vec<(usize, usize)> = (0..pre).map(|k| (k, k)).collect();
+    let place: HashMap<&str, usize> = cur
+        .clone()
+        .filter_map(|i| current[i].id().map(|id| (id, i)))
+        .collect();
+    let found: Vec<(usize, usize)> = tgt
+        .filter_map(|j| target[j].id().and_then(|id| place.get(id)).map(|&i| (i, j)))
+        .collect();
+    pairs.extend(longest_increasing(&found));
+    pairs.extend((0..suf).map(|k| (n - suf + k, m - suf + k)));
+    pairs
+}
+
+/// The first id among the blocks `n` holds, at any depth.
+fn id_inside(n: &Node) -> Option<String> {
+    n.content
+        .iter()
+        .find_map(|k| k.id().map(str::to_string).or_else(|| id_inside(k)))
+}
+
+/// How many indices of `cur` and `tgt` pair from their starts, and then
+/// from their ends, under `eq`.
+fn common_ends(cur: Range<usize>, tgt: Range<usize>, eq: &dyn Fn(usize, usize) -> bool) -> (usize, usize) {
+    let (n, m) = (cur.len(), tgt.len());
     let mut pre = 0;
-    while pre < n && pre < m && eq(pre, pre) {
+    while pre < n && pre < m && eq(cur.start + pre, tgt.start + pre) {
         pre += 1;
     }
     let mut suf = 0;
-    while suf < n - pre && suf < m - pre && eq(n - 1 - suf, m - 1 - suf) {
+    while suf < n - pre && suf < m - pre && eq(cur.end - 1 - suf, tgt.end - 1 - suf) {
         suf += 1;
     }
-    let (cur, tgt) = (pre..n - suf, pre..m - suf);
-    let mut pairs: Vec<(usize, usize)> = (0..pre).map(|k| (k, k)).collect();
+    (pre, suf)
+}
 
-    if target[tgt.clone()].iter().all(|t| t.id().is_some()) {
-        let place: HashMap<&str, usize> = cur
-            .clone()
-            .filter_map(|i| current[i].id().map(|id| (id, i)))
-            .collect();
-        let found: Vec<(usize, usize)> = tgt
-            .clone()
-            .filter_map(|j| target[j].id().and_then(|id| place.get(id)).map(|&i| (i, j)))
-            .collect();
-        pairs.extend(longest_increasing(&found));
-    } else if cur.len() * tgt.len() <= MAX_PAIRING_CELLS {
-        let (w, h) = (cur.len(), tgt.len());
+/// The longest common subsequence of the index ranges `cur` and `tgt` under
+/// `eq`, as (current index, target index) pairs in order: a common start and
+/// end first, then the textbook table between them, up to
+/// [`MAX_PAIRING_CELLS`]. Past it, only the start and the end pair.
+pub(crate) fn pair_by(cur: Range<usize>, tgt: Range<usize>, eq: &dyn Fn(usize, usize) -> bool) -> Vec<(usize, usize)> {
+    let (pre, suf) = common_ends(cur.clone(), tgt.clone(), eq);
+    let mut pairs: Vec<(usize, usize)> = (0..pre).map(|k| (cur.start + k, tgt.start + k)).collect();
+    let (cur_mid, tgt_mid) = (cur.start + pre..cur.end - suf, tgt.start + pre..tgt.end - suf);
+    let (w, h) = (cur_mid.len(), tgt_mid.len());
+    if w * h <= MAX_PAIRING_CELLS {
         // lengths[a][b]: the longest common subsequence of cur[a..], tgt[b..].
         let mut lengths = vec![0u32; (w + 1) * (h + 1)];
         let at = |a: usize, b: usize| a * (h + 1) + b;
         for a in (0..w).rev() {
             for b in (0..h).rev() {
-                lengths[at(a, b)] = if eq(cur.start + a, tgt.start + b) {
+                lengths[at(a, b)] = if eq(cur_mid.start + a, tgt_mid.start + b) {
                     lengths[at(a + 1, b + 1)] + 1
                 } else {
                     lengths[at(a + 1, b)].max(lengths[at(a, b + 1)])
@@ -165,8 +580,8 @@ pub(crate) fn pair_blocks(current: &[Node], target: &[Node]) -> Vec<(usize, usiz
         }
         let (mut a, mut b) = (0, 0);
         while a < w && b < h {
-            if eq(cur.start + a, tgt.start + b) {
-                pairs.push((cur.start + a, tgt.start + b));
+            if eq(cur_mid.start + a, tgt_mid.start + b) {
+                pairs.push((cur_mid.start + a, tgt_mid.start + b));
                 a += 1;
                 b += 1;
             } else if lengths[at(a + 1, b)] >= lengths[at(a, b + 1)] {
@@ -176,7 +591,7 @@ pub(crate) fn pair_blocks(current: &[Node], target: &[Node]) -> Vec<(usize, usiz
             }
         }
     }
-    pairs.extend((0..suf).map(|k| (n - suf + k, m - suf + k)));
+    pairs.extend((0..suf).map(|k| (cur.end - suf + k, tgt.end - suf + k)));
     pairs
 }
 
@@ -207,268 +622,6 @@ fn longest_increasing(pairs: &[(usize, usize)]) -> Vec<(usize, usize)> {
     out
 }
 
-/// What a reader has seen of a page: `base`, the page as it was when it
-/// read it, with every block whose id is in `fresh` (the blocks it has read
-/// again since, or written) taken from `current`, whole. Such a block
-/// replaces the base's block with its id; one the base lacks goes after its
-/// nearest preceding sibling in `current` that the base has, or first in its
-/// parent; one `current` lacks leaves. Nothing else of `current` enters: an
-/// edit someone made to any other block since the reader's read stays
-/// unseen, so a write over that block is merged against what the reader
-/// saw, or refused.
-///
-/// A block taken from `current` brings the blocks inside it; any of those
-/// the base holds elsewhere leaves that place, so no id is in the tree
-/// twice. A block whose parent cannot be found in the base (its parent is
-/// new, and not in `fresh`) is not placed.
-pub fn seen_tree(base: &[Node], current: &[Node], fresh: &HashSet<String>) -> Vec<Node> {
-    let mut seen = base.to_vec();
-    // Gone from the page: gone from what was seen.
-    for id in fresh {
-        if find_node(current, id).is_none() {
-            remove(&mut seen, id);
-        }
-    }
-    let mut placed: Vec<Placement> = vec![];
-    locate(current, &mut vec![], None, fresh, &mut placed);
-    for p in placed {
-        let Some(node) = node_at(current, &p.at) else {
-            continue;
-        };
-        let node = node.clone();
-        // Ids inside the block that the seen tree holds elsewhere leave
-        // there.
-        let mut inside = HashSet::new();
-        crate::ops::collect_ids(std::slice::from_ref(&node), &mut inside);
-        let mut held = HashSet::new();
-        crate::ops::collect_ids(&seen, &mut held);
-        let mut here = HashSet::new();
-        if let Some(n) = find_node(&seen, &p.id) {
-            crate::ops::collect_ids(std::slice::from_ref(n), &mut here);
-        }
-        for id in inside
-            .iter()
-            .filter(|id| held.contains(*id) && !here.contains(*id))
-        {
-            remove(&mut seen, id);
-        }
-        if let Some(path) = path_of(&seen, &p.id) {
-            if let Some(slot) = node_at_mut(&mut seen, &path) {
-                *slot = node;
-            }
-            continue;
-        }
-        // New to what was seen: after its nearest preceding sibling there.
-        let parent = match &p.anchor {
-            Some(anchor) => match path_of(&seen, anchor) {
-                Some(mut path) => {
-                    path.extend(&p.below);
-                    Some(path)
-                }
-                None => continue,
-            },
-            None if p.below.is_empty() => None,
-            None => Some(p.below.clone()),
-        };
-        let siblings = match &parent {
-            None => &mut seen,
-            Some(path) => match node_at_mut(&mut seen, path) {
-                Some(n) => &mut n.content,
-                None => continue,
-            },
-        };
-        let after = p
-            .preceding
-            .iter()
-            .find_map(|id| siblings.iter().position(|n| n.id() == Some(id.as_str())));
-        let at = after.map_or(0, |k| k + 1);
-        siblings.insert(at, node);
-    }
-    seen
-}
-
-/// The block a reader is shown so that the block `id` enters what it has
-/// seen ([`seen_tree`]): `id` itself when `base` holds it, or holds the
-/// nearest block with an id around it; otherwise the outermost block around
-/// it that `base` lacks. [`seen_tree`] places a new block only inside one
-/// the base has, so an item of a list the base never held enters with its
-/// list, or not at all. `None` when `current` has no block `id`.
-pub fn shown_for(base: &[Node], current: &[Node], id: &str) -> Option<String> {
-    let mut around = vec![];
-    if !holders(current, id, &mut around) {
-        return None;
-    }
-    if find_node(base, id).is_some() {
-        return Some(id.to_string());
-    }
-    let mut shown = id.to_string();
-    for holder in around.iter().rev() {
-        if find_node(base, holder).is_some() {
-            break;
-        }
-        shown = holder.clone();
-    }
-    Some(shown)
-}
-
-/// Whether `nodes` holds the block `id`; when it does, `around` ends up
-/// holding the ids of the blocks around it, outermost first.
-fn holders(nodes: &[Node], id: &str, around: &mut Vec<String>) -> bool {
-    for n in nodes {
-        if n.id() == Some(id) {
-            return true;
-        }
-        let own = n.id().map(str::to_string);
-        let pushed = own.is_some();
-        around.extend(own);
-        if holders(&n.content, id, around) {
-            return true;
-        }
-        if pushed {
-            around.pop();
-        }
-    }
-    false
-}
-
-/// `seen` with each block in `keep` put back as `base` has it, wherever
-/// `seen` holds it: a block a reader is about to write over stays as it was
-/// read, even inside a block brought up to date around it ([`seen_tree`]),
-/// so the write merges with a change made since, as it would have against
-/// that read. Ids inside the block as read that `seen` holds elsewhere
-/// leave there. A block `base` or `seen` lacks is left as it is.
-pub fn keep_as_read(seen: &mut Vec<Node>, base: &[Node], keep: &HashSet<String>) {
-    for id in keep {
-        let Some(then) = find_node(base, id) else {
-            continue;
-        };
-        let Some(path) = path_of(seen, id) else {
-            continue;
-        };
-        if node_at(seen, &path) == Some(then) {
-            continue;
-        }
-        let mut inside = HashSet::new();
-        crate::ops::collect_ids(std::slice::from_ref(then), &mut inside);
-        let mut here = HashSet::new();
-        if let Some(n) = node_at(seen, &path) {
-            crate::ops::collect_ids(std::slice::from_ref(n), &mut here);
-        }
-        let mut held = HashSet::new();
-        crate::ops::collect_ids(seen, &mut held);
-        for other in inside
-            .iter()
-            .filter(|other| held.contains(*other) && !here.contains(*other))
-        {
-            remove(seen, other);
-        }
-        if let Some(slot) = path_of(seen, id).and_then(|path| node_at_mut(seen, &path)) {
-            *slot = then.clone();
-        }
-    }
-}
-
-/// A fresh block in `current`: where it is, and where to place it in a tree
-/// that lacks it.
-struct Placement {
-    id: String,
-    /// Its path in `current`.
-    at: Vec<usize>,
-    /// The nearest ancestor with an id (none: the page), and the path from
-    /// it to the block's parent: a table cell has no id, so a paragraph in
-    /// one is found through its table.
-    anchor: Option<String>,
-    below: Vec<usize>,
-    /// The ids of its preceding siblings, nearest first.
-    preceding: Vec<String>,
-}
-
-/// Every block of `nodes` whose id is in `fresh`, in document order, parents
-/// before what they hold.
-fn locate(
-    nodes: &[Node],
-    path: &mut Vec<usize>,
-    anchor: Option<(&str, usize)>,
-    fresh: &HashSet<String>,
-    out: &mut Vec<Placement>,
-) {
-    for (i, n) in nodes.iter().enumerate() {
-        path.push(i);
-        if let Some(id) = n.id().filter(|id| fresh.contains(*id)) {
-            let (anchor_id, from) = match anchor {
-                Some((id, depth)) => (Some(id.to_string()), depth),
-                None => (None, 0),
-            };
-            out.push(Placement {
-                id: id.to_string(),
-                at: path.clone(),
-                anchor: anchor_id,
-                below: path[from..path.len() - 1].to_vec(),
-                preceding: nodes[..i]
-                    .iter()
-                    .rev()
-                    .filter_map(|s| s.id().map(str::to_string))
-                    .collect(),
-            });
-        }
-        let next = match n.id() {
-            Some(id) => Some((id, path.len())),
-            None => anchor,
-        };
-        locate(&n.content, path, next, fresh, out);
-        path.pop();
-    }
-}
-
-fn path_of(nodes: &[Node], id: &str) -> Option<Vec<usize>> {
-    for (i, n) in nodes.iter().enumerate() {
-        if n.id() == Some(id) {
-            return Some(vec![i]);
-        }
-        if let Some(mut rest) = path_of(&n.content, id) {
-            rest.insert(0, i);
-            return Some(rest);
-        }
-    }
-    None
-}
-
-fn node_at<'a>(nodes: &'a [Node], path: &[usize]) -> Option<&'a Node> {
-    let (first, rest) = path.split_first()?;
-    let n = nodes.get(*first)?;
-    if rest.is_empty() {
-        Some(n)
-    } else {
-        node_at(&n.content, rest)
-    }
-}
-
-fn node_at_mut<'a>(nodes: &'a mut [Node], path: &[usize]) -> Option<&'a mut Node> {
-    let (first, rest) = path.split_first()?;
-    let n = nodes.get_mut(*first)?;
-    if rest.is_empty() {
-        Some(n)
-    } else {
-        node_at_mut(&mut n.content, rest)
-    }
-}
-
-fn remove(nodes: &mut Vec<Node>, id: &str) {
-    let Some(path) = path_of(nodes, id) else {
-        return;
-    };
-    let (last, parent) = path.split_last().expect("a path names a block");
-    let siblings = if parent.is_empty() {
-        nodes
-    } else {
-        match node_at_mut(nodes, parent) {
-            Some(p) => &mut p.content,
-            None => return,
-        }
-    };
-    siblings.remove(*last);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -479,10 +632,6 @@ mod tests {
         let o = parse(&Contract::load(), src, "doc", Mode::Strict);
         assert!(o.errors.is_empty(), "{:?}", o.errors);
         o.nodes
-    }
-
-    fn fresh(ids: &[&str]) -> HashSet<String> {
-        ids.iter().map(|s| s.to_string()).collect()
     }
 
     fn show(nodes: &[Node]) -> String {
@@ -707,6 +856,430 @@ mod tests {
         assert!(diff_ops(&c, &back, &version).is_empty(), "{:?}", diff_ops(&c, &back, &version));
     }
 
+    /// A writer's markdown, converted: blocks without ids.
+    fn written(md: &str) -> Vec<Node> {
+        let o = crate::parse_article_markdown(md);
+        assert!(o.errors.is_empty(), "{:?}", o.errors);
+        o.nodes
+    }
+
+    /// The writer's diff on `doc`: the ops, and how each replace landed.
+    fn revise(doc: &yrs::Doc, md: &str) -> (Vec<Op>, Vec<String>) {
+        use yrs::Transact;
+        let c = Contract::load();
+        let now = crate::read_doc(&doc.transact());
+        let draft = crate::parse_draft(&now, md, Dialect::Article);
+        assert!(draft.errors.is_empty(), "{:?}", draft.errors);
+        let ops = revise_ops(&c, &now, &draft.nodes, Dialect::Article);
+        assert_eq!(suggestions_taken(&now, &ops), Vec::<String>::new(), "{ops:?}");
+        let applied = crate::ops::apply_own_in(&c, &mut doc.transact_mut(), &ops).unwrap();
+        (ops, applied.replaced_as)
+    }
+
+    /// A page as a person leaves it, written back by a writer that changed
+    /// nothing: its export read as the writer's markdown. Nothing is
+    /// written, whatever the page holds that its markdown shows otherwise
+    /// or not at all.
+    #[test]
+    fn a_page_written_back_unchanged_is_left_alone() {
+        use yrs::Transact;
+        let c = Contract::load();
+        let p = |id: &str, inner: &str| format!("<p data-id=\"{id}\">{inner}</p>");
+        let list = |kind: &str, id: &str, items: &[&str]| {
+            let (open, item) = match kind {
+                "ol" => ("<ol".to_string(), "<li>".to_string()),
+                "task" => ("<ul data-type=\"taskList\"".to_string(), "<li data-type=\"taskItem\">".to_string()),
+                _ => ("<ul".to_string(), "<li>".to_string()),
+            };
+            let close = if kind == "ol" { "</ol>" } else { "</ul>" };
+            let body: String = items.iter().map(|t| format!("{item}<p>{t}</p></li>")).collect();
+            format!("{open} data-id=\"{id}\">{body}{close}")
+        };
+        let f = |label: &str, note: &str| format!("<virtues-footnote label=\"{label}\" note=\"{note}\"></virtues-footnote>");
+        let pages = [
+            // An empty paragraph, where a person pressed Enter, mid-page and last.
+            format!("{}{}{}", p("a", "a"), p("e", ""), p("b", "b")),
+            format!("{}{}", p("a", "a"), p("e", "")),
+            format!("{}{}{}{}", p("e1", ""), p("a", "a"), p("e2", ""), p("e3", "")),
+            // Lists of one kind side by side.
+            format!("{}{}", list("ul", "l1", &["a"]), list("ul", "l2", &["b"])),
+            format!("{}{}{}", list("ol", "l1", &["a"]), list("ol", "l2", &["b", "c"]), list("ol", "l3", &["d"])),
+            format!("{}{}", list("task", "l1", &["a"]), list("task", "l2", &["b"])),
+            // Spaces as typed: two between words, a tab, at either end.
+            format!("{}{}{}{}{}", p("a", "two  spaces"), p("b", "tab\there"), p("c", "trailing space "), p("d", " leading space"), p("x", "End.  Next sentence.")),
+            // One label, two sources.
+            format!(
+                "{}{}",
+                p("a", &format!("You ate with Nick.{}", f("ev-2", "Message · 12:10 PM · data_communication_message:m_1"))),
+                p("b", &format!("You swam at noon.{}", f("ev-2", "Location · 9:30 AM")))
+            ),
+            // A footnote whose note its label's other footnote carries.
+            format!(
+                "{}{}",
+                p("a", &format!("One.{}", f("ev-1", "Message · 9:00 AM"))),
+                p("b", "Two.<virtues-footnote label=\"ev-1\"></virtues-footnote>")
+            ),
+            // The owner's pending suggestion.
+            format!(
+                "{}{}",
+                p("a", "You met Zoe at the shop."),
+                p("b", "I had lunch <virtues-del proposal=\"p1\">at noon</virtues-del><virtues-ins proposal=\"p1\">on Friday</virtues-ins> with her.")
+            ),
+        ];
+        for src in pages {
+            let doc = doc_of(&src);
+            let now = crate::read_doc(&doc.transact());
+            let md = crate::to_markdown(&now);
+            let draft = crate::parse_draft(&now, &md, Dialect::Article);
+            assert!(draft.errors.is_empty(), "{src}: {:?}", draft.errors);
+            let ops = revise_ops(&c, &now, &draft.nodes, Dialect::Article);
+            assert!(ops.is_empty(), "{src}\n{md:?}\n{ops:?}");
+            assert!(!draft.notes.iter().any(|n| n.message.contains("as accepted")), "{src}: {:?}", draft.notes);
+            assert_eq!(
+                crate::edition_of(&crate::to_markdown(&draft.nodes)),
+                crate::edition_of(&md),
+                "{src}: the draft reads as the page"
+            );
+        }
+    }
+
+    /// A paragraph added after an empty one, and another page block
+    /// changed, leave the empty paragraph where it was: the export shows it
+    /// as nothing, so the writer's markdown cannot say it went. A page that
+    /// is only that paragraph, written whole, holds the writing alone.
+    #[test]
+    fn an_empty_paragraph_stays_through_a_writers_change() {
+        use yrs::Transact;
+        let empty = doc_of("<p data-id=\"e\"></p>");
+        let (ops, _) = revise(&empty, "A first draft.\n\nIts second paragraph.\n");
+        assert!(ops.iter().any(|o| matches!(o, Op::Delete { id } if id == "e")), "{ops:?}");
+        assert_eq!(crate::to_markdown(&crate::read_doc(&empty.transact())), "A first draft.\n\nIts second paragraph.\n");
+
+        let doc = doc_of("<p data-id=\"a\">You read on the porch.</p><p data-id=\"e\"></p><p data-id=\"b\">End.</p>");
+        let (ops, _) = revise(&doc, "You read on the porch while it rained.\n\nEnd.\n\nA new line.\n");
+        assert!(!ops.iter().any(|o| matches!(o, Op::Delete { id } if id == "e")), "{ops:?}");
+        let after = crate::read_doc(&doc.transact());
+        let new_id = after[3].id().unwrap();
+        assert_eq!(
+            show(&after),
+            format!(
+                "<p data-id=\"a\">You read on the porch while it rained.</p><p data-id=\"e\"></p>\
+                 <p data-id=\"b\">End.</p><p data-id=\"{new_id}\">A new line.</p>"
+            )
+        );
+    }
+
+    /// The owner's pending suggestion is theirs to decide. A writer's
+    /// markdown that carries it back as it stands leaves its block alone;
+    /// one that changes that block is named, so the write is refused; one
+    /// that writes a suggestion of its own writes it as accepted.
+    #[test]
+    fn a_writer_leaves_the_owners_suggestion_to_them() {
+        use yrs::Transact;
+        let c = Contract::load();
+        let src = "<p data-id=\"a\">You met Zoe at the shop.</p>\
+                   <p data-id=\"b\">I had lunch <virtues-del proposal=\"p1\">at noon</virtues-del><virtues-ins proposal=\"p1\">on Friday</virtues-ins> with her.</p>";
+        let doc = doc_of(src);
+        let now = crate::read_doc(&doc.transact());
+        let md = crate::to_markdown(&now);
+        assert_eq!(md, "You met Zoe at the shop.\n\nI had lunch {--at noon--}{++on Friday++} with her.\n");
+
+        // Carried back, with a paragraph added: the suggestion stays.
+        let (ops, _) = revise(&doc, &format!("{md}\nYou walked home.\n"));
+        assert!(matches!(&ops[..], [Op::InsertAfter { id, .. }] if id == "b"), "{ops:?}");
+        let after = show(&crate::read_doc(&doc.transact()));
+        assert!(after.contains("<virtues-del proposal=\"p1\">at noon</virtues-del><virtues-ins proposal=\"p1\">on Friday</virtues-ins>"), "{after}");
+
+        // Changed, accepted or rejected: named, for the write to be refused.
+        let now = crate::read_doc(&doc.transact());
+        for decided in ["I had lunch on Friday with her.", "I had lunch at noon with her.", "I had lunch {--at noon--}{++on Friday++} with Nick."] {
+            let md = format!("You met Zoe at the shop.\n\n{decided}\n\nYou walked home.\n");
+            let draft = crate::parse_draft(&now, &md, Dialect::Article);
+            let ops = revise_ops(&c, &now, &draft.nodes, Dialect::Article);
+            assert_eq!(suggestions_taken(&now, &ops), ["b"], "{decided}: {ops:?}");
+        }
+        // Dropped with the paragraph: named too.
+        let draft = crate::parse_draft(&now, "You met Zoe at the shop.\n\nYou walked home.\n", Dialect::Article);
+        let ops = revise_ops(&c, &now, &draft.nodes, Dialect::Article);
+        assert_eq!(suggestions_taken(&now, &ops), ["b"], "{ops:?}");
+
+        // A suggestion of the writer's own is written as accepted.
+        let draft = crate::parse_draft(&now, &format!("{}\nYou walked {{--home--}}{{++back++}}.\n", crate::to_markdown(&now).replace("You walked home.\n", "")), Dialect::Article);
+        assert!(draft.notes.iter().any(|n| n.message.contains("as accepted")), "{:?}", draft.notes);
+        assert!(crate::to_markdown(&draft.nodes).contains("You walked back."), "{}", crate::to_markdown(&draft.nodes));
+        assert!(crate::to_markdown(&draft.nodes).contains("{--at noon--}{++on Friday++}"));
+    }
+
+    /// A block the writer's markdown shows as it stands is left alone, what
+    /// markdown cannot show included: a cell's span, a space inside bold.
+    /// `diff_ops`, which pairs by text, would write over both.
+    #[test]
+    fn revise_leaves_an_unchanged_block_untouched_even_where_markdown_cannot_show_it() {
+        use yrs::Transact;
+        let c = Contract::load();
+        let doc = doc_of(
+            "<p data-id=\"a\">Lunch with <strong>Nick </strong>today.</p>\
+             <table data-id=\"t\"><tr data-id=\"r1\"><th colspan=\"2\"><p>Both</p></th></tr>\
+             <tr data-id=\"r2\"><td><p>x</p></td><td><p>y</p></td></tr></table><p data-id=\"b\">End.</p>",
+        );
+        let now = crate::read_doc(&doc.transact());
+        let md = crate::to_markdown(&now);
+        let target = written(&md);
+        assert_ne!(show_plain(&target), show_plain(&now), "markdown cannot show these");
+        assert!(!diff_ops(&c, &now, &target).is_empty());
+        let before = items(&doc);
+        let (ops, _) = revise(&doc, &md);
+        assert!(ops.is_empty(), "{ops:?}");
+        assert_eq!(items(&doc), before);
+        assert_eq!(show(&crate::read_doc(&doc.transact())), show(&now));
+    }
+
+    /// A block the writer changed a little (a word, a heading's level, a
+    /// footnote renumbered, a figure's text) is written in place: its id
+    /// kept, a text block by its changed text.
+    #[test]
+    fn a_lightly_changed_paragraph_keeps_its_id() {
+        use yrs::Transact;
+        let doc = doc_of(
+            "<h2 data-id=\"h\">Morning</h2>\
+             <p data-id=\"a\">You read on the porch while it rained.<virtues-footnote label=\"ev-1\" note=\"Recording · 9:05 AM\"></virtues-footnote></p>\
+             <virtues-figure data-id=\"f\" kind=\"quote\" text=\"Save me a seat.\" who=\"Nick\"></virtues-figure>\
+             <p data-id=\"b\">Later you walked the dog.</p>",
+        );
+        let before = items(&doc);
+        let (ops, how) = revise(
+            &doc,
+            "### Morning\n\nYou read on the porch while it poured.[^ev-2]\n\n```figure\nkind: quote\ntext: Save me a seat by the window.\nwho: Nick\n```\n\nLater you walked the dog.\n\n[^ev-2]: Recording · 9:06 AM\n",
+        );
+        let replaced: Vec<&str> = ops
+            .iter()
+            .map(|o| match o {
+                Op::Replace { id, .. } => id.as_str(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(replaced, ["h", "a", "f"]);
+        assert_eq!(how, ["text-diff", "text-diff", "patch"]);
+        assert_eq!(items(&doc), before, "every block keeps its item");
+        assert_eq!(
+            show(&crate::read_doc(&doc.transact())),
+            "<h3 data-id=\"h\">Morning</h3>\
+             <p data-id=\"a\">You read on the porch while it poured.<virtues-footnote label=\"ev-2\" note=\"Recording · 9:06 AM\"></virtues-footnote></p>\
+             <virtues-figure data-id=\"f\" kind=\"quote\" text=\"Save me a seat by the window.\" who=\"Nick\"></virtues-figure>\
+             <p data-id=\"b\">Later you walked the dog.</p>"
+        );
+    }
+
+    /// A block whose words are not the page's block's is new: inserted where
+    /// it goes, and the page's block deleted. So is one of another type.
+    #[test]
+    fn an_unrelated_paragraph_is_swapped() {
+        let doc = doc_of("<p data-id=\"a\">You read on the porch.</p><p data-id=\"b\">End of the day.</p>");
+        let (ops, how) = revise(&doc, "Dinner was at the harbor with Nick.\n\nEnd of the day.\n");
+        assert!(how.is_empty(), "{ops:?}");
+        assert!(matches!(&ops[..], [Op::InsertBefore { id, .. }, Op::Delete { id: gone }] if id == "b" && gone == "a"), "{ops:?}");
+        let doc = doc_of("<p data-id=\"a\">The walk home</p><p data-id=\"b\">End.</p>");
+        let (ops, _) = revise(&doc, "## The walk home\n\nEnd.\n");
+        assert!(matches!(&ops[..], [Op::InsertBefore { .. }, Op::Delete { id }] if id == "a"), "{ops:?}");
+    }
+
+    /// A writer's change to one row of a table leaves every other row as
+    /// it stands, what markdown cannot show included: a header cell across
+    /// two columns, a cell down two rows, a cell's own alignment where its
+    /// column's differs. Read from the markdown, the rows it did not change
+    /// took the markdown's defaults: the wide header split in two, the cell
+    /// under the tall one moved into its column, every cell of a column
+    /// aligned alike. A table of words with no punctuation between its
+    /// cells is still the table changed, not a new one.
+    #[test]
+    fn a_writers_change_to_one_row_leaves_the_other_rows_as_they_stand() {
+        use yrs::Transact;
+        let cases = [
+            (
+                "<table data-id=\"t\"><tr data-id=\"r1\"><th colspan=\"2\"><p data-id=\"h\">Both sides</p></th></tr>\
+                 <tr data-id=\"r2\"><td><p data-id=\"a2\">Left.</p></td><td><p data-id=\"b2\">Right.</p></td></tr>\
+                 <tr data-id=\"r3\"><td><p data-id=\"a3\">More left.</p></td><td><p data-id=\"b3\">More right.</p></td></tr></table>",
+                ("More right.", "More right side."),
+            ),
+            (
+                "<table data-id=\"t\"><tr data-id=\"r1\"><th><p data-id=\"h1\">When</p></th><th><p data-id=\"h2\">What</p></th></tr>\
+                 <tr data-id=\"r2\"><td rowspan=\"2\"><p data-id=\"a2\">Morning</p></td><td><p data-id=\"b2\">You read on the porch.</p></td></tr>\
+                 <tr data-id=\"r3\"><td><p data-id=\"b3\">You had coffee with friends.</p></td></tr>\
+                 <tr data-id=\"r4\"><td><p data-id=\"a4\">Evening</p></td><td><p data-id=\"b4\">You finished a long book.</p></td></tr></table>",
+                ("a long book", "a very long book"),
+            ),
+            (
+                "<table data-id=\"t\"><tr data-id=\"r1\"><th align=\"center\"><p data-id=\"h1\">Day</p></th><th><p data-id=\"h2\">Weather</p></th></tr>\
+                 <tr data-id=\"r2\"><td><p data-id=\"a2\">Monday</p></td><td><p data-id=\"b2\">rain</p></td></tr>\
+                 <tr data-id=\"r3\"><td align=\"right\"><p data-id=\"a3\">Tuesday</p></td><td><p data-id=\"b3\">sun</p></td></tr></table>",
+                ("rain", "rain again"),
+            ),
+        ];
+        for (src, (from, to)) in cases {
+            let doc = doc_of(src);
+            let md = crate::to_markdown(&crate::read_doc(&doc.transact()));
+            assert_eq!(md.matches(from).count(), 1, "{md}");
+            let before = items(&doc);
+            let (ops, how) = revise(&doc, &md.replace(from, to));
+            assert!(matches!(&ops[..], [Op::Replace { id, .. }] if id == "t"), "{src}: {ops:?}");
+            assert_eq!(how, ["patch"], "{src}");
+            assert_eq!(items(&doc), before, "{src}");
+            assert_eq!(
+                show(&crate::read_doc(&doc.transact())),
+                show(&tree(&src.replace(from, to))),
+                "{src}"
+            );
+        }
+    }
+
+    /// A change markdown cannot line up with the page's rows (the row
+    /// under a cell two rows tall, or that cell's own row dropped) writes
+    /// the table as the writer's markdown reads, and the table stays a
+    /// grid: kept, the tall cell would cover a column the row under it
+    /// also fills.
+    #[test]
+    fn a_table_changed_across_a_tall_cell_is_written_as_it_reads() {
+        use yrs::Transact;
+        let src = "<table data-id=\"t\"><tr data-id=\"r1\"><th><p>When</p></th><th><p>What</p></th></tr>\
+                   <tr data-id=\"r2\"><td rowspan=\"2\"><p>Morning</p></td><td><p>You read on the porch.</p></td></tr>\
+                   <tr data-id=\"r3\"><td><p>You had coffee with friends.</p></td></tr>\
+                   <tr data-id=\"r4\"><td><p>Evening</p></td><td><p>You finished a long book.</p></td></tr></table>";
+        let edits: [&dyn Fn(&str) -> String; 2] = [
+            &|md| md.replace("coffee with friends", "tea with friends"),
+            &|md| md.lines().filter(|l| !l.contains("porch")).map(|l| format!("{l}\n")).collect(),
+        ];
+        for edit in edits {
+            let doc = doc_of(src);
+            let md = edit(&crate::to_markdown(&crate::read_doc(&doc.transact())));
+            revise(&doc, &md);
+            let after = crate::read_doc(&doc.transact());
+            assert_eq!(crate::table::problems(&after[0]), Vec::<String>::new(), "{}", show(&after));
+            assert_eq!(crate::to_markdown(&after), md);
+        }
+    }
+
+    /// A copy of `doc` as another device holds it.
+    fn device(doc: &yrs::Doc) -> yrs::Doc {
+        use yrs::updates::decoder::Decode;
+        use yrs::{ReadTxn, Transact};
+        let copy = crate::new_doc();
+        let state = doc.transact().encode_state_as_update_v1(&yrs::StateVector::default());
+        copy.transact_mut()
+            .apply_update(yrs::Update::decode_v1(&state).unwrap())
+            .unwrap();
+        copy
+    }
+
+    /// Type `typed` at the end of the text block `path` leads to, child by
+    /// child from the page, and return the update.
+    fn type_at_end(doc: &yrs::Doc, path: &[u32], typed: &str) -> Vec<u8> {
+        use yrs::{ReadTxn, Text, Transact, WriteTxn, XmlFragment, XmlOut};
+        let before = doc.transact().state_vector();
+        {
+            let mut txn = doc.transact_mut();
+            let frag = txn.get_or_insert_xml_fragment("doc");
+            let Some(XmlOut::Element(mut el)) = frag.get(&txn, path[0]) else {
+                panic!("a block at {path:?}")
+            };
+            for &i in &path[1..] {
+                let Some(XmlOut::Element(next)) = el.get(&txn, i) else {
+                    panic!("a block at {path:?}")
+                };
+                el = next;
+            }
+            let Some(XmlOut::Text(t)) = el.get(&txn, 0) else {
+                panic!("text at {path:?}")
+            };
+            let end = t.len(&txn);
+            t.insert(&mut txn, end, typed);
+        }
+        let update = doc.transact().encode_diff_v1(&before);
+        update
+    }
+
+    fn apply_update(doc: &yrs::Doc, update: &[u8]) {
+        use yrs::updates::decoder::Decode;
+        use yrs::Transact;
+        doc.transact_mut()
+            .apply_update(yrs::Update::decode_v1(update).unwrap())
+            .unwrap();
+    }
+
+    /// Every id `nodes` hold, in order.
+    fn ids_of(nodes: &[Node]) -> Vec<String> {
+        let mut out = vec![];
+        for n in nodes {
+            n.walk(&mut |n| out.extend(n.id().map(str::to_string)));
+        }
+        out
+    }
+
+    /// An item or a row the writer inserts beside one it rewords is new, as
+    /// a paragraph inserted beside a reworded one is: it takes no id of the
+    /// page's, and the reworded one keeps its id and its text, so a
+    /// person's keystroke on its way into it lands in it. Paired by place,
+    /// the inserted item took the reworded one's id and live text, and the
+    /// keystroke landed in the other sentence.
+    #[test]
+    fn an_item_inserted_beside_a_reworded_one_is_new() {
+        use yrs::Transact;
+        let cases = [
+            (
+                "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">You walked the dog in the park.</p></li>\
+                 <li data-id=\"i2\"><p data-id=\"p2\">You cooked dinner for your family.</p></li>\
+                 <li data-id=\"i3\"><p data-id=\"p3\">You read before bed.</p></li></ul>",
+                &[0u32, 1, 0][..],
+                "- You walked the dog in the park.\n- You called your sister about the trip.\n\
+                 - You cooked a late dinner for your family.\n- You read before bed.\n",
+                "<li data-id=\"i2\"><p data-id=\"p2\">You cooked a late dinner for your family. with Nick</p></li>",
+            ),
+            (
+                "<table data-id=\"t\"><tr data-id=\"r1\"><th><p data-id=\"h1\">When</p></th><th><p data-id=\"h2\">What</p></th></tr>\
+                 <tr data-id=\"r2\"><td><p data-id=\"a2\">Morning</p></td><td><p data-id=\"b2\">You cooked dinner for your family.</p></td></tr>\
+                 <tr data-id=\"r3\"><td><p data-id=\"a3\">Night</p></td><td><p data-id=\"b3\">You read before bed.</p></td></tr></table>",
+                &[0u32, 1, 1, 0][..],
+                "| When | What |\n| --- | --- |\n| Afternoon | You called your sister about the trip. |\n\
+                 | Morning | You cooked a late dinner for your family. |\n| Night | You read before bed. |\n",
+                "<tr data-id=\"r2\"><td><p data-id=\"a2\">Morning</p></td><td><p data-id=\"b2\">You cooked a late dinner for your family. with Nick</p></td></tr>",
+            ),
+        ];
+        for (src, path, md, kept) in cases {
+            let doc = doc_of(src);
+            let page_ids = ids_of(&crate::read_doc(&doc.transact()));
+            let keystroke = type_at_end(&device(&doc), path, " with Nick");
+            let (ops, how) = revise(&doc, md);
+            assert_eq!(how, ["patch"], "{ops:?}");
+            apply_update(&doc, &keystroke);
+            let after = crate::read_doc(&doc.transact());
+            let html = show(&after);
+            assert!(html.contains(kept), "{html}");
+            assert_eq!(html.matches("with Nick").count(), 1, "{html}");
+            // The inserted one, second in either, holds only ids of its own.
+            let inserted = &after[0].content[1];
+            assert!(inserted.text_content().contains("You called your sister"), "{html}");
+            let new_ids = ids_of(std::slice::from_ref(inserted));
+            assert!(!new_ids.is_empty(), "{html}");
+            assert!(new_ids.iter().all(|id| !page_ids.contains(id)), "{new_ids:?} in {page_ids:?}: {html}");
+            assert_eq!(ids_of(&after).len(), page_ids.len() + new_ids.len(), "{html}");
+        }
+    }
+
+    /// `diff_ops`, for a version put back and the model, pairs a target
+    /// without ids by type and text as it always did: a changed paragraph is
+    /// a new one there, and only the writer's diff writes it in place.
+    #[test]
+    fn diff_ops_pairs_as_before() {
+        use yrs::Transact;
+        let c = Contract::load();
+        let doc = doc_of("<p data-id=\"a\">You read on the porch while it rained.</p><p data-id=\"b\">End.</p>");
+        let now = crate::read_doc(&doc.transact());
+        let target = written("You read on the porch while it poured.\n\nEnd.\n");
+        let ops = diff_ops(&c, &now, &target);
+        assert!(matches!(&ops[..], [Op::InsertBefore { id, .. }, Op::Delete { id: gone }] if id == "b" && gone == "a"), "{ops:?}");
+        let ops = revise_ops(&c, &now, &target, Dialect::Article);
+        assert!(matches!(&ops[..], [Op::Replace { id, .. }] if id == "a"), "{ops:?}");
+    }
+
     #[test]
     fn diff_ops_name_their_anchors() {
         let c = Contract::load();
@@ -737,161 +1310,5 @@ mod tests {
                 r#"{"op":"delete","id":"b"}"#,
             ]
         );
-    }
-
-    #[test]
-    fn a_fresh_item_inside_a_list_leaves_the_rest_at_base() {
-        let base = tree(
-            "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">a</p></li>\
-             <li data-id=\"i2\"><p data-id=\"p2\">b</p></li></ul><p data-id=\"x\">x</p>",
-        );
-        let current = tree(
-            "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">a, read again</p></li>\
-             <li data-id=\"i2\"><p data-id=\"p2\">b, typed since</p></li></ul><p data-id=\"x\">x, typed since</p>",
-        );
-        let seen = seen_tree(&base, &current, &fresh(&["i1"]));
-        assert_eq!(
-            show(&seen),
-            "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">a, read again</p></li>\
-             <li data-id=\"i2\"><p data-id=\"p2\">b</p></li></ul><p data-id=\"x\">x</p>"
-        );
-    }
-
-    #[test]
-    fn a_fresh_block_gone_from_the_page_leaves() {
-        let base = tree("<p data-id=\"a\">a</p><p data-id=\"b\">b</p><p data-id=\"c\">c</p>");
-        let current = tree("<p data-id=\"a\">a</p><p data-id=\"c\">c, typed since</p>");
-        let seen = seen_tree(&base, &current, &fresh(&["b"]));
-        assert_eq!(show(&seen), "<p data-id=\"a\">a</p><p data-id=\"c\">c</p>");
-    }
-
-    #[test]
-    fn a_fresh_block_new_to_the_base_goes_after_its_preceding_sibling() {
-        let base = tree("<p data-id=\"a\">a</p><p data-id=\"c\">c</p>");
-        let current = tree(
-            "<p data-id=\"new0\">first</p><p data-id=\"a\">a</p><p data-id=\"n1\">one</p>\
-             <p data-id=\"n2\">two</p><p data-id=\"c\">c</p>",
-        );
-        let seen = seen_tree(&base, &current, &fresh(&["n1", "n2", "new0"]));
-        assert_eq!(
-            show(&seen),
-            "<p data-id=\"new0\">first</p><p data-id=\"a\">a</p><p data-id=\"n1\">one</p>\
-             <p data-id=\"n2\">two</p><p data-id=\"c\">c</p>"
-        );
-        // Nested: a new item in a list the base has.
-        let base = tree("<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">a</p></li></ul>");
-        let current = tree(
-            "<ul data-id=\"l\"><li data-id=\"i0\"><p data-id=\"p0\">zero</p></li>\
-             <li data-id=\"i1\"><p data-id=\"p1\">a</p></li><li data-id=\"i2\"><p data-id=\"p2\">b</p></li></ul>",
-        );
-        let seen = seen_tree(&base, &current, &fresh(&["i2", "i0"]));
-        assert_eq!(show(&seen), show(&current));
-        // In a table cell, which has no id: found through the table.
-        let base = tree("<table data-id=\"t\"><tr><td><p data-id=\"c1\">x</p></td></tr></table>");
-        let current = tree(
-            "<table data-id=\"t\"><tr><td><p data-id=\"c1\">x, typed since</p><p data-id=\"c2\">y</p></td></tr></table>",
-        );
-        let seen = seen_tree(&base, &current, &fresh(&["c2"]));
-        assert_eq!(
-            show(&seen),
-            "<table data-id=\"t\"><tbody><tr><td><p data-id=\"c1\">x</p><p data-id=\"c2\">y</p></td></tr></tbody></table>"
-        );
-    }
-
-    #[test]
-    fn nothing_outside_fresh_comes_from_the_page() {
-        let base = tree("<p data-id=\"a\">a</p><p data-id=\"b\">b</p>");
-        let current =
-            tree("<p data-id=\"a\">a2</p><p data-id=\"z\">new, unread</p><p data-id=\"b\">b2</p>");
-        assert_eq!(show(&seen_tree(&base, &current, &fresh(&[]))), show(&base));
-        assert_eq!(
-            show(&seen_tree(
-                &base,
-                &current,
-                &fresh(&["b", "gone-everywhere"])
-            )),
-            "<p data-id=\"a\">a</p><p data-id=\"b\">b2</p>"
-        );
-        // A whole read: everything fresh is the page.
-        let all = fresh(&["a", "b", "z"]);
-        assert_eq!(show(&seen_tree(&base, &current, &all)), show(&current));
-    }
-
-    /// A list the base never held: its item cannot be placed alone, so the
-    /// list is what a reader is shown, and the item enters with it.
-    #[test]
-    fn an_item_of_a_list_the_base_lacks_is_shown_with_its_list() {
-        let base = tree("<p data-id=\"p1\">a</p>");
-        let current = tree(
-            "<p data-id=\"p1\">a</p><ul data-type=\"taskList\" data-id=\"l1\">\
-             <li data-type=\"taskItem\" data-checked=\"false\" data-id=\"i1\"><p data-id=\"q1\">Pack</p></li>\
-             <li data-type=\"taskItem\" data-checked=\"false\" data-id=\"i2\"><p data-id=\"q2\">Print</p></li></ul>",
-        );
-        // Alone, the item has nowhere to go.
-        assert_eq!(seen_tree(&base, &current, &fresh(&["i1"])), base);
-        assert_eq!(shown_for(&base, &current, "i1").as_deref(), Some("l1"));
-        assert_eq!(shown_for(&base, &current, "q2").as_deref(), Some("l1"));
-        let seen = seen_tree(&base, &current, &fresh(&["l1"]));
-        assert!(find_node(&seen, "i1").is_some());
-        assert_eq!(seen, current);
-
-        // A block the base has, or whose list the base has, is shown itself.
-        assert_eq!(shown_for(&seen, &current, "i1").as_deref(), Some("i1"));
-        assert_eq!(shown_for(&base, &current, "p1").as_deref(), Some("p1"));
-        let base = tree("<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">a</p></li></ul>");
-        let current = tree(
-            "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">a</p></li>\
-             <li data-id=\"i2\"><p data-id=\"p2\">b</p></li></ul>",
-        );
-        assert_eq!(shown_for(&base, &current, "p2").as_deref(), Some("i2"));
-        assert_eq!(shown_for(&base, &current, "gone"), None);
-    }
-
-    /// A block brought up to date around a block the reader is about to
-    /// write over: that block stays as it was read.
-    #[test]
-    fn a_block_kept_as_read_stays_inside_a_fresh_one() {
-        let base =
-            tree("<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">Pakc bags</p></li></ul>");
-        let current = tree(
-            "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">Pakc bags tonight</p></li>\
-             <li data-id=\"i2\"><p data-id=\"p2\">Book seats</p></li></ul>",
-        );
-        let mut seen = seen_tree(&base, &current, &fresh(&["l"]));
-        keep_as_read(&mut seen, &base, &fresh(&["p1", "not-read"]));
-        assert_eq!(
-            show(&seen),
-            "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">Pakc bags</p></li>\
-             <li data-id=\"i2\"><p data-id=\"p2\">Book seats</p></li></ul>"
-        );
-
-        // A block kept as read takes back what it held, from wherever the
-        // fresh block put it: no id is in the tree twice.
-        let base = tree(
-            "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">a</p></li><li data-id=\"i2\"><p data-id=\"p2\">b</p></li></ul>\
-             <ul data-id=\"m\"><li data-id=\"i3\"><p data-id=\"p3\">c</p></li></ul>",
-        );
-        let current = tree(
-            "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">a</p></li></ul>\
-             <ul data-id=\"m\"><li data-id=\"i3\"><p data-id=\"p3\">c</p></li><li data-id=\"i2\"><p data-id=\"p2\">b</p></li></ul>",
-        );
-        let mut seen = seen_tree(&base, &current, &fresh(&["m"]));
-        assert_eq!(show(&seen), show(&current));
-        keep_as_read(&mut seen, &base, &fresh(&["l"]));
-        assert_eq!(seen, base);
-    }
-
-    #[test]
-    fn a_block_moved_into_a_fresh_one_leaves_its_old_place() {
-        let base = tree(
-            "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">a</p></li></ul>\
-             <ul data-id=\"m\"><li data-id=\"i2\"><p data-id=\"p2\">b</p></li><li data-id=\"i3\"><p data-id=\"p3\">c</p></li></ul>",
-        );
-        let current = tree(
-            "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">a</p></li><li data-id=\"i2\"><p data-id=\"p2\">b</p></li></ul>\
-             <ul data-id=\"m\"><li data-id=\"i3\"><p data-id=\"p3\">c</p></li></ul>",
-        );
-        let seen = seen_tree(&base, &current, &fresh(&["l"]));
-        assert_eq!(show(&seen), show(&current));
     }
 }

@@ -230,6 +230,7 @@ describe("readRefusal", () => {
 	});
 
 	it("maps the other refusals to failure codes", () => {
+		expect(readRefusal(409, "pending_suggestion")).toEqual({ kind: "failed", code: "pending_suggestion" });
 		expect(readRefusal(422, "not_over")).toEqual({ kind: "failed", code: "not_over" });
 		expect(readRefusal(404, "no_page")).toEqual({ kind: "failed", code: "no_page" });
 		expect(readRefusal(500, "Internal error")).toEqual({ kind: "failed", code: "failed" });
@@ -239,7 +240,7 @@ describe("readRefusal", () => {
 
 describe("failedCopy", () => {
 	it("has its own line for each code the server sends", () => {
-		const codes = ["not_enough", "edited_while_writing", "thin_draft", "not_saved", "billing", "not_over", "busy"];
+		const codes = ["not_enough", "edited_while_writing", "thin_draft", "not_saved", "billing", "not_over", "busy", "pending_suggestion"];
 		const lines = codes.map(failedCopy);
 		expect(new Set(lines).size).toBe(codes.length);
 		for (const line of lines) expect(line).not.toBe(failedCopy("failed"));
@@ -257,6 +258,12 @@ describe("failedCopy", () => {
 	it("says what happened and what to do when a page didn't come back", () => {
 		expect(SHOW_FAILED).toMatch(/Try Show it again\.$/);
 		expect(PUT_BACK_UNSEEN).toMatch(/Open this day again to see it\.$/);
+	});
+
+	it("says a pending suggestion is yours to decide first, and not to try again as it is", () => {
+		const line = failedCopy("pending_suggestion");
+		expect(line).toMatch(/Accept or reject it in the page/);
+		expect(line).not.toMatch(/[Tt]ry again/);
 	});
 
 	it("says a new page that isn't saved yet is saved again without giving your server a mind", () => {
@@ -300,7 +307,7 @@ describe("putBackCopy", () => {
 
 describe("the server in this page's lines", () => {
 	it("never wants or tries", () => {
-		const codes = ["not_enough", "edited_while_writing", "thin_draft", "not_saved", "billing", "not_over", "busy", "failed"];
+		const codes = ["not_enough", "edited_while_writing", "thin_draft", "not_saved", "billing", "not_over", "busy", "pending_suggestion", "failed"];
 		const lines = [
 			...codes.map(failedCopy),
 			UNKNOWN,

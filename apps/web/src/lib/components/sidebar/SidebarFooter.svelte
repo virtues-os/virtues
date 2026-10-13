@@ -10,6 +10,7 @@
 		stagedBundle,
 	} from "$lib/tauri/bridge";
 	import { onBoxBuildChanged } from "$lib/build";
+	import { reloadApp, uploadsHold } from "$lib/reload";
 
 	interface Props {
 		collapsed?: boolean;
@@ -128,6 +129,8 @@
 
 	/** Relaunch into the staged release, or take the chip down if there is none. */
 	async function relaunch() {
+		// A file still on its way to the server would end with this page.
+		if (uploadsHold("relaunch", () => void applyAppUpdate())) return;
 		if (await applyAppUpdate()) return; // unreachable: the app restarts
 		// The shell had nothing staged after all. Rather than leave a button
 		// that does nothing when pressed, drop the chip and re-read the state
@@ -199,7 +202,7 @@
 		<button
 			type="button"
 			class="relaunch"
-			onclick={() => window.location.reload()}
+			onclick={() => reloadApp()}
 			title={ownCopy
 				? "This app downloaded a newer interface - reload to switch to it"
 				: "Your server is serving a newer interface - reload to pick it up"}

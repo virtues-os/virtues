@@ -46,15 +46,6 @@ where
             "/api/pages/search/refs",
             get(search_refs_handler),
         )
-        // Markdown into blocks, for a paste into a block page. A static
-        // segment, matched before `:id`. Its body holds one conversion's
-        // markdown, which JSON escapes to at most about twice its bytes;
-        // anything larger is refused before it is read.
-        .route(
-            "/api/pages/convert",
-            post(convert_markdown_handler)
-                .layer(axum::extract::DefaultBodyLimit::max(CONVERT_BODY_LIMIT)),
-        )
         .route(
             "/api/pages/:id",
             get(get_page_handler)
@@ -84,6 +75,8 @@ where
             "/api/pages/versions/:version_id",
             get(get_page_version_handler),
         )
+        // A device's copy of a page from before it moved to blocks.
+        .route("/api/pages/:id/device-copy", post(keep_device_copy_handler))
         // Yjs WebSocket (real-time collaborative editing)
         .route("/ws/yjs/:page_id", get(crate::server::yjs::yjs_websocket_handler))
 }
@@ -124,29 +117,49 @@ struct PageWithContract {
     /// whose contract is newer opens a block page read-only and says the
     /// server needs an update: the server could not check what it writes.
     box_contract: u32,
+    /// `page` or `article`: an article's markdown reads as an article in the
+    /// editor (its footnotes, figures and veils).
+    kind: String,
+    /// Which copy of a block page's document this is (`tree_lineage`): a
+    /// device keeps its copy of the page under it, and sends the server any
+    /// copy it kept under another. Null for a markdown page, and for a block
+    /// page from before lineages.
+    lineage: Option<String>,
 }
 
-/// GET /api/pages/:id - Get a single page
+/// GET /api/pages/:id - Get a single page.
+///
+/// The page's document is built before its row is read: building it moves
+/// an article nobody had opened to blocks (`block_move::first_open`), so the
+/// row read after says `format: "tree"` and the contract and lineage the
+/// app binds at once.
 pub async fn get_page_handler(
     State(pool): State<PgPool>,
     State(yjs): State<YjsState>,
     Path(id): Path<String>,
 ) -> Response {
+    let contract = yjs.page_contract(&id).await;
     let page = match crate::api::pages::get_page(&pool, &id).await {
         Ok(page) => page,
         Err(e) => return error_response(e),
     };
-    let contract = match yjs.page_contract(&id).await {
+    let contract = match contract {
         Ok(contract) => Some(contract),
         Err(error) => {
             tracing::warn!(page_id = %id, %error, "could not read the page's document contract");
             None
         }
     };
+    let (kind, lineage) = match crate::api::pages::kind_and_lineage(&pool, &id).await {
+        Ok(read) => read,
+        Err(e) => return error_response(e),
+    };
     Json(PageWithContract {
         page,
         contract,
         box_contract: virtues_document::contract().version,
+        kind,
+        lineage,
     })
     .into_response()
 }
@@ -226,27 +239,6 @@ pub async fn append_page_handler(
     }
 }
 
-/// The body of `POST /api/pages/convert`.
-#[derive(Debug, Deserialize)]
-pub struct ConvertMarkdownRequest {
-    pub markdown: String,
-    /// A person's paste, read as text they copied (`parse_pasted_markdown`).
-    #[serde(default)]
-    pub paste: bool,
-}
-
-/// The largest body `POST /api/pages/convert` reads: markdown at the
-/// converter's limit, JSON-escaped, which doubles a quote, a backslash or a
-/// line break, with room for the rest of the request.
-const CONVERT_BODY_LIMIT: usize = 2 * virtues_document::MAX_INPUT_BYTES + 64 * 1024;
-
-/// POST /api/pages/convert - markdown as the canonical HTML of the blocks it
-/// makes, without block ids, and what the conversion changed: the one
-/// converter, for a paste into a block page and the inline writer.
-pub async fn convert_markdown_handler(Json(req): Json<ConvertMarkdownRequest>) -> Response {
-    api_response(crate::api::pages::convert_markdown(req.markdown, req.paste).await)
-}
-
 /// A page's markdown as its live document holds it.
 #[derive(Debug, Serialize)]
 struct PageMarkdown {
@@ -256,19 +248,27 @@ struct PageMarkdown {
 
 /// GET /api/pages/:id/markdown - the page's markdown from its live document:
 /// a markdown page's text, or a block page's export, including edits not
-/// saved yet. What Copy markdown and View as markdown show.
+/// saved yet. What Copy markdown and View as markdown show. The text is read
+/// first: reading it can move an article nobody had opened to blocks, and
+/// the format read after says what the text is.
 pub async fn get_page_markdown_handler(
     State(pool): State<PgPool>,
     State(yjs): State<YjsState>,
     Path(id): Path<String>,
 ) -> Response {
-    let format = match crate::api::pages::page_format(&pool, &id).await {
-        Ok(format) => format,
-        Err(e) => return error_response(e),
+    let markdown = match yjs.read_text(&id).await {
+        Ok(markdown) => markdown,
+        Err(e) => {
+            // A missing or trashed page is `NotFound`, as the format says.
+            if let Err(missing) = crate::api::pages::page_format(&pool, &id).await {
+                return error_response(missing);
+            }
+            return error_response(crate::error::Error::Other(e));
+        }
     };
-    match yjs.read_text(&id).await {
-        Ok(markdown) => Json(PageMarkdown { format, markdown }).into_response(),
-        Err(e) => error_response(crate::error::Error::Other(e)),
+    match crate::api::pages::page_format(&pool, &id).await {
+        Ok(format) => Json(PageMarkdown { format, markdown }).into_response(),
+        Err(e) => error_response(e),
     }
 }
 
@@ -337,6 +337,39 @@ pub async fn restore_page_version_handler(
     api_response(crate::api::pages::restore_version(&pool, &yjs, &id, &version_id).await)
 }
 
+/// A device's copy of a page, as `POST /api/pages/:id/device-copy` takes it.
+#[derive(Debug, Deserialize)]
+pub struct DeviceCopyRequest {
+    /// The copy's Yjs state, base64.
+    pub state: String,
+    /// The lineage of the block page's document the copy was kept under;
+    /// absent for a copy of the page in markdown, or of a block page from
+    /// before lineages.
+    #[serde(default)]
+    pub lineage: Option<String>,
+}
+
+/// POST /api/pages/:id/device-copy - a copy a device kept of a block page
+/// that is not the page's document: one from before it moved to blocks, or
+/// one of an earlier document of it. Sent the first time the device opens
+/// the page: `{ "kept": <version> }` when it held typing the page never had,
+/// kept as a version (`pages::keep_device_copy_of`), else `{ "kept": null }`.
+pub async fn keep_device_copy_handler(
+    State(pool): State<PgPool>,
+    Path(id): Path<String>,
+    Json(request): Json<DeviceCopyRequest>,
+) -> Response {
+    use base64::Engine as _;
+    let Ok(state) = base64::engine::general_purpose::STANDARD.decode(&request.state) else {
+        return error_response(crate::error::Error::InvalidInput("The copy isn't base64.".into()));
+    };
+    api_response(
+        crate::api::pages::keep_device_copy_of(&pool, &id, &state, request.lineage.as_deref())
+            .await
+            .map(|kept| serde_json::json!({ "kept": kept })),
+    )
+}
+
 /// GET /api/pages/versions/:version_id - A version and what it says: a
 /// markdown version's snapshot, or a block version's export and preview HTML.
 pub async fn get_page_version_handler(
@@ -395,7 +428,11 @@ mod tests {
     /// axum's own default would refuse a large paste before its handler
     /// could say why.
     fn app(pool: &PgPool) -> (Router, YjsState) {
-        let yjs = YjsState::new(pool.clone());
+        app_with(pool, YjsState::new(pool.clone()))
+    }
+
+    /// [`app`] on `yjs`.
+    fn app_with(pool: &PgPool, yjs: YjsState) -> (Router, YjsState) {
         let router = page_routes()
             .with_state(TestState {
                 pool: pool.clone(),
@@ -549,75 +586,6 @@ mod tests {
         assert_eq!(stored(&pool, &tree).await, before);
     }
 
-    #[sqlx::test]
-    async fn convert_answers_with_blocks_or_says_why_not(pool: PgPool) {
-        let (mut app, _) = app(&pool);
-        let (status, body) = call(
-            &mut app,
-            Method::POST,
-            "/api/pages/convert",
-            Some(json!({ "markdown": "---\ntitle: Trip\n---\n\n## Plan\n\n**Lunch** with [@Nick](/person/person_1).\n" })),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(
-            body["html"],
-            "<h2>Plan</h2><p><strong>Lunch</strong> with \
-             <virtues-mention to=\"/person/person_1\" label=\"Nick\"></virtues-mention>.</p>"
-        );
-        assert!(!body["html"].as_str().unwrap().contains("data-id"));
-        assert_eq!(body["notes"].as_array().map(Vec::len), Some(1), "{body}");
-
-        let deep = format!("{}Deep.\n", "> ".repeat(150));
-        let (status, body) =
-            call(&mut app, Method::POST, "/api/pages/convert", Some(json!({ "markdown": deep }))).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-        assert!(error_of(&body).contains("couldn't turn this markdown into blocks"), "{body}");
-
-        let large = "a".repeat(virtues_document::MAX_INPUT_BYTES + 1);
-        let (status, body) =
-            call(&mut app, Method::POST, "/api/pages/convert", Some(json!({ "markdown": large }))).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-        assert!(error_of(&body).contains(crate::api::pages::PASTE_TOO_LARGE), "{body}");
-
-        // Past what any paste the converter takes can be, the body is not read.
-        let huge = "\"".repeat(CONVERT_BODY_LIMIT / 2 + 1);
-        let (status, _) =
-            call(&mut app, Method::POST, "/api/pages/convert", Some(json!({ "markdown": huge }))).await;
-        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
-
-        // A paste is read as text: a line of code keeps its tags and its
-        // braces, where the same markdown written loses the tag.
-        let code = "- if (user == null) return <Login/>;\n- Draft {--old--} == fine\n";
-        let (status, body) = call(
-            &mut app,
-            Method::POST,
-            "/api/pages/convert",
-            Some(json!({ "markdown": code, "paste": true })),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(
-            body["html"],
-            "<ul><li><p>if (user == null) return &lt;Login/&gt;;</p></li><li><p>Draft {--old--} == fine</p></li></ul>"
-        );
-        let (_, written) =
-            call(&mut app, Method::POST, "/api/pages/convert", Some(json!({ "markdown": code }))).await;
-        assert!(!written["html"].as_str().unwrap().contains("Login"), "{written}");
-
-        // Markdown that only looks like front matter, pasted, converts and
-        // answers.
-        for markdown in ["Notes:\n\n ---\nLunch with **Nick** on Friday.\n---\n", " ---\nx\n---"] {
-            let answered = tokio::time::timeout(
-                std::time::Duration::from_secs(20),
-                call(&mut app, Method::POST, "/api/pages/convert", Some(json!({ "markdown": markdown }))),
-            )
-            .await;
-            let (status, body) = answered.expect("the server answers");
-            assert_eq!(status, StatusCode::OK, "{body}");
-        }
-    }
-
     /// lib0's var-uint, as y-websocket frames an update.
     fn sync_update(update: &[u8]) -> Vec<u8> {
         let mut message = vec![0, 2];
@@ -756,7 +724,7 @@ mod tests {
         let base = yjs.read_tree(&tree).await.unwrap();
         yjs.edit_tree(
             &tree,
-            Some(&base),
+            Some(&virtues_document::Seen::of_page(&base)),
             &[virtues_document::Op::Append {
                 html: "<p>Tea.</p>".into(),
             }],
@@ -804,5 +772,63 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "another page's version");
+    }
+
+    /// The page's row is read after its document is built, so the GET that
+    /// first builds an article's document answers with the blocks it moved
+    /// to: their format, contract and lineage, and that it is an article.
+    #[sqlx::test]
+    async fn get_moves_an_article_and_says_tree_lineage_and_kind(pool: PgPool) {
+        let (mut app, _) = app_with(&pool, YjsState::with_tree_articles(pool.clone(), true));
+        let article = crate::api::wiki_articles::create_article(
+            &pool,
+            "person",
+            "person_1",
+            "Nick",
+            "You met Nick at the R&B night.\n",
+        )
+        .await
+        .unwrap();
+        let (status, body) = call(&mut app, Method::GET, &format!("/api/pages/{}", article.page_id), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["format"], "tree");
+        assert_eq!(body["kind"], "article");
+        assert_eq!(body["contract"], json!(virtues_document::contract().version));
+        assert_eq!(body["content"], "You met Nick at the R\\&B night.\n");
+        let lineage = body["lineage"].as_str().expect("a lineage");
+        assert!(lineage.len() == 16 && lineage.bytes().all(|b| b.is_ascii_hexdigit()), "{lineage}");
+
+        let markdown = page_as(&pool, "Notes.\n", PageFormat::Markdown).await;
+        let (_, body) = call(&mut app, Method::GET, &format!("/api/pages/{markdown}"), None).await;
+        assert_eq!((body["kind"].as_str(), body["lineage"].is_null()), (Some("page"), true));
+        // A page a wiki article owns is an article whatever its kind, as the
+        // server reads and moves it.
+        sqlx::query("INSERT INTO wiki_articles (id, subject_type, subject_id, page_id) VALUES ('wa_owned', 'person', 'person_2', $1)")
+            .bind(&markdown)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (_, body) = call(&mut app, Method::GET, &format!("/api/pages/{markdown}"), None).await;
+        assert_eq!(body["kind"], "article");
+        let tree = page_as(&pool, "Notes.\n", PageFormat::Tree).await;
+        let (_, body) = call(&mut app, Method::GET, &format!("/api/pages/{tree}"), None).await;
+        assert!(body["lineage"].as_str().is_some(), "a block page made today has its lineage: {body}");
+        let (status, _) = call(&mut app, Method::GET, "/api/pages/page_nosuch", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// The markdown door reads the text before the format, so an article
+    /// its read moved to blocks answers as blocks.
+    #[sqlx::test]
+    async fn markdown_door_reads_the_text_first(pool: PgPool) {
+        let (mut app, _) = app_with(&pool, YjsState::with_tree_articles(pool.clone(), true));
+        let article =
+            crate::api::wiki_articles::create_article(&pool, "person", "person_1", "Nick", "R&B night.\n")
+                .await
+                .unwrap();
+        let (status, body) =
+            call(&mut app, Method::GET, &format!("/api/pages/{}/markdown", article.page_id), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body, json!({ "format": "tree", "markdown": "R\\&B night.\n" }));
     }
 }

@@ -154,7 +154,11 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: apps/web/pnpm-lock.yaml
 
+      # wasm32: `pnpm build` builds the page editor's markdown converter
+      # (apps/web/scripts/build-converter.mjs).
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -213,11 +217,15 @@ jobs:
   #
   # Without DOCUMENT_CONFORMANCE_BIN the conformance cases skip (and say so),
   # so a local `pnpm vitest run` that does not build the binary is not this
-  # check. The block editor's tests (src/lib/document), the page bindings'
-  # (src/lib/yjs), the AI writer's (src/lib/ai), the page and chat glue's
-  # (src/lib/components/views, src/lib/components/chat/state), the CodeMirror
-  # page editor's (src/lib/codemirror) and the floating elements'
-  # (src/lib/floating) run here too: this job is where vitest runs in CI.
+  # check. Every other vitest file runs here too, both projects (`unit` and
+  # the mounted components'): this job is where vitest runs in CI, so it
+  # names no paths, and a new test file is run without being listed
+  # (`src/lib/ci.test.ts` holds it to that).
+  #
+  # The editor converts pasted markdown with the crate's own converter,
+  # compiled to WebAssembly (crates/virtues-document-wasm); vitest's global
+  # setup builds it, and `converter.test.ts` holds it to the native build
+  # byte for byte over the corpus.
   document-conformance:
     name: Document contract conformance
     runs-on: blacksmith-4vcpu-ubuntu-2204
@@ -235,6 +243,8 @@ jobs:
           cache-dependency-path: apps/web/pnpm-lock.yaml
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -251,7 +261,7 @@ jobs:
         working-directory: apps/web
         env:
           DOCUMENT_CONFORMANCE_BIN: ${{ github.workspace }}/target/debug/document-conformance
-        run: pnpm vitest run src/lib/document src/lib/yjs src/lib/ai src/lib/components/views src/lib/components/chat/state src/lib/codemirror src/lib/floating
+        run: pnpm vitest run
 
   rust:
     runs-on: blacksmith-8vcpu-ubuntu-2204
@@ -314,6 +324,15 @@ jobs:
 
       - name: Clippy
         run: cargo clippy -p virtues -p virtues-installer
+
+      # The page converter without its Yjs half, as the browser's WebAssembly
+      # build compiles it (crates/virtues-document-wasm). Nothing else builds
+      # the crate with `yjs` off, so a converter path that reached into yrs
+      # would first fail in the web build.
+      - name: The page converter alone
+        run: |
+          cargo clippy -p virtues-document --no-default-features --all-targets -- -D warnings
+          cargo test -p virtues-document --no-default-features --lib
 
       # A ratchet over the repo's most-repeated bug: a query whose error is
       # discarded answers with a plausible value and never surfaces. Fails only

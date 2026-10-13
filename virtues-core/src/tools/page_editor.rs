@@ -11,11 +11,14 @@
 //! - **A block page** (`tree`) is read as canonical HTML with a `data-id` on
 //!   every block, or, when long, as its markdown export with each top-level
 //!   block's id in a comment above it. Every read records what the model was
-//!   shown as a read base (`api::page_reads`) and returns its name. An edit
-//!   is a batch of block-id ops naming that base, applied all or none
-//!   (`YjsState::edit_tree`): a block someone changed since the read is
-//!   merged with the edit or refused, never overwritten unseen. A refused
-//!   batch comes back as a result the model acts on, not an error.
+//!   shown as a read base (`virtues_document::Seen`, kept by
+//!   `api::page_reads`) and returns its name. An edit is a batch of
+//!   block-id ops naming that base, applied all or none
+//!   (`YjsState::edit_tree`): it takes off the page or writes over only
+//!   what reads showed the model as it stands, a block someone changed
+//!   since the read is merged with the edit or refused, and nothing is
+//!   overwritten unseen. A refused batch comes back as a result the model
+//!   acts on, not an error.
 //! - **A markdown page** is read as its text and edited by find/replace on
 //!   it, through the live Y.Text.
 //!
@@ -29,9 +32,9 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
-use virtues_document::{Node, Op, Problem};
+use virtues_document::{Form, Node, Op, Part, Problem, Seen, Shown, Unseen, Why};
 
 // Static regexes for stripping CriticMarkup (legacy safety fallback — strips markers if LLM still outputs them)
 static ADDITION_RE: OnceLock<Regex> = OnceLock::new();
@@ -56,6 +59,15 @@ const TYPED_BEFORE_CHAT_EDIT: &str = "Auto-saved (before a chat edit)";
 /// by id.
 const READ_HTML_CHARS: usize = 24_000;
 
+/// Whether a full read shows the page's canonical `html` whole: short
+/// enough in characters ([`READ_HTML_CHARS`]), and in the bytes it takes in
+/// the result ([`READ_MARKDOWN_BYTES`], as every read is measured), so the
+/// agent loop's cut never clips it and leaves the model a base of blocks it
+/// was not shown. A control character takes six bytes in JSON (`\u001b`).
+fn shows_whole_as_html(html: &str) -> bool {
+    chars(html) <= READ_HTML_CHARS && json_bytes(html) <= READ_MARKDOWN_BYTES
+}
+
 // The most ops one edit takes, the crate's, whose grid refusal names it. A
 // batch is applied in one transaction under the page's lock, which open
 // editors wait on.
@@ -76,10 +88,10 @@ pub(crate) fn fits_one_read(node: &Node) -> bool {
     json_bytes(&virtues_document::to_html(std::slice::from_ref(node), true)) <= READ_MARKDOWN_BYTES
 }
 
-/// How much of the written blocks' HTML an edit's result shows, whole blocks
-/// only. A block shown here is one the model has seen as it now stands, so
-/// it enters the next base; one too long to show does not, and the result
-/// names it, to be read by id before it is replaced.
+/// How much of the written blocks' HTML an edit's result shows, and a
+/// refusal of the blocks its retry is written from, whole blocks only. A
+/// block an edit wrote is in the next base as written whether it is shown
+/// or not; one a refusal could not show is named, to be read by id.
 const WRITTEN_HTML_CHARS: usize = 8_000;
 
 /// How much markdown each side of an edit's `find`/`replace` carries: they
@@ -98,8 +110,8 @@ const LONG_PAGE_NOTE: &str = "Long page, shown as markdown. To edit a block exac
      html: get_page_content with ids and this base.";
 
 /// An `ids` or `after` read without a base it can name.
-const IDS_NEED_BASE: &str = "ids and after need the base from your last read of this page; \
-     read it again without them";
+const IDS_NEED_BASE: &str = "ids and after need the base from your last read of this page in \
+     this turn; read it again without them";
 
 const EDITED_BY_BLOCK: &str =
     "This page is edited by block: read it with get_page_content, then send base and ops.";
@@ -271,12 +283,14 @@ impl PageEditorTool {
     /// A markdown page returns its text, live from Yjs when it is available.
     /// A block page returns HTML with block ids, or the long form, and keeps
     /// what it showed as the base the next edit names. `ids` with `base`
-    /// reads those blocks as HTML and keeps a base that is the earlier read
-    /// with just those blocks brought up to date (`seen_tree`). Without Yjs
-    /// (a CLI read in its own process) a block page is read from its saved
-    /// state, which can trail the live doc by the save debounce; a base
-    /// kept from it is still a tree the page held, and the merge handles
-    /// what changed since.
+    /// reads those blocks as HTML, and `after` with `base` reads on; either
+    /// keeps a base that is the earlier one with what this read shows
+    /// added. A read's text and what its base learns are both read off one
+    /// value (`virtues_document::Shown`), so a base never holds what the
+    /// text did not show. Without Yjs (a CLI read in its own process) a
+    /// block page is read from its saved state, which can trail the live
+    /// doc by the save debounce; a base kept from it holds what the page
+    /// held, and the merge handles what changed since.
     pub async fn get_page_content(
         &self,
         arguments: serde_json::Value,
@@ -284,6 +298,7 @@ impl PageEditorTool {
     ) -> Result<ToolResult, ToolError> {
         let args: GetPageContentArgs = serde_json::from_value(arguments)
             .map_err(|e| ToolError::InvalidParameters(format!("Invalid arguments: {}", e)))?;
+        let turn = context.turn.as_deref();
 
         // Get page_id from args or context
         let page_id = args.page_id.clone().or_else(|| context.page_id.clone());
@@ -358,9 +373,8 @@ impl PageEditorTool {
         }
 
         // An `ids` or `after` read adds to an earlier read: what the model
-        // has seen is that read's base with the blocks shown now brought up
-        // to date.
-        let base_tree = if ids.is_empty() && after.is_none() {
+        // has been shown is that read's base and what this read shows.
+        let prior = if ids.is_empty() && after.is_none() {
             None
         } else {
             let base = args
@@ -370,123 +384,30 @@ impl PageEditorTool {
                 .filter(|b| !b.is_empty())
                 .ok_or_else(|| ToolError::InvalidParameters(IDS_NEED_BASE.into()))?;
             Some(
-                self.base_tree(&page.id, base, &tree)
+                self.base_seen(&page.id, base, &tree, turn)
                     .await?
                     .ok_or_else(|| ToolError::InvalidParameters(IDS_NEED_BASE.into()))?,
             )
         };
 
-        if let Some(base) = base_tree.as_ref().filter(|_| !ids.is_empty()) {
-            // A block whose list (or quote, or table) the base never held
-            // enters it only with that list, so the list is what is shown.
-            // When the list is too long to show whole, it is shown cut down
-            // to the way to the block (`path_copy`).
-            let mut found: Vec<Node> = vec![];
-            let mut missing = vec![];
-            // The blocks asked for, by the block shown for them, in the order
-            // asked: several items of one list the base lacks are one list.
-            let mut asked_in: Vec<(String, Vec<String>)> = vec![];
-            for id in &ids {
-                let Some(shown) = virtues_document::shown_for(&base.tree, &tree, id) else {
-                    missing.push(id.clone());
-                    continue;
-                };
-                match asked_in.iter_mut().find(|(s, _)| *s == shown) {
-                    Some((_, inside)) => inside.push(id.clone()),
-                    None => asked_in.push((shown, vec![id.clone()])),
-                }
-            }
-            // Each list shown cut down, the blocks in it shown in part, and
-            // the blocks asked for that it shows.
-            let mut cut: Vec<(String, Vec<String>, Vec<String>)> = vec![];
-            for (shown, inside) in &asked_in {
-                let Some(node) = virtues_document::ops::find_node(&tree, shown) else {
-                    continue;
-                };
-                if !inside.contains(shown) && !fits_one_read(node) {
-                    let targets: Vec<&str> = inside.iter().map(String::as_str).collect();
-                    if let Some((copy, partial)) = path_copy(node, &targets, None) {
-                        cut.push((shown.clone(), partial, inside.clone()));
-                        found.push(copy);
-                        continue;
-                    }
-                }
-                found.push(node.clone());
-            }
-            let read = read_by_id(&found, READ_MARKDOWN_BYTES, json_bytes);
-            // A block asked for and gone is seen gone, so it leaves the
-            // base; one the read had no room for stays as the base had it.
-            let fresh: HashSet<String> =
-                read.seen.iter().cloned().chain(missing.iter().cloned()).collect();
-            let mut seen = virtues_document::seen_tree(&base.tree, &tree, &fresh);
-            // A list shown cut down enters the base as it was shown.
-            let cut: Vec<(String, Vec<String>, Vec<String>)> =
-                cut.into_iter().filter(|(outer, _, _)| read.seen.contains(outer)).collect();
-            for (outer, _, _) in &cut {
-                if let Some(copy) = found.iter().find(|n| n.id() == Some(outer.as_str())) {
-                    replace_node(&mut seen, outer, copy.clone());
-                }
-            }
-            // An opened block enters the base as it was shown: the blocks
-            // inside it this read listed, and any an earlier read showed, as
-            // that read showed them. Taken from the page, those would bring
-            // what no read has shown into the base: a person's change to a
-            // block read before, which a write would then land over unseen,
-            // or the rest of a list inside read only in part.
-            if let Some(opened) = &read.opened {
-                let mut keep: Vec<String> = opened.shown.clone();
-                let mut as_read: HashSet<String> = HashSet::new();
-                if let Some(had) = virtues_document::ops::find_node(&base.tree, &opened.id) {
-                    for id in had.content.iter().filter_map(Node::id) {
-                        if !opened.shown.iter().any(|s| s == id) {
-                            as_read.insert(id.to_string());
-                        }
-                        keep.push(id.to_string());
-                    }
-                }
-                keep_shown_part(&mut seen, &opened.id, &keep);
-                virtues_document::keep_as_read(&mut seen, &base.tree, &as_read);
-            }
-            // What this read showed as HTML: each block it showed whole,
-            // and of one it opened, its own tag and the blocks inside it the
-            // read showed, not those an earlier read showed as markdown.
-            let mut as_html: HashSet<String> = HashSet::new();
-            for id in &read.seen {
-                let opened = read.opened.as_ref().filter(|o| o.id == *id);
-                let Some(node) = virtues_document::ops::find_node(&seen, id) else {
-                    continue;
-                };
-                match opened {
-                    Some(opened) => {
-                        as_html.insert(id.clone());
-                        let shown = |c: &&Node| c.id().is_some_and(|cid| opened.shown.iter().any(|s| s == cid));
-                        for child in node.content.iter().filter(shown) {
-                            as_html.extend(ids_in(std::slice::from_ref(child)));
-                        }
-                    }
-                    None => as_html.extend(ids_in(std::slice::from_ref(node))),
-                }
-            }
-            let mut next_base = carry(base, seen, &as_html);
-            for (_, partial, _) in &cut {
-                for id in partial {
-                    shown_in_part(&mut next_base, &tree, id);
-                }
-            }
-            if let Some(opened) = &read.opened {
-                shown_in_part(&mut next_base, &tree, &opened.id);
-            }
-            let kept = keep_base(pool, &page.id, &next_base).await?;
+        if let Some(prior) = prior.as_ref().filter(|_| !ids.is_empty()) {
+            let read = read_by_id(prior, &tree, &ids, READ_MARKDOWN_BYTES, json_bytes);
+            // A block asked for and gone is seen gone, so it leaves the base.
+            let mut parts = read.parts.clone();
+            parts.extend(read.missing.iter().cloned().map(Part::Gone));
+            let shown = Shown::html(parts);
+            let mut next = prior.clone();
+            next.learn(&shown, &tree, &HashSet::new());
+            let kept = keep_base(pool, &page.id, &next, &tree, turn).await?;
             // A block asked for that the read did not show.
-            let shown_ids: HashSet<String> = read
-                .seen
-                .iter()
-                .filter_map(|id| virtues_document::ops::find_node(&next_base.tree, id))
-                .flat_map(|n| ids_in(std::slice::from_ref(n)))
-                .collect();
+            let shown_ids: HashSet<String> = shown.shown_ids().into_iter().collect();
             let mut unread = read.unread.clone();
             for id in &ids {
-                if !missing.contains(id) && !shown_ids.contains(id) && !unread.contains(id) {
+                let passed = read.missing.contains(id)
+                    || shown_ids.contains(id)
+                    || read.whole_only.contains(id)
+                    || unread.contains(id);
+                if !passed {
                     unread.push(id.clone());
                 }
             }
@@ -494,12 +415,12 @@ impl PageEditorTool {
                 "page_id": page.id,
                 "format": "tree",
                 "base": kept,
-                "html": read.html,
-                "missing": missing,
+                "html": shown.text(),
+                "missing": read.missing,
             });
             let mut notes = vec![];
-            for (outer, partial, inside) in &cut {
-                notes.push(cut_down_note(outer, partial, inside));
+            for (outer, cut, inside) in &read.cut {
+                notes.push(cut_down_note(outer, cut, inside));
             }
             if let Some(opened) = &read.opened {
                 notes.push(opened.note());
@@ -521,13 +442,13 @@ impl PageEditorTool {
             if !notes.is_empty() {
                 out["note"] = json!(notes.join(" "));
             }
-            if holds_proposal(&found) {
+            if holds_proposal(&wholes(&shown.parts)) {
                 out["suggestions"] = json!(SUGGESTIONS_NOTE);
             }
             return Ok(ToolResult::success(out));
         }
 
-        if let (Some(base), Some(after)) = (base_tree.as_ref(), after.as_deref()) {
+        if let (Some(prior), Some(after)) = (prior.as_ref(), after.as_deref()) {
             let Some(at) = tree.iter().position(|n| n.id() == Some(after)) else {
                 // A block inside another one: the read goes on inside it,
                 // as HTML, which is how the blocks before it were shown.
@@ -543,41 +464,17 @@ impl PageEditorTool {
                     READ_MARKDOWN_BYTES,
                     json_bytes,
                 );
-                let fresh: HashSet<String> = window.seen.iter().cloned().collect();
-                let mut seen = virtues_document::seen_tree(&base.tree, &tree, &fresh);
-                // A block the base lacks, read on inside: it enters the base
-                // with the blocks this read shows, cut down to the way to it.
-                let mut partial = vec![];
-                if let Some(parent) = parent.filter(|p| virtues_document::ops::find_node(&base.tree, p).is_none()) {
-                    let outer = virtues_document::shown_for(&base.tree, &tree, parent);
-                    let node = outer.as_deref().and_then(|o| virtues_document::ops::find_node(&tree, o));
-                    if let (Some(outer), Some(node)) = (outer.as_deref(), node) {
-                        if let Some((copy, cut)) = path_copy(node, &[parent], Some(&fresh)) {
-                            seen = virtues_document::seen_tree(
-                                &base.tree,
-                                &tree,
-                                &HashSet::from([outer.to_string()]),
-                            );
-                            replace_node(&mut seen, outer, copy);
-                            partial = cut;
-                        }
-                    }
-                }
-                let as_html: HashSet<String> = siblings
-                    .iter()
-                    .filter(|n| n.id().is_some_and(|id| fresh.contains(id)))
-                    .flat_map(|n| ids_in(std::slice::from_ref(n)))
-                    .collect();
-                let mut next_base = carry(base, seen, &as_html);
-                for id in &partial {
-                    shown_in_part(&mut next_base, &tree, id);
-                }
-                let kept = keep_base(pool, &page.id, &next_base).await?;
+                // The blocks it shows, inside the block the reply names, and
+                // no more: the tags of that block were not shown.
+                let shown = Shown::html(window.parts.clone()).inside(parent);
+                let mut next = prior.clone();
+                next.learn(&shown, &tree, &HashSet::new());
+                let kept = keep_base(pool, &page.id, &next, &tree, turn).await?;
                 let mut out = json!({
                     "page_id": page.id,
                     "format": "tree",
                     "base": kept,
-                    "html": window.html,
+                    "html": shown.text(),
                 });
                 if let Some(parent) = parent {
                     out["inside"] = json!(parent);
@@ -593,7 +490,7 @@ impl PageEditorTool {
                 if !notes.is_empty() {
                     out["note"] = json!(notes.join(" "));
                 }
-                if holds_proposal(&siblings[at + 1..at + 1 + window.listed.len()]) {
+                if holds_proposal(&wholes(&shown.parts)) {
                     out["suggestions"] = json!(SUGGESTIONS_NOTE);
                 }
                 return Ok(ToolResult::success(out));
@@ -605,43 +502,36 @@ impl PageEditorTool {
                 json_bytes,
                 fits_one_read,
             );
-            let fresh: HashSet<String> = window
-                .listed
-                .iter()
-                .filter_map(|n| n.id().map(str::to_string))
-                .collect();
-            let seen = virtues_document::seen_tree(&base.tree, &tree, &fresh);
-            // Shown again as markdown: its HTML not shown, as before.
-            let mut next_base = carry(base, seen, &ids_in(&window.listed));
-            next_base.markdown_only.extend(window.read_base().markdown_only);
-            let kept = keep_base(pool, &page.id, &next_base).await?;
+            let mut next = prior.clone();
+            next.learn(&window.shown, &tree, &HashSet::new());
+            let kept = keep_base(pool, &page.id, &next, &tree, turn).await?;
             let mut out = json!({
                 "page_id": page.id,
                 "format": "tree",
                 "base": kept,
-                "markdown": window.markdown,
+                "markdown": window.shown.text(),
             });
             if let Some(next) = window.next {
                 out["note"] = json!(read_on(&next));
                 out["more_after"] = json!(next);
             }
-            if holds_proposal(&window.listed) {
+            if holds_proposal(&wholes(&window.shown.parts)) {
                 out["suggestions"] = json!(SUGGESTIONS_NOTE);
             }
             return Ok(ToolResult::success(out));
         }
 
         // A full read: the whole page as HTML, or a long page's markdown as
-        // far as one read holds. The base is the blocks it lists.
+        // far as one read holds. Its base is what it shows, from nothing.
         let html = virtues_document::to_html(&tree, true);
         let mut out = json!({
             "page_id": page.id,
             "title": page.title,
             "format": "tree",
         });
-        let (shown, next) = if html.chars().count() <= READ_HTML_CHARS {
+        let (seen, next, shown) = if shows_whole_as_html(&html) {
             out["html"] = json!(html);
-            (page_reads::ReadBase::of(tree), None)
+            (Seen::of_page(&tree), None, tree.clone())
         } else {
             let window = page_reads::markdown_window(
                 &tree,
@@ -650,18 +540,21 @@ impl PageEditorTool {
                 json_bytes,
                 fits_one_read,
             );
-            out["markdown"] = json!(window.markdown);
+            out["markdown"] = json!(window.shown.text());
             out["note"] = json!(match &window.next {
                 Some(next) => format!("{LONG_PAGE_NOTE} {}", read_on(next)),
                 None => LONG_PAGE_NOTE.to_string(),
             });
-            (window.read_base(), window.next)
+            let mut seen = Seen::default();
+            seen.learn(&window.shown, &tree, &HashSet::new());
+            let shown = wholes(&window.shown.parts);
+            (seen, window.next, shown)
         };
-        out["base"] = json!(keep_base(pool, &page.id, &shown).await?);
+        out["base"] = json!(keep_base(pool, &page.id, &seen, &tree, turn).await?);
         if let Some(next) = next {
             out["more_after"] = json!(next);
         }
-        if holds_proposal(&shown.tree) {
+        if holds_proposal(&shown) {
             out["suggestions"] = json!(SUGGESTIONS_NOTE);
         }
         out["how_to_edit"] = json!(HOW_TO_EDIT);
@@ -706,7 +599,7 @@ impl PageEditorTool {
                 e => ToolError::ExecutionFailed(format!("Failed to get page: {e}")),
             })?;
         match format {
-            PageFormat::Tree => self.edit_block_page(page_id, args).await,
+            PageFormat::Tree => self.edit_block_page(page_id, args, context.turn.as_deref()).await,
             PageFormat::Markdown => self.edit_text_page(page_id, args).await,
         }
     }
@@ -892,12 +785,16 @@ impl PageEditorTool {
     /// There is no unchecked whole-page write: replacing everything is a
     /// replace or delete per block, each checked against the base. A replace
     /// or delete without a base the server still holds is refused, since
-    /// the server cannot tell whether its block changed since the model saw
-    /// it; inserts and appends need none.
+    /// the server cannot tell what the model has seen; inserts and appends
+    /// need none. With a base, the batch takes off the page or writes over
+    /// only what reads have shown the model as it stands
+    /// (`virtues_document::check_ops`), checked here first so a refusal
+    /// keeps no restore point, and again in the write's own transaction.
     async fn edit_block_page(
         &self,
         page_id: String,
         args: EditPageArgs,
+        turn: Option<&str>,
     ) -> Result<ToolResult, ToolError> {
         // An empty find and replace ask for no text edit, so they are not
         // the text form: models send them beside a rename.
@@ -928,96 +825,69 @@ impl PageEditorTool {
         // serves when the page has not changed since: its name is the hash
         // of the page as it stands.
         let current = read_tree(yjs, &page_id).await?;
-        let read_base = match args
+        let read = match args
             .base
             .as_deref()
             .map(str::trim)
             .filter(|b| !b.is_empty())
         {
-            Some(base) => self.base_tree(&page_id, base, &current).await?,
+            Some(base) => self.base_seen(&page_id, base, &current, turn).await?,
             None => None,
         };
-        // The tree the ops are checked against and merged with.
-        let base_tree = read_base.as_ref().map(|b| tree_for_ops(b, &current, &ops));
         let mut problems = vec![];
-        let writes_ref_link = ops.iter().any(|op| op_html(op).is_some_and(holds_ref_link));
-        let writes_blocks = ops.iter().any(|op| op_html(op).is_some());
-        for (i, op) in ops.iter().enumerate() {
-            if let Some(problem) = proposal_problem(op, &current) {
-                problems.push(Problem::new(format!("op {}", i + 1), problem));
-                continue;
-            }
-            let Some(id) = checked_target(op) else {
-                continue;
-            };
-            let verb = op_name(op);
-            // Markdown does not say what a block's HTML is: a replace of
-            // one shown only so would write a mention back as a link. So
-            // would a move of it: deleted, and written again elsewhere from
-            // its markdown in the same batch, a ref in it as a link.
-            let rewrites = match op {
-                Op::Replace { .. } => Some("replace"),
-                Op::Delete { .. } if writes_ref_link => Some("move"),
-                _ => None,
-            };
-            if let (Some(what), Some(read)) = (rewrites, &read_base) {
-                if shown_as_markdown(read, id) && virtues_document::ops::find_node(&current, id).is_some() {
-                    problems.push(Problem::new(
-                        format!("op {}", i + 1),
-                        markdown_only_problem(read, &current, id, what),
-                    ));
-                    continue;
-                }
-            }
-            match &base_tree {
-                None => problems.push(Problem::new(
-                    format!("op {}", i + 1),
-                    format!(
-                        "{verb} needs the base from your latest read of this page; that read is no \
-                         longer kept, or none was sent. Read it again."
-                    ),
-                )),
-                // A block the read did not show is one whose changes the
-                // server cannot check: a replace would land over them unseen.
-                Some(base)
-                    if virtues_document::ops::find_node(base, id).is_none()
-                        && virtues_document::ops::find_node(&current, id).is_some() =>
-                {
-                    problems.push(Problem::new(
-                        format!("op {}", i + 1),
-                        format!(
-                            "the block `{id}` is not in the read that base names; read it with \
-                             get_page_content, ids and that base, then use the base it returns"
-                        ),
-                    ))
-                }
-                // A block a read opened and showed in part: the blocks inside
-                // it no read showed would go with it.
-                Some(base) => {
-                    let in_part = read_base.as_ref().map(|r| &r.whole).unwrap_or(&NONE_IN_PART);
-                    let rewrites = match (op, &read_base) {
-                        (Op::Delete { id }, Some(read)) if writes_blocks => rewritten_in_part(id, read, &current),
-                        _ => None,
-                    };
-                    if let Some(problem) = partly_read(op, base, &current, in_part).or(rewrites) {
-                        problems.push(Problem::new(format!("op {}", i + 1), problem));
-                    }
-                }
-            }
-        }
-        // A comment in an op's HTML, unless the op is refused already: an
-        // opened block sent back as shown, its comment saying what was not
-        // shown, is refused for that, which says to read on.
         for (i, op) in ops.iter().enumerate() {
             let at = format!("op {}", i + 1);
-            if op_html(op).is_some_and(|html| html.contains("<!--")) && !problems.iter().any(|p| p.at == at) {
-                problems.push(Problem::new(at, COMMENT_WRITES_NOTHING));
+            if let Some(problem) = proposal_problem(op, &current) {
+                problems.push(Problem::new(at, problem));
+            } else if read.is_none() && checked_target(op).is_some() {
+                problems.push(Problem::new(
+                    at,
+                    format!(
+                        "{} needs the base from your latest read of this page in this turn; that \
+                         read was in an earlier turn, is no longer kept, or none was sent. Read it \
+                         again.",
+                        op_name(op)
+                    ),
+                ));
+            }
+        }
+        // Refused here already: the crate's word on these ops would say
+        // nothing the retry acts on.
+        let refused_here: HashSet<usize> = problems
+            .iter()
+            .filter_map(|p| problem_op(&p.at))
+            .map(|(i, _)| i)
+            .collect();
+        let mut unseen = vec![];
+        let mut conflicts = vec![];
+        if let Some(seen) = &read {
+            let checked = virtues_document::check_ops(&current, seen, &ops);
+            problems.extend(
+                checked
+                    .problems
+                    .into_iter()
+                    .filter(|p| problem_op(&p.at).is_none_or(|(i, _)| !refused_here.contains(&i))),
+            );
+            unseen = checked
+                .unseen
+                .into_iter()
+                .filter(|u| !refused_here.contains(&u.op))
+                .collect();
+            conflicts = checked.conflicts.into_iter().filter(|i| !refused_here.contains(i)).collect();
+        }
+        // A comment in an op's HTML writes nothing: a block a read showed as
+        // a comment, copied into a replace of the block around it, would go.
+        // The check above refuses that too; this says why in the model's
+        // own terms.
+        for (i, op) in ops.iter().enumerate() {
+            if op_html(op).is_some_and(|html| html.contains("<!--")) && !refused_here.contains(&i) {
+                problems.push(Problem::new(format!("op {}", i + 1), COMMENT_WRITES_NOTHING));
             }
         }
         if !problems.is_empty() {
-            return match (&read_base, &base_tree) {
-                (Some(read), Some(base)) => self.refusal(&page_id, &ops, read, base, problems, &current).await,
-                _ => Ok(refused(problems, None, String::new(), Unread::default(), false)),
+            return match &read {
+                Some(seen) => self.refusal(&page_id, &ops, seen, problems, unseen, conflicts, &current, turn).await,
+                None => Ok(refused(problems, None, String::new(), Unread::default(), false)),
             };
         }
 
@@ -1025,14 +895,21 @@ impl PageEditorTool {
         // are cut, so neither reads the other as the owner's typing.
         let _turn = yjs.write_turn(&page_id).await;
         let kept = keep_restore_point(pool, yjs, &page_id).await?;
-        let edit = match yjs.edit_tree(&page_id, base_tree.as_deref(), &ops).await {
+        let edit = match yjs.edit_tree(&page_id, read.as_ref(), &ops).await {
             Ok(edit) => edit,
             Err(TreeError::Refused { problems, tree }) => {
-                return match (&read_base, &base_tree) {
-                    (Some(read), Some(base)) => self.refusal(&page_id, &ops, read, base, problems, &tree).await,
-                    _ => {
+                return match &read {
+                    Some(seen) => {
+                        // The page changed between the check above and the
+                        // write: what the write found, said as the check says
+                        // it.
+                        let checked = virtues_document::check_ops(&tree, seen, &ops);
+                        self.refusal(&page_id, &ops, seen, problems, checked.unseen, checked.conflicts, &tree, turn)
+                            .await
+                    }
+                    None => {
                         let problems = explain_missing(problems, &ops, None, &tree);
-                        let blocks = target_html(&ops, &tree).0;
+                        let blocks = target_html(&ops, &tree);
                         let names_tags = problems.iter().any(|p| names_a_tag(&p.message));
                         Ok(refused(problems, None, blocks, Unread::default(), names_tags))
                     }
@@ -1077,23 +954,19 @@ impl PageEditorTool {
         let before_tree = edit.before.tree.clone().unwrap_or_default();
         let after_tree = after.tree.clone().unwrap_or_default();
         let written = in_document_order(&after_tree, &edit.applied.written);
-        // What is shown is what enters the base below: a block written
-        // into a list the base never held is shown with its list.
-        let to_show = match &read_base {
-            Some(read) => in_document_order(
-                &after_tree,
-                &shown_for_each(&read.tree, &after_tree, &edit.applied.written),
-            ),
-            None => written.clone(),
-        };
-        let (html, shown, unread) = blocks_html(&to_show, WRITTEN_HTML_CHARS, chars);
-        let deleted: Vec<String> = ops
+        let mut fit = Fit::new(WRITTEN_HTML_CHARS);
+        let unshown: Vec<String> = written
             .iter()
-            .filter_map(|op| match op {
-                Op::Delete { id } => Some(id.clone()),
-                _ => None,
-            })
+            .filter(|n| !fit.whole(n))
+            .filter_map(|n| n.id().map(str::to_string))
             .collect();
+        let shown = Shown::html(fit.parts);
+        // A written block too long to show is known as the model wrote it,
+        // unless it was merged with a change made since, which only a read
+        // shows.
+        let merged: HashSet<String> = edit.applied.merged.iter().cloned().collect();
+        let (unread, as_written): (Vec<String>, Vec<String>) =
+            unshown.into_iter().partition(|id| merged.contains(id));
         let removed: Vec<String> = ops
             .iter()
             .filter_map(|op| match op {
@@ -1102,34 +975,18 @@ impl PageEditorTool {
             })
             .collect();
 
-        // What the model has now seen: its base, with the blocks shown above
-        // and the ones it deleted brought up to date. Nothing else of the
-        // page enters it, so a person's edit elsewhere since the read is
-        // still checked on the next write. The edit is made either way, so
-        // a base that could not be kept is reported as none, never as a
-        // failure that would invite the edit a second time.
-        let base = match &read_base {
-            Some(read) => {
-                let as_html: HashSet<String> = shown
-                    .iter()
-                    .filter_map(|id| virtues_document::ops::find_node(&after_tree, id))
-                    .flat_map(|n| ids_in(std::slice::from_ref(n)))
-                    .collect();
-                let fresh: HashSet<String> = shown.into_iter().chain(deleted).collect();
-                let seen = virtues_document::seen_tree(&read.tree, &after_tree, &fresh);
-                let mut next = carry(read, seen, &as_html);
-                // A block shown in part that only this edit changed is
-                // still unchanged but for what the model wrote.
-                for (id, hash) in next.whole.iter_mut() {
-                    let then = virtues_document::ops::find_node(&before_tree, id);
-                    let now = virtues_document::ops::find_node(&after_tree, id);
-                    if let (Some(then), Some(now)) = (then, now) {
-                        if page_reads::node_hash(then) == *hash {
-                            *hash = page_reads::node_hash(now);
-                        }
-                    }
-                }
-                match keep_base(pool, &page_id, &next).await {
+        // What the model has now seen: its base, moved on by what it wrote
+        // (`Seen::advance`), and the blocks shown above. A person's edit
+        // elsewhere since the read is still unseen, and checked on the next
+        // write. The edit is made either way, so a base that could not be
+        // kept is reported as none, never as a failure that would invite the
+        // edit a second time.
+        let base = match &read {
+            Some(seen) => {
+                let mut next = seen.clone();
+                next.advance(&before_tree, &after_tree, &merged);
+                next.learn(&shown, &after_tree, &HashSet::new());
+                match keep_base(pool, &page_id, &next, &after_tree, turn).await {
                     Ok(base) => Some(base),
                     Err(e) => {
                         tracing::warn!(page = %page_id, error = %e, "block edit made but its next base was not kept");
@@ -1176,12 +1033,21 @@ impl PageEditorTool {
         match &base {
             Some(base) => {
                 message.push_str(&format!(" Use base {base} for your next edit."));
-                // A block written but not shown is not in that base: its
-                // next edit reads it first, or meets its own last write as
-                // someone else's.
+                if !as_written.is_empty() {
+                    message.push_str(&format!(
+                        " {}; that base holds {} as you wrote {}.",
+                        too_long_to_show(&as_written),
+                        them(&as_written),
+                        them(&as_written),
+                    ));
+                }
+                // Merged with a change made since and not shown: its next
+                // edit reads it first, or is written from a copy that lacks
+                // the change, which the merge then has to take.
                 if !unread.is_empty() {
                     message.push_str(&format!(
-                        " {}; read {} with get_page_content, ids and that base before editing {} again.",
+                        " {}, merged with a change made since; read {} with get_page_content, ids \
+                         and that base before editing {} again.",
                         too_long_to_show(&unread),
                         them(&unread),
                         them(&unread),
@@ -1195,7 +1061,7 @@ impl PageEditorTool {
             "applied": true,
             "saved": saved,
             "title_changed": title.changed,
-            "html": html,
+            "html": shown.text(),
             "edit": result,
             "message": message,
         });
@@ -1212,134 +1078,50 @@ impl PageEditorTool {
     }
 
     /// A refused batch, as the model's next step needs it: what was wrong
-    /// with each op, the blocks it has to write again from what they hold
-    /// now, shown as they are, and a base that has seen those and nothing
-    /// else, so a retry needs no read of its own. An op that was not refused
-    /// is sent again as it was written, so its block stays in the base as
-    /// the model read it, and the retry merges it with a person's change as
-    /// the first try would have. Nothing was written.
+    /// with each op and what to do about it, the blocks it has to write
+    /// again from what they hold now, shown as they are, and a base that has
+    /// seen those, so a retry needs no read of its own where they fit. An
+    /// op that was not refused is sent again as it was written, so the
+    /// blocks it writes over stay in the base as the model read them, and
+    /// the retry merges it with a person's change as the first try would
+    /// have. Nothing was written.
     ///
-    /// `read` is the base the batch named; `base` its tree as the ops were
-    /// checked against it ([`tree_for_ops`]). A block the base holds only in
-    /// part is neither shown nor said to be read by id: the base keeps what
-    /// was read of it, and the problem says where reading on starts.
+    /// `unseen` is what the batch would have taken or written over that
+    /// `read` has not seen as it stands (`virtues_document::check_ops`):
+    /// each says what to show, or what to read and where. `conflicts`: the
+    /// replaces refused because their block changed in a way they could
+    /// not be merged with.
+    #[allow(clippy::too_many_arguments)]
     async fn refusal(
         &self,
         page_id: &str,
         ops: &[Op],
-        read: &page_reads::ReadBase,
-        base: &[Node],
+        read: &Seen,
         problems: Vec<Problem>,
+        unseen: Vec<Unseen>,
+        conflicts: Vec<usize>,
         tree: &[Node],
+        turn: Option<&str>,
     ) -> Result<ToolResult, ToolError> {
-        let mut problems = explain_missing(problems, ops, Some(base), tree);
-        let partial: HashSet<&str> = ops
-            .iter()
-            .filter(|op| partly_read(op, base, tree, &read.whole).is_some())
-            .filter_map(op_target)
-            .collect();
-        let rewrite: Vec<String> = to_rewrite(ops, &problems, base, tree)
-            .into_iter()
-            .filter(|id| !partial.contains(id.as_str()))
-            .collect();
-        let asked = rewrite;
-        let rewrite = shown_for_each(&read.tree, tree, &asked);
-        let (blocks, shown, unread) = blocks_html(
-            &in_document_order(tree, &rewrite),
-            WRITTEN_HTML_CHARS,
-            chars,
-        );
-        // A block shown for blocks inside it the base lacks (a long list,
-        // for an item in it) that is too long to show here: the blocks
-        // themselves are named, since an ids read of each cuts the list down
-        // to the way to it, where one of the list opens it from its start,
-        // short of them.
-        let mut inside: Vec<String> = vec![];
-        let unread: Vec<String> = unread
-            .into_iter()
-            .filter(|outer| {
-                let within: Vec<&String> = asked
-                    .iter()
-                    .filter(|id| *id != outer && virtues_document::shown_for(&read.tree, tree, id).as_ref() == Some(outer))
-                    .collect();
-                inside.extend(within.iter().map(|id| id.to_string()));
-                within.is_empty()
-            })
-            .collect();
-        // One too long to show that has not changed since the read is in
-        // this base as it stands: the retry needs no read of it, unless the
-        // read showed it only as markdown, whose HTML no read has shown. A
-        // block a read opened says where reading on inside it starts, in its
-        // problem ([`markdown_only_problem`]); an ids read would open it
-        // from its start again.
-        let unread: Vec<String> = unread
-            .into_iter()
-            .filter(|id| {
-                let find = virtues_document::ops::find_node;
-                find(base, id) != find(tree, id)
-                    || (shown_as_markdown(read, id) && !read.whole.contains_key(id.as_str()))
-            })
-            .collect();
-        // One a read opened that changed since says where reading on inside
-        // it starts, in its problem ([`changed_in_part`]): an ids read of it
-        // would show it as the base holds it, and the retry would be
-        // refused again. The blocks inside it gone from the page are seen
-        // gone, so reading on from there shows the change.
-        let mut gone_inside: Vec<String> = vec![];
-        let unread: Vec<String> = unread
-            .into_iter()
-            .filter(|id| {
-                let Some((said, gone)) = changed_in_part(read, tree, id) else {
-                    return true;
-                };
-                let mut told = false;
-                for p in problems.iter_mut().filter(|p| {
-                    p.message.starts_with(CHANGED_SINCE_READ)
-                        && problem_op(&p.at)
-                            .filter(|(_, inside)| !inside)
-                            .and_then(|(i, _)| ops.get(i))
-                            .and_then(op_target)
-                            == Some(id.as_str())
-                }) {
-                    p.message = said.clone();
-                    told = true;
-                }
-                if told {
-                    gone_inside.extend(gone);
-                }
-                !told
-            })
-            .collect();
-        // A block that is gone is seen gone; one too long to show here
-        // stays as the base had it, and the reply names it to be read by
-        // id: sent again with this base, it would be refused again.
-        let fresh: HashSet<String> = rewrite
-            .into_iter()
-            .filter(|id| {
-                shown.contains(id) || virtues_document::ops::find_node(tree, id).is_none()
-            })
-            .chain(gone_inside)
-            .collect();
-        let mut seen = virtues_document::seen_tree(&read.tree, tree, &fresh);
-        // A block an op that was not refused writes over stays as read even
-        // inside a block brought up to date around it: sent again as
-        // written, it merges with a person's change as the first try would
-        // have.
-        virtues_document::keep_as_read(&mut seen, &read.tree, &kept_as_written(ops, &problems));
-        let as_html: HashSet<String> = shown
-            .iter()
-            .filter_map(|id| virtues_document::ops::find_node(tree, id))
-            .flat_map(|n| ids_in(std::slice::from_ref(n)))
-            .collect();
-        let new_base = keep_base(self.pool.as_ref(), page_id, &carry(read, seen, &as_html)).await?;
-        let names_tags = problems.iter().any(|p| names_a_tag(&p.message));
-        Ok(refused(
-            problems,
-            Some(new_base),
-            blocks,
-            Unread { long: unread, inside },
-            names_tags,
-        ))
+        // The batch is right and waits only on reads of blocks no read has
+        // shown: each read and edit after it shows the model more of the
+        // page, which the turn's guard does not count as a loop.
+        let unread_only = !unseen.is_empty()
+            && conflicts.is_empty()
+            && unseen.iter().all(|u| matches!(u.why, Why::Unread { .. }));
+        let unseen_count = unseen.len();
+        let r = refusal_of(ops, read, problems, unseen, &conflicts, tree, WRITTEN_HTML_CHARS, &fits_one_read);
+        // Each problem one of those, the refusal's own included.
+        let read_first = unread_only && r.problems.len() == unseen_count;
+        let mut next = read.clone();
+        next.learn(&r.shown, tree, &r.keep);
+        let new_base = keep_base(self.pool.as_ref(), page_id, &next, tree, turn).await?;
+        let names_tags = r.problems.iter().any(|p| names_a_tag(&p.message));
+        let mut result = refused(r.problems, Some(new_base), r.blocks, r.unread, names_tags);
+        if read_first {
+            result.data["read_first"] = json!(true);
+        }
+        Ok(result)
     }
 
     /// The tree a block page holds now: live from Yjs, or from its saved
@@ -1376,20 +1158,28 @@ impl PageEditorTool {
             })
     }
 
-    /// The tree `base` names for this page: the one kept for it, or the
-    /// page as it is now when that hashes to `base`. `None` when neither.
-    async fn base_tree(
+    /// What `base` names for this page: the base kept for it, or a read of
+    /// the page as it is now when that hashes to `base`. `None` when
+    /// neither, and in a chat turn for a base an earlier turn made
+    /// (`page_reads::serves_turn`).
+    async fn base_seen(
         &self,
         page_id: &str,
         base: &str,
         current: &[Node],
-    ) -> Result<Option<page_reads::ReadBase>, ToolError> {
+        turn: Option<&str>,
+    ) -> Result<Option<Seen>, ToolError> {
+        if !page_reads::serves_turn(base, turn) {
+            return Ok(None);
+        }
         let kept = page_reads::read_base(self.pool.as_ref(), page_id, base)
             .await
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
         Ok(match kept {
             Some(kept) => Some(kept),
-            None if page_reads::tree_hash(current) == base => Some(page_reads::ReadBase::of(current.to_vec())),
+            None if virtues_document::tree_hash(current) == page_reads::base_hash(base) => {
+                Some(Seen::of_page(current))
+            }
             None => None,
         })
     }
@@ -1464,6 +1254,264 @@ impl PageEditorTool {
     }
 }
 
+/// What a refusal says and shows ([`refusal_of`]).
+struct Refusal {
+    /// The problems, each said with what to do about it.
+    problems: Vec<Problem>,
+    /// What the reply shows, and the blocks it says are gone: what the
+    /// refusal's base learns, but for `keep`.
+    shown: Shown,
+    /// The blocks the ops that were not refused write over, and the blocks
+    /// inside them: they stay in the base as read.
+    keep: HashSet<String>,
+    /// The blocks shown, as HTML.
+    blocks: String,
+    /// The blocks to read by id.
+    unread: Unread,
+}
+
+/// [`PageEditorTool::refusal`] without the base kept: what the refusal
+/// says and shows, in `room` characters of HTML ([`WRITTEN_HTML_CHARS`]).
+/// `fits` is whether a read shows a block whole ([`fits_one_read`]): a read
+/// holds far more than a refusal shows, so a block a refusal cannot show is
+/// one to read.
+#[allow(clippy::too_many_arguments)]
+fn refusal_of(
+    ops: &[Op],
+    read: &Seen,
+    problems: Vec<Problem>,
+    unseen: Vec<Unseen>,
+    conflicts: &[usize],
+    tree: &[Node],
+    room: usize,
+    fits: &dyn Fn(&Node) -> bool,
+) -> Refusal {
+    use virtues_document::ops::find_node;
+    let mut problems = explain_missing(problems, ops, Some(read), tree);
+    let refused_ops: HashSet<usize> = problems
+        .iter()
+        .filter_map(|p| problem_op(&p.at))
+        .map(|(i, _)| i)
+        .collect();
+    let unseen: Vec<Unseen> = unseen
+        .into_iter()
+        .filter(|u| refused_ops.contains(&u.op))
+        .collect();
+    let with_unseen: HashSet<usize> = unseen.iter().map(|u| u.op).collect();
+    let over_block: HashSet<usize> = with_unseen.iter().chain(conflicts).copied().collect();
+
+    // The blocks the refused ops name, each shown as the block around it
+    // a read has not shown when that one fits.
+    let mut groups: Vec<(String, Vec<(usize, String)>)> = vec![];
+    for (i, id) in to_rewrite(ops, &problems, read, tree, &over_block) {
+        let shown = context_for(read, tree, &id).unwrap_or_else(|| id.clone());
+        match groups.iter_mut().find(|(s, _)| *s == shown) {
+            Some((_, asked)) => asked.push((i, id)),
+            None => groups.push((shown, vec![(i, id)])),
+        }
+    }
+    let mut fit = Fit::new(room);
+    let mut gone: Vec<String> = vec![];
+    let mut long: Vec<String> = vec![];
+    let mut inside: Vec<String> = vec![];
+    let place = page_order(tree);
+    groups.sort_by_key(|(shown, _)| place.get(shown.as_str()).copied().unwrap_or(usize::MAX));
+    for (shown, asked) in &groups {
+        let Some(node) = find_node(tree, shown) else {
+            // Gone from the page: seen gone.
+            gone.push(shown.clone());
+            continue;
+        };
+        if fit.whole(node) {
+            continue;
+        }
+        // Too long to show here. An op refused over what the base has
+        // not seen says what to read in its problem, below.
+        if asked.iter().any(|(i, _)| with_unseen.contains(i)) {
+            continue;
+        }
+        for (_, id) in asked {
+            let Some(block) = find_node(tree, id) else { continue };
+            if id != shown && fit.whole(block) {
+                continue;
+            }
+            if !needs_a_read(read, block) {
+                continue;
+            }
+            let names = if id == shown { &mut long } else { &mut inside };
+            if !names.contains(id) {
+                names.push(id.clone());
+            }
+        }
+    }
+
+    // What each block the base has not seen asks of the retry.
+    let mut advice: Vec<(usize, String, String)> = vec![];
+    for u in &unseen {
+        let said = u.message();
+        let first = u.id();
+        let node = find_node(tree, first);
+        let above = node.is_some_and(|n| fit.covers(n));
+        let tell = match &u.why {
+            // Taken with the block around it, which no read showed holding
+            // it: that block is shown cut down to the way to it, which shows
+            // it there, or read; the block alone would show it nowhere.
+            Why::Unread { added_since: true } if u.inside.is_some() => {
+                let holder = u.inside.as_deref().unwrap_or_default();
+                let ids: Vec<&str> = u.ids.iter().map(String::as_str).collect();
+                let around = find_node(tree, holder);
+                let shown = around.is_some_and(|h| fit.covers(h))
+                    || around.is_some_and(|h| fit.part(cut_down(h, &ids, &mut vec![])));
+                if shown {
+                    format!(
+                        "`{holder}` is above as it is now, with {} inside it: write the op from it",
+                        block_names(&u.ids)
+                    )
+                } else if !read.knows(first) && read.opaque_hash(first).is_none() {
+                    // No read has shown it: it is read first, as any block
+                    // is, on the way from the block around it when it was
+                    // read elsewhere ([`context_for`]).
+                    format!("read `{first}` with get_page_content, ids [\"{first}\"] and this base, first")
+                } else if around.is_some_and(page_reads::opens)
+                    && node.is_some_and(fits)
+                    && read.known(holder).is_some_and(|k| virtues_document::seen::stubs(&k.shell).contains(&first))
+                {
+                    // Its read named it there without showing it: a read on
+                    // inside that block shows it there.
+                    format!("{}, first", read_on_advice(tree, first, false, fits))
+                } else {
+                    // Shown elsewhere, or listed: an op deleting it takes
+                    // it, and one replacing it writes over it.
+                    format!(
+                        "{} `{first}` by its id in an op before op {}, or leave it as it is",
+                        named_first(u.removes),
+                        first_taker(ops, first, tree, u.op) + 1
+                    )
+                }
+            }
+            Why::Changed { .. } | Why::MarkdownOnly | Why::Unread { .. } | Why::ListedChanged
+                if u.ids.len() == 1 && (above || node.is_some_and(|n| fit.whole(n))) =>
+            {
+                match &u.why {
+                    Why::MarkdownOnly => format!(
+                        "its HTML is above as it is now: write the {} from its HTML",
+                        if u.removes { "move" } else { "op" }
+                    ),
+                    _ => "it is above as it is now: write the op from it".to_string(),
+                }
+            }
+            Why::Changed { .. } => {
+                if !long.iter().any(|l| l == first) {
+                    long.push(first.to_string());
+                }
+                "read it as it is now".to_string()
+            }
+            Why::MarkdownOnly | Why::Unread { .. } if u.ids.len() == 1 && u.target => {
+                if !long.iter().any(|l| l == first) {
+                    long.push(first.to_string());
+                }
+                match u.why {
+                    Why::MarkdownOnly => format!(
+                        "read it as HTML, then write the {} from its HTML",
+                        if u.removes { "move" } else { "op" }
+                    ),
+                    _ => "read it first".to_string(),
+                }
+            }
+            Why::MarkdownOnly => format!(
+                "{}, then write the op from their HTML",
+                read_on_advice(tree, first, true, fits)
+            ),
+            Why::Unread { .. } => format!("{}, first", read_run_advice(tree, &u.ids, fits)),
+            Why::NamedInside => format!(
+                "{} `{first}` by its id in an op before op {}, or leave it as it is",
+                named_first(u.removes),
+                first_taker(ops, first, tree, u.op) + 1
+            ),
+            Why::ListedChanged => match node {
+                // Still too long for any read: listed again, at its hash now.
+                Some(n) if !fits(n) && !page_reads::opens(n) => {
+                    fit.parts.push(page_reads::listed(n, page_reads::TooLong::WholeOnly));
+                    "it is still too long for any read: an op naming it deletes it, or replaces it \
+                     whole, with the base this reply returns"
+                        .to_string()
+                }
+                // A read shows it now, or the blocks inside it: what it says
+                // now is read before an op takes it.
+                _ => {
+                    if !long.iter().any(|l| l == first) {
+                        long.push(first.to_string());
+                    }
+                    "read it as it is now".to_string()
+                }
+            },
+            Why::Deleted => "leave it out unless you were asked to bring it back, and then write \
+                 it without its data-id"
+                .to_string(),
+        };
+        advice.push((u.op, said, tell));
+    }
+    for p in problems.iter_mut() {
+        let Some((i, false)) = problem_op(&p.at) else { continue };
+        if let Some((_, _, tell)) = advice.iter().find(|(op, said, _)| *op == i && *said == p.message) {
+            p.message = format!("{}; {tell}", p.message);
+        }
+    }
+
+    // A block that is gone is seen gone. The blocks the ops that were
+    // not refused write over stay as read, the blocks inside them too:
+    // sent again as written, those ops merge with a person's change as
+    // the first try would have.
+    let mut parts = fit.parts;
+    let blocks = Shown::html(parts.clone()).text();
+    gone.sort();
+    gone.dedup();
+    parts.extend(gone.into_iter().map(Part::Gone));
+    // A block a refused op's problem is about is learned all the same: the
+    // retry is refused over it until the base has seen it, and the reply
+    // has shown it as it is now.
+    let about: HashSet<String> = unseen
+        .iter()
+        .flat_map(|u| u.ids.iter())
+        .filter_map(|id| find_node(tree, id))
+        .flat_map(|n| ids_in(std::slice::from_ref(n)))
+        .collect();
+    // So an op that was not refused, whose block is one of those and
+    // changed since the read, would be sent again as written against a base
+    // that holds the block as it is now, and land over the change its first
+    // try merged with. It is written again from the block shown, as the
+    // refused ops are.
+    let mut learned = read.clone();
+    learned.learn(&Shown::html(parts.clone()), tree, &HashSet::new());
+    for (i, op) in ops.iter().enumerate() {
+        let Op::Replace { id, html } = op else { continue };
+        if refused_ops.contains(&i) || html.trim().is_empty() || !about.contains(id) {
+            continue;
+        }
+        let Some(now) = find_node(tree, id) else { continue };
+        if read.seen_as_it_stands(now) || learned.known(id) == read.known(id) {
+            continue;
+        }
+        problems.push(Problem::new(
+            format!("op {}", i + 1),
+            format!("the block `{id}` changed since you read it; it is above as it is now: write the op from it"),
+        ));
+    }
+    let keep: HashSet<String> = kept_as_written(ops, &problems)
+        .iter()
+        .filter_map(|id| find_node(tree, id))
+        .flat_map(|n| ids_in(std::slice::from_ref(n)))
+        .filter(|id| !about.contains(id))
+        .collect();
+    Refusal {
+        problems,
+        shown: Shown::html(parts),
+        keep,
+        blocks,
+        unread: Unread { long, inside },
+    }
+}
+
 /// `create_page`'s result: the page's format, and what converting a block
 /// page's markdown changed on the way in.
 fn created_result(created: pages::CreatedPage) -> Value {
@@ -1521,15 +1569,18 @@ async fn read_tree(yjs: &YjsState, page_id: &str) -> Result<Vec<Node>, ToolError
     })
 }
 
-async fn keep_base(pool: &PgPool, page_id: &str, kept: &page_reads::ReadBase) -> Result<String, ToolError> {
-    page_reads::keep_read_base(pool, page_id, kept)
+async fn keep_base(
+    pool: &PgPool,
+    page_id: &str,
+    seen: &Seen,
+    page: &[Node],
+    turn: Option<&str>,
+) -> Result<String, ToolError> {
+    page_reads::keep_read_base(pool, page_id, seen, page, turn)
         .await
         .map_err(|e| ToolError::ExecutionFailed(e.to_string()))
 }
 
-/// A refused batch's result. A success to the caller, with `status:
-/// "refused"`: the model acts on it in the same turn, the chat draws no
-/// failed card, and the CLI exits 1 with its sentence.
 /// The blocks a refusal could not show, to read by id: too long to show
 /// here (`long`), or inside a block too long to show, which an `ids` read of
 /// each cuts down to the way to it (`inside`).
@@ -1539,6 +1590,9 @@ struct Unread {
     inside: Vec<String>,
 }
 
+/// A refused batch's result. A success to the caller, with `status:
+/// "refused"`: the model acts on it in the same turn, the chat draws no
+/// failed card, and the CLI exits 1 with its sentence.
 fn refused(
     problems: Vec<Problem>,
     base: Option<String>,
@@ -1704,7 +1758,8 @@ fn html_problems(ops: &[Op]) -> Vec<Problem> {
 
 /// Refusing op HTML that holds a comment. A read shows a block too long for
 /// it as a comment naming its id; a comment writes nothing, so one copied
-/// into a replace of the block around it deleted that block.
+/// into a replace of the block around it would take that block. The base
+/// check refuses that on its own; this says why in the model's terms.
 const COMMENT_WRITES_NOTHING: &str = "the html holds an HTML comment (<!-- … -->), which writes \
      nothing: a block a read showed as a comment would go. Leave such a block out of your ops and \
      edit the blocks around it by id; to take it out, delete it by id";
@@ -1816,38 +1871,46 @@ fn problem_op(at: &str) -> Option<(usize, bool)> {
 }
 
 /// The blocks a refused batch's retry has to write from what they hold now,
-/// in no order: the blocks of the refused ops, each one only when its op was
-/// refused over the block itself (it is gone, the read did not show it, it
-/// changed in a way the edit could not merge with, it holds a suggestion)
-/// or when it has not changed since the base, which a refresh leaves as it
+/// each with the op naming it: the blocks of the refused ops, each one only
+/// when its op was refused over the block itself (it is gone, the read did
+/// not show it as it stands, `over_block`: what the base has not seen of it
+/// or a change the edit could not merge with, it holds a suggestion) or
+/// when it has not changed since the read, which a refresh leaves as it
 /// was.
 ///
-/// A block that changed since the base and whose op was refused for its own
-/// HTML is left out: the model fixes that HTML from its copy, and the retry
-/// merges it with the change as it stands. So is any block an op that was
-/// not refused rewrites or deletes: it is sent again as written, from the
-/// copy the base holds. Either brought into the base would let the retry
-/// land over a person's change the first try would have kept.
-fn to_rewrite(ops: &[Op], problems: &[Problem], base: &[Node], tree: &[Node]) -> Vec<String> {
+/// A block that changed since the read and whose op was refused for
+/// anything else is left out: a problem with the op's HTML (a tag, a
+/// comment, HTML that holds no block or one its place cannot hold, a new
+/// suggestion), whether it is charged to the op or to a place inside its
+/// HTML, or with the batch's shape (a grid, a block an earlier op took).
+/// The model fixes that from its copy, and the retry merges it with the
+/// change as it stands. So is any block an op that was not refused
+/// rewrites or deletes: it is sent again as written, from the copy the base
+/// holds. Either brought into the base would let the retry land over a
+/// person's change the first try would have kept.
+fn to_rewrite(
+    ops: &[Op],
+    problems: &[Problem],
+    read: &Seen,
+    tree: &[Node],
+    over_block: &HashSet<usize>,
+) -> Vec<(usize, String)> {
     use virtues_document::ops::find_node;
-    let about: Vec<(usize, bool)> = problems.iter().filter_map(|p| problem_op(&p.at)).collect();
-    let refused_ops: HashSet<usize> = about.iter().map(|(i, _)| *i).collect();
+    let mut refused_ops: Vec<usize> = problems.iter().filter_map(|p| problem_op(&p.at)).map(|(i, _)| i).collect();
+    refused_ops.sort();
+    refused_ops.dedup();
     let kept_as_written = kept_as_written(ops, problems);
-    let unchanged = |id: &str| match (find_node(base, id), find_node(tree, id)) {
-        (Some(then), Some(now)) => then == now,
-        _ => false,
-    };
-    let mut out: Vec<String> = vec![];
+    let mut out: Vec<(usize, String)> = vec![];
     for i in refused_ops {
         let Some(id) = ops.get(i).and_then(op_target) else {
             continue;
         };
-        let inside_html = about.iter().any(|(j, inside)| *j == i && *inside);
-        let gone = find_node(tree, id).is_none();
-        let unseen = find_node(base, id).is_none();
-        let rewrite = gone || unseen || unchanged(id) || !inside_html;
-        if rewrite && !kept_as_written.contains(id) && !out.iter().any(|o| o == id) {
-            out.push(id.to_string());
+        let now = find_node(tree, id);
+        let unchanged = now.is_some_and(|now| read.subtree(id).as_ref() == Some(now));
+        let suggested = now.is_some_and(|now| holds_proposal(std::slice::from_ref(now)));
+        let rewrite = now.is_none() || !read.knows(id) || unchanged || over_block.contains(&i) || suggested;
+        if rewrite && !kept_as_written.contains(id) && !out.iter().any(|(_, o)| o == id) {
+            out.push((i, id.to_string()));
         }
     }
     out
@@ -1869,26 +1932,12 @@ fn kept_as_written(ops: &[Op], problems: &[Problem]) -> HashSet<String> {
         .collect()
 }
 
-/// What to show of `tree` so that each of `ids` enters a base made from
-/// `base` ([`virtues_document::shown_for`]), each once: a block on the page
-/// whose container `base` lacks becomes that container. A block gone from
-/// the page stays named, to leave the base.
-fn shown_for_each(base: &[Node], tree: &[Node], ids: &[String]) -> Vec<String> {
-    let mut out: Vec<String> = vec![];
-    for id in ids {
-        let shown = virtues_document::shown_for(base, tree, id).unwrap_or_else(|| id.clone());
-        if !out.contains(&shown) {
-            out.push(shown);
-        }
-    }
-    out
-}
-
 /// Each of the crate's "no block has id `x`" said as what happened to `x`,
 /// with what to do instead, so a retry is not the same batch again:
 ///
 /// - `x` is still on the page, so an op earlier in the batch took it away
-///   (ops run in order): that op is named.
+///   (ops run in order): that op is named. A block too long for any read,
+///   which only an op deleting it takes, is deleted first.
 /// - the read had `x` and the page does not, so someone deleted it after the
 ///   read: a replace or delete leaves it out, an insert anchors elsewhere.
 ///
@@ -1896,7 +1945,7 @@ fn shown_for_each(base: &[Node], tree: &[Node], ids: &[String]) -> Vec<String> {
 fn explain_missing(
     problems: Vec<Problem>,
     ops: &[Op],
-    base: Option<&[Node]>,
+    read: Option<&Seen>,
     tree: &[Node],
 ) -> Vec<Problem> {
     use virtues_document::ops::find_node;
@@ -1922,7 +1971,29 @@ fn explain_missing(
                     return p;
                 };
                 let earlier = j + 1;
+                // Taken with a block around it, which only an op deleting it
+                // may do: one too long for any read, or one no read showed
+                // in the block around it. An op naming it already takes it.
+                // Put first, this op takes it only if it deletes it: a
+                // replace means the block to stay.
+                let by_name = op_target(&ops[j]) != Some(id) && removes(op, id, tree);
+                let opaque = by_name && read.is_some_and(|r| r.opaque_hash(id).is_some());
+                let unshown_in = path_to(tree, id)
+                    .and_then(|path| path.len().checked_sub(2).map(|at| path[at].clone()))
+                    .filter(|holder| {
+                        by_name && read.is_some_and(|r| r.knows(id) && r.known(holder).is_some_and(|k| !k.shows(id)))
+                    });
                 match op {
+                    Op::Delete { .. } | Op::Replace { .. } if opaque => format!(
+                        "op {earlier} removes the block `{id}` before this op runs, and ops run in \
+                         order; `{id}` is too long for any read, and only an op deleting it takes it, \
+                         so put this op before op {earlier}"
+                    ),
+                    Op::Delete { .. } | Op::Replace { .. } if unshown_in.is_some() => format!(
+                        "op {earlier} removes the block `{id}` before this op runs, and ops run in \
+                         order; no read has shown you `{id}` inside `{}`, so put this op before op {earlier}",
+                        unshown_in.unwrap_or_default()
+                    ),
                     Op::Delete { .. } => {
                         format!("op {earlier} already removes the block `{id}`; leave this op out")
                     }
@@ -1935,8 +2006,19 @@ fn explain_missing(
                          order; leave one of the two out"
                     ),
                 }
-            } else if base.is_some_and(|b| find_node(b, id).is_some()) {
-                if insert {
+            } else if read.is_some_and(|r| r.knows(id) || r.opaque_hash(id).is_some()) {
+                // An item or a row goes only beside another: appended, it
+                // would land where no list or table is.
+                let part = match op {
+                    Op::InsertAfter { html, .. } | Op::InsertBefore { html, .. } => part_of_a_block(html),
+                    _ => None,
+                };
+                if let Some(part) = part.filter(|_| insert) {
+                    format!(
+                        "the block `{id}` was deleted after you read the page; anchor this op on \
+                         another {part} beside where it was, or leave it out"
+                    )
+                } else if insert {
                     format!(
                         "the block `{id}` was deleted after you read the page; anchor this op on \
                          another block, or append it"
@@ -1953,6 +2035,39 @@ fn explain_missing(
             Problem::new(p.at, message)
         })
         .collect()
+}
+
+/// The op a refusal asks for before the one refused, by the block's id: a
+/// delete takes a block an op would take with a block around it (a replace
+/// means its block to stay), and a delete or a replace lets an op write
+/// over it.
+fn named_first(removes: bool) -> &'static str {
+    if removes {
+        "delete"
+    } else {
+        "delete or replace"
+    }
+}
+
+/// The first op, up to `last`, that takes the block `id` off the page: an
+/// op naming it goes before that one.
+fn first_taker(ops: &[Op], id: &str, tree: &[Node], last: usize) -> usize {
+    ops.iter()
+        .take(last + 1)
+        .position(|op| removes(op, id, tree))
+        .unwrap_or(last)
+}
+
+/// What `html` writes when it is only a part of a block, which goes beside
+/// another such part and never where a block goes: `item` for a list item,
+/// `row` for a table row.
+fn part_of_a_block(html: &str) -> Option<&'static str> {
+    let lead = html.trim_start().get(..3)?.to_ascii_lowercase();
+    match lead.as_str() {
+        "<li" => Some("item"),
+        "<tr" => Some("row"),
+        _ => None,
+    }
 }
 
 /// Whether `op` takes the block `id` off the page: deletes it or a block
@@ -1979,63 +2094,246 @@ fn names_a_tag(message: &str) -> bool {
 }
 
 /// The blocks the ops name, as they are in `tree` now, up to
-/// [`WRITTEN_HTML_CHARS`]: the HTML, the ids shown, and the ids of those
-/// on the page that were not.
-fn target_html(ops: &[Op], tree: &[Node]) -> (String, HashSet<String>, Vec<String>) {
+/// [`WRITTEN_HTML_CHARS`], as HTML.
+fn target_html(ops: &[Op], tree: &[Node]) -> String {
     let targets: Vec<String> = ops
         .iter()
         .filter_map(op_target)
         .map(str::to_string)
         .collect();
-    blocks_html(
-        &in_document_order(tree, &targets),
-        WRITTEN_HTML_CHARS,
-        chars,
-    )
+    let mut fit = Fit::new(WRITTEN_HTML_CHARS);
+    for node in in_document_order(tree, &targets) {
+        fit.whole(&node);
+    }
+    Shown::html(fit.parts).text()
 }
 
-/// `nodes` as HTML with ids, whole blocks only, as many as fit in `limit` as
-/// `measure` counts them, a block that does not fit passed over for the
-/// ones after it: the HTML, the ids of the blocks shown, and the ids of the
-/// blocks not shown, in order.
-fn blocks_html(
-    nodes: &[Node],
+/// Blocks shown whole in a result, as many as fit in `limit` characters of
+/// HTML with ids, a block that does not fit passed over for the ones after
+/// it.
+struct Fit {
+    parts: Vec<Part>,
+    used: usize,
     limit: usize,
-    measure: impl Fn(&str) -> usize,
-) -> (String, HashSet<String>, Vec<String>) {
-    let mut html = String::new();
-    let mut length = 0;
-    let mut shown = HashSet::new();
-    let mut unshown = vec![];
-    for node in nodes {
-        let one = virtues_document::to_html(std::slice::from_ref(node), true);
-        let n = measure(&one);
-        if length + n > limit {
-            unshown.extend(node.id().map(str::to_string));
-            continue;
-        }
-        length += n;
-        html.push_str(&one);
-        if let Some(id) = node.id() {
-            shown.insert(id.to_string());
+    /// Every block inside the blocks shown.
+    covered: HashSet<String>,
+}
+
+impl Fit {
+    fn new(limit: usize) -> Self {
+        Fit {
+            parts: vec![],
+            used: 0,
+            limit,
+            covered: HashSet::new(),
         }
     }
-    (html, shown, unshown)
+
+    /// Show `node` whole if it fits, or say it is shown already.
+    fn whole(&mut self, node: &Node) -> bool {
+        if self.covers(node) {
+            return true;
+        }
+        let n = chars(&virtues_document::to_html(std::slice::from_ref(node), true));
+        if self.used + n > self.limit {
+            return false;
+        }
+        self.used += n;
+        self.covered.extend(ids_in(std::slice::from_ref(node)));
+        self.parts.push(Part::Whole(node.clone()));
+        true
+    }
+
+    /// Whether `node` is shown, whole or inside a block shown whole.
+    fn covers(&self, node: &Node) -> bool {
+        node.id().is_some_and(|id| self.covered.contains(id))
+    }
+
+    /// Show `part` (a block cut down to the way to some inside it) if it
+    /// fits.
+    fn part(&mut self, part: Part) -> bool {
+        let n = chars(&Shown::html(vec![part.clone()]).text());
+        if self.used + n > self.limit {
+            return false;
+        }
+        self.used += n;
+        self.covered.extend(ids_in(&wholes(std::slice::from_ref(&part))));
+        self.parts.push(part);
+        true
+    }
 }
 
-/// What an `ids` read shows of the blocks it found ([`read_by_id`]).
+/// The ids of the blocks from the page's top level down to `id`, `id` last;
+/// a table cell, which carries none, is passed through. `None` when the page
+/// has no block `id`.
+fn path_to(tree: &[Node], id: &str) -> Option<Vec<String>> {
+    fn walk(nodes: &[Node], id: &str, path: &mut Vec<String>) -> bool {
+        for n in nodes {
+            let pushed = n.id().map(|own| path.push(own.to_string())).is_some();
+            if n.id() == Some(id) || walk(&n.content, id, path) {
+                return true;
+            }
+            if pushed {
+                path.pop();
+            }
+        }
+        false
+    }
+    let mut path = vec![];
+    walk(tree, id, &mut path).then_some(path)
+}
+
+/// Each block of the page by its place in document order.
+fn page_order(tree: &[Node]) -> std::collections::HashMap<String, usize> {
+    let mut out = std::collections::HashMap::new();
+    for n in tree {
+        n.walk(&mut |b| {
+            if let Some(id) = b.id() {
+                let at = out.len();
+                out.insert(id.to_string(), at);
+            }
+        });
+    }
+    out
+}
+
+/// The block a read shows for the block `id`: `id` itself when a read has
+/// shown it where it is or shown the block around it, or else the
+/// outermost block around it no read has shown, so it comes with its
+/// context. One the block around it, as read, does not show inside it
+/// (added or moved there since, or counted there once a read had shown it
+/// elsewhere) comes with that block, read or not, cut down to the way to it
+/// when it is long: the read shows it there, and so in no block a read
+/// showed it in before. A display choice only: what enters the base is what
+/// the read shows. `None` when the page has no block `id`.
+fn context_for(seen: &Seen, tree: &[Node], id: &str) -> Option<String> {
+    let path = path_to(tree, id)?;
+    let around = &path[..path.len() - 1];
+    if seen.knows(id) {
+        let holder = around.last().and_then(|p| seen.known(p).map(|k| (p, k)));
+        return Some(match holder {
+            Some((p, k)) if !k.shows(id) => p.clone(),
+            _ => id.to_string(),
+        });
+    }
+    Some(match around.iter().rposition(|a| seen.knows(a)) {
+        Some(k) if seen.known(&path[k]).is_some_and(|holder| !holder.shows(&path[k + 1])) => path[k].clone(),
+        Some(k) => path[k + 1].clone(),
+        None => path[0].clone(),
+    })
+}
+
+/// Whether a block a refusal has no room to show has to be read before its
+/// op is written again: unless the base holds it as it stands, all of it as
+/// HTML, or it is too long for any read and still as it was listed.
+fn needs_a_read(read: &Seen, node: &Node) -> bool {
+    let Some(id) = node.id() else { return true };
+    if read.opaque_hash(id) == Some(virtues_document::node_hash(node).as_str()) {
+        return false;
+    }
+    let mut as_html = true;
+    node.walk(&mut |b| {
+        if let Some(bid) = b.id() {
+            as_html &= read.known(bid).is_some_and(|k| k.form == Form::Html);
+        }
+    });
+    !(as_html && read.subtree(id).as_ref() == Some(node))
+}
+
+/// The read that shows the block `first` (the first of what a refused op
+/// would take or write over unseen), and what follows it: inside the
+/// deepest block around it too long for one read, on from just before the
+/// block there that leads to it. By the leading block's id when it is the
+/// first there (an `ids` read of the block around would open it with less
+/// room than a read, its tags and the comment after taking some, and could
+/// only list it), when it is itself too long for one read (an `ids` read
+/// opens it), or when the block around holds it in a table cell, which a
+/// read on does not cross.
+fn read_on_advice(tree: &[Node], first: &str, as_html: bool, fits: &dyn Fn(&Node) -> bool) -> String {
+    use virtues_document::ops::find_node;
+    let how = if as_html { "as HTML " } else { "" };
+    let by_id = |id: &str| format!("read `{id}` {how}with get_page_content, ids [\"{id}\"] and this base");
+    let Some(path) = path_to(tree, first) else {
+        return by_id(first);
+    };
+    let nodes: Vec<&Node> = path.iter().filter_map(|id| find_node(tree, id)).collect();
+    if nodes.len() != path.len() {
+        return by_id(first);
+    }
+    let Some(j) = (0..path.len() - 1).rev().find(|&j| !fits(nodes[j])) else {
+        // Everything around it fits one read.
+        return by_id(&path[0]);
+    };
+    let (outer, lead) = (nodes[j], &path[j + 1]);
+    if !page_reads::opens(outer) || !fits(nodes[j + 1]) {
+        return by_id(lead);
+    }
+    let at = outer.content.iter().position(|c| c.id() == Some(lead.as_str()));
+    match at.and_then(|i| i.checked_sub(1)).and_then(|i| outer.content[i].id()) {
+        Some(before) => format!(
+            "read the rest of `{}` {how}with get_page_content, after \"{before}\" and this base",
+            path[j]
+        ),
+        None => by_id(lead),
+    }
+}
+
+/// [`read_on_advice`] for a run of blocks no read has shown, `ids` in page
+/// order. Where they lie in a block too long for any read that cannot be
+/// opened (a table row, whose cells carry no id), one `ids` read names them
+/// all: no read on goes inside that block, and a read of the first shows
+/// the others only as a count, so naming one at a time took a refusal for
+/// each block in the row's cells.
+fn read_run_advice(tree: &[Node], ids: &[String], fits: &dyn Fn(&Node) -> bool) -> String {
+    use virtues_document::ops::find_node;
+    let Some(first) = ids.first() else {
+        return String::new();
+    };
+    let in_unopened = path_to(tree, first).is_some_and(|path| {
+        path[..path.len() - 1]
+            .iter()
+            .filter_map(|id| find_node(tree, id))
+            .any(|n| !fits(n) && !page_reads::opens(n))
+    });
+    if ids.len() < 2 || !in_unopened {
+        return read_on_advice(tree, first, false, fits);
+    }
+    let listed = ids.iter().map(|id| format!("\"{id}\"")).collect::<Vec<_>>().join(", ");
+    let named = ids.iter().map(|id| format!("`{id}`")).collect::<Vec<_>>().join(", ");
+    format!("read {named} with get_page_content, ids [{listed}] and this base")
+}
+
+/// The blocks shown whole in `parts`, at any depth, in order.
+fn wholes(parts: &[Part]) -> Vec<Node> {
+    let mut out = vec![];
+    for part in parts {
+        match part {
+            Part::Whole(n) => out.push(n.clone()),
+            Part::Opened { inside, .. } | Part::Cell { inside, .. } => out.extend(wholes(inside)),
+            Part::Listed { .. } | Part::More { .. } | Part::Gone(_) => {}
+        }
+    }
+    out
+}
+
+/// What an `ids` read shows of the blocks asked for ([`read_by_id`]).
 #[derive(Default)]
 struct ByIdRead {
-    html: String,
-    /// Every block the read has seen, to enter its base as it stands: shown
-    /// whole, listed as too long for any read, or opened.
-    seen: HashSet<String>,
+    /// What it shows, as HTML, in the order asked: its text and what its
+    /// base learns are both read off these.
+    parts: Vec<Part>,
+    /// Asked for, and not on the page.
+    missing: Vec<String>,
     /// Blocks there was no room left for; another `ids` read shows them.
     unread: Vec<String>,
-    /// Blocks too long for any read that hold no blocks to show instead.
+    /// Blocks too long for any read that hold no blocks to show instead,
+    /// listed by a comment.
     whole_only: Vec<String>,
     /// A block too long to show whole, shown by the blocks inside it.
     opened: Option<Opened>,
+    /// Each block shown cut down to the way to blocks asked for inside it:
+    /// its id, the ids of the blocks cut down, and the blocks asked for.
+    cut: Vec<(String, Vec<String>, Vec<String>)>,
 }
 
 /// A block an `ids` read showed by the blocks inside it ([`open_block`]).
@@ -2043,10 +2341,9 @@ struct Opened {
     id: String,
     /// How many blocks it holds.
     holds: usize,
-    /// The ids of the blocks inside it the read showed, whole or as too
-    /// long for any read: what enters the base.
-    shown: Vec<String>,
-    /// Of those, the ones too long for any read, shown as a comment.
+    /// How many of them the read showed whole.
+    shown: usize,
+    /// The blocks inside it too long for any read, shown as a comment.
     whole_only: Vec<String>,
     /// The blocks inside it the read listed by id alone, to read by id.
     listed_only: Vec<String>,
@@ -2059,21 +2356,20 @@ impl Opened {
         let id = &self.id;
         let mut note = format!(
             "`{id}` is too long to show whole, so it is shown with {} of the {} blocks inside it. \
-             Edit those by id. Replacing `{id}` itself, or deleting it and writing it again, would \
-             lose the blocks inside it not shown, so either waits until reads have shown you all \
-             of them.",
-            self.shown.len() - self.whole_only.len(),
-            self.holds
+             Edit those by id. Replacing or deleting `{id}` waits until reads have shown you all of \
+             the blocks inside it.",
+            self.shown, self.holds
         );
         if !self.whole_only.is_empty() {
+            let it = them(&self.whole_only);
             note.push(' ');
             note.push_str(&format!(
-                "{} inside it {} too long for any read, shown as a comment: a replace of `{id}` \
-                 that leaves {} out deletes {}.",
+                "{} inside it {} too long for any read, shown as a comment: a replace of `{id}` that \
+                 leaves {it} out, or a delete of `{id}`, is refused while {it} {} there. Delete or \
+                 replace {it} by id in an op before it.",
                 block_names(&self.whole_only),
                 if self.whole_only.len() == 1 { "is" } else { "are" },
-                them(&self.whole_only),
-                them(&self.whole_only),
+                if self.whole_only.len() == 1 { "is" } else { "are" },
             ));
         }
         if !self.listed_only.is_empty() {
@@ -2105,106 +2401,218 @@ fn listed_only_note(window: &ChildWindow) -> Option<String> {
     let only: Vec<String> = window
         .listed
         .iter()
-        .filter(|id| !window.seen.contains(id))
+        .filter(|id| !window.shown.contains(id) && !window.whole_only.contains(id))
         .cloned()
         .collect();
     (!only.is_empty()).then(|| listed_by_id(&only))
 }
 
-/// `found` as an `ids` read shows it, in `limit` as `measure` counts: each
-/// block whole while there is room; a block too long for any read listed by
-/// id, or, when it holds blocks with ids, opened ([`open_block`]), one per
-/// read. Every block the read lists enters its base as it stands, so one
-/// too long to show can still be deleted, or replaced whole, and a block
-/// asked for again is shown again, opened again, or said to be too long,
-/// never passed over twice for the same reason.
-fn read_by_id(found: &[Node], limit: usize, measure: impl Fn(&str) -> usize + Copy) -> ByIdRead {
+/// `ids` as an `ids` read shows them, in `limit` as `measure` counts: each
+/// block whole while there is room, with the block around it no read has
+/// shown when that fits one read ([`context_for`]), or cut down to the way
+/// to it when that does not ([`cut_down`]), or alone when not even the way
+/// to it fits; a block too long for any read
+/// listed by id, or, when it holds blocks with ids, opened
+/// ([`open_block`]), one per read. A block asked for again is shown again,
+/// opened again, or said to be too long, never passed over twice for the
+/// same reason.
+fn read_by_id(
+    seen: &Seen,
+    tree: &[Node],
+    ids: &[String],
+    limit: usize,
+    measure: impl Fn(&str) -> usize + Copy,
+) -> ByIdRead {
+    use virtues_document::ops::find_node;
+    let html = |n: &Node| virtues_document::to_html(std::slice::from_ref(n), true);
     let mut read = ByIdRead::default();
-    let mut room = limit;
-    for node in found {
-        let Some(id) = node.id().map(str::to_string) else {
+    // The blocks asked for, by the block shown for them, in the order
+    // asked: several items of one list no read has shown are one list. A
+    // block too long for one read is shown by itself, as it can be.
+    let mut groups: Vec<(String, Vec<String>)> = vec![];
+    for id in ids {
+        let Some(node) = find_node(tree, id) else {
+            read.missing.push(id.clone());
             continue;
         };
-        let one = virtues_document::to_html(std::slice::from_ref(node), true);
-        let n = measure(&one);
+        let shown = if measure(&html(node)) <= limit {
+            context_for(seen, tree, id).unwrap_or_else(|| id.clone())
+        } else {
+            id.clone()
+        };
+        match groups.iter_mut().find(|(s, _)| *s == shown) {
+            Some((_, asked)) => asked.push(id.clone()),
+            None => groups.push((shown, vec![id.clone()])),
+        }
+    }
+    let mut room = limit;
+    for (shown, asked) in &groups {
+        let Some(node) = find_node(tree, shown) else {
+            continue;
+        };
+        let n = measure(&html(node));
+        if !asked.contains(shown) && n > limit {
+            // The way to as many of them as fit, in the order asked; the
+            // rest are another read's. Each shown alone instead would be no
+            // block shown there, inside the block around them.
+            let mut fitted: Option<(Part, Vec<String>, usize, usize)> = None;
+            for k in 1..=asked.len() {
+                let targets: Vec<&str> = asked[..k].iter().map(String::as_str).collect();
+                let mut cut = vec![];
+                let part = cut_down(node, &targets, &mut cut);
+                let said = measure(&Shown::html(vec![part.clone()]).text());
+                if said > room {
+                    break;
+                }
+                fitted = Some((part, cut, k, said));
+            }
+            if let Some((part, cut, k, said)) = fitted {
+                room -= said;
+                read.parts.push(part);
+                read.cut.push((shown.clone(), cut, asked[..k].to_vec()));
+                read.unread.extend(asked[k..].iter().cloned());
+                continue;
+            }
+            // The way to even one of them takes more than the read holds (a
+            // row too long for any read, its tags and its other cells'
+            // comments), and no read would hold it: each is shown alone, as
+            // it fits one.
+            for id in asked {
+                let Some(block) = find_node(tree, id) else { continue };
+                let m = measure(&html(block));
+                if m <= room {
+                    room -= m;
+                    read.parts.push(Part::Whole(block.clone()));
+                } else {
+                    read.unread.push(id.clone());
+                }
+            }
+            continue;
+        }
         if n <= room {
             room -= n;
-            read.html.push_str(&one);
-            read.seen.insert(id);
+            read.parts.push(Part::Whole(node.clone()));
             continue;
         }
         if n <= limit {
-            read.unread.push(id);
+            read.unread.push(shown.clone());
             continue;
         }
         if !page_reads::opens(node) {
-            let listed = format!("<!-- {id}: {} -->", page_reads::too_long_advice(node));
-            if measure(&listed) <= room {
-                room -= measure(&listed);
-                read.html.push_str(&listed);
-                read.whole_only.push(id.clone());
-                read.seen.insert(id);
+            let part = page_reads::listed(node, page_reads::TooLong::WholeOnly);
+            let said = measure(&Shown::html(vec![part.clone()]).text());
+            if said <= room {
+                room -= said;
+                read.parts.push(part);
+                read.whole_only.push(shown.clone());
             } else {
-                read.unread.push(id);
+                read.unread.push(shown.clone());
             }
             continue;
         }
         match read.opened.is_none().then(|| open_block(node, room, limit, measure)).flatten() {
-            Some((html, opened)) => {
-                room = room.saturating_sub(measure(&html));
-                read.html.push_str(&html);
-                read.seen.insert(id);
+            Some((part, opened)) => {
+                room = room.saturating_sub(measure(&Shown::html(vec![part.clone()]).text()));
+                read.parts.push(part);
                 read.opened = Some(opened);
             }
-            None => read.unread.push(id),
+            None => read.unread.push(shown.clone()),
         }
     }
     read
+}
+
+/// `node` cut down to the way to each of `targets` inside it: each block on
+/// the way shown by its own tags around only the blocks that lead on, a
+/// table cell on the way the same, a cell off it as a comment counting what
+/// it holds, and each target whole. Also the ids of the blocks cut down,
+/// outermost first, into `cut`.
+fn cut_down(node: &Node, targets: &[&str], cut: &mut Vec<String>) -> Part {
+    use virtues_document::ops::find_node;
+    let is_target = |n: &Node| n.id().is_some_and(|id| targets.contains(&id));
+    if is_target(node) {
+        return Part::Whole(node.clone());
+    }
+    let holds = |n: &Node| is_target(n) || targets.iter().any(|t| find_node(&n.content, t).is_some());
+    let at = cut.len();
+    let mut inside = vec![];
+    let mut passed = false;
+    for child in &node.content {
+        if holds(child) {
+            inside.push(cut_down(child, targets, cut));
+        } else if child.id().is_none() && !child.is_text() {
+            inside.push(Part::Cell {
+                cell: child.clone(),
+                inside: vec![Part::More {
+                    count: child.content.len(),
+                    after: None,
+                }],
+            });
+            passed = true;
+        } else {
+            passed = true;
+        }
+    }
+    match node.id() {
+        Some(id) => {
+            if passed {
+                cut.insert(at, id.to_string());
+            }
+            Part::Opened {
+                shell: virtues_document::seen::shell(node),
+                inside,
+            }
+        }
+        None => Part::Cell {
+            cell: node.clone(),
+            inside,
+        },
+    }
 }
 
 /// The most a comment about the blocks not shown inside an opened block
 /// takes, kept free for it.
 const MORE_INSIDE: usize = 160;
 
-/// `node`, too long to show whole, as its own tag around the blocks inside
+/// `node`, too long to show whole, as its own tags around the blocks inside
 /// it that fit in `room` ([`children_window`]), and a comment where the
-/// rest go. `None` when not even its tag and one block fit.
+/// rest go. `None` when not even its tags and one block fit.
 fn open_block(
     node: &Node,
     room: usize,
     limit: usize,
     measure: impl Fn(&str) -> usize + Copy,
-) -> Option<(String, Opened)> {
+) -> Option<(Part, Opened)> {
     let id = node.id()?.to_string();
-    let mut shell = node.clone();
-    shell.content.clear();
-    let empty = virtues_document::to_html(std::slice::from_ref(&shell), true);
-    // Empty, the block is its opening tags and then its closing ones: its
-    // own, and a table's `<tbody>` inside it, around where its blocks go.
-    let (open, close) = empty.split_at(empty.find("</")?);
-    let inner_room = room.checked_sub(measure(open) + measure(close) + MORE_INSIDE)?;
+    let shell = virtues_document::seen::shell(node);
+    let (open, close) = virtues_document::seen::tags(&shell);
+    if close.is_empty() {
+        return None;
+    }
+    let inner_room = room.checked_sub(measure(&open) + measure(&close) + MORE_INSIDE)?;
     let window = children_window(&node.content, 0, inner_room, limit, measure);
     if window.listed.is_empty() {
         return None;
     }
-    let mut html = format!("{open}{}", window.html);
+    let mut inside = window.parts.clone();
     if let Some(next) = &window.next {
-        let rest = node.content.len() - window.listed.len();
-        html.push_str(&format!("<!-- {rest} more: read on after \"{next}\" -->"));
+        inside.push(Part::More {
+            count: node.content.len() - window.listed.len(),
+            after: Some(next.clone()),
+        });
     }
-    html.push_str(close);
     let listed_only = window
         .listed
         .iter()
-        .filter(|id| !window.seen.contains(id))
+        .filter(|id| !window.shown.contains(id) && !window.whole_only.contains(id))
         .cloned()
         .collect();
     Some((
-        html,
+        Part::Opened { shell, inside },
         Opened {
             id,
             holds: node.content.len(),
-            shown: window.seen,
+            shown: window.shown.len(),
             whole_only: window.whole_only,
             listed_only,
             next: window.next,
@@ -2213,18 +2621,16 @@ fn open_block(
 }
 
 /// Blocks shown one after another, as HTML ([`children_window`]).
+#[derive(Default)]
 struct ChildWindow {
-    html: String,
-    /// The ids of the blocks shown or listed by id, in order.
+    parts: Vec<Part>,
+    /// The ids of the blocks shown or listed by a comment, in order.
     listed: Vec<String>,
+    /// Of those, the ones shown whole.
+    shown: Vec<String>,
     /// Of those, the ones too long for any read and not ones to open,
-    /// shown as a comment and seen as they stand.
+    /// listed with their hash.
     whole_only: Vec<String>,
-    /// Of those, the ones a read of the window has seen: each shown whole,
-    /// or too long for any read and not one to open, which is in a base as
-    /// it stands. One listed by id because a read with ids shows it, or the
-    /// blocks inside it, is not.
-    seen: Vec<String>,
     /// The last id listed, when more blocks follow it.
     next: Option<String>,
 }
@@ -2240,41 +2646,40 @@ fn children_window(
     limit: usize,
     measure: impl Fn(&str) -> usize,
 ) -> ChildWindow {
-    let mut window = ChildWindow {
-        html: String::new(),
-        listed: vec![],
-        whole_only: vec![],
-        seen: vec![],
-        next: None,
-    };
+    let mut window = ChildWindow::default();
     let mut used = 0;
     let mut end = start;
     for node in nodes.iter().skip(start) {
         let Some(id) = node.id() else { break };
         let one = virtues_document::to_html(std::slice::from_ref(node), true);
-        let (part, seen, whole_only) = if used + measure(&one) <= room {
-            (one, true, false)
-        } else if measure(&one) > limit {
-            let advice = page_reads::too_long_advice(node);
-            let whole_only = !page_reads::opens(node);
-            (format!("<!-- {id}: {advice} -->"), whole_only, whole_only)
+        let alone = measure(&one);
+        let (part, whole, whole_only) = if used + alone <= room {
+            (Part::Whole(node.clone()), true, false)
+        } else if alone > limit {
+            let kind = page_reads::TooLong::of(node, false);
+            (page_reads::listed(node, kind), false, kind == page_reads::TooLong::WholeOnly)
         } else if window.listed.is_empty() {
             (
-                format!("<!-- {id}: too long to show here; read it with get_page_content and ids -->"),
+                Part::Listed {
+                    id: id.to_string(),
+                    say: "too long to show here; read it with get_page_content and ids".into(),
+                    opaque: None,
+                },
                 false,
                 false,
             )
         } else {
             break;
         };
-        if used + measure(&part) > room {
+        let n = if whole { alone } else { measure(&Shown::html(vec![part.clone()]).text()) };
+        if used + n > room {
             break;
         }
-        used += measure(&part);
-        window.html.push_str(&part);
+        used += n;
+        window.parts.push(part);
         window.listed.push(id.to_string());
-        if seen {
-            window.seen.push(id.to_string());
+        if whole {
+            window.shown.push(id.to_string());
         }
         if whole_only {
             window.whole_only.push(id.to_string());
@@ -2318,130 +2723,13 @@ fn read_on_inside(inside: &str, next: &str) -> String {
 
 /// The blocks too long for any read, which a read lists by id alone.
 fn whole_only_note(ids: &[String]) -> String {
-    if ids.len() == 1 {
-        format!(
-            "{} is too long to show in any read. It is in this base as it stands: delete it, or \
-             replace it whole.",
-            block_names(ids)
-        )
-    } else {
-        format!(
-            "{} are too long to show in any read. They are in this base as they stand: delete \
-             them, or replace them whole.",
-            block_names(ids)
-        )
-    }
-}
-
-/// `id`, opened by a read, as the read showed it in the base `seen`: its
-/// own tag around the blocks inside it in `shown`. Reading on inside it
-/// (`after`) adds the rest. A replace or a delete of it before then sees
-/// what it has not read (`partly_read`), and is refused.
-fn keep_shown_part(seen: &mut [Node], id: &str, shown: &[String]) {
-    if let Some(node) = find_node_mut(seen, id) {
-        node.content
-            .retain(|c| c.id().is_some_and(|cid| shown.iter().any(|s| s == cid)));
-    }
-}
-
-fn find_node_mut<'a>(nodes: &'a mut [Node], id: &str) -> Option<&'a mut Node> {
-    for n in nodes {
-        if n.id() == Some(id) {
-            return Some(n);
-        }
-        if let Some(found) = find_node_mut(&mut n.content, id) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-/// Why a replace or a delete of a block the base holds only part of cannot
-/// be made: blocks inside it that no read has shown would go with it.
-/// `in_part` names the blocks reads showed in part (`ReadBase::whole`): the
-/// block itself, or one inside it, as a list read in part inside a callout
-/// read whole goes with the callout. A block read whole that has gained a
-/// block since is no such block: its change is the merge's to take or
-/// refuse, and a refusal shows it as it is now, which no read on inside it
-/// would. A delete takes a block inside it shown in part as it stands while
-/// nothing in that block has changed since it was shown, as it takes the
-/// block itself ([`tree_for_ops`]).
-fn partly_read(op: &Op, base: &[Node], current: &[Node], in_part: &BTreeMap<String, String>) -> Option<String> {
-    let (id, deletes) = match op {
-        Op::Replace { id, .. } => (id, false),
-        Op::Delete { id } => (id, true),
-        _ => return None,
-    };
-    unread_in(id, deletes, base, current, in_part)
-}
-
-/// A delete of a block shown in part, in a batch that writes blocks too: a
-/// rewrite of it, the delete and the write as one edit, which would put
-/// back only the blocks inside it a read showed and lose the rest. A delete
-/// alone stands while nothing in the block has changed ([`tree_for_ops`]);
-/// beside a write it is the replace [`partly_read`] refuses, made in two ops.
-/// `read` is the base as read, before [`tree_for_ops`] took the block as it
-/// stands.
-fn rewritten_in_part(id: &str, read: &page_reads::ReadBase, current: &[Node]) -> Option<String> {
-    let problem = unread_in(id, false, &read.tree, current, &read.whole)?;
-    Some(format!(
-        "this edit deletes `{id}` and writes blocks too, which puts back only what was read of it: {problem}"
-    ))
-}
-
-/// [`partly_read`] for the block `id`, a delete (`deletes`) taking a block
-/// inside it shown in part as it stands while nothing in it has changed.
-fn unread_in(id: &str, deletes: bool, base: &[Node], current: &[Node], in_part: &BTreeMap<String, String>) -> Option<String> {
-    let then = virtues_document::ops::find_node(base, id)?;
-    let mut held = vec![];
-    then.walk(&mut |n| {
-        if let Some(inner) = n.id().filter(|inner| in_part.contains_key(*inner)) {
-            held.push(inner.to_string());
-        }
-    });
-    held.iter().find_map(|inner| {
-        let now = virtues_document::ops::find_node(current, inner)?;
-        if deletes && inner != id && in_part.get(inner) == Some(&page_reads::node_hash(now)) {
-            return None;
-        }
-        unread_inside(id, inner, base, now)
-    })
-}
-
-/// [`partly_read`] for the block `inner` (the op's block `id`, or one inside
-/// it): how many of the blocks inside it the base has not read, and where
-/// reading on starts.
-fn unread_inside(id: &str, inner: &str, base: &[Node], now: &Node) -> Option<String> {
-    let then = virtues_document::ops::find_node(base, inner)?;
-    let read: HashSet<&str> = then.content.iter().filter_map(Node::id).collect();
-    let unread = now
-        .content
-        .iter()
-        .filter(|c| c.id().is_some_and(|cid| !read.contains(cid)))
-        .count();
-    if unread == 0 || now.content.len() <= then.content.len() {
-        return None;
-    }
-    // A read on from just before the first block not read shows it and
-    // what follows; from the start of the block, an ids read of it does.
-    let first_unread = now
-        .content
-        .iter()
-        .position(|c| c.id().is_some_and(|cid| !read.contains(cid)))?;
-    let before = first_unread.checked_sub(1).and_then(|i| now.content[i].id());
-    let read_on = match before {
-        Some(last) => format!("read the rest of it with get_page_content, after \"{last}\" and this base"),
-        None => format!("read it with get_page_content, ids [\"{inner}\"] and this base"),
-    };
-    let (what, with) = if inner == id {
-        (format!("`{id}` was shown only in part"), "it".to_string())
-    } else {
-        (format!("`{id}` holds `{inner}`, which was shown only in part"), format!("`{id}`"))
-    };
-    Some(format!(
-        "{what}: {unread} of the blocks inside it have not been read, and would go with {with}. \
-         Edit the blocks inside it by id, or {read_on}, first"
-    ))
+    let it = them(ids);
+    format!(
+        "{} {} too long to show in any read. An op naming {it} deletes {it}, or replaces {it} \
+         whole; a replace or delete of a block around {it} does not take {it}.",
+        block_names(ids),
+        if ids.len() == 1 { "is" } else { "are" },
+    )
 }
 
 /// The ids of every block in `nodes`, the blocks inside them included.
@@ -2457,67 +2745,13 @@ fn ids_in(nodes: &[Node]) -> HashSet<String> {
     out
 }
 
-/// Put `with` in place of the block `id` in `nodes`.
-fn replace_node(nodes: &mut [Node], id: &str, with: Node) {
-    if let Some(node) = find_node_mut(nodes, id) {
-        *node = with;
-    }
-}
-
-/// `node` cut down to the way to each of the blocks `targets` inside it (or
-/// `node` itself): each block with an id on the way keeps only the children
-/// that lead on, and blocks without one (a table's cells) are kept whole. A
-/// block in `targets` is kept whole, or, with `keep`, with only the
-/// children in it. Also the ids of the blocks cut down, outermost first.
-/// `None` when `node` holds none of `targets`.
-fn path_copy(node: &Node, targets: &[&str], keep: Option<&HashSet<String>>) -> Option<(Node, Vec<String>)> {
-    let is_target = |n: &Node| n.id().is_some_and(|id| targets.contains(&id));
-    let holds = |n: &Node| {
-        is_target(n) || targets.iter().any(|t| virtues_document::ops::find_node(&n.content, t).is_some())
-    };
-    if is_target(node) {
-        let Some(keep) = keep else {
-            return Some((node.clone(), vec![]));
-        };
-        let mut copy = node.clone();
-        copy.content.retain(|c| c.id().is_none_or(|id| keep.contains(id)));
-        let cut = match node.id() {
-            Some(id) if copy.content.len() < node.content.len() => vec![id.to_string()],
-            _ => vec![],
-        };
-        return Some((copy, cut));
-    }
-    if !holds(node) {
-        return None;
-    }
-    let mut copy = node.clone();
-    let mut cut = vec![];
-    let mut content = vec![];
-    for child in &node.content {
-        if holds(child) {
-            let (inner, inner_cut) = path_copy(child, targets, keep)?;
-            content.push(inner);
-            cut.extend(inner_cut);
-        } else if child.id().is_none() {
-            content.push(child.clone());
-        }
-    }
-    if content.len() < node.content.len() {
-        if let Some(id) = node.id() {
-            cut.insert(0, id.to_string());
-        }
-    }
-    copy.content = content;
-    Some((copy, cut))
-}
-
 /// What a read says of `outer` shown cut down to `shown`, the blocks asked
 /// for inside it, every one of them in the copy shown.
 fn cut_down_note(outer: &str, cut: &[String], shown: &[String]) -> String {
     let inside: Vec<String> = shown.iter().filter(|id| *id != outer).cloned().collect();
     format!(
         "{} {} shown inside `{outer}`, with only the blocks on the way to {}: edit {} by id. \
-         Replacing {} waits until reads have shown all of {}.",
+         Replacing or deleting {} waits until reads have shown all of {}.",
         block_names(&inside),
         if inside.len() == 1 { "is" } else { "are" },
         them(&inside),
@@ -2525,173 +2759,6 @@ fn cut_down_note(outer: &str, cut: &[String], shown: &[String]) -> String {
         cut.iter().map(|id| format!("`{id}`")).collect::<Vec<_>>().join(", "),
         if cut.len() == 1 { "it" } else { "them" },
     )
-}
-
-/// `base` with `seen` as what has been seen now, the blocks `as_html`
-/// names just shown as HTML, whole: none of them is shown only as markdown
-/// or in part any more, and what the base says of blocks gone from `seen`
-/// goes with them.
-fn carry(base: &page_reads::ReadBase, seen: Vec<Node>, as_html: &HashSet<String>) -> page_reads::ReadBase {
-    let present = ids_in(&seen);
-    page_reads::ReadBase {
-        markdown_only: base
-            .markdown_only
-            .iter()
-            .filter(|id| present.contains(*id) && !as_html.contains(*id))
-            .cloned()
-            .collect(),
-        whole: base
-            .whole
-            .iter()
-            .filter(|(id, _)| present.contains(*id) && !as_html.contains(*id))
-            .map(|(id, hash)| (id.clone(), hash.clone()))
-            .collect(),
-        tree: seen,
-    }
-}
-
-/// Say in `base` that the block `id` was shown in part, as `tree` holds it.
-fn shown_in_part(base: &mut page_reads::ReadBase, tree: &[Node], id: &str) {
-    if let Some(node) = virtues_document::ops::find_node(tree, id) {
-        base.whole.insert(id.to_string(), page_reads::node_hash(node));
-    }
-}
-
-/// The tree a batch is checked against and merged with: the base's, with a
-/// block shown in part that the batch deletes taken as it stands when it
-/// still hashes as it did when shown. Nothing in it changed since, so the
-/// delete takes nothing a read did not have the chance to show; a replace
-/// still waits for every block inside to be read ([`partly_read`]).
-fn tree_for_ops(base: &page_reads::ReadBase, current: &[Node], ops: &[Op]) -> Vec<Node> {
-    let mut tree = base.tree.clone();
-    for op in ops {
-        let Op::Delete { id } = op else { continue };
-        let (Some(hash), Some(now)) = (base.whole.get(id), virtues_document::ops::find_node(current, id)) else {
-            continue;
-        };
-        if page_reads::node_hash(now) == *hash {
-            replace_node(&mut tree, id, now.clone());
-        }
-    }
-    tree
-}
-
-/// Whether a replace of the block `id` would write a block shown only as
-/// markdown in the reads `base` holds: `id` itself, or a block inside it.
-/// A block around it is no matter; the replace does not write it.
-fn shown_as_markdown(base: &page_reads::ReadBase, id: &str) -> bool {
-    if base.markdown_only.is_empty() {
-        return false;
-    }
-    match virtues_document::ops::find_node(&base.tree, id) {
-        Some(node) => ids_in(std::slice::from_ref(node))
-            .iter()
-            .any(|inner| base.markdown_only.contains(inner)),
-        None => base.markdown_only.contains(id),
-    }
-}
-
-/// Why a replace (or a move) of the block `id` waits: a read showed it, or
-/// blocks inside it, only as markdown, which does not say what its HTML is.
-/// A block a read opened is read on inside from just before the first block
-/// in it still shown only as markdown. Any other block's HTML comes with the
-/// refusal, or, too long to come with it, is named there to be read by id.
-fn markdown_only_problem(read: &page_reads::ReadBase, current: &[Node], id: &str, what: &str) -> String {
-    let opened = read
-        .whole
-        .contains_key(id)
-        .then(|| virtues_document::ops::find_node(current, id))
-        .flatten()
-        .and_then(|now| {
-            let first = now
-                .content
-                .iter()
-                .position(|c| c.id().is_some_and(|cid| shown_as_markdown(read, cid)))?;
-            Some(first.checked_sub(1).and_then(|i| now.content[i].id()))
-        });
-    let then = match opened {
-        Some(Some(last)) => format!(
-            "read the rest of it as HTML with get_page_content, after \"{last}\" and this base, then \
-             write the {what} from its HTML"
-        ),
-        Some(None) => format!(
-            "read it as HTML with get_page_content, ids [\"{id}\"] and this base, then write the \
-             {what} from its HTML"
-        ),
-        None => format!("write the {what} from its HTML"),
-    };
-    format!(
-        "the block `{id}` was shown only as markdown, which does not say what its HTML is (a mention \
-         reads as a link, a callout as a quote); {then}"
-    )
-}
-
-/// How the crate's merge refuses a replace or a delete of a block that
-/// changed since the read and could not be merged.
-const CHANGED_SINCE_READ: &str = "the block changed since you read it";
-
-/// What a refusal says of the block `id`, one a read opened
-/// (`ReadBase::whole`) that changed since: where reading on inside it
-/// starts, just before the first block in it the base does not hold as the
-/// page has it.
-/// An ids read opens such a block from its start again and keeps the blocks
-/// past its first window as the earlier read showed them, so it would never
-/// show a change further in, and the retry would be refused again. Also the
-/// blocks the base holds inside it that are gone from the page, which the
-/// refusal's base sees gone, so the read on starts where the page differs.
-/// None for any other block, or when its first block changed, which an ids
-/// read shows.
-fn changed_in_part(read: &page_reads::ReadBase, current: &[Node], id: &str) -> Option<(String, Vec<String>)> {
-    if !read.whole.contains_key(id) {
-        return None;
-    }
-    let then = virtues_document::ops::find_node(&read.tree, id)?;
-    let now = virtues_document::ops::find_node(current, id)?;
-    let gone: Vec<String> = then
-        .content
-        .iter()
-        .filter_map(Node::id)
-        .filter(|inner| !now.content.iter().any(|c| c.id() == Some(*inner)))
-        .map(str::to_string)
-        .collect();
-    let kept: Vec<&Node> = then
-        .content
-        .iter()
-        .filter(|c| c.id().is_none_or(|inner| !gone.iter().any(|g| g == inner)))
-        .collect();
-    let first = (0..now.content.len().max(kept.len()))
-        .find(|&i| now.content.get(i) != kept.get(i).copied())?;
-    let last = first.checked_sub(1).and_then(|i| now.content[i].id())?;
-    Some((
-        format!(
-            "{CHANGED_SINCE_READ}, further in than a read of it by id shows: read the rest of it \
-             with get_page_content, after \"{last}\" and this base, then write the op from what \
-             that read shows"
-        ),
-        gone,
-    ))
-}
-
-/// No block a read showed in part ([`partly_read`]): a base with no kept read.
-static NONE_IN_PART: BTreeMap<String, String> = BTreeMap::new();
-
-/// Whether op HTML holds a link to a ref on the box (`/person/…`): what a
-/// mention, shown as markdown (`[@Nick](/person/person_1)`), comes back as
-/// when written from it.
-fn holds_ref_link(html: &str) -> bool {
-    let mut found = false;
-    for n in &virtues_document::parse_html(html, "doc").nodes {
-        n.walk(&mut |n| {
-            found |= n.marks.iter().any(|m| {
-                m.kind == "link"
-                    && m.attrs
-                        .get("href")
-                        .and_then(|h| h.as_str())
-                        .is_some_and(virtues_document::contract::is_route)
-            });
-        });
-    }
-    found
 }
 
 fn chars(text: &str) -> usize {
@@ -2831,6 +2898,41 @@ fn string_list(value: Value) -> Result<Vec<String>, ToolError> {
 mod tests {
     use super::*;
     use crate::server::yjs::extract_text_content;
+
+    /// A block in a cell of a row too long for any read, which fits a read
+    /// alone but not with the way to it (the row's tags and its other
+    /// cells' comments), is shown alone: left unread, a refusal's advice to
+    /// read it by id would come back the same, read after read.
+    #[test]
+    fn a_block_in_a_long_rows_cell_is_read_alone_when_the_way_to_it_does_not_fit() {
+        use virtues_document::ops::find_node;
+        let long = "harbour ".repeat(200);
+        let items: String = (0..6).map(|i| format!("<li data-id=\"i{i}\"><p data-id=\"p{i}\">Item {i}</p></li>")).collect();
+        let html = format!(
+            "<table data-id=\"t\"><tr data-id=\"r\"><td><p data-id=\"c\">{long}</p></td>\
+             <td><ul data-id=\"l\">{items}</ul></td></tr></table>"
+        );
+        let parsed = virtues_document::parse_html(&html, "doc");
+        assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
+        let tree = parsed.nodes;
+        let node = |id: &str| find_node(&tree, id).unwrap().clone();
+        let mut seen = Seen::default();
+        seen.learn(
+            &Shown::html(vec![Part::Opened {
+                shell: virtues_document::seen::shell(&node("t")),
+                inside: vec![page_reads::listed(&node("r"), page_reads::TooLong::WholeOnly)],
+            }]),
+            &tree,
+            &HashSet::new(),
+        );
+        let list = virtues_document::to_html(&[node("l")], true);
+        let limit = json_bytes(&list) + 8;
+        let read = read_by_id(&seen, &tree, &["l".to_string()], limit, json_bytes);
+        assert_eq!(read.unread, Vec::<String>::new());
+        assert!(matches!(&read.parts[..], [Part::Whole(n)] if n.id() == Some("l")), "{:?}", read.parts.len());
+        seen.learn(&Shown::html(read.parts), &tree, &HashSet::new());
+        assert_eq!(seen.subtree("l"), Some(node("l")));
+    }
 
     /// Two chat edits to one page at once take turns: neither reads the
     /// other's change as the owner's typing, so no version credits a chat's
@@ -3226,8 +3328,31 @@ mod block_pages {
             .unwrap();
     }
 
-    async fn kept_base(pool: &PgPool, page_id: &str, base: &str) -> Option<Vec<Node>> {
-        page_reads::read_base(pool, page_id, base).await.unwrap().map(|kept| kept.tree)
+    async fn kept_base(pool: &PgPool, page_id: &str, base: &str) -> Option<Seen> {
+        page_reads::read_base(pool, page_id, base).await.unwrap()
+    }
+
+    /// The text of the block `id` as the base holds it.
+    fn known_text(seen: &Seen, id: &str) -> Option<String> {
+        seen.subtree(id).map(|n| n.text_content())
+    }
+
+    /// The blocks inside the block `id` that the base holds, in page order.
+    fn known_children(seen: &Seen, id: &str) -> Vec<String> {
+        seen.known(id)
+            .map(|k| {
+                virtues_document::seen::stubs(&k.shell)
+                    .into_iter()
+                    .filter(|c| seen.knows(c))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Whether the base holds every block of `nodes` as it stands.
+    fn holds_as_it_stands(seen: &Seen, nodes: &[Node]) -> bool {
+        nodes.iter().all(|n| seen.subtree(n.id().unwrap()).as_ref() == Some(n))
     }
 
     async fn versions(pool: &PgPool, page_id: &str) -> Vec<(String, Option<String>, String)> {
@@ -3242,6 +3367,73 @@ mod block_pages {
         rows.into_iter()
             .map(|(by, description, snapshot)| (by, description, extract_text_content(&snapshot)))
             .collect()
+    }
+
+    /// A chat turn's results replay to later turns clipped (to 32 KiB, then
+    /// 2 KiB), while a base would still let a replace write over all a read
+    /// showed. So a base serves the turn that made it, the edits it chains
+    /// included, and a later turn's replace or delete with it is refused,
+    /// writing nothing, until a read in that turn; the CLI, which has no
+    /// turns, takes any base.
+    #[sqlx::test]
+    async fn a_base_serves_only_the_turn_that_made_it(pool: PgPool) {
+        let page_id = tree_page(&pool, "Groceries\n\n- Milk\n- Eggs\n- Bread\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let tool = tool(&pool, &yjs);
+        let in_turn = |turn: &str| ToolContext { turn: Some(turn.into()), ..Default::default() };
+        let first = tool
+            .get_page_content(json!({ "page_id": page_id }), &in_turn("turn_1"))
+            .await
+            .unwrap()
+            .data;
+        let base = first["base"].as_str().unwrap().to_string();
+        let tree = yjs.read_tree(&page_id).await.unwrap();
+        assert_eq!(page_reads::base_hash(&base), virtues_document::tree_hash(&tree));
+        let list = tree[1].id().unwrap().to_string();
+        let replace = |base: &str, html: &str| {
+            json!({ "page_id": page_id, "base": base, "ops": [{ "op": "replace", "id": list, "html": html }] })
+        };
+
+        // The turn that read it edits with it, and chains on what the edit returns.
+        let done = tool
+            .edit_page(replace(&base, "<ul><li><p>Milk</p></li><li><p>Eggs</p></li></ul>"), &in_turn("turn_1"))
+            .await
+            .unwrap();
+        assert_eq!(done.data["applied"], true, "{:?}", done.data);
+        let chained = done.data["base"].as_str().unwrap().to_string();
+
+        // A later turn holds only part of that read: its replace is refused.
+        for base in [&base, &chained] {
+            let refused = tool
+                .edit_page(replace(base, "<ul><li><p>Milk</p></li></ul>"), &in_turn("turn_2"))
+                .await
+                .unwrap();
+            assert_eq!(refused.data["applied"], false, "{:?}", refused.data);
+            assert!(refused.data["error"].as_str().unwrap().contains("in an earlier turn"), "{:?}", refused.data);
+        }
+        assert_eq!(texts(&yjs.read_tree(&page_id).await.unwrap()), ["Groceries", "MilkEggs"]);
+        let ids_read = tool
+            .get_page_content(json!({ "page_id": page_id, "ids": [list], "base": chained }), &in_turn("turn_2"))
+            .await;
+        assert!(ids_read.is_err(), "an ids read adds to a read of its own turn");
+
+        // Read again in that turn, it edits.
+        let again = tool
+            .get_page_content(json!({ "page_id": page_id }), &in_turn("turn_2"))
+            .await
+            .unwrap()
+            .data;
+        let base = again["base"].as_str().unwrap();
+        let done = tool
+            .edit_page(replace(base, "<ul><li><p>Milk</p></li></ul>"), &in_turn("turn_2"))
+            .await
+            .unwrap();
+        assert_eq!(done.data["applied"], true, "{:?}", done.data);
+        // Outside a turn, any base.
+        let cli = edit(&tool, replace(done.data["base"].as_str().unwrap(), "<ul><li><p>Oats</p></li></ul>")).await;
+        assert_eq!(cli["applied"], true);
+        assert!(page_reads::serves_turn(base, None));
+        assert!(!page_reads::serves_turn(&virtues_document::tree_hash(&tree), Some("turn_2")));
     }
 
     #[sqlx::test]
@@ -3259,8 +3451,8 @@ mod block_pages {
             "<virtues-mention to=\"/person/person_1\" label=\"Nick\"></virtues-mention>"
         ));
         let base = data["base"].as_str().unwrap();
-        assert_eq!(base, page_reads::tree_hash(&tree));
-        assert_eq!(kept_base(&pool, &page_id, base).await, Some(tree));
+        assert_eq!(base, virtues_document::tree_hash(&tree));
+        assert_eq!(kept_base(&pool, &page_id, base).await, Some(Seen::of_page(&tree)));
         assert_eq!(data["how_to_edit"], HOW_TO_EDIT);
         assert_eq!(data["tags"], virtues_document::tag_guide());
         assert!(data.get("markdown").is_none());
@@ -3293,9 +3485,33 @@ mod block_pages {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(kept.tree, tree);
-        assert_eq!(kept.markdown_only, ids_in(&tree).into_iter().collect());
+        assert!(holds_as_it_stands(&kept, &tree));
+        assert!(ids_in(&tree).iter().all(|id| kept.known(id).is_some_and(|k| k.form == Form::Markdown)));
         assert!(data.get("more_after").is_none());
+    }
+
+    /// A page whose HTML is short in characters and long in the bytes its
+    /// result takes (a control character is six bytes in JSON) was shown
+    /// whole: the agent loop cut the result at 96 KiB, mid-page, after a
+    /// base that claimed every block, and a replace written from the part
+    /// shown would drop a tail no read showed. It reads as markdown, as far
+    /// as one read holds, inside the cut.
+    #[sqlx::test]
+    async fn a_full_read_fits_the_loops_cut_in_bytes_not_only_characters(pool: PgPool) {
+        let code = "\u{1b}\u{7}".repeat(11_950);
+        let page_id = tree_page(&pool, &format!("Log:\n\n```\n{code}\n```\n\nEnd.\n")).await;
+        let yjs = YjsState::new(pool.clone());
+        let tool = tool(&pool, &yjs);
+        let tree = yjs.read_tree(&page_id).await.unwrap();
+        let html = virtues_document::to_html(&tree, true);
+        assert!(html.contains(&code), "the code keeps its control characters");
+        assert!(chars(&html) <= READ_HTML_CHARS, "{}", chars(&html));
+        assert!(json_bytes(&html) > crate::agent::executor::MAX_TOOL_OUTPUT_BYTES);
+
+        let first = read(&tool, json!({ "page_id": page_id })).await;
+        assert!(first.get("html").is_none(), "shown whole as HTML past the cut");
+        assert!(first["markdown"].is_string(), "{first}");
+        assert!(serde_json::to_string(&first).unwrap().len() < crate::agent::executor::MAX_TOOL_OUTPUT_BYTES);
     }
 
     /// A page longer than one read holds is read in windows of whole blocks,
@@ -3327,7 +3543,9 @@ mod block_pages {
         assert!(k > 0 && k < tree.len(), "{k}");
         assert_eq!(shown, virtues_document::to_markdown_with_ids(&tree[..k]));
         let base1 = first["base"].as_str().unwrap().to_string();
-        assert_eq!(kept_base(&pool, &page_id, &base1).await.unwrap(), tree[..k]);
+        let kept = kept_base(&pool, &page_id, &base1).await.unwrap();
+        assert!(holds_as_it_stands(&kept, &tree[..k]));
+        assert!(!kept.knows(tree[k].id().unwrap()));
         let next = tree[k - 1].id().unwrap();
         assert_eq!(first["more_after"], next);
         assert!(first["note"].as_str().unwrap().contains(&format!(
@@ -3381,7 +3599,7 @@ mod block_pages {
             }
         }
         let now = yjs.read_tree(&page_id).await.unwrap();
-        assert_eq!(kept_base(&pool, &page_id, &base).await, Some(now));
+        assert!(holds_as_it_stands(&kept_base(&pool, &page_id, &base).await.unwrap(), &now));
 
         // With a base that has seen the owner's text, as markdown, the
         // replace waits for the block's HTML, which the refusal brings with
@@ -3489,7 +3707,8 @@ mod block_pages {
         let base2 = data["base"].as_str().unwrap();
         assert_ne!(base2, base1);
         let seen = kept_base(&pool, &page_id, base2).await.unwrap();
-        assert_eq!(texts(&seen), ["Coffee.", "Green tea.", "Juice."]);
+        let held: Vec<Option<String>> = ids.iter().map(|id| known_text(&seen, id)).collect();
+        assert_eq!(held, [Some("Coffee.".into()), Some("Green tea.".into()), Some("Juice.".into())]);
 
         // A string holding the list is read the same.
         let again = read(
@@ -3552,7 +3771,7 @@ mod block_pages {
             .await
             .unwrap();
         assert_eq!(data["html"], virtues_document::to_html(&tree, true));
-        assert_eq!(data["base"], page_reads::tree_hash(&tree));
+        assert_eq!(data["base"], virtues_document::tree_hash(&tree));
 
         let plain = read(&offline, json!({ "page_id": page_id, "view": "markdown" })).await;
         assert_eq!(plain["markdown"], "Coffee.\n\nTea.\n");
@@ -3643,7 +3862,7 @@ mod block_pages {
             .as_str()
             .unwrap()
             .contains(&format!("Use base {next}")));
-        assert_eq!(kept_base(&pool, &page_id, next).await.unwrap(), tree);
+        assert_eq!(kept_base(&pool, &page_id, next).await.unwrap(), Seen::of_page(&tree));
 
         let title: String = sqlx::query_scalar("SELECT title FROM app_pages WHERE id = $1")
             .bind(&page_id)
@@ -3851,10 +4070,11 @@ mod block_pages {
         );
     }
 
-    /// A block too long to show in an edit's reply is named, not left out of
-    /// the base unsaid: the edit that wrote it says to read it by id, and a
-    /// refusal over it says the same, where "send the batch again" with a
-    /// base that has not seen it would be refused again, every time.
+    /// A block too long to show in an edit's reply is named: the base holds
+    /// it as the model wrote it, so its next edit needs no read. A refusal
+    /// over it once a person has changed it says to read it by id, where
+    /// "send the batch again" with a base that has not seen the change would
+    /// be refused again, every time.
     #[sqlx::test]
     async fn a_block_too_long_to_show_is_named_and_read_by_id(pool: PgPool) {
         let page_id = tree_page(&pool, "Lunch on Friday.\n\nCoffee.\n").await;
@@ -3875,10 +4095,9 @@ mod block_pages {
         .await;
         assert_eq!(wrote["applied"], true);
         assert_eq!(wrote["html"], "");
-        assert_eq!(wrote["unread"], json!([id]));
+        assert!(wrote.get("unread").is_none(), "{wrote}");
         assert!(wrote["message"].as_str().unwrap().ends_with(&format!(
-            "The block `{id}` is too long to show here; read it with get_page_content, ids and that \
-             base before editing it again."
+            "The block `{id}` is too long to show here; that base holds it as you wrote it."
         )));
         let base = wrote["base"].clone();
 
@@ -3972,7 +4191,9 @@ mod block_pages {
         )
         .await;
         let message = refused["refused"][0]["message"].as_str().unwrap();
-        assert!(message.contains(&format!("`{list}` was shown only in part")), "{message}");
+        assert!(message.contains("that no read has shown you"), "{message}");
+        assert!(message.contains(&format!("inside `{list}`")), "{message}");
+        assert!(message.contains(&format!("after \"{next}\" and this base")), "{message}");
         assert_eq!(yjs.read_tree(&page_id).await.unwrap()[1].content.len(), 1_000);
 
         // An item the opened list showed.
@@ -4069,7 +4290,7 @@ mod block_pages {
         assert!(note.contains("shown with 2 of the 3 blocks inside it"), "{note}");
         let base = opened["base"].as_str().unwrap();
         let kept = kept_base(&pool, &page_id, base).await.unwrap();
-        assert_eq!(child_ids(&kept, &list), [items[0].clone(), items[2].clone()]);
+        assert_eq!(known_children(&kept, &list), [items[0].clone(), items[2].clone()]);
 
         for op in [
             json!({ "op": "replace", "id": list, "html": html.replace("Phase one", "Phase one, done") }),
@@ -4080,25 +4301,36 @@ mod block_pages {
         assert_eq!(yjs.read_tree(&page_id).await.unwrap(), tree);
     }
 
-    /// A paragraph inside a quote too long for any read is shown as a
-    /// comment. The model's replace of the quote, written from that read
-    /// with a typo fixed, copied the comment, which wrote nothing: the long
-    /// paragraph went, and the edit said it was on the page. A comment in
-    /// op HTML is refused, and the read's note says what leaving it out does.
-    #[sqlx::test]
-    async fn a_block_shown_as_a_comment_is_never_written_over_by_copying_the_comment(pool: PgPool) {
+    /// A quote holding a paragraph too long for any read, opened by id: its
+    /// first paragraph, and a comment for the long one. Its page, the quote,
+    /// the long paragraph's id, and the opened read.
+    async fn quote_around_a_long_paragraph(pool: &PgPool, tool: &PageEditorTool, yjs: &YjsState) -> (String, String, String, Value) {
         let long_line = "ridge ".repeat(14_000);
-        let page_id = tree_page(&pool, &format!("Notes:\n\n> Teh log from the ridge:\n>\n> {long_line}\n")).await;
-        let yjs = YjsState::new(pool.clone());
-        let tool = tool(&pool, &yjs);
+        let page_id = tree_page(pool, &format!("Notes:\n\n> Teh log from the ridge:\n>\n> {long_line}\n")).await;
         let tree = yjs.read_tree(&page_id).await.unwrap();
         let quote = tree[1].id().unwrap().to_string();
         let inner = child_ids(&tree, &quote);
         assert_eq!(inner.len(), 2);
-        let first = read(&tool, json!({ "page_id": page_id })).await;
-        let opened = read(&tool, json!({ "page_id": page_id, "ids": [quote], "base": first["base"] })).await;
+        assert!(!fits_one_read(&tree[1].content[1]), "the paragraph fits one read");
+        let first = read(tool, json!({ "page_id": page_id })).await;
+        let opened = read(tool, json!({ "page_id": page_id, "ids": [quote], "base": first["base"] })).await;
+        (page_id, quote, inner[1].clone(), opened)
+    }
+
+    /// A paragraph inside a quote too long for any read is shown as a
+    /// comment. The model's replace of the quote, written from that read
+    /// with a typo fixed, copied the comment, which wrote nothing: the long
+    /// paragraph went, and the edit said it was on the page. Refused, as
+    /// taking a block no read can show by an op on the block around it, and
+    /// as a comment, which writes nothing; the read's note says so first.
+    #[sqlx::test]
+    async fn a_block_shown_as_a_comment_is_never_written_over_by_copying_the_comment(pool: PgPool) {
+        let yjs = YjsState::new(pool.clone());
+        let tool = tool(&pool, &yjs);
+        let (page_id, quote, long, opened) = quote_around_a_long_paragraph(&pool, &tool, &yjs).await;
+        let tree = yjs.read_tree(&page_id).await.unwrap();
         let html = opened["html"].as_str().unwrap();
-        assert!(html.contains(&format!("<!-- {}: too long to show in any read", inner[1])), "{html}");
+        assert!(html.contains(&format!("<!-- {long}: too long to show in any read")), "{html}");
         let note = opened["note"].as_str().unwrap();
         assert!(note.contains("shown with 1 of the 2 blocks inside it"), "{note}");
         assert!(note.contains("a replace of"), "{note}");
@@ -4111,8 +4343,47 @@ mod block_pages {
             ] }),
         )
         .await;
-        assert!(refused["error"].as_str().unwrap().contains("HTML comment"), "{refused}");
+        let error = refused["error"].as_str().unwrap();
+        assert!(error.contains("HTML comment"), "{refused}");
+        assert!(error.contains(&format!("`{long}`, which is too long for any read")), "{refused}");
         assert_eq!(yjs.read_tree(&page_id).await.unwrap(), tree);
+    }
+
+    /// The same replace with the comment left out took the long paragraph
+    /// just the same: the base held the quote's blocks as read, the long one
+    /// "seen" as listed, so nothing in the quote counted as unread. A block
+    /// too long for any read goes only by an op deleting it, ahead of any op
+    /// on a block around it; the refusal says so, and that batch lands.
+    #[sqlx::test]
+    async fn a_replace_that_leaves_out_a_block_too_long_for_any_read_is_refused(pool: PgPool) {
+        let yjs = YjsState::new(pool.clone());
+        let tool = tool(&pool, &yjs);
+        let (page_id, quote, long, opened) = quote_around_a_long_paragraph(&pool, &tool, &yjs).await;
+        let base = opened["base"].clone();
+        let fixed = json!({ "op": "replace", "id": quote, "html": "<blockquote><p>The log from the ridge:</p></blockquote>" });
+        let refused = refused_whole(&tool, &yjs, &page_id, json!({ "page_id": page_id, "base": base, "ops": [fixed] })).await;
+        let message = refused["refused"][0]["message"].as_str().unwrap();
+        assert!(message.contains(&format!("`{long}`, which is too long for any read")), "{message}");
+        assert!(message.contains(&format!("delete `{long}` by its id in an op before op 1")), "{message}");
+
+        // Deleting the quote takes it the same way; after it, the op naming
+        // it finds it gone, and is told to go first.
+        let delete_quote = json!({ "op": "delete", "id": quote });
+        let delete_long = json!({ "op": "delete", "id": long });
+        refused_whole(&tool, &yjs, &page_id, json!({ "page_id": page_id, "base": base, "ops": [delete_quote] })).await;
+        let late = refused_whole(
+            &tool,
+            &yjs,
+            &page_id,
+            json!({ "page_id": page_id, "base": base, "ops": [delete_quote, delete_long] }),
+        )
+        .await;
+        let named = late["refused"].as_array().unwrap().iter().find(|p| p["at"] == "op 2").unwrap();
+        assert!(named["message"].as_str().unwrap().contains("put this op before op 1"), "{late}");
+
+        let wrote = edit(&tool, json!({ "page_id": page_id, "base": base, "ops": [delete_long, fixed] })).await;
+        assert_eq!(wrote["applied"], true, "{wrote}");
+        assert_eq!(texts(&yjs.read_tree(&page_id).await.unwrap()), ["Notes:", "The log from the ridge:"]);
     }
 
     /// A list read whole that a person has added an item to since is no list
@@ -4162,30 +4433,32 @@ mod block_pages {
         panic!("the replace never landed");
     }
 
-    /// The opened list's refusal points the read on at the first item not
-    /// read, wherever a person added it: from just before it, or with an
-    /// ids read of the list when it is the first.
+    /// A refusal's read on starts just before the first block not read,
+    /// inside the deepest block around it too long for one read: from just
+    /// before it, or with an ids read of it when it is the first there;
+    /// around a block that fits one read, that block whole.
     #[test]
     fn a_read_on_starts_before_the_first_block_not_read() {
-        let item = |id: &str| {
-            let mut n = Node::element("listItem", Default::default(), vec![]);
-            n.attrs.insert("id".into(), json!(id));
-            n
-        };
-        let list = |ids: &[&str]| {
-            let mut n = Node::element("bulletList", Default::default(), ids.iter().map(|i| item(i)).collect());
-            n.attrs.insert("id".into(), json!("l"));
-            n
-        };
-        let in_part = BTreeMap::from([("l".to_string(), String::new())]);
-        let op = Op::Delete { id: "l".into() };
-        let base = [list(&["a", "b", "c"])];
-        let middle = partly_read(&op, &base, &[list(&["a", "x", "b", "c"])], &in_part).unwrap();
-        assert!(middle.contains("after \"a\""), "{middle}");
-        let top = partly_read(&op, &base, &[list(&["x", "a", "b", "c"])], &in_part).unwrap();
-        assert!(top.contains("ids [\"l\"]"), "{top}");
-        // Read whole: no read on, the merge decides.
-        assert!(partly_read(&op, &base, &[list(&["a", "x", "b", "c"])], &BTreeMap::new()).is_none());
+        let items: String = (0..1_000)
+            .map(|i| format!("<li data-id=\"i{i}\"><p data-id=\"p{i}\">Item {i} for the trip to the coast, packed by the door</p></li>"))
+            .collect();
+        let o = virtues_document::parse_html(
+            &format!("<ul data-id=\"l\">{items}</ul><ul data-id=\"s\"><li data-id=\"s0\"><p data-id=\"t0\">Short</p></li></ul>"),
+            "doc",
+        );
+        assert!(o.errors.is_empty(), "{:?}", o.errors);
+        let tree = o.nodes;
+        assert!(!fits_one_read(&tree[0]), "the list fits one read");
+        assert_eq!(
+            read_on_advice(&tree, "i500", false, &fits_one_read),
+            "read the rest of `l` with get_page_content, after \"i499\" and this base"
+        );
+        assert_eq!(
+            read_on_advice(&tree, "p500", true, &fits_one_read),
+            "read the rest of `l` as HTML with get_page_content, after \"i499\" and this base"
+        );
+        assert_eq!(read_on_advice(&tree, "i0", false, &fits_one_read), "read `i0` with get_page_content, ids [\"i0\"] and this base");
+        assert_eq!(read_on_advice(&tree, "t0", false, &fits_one_read), "read `s` with get_page_content, ids [\"s\"] and this base");
     }
 
     /// A long page reads as markdown, where a mention reads as a link. A
@@ -4242,7 +4515,7 @@ mod block_pages {
         )
         .await;
         let base = on["base"].as_str().unwrap().to_string();
-        let read_so_far = child_ids(&kept_base(&pool, &page_id, &base).await.unwrap(), &list);
+        let read_so_far = known_children(&kept_base(&pool, &page_id, &base).await.unwrap(), &list);
         let last = read_so_far.last().unwrap().clone();
         assert_eq!(on["more_after"], last.as_str());
 
@@ -4260,53 +4533,78 @@ mod block_pages {
         assert!(refused.get("unread").is_none_or(|u| !u.to_string().contains(&list)), "{refused}");
         assert!(!refused["message"].as_str().unwrap().contains("ids and base"), "{refused}");
         let kept = refused["base"].as_str().unwrap().to_string();
-        assert_eq!(child_ids(&kept_base(&pool, &page_id, &kept).await.unwrap(), &list), read_so_far);
+        assert_eq!(known_children(&kept_base(&pool, &page_id, &kept).await.unwrap(), &list), read_so_far);
 
         // Reading the list by id again keeps what the base had read of it.
         let again = read(&tool, json!({ "page_id": page_id, "ids": [list], "base": kept })).await;
-        let held = child_ids(&kept_base(&pool, &page_id, again["base"].as_str().unwrap()).await.unwrap(), &list);
+        let held = known_children(&kept_base(&pool, &page_id, again["base"].as_str().unwrap()).await.unwrap(), &list);
         assert_eq!(held, read_so_far);
     }
 
-    /// Deleting a list a read showed in part stands while nothing in it
-    /// changed since the read: the read had the chance to show it all. A
-    /// change to an item no read showed refuses it.
+    /// A list a read showed in part, deleted while nothing in it had
+    /// changed, was let through: the read "had the chance" to show it all.
+    /// The rewrite then came in the next edit, from the items shown, and the
+    /// rest were gone with no word to anyone. Deleting it waits until reads
+    /// have shown all of it, and following the refusal gets there.
     #[sqlx::test]
-    async fn deleting_a_list_shown_in_part_stands_while_nothing_in_it_changed(pool: PgPool) {
+    async fn a_list_read_in_part_is_not_deleted_then_written_again_in_the_next_edit(pool: PgPool) {
         let page_id = tree_page(&pool, &format!("Packing list:\n\n{}\nDone.\n", long_list(1_000))).await;
         let yjs = YjsState::new(pool.clone());
         let tool = tool(&pool, &yjs);
         let tree = yjs.read_tree(&page_id).await.unwrap();
         let list = tree[1].id().unwrap().to_string();
-        let late = tree[1].content[990].content[0].id().unwrap().to_string();
         let first = read(&tool, json!({ "page_id": page_id })).await;
         let opened = read(&tool, json!({ "page_id": page_id, "ids": [list], "base": first["base"] })).await;
-        assert!(!opened["html"].as_str().unwrap().contains(&late));
-        let delete = json!({ "page_id": page_id, "base": opened["base"], "ops": [{ "op": "delete", "id": list }] });
-
-        person_writes(&yjs, &page_id, Op::Replace { id: late.clone(), html: "<p>Item 990, the charger</p>".into() })
-            .await;
-        let refused = refused_whole(&tool, &yjs, &page_id, delete.clone()).await;
+        let delete = |base: &Value| json!({ "page_id": page_id, "base": base, "ops": [{ "op": "delete", "id": list }] });
+        let refused = refused_whole(&tool, &yjs, &page_id, delete(&opened["base"])).await;
         let message = refused["refused"][0]["message"].as_str().unwrap();
-        assert!(message.contains(&format!("`{list}` was shown only in part")), "{message}");
+        let next = opened["more_after"].as_str().unwrap();
+        assert!(message.contains("that no read has shown you"), "{message}");
+        assert!(message.contains(&format!("after \"{next}\" and this base")), "{message}");
 
-        // Read again, the list is deleted whole.
-        let opened = read(&tool, json!({ "page_id": page_id, "ids": [list], "base": first["base"] })).await;
-        let deleted = edit(
-            &tool,
-            json!({ "page_id": page_id, "base": opened["base"], "ops": [{ "op": "delete", "id": list }] }),
-        )
-        .await;
+        let base = follow(&tool, &page_id, &refused).await;
+        let deleted = edit(&tool, delete(&base)).await;
         assert_eq!(deleted["applied"], true, "{deleted}");
         assert_eq!(texts(&yjs.read_tree(&page_id).await.unwrap()), ["Packing list:", "Done."]);
     }
 
+    /// Does what a refusal's problems say to read, reading on to the end of
+    /// each read on, and returns the last base: the base the retry names.
+    async fn follow(tool: &PageEditorTool, page_id: &str, refused: &Value) -> Value {
+        let mut base = refused["base"].clone();
+        let mut reads: Vec<Value> = vec![];
+        for p in refused["refused"].as_array().unwrap() {
+            let message = p["message"].as_str().unwrap();
+            if let Some(rest) = message.split("after \"").nth(1) {
+                let after = rest.split('"').next().unwrap();
+                reads.push(json!({ "after": after }));
+            } else if let Some(rest) = message.split("ids [").nth(1) {
+                let listed = rest.split(']').next().unwrap();
+                let ids: Value = serde_json::from_str(&format!("[{listed}]")).unwrap();
+                reads.push(json!({ "ids": ids }));
+            }
+        }
+        if let Some(unread) = refused.get("unread") {
+            reads.push(json!({ "ids": unread }));
+        }
+        for mut args in reads {
+            args["page_id"] = json!(page_id);
+            args["base"] = base;
+            let mut on = read(tool, args).await;
+            while let Some(after) = on["more_after"].as_str().map(str::to_string) {
+                on = read(tool, json!({ "page_id": page_id, "after": after, "base": on["base"] })).await;
+            }
+            base = on["base"].clone();
+        }
+        base
+    }
+
     /// A list read whole across reads, then changed by a person further in
-    /// than an ids read of it shows: the refusal of a replace says where
-    /// reading on inside it starts. An ids read of it opens it from its
+    /// than an ids read of it shows. An ids read of it opens it from its
     /// start and keeps the items past its first window as the base had
-    /// them, so following a refusal that named it for one was refused again
-    /// and again. Read on from where it says, the replace lands.
+    /// them, so following a refusal that named the list was refused again
+    /// and again. The refusal shows the item that changed, and its base has
+    /// seen it: the retry lands with no read.
     #[sqlx::test]
     async fn a_list_changed_further_in_than_an_ids_read_shows_says_where_to_read_on(pool: PgPool) {
         let page_id = tree_page(&pool, &format!("Packing list:\n\n{}\nDone.\n", long_list(1_000))).await;
@@ -4341,27 +4639,21 @@ mod block_pages {
         )
         .await;
         let message = refused["refused"][0]["message"].as_str().unwrap();
-        assert!(message.contains(&format!("after \"{}\" and this base", items[899])), "{message}");
+        assert!(message.contains("changed since you read it"), "{message}");
+        assert!(refused["blocks"].as_str().unwrap().contains("Item 900, the charger"), "{refused}");
         assert!(refused.get("unread").is_none(), "{refused}");
-        assert!(
-            refused["message"].as_str().unwrap().starts_with("Read on where the problems say"),
-            "{}",
-            refused["message"]
-        );
 
-        // Done as it says.
-        let on = read(&tool, json!({ "page_id": page_id, "after": items[899], "base": refused["base"] })).await;
-        let base = read_through(on).await;
-        let wrote = edit(&tool, json!({ "page_id": page_id, "base": base, "ops": [replace] })).await;
+        let wrote = edit(&tool, json!({ "page_id": page_id, "base": refused["base"], "ops": [replace] })).await;
         assert_eq!(wrote["applied"], true, "{wrote}");
         assert_eq!(texts(&yjs.read_tree(&page_id).await.unwrap()), ["Packing list:", "Passport", "Done."]);
     }
 
     /// A list shown in part, deleted and written again in one edit from what
     /// was shown: the rewrite puts back only the items a read showed, and
-    /// the rest went with no word to anyone. Refused, as a replace of it is,
-    /// until the rest has been read; and the opened read never offers the
-    /// delete as the way past a refused replace.
+    /// the rest went with no word to anyone. The delete is refused, judged by
+    /// what it takes whatever else the batch writes, until the rest has been
+    /// read; and the opened read never offers the delete as the way past a
+    /// refused replace.
     #[sqlx::test]
     async fn a_list_shown_in_part_is_not_deleted_and_written_again_in_one_edit(pool: PgPool) {
         let page_id = tree_page(&pool, &format!("Packing list:\n\n{}\nDone.\n", long_list(1_000))).await;
@@ -4373,7 +4665,7 @@ mod block_pages {
         let first = read(&tool, json!({ "page_id": page_id })).await;
         let opened = read(&tool, json!({ "page_id": page_id, "ids": [list], "base": first["base"] })).await;
         let note = opened["note"].as_str().unwrap_or_default();
-        assert!(note.contains("deleting it and writing it again"), "{opened}");
+        assert!(note.contains(&format!("Replacing or deleting `{list}` waits")), "{opened}");
         assert!(!note.contains("deleting it stands"), "{note}");
 
         let shown = opened["html"].as_str().unwrap().split("<!--").next().unwrap().to_string();
@@ -4388,9 +4680,11 @@ mod block_pages {
                 json!({ "page_id": page_id, "base": opened["base"], "ops": [{ "op": "delete", "id": list }, written] }),
             )
             .await;
+            assert_eq!(refused["refused"].as_array().unwrap().len(), 1, "{refused}");
+            assert_eq!(refused["refused"][0]["at"], "op 1");
             let message = refused["refused"][0]["message"].as_str().unwrap();
-            assert!(message.contains(&format!("deletes `{list}` and writes blocks too")), "{message}");
-            assert!(message.contains(&format!("`{list}` was shown only in part")), "{message}");
+            assert!(message.contains("that no read has shown you"), "{message}");
+            assert!(message.contains(&format!("inside `{list}`")), "{message}");
         }
         assert_eq!(child_ids(&yjs.read_tree(&page_id).await.unwrap(), &list).len(), 1_000);
     }
@@ -4432,9 +4726,10 @@ mod block_pages {
         }
     }
 
-    /// A refused edit of an item in a long list the base lacks names the
-    /// item to read, not the list: an ids read of the list opens it from its
-    /// start, short of the item, and the edit was refused a second time.
+    /// A refused edit of an item in a long list the base lacks shows the
+    /// item, not the list: an ids read of the list opens it from its start,
+    /// short of the item, and the edit was refused a second time. The
+    /// refusal's base has seen the item, and the retry lands.
     #[sqlx::test]
     async fn a_refusal_for_an_item_in_a_long_list_names_the_item_to_read(pool: PgPool) {
         let page_id = tree_page(&pool, &format!("Packing list:\n\n{}", long_list(1_000))).await;
@@ -4452,14 +4747,11 @@ mod block_pages {
             json!({ "page_id": page_id, "base": first["base"], "ops": [replace] }),
         )
         .await;
-        assert_eq!(refused["unread"], json!([item]), "{refused}");
-        let message = refused["message"].as_str().unwrap();
-        assert!(message.contains(&format!("`{item}` is inside a block too long to show here")), "{message}");
-        assert!(!message.contains(&format!("`{list}`")), "{message}");
-
-        let shown = read(&tool, json!({ "page_id": page_id, "ids": [item], "base": refused["base"] })).await;
-        assert!(shown["html"].as_str().unwrap().contains(&format!("data-id=\"{item}\"")), "{shown}");
-        let wrote = edit(&tool, json!({ "page_id": page_id, "base": shown["base"], "ops": [replace] })).await;
+        assert!(refused.get("unread").is_none(), "{refused}");
+        let blocks = refused["blocks"].as_str().unwrap();
+        assert!(blocks.starts_with(&format!("<li data-id=\"{item}\">")), "{blocks}");
+        assert!(!refused["message"].as_str().unwrap().contains(&format!("`{list}`")), "{refused}");
+        let wrote = edit(&tool, json!({ "page_id": page_id, "base": refused["base"], "ops": [replace] })).await;
         assert_eq!(wrote["applied"], true, "{wrote}");
     }
 
@@ -4593,7 +4885,7 @@ mod block_pages {
         let first = read(&tool, json!({ "page_id": page_id })).await;
         let shown = first["markdown"].as_str().unwrap();
         assert!(shown.contains(&format!(
-            "<!-- {code} -->\n<!-- too long to show in any read; delete it or replace it whole -->"
+            "<!-- {code} -->\n<!-- too long to show in any read; delete it or replace it whole, by its id -->"
         )), "{shown}");
         assert!(shown.contains(&format!("<!-- {list} -->\n<!-- too long to show here; read it")), "{shown}");
 
@@ -4707,6 +4999,25 @@ mod block_pages {
             format!(
                 "the block `{}` was deleted after you read the page; anchor this op on another \
                  block, or append it",
+                ids[2]
+            )
+        );
+        // An item goes beside another item: appended, it would land where
+        // no list is.
+        let item = refused_whole(
+            &tool,
+            &yjs,
+            &page_id,
+            json!({ "page_id": page_id, "base": swapped["base"], "ops": [
+                { "op": "insert_after", "id": ids[2], "html": "<li><p>Dinner.</p></li>" },
+            ] }),
+        )
+        .await;
+        assert_eq!(
+            item["refused"][0]["message"],
+            format!(
+                "the block `{}` was deleted after you read the page; anchor this op on another \
+                 item beside where it was, or leave it out",
                 ids[2]
             )
         );
@@ -4906,7 +5217,7 @@ mod block_pages {
         let seen = kept_base(&pool, &page_id, deleted["base"].as_str().unwrap())
             .await
             .unwrap();
-        assert_eq!(texts(&seen), ["Coffee."]);
+        assert!(seen.knows(&ids[0]) && !seen.knows(&ids[1]));
     }
 
     #[sqlx::test]
@@ -5127,7 +5438,8 @@ mod block_pages {
         let seen = kept_base(&pool, &page_id, refused["base"].as_str().unwrap())
             .await
             .unwrap();
-        assert_eq!(texts(&seen), ["The quick brown fox.", "Lunch on Saturday."]);
+        assert_eq!(known_text(&seen, &ids[0]).as_deref(), Some("The quick brown fox."));
+        assert_eq!(known_text(&seen, &ids[1]).as_deref(), Some("Lunch on Saturday."));
 
         // Op 1 as written, op 2 written again from the block shown.
         let retry = edit(
@@ -5183,8 +5495,7 @@ mod block_pages {
         let seen = kept_base(&pool, &page_id, refused["base"].as_str().unwrap())
             .await
             .unwrap();
-        let read_para = virtues_document::ops::find_node(&seen, &para).unwrap();
-        assert_eq!(read_para.text_content(), "Pakc bags for Lisbon", "the paragraph as read");
+        assert_eq!(known_text(&seen, &para).as_deref(), Some("Pakc bags for Lisbon"), "the paragraph as read");
 
         let retry = edit(
             &tool,
@@ -5325,6 +5636,50 @@ mod block_pages {
             texts(&yjs.read_tree(&page_id).await.unwrap()),
             ["Dinner on Saturday."]
         );
+    }
+
+    /// An op refused over its own HTML keeps its block as read whatever the
+    /// problem is charged to: a comment in it, HTML that holds no block.
+    /// Learned as it stands, the block let the retry write over a person's
+    /// change the first try would have merged with.
+    #[sqlx::test]
+    async fn an_op_refused_for_any_html_problem_keeps_its_block_as_read(pool: PgPool) {
+        for (markdown, html) in [
+            ("Lunch on Friday.\n", "<p>Dinner on Friday.</p><!-- x -->"),
+            ("Lunch on Friday.\n", "<!-- x -->"),
+            ("- Lunch on Friday.\n", "<p>Dinner on Friday.</p><!-- x -->"),
+        ] {
+            let page_id = tree_page(&pool, markdown).await;
+            let yjs = YjsState::new(pool.clone());
+            let tool = tool(&pool, &yjs);
+            let base = read(&tool, json!({ "page_id": page_id })).await["base"].clone();
+            let mut id = String::new();
+            for n in yjs.read_tree(&page_id).await.unwrap() {
+                n.walk(&mut |n| {
+                    if id.is_empty() && n.kind == "paragraph" {
+                        id = n.id().unwrap_or_default().to_string();
+                    }
+                });
+            }
+            person_writes(&yjs, &page_id, Op::Replace { id: id.clone(), html: "<p>Lunch on Saturday.</p>".into() }).await;
+
+            let refused = refused_whole(
+                &tool,
+                &yjs,
+                &page_id,
+                json!({ "page_id": page_id, "base": base, "ops": [{ "op": "replace", "id": id, "html": html }] }),
+            )
+            .await;
+            assert!(refused.get("blocks").is_none(), "{html}: {refused}");
+            let retry = edit(
+                &tool,
+                json!({ "page_id": page_id, "base": refused["base"],
+                        "ops": [{ "op": "replace", "id": id, "html": "<p>Dinner on Friday.</p>" }] }),
+            )
+            .await;
+            assert_eq!(retry["applied"], true, "{html}: {retry}");
+            assert_eq!(texts(&yjs.read_tree(&page_id).await.unwrap()), ["Dinner on Saturday."], "{html}");
+        }
     }
 
     /// A suggestion the owner has not decided is theirs to decide. A read
@@ -5674,7 +6029,7 @@ mod block_pages {
         let first = read(&tool, json!({ "page_id": page_id })).await;
         let opened = read(&tool, json!({ "page_id": page_id, "ids": [callout], "base": first["base"] })).await;
         let opened_list = read(&tool, json!({ "page_id": page_id, "ids": [list], "base": opened["base"] })).await;
-        let seen = child_ids(
+        let seen = known_children(
             &kept_base(&pool, &page_id, opened_list["base"].as_str().unwrap()).await.unwrap(),
             &list,
         );
@@ -5690,12 +6045,13 @@ mod block_pages {
         let last = seen.last().unwrap();
         let refused = refused_whole(&tool, &yjs, &page_id, replace(&opened_list["base"])).await;
         let message = refused["refused"][0]["message"].as_str().unwrap();
-        assert!(message.contains(&format!("holds `{list}`, which was shown only in part")), "{message}");
+        assert!(message.contains(&format!("that no read has shown you, from `")), "{message}");
+        assert!(message.contains(&format!("inside `{list}`")), "{message}");
         assert!(message.contains(&format!("after \"{last}\" and this base")), "{message}");
 
         // Reading the callout again keeps the list as it was read.
         let again = read(&tool, json!({ "page_id": page_id, "ids": [callout], "base": refused["base"] })).await;
-        let held = child_ids(&kept_base(&pool, &page_id, again["base"].as_str().unwrap()).await.unwrap(), &list);
+        let held = known_children(&kept_base(&pool, &page_id, again["base"].as_str().unwrap()).await.unwrap(), &list);
         assert_eq!(held, seen);
         refused_whole(&tool, &yjs, &page_id, replace(&again["base"])).await;
         let now = yjs.read_tree(&page_id).await.unwrap();
@@ -5731,7 +6087,7 @@ mod block_pages {
         assert!(!again["html"].as_str().unwrap().contains(&format!("data-id=\"{p700}\"")), "item 700 not shown again");
         let kept = kept_base(&pool, &page_id, again["base"].as_str().unwrap()).await.unwrap();
         assert_eq!(
-            virtues_document::ops::find_node(&kept, &p700).map(Node::text_content).as_deref(),
+            known_text(&kept, &p700).as_deref(),
             Some("Item 700 for the trip to the coast, packed by the door the night before"),
             "the base holds the item as it was read"
         );
@@ -5782,24 +6138,28 @@ mod block_pages {
         assert_eq!(applied["applied"], true, "{applied}");
     }
 
-    /// A list shown whole as markdown, then opened by id: a replace of it
-    /// waits for the HTML of the items the open did not show, and the
+    /// A list shown whole as markdown, then opened by id: a replace of it,
+    /// written from the markdown, would turn each mention in the items the
+    /// open did not show into a link. It waits for their HTML, and the
     /// refusal says to read on inside it from there, not to open it again.
     #[sqlx::test]
     async fn a_list_shown_as_markdown_then_opened_is_read_on_before_it_is_replaced(pool: PgPool) {
-        let items: String = (0..1_000).map(|i| format!("- [ ] Pack thing {i:04}\n")).collect();
+        let items: String = (0..1_000).map(|i| format!("- [ ] Pack {i:04} [@Nick](/person/person_1)\n")).collect();
         let page_id = tree_page(&pool, &format!("Checklist:\n\n{items}\nAfter.\n")).await;
         let yjs = YjsState::new(pool.clone());
         let tool = tool(&pool, &yjs);
         let tree = yjs.read_tree(&page_id).await.unwrap();
         let list = tree[1].id().unwrap().to_string();
         let first = read(&tool, json!({ "page_id": page_id })).await;
-        assert!(first["markdown"].as_str().unwrap().contains("Pack thing 0999"), "shown whole as markdown");
+        assert!(first["markdown"].as_str().unwrap().contains("Pack 0999"), "shown whole as markdown");
         let opened = read(&tool, json!({ "page_id": page_id, "ids": [list], "base": first["base"] })).await;
         let last = opened["more_after"].as_str().unwrap().to_string();
         let html = format!(
             "<ul data-type=\"taskList\">{}</ul>",
-            (0..1_000).rev().map(|i| format!("<li data-type=\"taskItem\"><p>Pack thing {i:04}</p></li>")).collect::<String>()
+            (0..1_000)
+                .rev()
+                .map(|i| format!("<li data-type=\"taskItem\"><p>Pack {i:04} <a href=\"/person/person_1\">@Nick</a></p></li>"))
+                .collect::<String>()
         );
         let replace = |base: &Value| json!({ "page_id": page_id, "base": base, "ops": [
             { "op": "replace", "id": list, "html": html }
@@ -5818,6 +6178,488 @@ mod block_pages {
         }
         let applied = edit(&tool, replace(&base)).await;
         assert_eq!(applied["applied"], true, "{applied}");
+    }
+
+    /// A table row too long for any read holds blocks in its cells a read
+    /// can show. Listed whole by its id, the row went with a replace that
+    /// wrote two short cells, and the long list in one of them, which no
+    /// read had shown, with it. The blocks in its cells go only once read:
+    /// the refusal names what to read by id, and following it the replace
+    /// lands.
+    #[sqlx::test]
+    async fn a_row_too_long_for_any_read_does_not_take_the_blocks_in_its_cells(pool: PgPool) {
+        let yjs = YjsState::new(pool.clone());
+        let tool = tool(&pool, &yjs);
+        let page_id = tree_page(&pool, "Expenses:\n").await;
+        let items: String = (0..1_200)
+            .map(|i| format!("<li><p>Receipt {i:04} for the taxi to the coast, kept in the blue folder</p></li>"))
+            .collect();
+        let appended = edit(&tool, json!({ "page_id": page_id, "ops": [{ "op": "append", "html": format!(
+            "<table><tr><td><p>Fri</p></td><td><ul>{items}</ul></td></tr><tr><td><p>Sat</p></td><td><p>Lunch</p></td></tr></table>"
+        ) }] }))
+        .await;
+        assert_eq!(appended["applied"], true, "{appended}");
+        let tree = yjs.read_tree(&page_id).await.unwrap();
+        let table = tree[1].id().unwrap().to_string();
+        let row = tree[1].content[0].id().unwrap().to_string();
+        let list = tree[1].content[0].content[1].content[0].id().unwrap().to_string();
+        assert!(!fits_one_read(&tree[1].content[0]), "the row fits one read");
+
+        let first = read(&tool, json!({ "page_id": page_id })).await;
+        assert!(!first["markdown"].as_str().unwrap().contains("Receipt 0000"), "the table was shown");
+        let opened = read(&tool, json!({ "page_id": page_id, "ids": [table], "base": first["base"] })).await;
+        let html = opened["html"].as_str().unwrap();
+        assert!(html.contains(&format!("<!-- {row}: too long to show in any read")), "{html}");
+        let short = json!({ "op": "replace", "id": row, "html": "<tr><td><p>Fri</p></td><td><p>Taxis</p></td></tr>" });
+        let mut refused =
+            refused_whole(&tool, &yjs, &page_id, json!({ "page_id": page_id, "base": opened["base"], "ops": [short] })).await;
+        let message = refused["refused"][0]["message"].as_str().unwrap();
+        assert!(message.contains("no read has shown you"), "{message}");
+        assert!(message.contains("with get_page_content, ids ["), "{message}");
+        for _ in 0..8 {
+            let base = follow(&tool, &page_id, &refused).await;
+            let data = edit(&tool, json!({ "page_id": page_id, "base": base, "ops": [short] })).await;
+            if data["applied"] == true {
+                let now = yjs.read_tree(&page_id).await.unwrap();
+                assert!(virtues_document::ops::find_node(&now, &list).is_none());
+                assert_eq!(now[1].content[0].text_content(), "FriTaxis");
+                return;
+            }
+            assert_eq!(yjs.read_tree(&page_id).await.unwrap()[1], tree[1], "a refused batch wrote");
+            refused = data;
+        }
+        panic!("the replace never landed: {refused}");
+    }
+
+    /// A row too long for any read, its cells holding more blocks than one
+    /// read shows. Each refusal named one of them, and every one took an
+    /// edit refused in a row, so the turn's guard closed edit_page before
+    /// the row could go. One read now names them all, and a refusal that
+    /// waits only on reads does not count toward the close: deleting the
+    /// row by following the refusals lands within the turn.
+    #[sqlx::test]
+    async fn a_row_with_more_in_its_cells_than_one_read_shows_is_deleted_within_a_turn(pool: PgPool) {
+        use crate::agent::executor::ToolExecutionResult;
+        use crate::agent::guard::{RepeatGuard, MAX_CONSECUTIVE};
+        use crate::agent::stream::ToolCall;
+        let yjs = YjsState::new(pool.clone());
+        let tool = tool(&pool, &yjs);
+        let page_id = tree_page(&pool, "Expenses:\n").await;
+        let words = "Receipt for the taxi to the coast, kept in the blue folder. ".repeat(320);
+        let cells: String = (0..14).map(|i| format!("<td><p>{i} {words}</p></td>")).collect();
+        let short: String = (0..14).map(|i| format!("<td><p>{i}</p></td>")).collect();
+        let appended = edit(&tool, json!({ "page_id": page_id, "ops": [{ "op": "append", "html": format!(
+            "<table><tr>{cells}</tr><tr>{short}</tr></table>"
+        ) }] }))
+        .await;
+        assert_eq!(appended["applied"], true, "{appended}");
+        let tree = yjs.read_tree(&page_id).await.unwrap();
+        let table = tree[1].id().unwrap().to_string();
+        let row = tree[1].content[0].id().unwrap().to_string();
+        let inside: Vec<String> = tree[1].content[0].content.iter().map(|cell| cell.content[0].id().unwrap().to_string()).collect();
+        assert!(!fits_one_read(&tree[1].content[0]));
+        assert!(fits_one_read(&tree[1].content[0].content[0]));
+
+        let first = read(&tool, json!({ "page_id": page_id })).await;
+        let opened = read(&tool, json!({ "page_id": page_id, "ids": [table], "base": first["base"] })).await;
+        let delete = |base: &Value| json!({ "page_id": page_id, "base": base, "ops": [{ "op": "delete", "id": row }] });
+        let mut args = delete(&opened["base"]);
+        let mut guard = RepeatGuard::new();
+        for i in 0..40 {
+            let call = ToolCall { id: format!("c{i}"), name: "edit_page".into(), arguments: args.clone() };
+            let (run, closed) = guard.admit(std::slice::from_ref(&call));
+            assert!(closed.is_empty(), "after {i} refusals: {}", closed[0].to_llm_content());
+            let result = tool.edit_page(args.clone(), &ToolContext::default()).await.unwrap();
+            let data = result.data.clone();
+            guard.record(&run, &[ToolExecutionResult { tool_call_id: call.id, tool_name: call.name, result: Ok(result) }]);
+            if data["applied"] == true {
+                assert!(i > MAX_CONSECUTIVE as usize, "only {i} refusals: the guard was never in the way");
+                let now = yjs.read_tree(&page_id).await.unwrap();
+                assert!(virtues_document::ops::find_node(&now, &row).is_none());
+                return;
+            }
+            assert_eq!(data["read_first"], true, "{data}");
+            if i == 0 {
+                // One read names every block in the row's cells.
+                let listed = inside.iter().map(|id| format!("\"{id}\"")).collect::<Vec<_>>().join(", ");
+                let message = data["refused"][0]["message"].as_str().unwrap();
+                assert!(message.contains(&format!("ids [{listed}]")), "{message}");
+            }
+            args = delete(&follow(&tool, &page_id, &data).await);
+        }
+        panic!("the delete never landed");
+    }
+
+    /// A callout read by id and the long list inside it opened by id: the
+    /// base took the callout from the page whole, so deleting it took the
+    /// items no read had shown. The delete waits for the rest of the list,
+    /// and following the refusal, it stands.
+    #[sqlx::test]
+    async fn deleting_a_block_around_a_list_read_in_part_waits_for_the_rest_of_it(pool: PgPool) {
+        let yjs = YjsState::new(pool.clone());
+        let tool = tool(&pool, &yjs);
+        let (page_id, callout, list) = callout_around_a_long_list(&pool, &tool, &yjs).await;
+        let first = read(&tool, json!({ "page_id": page_id })).await;
+        let opened = read(&tool, json!({ "page_id": page_id, "ids": [callout], "base": first["base"] })).await;
+        let opened_list = read(&tool, json!({ "page_id": page_id, "ids": [list], "base": opened["base"] })).await;
+        let delete = |base: &Value| json!({ "page_id": page_id, "base": base, "ops": [{ "op": "delete", "id": callout }] });
+        let refused = refused_whole(&tool, &yjs, &page_id, delete(&opened_list["base"])).await;
+        let message = refused["refused"][0]["message"].as_str().unwrap();
+        assert!(message.contains(&format!("inside `{list}`")), "{message}");
+        let base = follow(&tool, &page_id, &refused).await;
+        let deleted = edit(&tool, delete(&base)).await;
+        assert_eq!(deleted["applied"], true, "{deleted}");
+        assert!(virtues_document::ops::find_node(&yjs.read_tree(&page_id).await.unwrap(), &list).is_none());
+    }
+
+    /// The model knows what it wrote: a block an edit wrote that was too
+    /// long to show in the result is edited again with the result's base and
+    /// no read.
+    #[sqlx::test]
+    async fn blocks_an_edit_wrote_but_could_not_show_are_edited_again_with_no_read(pool: PgPool) {
+        let page_id = tree_page(&pool, "Lunch on Friday.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let tool = tool(&pool, &yjs);
+        let base = read(&tool, json!({ "page_id": page_id })).await["base"].clone();
+        let id = top_ids(&yjs.read_tree(&page_id).await.unwrap())[0].clone();
+        let rest = "and the coast road after it. ".repeat(300);
+        let replace = |base: &Value, html: String| {
+            json!({ "page_id": page_id, "base": base, "ops": [{ "op": "replace", "id": id, "html": html }] })
+        };
+        let wrote = edit(&tool, replace(&base, format!("<p>Lunch on Friday, {rest}</p>"))).await;
+        assert_eq!(wrote["html"], "", "{wrote}");
+        let again = edit(&tool, replace(&wrote["base"], format!("<p>Lunch on Saturday, {rest}</p>"))).await;
+        assert_eq!(again["applied"], true, "{again}");
+        assert!(texts(&yjs.read_tree(&page_id).await.unwrap())[0].starts_with("Lunch on Saturday,"));
+    }
+}
+
+#[cfg(test)]
+#[path = "page_editor_unseen_tests.rs"]
+mod unseen_tests;
+
+/// The model's edits at a box's own limits: a read holds 64 KiB, a refusal
+/// shows 8,000 characters. Each case here got past the base, or looped, only
+/// where a refusal shows less than a read holds, which the random test at
+/// its small limits once never reached.
+#[cfg(test)]
+mod production_limits {
+    use super::*;
+    use virtues_document::ops::find_node;
+
+    fn parsed(html: &str) -> Vec<Node> {
+        let o = virtues_document::parse_html(html, "doc");
+        assert!(o.errors.is_empty(), "{:?}", o.errors);
+        o.nodes
+    }
+
+    fn delete(id: &str) -> Op {
+        Op::Delete { id: id.into() }
+    }
+
+    /// The refusal `edit_page` gives, or `None` when the batch lands.
+    fn refusal(seen: &Seen, tree: &[Node], ops: &[Op]) -> Option<Refusal> {
+        let checked = virtues_document::check_ops(tree, seen, ops);
+        (!checked.problems.is_empty())
+            .then(|| {
+                refusal_of(
+                    ops,
+                    seen,
+                    checked.problems,
+                    checked.unseen,
+                    &checked.conflicts,
+                    tree,
+                    WRITTEN_HTML_CHARS,
+                    &fits_one_read,
+                )
+            })
+    }
+
+    fn said(r: &Refusal) -> String {
+        r.problems.iter().map(|p| p.message.as_str()).collect::<Vec<_>>().join(" | ")
+    }
+
+    /// An `ids` read of `id`, and on inside it to its end, as
+    /// `get_page_content` reads.
+    fn read_through(seen: &mut Seen, tree: &[Node], id: &str) {
+        let read = read_by_id(seen, tree, &[id.to_string()], READ_MARKDOWN_BYTES, json_bytes);
+        let mut next = read.opened.as_ref().and_then(|o| o.next.clone());
+        seen.learn(&Shown::html(read.parts), tree, &HashSet::new());
+        while let Some(after) = next {
+            let (parent, siblings, at) = siblings_of(tree, &after).unwrap();
+            let window = children_window(siblings, at + 1, READ_MARKDOWN_BYTES, READ_MARKDOWN_BYTES, json_bytes);
+            seen.learn(&Shown::html(window.parts).inside(parent), tree, &HashSet::new());
+            next = window.next;
+        }
+    }
+
+    fn quote_lines(n: usize) -> String {
+        (0..n)
+            .map(|i| format!("<p data-id=\"q{i}\">Line {i} of the harbour notes, with the ferry times kept</p>"))
+            .collect()
+    }
+
+    fn list(n: usize, extra: &[(usize, &str)]) -> String {
+        let mut items = String::new();
+        for i in 0..n {
+            items.push_str(&format!("<li data-id=\"i{i}\"><p data-id=\"p{i}\">Item {i} on the list for the coast</p></li>"));
+            for (at, id) in extra {
+                if *at == i {
+                    items.push_str(&format!("<li data-id=\"{id}\"><p data-id=\"{id}p\">Added by hand</p></li>"));
+                }
+            }
+        }
+        format!("<ul data-id=\"l\">{items}</ul><p data-id=\"z\">After</p>")
+    }
+
+    /// A paragraph a person joined to the end of a quote too long for one
+    /// read: the read the refusal names opens the quote without showing
+    /// it, and the copy the model had is still refused, the paragraph kept.
+    #[test]
+    fn a_block_joined_into_a_long_quote_is_not_taken_on_a_read_that_did_not_show_it_there() {
+        let lines = quote_lines(1200);
+        let before = parsed(&format!("<blockquote data-id=\"q\">{lines}</blockquote><p data-id=\"x\">Mine</p><p data-id=\"z\">After</p>"));
+        let mut seen = Seen::of_page(&before);
+        let copy = Op::Replace {
+            id: "q".into(),
+            html: virtues_document::to_html(&[seen.subtree("q").unwrap()], true),
+        };
+        let now = parsed(&format!("<blockquote data-id=\"q\">{lines}<p data-id=\"x\">Mine</p></blockquote><p data-id=\"z\">After</p>"));
+        assert!(!fits_one_read(find_node(&now, "q").unwrap()));
+        let r = refusal(&seen, &now, std::slice::from_ref(&copy)).expect("refused");
+        assert!(said(&r).contains("`x`"), "{}", said(&r));
+
+        let read = read_by_id(&seen, &now, &["q".to_string()], READ_MARKDOWN_BYTES, json_bytes);
+        let shown = Shown::html(read.parts);
+        assert!(read.opened.is_some());
+        assert!(!shown.text().contains("data-id=\"x\""), "the read does not show it");
+        seen.learn(&shown, &now, &HashSet::new());
+        for op in [copy, delete("q")] {
+            let r = refusal(&seen, &now, std::slice::from_ref(&op)).expect("refused");
+            assert!(said(&r).contains("`x`"), "{op:?}: {}", said(&r));
+        }
+
+        // Read on inside the quote, it is shown there, and goes with it.
+        read_through(&mut seen, &now, "q");
+        assert!(refusal(&seen, &now, &[delete("q")]).is_none());
+    }
+
+    /// The last paragraph of a quote too long for one read, counted by the
+    /// read that opened the quote, moved out to the page's top level by a
+    /// person, read there (a read on after the quote, or an `ids` read),
+    /// and moved back: no read showed it inside the quote, and a delete of
+    /// the quote, or a replace from the opened read, is refused over it.
+    /// The top-level read placed it nowhere, so the quote held it as shown.
+    #[test]
+    fn a_block_read_at_the_top_level_is_not_taken_with_the_quote_it_was_counted_in() {
+        let lines = quote_lines(1200);
+        let inside = parsed(&format!(
+            "<blockquote data-id=\"q\">{lines}<p data-id=\"k\">Kept</p></blockquote><p data-id=\"z\">After</p>"
+        ));
+        let out = parsed(&format!(
+            "<blockquote data-id=\"q\">{lines}</blockquote><p data-id=\"k\">Kept</p><p data-id=\"z\">After</p>"
+        ));
+        let comments = Regex::new(r"<!--.*?-->").unwrap();
+        for how in ["a read on after the quote", "an ids read"] {
+            let mut seen = Seen::default();
+            let read = read_by_id(&seen, &inside, &["q".to_string()], READ_MARKDOWN_BYTES, json_bytes);
+            assert!(read.opened.is_some(), "the quote opens");
+            let opened = Shown::html(read.parts);
+            assert!(!opened.text().contains("data-id=\"k\""), "the opened read counts `k`");
+            seen.learn(&opened, &inside, &HashSet::new());
+            // The quote as the model would write it back from that read.
+            let copy = Op::Replace {
+                id: "q".into(),
+                html: comments.replace_all(&opened.text(), "").to_string(),
+            };
+
+            let at_top = if how == "an ids read" {
+                Shown::html(read_by_id(&seen, &out, &["k".to_string()], READ_MARKDOWN_BYTES, json_bytes).parts)
+            } else {
+                page_reads::markdown_window(&out, 1, READ_MARKDOWN_BYTES, json_bytes, fits_one_read).shown
+            };
+            assert!(at_top.text().contains("Kept"), "{how} shows `k`");
+            seen.learn(&at_top, &out, &HashSet::new());
+            assert!(seen.knows("k"), "{how}");
+            assert!(!seen.known("q").unwrap().shows("k"), "{how}: no read showed `k` inside `q`");
+
+            for op in [delete("q"), copy] {
+                let r = refusal(&seen, &inside, std::slice::from_ref(&op)).expect("refused");
+                assert!(said(&r).contains("`k`"), "{how}, {op:?}: {}", said(&r));
+            }
+        }
+    }
+
+    /// Items a person added to a list read through, and one the model
+    /// added after a person's edit: the refusal over an added item shows
+    /// it inside the list, so the next try lands, where it showed the item
+    /// alone and was given again word for word; and the model's own item is
+    /// no item added since its read.
+    #[test]
+    fn items_added_to_a_list_read_through_are_shown_inside_it_and_the_next_try_lands() {
+        let read = parsed(&list(1500, &[]));
+        assert!(!fits_one_read(find_node(&read, "l").unwrap()));
+        let mut seen = Seen::default();
+        read_through(&mut seen, &read, "l");
+        assert!(refusal(&seen, &read, &[delete("l")]).is_none());
+
+        for added in [vec![(700, "x")], vec![(300, "x"), (1200, "y")]] {
+            let now = parsed(&list(1500, &added));
+            let mut base = seen.clone();
+            let r = refusal(&base, &now, &[delete("l")]).expect("refused");
+            assert!(said(&r).contains("`l` is above as it is now"), "{}", said(&r));
+            base.learn(&r.shown, &now, &r.keep);
+            assert!(refusal(&base, &now, &[delete("l")]).is_none(), "{added:?}");
+        }
+
+        // A person deletes an item; the model adds one with its base.
+        let doc = virtues_document::doc_from_nodes(read.clone());
+        virtues_document::apply_ops(&doc, None, &[delete("i5")]).unwrap();
+        let before = { use yrs::Transact; virtues_document::read_doc(&doc.transact()) };
+        let mut base = seen.clone();
+        let applied = virtues_document::apply_ops(
+            &doc,
+            Some(&base),
+            &[Op::InsertAfter { id: "i10".into(), html: "<li><p>Mine</p></li>".into() }],
+        )
+        .unwrap();
+        let after = { use yrs::Transact; virtues_document::read_doc(&doc.transact()) };
+        base.advance(&before, &after, &applied.merged.iter().cloned().collect());
+        assert!(refusal(&base, &after, &[delete("l")]).is_none());
+    }
+
+    /// Code a markdown read showed whole, which an `ids` read lists as too
+    /// long for any read: a delete of the item around it is refused with
+    /// the op to add, never a read as HTML no read can give.
+    #[test]
+    fn a_listed_block_a_markdown_read_showed_is_named_not_read_again() {
+        // Its markdown fits a read; its HTML, every `<` an `&lt;`, does not.
+        let code = "x &lt; y &lt; z &lt; w &amp;&amp; v &gt; u\n".repeat(2000);
+        let tree = parsed(&format!(
+            "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">One</p><pre data-id=\"code\">{code}</pre></li>\
+             <li data-id=\"i2\"><p data-id=\"p2\">Two</p></li></ul><p data-id=\"z\">After</p>"
+        ));
+        let code_node = find_node(&tree, "code").unwrap();
+        assert!(!fits_one_read(code_node));
+        let mut seen = Seen::default();
+        let window = page_reads::markdown_window(&tree, 0, READ_MARKDOWN_BYTES, json_bytes, fits_one_read);
+        seen.learn(&window.shown, &tree, &HashSet::new());
+        assert!(seen.knows("code"), "the markdown read shows it whole");
+        // The list and its item read as HTML by id, as refusals say: each
+        // opens, and the code is listed in the item.
+        for id in ["l", "i1"] {
+            let read = read_by_id(&seen, &tree, &[id.to_string()], READ_MARKDOWN_BYTES, json_bytes);
+            assert!(read.opened.is_some(), "{id}");
+            seen.learn(&Shown::html(read.parts), &tree, &HashSet::new());
+        }
+        assert_eq!(seen.known("i1").map(|k| k.form), Some(Form::Html));
+        assert!(seen.opaque_hash("code").is_some());
+        let link = Op::Append { html: "<p><a href=\"/person/person_1\">@Nick</a></p>".into() };
+        for ops in [vec![delete("i1")], vec![delete("l"), link.clone()]] {
+            let r = refusal(&seen, &tree, &ops).expect("refused");
+            assert!(said(&r).contains("delete `code` by its id"), "{ops:?}: {}", said(&r));
+            assert!(!said(&r).contains("as HTML"), "{}", said(&r));
+        }
+        assert!(refusal(&seen, &tree, &[delete("code"), delete("l"), link]).is_none());
+    }
+
+    /// A paragraph listed as too long for any read, which a person then
+    /// rewrote short enough for one: the refusal asks for a read of it, and
+    /// an op by its name does not take the new text unread.
+    #[test]
+    fn a_listed_block_rewritten_to_fit_a_read_is_read_before_it_goes() {
+        let big = format!("<p data-id=\"big\">{}</p><p data-id=\"z\">After</p>", "word ".repeat(16_000));
+        let tree = parsed(&big);
+        let mut seen = Seen::default();
+        let read = read_by_id(&seen, &tree, &["big".to_string()], READ_MARKDOWN_BYTES, json_bytes);
+        assert_eq!(read.whole_only, ["big"]);
+        seen.learn(&Shown::html(read.parts), &tree, &HashSet::new());
+        let now = parsed(&format!("<p data-id=\"big\">{}</p><p data-id=\"z\">After</p>", "fresh ".repeat(3_000)));
+        assert!(fits_one_read(find_node(&now, "big").unwrap()));
+        for op in [delete("big"), Op::Replace { id: "big".into(), html: "<p>cut</p>".into() }] {
+            let r = refusal(&seen, &now, std::slice::from_ref(&op)).expect("refused");
+            assert!(said(&r).contains("read it as it is now"), "{}", said(&r));
+            assert_eq!(r.unread.long, ["big"]);
+            let mut base = seen.clone();
+            base.learn(&r.shown, &now, &r.keep);
+            assert!(refusal(&base, &now, std::slice::from_ref(&op)).is_some(), "no read showed the new text");
+            let read = read_by_id(&base, &now, &["big".to_string()], READ_MARKDOWN_BYTES, json_bytes);
+            base.learn(&Shown::html(read.parts), &now, &HashSet::new());
+            assert!(refusal(&base, &now, &[op]).is_none());
+        }
+    }
+
+    /// A paragraph a person joined into a quote, replaced by name in the
+    /// batch that deletes the quote: a replace means its block to stay, so
+    /// the delete is refused over it and the quote is shown with it inside.
+    /// Taken as named, the person's paragraph and the model's update to it
+    /// both went with the quote.
+    #[test]
+    fn a_replace_by_name_does_not_take_a_block_moved_in_with_the_block_around_it() {
+        let read = parsed(
+            "<blockquote data-id=\"q\"><p data-id=\"x\">Quoted line</p></blockquote>\
+             <p data-id=\"c\">The person's paragraph</p><p data-id=\"z\">End</p>",
+        );
+        let seen = Seen::of_page(&read);
+        let now = parsed(
+            "<blockquote data-id=\"q\"><p data-id=\"x\">Quoted line</p><p data-id=\"c\">The person's paragraph</p></blockquote>\
+             <p data-id=\"z\">End</p>",
+        );
+        let ops = [
+            Op::Replace { id: "c".into(), html: "<p>The person's paragraph, updated</p>".into() },
+            delete("q"),
+        ];
+        let r = refusal(&seen, &now, &ops).expect("refused");
+        assert!(said(&r).contains("`c`, added to `q` after you read it"), "{}", said(&r));
+        assert!(said(&r).contains("`q` is above as it is now"), "{}", said(&r));
+        // Shown there, the quote goes with it: the writer has seen it holds it.
+        let mut base = seen.clone();
+        base.learn(&r.shown, &now, &r.keep);
+        assert!(refusal(&base, &now, &ops).is_none());
+    }
+
+    /// A refused op on a to-do and a kept op on the paragraph inside it,
+    /// which a person changed since the read. The refusal shows the to-do
+    /// as it is now, so its base learns the paragraph too: the kept op, sent
+    /// again as written as the reply said, landed over the person's words
+    /// its first try had merged with. It is refused with the other, to be
+    /// written from what is shown.
+    #[test]
+    fn a_kept_op_on_a_block_a_refusal_shows_changed_is_written_again_from_it() {
+        use yrs::Transact;
+        let read = parsed(
+            "<ul data-type=\"taskList\" data-id=\"l\"><li data-type=\"taskItem\" data-checked=\"false\" data-id=\"i\">\
+             <p data-id=\"x\">Book the ferry seats</p></li></ul><p data-id=\"z\">After</p>",
+        );
+        let seen = Seen::of_page(&read);
+        let doc = virtues_document::doc_from_nodes(read);
+        let person = Op::Replace { id: "x".into(), html: "<p>Reserve the ferry seats</p>".into() };
+        virtues_document::apply_ops(&doc, None, &[person]).unwrap();
+        let now = virtues_document::read_doc(&doc.transact());
+        let item = |text: &str| Op::Replace {
+            id: "i".into(),
+            html: format!("<li data-type=\"taskItem\" data-checked=\"true\"><p data-id=\"x\">{text}</p></li>"),
+        };
+        let fix = |text: &str| Op::Replace { id: "x".into(), html: format!("<p>{text}</p>") };
+        let ops = [item("Book the ferry seats"), fix("Book the ferry tickets")];
+        // Alone, the paragraph's op merges with the person's word.
+        assert!(refusal(&seen, &now, &ops[1..]).is_none());
+
+        let r = refusal(&seen, &now, &ops).expect("refused");
+        let at: Vec<&str> = r.problems.iter().map(|p| p.at.as_str()).collect();
+        assert_eq!(at, ["op 1", "op 2"], "{}", said(&r));
+        assert!(r.problems[1].message.contains("`x` changed since you read it"), "{}", said(&r));
+        assert!(r.problems[1].message.contains("is above as it is now"), "{}", said(&r));
+        assert!(r.blocks.contains("Reserve the ferry seats"), "{}", r.blocks);
+        assert!(!r.keep.contains("x"));
+
+        // Both written again from what was shown: the person's word stays.
+        let mut base = seen.clone();
+        base.learn(&r.shown, &now, &r.keep);
+        let retry = [item("Reserve the ferry seats"), fix("Reserve the ferry tickets")];
+        virtues_document::apply_ops(&doc, Some(&base), &retry).unwrap();
+        let after = virtues_document::read_doc(&doc.transact());
+        assert_eq!(find_node(&after, "x").unwrap().text_content(), "Reserve the ferry tickets");
     }
 }
 

@@ -6,6 +6,7 @@
  */
 
 import { speakerTurns } from "$lib/timeline/transcript";
+import { unescapeMarkdown } from "./inlineMarkdown";
 
 type Row = Record<string, unknown>;
 
@@ -57,11 +58,13 @@ function tokens(text: string): Token[] {
 	return out;
 }
 
-/** A sentence's markdown as the words a reader sees: link text, no veil marks or emphasis. */
+/**
+ * A sentence's markdown as the words a reader sees: link text, no veil marks
+ * or emphasis, and no escapes, which go with the `*` and `_` they escape so
+ * `user\_name` is one word here as `user_name` is.
+ */
 function plain(markdown: string): string {
-	return markdown
-		.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-		.replace(/[⟦⟧*_`]/g, "");
+	return unescapeMarkdown(markdown.replace(/\[((?:\\.|[^\]\\])+)\]\([^)]*\)/g, "$1")).replace(/[⟦⟧*_`]/g, "");
 }
 
 /** The content words of a sentence (or any text), stemmed. */

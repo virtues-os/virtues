@@ -16,9 +16,20 @@
  *
  * A page written before the narrator had footnotes parses the same way, with
  * no notes: its first paragraph is still the lede.
+ *
+ * An article becomes a block page once opened, and from then on this reads
+ * the page's export: definitions last, markers bare, fences exact and veil
+ * marks bare, as the narrator writes them, with what would read as markup
+ * escaped (`R\&B`, `user\_name`), and a hard line break as a backslash
+ * ending its line. An escaped character is that character: it never ends a
+ * sentence or opens a link, a veil mark or a bold span (`inlineMarkdown.ts`
+ * reads escapes the same way), and a hard line break is the space between
+ * two sentences.
  */
 
 import { zoneOffset } from "$lib/timeline/scale";
+import { parseEntityRoute } from "$lib/utils/refRoutes";
+import { plainText, readHardBreaks } from "./inlineMarkdown";
 
 export type NoteKind = "ev" | "cx";
 
@@ -68,15 +79,22 @@ const MARK = /\[\^(ev|cx)-(\d+)\]/g;
 const MARK_RUN = /(?:\[\^(?:ev|cx)-\d+\])+/g;
 const REF = /^([a-z_]+:[A-Za-z0-9_\-]+)$/;
 
-/** A full stop, then the start of a new sentence. */
-const END = /(?<=[.!?]["”’)]?)\s+(?=[A-Z⟦[*"“])/;
+/**
+ * A full stop, then the start of a new sentence, which may open with an
+ * escaped character. A stop that is itself escaped is no stop.
+ */
+const END = /(?<=(?<!\\)[.!?]["”’)]?)\s+(?=[A-Z⟦[*"“]|\\[[*"])/;
 /** Stops that don't end a sentence: "St. John", "Mt. Bonnell", an initial ("David O. Okafor"). */
 const ABBR = /\b(?:Dr|Mr|Mrs|Ms|St|Mt|Ft|Jr|Sr|vs|e\.g|i\.e|[A-Z])\.$/;
+/** A backslash escape: an escaped character is that character, never markup. */
+const ESCAPED = /\\[!-\/:-@[-`{-~]/g;
 
 const count = (s: string, c: string) => s.split(c).length - 1;
-/** A link, veil mark or bold span still open, so a stop here is inside it. */
-const unclosed = (s: string) =>
-	count(s, "[") > count(s, "]") || count(s, "⟦") > count(s, "⟧") || count(s, "(") > count(s, ")") || count(s, "**") % 2 === 1;
+/** A link, veil mark or bold span still open, so a stop here is inside it. Escaped brackets and stars open nothing. */
+const unclosed = (raw: string) => {
+	const s = raw.replace(ESCAPED, "");
+	return count(s, "[") > count(s, "]") || count(s, "⟦") > count(s, "⟧") || count(s, "(") > count(s, ")") || count(s, "**") % 2 === 1;
+};
 
 function splitSentences(chunk: string): string[] {
 	const parts: string[] = [];
@@ -89,7 +107,7 @@ function splitSentences(chunk: string): string[] {
 }
 
 function sentencesOf(raw: string, defs: Map<string, MarginNote>): Sentence[] {
-	const text = raw.replace(/\s*\n\s*/g, " ");
+	const text = readHardBreaks(raw).replace(/\s*\n\s*/g, " ");
 	const out: Sentence[] = [];
 	// Everything up to a run of markers is one or more sentences; only the
 	// last of them is the one the markers close.
@@ -159,29 +177,55 @@ const GAP_PARAGRAPH = new RegExp(
 	"i",
 );
 
-/** Blank lines part blocks, except inside a fence, which stays one block. */
+/**
+ * A line that is a block of its own whatever surrounds it: a heading, which
+ * ends at its line, and an image alone on its line, which a page's blocks
+ * hold as a block of its own (a name written as an image, `![@Nick](/person/id)`,
+ * is a name in its sentence). A page whose writer put a section's first
+ * paragraph on the line under its heading reads as its export, which parts
+ * them, does.
+ */
+function standsAlone(line: string): boolean {
+	if (/^ {0,3}#{1,6}(?:[ \t]|$)/.test(line)) return true;
+	const image = line.trim().match(/^!\[[^\]]*\]\(([^()\s]*)\)$/);
+	return image !== null && parseEntityRoute(image[1]) === null;
+}
+
+/** Blank lines part blocks, except inside a fence, which stays one block; a line that stands alone is one. */
 function splitBlocks(text: string): string[] {
 	const out: string[] = [];
 	let lines: string[] = [];
 	let fenced = false;
+	const part = () => {
+		if (lines.length) out.push(lines.join("\n").trim());
+		lines = [];
+	};
 	for (const line of text.split("\n")) {
 		if (/^\s*```/.test(line)) fenced = !fenced;
 		if (!fenced && !line.trim()) {
-			if (lines.length) out.push(lines.join("\n").trim());
-			lines = [];
+			part();
+		} else if (!fenced && standsAlone(line)) {
+			part();
+			out.push(line.trim());
 		} else {
 			lines.push(line);
 		}
 	}
-	if (lines.length) out.push(lines.join("\n").trim());
+	part();
 	return out.filter(Boolean);
 }
+
+/** A table's rule row, under its header: `|---|:--:|`. */
+const RULE_ROW = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
 
 function kindOf(block: string): BlockKind {
 	if (FIGURE.test(block)) return "figure";
 	if (/^#{1,6}\s/.test(block)) return "heading";
-	if (block.split("\n").every((l) => l.trim().startsWith("|"))) return "table";
-	if (/^(```|>|-\s|\*\s|\d+\.\s|!\[)/.test(block)) return "other";
+	// Rows with no rule under the first are no table, to the page's markdown
+	// renderer or to its blocks: they are a paragraph of pipes.
+	const lines = block.split("\n");
+	if (lines.length > 1 && lines.every((l) => l.trim().startsWith("|")) && RULE_ROW.test(lines[1])) return "table";
+	if (/^(```|>|-\s|\*\s|\d+[.)]\s|!\[)/.test(block)) return "other";
 	return "paragraph";
 }
 
@@ -227,20 +271,24 @@ export function parseDayArticle(markdown: string): DayArticle {
 /**
  * The writer wraps what the veil may hide — names, and phrases about hard
  * or intimate things — in ⟦ ⟧. Reading normally, the marks are simply gone.
+ * Each phrase comes back as the page draws it, since the veil finds it in
+ * the drawn words: in markdown its escapes read (the export's `⟦AT\&T⟧`
+ * draws as AT&T), and in `text` (a figure's field, drawn as it is written)
+ * as written.
  */
-export function veilMarks(markdown: string): { markdown: string; phrases: string[] } {
+export function veilMarks(markdown: string, drawn: "markdown" | "text" = "markdown"): { markdown: string; phrases: string[] } {
 	const phrases: string[] = [];
 	const out = markdown.replace(/⟦([^⟧]*)⟧/g, (_, p: string) => {
-		phrases.push(p);
+		phrases.push(drawn === "markdown" ? plainText(p) : p);
 		return p;
 	});
 	return { markdown: out, phrases };
 }
 
-/** The Abstract of another day's page, for a previous / next card. */
+/** The Abstract of another day's page as plain text, for a previous / next card: links as their words, escapes read. */
 export function abstractOf(markdown: string | null | undefined): string {
 	if (!markdown) return "";
-	return veilMarks(parseDayArticle(markdown).abstract).markdown.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+	return plainText(veilMarks(parseDayArticle(markdown).abstract).markdown);
 }
 
 // ── The margin's computed marks ──────────────────────────────────────────

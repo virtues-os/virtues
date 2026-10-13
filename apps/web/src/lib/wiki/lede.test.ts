@@ -23,4 +23,13 @@ describe("ledeSentence", () => {
 		expect(ledeSentence("Mass at [St. Mary's](/place/p) ran long. Then lunch.")).toBe("Mass at ⟦St. Mary's⟧ ran long.");
 		expect(ledeSentence("Mass at ⟦St. Mary's⟧, then lunch")).toBe("Mass at ⟦St. Mary's⟧, then lunch");
 	});
+
+	it("reads an escape as its character, as a block page's export writes it", () => {
+		expect(ledeSentence("Dinner at [⟦Ruth\\'s⟧](/place/p) with R\\&B, \\~20 people and user\\_name. Then home.")).toBe(
+			"Dinner at ⟦Ruth's⟧ with R&B, ~20 people and user_name.",
+		);
+		expect(ledeSentence("Dinner at [⟦Ruth's⟧](/place/p) with R&B, ~20 people and user_name. Then home.")).toBe(
+			"Dinner at ⟦Ruth's⟧ with R&B, ~20 people and user_name.",
+		);
+	});
 });

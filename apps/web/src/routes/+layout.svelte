@@ -4,6 +4,7 @@
 	import { onMount } from "svelte";
 	import { installErrorReporting, log } from "$lib/log";
 	import ErrorState from "$lib/components/ErrorState.svelte";
+	import { reloadApp } from "$lib/reload";
 
 	let { children } = $props();
 
@@ -62,7 +63,7 @@
 		<ErrorState
 			title="This screen couldn't open"
 			message="Reload to try again."
-			onRetry={() => window.location.reload()}
+			onRetry={() => reloadApp()}
 		/>
 	{/snippet}
 </svelte:boundary>

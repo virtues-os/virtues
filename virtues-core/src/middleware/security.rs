@@ -67,8 +67,6 @@ pub async fn headers_layer(req: Request, next: Next) -> Response {
 /// locked-down default (never to a weaker policy).
 fn csp_header() -> &'static HeaderValue {
     static CSP: std::sync::OnceLock<HeaderValue> = std::sync::OnceLock::new();
-    const DEFAULT_CONNECT_SRC: &str =
-        "'self' https://api.virtues.com https://atlas.virtues.com ws: wss:";
     CSP.get_or_init(|| {
         let mut connect_src = String::from(DEFAULT_CONNECT_SRC);
         if let Ok(extra) = std::env::var("VIRTUES_CSP_CONNECT_SRC_EXTRA") {
@@ -78,27 +76,53 @@ fn csp_header() -> &'static HeaderValue {
                 connect_src.push_str(extra);
             }
         }
-        let csp = format!(
-            "default-src 'self'; \
-             script-src 'self'; \
-             style-src 'self' 'unsafe-inline'; \
-             img-src 'self' data: blob:; \
-             connect-src {connect_src}; \
-             frame-ancestors 'none'; \
-             base-uri 'self'; \
-             form-action 'self'"
-        );
-        HeaderValue::from_str(&csp).unwrap_or_else(|_| {
+        HeaderValue::from_str(&csp(&connect_src)).unwrap_or_else(|_| {
             tracing::warn!(
                 "VIRTUES_CSP_CONNECT_SRC_EXTRA produced an invalid CSP header; \
                  ignoring it and using the default connect-src"
             );
-            HeaderValue::from_static(
-                "default-src 'self'; script-src 'self'; \
-                 style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; \
-                 connect-src 'self' https://api.virtues.com https://atlas.virtues.com ws: wss:; \
-                 frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
-            )
+            HeaderValue::from_str(&csp(DEFAULT_CONNECT_SRC)).expect("the default policy is a valid header")
         })
     })
+}
+
+const DEFAULT_CONNECT_SRC: &str = "'self' https://api.virtues.com https://atlas.virtues.com ws: wss:";
+
+/// The policy, its `connect-src` given. `script-src` allows the page's own
+/// scripts and compiling WebAssembly (`'wasm-unsafe-eval'`, which permits no
+/// `eval` of script): the page editor's markdown converter is the server's
+/// own, compiled to WebAssembly (`apps/web/src/lib/document/converter.ts`),
+/// and code highlighting runs Shiki's Oniguruma engine, also WebAssembly.
+fn csp(connect_src: &str) -> String {
+    format!(
+        "default-src 'self'; \
+         script-src 'self' 'wasm-unsafe-eval'; \
+         style-src 'self' 'unsafe-inline'; \
+         img-src 'self' data: blob:; \
+         connect-src {connect_src}; \
+         frame-ancestors 'none'; \
+         base-uri 'self'; \
+         form-action 'self'"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The page compiles WebAssembly, and nothing else is let through:
+    /// `script-src` names exactly the page's own scripts and that.
+    #[test]
+    fn scripts_are_the_pages_own_and_webassembly_compiles() {
+        for policy in [csp(DEFAULT_CONNECT_SRC), csp("'self' https://example.com")] {
+            let script_src = policy
+                .split(';')
+                .map(str::trim)
+                .find_map(|d| d.strip_prefix("script-src "))
+                .expect("a script-src");
+            assert_eq!(script_src, "'self' 'wasm-unsafe-eval'", "{policy}");
+            assert!(HeaderValue::from_str(&policy).is_ok(), "{policy}");
+        }
+        assert!(csp_header().to_str().unwrap().contains("script-src 'self' 'wasm-unsafe-eval';"));
+    }
 }

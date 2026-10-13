@@ -28,3 +28,7 @@ vite.config.ts.timestamp-*
 !/src-tauri/binaries/.gitkeep
 /build-desktop
 /build-ios
+
+# The editor's converter, built from crates/virtues-document-wasm
+# (scripts/build-converter.mjs); never committed.
+/src/lib/document/converter.wasm

@@ -176,6 +176,9 @@ export function readRefusal(status: number | null, code: string | null | undefin
 	if (status === null || status === 502 || status === 503 || status === 504) return { kind: "ask" };
 	if (status === 409 && code === "needs_consent") return { kind: "consent" };
 	if (status === 409 && code === "rewrite_in_progress") return { kind: "running" };
+	// The page holds a suggestion you haven't accepted or rejected yet, which
+	// a new page would decide for you: nothing started.
+	if (status === 409 && code === "pending_suggestion") return { kind: "failed", code: "pending_suggestion" };
 	// Another writer holds the day, such as the nightly one: no rewrite of
 	// yours is running to watch.
 	if (status === 409 && code === "busy") return { kind: "failed", code: "busy" };
@@ -231,6 +234,8 @@ export function failedCopy(code: string): string {
 			return "This day isn't over yet where you spent it. Rewrite it after midnight there.";
 		case "busy":
 			return "Your server is writing this day's page right now. Try again in a few minutes.";
+		case "pending_suggestion":
+			return "This page has a suggestion you haven't accepted or rejected yet, so your server left the page as it is. Accept or reject it in the page, then rewrite the page.";
 		case "interrupted":
 			return STOPPED;
 		default:

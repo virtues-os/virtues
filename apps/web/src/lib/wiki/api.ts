@@ -828,8 +828,8 @@ export interface DayRewriteStatus {
 	state: 'idle' | 'running' | 'done' | 'failed';
 	/**
 	 * Why a rewrite failed: not_enough, edited_while_writing, thin_draft,
-	 * not_saved, billing, failed, interrupted, not_over, no_page or
-	 * needs_consent.
+	 * not_saved, billing, failed, interrupted, not_over, no_page,
+	 * pending_suggestion or needs_consent.
 	 */
 	code?: string | null;
 	message?: string | null;

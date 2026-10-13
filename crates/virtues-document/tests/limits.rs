@@ -4,6 +4,8 @@
 //! value nested past `MAX_VALUE_DEPTH` inside an update; and reading,
 //! checking, building and editing a page costs time in proportion to its
 //! size, since the server does it under the page's lock on every update.
+// The tree in a document, which the converter alone (no `yjs`) lacks.
+#![cfg(feature = "yjs")]
 
 use std::time::{Duration, Instant};
 use virtues_document::{
@@ -98,7 +100,7 @@ fn the_deepest_page_allowed_goes_through_every_walk() {
         // A block that would take the page one level past the limit.
         let deeper = apply_ops(
             &doc,
-            Some(&tree),
+            Some(&virtues_document::Seen::of_page(&tree)),
             &[Op::Replace {
                 id: id.clone(),
                 html: "<blockquote><p>one more</p></blockquote>".into(),
@@ -110,7 +112,7 @@ fn the_deepest_page_allowed_goes_through_every_walk() {
         );
         let applied = apply_ops(
             &doc,
-            Some(&tree),
+            Some(&virtues_document::Seen::of_page(&tree)),
             &[Op::Replace {
                 id,
                 html: "<p>replaced</p>".into(),

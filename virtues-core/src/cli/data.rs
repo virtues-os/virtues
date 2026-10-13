@@ -52,7 +52,7 @@ fn failed_status(data: &Value) -> Option<String> {
 }
 
 /// The server on this machine: every write, and every read from an agent key.
-struct Console {
+pub(crate) struct Console {
     http: reqwest::Client,
     base: String,
     /// The agent key this call came in on, for the server's audit line.
@@ -60,7 +60,7 @@ struct Console {
 }
 
 impl Console {
-    fn new(key: Option<String>) -> Self {
+    pub(crate) fn new(key: Option<String>) -> Self {
         Self {
             http: reqwest::Client::new(),
             base: format!("http://127.0.0.1:{}", super::types::default_port()),
@@ -113,6 +113,18 @@ impl Console {
     async fn set_enabled(&self, id: &str, on: bool) -> Result<Value, String> {
         let url = format!("{}/api/applets/{id}", self.base);
         self.send(self.http.patch(url).json(&json!({ "enabled": on }))).await
+    }
+
+    /// Move every markdown page of a kind (`which`: user pages or articles)
+    /// to blocks in the server (`cli/page_convert.rs`), which refuses unless
+    /// it serves `database`. Returns the run's report.
+    pub(crate) async fn convert_pages(
+        &self,
+        database: &crate::api::page_convert::DatabaseIdentity,
+        which: crate::api::page_convert::Which,
+    ) -> Result<Value, String> {
+        let url = format!("{}/api/console/pages/convert", self.base);
+        self.send(self.http.post(url).json(&json!({ "database": database, "which": which }))).await
     }
 }
 
@@ -513,12 +525,7 @@ impl Verbs {
                 if out.json {
                     print_json(&data)?;
                 } else if data["status"] == json!("refused") {
-                    // What to send next, and the base that has seen the
-                    // blocks as they are now.
-                    note(&cell(&data["message"]));
-                    if let Some(read) = read_by_id(&id, &data) {
-                        note(&read);
-                    }
+                    print_page_read(refused_edit(&id, &data));
                 }
                 if let Some(err) = failed_status(&data) {
                     return Err(err);
@@ -529,21 +536,7 @@ impl Verbs {
                 if ui::tty() {
                     ui::ok(&format!("edited {id}"));
                 }
-                for line in problem_lines(&data["notes"]) {
-                    note(&line);
-                }
-                // Made, but not saved yet: a read of the page shows the old
-                // text until the save lands. The server's sentence says so
-                // and that the edit must not be run again, on stderr even
-                // when piped, so a script sees it. Still a success: running
-                // it again would make the edit twice.
-                if data["saved"] == json!(false) {
-                    note(&cell(&data["message"]));
-                }
-                // The base the next edit names, so edits chain with no read.
-                if let Some(base) = data["base"].as_str() {
-                    note(&format!("base {base}"));
-                }
+                print_page_read(made_edit(&id, &data));
                 Ok(())
             }
             PageCmd::Get { id, blocks, after, ids, base, out } => {
@@ -672,6 +665,53 @@ fn page_read(data: &Value, blocks: bool) -> PageRead {
     PageRead { text, notes }
 }
 
+/// A refused `page edit` as it prints: the blocks the refusal shows as they
+/// are now, on stdout, since the base it names has learned them and the
+/// refused ops are written again from them; on stderr, what to send next and
+/// what to read first. A base printed without its blocks let an edit from an
+/// older copy land over a person's change.
+fn refused_edit(page_id: &str, data: &Value) -> PageRead {
+    let mut notes = vec![cell(&data["message"])];
+    notes.extend(read_by_id(page_id, data));
+    PageRead {
+        text: cell(&data["blocks"]),
+        notes,
+    }
+}
+
+/// A made `page edit` as it prints: the blocks it wrote as the page holds
+/// them now, a block merged with a change made since included, on stdout,
+/// since the base it prints has learned them; on stderr its notes, a save
+/// still pending (which says not to run the edit again: running it again
+/// would make it twice), the blocks too long to show to read before the
+/// next edit of them, and the base that edit names, so edits chain with no
+/// read.
+fn made_edit(page_id: &str, data: &Value) -> PageRead {
+    let mut notes = problem_lines(&data["notes"]);
+    if data["saved"] == json!(false) {
+        notes.push(cell(&data["message"]));
+    }
+    notes.extend(read_by_id(page_id, data));
+    if let Some(base) = data["base"].as_str() {
+        notes.push(format!("base {base}"));
+    }
+    PageRead {
+        text: cell(&data["html"]),
+        notes,
+    }
+}
+
+/// A [`PageRead`] printed: its text on stdout, when it has any, and its
+/// notes on stderr.
+fn print_page_read(read: PageRead) {
+    if !read.text.is_empty() {
+        println!("{}", read.text);
+    }
+    for line in read.notes {
+        note(&line);
+    }
+}
+
 /// The `page get` that reads the blocks a read or a refusal could not show
 /// (`unread`), with the base it returned; none when it showed them all.
 fn read_by_id(page_id: &str, data: &Value) -> Option<String> {
@@ -760,7 +800,7 @@ async fn folder_args(pool: &PgPool, dir: &std::path::Path) -> Result<(Value, Vec
     Ok((args, findings))
 }
 
-fn array<'a>(v: &'a Value, key: &str) -> &'a [Value] {
+pub(crate) fn array<'a>(v: &'a Value, key: &str) -> &'a [Value] {
     v.get(key).and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
 }
 
@@ -798,7 +838,7 @@ fn clip(s: &str, max: usize) -> String {
 }
 
 /// Rows as an aligned table on a terminal, or tab-separated lines when piped.
-fn table(cols: &[&str], rows: &[Value]) {
+pub(crate) fn table(cols: &[&str], rows: &[Value]) {
     let cells: Vec<Vec<String>> = rows
         .iter()
         .map(|r| cols.iter().map(|c| one_line(&cell(&r[*c]))).collect())
@@ -833,7 +873,7 @@ fn table(cols: &[&str], rows: &[Value]) {
 }
 
 /// A section title on a terminal; nothing when piped, so pipes carry only data.
-fn heading(title: &str) {
+pub(crate) fn heading(title: &str) {
     if ui::tty() {
         ui::section(title);
         println!();
@@ -841,7 +881,7 @@ fn heading(title: &str) {
 }
 
 /// A note about the output rather than the output itself.
-fn note(msg: &str) {
+pub(crate) fn note(msg: &str) {
     if ui::tty() {
         eprintln!("  {}  {}", style("·").dim(), style(msg).dim());
     } else {
@@ -849,7 +889,7 @@ fn note(msg: &str) {
     }
 }
 
-fn print_json(data: &Value) -> Result<(), String> {
+pub(crate) fn print_json(data: &Value) -> Result<(), String> {
     let text = if ui::tty() { serde_json::to_string_pretty(data) } else { serde_json::to_string(data) };
     println!("{}", text.map_err(|e| e.to_string())?);
     Ok(())
@@ -1045,6 +1085,46 @@ mod tests {
         let text = page_read(&json!({ "format": "markdown", "content": "Coffee.\n" }), true);
         assert_eq!(text.text, "Coffee.\n");
         assert!(text.notes[0].contains("--find"));
+    }
+
+    /// The blocks a refusal shows, and the blocks a made edit wrote, print
+    /// with the base that has learned them: the base alone let an agent
+    /// chain its next edit from its own older copy, over a person's change
+    /// the merge had kept, and a refusal said its blocks were above with
+    /// nothing above.
+    #[test]
+    fn page_edit_prints_the_blocks_its_base_has_learned() {
+        let message = "The blocks the refused ops name are above as they are now: write those ops from them. \
+                       Send the whole batch again with base 5e0d2c7f9a81b3c4, the ops that were not refused as you wrote them.";
+        let refused = json!({
+            "applied": false, "status": "refused",
+            "error": "Nothing was written. op 1: the block `x1` changed since you read it",
+            "refused": [{ "at": "op 1", "message": "the block `x1` changed since you read it" }],
+            "base": "5e0d2c7f9a81b3c4",
+            "blocks": "<p data-id=\"x1\">Reserve the ferry seats</p>",
+            "unread": ["k3n1x0aa"],
+            "message": message,
+        });
+        let shown = refused_edit("page_1", &refused);
+        assert_eq!(shown.text, "<p data-id=\"x1\">Reserve the ferry seats</p>");
+        assert_eq!(
+            shown.notes,
+            [message, "read them as html: page get page_1 --blocks --ids k3n1x0aa --base 5e0d2c7f9a81b3c4"]
+        );
+
+        let made = json!({
+            "applied": true, "saved": true,
+            "html": "<p data-id=\"x1\">Reserve the ferry tickets</p>",
+            "base": "7c1d0e2f3a4b5c6d",
+            "notes": [{ "at": "op 1", "message": "merged with a concurrent edit to this block" }],
+            "message": "The edit is on the page. Use base 7c1d0e2f3a4b5c6d for your next edit.",
+        });
+        let wrote = made_edit("page_1", &made);
+        assert_eq!(wrote.text, "<p data-id=\"x1\">Reserve the ferry tickets</p>");
+        assert_eq!(wrote.notes, ["op 1: merged with a concurrent edit to this block", "base 7c1d0e2f3a4b5c6d"]);
+
+        // A markdown page's edit writes no blocks: nothing on stdout.
+        assert_eq!(made_edit("page_1", &json!({ "applied": true, "saved": true })).text, "");
     }
 
     /// A refused edit is a result, not an error, to the tool; to the CLI it

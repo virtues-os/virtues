@@ -1,19 +1,16 @@
 /**
- * Files into a block page: pasted, dropped or picked files are uploaded
- * (`/api/media/upload`) and become an image, audio, video or file block.
- * While files upload the page shows one placeholder for them, which is a
- * decoration and never a document node: nothing half-made reaches the
- * shared document or another device. The placeholder holds its place by an
- * anchor (`anchor.ts`), so another device's edit meanwhile moves it with the
- * text around it. Files given together land together, in the order they
- * were given whichever finishes first, each after the one before it. A
- * failed upload is said, and the rest still land. Files pasted over a
- * selection replace it as a markdown paste does (`paste.ts`): it stays,
- * drawn as going, and goes in the edit that places the first file; if none
- * uploads, or someone changed its words meanwhile, it stays. Over selected table cells, every one of them is
- * emptied in that edit and the files land in the first. Undo while files
- * upload calls off those still to land (`callOffUpload`): the placeholder
- * goes, a selection they would have replaced stays, and nothing lands.
+ * Files into a block page: pasted, dropped or picked files become an image,
+ * audio, video or file block the moment they are given, in one edit with
+ * taking out the selection they replace (over selected table cells, every
+ * cell empties and they land in the first). Each block holds its file's
+ * final address from the start, `/drive/<id>`, with a Drive id made here
+ * (`mintFileId`), and the bytes follow outside the page (`uploads.ts`). So
+ * the page changes once, when the person acts: nothing is written after an
+ * upload, which can then race nothing (not typing, not undo, not another
+ * device), and a block whose file is still on its way is an ordinary block
+ * that undo takes out and redo puts back, and that syncs, moves and copies
+ * like any other. What it shows while its file is on its way, or after it
+ * failed, is the block's own (`MediaNode.svelte`).
  *
  * Files arrive on a paste only when they are what was copied. Office copies
  * a picture of the range beside its HTML; the HTML is the content then, and
@@ -22,31 +19,24 @@
 
 import { Extension } from '@tiptap/core';
 import type { Node as PmNode, Schema } from '@tiptap/pm/model';
-import { Plugin, PluginKey, type EditorState, type Selection } from '@tiptap/pm/state';
+import { Plugin, TextSelection, type Selection } from '@tiptap/pm/state';
 import { CellSelection } from '@tiptap/pm/tables';
-import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view';
+import type { EditorView } from '@tiptap/pm/view';
 import { toast } from 'svelte-sonner';
-import { uploadMedia, type MediaFile } from '$lib/api/client';
 import { decoded } from '$lib/utils/urlUtils';
-import {
-	anchorAt,
-	goingDecorations,
-	heldPos,
-	heldSelection,
-	holdRangeThrough,
-	holdSelection,
-	holdThrough,
-	holdsAsTaken,
-	landApart,
-	nextWait,
-	type Anchor,
-	type Held,
-	type HeldRange,
-} from './anchor';
-import type { MediaKind } from './media-kind';
+import type { Anchor } from './anchor';
+import { ownUndoStep } from './history';
+import { kindOfLink, type MediaKind } from './media-kind';
+import { pastPageLimit, tellPastLimit } from './paste';
 import { insertBlockAt } from './place';
+import { getTreeEditor, openTreeEditors } from './registry';
+import { mintFileId, startUpload, unsettledUploads, uploadBlocksBack, uploadBlocksLeft } from './uploads';
 
-export type Upload = (file: File) => Promise<Pick<MediaFile, 'url' | 'filename' | 'mime_type'>>;
+/** The largest file a page holds: the server's `MAX_FILE_SIZE` (`api/media.rs`). */
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+/** Send a file to the address its block holds: `startUpload` by default. */
+export type Send = (id: string, file: File) => void;
 
 /** The Drive file an address points at (`/drive/<id>` or its download address), if any. */
 export function driveFileId(src: string): string | null {
@@ -89,201 +79,117 @@ export function mediaNode(schema: Schema, kind: MediaKind, src: string, name: st
 	return type.create({ src, name: name || null });
 }
 
-/** Files uploading together, under one placeholder. */
-interface Pending {
-	id: string;
-	/** When it started waiting, among uploads and pastes (`nextWait`). */
-	order: number;
-	/** The names of those still to land, in order. */
-	names: string[];
-	/** Where the next block goes. */
-	at: Held;
-	/** The selection the files replace: it goes when the first of them lands. */
-	replaces?: HeldRange;
+/** The extension a file of this type is written with, for a name that has none. */
+const EXTENSION_OF: Record<string, string> = {
+	'image/jpeg': 'jpg',
+	'image/png': 'png',
+	'image/gif': 'gif',
+	'image/webp': 'webp',
+	'image/svg+xml': 'svg',
+	'image/heic': 'heic',
+	'image/heif': 'heif',
+	'image/avif': 'avif',
+	'image/bmp': 'bmp',
+	'image/tiff': 'tiff',
+	'audio/mpeg': 'mp3',
+	'audio/mp4': 'm4a',
+	'audio/x-m4a': 'm4a',
+	'audio/aac': 'aac',
+	'audio/wav': 'wav',
+	'audio/x-wav': 'wav',
+	'audio/ogg': 'ogg',
+	'audio/flac': 'flac',
+	'audio/webm': 'webm',
+	'video/mp4': 'mp4',
+	'video/quicktime': 'mov',
+	'video/webm': 'webm',
+	'application/pdf': 'pdf',
+};
+
+/**
+ * What a file's block calls it: its name, with an extension from its type
+ * when it has none. The page's markdown reads a Drive file's kind from its
+ * name's extension (`kindOfLink`, `media_kind` in the crate), so a picture
+ * pasted as `image` would come back from the markdown as a file.
+ */
+export function nameForBlock(file: File): string {
+	const name = file.name || 'file';
+	const ext = EXTENSION_OF[file.type.toLowerCase()];
+	if (!ext || /\.[a-z0-9]+$/i.test(name)) return name;
+	return `${name}.${ext}`;
 }
 
-type UploadMeta =
-	| { add: Pending }
-	| { remove: string }
-	/** A file failed; `names` are those still to land. */
-	| { failed: { id: string; names: string[] } }
-	/** A block landed: the next goes at `pos`, in the document the meta's transaction makes; `names` are those still to land. */
-	| { landed: { id: string; pos: number; names: string[] } }
-	/** The place taken again as an anchor, once the document it is in is the page's. */
-	| { anchor: { id: string; at: Anchor } };
-
-interface Uploads {
-	/** The placeholders and the selections going, drawn where they are now. */
-	set: DecorationSet;
-	pending: Pending[];
-}
-
-const uploadsKey = new PluginKey<Uploads>('mediaUploads');
-
-function placeholderLabel(names: string[]): string {
-	return names.length === 1 ? `Uploading ${names[0]}…` : `Uploading ${names.length} files…`;
-}
-
-function placeholder(p: Pending): HTMLElement {
-	const el = document.createElement('div');
-	el.className = 'doc-upload';
-	el.setAttribute('contenteditable', 'false');
-	const spinner = document.createElement('span');
-	spinner.className = 'doc-upload-spinner';
-	const label = document.createElement('span');
-	label.textContent = placeholderLabel(p.names);
-	el.append(spinner, label);
-	return el;
-}
-
-/** What a pending upload draws: its placeholder, and the selection it replaces as going. */
-function decorations(doc: PmNode, p: Pending): Decoration[] {
-	const out: Decoration[] = [];
-	if (p.at.pos !== null) {
-		out.push(
-			Decoration.widget(Math.min(p.at.pos, doc.content.size), () => placeholder(p), {
-				uploadId: p.id,
-				key: `${p.id}:${p.names.length}`,
-				side: 1,
-			}),
-		);
-	}
-	out.push(...goingDecorations(doc, p.replaces));
-	return out;
-}
-
-function pendingOf(view: EditorView, id: string): Pending | undefined {
-	return uploadsKey.getState(view.state)?.pending.find((p) => p.id === id);
-}
-
-/** Where the files under `id` land next; null once the text that place was in is gone. */
-function placeholderPos(view: EditorView, id: string): number | null {
-	const pending = pendingOf(view, id);
-	return pending ? heldPos(view.state, pending.at) : null;
-}
-
-/** Uploads waiting: none means nothing is uploading. */
-export function pendingUploads(view: EditorView): number {
-	return uploadsKey.getState(view.state)?.pending.length ?? 0;
-}
-
-/** The uploads waiting to land, as Undo weighs them against pastes. */
-export function waitingUploads(state: EditorState): { id: string; order: number }[] {
-	return (uploadsKey.getState(state)?.pending ?? []).map(({ id, order }) => ({ id, order }));
+/** A file's block, from its type, else from its name. */
+export function kindOfFile(file: File, name: string): MediaKind {
+	const byType = kindOfMime(file.type);
+	return byType !== 'file' ? byType : kindOfLink('', name);
 }
 
 /**
- * Call off the files under `id` still to land, as Undo does while they
- * upload: the placeholder goes, the selection they would have replaced
- * stays, and none of them lands when its upload finishes. An upload waiting
- * is no edit yet, so y-undo would pass over it to the person's own writing,
- * and its landing, a new edit, would then clear the redo that could bring
- * that writing back.
+ * Put a block for each of `files` at `at`, in the order given, now, and send
+ * each file after: `at` is a position in the page as it is, or an anchor
+ * taken earlier (the insert menu's, held while the file dialog was open).
+ * With `replacing`, that selection goes in the same edit. One undo takes it
+ * all back. A file larger than a page holds is said and left out, and
+ * files that would take the page past what it holds (`MAX_NODES`,
+ * `MAX_DEPTH`) are refused and said, as a paste is (`pastPageLimit`).
  */
-export function callOffUpload(view: EditorView, id: string): void {
-	const pending = pendingOf(view, id);
-	if (!pending) return;
-	view.dispatch(view.state.tr.setMeta(uploadsKey, { remove: id }));
-	toast(pending.names.length === 1 ? `Undo stopped uploading ${pending.names[0]}` : `Undo stopped uploading ${pending.names.length} files`);
-}
-
-let nextUpload = 0;
-
-type Uploaded = { ok: true; media: Awaited<ReturnType<Upload>> } | { ok: false; error: unknown };
-
-/**
- * Upload `files` and put their blocks where `at` is by the time each is
- * done, wherever edits made meanwhile have moved it: a position in the page
- * as it is now, or an anchor taken earlier (the insert menu's, held while
- * the file dialog was open). The files upload together and land in the
- * order given, each after the one before. If the place is gone by then
- * (someone deleted the text it was in), they land at the caret, and the
- * person is told. With `replacing`, that selection stays, drawn as going,
- * and goes in the edit that places the first file; if none uploads, it
- * stays. Each landing is an undo step of its own. Resolves when every
- * upload has settled.
- */
-export async function uploadFiles(
+export function addFiles(
 	view: EditorView,
 	files: File[],
 	at: number | Anchor,
-	upload: Upload = uploadMedia,
-	replacing?: Selection,
-): Promise<void> {
-	if (!files.length) return;
-	const id = `upload-${++nextUpload}`;
-	const start = typeof at === 'number' ? at : at.resolve();
-	const place: Held = {
-		at: typeof at === 'number' ? anchorAt(view.state, at) : at,
-		pos: start === null ? null : Math.min(start, view.state.doc.content.size),
-	};
-	const replaces = replacing && holdSelection(view.state, replacing);
-	view.dispatch(
-		view.state.tr.setMeta(uploadsKey, { add: { id, order: nextWait(), names: files.map((f) => f.name), at: place, replaces } }),
-	);
-	const results = files.map((file) =>
-		upload(file).then(
-			(media): Uploaded => ({ ok: true, media }),
-			(error): Uploaded => ({ ok: false, error }),
-		),
-	);
-	let toldMoved = false;
-	for (let i = 0; i < files.length; i++) {
-		const file = files[i];
-		const result = await results[i];
-		// Undo called the rest off while they uploaded.
-		if (view.isDestroyed || !pendingOf(view, id)) return;
-		const names = files.slice(i + 1).map((f) => f.name);
-		if (!result.ok) {
-			toast.error(`Couldn't upload ${file.name}`, {
-				description: result.error instanceof Error ? result.error.message : String(result.error),
+	o: { replacing?: Selection; send?: Send } = {},
+): void {
+	const fit = files.filter((file) => file.size <= MAX_UPLOAD_BYTES);
+	for (const file of files) {
+		if (file.size > MAX_UPLOAD_BYTES) {
+			toast.error(`${file.name} is over 100 MB`, {
+				description: 'A page holds files up to 100 MB. Upload it to Drive and link to it from the page instead.',
 			});
-			if (names.length) view.dispatch(view.state.tr.setMeta(uploadsKey, { failed: { id, names } }));
-			continue;
 		}
-		const { media } = result;
-		const kind = kindOfMime(file.type || media.mime_type);
-		const node = mediaNode(view.state.schema, kind, media.url, file.name || media.filename);
+	}
+	if (!fit.length) return;
+	const { state } = view;
+	let pos = typeof at === 'number' ? at : at.resolve();
+	if (pos === null) {
+		pos = state.selection.from;
+		toast('Added at the cursor', {
+			description: 'Someone deleted the line you were adding the files to while you chose them.',
+		});
+	}
+	const tr = state.tr;
+	pos = Math.min(pos, tr.doc.content.size);
+	const replacing = o.replacing && !o.replacing.empty ? o.replacing : null;
+	if (replacing) {
+		const first = Math.min(...replacing.ranges.map((r) => r.$from.pos));
+		replacing.replace(tr);
+		pos = tr.mapping.map(first, -1);
+		// An emptied cell holds an empty line, and the file takes its place.
+		const after = tr.doc.resolve(pos).nodeAfter;
+		if (replacing instanceof CellSelection && after?.isTextblock && !after.content.size) pos += 1;
+	}
+	const caretHere = tr.selection.empty && tr.selection.from === pos;
+	const sent: [string, File][] = [];
+	for (const file of fit) {
+		const id = mintFileId();
+		const name = nameForBlock(file);
+		const node = mediaNode(state.schema, kindOfFile(file, name), `/drive/${id}`, name);
 		if (!node) continue;
-		const tr = view.state.tr;
-		let pos = placeholderPos(view, id);
-		const going = pendingOf(view, id)?.replaces;
-		const replaced = going ? heldSelection(view.state, going) : null;
-		if (going && replaced && holdsAsTaken(going, replaced)) {
-			const first = Math.min(...replaced.ranges.map((r) => r.$from.pos));
-			replaced.replace(tr);
-			pos = tr.mapping.map(first, -1);
-			// An emptied cell holds an empty line, and the file takes its place.
-			const after = tr.doc.resolve(pos).nodeAfter;
-			if (replaced instanceof CellSelection && after?.isTextblock && !after.content.size) pos += 1;
-		} else if (replaced) {
-			toast('Added beside your selection', {
-				description: 'Someone changed the words you selected while the files uploaded, so they stay.',
-			});
-		}
-		if (pos === null) {
-			pos = view.state.selection.from;
-			if (!toldMoved) {
-				toldMoved = true;
-				toast('Added at the cursor', {
-					description: 'Someone deleted the text you added the files to while they uploaded.',
-				});
-			}
-		}
-		const end = insertBlockAt(tr, pos, node);
-		tr.setMeta(uploadsKey, names.length ? { landed: { id, pos: end, names } } : { remove: id });
-		landApart(view, tr);
-		// The next block's place, held through other devices' edits from here.
-		const next = names.length ? placeholderPos(view, id) : null;
-		if (next !== null) view.dispatch(view.state.tr.setMeta(uploadsKey, { anchor: { id, at: anchorAt(view.state, next) } }));
+		pos = insertBlockAt(tr, pos, node);
+		sent.push([id, file]);
 	}
-	if (!view.isDestroyed && pendingIds(view).includes(id)) {
-		view.dispatch(view.state.tr.setMeta(uploadsKey, { remove: id }));
+	if (!sent.length) return;
+	if (caretHere) tr.setSelection(TextSelection.near(tr.doc.resolve(pos)));
+	// The server refuses an edit that takes a page past what it holds, and
+	// the page would stop saving: nothing goes in, and nothing is sent.
+	const past = pastPageLimit(state.doc, tr);
+	if (past) {
+		tellPastLimit(past, 'files');
+		return;
 	}
-}
-
-function pendingIds(view: EditorView): string[] {
-	return (uploadsKey.getState(view.state)?.pending ?? []).map((p) => p.id);
+	ownUndoStep(view, tr.scrollIntoView());
+	const send = o.send ?? startUpload;
+	for (const [id, file] of sent) send(id, file);
 }
 
 /** Files on a paste or a drop. */
@@ -310,50 +216,99 @@ export function filesAreTheContent(data: DataTransfer | null): boolean {
 	return !(body.textContent ?? '').trim();
 }
 
-export function mediaUploads(upload: Upload = uploadMedia): Extension {
+/**
+ * Which of `ids` `doc` names: by a file's block, or by a link to the
+ * file's address, as Turn into link leaves one. Either way the page points
+ * at the address the file fills, so the file is still the page's.
+ */
+export function filesNamedIn(doc: PmNode, ids: ReadonlySet<string>): Set<string> {
+	const held = new Set<string>();
+	const name = (src: unknown) => {
+		const id = typeof src === 'string' ? driveFileId(src) : null;
+		if (id !== null && ids.has(id)) held.add(id);
+	};
+	doc.descendants((node) => {
+		if (node.isText) {
+			for (const mark of node.marks) if (mark.type.name === 'link') name(mark.attrs.href);
+			return false;
+		}
+		if (node.isAtom) {
+			name(node.attrs.src);
+			return false;
+		}
+		return true;
+	});
+	return held;
+}
+
+/**
+ * Tell the upload queue when a block whose file is still on its way leaves
+ * every page open here, or is in one again (`uploadBlocksLeft`,
+ * `uploadBlocksBack`): undo, Remove and a cut take it out, redo and a paste
+ * put it back, and so may another device's edit; opening a page shows its
+ * own. A block turned into a link to its address has not left
+ * (`filesNamedIn`), and neither has one still in another open page. What
+ * the queue does with a block that left is its own: it asks the server
+ * whether any page still names the file. Closing a page takes nothing out:
+ * edits it holds that the server has not had would say no page names a
+ * file it does. Only while this device holds such a file is any page
+ * looked through.
+ */
+function followFileBlocks(view: EditorView, before: PmNode | null): void {
+	const watched = unsettledUploads();
+	if (!watched.size) return;
+	const now = filesNamedIn(view.state.doc, watched);
+	if (before === null) {
+		uploadBlocksBack(now);
+		return;
+	}
+	const was = filesNamedIn(before, watched);
+	uploadBlocksBack([...now].filter((id) => !was.has(id)));
+	const others = openTreeEditors().filter((editor) => editor.view !== view && !editor.isDestroyed);
+	const left = [...was].filter((id) => !now.has(id));
+	uploadBlocksLeft(left.filter((id) => !others.some((editor) => filesNamedIn(editor.state.doc, new Set([id])).size)));
+}
+
+/**
+ * How many images on the page `pageId`, open here, are files this device
+ * has not finished sending: shared now, the page would go without them. The
+ * server refuses such a share once it has heard of the file, and this
+ * device knows of it first.
+ */
+export function imagesOnTheirWay(pageId: string): number {
+	const editor = getTreeEditor(pageId);
+	const unsettled = unsettledUploads();
+	if (!editor || !unsettled.size) return 0;
+	let n = 0;
+	editor.state.doc.descendants((node) => {
+		if (node.type.name !== 'image') return true;
+		const id = typeof node.attrs.src === 'string' ? driveFileId(node.attrs.src) : null;
+		if (id !== null && unsettled.has(id)) n++;
+		return false;
+	});
+	return n;
+}
+
+export function mediaUploads(send: Send = startUpload): Extension {
 	return Extension.create({
 		name: 'pageMediaUploads',
 		addProseMirrorPlugins() {
 			return [
-				new Plugin<Uploads>({
-					key: uploadsKey,
-					state: {
-						init: () => ({ set: DecorationSet.empty, pending: [] }),
-						apply(tr, prev) {
-							const meta = tr.getMeta(uploadsKey) as UploadMeta | undefined;
-							if (!meta && !prev.pending.length) return prev;
-							let pending: Pending[] = prev.pending.map((p) => ({
-								...p,
-								at: holdThrough(tr, p.at, 1),
-								replaces: p.replaces && holdRangeThrough(tr, p.replaces),
-							}));
-							if (meta && 'add' in meta) pending = [...pending, meta.add];
-							if (meta && 'remove' in meta) pending = pending.filter((p) => p.id !== meta.remove);
-							if (meta && 'failed' in meta) {
-								pending = pending.map((p) => (p.id === meta.failed.id ? { ...p, names: meta.failed.names } : p));
-							}
-							if (meta && 'landed' in meta) {
-								const { id, pos, names } = meta.landed;
-								pending = pending.map((p) =>
-									p.id === id ? { ...p, names, at: { at: p.at.at, pos }, replaces: undefined } : p,
-								);
-							}
-							if (meta && 'anchor' in meta) {
-								pending = pending.map((p) => (p.id === meta.anchor.id ? { ...p, at: { ...p.at, at: meta.anchor.at } } : p));
-							}
-							return { set: DecorationSet.create(tr.doc, pending.flatMap((p) => decorations(tr.doc, p))), pending };
-						},
+				new Plugin({
+					view(view) {
+						followFileBlocks(view, null);
+						return {
+							update(view, prev) {
+								if (view.state.doc !== prev.doc) followFileBlocks(view, prev.doc);
+							},
+						};
 					},
 					props: {
-						decorations: (state) => uploadsKey.getState(state)?.set,
 						handlePaste(view, event) {
 							const files = filesOf(event.clipboardData);
 							if (!files.length || !filesAreTheContent(event.clipboardData)) return false;
-							// A selection stays until the first file lands, and goes with it.
-							// Selected cells all go, and the files land in the first of them.
 							const { selection } = view.state;
-							const first = Math.min(...selection.ranges.map((r) => r.$from.pos));
-							void uploadFiles(view, files, first, upload, selection);
+							addFiles(view, files, selection.from, { replacing: selection, send });
 							return true;
 						},
 						handleDrop(view, event, _slice, moved) {
@@ -362,7 +317,7 @@ export function mediaUploads(upload: Upload = uploadMedia): Extension {
 							if (!files.length) return false;
 							const at = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
 							event.preventDefault();
-							void uploadFiles(view, files, at ?? view.state.selection.from, upload);
+							addFiles(view, files, at ?? view.state.selection.from, { send });
 							return true;
 						},
 					},

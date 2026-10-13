@@ -329,3 +329,44 @@ proven on the dev box against a real record; none of it has run on a box.
 Enabling it should be a deliberate act, and the first week of it wants
 watching: the ceiling of three articles per hourly run is a guess, and the
 per-run cost ceiling was already raised once under pressure.
+
+## The edition as export (2026-10-11, unreleased)
+
+Articles became block pages in slice 6 of
+[document-contract-plan.md](../plan/document-contract-plan.md). Provenance
+did not change its model (`diff(live, machine_text)` is what the person did),
+but the text on both sides of that diff did, and three things had to follow.
+
+**The edition is what the page says, not what the writer sent.** On a block
+article the page's text is the export of its tree, which escapes what the
+writer did not (`R\&B`, `user\_name`) and writes footnote definitions in the
+order the page cites them. A writer that recorded its own markdown as
+`machine_text` would make every article read as owner-edited after one
+revision, and the wiki editor would freeze them all. So every writer records
+the export: the wiki editor its draft's text (`YjsState::draft`), the day's
+rewrite and the picture what the write left.
+
+**The move rebases the edition, in the flip's own transaction**
+(`block_move::rebase`, `record_rebase`). An article untouched since its
+writers wrote it gets the export as its edition; an edited one, its edition
+converted on its own. Each sentence of the owner's becomes the export's
+sentence that says it, matched by its key and then by its plain words; one
+the export cannot place keeps the article in markdown, because a sentence of
+theirs that no longer matches is a sentence the invariant would stop
+protecting. One that is no longer a whole sentence of the page (its words
+now inside a longer sentence the owner wrote) is dropped, as the next
+revision's `fold_provenance` drops it. The update is guarded on the edition
+as read, so a writer that recorded one meanwhile makes the move read the
+page again.
+
+**Comparisons re-project; nothing pins the export.** Pinning the export's
+rules and re-recording every edition when they change was considered and
+rejected: one missed pass and every article freezes. Instead each "has the
+owner changed it?" converts both sides through this server's converter and
+export (`block_move::as_compared`), so an edition recorded under an earlier
+export compares equal to the same text written by this one. The cost is one
+conversion per check, off the async workers, and only for block articles.
+
+History reads the move's two versions, "Before blocks" and "Moved to blocks",
+as restore points (`pages::is_move_version`): the move is nobody's edit, and
+the first entry after it is diffed against the blocks.

@@ -37,6 +37,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
     spawn_background(&client, &yjs_state);
 
+    // Markdown pages moved to blocks, only when `VIRTUES_CONVERT_PAGES=1`
+    // says so. See `api::page_convert`.
+    crate::api::page_convert::spawn_on_startup(yjs_state.clone());
+
     let app = build_app(build_state(&client, yjs_state.clone()));
 
     // iroh reach: the box is an iroh Endpoint that serves this same axum app
@@ -485,6 +489,7 @@ fn cors_layer() -> tower_http::cors::CorsLayer {
                         req.headers
                             .get(axum::http::header::HOST)
                             .and_then(|h| h.to_str().ok()),
+                        public_origins(),
                     )
                 })
             },
@@ -1133,10 +1138,48 @@ fn is_face_path(path: &str) -> bool {
 }
 
 /// The CORS predicate, named so it can be tested: our own origins anywhere,
-/// and the opaque origin `null` only on the face routes. `request_host` is the
-/// request's `Host` header — a loopback origin must be that authority.
-fn face_origin_allowed(origin: &str, path: &str, request_host: Option<&str>) -> bool {
-    origin_is_ours(origin, request_host) || (origin == "null" && is_face_path(path))
+/// an origin the operator serves the UI from (`listed`, [`public_origins`]),
+/// and the opaque origin `null` only on the face routes. `request_host` is
+/// the request's `Host` header — a loopback origin must be that authority.
+fn face_origin_allowed(origin: &str, path: &str, request_host: Option<&str>, listed: &[String]) -> bool {
+    origin_is_ours(origin, request_host)
+        || origin_is_listed(origin, listed)
+        || (origin == "null" && is_face_path(path))
+}
+
+/// The origins an operator serves the box's own UI from, behind a proxy of
+/// their own (`VIRTUES_PUBLIC_ORIGINS`, comma-separated, each
+/// `scheme://host[:port]`): the demo box's hostnames. No list of ours can
+/// name them, and Origin equal to Host cannot stand in for one: a page whose
+/// name a DNS rebinding points at the desktop app's 127.0.0.1:7117 sends
+/// exactly that. Unset on every box but such a one; `make dev` sets the
+/// dev server's origin, whose proxy passes its page's Origin as sent. Read
+/// once.
+pub(crate) fn public_origins() -> &'static [String] {
+    static ORIGINS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    ORIGINS.get_or_init(|| listed_origins(std::env::var("VIRTUES_PUBLIC_ORIGINS").ok().as_deref()))
+}
+
+/// [`public_origins`] as `value` writes them: each an http(s) origin, case
+/// folded, a trailing `/` dropped. An entry that is no origin (a bare host, a
+/// path, a wildcard, credentials) is left out, so a slip admits nothing.
+fn listed_origins(value: Option<&str>) -> Vec<String> {
+    let Some(value) = value else { return vec![] };
+    value
+        .split(',')
+        .map(|o| o.trim().trim_end_matches('/').to_ascii_lowercase())
+        .filter(|o| {
+            let rest = o.strip_prefix("https://").or_else(|| o.strip_prefix("http://"));
+            rest.is_some_and(|r| {
+                !r.is_empty() && !r.contains(|c: char| matches!(c, '/' | '*' | '@' | '?' | '#') || c.is_whitespace())
+            })
+        })
+        .collect()
+}
+
+/// Whether `origin` is one of `listed` ([`listed_origins`]), exactly.
+fn origin_is_listed(origin: &str, listed: &[String]) -> bool {
+    !listed.is_empty() && listed.contains(&origin.to_ascii_lowercase())
 }
 
 /// The answer to a WebSocket handshake a page from another origin sent, or
@@ -1149,12 +1192,17 @@ fn face_origin_allowed(origin: &str, path: &str, request_host: Option<&str>) -> 
 /// without this any site the owner visits could open the page socket and
 /// read the page, or the terminal and type into a shell. The policy is the
 /// CORS layer's (`origin_is_ours`), which takes the phone's `virtues://`
-/// bundle and a loopback page served by the authority it dials. A request
-/// with no `Origin` is no browser's (the app's shell, a test client) and
-/// passes; the route's own auth still applies to it.
+/// bundle and a loopback page served by the authority it dials, and
+/// `listed`, the origins an operator serves the UI from
+/// ([`public_origins`]): the page socket takes those, since a page there
+/// reads and writes the same pages over HTTP, while the terminal and the
+/// owner's browser pass none, so no proxied hostname reaches a shell. A
+/// request with no `Origin` is no browser's (the app's shell, a test
+/// client) and passes; the route's own auth still applies to it.
 pub(crate) fn refuse_foreign_socket(
     headers: &axum::http::HeaderMap,
     socket: &str,
+    listed: &[String],
 ) -> Option<axum::response::Response> {
     let origin = headers
         .get(axum::http::header::ORIGIN)
@@ -1162,7 +1210,7 @@ pub(crate) fn refuse_foreign_socket(
     let host = headers
         .get(axum::http::header::HOST)
         .and_then(|v| v.to_str().ok());
-    if origin_is_ours(origin, host) {
+    if origin_is_ours(origin, host) || origin_is_listed(origin, listed) {
         return None;
     }
     tracing::warn!(socket, origin, "websocket refused: foreign origin");
@@ -1241,7 +1289,7 @@ pub(crate) fn origin_is_ours(origin: &str, request_host: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod cors_tests {
-    use super::{face_origin_allowed, origin_is_ours, refuse_foreign_socket};
+    use super::{face_origin_allowed, listed_origins, origin_is_ours, refuse_foreign_socket};
 
     /// A remote page must not be allowed to read the box's responses.
     ///
@@ -1324,13 +1372,84 @@ mod cors_tests {
     #[test]
     fn a_socket_refuses_a_foreign_page_alone() {
         for o in ["virtues://localhost", "tauri://localhost", "http://127.0.0.1:7117"] {
-            assert!(refuse_foreign_socket(&handshake(Some(o)), "test").is_none(), "{o}");
+            assert!(refuse_foreign_socket(&handshake(Some(o)), "test", &[]).is_none(), "{o}");
         }
-        assert!(refuse_foreign_socket(&handshake(None), "test").is_none());
+        assert!(refuse_foreign_socket(&handshake(None), "test", &[]).is_none());
         for o in ["https://evil.example", "http://localhost.evil.example", "http://localhost:8888", "null"] {
-            let refused = refuse_foreign_socket(&handshake(Some(o)), "test").expect(o);
+            let refused = refuse_foreign_socket(&handshake(Some(o)), "test", &[]).expect(o);
             assert_eq!(refused.status(), axum::http::StatusCode::FORBIDDEN, "{o}");
         }
+    }
+
+    /// The box's UI served from an operator's own hostname, behind a proxy
+    /// (the demo box): its page socket was refused, so no page there ever
+    /// synced, with nothing on screen to say why. Listed in
+    /// `VIRTUES_PUBLIC_ORIGINS`, the origin opens the page socket and passes
+    /// CORS, exactly and in no other spelling; the terminal and the owner's
+    /// browser still take only the app's own origins; and Origin equal to
+    /// Host admits nothing, as a page a DNS rebinding sends to 127.0.0.1:7117
+    /// presents just that.
+    #[test]
+    fn an_origin_the_operator_lists_opens_the_page_socket_alone() {
+        let listed = listed_origins(Some(" https://demo.virtues.com, https://Demo-x1.virtues.ch/ ,demo.example.net,*,https://a.example/path,"));
+        assert_eq!(listed, ["https://demo.virtues.com", "https://demo-x1.virtues.ch"]);
+        assert!(listed_origins(None).is_empty());
+
+        let proxied = |origin: &str, host: &str| {
+            let mut h = axum::http::HeaderMap::new();
+            h.insert(axum::http::header::ORIGIN, origin.parse().unwrap());
+            h.insert(axum::http::header::HOST, host.parse().unwrap());
+            h
+        };
+        for o in ["https://demo.virtues.com", "https://DEMO.virtues.com", "https://demo-x1.virtues.ch"] {
+            let host = o.trim_start_matches("https://").to_ascii_lowercase();
+            assert!(refuse_foreign_socket(&proxied(o, &host), "page", &listed).is_none(), "{o}");
+            assert!(face_origin_allowed(o, "/api/pages", Some(&host), &listed), "{o}");
+            // Unlisted, as on every other box, it is refused as ever.
+            assert!(refuse_foreign_socket(&proxied(o, &host), "page", &[]).is_some(), "{o}");
+            assert!(!face_origin_allowed(o, "/api/pages", Some(&host), &[]), "{o}");
+            // The terminal and the browser pass no list.
+            assert!(refuse_foreign_socket(&proxied(o, &host), "terminal", &[]).is_some(), "{o}");
+        }
+        for (o, host) in [
+            ("http://demo.virtues.com", "demo.virtues.com"),
+            ("https://demo.virtues.com.evil.example", "demo.virtues.com.evil.example"),
+            ("https://demo.virtues.com:8443", "demo.virtues.com:8443"),
+            ("http://rebound.example:7117", "rebound.example:7117"),
+        ] {
+            assert!(refuse_foreign_socket(&proxied(o, host), "page", &listed).is_some(), "{o}");
+            assert!(!face_origin_allowed(o, "/api/pages", Some(host), &listed), "{o}");
+        }
+    }
+
+    /// `make dev` serves the UI from the dev server and proxies its sockets
+    /// to the box, the page's Origin as the browser sent it, the Host the
+    /// box's own (`apps/web/vite.config.ts`), and lists the dev server's
+    /// origin. Its page opens the page socket, never the terminal; any other
+    /// page in the browser opens neither. A proxy that rewrote Origin to the
+    /// box's own would let every page through: Origin equal to Host on
+    /// loopback is the box's own page.
+    #[test]
+    fn the_dev_servers_page_opens_the_page_socket_alone() {
+        let listed = listed_origins(Some("http://localhost:5173,http://127.0.0.1:5173"));
+        let proxied = |origin: &str| {
+            let mut h = axum::http::HeaderMap::new();
+            h.insert(axum::http::header::ORIGIN, origin.parse().unwrap());
+            h.insert(axum::http::header::HOST, "localhost:8000".parse().unwrap());
+            h
+        };
+        for o in ["http://localhost:5173", "http://127.0.0.1:5173"] {
+            assert!(refuse_foreign_socket(&proxied(o), "page", &listed).is_none(), "{o}");
+            assert!(refuse_foreign_socket(&proxied(o), "terminal", &[]).is_some(), "{o}");
+        }
+        for o in ["https://evil.example", "http://localhost:8888", "http://192.168.1.20:5173"] {
+            assert!(refuse_foreign_socket(&proxied(o), "page", &listed).is_some(), "{o}");
+            assert!(refuse_foreign_socket(&proxied(o), "terminal", &[]).is_some(), "{o}");
+        }
+        assert!(
+            refuse_foreign_socket(&proxied("http://localhost:8000"), "terminal", &[]).is_none(),
+            "rewritten to the box's own, a page is the box's"
+        );
     }
 
     /// The face is hung in `<iframe sandbox="allow-scripts">`, so its origin
@@ -1344,7 +1463,7 @@ mod cors_tests {
             "/face/applet_dot_cloud/virtues.js",
             "/api/face/query",
         ] {
-            assert!(face_origin_allowed("null", p, None), "must allow null on {p}");
+            assert!(face_origin_allowed("null", p, None, &[]), "must allow null on {p}");
         }
     }
 
@@ -1360,7 +1479,7 @@ mod cors_tests {
             "/faces/x",
             "/face",
         ] {
-            assert!(!face_origin_allowed("null", p, None), "must refuse null on {p}");
+            assert!(!face_origin_allowed("null", p, None, &[]), "must refuse null on {p}");
         }
     }
 }

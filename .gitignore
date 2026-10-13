@@ -195,6 +195,7 @@ tmp/*
 /applets/user/
 /.applet-state/
 /.publication-state/
+/.page-conversion-state/
 
 # Dev-only age recipient for `virtues backup` (public half; the secret is
 # printed once and never stored). The box equivalent lives in the state root.
@@ -224,3 +225,5 @@ virtues-core/seeds/demo3y/
 # Licensed music (AGsoundtrax, ref AGX-2026-00084): the license grants no right
 # to publish the master, and this repo is public. Ship it from a private path.
 apps/web/static/onboarding/hello.mp3
+# The editor converter's own cargo build (apps/web/scripts/build-converter.mjs)
+/.converter-target/
