@@ -113,7 +113,7 @@ pub async fn run_agent_loop(
     } else {
         Vec::new()
     };
-    let mut llm_messages = build_context_for_llm(&messages, None, 0, Some(&system_prompt), None);
+    let mut llm_messages = build_context_for_llm(&messages, None, 0, Some(&system_prompt), None, None);
 
     add_wake_turn(&mut llm_messages, message);
     // The person's words go into the chat too, so the conversation shows

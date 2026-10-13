@@ -182,8 +182,8 @@ for constraint recency. What runs, in order:
 | 1 | `base` | one fused string (`agent/prompt.rs::build_personalized_prompt`): the character and house style, the owner's `<style_notes>`, `<narrative_identity>` (the document, whole), `<tool_usage>` and the `<mode>` guidance | us + the person | slow |
 | 2 | `precedence` | the precedence ladder, as text | us | static |
 | 3 | `memory` | what the machine has learned, in three lanes | machine; the person can edit | session |
-| 4 | `circumstances` | the computed present | SQL only, no LLM | quarter-hour |
-| 5 | `coverage` | what the record holds, per table, as a date range — so "the record is silent" differs from "nothing happened" | SQL only | daily |
+| 4 | `circumstances` | the computed present, as of when the chat first read it | SQL only, no LLM | held per chat; read again hourly or when the day turns |
+| 5 | `coverage` | what the record holds, per table, as a date range — so "the record is silent" differs from "nothing happened" | SQL only | held per chat like `circumstances` |
 | 6 | `active_project` | the Project (room) the chat lives in | the UI | session |
 | 7 | `skill` | the running skill's file body, if any | us | per turn |
 | 8 | `active_context` | the open page's live content | the UI | per turn |
@@ -230,10 +230,18 @@ around" the act, and Cicero's canonical list — who, what, where, when,
 how, why — is nearly a spec for the fields:
 
 Its sections are one registry (`api/circumstances.rs::SECTIONS`), in order:
-the clock (floored to the quarter-hour, computed once so every line derives
-from the same instant), identity, the chapters as they named them (names and
+the as-of time (floored to the quarter-hour, computed once so every line
+derives from the same instant), identity, the chapters as they named them (names and
 years only), place, today's spine, the calendar, recent people, live threads,
 last night's sleep, recently narrated days, and connected sources.
+
+The block is held per chat (`prompt_blocks::held_per_chat`) and the current
+time is not in the prompt at all: each of their messages opens with when it
+was sent (`compaction::build_context_for_llm`). Grok reads from cache only
+where an earlier request ended, so one changed byte in the system message
+costs the prompt and the whole history behind it; with the clock and the
+ingest-driven lines inside it, 57% of turns on the main box started from
+nothing (measured 2026-10-09).
 
 - **Recent people** carry entity ids and are labelled *recency, not
   significance*: who is around, never who matters (bonds, in the NI, carry

@@ -189,26 +189,10 @@ const TOOLS: Record<string, Presentation> = {
 	generate_image: { noun: "an image", depth: 4, say: ["Making an image", "Made an image"] },
 	// Drawn in the reply; listed here only when a call failed.
 	show: { noun: "a figure", depth: 4, say: ["Drawing a figure", "Drew a figure"] },
-	publish_to_github: {
-		noun: "a page",
-		depth: 4,
-		say: (input, live) => {
-			const repo = (input.repo as string) || "GitHub";
-			return `${live ? "Publishing to" : "Published to"} ${repo}`;
-		},
-	},
 	update_memory: {
 		noun: "memory",
 		depth: 4,
 		say: ["Noting something to remember", "Noted something to remember"],
-	},
-	propose_narrative_identity_edit: {
-		noun: "how you're described",
-		depth: 4,
-		say: [
-			"Suggesting a change to how you're described",
-			"Suggested a change to how you're described",
-		],
 	},
 	get_project_item: {
 		noun: "a project",

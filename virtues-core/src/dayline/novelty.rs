@@ -1,6 +1,6 @@
 //! Novelty scoring for dayline events.
 //!
-//! Embeds event summaries (EmbeddingGemma-300M, via the llama-server sidecar) and produces
+//! Embeds event summaries (through the box's embedding endpoint) and produces
 //! TWO orthogonal z-scored signals against a recency- and phase-weighted
 //! baseline of recent events:
 //!
@@ -35,7 +35,7 @@ use std::f64::consts::{LN_2, PI};
 use crate::dayline::embedding_ops::{
     bytes_to_embedding, cosine_distance, embed_input_for_event, embedding_to_bytes, k_nearest,
 };
-use crate::search::embedder::get_embedder;
+use crate::search::embedder::searchable_embedder;
 
 /// Minimum distinct baseline DAYS required before any scoring (else NULL,
 /// "calibrating").
@@ -105,7 +105,7 @@ pub async fn compute_novelty_for_day(pool: &PgPool, date: NaiveDate) -> anyhow::
         .iter()
         .map(|(_, s, _, _)| embed_input_for_event(s))
         .collect();
-    let embedder = get_embedder().await?;
+    let embedder = searchable_embedder(pool).await?;
     let embeddings = embedder.embed_batch_async(summaries).await?;
 
     let baseline = load_baseline(pool, date, true).await?;
@@ -181,7 +181,7 @@ pub async fn compute_and_store_novelty(
         return Ok(None);
     }
 
-    let embedder = get_embedder().await?;
+    let embedder = searchable_embedder(pool).await?;
     let embedding = embedder
         .embed_async(&embed_input_for_event(event_summary))
         .await?;

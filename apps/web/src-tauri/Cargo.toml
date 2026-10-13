@@ -12,8 +12,18 @@ description = "Virtues Desktop App"
 authors = ["Virtues"]
 edition = "2021"
 
+# Not `virtues`: that is the core server's binary, and a checkout whose
+# `.cargo/config.toml` points both workspaces at one shared target dir would
+# link this app over `debug/virtues` on every `tauri dev`, so anything that
+# execs that path launches the Mac app instead of the server.
+#
+# The shipped executable is still `virtues` (`mainBinaryName` in
+# tauri.conf.json), so the bundles and their updaters see no change. `tauri
+# build` applies that name by renaming the output inside the target dir, which
+# is why `tools/build-mac-app.sh` passes `--target`: the rename then lands in
+# `<triple>/release/`, a directory the core never builds into.
 [[bin]]
-name = "virtues"
+name = "virtues-app"
 path = "src/main.rs"
 
 # iOS/Android build the crate as a library; the tauri mobile entry point lives

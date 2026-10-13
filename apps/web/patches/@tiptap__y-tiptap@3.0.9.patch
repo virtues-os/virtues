@@ -1,0 +1,152 @@
+diff --git a/dist/y-tiptap.cjs b/dist/y-tiptap.cjs
+index 8b341de..32913f0 100644
+--- a/dist/y-tiptap.cjs
++++ b/dist/y-tiptap.cjs
+@@ -329,7 +329,9 @@ const ySyncPlugin = (yXmlFragment, {
+  * @return {number|null}
+  */
+ const recoverSelectionEndpoint = (newDoc, oldDoc, oldAbs, resolved) => {
+-  if (oldAbs == null) {
++  // A position from another document than `oldDoc` (a selection an undo
++  // put back, taken before edits since) says nothing about it.
++  if (oldAbs == null || oldAbs < 0 || oldAbs > oldDoc.content.size) {
+     return resolved
+   }
+   const misresolved = resolved === null ||
+@@ -1001,6 +1003,28 @@ const createNodeFromYElement = (
+     meta.mapping.set(el, node);
+     return node
+   } catch (e) {
++    // A merge of devices' edits, each valid, can leave a node holding what
++    // its schema refuses (a list item whose paragraphs both went), which the
++    // server's repair puts right. Drawn filled to fit meanwhile, the shared
++    // document left as it is: deleted, it went from every device with all
++    // it held, and the server took the deletion. A type the schema does not
++    // know at all is deleted below; a page's contract version keeps a client
++    // from binding a page that holds one.
++    const type = schema.nodes[el.nodeName];
++    if (type) {
++      let filled = null;
++      try {
++        filled = type.createAndFill(el.getAttributes(snapshot), children);
++      } catch (_) {
++        filled = null;
++      }
++      if (filled !== null) {
++        meta.mapping.set(el, filled);
++        return filled
++      }
++      meta.mapping.delete(el);
++      return null
++    }
+     // an error occured while creating the node. This is probably a result of a concurrent action.
+     /** @type {Y.Doc} */ (el.doc).transact((transaction) => {
+       /** @type {Y.Item} */ (el._item).delete(transaction);
+@@ -2295,6 +2319,16 @@ const isMisresolvedAfterStructuralChange = (oldDoc, newDoc, oldAbs, resolvedAbs)
+   if (!$new.parent.isTextblock) {
+     return true
+   }
++  // The same block, told by attrs no sibling shares (an id): its text
++  // changed by an edit inside it, and Yjs placed the cursor among the
++  // edit's own characters. The old offset would put it mid-word.
++  if (
++    $old.parent.type === $new.parent.type &&
++    hasDistinctiveAttrs($old.parent) &&
++    attrsEqual($old.parent.attrs, $new.parent.attrs)
++  ) {
++    return false
++  }
+   if ($old.parent.textContent !== $new.parent.textContent) {
+     return true
+   }
+@@ -2952,7 +2986,13 @@ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins =
+     undoManager.on('stack-item-popped', ({ stackItem }) => {
+       const binding = ystate.binding;
+       if (binding) {
+-        binding.beforeTransactionSelection = stackItem.meta.get(binding) || binding.beforeTransactionSelection;
++        const sel = stackItem.meta.get(binding);
++        // Its absolute positions are of the document as it was when the
++        // item was made; read against a later one they point anywhere, or
++        // past its end. The relative positions place it.
++        binding.beforeTransactionSelection = sel
++          ? Object.assign({}, sel, { absAnchor: null, absHead: null })
++          : binding.beforeTransactionSelection;
+       }
+     });
+     return {
+diff --git a/dist/y-tiptap.js b/dist/y-tiptap.js
+index c6fdfa4..02a0e0b 100644
+--- a/dist/y-tiptap.js
++++ b/dist/y-tiptap.js
+@@ -295,7 +295,9 @@ const ySyncPlugin = (yXmlFragment, {
+  * @return {number|null}
+  */
+ const recoverSelectionEndpoint = (newDoc, oldDoc, oldAbs, resolved) => {
+-  if (oldAbs == null) {
++  // A position from another document than `oldDoc` (a selection an undo
++  // put back, taken before edits since) says nothing about it.
++  if (oldAbs == null || oldAbs < 0 || oldAbs > oldDoc.content.size) {
+     return resolved
+   }
+   const misresolved = resolved === null ||
+@@ -967,6 +969,28 @@ const createNodeFromYElement = (
+     meta.mapping.set(el, node);
+     return node
+   } catch (e) {
++    // A merge of devices' edits, each valid, can leave a node holding what
++    // its schema refuses (a list item whose paragraphs both went), which the
++    // server's repair puts right. Drawn filled to fit meanwhile, the shared
++    // document left as it is: deleted, it went from every device with all
++    // it held, and the server took the deletion. A type the schema does not
++    // know at all is deleted below; a page's contract version keeps a client
++    // from binding a page that holds one.
++    const type = schema.nodes[el.nodeName];
++    if (type) {
++      let filled = null;
++      try {
++        filled = type.createAndFill(el.getAttributes(snapshot), children);
++      } catch (_) {
++        filled = null;
++      }
++      if (filled !== null) {
++        meta.mapping.set(el, filled);
++        return filled
++      }
++      meta.mapping.delete(el);
++      return null
++    }
+     // an error occured while creating the node. This is probably a result of a concurrent action.
+     /** @type {Y.Doc} */ (el.doc).transact((transaction) => {
+       /** @type {Y.Item} */ (el._item).delete(transaction);
+@@ -2261,6 +2285,16 @@ const isMisresolvedAfterStructuralChange = (oldDoc, newDoc, oldAbs, resolvedAbs)
+   if (!$new.parent.isTextblock) {
+     return true
+   }
++  // The same block, told by attrs no sibling shares (an id): its text
++  // changed by an edit inside it, and Yjs placed the cursor among the
++  // edit's own characters. The old offset would put it mid-word.
++  if (
++    $old.parent.type === $new.parent.type &&
++    hasDistinctiveAttrs($old.parent) &&
++    attrsEqual($old.parent.attrs, $new.parent.attrs)
++  ) {
++    return false
++  }
+   if ($old.parent.textContent !== $new.parent.textContent) {
+     return true
+   }
+@@ -2918,7 +2952,13 @@ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins =
+     undoManager.on('stack-item-popped', ({ stackItem }) => {
+       const binding = ystate.binding;
+       if (binding) {
+-        binding.beforeTransactionSelection = stackItem.meta.get(binding) || binding.beforeTransactionSelection;
++        const sel = stackItem.meta.get(binding);
++        // Its absolute positions are of the document as it was when the
++        // item was made; read against a later one they point anywhere, or
++        // past its end. The relative positions place it.
++        binding.beforeTransactionSelection = sel
++          ? Object.assign({}, sel, { absAnchor: null, absHead: null })
++          : binding.beforeTransactionSelection;
+       }
+     });
+     return {

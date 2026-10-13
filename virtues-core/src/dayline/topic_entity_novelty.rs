@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::NaiveDate;
 use sqlx::PgPool;
 
-use crate::search::embedder::get_embedder;
+use crate::search::embedder::searchable_embedder;
 
 /// Read a JSONB `["a","b"]` column into a Vec<String>.
 ///
@@ -243,7 +243,7 @@ async fn score_topics_by_embedding(
     today_topics: &HashSet<String>,
     baseline_rows: &[(NaiveDate, Option<serde_json::Value>, Option<serde_json::Value>)],
 ) -> anyhow::Result<HashMap<String, f64>> {
-    let embedder = get_embedder().await?;
+    let embedder = searchable_embedder(pool).await?;
 
     // Collect all unique baseline topic strings
     let mut baseline_topics: HashSet<String> = HashSet::new();
