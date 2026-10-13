@@ -72,7 +72,7 @@ async fn detailed(lat: f64, lon: f64) -> Option<Tile> {
 
 /// Even-odd over every ring of one polygon, so a point on an island in a
 /// lake (a hole) is not on the water.
-fn inside(px: f64, py: f64, rings: &[Vec<(f64, f64)>]) -> bool {
+pub(super) fn inside(px: f64, py: f64, rings: &[Vec<(f64, f64)>]) -> bool {
     let mut odd = false;
     for ring in rings {
         let n = ring.len();
