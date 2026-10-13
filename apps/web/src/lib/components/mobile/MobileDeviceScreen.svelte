@@ -219,6 +219,88 @@
 			: `${fixes.length} location fixes · last ${rel(lastTs ?? "")}`,
 	);
 
+	/** Share the log: the same table the page reads, as text for a bug report. */
+	let sharing = $state(false);
+	let shareNote = $state<string | null>(null);
+
+	/**
+	 * The log as plain text, oldest first. Marker rows (what the recorder and
+	 * the location probe did, with the app state at the time) are kept as
+	 * written, except that a muted place's id becomes "muted place 1", 2 and so
+	 * on for this file; a fix keeps only its time and state. No coordinate or
+	 * place id leaves the phone this way: the person sharing it may not be
+	 * sharing where they were. Row times are UTC; the header gives the
+	 * phone's offset so a "it cut out at 3:40" report can be lined up.
+	 */
+	function logText(all: ProbeRow[], status: AudioStatus | null): string {
+		const now = new Date();
+		const off = -now.getTimezoneOffset();
+		const hh = String(Math.floor(Math.abs(off) / 60)).padStart(2, "0");
+		const mm = String(Math.abs(off) % 60).padStart(2, "0");
+		const head = [
+			`Virtues ${version || "?"} log, ${now.toISOString()} (phone clock UTC${off >= 0 ? "+" : "-"}${hh}:${mm}; times below are UTC)`,
+			navigator.userAgent,
+			status
+				? `audio: ${status.enabled ? "on" : "off"}, ${status.recording ? "recording" : "not recording"}, mic ${status.mic ?? "?"}` +
+					(status.mutedBy ? `, muted by ${status.mutedBy}` : "") +
+					(status.pausedReason ? `, paused for ${status.pausedReason}` : "") +
+					(status.override ? `, override ${status.override}` : "")
+				: "audio: unknown",
+			"",
+		];
+		const places = new Map<string, number>();
+		const placeLabel = (id: string) => {
+			if (!places.has(id)) places.set(id, places.size + 1);
+			return `muted place ${places.get(id)}`;
+		};
+		const lines = all
+			.slice()
+			.reverse()
+			.map((r) => {
+				const marker = r.lat === 0 && r.lon === 0;
+				const launch = r.launchReason && r.launchReason !== "user" ? ` [launched for ${r.launchReason}]` : "";
+				const what = marker
+					? r.source.replace(/virtues\.place\.[^\s]+/g, placeLabel)
+					: `location fix (${r.source})`;
+				return `${r.ts}  ${r.appState}${launch}  ${what}`;
+			});
+		return [...head, ...lines, ""].join("\n");
+	}
+
+	async function shareLog() {
+		sharing = true;
+		shareNote = null;
+		try {
+			// The status is read now, not taken from the screen's last load: the
+			// header has to describe the moment the log was shared.
+			const [resp, status] = await Promise.all([
+				invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
+					payload: { limit: 5000 },
+				}),
+				invoke<AudioStatus>("plugin:audio|status").catch(() => null),
+			]);
+			const text = logText(resp.rows ?? [], status);
+			const d = new Date();
+			const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+			const name = `virtues-log-${day}.txt`;
+			const file = new File([text], name, { type: "text/plain" });
+			if (navigator.canShare?.({ files: [file] })) {
+				await navigator.share({ files: [file], title: name });
+			} else if (typeof navigator.share === "function") {
+				await navigator.share({ title: name, text });
+			} else {
+				await navigator.clipboard.writeText(text);
+				shareNote = "Copied the log. Paste it into your message.";
+			}
+		} catch (e) {
+			// Closing the share sheet is a choice, not a failure.
+			if (e instanceof DOMException && e.name === "AbortError") return;
+			shareNote = "Couldn't share the log. Try again.";
+		} finally {
+			sharing = false;
+		}
+	}
+
 	async function load() {
 		if (!mobileLayout.isNativeShell) {
 			loading = false;
@@ -249,8 +331,11 @@
 			] = await Promise.all([
 				// A page's worth of history now that the log has a page; 60 was
 				// sized for an inline strip that showed three runs.
+				// Fixes only: marker rows (the probe's events, the recorder's
+				// diagnostics) would otherwise crowd fixes out of the window that
+				// decides whether Location reads as on.
 				invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
-					payload: { limit: 300 },
+					payload: { limit: 300, fixesOnly: true },
 				}),
 				invoke<ReachStatus>("plugin:reach|reach_status").catch(() => null),
 				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "location" }).catch(() => null),
@@ -865,6 +950,20 @@
 		{error}
 		onBack={() => (activityOpen = false)}
 	>
+		<!-- For a bug report: what the recorder and the location probe did
+		     lately, as a text file. Above the list so it is never 300 runs
+		     down. -->
+		<div class="card share">
+			<button class="stream link" type="button" onclick={shareLog} disabled={sharing}>
+				<div class="s-icon">
+					<Icon icon="ri:file-text-line" width={18} />
+				</div>
+				<div class="s-body">
+					<div class="s-title">{sharing ? "Preparing…" : "Share the log"}</div>
+					<div class="s-sub">{shareNote ?? "What recording and location did lately, without your locations or places"}</div>
+				</div>
+			</button>
+		</div>
 		<div class="card activity">
 			{#if loading && runs.length === 0}
 				<div class="empty">Loading…</div>
@@ -1023,6 +1122,7 @@
 	}
 
 	/* Recent activity: one run per line, on its own page. */
+	.card.share,
 	.card.activity {
 		margin-top: 16px;
 	}
