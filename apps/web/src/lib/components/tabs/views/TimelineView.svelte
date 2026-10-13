@@ -1574,9 +1574,12 @@
 		<div class="date-card tile" bind:offsetWidth={cardW} bind:offsetHeight={cardH}>
 			<div class="date-row">
 				<IconButton icon="ri:arrow-left-s-line" label="Previous day" size="sm" onclick={() => (date = stepDay(date, -1))} />
+				<!-- Calendar's ‹ Today ›: a button between the arrows, there on
+				     every day and greyed out on today, so it never reads as the
+				     date's label and the › never moves. -->
+				<span class="date-today"><Pill disabled={date === today} onclick={() => (date = today)}>Today</Pill></span>
 				<IconButton icon="ri:arrow-right-s-line" label="Next day" size="sm" disabled={date >= today} onclick={() => (date = stepDay(date, 1))} />
 				<IconButton icon="ri:calendar-line" label="Show the month" size="sm" pressed={monthOpen} onclick={() => (monthOpen = !monthOpen)} />
-				{#if date !== today}<span class="date-today"><Pill quiet onclick={() => (date = today)}>Today</Pill></span>{/if}
 			</div>
 			<button class="date-title" type="button" title="Back to the whole day" onclick={resetView}>{title}</button>
 		</div>
@@ -1758,7 +1761,7 @@
 		min-height: 24px;
 	}
 	.date-today {
-		margin-left: 4px;
+		margin: 0 2px;
 	}
 	.date-title {
 		display: block;
