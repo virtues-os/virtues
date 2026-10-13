@@ -558,9 +558,11 @@
 		width: auto;
 		height: 34%;
 	}
+	/* No space above the pinned date header: rows scrolled up would show in
+	   it, above the header. */
 	.scroll {
 		overflow-y: auto;
-		padding: 4px 0 8px;
+		padding: 0 0 8px;
 		background: inherit;
 	}
 	.group {
@@ -605,9 +607,13 @@
 		grid-template-columns: 56px 1fr;
 		gap: 8px;
 	}
-	.sec:hover,
 	.row:hover {
 		background: var(--hover-bg);
+	}
+	/* A stay's header pins over the rows scrolling beneath it, so its hover
+	   is laid over the surface, never see-through. */
+	.sec:hover {
+		background: linear-gradient(var(--hover-bg), var(--hover-bg)) var(--color-surface);
 	}
 	/* Selected, as a Mac list selects: a rounded fill in the accent, stronger
 	   than the hover's grey, over the stay and its question line; the
@@ -641,7 +647,7 @@
 	   on the row, or on its stretch of path on the map. */
 	.group.hov > :is(.sec, .ask-line),
 	.group:has(> .sec:hover, > .ask-line:hover) > :is(.sec, .ask-line) {
-		background: var(--hover-bg);
+		background: linear-gradient(var(--hover-bg), var(--hover-bg)) var(--color-surface);
 	}
 	/* Where the playhead is: an edge in the accent, which means now. */
 	.group.cur::before,
@@ -912,12 +918,18 @@
 		color: var(--color-foreground);
 	}
 	/* A question open in the list: its stay and card at full strength, the
-	   rest of the day dimmed around it, still there to read and to pick. */
-	.scroll.asking-open .group:not(.open) {
+	   rest of the day dimmed around it, still there to read and to pick. The
+	   contents dim, never a pinned header's surface, which would let the
+	   rows beneath show through it; the ⓘ keeps its own showing and
+	   hiding. */
+	.scroll.asking-open .group:not(.open) > :not(.sec, .info),
+	.scroll.asking-open .group:not(.open) > .sec > :not(.info),
+	.scroll.asking-open .group:not(.open)::before {
 		opacity: 0.45;
 		transition: opacity 160ms ease;
 	}
-	.scroll.asking-open .group:not(.open):hover {
+	.scroll.asking-open .group:not(.open):hover > :not(.sec, .info),
+	.scroll.asking-open .group:not(.open):hover > .sec > :not(.info) {
 		opacity: 0.8;
 	}
 	/* The open question hangs inside the stay's selection: the tint runs on
@@ -930,7 +942,8 @@
 		background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface));
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.scroll.asking-open .group:not(.open) {
+		.scroll.asking-open .group:not(.open) > :not(.sec, .info),
+		.scroll.asking-open .group:not(.open) > .sec > :not(.info) {
 			transition: none;
 		}
 	}
@@ -944,7 +957,7 @@
 		position: sticky;
 		top: 0;
 		z-index: 3;
-		padding: 12px 16px 8px;
+		padding: 16px 16px 8px;
 		background: var(--color-surface);
 		font-family: var(--font-sans);
 		font-size: 13px;

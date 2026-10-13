@@ -43,6 +43,9 @@
 	let noneOfThese = $state(false);
 	/** A kind that asks a follow-up (a hotel: which; a home: whose). */
 	let kind = $state<Kind | null>(null);
+	/** "Choose a kind of place": the kinds of place, behind one row, as
+	 *  Settings keeps "Other…" (the owner's call, 2026-10-13). */
+	let kindsOpen = $state(false);
 	let text = $state('');
 	let input = $state<HTMLInputElement | null>(null);
 	let people = $state<string[] | null>(null);
@@ -73,6 +76,7 @@
 		picked = [];
 		noneOfThese = false;
 		kind = null;
+		kindsOpen = false;
 		text = '';
 	});
 
@@ -156,7 +160,7 @@
 	const placeholder = $derived(kind?.then === 'person' ? 'Their name' : kind?.then === 'hotel' ? 'Another hotel' : 'Name this place');
 </script>
 
-{#snippet options(items: Offer[])}
+{#snippet options(items: Offer[], more = false)}
 	<!-- One list: the names to pick, then a row to type one, as Reminders'
 	     new-item row. A name picked from the map's carries its kind. -->
 	<ul class="list">
@@ -187,6 +191,17 @@
 			/>
 			{#if text.trim()}<Pill filled disabled={review.saving} onclick={() => saveName(text)}>Save</Pill>{/if}
 		</li>
+		{#if more}
+			<!-- For when the name isn't known: the kinds of place, one tap
+			     away, with Settings' chevron for a row that leads on. -->
+			<li>
+				<button type="button" onclick={() => (kindsOpen = true)}>
+					<Icon icon="ri:shapes-line" width="16" />
+					<span class="grow">Choose a kind of place</span>
+					<Icon icon="ri:arrow-right-s-line" width="16" />
+				</button>
+			</li>
+		{/if}
 	</ul>
 {/snippet}
 
@@ -202,6 +217,22 @@
 				<Pill quiet disabled={review.saving} onclick={skip}>Skip the Name</Pill>
 				{#if onclose}<Pill quiet onclick={onclose}>Close</Pill>{/if}
 			</span>
+		</div>
+	{:else if kindsOpen}
+		<p class="q">What kind of place was it?</p>
+		<ul class="list">
+			{#each ask.kinds as k (k.label)}
+				<li>
+					<button type="button" disabled={review.saving} onclick={() => void pickKind(k)}>
+						<Icon icon={k.icon} width="16" />
+						<span>{k.label}</span>
+					</button>
+				</li>
+			{/each}
+		</ul>
+		<div class="foot">
+			<Pill quiet onclick={() => (kindsOpen = false)}>‹ Back</Pill>
+			{#if onclose}<span class="end"><Pill quiet onclick={onclose}>Close</Pill></span>{/if}
 		</div>
 	{:else}
 		<p class="q">{noneOfThese ? 'What was this spot?' : ask.text}</p>
@@ -263,22 +294,9 @@
 			<!-- The places around first, the likely answer in one tap; a name
 			     picked from the map's carries its kind of place. Then the
 			     field, which also narrows the list as it's typed into; the
-			     kinds last, for when the name isn't known (the owner's call,
-			     2026-10-10). -->
-			{@render options(matches(offers, text))}
-			<!-- For when the name isn't known: a second list, under its own
-			     header, in the same rows. -->
-			<p class="section-hd">Or a kind of place</p>
-			<ul class="list">
-				{#each ask.kinds as k (k.label)}
-					<li>
-						<button type="button" disabled={review.saving} onclick={() => void pickKind(k)}>
-							<Icon icon={k.icon} width="16" />
-							<span>{k.label}</span>
-						</button>
-					</li>
-				{/each}
-			</ul>
+			     kinds last, behind one row (the owner's calls, 2026-10-10 and
+			     2026-10-13). -->
+			{@render options(matches(offers, text), true)}
 		{/if}
 		{#if (ask.passing && !ask.role) || onclose}
 			<div class="foot">
@@ -325,13 +343,6 @@
 	.more-hd {
 		margin-top: 16px;
 	}
-	/* A list's header, Apple's: quiet, in line with the rows' icons. */
-	.section-hd {
-		margin: 16px 0 0;
-		padding-left: 13px;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
 	/* Names to pick, as Apple's inset grouped list (Settings, Maps'
 	   suggestions): one white rounded box of rows, each with its icon,
 	   hairlines between them, its edges in line with the field below. */
@@ -361,6 +372,9 @@
 		font-size: 15px;
 		text-align: left;
 		cursor: pointer;
+	}
+	.list .grow {
+		flex: 1;
 	}
 	.list button :global(svg) {
 		flex: none;
