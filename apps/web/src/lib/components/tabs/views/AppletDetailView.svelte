@@ -690,7 +690,6 @@
 		height: 100%;
 		overflow-y: auto;
 		padding: 40px 48px 64px;
-		background: var(--color-surface);
 	}
 	@container (max-width: 640px) {
 		.applet-home {
@@ -909,6 +908,7 @@
 		padding: 0;
 		border: 1px solid var(--color-border);
 		border-radius: 12px;
+		background: var(--color-surface);
 	}
 	.result {
 		display: flex;
