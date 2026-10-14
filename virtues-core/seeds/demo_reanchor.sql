@@ -43,12 +43,25 @@ DECLARE
     cur_anchor  date;
     shift_days  int;
     park_days   CONSTANT int := 100000;   -- see the wiki_days note below
+    -- The demo life is lived in Austin. Days are local days: the instrumented
+    -- day's evening falls on the NEXT UTC date, and a box's session runs in UTC,
+    -- so both the anchor and "today" are read on the Chicago wall clock.
+    -- Anchoring on occurred_at::date split the trace across two UTC dates and
+    -- could pick the evening's; reading current_date in UTC put the demo on
+    -- tomorrow for every US evening viewer.
+    demo_tz     CONSTANT text := 'America/Chicago';
+    -- Timestamps move by the distance between the two LOCAL midnights, not by
+    -- whole 24-hour days. The seed is written in February (CST, UTC-6); landed
+    -- on a summer day (CDT, UTC-5) a whole-day shift showed every event an hour
+    -- late, and the instrumented day's last drive spilled past midnight into
+    -- tomorrow. Dates still move by shift_days.
+    ts_shift    interval;
     r           record;
 BEGIN
     -- The instrumented day, found by where the raw observations actually are
     -- rather than by a hardcoded date that would rot the moment the seed is
     -- regenerated. Ties break toward the later day.
-    SELECT occurred_at::date INTO cur_anchor
+    SELECT (occurred_at AT TIME ZONE demo_tz)::date INTO cur_anchor
     FROM data_location_point
     GROUP BY 1
     ORDER BY count(*) DESC, 1 DESC
@@ -65,7 +78,10 @@ BEGIN
         RETURN;
     END IF;
 
-    shift_days := current_date - cur_anchor;
+    shift_days := (now() AT TIME ZONE demo_tz)::date - cur_anchor;
+
+    ts_shift := ((cur_anchor + shift_days)::timestamp AT TIME ZONE demo_tz)
+              - (cur_anchor::timestamp AT TIME ZONE demo_tz);
 
     IF shift_days = 0 THEN
         RAISE NOTICE 'demo re-anchor: the richest day is already today (%) -- nothing to move',
@@ -172,7 +188,7 @@ BEGIN
             EXECUTE format(
                 'UPDATE public.%I SET %I = %I + $1 WHERE %I IS NOT NULL',
                 r.table_name, r.column_name, r.column_name, r.column_name
-            ) USING make_interval(days => shift_days);
+            ) USING ts_shift;
         END IF;
     END LOOP;
 

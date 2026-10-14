@@ -12,8 +12,12 @@ ends with `ON CONFLICT DO NOTHING` so a re-run is a no-op.
   not a static `.sql` file. Listed here for completeness.
 
 - **`demo_day.sql`** — a single richly-instrumented day (Friday, Feb 13 2026
-  + flanking days) used for UI demos and as primary test data. ~80 INSERTs,
-  ~1.4 KLOC.
+  + flanking days) used for UI demos and as primary test data. ~90 INSERTs,
+  ~1.5 KLOC. Its location trace is **real**: one actual day's GPS points in
+  Austin, points only, taken with their owner's consent and pinned onto the
+  Friday by local wall-clock time. Everything else in the file is invented and
+  written to agree with where that trace went, so a change to the story has to
+  keep matching the trace, not the other way round.
 
 - **`demo_narrative.sql`** — the 12-week character narrative (Nov 24 2025 →
   Feb 11 2026 as written; see `demo_reanchor.sql`, which moves it to the
@@ -56,7 +60,7 @@ ends with `ON CONFLICT DO NOTHING` so a re-run is a no-op.
   whole seeded life forward so that **the instrumented day lands on today**,
   rather than in February 2026. The other files keep their absolute dates,
   which is what makes them readable and re-generatable; this is where "relative
-  to today" is bought, once, in one pass. It anchors on the day carrying the
+  to today" is bought, once, in one pass. It anchors on the LOCAL (America/Chicago) day carrying the
   most location points — all the raw streams live in one day, and Home asks for
   the literal current date with no "newest day with data" fallback, so any
   other anchor leaves the good day just off the only page anyone opens. The

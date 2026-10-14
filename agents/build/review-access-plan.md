@@ -164,8 +164,10 @@ row must produce a 429.
    nothing about it** (see below); until a release carries the fix, run the
    seed files from a current checkout by hand instead. Either way the last file
    to run must be `demo_reanchor.sql`, which is what puts the instrumented day
-   on today — check it: `select occurred_at::date from data_location_point
-   group by 1 order by count(*) desc limit 1` should return today's date.
+   on today — check it: `select (occurred_at at time zone 'America/Chicago')::date
+   from data_location_point group by 1 order by count(*) desc limit 1` should
+   return today's date in Austin. Read the local date, not `occurred_at::date`:
+   the instrumented day's evening falls on the next UTC date.
 7a. **Install the re-anchor timer.** `demo_reanchor.sql` only runs when
    something runs it, so a box seeded once ages a day at a time and a reviewer
    opening the app two weeks after submission meets the empty Home the pass
