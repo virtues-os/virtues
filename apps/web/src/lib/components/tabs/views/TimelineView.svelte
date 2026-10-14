@@ -1618,7 +1618,7 @@
 	class:narrow
 	bind:this={root}
 	bind:clientWidth={paneW}
-	style="{colourVars()}; --top-chrome: {topChrome}px; --scrub-h: {scrubH}px; --inspector-top: {inspectorLow ? topChrome + 12 : 16}px"
+	style="{colourVars(dark)}; --top-chrome: {topChrome}px; --scrub-h: {scrubH}px; --inspector-top: {inspectorLow ? topChrome + 12 : 16}px"
 >
 	<div class="timeline-map" bind:this={container}></div>
 

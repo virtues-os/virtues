@@ -47,9 +47,17 @@ const PAINT: Record<string, string> = {
 	"--c-sel": "var(--color-primary)",
 };
 
+/** Dark themes: In Bed in a bright periwinkle, since the light theme's slate
+ *  all but vanished on a dark lane, and still blue-violet so it stays apart
+ *  from Voice's purple (the owner's call, 2026-10-14). */
+const DARK: Record<string, string> = {
+	"--c-rest": "hsl(232, 70%, 72%)",
+	"--c-rest-ink": "hsl(232, 75%, 80%)",
+};
+
 /** The paint as a `style` string for the Timeline's root element. */
-export function colourVars(): string {
-	return Object.entries(PAINT)
+export function colourVars(dark = false): string {
+	return Object.entries({ ...PAINT, ...(dark ? DARK : {}) })
 		.map(([k, v]) => `${k}: ${v}`)
 		.join("; ");
 }
