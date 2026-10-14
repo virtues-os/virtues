@@ -26,6 +26,7 @@ a name already in use overwrites that applet instead of adding a new one.
 | `schema_sql` | **one migration** | **only** schema `applet_<slug>`. First call creates; later calls submit *only what changed* — see below |
 | `face_html` | complete index.html | sandboxed iframe; include `<link rel="stylesheet" href="virtues.css">` + `<script src="virtues.js"></script>`; read data with `await virtues.query(sql)` (read-only); 48KB max. A face meant to be published is the exception: see below |
 | `limits` | object | protective ceilings — see below. Only enforced keys are accepted |
+| `delivers` | `page` · `chat` · `dashboard` | what each run makes. Set `page` when every run writes one: a run that ends without writing a page is then recorded as failed, not as a success. A face-only dashboard is `dashboard` |
 
 ## A dashboard has no agent
 
