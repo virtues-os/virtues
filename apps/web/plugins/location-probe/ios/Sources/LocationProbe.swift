@@ -96,10 +96,18 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   private var launchActivationSeen = false
   private var enteredForeground = false
 
-  /// Throttle: keep at most one fix per ~15s (matches the native app's sampling
-  /// cadence — avoids flooding the log + outbox with near-identical points).
+  /// Which callbacks are logged. A fix that has moved `minStep` (and further
+  /// than its own error radius) from the last logged one is logged after
+  /// `minStepInterval`; otherwise one fix per `minFixInterval`. Time alone
+  /// drew a drive as 200-300 m chords cutting across blocks, while near-still
+  /// fixes need no more than the 15 s the box's stay detection was built on.
+  /// The error-radius guard keeps an indoor phone, whose Wi-Fi fixes hop
+  /// 30-120 m every few seconds, on the slow cadence.
   private var lastFixAt: Date?
+  private var lastFix: CLLocation?
   private let minFixInterval: TimeInterval = 15
+  private let minStep: CLLocationDistance = 20
+  private let minStepInterval: TimeInterval = 2
 
   // MARK: - Power modes (motion-adaptive duty cycle)
   //
@@ -436,8 +444,16 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
       return
     }
     updateMotion(l)  // mode logic sees every callback, before the log throttle
-    if let last = lastFixAt, Date().timeIntervalSince(last) < minFixInterval { return }
+    if !isDue(l) { return }
     record(l, still: false)
+  }
+
+  private func isDue(_ l: CLLocation) -> Bool {
+    guard let at = lastFixAt else { return true }
+    let since = Date().timeIntervalSince(at)
+    if since >= minFixInterval { return true }
+    guard since >= minStepInterval, l.horizontalAccuracy >= 0, let prev = lastFix else { return false }
+    return l.distance(from: prev) >= max(minStep, l.horizontalAccuracy)
   }
 
   /// Log one fix locally, enqueue it for the box, and ride its wake.
@@ -445,6 +461,7 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     // A still fix is proof of presence, not news: it rides the next upload
     // (the audio chunk's nudge, or the drain timer) instead of calling one.
     lastFixAt = Date()
+    lastFix = l
     // Local rolling log (device-screen "recent activity" + background badge).
     write(lat: l.coordinate.latitude, lon: l.coordinate.longitude, source: still ? "still" : "update")
     // Durable delivery: full-field record → shared outbox → box.
