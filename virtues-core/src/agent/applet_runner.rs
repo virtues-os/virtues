@@ -227,8 +227,15 @@ pub async fn run_agent_loop(
                 tool_names.insert(id, name);
             }
             crate::agent::AgentEvent::ToolCallResult { id, result, success, .. } => {
-                if tool_names.get(&id).is_some_and(|name| wrote_a_page(name, success, &result)) {
+                let written = tool_names.get(&id).and_then(|name| page_written(name, success, &result));
+                if let Some(page_id) = written {
                     wrote_page = true;
+                    // What the run made, so the applet's page can show it.
+                    // A record we failed to write must not fail the run that
+                    // wrote the page.
+                    if let Err(e) = crate::scheduler::applets::record_page_output(pool, run_id, page_id).await {
+                        tracing::warn!(applet_id, page_id, error = %e, "failed to record the page a run wrote");
+                    }
                 }
             }
             crate::agent::AgentEvent::TextDelta { content } => {
@@ -392,8 +399,13 @@ fn delivers_kind(config: &serde_json::Value) -> Option<&str> {
 /// answers `needs_binding` and succeeds without writing anything.
 const PAGE_WRITE_TOOLS: &[&str] = &["create_page", "edit_page", "revise_article"];
 
-fn wrote_a_page(tool: &str, success: bool, result: &serde_json::Value) -> bool {
-    success && PAGE_WRITE_TOOLS.contains(&tool) && result.get("needs_binding").is_none()
+/// The page a tool call wrote, if it wrote one. Every page tool answers with
+/// the `page_id` it acted on.
+fn page_written<'a>(tool: &str, success: bool, result: &'a serde_json::Value) -> Option<&'a str> {
+    if !success || !PAGE_WRITE_TOOLS.contains(&tool) || result.get("needs_binding").is_some() {
+        return None;
+    }
+    result.get("page_id")?.as_str()
 }
 
 /// Why a finished run failed to make what its applet makes, if it did.
@@ -430,6 +442,11 @@ const RUN_INSTRUCTION: &str = "Run your action instruction now.";
 /// Providers (Bedrock, zai) also require the first non-system message to be a
 /// user message, and a compacted chat's post-checkpoint tail can begin with
 /// an assistant turn, so that case opens with the instruction.
+///
+/// A chat can also already end on a user turn: the person's message is posted
+/// before the run, so a run that failed or hit its ceiling leaves it
+/// unanswered. Some providers reject two user turns in a row, so this wake's
+/// words join that turn instead of following it.
 fn add_wake_turn(llm_messages: &mut Vec<serde_json::Value>, message: Option<&str>) {
     let role = |m: &serde_json::Value| m.get("role").and_then(|r| r.as_str()).map(str::to_owned);
     if let Some(i) = llm_messages.iter().position(|m| role(m).as_deref() != Some("system")) {
@@ -437,10 +454,16 @@ fn add_wake_turn(llm_messages: &mut Vec<serde_json::Value>, message: Option<&str
             llm_messages.insert(i, serde_json::json!({ "role": "user", "content": RUN_INSTRUCTION }));
         }
     }
-    llm_messages.push(serde_json::json!({
-        "role": "user",
-        "content": message.unwrap_or(RUN_INSTRUCTION),
-    }));
+    let text = message.unwrap_or(RUN_INSTRUCTION);
+    if let Some(last) = llm_messages.last_mut() {
+        if role(last).as_deref() == Some("user") {
+            if let Some(held) = last.get("content").and_then(|c| c.as_str()) {
+                last["content"] = serde_json::Value::String(format!("{held}\n\n{text}"));
+                return;
+            }
+        }
+    }
+    llm_messages.push(serde_json::json!({ "role": "user", "content": text }));
 }
 
 /// Load chat messages for context building.
@@ -577,12 +600,13 @@ mod tests {
 
     #[test]
     fn only_a_successful_page_write_counts() {
-        assert!(wrote_a_page("create_page", true, &json!({ "page_id": "page_1" })));
-        assert!(wrote_a_page("revise_article", true, &json!({})));
-        assert!(!wrote_a_page("create_page", false, &json!({})), "a failed write");
-        assert!(!wrote_a_page("sql_query", true, &json!({})), "not a page tool");
-        assert!(
-            !wrote_a_page("edit_page", true, &json!({ "needs_binding": true })),
+        assert_eq!(page_written("create_page", true, &json!({ "page_id": "page_1" })), Some("page_1"));
+        assert_eq!(page_written("revise_article", true, &json!({ "page_id": "page_2" })), Some("page_2"));
+        assert_eq!(page_written("create_page", false, &json!({ "page_id": "page_1" })), None, "a failed write");
+        assert_eq!(page_written("sql_query", true, &json!({ "page_id": "x" })), None, "not a page tool");
+        assert_eq!(
+            page_written("edit_page", true, &json!({ "needs_binding": true })),
+            None,
             "no page was bound, so nothing was written"
         );
     }
@@ -608,6 +632,17 @@ mod tests {
         ];
         add_wake_turn(&mut m, None);
         assert_eq!(roles_and_text(&m).last().unwrap(), &("user".to_string(), RUN_INSTRUCTION.to_string()));
+    }
+
+    #[test]
+    fn an_unanswered_message_joins_the_next_wake_instead_of_doubling_the_turn() {
+        let mut m = vec![
+            json!({"role": "system", "content": "s"}),
+            json!({"role": "user", "content": "Make it weekly"}),
+        ];
+        add_wake_turn(&mut m, None);
+        assert_eq!(m.len(), 2, "no second user turn in a row");
+        assert_eq!(m[1]["content"], format!("Make it weekly\n\n{RUN_INSTRUCTION}"));
     }
 
     #[test]
