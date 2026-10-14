@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { StyleSpecification } from 'maplibre-gl';
-import { APPLE_LIGHT, hsl, recolour } from './palette';
+import { APPLE_DARK, APPLE_LIGHT, hsl, recolour } from './palette';
 
 const style = (): StyleSpecification => ({
 	version: 8,
@@ -37,5 +37,15 @@ describe('recolour', () => {
 		const out = recolour(input, APPLE_LIGHT);
 		expect(out.layers[2]).toBe(input.layers[2]);
 		expect((input.layers[0] as { paint: Record<string, unknown> }).paint['background-color']).toBe('#000');
+	});
+
+	it('greens a park by its kind: forest, field, urban park, else other', () => {
+		const park: StyleSpecification = { version: 8, sources: {}, layers: [{ id: 'home:landuse_park', type: 'fill', source: 'home', 'source-layer': 'landuse', paint: {} }] };
+		const fill = (recolour(park, APPLE_DARK).layers[0] as { paint: Record<string, unknown> }).paint['fill-color'] as unknown[];
+		expect(fill[0]).toBe('match');
+		expect(fill).toContain(hsl(APPLE_DARK.greenForest));
+		expect(fill).toContain(hsl(APPLE_DARK.greenField));
+		expect(fill).toContain(hsl(APPLE_DARK.greenUrban));
+		expect(fill.at(-1)).toBe(hsl(APPLE_DARK.greenOther));
 	});
 });
