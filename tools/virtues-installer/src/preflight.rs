@@ -16,8 +16,8 @@ use reqwest::Client;
 use crate::ui;
 
 pub async fn run() -> Result<()> {
-    // Disk space — the GGUFs are ~0.5 GB (embeddinggemma-2 Q8_0 ~0.3 GB +
-    // gte-reranker-modernbert-base Q8_0 ~0.2 GB); PG18 adds another ~1 GB;
+    // Disk space — the GGUF is ~0.3 GB (embeddinggemma-2 Q8_0), and a model
+    // change briefly holds two; PG18 adds another ~1 GB;
     // binaries + web + working room another GB. We want ≥ 4 GB free on /.
     match free_gb(Path::new("/")) {
         Some(gb) if gb >= 4 => ui::ok(&format!("Disk space ({gb} GB free on /)")),

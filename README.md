@@ -133,8 +133,8 @@ read-only research.
 
 <img src=".github/images/shots/chat.png" alt="A chat: the question — how much of last week does the record actually account for — with the agent's sql_query step against the events table above the answer: 92.4 hours placed as stays, 16.5 in transit, and 59.1 it will not claim to know, because those hours have no visit, movement, audio or purchase to corroborate them." width="100%">
 
-**Where the data goes.** It stays on your server. Embedding and reranking must
-run on a local address; the installer refuses a public one. GPS is reduced to
+**Where the data goes.** It stays on your server. Embedding must run on a
+local address; the installer refuses a public one. GPS is reduced to
 distance and pace before anything is sent. The assistant is the exception and
 the point: a question, or the nightly day-writing, sends the relevant part of
 your record to a model provider — voice as audio, not as transcript. Point it
@@ -215,19 +215,19 @@ the search index follow from the descriptor.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/images/architecture/architecture-dark.svg">
-  <img alt="Sources flow into Virtues Core, one Rust binary on port 8000 holding Postgres and a file store and never an external API key. Core calls your own inference endpoints — /v1/embeddings on 18181 and /v1/rerank on 18182, loopback, LAN or VPN only — and reaches model providers solely through virtues-api on port 9002, which holds the external keys and enforces a budget." src=".github/images/architecture/architecture-light.svg" width="100%">
+  <img alt="Sources flow into Virtues Core, one Rust binary on port 8000 holding Postgres and a file store and never an external API key. Core calls your own embedding endpoint — /v1/embeddings on 18181, loopback, LAN or VPN only — and reaches model providers solely through virtues-api on port 9002, which holds the external keys and enforces a budget." src=".github/images/architecture/architecture-light.svg" width="100%">
 </picture>
 
 **Core** is one Rust binary against one Postgres database: ingestion, entity
 resolution, the wiki, pages, chat, and the web UI it serves. It never touches
 an external API key.
 
-**Retrieval is two HTTP contracts, not code we ship.** Core consumes an
-OpenAI-style `/v1/embeddings` endpoint (required) and a `/v1/rerank` endpoint
-(optional), and cannot tell what is behind them. On our own board the installer
-provisions them on the NPU; on your machine you run them, and the installer
-probes what you point it at and pins the model's fingerprint — so a silently
-swapped model can't quietly corrupt your index.
+**Retrieval is one HTTP contract, not code we ship.** Core consumes an
+OpenAI-style `/v1/embeddings` endpoint and cannot tell what is behind it. On
+your machine the installer runs the recommended model on the CPU and keeps it
+current, or you run your own server and the installer probes what you point it
+at and pins the model's fingerprint — so a silently swapped model can't
+quietly corrupt your index. On our own board it runs on the NPU.
 
 **virtues-api** is the metered edge, and **atlas** owns identity and funding
 (Stripe on one side, an opaque account id on the other; it never sees usage).
@@ -259,7 +259,7 @@ doesn't have to hold anyone's API keys.
 | **Host OS** | Debian 13+, Ubuntu 24.04 LTS+, or Fedora 40+, `x86_64` or `aarch64`, with systemd and root. A VM is fine; a container is not. |
 | **Hardware** | 8 GB RAM and an SSD. **No GPU required** — the model that writes is remote, and the one local retrieval model runs on the CPU. |
 | **Storage** | NVMe or SATA SSD. The installer classifies *and measures* the disk first: eMMC is workable to ~100k items, microSD is slow and wears out, NFS/SMB is a corruption risk. |
-| **Inference** | Two endpoints you run: `/v1/embeddings` (required) and `/v1/rerank` (optional), on loopback, LAN, or VPN — never a public address. |
+| **Inference** | One `/v1/embeddings` endpoint, on loopback, LAN, or VPN — never a public address. The installer runs one on the CPU by default. |
 | **Network** | Outbound 443 only. No port forwarding, no inbound rule, no hostname. |
 
 Machines that clear the bar: a mini PC with 16 GB and an NVMe slot; a used
@@ -276,24 +276,19 @@ runs the recommended embedding model on the CPU. We don't install GPU or NPU
 inference software on hardware we can't test, so for those you run the
 server and we validate it at the door.
 
-[llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` speaks both
-contracts. These are the invocations our own systemd units use:
+[llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` speaks the
+contract. This is the invocation our own systemd unit uses:
 
 ```bash
 # embedder — -ngl 0 keeps it on the CPU (its math overflows fp16 on some GPU paths)
 llama-server --embedding --pooling mean -m embeddinggemma-2-Q8_0.gguf \
   --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0
-
-# reranker — optional; search uses one only if you turn reranking on
-llama-server --rerank --pooling rank -m gte-reranker-modernbert-base-Q8_0.gguf \
-  --host 127.0.0.1 --port 18182 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 99
 ```
 
-`-np 1` and `--cache-ram 0` take each server from ~2.5 GB resident to ~1 GB.
+`-np 1` and `--cache-ram 0` take the server from ~2.5 GB resident to ~1 GB.
 Known-good embedders: **embeddinggemma-2** (768; needs llama.cpp b11507+),
 gte-small (384), bge-small-en-v1.5 (384), e5-small-v2 (384),
-nomic-embed-text-v1.5 (768). Known-good rerankers:
-**gte-reranker-modernbert-base**, bge-reranker-v2-m3, jina-reranker-v2.
+nomic-embed-text-v1.5 (768).
 
 [Setting up inference](docs/inference.md) is the full page: the exact contract,
 the prompt-prefix and dimension rules, what the fingerprint pin protects you
@@ -436,14 +431,14 @@ and `make dev` uses to install `llama.cpp` for the local sidecars.
 git clone https://github.com/virtues-os/virtues
 cd virtues
 make init   # .env with a fresh encryption key
-make dev    # postgres + api :9002 + core :8000 + web :5173 + embed/rerank
+make dev    # postgres + api :9002 + core :8000 + web :5173 + embed
 ```
 
-One command runs the whole stack; Ctrl-C stops it. First run fetches ~480 MB of
-GGUFs into `.data/`.
+One command runs the whole stack; Ctrl-C stops it. First run fetches the ~320 MB
+embedding model into `.data/`.
 
 ```bash
-make dev WITH_EMBED=0   # skip the sidecars (search off) — UI-only or low-RAM
+make dev WITH_EMBED=0   # skip the sidecar (search off) — UI-only or low-RAM
 make dev-info           # per-tab commands, for split logs
 make dev-link           # a login URL for the local stack
 make help               # every target

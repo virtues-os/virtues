@@ -296,8 +296,8 @@ row must produce a 429.
 10. Test-pair a real phone **over cellular**, not Wi-Fi. Wi-Fi would pass via
     the LAN path and prove nothing about the reviewer's experience.
 
-Models: chat routes to `virtues-api`, so no local LLM is needed. Embeddings and
-the reranker do run locally, CPU-only, and slowness is acceptable.
+Models: chat routes to `virtues-api`, so no local LLM is needed. Embeddings do
+run locally, CPU-only, and slowness is acceptable.
 
 ## Before every submission
 

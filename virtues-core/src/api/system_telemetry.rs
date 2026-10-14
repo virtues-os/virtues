@@ -238,7 +238,7 @@ pub async fn telemetry_handler(
         Err(_) => DevicesInfo { paired_wg: 0 },
     };
 
-    // Sidecar liveness — TCP probe the embedding/rerank llama-servers.
+    // Sidecar liveness — TCP probe the embedding server.
     let services = collect_services().await;
 
     // GPU offload is "active" when we have a live Jetson GPU sample showing
@@ -701,16 +701,12 @@ fn capture_after<'a>(haystack: &'a str, needle: &str) -> Option<&'a str> {
 
 // ─── Sidecar liveness ───────────────────────────────────────────────────────
 
-/// TCP-probe the inference sidecars (embed :18181, and rerank :18182 when
-/// search uses one). A successful connect within the timeout means the sidecar
-/// is listening.
+/// TCP-probe the embedding sidecar (:18181). A successful connect within the
+/// timeout means it is listening.
 async fn collect_services() -> Vec<ServiceInfo> {
-    let mut probes = vec![("embedding", "127.0.0.1:18181")];
-    if crate::search::query::reranker_enabled() {
-        probes.push(("rerank", "127.0.0.1:18182"));
-    }
-    let mut out = Vec::with_capacity(probes.len());
-    for (name, addr) in &probes {
+    const PROBES: &[(&str, &str)] = &[("embedding", "127.0.0.1:18181")];
+    let mut out = Vec::with_capacity(PROBES.len());
+    for (name, addr) in PROBES {
         let up = tokio::time::timeout(
             Duration::from_millis(250),
             tokio::net::TcpStream::connect(*addr),
@@ -789,15 +785,14 @@ async fn sample_once(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
     let gpu_pct = gpu.as_ref().and_then(|g| g.usage_pct);
     let gpu_offload = gpu.as_ref().map(|g| g.offload_active);
     let embed_up = services.iter().find(|s| s.name == "embedding").map(|s| s.up);
-    let rerank_up = services.iter().find(|s| s.name == "rerank").map(|s| s.up);
 
     sqlx::query(
         r#"
         INSERT INTO app_system_samples
             (cpu_pct, mem_used_bytes, mem_total_bytes, gpu_pct, gpu_offload_active,
              net_rx_bps, net_tx_bps, disk_used_bytes, disk_total_bytes,
-             temp_c, load1, sidecar_embed_up, sidecar_rerank_up)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             temp_c, load1, sidecar_embed_up)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         "#,
     )
     .bind(host.cpu.usage_pct)
@@ -812,7 +807,6 @@ async fn sample_once(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
     .bind(temp_c)
     .bind(host.cpu.load_avg.one)
     .bind(embed_up)
-    .bind(rerank_up)
     .execute(pool)
     .await?;
     Ok(())
@@ -834,7 +828,6 @@ pub struct SystemSample {
     pub temp_c: Option<f32>,
     pub load1: Option<f64>,
     pub sidecar_embed_up: Option<bool>,
-    pub sidecar_rerank_up: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -857,7 +850,7 @@ pub async fn history_handler(
         r#"
         SELECT sampled_at, cpu_pct, mem_used_bytes, mem_total_bytes, gpu_pct,
                gpu_offload_active, net_rx_bps, net_tx_bps, disk_used_bytes,
-               disk_total_bytes, temp_c, load1, sidecar_embed_up, sidecar_rerank_up
+               disk_total_bytes, temp_c, load1, sidecar_embed_up
         FROM app_system_samples
         WHERE sampled_at >= now() - make_interval(secs => $1::double precision)
         ORDER BY sampled_at ASC

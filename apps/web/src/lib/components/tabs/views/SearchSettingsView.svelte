@@ -159,16 +159,6 @@
 					<span class="dim"> · last indexed {formatRelativeTimestamp(status.last_indexed_at)}</span>
 				{/if}
 			</dd>
-
-			<dt>Reranker</dt>
-			<dd>
-				{status.rerank_on ? 'On' : 'Off'}
-				{#if !status.rerank_on}
-					<span class="note">
-						In our tests, the small rerankers ranked results worse than search without them.
-					</span>
-				{/if}
-			</dd>
 		</dl>
 
 		{#if status.mode !== 'manual' && status.mode !== 'dragon'}

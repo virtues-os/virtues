@@ -42,8 +42,8 @@ def render(t):
     p = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
         f'viewBox="0 0 {W} {H}" role="img" aria-label="Virtues architecture: sources flow '
-        f'into Virtues Core on port 8000, which uses your own inference endpoints on ports '
-        f'18181 and 18182 and reaches external providers only through the virtues-api proxy '
+        f'into Virtues Core on port 8000, which uses your own embedding endpoint on port '
+        f'18181 and reaches external providers only through the virtues-api proxy '
         f'on port 9002.">',
         f'<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" '
         f'markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="{t["dim"]}"/>'
@@ -74,10 +74,8 @@ def render(t):
     p += [arrow(584, 214, 626, 214, t),
           box(628, 150, 248, 128, dashed=True, t=t),
           text(648, 178, "Inference — yours", size=16, font=SERIF, t=t),
-          text(648, 204, "/v1/embeddings", size=12, font=MONO, t=t),
-          text(856, 204, ":18181", size=12, font=MONO, fill=t["dim"], anchor="end", t=t),
-          text(648, 224, "/v1/rerank", size=12, font=MONO, t=t),
-          text(856, 224, ":18182", size=12, font=MONO, fill=t["dim"], anchor="end", t=t),
+          text(648, 210, "/v1/embeddings", size=12, font=MONO, t=t),
+          text(856, 210, ":18181", size=12, font=MONO, fill=t["dim"], anchor="end", t=t),
           text(648, 252, "loopback, LAN or VPN only —", size=11.5, fill=t["dim"], t=t),
           text(648, 268, "a public address is refused.", size=11.5, fill=t["dim"], t=t)]
     # ── virtues-api ──────────────────────────────────────────────────────
