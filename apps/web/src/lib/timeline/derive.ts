@@ -113,6 +113,9 @@ export function deriveDay(day: TimelineDay, sources: Sources): DerivedDay {
 		metadata: { source: "healthkit", asleep_minutes: n.asleep_minutes },
 	}));
 
+	// Every point the phone sent, however rough: a gap's verdict is whether the
+	// phone was recording, and a Wi-Fi guess left off the track still says so.
+	const pointTimes = day.points.map((p) => t(p.timestamp));
 	const talk = day.sessions.filter((x) => x.speaker_mode >= 2).map((x) => ({ s: t(x.started_at), e: t(x.ended_at) }));
 	const stepTimes = day.steps.map((b) => t(b.at));
 
@@ -137,7 +140,7 @@ export function deriveDay(day: TimelineDay, sources: Sources): DerivedDay {
 				...iso,
 				timeline_place_id: null,
 				metadata: {
-					fix_count: track.fixes,
+					fix_count: pointTimes.filter((x) => g.s <= x && x < g.e).length,
 					conversation_count: talk.filter((c) => c.e > g.s && c.s < g.e).length,
 					step_bin_count: stepTimes.filter((x) => g.s <= x && x < g.e).length,
 				},
