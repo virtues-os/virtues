@@ -956,6 +956,10 @@ fn setup_applet_tool() -> ToolConfig {
                 "until": { "type": "string" },
                 "schema_sql": { "type": "string" },
                 "face_html": { "type": "string" },
+                "delivers": {
+                    "type": "string",
+                    "enum": ["page", "chat", "dashboard"]
+                },
                 "limits": {
                     "type": "object",
                     "properties": {
