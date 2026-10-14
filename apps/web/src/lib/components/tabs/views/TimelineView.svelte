@@ -952,8 +952,13 @@
 		// The place in the middle of the clear map, at block scale: its
 		// streets named and the path around it in view (the owner's call,
 		// 2026-10-10, over framing the stay's own path, which set the pin low
-		// and close).
-		m.easeTo({ center: [at.lon, at.lat], zoom: QUESTION_ZOOM, padding: fitPad(m), duration: 820 });
+		// and close). An offset, not `padding`: MapLibre keeps an ease's
+		// padding on the map, and every fit after it then added its own on
+		// top and found no room, so "Show the whole day" did nothing.
+		const lim = clearArea(m);
+		const c = m.getContainer();
+		const offset: [number, number] = [(lim.l + lim.r) / 2 - c.clientWidth / 2, (lim.t + lim.b) / 2 - c.clientHeight / 2];
+		m.easeTo({ center: [at.lon, at.lat], zoom: QUESTION_ZOOM, offset, duration: 820 });
 	}
 
 	/** After an answer, the day's titles again: a place just named, or one no
