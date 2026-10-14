@@ -880,10 +880,6 @@ pub enum Commands {
         /// /v1/embeddings endpoint on this machine, your LAN, or your VPN).
         #[arg(long)]
         embed_url: Option<String>,
-        /// Rerank server to record with the switch. Reranking stays off
-        /// unless VIRTUES_RERANK_GAP opts in.
-        #[arg(long)]
-        rerank_url: Option<String>,
         /// Model name sent with every request; Ollama routes by it.
         #[arg(long)]
         embed_model: Option<String>,
@@ -896,7 +892,7 @@ pub enum Commands {
         /// Go back to the recommended setup: Virtues runs the embedding model
         /// it recommends on this machine's CPU and keeps it current. Search
         /// keeps using your server until the index is rebuilt. Needs sudo.
-        #[arg(long, conflicts_with_all = ["embed_url", "rerank_url", "embed_model"])]
+        #[arg(long, conflicts_with_all = ["embed_url", "embed_model"])]
         recommended: bool,
     },
 

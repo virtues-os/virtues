@@ -121,20 +121,11 @@ const SAME_MODEL_COSINE: f32 = 0.995;
 /// confirmation.
 pub async fn switch(
     embed_url: &str,
-    rerank_url: Option<&str>,
     embed_model: Option<&str>,
     yes: bool,
 ) -> Result<()> {
     let embed_url = normalize_url(embed_url)?;
     ensure_local(&embed_url, "embedding server").await?;
-    let rerank_url = match rerank_url {
-        Some(u) => {
-            let u = normalize_url(u)?;
-            ensure_local(&u, "rerank server").await?;
-            Some(u)
-        }
-        None => None,
-    };
     let model = embed_model
         .map(str::to_string)
         .or_else(|| std::env::var("VIRTUES_EMBED_MODEL").ok().filter(|s| !s.trim().is_empty()))
@@ -207,9 +198,6 @@ pub async fn switch(
         ("VIRTUES_EMBED_MODEL", model.clone()),
         ("VIRTUES_EMBED_FINGERPRINT", fp),
     ];
-    if let Some(u) = &rerank_url {
-        set.push(("VIRTUES_RERANK_URL", u.clone()));
-    }
     // A move to the recommended model may be under way (an update started it).
     // Your own server replaces that decision, so call it off: without the next
     // endpoint, the indexer drops the partial build (`search::next_index`).

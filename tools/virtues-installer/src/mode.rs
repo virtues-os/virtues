@@ -6,22 +6,19 @@
 //!     detected from the device tree. Inference is built in: the installer
 //!     provisions the on-box NPU daemon and the runtime talks to it over
 //!     loopback. Zero config, the "it just works" appliance path.
-//!   · **Manual / bring-your-own (recommended for any other board)** — the
-//!     user runs their own OpenAI-style embedding endpoint (plus an optional
-//!     reranker) on whatever their silicon supports; the installer asks for
-//!     the URL, probes it (auto-detecting the embedding dimension), and pins
-//!     a model fingerprint so the runtime can detect a silently-swapped model
-//!     at boot (see `virtues-core/src/search/embedder.rs`).
-//!   · **Bundled (quick trial only)** — a portable CPU-only llama-server
-//!     we build+test in CI, dropped in with our two models and no config. It
-//!     is honestly slow and not a deployment; it exists so someone can watch
-//!     the product move in five minutes before standing up a real endpoint.
+//!   · **Bundled (the default)** — a portable CPU-only llama-server we
+//!     build+test in CI, running the recommended embedding model, which
+//!     `virtues upgrade` keeps current. A detected GPU or NPU gets a guide.
+//!   · **Manual / bring-your-own** — the user runs their own OpenAI-style
+//!     embedding endpoint on whatever their silicon supports; the installer
+//!     asks for the URL, probes it (auto-detecting the embedding dimension),
+//!     and pins a model fingerprint so the runtime can detect a
+//!     silently-swapped model at boot (see `virtues-core/src/search/embedder.rs`).
 //!
 //! There is deliberately no general "managed" mode for arbitrary accelerators:
 //! provisioning tuned sidecars on the thousand SBCs we can't test produces more
 //! broken boxes than it saves keystrokes. Either it's our board (NPU built in),
-//! or the user owns the endpoint and we validate it, or it's the honest-slow
-//! CPU trial.
+//! the CPU engine we ship, or the user owns the endpoint and we validate it.
 
 use std::time::{Duration, Instant};
 
@@ -50,7 +47,6 @@ pub enum InferenceMode {
     Manual {
         embed_url: String,
         embed_model: String,
-        rerank_url: Option<String>,
     },
 }
 
@@ -77,24 +73,15 @@ impl InferenceMode {
                         anyhow!(
                             "VIRTUES_INFERENCE=manual requires VIRTUES_EMBED_URL \
                              (your OpenAI-style /v1/embeddings endpoint, e.g. \
-                             http://localhost:11434). Optionally also set \
-                             VIRTUES_RERANK_URL."
+                             http://localhost:11434)."
                         )
                     })?;
                 let embed_url = normalize_url(&embed_url)
                     .context("VIRTUES_EMBED_URL is not a valid http(s) URL")?;
-                let rerank_url = std::env::var("VIRTUES_RERANK_URL")
-                    .ok()
-                    .filter(|s| !s.trim().is_empty())
-                    .map(|u| normalize_url(&u).context("VIRTUES_RERANK_URL is not a valid http(s) URL"))
-                    .transpose()?;
                 ensure_local(&embed_url, "Embedding endpoint")?;
-                if let Some(u) = &rerank_url {
-                    ensure_local(u, "Rerank endpoint")?;
-                }
                 let embed_model = embed_model_from_env();
                 ui::ok(&format!("Inference mode: manual (embed: {embed_url})"));
-                return Ok(Self::Manual { embed_url, embed_model, rerank_url });
+                return Ok(Self::Manual { embed_url, embed_model });
             }
             Some(other) => bail!(
                 "unrecognized VIRTUES_INFERENCE={other} — expected \"bundled\", \"manual\", or \"dragon\""
@@ -131,7 +118,7 @@ impl InferenceMode {
             bail!(
                 "not our hardware and no terminal to ask on — set VIRTUES_INFERENCE to \
                  \"bundled\" (local CPU engine) or \"manual\" (+ VIRTUES_EMBED_URL=<your \
-                 /v1/embeddings endpoint>, optionally VIRTUES_RERANK_URL) and re-run, or \
+                 /v1/embeddings endpoint>) and re-run, or \
                  run the installer from an interactive terminal"
             );
         }
@@ -214,38 +201,14 @@ impl InferenceMode {
         let embed_url = normalize_url(&embed_url)?;
         ensure_local(&embed_url, "Embedding endpoint")?;
 
-        let rerank_raw: String = cliclack::input(
-            "Rerank endpoint URL (optional; Enter to skip — search doesn't use one unless you turn reranking on)",
-        )
-        .required(false)
-        .validate(|s: &String| {
-            if s.trim().is_empty() {
-                Ok(())
-            } else {
-                match normalize_url(s) {
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(e.to_string()),
-                }
-            }
-        })
-        .interact()
-        .context("reading rerank endpoint URL")?;
-        let rerank_url = if rerank_raw.trim().is_empty() {
-            None
-        } else {
-            let u = normalize_url(&rerank_raw)?;
-            ensure_local(&u, "Rerank endpoint")?;
-            Some(u)
-        };
-
-        // Two URLs and we're done — no model-name question. llama.cpp / vLLM
+        // One URL and we're done — no model-name question. llama.cpp / vLLM
         // serve whatever they loaded, so `"default"` is right for them. The one
         // server that routes by model name is Ollama; that user sets
         // VIRTUES_EMBED_MODEL themselves (they know their model). We still probe
         // + fingerprint the endpoint below — that runs silently, no prompts.
         let embed_model = embed_model_from_env();
 
-        Ok(Self::Manual { embed_url, embed_model, rerank_url })
+        Ok(Self::Manual { embed_url, embed_model })
     }
 }
 
@@ -293,14 +256,13 @@ fn has_tty() -> bool {
 /// on them, lists known-good models (with dims, for picking — we auto-detect the
 /// real dim when we probe), then shows concrete start commands. Everything
 /// speaks the contracts we pin: OpenAI `/v1/embeddings` (llama.cpp / Ollama /
-/// vLLM all work) and the optional llama.cpp-style `/v1/rerank`. Cloud APIs are
+/// vLLM all work). Cloud APIs are
 /// intentionally absent — see `ensure_local`.
 fn print_byo_guide() {
     use console::style;
     println!();
     println!("  Virtues runs inference on a service YOU host — this box, a machine on your");
-    println!("  LAN, or one over your VPN. It needs an OpenAI-style /v1/embeddings endpoint;");
-    println!("  a /v1/rerank endpoint is optional (search still works without one).");
+    println!("  LAN, or one over your VPN. It needs an OpenAI-style /v1/embeddings endpoint.");
     println!("  Cloud APIs (OpenAI, Cohere, …) are not supported — your data stays yours.");
     println!("  {}", style("You don't need to know your model's dimension — we detect it when we probe.").dim());
     println!();
@@ -315,19 +277,14 @@ fn print_byo_guide() {
     println!("  {}", style("Known-good models (embedding dim in parens):").bold());
     println!("    embed :  gte-small (384) · bge-small-en-v1.5 (384) · e5-small-v2 (384)");
     println!("             embeddinggemma-2 (768) · nomic-embed-text-v1.5 (768)");
-    println!("    rerank:  gte-reranker-modernbert-base · bge-reranker-v2-m3 · jina-reranker-v2");
     println!();
-    println!("  {}", style("Start commands (we'll ask only for the URLs):").bold());
+    println!("  {}", style("Start commands (we'll ask only for the URL):").bold());
     println!("    embeddings (llama.cpp, mean pooling required):");
     println!("      llama-server --embeddings --pooling mean -m gte-small.Q8_0.gguf --port 18181");
     println!("        → URL http://localhost:18181");
     println!("    embeddings (Ollama — routes by model, so export the name):");
     println!("      ollama pull nomic-embed-text");
     println!("        → URL http://localhost:11434   (+ VIRTUES_EMBED_MODEL=nomic-embed-text)");
-    println!("    rerank (llama.cpp, optional — drop -ngl for CPU):");
-    println!("      llama-server --reranking --pooling rank -ngl 99 \\");
-    println!("        -m gte-reranker-modernbert-base.Q8_0.gguf --port 18182");
-    println!("        → URL http://localhost:18182");
     println!();
     println!("  {}", style("Docs: https://virtues.com/docs/inference").dim());
     println!();
@@ -497,19 +454,11 @@ pub struct ValidationReport {
     /// fingerprint + prompts end up in the env file today.
     #[allow(dead_code)]
     pub p50_ms: u128,
-    #[allow(dead_code)]
-    pub rerank_ok: bool,
 }
 
-/// Probe the user's endpoints: shape check + dims + latency + fingerprint
-/// on the embedder (fatal if broken — search can't exist without it), and a
-/// best-effort probe of the reranker (absent/broken → warn, search still
-/// works on bi-encoder ranking alone).
-pub async fn validate_manual(
-    embed_url: &str,
-    embed_model: &str,
-    rerank_url: Option<&str>,
-) -> Result<ValidationReport> {
+/// Probe the user's endpoint: shape check + dims + latency + fingerprint
+/// (fatal if broken — search can't exist without it).
+pub async fn validate_manual(embed_url: &str, embed_model: &str) -> Result<ValidationReport> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()?;
@@ -544,22 +493,6 @@ pub async fn validate_manual(
     lat_ms.sort_unstable();
     let p50_ms = lat_ms[2];
 
-    // Reranker probe — never fatal: a broken reranker degrades precision,
-    // it doesn't break search.
-    let rerank_ok = match rerank_url {
-        None => false,
-        Some(url) => match probe_rerank(&client, url).await {
-            Ok(()) => true,
-            Err(e) => {
-                ui::warn(&format!(
-                    "rerank endpoint {url} failed validation ({e:#}) — continuing without \
-                     a reranker (search doesn't use one unless you turn reranking on)"
-                ));
-                false
-            }
-        },
-    };
-
     // `/health` — reported, never enforced. llama-server and `virtues-qnnd`
     // answer it and the box uses it as a fast startup signal, but it is not
     // part of the OpenAI shape and Ollama (recommended first in the guide
@@ -590,15 +523,10 @@ pub async fn validate_manual(
              Consider running the model on faster hardware or closer to the box."
         ));
     }
-    if rerank_ok {
-        ui::ok("Rerank endpoint OK");
-    } else {
-        ui::skip("No reranker — search doesn't use one unless you turn reranking on");
-    }
 
     let (query_prompt, doc_prompt) = resolve_prompts(embed_model);
 
-    Ok(ValidationReport { dims, p50_ms, fingerprint, query_prompt, doc_prompt, rerank_ok })
+    Ok(ValidationReport { dims, p50_ms, fingerprint, query_prompt, doc_prompt })
 }
 
 /// Resolve the asymmetric (query, document) prompt prefixes for a manual model.
@@ -704,43 +632,6 @@ async fn embed(
         out.push(v?);
     }
     Ok(out)
-}
-
-/// POST `{base}/v1/rerank` with a two-document probe; accepts
-/// `results[].relevance_score` (Jina/llama-server) or `results[].score`
-/// (Cohere-style).
-async fn probe_rerank(client: &reqwest::Client, base: &str) -> Result<()> {
-    let url = format!("{base}/v1/rerank");
-    let resp = client
-        .post(&url)
-        .json(&serde_json::json!({
-            "model": "default",
-            "query": "probe",
-            "documents": ["a", "b"],
-        }))
-        .send()
-        .await
-        .with_context(|| format!("POST {url}"))?
-        .error_for_status()
-        .with_context(|| format!("POST {url}"))?;
-    let body: serde_json::Value = resp.json().await.context("parsing /v1/rerank response")?;
-    let results = body
-        .get("results")
-        .and_then(|r| r.as_array())
-        .ok_or_else(|| anyhow!("response has no `results` array"))?;
-    if results.is_empty() {
-        bail!("rerank returned no results for a 2-document probe");
-    }
-    for r in results {
-        let score = r
-            .get("relevance_score")
-            .or_else(|| r.get("score"))
-            .and_then(|s| s.as_f64());
-        if score.is_none() {
-            bail!("rerank result rows carry neither `relevance_score` nor `score`");
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

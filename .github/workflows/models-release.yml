@@ -7,12 +7,12 @@
 #
 # Manual-dispatch only, and deliberately so: adding or changing a model is a
 # provenance decision (the upstream GGUFs are community conversions — vet
-# the conversion + run the embed/rerank fixtures on a staging box BEFORE
+# the conversion + run the embedding fixtures on a staging box BEFORE
 # dispatching). The workflow re-hosts the files under our release with
 # .sha256 sidecars, which is what lets the installer hard-fail on mismatch
 # and never depend on a third-party host at install time.
 #
-# To ship a model UPDATE (e.g. a newer reranker): upload under a NEW file
+# To ship a model UPDATE (e.g. a newer embedder): upload under a NEW file
 # name and bump the names in installer config.rs + virtues-core
 # model_cache.rs. Never replace an asset in place — boxes skip re-downloading
 # files they already have, keyed by name.
@@ -26,11 +26,6 @@ on:
         description: 'Source URL for the embedding GGUF (vetted!)'
         required: true
         default: 'https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/bfcd298762cc34d0357ece5ebdd31791a3a374d8/embeddinggemma-2-Q8_0.gguf'
-        type: string
-      rerank_url:
-        description: 'Source URL for the reranker GGUF (vetted!)'
-        required: true
-        default: 'https://huggingface.co/keisuke-miyako/gte-reranker-modernbert-base-gguf-q8_0/resolve/main/gte-reranker-modernbert-base-Q8_0.gguf'
         type: string
       pdfium_version:
         description: >
@@ -60,9 +55,9 @@ jobs:
         run: |
           mkdir -p dist
           # File names on OUR release must match installer config.rs /
-          # model_cache.rs constants — derive them from the source URLs so
+          # core inference_report.rs constants — derive them from the source URLs so
           # a mismatch is loud here, not at install time on someone's box.
-          for url in "${{ inputs.embed_url }}" "${{ inputs.rerank_url }}"; do
+          for url in "${{ inputs.embed_url }}"; do
             name="$(basename "$url")"
             echo "fetching $name"
             curl -fSL --retry 3 -o "dist/$name" "$url"

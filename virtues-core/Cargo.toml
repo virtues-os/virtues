@@ -196,10 +196,10 @@ schemars = "1.0"
 # Geospatial/clustering
 geo = "0.28"  # Geospatial calculations (Haversine distance)
 
-# Local inference needs no client crate: the llama-server sidecars
-# (embedding :18181, rerank :18182 — installed + pinned by
-# tools/virtues-installer) speak OpenAI/Jina-compatible JSON, handled by
-# the existing reqwest dep in search/embedder.rs + search/reranker.rs.
+# Local inference needs no client crate: the llama-server embedding sidecar
+# (:18181, installed + pinned by tools/virtues-installer) speaks
+# OpenAI-compatible JSON, handled by the existing reqwest dep in
+# search/embedder.rs.
 futures = "0.3"
 
 # Changepoint detection

@@ -83,8 +83,8 @@ pub async fn run(cli: Config) -> Result<()> {
         // Dragon + Bundled both provision our own local sidecars — nothing to
         // validate (we control the endpoint).
         InferenceMode::Dragon | InferenceMode::Bundled => None,
-        InferenceMode::Manual { embed_url, embed_model, rerank_url } => Some(
-            mode::validate_manual(embed_url, embed_model, rerank_url.as_deref()).await?,
+        InferenceMode::Manual { embed_url, embed_model } => Some(
+            mode::validate_manual(embed_url, embed_model).await?,
         ),
     };
 

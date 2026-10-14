@@ -160,8 +160,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             probe.len()
         ));
 
-        let _reranker = virtues::search::get_reranker().await?;
-        ui::ok("reranker ready");
         println!();
 
         return Ok(());
@@ -555,7 +553,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // fingerprint mismatch this command exists to fix.
     if let Some(Commands::ConfigureInference {
         embed_url,
-        rerank_url,
         embed_model,
         reembed,
         yes,
@@ -567,7 +564,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(url) => {
                 virtues::cli::configure_inference::switch(
                     url,
-                    rerank_url.as_deref(),
                     embed_model.as_deref(),
                     *reembed || *yes,
                 )
