@@ -1,10 +1,9 @@
 //! Inference resolution report.
 //!
-//! On the recommended setup, local ML runs in llama-server sidecars the
-//! installer ships and pins: embedding on :18181, and on older installs a
-//! reranker on :18182, which upgrades retire (see `search/embedder.rs`,
-//! `search/reranker.rs`, `cli/model_set.rs`). `virtues doctor`, `upgrade`,
-//! `deploy` and box status consume this report shape.
+//! On the recommended setup, local ML is one llama-server embedding sidecar the
+//! installer ships and pins, on :18181 (see `search/embedder.rs`,
+//! `cli/model_set.rs`). `virtues doctor`, `upgrade`, `deploy` and box status
+//! consume this report shape.
 
 use std::path::PathBuf;
 
@@ -51,15 +50,12 @@ impl ResolutionReport {
     }
 }
 
-/// The GGUFs the installer provisions.
-/// - Embed: EmbeddingGemma 2 (text tower), Q8_0 — mean pooling, 768-dim stored
-///   at native width (256 kept only half its recall gain on the personal-data
-///   eval). Q8_0 matches the fp32 reference at cosine 0.9998. Its activations
-///   require bf16/fp32, not fp16 — run it on CPU; see embedder.rs.
-/// - Rerank: gte-reranker-modernbert-base, Q8_0 (Q4 doesn't help — the
-///   workload is overhead/layer-bound at this size, not bandwidth-bound).
+/// The GGUF the installer provisions: EmbeddingGemma 2 (text tower), Q8_0 —
+/// mean pooling, 768-dim stored at native width (256 kept only half its recall
+/// gain on the personal-data eval). Q8_0 matches the fp32 reference at cosine
+/// 0.9998. Its activations require bf16/fp32, not fp16 — run it on CPU; see
+/// embedder.rs.
 pub const EMBED_GGUF: &str = "embeddinggemma-2-Q8_0.gguf";
-pub const RERANK_GGUF: &str = "gte-reranker-modernbert-base-Q8_0.gguf";
 
 /// The recommended embedder's checksum, pinned in the binary so `virtues
 /// upgrade` (`cli::model_set`) verifies the download against what this release
@@ -109,12 +105,12 @@ fn qnn_models_dir() -> PathBuf {
 ///
 /// We deliberately don't reach across the network to the sidecars here —
 /// this function is called from sync CLI surfaces and synchronous status
-/// endpoints. The "are the sidecars actually up?" checks live in the
-/// embedder/reranker startup paths and in `virtues warm-models`.
+/// endpoints. The "is the sidecar actually up?" checks live in the embedder's
+/// startup path and in `virtues warm-models`.
 pub fn resolution_report() -> ResolutionReport {
     // Dragon NPU profile: report the QNN daemon + its context binaries, not the
     // HTTP-sidecar GGUFs. Checked first so a Dragon box never mis-reports
-    // EmbeddingGemma/gte-reranker as "missing" (they aren't used here).
+    // EmbeddingGemma as "missing" (it isn't used here).
     if is_dragon_profile() {
         let dir = qnn_models_dir();
         let source_for = |f: &str| {
@@ -136,9 +132,11 @@ pub fn resolution_report() -> ResolutionReport {
                     gguf_file: QNN_EMBED_BIN,
                     source: source_for(QNN_EMBED_BIN),
                 },
+                // Search doesn't rerank, but the daemon still loads this
+                // binary at start, so it must be on disk.
                 ModelEntry {
                     name: "rerank",
-                    repo: "answerai-colbert@256 · Hexagon NPU :18182",
+                    repo: "answerai-colbert@256 · Hexagon NPU (unused by search)",
                     gguf_file: QNN_RERANK_BIN,
                     source: source_for(QNN_RERANK_BIN),
                 },
@@ -159,22 +157,12 @@ pub fn resolution_report() -> ResolutionReport {
     // Whether the sidecar runs CUDA or CPU is decided by which llama-server
     // binary CI built for this arch (the appliance-vs-DIY seam) — outside
     // this process. The sidecar's own logs are the source of truth.
-    let mut models = vec![ModelEntry {
+    let models = vec![ModelEntry {
         name: "embed",
         repo: "embeddinggemma-2 @ :18181",
         gguf_file: EMBED_GGUF,
         source: source_for(EMBED_GGUF),
     }];
-    // Only boxes that still run it: upgrades retire the reranker unless the
-    // owner opted in (`cli::model_set`), and new installs don't set it up.
-    if std::path::Path::new("/etc/systemd/system/virtues-rerank.service").exists() {
-        models.push(ModelEntry {
-            name: "rerank",
-            repo: "gte-reranker-modernbert-base @ :18182",
-            gguf_file: RERANK_GGUF,
-            source: source_for(RERANK_GGUF),
-        });
-    }
     ResolutionReport {
         // The qualifier belongs to this path only — CUDA vs CPU is decided by
         // which llama-server binary CI built. The QNN path's accelerator string

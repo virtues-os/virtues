@@ -41,7 +41,7 @@ code a provider list in copy.
   *Retained* (`ModelCatalog.svelte`); choosing it affects only that slot.
 - **An unknown model id enforces.** A typo or a model newer than the hourly
   catalog fails loudly rather than reaching an endpoint we cannot vouch for.
-- **Embeddings and reranking run on the box.** Search never ships the record
+- **Embeddings run on the box, and search doesn't rerank.** Search never ships the record
   out to be indexed.
 - **The usage ledger records metadata only** — model, tokens, cost. No prompt
   or completion log exists on our side.

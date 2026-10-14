@@ -7,12 +7,6 @@
 //! and runs it as `virtues-embed.service`, so there's no third-party
 //! daemon, no model registry, and no client crate — just reqwest.
 //!
-//! History: v0.1.0 used Ollama for this. That worked for embeddings but
-//! dead-ended on reranking (Ollama has no rerank endpoint, and pushing a
-//! cross-encoder GGUF through `/api/embed` silently returns hidden-state
-//! garbage). llama-server hosts both model classes behind the same JSON
-//! conventions, so the reranker (`reranker.rs`) is now this file's twin.
-//!
 //! In **manual inference mode** the endpoint is user-run rather than a
 //! sidecar we provisioned; the installer pins a fingerprint of the model at
 //! setup time (`VIRTUES_EMBED_FINGERPRINT`) and we re-check it every time the

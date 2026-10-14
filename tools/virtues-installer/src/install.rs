@@ -192,9 +192,7 @@ fn install_file(path: &str, body: &str) -> Result<()> {
 /// `cfg.llama_binary_path()`); the GGUF comes from the pinned models release,
 /// SHA-verified.
 ///
-/// No reranker: both small rerankers we shipped ranked results worse than
-/// search without them (see `search::query::rerank_gap_threshold` in core), so
-/// search doesn't call one unless the owner opts in with their own server.
+/// No reranker: search doesn't rerank (see `search::query` in core), and
 /// `virtues upgrade` retires the one older installs ran.
 pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
     let bin = cfg.llama_binary_path();
@@ -254,9 +252,10 @@ pub async fn install_pdfium(cfg: &InstallConfig) -> Result<()> {
 
 /// Provision the Dragon NPU daemon: fetch the QAIRT context binaries +
 /// tokenizers, then install + start `virtues-qnnd.service`. Replaces the
-/// llama-server sidecars on our board — but serves the SAME llama-compatible
-/// HTTP inference contract on :18181/:18182, so the runtime talks to it through
-/// `VIRTUES_EMBED_URL`/`VIRTUES_RERANK_URL` like any other endpoint.
+/// llama-server sidecar on our board — but serves the SAME llama-compatible
+/// HTTP inference contract on :18181, so the runtime talks to it through
+/// `VIRTUES_EMBED_URL` like any other endpoint. (It also loads a ColBERT
+/// reranker and serves it on :18182; search doesn't call it.)
 ///
 /// Depends on two things this installer does NOT produce: the `virtues-qnnd`
 /// binary in the tarball (CI must build it for aarch64 with `QNN_SDK_ROOT`) and
@@ -336,7 +335,7 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
                 systemctl_try(&["disable", "--now", "virtues-qnnd"]).await;
                 ui::warn(&format!(
                     "could not obtain the QAIRT runtime libs ({e}) — NPU daemon NOT installed, \
-                     so this box has no embedding or rerank endpoint and semantic search will \
+                     so this box has no embedding endpoint and semantic search will \
                      not work. Unpack the QAIRT Community SDK on the box by hand, point \
                      VIRTUES_QNN_LIB_DIR at its lib/aarch64-*-linux-*/ directory, and re-run \
                      this installer."
@@ -1077,16 +1076,14 @@ fn inference_env_keys(
 ) -> Vec<(&'static str, String)> {
     match mode {
         // Dragon: `virtues-qnnd` serves the SAME llama-compatible HTTP contract
-        // as the llama-server sidecars (gte-small 384-d embed + colbert MaxSim
-        // rerank on the Hexagon NPU), so core needs nothing QNN-specific — just
-        // the standard URLs. No fingerprint pin (it's our compiled model; the
+        // as the llama-server sidecar (gte-small 384-d embed on the Hexagon
+        // NPU), so core needs nothing QNN-specific — just the standard URL. No fingerprint pin (it's our compiled model; the
         // runtime's /v1/models + dim probes cover identity).
         // VIRTUES_QNND_MODELS_DIR stays for the resolution report (which
         // context binaries to list) and the daemon's tokenizer default.
         InferenceMode::Dragon => vec![
             ("VIRTUES_INFERENCE", "dragon".to_string()),
             ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
-            ("VIRTUES_RERANK_URL", "http://127.0.0.1:18182".to_string()),
             (
                 "VIRTUES_QNND_MODELS_DIR",
                 cfg.qnn_models_dir().display().to_string(),
@@ -1124,15 +1121,12 @@ fn inference_env_keys(
             }
             keys
         }
-        InferenceMode::Manual { embed_url, embed_model, rerank_url, .. } => {
+        InferenceMode::Manual { embed_url, embed_model } => {
             let mut keys = vec![
                 ("VIRTUES_INFERENCE", "manual".to_string()),
                 ("VIRTUES_EMBED_URL", embed_url.clone()),
                 ("VIRTUES_EMBED_MODEL", embed_model.clone()),
             ];
-            if let Some(url) = rerank_url {
-                keys.push(("VIRTUES_RERANK_URL", url.clone()));
-            }
             if let Some(v) = validation {
                 keys.push(("VIRTUES_EMBED_FINGERPRINT", v.fingerprint.clone()));
                 keys.push(("VIRTUES_EMBED_DIMS", v.dims.to_string()));
@@ -2267,8 +2261,8 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
         // exist, so name the real state instead.
         if !Path::new("/etc/systemd/system/virtues-qnnd.service").exists() {
             ui::warn(
-                "NPU daemon not installed (no QAIRT runtime on this box) — no embedding or \
-                 rerank endpoint, so semantic search is unavailable",
+                "NPU daemon not installed (no QAIRT runtime on this box) — no embedding \
+                 endpoint, so semantic search is unavailable",
             );
             issues += 1;
         } else {

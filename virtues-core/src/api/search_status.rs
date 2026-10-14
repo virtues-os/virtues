@@ -32,8 +32,6 @@ pub struct SearchStatus {
     pub busy: bool,
     pub probe_ms: Option<u64>,
     pub probe_error: Option<String>,
-    /// Reranking runs only when `VIRTUES_RERANK_GAP` opts in (search::query).
-    pub rerank_on: bool,
     /// An accelerator the installer found on this machine and isn't in use
     /// (written to the env as VIRTUES_ACCELERATOR / _GUIDE), with its guide.
     pub accelerator: Option<String>,
@@ -77,8 +75,6 @@ pub async fn status(pool: &PgPool) -> Result<SearchStatus> {
         Err(_) => (false, true, None, Some("no answer within 5 seconds".to_string())),
     };
 
-    let rerank_on = crate::search::query::reranker_enabled();
-
     // Only worth showing while search isn't already on the owner's server.
     let env = crate::box_env::var;
     let (accelerator, accelerator_guide) = if mode == "manual" {
@@ -100,7 +96,6 @@ pub async fn status(pool: &PgPool) -> Result<SearchStatus> {
         busy,
         probe_ms,
         probe_error,
-        rerank_on,
         accelerator,
         accelerator_guide,
     })
