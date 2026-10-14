@@ -576,8 +576,9 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F4F3F0;
 	--surface-overlay: #FFFFFF;
-	/* The page is ivory, so a white card, popover or menu lifts off it. */
-	--page: #FDFCF9;
+	/* The page is the same white as the sidebar's card, so the two panes read
+	   as one paper on the warm ground; a card on it lifts by its border. */
+	--page: var(--surface);
 
 	/* Background Treatment - Flat warm ivory */
 	--background-image: none;
