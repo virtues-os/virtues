@@ -1671,8 +1671,8 @@
 		   every column into a guess. It needs an opaque fill to cover the rows
 		   sliding under it — but the fill should be the PAGE's colour, so the
 		   header reads as clear and only its rule shows. That is `--color-page`,
-		   what the main card paints; on Oxford it is ivory and `--surface` is
-		   white, so a surface fill drew a white band across every table. */
+		   what the main card paints; on a theme whose page differs from
+		   `--surface`, a surface fill draws a band across every table. */
 		position: sticky;
 		top: 0;
 		z-index: 2;

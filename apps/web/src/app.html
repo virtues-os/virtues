@@ -19,7 +19,7 @@
 		     key existed.
 
 		     The literal fallback tracks the DEFAULT theme — Oxford's `--page`,
-		     #FDFCF9. Only a first run reaches it (afterwards localStorage has
+		     #FFFFFF. Only a first run reaches it (afterwards localStorage has
 		     the real value), so getting it wrong means every new box flashes one
 		     colour on its very first paint and then settles to another. Keep it
 		     in step with virtues-registry DEFAULT_THEME. -->
@@ -31,7 +31,7 @@
 					var bg =
 						localStorage.getItem("virtues-theme-surface") ||
 						localStorage.getItem("virtues-theme-bg") ||
-						"#FDFCF9";
+						"#FFFFFF";
 					document.documentElement.style.backgroundColor = bg;
 				} catch (e) {
 					/* private mode / storage disabled — the stylesheet still wins */
