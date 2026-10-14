@@ -36,6 +36,12 @@ const SPOT_LEAVE_MS = 60_000;
 /** A fix the phone itself rates at or worse than this is a cell tower's
  *  guess, not GPS (dayback/build.py:290). */
 export const GPS_ACCURACY_MAX_M = 100;
+/** A fix worse than this from a phone reporting no speed is a Wi-Fi guess:
+ *  indoors they hop between access points 30-120 m apart every few seconds. */
+export const STILL_ACCURACY_MAX_M = 20;
+/** A reported speed at least this fast is a satellite reading, so the fix
+ *  is kept up to GPS_ACCURACY_MAX_M. */
+export const MOVING_MS = 1;
 
 /** One fix. `bridge`: it arrived across a hole. */
 export type Fix = { t: number; lat: number; lng: number; bridge: boolean };
@@ -52,16 +58,29 @@ export function metres(a: { lat: number; lng: number }, b: { lat: number; lng: n
 }
 
 /**
- * The endpoint's GPS fixes, in time order. A fix the phone rates worse than
+ * Whether a fix is drawn and measured. A fix the phone rates worse than
  * 100 m is dropped: the prototype's rule for movement (dayback/build.py:290),
  * here for the drawn line too. A still phone indoors reports such guesses
  * hundreds of metres to kilometres off and snaps back within a minute, and
- * each drew a straight line out and back (one sparse day: 51 of 665). The
- * prototype's July track rarely had them, so its line never needed the rule.
+ * each drew a straight line out and back (one sparse day: 51 of 665).
+ *
+ * Below 100 m a still phone's fix must also be within 20 m. Indoors it reports
+ * Wi-Fi positions 20-70 m "accurate" that jump between a few spots ~100 m
+ * apart, which drew a parked ten minutes as 660 m of zigzag over the block.
+ * A phone reporting speed is on satellites, and keeps the looser bar: on one
+ * month's track 6.5% of moving fixes are rated worse than 20 m.
  */
+function isGoodFix(p: Pick<TimelineDayPoint, "horizontal_accuracy" | "speed">): boolean {
+	const acc = p.horizontal_accuracy;
+	if (acc === null) return true;
+	if (acc >= GPS_ACCURACY_MAX_M) return false;
+	return acc <= STILL_ACCURACY_MAX_M || (p.speed ?? 0) >= MOVING_MS;
+}
+
+/** The endpoint's good fixes (see isGoodFix), in time order. */
 export function toFixes(points: TimelineDayPoint[]): Fix[] {
 	return points
-		.filter((p) => p.horizontal_accuracy === null || p.horizontal_accuracy < GPS_ACCURACY_MAX_M)
+		.filter(isGoodFix)
 		.map((p) => ({ t: Date.parse(p.timestamp), lat: p.latitude, lng: p.longitude, bridge: false }))
 		.filter((f) => Number.isFinite(f.t))
 		.sort((a, b) => a.t - b.t);

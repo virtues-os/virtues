@@ -34,6 +34,13 @@ describe("toFixes", () => {
 		const unrated = { ...at(3), horizontal_accuracy: null };
 		expect(toFixes([at(0), guess, edge, unrated, at(4)]).map((f) => f.t)).toEqual([T0, T0 + 3 * 60_000, T0 + 4 * 60_000]);
 	});
+	it("drops a still phone's fix rated worse than 20 m, a Wi-Fi guess, but not a moving one's", () => {
+		const wifi = { ...at(1, 100), horizontal_accuracy: 45, speed: 0 };
+		const unspeeded = { ...at(2, 100), horizontal_accuracy: 45 };
+		const sharp = { ...at(3), horizontal_accuracy: 20, speed: 0 };
+		const driving = { ...at(4, 300), horizontal_accuracy: 45, speed: 12 };
+		expect(toFixes([wifi, unspeeded, sharp, driving]).map((f) => f.t)).toEqual([T0 + 3 * 60_000, T0 + 4 * 60_000]);
+	});
 });
 
 describe("dropSpikes", () => {
