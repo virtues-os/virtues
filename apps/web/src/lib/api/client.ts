@@ -311,7 +311,6 @@ export interface SearchStatus {
 	busy: boolean;
 	probe_ms: number | null;
 	probe_error: string | null;
-	rerank_on: boolean;
 	accelerator: string | null;
 	accelerator_guide: string | null;
 }

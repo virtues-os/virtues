@@ -210,7 +210,7 @@ jobs:
         run: |
           cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-client --bin virtues-client --target ${{ matrix.target }}
 
-      # llama-server — the engine behind the virtues-embed/-rerank sidecars
+      # llama-server — the engine behind the virtues-embed sidecar
       # (one CPU binary per arch — the universal floor for Manual mode and the
       # Dragon fallback). GGML_NATIVE=OFF keeps the build portable
       # across the arch instead of tuned to the runner's CPU; static libs

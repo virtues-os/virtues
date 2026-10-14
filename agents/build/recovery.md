@@ -188,8 +188,8 @@ Everything logs to the journal; there is no Virtues log file.
   it. If there is nothing to restore, the box is uninitialized: re-run the
   installer.
 - **"Failed to bind 0.0.0.0:8000"** — `sudo ss -lntp '( sport = :8000 )'`.
-- **OOM kill** — `dmesg | grep -i oom`, then `free -h`. The embedding +
-  reranker sidecars want roughly 6 GB resident.
+- **OOM kill** — `dmesg | grep -i oom`, then `free -h`. The embedding
+  sidecar wants about 1 GB resident, two during a model change.
 
 ### The other units
 

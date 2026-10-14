@@ -82,9 +82,7 @@ VIRTUES_DEV_SKIP_SETUP ?= 1
 # installer pins (see tools/virtues-installer/src/install.rs). `dev-core` points
 # at this dir so `virtues doctor` reports them baked.
 # `make dev` runs the embedding sidecar by default (~1 GB RAM, ~0% CPU idle).
-# Skip it for a UI-only or low-RAM session: `make dev WITH_EMBED=0`. No
-# reranker: search calls one only when VIRTUES_RERANK_GAP opts in, so a dev
-# session testing that runs its own on :18182.
+# Skip it for a UI-only or low-RAM session: `make dev WITH_EMBED=0`.
 WITH_EMBED ?= 1
 VIRTUES_MODELS_DIR ?= $(CURDIR)/.data/models
 # Must match the GGUF boxes run (virtues-core/src/inference_report.rs

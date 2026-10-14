@@ -222,8 +222,7 @@ pub fn print_inference(r: &ResolutionReport, issues: &mut ui::Issues) {
 ///
 /// So three states, not two. 2xx is serving. A non-2xx (or a `/health` that
 /// isn't there to answer) falls through to the work the endpoint actually
-/// exists to do — a one-input embed, a two-document rerank — and that verdict
-/// is the row. Only when both fail is the endpoint down.
+/// exists to do — a one-input embed — and that verdict is the row. Only when both fail is the endpoint down.
 ///
 /// Errors, not warnings: with no embed endpoint there is no indexing and no
 /// semantic retrieval, and doctor's exit code should say so.
@@ -248,34 +247,14 @@ async fn probe_inference(issues: &mut ui::Issues) {
         .build()
         .ok();
 
-    // The unit that owns these endpoints differs by profile, and a remedy that
+    // The unit that owns the endpoint differs by profile, and a remedy that
     // names the wrong service is a remedy that wastes someone's evening.
-    let dragon = crate::inference_report::is_dragon_profile();
-
-    // Row labels stay inside `ui::kv`'s 12-column leader so the values line up
-    // with the rows above them; the prose noun for the issue list is separate,
-    // because "embed live answered 503" is not a sentence.
-    let rows = [
-        (
-            "embed live",
-            "embed endpoint",
-            endpoint("VIRTUES_EMBED_URL", crate::search::embedder::resolve_base_url()),
-            if dragon { "virtues-qnnd" } else { "virtues-embed" },
-            Work::Embed,
-        ),
-        (
-            "rerank live",
-            "rerank endpoint",
-            endpoint("VIRTUES_RERANK_URL", crate::search::reranker::resolve_base_url()),
-            if dragon { "virtues-qnnd" } else { "virtues-rerank" },
-            Work::Rerank,
-        ),
-    ];
-    // Search calls a reranker only when the owner opted in; an absent one is
-    // not a fault otherwise.
-    let rerank = crate::search::query::reranker_enabled();
-    for (label, noun, base, unit, work) in
-        rows.into_iter().filter(|(_, _, _, _, w)| rerank || !matches!(w, Work::Rerank))
+    let unit = if crate::inference_report::is_dragon_profile() {
+        "virtues-qnnd"
+    } else {
+        "virtues-embed"
+    };
+    let base = endpoint("VIRTUES_EMBED_URL", crate::search::embedder::resolve_base_url());
     {
         let health = format!("{base}/health");
         // Distinguish "nothing is listening" from "listening but not ready"
@@ -289,7 +268,7 @@ async fn probe_inference(issues: &mut ui::Issues) {
             (style("✓ serving").green().to_string(), None)
         } else {
             // `/health` didn't vouch for it. Ask it to do the actual job.
-            match work_probe(work_client.as_ref(), &base, &work).await {
+            match work_probe(work_client.as_ref(), &base).await {
                 Ok(()) => (
                     style("✓ serving (no /health)").green().to_string(),
                     None,
@@ -298,7 +277,7 @@ async fn probe_inference(issues: &mut ui::Issues) {
                     Ok(r) => (
                         style(format!("✖ unhealthy ({})", r.status())).red().to_string(),
                         Some(format!(
-                            "{noun} answered {} at {base} and {why}",
+                            "embed endpoint answered {} at {base} and {why}",
                             r.status()
                         )),
                     ),
@@ -309,20 +288,16 @@ async fn probe_inference(issues: &mut ui::Issues) {
                 },
             }
         };
-        ui::kv(label, &format!("{base}  {mark}"));
+        // The label stays inside `ui::kv`'s 12-column leader so the value lines
+        // up with the rows above it.
+        ui::kv("embed live", &format!("{base}  {mark}"));
         if let Some(what) = finding {
             issues.error(
-                format!("{what} — semantic search and reranking are unavailable"),
+                format!("{what} — semantic search is unavailable"),
                 Some(&format!("systemctl status {unit}; journalctl -u {unit} -n 50")),
             );
         }
     }
-}
-
-/// What an endpoint is for, so the fallback probe can ask it to do that.
-enum Work {
-    Embed,
-    Rerank,
 }
 
 /// Ask the endpoint to do its actual job.
@@ -332,35 +307,17 @@ enum Work {
 /// green row here means the server will come up rather than merely that a
 /// socket is open.
 ///
-/// Deliberately cheap (one short input; two one-character documents) and
-/// deliberately shaped like the installer's setup probes
-/// (`mode.rs::validate_manual`, `probe_rerank`), so setup and doctor cannot
+/// Deliberately cheap (one short input) and deliberately shaped like the
+/// installer's setup probe (`mode.rs::validate_manual`), so setup and doctor cannot
 /// disagree about the same server. The body is inspected, not just the status:
 /// a 200 carrying an error object is a shape we have shipped before, and it
 /// must not read as green.
-async fn work_probe(
-    client: Option<&reqwest::Client>,
-    base: &str,
-    work: &Work,
-) -> Result<(), String> {
+async fn work_probe(client: Option<&reqwest::Client>, base: &str) -> Result<(), String> {
     let Some(client) = client else {
         return Err("its probe client could not be built".to_string());
     };
-    let (path, body) = match work {
-        Work::Embed => (
-            "/v1/embeddings",
-            serde_json::json!({ "input": ["doctor probe"], "model": embed_model() }),
-        ),
-        Work::Rerank => (
-            "/v1/rerank",
-            serde_json::json!({
-                "model": "default",
-                "query": "probe",
-                "documents": ["a", "b"],
-                "top_n": 2,
-            }),
-        ),
-    };
+    let path = "/v1/embeddings";
+    let body = serde_json::json!({ "input": ["doctor probe"], "model": embed_model() });
 
     let resp = match client.post(format!("{base}{path}")).json(&body).send().await {
         Ok(r) if r.status().is_success() => r,
@@ -372,22 +329,16 @@ async fn work_probe(
         Err(e) => return Err(format!("its {path} probe returned unparseable JSON ({e})")),
     };
 
-    let served = match work {
-        // Accepts both OpenAI-style shapes the embedder does: a `data` array of
-        // rows, or a bare top-level row array.
-        Work::Embed => payload
-            .get("data")
-            .and_then(|d| d.as_array())
-            .or_else(|| payload.as_array())
-            .and_then(|rows| rows.first())
-            .and_then(|row| row.get("embedding"))
-            .and_then(|e| e.as_array())
-            .is_some_and(|v| !v.is_empty()),
-        Work::Rerank => payload
-            .get("results")
-            .and_then(|r| r.as_array())
-            .is_some_and(|r| !r.is_empty()),
-    };
+    // Accepts both OpenAI-style shapes the embedder does: a `data` array of
+    // rows, or a bare top-level row array.
+    let served = payload
+        .get("data")
+        .and_then(|d| d.as_array())
+        .or_else(|| payload.as_array())
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.get("embedding"))
+        .and_then(|e| e.as_array())
+        .is_some_and(|v| !v.is_empty());
     if served {
         Ok(())
     } else {
