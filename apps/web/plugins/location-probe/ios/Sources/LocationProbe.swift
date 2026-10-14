@@ -96,18 +96,23 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   private var launchActivationSeen = false
   private var enteredForeground = false
 
-  /// Which callbacks are logged. A fix that has moved `minStep` (and further
-  /// than its own error radius) from the last logged one is logged after
-  /// `minStepInterval`; otherwise one fix per `minFixInterval`. Time alone
-  /// drew a drive as 200-300 m chords cutting across blocks, while near-still
-  /// fixes need no more than the 15 s the box's stay detection was built on.
-  /// The error-radius guard keeps an indoor phone, whose Wi-Fi fixes hop
-  /// 30-120 m every few seconds, on the slow cadence.
+  /// Which callbacks are sent. A fix reporting at least `stepSpeed` that has
+  /// moved `minStep` (and further than its own error radius) from the last
+  /// sent one goes after `minStepInterval`; any other, one per
+  /// `minFixInterval`. Time alone drew a drive as 200-300 m chords across
+  /// blocks. The speed gate is what keeps a still phone on 15 s: indoors its
+  /// Wi-Fi fixes hop 30-120 m with no speed, and an error-radius guard alone
+  /// let 13% of them through, and stay detection ends a stay on two far
+  /// fixes in a row.
   private var lastFixAt: Date?
   private var lastFix: CLLocation?
   private let minFixInterval: TimeInterval = 15
   private let minStep: CLLocationDistance = 20
   private let minStepInterval: TimeInterval = 2
+  private let stepSpeed: CLLocationSpeed = 1
+  /// The local log keeps the 15 s cadence: the shared log is its newest 5000
+  /// rows, and a drive's dense fixes would push the diagnostics out of it.
+  private var lastLoggedAt: Date?
 
   // MARK: - Power modes (motion-adaptive duty cycle)
   //
@@ -452,7 +457,8 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     guard let at = lastFixAt else { return true }
     let since = Date().timeIntervalSince(at)
     if since >= minFixInterval { return true }
-    guard since >= minStepInterval, l.horizontalAccuracy >= 0, let prev = lastFix else { return false }
+    guard since >= minStepInterval, l.speed >= stepSpeed, l.horizontalAccuracy >= 0,
+      let prev = lastFix else { return false }
     return l.distance(from: prev) >= max(minStep, l.horizontalAccuracy)
   }
 
@@ -460,10 +466,14 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   private func record(_ l: CLLocation, still: Bool) {
     // A still fix is proof of presence, not news: it rides the next upload
     // (the audio chunk's nudge, or the drain timer) instead of calling one.
-    lastFixAt = Date()
+    let now = Date()
+    lastFixAt = now
     lastFix = l
     // Local rolling log (device-screen "recent activity" + background badge).
-    write(lat: l.coordinate.latitude, lon: l.coordinate.longitude, source: still ? "still" : "update")
+    if still || lastLoggedAt.map({ now.timeIntervalSince($0) >= minFixInterval }) ?? true {
+      lastLoggedAt = now
+      write(lat: l.coordinate.latitude, lon: l.coordinate.longitude, source: still ? "still" : "update")
+    }
     // Durable delivery: full-field record → shared outbox → box.
     enqueueFix(l, still: still)
     // If this fix arrived while backgrounded (incl. a cold sig-loc relaunch),
