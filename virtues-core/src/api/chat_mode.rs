@@ -25,6 +25,17 @@ use crate::api::getting_started;
 /// cost and time.
 pub(crate) const CHAT_TOOL_CAPS: &[(&str, u32)] = &[("web_search", 4)];
 
+/// Chat's tools: every model-facing tool but `think`. The chat model reasons
+/// natively, so a `think` call buys nothing it would not have thought anyway
+/// and costs a whole extra step, with the prompt and history re-sent. Deep
+/// research, its workers, applets and skills keep it in their own lists.
+fn chat_tools() -> Vec<serde_json::Value> {
+    crate::tools::get_tool_definitions_for_llm()
+        .into_iter()
+        .filter(|t| t["function"]["name"] != "think")
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub enum ChatMode {
     /// The default: every tool (write/act tools confirm first), low effort,
@@ -159,13 +170,13 @@ impl ChatMode {
 
     /// The tool definitions the model is offered this turn.
     pub fn tools(&self) -> Vec<serde_json::Value> {
-        use crate::tools::{get_tool_definitions_for_llm, tools_named};
+        use crate::tools::tools_named;
         match self {
             // Write/act tools confirm before running. The owner's browser
             // only while an app that has one is connected: a tool the model
             // cannot use is one it will try anyway.
             Self::Chat => {
-                let mut tools = get_tool_definitions_for_llm();
+                let mut tools = chat_tools();
                 if crate::browser::connected() {
                     tools.extend(tools_named(&[crate::browse::TOOL]));
                 }
@@ -173,7 +184,7 @@ impl ChatMode {
             }
             // Everything chat has, plus `shell`; deletes ask (`sudo_gate`).
             Self::Sudo => {
-                let mut tools = get_tool_definitions_for_llm();
+                let mut tools = chat_tools();
                 tools.extend(tools_named(crate::tools::SUDO_ONLY_TOOLS));
                 if crate::browser::connected() {
                     tools.extend(tools_named(&[crate::browse::TOOL]));
@@ -342,6 +353,7 @@ pub(crate) mod tests {
         let every: BTreeSet<String> = crate::tools::get_tool_definitions_for_llm()
             .iter()
             .filter_map(|t| t["function"]["name"].as_str().map(str::to_string))
+            .filter(|name| name != "think")
             .collect();
 
         assert_eq!(tool_names(&ChatMode::Chat), every);
