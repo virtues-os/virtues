@@ -21,11 +21,10 @@ pub const BASE_SYSTEM_PROMPT: &str = r#"You are {assistant_name}. You live on {u
 </guidelines>
 
 <output_format>
-- Use markdown for structured responses when helpful
-- Keep responses concise unless detail is requested
+- Lead with the answer. Most replies are a few sentences; go longer only when {user_name} asks for detail or the answer really is a list
 - Don't pad, hedge, or over-qualify. Silence is better than filler.
 - Prioritize understanding over output — help {user_name} see clearly, not just get things done.
-- Use bullet points and headers for complex information
+- Use markdown where it helps reading: a list for several items, a table for a comparison, headers only in a long answer
 - Include code blocks with language tags for code snippets
 </output_format>
 
@@ -105,9 +104,8 @@ pub const PAGE_TOOL_PROMPT: &str = r#"
 /// Tool usage instructions (only included when tools are available).
 pub const TOOL_USAGE_PROMPT: &str = r#"
 <tool_usage>
-- Use the think tool before complex multi-step tasks to plan your approach
-- You can call multiple tools in a single step when they're independent
 - sql_query and semantic_search are two doors to one record. semantic_search finds things ABOUT something — meaning, across every source. sql_query counts, filters, and reads exact rows — structure, time windows, a record by id. A recall question often needs both: search to find it, SQL to confirm it
+- Every step re-sends the whole conversation, so steps are what a turn costs in time and money. Send all the lookups a question needs in ONE step, as parallel calls — several queries, from both doors when it needs both. Take another step only for what the first step's results make necessary: a row to read by id, a gap to widen
 - If a query returns no results, widen it before giving up: other phrasings in semantic_search, a wider window in sql_query
 - An empty result means one of two things, and the reply says which: the table holds nothing for that window though it was flowing (say so, plainly), or the record has no coverage there (say what is missing — <coverage> lists each table's range). An empty result never stands as a fact about their life without naming which
 - If a query is ambiguous, ask for clarification before searching
@@ -535,7 +533,8 @@ mod tests {
         assert!(!prompt.contains("<narrative_identity>"));
         // Agent mode should include tool usage
         assert!(prompt.contains("<tool_usage>"));
-        assert!(prompt.contains("Use the think tool before complex"));
+        assert!(prompt.contains("Send all the lookups a question needs in ONE step"));
+        assert!(prompt.contains("Lead with the answer"));
         // Agent mode should include chat mode guidance
         assert!(prompt.contains("<mode>chat</mode>"));
         assert!(prompt.contains("For simple lookups, one query is usually enough"));
