@@ -17,7 +17,8 @@
  *  2. CONTINUITY. It glides between positions (105ms) instead of teleporting,
  *     so arrow-key motion is legible as motion. The easing is front-loaded —
  *     it leaves fast and settles — because a symmetric curve at this duration
- *     reads as lag, not travel.
+ *     reads as lag, not travel. Typed characters glide in 60ms: keys land
+ *     every 60–100ms at speed, and a 105ms glide left the bar behind them.
  *
  *  3. RESTRAINT — the rule that makes the other two survive contact:
  *     - The glide is KEYBOARD-ONLY. A click is a teleport, always. Animating
@@ -67,7 +68,7 @@ function caretWidthFor(caretHeight: number): number {
 
 /**
  * Records what moved the caret, so the CSS can suppress the glide for pointer
- * input. `keydown` fires before the selection it causes, and `mousedown`
+ * input and shorten it for typing. `keydown` fires before the selection it causes, and `mousedown`
  * before the click's selection, so the attribute is always correct by the time
  * the transition would run.
  */
@@ -80,8 +81,15 @@ const caretInputSource = EditorView.domEventHandlers({
 		view.dom.dataset.caretInput = 'pointer';
 		return false;
 	},
-	keydown(_event, view) {
-		view.dom.dataset.caretInput = 'keyboard';
+	keydown(event, view) {
+		// Typing moves the caret one character per key, often faster than the
+		// glide: it gets the short one so the bar stays ahead of the letters.
+		const typing =
+			(event.key.length === 1 && !event.metaKey && !event.ctrlKey) ||
+			event.key === 'Backspace' ||
+			event.key === 'Delete' ||
+			event.key === 'Enter';
+		view.dom.dataset.caretInput = typing ? 'typing' : 'keyboard';
 		return false;
 	},
 });
