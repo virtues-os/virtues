@@ -43,6 +43,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
   Builder::new("health")
     .invoke_handler(tauri::generate_handler![
       commands::enable,
+      commands::enable_cycle,
       commands::resume,
       commands::status,
       commands::collect

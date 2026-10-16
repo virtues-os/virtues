@@ -7,11 +7,15 @@ class HealthPlugin: Plugin {
   private static func resolveStatus(_ invoke: Invoke) {
     let c = HealthCollector.shared
     c.permission { permission in
-      invoke.resolve([
-        "authorized": c.optedIn(),
-        "collecting": c.isCollecting,
-        "permission": permission,
-      ])
+      c.cyclePermission { cyclePermission in
+        invoke.resolve([
+          "authorized": c.optedIn(),
+          "collecting": c.isCollecting,
+          "permission": permission,
+          "cycle": c.cycleOptedIn(),
+          "cyclePermission": cyclePermission,
+        ])
+      }
     }
   }
 
@@ -19,6 +23,12 @@ class HealthPlugin: Plugin {
   /// Resolves once the sheet closes; whether reads were allowed stays unknown.
   @objc public func enable(_ invoke: Invoke) throws {
     HealthCollector.shared.enable { _ in HealthPlugin.resolveStatus(invoke) }
+  }
+
+  /// Cycle tracking's own sheet, then a full-history backfill of its types.
+  /// The app calls this only for a box at `api_version` 5 or above.
+  @objc public func enableCycle(_ invoke: Invoke) throws {
+    HealthCollector.shared.enableCycle { _ in HealthPlugin.resolveStatus(invoke) }
   }
 
   /// Launch auto-resume: collect only if already opted in; never prompts.
