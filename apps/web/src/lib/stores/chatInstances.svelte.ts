@@ -121,7 +121,7 @@ export interface TurnInputs {
     model?: string;
 }
 
-/** Live status of one Deep Research subagent, from transient `data-subagent` events. */
+/** Live status of one worker the turn started, from transient `data-subagent` events. */
 export interface SubagentStatus {
     /** Unique per-dispatch id; with subagentId it namespaces workers across dispatch rounds. */
     dispatchId: number;
@@ -130,6 +130,14 @@ export interface SubagentStatus {
     model: string;
     status: 'thinking' | 'done' | 'failed';
     tokens: number;
+    /** Only from the browsing agent: the call it is making now. */
+    step?: WorkerStep;
+}
+
+/** One call a worker is making, shaped like a tool part's name and input. */
+export interface WorkerStep {
+    tool: string;
+    input: Record<string, unknown>;
 }
 
 interface ActivePageContext {
@@ -167,6 +175,9 @@ class ChatInstanceStore {
     // Live Deep Research subagent state, keyed by conversationId. Ephemeral — rebuilt each turn
     // from transient `data-subagent` events.
     private subagents = $state(new Map<string, SubagentStatus[]>());
+    // The browsing agent's call in flight, keyed by conversationId; cleared
+    // with the panel each turn and when the agent finishes.
+    private browseSteps = $state(new Map<string, WorkerStep>());
 
     // What each local reply measured, keyed by conversation then message id.
     // Transient: shown under replies from this session, never stored.
@@ -182,9 +193,15 @@ class ChatInstanceStore {
         return this.subagents.get(conversationId) ?? [];
     }
 
+    /** What the browsing agent is doing in this conversation right now, if anything. */
+    getBrowseStep(conversationId: string): WorkerStep | undefined {
+        return this.browseSteps.get(conversationId);
+    }
+
     /** Clear the live subagent panel for a conversation (called at the start of each turn). */
     clearSubagents(conversationId: string) {
         if (this.subagents.has(conversationId)) this.subagents.set(conversationId, []);
+        if (this.browseSteps.has(conversationId)) this.browseSteps.delete(conversationId);
     }
 
     /** Upsert one subagent's status from a `data-subagent` event. */
@@ -297,7 +314,15 @@ class ChatInstanceStore {
             onData: (dataPart) => {
                 // Handle Deep Research subagent events (transient - drives the live panel)
                 if (dataPart.type === 'data-subagent') {
-                    this.applySubagent(conversationId, dataPart.data as SubagentStatus);
+                    const update = dataPart.data as SubagentStatus;
+                    // The browsing agent is one worker driving one browser:
+                    // its steps go to the status line, not the research panel.
+                    if (update.title === 'browse') {
+                        if (update.step) this.browseSteps.set(conversationId, update.step);
+                        else this.browseSteps.delete(conversationId);
+                    } else {
+                        this.applySubagent(conversationId, update);
+                    }
                 }
                 // A local turn's measurements arrive as its last part, so they
                 // belong to the reply being written now.
