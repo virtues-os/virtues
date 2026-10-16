@@ -85,6 +85,8 @@ const APP_COMMANDS: &[&str] = &[
     "recheck_collector",
     "open_full_disk_access",
     "open_accessibility_settings",
+    // The composer's mic: the Mac's own dictation (desktop).
+    "start_dictation",
     // Window chrome (desktop).
     "set_summon_shortcut",
     // Logging in to a source in a window of its own (desktop, browser.rs).

@@ -773,6 +773,31 @@ async fn open_accessibility_settings(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Start the Mac's own dictation in whatever has focus — the composer, when
+/// its mic button asks. This is the Edit menu's "Start Dictation…" sent down
+/// the responder chain, so the words are Apple's: on the device, streaming
+/// into the field as they are spoken, under the system's own mic. A Mac with
+/// Dictation off answers with the system's offer to turn it on.
+#[tauri::command]
+fn start_dictation(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        app.run_on_main_thread(|| unsafe {
+            use objc2::runtime::{AnyObject, Bool};
+            use objc2::{class, msg_send, sel};
+            let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+            let none: *mut AnyObject = std::ptr::null_mut();
+            let _: Bool = msg_send![ns_app, sendAction: sel!(startDictation:), to: none, from: none];
+        })
+        .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("dictation is the Mac's".into())
+    }
+}
+
 // ============================================================================
 // Global summon shortcut
 // ============================================================================
@@ -1707,6 +1732,7 @@ fn main() {
             recheck_collector,
             open_full_disk_access,
             open_accessibility_settings,
+            start_dictation,
             set_summon_shortcut,
             browser_login,
             browser_pane_open,

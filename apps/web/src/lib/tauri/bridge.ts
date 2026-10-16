@@ -761,6 +761,33 @@ export async function openAccessibilitySettings(): Promise<boolean> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Dictation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The surface that added `start_dictation` (lib.rs `COMMAND_SURFACE_VERSION`). */
+export const DICTATION_SURFACE = 12;
+
+/** Whether this shell can start the Mac's own dictation from a button. */
+export async function canDictate(): Promise<boolean> {
+	if (!isMacOS || isIOS) return false;
+	return shellSupports(DICTATION_SURFACE);
+}
+
+/**
+ * Start the Mac's dictation in the focused field. Focus the field first: the
+ * words go wherever the system's cursor is, exactly as from the Edit menu.
+ */
+export async function startDictation(): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	try {
+		await invoke('start_dictation');
+	} catch (e) {
+		console.error('[Tauri] Failed to start dictation:', e);
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Global summon shortcut
 // ─────────────────────────────────────────────────────────────────────────────
 
