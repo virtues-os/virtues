@@ -1570,6 +1570,10 @@ describe('paste', () => {
 		expect(editor.getHTML()).toBe('<p>Shopping</p><ul><li><p>milk</p></li></ul><p>Call Nick at 5<br>Bring receipts</p>');
 	});
 
+	// A page filled to MAX_NODES takes about a second to build here and over
+	// five on a shared CI runner, past vitest's default of five.
+	const FULL_PAGE_MS = 30_000;
+
 	// A paste too large to convert went in as a paragraph a line, past what
 	// a page holds: the server refused the edit, and the page stopped saving.
 	it('refuses a paste that would take the page past what it holds, however it would have landed', () => {
@@ -1594,7 +1598,7 @@ describe('paste', () => {
 		pasteEvent(plain, { 'text/plain': 'one\ntwo' });
 		expect(plain.getHTML()).toBe('<p>Keepone</p><p>two</p>');
 		expect(nodeCount(plain.state.doc)).toBe(4);
-	});
+	}, FULL_PAGE_MS);
 
 	// Files went in past what a page holds, with nothing said, and their
 	// upload began: the server refused the edit, and the page stopped saving.
@@ -1628,7 +1632,7 @@ describe('paste', () => {
 		const room = track(htmlEditor('<p>x</p>', [pasteHandling(), mediaUploads(sends)]));
 		addFiles(room.view, [photo()], 1, { send: sends });
 		expect(sends).toHaveBeenCalledOnce();
-	});
+	}, FULL_PAGE_MS);
 
 	// A paste nesting lists past the levels a page holds went in, the server
 	// refused the edit, and the page stopped saving with nothing said.
