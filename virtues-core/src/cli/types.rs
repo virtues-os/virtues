@@ -28,7 +28,7 @@ pub(crate) fn default_port() -> u16 {
 /// privilege.
 pub const RUNS_AS_SERVICE_USER: &[&str] = &[
     "init", "pair", "link", "login", "subscribe", "sudo", "backup", "reset", "status",
-    "migrate", "seed",
+    "migrate",
     // `doctor` reads the env file (inference mode) and the DB (reach legs),
     // both `virtues`-owned. Run as another user it can read neither, so it
     // would render the default llama-server guess and "DB unknown": a
