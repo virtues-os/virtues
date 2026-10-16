@@ -711,10 +711,6 @@ pub enum Commands {
         port: u16,
     },
 
-    /// Seed the database with demo data (people, places, events, etc.)
-    #[command(hide = true)]
-    Seed,
-
     /// Show box health: identity (WG keypair), subscription, and paired devices.
     /// The deployment substrate's status command.
     ///

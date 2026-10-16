@@ -108,7 +108,7 @@ the billing service.
 | Address | the VPS's fixed IPv4 + a random `demo-<rand>.virtues.ch` Route 53 record, and `demo.virtues.com` on the same address |
 | Firewall | ufw: 22, 80, 443 only — iroh's UDP port stays closed, so reach always goes via the relay |
 | Access | SSH, key-only, no root login |
-| Monitoring | `virtues-health` every ten minutes with a demo check file (box, sidecars, both re-anchor timers, and the public doors: review identity 200, both hostnames 401 without credentials); the re-anchor and reset units email on failure; the cloud server also probes the review hostname, because a dead box cannot report itself |
+| Monitoring | `virtues-health` every ten minutes with the demo check file ([deploy/demo/health.sh](../../deploy/demo/health.sh): box, sidecars, the placement and reset timers, today being a full day, and the public doors: review identity 200, both hostnames 401 without credentials); the placement and reset units email on failure; the cloud server also probes the review hostname, because a dead box cannot report itself |
 
 An obscure hostname is not a security control — it only keeps opportunistic
 scanners away, and it does even that only while it stays unpublished. The real
@@ -173,101 +173,25 @@ row must produce a 429.
    page socket only: the terminal and the owner's browser socket still take
    the app's own origins alone. Each must be the exact `https://host`, with
    no path or wildcard; an entry that is not is left out.
-7. **Seed it.** There are two demo seeds, each with its own re-anchor pass —
-   the SQL that walks the seeded life forward so its anchor day lands on today,
-   because Home asks for the literal current date and has no fallback to the
-   newest day holding data. **Exactly one re-anchor may ever run on a box.** The
-   two read their anchor from different days — `demo_reanchor.sql` from the day
-   with the most location points, `demo3y/99_reanchor.sql` from the newest day
-   holding a `p3y_` event — and each moves rows the other reads, so run
-   together they undo each other on every pass and the life never rests on
-   today.
+7. **Install the demo life.** Mark the box as a demo box in the env file
+   (`VIRTUES_DEMO_BOX=1` — the installer refuses without it, because it empties
+   the box's record), then from a checkout of the release's commit:
 
-   - **The base seed**, `virtues seed`: `demo_day.sql` (one richly
-     instrumented day), the 12-week `demo_narrative.sql`, `demo_bookmarks.sql`,
-     then `demo_reanchor.sql`, compiled into the binary and run by
-     `seed_demo_data` (`virtues-core/src/seeding/demo_seed.rs`). **On a release
-     older than the `morning_baseline` fix this seeds only a third of the data
-     and says nothing about it** (see below); until a release carries the fix,
-     run the seed files from a current checkout by hand, ending with
-     `demo_reanchor.sql`. Check it: `select occurred_at::date from
-     data_location_point group by 1 order by count(*) desc limit 1` should
-     return today's date.
-   - **demo3y**, three years of raw streams, derived days and events, chats,
-     pages, projects and assistant memories — the set that populates Chapters,
-     Years and Lifeline, which twelve weeks cannot. It is not in any release:
-     `virtues-core/seeds/demo3y/` is gitignored and generated from a checkout
-     by `python3 tools/gen-demo-seed.py --check-db <db>` (see
-     [seeds/README.md](../../virtues-core/seeds/README.md)). Copy the
-     directory to the box and run `DB=virtues sh run.sh` as `postgres`; it
-     loads `01_entities` through `05_content` and ends in its own
-     `99_reanchor.sql`. **Load it on a box without the base seed, and never
-     run `virtues seed` on that box afterwards.** The two sets write the same
-     `day_<date>` ids for the twelve weeks they overlap, so in either order
-     the second set's events attach, at their original dates, to day rows the
-     first set's re-anchor has already moved months away. Check it: `select
-     max(d.date) from wiki_days d where exists (select 1 from wiki_events e
-     where e.day_id = d.id and e.id like 'p3y!_%' escape '!')` should return
-     today's date.
-7a. **Install the timers for whichever seed the box carries.** A re-anchor only
-   runs when something runs it, so a box seeded once ages a day at a time and a
-   reviewer opening the app two weeks after submission meets the empty Home the
-   pass exists to prevent — a review cycle is measured in weeks, and a
-   rejection round adds more. Both re-anchor files read their anchor out of the
-   data, so hourly is free: a run with nothing to do is one SELECT. Each
-   re-anchor timer is `OnCalendar=hourly` with `Persistent=true` and
-   `OnBootSec=2min` — persistent and on-boot because a box that was down for a
-   reboot or a rebuild must catch up when it comes back. Each unit is a
-   `Type=oneshot` with `User=postgres` running
-   `psql -v ON_ERROR_STOP=1 -d virtues -f <file>`.
+   ```sh
+   sudo sh deploy/demo/install.sh virtues-core/seeds/demo/life.sql.gz
+   ```
 
-   **A box carrying demo3y** (the current demo box) gets two timers, and the
-   old one stays off:
+   It backs the database up, clears the box's life, loads Jules Arden's (a
+   three-year backbone and a dense showcase week), places it on today, installs
+   the hourly placement and nightly reset units, turns the box's own day writer
+   off (the life is already written) and starts a background reindex. Paired
+   devices, auth and settings are kept. Everything about the life, the
+   placement rule and the reset is in [deploy/demo/README.md](../../deploy/demo/README.md).
 
-   - `virtues-demo3y-reanchor.timer` runs `99_reanchor.sql`, hourly as above.
-   - `virtues-demo3y-reset.timer` runs nightly and its service runs **two**
-     files in order: `98_reset.sql`, then `04_creation.sql`. The box is shared
-     — one reviewer or visitor after another — and everything anyone types on
-     it is otherwise visible to the next. `98_reset.sql` deletes what is not
-     seeded rather than wiping and re-inserting, because a re-insert would put
-     the seeded chats back at their absolute dates three years ago and the
-     re-anchor would compute a zero shift and leave them there. It keeps the
-     `chat_p3y_` / `page_p3y_` / `p3y_nb_` rows, Getting Started and the
-     narrative interview, and clears visitor chats, pages, projects,
-     marginalia, pins and drive files. Its table list is an allowlist that
-     never names auth, so paired devices and the review pair code survive a
-     night mid-round. The second file is there for `app_assistant_memories`
-     alone: its ids carry no seed prefix, so the reset clears it wholesale and
-     `04_creation.sql` puts the seeded memories back while no-opping on the
-     tables whose ids it writes through `ON CONFLICT DO NOTHING`. It does not
-     no-op on `wiki_notes`: those ids are generated, nothing conflicts, and
-     each run adds the seeded notes again.
-   - **`virtues-demo-reanchor.timer` stays disabled and masked** for as long
-     as demo3y is on the box. Disabling alone is not enough: it has already been
-     re-enabled once on a box carrying demo3y. Step 7a installs both unit files
-     into `/etc/systemd/system`, where `systemctl mask` refuses ("already
-     exists"), so move them out first:
-     `systemctl disable --now virtues-demo-reanchor.timer`, move
-     `/etc/systemd/system/virtues-demo-reanchor.{timer,service}` aside, then
-     `systemctl daemon-reload && systemctl mask virtues-demo-reanchor.timer
-     virtues-demo-reanchor.service`. Both should then report `masked`.
-     When both run, the journal shows the two re-anchors moving the life in
-     opposite directions, a few days each way, every hour. After any change to
-     the box's units, `systemctl list-timers 'virtues-demo*'` should list the
-     two demo3y timers and nothing else.
-
-   **A box carrying only the base seed** gets one timer:
-   `virtues-demo-reanchor.timer`, running `demo_reanchor.sql` (copied to
-   `/usr/local/share/virtues/demo-reanchor.sql`), hourly as above. It has no
-   reset; the base seed has no visitor-work cleanup.
-
-   The residual edge, worth knowing rather than fixing: the box anchors on its
-   own `current_date` (UTC here) while Home asks for the *browser's* today. A
-   reviewer in Pacific time after 5pm is a calendar day behind the box, so they
-   land on the day before the anchor day. On the base seed that day still
-   carries `wiki_events`, just no raw streams; on demo3y every day carries
-   streams, so the cost is only that the reviewer's first day is yesterday's.
-   Every other direction lines up.
+   Placement runs on the box's UTC date, and the week always covers the seven
+   days ending there. A viewer in the US evening is a calendar day behind UTC
+   and a viewer in Europe is level with it, so both find their own today inside
+   the week, full.
 8. **Give the server a funded api key.** NOT the old "subscribe the account"
    step — that one is genuinely dead, see below — but the server still needs to
    be able to pay for inference, and this is easy to miss now that the two are
@@ -312,15 +236,12 @@ run locally, CPU-only, and slowness is acceptable.
 
 ## Between review rounds
 
-- Wipe the box and re-seed (`virtues reset --yes`, then provisioning steps
-  6–7a; the review code reinstalls itself from the env file on the next start).
-  The reviewer's own device data — health, location, contacts, ambient audio —
-  syncs onto this box once paired, and it should not persist or bleed into the
-  next round; the nightly demo3y reset clears visitor chats and pages but not
-  synced device data. Each re-anchor file is idempotent and walks its own seed
-  forward to today, but never re-age a demo3y box by re-running `virtues seed`:
-  that runs `demo_reanchor.sql` against it, which is the same fight step 7a
-  masks the old timer to prevent.
+- Reinstall the demo life (step 7). It clears every synced row along with the
+  life, so a reviewer's own device data — health, location, contacts, ambient
+  audio — does not persist into the next round; the nightly reset only clears
+  visitor chats, pages and the like. To drop the paired devices as well, run
+  `virtues reset --yes` first, then provisioning steps 6–7 (the review code
+  reinstalls itself from the env file on the next start).
 - **Leave it running.** A VPS bills the same stopped, the seed data and the
   review-code row live on its disk, and its fixed address keeps DNS valid.
 - **Moving it** to another machine: install the same version, then carry the
@@ -377,8 +298,8 @@ the territory list.
 
 ## Shooting App Store screenshots
 
-The demo server doubles as the screenshot rig — synthetic data that looks like
-a life, re-anchored nightly so "today" is always full. Drive a simulator
+The demo server doubles as the screenshot rig — a fictional life placed hourly
+so "today" is always a full day. Drive a simulator
 against it rather than a real phone: exact store canvas sizes, no personal data,
 and `xcrun simctl status_bar override` gives the clean 9:41 full-battery bar.
 

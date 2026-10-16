@@ -270,17 +270,6 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             std::process::exit(0);
         }
 
-        Commands::Seed => {
-            println!("Running migrations...");
-            virtues.database.initialize().await?;
-            println!("Migrations complete");
-            println!();
-
-            println!("Seeding demo data...");
-            crate::seeding::seed_demo_data(&virtues.database).await?;
-            println!("Demo data seeded");
-        }
-
         Commands::Status { json } => {
             if json {
                 commands::status_json::print(&virtues)
