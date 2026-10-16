@@ -193,9 +193,9 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         note: Some("high volume; prefer data_location_visit"),
     });
     m.insert("data_location_visit", TableMetadata {
-        description: "Place visits with arrival/departure times",
+        description: "Place visits with arrival/departure times; the place's name is on wiki_places, through the join",
         category: "location",
-        key_columns: &["place_name", "latitude", "longitude", "started_at", "ended_at", "duration_minutes"],
+        key_columns: &["latitude", "longitude", "started_at", "ended_at", "duration_minutes"],
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_location_visit' AND er.source_id = data_location_visit.id JOIN wiki_places ON er.entity_id = wiki_places.id AND er.entity_type = 'place'"),
         note: None,
     });
