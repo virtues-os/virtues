@@ -1955,6 +1955,9 @@
 													reasoningContent={turn.reasoning}
 													narration={turn.narration}
 													intent={turn.intent}
+													browseStep={isStreaming
+														? chatInstances.getBrowseStep(conversationId)
+														: undefined}
 													seconds={turnPhase.secondsFor(message.id) ||
 														turnSeconds.get(message.id) ||
 														0}
