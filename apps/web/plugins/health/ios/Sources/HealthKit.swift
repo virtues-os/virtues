@@ -213,10 +213,14 @@ public final class HealthCollector {
 
     let query = HKAnchoredObjectQuery(
       type: type, predicate: predicate, anchor: loadAnchor(key), limit: pageLimit
-    ) { [weak self] _, samples, _, newAnchor, _ in
+    ) { [weak self] _, samples, deleted, newAnchor, _ in
       guard let self = self else { return }
       let samples = samples ?? []
-      let durable = handle(samples)
+      let deleted = deleted ?? []
+      // Deletions ride the same anchor as samples, so they count toward
+      // whether the page is durable. Without them a sample deleted in Health
+      // stays on the box for good.
+      let durable = handle(samples) && self.enqueueDeletions(deleted)
       guard durable else {
         NSLog("[Health] enqueue failed for %@ — anchor HELD, will retry this page",
               type.identifier)
@@ -224,11 +228,29 @@ public final class HealthCollector {
       }
       if let a = newAnchor { self.saveAnchor(key, a) }
       // A full page means there may be more history — page again.
-      if samples.count >= self.pageLimit {
+      if samples.count + deleted.count >= self.pageLimit {
         self.runAnchored(type: type, handle: handle)
       }
     }
     store.execute(query)
+  }
+
+  /// Tell the box which samples were deleted in Health. The box tombstones
+  /// the row on whichever table holds it. The record's own `id` cannot be the
+  /// sample's: the outbox ignores an id it has already queued, and the sample
+  /// may still be in it.
+  private func enqueueDeletions(_ deleted: [HKDeletedObject]) -> Bool {
+    var allEnqueued = true
+    for d in deleted {
+      let uuid = d.uuid.uuidString
+      if !enqueue([
+        "id": "deleted:" + uuid,
+        "metric_type": "deleted",
+        "deleted_id": uuid,
+        "timestamp": iso.string(from: Date()),
+      ]) { allEnqueued = false }
+    }
+    return allEnqueued
   }
 
   /// Hand one record to the outbox. Returns whether it was actually taken —

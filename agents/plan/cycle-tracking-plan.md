@@ -1,7 +1,8 @@
 # Cycle tracking
 
-**Status:** Slice 1 (box side, raw streams) in progress on `wave`. Migration
-`0053_add_health_cycle` holds the three raw tables. Nothing on the phone yet.
+**Status:** Slices 1 and 2 built on `wave`, unreleased. Migration 0053 holds the
+three raw tables (`fd07c088`), and 0054 adds the missing tombstone columns for
+HealthKit deletions. The phone sends deletions but not yet the cycle types.
 
 The owner's menstrual cycle, read from Apple Health. **Raw first:** the box
 ingests the primitives exactly as Health stores them. Cycles, predictions,
@@ -131,10 +132,13 @@ whole batch would fail, and the phone retries a failed batch forever (see
 - **Turning access on** (slice 5) runs `GRANT`, adds the catalog entries, and
   adds a row to "What leaves" in `agents/build/privacy-boundary.md`. The
   on-state copy may claim zero data retention per request and nothing more.
-- **Deletes must propagate.** Today no health type handles HealthKit
-  deletions: the collector ignores `HKAnchoredObjectQuery`'s deleted objects,
-  and nothing sets `deleted_at_source`. A cycle entry deleted on the phone
-  stays on the box until slice 2.
+- **Deletes propagate** (slice 2). A sample deleted in Health is tombstoned
+  (`deleted_at_source`) on whichever table holds it, and every health reader
+  skips tombstones.
+  - A phone that outruns its box loses deletions. An older box logs the
+    unknown `deleted` metric type and drops it, and the phone's anchor still
+    advances, so those samples stay live on that box. The version gate in
+    slice 3 should cover this too.
 
 ## Slices
 
@@ -143,10 +147,15 @@ whole batch would fail, and the phone retries a failed batch forever (see
    `manifest.toml` `writes`), registry entries with `OwnerOptIn`, the grant-loop
    skip, and the annotate skip. Tests: the vocabulary mapping, and a role test
    proving `virtues_face_reader` cannot SELECT the three tables.
-2. **Health deletions, all types.** The phone sends
-   `{id, metric_type: "deleted"}`. `ios_ingest` sets `deleted_at_source` on
-   whichever health table holds that `source_stream_id`. Every health reader
-   filters on it.
+2. **Health deletions, all types.** Built.
+   - The phone sends `{id: "deleted:<uuid>", metric_type: "deleted",
+     deleted_id: "<uuid>"}`. The outbox ignores an id it has already queued,
+     so the deletion cannot reuse the sample's id.
+   - `ios_ingest` tombstones that `source_stream_id` on every HealthKit table,
+     for `source_provider = 'ios'` only.
+   - The readers in dayline, census, circumstances and day summary skip
+     tombstones, as do the lane measures, the health day sources and the SQL
+     catalog note.
 3. **Phone.**
    - A "Track your cycle" switch that requests only the slice-1 types, with one
      anchor key per type.

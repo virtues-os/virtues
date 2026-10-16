@@ -1017,6 +1017,64 @@ pub async fn write_wrist_temperature(db: &PgPool, records: &[Value]) -> Result<u
     Ok(written)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Deletions
+//
+// A sample deleted in Apple Health is tombstoned here: `deleted_at_source` is
+// stamped and every reader skips the row. The row itself stays, as for every
+// other source, and a re-send of the sample cannot revive it because the
+// insert is ON CONFLICT DO NOTHING.
+//
+// The phone names only the sample's UUID, not its type (HealthKit's deleted
+// object carries nothing else), so the tombstone is tried on every table a
+// HealthKit sample can land in. The record's own `id` is not the sample's:
+// the outbox drops a record whose id it has already seen, so the deletion
+// travels as `deleted:<uuid>` with the UUID in `deleted_id`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Every table `healthkit_ingest` writes.
+const HEALTHKIT_TABLES: &[&str] = &[
+    "data_health_heart_rate",
+    "data_health_hrv",
+    "data_health_steps",
+    "data_health_active_energy",
+    "data_health_distance",
+    "data_health_sleep",
+    "data_health_workout",
+    "data_health_cycle_log",
+    "data_health_symptom",
+    "data_health_wrist_temperature",
+];
+
+pub async fn mark_deleted(db: &PgPool, records: &[Value]) -> Result<usize> {
+    let ids: Vec<String> = records
+        .iter()
+        .filter_map(|r| str_field(r, "deleted_id"))
+        .map(String::from)
+        .collect();
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let mut marked = 0;
+    for table in HEALTHKIT_TABLES {
+        // Table names are compile-time constants. Only the phone's own rows:
+        // a workout from another provider never shares a HealthKit UUID, but
+        // the provider check keeps that from being a matter of luck.
+        let sql = format!(
+            "UPDATE {table} SET deleted_at_source = now(), updated_at = now() \
+             WHERE source_stream_id = ANY($1) AND source_provider = $2 \
+               AND deleted_at_source IS NULL"
+        );
+        marked += sqlx::query(&sql)
+            .bind(&ids)
+            .bind(IOS_PROVIDER)
+            .execute(db)
+            .await?
+            .rows_affected() as usize;
+    }
+    Ok(marked)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1095,6 +1153,33 @@ mod tests {
         assert!(s("mood_changes", "mild").is_err());
         assert!(s("appetite_changes", "increased").is_ok());
         assert!(s("toe_tingling", "mild").is_err());
+    }
+
+    /// A sample deleted on the phone is tombstoned wherever it landed, and a
+    /// later re-send of the same sample does not bring it back.
+    #[sqlx::test(migrations = "../virtues-core/migrations")]
+    async fn a_deleted_sample_is_tombstoned_and_stays_so(pool: PgPool) {
+        let steps = json!({"id": "hk-steps-1", "metric_type": "steps", "value": 420,
+                           "timestamp": "2026-10-01T15:00:00Z"});
+        write_steps(&pool, &[steps.clone()]).await.unwrap();
+        write_cycle(&pool, &[flow("light")]).await.unwrap();
+
+        let deletions = [
+            json!({"id": "deleted:hk-steps-1", "metric_type": "deleted", "deleted_id": "hk-steps-1"}),
+            json!({"id": "deleted:hk-flow-light", "metric_type": "deleted", "deleted_id": "hk-flow-light"}),
+            json!({"id": "deleted:never-sent", "metric_type": "deleted", "deleted_id": "never-sent"}),
+        ];
+        assert_eq!(mark_deleted(&pool, &deletions).await.unwrap(), 2);
+        assert_eq!(mark_deleted(&pool, &deletions).await.unwrap(), 0, "already tombstoned");
+
+        write_steps(&pool, &[steps]).await.unwrap();
+        let live: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM data_health_steps WHERE deleted_at_source IS NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(live, 0, "a re-send must not revive a deleted sample");
     }
 
     #[sqlx::test(migrations = "../virtues-core/migrations")]

@@ -2066,6 +2066,7 @@ async fn build_dossier(
             "SELECT started_at, ended_at, duration_minutes \
          FROM data_health_sleep \
          WHERE ended_at >= $1::timestamptz AND started_at <= $2::timestamptz \
+           AND deleted_at_source IS NULL \
          ORDER BY started_at",
         )
         .bind(start_str)

@@ -143,7 +143,8 @@ async fn window_avg_hr(
     sqlx::query_scalar(
         r#"SELECT AVG(CAST(bpm AS REAL))
            FROM data_health_heart_rate
-           WHERE occurred_at >= $1 AND occurred_at < $2"#,
+           WHERE occurred_at >= $1 AND occurred_at < $2
+             AND deleted_at_source IS NULL"#,
     )
     .bind(start)
     .bind(end)

@@ -79,6 +79,7 @@ pub async fn nights_ending_between(
         r#"SELECT started_at, ended_at, sleep_stages
            FROM data_health_sleep
            WHERE ended_at >= $1 AND started_at < $2
+             AND deleted_at_source IS NULL
            ORDER BY started_at"#,
     )
     .bind(from - Duration::hours(NIGHT_LOOKBACK_HOURS))
@@ -168,7 +169,8 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
     let avg_hr: Option<f64> = sqlx::query_scalar(
         r#"SELECT AVG(CAST(bpm AS REAL))
            FROM data_health_heart_rate
-           WHERE occurred_at >= $1 AND occurred_at < $2"#,
+           WHERE occurred_at >= $1 AND occurred_at < $2
+             AND deleted_at_source IS NULL"#,
     )
     .bind(sleep_start)
     .bind(sleep_end)
