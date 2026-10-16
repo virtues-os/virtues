@@ -43,6 +43,12 @@
 		height 105ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
+/* Typing gets a shorter glide: keys land faster than 105ms, and a caret
+   still travelling when the next letter appears sits behind the text. */
+.cm-editor[data-caret-input='typing'] .cm-cursorLayer .cm-cursor {
+	transition-duration: 60ms;
+}
+
 /* A click is a teleport. Gliding toward the spot someone just pointed at is
    the fastest way to make an editor feel slow. */
 .cm-editor[data-caret-input='pointer'] .cm-cursorLayer .cm-cursor {
