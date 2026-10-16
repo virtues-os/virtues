@@ -374,6 +374,7 @@ async fn emit(
                 model: model.to_string(),
                 status,
                 tokens,
+                step: None,
             })
             .await;
     }

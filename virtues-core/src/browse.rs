@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent::{AgentConfig, AgentEvent, AgentLoop, DelegatedUsage, FinishReason, Thinking, TurnBudget};
 use crate::api::compaction::build_context_for_llm;
-use crate::tools::{ToolContext, ToolResult};
+use crate::tools::{SubagentStatus, SubagentUpdate, ToolContext, ToolResult, WorkerStep};
 
 /// The tool the chat is offered while a browser is connected.
 pub const TOOL: &str = "browse";
@@ -88,7 +88,8 @@ pub async fn run_tool(pool: &PgPool, args: &Value, context: &ToolContext) -> Too
     // chat's browsing prompt warm for its next task, and the chat's own
     // prefix is left alone.
     let session = context.chat_id.as_ref().map(|chat| format!("{chat}:browse"));
-    let outcome = run(pool, task, &model, session, context.cancel_token.clone()).await;
+    let progress = Progress::new(context.subagent_tx.clone(), &model);
+    let outcome = run(pool, task, &model, session, context.cancel_token.clone(), progress).await;
 
     let usage = DelegatedUsage { feature: Some(TOOL.to_string()), ..outcome.usage };
     ToolResult::success(json!({
@@ -108,6 +109,7 @@ pub async fn run(
     model: &str,
     session: Option<String>,
     cancel: Option<CancellationToken>,
+    progress: Progress,
 ) -> Outcome {
     let _driving = driving().lock().await;
     let started = Instant::now();
@@ -159,6 +161,7 @@ pub async fn run(
             }
             AgentEvent::ToolCallArgsComplete { id, args } => {
                 if let Some(p) = pending.iter_mut().find(|p| p.0 == id) {
+                    progress.step(&p.1, &args);
                     p.2 = args;
                 }
             }
@@ -200,6 +203,7 @@ pub async fn run(
         }
     }
 
+    progress.finish(ended == "done");
     Outcome {
         answer: answer.trim().to_string(),
         ended,
@@ -207,6 +211,44 @@ pub async fn run(
         steps,
         usage,
         seconds: started.elapsed().as_secs_f64(),
+    }
+}
+
+/// The worker's steps as they happen, for the chat's status line. The chat
+/// drains this channel while the tool runs; a full channel drops a step
+/// rather than holding the browser up, since the next step replaces it.
+pub struct Progress {
+    tx: Option<tokio::sync::mpsc::Sender<SubagentUpdate>>,
+    dispatch_id: u64,
+    model: String,
+}
+
+impl Progress {
+    pub fn new(tx: Option<tokio::sync::mpsc::Sender<SubagentUpdate>>, model: &str) -> Self {
+        static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self { tx, dispatch_id: RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed), model: model.to_string() }
+    }
+
+    fn send(&self, status: SubagentStatus, step: Option<WorkerStep>) {
+        if let Some(tx) = &self.tx {
+            let _ = tx.try_send(SubagentUpdate {
+                dispatch_id: self.dispatch_id,
+                id: 0,
+                title: TOOL.to_string(),
+                model: self.model.clone(),
+                status,
+                tokens: 0,
+                step,
+            });
+        }
+    }
+
+    fn step(&self, tool: &str, input: &Value) {
+        self.send(SubagentStatus::Thinking, Some(WorkerStep { tool: tool.to_string(), input: input.clone() }));
+    }
+
+    fn finish(&self, ok: bool) {
+        self.send(if ok { SubagentStatus::Done } else { SubagentStatus::Failed }, None);
     }
 }
 
@@ -287,7 +329,7 @@ pub fn debug_routes() -> axum::Router<crate::server::AppState> {
         let model = req.model.unwrap_or_else(|| {
             crate::api::model_catalog::model_for_slot(virtues_registry::models::ModelSlot::Lite)
         });
-        Json(run(state.db.pool(), &req.task, &model, None, None).await)
+        Json(run(state.db.pool(), &req.task, &model, None, None, Progress::new(None, &model)).await)
     }
 
     axum::Router::new().route("/api/debug/browse", post(handler))
@@ -317,6 +359,20 @@ mod tests {
     #[test]
     fn an_ordinary_failed_step_does_not_end_the_run() {
         assert_eq!(failure_ending("browser_click", "No element with ref e12."), None);
+    }
+
+    #[tokio::test]
+    async fn each_step_reaches_the_chat_and_the_run_ends_the_line() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let progress = Progress::new(Some(tx), "lite");
+        progress.step("browser_click", &json!({"ref": "e7"}));
+        progress.finish(true);
+        let first = rx.recv().await.unwrap();
+        assert_eq!(first.title, TOOL);
+        assert_eq!(first.step, Some(WorkerStep { tool: "browser_click".into(), input: json!({"ref": "e7"}) }));
+        let last = rx.recv().await.unwrap();
+        assert!(matches!(last.status, SubagentStatus::Done));
+        assert_eq!(last.step, None);
     }
 
     #[test]

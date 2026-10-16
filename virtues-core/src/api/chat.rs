@@ -605,6 +605,7 @@ pub enum StreamEvent {
         model: String,
         status: String,
         tokens: u32,
+        step: Option<crate::tools::WorkerStep>,
     },
 
     // A local turn's own measurements, for the line under the reply.
@@ -637,6 +638,7 @@ impl From<crate::tools::SubagentUpdate> for StreamEvent {
             model: update.model,
             status: update.status.as_str().to_string(),
             tokens: update.tokens,
+            step: update.step,
         }
     }
 }
@@ -687,6 +689,9 @@ struct SubagentStatusData {
     /// "thinking" | "done" | "failed"
     status: String,
     tokens: u32,
+    /// Set only by the browsing agent: the call it is making now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    step: Option<crate::tools::WorkerStep>,
 }
 
 /// Chat error response
@@ -790,7 +795,7 @@ pub(crate) fn serialize_event(event: &StreamEvent) -> String {
             true,
         ),
         // Transient: the live panel only.
-        StreamEvent::SubagentStatus { dispatch_id, subagent_id, title, model, status, tokens } => data_event(
+        StreamEvent::SubagentStatus { dispatch_id, subagent_id, title, model, status, tokens, step } => data_event(
             "data-subagent",
             None,
             SubagentStatusData {
@@ -800,6 +805,7 @@ pub(crate) fn serialize_event(event: &StreamEvent) -> String {
                 model: model.clone(),
                 status: status.clone(),
                 tokens: *tokens,
+                step: step.clone(),
             },
             true,
         ),
@@ -3407,8 +3413,21 @@ mod ui_stream_fixture {
                 model: "m".into(),
                 status: "thinking".into(),
                 tokens: 42,
+                step: None,
             }),
             r#"{"type":"data-subagent","data":{"dispatchId":3,"subagentId":1,"title":"Prices","model":"m","status":"thinking","tokens":42},"transient":true}"#
+        );
+        assert_eq!(
+            serialize_event(&StreamEvent::SubagentStatus {
+                dispatch_id: 4,
+                subagent_id: 0,
+                title: "browse".into(),
+                model: "m".into(),
+                status: "thinking".into(),
+                tokens: 0,
+                step: Some(crate::tools::WorkerStep { tool: "browser_click".into(), input: serde_json::json!({"ref": "e7"}) }),
+            }),
+            r#"{"type":"data-subagent","data":{"dispatchId":4,"subagentId":0,"title":"browse","model":"m","status":"thinking","tokens":0,"step":{"tool":"browser_click","input":{"ref":"e7"}}},"transient":true}"#
         );
     }
 }

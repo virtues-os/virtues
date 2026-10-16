@@ -1063,6 +1063,7 @@ mod tests {
             model: "m".into(),
             status: crate::tools::SubagentStatus::Done,
             tokens: 12,
+            step: None,
         };
         assert_eq!(
             serialize_event(&StreamEvent::from(update)),
