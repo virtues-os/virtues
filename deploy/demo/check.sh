@@ -16,7 +16,9 @@ out=$({
   echo "BEGIN;"
   gunzip -c "$LIFE"
   cat "$HERE/place.sql"
-  echo "\\echo SECOND_PLACE"
+  # printf, not echo: dash (CI's sh) reads the \e in echo's argument as
+  # an escape character.
+  printf '%s\n' '\echo SECOND_PLACE'
   cat "$HERE/place.sql"
   cat <<'SQL'
 DO $$
