@@ -412,6 +412,7 @@ async fn build_section(
                    WHERE ended_at > $1::timestamptz - interval '30 hours'
                      AND ended_at <= $1::timestamptz
                      AND started_at IS NOT NULL
+                     AND deleted_at_source IS NULL
                    ORDER BY started_at, id"#,
             )
             .bind(now.to_rfc3339())

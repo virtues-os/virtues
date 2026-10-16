@@ -218,7 +218,7 @@ async fn get_resting_hr(pool: &PgPool, before_date: &str) -> Option<f64> {
         FROM (
             SELECT MIN(bpm) as bpm
             FROM data_health_heart_rate
-            WHERE occurred_at < $1
+            WHERE occurred_at < $1 AND deleted_at_source IS NULL
             GROUP BY DATE(occurred_at)
             ORDER BY DATE(occurred_at) DESC
             LIMIT 14
@@ -241,7 +241,7 @@ async fn get_resting_hr_std(pool: &PgPool, before_date: &str) -> Option<f64> {
         r#"
         SELECT MIN(bpm)::float8 as daily_min
         FROM data_health_heart_rate
-        WHERE occurred_at < $1
+        WHERE occurred_at < $1 AND deleted_at_source IS NULL
         GROUP BY DATE(occurred_at)
         ORDER BY DATE(occurred_at) DESC
         LIMIT 14
