@@ -11,7 +11,11 @@
  *
  * This is that anchoring by hand, for a short window: note the element at
  * the reading line, and on every frame put it back where it was. Any input
- * from the person ends the hold at once, so it never fights a scroll.
+ * from the person ends the hold at once, so it never fights a scroll — and
+ * so does any scroll the hold did not make itself. A phone's flick keeps
+ * scrolling after the finger lifts, and a finger already dragging when the
+ * turn ends sent its touchstart before the hold began: neither is a new
+ * input event, and the hold was pulling the page back under both.
  *
  * Returns a release, so a second turn ending can supersede the first.
  */
@@ -36,10 +40,18 @@ export function holdReadingPosition(scroller: HTMLElement): () => void {
 	const offset = anchor.getBoundingClientRect().top - box.top;
 	const started = performance.now();
 	let frame = 0;
+	// Where the hold last left the scroller. A scroll event anywhere else
+	// was someone else's.
+	let held = scroller.scrollTop;
 
 	const release = () => {
 		cancelAnimationFrame(frame);
 		for (const type of INPUT_EVENTS) scroller.removeEventListener(type, release);
+		scroller.removeEventListener("scroll", onScroll);
+	};
+
+	const onScroll = () => {
+		if (Math.abs(scroller.scrollTop - held) > 1) release();
 	};
 
 	const tick = () => {
@@ -48,11 +60,15 @@ export function holdReadingPosition(scroller: HTMLElement): () => void {
 			return;
 		}
 		const drift = anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset;
-		if (Math.abs(drift) >= 1) scroller.scrollTop += drift;
+		if (Math.abs(drift) >= 1) {
+			scroller.scrollTop += drift;
+			held = scroller.scrollTop;
+		}
 		frame = requestAnimationFrame(tick);
 	};
 
 	for (const type of INPUT_EVENTS) scroller.addEventListener(type, release, { passive: true });
+	scroller.addEventListener("scroll", onScroll, { passive: true });
 	frame = requestAnimationFrame(tick);
 	return release;
 }
