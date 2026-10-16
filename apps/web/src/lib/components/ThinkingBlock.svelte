@@ -13,6 +13,7 @@
 		type ToolPart,
 	} from "$lib/components/chat/state/toolPresentation";
 	import type { AgentModeId } from "$lib/config/agentModes";
+	import type { WorkerStep } from "$lib/stores/chatInstances.svelte";
 
 	interface Props {
 		/** This turn is in flight (TurnPhaseController: Send to stream end). */
@@ -38,6 +39,12 @@
 		 * later calls without a word, and the label kept saying the first.
 		 */
 		intent?: string;
+		/**
+		 * The browsing agent's call in flight, while a `browse` call runs. It
+		 * outranks the narration: the chat model said why once, and a task
+		 * of twenty steps is better described by the one happening now.
+		 */
+		browseStep?: WorkerStep;
 		/** How long the turn worked, in seconds; 0 when nobody measured it. */
 		seconds?: number;
 		/** Play the landing when the turn ends. Off for a turn that was
@@ -57,6 +64,7 @@
 		reasoningContent = "",
 		narration = [],
 		intent = "",
+		browseStep = undefined,
 		startedAt = null,
 		stalled = false,
 		seconds = 0,
@@ -112,6 +120,9 @@
 	 * the call is being made, which is the one thing the narration does.
 	 */
 	const thinkingLabel = $derived.by(() => {
+		if (browseStep && toolRunning && toolName(toolRunning) === "browse") {
+			return describeTool({ type: `tool-${browseStep.tool}`, input: browseStep.input }, true, true);
+		}
 		const said = lastIntent(intent);
 		if (said) return said;
 

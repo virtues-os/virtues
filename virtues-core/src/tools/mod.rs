@@ -38,7 +38,7 @@ pub mod applet_setup;
 pub mod applet_management;
 
 pub use executor::{
-    SubagentStatus, SubagentUpdate, ToolAttachment, ToolContext, ToolError, ToolExecutor,
+    SubagentStatus, SubagentUpdate, ToolAttachment, ToolContext, ToolError, ToolExecutor, WorkerStep,
     ToolResult,
 };
 pub use web_search::WebSearchTool;

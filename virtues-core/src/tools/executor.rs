@@ -33,8 +33,9 @@ impl SubagentStatus {
     }
 }
 
-/// A live update from a Deep Research worker, streamed out to the panel via the
-/// `subagent_tx` side-channel on [`ToolContext`].
+/// A live update from a worker the turn started (Deep Research workers, the
+/// browsing agent), streamed to the client via the `subagent_tx` side-channel
+/// on [`ToolContext`].
 #[derive(Debug, Clone)]
 pub struct SubagentUpdate {
     /// Unique per-dispatch id, so multiple dispatch rounds in one turn don't collide in the panel.
@@ -44,6 +45,16 @@ pub struct SubagentUpdate {
     pub model: String,
     pub status: SubagentStatus,
     pub tokens: u32,
+    /// The browsing agent's call in flight, for the chat's status line. The
+    /// client words it as it words that tool anywhere else.
+    pub step: Option<WorkerStep>,
+}
+
+/// One tool call a worker is making, as the client's tool table reads it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct WorkerStep {
+    pub tool: String,
+    pub input: serde_json::Value,
 }
 
 /// Context provided to tools during execution
